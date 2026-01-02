@@ -1,0 +1,46 @@
+# Build outputs
+build/
+DerivedData/
+*.xcworkspace
+
+# Xcode
+*.xcuserstate
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+
+# Swift Package Manager
+.swiftpm/
+.build/
+Packages/
+
+# CocoaPods
+Pods/
+Podfile.lock
+
+# Carthage
+Carthage/
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Thumbnails
+Thumbs.db
+
+# VM artifacts
+*.image
+*.changes
+*.sources
+
+# Archives
+*.zip
+*.tar.gz

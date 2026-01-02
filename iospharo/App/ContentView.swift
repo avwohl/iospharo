@@ -1,0 +1,320 @@
+/*
+ * ContentView.swift
+ *
+ * Main content view for the iOS Pharo client.
+ * Shows download progress, start button, or the Pharo canvas.
+ */
+
+import SwiftUI
+
+struct ContentView: View {
+
+    @EnvironmentObject var bridge: PharoBridge
+    @EnvironmentObject var imageManager: ImageManager
+
+    @State private var showingSettings = false
+    @State private var showingKeyboard = false
+
+    var body: some View {
+        ZStack {
+            // Background
+            Color.black.edgesIgnoringSafeArea(.all)
+
+            // Main content based on state
+            if bridge.isRunning {
+                // Pharo is running - show canvas
+                pharoCanvas
+            } else if imageManager.isDownloading {
+                // Downloading image
+                downloadingView
+            } else if imageManager.hasImage {
+                // Ready to start
+                readyView
+            } else {
+                // No image - show download option
+                noImageView
+            }
+
+            // Error overlay
+            if let error = bridge.errorMessage ?? imageManager.errorMessage {
+                errorOverlay(message: error)
+            }
+        }
+        .onAppear {
+            imageManager.checkForExistingImage()
+        }
+    }
+
+    // MARK: - Views
+
+    private var pharoCanvas: some View {
+        VStack(spacing: 0) {
+            // Pharo display
+            PharoCanvasView(bridge: bridge)
+                .edgesIgnoringSafeArea(.all)
+
+            // Keyboard toggle for text input
+            if showingKeyboard {
+                keyboardBar
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            // Toolbar overlay
+            toolbarOverlay
+        }
+    }
+
+    private var downloadingView: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "arrow.down.circle")
+                .font(.system(size: 60))
+                .foregroundColor(.blue)
+
+            Text("Downloading Pharo")
+                .font(.title2)
+                .foregroundColor(.white)
+
+            ProgressView(value: imageManager.downloadProgress)
+                .progressViewStyle(LinearProgressViewStyle(tint: .blue))
+                .frame(width: 250)
+
+            Text("\(Int(imageManager.downloadProgress * 100))%")
+                .font(.caption)
+                .foregroundColor(.gray)
+
+            if let status = imageManager.statusMessage {
+                Text(status)
+                    .font(.caption)
+                    .foregroundColor(.gray)
+            }
+
+            Button("Cancel") {
+                imageManager.cancelDownload()
+            }
+            .foregroundColor(.red)
+            .padding(.top, 20)
+        }
+        .padding()
+    }
+
+    private var readyView: some View {
+        VStack(spacing: 30) {
+            Image(systemName: "play.circle.fill")
+                .font(.system(size: 80))
+                .foregroundColor(.green)
+
+            Text("Pharo Ready")
+                .font(.title)
+                .foregroundColor(.white)
+
+            if let imageName = imageManager.imageName {
+                Text(imageName)
+                    .font(.caption)
+                    .foregroundColor(.gray)
+            }
+
+            Button(action: startPharo) {
+                HStack {
+                    Image(systemName: "play.fill")
+                    Text("Start Pharo")
+                }
+                .font(.headline)
+                .foregroundColor(.white)
+                .padding(.horizontal, 40)
+                .padding(.vertical, 15)
+                .background(Color.green)
+                .cornerRadius(10)
+            }
+
+            Button("Download Different Image") {
+                showingSettings = true
+            }
+            .font(.caption)
+            .foregroundColor(.blue)
+            .padding(.top, 20)
+        }
+        .sheet(isPresented: $showingSettings) {
+            SettingsView()
+        }
+    }
+
+    private var noImageView: some View {
+        VStack(spacing: 30) {
+            Image(systemName: "photo.badge.arrow.down")
+                .font(.system(size: 60))
+                .foregroundColor(.gray)
+
+            Text("No Pharo Image")
+                .font(.title2)
+                .foregroundColor(.white)
+
+            Text("Download a Pharo image to get started")
+                .font(.body)
+                .foregroundColor(.gray)
+
+            Button(action: { imageManager.downloadDefaultImage() }) {
+                HStack {
+                    Image(systemName: "arrow.down.circle.fill")
+                    Text("Download Pharo 12")
+                }
+                .font(.headline)
+                .foregroundColor(.white)
+                .padding(.horizontal, 40)
+                .padding(.vertical, 15)
+                .background(Color.blue)
+                .cornerRadius(10)
+            }
+        }
+    }
+
+    private var toolbarOverlay: some View {
+        HStack(spacing: 15) {
+            // Keyboard toggle
+            Button(action: { showingKeyboard.toggle() }) {
+                Image(systemName: showingKeyboard ? "keyboard.fill" : "keyboard")
+                    .foregroundColor(.white)
+                    .padding(8)
+                    .background(Color.black.opacity(0.5))
+                    .clipShape(Circle())
+            }
+
+            // Settings
+            Button(action: { showingSettings = true }) {
+                Image(systemName: "gear")
+                    .foregroundColor(.white)
+                    .padding(8)
+                    .background(Color.black.opacity(0.5))
+                    .clipShape(Circle())
+            }
+        }
+        .padding()
+    }
+
+    private var keyboardBar: some View {
+        HStack {
+            // Common keys
+            ForEach(["Esc", "Tab", "Ctrl", "Alt", "Cmd"], id: \.self) { key in
+                Button(key) {
+                    sendSpecialKey(key)
+                }
+                .font(.caption)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(Color.gray.opacity(0.3))
+                .foregroundColor(.white)
+                .cornerRadius(5)
+            }
+
+            Spacer()
+
+            // Text input field
+            TextField("Type here", text: .constant(""))
+                .textFieldStyle(RoundedBorderTextFieldStyle())
+                .frame(width: 150)
+        }
+        .padding()
+        .background(Color.black.opacity(0.8))
+    }
+
+    private func errorOverlay(message: String) -> some View {
+        VStack {
+            Spacer()
+
+            HStack {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(.yellow)
+                Text(message)
+                    .foregroundColor(.white)
+            }
+            .padding()
+            .background(Color.red.opacity(0.8))
+            .cornerRadius(10)
+            .padding()
+        }
+    }
+
+    // MARK: - Actions
+
+    private func startPharo() {
+        guard let imagePath = imageManager.imagePath else { return }
+
+        if bridge.loadImage(at: imagePath) {
+            bridge.start()
+        }
+    }
+
+    private func sendSpecialKey(_ key: String) {
+        switch key {
+        case "Esc":
+            bridge.sendKeyTyped(Character(UnicodeScalar(27)!))
+        case "Tab":
+            bridge.sendKeyTyped(Character(UnicodeScalar(9)!))
+        case "Ctrl":
+            // Toggle ctrl modifier (simplified)
+            break
+        case "Alt":
+            break
+        case "Cmd":
+            break
+        default:
+            break
+        }
+    }
+}
+
+// MARK: - Settings View
+
+struct SettingsView: View {
+
+    @EnvironmentObject var imageManager: ImageManager
+    @Environment(\.dismiss) var dismiss
+
+    var body: some View {
+        NavigationView {
+            List {
+                Section("Image Management") {
+                    Button("Download Pharo 12") {
+                        imageManager.downloadDefaultImage()
+                        dismiss()
+                    }
+
+                    Button("Download Pharo 11") {
+                        imageManager.downloadImage(version: "110")
+                        dismiss()
+                    }
+                }
+
+                Section("About") {
+                    HStack {
+                        Text("Device")
+                        Spacer()
+                        Text(PharoBridge.shared.deviceModel)
+                            .foregroundColor(.gray)
+                    }
+
+                    HStack {
+                        Text("iOS Version")
+                        Spacer()
+                        Text(PharoBridge.shared.systemVersion)
+                            .foregroundColor(.gray)
+                    }
+                }
+            }
+            .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Preview
+
+#Preview {
+    ContentView()
+        .environmentObject(PharoBridge.shared)
+        .environmentObject(ImageManager())
+}
