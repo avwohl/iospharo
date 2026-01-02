@@ -34,10 +34,20 @@ PROGRESS (2026-01-02):
 [x] Assets.xcassets configured
 
 NEXT STEPS:
-[ ] Build VM static library: cmake -B build -G Xcode && cmake --build build
+[x] Build VM static library - libPharoVMCore.a
+    Device (arm64): 1.6MB - build/Release-iphoneos/
+    Simulator (arm64+x86_64): 3.0MB - build-sim/Release-iphonesimulator/
+    XCFramework: 4.6MB - PharoVMCore.xcframework/
+    Build commands:
+      Device:    cmake -B build -G Xcode -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0
+                 cmake --build build --config Release -- -sdk iphoneos
+      Simulator: cmake -B build-sim -G Xcode -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 -DCMAKE_OSX_SYSROOT=iphonesimulator
+                 cmake --build build-sim --config Release -- -sdk iphonesimulator
+      XCFramework: xcodebuild -create-xcframework -library build/Release-iphoneos/libPharoVMCore.a -library build-sim/Release-iphonesimulator/libPharoVMCore.a -output PharoVMCore.xcframework
+    Excluded: SqueakSSL (iOS-incompatible API), BitBltArm* (type issues on 64-bit)
+[x] Add app icon images to Assets.xcassets - extracted from Pharo.icns
 [ ] Open iospharo.xcodeproj in Xcode
 [ ] Configure code signing
-[ ] Add app icon images to Assets.xcassets
 [ ] Build and test on iOS Simulator
 [ ] Test on real iOS device
 [x] Create GitHub repository - https://github.com/avwohl/iospharo (private)

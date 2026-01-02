@@ -114,7 +114,8 @@ class PharoBridge: ObservableObject {
         // Memory configuration (512MB default, can be adjusted)
         parameters.maxOldSpaceSize = 512 * 1024 * 1024
         parameters.edenSize = 10 * 1024 * 1024
-        parameters.maxCodeSize = 64 * 1024 * 1024
+        // No code zone for iOS - interpreter only (no JIT)
+        parameters.maxCodeSize = 0
 
         // Initialize VM
         let initResult = vm_init(&parameters)

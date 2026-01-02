@@ -27,8 +27,9 @@ set(PHARO_VM_BUILD_DIR "${PHARO_VM_DIR}/build-gen" CACHE PATH "Path to pharo-vm 
 
 # Use only the interpreter (cointerp.c), not the JIT compiler (cogit*.c)
 # iOS doesn't support JIT due to code signing restrictions
+# We use a patched cointerp.c that removes strict address checks (iOS uses ASLR)
 set(GENERATED_VM_SOURCES
-    "${PHARO_VM_BUILD_DIR}/generated/64/vm/src/cointerp.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ios/cointerp.c"
 )
 
 # Collect plugin sources

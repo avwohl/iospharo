@@ -66,10 +66,11 @@ EXPORT(void) fillParametersFromPList(VMParameters* parameters) {
             parameters->edenSize = [edenSizeRef longLongValue];
         }
 
-        NSNumber* codeSizeRef = infoPlist[@"PharoCodeSize"];
-        if (codeSizeRef) {
-            parameters->maxCodeSize = [codeSizeRef longLongValue];
-        }
+        /* Code zone size - force to 0 for interpreter-only mode on iOS.
+         * iOS doesn't allow JIT compilation, so we skip code zone allocation
+         * entirely by setting maxCodeSize to 0.
+         */
+        parameters->maxCodeSize = 0;
 
         /* Image parameters array */
         NSArray* imageParamsArray = infoPlist[@"PharoImageParameters"];

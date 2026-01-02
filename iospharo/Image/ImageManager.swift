@@ -34,11 +34,11 @@ class ImageManager: ObservableObject {
         fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
     }
 
-    /// Default Pharo image URLs
+    /// Default Pharo image URLs (arm64 for iOS/Apple Silicon)
     private let imageURLs: [String: String] = [
-        "120": "https://files.pharo.org/get-files/120/pharo.zip",
-        "110": "https://files.pharo.org/get-files/110/pharo.zip",
-        "100": "https://files.pharo.org/get-files/100/pharo.zip"
+        "120": "https://files.pharo.org/get-files/120/pharoImage-arm64.zip",
+        "110": "https://files.pharo.org/get-files/110/pharoImage-arm64.zip",
+        "100": "https://files.pharo.org/get-files/100/pharoImage-arm64.zip"
     ]
 
     // MARK: - Public Methods

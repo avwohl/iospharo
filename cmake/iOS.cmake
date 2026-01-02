@@ -39,8 +39,8 @@ set(EXTRACTED_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ios/iosParameters.m
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ios/iosUtils.mm
 
-    # Virtual Memory functions - reuse Unix implementation
-    ${PHARO_VM_DIR}/src/memoryUnix.c
+    # Virtual Memory functions - iOS-specific implementation (no JIT)
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ios/iosMemory.c
 
     # Debug support
     ${PHARO_VM_DIR}/src/debugUnix.c
