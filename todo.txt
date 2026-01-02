@@ -40,5 +40,7 @@ NEXT STEPS:
 [ ] Add app icon images to Assets.xcassets
 [ ] Build and test on iOS Simulator
 [ ] Test on real iOS device
-[ ] Create GitHub repository
+[x] Create GitHub repository - https://github.com/avwohl/iospharo (private)
+
+Bundle ID: com.awohl.pharo
 
