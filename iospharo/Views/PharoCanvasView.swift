@@ -97,6 +97,7 @@ struct PharoCanvasView: UIViewRepresentable {
 
     // MARK: - Coordinator
 
+    @MainActor
     class Coordinator: NSObject {
         var parent: PharoCanvasView
         var renderer: MetalRenderer?

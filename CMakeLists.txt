@@ -12,7 +12,7 @@ endif()
 # Options
 option(BUILD_IOS "Build for iOS" ON)
 option(BUILD_CATALYST "Build for Mac Catalyst" OFF)
-option(FEATURE_LIB_FFI "Enable FFI support" ON)
+option(FEATURE_LIB_FFI "Enable FFI support" OFF)  # Disabled for initial iOS build
 
 # Include iOS platform configuration
 include(cmake/iOS.cmake)
@@ -21,9 +21,14 @@ include(cmake/iOS.cmake)
 set(VM_LIBRARY_NAME "PharoVMCore")
 set(APPNAME "iospharo")
 
-# Collect generated VM sources from pharo-vm
-file(GLOB_RECURSE GENERATED_VM_SOURCES
-    "${PHARO_VM_DIR}/generated/64/vm/src/*.c"
+# Collect generated VM sources from pharo-vm build directory
+# Generated sources are created during pharo-vm build
+set(PHARO_VM_BUILD_DIR "${PHARO_VM_DIR}/build-gen" CACHE PATH "Path to pharo-vm build directory")
+
+# Use only the interpreter (cointerp.c), not the JIT compiler (cogit*.c)
+# iOS doesn't support JIT due to code signing restrictions
+set(GENERATED_VM_SOURCES
+    "${PHARO_VM_BUILD_DIR}/generated/64/vm/src/cointerp.c"
 )
 
 # Collect plugin sources
@@ -31,6 +36,10 @@ file(GLOB_RECURSE PLUGIN_SOURCES
     "${PHARO_VM_DIR}/extracted/plugins/*/src/common/*.c"
     "${PHARO_VM_DIR}/extracted/plugins/*/src/osx/*.c"
 )
+
+# Exclude plugins/sources that are incompatible with iOS
+list(FILTER PLUGIN_SOURCES EXCLUDE REGEX "SqueakSSL")
+list(FILTER PLUGIN_SOURCES EXCLUDE REGEX "BitBltArm")  # ARM-specific optimizations have type issues on 64-bit iOS
 
 # FFI sources if enabled
 if(FEATURE_LIB_FFI)
@@ -41,6 +50,12 @@ if(FEATURE_LIB_FFI)
     )
 endif()
 
+# iOS-specific sources
+set(IOS_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ios/iosStubs.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ios/cogStubs.c
+)
+
 # Core VM support sources from pharo-vm
 set(VM_SUPPORT_SOURCES
     ${PHARO_VM_DIR}/src/client.c
@@ -50,10 +65,20 @@ set(VM_SUPPORT_SOURCES
     ${PHARO_VM_DIR}/src/imageAccess.c
     ${PHARO_VM_DIR}/src/pathUtilities.c
     ${PHARO_VM_DIR}/src/parameters/parameters.c
+    ${PHARO_VM_DIR}/src/parameters/parameterVector.c
     ${PHARO_VM_DIR}/src/semaphores/platformSemaphore.c
     ${PHARO_VM_DIR}/src/semaphores/pharoSemaphore.c
     ${PHARO_VM_DIR}/src/threadSafeQueue/threadSafeQueue.c
     ${PHARO_VM_DIR}/src/utils.c
+    # Common VM sources
+    ${PHARO_VM_DIR}/extracted/vm/src/common/heartbeat.c
+    ${PHARO_VM_DIR}/extracted/vm/src/common/sqExternalSemaphores.c
+    ${PHARO_VM_DIR}/extracted/vm/src/common/sqHeapMap.c
+    ${PHARO_VM_DIR}/extracted/vm/src/common/sqNamedPrims.c
+    ${PHARO_VM_DIR}/extracted/vm/src/common/sqVirtualMachine.c
+    # OSX/Unix sources
+    ${PHARO_VM_DIR}/extracted/vm/src/osx/aioOSX.c
+    ${PHARO_VM_DIR}/extracted/vm/src/unix/sqUnixCharConv.c
 )
 
 # Build static library for iOS embedding
@@ -61,6 +86,7 @@ add_library(${VM_LIBRARY_NAME} STATIC
     ${GENERATED_VM_SOURCES}
     ${EXTRACTED_SOURCES}
     ${VM_SUPPORT_SOURCES}
+    ${IOS_SOURCES}
     ${PLUGIN_SOURCES}
     ${FFI_SOURCES}
 )
@@ -73,20 +99,25 @@ add_required_libs_per_platform()
 target_include_directories(${VM_LIBRARY_NAME}
     PUBLIC
         ${PHARO_VM_DIR}/include
+        ${PHARO_VM_DIR}/include/pharovm
         ${PHARO_VM_DIR}/extracted/vm/include
         ${PHARO_VM_DIR}/ffi/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src/include
     PRIVATE
         ${PHARO_VM_DIR}/src
-        ${PHARO_VM_DIR}/generated/64/vm/include
+        ${PHARO_VM_BUILD_DIR}/generated/64/vm/include
+        ${PHARO_VM_BUILD_DIR}/build/include
+        ${PHARO_VM_BUILD_DIR}/build/include/pharovm
 )
 
 # Plugin include directories
 file(GLOB PLUGIN_INCLUDE_DIRS "${PHARO_VM_DIR}/extracted/plugins/*/include/common")
 file(GLOB PLUGIN_OSX_INCLUDE_DIRS "${PHARO_VM_DIR}/extracted/plugins/*/include/osx")
+file(GLOB PLUGIN_UNIX_INCLUDE_DIRS "${PHARO_VM_DIR}/extracted/plugins/*/include/unix")
 target_include_directories(${VM_LIBRARY_NAME} PRIVATE
     ${PLUGIN_INCLUDE_DIRS}
     ${PLUGIN_OSX_INCLUDE_DIRS}
+    ${PLUGIN_UNIX_INCLUDE_DIRS}
 )
 
 # Compile definitions

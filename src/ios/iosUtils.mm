@@ -9,21 +9,9 @@
 
 extern "C" {
     #include "pharovm/pharo.h"
-
-    void fillApplicationDirectory(char* vmPath);
-    void fillBundlePath(char* bundlePath);
-    void fillResourcesPath(char* resourcesPath);
 }
 
-/* Get the Documents directory path */
-void fillApplicationDirectory(char* vmPath) {
-    @autoreleasepool {
-        NSArray* paths = NSSearchPathForDirectoriesInDomains(
-            NSDocumentDirectory, NSUserDomainMask, YES);
-        NSString* documentsPath = [paths firstObject];
-        strcpy(vmPath, [documentsPath UTF8String]);
-    }
-}
+/* fillApplicationDirectory, fillBundlePath, fillResourcesPath are in iosParameters.m */
 
 /* Get temporary directory */
 extern "C" char* ioGetTempDirectory(void) {

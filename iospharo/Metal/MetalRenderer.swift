@@ -10,6 +10,7 @@ import MetalKit
 import simd
 
 /// Metal renderer for the Pharo display
+@MainActor
 class MetalRenderer: NSObject, MTKViewDelegate {
 
     // Metal objects

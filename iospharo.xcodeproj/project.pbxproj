@@ -7,17 +7,18 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A10001 /* iosparoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20001; };
-		A10002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20002; };
-		A10003 /* PharoBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20003; };
-		A10004 /* MetalRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20004; };
-		A10005 /* Shaders.metal in Sources */ = {isa = PBXBuildFile; fileRef = A20005; };
-		A10006 /* PharoCanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20006; };
-		A10007 /* ImageManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20007; };
-		A10008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20008; };
-		A10009 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A20009; };
-		A1000A /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000A; };
-		A1000B /* libPharoVMCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000B; settings = {ATTRIBUTES = (Required, ); }; };
+		4E4B3BEE2F0859030064396B /* ZIPFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = A90001 /* ZIPFoundation */; };
+		A10001 /* iosparoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20001 /* iosparoApp.swift */; };
+		A10002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20002 /* ContentView.swift */; };
+		A10003 /* PharoBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20003 /* PharoBridge.swift */; };
+		A10004 /* MetalRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20004 /* MetalRenderer.swift */; };
+		A10005 /* Shaders.metal in Sources */ = {isa = PBXBuildFile; fileRef = A20005 /* Shaders.metal */; };
+		A10006 /* PharoCanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20006 /* PharoCanvasView.swift */; };
+		A10007 /* ImageManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20007 /* ImageManager.swift */; };
+		A10008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20008 /* Assets.xcassets */; };
+		A10009 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A20009 /* Metal.framework */; };
+		A1000A /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000A /* MetalKit.framework */; };
+		A1000B /* PharoVMCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000B /* PharoVMCore.xcframework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -31,7 +32,7 @@
 		A20008 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A20009 /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
 		A2000A /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
-		A2000B /* libPharoVMCore.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libPharoVMCore.a; path = build/Release/libPharoVMCore.a; sourceTree = SOURCE_ROOT; };
+		A2000B /* PharoVMCore.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = PharoVMCore.xcframework; sourceTree = SOURCE_ROOT; };
 		A2000C /* iospharo-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "iospharo-Bridging-Header.h"; sourceTree = "<group>"; };
 		A2000D /* iospharo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = iospharo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A2000E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -42,9 +43,10 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4E4B3BEE2F0859030064396B /* ZIPFoundation in Frameworks */,
 				A10009 /* Metal.framework in Frameworks */,
 				A1000A /* MetalKit.framework in Frameworks */,
-				A1000B /* libPharoVMCore.a in Frameworks */,
+				A1000B /* PharoVMCore.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -122,7 +124,7 @@
 			children = (
 				A20009 /* Metal.framework */,
 				A2000A /* MetalKit.framework */,
-				A2000B /* libPharoVMCore.a */,
+				A2000B /* PharoVMCore.xcframework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -152,6 +154,7 @@
 			);
 			name = iospharo;
 			packageProductDependencies = (
+				A90001 /* ZIPFoundation */,
 			);
 			productName = iospharo;
 			productReference = A2000D /* iospharo.app */;
@@ -275,7 +278,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
@@ -332,7 +335,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
@@ -347,9 +350,10 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 644N5FNKG2;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = (
@@ -361,19 +365,17 @@
 				INFOPLIST_FILE = iospharo/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "iOS Pharo";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UIRequiredDeviceCapabilities = "arm64 metal";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportsDocumentBrowser = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
-				);
-				LIBRARY_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(PROJECT_DIR)/build/Release",
-					"$(PROJECT_DIR)/build/Debug",
 				);
 				MARKETING_VERSION = 1.0;
 				OTHER_LDFLAGS = (
@@ -395,9 +397,10 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 644N5FNKG2;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = (
@@ -409,19 +412,17 @@
 				INFOPLIST_FILE = iospharo/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "iOS Pharo";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UIRequiredDeviceCapabilities = "arm64 metal";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportsDocumentBrowser = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
-				);
-				LIBRARY_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(PROJECT_DIR)/build/Release",
-					"$(PROJECT_DIR)/build/Debug",
 				);
 				MARKETING_VERSION = 1.0;
 				OTHER_LDFLAGS = (
@@ -472,6 +473,13 @@
 		};
 /* End XCRemoteSwiftPackageReference section */
 
+/* Begin XCSwiftPackageProductDependency section */
+		A90001 /* ZIPFoundation */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A80001 /* XCRemoteSwiftPackageReference "ZIPFoundation" */;
+			productName = ZIPFoundation;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = A60001 /* Project object */;
 }

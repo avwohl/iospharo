@@ -168,21 +168,17 @@ class ImageManager: ObservableObject {
     private func extractZip(from zipURL: URL, to destination: URL) throws {
         // Try using built-in Archive class (iOS 16+)
         if #available(iOS 16.0, *) {
-            try extractWithArchive(from: zipURL, to: destination)
+            try extractWithZIPFoundation(from: zipURL, to: destination)
         } else {
             // Fallback: manual extraction or use third-party library
             try extractManually(from: zipURL, to: destination)
         }
     }
 
-    @available(iOS 16.0, *)
-    private func extractWithArchive(from zipURL: URL, to destination: URL) throws {
-        // Use Foundation's Archive API
-        let process = Process()
-        // Note: Process is not available on iOS, so we need alternative approach
-
-        // For iOS, we'll use a simple unzip approach
-        try extractManually(from: zipURL, to: destination)
+    private func extractWithZIPFoundation(from zipURL: URL, to destination: URL) throws {
+        // Use ZIPFoundation for extraction on iOS
+        try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
+        try fileManager.unzipItem(at: zipURL, to: destination)
     }
 
     private func extractManually(from zipURL: URL, to destination: URL) throws {
