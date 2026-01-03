@@ -29,10 +29,25 @@ Hybrid build compiles successfully. The `libPharoVMCore.a` includes all oop_wrap
 - `oop_to_pointer`
 
 ### Completed
-Patched cointerp.c to use oop_wrapper functions for space detection:
-- 60 calls patched: `isOldObject(GIV(memoryMap), oop)` → `oop_is_old((uint64_t)(oop))`
-- Also patched `getMemoryMap()` variant patterns
-- Build verified: compiles and links successfully
+1. **Patched cointerp.c space checks**:
+   - 60 calls patched: `isOldObject(GIV(memoryMap), oop)` → `oop_is_old((uint64_t)(oop))`
+   - Also patched `getMemoryMap()` variant patterns
+   - Build verified: compiles and links successfully
+
+2. **Added space encoding during image swizzle**:
+   - `swizzleObj()` now encodes space in low bits after address adjustment
+   - Permanent space objects → `OOP_SPACE_PERM` encoding
+   - Old space objects (from image file) → `OOP_SPACE_OLD` encoding
+
+3. **XCFramework built**:
+   - iOS device (arm64)
+   - iOS Simulator (arm64 + x86_64)
+   - Mac Catalyst (arm64 + x86_64)
+
+### Remaining Work
+- Runtime allocations (new objects) don't yet get space encoded
+- May need to encode when storing references to object fields
+- GC space transitions (new→old) need encoding updates
 
 ### Previous Blocker (Resolved via Hybrid Approach)
 Pure C++ compilation of cointerp.cpp fails due to C/C++ incompatibilities:

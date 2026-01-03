@@ -5,7 +5,12 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-PHARO_VM_DIR="../pharo-vm"
+# Use iOS fork if available, otherwise fall back to original
+if [ -d "../pharo-vm-ios" ]; then
+    PHARO_VM_DIR="../pharo-vm-ios"
+else
+    PHARO_VM_DIR="../pharo-vm"
+fi
 BUILD_BASE="$SCRIPT_DIR/build-xcframework"
 XCFRAMEWORK_OUTPUT="$SCRIPT_DIR/PharoVMCore.xcframework"
 
