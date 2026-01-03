@@ -50,6 +50,11 @@ char *__interpBuildInfo = __buildInfo;
 #include "cointerp.h"
 #include "cogit.h"
 
+/* iOS ASLR-compatible space detection */
+#if PHARO_IOS_OOP_WRAPPER
+#include "oop_wrapper.h"
+#endif
+
 
 
 /* StackInterpreter class>>preambleCCode */
@@ -22887,7 +22892,7 @@ voidVMStateForSnapshotFlushingExternalPrimitivesIf(sqInt flushExtPrims)
 		/* begin allOldSpaceObjectsDo: */
 		/* begin allOldSpaceObjectsFrom:do: */
 		/* begin allOldSpaceEntitiesFrom:do: */
-		assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+		assert(oop_is_old((uint64_t)(GIV(nilObj))));
 		prevPrevObj2 = (prevObj2 = null);
 		objOop22 = GIV(nilObj);
 		while (1) {
@@ -25137,7 +25142,7 @@ primitiveVoidVMStateForMethod(void)
 		/* begin allOldSpaceObjectsDo: */
 		/* begin allOldSpaceObjectsFrom:do: */
 		/* begin allOldSpaceEntitiesFrom:do: */
-		assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+		assert(oop_is_old((uint64_t)(GIV(nilObj))));
 		prevPrevObj2 = (prevObj2 = null);
 		objOop22 = GIV(nilObj);
 		while (1) {
@@ -30963,7 +30968,7 @@ primitiveFlushExternalPrimitives(void)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -40175,7 +40180,7 @@ primitiveUnloadModule(void)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -41055,7 +41060,7 @@ clearLeakMapAndMapAccessibleObjects(void)
 		/* begin allOldSpaceObjectsDo: */
 		/* begin allOldSpaceObjectsFrom:do: */
 		/* begin allOldSpaceEntitiesFrom:do: */
-		assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+		assert(oop_is_old((uint64_t)(GIV(nilObj))));
 		prevPrevObj2 = (prevObj2 = null);
 		objOop22 = GIV(nilObj);
 		while (1) {
@@ -44967,7 +44972,7 @@ allInstancesOf(sqInt aClass)
 		/* begin allHeapEntitiesDo: */
 		/* begin allOldSpaceEntitiesDo: */
 		/* begin allOldSpaceEntitiesFrom:do: */
-		assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+		assert(oop_is_old((uint64_t)(GIV(nilObj))));
 		prevPrevObj2 = (prevObj2 = null);
 		objOop2 = GIV(nilObj);
 		while (1) {
@@ -45153,7 +45158,7 @@ allInstancesOf(sqInt aClass)
 		/* begin allHeapEntitiesDo: */
 		/* begin allOldSpaceEntitiesDo: */
 		/* begin allOldSpaceEntitiesFrom:do: */
-		assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+		assert(oop_is_old((uint64_t)(GIV(nilObj))));
 		prevPrevObj22 = (prevObj22 = null);
 		objOop22 = GIV(nilObj);
 		while (1) {
@@ -45523,7 +45528,7 @@ allObjects(void)
 	/* begin allHeapEntitiesDo: */
 	/* begin allOldSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop2 = GIV(nilObj);
 	while (1) {
@@ -45846,7 +45851,7 @@ allObjectsUnmarked(void)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -45932,7 +45937,7 @@ allOldMarkedWeakObjectsOnWeaklingStack(void)
 
 	/* begin allOldSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj = (prevObj = null);
 	objOop = GIV(nilObj);
 	while (1) {
@@ -47809,7 +47814,7 @@ checkHeapFreeSpaceIntegrity(void)
 	/* end allNewSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop2 = GIV(nilObj);
 	while (1) {
@@ -48279,7 +48284,7 @@ checkHeapIntegrityclassIndicesShouldBeValid(sqInt excludeUnmarkedObjs, sqInt cla
 	/* end allNewSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop2 = GIV(nilObj);
 	while (1) {
@@ -49349,7 +49354,7 @@ clearLeakMapAndMapAccessibleFreeSpace(void)
 
 	clearHeapMap();
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj = (prevObj = null);
 	objOop2 = GIV(nilObj);
 	while (1) {
@@ -49810,7 +49815,7 @@ countMarkedAndUnmarkdObjects(sqInt printFlags)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -50373,7 +50378,7 @@ doValidateObjectMemory(void)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -51251,7 +51256,7 @@ findStringBeginningWith(char *aCString)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -51476,7 +51481,7 @@ findString(char *aCString)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -52877,7 +52882,7 @@ initialInstanceOf(sqInt classObj)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -54779,7 +54784,7 @@ longPrintInstancesWithClassIndex(sqInt classIndex)
 	/* begin allHeapEntitiesDo: */
 	/* begin allOldSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop2 = GIV(nilObj);
 	while (1) {
@@ -55108,7 +55113,7 @@ longPrintReferencesTo(sqInt anOop)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -55343,7 +55348,7 @@ markAndShouldScan(sqInt objOop)
 	}
 	assert(!(isForwarded(objOop)));
 	if (((((usqInt) (longAt(objOop)) ) >> (markedBitFullShift())) & 1) != 0) {
-		assert(!(isPermanentObject(GIV(memoryMap), objOop)));
+		assert(!(oop_is_permanent((uint64_t)(objOop))));
 		return 0;
 	}
 	if (!(objOop >= PERM_SPACE_START())) {
@@ -55694,7 +55699,7 @@ markAndTrace(sqInt objOop)
 		}
 		assert(!(isForwarded(objOop)));
 		if (((((usqInt) (longAt(objOop)) ) >> (markedBitFullShift())) & 1) != 0) {
-			assert(!(isPermanentObject(GIV(memoryMap), objOop)));
+			assert(!(oop_is_permanent((uint64_t)(objOop))));
 			{
 				return;
 			}
@@ -55855,7 +55860,7 @@ markAndTrace(sqInt objOop)
 						}
 						assert(!(isForwarded(field)));
 						if (((((usqInt) (longAt(field)) ) >> (markedBitFullShift())) & 1) != 0) {
-							assert(!(isPermanentObject(GIV(memoryMap), field)));
+							assert(!(oop_is_permanent((uint64_t)(field))));
 							goto l3;
 						}
 						if (!(field >= PERM_SPACE_START())) {
@@ -56676,7 +56681,7 @@ moveToPermSpaceAllOldObjects(void)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj = (prevObj = null);
 	objOop2 = GIV(nilObj);
 	while (1) {
@@ -57712,7 +57717,7 @@ objectBefore(sqInt objOop)
 	}
 	/* begin allOldSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop3 = GIV(nilObj);
 	while (1) {
@@ -58608,7 +58613,7 @@ printActivationsOf(sqInt aMethodObj)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -58900,7 +58905,7 @@ printContextReferencesTo(sqInt anOop)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -59107,7 +59112,7 @@ printForwarders(void)
 	/* begin allHeapEntitiesDo: */
 	/* begin allOldSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop2 = GIV(nilObj);
 	while (1) {
@@ -59378,7 +59383,7 @@ printFreeChunks(void)
 	/* end allNewSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop2 = GIV(nilObj);
 	while (1) {
@@ -59698,7 +59703,7 @@ printInstancesWithClassIndex(sqInt classIndex)
 	/* begin allHeapEntitiesDo: */
 	/* begin allOldSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop2 = GIV(nilObj);
 	while (1) {
@@ -60039,7 +60044,7 @@ printMethodImplementorsOf(sqInt anOop)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -60270,7 +60275,7 @@ printMethodReferencesTo(sqInt anOop)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -60426,7 +60431,7 @@ printObjectsWithHash(sqInt hash)
 	/* begin allHeapEntitiesDo: */
 	/* begin allOldSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop2 = GIV(nilObj);
 	while (1) {
@@ -60729,7 +60734,7 @@ printOopsExcept(sqInt (*function)(sqInt))
 	/* begin allHeapEntitiesDo: */
 	/* begin allOldSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop2 = GIV(nilObj);
 	while (1) {
@@ -60964,7 +60969,7 @@ printOopsSuchThat(sqInt (*function)(sqInt))
 	/* begin allHeapEntitiesDo: */
 	/* begin allOldSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop2 = GIV(nilObj);
 	while (1) {
@@ -61365,7 +61370,7 @@ printReferencesTo(sqInt anOop)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -61766,7 +61771,7 @@ recreateFromPermSpaceRememberedSet(void)
 		/* begin rememberedSet:oop: */
 		rootIndex = (self_in_emptyRememberedSet->rootIndex);
 		anOop = GIV(nilObj);
-		assert(isOldObject(GIV(memoryMap), anOop));
+		assert(oop_is_old((uint64_t)(anOop)));
 		{
 			assert(!(isOopForwarded(GIV(hiddenRootsObj))));
 			longAtput((GIV(hiddenRootsObj) + BaseHeaderSize) + ((sqInt) (((usqInt) rootIndex ) << (shiftForWord())) ), anOop);
@@ -61790,7 +61795,7 @@ recreateFromPermSpaceRememberedSet(void)
 		/* begin rememberedSet:oop: */
 		rootIndex1 = (self_in_emptyRememberedSet1->rootIndex);
 		anOop1 = GIV(nilObj);
-		assert(isOldObject(GIV(memoryMap), anOop1));
+		assert(oop_is_old((uint64_t)(anOop1)));
 		{
 			assert(!(isOopForwarded(GIV(hiddenRootsObj))));
 			longAtput((GIV(hiddenRootsObj) + BaseHeaderSize) + ((sqInt) (((usqInt) rootIndex1 ) << (shiftForWord())) ), anOop1);
@@ -62180,8 +62185,8 @@ scavengingGCTenuringIf(sqInt tenuringCriterion)
 		/* end doCheckMemoryMap */
 	}
 	;
-	assert(!(isOldObject(GIV(memoryMap), minCogMethodAddress())));
-	assert(!(isOldObject(GIV(memoryMap), maxCogMethodAddress())));
+	assert(!(oop_is_old((uint64_t)(minCogMethodAddress()))));
+	assert(!(oop_is_old((uint64_t)(maxCogMethodAddress()))));
 	/* end checkMemoryMap */
 	/* begin checkFreeSpace: */
 	assert(bitsSetInFreeSpaceMaskForAllFreeLists());
@@ -64003,7 +64008,7 @@ copyAndUnmarkMobileObjects(void)
 	finalObject = ((!GIV(lastMobileObject))
 		 ? GIV(nilObj)
 		 : GIV(lastMobileObject));
-	assert(isOldObject(GIV(memoryMap), GIV(firstFreeObject)));
+	assert(oop_is_old((uint64_t)(GIV(firstFreeObject))));
 	assert(oopisLessThanOrEqualTo(finalObject, (GIV(memoryMap)->oldSpaceEnd)));
 	prevPrevObj = (prevObj = null);
 	objOop = GIV(firstFreeObject);
@@ -64377,7 +64382,7 @@ planCompactSavingForwarders(void)
 	startOfPreviousPin = 0;
 	GIV(lastMobileObject) = null;
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(firstFreeObject)));
+	assert(oop_is_old((uint64_t)(GIV(firstFreeObject))));
 	prevPrevObj = (prevObj = null);
 	objOop = GIV(firstFreeObject);
 	while (1) {
@@ -64619,7 +64624,7 @@ scanForFirstFreeAndFirstMobileObjectFrom(sqInt initialObject)
 
 	firstFree = 0;
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), initialObject));
+	assert(oop_is_old((uint64_t)(initialObject)));
 	prevPrevObj = (prevObj = null);
 	objOop = initialObject;
 	while (1) {
@@ -64704,7 +64709,7 @@ unmarkInitialImmobileObjectsFreeUnmarked(sqInt freeUnmarked)
 
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj = (prevObj = null);
 	objOop2 = GIV(nilObj);
 	while (1) {
@@ -64772,7 +64777,7 @@ unmarkObjectsFromFirstFreeObject(void)
 	startOfFree = 0;
 	freeBytes = 0;
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(firstFreeObject)));
+	assert(oop_is_old((uint64_t)(GIV(firstFreeObject))));
 	prevPrevObj = (prevObj = null);
 	objOop = GIV(firstFreeObject);
 	while (1) {
@@ -65080,7 +65085,7 @@ updatePointers(void)
 	/* begin updatePointersInInitialImmobileObjects */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj3 = (prevObj3 = null);
 	objOop23 = GIV(nilObj);
 	while (1) {
@@ -65208,7 +65213,7 @@ updatePointers(void)
 	top = (GIV(savedFirstFieldsSpace).start);
 	startOfPreviousPin = 0;
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(firstFreeObject)));
+	assert(oop_is_old((uint64_t)(GIV(firstFreeObject))));
 	prevPrevObj4 = (prevObj4 = null);
 	objOop5 = GIV(firstFreeObject);
 	while (1) {
@@ -65372,7 +65377,7 @@ updatePointers(void)
 		/* begin updatePointersInObjectsOverflowingSavedFirstFieldsSpace */
 		/* begin allOldSpaceObjectsFrom:do: */
 		/* begin allOldSpaceEntitiesFrom:do: */
-		assert(isOldObject(GIV(memoryMap), GIV(objectAfterLastMobileObject)));
+		assert(oop_is_old((uint64_t)(GIV(objectAfterLastMobileObject))));
 		prevPrevObj = (prevObj = null);
 		objOop2 = GIV(objectAfterLastMobileObject);
 		while (1) {
@@ -66191,7 +66196,7 @@ validRelocationPlanInPass(sqInt onePass)
 	toFinger = GIV(mobileStart);
 	GIV(anomaly) = null;
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(firstMobileObject)));
+	assert(oop_is_old((uint64_t)(GIV(firstMobileObject))));
 	prevPrevObj = (prevObj = null);
 	objOop = GIV(firstMobileObject);
 	while (1) {
@@ -67486,7 +67491,7 @@ checkAllAccessibleObjectsOkay(void)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -69175,7 +69180,7 @@ ensureImageFormatIsUpToDate(sqInt swapBytes)
 		/* begin allOldSpaceObjectsDo: */
 		/* begin allOldSpaceObjectsFrom:do: */
 		/* begin allOldSpaceEntitiesFrom:do: */
-		assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+		assert(oop_is_old((uint64_t)(GIV(nilObj))));
 		prevPrevObj22 = (prevObj22 = null);
 		objOop222 = GIV(nilObj);
 		while (1) {
@@ -69373,7 +69378,7 @@ ensureImageFormatIsUpToDate(sqInt swapBytes)
 		/* begin allOldSpaceObjectsDo: */
 		/* begin allOldSpaceObjectsFrom:do: */
 		/* begin allOldSpaceEntitiesFrom:do: */
-		assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+		assert(oop_is_old((uint64_t)(GIV(nilObj))));
 		prevPrevObj2 = (prevObj2 = null);
 		objOop22 = GIV(nilObj);
 		while (1) {
@@ -74742,7 +74747,7 @@ printAllStacks(void)
 	/* begin allHeapEntitiesDo: */
 	/* begin allOldSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -76086,7 +76091,7 @@ printLikelyImplementorsOfSelector(sqInt selector)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -77194,7 +77199,7 @@ printPointersTo(sqInt anAddress)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -92671,7 +92676,7 @@ unmarkAfterPathTo(void)
 	/* begin allHeapEntitiesDo: */
 	/* begin allOldSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert(oop_is_old((uint64_t)(GIV(nilObj))));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop2 = GIV(nilObj);
 	while (1) {
@@ -93710,7 +93715,7 @@ growRememberedSet(VMRememberedSet * self_in_growRememberedSet)
 	}
 	/* begin rememberedSet:oop: */
 	rootIndex = (self_in_growRememberedSet->rootIndex);
-	assert(isOldObject(GIV(memoryMap), newObj));
+	assert(oop_is_old((uint64_t)(newObj)));
 	{
 		assert(!(isOopForwarded(GIV(hiddenRootsObj))));
 		longAtput((GIV(hiddenRootsObj) + BaseHeaderSize) + ((sqInt) (((usqInt) rootIndex ) << (shiftForWord())) ), newObj);
@@ -93782,7 +93787,7 @@ initializeRememberedSetShouldStartEmpty(VMRememberedSet * self_in_initializeReme
 		/* end allocatePinnedSlots: */
 		/* begin rememberedSet:oop: */
 		rootIndex = (self_in_initializeRememberedSetShouldStartEmpty->rootIndex);
-		assert(isOldObject(GIV(memoryMap), obj));
+		assert(oop_is_old((uint64_t)(obj)));
 		{
 			assert(!(isOopForwarded(GIV(hiddenRootsObj))));
 			longAtput((GIV(hiddenRootsObj) + BaseHeaderSize) + ((sqInt) (((usqInt) rootIndex ) << (shiftForWord())) ), obj);
@@ -93850,7 +93855,7 @@ rememberWithoutMarkingAsRemembered(VMRememberedSet * self_in_rememberWithoutMark
 	sqInt aNewValue;
 
 	assert(isNonImmediate(objOop));
-	assert(!(isYoungObject(getMemoryMap(), objOop)));
+	assert(!(oop_is_young((uint64_t)(objOop))));
 	if (((self_in_rememberWithoutMarkingAsRemembered->rememberedSetSize)) >= ((self_in_rememberWithoutMarkingAsRemembered->rememberedSetLimit))) {
 		growRememberedSet(self_in_rememberWithoutMarkingAsRemembered);
 		if (!((self_in_rememberWithoutMarkingAsRemembered->doFullScan))) {
@@ -93978,7 +93983,7 @@ shrinkRememberedSet(VMRememberedSet * self_in_shrinkRememberedSet)
 	}
 	/* begin rememberedSet:oop: */
 	rootIndex = (self_in_shrinkRememberedSet->rootIndex);
-	assert(isOldObject(GIV(memoryMap), newObj));
+	assert(oop_is_old((uint64_t)(newObj)));
 	{
 		assert(!(isOopForwarded(GIV(hiddenRootsObj))));
 		longAtput((GIV(hiddenRootsObj) + BaseHeaderSize) + ((sqInt) (((usqInt) rootIndex ) << (shiftForWord())) ), newObj);

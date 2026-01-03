@@ -28,8 +28,11 @@ Hybrid build compiles successfully. The `libPharoVMCore.a` includes all oop_wrap
 - `oop_integer_value_of`, `oop_integer_object_of`
 - `oop_to_pointer`
 
-### In Progress
-Modify C interpreter (cointerp.c) to call oop_wrapper functions instead of address-range-based space detection.
+### Completed
+Patched cointerp.c to use oop_wrapper functions for space detection:
+- 60 calls patched: `isOldObject(GIV(memoryMap), oop)` → `oop_is_old((uint64_t)(oop))`
+- Also patched `getMemoryMap()` variant patterns
+- Build verified: compiles and links successfully
 
 ### Previous Blocker (Resolved via Hybrid Approach)
 Pure C++ compilation of cointerp.cpp fails due to C/C++ incompatibilities:
