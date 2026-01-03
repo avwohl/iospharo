@@ -2,8 +2,12 @@
 cmake_minimum_required(VERSION 3.20)
 project(iospharo VERSION 1.0.0 LANGUAGES C CXX OBJC OBJCXX)
 
-# Path to pharo-vm source
-set(PHARO_VM_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../pharo-vm" CACHE PATH "Path to pharo-vm source")
+# Path to pharo-vm source (use iOS fork if available)
+set(PHARO_VM_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../pharo-vm-ios" CACHE PATH "Path to pharo-vm source")
+if(NOT EXISTS "${PHARO_VM_DIR}/CMakeLists.txt")
+    # Fall back to original pharo-vm
+    set(PHARO_VM_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../pharo-vm" CACHE PATH "Path to pharo-vm source" FORCE)
+endif()
 
 if(NOT EXISTS "${PHARO_VM_DIR}/CMakeLists.txt")
     message(FATAL_ERROR "pharo-vm not found at ${PHARO_VM_DIR}. Set PHARO_VM_DIR correctly.")
@@ -13,6 +17,7 @@ endif()
 option(BUILD_IOS "Build for iOS" ON)
 option(BUILD_CATALYST "Build for Mac Catalyst" OFF)
 option(FEATURE_LIB_FFI "Enable FFI support" OFF)  # Disabled for initial iOS build
+option(USE_CPP_OOP "Use C++ Oop wrapper for ASLR compatibility" OFF)
 
 # Include iOS platform configuration
 include(cmake/iOS.cmake)
@@ -25,12 +30,26 @@ set(APPNAME "iospharo")
 # Generated sources are created during pharo-vm build
 set(PHARO_VM_BUILD_DIR "${PHARO_VM_DIR}/build-gen" CACHE PATH "Path to pharo-vm build directory")
 
-# Use only the interpreter (cointerp.c), not the JIT compiler (cogit*.c)
+# Use only the interpreter, not the JIT compiler (cogit*.c)
 # iOS doesn't support JIT due to code signing restrictions
 # We use a patched cointerp.c that removes strict address checks (iOS uses ASLR)
-set(GENERATED_VM_SOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/ios/cointerp.c"
-)
+if(USE_CPP_OOP)
+    # C++ version with Oop wrapper class for full ASLR compatibility
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/ios/cointerp.cpp")
+        set(GENERATED_VM_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/ios/cointerp.cpp")
+        message(STATUS "Using C++ interpreter with Oop wrapper (cointerp.cpp)")
+    else()
+        message(WARNING "cointerp.cpp not found, falling back to C version")
+        set(GENERATED_VM_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/ios/cointerp.c")
+    endif()
+    # Add C++ specific definitions
+    add_compile_definitions(PHARO_IOS_OOP_WRAPPER=1)
+    set(CMAKE_CXX_STANDARD 17)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+else()
+    set(GENERATED_VM_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/ios/cointerp.c")
+    message(STATUS "Using C interpreter (cointerp.c)")
+endif()
 
 # Collect plugin sources
 file(GLOB_RECURSE PLUGIN_SOURCES
@@ -104,12 +123,18 @@ target_include_directories(${VM_LIBRARY_NAME}
         ${PHARO_VM_DIR}/extracted/vm/include
         ${PHARO_VM_DIR}/ffi/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ios  # For oop.hpp
     PRIVATE
         ${PHARO_VM_DIR}/src
         ${PHARO_VM_BUILD_DIR}/generated/64/vm/include
         ${PHARO_VM_BUILD_DIR}/build/include
         ${PHARO_VM_BUILD_DIR}/build/include/pharovm
 )
+
+# Also check if the fork has oop.hpp
+if(EXISTS "${PHARO_VM_DIR}/src/ios/oop.hpp")
+    target_include_directories(${VM_LIBRARY_NAME} PUBLIC ${PHARO_VM_DIR}/src/ios)
+endif()
 
 # Plugin include directories
 file(GLOB PLUGIN_INCLUDE_DIRS "${PHARO_VM_DIR}/extracted/plugins/*/include/common")
