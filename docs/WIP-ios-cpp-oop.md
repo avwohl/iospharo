@@ -6,7 +6,16 @@
 iOS ASLR randomizes memory addresses, breaking Pharo VM's space detection which relies on fixed address ranges (oldSpace at 0x10000000000, etc.). The crash at `0x100010db558` is an unrelocated Spur pointer.
 
 ## Solution Approach
-Encode memory space (new/old/perm) explicitly in low bits of pointers using a C++ Oop wrapper class, eliminating address-range-based space detection.
+
+### Attempt 1: Bit Encoding (FAILED)
+Encode memory space in low bits of pointers using C++ Oop wrapper class.
+**Problem**: Encoded pointers corrupt memory access - VM uses them directly.
+
+### Attempt 2: Range-Based Detection (CURRENT)
+Modify isOldObject/isYoungObject to use actual memory ranges from VMMemoryMap:
+- `isOldObject`: check if `oldSpaceStart <= oop < oldSpaceEnd`
+- `isYoungObject`: check if `newSpaceStart <= oop < newSpaceEnd`
+This works because ranges are set AFTER memory allocation, so they reflect actual ASLR addresses.
 
 ## Current Status
 
@@ -44,10 +53,9 @@ Hybrid build compiles successfully. The `libPharoVMCore.a` includes all oop_wrap
    - iOS Simulator (arm64 + x86_64)
    - Mac Catalyst (arm64 + x86_64)
 
-### Remaining Work
-- Runtime allocations (new objects) don't yet get space encoded
-- May need to encode when storing references to object fields
-- GC space transitions (new→old) need encoding updates
+### Current Implementation
+Range-based space detection in isOldObject/isYoungObject/isPermanentObject.
+No pointer modification needed - uses actual memory ranges from VMMemoryMap.
 
 ### Previous Blocker (Resolved via Hybrid Approach)
 Pure C++ compilation of cointerp.cpp fails due to C/C++ incompatibilities:
