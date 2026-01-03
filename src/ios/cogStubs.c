@@ -187,6 +187,11 @@ void linkSendAtintooffsetreceiver(void* addr, void* target, int offset, void* rc
 void* patchToOpenPICFornumArgsreceiver(void* method, int numArgs, void* rcvr) { return NULL; }
 void recordCallOffsetIn(void* method) {}
 
+/* Stack page configuration */
+void setDesiredStackPageBytes(long long anInteger) {
+	/* iOS uses default stack page size */
+}
+
 /* Time and heartbeat functions provided by heartbeat.c */
 
 /* Surface plugin */
