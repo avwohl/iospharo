@@ -53078,6 +53078,11 @@ initializeObjectMemory(sqInt bytesToShift)
 
 	assert(BaseHeaderSize == BaseHeaderSize);
 	assert(((sqInt) ((maxSlotsForAlloc()) * BytesPerWord) ) > 0);
+	/* iOS ASLR Debug: Log memory layout */
+	logDebug("iOS: initializeObjectMemory bytesToShift=%lld (0x%llx)", (long long)bytesToShift, (long long)bytesToShift);
+	logDebug("iOS: oldSpaceStart=%p oldSpaceEnd=%p", (void*)((GIV(memoryMap)->oldSpaceStart)), (void*)((GIV(memoryMap)->oldSpaceEnd)));
+	logDebug("iOS: newSpaceStart=%p newSpaceEnd=%p", (void*)((GIV(memoryMap)->newSpaceStart)), (void*)((GIV(memoryMap)->newSpaceEnd)));
+	logDebug("iOS: specialObjectsOop=%p (pre-swizzle)", (void*)GIV(specialObjectsOop));
 	{
 		initSegmentBridgeWithBytesat(2 * BaseHeaderSize, ((GIV(memoryMap)->oldSpaceEnd)) - (2 * BaseHeaderSize));
 	}
