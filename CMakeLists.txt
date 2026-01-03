@@ -76,6 +76,21 @@ set(IOS_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ios/cogStubs.c
 )
 
+# C++ wrapper for ASLR-compatible space detection (hybrid approach)
+# This provides C-callable functions that use the C++ Oop class
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/ios/oop_wrapper.cpp")
+    set(OOP_WRAPPER_SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ios/oop_wrapper.cpp
+    )
+    message(STATUS "Including C++ Oop wrapper for ASLR compatibility")
+    add_compile_definitions(PHARO_IOS_OOP_WRAPPER=1)
+    # Ensure C++ is enabled
+    set(CMAKE_CXX_STANDARD 17)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+else()
+    set(OOP_WRAPPER_SOURCES "")
+endif()
+
 # Core VM support sources from pharo-vm
 set(VM_SUPPORT_SOURCES
     ${PHARO_VM_DIR}/src/client.c
@@ -107,6 +122,7 @@ add_library(${VM_LIBRARY_NAME} STATIC
     ${EXTRACTED_SOURCES}
     ${VM_SUPPORT_SOURCES}
     ${IOS_SOURCES}
+    ${OOP_WRAPPER_SOURCES}
     ${PLUGIN_SOURCES}
     ${FFI_SOURCES}
 )

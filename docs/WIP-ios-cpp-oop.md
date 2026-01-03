@@ -17,19 +17,26 @@ Encode memory space (new/old/perm) explicitly in low bits of pointers using a C+
 4. **oop.hpp** C++ wrapper class with space encoding
 5. **VMMaker generation working**: `PharoVMMaker generate:outputDirectory:` API discovered
 6. **C-to-C++ transformer** script created: `scripts/c-to-cpp-transform.py`
+7. **Hybrid C/C++ build working**: CMakeLists.txt updated, builds successfully
+8. **oop_wrapper.cpp/h created**: C-callable wrapper functions for space detection
 
-### Current Blocker
+### Build Verified
+Hybrid build compiles successfully. The `libPharoVMCore.a` includes all oop_wrapper symbols:
+- `oop_is_young`, `oop_is_old`, `oop_is_permanent`
+- `oop_encode_with_space`, `oop_get_space`
+- `oop_is_immediate`, `oop_is_non_immediate`
+- `oop_integer_value_of`, `oop_integer_object_of`
+- `oop_to_pointer`
+
+### In Progress
+Modify C interpreter (cointerp.c) to call oop_wrapper functions instead of address-range-based space detection.
+
+### Previous Blocker (Resolved via Hybrid Approach)
 Pure C++ compilation of cointerp.cpp fails due to C/C++ incompatibilities:
 - `class` keyword used as variable name (200+ occurrences) - FIXED with renaming
 - `sqInt` (long) used to store pointers - C++ doesn't allow implicit conversions
 - Anonymous structs in function pointers
 - void* implicit casts
-
-### Next Steps (Hybrid Approach)
-1. Keep `cointerp.c` as C
-2. Add `oop_wrapper.cpp` (C++ with extern "C") for space-aware functions
-3. Modify C code to call wrapper functions for space checks
-4. Update CMakeLists.txt to compile both C and C++
 
 ## Key Files
 
