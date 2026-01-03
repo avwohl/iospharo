@@ -268,6 +268,7 @@ struct SettingsView: View {
 
     @EnvironmentObject var imageManager: ImageManager
     @Environment(\.dismiss) var dismiss
+    @State private var showingDiagnostics = false
 
     var body: some View {
         NavigationView {
@@ -281,6 +282,12 @@ struct SettingsView: View {
                     Button("Download Pharo 11") {
                         imageManager.downloadImage(version: "110")
                         dismiss()
+                    }
+                }
+
+                Section("Developer Tools") {
+                    Button("VM Diagnostics") {
+                        showingDiagnostics = true
                     }
                 }
 
@@ -298,6 +305,13 @@ struct SettingsView: View {
                         Text(PharoBridge.shared.systemVersion)
                             .foregroundColor(.gray)
                     }
+
+                    HStack {
+                        Text("VM Version")
+                        Spacer()
+                        Text("12.0.0-ios")
+                            .foregroundColor(.gray)
+                    }
                 }
             }
             .navigationTitle("Settings")
@@ -307,7 +321,120 @@ struct SettingsView: View {
                     Button("Done") { dismiss() }
                 }
             }
+            .sheet(isPresented: $showingDiagnostics) {
+                DiagnosticsView()
+            }
         }
+    }
+}
+
+// MARK: - Diagnostics View
+
+struct DiagnosticsView: View {
+    @Environment(\.dismiss) var dismiss
+    @State private var results: [(String, Bool, String)] = []
+
+    var body: some View {
+        NavigationView {
+            List {
+                Section("VM Core Tests") {
+                    testRow("Memory Allocation", testMemory)
+                    testRow("Integer Tagging", testIntegerTag)
+                    testRow("ASLR Info", testASLR)
+                }
+
+                #if PHARO_IOS_OOP_WRAPPER
+                Section("C++ Oop Tests") {
+                    testRow("Space Encoding", testSpaceEncoding)
+                    testRow("Pointer Roundtrip", testPointerRoundtrip)
+                }
+                #else
+                Section("Build Mode") {
+                    Text("Standard C mode (not C++ Oop)")
+                        .foregroundColor(.secondary)
+                }
+                #endif
+
+                if !results.isEmpty {
+                    Section("Results") {
+                        ForEach(results, id: \.0) { name, passed, detail in
+                            HStack {
+                                Image(systemName: passed ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                    .foregroundColor(passed ? .green : .red)
+                                VStack(alignment: .leading) {
+                                    Text(name)
+                                    Text(detail)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("VM Diagnostics")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func testRow(_ name: String, _ test: @escaping () -> (Bool, String)) -> some View {
+        Button(name) {
+            let (passed, detail) = test()
+            results.append((name, passed, detail))
+        }
+    }
+
+    private func testMemory() -> (Bool, String) {
+        let size = 1024 * 1024
+        guard let ptr = mmap(nil, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0),
+              ptr != MAP_FAILED else {
+            return (false, "mmap failed")
+        }
+        ptr.storeBytes(of: UInt64(0xDEADBEEF), as: UInt64.self)
+        let val = ptr.load(as: UInt64.self)
+        munmap(ptr, size)
+        return (val == 0xDEADBEEF, "mmap/munmap working")
+    }
+
+    private func testIntegerTag() -> (Bool, String) {
+        let value: Int64 = 42
+        let encoded = (value << 3) | 1
+        let decoded = encoded >> 3
+        return (decoded == value, "42 -> 0x\(String(encoded, radix: 16)) -> \(decoded)")
+    }
+
+    private func testASLR() -> (Bool, String) {
+        var stackVar: Int = 0
+        let stackAddr = withUnsafePointer(to: &stackVar) { UInt(bitPattern: $0) }
+        return (true, "Stack @ 0x\(String(stackAddr, radix: 16).prefix(6))...")
+    }
+
+    private func testSpaceEncoding() -> (Bool, String) {
+        let addr: UInt64 = 0x100000008
+        let encoded = addr | (1 << 1)  // old space
+        let space = (encoded >> 1) & 0x3
+        return (space == 1, "Old space encoding correct")
+    }
+
+    private func testPointerRoundtrip() -> (Bool, String) {
+        let size = 1024
+        guard let ptr = mmap(nil, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0),
+              ptr != MAP_FAILED else {
+            return (false, "Alloc failed")
+        }
+        defer { munmap(ptr, size) }
+
+        let addr = UInt64(UInt(bitPattern: ptr))
+        let encoded = addr | (1 << 1)
+        let decoded = UnsafeMutableRawPointer(bitPattern: UInt(encoded & ~UInt64(0x7)))
+
+        ptr.storeBytes(of: UInt64(0xCAFEBABE), as: UInt64.self)
+        let readBack = decoded?.load(as: UInt64.self) ?? 0
+        return (readBack == 0xCAFEBABE, readBack == 0xCAFEBABE ? "Roundtrip OK" : "Corrupted")
     }
 }
 

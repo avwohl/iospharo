@@ -261,7 +261,7 @@ extension ImageManager {
             let compressedSize = Int(data.subdata(in: offset+18..<offset+22).withUnsafeBytes {
                 $0.load(as: UInt32.self)
             })
-            let uncompressedSize = Int(data.subdata(in: offset+22..<offset+26).withUnsafeBytes {
+            let _ = Int(data.subdata(in: offset+22..<offset+26).withUnsafeBytes {
                 $0.load(as: UInt32.self)
             })
             let fileNameLength = Int(data.subdata(in: offset+26..<offset+28).withUnsafeBytes {

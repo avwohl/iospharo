@@ -46,3 +46,6 @@ Thumbs.db
 # Archives
 *.zip
 *.tar.gz
+build-cpp/
+build-test/
+src/generated/

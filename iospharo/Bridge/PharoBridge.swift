@@ -102,7 +102,7 @@ class PharoBridge: ObservableObject {
         vmThread?.start()
     }
 
-    private func runVM(imagePath: String) {
+    private nonisolated func runVM(imagePath: String) {
         var parameters = VMParameters()
         vm_parameters_init(&parameters)
 
