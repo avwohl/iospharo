@@ -66954,17 +66954,35 @@ swizzleObj(sqInt objOop)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
 	sqInt i;
+	sqInt swizzled;
 
 	assert(GIV(canSwizzle));
 	if (objOop >= PERM_SPACE_START()) {
+#if PHARO_IOS_OOP_WRAPPER
+		/* Encode permanent space in low bits for iOS ASLR compatibility */
+		return (sqInt)oop_encode_with_space((uint64_t)objOop, OOP_SPACE_PERM);
+#else
 		return objOop;
+#endif
 	}
 	for (i = GIV(numSegments) - 1; i >= 1; i += -1) {
 		if (objOop >= (((GIV(segments)[i]).segStart))) {
-			return objOop + (((GIV(segments)[i]).swizzle));
+			swizzled = objOop + (((GIV(segments)[i]).swizzle));
+#if PHARO_IOS_OOP_WRAPPER
+			/* Image objects are loaded into old space */
+			return (sqInt)oop_encode_with_space((uint64_t)swizzled, OOP_SPACE_OLD);
+#else
+			return swizzled;
+#endif
 		}
 	};
-	return objOop + (((GIV(segments)[0]).swizzle));
+	swizzled = objOop + (((GIV(segments)[0]).swizzle));
+#if PHARO_IOS_OOP_WRAPPER
+	/* Image objects are loaded into old space */
+	return (sqInt)oop_encode_with_space((uint64_t)swizzled, OOP_SPACE_OLD);
+#else
+	return swizzled;
+#endif
 }
 /* SpurSegmentManager>>#totalBytesInNonEmptySegments */
 static size_t

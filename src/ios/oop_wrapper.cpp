@@ -22,6 +22,10 @@ extern "C" {
 // Space encoding during swizzle
 uint64_t oop_encode_with_space(uint64_t rawAddress, int space) {
     Oop oop = Oop::fromBits(rawAddress);
+    // Immediates (SmallIntegers, Characters) don't need space encoding
+    if (oop.isImmediate()) {
+        return rawAddress;
+    }
     return oop.withSpace(static_cast<Space>(space)).bits();
 }
 
