@@ -24,6 +24,11 @@ char *__interpBuildInfo = __buildInfo;
 /* iOS ASLR compatibility - use actual allocated addresses instead of hardcoded ones */
 #ifdef __APPLE__
 #define PERM_SPACE_START() (GIV(memoryMap) ? GIV(memoryMap)->permSpaceStart : 0x20000000000LL)
+/* DISABLED: Low-bits encoding breaks byteAt/shortAt with address offsets
+ * The masking applies to ALL addresses, not just encoded oops.
+ * Need to fix sqMemoryAccessIOS.h to only mask oop arguments, not address+offset calculations.
+ */
+/* #define IOS_LOWBITS_ENCODING 1 */
 #else
 #define PERM_SPACE_START() 0x20000000000LL
 #endif
@@ -39,6 +44,10 @@ char *__interpBuildInfo = __buildInfo;
 #endif //FEATURE_THREADED_FFI
 #include <sys/stat.h> /* for e.g. mkdir */
 #include "sq.h"
+/* iOS low-bits memory access - must come after sq.h which includes sqMemoryAccess.h */
+#ifdef IOS_LOWBITS_ENCODING
+#include "sqMemoryAccessIOS.h"
+#endif
 #include "sigjmp_support.h"
 #include "vmCallback.h"
 #include "sqMemoryFence.h"
@@ -820,6 +829,10 @@ static void primitiveRelinquishProcessor(void);
 EXPORT(void) primitiveRemLargeIntegers(void);
 EXPORT(sqInt) primitiveScreenDepth(void);
 EXPORT(sqInt) primitiveScreenScaleFactor(void);
+/* iOS display primitives */
+static void primitiveScreenSize(void);
+static void primitiveDeferDisplayUpdates(void);
+static void primitiveHasDisplayDepth(void);
 static void primitiveSecondsClock(void);
 #if IMMUTABILITY
 static void primitiveSetImmutability(void);
@@ -2212,7 +2225,7 @@ static void (*primitiveTable[MaxPrimitiveIndex + 2 /* 662 */])(void) = {
 	/* 103 */ (void (*)(void))0,
 	/* 104 */ (void (*)(void))0,
 	/* 105 */ primitiveStringReplace,
-	/* 106 */ (void (*)(void))0,
+	/* 106 */ primitiveScreenSize,
 	/* 107 */ (void (*)(void))0,
 	/* 108 */ (void (*)(void))0,
 	/* 109 */ (void (*)(void))0,
@@ -2232,8 +2245,8 @@ static void (*primitiveTable[MaxPrimitiveIndex + 2 /* 662 */])(void) = {
 	/* 123 */ (void (*)(void))0,
 	/* 124 */ primitiveLowSpaceSemaphore,
 	/* 125 */ primitiveSignalAtBytesLeft,
-	/* 126 */ (void (*)(void))0,
-	/* 127 */ (void (*)(void))0,
+	/* 126 */ primitiveDeferDisplayUpdates,
+	/* 127 */ primitiveHasDisplayDepth,
 	/* 128 */ primitiveArrayBecome,
 	/* 129 */ primitiveSpecialObjectsOop,
 	/* 130 */ primitiveFullGC,
@@ -2966,6 +2979,8 @@ interpret(void)
 	sqInt theIndex;
 	void *theStackMemory;
 
+	fprintf(stderr, "iOS: [50] interpret() START\n");
+	fflush(stderr);
 	local_stackPointer = GIV(stackPointer);
 	local_instructionPointer = GIV(instructionPointer);
 	local_framePointer = GIV(framePointer);
@@ -2983,8 +2998,14 @@ interpret(void)
 			aMemoryMap = GIV(memoryMap);
 			/* end getMemoryMap */
 			allocateStackPages(aMemoryMap, stackPagesBytes);
+			fprintf(stderr, "iOS: [50a] allocateStackPages returned, stackPagesStart=%p\n",
+				(void*)(aMemoryMap->stackPagesStart));
+			fflush(stderr);
 			stackAddress = (aMemoryMap->stackPagesStart);
 			theStackMemory = stackAddress;
+			fprintf(stderr, "iOS: [50b] theStackMemory=%p, stackPagesBytes=%ld\n",
+				(void*)theStackMemory, (long)stackPagesBytes);
+			fflush(stderr);
 			/* end initializeWithByteSize:inMemoryMap:for: */
 			/* begin initializeStack:numSlots:pageSize: */
 			stackSlots = stackPagesBytes / BytesPerWord;
@@ -2994,10 +3015,22 @@ interpret(void)
 			/* begin numStkPages */
 			numPages = GIV(numStackPages);
 			/* end numStkPages */
+			fprintf(stderr, "iOS: [50c] numPages=%d, bytesPerPage=%ld, stackSlots=%ld\n",
+				numPages, (long)GIV(bytesPerPage), (long)stackSlots);
+			fflush(stderr);
 			pageStructBase = (theStackMemory + (numPages * GIV(bytesPerPage))) + BytesPerWord;
 			GIV(pages) = ((StackPage *) pageStructBase );
+			fprintf(stderr, "iOS: [50d] pageStructBase=%p, pages=%p\n",
+				(void*)pageStructBase, (void*)GIV(pages));
+			fflush(stderr);
 			assert((((stackPageByteSize()) - (stackLimitBytes())) - (stackLimitOffset())) >= (stackPageHeadroom()));
+			fprintf(stderr, "iOS: [50e] stack page size assert passed, starting page init loop (numPages=%d)...\n", (int)numPages);
+			fflush(stderr);
 			for (index = 0; index < numPages; index += 1) {
+				if (index <= 3 || (index % 10 == 0)) {
+					fprintf(stderr, "iOS: [50f] page init index=%d/%d\n", (int)index, (int)numPages);
+					fflush(stderr);
+				}
 				/* begin stackPageAt: */
 				page = stackPageAtpages(index, GIV(pages));
 				/* end stackPageAt: */
@@ -3015,11 +3048,15 @@ interpret(void)
 						 : index - 1)));
 				}
 			};
+			fprintf(stderr, "iOS: [50g] first page init loop complete\n");
+			fflush(stderr);
 			GIV(stackBasePlus1) = ((char *) theStackMemory ) + 1;
 			/* begin stackPageAt: */
 			page = stackPageAtpages(0, GIV(pages));
 			/* end stackPageAt: */
 			GIV(overflowLimit) = ((((page->baseAddress)) - ((page->realStackLimit))) * 3) / 5;
+			fprintf(stderr, "iOS: [50h] starting second page init loop...\n");
+			fflush(stderr);
 			for (index = 0; index < numPages; index += 1) {
 				/* begin stackPageAt: */
 				page = stackPageAtpages(index, GIV(pages));
@@ -3032,6 +3069,8 @@ interpret(void)
 				(page->trace = StackPageTraceInvalid);
 				/* end initializePageTraceToInvalid: */
 			};
+			fprintf(stderr, "iOS: [50i] second page init loop complete\n");
+			fflush(stderr);
 			/* begin stackPageAt: */
 			GIV(mostRecentlyUsedPage) = stackPageAtpages(0, GIV(pages));
 			/* end stackPageAt: */
@@ -3048,14 +3087,29 @@ interpret(void)
 				assert((pageIndexFor((page->stackLimit))) == theIndex);
 				assert((pageIndexFor(((page->lastAddress)) + 1)) == theIndex);
 			}while(((page = (page->nextPage))) != GIV(mostRecentlyUsedPage));
+			fprintf(stderr, "iOS: [51a] page loop done, count=%d, numPages=%d\n", count, numPages);
+			fflush(stderr);
 			assert(count == numPages);
+			fprintf(stderr, "iOS: [51b] count assert passed, checking pageListIsWellFormed...\n");
+			fflush(stderr);
 			assert(pageListIsWellFormed());
+			fprintf(stderr, "iOS: [51c] pageList assert passed\n");
+			fflush(stderr);
 			/* end initializeStack:numSlots:pageSize: */
 			/* begin stackPagesInitializedAt:totalSize:pageSize: */
+			fprintf(stderr, "iOS: [51d] calling sqMakeMemoryNotExecutableFromTo(%p, %p)...\n",
+				(void*)((usqInt) theStackMemory), (void*)(((usqInt) theStackMemory ) + stackPagesBytes));
+			fflush(stderr);
 			sqMakeMemoryNotExecutableFromTo(((usqInt) theStackMemory ), ((usqInt) theStackMemory ) + stackPagesBytes);
+			fprintf(stderr, "iOS: [51e] sqMakeMemoryNotExecutableFromTo done\n");
+			fflush(stderr);
 			assert((minimumUnusedHeadroom()) == stackPageBytes);
+			fprintf(stderr, "iOS: [51f] minimumUnusedHeadroom assert passed\n");
+			fflush(stderr);
 			/* end stackPagesInitializedAt:totalSize:pageSize: */
 			/* end initStackPages */
+			fprintf(stderr, "iOS: [51] stack pages initialized, calling loadInitialContext()...\n");
+			fflush(stderr);
 			{
 				GIV(framePointer) = local_framePointer;
 				GIV(instructionPointer) = local_instructionPointer;
@@ -3065,12 +3119,20 @@ interpret(void)
 				local_instructionPointer = GIV(instructionPointer);
 				local_stackPointer = GIV(stackPointer);
 			}
+			fprintf(stderr, "iOS: [52] loadInitialContext() returned, calling ioInitHeartbeat()...\n");
+			fflush(stderr);
 			ioInitHeartbeat();
+			fprintf(stderr, "iOS: [53] ioInitHeartbeat() returned, calling initialEnterSmalltalkExecutive()...\n");
+			fprintf(stderr, "iOS: [54] framePointer=%p, instructionPointer=%p, stackPointer=%p\n",
+				(void*)local_framePointer, (void*)local_instructionPointer, (void*)local_stackPointer);
+			fflush(stderr);
 			{
 				GIV(framePointer) = local_framePointer;
 				GIV(instructionPointer) = local_instructionPointer;
 				GIV(stackPointer) = local_stackPointer;
 				initialEnterSmalltalkExecutive();
+				fprintf(stderr, "iOS: [55] initialEnterSmalltalkExecutive() returned\n");
+				fflush(stderr);
 				local_framePointer = GIV(framePointer);
 				local_instructionPointer = GIV(instructionPointer);
 				local_stackPointer = GIV(stackPointer);
@@ -11034,6 +11096,19 @@ interpret(void)
 								savedStackPointer = ((char *) 0 );
 								/* begin sendBreakpoint:receiver: */
 								rcvr = unsignedLongAt(local_stackPointer + (GIV(argumentCount) * BytesPerWord));
+								/* iOS DEBUG: Check for null receiver */
+								if (rcvr == 0) {
+									static int nullRcvrCount = 0;
+									nullRcvrCount++;
+									if (nullRcvrCount <= 5) {
+										sqInt selLen = lengthOfMaybeImmediate(GIV(messageSelector));
+										char *selBytes = (char*)firstFixedFieldOfMaybeImmediate(GIV(messageSelector));
+										fprintf(stderr, "iOS: [NULL RCVR #%d] selector='%.*s' argCount=%ld stackPtr=%p\n",
+											nullRcvrCount, (int)(selLen > 50 ? 50 : selLen), selBytes,
+											(long)GIV(argumentCount), (void*)local_stackPointer);
+										fflush(stderr);
+									}
+								}
 								sendBreakpointreceiver(firstFixedFieldOfMaybeImmediate(GIV(messageSelector)), lengthOfMaybeImmediate(GIV(messageSelector)), rcvr);
 								/* end sendBreakpoint:receiver: */
 								/* begin doRecordSendTrace */
@@ -18448,25 +18523,53 @@ enterSmalltalkExecutiveImplementation(void)
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
 	sqInt aMethodObj;
 
+	fprintf(stderr, "iOS: [60] enterSmalltalkExecutiveImplementation START\n");
+	fprintf(stderr, "iOS: [61] framePointer=%p, instructionPointer=%p, stackPointer=%p\n",
+		(void*)GIV(framePointer), (void*)GIV(instructionPointer), (void*)GIV(stackPointer));
+	fflush(stderr);
 	assertCStackWellAligned();
+	fprintf(stderr, "iOS: [62] assertCStackWellAligned passed\n");
+	fflush(stderr);
 	ceCaptureCStackPointers();
+	fprintf(stderr, "iOS: [63] ceCaptureCStackPointers done\n");
+	fflush(stderr);
 	sigsetjmp(reenterInterpreter, 0);
+	fprintf(stderr, "iOS: [64] sigsetjmp done, checking isMachineCodeIP...\n");
+	fprintf(stderr, "iOS: [65] framePointer + FoxMethod = %p + %d = %p\n",
+		(void*)GIV(framePointer), FoxMethod, (void*)(GIV(framePointer) + FoxMethod));
+	fflush(stderr);
 	if (isMachineCodeIP(((usqInt) (unsignedLongAt(GIV(framePointer) + FoxMethod)) ))) {
+		fprintf(stderr, "iOS: [66] isMachineCodeIP=true, calling returnToExecutive\n");
+		fflush(stderr);
 		returnToExecutivepostContextSwitch(0, 1);
 	}
+	fprintf(stderr, "iOS: [67] isMachineCodeIP=false, setting method...\n");
+	fflush(stderr);
 	/* begin setMethod: */
 	aMethodObj = unsignedLongAt(GIV(framePointer) + FoxMethod);
+	fprintf(stderr, "iOS: [68] aMethodObj=%p\n", (void*)aMethodObj);
+	fflush(stderr);
 	assert(((usqInt) aMethodObj ) >= (startOfObjectMemory(getMemoryMap())));
+	fprintf(stderr, "iOS: [69] aMethodObj assert passed\n");
+	fflush(stderr);
 	{
 		GIV(method) = aMethodObj;
 		assert(isOopCompiledMethod(GIV(method)));
 	}
+	fprintf(stderr, "iOS: [70] isOopCompiledMethod assert passed\n");
+	fflush(stderr);
 	/* end setMethod: */
 	if (GIV(instructionPointer) == (ceReturnToInterpreterPC())) {
 		GIV(instructionPointer) = unsignedLongAt(GIV(framePointer) + FoxIFSavedIP);
 	}
+	fprintf(stderr, "iOS: [71] calling assertValidExecutionPointers...\n");
+	fflush(stderr);
 	assertValidExecutionPointersimbarline(GIV(instructionPointer), GIV(framePointer), GIV(stackPointer), 1, __LINE__);
+	fprintf(stderr, "iOS: [72] assertValidExecutionPointers passed, calling interpret()...\n");
+	fflush(stderr);
 	interpret();
+	fprintf(stderr, "iOS: [73] interpret() returned\n");
+	fflush(stderr);
 	return 0;
 }
 /*	Execute a CogMethod from a linked send. The receiver, 
@@ -36452,6 +36555,75 @@ primitiveScreenScaleFactor(void)
 	}
 	return 0;
 }
+
+/* iOS Display Primitives - Added for iOS port */
+
+/*	Return the size of the screen (packed as width << 16 | height).
+	Primitive 106. */
+static void
+primitiveScreenSize(void)
+{
+	DECL_MAYBE_SQ_GLOBAL_STRUCT;
+	sqInt size;
+	char *sp;
+	static int callCount = 0;
+
+	size = ioScreenSize();
+	callCount++;
+	if (callCount <= 5) {
+		fprintf(stderr, "iOS: [PRIM 106] primitiveScreenSize called #%d, returning 0x%lx\n", callCount, (long)size);
+		fflush(stderr);
+	}
+	/* begin pop:thenPushInteger: */
+	unsignedLongAtput((sp = GIV(stackPointer) + ((1 - 1) * BytesPerWord)), ((((usqInt) size ) << 3) | 1));
+	GIV(stackPointer) = sp;
+	/* end pop:thenPushInteger: */
+}
+
+/*	Control display update deferral. If argument is true, defer updates.
+	If false, process any pending updates.
+	Primitive 126. */
+static void
+primitiveDeferDisplayUpdates(void)
+{
+	DECL_MAYBE_SQ_GLOBAL_STRUCT;
+	sqInt aBoolean;
+
+	aBoolean = longAt(GIV(stackPointer));
+	/* We don't actually defer on iOS - just acknowledge the call */
+	/* begin pop: */
+	GIV(stackPointer) += 1 * BytesPerWord;
+	/* end pop: */
+}
+
+/*	Return true if the given display depth is supported.
+	Primitive 127. */
+static void
+primitiveHasDisplayDepth(void)
+{
+	DECL_MAYBE_SQ_GLOBAL_STRUCT;
+	sqInt depth;
+	sqInt result;
+	char *sp;
+	static int callCount = 0;
+
+	depth = longAt(GIV(stackPointer));
+	/* Convert from Smalltalk integer */
+	depth = (depth >> 3);
+	result = ioHasDisplayDepth(depth);
+	callCount++;
+	if (callCount <= 10) {
+		fprintf(stderr, "iOS: [PRIM 127] primitiveHasDisplayDepth called #%d, depth=%ld, result=%ld\n", callCount, (long)depth, (long)result);
+		fflush(stderr);
+	}
+	/* begin pop:thenPush: */
+	unsignedLongAtput((sp = GIV(stackPointer) + ((2 - 1) * BytesPerWord)), (result ? GIV(trueObj) : GIV(falseObj)));
+	GIV(stackPointer) = sp;
+	/* end pop:thenPush: */
+}
+
+/* End iOS Display Primitives */
+
 /*	Return the number of seconds since January 1, 1901 as an integer. */
 /* InterpreterPrimitives>>#primitiveSecondsClock */
 static void
@@ -53227,7 +53399,7 @@ initializeObjectMemory(sqInt bytesToShift)
 	sqInt swizzleCount = 0;
 	while (oopisLessThan(obj, GIV(freeOldSpaceStart))) {
 		swizzleCount++;
-		if (swizzleCount <= 10 || (swizzleCount % 10000) == 0) {
+		if (swizzleCount <= 5 || (swizzleCount % 200000) == 0) {
 			fprintf(stderr, "iOS: [SWIZZLE] obj #%lld at %p classIndex=%lld\n", (long long)swizzleCount, (void*)obj, (long long)((longAt(obj)) & (classIndexMask())));
 			fflush(stderr);
 		}
@@ -53337,15 +53509,31 @@ initializeObjectMemory(sqInt bytesToShift)
 	GIV(specialObjectsOop) = swizzleObj(GIV(specialObjectsOop));
 	fprintf(stderr, "iOS: [23] specialObjectsOop after swizzle: %p\n", (void*)GIV(specialObjectsOop));
 	fflush(stderr);
+	{
+		sqInt addr = (GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) NilObject ) << (shiftForWord())));
+		sqInt maskedAddr = addr & (~7LL);
+		fprintf(stderr, "iOS: [24] Reading nilObj from addr=%p (masked=%p)\n", (void*)addr, (void*)maskedAddr);
+		fflush(stderr);
+	}
 	/* begin fetchPointer:ofObject: */
 	GIV(nilObj) = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) NilObject ) << (shiftForWord())) ));
 	/* end fetchPointer:ofObject: */
+	fprintf(stderr, "iOS: [25] nilObj=%p\n", (void*)GIV(nilObj));
+	fflush(stderr);
 	/* begin fetchPointer:ofObject: */
 	GIV(falseObj) = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) FalseObject ) << (shiftForWord())) ));
 	/* end fetchPointer:ofObject: */
 	/* begin fetchPointer:ofObject: */
 	GIV(trueObj) = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) TrueObject ) << (shiftForWord())) ));
 	/* end fetchPointer:ofObject: */
+	fprintf(stderr, "iOS: [26] nilObj=%p, oldSpaceStart=%p (should be equal)\n",
+		(void*)GIV(nilObj), (void*)((GIV(memoryMap)->oldSpaceStart)));
+	fprintf(stderr, "iOS: [27] falseObj=%p, trueObj=%p\n", (void*)GIV(falseObj), (void*)GIV(trueObj));
+	fflush(stderr);
+	if (GIV(nilObj) != ((GIV(memoryMap)->oldSpaceStart))) {
+		fprintf(stderr, "iOS: [ERROR] nilObj != oldSpaceStart - ASLR swizzle mismatch!\n");
+		fflush(stderr);
+	}
 	assert(GIV(nilObj) == ((GIV(memoryMap)->oldSpaceStart)));
 	assert(GIV(falseObj) == (oldSpaceObjectAfter(GIV(nilObj))));
 	assert(GIV(trueObj) == (oldSpaceObjectAfter(GIV(falseObj))));
@@ -53380,14 +53568,23 @@ initializeObjectMemory(sqInt bytesToShift)
 	l6:
 	;
 	/* end setHiddenRootsObj: */
+	fprintf(stderr, "iOS: [28] hiddenRootsObj=%p, numClassTablePages=%d\n",
+		(void*)GIV(hiddenRootsObj), (int)GIV(numClassTablePages));
+	fflush(stderr);
 	GIV(markStack) = swizzleObjStackAt(MarkStackRootIndex);
 	GIV(weaklingStack) = swizzleObjStackAt(WeaklingStackRootIndex);
 	GIV(mournQueue) = swizzleObjStackAt(MournQueueRootIndex);
 	assert(validObjStacks());
 	assert(isEmptyObjStack(GIV(markStack)));
 	assert(isEmptyObjStack(GIV(weaklingStack)));
+	fprintf(stderr, "iOS: [29] obj stacks validated, initializing free space...\n");
+	fflush(stderr);
 	initializeFreeSpacePostLoad(freeListObj);
+	fprintf(stderr, "iOS: [30] free space initialized, collapsing segments...\n");
+	fflush(stderr);
 	collapseSegmentsPostSwizzle();
+	fprintf(stderr, "iOS: [31] segments collapsed\n");
+	fflush(stderr);
 	/* begin assertBridge */
 	assert(isSegmentBridge(bridgeAt(0)));
 	assert((numSlotsOfAny(bridgeAt(0))) == 0);
@@ -53500,6 +53697,8 @@ initializeObjectMemory(sqInt bytesToShift)
 	/* end resetAllocationAccountingAfterGC */
 	/* end setHeapSizeAtPreviousGC */
 	GIV(heapGrowthToSizeGCRatio) = 0.333333;
+	fprintf(stderr, "iOS: [40] initializeObjectMemory COMPLETE\n");
+	fflush(stderr);
 }
 /*	print free chunks in freeTree in order. */
 /* SpurMemoryManager>>#inOrderPrintFreeTree:printList: */
@@ -67071,52 +67270,114 @@ someSegmentContainsPinned(void)
 	};
 	return 0;
 }
+/* iOS low-bits encoding constants */
+#ifdef IOS_LOWBITS_ENCODING
+#define OOP_SPACE_NEW  (0 << 1)  /* 0b00 in bits 1-2 */
+#define OOP_SPACE_OLD  (1 << 1)  /* 0b01 in bits 1-2 = 0x2 */
+#define OOP_SPACE_PERM (2 << 1)  /* 0b10 in bits 1-2 = 0x4 */
+
+/* Determine which space an address belongs to based on memory map ranges.
+ * Returns: OOP_SPACE_NEW (0), OOP_SPACE_OLD (2), or OOP_SPACE_PERM (4)
+ */
+static sqInt NoDbgRegParms
+spaceForAddress(usqInt address)
+{
+	DECL_MAYBE_SQ_GLOBAL_STRUCT;
+	VMMemoryMap *memMap = GIV(memoryMap);
+
+	if (!memMap) {
+		/* Fallback if memoryMap not initialized - assume old space */
+		return OOP_SPACE_OLD;
+	}
+
+	if (address >= memMap->newSpaceStart && address < memMap->newSpaceEnd) {
+		return OOP_SPACE_NEW;
+	}
+	if (address >= memMap->oldSpaceStart && address < memMap->oldSpaceEnd) {
+		return OOP_SPACE_OLD;
+	}
+	if (address >= memMap->permSpaceStart && address < memMap->permSpaceEnd) {
+		return OOP_SPACE_PERM;
+	}
+
+	/* Default to old space for unknown addresses */
+	return OOP_SPACE_OLD;
+}
+
+/* Encode a pointer with space information in low bits.
+ * Pointer must be 8-byte aligned (bits 0-2 are 0).
+ */
+static sqInt NoDbgRegParms
+encodePointerWithSpace(usqInt pointer, sqInt space)
+{
+	/* Assert pointer is 8-byte aligned */
+	assert((pointer & 7) == 0);
+	return pointer | space;
+}
+#endif /* IOS_LOWBITS_ENCODING */
+
 /* SpurSegmentManager>>#swizzleObj: */
+/* Image perm space threshold - the IMAGE's perm space is always at 2TB in standard Pharo images.
+ * This is different from the ACTUAL allocated permSpaceStart which may be 0 or elsewhere.
+ * We use this constant to check if an image pointer is in the image's perm space. */
+#define IMAGE_PERM_SPACE_START 0x20000000000LL
+
 static sqInt NoDbgRegParms
 swizzleObj(sqInt objOop)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
 	sqInt i;
 	sqInt result;
-
+#ifdef IOS_LOWBITS_ENCODING
+	sqInt space;
+#endif
 	assert(GIV(canSwizzle));
 
-	/* Log for specialObjectsOop */
-	if (objOop == 0x100010db550LL) {
-		fprintf(stderr, "iOS: [SWIZZLE-SPECIAL] Called with specialObjectsOop=%p\n", (void*)objOop);
-		fprintf(stderr, "iOS: [SWIZZLE-SPECIAL] PERM_SPACE_START=%p numSegments=%lld\n",
-			(void*)PERM_SPACE_START(), (long long)GIV(numSegments));
-		for (i = 0; i < GIV(numSegments); i++) {
-			fprintf(stderr, "iOS: [SWIZZLE-SPECIAL] seg[%lld].segStart=%p .swizzle=%lld\n",
-				(long long)i, (void*)(GIV(segments)[i]).segStart, (long long)(GIV(segments)[i]).swizzle);
-		}
-		fflush(stderr);
+	/* NULL pointer - return unchanged (nil references stay nil) */
+	if (objOop == 0) {
+		return 0;
 	}
 
-	if (objOop >= PERM_SPACE_START()) {
+	/* Immediates pass through unchanged - they don't point to memory */
+	if (objOop & 1) {
 		return objOop;
 	}
+
+	/* Permanent space objects in IMAGE (at 2TB) - these don't get relocated.
+	 * Use IMAGE_PERM_SPACE_START (2TB) not PERM_SPACE_START() which may be 0. */
+	if (objOop >= IMAGE_PERM_SPACE_START) {
+#ifdef IOS_LOWBITS_ENCODING
+		return encodePointerWithSpace((usqInt)objOop, OOP_SPACE_PERM);
+#else
+		return objOop;
+#endif
+	}
+
+	/* Find segment and relocate */
 	for (i = GIV(numSegments) - 1; i >= 1; i += -1) {
 		if (objOop >= (((GIV(segments)[i]).segStart))) {
 			result = objOop + (((GIV(segments)[i]).swizzle));
-			if (objOop == 0x100010db550LL) {
-				fprintf(stderr, "iOS: [SWIZZLE-SPECIAL] Matched segment %lld, result=%p\n", (long long)i, (void*)result);
-				fflush(stderr);
-			}
+#ifdef IOS_LOWBITS_ENCODING
+			space = spaceForAddress((usqInt)result);
+			return encodePointerWithSpace((usqInt)result, space);
+#else
 			return result;
+#endif
 		}
 	};
+
+	/* Default: first segment */
 	result = objOop + (((GIV(segments)[0]).swizzle));
-	if (objOop == 0x100010db550LL) {
-		fprintf(stderr, "iOS: [SWIZZLE-SPECIAL] Using segment 0, result=%p\n", (void*)result);
-		fflush(stderr);
-	}
+#ifdef IOS_LOWBITS_ENCODING
+	space = spaceForAddress((usqInt)result);
+	return encodePointerWithSpace((usqInt)result, space);
+#else
 	return result;
+#endif
 }
-/* NOTE: Space encoding in swizzle was removed because:
- * - Encoded pointers corrupt memory access (VM uses them directly)
- * - Need to modify ALL memory access to clear bits first
- * - Alternative: Store space info separately or use different approach
+/* iOS low-bits encoding: Space is encoded in bits 1-2 of each object pointer
+ * during image load (swizzle). Memory access macros mask these bits before
+ * dereferencing. Space checks read bits directly for fast ASLR-compatible detection.
  */
 /* SpurSegmentManager>>#totalBytesInNonEmptySegments */
 static size_t
@@ -79247,10 +79508,11 @@ shortReversePrintFrameAndCallers(char *aFramePointer)
 	}
 	return caller;
 }
-/*	Repaint the portion of the Smalltalk screen bounded by the affected 
-	rectangle. Used to synchronize the screen after a Bitblt to the Smalltalk 
+/*	Repaint the portion of the Smalltalk screen bounded by the affected
+	rectangle. Used to synchronize the screen after a Bitblt to the Smalltalk
 	Display object. */
 /* StackInterpreter>>#showDisplayBits:Left:Top:Right:Bottom: */
+/* iOS: Modified to extract display info from aForm parameter instead of using uninitialized globals */
 void
 showDisplayBitsLeftTopRightBottom(sqInt aForm, sqInt l, sqInt t, sqInt r, sqInt b)
 {
@@ -79260,6 +79522,56 @@ showDisplayBitsLeftTopRightBottom(sqInt aForm, sqInt l, sqInt t, sqInt r, sqInt 
 	sqInt right;
 	sqInt surfaceHandle;
 	sqInt top;
+	sqInt formBits;
+	sqInt formWidth;
+	sqInt formHeight;
+	sqInt formDepth;
+	static int callCount = 0;
+
+	callCount++;
+	if (callCount <= 10) {
+		fprintf(stderr, "iOS: [SHOWDISPLAY] showDisplayBitsLeftTopRightBottom #%d: aForm=0x%lx, rect=(%ld,%ld,%ld,%ld)\n",
+			callCount, (long)aForm, (long)l, (long)t, (long)r, (long)b);
+		fflush(stderr);
+	}
+
+	/* iOS: Safety checks - aForm must be a valid non-nil object */
+	if (aForm == 0 || aForm == GIV(nilObj)) {
+		if (callCount <= 10) {
+			fprintf(stderr, "iOS: [SHOWDISPLAY] aForm is nil/null, skipping\n");
+			fflush(stderr);
+		}
+		return;
+	}
+
+	/* Extract display info from the Form object */
+	/* Form layout: bits (0), width (1), height (2), depth (3) */
+	formBits = unsignedLongAt(aForm + BaseHeaderSize);  /* bits field */
+
+	/* Safety check: formBits should be a valid oop, not raw 0 */
+	if (formBits == 0 || formBits == GIV(nilObj)) {
+		if (callCount <= 10) {
+			fprintf(stderr, "iOS: [SHOWDISPLAY] formBits is nil/null (0x%lx), skipping\n", (long)formBits);
+			fflush(stderr);
+		}
+		return;
+	}
+
+	formWidth = (unsignedLongAt(aForm + BaseHeaderSize + (1 * BytesPerWord)) >> 3);  /* width as integer */
+	formHeight = (unsignedLongAt(aForm + BaseHeaderSize + (2 * BytesPerWord)) >> 3); /* height as integer */
+	formDepth = (unsignedLongAt(aForm + BaseHeaderSize + (3 * BytesPerWord)) >> 3);  /* depth as integer */
+
+	if (callCount <= 10) {
+		fprintf(stderr, "iOS: [SHOWDISPLAY] formBits=0x%lx, size=%ldx%ld@%ld\n",
+			(long)formBits, (long)formWidth, (long)formHeight, (long)formDepth);
+		fflush(stderr);
+	}
+
+	/* Update globals for compatibility */
+	displayBits = (void*)formBits;
+	displayWidth = formWidth;
+	displayHeight = formHeight;
+	displayDepth = formDepth;
 
 	/* begin updateDisplayLeft:Top:Right:Bottom: */
 	left = ((l < 0) ? 0 : l);
@@ -79282,8 +79594,10 @@ showDisplayBitsLeftTopRightBottom(sqInt aForm, sqInt l, sqInt t, sqInt r, sqInt 
 		}
 		showSurfaceFn(surfaceHandle, left, top, right - left, bottom - top);
 	} else {
-		assert(isNonImmediate(((sqInt) displayBits )));
-		ioShowDisplay(((sqInt) displayBits ), displayWidth, displayHeight, displayDepth, left, right, top, bottom);
+		/* iOS: Check if displayBits is valid before asserting */
+		if (displayBits != NULL && displayBits != 0) {
+			ioShowDisplay(((sqInt) displayBits ), displayWidth, displayHeight, displayDepth, left, right, top, bottom);
+		}
 	}
 	l1:
 	;
@@ -93453,7 +93767,19 @@ allocateStackPages(VMMemoryMap * self_in_allocateStackPages, sqInt initialStackS
 		logWarn("iOS: Address mismatch - continuing anyway");
 	}
 	(self_in_allocateStackPages->stackPagesEnd = ((self_in_allocateStackPages->stackPagesStart)) + sizeToRequest);
+#ifdef __APPLE__
+	/* Skip memset on iOS/macOS - mmap with MAP_ANON returns zeroed pages */
+	fprintf(stderr, "iOS: [STACK] Skipping memset (mmap already zeroed), size=%ld at %p\n",
+		(long)sizeToRequest, (void*)(self_in_allocateStackPages->stackPagesStart));
+	fflush(stderr);
+#else
+	fprintf(stderr, "iOS: [STACK] About to memset %ld bytes at %p\n",
+		(long)sizeToRequest, (void*)(self_in_allocateStackPages->stackPagesStart));
+	fflush(stderr);
 	memset((self_in_allocateStackPages->stackPagesStart), 0, sizeToRequest);
+	fprintf(stderr, "iOS: [STACK] memset complete\n");
+	fflush(stderr);
+#endif
 	{
 		return;
 	}
@@ -93681,7 +94007,12 @@ isInCodeZone(VMMemoryMap * self_in_isInCodeZone, sqInt anOop)
 sqInt
 isOldObject(VMMemoryMap * self_in_isOldObject, sqInt anOop)
 {
-#if PHARO_IOS_OOP_WRAPPER
+#ifdef IOS_LOWBITS_ENCODING
+	/* iOS low-bits encoding: check if bits 1-2 == 01 (old space) */
+	/* Immediates (bit 0 = 1) are never old objects */
+	if (anOop & 1) return 0;
+	return ((anOop >> 1) & 3) == 1;
+#elif PHARO_IOS_OOP_WRAPPER
 	/* iOS ASLR compatibility: use range checking instead of mask-based detection */
 	return (anOop >= ((self_in_isOldObject->oldSpaceStart))) && (anOop < ((self_in_isOldObject->oldSpaceEnd)));
 #else
@@ -93692,13 +94023,25 @@ isOldObject(VMMemoryMap * self_in_isOldObject, sqInt anOop)
 sqInt
 isPermanentObject(VMMemoryMap * self_in_isPermanentObject, sqInt anOop)
 {
+#ifdef IOS_LOWBITS_ENCODING
+	/* iOS low-bits encoding: check if bits 1-2 == 10 (perm space) */
+	/* Immediates (bit 0 = 1) are never perm objects */
+	if (anOop & 1) return 0;
+	return ((anOop >> 1) & 3) == 2;
+#else
 	return anOop >= PERM_SPACE_START();
+#endif
 }
 /* VMMemoryMap>>#isYoungObject: */
 sqInt
 isYoungObject(VMMemoryMap * self_in_isYoungObject, sqInt anOop)
 {
-#if PHARO_IOS_OOP_WRAPPER
+#ifdef IOS_LOWBITS_ENCODING
+	/* iOS low-bits encoding: check if bits 1-2 == 00 (new space) */
+	/* Immediates (bit 0 = 1) are never young objects */
+	if (anOop & 1) return 0;
+	return ((anOop >> 1) & 3) == 0;
+#elif PHARO_IOS_OOP_WRAPPER
 	/* iOS ASLR compatibility: use range checking instead of mask-based detection */
 	return (anOop >= ((self_in_isYoungObject->newSpaceStart))) && (anOop < ((self_in_isYoungObject->newSpaceEnd)));
 #else

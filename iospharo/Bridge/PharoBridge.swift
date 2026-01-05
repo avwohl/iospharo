@@ -90,7 +90,8 @@ class PharoBridge: ObservableObject {
             return
         }
 
-        isRunning = true
+        // Don't set isRunning yet - wait until VM is initialized
+        // This prevents SwiftUI from showing canvas before VM is ready
         errorMessage = nil
 
         // Run VM on a dedicated thread
@@ -121,8 +122,10 @@ class PharoBridge: ObservableObject {
         let initResult = vm_init(&parameters)
 
         if initResult != 0 {
+            // VM initialized successfully - NOW it's safe to show canvas
             DispatchQueue.main.async {
                 self.isInitialized = true
+                self.isRunning = true  // Signal to show canvas AFTER init
             }
 
             // Run interpreter (blocking)

@@ -74,6 +74,11 @@ endif()
 set(IOS_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ios/iosStubs.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ios/cogStubs.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ios/iosMemory.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ios/iosDisplay.m
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ios/iosEvents.m
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ios/iosParameters.m
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ios/iosUtils.mm
 )
 
 # C++ wrapper for ASLR-compatible space detection (hybrid approach)
@@ -131,15 +136,17 @@ add_library(${VM_LIBRARY_NAME} STATIC
 add_platform_headers()
 add_required_libs_per_platform()
 
-# Include directories
+# Include directories - local includes FIRST to override upstream files
 target_include_directories(${VM_LIBRARY_NAME}
     PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/include          # LOCAL FIRST - overrides sqNamedPrims.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/include/pharovm  # LOCAL pharovm headers
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ios              # For oop.hpp
         ${PHARO_VM_DIR}/include
         ${PHARO_VM_DIR}/include/pharovm
         ${PHARO_VM_DIR}/extracted/vm/include
+        ${PHARO_VM_DIR}/extracted/vm/include/common      # For sqMemoryAccessIOS.h
         ${PHARO_VM_DIR}/ffi/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/ios  # For oop.hpp
     PRIVATE
         ${PHARO_VM_DIR}/src
         ${PHARO_VM_BUILD_DIR}/generated/64/vm/include
