@@ -2,10 +2,8 @@
 	CCodeGeneratorGlobalStructure Melchor-tonel.1 uuid: e8816e38-cd03-0e00-af63-750f00364351
    from
 	CoInterpreter VMMaker-tonel.1 uuid: 33c59938-cd03-0e00-af67-949a00364351
-
-   Modified for iOS by iospharo project.
  */
-static char __buildInfo[] = "CoInterpreter VMMaker-tonel.1 uuid: 33c59938-cd03-0e00-af67-949a00364351 (iOS) " __DATE__ ;
+static char __buildInfo[] = "CoInterpreter VMMaker-tonel.1 uuid: 33c59938-cd03-0e00-af67-949a00364351 " __DATE__ ;
 char *__interpBuildInfo = __buildInfo;
 
 
@@ -21,13 +19,6 @@ char *__interpBuildInfo = __buildInfo;
 # define SQ_USE_GLOBAL_STRUCT_REG 0
 #endif
 
-/* iOS ASLR compatibility - use actual allocated addresses instead of hardcoded ones */
-#ifdef __APPLE__
-#define PERM_SPACE_START() (GIV(memoryMap) ? GIV(memoryMap)->permSpaceStart : 0x20000000000LL)
-#else
-#define PERM_SPACE_START() 0x20000000000LL
-#endif
-
 #include <stddef.h> /* for e.g. alloca */
 #include <stdint.h> /* for e.g. alloca */
 #include <wchar.h> /* for wint_t */
@@ -39,6 +30,14 @@ char *__interpBuildInfo = __buildInfo;
 #endif //FEATURE_THREADED_FFI
 #include <sys/stat.h> /* for e.g. mkdir */
 #include "sq.h"
+
+// C++ Oop wrapper for iOS ASLR compatibility
+#include "oop.hpp"
+using namespace pharo;
+
+// C++ compatibility casts
+#define CHAR_PTR(x) ((char*)(x))
+#define VOID_PTR(x) ((void*)(x))
 #include "sigjmp_support.h"
 #include "vmCallback.h"
 #include "sqMemoryFence.h"
@@ -50,14 +49,9 @@ char *__interpBuildInfo = __buildInfo;
 #include "cointerp.h"
 #include "cogit.h"
 
-/* iOS ASLR-compatible space detection */
-#if PHARO_IOS_OOP_WRAPPER
-#include "oop_wrapper.h"
-#endif
 
 
-
-/* StackInterpreter class>>preambleCCode */
+/* StackInterpreter class_>>preambleCCode */
 /* Disable Intel compiler inlining of warning which is used for breakpoints */
 #pragma auto_inline(off)
 sqInt warnpid, erroronwarn;
@@ -79,11 +73,11 @@ warningat(char *s, int l) { /* ditto with line number. */
 #pragma auto_inline(on)
 
 void
-invalidCompactClassError(char *s) { /* Print a (compact) class index error message and exit. */
+invalidCompactClassError(char *s) { /* Print a (compact) class_ index error message and exit. */
 #if SPURVM
-	vm_printf("\nClass %s does not have the required class index\n", s);
+	vm_printf("\nClass %s does not have the required class_ index\n", s);
 #else
-	vm_printf("\nClass %s does not have the required compact class index\n", s);
+	vm_printf("\nClass %s does not have the required compact class_ index\n", s);
 #endif
 	exit(-1);
 }
@@ -91,7 +85,7 @@ invalidCompactClassError(char *s) { /* Print a (compact) class index error messa
 #define odd(v) ((int)(v)&1)
 #define even(v) (!odd(v))
 
-/* end StackInterpreter class>>preambleCCode */
+/* end StackInterpreter class_>>preambleCCode */
 
 
 /*** Constants ***/
@@ -162,10 +156,10 @@ invalidCompactClassError(char *s) { /* Print a (compact) class index error messa
 #define ExtraRootsSize 2048
 #define FailImbalancedPrimitives 1
 #define FalseObject 1
-#if !defined(FEATURE_FFI) /* Allow this to be overridden on the compiler command line */
+#if !defined(FEATURE_FFI) /* Allow this_ to be overridden on the compiler command line */
 # define FEATURE_FFI 0
 #endif /* !defined(FEATURE_FFI) */
-#if !defined(FEATURE_THREADED_FFI) /* Allow this to be overridden on the compiler command line */
+#if !defined(FEATURE_THREADED_FFI) /* Allow this_ to be overridden on the compiler command line */
 # define FEATURE_THREADED_FFI 0
 #endif /* !defined(FEATURE_THREADED_FFI) */
 #define FirstLinkIndex 0
@@ -193,7 +187,7 @@ invalidCompactClassError(char *s) { /* Print a (compact) class index error messa
 #define HashMultiplyConstant 1664525
 #define HeaderIndex 0
 #define IFrameSlots 7
-#if !defined(IMMUTABILITY) /* Allow this to be overridden on the compiler command line */
+#if !defined(IMMUTABILITY) /* Allow this_ to be overridden on the compiler command line */
 # define IMMUTABILITY 1
 #endif /* !defined(IMMUTABILITY) */
 #define InstanceSpecificationIndex 2
@@ -255,7 +249,7 @@ invalidCompactClassError(char *s) { /* Print a (compact) class index error messa
 #define OldRememberedSetRootIndex 4099
 #define PermToNewRememberedSetRootIndex 4101
 #define PermToOldRememberedSetRootIndex 4100
-#if !defined(PRIdSQINT) /* Allow this to be overridden on the compiler command line */
+#if !defined(PRIdSQINT) /* Allow this_ to be overridden on the compiler command line */
 # define PRIdSQINT "ld"
 #endif /* !defined(PRIdSQINT) */
 #define PrimErrBadArgument 3
@@ -339,11 +333,11 @@ invalidCompactClassError(char *s) { /* Print a (compact) class index error messa
 #define TraceVMCallbackReturn 97
 #define TrueObject 2
 #define ValueIndex 1
-#if !defined(VMBIGENDIAN) /* Allow this to be overridden on the compiler command line */
+#if !defined(VMBIGENDIAN) /* Allow this_ to be overridden on the compiler command line */
 # define VMBIGENDIAN 0
 #endif /* !defined(VMBIGENDIAN) */
 #define WeaklingStackRootIndex 0x1001
-#if !defined(WIN32) /* Allow this to be overridden on the compiler command line */
+#if !defined(WIN32) /* Allow this_ to be overridden on the compiler command line */
 # define WIN32 0
 #endif /* !defined(WIN32) */
 #define XIndex 0
@@ -1236,7 +1230,7 @@ static sqInt noUnscannedEphemerons(void);
 extern sqLong nullHeaderForMachineCodeMethod(void);
 static sqInt NoDbgRegParms numBytesOfBytes(sqInt objOop);
 extern sqInt numBytesOf(sqInt objOop);
-extern usqInt numPointerSlotsOf(sqInt objOop);
+extern sqInt numPointerSlotsOf(sqInt objOop);
 static usqInt NoDbgRegParms numSlotsOfAny(sqInt objOop);
 extern usqInt numSlotsOf(sqInt objOop);
 static sqInt NoDbgRegParms numStrongSlotsOfInephemeral(sqInt objOop);
@@ -1510,10 +1504,10 @@ extern void loadInitialContext(void);
 extern void longPrintOop(sqInt oop);
 extern sqInt longStoreBytecodeForHeader(sqInt methodHeader);
 static sqInt NoDbgRegParms lookupInMethodCacheSelclassTag(sqInt selector, sqInt classTag);
-static sqInt NoDbgRegParms lookupMethodInClass(sqInt class);
-static sqInt NoDbgRegParms lookupMNUInClass(sqInt class);
-static sqInt NoDbgRegParms lookupOrdinaryNoMNUEtcInClass(sqInt class);
-extern sqInt lookupSelectorinClass(sqInt selector, sqInt class);
+static sqInt NoDbgRegParms lookupMethodInClass(sqInt class_);
+static sqInt NoDbgRegParms lookupMNUInClass(sqInt class_);
+static sqInt NoDbgRegParms lookupOrdinaryNoMNUEtcInClass(sqInt class_);
+extern sqInt lookupSelectorinClass(sqInt selector, sqInt class_);
 static void NoDbgRegParms makeContextSnapshotSafe(sqInt ctxt);
 extern usqInt makePointwithxValueyValue(sqInt xValue, sqInt yValue);
 static void mapInterpreterOops(void);
@@ -2091,7 +2085,7 @@ static void (*primitiveFunctionPointer)();
 sqInt maxLiteralCountForCompile = MaxLiteralCountForCompile /* 60 */;
 sqInt checkForLeaks;
 sqInt checkAllocFiller;
-jmp_buf reenterInterpreter; /* private export */;
+jmp_buf reenterInterpreter; /* private_ export */;
 sqInt breakLookupClassTag;
 sqInt breakSelectorLength = MinSmallInteger;
 sqInt desiredEdenBytes;
@@ -2833,10 +2827,10 @@ int (*showSurfaceFn)(sqIntptr_t, int, int, int, int);
 		compilationBreakpointFor(sel); \
 	} \
 } while (0)
-#define getCodeCompactionCount() integerObjectOf(GIV(statCodeCompactionCount))
-#define getCodeCompactionMSecs() integerObjectOf((GIV(statCodeCompactionUsecs) + 500) / 1000)
-#define getCogCodeSize() integerObjectOf(GIV(cogCodeSize))
-#define getDesiredCogCodeSize() integerObjectOf(desiredCogCodeSize)
+#define getCodeCompactionCount() Oop::integerObjectOf(GIV(statCodeCompactionCount))
+#define getCodeCompactionMSecs() Oop::integerObjectOf((GIV(statCodeCompactionUsecs) + 500) / 1000)
+#define getCogCodeSize() Oop::integerObjectOf(GIV(cogCodeSize))
+#define getDesiredCogCodeSize() Oop::integerObjectOf(desiredCogCodeSize)
 #define mnuCompilationBreakpoint(sel, len) do { \
 	if ((len) == -breakSelectorLength \
 	 && !strncmp((char *)((sel) + BaseHeaderSize), breakSelector, -breakSelectorLength)) { \
@@ -2933,7 +2927,7 @@ int (*showSurfaceFn)(sqIntptr_t, int, int, int, int);
 	executing bytecodes. When running in the context of a browser plugin VM, 
 	however, it must return control to the browser periodically. This should 
 	done only when the state of the currently running Squeak thread is safely 
-	stored in the object heap. Since this is the case at the moment that a 
+	stored in the object heap. Since this_ is the case at the moment that a 
 	check for interrupts is performed, that is when we return to the browser 
 	if it is time to do so. Interrupt checks happen quite frequently.If stacklimit is zero then the stack pages have not been initialized. */
 /* StackInterpreter>>#interpret */
@@ -9111,7 +9105,7 @@ interpret(void)
 							goto l179;
 						}
 						/* begin isClassOfNonImm:equalTo:compactClassIndex: */
-						assert(!(isImmediate(rcvr)));
+						assert(!((rcvr).isImmediate()));
 						/* begin classIndexOf: */
 						ccIndex = (longAt(rcvr)) & (classIndexMask());
 						/* end classIndexOf: */
@@ -9176,7 +9170,7 @@ interpret(void)
 							goto l176;
 						}
 						/* begin isClassOfNonImm:equalTo:compactClassIndex: */
-						assert(!(isImmediate(rcvr)));
+						assert(!((rcvr).isImmediate()));
 						/* begin classIndexOf: */
 						ccIndex2 = (longAt(rcvr)) & (classIndexMask());
 						/* end classIndexOf: */
@@ -9465,7 +9459,7 @@ interpret(void)
 							goto l200;
 						}
 						/* begin isClassOfNonImm:equalTo:compactClassIndex: */
-						assert(!(isImmediate(rcvr)));
+						assert(!((rcvr).isImmediate()));
 						/* begin classIndexOf: */
 						ccIndex = (longAt(rcvr)) & (classIndexMask());
 						/* end classIndexOf: */
@@ -9535,7 +9529,7 @@ interpret(void)
 							goto l206;
 						}
 						/* begin isClassOfNonImm:equalTo:compactClassIndex: */
-						assert(!(isImmediate(rcvr)));
+						assert(!((rcvr).isImmediate()));
 						/* begin classIndexOf: */
 						ccIndex = (longAt(rcvr)) & (classIndexMask());
 						/* end classIndexOf: */
@@ -9679,7 +9673,7 @@ interpret(void)
 						/* end isNonImmediate: */
 						if (ok) {
 							/* begin isClassOfNonImm:equalTo: */
-							assert(isNonImmediate(rcvr));
+							assert((rcvr).isNonImmediate());
 							ok = ((longAt(rcvr)) & (classIndexMask())) == ((uint32AtPointer(classOop + 4)) & (identityHashHalfWordMask()));
 							/* end isClassOfNonImm:equalTo: */
 						}
@@ -9748,7 +9742,7 @@ interpret(void)
 						/* end isNonImmediate: */
 						if (ok) {
 							/* begin isClassOfNonImm:equalTo: */
-							assert(isNonImmediate(rcvr));
+							assert((rcvr).isNonImmediate());
 							ok = ((longAt(rcvr)) & (classIndexMask())) == ((uint32AtPointer(classOop + 4)) & (identityHashHalfWordMask()));
 							/* end isClassOfNonImm:equalTo: */
 						}
@@ -10205,7 +10199,7 @@ interpret(void)
 						
 #            if IMMUTABILITY
 						{
-							assert(!(isImmediate(rcvr)));
+							assert(!((rcvr).isImmediate()));
 							if (((((usqInt) (longAt(rcvr)) ) >> (immutableBitShift())) & 1) != 0) {
 								/* begin cannotAssign:to:withIndex: */
 								/* begin push: */
@@ -10275,10 +10269,10 @@ interpret(void)
 						if (top & (tagMask())) {
 							goto l249;
 						}
-						if (!(rcvr >= PERM_SPACE_START())) {
+						if (!(rcvr >= 0x20000000000LL)) {
 							goto l249;
 						}
-						if (top >= PERM_SPACE_START()) {
+						if (top >= 0x20000000000LL) {
 							goto l249;
 						}
 						t23 = top >= GIV(nilObj);
@@ -11334,7 +11328,7 @@ interpret(void)
 									}
 									if (t18) {
 										if (local_stackPointer != (savedStackPointer + (nArgs * BytesPerWord))) {
-											flag("Would be nice to make this a message send of e.g. unbalancedPrimitive to the current process or context");
+											flag("Would be nice to make this_ a message send of e.g. unbalancedPrimitive to the current process or context");
 											failUnbalancedPrimitive();
 											local_stackPointer = savedStackPointer;
 										}
@@ -11403,7 +11397,7 @@ interpret(void)
 					VM_LABEL(extSendSuperBytecode);
 					{
 						sqInt byte;
-						sqInt class;
+						sqInt class_;
 						sqInt classPointer;
 						sqInt err;
 						sqInt err2;
@@ -11455,13 +11449,13 @@ interpret(void)
 								/* begin popStack */
 								top = unsignedLongAt(local_stackPointer);
 								local_stackPointer += BytesPerWord;
-								class = top;
+								class_ = top;
 								/* end popStack */
-								if (((long64At(class)) & ((classIndexMask()) - (isForwardedObjectClassIndexPun()))) == 0) {
+								if (((long64At(class_)) & ((classIndexMask()) - (isForwardedObjectClassIndexPun()))) == 0) {
 									/* begin followForwarded: */
-									assert(isUnambiguouslyForwarder(class));
+									assert(isUnambiguouslyForwarder(class_));
 									/* begin fetchPointer:ofMaybeForwardedObject: */
-									referent = unsignedLongAt((class + BaseHeaderSize) + (0U << (shiftForWord())));
+									referent = unsignedLongAt((class_ + BaseHeaderSize) + (0U << (shiftForWord())));
 									/* end fetchPointer:ofMaybeForwardedObject: */
 									while (1) {
 										int t0;
@@ -11475,12 +11469,12 @@ interpret(void)
 										referent = unsignedLongAt((referent + BaseHeaderSize) + (0U << (shiftForWord())));
 										/* end fetchPointer:ofMaybeForwardedObject: */
 									};
-									class = referent;
+									class_ = referent;
 									/* end followForwarded: */
 								}
 								/* begin followField:ofObject: */
 								/* begin fetchPointer:ofObject: */
-								objOop = unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) SuperclassIndex ) << (shiftForWord())) ));
+								objOop = unsignedLongAt((class_ + BaseHeaderSize) + ((sqInt) (((usqInt) SuperclassIndex ) << (shiftForWord())) ));
 								/* end fetchPointer:ofObject: */
 								t14 = (objOop & (tagMask())) == 0;
 								if (t14) {
@@ -11489,7 +11483,7 @@ interpret(void)
 									t15 = t14;
 								}
 								if (t15) {
-									objOop = fixFollowedFieldofObjectwithInitialValue(SuperclassIndex, class, objOop);
+									objOop = fixFollowedFieldofObjectwithInitialValue(SuperclassIndex, class_, objOop);
 								}
 								superclass = objOop;
 								/* end followField:ofObject: */
@@ -12548,10 +12542,10 @@ interpret(void)
 								if (value & (tagMask())) {
 									goto l372;
 								}
-								if (!(obj >= PERM_SPACE_START())) {
+								if (!(obj >= 0x20000000000LL)) {
 									goto l372;
 								}
-								if (value >= PERM_SPACE_START()) {
+								if (value >= 0x20000000000LL) {
 									goto l372;
 								}
 								t10 = value >= GIV(nilObj);
@@ -12681,10 +12675,10 @@ interpret(void)
 							if (value & (tagMask())) {
 								goto l363;
 							}
-							if (!(obj >= PERM_SPACE_START())) {
+							if (!(obj >= 0x20000000000LL)) {
 								goto l363;
 							}
-							if (value >= PERM_SPACE_START()) {
+							if (value >= 0x20000000000LL) {
 								goto l363;
 							}
 							t40 = value >= GIV(nilObj);
@@ -12729,7 +12723,7 @@ interpret(void)
 							
 #              if IMMUTABILITY
 							{
-								assert(!(isImmediate(obj)));
+								assert(!((obj).isImmediate()));
 								if (((((usqInt) (longAt(obj)) ) >> (immutableBitShift())) & 1) != 0) {
 									/* begin cannotAssign:to:withIndex: */
 									/* begin push: */
@@ -12799,10 +12793,10 @@ interpret(void)
 							if (value & (tagMask())) {
 								goto l365;
 							}
-							if (!(obj >= PERM_SPACE_START())) {
+							if (!(obj >= 0x20000000000LL)) {
 								goto l365;
 							}
-							if (value >= PERM_SPACE_START()) {
+							if (value >= 0x20000000000LL) {
 								goto l365;
 							}
 							t12 = value >= GIV(nilObj);
@@ -12881,7 +12875,7 @@ interpret(void)
 						
 #            if IMMUTABILITY
 						{
-							assert(!(isImmediate(litVar)));
+							assert(!((litVar).isImmediate()));
 							if (((((usqInt) (longAt(litVar)) ) >> (immutableBitShift())) & 1) != 0) {
 								/* begin cannotAssign:to:withIndex: */
 								/* begin push: */
@@ -12951,10 +12945,10 @@ interpret(void)
 						if (value & (tagMask())) {
 							goto l382;
 						}
-						if (!(litVar >= PERM_SPACE_START())) {
+						if (!(litVar >= 0x20000000000LL)) {
 							goto l382;
 						}
-						if (value >= PERM_SPACE_START()) {
+						if (value >= 0x20000000000LL) {
 							goto l382;
 						}
 						t25 = value >= GIV(nilObj);
@@ -13167,10 +13161,10 @@ interpret(void)
 								if (anObject & (tagMask())) {
 									goto l399;
 								}
-								if (!(obj >= PERM_SPACE_START())) {
+								if (!(obj >= 0x20000000000LL)) {
 									goto l399;
 								}
-								if (anObject >= PERM_SPACE_START()) {
+								if (anObject >= 0x20000000000LL) {
 									goto l399;
 								}
 								t10 = anObject >= GIV(nilObj);
@@ -13300,10 +13294,10 @@ interpret(void)
 							if (anObject & (tagMask())) {
 								goto l391;
 							}
-							if (!(obj >= PERM_SPACE_START())) {
+							if (!(obj >= 0x20000000000LL)) {
 								goto l391;
 							}
-							if (anObject >= PERM_SPACE_START()) {
+							if (anObject >= 0x20000000000LL) {
 								goto l391;
 							}
 							t40 = anObject >= GIV(nilObj);
@@ -13348,7 +13342,7 @@ interpret(void)
 							
 #              if IMMUTABILITY
 							{
-								assert(!(isImmediate(obj)));
+								assert(!((obj).isImmediate()));
 								if (((((usqInt) (longAt(obj)) ) >> (immutableBitShift())) & 1) != 0) {
 									/* begin cannotAssign:to:withIndex: */
 									/* begin push: */
@@ -13418,10 +13412,10 @@ interpret(void)
 							if (anObject & (tagMask())) {
 								goto l393;
 							}
-							if (!(obj >= PERM_SPACE_START())) {
+							if (!(obj >= 0x20000000000LL)) {
 								goto l393;
 							}
-							if (anObject >= PERM_SPACE_START()) {
+							if (anObject >= 0x20000000000LL) {
 								goto l393;
 							}
 							t12 = anObject >= GIV(nilObj);
@@ -13497,7 +13491,7 @@ interpret(void)
 						
 #            if IMMUTABILITY
 						{
-							assert(!(isImmediate(litVar)));
+							assert(!((litVar).isImmediate()));
 							if (((((usqInt) (longAt(litVar)) ) >> (immutableBitShift())) & 1) != 0) {
 								/* begin cannotAssign:to:withIndex: */
 								/* begin push: */
@@ -13567,10 +13561,10 @@ interpret(void)
 						if (anObject & (tagMask())) {
 							goto l408;
 						}
-						if (!(litVar >= PERM_SPACE_START())) {
+						if (!(litVar >= 0x20000000000LL)) {
 							goto l408;
 						}
-						if (anObject >= PERM_SPACE_START()) {
+						if (anObject >= 0x20000000000LL) {
 							goto l408;
 						}
 						t21 = anObject >= GIV(nilObj);
@@ -14000,10 +13994,10 @@ interpret(void)
 						if (valuePointer & (tagMask())) {
 							goto l442;
 						}
-						if (!(tempVector >= PERM_SPACE_START())) {
+						if (!(tempVector >= 0x20000000000LL)) {
 							goto l442;
 						}
-						if (valuePointer >= PERM_SPACE_START()) {
+						if (valuePointer >= 0x20000000000LL) {
 							goto l442;
 						}
 						t28 = valuePointer >= GIV(nilObj);
@@ -14109,10 +14103,10 @@ interpret(void)
 						if (valuePointer & (tagMask())) {
 							goto l448;
 						}
-						if (!(tempVector >= PERM_SPACE_START())) {
+						if (!(tempVector >= 0x20000000000LL)) {
 							goto l448;
 						}
-						if (valuePointer >= PERM_SPACE_START()) {
+						if (valuePointer >= 0x20000000000LL) {
 							goto l448;
 						}
 						t29 = valuePointer >= GIV(nilObj);
@@ -14618,9 +14612,9 @@ activateNewMethod(void)
 /*	Add the given entry to the method cache. 
 	The policy is as follows: 
 	Look for an empty entry anywhere in the reprobe chain. 
-	If found, install the new entry there. 
-	If not found, then install the new entry at the first probe position 
-	and delete the entries in the rest of the reprobe chain. 
+	If found, install the new_ entry there. 
+	If not found, then install the new_ entry at the first probe position 
+	and delete_ the entries in the rest of the reprobe chain. 
 	This has two useful purposes: 
 	If there is active contention over the first slot, the second 
 	or third will likely be free for reentry after ejection. 
@@ -14695,7 +14689,7 @@ addNewMethodToCache(sqInt classObj)
 				 : primitiveTable[primitiveIndex])) );
 			/* end functionPointerFor:inClass: */
 		} else {
-			assert(!((isNonImmediate(GIV(newMethod))) && (isForwarded(GIV(newMethod)))));
+			assert(!(((GIV(newMethod).isNonImmediate())) && (isForwarded(GIV(newMethod)))));
 			primitiveFunctionPointer = primitiveInvokeObjectAsMethod;
 		}
 		for (p = 0; p < CacheProbeMax; p += 1) {
@@ -14806,38 +14800,16 @@ allocateMemoryForImagewithHeader(sqImageFile f, SpurImageHeaderStruct header)
 			(cascade0->initialNewSpaceSize = GIV(edenBytes));
 			(cascade0->initialHeadroom = initialHeadroomgivenFreeOldSpaceInImage(extraVMMemory, (header.freeOldSpaceInImage)));
 			allocateHeap(cascade0);
-			fprintf(stderr, "iOS: [CALLER] allocateHeap returned, oldSpaceStart=%p\n", (void*)(cascade0->oldSpaceStart));
-			fflush(stderr);
-#ifdef __APPLE__
-			/* iOS: Recalculate masks now that memory is allocated */
-			fprintf(stderr, "iOS: [CALLER] Calling calculateMaskToUse...\n");
-			fflush(stderr);
-			calculateMaskToUse(cascade0);
-			fprintf(stderr, "iOS: [CALLER] calculateMaskToUse returned\n");
-			fflush(stderr);
-#endif
 		}
-		fprintf(stderr, "iOS: [CALLER] Starting initializeFromMemoryMap\n");
-		fflush(stderr);
-		fprintf(stderr, "iOS: [INIT] newSpaceStart=%p, newSpaceEnd=%p\n", (void*)((GIV(memoryMap)->newSpaceStart)), (void*)((GIV(memoryMap)->newSpaceEnd)));
-		fflush(stderr);
 		/* begin initializeFromMemoryMap */
 		reserve = interpreterAllocationReserveBytes();
-		fprintf(stderr, "iOS: [INIT] reserve=%lld\n", (long long)reserve);
-		fflush(stderr);
 		/* begin newSpaceStart:newSpaceBytes:survivorBytes: */
 		startAddress = ((sqInt) ((GIV(memoryMap)->newSpaceStart)) );
 		totalBytes = ((sqInt) (((GIV(memoryMap)->newSpaceEnd)) - ((GIV(memoryMap)->newSpaceStart))) );
-		fprintf(stderr, "iOS: [INIT] startAddress=%p, totalBytes=%lld\n", (void*)startAddress, (long long)totalBytes);
-		fflush(stderr);
 		requestedSurvivorBytes = ((sqInt) (((((GIV(memoryMap)->newSpaceEnd)) - ((GIV(memoryMap)->newSpaceStart))) - reserve) / 7) );
 		survivorBytes = (requestedSurvivorBytes & ~7);
 		actualEdenBytes = (((totalBytes - survivorBytes) - survivorBytes) & ~7);
-		fprintf(stderr, "iOS: [INIT] survivorBytes=%lld, actualEdenBytes=%lld\n", (long long)survivorBytes, (long long)actualEdenBytes);
-		fflush(stderr);
 		assert((((totalBytes - actualEdenBytes) - survivorBytes) - survivorBytes) < (allocationUnit()));
-		fprintf(stderr, "iOS: [INIT] assert passed, setting up spaces\n");
-		fflush(stderr);
 		{
 			(GIV(pastSpace).start = startAddress);
 			(GIV(pastSpace).limit = startAddress + survivorBytes);
@@ -14850,43 +14822,25 @@ allocateMemoryForImagewithHeader(sqImageFile f, SpurImageHeaderStruct header)
 			(GIV(eden).start = (GIV(futureSpace).limit));
 			(GIV(eden).limit = startAddress + totalBytes);
 		}
-		fprintf(stderr, "iOS: [INIT] eden.start=%p, eden.limit=%p\n", (void*)(GIV(eden).start), (void*)(GIV(eden).limit));
-		fflush(stderr);
-		fprintf(stderr, "iOS: [INIT] Accessing remembered sets...\n");
-		fflush(stderr);
 		((getFromOldSpaceRememberedSet())->fudge = ((((GIV(eden).limit)) - ((GIV(eden).start))) / BytesPerWord) / 1024);
-		fprintf(stderr, "iOS: [INIT] OldSpaceRememberedSet done\n");
-		fflush(stderr);
 		((getFromPermToOldSpaceRememberedSet())->fudge = ((((GIV(eden).limit)) - ((GIV(eden).start))) / BytesPerWord) / 1024);
-		fprintf(stderr, "iOS: [INIT] PermToOldSpaceRememberedSet done\n");
-		fflush(stderr);
 		((getFromPermToNewSpaceRememberedSet())->fudge = ((((GIV(eden).limit)) - ((GIV(eden).start))) / BytesPerWord) / 1024);
-		fprintf(stderr, "iOS: [INIT] Remembered sets accessed OK\n");
-		fflush(stderr);
 		assert((((futureSpace()).limit)) <= (startAddress + totalBytes));
 		assert((((((eden()).start)) % (allocationUnit())) + ((((eden()).limit)) % (allocationUnit()))) == 0);
 		assert((((((pastSpace()).start)) % (allocationUnit())) + ((((pastSpace()).limit)) % (allocationUnit()))) == 0);
 		assert((((((futureSpace()).start)) % (allocationUnit())) + ((((futureSpace()).limit)) % (allocationUnit()))) == 0);
-		fprintf(stderr, "iOS: [INIT] All asserts passed\n");
-		fflush(stderr);
 		/* begin initFutureSpaceStart */
 		oldStart = GIV(futureSurvivorStart);
 		GIV(futureSurvivorStart) = (GIV(futureSpace).start);
 		/* end initFutureSpaceStart */
-		fprintf(stderr, "iOS: [INIT] initFutureSpaceStart done\n");
-		fflush(stderr);
 		/* begin initSpaceForAllocationCheck:limit: */
 		aNewSpace = ((SpurNewSpaceSpace *) &GIV(eden) );
 		limit = (GIV(eden).limit);
-		fprintf(stderr, "iOS: [INIT] checkAllocFiller=%d, aNewSpace->start=%p, limit=%p\n", checkAllocFiller(), (void*)(aNewSpace->start), (void*)limit);
-		fflush(stderr);
 		if (checkAllocFiller()) {
 			for (p = (aNewSpace->start); p < limit; p += BytesPerWord) {
 				longAtput(p, p);
 			};
 		}
-		fprintf(stderr, "iOS: [INIT] initSpaceForAllocationCheck done\n");
-		fflush(stderr);
 		/* end initSpaceForAllocationCheck:limit: */
 		GIV(tenuringProportion) = 0.9;
 		/* end newSpaceStart:newSpaceBytes:survivorBytes: */
@@ -14895,26 +14849,15 @@ allocateMemoryForImagewithHeader(sqImageFile f, SpurImageHeaderStruct header)
 		GIV(freeOldSpaceStart) = (GIV(memoryMap)->oldSpaceEnd);
 		GIV(permSpaceFreeStart) = (GIV(memoryMap)->permSpaceStart);
 		/* end initializeFromMemoryMap */
-		fprintf(stderr, "iOS: [INIT] initializeFromMemoryMap complete, freeStart=%p, freeOldSpaceStart=%p\n", (void*)GIV(freeStart), (void*)GIV(freeOldSpaceStart));
-		fflush(stderr);
 		goto l22;
 		l22:
 		;
 		/* end allocateMemoryForImageHeader: */
-		fprintf(stderr, "iOS: [ALLOC DONE] Memory allocated, oldSpaceStart=%p, header.oldBaseAddr=%p\n",
-			(void*)((getMemoryMap())->oldSpaceStart), (void*)(header.oldBaseAddr));
-		fflush(stderr);
-		fprintf(stderr, "iOS: [ALLOC DONE] specialObjectsOop=%p (unswizzled from image header)\n", (void*)GIV(specialObjectsOop));
-		fflush(stderr);
 		if (hasToUseComposedFormat()) {
-			fprintf(stderr, "iOS: [CIR] Using Composed Image Reading format\n");
-			fflush(stderr);
 			/* begin CIR_doLoadImageFromFile:withHeader: */
 			oldSpaceBytesRead = CIR_readSegmentsFromImageFileheader(f, header);
 			permSpaceBytesRead = CIR_readPermanentSpaceFromImageFileheader(f, header);
 			bytesRead = oldSpaceBytesRead + permSpaceBytesRead;
-			fprintf(stderr, "iOS: [CIR] Read %lld bytes (old=%lld, perm=%lld)\n", (long long)bytesRead, (long long)oldSpaceBytesRead, (long long)permSpaceBytesRead);
-			fflush(stderr);
 			/* begin initializeInterpreterFromHeader:withBytes: */
 			if (bytesRead != ((header.dataSize))) {
 				logError("Expecting %lld Got %lld", (header.dataSize), bytesRead);
@@ -14922,16 +14865,10 @@ allocateMemoryForImagewithHeader(sqImageFile f, SpurImageHeaderStruct header)
 			}
 			ensureImageFormatIsUpToDate((header.swapBytes));
 			bytesToShift = (((getMemoryMap())->oldSpaceStart)) - ((header.oldBaseAddr));
-			fprintf(stderr, "iOS: [CIR] bytesToShift=%lld (0x%llx)\n", (long long)bytesToShift, (long long)bytesToShift);
-			fflush(stderr);
-			fprintf(stderr, "iOS: [CIR] Calling initializeObjectMemory...\n");
-			fflush(stderr);
 			/* begin initializeInterpreter: */
 			interpreterProxy = sqGetInterpreterProxy();
 			dummyReferToProxy();
 			initializeObjectMemory(bytesToShift);
-			fprintf(stderr, "iOS: [CIR] initializeObjectMemory returned\n");
-			fflush(stderr);
 			/* begin checkAssumedCompactClasses */
 			/* begin checkCompactIndex:isClass:named: */
 			if ((unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassArray ) << (shiftForWord())) ))) != ((assert((ClassArrayCompactIndex >= 1) && (ClassArrayCompactIndex <= (classTablePageSize()))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(classTableFirstPage) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassArrayCompactIndex ) << (shiftForWord())) )) /* end fetchPointer:ofObject: */))) {
@@ -15032,7 +14969,6 @@ allocateMemoryForImagewithHeader(sqImageFile f, SpurImageHeaderStruct header)
 		} else {
 			/* begin SIR_doLoadImageFromFile:withHeader: */
 			/* begin SIR_readSegmentsFromImageFile:header: */
-			logWarn("iOS: [SIR] Starting SIR_readSegmentsFromImageFile");
 			/* begin prepareSegmentsToRead */
 			/* begin clearSegments */
 			GIV(numSegments) = 0;
@@ -15042,8 +14978,6 @@ allocateMemoryForImagewithHeader(sqImageFile f, SpurImageHeaderStruct header)
 			totalBytesRead = 0;
 			oldBase = (header.oldBaseAddr);
 			newBase = ((getMemoryMap())->oldSpaceStart);
-			logWarn("iOS: [SIR] oldBase (from image)=%p, newBase (actual)=%p", (void*)oldBase, (void*)newBase);
-			logWarn("iOS: [SIR] swizzle will be: %lld (0x%llx)", (long long)(newBase - oldBase), (long long)(newBase - oldBase));
 			nextSegmentSize = (header.firstSegSize);
 			bridgehead = (((header.firstSegSize)) + (((getMemoryMap())->oldSpaceStart))) - (2 * BaseHeaderSize);
 			while (1) {
@@ -15096,14 +15030,10 @@ allocateMemoryForImagewithHeader(sqImageFile f, SpurImageHeaderStruct header)
 			}
 			ensureImageFormatIsUpToDate((header.swapBytes));
 			bytesToShift2 = (((getMemoryMap())->oldSpaceStart)) - ((header.oldBaseAddr));
-			logWarn("iOS: [SIR] Segments read, bytesToShift2=%lld (0x%llx)", (long long)bytesToShift2, (long long)bytesToShift2);
-			logWarn("iOS: [SIR] numSegments=%d, freeOldSpaceStart=%p", (int)GIV(numSegments), (void*)GIV(freeOldSpaceStart));
-			logWarn("iOS: [SIR] Calling initializeObjectMemory...");
 			/* begin initializeInterpreter: */
 			interpreterProxy = sqGetInterpreterProxy();
 			dummyReferToProxy();
 			initializeObjectMemory(bytesToShift2);
-			logWarn("iOS: [SIR] initializeObjectMemory returned, specialObjectsOop=%p", (void*)GIV(specialObjectsOop));
 			/* begin checkAssumedCompactClasses */
 			/* begin checkCompactIndex:isClass:named: */
 			if ((unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassArray ) << (shiftForWord())) ))) != ((assert((ClassArrayCompactIndex >= 1) && (ClassArrayCompactIndex <= (classTablePageSize()))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(classTableFirstPage) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassArrayCompactIndex ) << (shiftForWord())) )) /* end fetchPointer:ofObject: */))) {
@@ -15348,7 +15278,7 @@ assertValidStackedInstructionPointers(sqInt ln)
 	};
 }
 /*	Attempt to convert the current interpreted activation into a machine code 
-	activation, and if this is popssible, jump into machine code. bcpc is the 
+	activation, and if this_ is popssible, jump into machine code. bcpc is the 
 	0-relative pc of the backward branch bytecode (not any preceding 
 	extension).  */
 /* CoInterpreter>>#attemptToSwitchToMachineCode: */
@@ -15373,7 +15303,7 @@ attemptToSwitchToMachineCode(sqInt bcpc)
 	sqInt startBcpc;
 	char *theFP;
 
-	if (!((assert(isNonImmediate(GIV(method))), isCogMethodReference(unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) )))))) {
+	if (!((assert((GIV(method).isNonImmediate())), isCogMethodReference(unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) )))))) {
 		if ((byteAt((GIV(framePointer) + FoxIFrameFlags) + 3)) != 0) {
 			/* begin frameStackedReceiver:numArgs: */
 			if (isMachineCodeIP(((usqInt) (unsignedLongAt(GIV(framePointer) + FoxMethod)) ))) {
@@ -15390,12 +15320,12 @@ attemptToSwitchToMachineCode(sqInt bcpc)
 			cogselector(GIV(method), GIV(nilObj));
 		}
 	}
-	if ((assert(isNonImmediate(GIV(method))), isCogMethodReference(unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ))))) {
+	if ((assert((GIV(method).isNonImmediate())), isCogMethodReference(unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ))))) {
 		/* begin cogMethodOf: */
 		/* begin fetchPointer:ofObject: */
 		methodHeader = unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ));
 		/* end fetchPointer:ofObject: */
-		assert((isNonImmediate(methodHeader)) && (((usqInt) methodHeader ) < (startOfObjectMemory(getMemoryMap()))));
+		assert(((methodHeader).isNonImmediate()) && (((usqInt) methodHeader ) < (startOfObjectMemory(getMemoryMap()))));
 		cogMethod = ((CogMethod *) methodHeader );
 		/* end cogMethodOf: */
 		/* begin convertToMachineCodeFrame:bcpc: */
@@ -15578,7 +15508,7 @@ ceActivateFailingPrimitiveMethod(sqInt aPrimitiveMethod)
 	married) is stored in the first word of the stack. We get here when a 
 	return instruction jumps 
 	to the ceBaseFrameReturn: address that is the return pc for base frames. A 
-	consequence of this is that the current frame is no longer valid since an 
+	consequence of this_ is that the current frame is no longer valid since an 
 	interrupt may have overwritten 
 	its state as soon as the stack pointer has been cut-back beyond the return 
 	pc. So to have 
@@ -15950,10 +15880,10 @@ ceContextinstVarvalue(sqInt maybeMarriedContext, sqInt slotIndex, sqInt anOop)
 			if (anOop & (tagMask())) {
 				goto l9;
 			}
-			if (!(maybeMarriedContext >= PERM_SPACE_START())) {
+			if (!(maybeMarriedContext >= 0x20000000000LL)) {
 				goto l9;
 			}
-			if (anOop >= PERM_SPACE_START()) {
+			if (anOop >= 0x20000000000LL) {
 				goto l9;
 			}
 			if ((anOop >= GIV(nilObj)) && (anOop <= GIV(trueObj))) {
@@ -16027,10 +15957,10 @@ ceContextinstVarvalue(sqInt maybeMarriedContext, sqInt slotIndex, sqInt anOop)
 		if (anOop & (tagMask())) {
 			goto l5;
 		}
-		if (!(maybeMarriedContext >= PERM_SPACE_START())) {
+		if (!(maybeMarriedContext >= 0x20000000000LL)) {
 			goto l5;
 		}
-		if (anOop >= PERM_SPACE_START()) {
+		if (anOop >= 0x20000000000LL) {
 			goto l5;
 		}
 		if ((anOop >= GIV(nilObj)) && (anOop <= GIV(trueObj))) {
@@ -16079,10 +16009,10 @@ ceContextinstVarvalue(sqInt maybeMarriedContext, sqInt slotIndex, sqInt anOop)
 		if (anOop & (tagMask())) {
 			goto l2;
 		}
-		if (!(maybeMarriedContext >= PERM_SPACE_START())) {
+		if (!(maybeMarriedContext >= 0x20000000000LL)) {
 			goto l2;
 		}
-		if (anOop >= PERM_SPACE_START()) {
+		if (anOop >= 0x20000000000LL) {
 			goto l2;
 		}
 		if ((anOop >= GIV(nilObj)) && (anOop <= GIV(trueObj))) {
@@ -16120,7 +16050,7 @@ ceInterpretMethodFromPICreceiver(sqInt aMethodObj, sqInt rcvr)
 			cogselector(aMethodObj, (pic->selector));
 		}
 	}
-	if ((assert(isNonImmediate(aMethodObj)), isCogMethodReference(unsignedLongAt((aMethodObj + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ))))) {
+	if ((assert((aMethodObj).isNonImmediate()), isCogMethodReference(unsignedLongAt((aMethodObj + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ))))) {
 		executeCogMethodfromUnlinkedSendWithReceiver(cogMethodOf(aMethodObj), rcvr);
 	}
 	GIV(messageSelector) = (pic->selector);
@@ -16228,13 +16158,13 @@ ceMNUFromPICMNUMethodreceiver(sqInt aMethodObj, sqInt rcvr)
 	assert(0);
 	return 0;
 }
-/*	We know anObject has not a hash yet (or this trampoline would not be 
+/*	We know anObject has not a hash yet (or this_ trampoline would not be 
 	called. Sets the hash, then answers it as a smallinteger */
 /* CoInterpreter>>#ceNewHashOf: */
 sqInt
 ceNewHashOf(sqInt anObject)
 {
-	assert((isNonImmediate(anObject)) && ((rawHashBitsOf(anObject)) == 0));
+	assert(((anObject).isNonImmediate()) && ((rawHashBitsOf(anObject)) == 0));
 	return ((((usqInt) (newHashBitsOf(anObject)) ) << 3) | 1);
 }
 /* CoInterpreter>>#ceNonLocalReturn: */
@@ -16810,7 +16740,7 @@ ceSendAborttonumArgs(sqInt selector, sqInt rcvr, sqInt numArgs)
 			/* end maybeFailForLastObjectOverwrite */
 			if (!GIV(primFailCode) && ((GIV(framePointer) == savedFramePointer) && (!(isMachineCodeIP(((usqInt) (unsignedLongAt(GIV(framePointer) + FoxMethod)) )))))) {
 				if (GIV(stackPointer) != (savedStackPointer + (nArgs * BytesPerWord))) {
-					flag("Would be nice to make this a message send of e.g. unbalancedPrimitive to the current process or context");
+					flag("Would be nice to make this_ a message send of e.g. unbalancedPrimitive to the current process or context");
 					failUnbalancedPrimitive();
 					GIV(stackPointer) = savedStackPointer;
 				}
@@ -17015,7 +16945,7 @@ ceSendFromInLineCacheMiss(CogMethod *cogMethodOrPIC)
 			/* end maybeFailForLastObjectOverwrite */
 			if (!GIV(primFailCode) && ((GIV(framePointer) == savedFramePointer) && (!(isMachineCodeIP(((usqInt) (unsignedLongAt(GIV(framePointer) + FoxMethod)) )))))) {
 				if (GIV(stackPointer) != (savedStackPointer + (nArgs * BytesPerWord))) {
-					flag("Would be nice to make this a message send of e.g. unbalancedPrimitive to the current process or context");
+					flag("Would be nice to make this_ a message send of e.g. unbalancedPrimitive to the current process or context");
 					failUnbalancedPrimitive();
 					GIV(stackPointer) = savedStackPointer;
 				}
@@ -17069,15 +16999,15 @@ ceSendFromInLineCacheMiss(CogMethod *cogMethodOrPIC)
 	we don't have to generate code to reload registers. But notionally the pc 
 	following a conditional 
 	branch is reached when continuing from a mustBeBoolean error. Instead of 
-	supporting this in the 
+	supporting this_ in the 
 	JIT, simply convert to an interpreter frame, backup the pc to the branch, 
 	reenter the interpreter 
-	and hence retry the mustBeBoolean send therein. N.B. We could do this for 
+	and hence retry the mustBeBoolean send therein. N.B. We could do this_ for 
 	immutability violations 
 	too, but immutability is used in actual applications and so should be 
 	performant, whereas 
 	mustBeBoolean errors are extremely rare and so we choose brevity over 
-	performance in this case. */
+	performance in this_ case. */
 /* CoInterpreter>>#ceSendMustBeBooleanTo:interpretingAtDelta: */
 void
 ceSendMustBeBooleanTointerpretingAtDelta(sqInt aNonBooleanObject, sqInt jumpSize)
@@ -17159,7 +17089,7 @@ ceSendMustBeBoolean(sqInt anObject)
 	receiver 
 	args 
 	head sp ->	sender return pc 
-	methodClassBinding is an association whose value is the class above which 
+	methodClassBinding is an association whose value is the class_ above which 
 	to start the lookup. */
 /* CoInterpreter>>#ceSend:aboveClassBinding:to:numArgs: */
 void
@@ -17174,11 +17104,11 @@ ceSendaboveClassBindingtonumArgs(sqInt selector, sqInt methodClassBinding, sqInt
 	receiver 
 	args 
 	head sp ->	sender return pc 
-	methodClass is the class above which to start the lookup. 
+	methodClass is the class_ above which to start the lookup. 
 	 
 	If an MNU then defer to handleMNUInMachineCodeTo:... which will dispatch 
 	the MNU and 
-	may choose to allocate a closed PIC with a fast MNU dispatch for this 
+	may choose to allocate a closed PIC with a fast MNU dispatch for this_ 
 	send. Otherwise 
 	attempt to link the send site as efficiently as possible. All link 
 	attempts may fail; e.g. 
@@ -17306,7 +17236,7 @@ ceSendabovetonumArgs(sqInt selector, sqInt methodClass, sqInt rcvr, sqInt numArg
 		/* begin fetchPointer:ofObject: */
 		methodHeader = unsignedLongAt((GIV(newMethod) + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ));
 		/* end fetchPointer:ofObject: */
-		assert((isNonImmediate(methodHeader)) && (((usqInt) methodHeader ) < (startOfObjectMemory(getMemoryMap()))));
+		assert(((methodHeader).isNonImmediate()) && (((usqInt) methodHeader ) < (startOfObjectMemory(getMemoryMap()))));
 		cogMethod = ((CogMethod *) methodHeader );
 		/* end cogMethodOf: */
 		if (((cogMethod->selector)) == GIV(nilObj)) {
@@ -17384,7 +17314,7 @@ ceSendabovetonumArgs(sqInt selector, sqInt methodClass, sqInt rcvr, sqInt numArg
 			/* end maybeFailForLastObjectOverwrite */
 			if (!GIV(primFailCode) && ((GIV(framePointer) == savedFramePointer) && (!(isMachineCodeIP(((usqInt) (unsignedLongAt(GIV(framePointer) + FoxMethod)) )))))) {
 				if (GIV(stackPointer) != (savedStackPointer + (nArgs * BytesPerWord))) {
-					flag("Would be nice to make this a message send of e.g. unbalancedPrimitive to the current process or context");
+					flag("Would be nice to make this_ a message send of e.g. unbalancedPrimitive to the current process or context");
 					failUnbalancedPrimitive();
 					GIV(stackPointer) = savedStackPointer;
 				}
@@ -17445,7 +17375,7 @@ ceSendabovetonumArgs(sqInt selector, sqInt methodClass, sqInt rcvr, sqInt numArg
 	 
 	If an MNU then defer to handleMNUInMachineCodeTo:... which will dispatch 
 	the MNU and 
-	may choose to allocate a closed PIC with a fast MNU dispatch for this 
+	may choose to allocate a closed PIC with a fast MNU dispatch for this_ 
 	send. Otherwise 
 	attempt to link the send site as efficiently as possible. All link 
 	attempts may fail; e.g. 
@@ -17631,7 +17561,7 @@ ceSendsupertonumArgs(sqInt selector, sqInt superNormalBar, sqInt rcvr, sqInt num
 		/* begin fetchPointer:ofObject: */
 		methodHeader = unsignedLongAt((GIV(newMethod) + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ));
 		/* end fetchPointer:ofObject: */
-		assert((isNonImmediate(methodHeader)) && (((usqInt) methodHeader ) < (startOfObjectMemory(getMemoryMap()))));
+		assert(((methodHeader).isNonImmediate()) && (((usqInt) methodHeader ) < (startOfObjectMemory(getMemoryMap()))));
 		cogMethod = ((CogMethod *) methodHeader );
 		/* end cogMethodOf: */
 		if (((cogMethod->selector)) == GIV(nilObj)) {
@@ -17715,7 +17645,7 @@ ceSendsupertonumArgs(sqInt selector, sqInt superNormalBar, sqInt rcvr, sqInt num
 			/* end maybeFailForLastObjectOverwrite */
 			if (!GIV(primFailCode) && ((GIV(framePointer) == savedFramePointer) && (!(isMachineCodeIP(((usqInt) (unsignedLongAt(GIV(framePointer) + FoxMethod)) )))))) {
 				if (GIV(stackPointer) != (savedStackPointer + (nArgs * BytesPerWord))) {
-					flag("Would be nice to make this a message send of e.g. unbalancedPrimitive to the current process or context");
+					flag("Would be nice to make this_ a message send of e.g. unbalancedPrimitive to the current process or context");
 					failUnbalancedPrimitive();
 					GIV(stackPointer) = savedStackPointer;
 				}
@@ -17869,7 +17799,7 @@ ceTraceLinkedSend(sqInt theReceiver)
 void
 ceTraceStoreOfinto(sqInt aValue, sqInt anObject)
 {
-	assert((isImmediate(aValue)) || (addressCouldBeObj(aValue)));
+	assert(((aValue).isImmediate()) || (addressCouldBeObj(aValue)));
 	assert(addressCouldBeObj(anObject));
 }
 /* CoInterpreter>>#checkAssertsEnabledInCoInterpreter */
@@ -17933,7 +17863,7 @@ checkLogIntegrity(void)
 	return ok;
 }
 /*	Check if the argument is an ok object. 
-	If this is a pointers object, check that its fields are all okay oops. */
+	If this_ is a pointers object, check that its fields are all okay oops. */
 /* CoInterpreter>>#checkOkayFields: */
 static sqInt NoDbgRegParms
 checkOkayFields(sqInt oop)
@@ -18091,7 +18021,7 @@ checkStackIntegrity(void)
 						ok = 0;
 					}
 					if (!((((oop & (tagMask())) == 0) && (((longAt(oop)) & (classIndexMask())) == ClassMethodContextCompactIndex)) && ((frameOfMarriedContext(oop)) == theFP))) {
-						printFrameThingandFrameat("frame ctxt should be married to this frame ", theFP, theFP + FoxThisContext);
+						printFrameThingandFrameat("frame ctxt should be married to this_ frame ", theFP, theFP + FoxThisContext);
 						ok = 0;
 					}
 				}
@@ -18150,7 +18080,7 @@ cogMethodOf(sqInt aMethodOop)
 	/* begin fetchPointer:ofObject: */
 	methodHeader = unsignedLongAt((aMethodOop + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ));
 	/* end fetchPointer:ofObject: */
-	assert((isNonImmediate(methodHeader)) && (((usqInt) methodHeader ) < (startOfObjectMemory(getMemoryMap()))));
+	assert(((methodHeader).isNonImmediate()) && (((usqInt) methodHeader ) < (startOfObjectMemory(getMemoryMap()))));
 	return ((CogMethod *) methodHeader );
 }
 /* CoInterpreter>>#commenceCogCompiledCodeCompaction */
@@ -18222,7 +18152,7 @@ compilationBreakpointFor(sqInt selectorOop)
 	object for theIP and theFP. 
 	Mapping native pcs to bytecode pcs is quite expensive, requiring a search 
 	through the method 
-	map. We mitigate this cost by deferring mapping until we really have to, 
+	map. We mitigate this_ cost by deferring mapping until we really have to, 
 	which is when a context's 
 	instruction pointer is accessed by Smalltalk code (either direct inst var 
 	access or through the 
@@ -18436,7 +18366,7 @@ ensureContextIsExecutionSafeAfterAssignToStackPointer(sqInt aContext)
 /*	Main entry-point into the interpreter at each execution level, where an 
 	execution level is either the start of execution or reentry for a 
 	callback. Capture the C stack 
-	pointers so that calls from machine-code into the C run-time occur at this 
+	pointers so that calls from machine-code into the C run-time occur at this_ 
 	level. This is the actual implementation, separated from 
 	enterSmalltalkExecutive so the 
 	simulator can wrap it in an exception handler and hence simulate the 
@@ -18806,7 +18736,7 @@ flushExternalPrimitiveOf(sqInt methodObj)
 		}
 		primIdx = primIdx1;
 	}
-	if ((primIdx == PrimNumberExternalCall) && ((assert(isNonImmediate(methodObj)), /* begin isCogMethodReference: */ (methodHeader = unsignedLongAt((methodObj + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ))), assert((((methodHeader & 7) == 1)) || ((((usqInt) methodHeader ) < (startOfObjectMemory(getMemoryMap()))) && (((usqInt) methodHeader ) >= (minCogMethodAddress())))), (methodHeader & (smallIntegerTag())) == 0 /* end isCogMethodReference: */))) {
+	if ((primIdx == PrimNumberExternalCall) && ((assert((methodObj).isNonImmediate()), /* begin isCogMethodReference: */ (methodHeader = unsignedLongAt((methodObj + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ))), assert((((methodHeader & 7) == 1)) || ((((usqInt) methodHeader ) < (startOfObjectMemory(getMemoryMap()))) && (((usqInt) methodHeader ) >= (minCogMethodAddress())))), (methodHeader & (smallIntegerTag())) == 0 /* end isCogMethodReference: */))) {
 		rewritePrimInvocationInto(cogMethodOf(methodObj), primitiveExternalCall);
 	}
 }
@@ -19158,7 +19088,7 @@ getCheckAllocFiller(void)
 {
 	return checkAllocFiller;
 }
-/*	currentBytecode will be private to the main dispatch loop in the generated 
+/*	currentBytecode will be private_ to the main dispatch loop in the generated 
 	code. This method allows the currentBytecode to be retrieved from global 
 	variables. Override to answer -1 if we're not in an interpreter frame. */
 /* CoInterpreter>>#getCurrentBytecode */
@@ -19486,7 +19416,7 @@ interpretMethodFromMachineCode(void)
 		/* end maybeFailForLastObjectOverwrite */
 		if (!GIV(primFailCode) && ((GIV(framePointer) == savedFramePointer) && (!(isMachineCodeIP(((usqInt) (unsignedLongAt(GIV(framePointer) + FoxMethod)) )))))) {
 			if (GIV(stackPointer) != (savedStackPointer + (nArgs * BytesPerWord))) {
-				flag("Would be nice to make this a message send of e.g. unbalancedPrimitive to the current process or context");
+				flag("Would be nice to make this_ a message send of e.g. unbalancedPrimitive to the current process or context");
 				failUnbalancedPrimitive();
 				GIV(stackPointer) = savedStackPointer;
 			}
@@ -19607,8 +19537,8 @@ lookupOrdinaryreceiver(sqInt selector, sqInt rcvr)
 	}
 	return GIV(newMethod);
 }
-/*	<Integer>Marry aContext with the base frame of a new stack page. Build the base 
-	frame to reflect the context's state. Answer the new page. Override to 
+/*	<Integer>Marry aContext with the base frame of a new_ stack page. Build the base 
+	frame to reflect the context's state. Answer the new_ page. Override to 
 	hold the caller context in a different place, In the StackInterpreter we 
 	use the caller saved ip, but in the Cog VM caller saved ip is the 
 	ceBaseReturn: trampoline. Simply hold the caller context in the first word 
@@ -19651,7 +19581,7 @@ makeBaseFrameFor(sqInt aContext)
 	/* begin fetchPointer:ofObject: */
 	objOop = unsignedLongAt((aContext + BaseHeaderSize) + ((sqInt) (((usqInt) MethodIndex ) << (shiftForWord())) ));
 	/* end fetchPointer:ofObject: */
-	assert(isNonImmediate(objOop));
+	assert((objOop).isNonImmediate());
 	if (((long64At(objOop)) & ((classIndexMask()) - (isForwardedObjectClassIndexPun()))) == 0) {
 		objOop = fixFollowedFieldofObjectwithInitialValue(MethodIndex, aContext, objOop);
 	}
@@ -20241,7 +20171,7 @@ methodHasCogMethod(sqInt aMethodOop)
 {
 	sqInt methodHeader;
 
-	assert(isNonImmediate(aMethodOop));
+	assert((aMethodOop).isNonImmediate());
 	/* begin isCogMethodReference: */
 	methodHeader = unsignedLongAt((aMethodOop + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ));
 	assert((((methodHeader & 7) == 1)) || ((((usqInt) methodHeader ) < (startOfObjectMemory(getMemoryMap()))) && (((usqInt) methodHeader ) >= (minCogMethodAddress()))));
@@ -20283,7 +20213,7 @@ methodShouldBeCogged(sqInt aMethodObj)
 }
 /*	At the moment jit any method with less than N literals, where N defaults 
 	to 60. 
-	See e.g. SimpleStackBasedCogit class>>initialize. 
+	See e.g. SimpleStackBasedCogit class_>>initialize. 
 	In my dev image eem 2/22/2009 13:39 
 	(30 to: 100 by: 5) collect: 
 	[:n| n -> (SystemNavigation default allSelect: [:m| m numLiterals > n]) 
@@ -20293,7 +20223,7 @@ methodShouldBeCogged(sqInt aMethodObj)
 	on reveals 
 	the following sizes of interpreted methods. 
 	| sizes | 
-	sizes := Bag new. 
+	sizes := Bag new_. 
 	SystemNavigation default allSelect: [:m| m flag ifTrue: [sizes add: m 
 	numLiterals]. false]. 
 	sizes sortedElements asArray 
@@ -20417,7 +20347,7 @@ mnuCompilationBreakpointFor(sqInt selectorOop)
 	suppressHeartbeatFlag = 1;
 	warning("compilation MNU break (heartbeat suppressed)");
 }
-/*	Lookup the doesNotUnderstand: selector in the class of the argument rcvr. 
+/*	Lookup the doesNotUnderstand: selector in the class_ of the argument rcvr. 
 	Answer either the matching method (cogged if appropriate), or nil, if not 
 	found.  */
 /* CoInterpreter>>#mnuMethodOrNilFor: */
@@ -20487,7 +20417,7 @@ mnuMethodOrNilFor(sqInt rcvr)
 				/* begin fetchPointer:ofObject: */
 				objOop = unsignedLongAt((dictionary + BaseHeaderSize) + ((sqInt) (((usqInt) MethodArrayIndex ) << (shiftForWord())) ));
 				/* end fetchPointer:ofObject: */
-				assert(isNonImmediate(objOop));
+				assert((objOop).isNonImmediate());
 				if (((long64At(objOop)) & ((classIndexMask()) - (isForwardedObjectClassIndexPun()))) == 0) {
 					objOop = fixFollowedFieldofObjectwithInitialValue(MethodArrayIndex, dictionary, objOop);
 				}
@@ -20541,7 +20471,7 @@ mnuMethodOrNilFor(sqInt rcvr)
 }
 /*	Move frames from the hot end of oldPage through to theFP to newPage. 
 	This has the effect of making theFP a base frame which can be stored into. 
-	Answer theFP's new location. */
+	Answer theFP's new_ location. */
 /* CoInterpreter>>#moveFramesIn:through:toPage: */
 static char * NoDbgRegParms
 moveFramesInthroughtoPage(StackPage *oldPage, char *theFP, StackPage *newPage)
@@ -20774,7 +20704,7 @@ noAssertHeaderOf(sqInt methodPointer)
 /*	Insulate the stack zone from the effects of a become. 
 	All receivers must be unfollowed for two reasons: 
 	1. inst var access is direct with no read barrier 
-	2. super sends (always to the receiver) have no class check and so don't 
+	2. super sends (always to the receiver) have no class_ check and so don't 
 	trap for forwarded receivers. This is an issue for primitives that assume 
 	their receiver 
 	is valid and don't validate. 
@@ -20782,11 +20712,11 @@ noAssertHeaderOf(sqInt methodPointer)
 	are unforwarded. 
 	e.g. super doSomethingWith: (self become: other) forwards the receiver 
 	self pushed on the 
-	stack. So we could avoid following non-pointer receivers. But this is too 
+	stack. So we could avoid following non-pointer receivers. But this_ is too 
 	tricky, Instead, we 
 	always follow receivers. 
 	Methods must be unfollowed since bytecode access is direct with no read 
-	barrier. But this only needs to be done if the becomeEffectsFlags indicate 
+	barrier. But this_ only needs to be done if the becomeEffectsFlags indicate 
 	that a 
 	CompiledMethod was becommed. 
 	The scheduler state must be followed, but only if the becomeEffectsFlags 
@@ -20913,7 +20843,7 @@ postBecomeAction(sqInt theBecomeEffectsFlags)
 				/* begin fetchPointer:ofObject: */
 				objOop5 = unsignedLongAt((sched + BaseHeaderSize) + ((sqInt) (((usqInt) ProcessListsIndex ) << (shiftForWord())) ));
 				/* end fetchPointer:ofObject: */
-				assert(isNonImmediate(objOop5));
+				assert((objOop5).isNonImmediate());
 				if (((long64At(objOop5)) & ((classIndexMask()) - (isForwardedObjectClassIndexPun()))) == 0) {
 					objOop5 = fixFollowedFieldofObjectwithInitialValue(ProcessListsIndex, sched, objOop5);
 				}
@@ -20924,7 +20854,7 @@ postBecomeAction(sqInt theBecomeEffectsFlags)
 					/* begin fetchPointer:ofObject: */
 					objOop2 = unsignedLongAt((procLists + BaseHeaderSize) + ((sqInt) (((usqInt) i3 ) << (shiftForWord())) ));
 					/* end fetchPointer:ofObject: */
-					assert(isNonImmediate(objOop2));
+					assert((objOop2).isNonImmediate());
 					if (((long64At(objOop2)) & ((classIndexMask()) - (isForwardedObjectClassIndexPun()))) == 0) {
 						objOop2 = fixFollowedFieldofObjectwithInitialValue(i3, procLists, objOop2);
 					}
@@ -20934,7 +20864,7 @@ postBecomeAction(sqInt theBecomeEffectsFlags)
 					/* begin fetchPointer:ofObject: */
 					objOop3 = unsignedLongAt((list + BaseHeaderSize) + ((sqInt) (((usqInt) FirstLinkIndex ) << (shiftForWord())) ));
 					/* end fetchPointer:ofObject: */
-					assert(isNonImmediate(objOop3));
+					assert((objOop3).isNonImmediate());
 					if (((long64At(objOop3)) & ((classIndexMask()) - (isForwardedObjectClassIndexPun()))) == 0) {
 						objOop3 = fixFollowedFieldofObjectwithInitialValue(FirstLinkIndex, list, objOop3);
 					}
@@ -20944,7 +20874,7 @@ postBecomeAction(sqInt theBecomeEffectsFlags)
 					/* begin fetchPointer:ofObject: */
 					objOop4 = unsignedLongAt((list + BaseHeaderSize) + ((sqInt) (((usqInt) LastLinkIndex ) << (shiftForWord())) ));
 					/* end fetchPointer:ofObject: */
-					assert(isNonImmediate(objOop4));
+					assert((objOop4).isNonImmediate());
 					if (((long64At(objOop4)) & ((classIndexMask()) - (isForwardedObjectClassIndexPun()))) == 0) {
 						objOop4 = fixFollowedFieldofObjectwithInitialValue(LastLinkIndex, list, objOop4);
 					}
@@ -20955,7 +20885,7 @@ postBecomeAction(sqInt theBecomeEffectsFlags)
 						/* begin fetchPointer:ofObject: */
 						objOop = unsignedLongAt((first + BaseHeaderSize) + ((sqInt) (((usqInt) NextLinkIndex ) << (shiftForWord())) ));
 						/* end fetchPointer:ofObject: */
-						assert(isNonImmediate(objOop));
+						assert((objOop).isNonImmediate());
 						if (((long64At(objOop)) & ((classIndexMask()) - (isForwardedObjectClassIndexPun()))) == 0) {
 							objOop = fixFollowedFieldofObjectwithInitialValue(NextLinkIndex, first, objOop);
 						}
@@ -21007,10 +20937,10 @@ postBecomeAction(sqInt theBecomeEffectsFlags)
 					if (obj2 & (tagMask())) {
 						goto l39;
 					}
-					if (!(anArray >= PERM_SPACE_START())) {
+					if (!(anArray >= 0x20000000000LL)) {
 						goto l39;
 					}
-					if (obj2 >= PERM_SPACE_START()) {
+					if (obj2 >= 0x20000000000LL) {
 						goto l39;
 					}
 					if ((obj2 >= GIV(nilObj)) && (obj2 <= GIV(trueObj))) {
@@ -21066,10 +20996,10 @@ postBecomeAction(sqInt theBecomeEffectsFlags)
 					if (obj3 & (tagMask())) {
 						goto l58;
 					}
-					if (!(anArray1 >= PERM_SPACE_START())) {
+					if (!(anArray1 >= 0x20000000000LL)) {
 						goto l58;
 					}
-					if (obj3 >= PERM_SPACE_START()) {
+					if (obj3 >= 0x20000000000LL) {
 						goto l58;
 					}
 					if ((obj3 >= GIV(nilObj)) && (obj3 <= GIV(trueObj))) {
@@ -21125,10 +21055,10 @@ postBecomeAction(sqInt theBecomeEffectsFlags)
 					if (obj4 & (tagMask())) {
 						goto l27;
 					}
-					if (!(anArray2 >= PERM_SPACE_START())) {
+					if (!(anArray2 >= 0x20000000000LL)) {
 						goto l27;
 					}
-					if (obj4 >= PERM_SPACE_START()) {
+					if (obj4 >= 0x20000000000LL) {
 						goto l27;
 					}
 					if ((obj4 >= GIV(nilObj)) && (obj4 <= GIV(trueObj))) {
@@ -21184,10 +21114,10 @@ postBecomeAction(sqInt theBecomeEffectsFlags)
 					if (obj5 & (tagMask())) {
 						goto l33;
 					}
-					if (!(anArray3 >= PERM_SPACE_START())) {
+					if (!(anArray3 >= 0x20000000000LL)) {
 						goto l33;
 					}
-					if (obj5 >= PERM_SPACE_START()) {
+					if (obj5 >= 0x20000000000LL) {
 						goto l33;
 					}
 					if ((obj5 >= GIV(nilObj)) && (obj5 <= GIV(trueObj))) {
@@ -21244,10 +21174,10 @@ postBecomeAction(sqInt theBecomeEffectsFlags)
 					if (xArray & (tagMask())) {
 						goto l59;
 					}
-					if (!(GIV(specialObjectsOop) >= PERM_SPACE_START())) {
+					if (!(GIV(specialObjectsOop) >= 0x20000000000LL)) {
 						goto l59;
 					}
-					if (xArray >= PERM_SPACE_START()) {
+					if (xArray >= 0x20000000000LL) {
 						goto l59;
 					}
 					if ((xArray >= GIV(nilObj)) && (xArray <= GIV(trueObj))) {
@@ -21303,10 +21233,10 @@ postBecomeAction(sqInt theBecomeEffectsFlags)
 						if (obj & (tagMask())) {
 							goto l41;
 						}
-						if (!(xArray >= PERM_SPACE_START())) {
+						if (!(xArray >= 0x20000000000LL)) {
 							goto l41;
 						}
-						if (obj >= PERM_SPACE_START()) {
+						if (obj >= 0x20000000000LL) {
 							goto l41;
 						}
 						if ((obj >= GIV(nilObj)) && (obj <= GIV(trueObj))) {
@@ -22262,7 +22192,7 @@ rawHeaderOf(sqInt methodPointer)
 	return unsignedLongAt((methodPointer + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ));
 }
 /*	Since methods may be updated while forwarding during become, make the 
-	assert accomodate this. */
+	assert accomodate this_. */
 /* CoInterpreter>>#rawHeaderOf:put: */
 void
 rawHeaderOfput(sqInt methodOop, sqInt cogMethodOrMethodHeader)
@@ -22414,11 +22344,11 @@ returntoExecutive(sqInt returnValue, sqInt inInterpreter)
 	siglongjmp(reenterInterpreter, ReturnToInterpreter);
 	return null;
 }
-/*	Rewrite an existing entry in the method cache with a new primitive 
+/*	Rewrite an existing entry in the method cache with a new_ primitive 
 	function address. 
 	Used by primitiveExternalCall to make direct calls to found external 
 	prims, or quickly 
-	fail not found external prims.Rewrite an existing entry in the method cache with a new primitive 
+	fail not found external prims.Rewrite an existing entry in the method cache with a new_ primitive 
 	function address. 
 	Used by primitiveExternalCall to make direct calls to found external 
 	prims, or quickly 
@@ -22435,7 +22365,7 @@ rewriteMethodCacheEntryForExternalPrimitiveToFunction(void (*localPrimAddress)(v
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
 
-	if ((assert(isNonImmediate(GIV(newMethod))), isCogMethodReference(unsignedLongAt((GIV(newMethod) + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ))))) {
+	if ((assert((GIV(newMethod).isNonImmediate())), isCogMethodReference(unsignedLongAt((GIV(newMethod) + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ))))) {
 		rewritePrimInvocationInto(cogMethodOf(GIV(newMethod)), ((localPrimAddress == 0)
 			 ? ((void (*)(void)) primitiveFail )
 			 : localPrimAddress));
@@ -22527,8 +22457,8 @@ stackLimitAddress(void)
 
 	return (usqInt)&GIV(stackLimit);
 }
-/*	Answer the amount of slots needed to fit a new frame at the point the 
-	stack limit is checked. A frame looks like this at the point the stack 
+/*	Answer the amount of slots needed to fit a new_ frame at the point the 
+	stack limit is checked. A frame looks like this_ at the point the stack 
 	limit is checked: 
 	stacked receiver/closure 
 	arg0 
@@ -22559,7 +22489,7 @@ stackLimitOffset(void)
 /*	Return a minimum amount of headroom for each stack page (in bytes). 
 	In the interpreter we don't actually need any headroom. In a JIT the stack 
 	has to have room for interrupt handlers which will run on the stack. 
-	Defer to the platform for this one. */
+	Defer to the platform for this_ one. */
 /* CoInterpreter>>#stackPageHeadroom */
 static sqInt
 stackPageHeadroom(void)
@@ -22575,7 +22505,7 @@ stackPointerAddress(void)
 	return ((usqInt) &GIV(stackPointer) );
 }
 /*	Handle the cannot return response for a base frame return to an invalid 
-	context. Build a new base frame for the context in the cannot resume state 
+	context. Build a new_ base frame for the context in the cannot resume state 
 	ready for the 
 	send of cannotReturn:. 
 	 
@@ -22620,10 +22550,10 @@ tearDownAndRebuildFrameForCannotReturnBaseFrameReturnFromtoreturnValue(sqInt con
 		if (contextToReturnTo & (tagMask())) {
 			goto l1;
 		}
-		if (!(contextToReturnFrom >= PERM_SPACE_START())) {
+		if (!(contextToReturnFrom >= 0x20000000000LL)) {
 			goto l1;
 		}
-		if (contextToReturnTo >= PERM_SPACE_START()) {
+		if (contextToReturnTo >= 0x20000000000LL) {
 			goto l1;
 		}
 		if ((contextToReturnTo >= GIV(nilObj)) && (contextToReturnTo <= GIV(trueObj))) {
@@ -22659,7 +22589,7 @@ tearDownAndRebuildFrameForCannotReturnBaseFrameReturnFromtoreturnValue(sqInt con
 		if (HasBeenReturnedFromMCPCOop & (tagMask())) {
 			goto l3;
 		}
-		if (!(contextToReturnFrom >= PERM_SPACE_START())) {
+		if (!(contextToReturnFrom >= 0x20000000000LL)) {
 			goto l3;
 		}
 		{
@@ -22952,7 +22882,7 @@ voidVMStateForSnapshotFlushingExternalPrimitivesIf(sqInt flushExtPrims)
 		/* begin allOldSpaceObjectsDo: */
 		/* begin allOldSpaceObjectsFrom:do: */
 		/* begin allOldSpaceEntitiesFrom:do: */
-		assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+		assert((GIV(nilObj).isOld()));
 		prevPrevObj2 = (prevObj2 = null);
 		objOop22 = GIV(nilObj);
 		while (1) {
@@ -23065,7 +22995,7 @@ whereIs(sqInt anOop)
 					where = " is in past space";
 					goto l2;
 				}
-				where = " is in new space";
+				where = " is in new_ space";
 				goto l2;
 			}
 			if (oopisGreaterThanOrEqualToandLessThan(anOop, (GIV(memoryMap)->oldSpaceStart), (GIV(memoryMap)->oldSpaceEnd))) {
@@ -23156,7 +23086,7 @@ mcprimHashMultiply(sqInt receiverArg)
 			goto l2;
 		}
 		/* begin isClassOfNonImm:equalTo:compactClassIndex: */
-		assert(!(isImmediate(receiverArg)));
+		assert(!((receiverArg).isImmediate()));
 		/* begin classIndexOf: */
 		ccIndex = (longAt(receiverArg)) & (classIndexMask());
 		/* end classIndexOf: */
@@ -23271,10 +23201,10 @@ primitiveContextXray(void)
 	/* end pop:thenPush: */
 }
 /*	The receiver is a compiledMethod. Clear all entries in the method lookup 
-	cache that refer to this method, presumably because it has been redefined, 
+	cache that refer to this_ method, presumably because it has been redefined, 
 	overridden or removed.The receiver is a compiledMethod. Clear all entries in the method lookup 
 	cache that 
-	refer to this method, presumably because it has been redefined, overridden 
+	refer to this_ method, presumably because it has been redefined, overridden 
 	or removed. 
 	Override to flush appropriate machine code caches also. */
 /* CoInterpreterPrimitives>>#primitiveFlushCacheByMethod */
@@ -23302,7 +23232,7 @@ primitiveFlushCacheByMethod(void)
 	unlinkSendsToandFreeIf(unsignedLongAt(GIV(stackPointer)), 0);
 }
 /*	The receiver is a message selector. Clear all entries in the method lookup 
-	cache with this selector, presumably because an associated method has been 
+	cache with this_ selector, presumably because an associated method has been 
 	redefined. Override to also flush machine code caches. */
 /* CoInterpreterPrimitives>>#primitiveFlushCacheBySelector */
 static void
@@ -23398,13 +23328,13 @@ primitiveMethodPCData(void)
 	}
 	methodReceiver = unsignedLongAt(GIV(stackPointer));
 	data = 0;
-	if ((assert(isNonImmediate(methodReceiver)), isCogMethodReference(unsignedLongAt((methodReceiver + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ))))) {
+	if ((assert((methodReceiver).isNonImmediate()), isCogMethodReference(unsignedLongAt((methodReceiver + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ))))) {
 		/* begin pcDataFor: */
 		/* begin cogMethodOf: */
 		/* begin fetchPointer:ofObject: */
 		methodHeader = unsignedLongAt((methodReceiver + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ));
 		/* end fetchPointer:ofObject: */
-		assert((isNonImmediate(methodHeader)) && (((usqInt) methodHeader ) < (startOfObjectMemory(getMemoryMap()))));
+		assert(((methodHeader).isNonImmediate()) && (((usqInt) methodHeader ) < (startOfObjectMemory(getMemoryMap()))));
 		cogMethod = ((CogMethod *) methodHeader );
 		/* end cogMethodOf: */
 		cm = (cogMethod->methodObject);
@@ -23468,13 +23398,13 @@ primitiveMethodProfilingData(void)
 	}
 	methodReceiver = unsignedLongAt(GIV(stackPointer));
 	data = 0;
-	if ((assert(isNonImmediate(methodReceiver)), isCogMethodReference(unsignedLongAt((methodReceiver + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ))))) {
+	if ((assert((methodReceiver).isNonImmediate()), isCogMethodReference(unsignedLongAt((methodReceiver + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ))))) {
 		/* begin profilingDataFor: */
 		/* begin cogMethodOf: */
 		/* begin fetchPointer:ofObject: */
 		methodHeader = unsignedLongAt((methodReceiver + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ));
 		/* end fetchPointer:ofObject: */
-		assert((isNonImmediate(methodHeader)) && (((usqInt) methodHeader ) < (startOfObjectMemory(getMemoryMap()))));
+		assert(((methodHeader).isNonImmediate()) && (((usqInt) methodHeader ) < (startOfObjectMemory(getMemoryMap()))));
 		cogMethod = ((CogMethod *) methodHeader );
 		/* end cogMethodOf: */
 		cm = (cogMethod->methodObject);
@@ -23601,7 +23531,7 @@ primitiveMethodXray(void)
 			/* begin fetchPointer:ofObject: */
 			methodHeader = unsignedLongAt((aMethodOop + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ));
 			/* end fetchPointer:ofObject: */
-			assert((isNonImmediate(methodHeader)) && (((usqInt) methodHeader ) < (startOfObjectMemory(getMemoryMap()))));
+			assert(((methodHeader).isNonImmediate()) && (((usqInt) methodHeader ) < (startOfObjectMemory(getMemoryMap()))));
 			cogMethod = ((CogMethod *) methodHeader );
 			/* end cogMethodOf: */
 			if (((cogMethod->stackCheckOffset)) == 0) {
@@ -23767,10 +23697,10 @@ primitiveObjectAtPut(void)
 		if (newValue & (tagMask())) {
 			goto l2;
 		}
-		if (!(thisReceiver >= PERM_SPACE_START())) {
+		if (!(thisReceiver >= 0x20000000000LL)) {
 			goto l2;
 		}
-		if (newValue >= PERM_SPACE_START()) {
+		if (newValue >= 0x20000000000LL) {
 			goto l2;
 		}
 		if ((newValue >= GIV(nilObj)) && (newValue <= GIV(trueObj))) {
@@ -24231,10 +24161,10 @@ primitiveSnapshot(void)
 	if (activeContext & (tagMask())) {
 		goto l11;
 	}
-	if (!(activeProc >= PERM_SPACE_START())) {
+	if (!(activeProc >= 0x20000000000LL)) {
 		goto l11;
 	}
-	if (activeContext >= PERM_SPACE_START()) {
+	if (activeContext >= 0x20000000000LL) {
 		goto l11;
 	}
 	if ((activeContext >= GIV(nilObj)) && (activeContext <= GIV(trueObj))) {
@@ -24268,7 +24198,7 @@ primitiveSnapshot(void)
 	assert(GIV(pastSpaceStart) == (((pastSpace()).start)));
 	assert(GIV(freeStart) == (((eden()).start)));
 	/* end flushNewSpace */
-	flag("If we wanted to shrink the rememberedSet prior to snapshot this is the place to do it.");
+	flag("If we wanted to shrink the rememberedSet prior to snapshot this_ is the place to do it.");
 	/* begin biasForSnapshot */
 	GIV(biasForGC) = 0;
 	/* end biasForSnapshot */
@@ -24891,10 +24821,10 @@ primitiveTerminateTo(void)
 		if (aContextOrNil & (tagMask())) {
 			goto l32;
 		}
-		if (!(thisCtx >= PERM_SPACE_START())) {
+		if (!(thisCtx >= 0x20000000000LL)) {
 			goto l32;
 		}
-		if (aContextOrNil >= PERM_SPACE_START()) {
+		if (aContextOrNil >= 0x20000000000LL) {
 			goto l32;
 		}
 		if ((aContextOrNil >= GIV(nilObj)) && (aContextOrNil <= GIV(trueObj))) {
@@ -25090,13 +25020,13 @@ primitiveVoidVMStateForMethod(void)
 	/* end setHeadFP:andSP:inPage: */
 	assert(pageListIsWellFormed());
 	/* end writeBackHeadFramePointers */
-	if ((assert(isNonImmediate(methodObj)), /* begin isCogMethodReference: */ (methodHeader = unsignedLongAt((methodObj + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ))), assert((((methodHeader & 7) == 1)) || ((((usqInt) methodHeader ) < (startOfObjectMemory(getMemoryMap()))) && (((usqInt) methodHeader ) >= (minCogMethodAddress())))), (hasCogMethod = (methodHeader & (smallIntegerTag())) == 0) /* end isCogMethodReference: */)) {
+	if ((assert((methodObj).isNonImmediate()), /* begin isCogMethodReference: */ (methodHeader = unsignedLongAt((methodObj + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ))), assert((((methodHeader & 7) == 1)) || ((((usqInt) methodHeader ) < (startOfObjectMemory(getMemoryMap()))) && (((usqInt) methodHeader ) >= (minCogMethodAddress())))), (hasCogMethod = (methodHeader & (smallIntegerTag())) == 0) /* end isCogMethodReference: */)) {
 		/* begin divorceMachineCodeFramesWithMethod: */
 		/* begin cogMethodOf: */
 		/* begin fetchPointer:ofObject: */
 		methodHeader2 = unsignedLongAt((methodObj + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ));
 		/* end fetchPointer:ofObject: */
-		assert((isNonImmediate(methodHeader2)) && (((usqInt) methodHeader2 ) < (startOfObjectMemory(getMemoryMap()))));
+		assert(((methodHeader2).isNonImmediate()) && (((usqInt) methodHeader2 ) < (startOfObjectMemory(getMemoryMap()))));
 		cogMethod = ((CogMethod *) methodHeader2 );
 		/* end cogMethodOf: */
 		do{
@@ -25202,7 +25132,7 @@ primitiveVoidVMStateForMethod(void)
 		/* begin allOldSpaceObjectsDo: */
 		/* begin allOldSpaceObjectsFrom:do: */
 		/* begin allOldSpaceEntitiesFrom:do: */
-		assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+		assert((GIV(nilObj).isOld()));
 		prevPrevObj2 = (prevObj2 = null);
 		objOop22 = GIV(nilObj);
 		while (1) {
@@ -25641,7 +25571,7 @@ CIR_readSegmentsFromImageFileheader(sqInt imageFileName, SpurImageHeaderStruct a
 	return totalBytesRead;
 }
 /*	Write one image header file + many segments files (metadata & data per 
-	segment) TODO: Rename this class */
+	segment) TODO: Rename this_ class_ */
 /* ComposedImageWriter>>#CIW_writeImageFile:fromHeader: */
 static void NoDbgRegParms
 CIW_writeImageFilefromHeader(char *imageFileName, SpurImageHeaderStruct header)
@@ -25993,11 +25923,11 @@ canBeImmutable(sqInt oop)
 	sqInt schedAssoc;
 	sqInt scheduler;
 
-	assert(isNonImmediate(oop));
+	assert((oop).isNonImmediate());
 	if (((oop & (tagMask())) == 0) && (((longAt(oop)) & (classIndexMask())) == ClassMethodContextCompactIndex)) {
 		return 0;
 	}
-	if ((assert(isNonImmediate(oop)), isEphemeronFormat((((usqInt) (longAt(oop)) ) >> (formatShift())) & (formatMask())))) {
+	if ((assert((oop).isNonImmediate()), isEphemeronFormat((((usqInt) (longAt(oop)) ) >> (formatShift())) & (formatMask())))) {
 		return 0;
 	}
 	if (isWeakFormat((((usqInt) (longAt(oop)) ) >> (formatShift())) & (formatMask()))) {
@@ -26058,7 +25988,7 @@ cStringOrNullFor(sqInt oop)
 		goto l2;
 	}
 	/* begin isClassOfNonImm:equalTo:compactClassIndex: */
-	assert(!(isImmediate(oop)));
+	assert(!((oop).isImmediate()));
 	/* begin classIndexOf: */
 	ccIndex = (longAt(oop)) & (classIndexMask());
 	/* end classIndexOf: */
@@ -26207,7 +26137,7 @@ isNegativeIntegerValueOf(sqInt oop)
 	if ((oop & (tagMask())) == 0) {
 		/* begin isClassOfNonImm:equalTo:compactClassIndex: */
 		classOop = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassLargePositiveInteger ) << (shiftForWord())) ));
-		assert(!(isImmediate(oop)));
+		assert(!((oop).isImmediate()));
 		/* begin classIndexOf: */
 		ccIndex = (longAt(oop)) & (classIndexMask());
 		/* end classIndexOf: */
@@ -26223,7 +26153,7 @@ isNegativeIntegerValueOf(sqInt oop)
 		}
 		/* begin isClassOfNonImm:equalTo:compactClassIndex: */
 		classOop1 = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassLargeNegativeInteger ) << (shiftForWord())) ));
-		assert(!(isImmediate(oop)));
+		assert(!((oop).isImmediate()));
 		/* begin classIndexOf: */
 		ccIndex2 = (longAt(oop)) & (classIndexMask());
 		/* end classIndexOf: */
@@ -26266,7 +26196,7 @@ isPositiveMachineIntegerObject(sqInt oop)
 	}
 	/* begin isClassOfNonImm:equalTo:compactClassIndex: */
 	classOop = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassLargePositiveInteger ) << (shiftForWord())) ));
-	assert(!(isImmediate(oop)));
+	assert(!((oop).isImmediate()));
 	/* begin classIndexOf: */
 	ccIndex = (longAt(oop)) & (classIndexMask());
 	/* end classIndexOf: */
@@ -26358,7 +26288,7 @@ magnitude64BitValueOf(sqInt oop)
 	}
 	/* begin isClassOfNonImm:equalTo:compactClassIndex: */
 	classOop1 = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassLargePositiveInteger ) << (shiftForWord())) ));
-	assert(!(isImmediate(oop)));
+	assert(!((oop).isImmediate()));
 	/* begin classIndexOf: */
 	ccIndex2 = (longAt(oop)) & (classIndexMask());
 	/* end classIndexOf: */
@@ -26372,7 +26302,7 @@ magnitude64BitValueOf(sqInt oop)
 	if (!ok) {
 		/* begin isClassOfNonImm:equalTo:compactClassIndex: */
 		classOop = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassLargeNegativeInteger ) << (shiftForWord())) ));
-		assert(!(isImmediate(oop)));
+		assert(!((oop).isImmediate()));
 		/* begin classIndexOf: */
 		ccIndex = (longAt(oop)) & (classIndexMask());
 		/* end classIndexOf: */
@@ -26479,7 +26409,7 @@ positive64BitValueOf(sqInt oop)
 	}
 	/* begin isClassOfNonImm:equalTo:compactClassIndex: */
 	classOop = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassLargePositiveInteger ) << (shiftForWord())) ));
-	assert(!(isImmediate(oop)));
+	assert(!((oop).isImmediate()));
 	/* begin classIndexOf: */
 	ccIndex = (longAt(oop)) & (classIndexMask());
 	/* end classIndexOf: */
@@ -26556,7 +26486,7 @@ positiveMachineIntegerValueOf(sqInt oop)
 	}
 	/* begin isClassOfNonImm:equalTo:compactClassIndex: */
 	classOop = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassLargePositiveInteger ) << (shiftForWord())) ));
-	assert(!(isImmediate(oop)));
+	assert(!((oop).isImmediate()));
 	/* begin classIndexOf: */
 	ccIndex = (longAt(oop)) & (classIndexMask());
 	/* end classIndexOf: */
@@ -26680,18 +26610,18 @@ primitiveAddLargeIntegers(void)
 		/* end pop:thenPush: */
 	}
 }
-/*	Primitive. Change the class of the argument to make it an instance of the 
+/*	Primitive. Change the class_ of the argument to make it an instance of the 
 	receiver given that the format of the receiver matches the format of the 
-	argument's class. 
+	argument's class_. 
 	Fail if receiver or argument are SmallIntegers, or the receiver is an 
 	instance of a 
-	compact class and the argument isn't, or when the argument's class is 
+	compact class_ and the argument isn't, or when the argument's class_ is 
 	compact and 
 	the receiver isn't, or when the format of the receiver is different from 
 	the format of 
-	the argument's class, or when the arguments class is fixed and the 
+	the argument's class_, or when the arguments class_ is fixed and the 
 	receiver's size 
-	differs from the size that an instance of the argument's class should 
+	differs from the size that an instance of the argument's class_ should 
 	have.  */
 /* InterpreterPrimitives>>#primitiveAdoptInstance */
 static void
@@ -26791,7 +26721,7 @@ primitiveAllObjects(void)
 	GIV(stackPointer) = sp;
 	/* end pop:thenPush: */
 }
-/*	N.B. IMO we should be able to assume the receiver is a float because this 
+/*	N.B. IMO we should be able to assume the receiver is a float because this_ 
 	primitive is specific to floats. eem 2/13/2017 */
 /* InterpreterPrimitives>>#primitiveArctan */
 static void
@@ -26961,7 +26891,7 @@ static void
 primitiveAt(void)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
-	sqInt class;
+	sqInt class_;
 	sqInt classFormat;
 	sqInt fixedFields;
 	usqLong fmt;
@@ -27043,9 +26973,9 @@ primitiveAt(void)
 		fixedFields = totalLength;
 		goto l5;
 	}
-	class = fetchClassOfNonImm(rcvr);
+	class_ = fetchClassOfNonImm(rcvr);
 	/* begin fixedFieldsOfClassFormat: */
-	classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+	classFormat = (unsignedLongAt((class_ + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 	fixedFields = classFormat & ((1U << (fixedFieldsFieldWidth())) - 1);
 	/* end fixedFieldsOfClassFormat: */
 	l5:
@@ -27274,10 +27204,10 @@ primitiveAtPut(void)
 				if (value & (tagMask())) {
 					goto l26;
 				}
-				if (!(rcvr >= PERM_SPACE_START())) {
+				if (!(rcvr >= 0x20000000000LL)) {
 					goto l26;
 				}
-				if (value >= PERM_SPACE_START()) {
+				if (value >= 0x20000000000LL) {
 					goto l26;
 				}
 				if ((value >= GIV(nilObj)) && (value <= GIV(trueObj))) {
@@ -27375,7 +27305,7 @@ primitiveBehaviorHash(void)
 	sqInt hashOrError;
 	char *sp;
 
-	assert((isNonImmediate(stackTop())) && (addressCouldBeClassObj(stackTop())));
+	assert(((stackTop().isNonImmediate())) && (addressCouldBeClassObj(stackTop())));
 	/* begin ensureBehaviorHash: */
 	aBehavior = unsignedLongAt(GIV(stackPointer));
 	assert(addressCouldBeClassObj(aBehavior));
@@ -27401,7 +27331,7 @@ primitiveBehaviorHash(void)
 	}
 }
 /*	Note no short-cut for SmallIntegers. Either the inline interpreter 
-	bytecode or the JIT primitive will handle this case. */
+	bytecode or the JIT primitive will handle this_ case. */
 /* InterpreterPrimitives>>#primitiveBitAnd */
 static void
 primitiveBitAnd(void)
@@ -27453,7 +27383,7 @@ primitiveBitAnd(void)
 	}
 	/* begin isClassOfNonImm:equalTo:compactClassIndex: */
 	classOop = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassLargePositiveInteger ) << (shiftForWord())) ));
-	assert(!(isImmediate(oop1)));
+	assert(!((oop1).isImmediate()));
 	/* begin classIndexOf: */
 	ccIndex = (longAt(oop1)) & (classIndexMask());
 	/* end classIndexOf: */
@@ -27524,7 +27454,7 @@ primitiveBitAnd(void)
 	}
 	/* begin isClassOfNonImm:equalTo:compactClassIndex: */
 	classOop1 = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassLargePositiveInteger ) << (shiftForWord())) ));
-	assert(!(isImmediate(oop2)));
+	assert(!((oop2).isImmediate()));
 	/* begin classIndexOf: */
 	ccIndex2 = (longAt(oop2)) & (classIndexMask());
 	/* end classIndexOf: */
@@ -27603,7 +27533,7 @@ primitiveBitAndLargeIntegers(void)
 	}
 }
 /*	Note no short-cut for SmallIntegers. Either the inline interpreter 
-	bytecode or the JIT primitive will handle this case. */
+	bytecode or the JIT primitive will handle this_ case. */
 /* InterpreterPrimitives>>#primitiveBitOr */
 static void
 primitiveBitOr(void)
@@ -27655,7 +27585,7 @@ primitiveBitOr(void)
 	}
 	/* begin isClassOfNonImm:equalTo:compactClassIndex: */
 	classOop = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassLargePositiveInteger ) << (shiftForWord())) ));
-	assert(!(isImmediate(oop1)));
+	assert(!((oop1).isImmediate()));
 	/* begin classIndexOf: */
 	ccIndex = (longAt(oop1)) & (classIndexMask());
 	/* end classIndexOf: */
@@ -27726,7 +27656,7 @@ primitiveBitOr(void)
 	}
 	/* begin isClassOfNonImm:equalTo:compactClassIndex: */
 	classOop1 = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassLargePositiveInteger ) << (shiftForWord())) ));
-	assert(!(isImmediate(oop2)));
+	assert(!((oop2).isImmediate()));
 	/* begin classIndexOf: */
 	ccIndex2 = (longAt(oop2)) & (classIndexMask());
 	/* end classIndexOf: */
@@ -28017,7 +27947,7 @@ primitiveBitXor(void)
 		}
 		/* begin isClassOfNonImm:equalTo:compactClassIndex: */
 		classOop = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassLargePositiveInteger ) << (shiftForWord())) ));
-		assert(!(isImmediate(integerArgument)));
+		assert(!((integerArgument).isImmediate()));
 		/* begin classIndexOf: */
 		ccIndex = (longAt(integerArgument)) & (classIndexMask());
 		/* end classIndexOf: */
@@ -28087,7 +28017,7 @@ primitiveBitXor(void)
 		}
 		/* begin isClassOfNonImm:equalTo:compactClassIndex: */
 		classOop1 = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassLargePositiveInteger ) << (shiftForWord())) ));
-		assert(!(isImmediate(integerReceiver)));
+		assert(!((integerReceiver).isImmediate()));
 		/* begin classIndexOf: */
 		ccIndex2 = (longAt(integerReceiver)) & (classIndexMask());
 		/* end classIndexOf: */
@@ -28166,8 +28096,8 @@ primitiveBitXorLargeIntegers(void)
 		/* end pop:thenPush: */
 	}
 }
-/*	Answer bytes available at this moment. For more meaningful  
-	results, calls to this primitive should be precedeed by a full  
+/*	Answer bytes available at this_ moment. For more meaningful  
+	results, calls to this_ primitive should be precedeed by a full  
 	or incremental garbage collection. */
 /* InterpreterPrimitives>>#primitiveBytesLeft */
 static void
@@ -28263,7 +28193,7 @@ primitiveBytesLeft(void)
 }
 /*	Perform a function call to a foreign function. 
 	Only invoked from method containing explicit external call spec. 
-	Due to this we use the pluggable prim mechanism explicitly here 
+	Due to this_ we use the pluggable prim mechanism explicitly here 
 	(the first literal of any FFI spec'ed method is an ExternalFunction 
 	and not an array as used in the pluggable primitive mechanism). */
 /* InterpreterPrimitives>>#primitiveCalloutToFFI */
@@ -28290,19 +28220,19 @@ primitiveCalloutToFFI(void)
 		primitiveCallout();
 	}
 }
-/*	Primitive. Change the class of the receiver into the class of the argument 
+/*	Primitive. Change the class_ of the receiver into the class_ of the argument 
 	given that 
-	the format of the receiver matches the format of the argument's class. 
+	the format of the receiver matches the format of the argument's class_. 
 	Fail if the 
 	receiver or argument are SmallIntegers, or the receiver is an instance of 
 	a compact 
-	class and the argument isn't, or when the argument's class is compact and 
+	class_ and the argument isn't, or when the argument's class_ is compact and 
 	the receiver 
 	isn't, or when the format of the receiver is different from the format of 
 	the argument's 
-	class, or when the arguments class is fixed and the receiver's size 
+	class_, or when the arguments class_ is fixed and the receiver's size 
 	differs from the size 
-	that an instance of the argument's class should have. */
+	that an instance of the argument's class_ should have. */
 /* InterpreterPrimitives>>#primitiveChangeClass */
 static void
 primitiveChangeClass(void)
@@ -28523,10 +28453,10 @@ primitiveClockLogAddresses(void)
 	if (v1 & (tagMask())) {
 		goto l7;
 	}
-	if (!(objOop3 >= PERM_SPACE_START())) {
+	if (!(objOop3 >= 0x20000000000LL)) {
 		goto l7;
 	}
-	if (v1 >= PERM_SPACE_START()) {
+	if (v1 >= 0x20000000000LL) {
 		goto l7;
 	}
 	if ((v1 >= GIV(nilObj)) && (v1 <= GIV(trueObj))) {
@@ -28568,10 +28498,10 @@ primitiveClockLogAddresses(void)
 	if (v2 & (tagMask())) {
 		goto l9;
 	}
-	if (!(objOop4 >= PERM_SPACE_START())) {
+	if (!(objOop4 >= 0x20000000000LL)) {
 		goto l9;
 	}
-	if (v2 >= PERM_SPACE_START()) {
+	if (v2 >= 0x20000000000LL) {
 		goto l9;
 	}
 	if ((v2 >= GIV(nilObj)) && (v2 <= GIV(trueObj))) {
@@ -28793,7 +28723,7 @@ primitiveControlVMProfiling(void)
 	/* end pop:thenPushInteger: */
 }
 /*	Primitive. Copy the state of the receiver from the argument.  
-	Fail if receiver and argument are of a different class. 
+	Fail if receiver and argument are of a different class_. 
 	Fail if the receiver or argument are contexts (because of context-to-stack 
 	mapping). Fail if receiver and argument have different lengths (for 
 	indexable objects). 
@@ -28917,10 +28847,10 @@ primitiveCopyObject(void)
 			if (valuePointer & (tagMask())) {
 				goto l5;
 			}
-			if (!(rcvr >= PERM_SPACE_START())) {
+			if (!(rcvr >= 0x20000000000LL)) {
 				goto l5;
 			}
-			if (valuePointer >= PERM_SPACE_START()) {
+			if (valuePointer >= 0x20000000000LL) {
 				goto l5;
 			}
 			if ((valuePointer >= GIV(nilObj)) && (valuePointer <= GIV(trueObj))) {
@@ -28942,9 +28872,9 @@ primitiveCopyObject(void)
 	/* end pop: */
 }
 /*	Crash the VM by indirecting through a null pointer. If the sole argument 
-	is true crash in this thread, and if it is false crash in a new thread. If 
+	is true crash in this_ thread, and if it is false crash in a new_ thread. If 
 	the argument is an integer use the method that implies. 
-	bit 0 = thread to crash in; 1 => this thread 
+	bit 0 = thread to crash in; 1 => this_ thread 
 	bit 1 = crash method; 0 => indirect through null pointer; 1 => call exit */
 /* InterpreterPrimitives>>#primitiveCrashVM */
 EXPORT(sqInt)
@@ -29282,7 +29212,7 @@ primitiveEqualLargeIntegers(void)
 	}
 }
 /*	Computes E raised to the receiver power. 
-	N.B. IMO we should be able to assume the receiver is a float because this 
+	N.B. IMO we should be able to assume the receiver is a float because this_ 
 	primitive is specific to floats. eem 2/13/2017 */
 /* InterpreterPrimitives>>#primitiveExp */
 static void
@@ -29302,8 +29232,8 @@ primitiveExp(void)
 		/* end stackTopPut: */
 	}
 }
-/*	Exponent part of this float. 
-	N.B. IMO we should be able to assume the receiver is a float because this 
+/*	Exponent part of this_ float. 
+	N.B. IMO we should be able to assume the receiver is a float because this_ 
 	primitive is specific to floats. eem 2/13/2017 */
 /* InterpreterPrimitives>>#primitiveExponent */
 static void
@@ -31028,7 +30958,7 @@ primitiveFlushExternalPrimitives(void)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -31142,8 +31072,8 @@ primitiveFormat(void)
 	GIV(stackPointer) = sp;
 	/* end pop:thenPush: */
 }
-/*	Fractional part of this float. 
-	N.B. IMO we should be able to assume the receiver is a float because this 
+/*	Fractional part of this_ float. 
+	N.B. IMO we should be able to assume the receiver is a float because this_ 
 	primitive is specific to floats. eem 2/13/2017 */
 /* InterpreterPrimitives>>#primitiveFractionalPart */
 static void
@@ -31254,7 +31184,7 @@ primitiveFullClosureValue(void)
 		/* begin fetchPointer:ofObject: */
 		methodHeader3 = unsignedLongAt((closureMethod + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ));
 		/* end fetchPointer:ofObject: */
-		assert((isNonImmediate(methodHeader3)) && (((usqInt) methodHeader3 ) < (startOfObjectMemory(getMemoryMap()))));
+		assert(((methodHeader3).isNonImmediate()) && (((usqInt) methodHeader3 ) < (startOfObjectMemory(getMemoryMap()))));
 		cogMethod = ((CogMethod *) methodHeader3 );
 		/* end cogMethodOf: */
 		assertCStackWellAligned();
@@ -31299,13 +31229,13 @@ primitiveFullClosureValue(void)
 			if (closureMethod != GIV(lastUncoggableInterpretedBlockMethod)) {
 				numCopied = (numSlotsOf(blockClosure)) - FullClosureFirstCopiedValueIndex;
 				cogFullBlockMethodnumCopied(closureMethod, numCopied);
-				if ((assert(isNonImmediate(closureMethod)), isCogMethodReference(unsignedLongAt((closureMethod + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ))))) {
+				if ((assert((closureMethod).isNonImmediate()), isCogMethodReference(unsignedLongAt((closureMethod + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ))))) {
 					/* begin executeFullCogBlock:closure:mayContextSwitch: */
 					/* begin cogMethodOf: */
 					/* begin fetchPointer:ofObject: */
 					methodHeader4 = unsignedLongAt((closureMethod + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ));
 					/* end fetchPointer:ofObject: */
-					assert((isNonImmediate(methodHeader4)) && (((usqInt) methodHeader4 ) < (startOfObjectMemory(getMemoryMap()))));
+					assert(((methodHeader4).isNonImmediate()) && (((usqInt) methodHeader4 ) < (startOfObjectMemory(getMemoryMap()))));
 					cogMethod1 = ((CogMethod *) methodHeader4 );
 					/* end cogMethodOf: */
 					assertCStackWellAligned();
@@ -31452,7 +31382,7 @@ primitiveFullClosureValue(void)
 	;
 	/* end activateNewFullClosure:method:numArgs:mayContextSwitch: */
 }
-/*	An exact clone of primitiveFullClosureValue except that this version will 
+/*	An exact clone of primitiveFullClosureValue except that this_ version will 
 	not check for interrupts on stack overflow. It may invoke the garbage 
 	collector but will not switch processes. See 
 	checkForInterruptsMayContextSwitch:  */
@@ -31545,7 +31475,7 @@ primitiveFullClosureValueNoContextSwitch(void)
 		/* begin fetchPointer:ofObject: */
 		methodHeader3 = unsignedLongAt((closureMethod + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ));
 		/* end fetchPointer:ofObject: */
-		assert((isNonImmediate(methodHeader3)) && (((usqInt) methodHeader3 ) < (startOfObjectMemory(getMemoryMap()))));
+		assert(((methodHeader3).isNonImmediate()) && (((usqInt) methodHeader3 ) < (startOfObjectMemory(getMemoryMap()))));
 		cogMethod = ((CogMethod *) methodHeader3 );
 		/* end cogMethodOf: */
 		assertCStackWellAligned();
@@ -31590,13 +31520,13 @@ primitiveFullClosureValueNoContextSwitch(void)
 			if (closureMethod != GIV(lastUncoggableInterpretedBlockMethod)) {
 				numCopied = (numSlotsOf(blockClosure)) - FullClosureFirstCopiedValueIndex;
 				cogFullBlockMethodnumCopied(closureMethod, numCopied);
-				if ((assert(isNonImmediate(closureMethod)), isCogMethodReference(unsignedLongAt((closureMethod + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ))))) {
+				if ((assert((closureMethod).isNonImmediate()), isCogMethodReference(unsignedLongAt((closureMethod + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ))))) {
 					/* begin executeFullCogBlock:closure:mayContextSwitch: */
 					/* begin cogMethodOf: */
 					/* begin fetchPointer:ofObject: */
 					methodHeader4 = unsignedLongAt((closureMethod + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ));
 					/* end fetchPointer:ofObject: */
-					assert((isNonImmediate(methodHeader4)) && (((usqInt) methodHeader4 ) < (startOfObjectMemory(getMemoryMap()))));
+					assert(((methodHeader4).isNonImmediate()) && (((usqInt) methodHeader4 ) < (startOfObjectMemory(getMemoryMap()))));
 					cogMethod1 = ((CogMethod *) methodHeader4 );
 					/* end cogMethodOf: */
 					assertCStackWellAligned();
@@ -31880,7 +31810,7 @@ primitiveFullClosureValueWithArgs(void)
 		/* begin fetchPointer:ofObject: */
 		methodHeader3 = unsignedLongAt((closureMethod + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ));
 		/* end fetchPointer:ofObject: */
-		assert((isNonImmediate(methodHeader3)) && (((usqInt) methodHeader3 ) < (startOfObjectMemory(getMemoryMap()))));
+		assert(((methodHeader3).isNonImmediate()) && (((usqInt) methodHeader3 ) < (startOfObjectMemory(getMemoryMap()))));
 		cogMethod = ((CogMethod *) methodHeader3 );
 		/* end cogMethodOf: */
 		assertCStackWellAligned();
@@ -31925,13 +31855,13 @@ primitiveFullClosureValueWithArgs(void)
 			if (closureMethod != GIV(lastUncoggableInterpretedBlockMethod)) {
 				numCopied = (numSlotsOf(blockClosure)) - FullClosureFirstCopiedValueIndex;
 				cogFullBlockMethodnumCopied(closureMethod, numCopied);
-				if ((assert(isNonImmediate(closureMethod)), isCogMethodReference(unsignedLongAt((closureMethod + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ))))) {
+				if ((assert((closureMethod).isNonImmediate()), isCogMethodReference(unsignedLongAt((closureMethod + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ))))) {
 					/* begin executeFullCogBlock:closure:mayContextSwitch: */
 					/* begin cogMethodOf: */
 					/* begin fetchPointer:ofObject: */
 					methodHeader4 = unsignedLongAt((closureMethod + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ));
 					/* end fetchPointer:ofObject: */
-					assert((isNonImmediate(methodHeader4)) && (((usqInt) methodHeader4 ) < (startOfObjectMemory(getMemoryMap()))));
+					assert(((methodHeader4).isNonImmediate()) && (((usqInt) methodHeader4 ) < (startOfObjectMemory(getMemoryMap()))));
 					cogMethod1 = ((CogMethod *) methodHeader4 );
 					/* end cogMethodOf: */
 					assertCStackWellAligned();
@@ -32515,7 +32445,7 @@ primitiveHashMultiply(void)
 			goto l3;
 		}
 		/* begin isClassOfNonImm:equalTo:compactClassIndex: */
-		assert(!(isImmediate(value)));
+		assert(!((value).isImmediate()));
 		/* begin classIndexOf: */
 		ccIndex = (longAt(value)) & (classIndexMask());
 		/* end classIndexOf: */
@@ -32570,7 +32500,7 @@ primitiveHeartbeatFrequency(void)
 	/* end pop:thenPush: */
 	return 0;
 }
-/*	Return the value of the high resolution clock if this system has any. The 
+/*	Return the value of the high resolution clock if this_ system has any. The 
 	exact frequency of the high res clock is undefined specifically so that we 
 	can use processor dependent instructions (like RDTSC). The only use for 
 	the high res clock is for profiling where we can allocate time based on 
@@ -32595,7 +32525,7 @@ primitiveHighResClock(void)
 	return 0;
 }
 /*	is the receiver/first argument the same object as the (last) argument?. 
-	pop argumentCount because this can be used as a mirror primitive. */
+	pop argumentCount because this_ can be used as a mirror primitive. */
 /* InterpreterPrimitives>>#primitiveIdentical */
 static void
 primitiveIdentical(void)
@@ -32727,7 +32657,7 @@ primitiveImageName(void)
 		/* end isNonImmediate: */
 		if (ok) {
 			/* begin isClassOfNonImm:equalTo: */
-			assert(isNonImmediate(s));
+			assert((s).isNonImmediate());
 			ok = ((longAt(s)) & (classIndexMask())) == ((uint32AtPointer(classOop + 4)) & (identityHashHalfWordMask()));
 			/* end isClassOfNonImm:equalTo: */
 		}
@@ -33227,10 +33157,10 @@ primitiveIntegerAtPut(void)
 				if (valueOop & (tagMask())) {
 					goto l22;
 				}
-				if (!(rcvr >= PERM_SPACE_START())) {
+				if (!(rcvr >= 0x20000000000LL)) {
 					goto l22;
 				}
-				if (valueOop >= PERM_SPACE_START()) {
+				if (valueOop >= 0x20000000000LL) {
 					goto l22;
 				}
 				if ((valueOop >= GIV(nilObj)) && (valueOop <= GIV(trueObj))) {
@@ -33285,10 +33215,10 @@ primitiveIntegerAtPut(void)
 			if (valueOop & (tagMask())) {
 				goto l25;
 			}
-			if (!(rcvr >= PERM_SPACE_START())) {
+			if (!(rcvr >= 0x20000000000LL)) {
 				goto l25;
 			}
-			if (valueOop >= PERM_SPACE_START()) {
+			if (valueOop >= 0x20000000000LL) {
 				goto l25;
 			}
 			if ((valueOop >= GIV(nilObj)) && (valueOop <= GIV(trueObj))) {
@@ -33328,7 +33258,7 @@ primitiveIntegerAtPut(void)
 	}
 }
 /*	Primitive. Answer the number of interrupt checks per milliseconds that we 
-	execute on this machine. This can be used to adjust the sub-msecs profiler 
+	execute on this_ machine. This can be used to adjust the sub-msecs profiler 
 	to check (roughly)  
 	n times per millisecond. */
 /* InterpreterPrimitives>>#primitiveInterruptChecksPerMSec */
@@ -33490,7 +33420,7 @@ primitiveInvokeObjectAsMethod(void)
 		/* end maybeFailForLastObjectOverwrite */
 		if (!GIV(primFailCode) && ((GIV(framePointer) == savedFramePointer) && (!(isMachineCodeIP(((usqInt) (unsignedLongAt(GIV(framePointer) + FoxMethod)) )))))) {
 			if (GIV(stackPointer) != (savedStackPointer + (nArgs * BytesPerWord))) {
-				flag("Would be nice to make this a message send of e.g. unbalancedPrimitive to the current process or context");
+				flag("Would be nice to make this_ a message send of e.g. unbalancedPrimitive to the current process or context");
 				failUnbalancedPrimitive();
 				GIV(stackPointer) = savedStackPointer;
 			}
@@ -33896,7 +33826,7 @@ primitiveLocalMicrosecondClock(void)
 	/* end pop:thenPush: */
 }
 /*	Natural log. 
-	N.B. IMO we should be able to assume the receiver is a float because this 
+	N.B. IMO we should be able to assume the receiver is a float because this_ 
 	primitive is specific to floats. eem 2/13/2017 */
 /* InterpreterPrimitives>>#primitiveLogN */
 static void
@@ -33949,10 +33879,10 @@ primitiveLowSpaceSemaphore(void)
 		if (arg & (tagMask())) {
 			goto l4;
 		}
-		if (!(GIV(specialObjectsOop) >= PERM_SPACE_START())) {
+		if (!(GIV(specialObjectsOop) >= 0x20000000000LL)) {
 			goto l4;
 		}
-		if (arg >= PERM_SPACE_START()) {
+		if (arg >= 0x20000000000LL) {
 			goto l4;
 		}
 		if ((arg >= GIV(nilObj)) && (arg <= GIV(trueObj))) {
@@ -34320,7 +34250,7 @@ primitiveMultiplyLargeIntegers(void)
 		/* end pop:thenPush: */
 	}
 }
-/*	Allocate a new fixed-size instance. Fail if the allocation would leave 
+/*	Allocate a new_ fixed-size instance. Fail if the allocation would leave 
 	less than lowSpaceThreshold bytes free. This *will not* cause a GC :-) */
 /* InterpreterPrimitives>>#primitiveNew */
 static void
@@ -34358,7 +34288,7 @@ primitiveNewMethod(void)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
 	sqInt bytecodeCount;
-	sqInt class;
+	sqInt class_;
 	sqInt classFormat;
 	sqInt classIndex;
 	sqInt err;
@@ -34386,14 +34316,14 @@ primitiveNewMethod(void)
 		/* end primitiveFailFor: */
 		return;
 	}
-	class = unsignedLongAt(GIV(stackPointer) + (2 * BytesPerWord));
+	class_ = unsignedLongAt(GIV(stackPointer) + (2 * BytesPerWord));
 	{
 		assert(((header & 7) == 1));
 		literalCount = (header >> 3) & AlternateHeaderNumLiteralsMask;
 	}
 	size = ((literalCount + LiteralStart) * BytesPerOop) + bytecodeCount;
 	/* begin instantiateCompiledMethodClass:indexableSize: */
-	classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+	classFormat = (unsignedLongAt((class_ + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 	instSpec = (((usqInt) classFormat ) >> (fixedFieldsFieldWidth())) & (formatMask());
 	if (instSpec != (firstCompiledMethodFormat())) {
 		theMethod = null;
@@ -34402,13 +34332,13 @@ primitiveNewMethod(void)
 	numSlots = (size + 7) / 8;
 	instSpec += (8 - size) & 7;
 	{
-		assert(addressCouldBeClassObj(class));
-		classIndex = ((((hash = (uint32AtPointer(class + 4)) & (identityHashHalfWordMask()))) != 0)
+		assert(addressCouldBeClassObj(class_));
+		classIndex = ((((hash = (uint32AtPointer(class_ + 4)) & (identityHashHalfWordMask()))) != 0)
 			 ? hash
-			 : ((objCouldBeClassObj(class))
-				 ? ((((err = enterIntoClassTable(class))) != 0)
+			 : ((objCouldBeClassObj(class_))
+				 ? ((((err = enterIntoClassTable(class_))) != 0)
 					 ? -err
-					 : (/* begin rawHashBitsOf: */ (uint32AtPointer(class + 4)) & (identityHashHalfWordMask()) /* end rawHashBitsOf: */))
+					 : (/* begin rawHashBitsOf: */ (uint32AtPointer(class_ + 4)) & (identityHashHalfWordMask()) /* end rawHashBitsOf: */))
 				 : -PrimErrBadReceiver));
 	}
 	if (classIndex < 0) {
@@ -34481,7 +34411,7 @@ primitiveNewMethod(void)
 	/* end instantiateCompiledMethodClass:indexableSize: */
 	if (!theMethod) {
 		/* begin primitiveFailFor: */
-		reasonCode = ((isCompiledMethodFormat(instSpecOfClassFormat((unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3)))
+		reasonCode = ((isCompiledMethodFormat(instSpecOfClassFormat((unsignedLongAt((class_ + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3)))
 			 ? PrimErrNoMemory
 			 : PrimErrBadReceiver);
 		GIV(primFailCode) = reasonCode;
@@ -34514,10 +34444,10 @@ primitiveNewMethod(void)
 		if (GIV(nilObj) & (tagMask())) {
 			goto l3;
 		}
-		if (!(theMethod >= PERM_SPACE_START())) {
+		if (!(theMethod >= 0x20000000000LL)) {
 			goto l3;
 		}
-		if (GIV(nilObj) >= PERM_SPACE_START()) {
+		if (GIV(nilObj) >= 0x20000000000LL) {
 			goto l3;
 		}
 		if ((GIV(nilObj) >= GIV(nilObj)) && (GIV(nilObj) <= GIV(trueObj))) {
@@ -34538,7 +34468,7 @@ primitiveNewMethod(void)
 	GIV(stackPointer) = sp;
 	/* end pop:thenPush: */
 }
-/*	Allocate a new pinned fixed-size instance. Fail if the allocation would 
+/*	Allocate a new_ pinned fixed-size instance. Fail if the allocation would 
 	leave less than lowSpaceThreshold bytes free. This *will not* cause a GC 
 	:-)  */
 /* InterpreterPrimitives>>#primitiveNewOldSpace */
@@ -34567,7 +34497,7 @@ primitiveNewOldSpace(void)
 		}
 	}
 }
-/*	Allocate a new pinned fixed-size instance. Fail if the allocation would 
+/*	Allocate a new_ pinned fixed-size instance. Fail if the allocation would 
 	leave less than lowSpaceThreshold bytes free. This *will not* cause a GC 
 	:-)  */
 /* InterpreterPrimitives>>#primitiveNewPinned */
@@ -34600,7 +34530,7 @@ primitiveNewPinned(void)
 		}
 	}
 }
-/*	Allocate a new indexable instance. Fail if the allocation would leave less 
+/*	Allocate a new_ indexable instance. Fail if the allocation would leave less 
 	than lowSpaceThreshold bytes free. May cause a GC. */
 /* InterpreterPrimitives>>#primitiveNewWithArg */
 static void
@@ -34650,7 +34580,7 @@ primitiveNewWithArg(void)
 	}
 	/* begin isClassOfNonImm:equalTo:compactClassIndex: */
 	classOop = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassLargePositiveInteger ) << (shiftForWord())) ));
-	assert(!(isImmediate(oop)));
+	assert(!((oop).isImmediate()));
 	/* begin classIndexOf: */
 	ccIndex = (longAt(oop)) & (classIndexMask());
 	/* end classIndexOf: */
@@ -34776,7 +34706,7 @@ primitiveNewWithArgOldSpace(void)
 	}
 	/* begin isClassOfNonImm:equalTo:compactClassIndex: */
 	classOop = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassLargePositiveInteger ) << (shiftForWord())) ));
-	assert(!(isImmediate(oop)));
+	assert(!((oop).isImmediate()));
 	/* begin classIndexOf: */
 	ccIndex = (longAt(oop)) & (classIndexMask());
 	/* end classIndexOf: */
@@ -34892,7 +34822,7 @@ primitiveNewWithArgPinned(void)
 	}
 	/* begin isClassOfNonImm:equalTo:compactClassIndex: */
 	classOop = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassLargePositiveInteger ) << (shiftForWord())) ));
-	assert(!(isImmediate(oop)));
+	assert(!((oop).isImmediate()));
 	/* begin classIndexOf: */
 	ccIndex = (longAt(oop)) & (classIndexMask());
 	/* end classIndexOf: */
@@ -35174,7 +35104,7 @@ primitiveNotEqualLargeIntegers(void)
 	}
 }
 /*	is the receiver/first argument not the same object as the (last) 
-	argument?. pop argumentCount because this can be used as a mirror 
+	argument?. pop argumentCount because this_ can be used as a mirror 
 	primitive.  */
 /* InterpreterPrimitives>>#primitiveNotIdentical */
 static void
@@ -35427,10 +35357,10 @@ primitivePathToUsing(void)
 				if (current & (tagMask())) {
 					goto l1;
 				}
-				if (!(stack >= PERM_SPACE_START())) {
+				if (!(stack >= 0x20000000000LL)) {
 					goto l1;
 				}
-				if (current >= PERM_SPACE_START()) {
+				if (current >= 0x20000000000LL) {
 					goto l1;
 				}
 				if ((current >= GIV(nilObj)) && (current <= GIV(trueObj))) {
@@ -35788,7 +35718,7 @@ primitivePerformInSuperclass(void)
 		/* end maybeFailForLastObjectOverwrite */
 		if (!GIV(primFailCode) && ((GIV(framePointer) == savedFramePointer) && (!(isMachineCodeIP(((usqInt) (unsignedLongAt(GIV(framePointer) + FoxMethod)) )))))) {
 			if (GIV(stackPointer) != (savedStackPointer + (nArgs * BytesPerWord))) {
-				flag("Would be nice to make this a message send of e.g. unbalancedPrimitive to the current process or context");
+				flag("Would be nice to make this_ a message send of e.g. unbalancedPrimitive to the current process or context");
 				failUnbalancedPrimitive();
 				GIV(stackPointer) = savedStackPointer;
 			}
@@ -36012,7 +35942,7 @@ primitivePerformWithArgs(void)
 		/* end maybeFailForLastObjectOverwrite */
 		if (!GIV(primFailCode) && ((GIV(framePointer) == savedFramePointer) && (!(isMachineCodeIP(((usqInt) (unsignedLongAt(GIV(framePointer) + FoxMethod)) )))))) {
 			if (GIV(stackPointer) != (savedStackPointer + (nArgs * BytesPerWord))) {
-				flag("Would be nice to make this a message send of e.g. unbalancedPrimitive to the current process or context");
+				flag("Would be nice to make this_ a message send of e.g. unbalancedPrimitive to the current process or context");
 				failUnbalancedPrimitive();
 				GIV(stackPointer) = savedStackPointer;
 			}
@@ -36314,7 +36244,7 @@ primitiveQuoLargeIntegers(void)
 	}
 }
 /*	Relinquish the processor for up to the given number of microseconds. The 
-	exact behavior of this primitive is platform dependent. */
+	exact behavior of this_ primitive is platform dependent. */
 /* InterpreterPrimitives>>#primitiveRelinquishProcessor */
 static void
 primitiveRelinquishProcessor(void)
@@ -36619,7 +36549,7 @@ primitiveSetOrHasIdentityHash(void)
 	sqInt thisReceiver;
 
 	if (GIV(argumentCount) == 0) {
-		hasHash = (isNonImmediate(unsignedLongAt(GIV(stackPointer)))) && (hasIdentityHash(unsignedLongAt(GIV(stackPointer))));
+		hasHash = ((unsignedLongAt(GIV(stackPointer).isNonImmediate()))) && (hasIdentityHash(unsignedLongAt(GIV(stackPointer))));
 		/* begin pop:thenPushBool: */
 		unsignedLongAtput((sp = GIV(stackPointer) + (((GIV(argumentCount) + 1) - 1) * BytesPerWord)), ((hasHash)
 			 ? GIV(trueObj)
@@ -36952,7 +36882,7 @@ primitiveShortAtPut(void)
 	/* end pop:thenPush: */
 }
 /*	Set the low-water mark for free space. When the free space falls 
-	below this level, the new and new: primitives fail and system attempts 
+	below this_ level, the new_ and new_: primitives fail and system attempts 
 	to allocate space (e.g., to create a method context) cause the low-space 
 	semaphore (if one is registered) to be signalled. */
 /* InterpreterPrimitives>>#primitiveSignalAtBytesLeft */
@@ -36980,7 +36910,7 @@ primitiveSignalAtBytesLeft(void)
 		/* end primitiveFailFor: */
 	}
 }
-/*	N.B. IMO we should be able to assume the receiver is a float because this 
+/*	N.B. IMO we should be able to assume the receiver is a float because this_ 
 	primitive is specific to floats. eem 2/13/2017 */
 /* InterpreterPrimitives>>#primitiveSine */
 static void
@@ -37005,7 +36935,7 @@ static void
 primitiveSize(void)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
-	sqInt class;
+	sqInt class_;
 	sqInt classFormat;
 	sqInt fixedFields;
 	usqLong fmt;
@@ -37071,9 +37001,9 @@ primitiveSize(void)
 		fixedFields = totalLength;
 		goto l4;
 	}
-	class = fetchClassOfNonImm(rcvr);
+	class_ = fetchClassOfNonImm(rcvr);
 	/* begin fixedFieldsOfClassFormat: */
-	classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+	classFormat = (unsignedLongAt((class_ + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 	fixedFields = classFormat & ((1U << (fixedFieldsFieldWidth())) - 1);
 	/* end fixedFieldsOfClassFormat: */
 	l4:
@@ -37722,7 +37652,7 @@ primitiveSmallFloatExp(void)
 	unsignedLongAtput(GIV(stackPointer), aValue);
 	/* end stackTopPut: */
 }
-/*	Answer the exponent part of this float. */
+/*	Answer the exponent part of this_ float. */
 /* InterpreterPrimitives>>#primitiveSmallFloatExponent */
 static void
 primitiveSmallFloatExponent(void)
@@ -38933,12 +38863,12 @@ static void
 primitiveSomeInstance(void)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
-	sqInt class;
+	sqInt class_;
 	sqInt instance;
 	char *sp;
 
-	class = unsignedLongAt(GIV(stackPointer));
-	instance = initialInstanceOf(class);
+	class_ = unsignedLongAt(GIV(stackPointer));
+	instance = initialInstanceOf(class_);
 	if (instance == null) {
 		/* begin primitiveFail */
 		if (!GIV(primFailCode)) {
@@ -38983,7 +38913,7 @@ primitiveSpecialObjectsOop(void)
 	GIV(stackPointer) = sp;
 	/* end pop:thenPush: */
 }
-/*	N.B. IMO we should be able to assume the receiver is a float because this 
+/*	N.B. IMO we should be able to assume the receiver is a float because this_ 
 	primitive is specific to floats. eem 2/13/2017 */
 /* InterpreterPrimitives>>#primitiveSquareRoot */
 static void
@@ -39014,7 +38944,7 @@ static void
 primitiveStringAt(void)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
-	sqInt class;
+	sqInt class_;
 	sqInt classFormat;
 	sqInt fixedFields;
 	usqLong fmt;
@@ -39096,9 +39026,9 @@ primitiveStringAt(void)
 		fixedFields = totalLength;
 		goto l5;
 	}
-	class = fetchClassOfNonImm(rcvr);
+	class_ = fetchClassOfNonImm(rcvr);
 	/* begin fixedFieldsOfClassFormat: */
-	classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+	classFormat = (unsignedLongAt((class_ + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 	fixedFields = classFormat & ((1U << (fixedFieldsFieldWidth())) - 1);
 	/* end fixedFieldsOfClassFormat: */
 	l5:
@@ -39201,7 +39131,7 @@ primitiveStringAtPut(void)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
 	sqInt charToPut;
-	sqInt class;
+	sqInt class_;
 	sqInt classFormat;
 	sqInt fixedFields;
 	usqLong fmt;
@@ -39305,9 +39235,9 @@ primitiveStringAtPut(void)
 				fixedFields = totalLength;
 				goto l5;
 			}
-			class = fetchClassOfNonImm(rcvr);
+			class_ = fetchClassOfNonImm(rcvr);
 			/* begin fixedFieldsOfClassFormat: */
-			classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+			classFormat = (unsignedLongAt((class_ + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 			fixedFields = classFormat & ((1U << (fixedFieldsFieldWidth())) - 1);
 			/* end fixedFieldsOfClassFormat: */
 			l5:
@@ -39340,10 +39270,10 @@ primitiveStringAtPut(void)
 					if (charToPut & (tagMask())) {
 						goto l9;
 					}
-					if (!(rcvr >= PERM_SPACE_START())) {
+					if (!(rcvr >= 0x20000000000LL)) {
 						goto l9;
 					}
-					if (charToPut >= PERM_SPACE_START()) {
+					if (charToPut >= 0x20000000000LL) {
 						goto l9;
 					}
 					if ((charToPut >= GIV(nilObj)) && (charToPut <= GIV(trueObj))) {
@@ -39564,7 +39494,7 @@ primitiveStringReplace(void)
 	sqInt arrayFmt;
 	sqInt arrayInstSize;
 	sqInt arrayLength;
-	sqInt class;
+	sqInt class_;
 	sqInt class2;
 	sqInt classFormat;
 	sqInt classFormat1;
@@ -39729,9 +39659,9 @@ primitiveStringReplace(void)
 			arrayInstSize = arrayLength;
 			goto l13;
 		}
-		class = fetchClassOfNonImm(array);
+		class_ = fetchClassOfNonImm(array);
 		/* begin fixedFieldsOfClassFormat: */
-		classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+		classFormat = (unsignedLongAt((class_ + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 		arrayInstSize = classFormat & ((1U << (fixedFieldsFieldWidth())) - 1);
 		/* end fixedFieldsOfClassFormat: */
 		l13:
@@ -39987,10 +39917,10 @@ primitiveTestAndSetOwnershipOfCriticalSection(void)
 		if (activeProc & (tagMask())) {
 			goto l3;
 		}
-		if (!(criticalSection >= PERM_SPACE_START())) {
+		if (!(criticalSection >= 0x20000000000LL)) {
 			goto l3;
 		}
-		if (activeProc >= PERM_SPACE_START()) {
+		if (activeProc >= 0x20000000000LL) {
 			goto l3;
 		}
 		if ((activeProc >= GIV(nilObj)) && (activeProc <= GIV(trueObj))) {
@@ -40066,7 +39996,7 @@ primitiveTimesTwoPower(void)
 	GIV(stackPointer) = sp;
 	/* end pop:thenPushFloat: */
 }
-/*	N.B. IMO we should be able to assume the receiver is a float because this 
+/*	N.B. IMO we should be able to assume the receiver is a float because this_ 
 	primitive is specific to floats. eem 2/13/2017 */
 /* InterpreterPrimitives>>#primitiveTruncated */
 static void
@@ -40240,7 +40170,7 @@ primitiveUnloadModule(void)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -40332,7 +40262,7 @@ primitiveUnloadModule(void)
 }
 /*	Update the VMs notion of the current timezone. The VM sets its notion 
 	of the timezone once at start-up. If one wants the VM to keep its notion 
-	up-to-date arrange to invoke this primitive periodically. */
+	up-to-date arrange to invoke this_ primitive periodically. */
 /* InterpreterPrimitives>>#primitiveUpdateTimezone */
 static void
 primitiveUpdateTimezone(void)
@@ -40429,10 +40359,10 @@ primitiveUtcAndTimezoneOffset(void)
 		if (valuePointer1 & (tagMask())) {
 			goto l4;
 		}
-		if (!(resultArray >= PERM_SPACE_START())) {
+		if (!(resultArray >= 0x20000000000LL)) {
 			goto l4;
 		}
-		if (valuePointer1 >= PERM_SPACE_START()) {
+		if (valuePointer1 >= 0x20000000000LL) {
 			goto l4;
 		}
 		if ((valuePointer1 >= GIV(nilObj)) && (valuePointer1 <= GIV(trueObj))) {
@@ -40520,10 +40450,10 @@ primitiveUtcWithOffset(void)
 		if (valuePointer1 & (tagMask())) {
 			goto l2;
 		}
-		if (!(resultArray >= PERM_SPACE_START())) {
+		if (!(resultArray >= 0x20000000000LL)) {
 			goto l2;
 		}
-		if (valuePointer1 >= PERM_SPACE_START()) {
+		if (valuePointer1 >= 0x20000000000LL) {
 			goto l2;
 		}
 		if ((valuePointer1 >= GIV(nilObj)) && (valuePointer1 <= GIV(trueObj))) {
@@ -40763,7 +40693,7 @@ signed64BitValueOf(sqInt oop)
 	}
 	/* begin isClassOfNonImm:equalTo:compactClassIndex: */
 	classOop1 = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassLargePositiveInteger ) << (shiftForWord())) ));
-	assert(!(isImmediate(oop)));
+	assert(!((oop).isImmediate()));
 	/* begin classIndexOf: */
 	ccIndex2 = (longAt(oop)) & (classIndexMask());
 	/* end classIndexOf: */
@@ -40780,7 +40710,7 @@ signed64BitValueOf(sqInt oop)
 		negative = 1;
 		/* begin isClassOfNonImm:equalTo:compactClassIndex: */
 		classOop = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassLargeNegativeInteger ) << (shiftForWord())) ));
-		assert(!(isImmediate(oop)));
+		assert(!((oop).isImmediate()));
 		/* begin classIndexOf: */
 		ccIndex = (longAt(oop)) & (classIndexMask());
 		/* end classIndexOf: */
@@ -40870,7 +40800,7 @@ signedMachineIntegerValueOf(sqInt oop)
 	}
 	/* begin isClassOfNonImm:equalTo:compactClassIndex: */
 	classOop1 = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassLargePositiveInteger ) << (shiftForWord())) ));
-	assert(!(isImmediate(oop)));
+	assert(!((oop).isImmediate()));
 	/* begin classIndexOf: */
 	ccIndex2 = (longAt(oop)) & (classIndexMask());
 	/* end classIndexOf: */
@@ -40887,7 +40817,7 @@ signedMachineIntegerValueOf(sqInt oop)
 		negative = 1;
 		/* begin isClassOfNonImm:equalTo:compactClassIndex: */
 		classOop = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassLargeNegativeInteger ) << (shiftForWord())) ));
-		assert(!(isImmediate(oop)));
+		assert(!((oop).isImmediate()));
 		/* begin classIndexOf: */
 		ccIndex = (longAt(oop)) & (classIndexMask());
 		/* end classIndexOf: */
@@ -41120,7 +41050,7 @@ clearLeakMapAndMapAccessibleObjects(void)
 		/* begin allOldSpaceObjectsDo: */
 		/* begin allOldSpaceObjectsFrom:do: */
 		/* begin allOldSpaceEntitiesFrom:do: */
-		assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+		assert((GIV(nilObj).isOld()));
 		prevPrevObj2 = (prevObj2 = null);
 		objOop22 = GIV(nilObj);
 		while (1) {
@@ -41219,7 +41149,7 @@ headerWhileForwardingOf(sqInt aCompiledMethodObjOop)
 	assert(!(isForwarded(aCompiledMethodObjOop)));
 	return long64At(aCompiledMethodObjOop);
 }
-/*	A lenient tester of forwarded class indices for inline cache management in 
+/*	A lenient tester of forwarded class_ indices for inline cache management in 
 	the Cogit. */
 /* Spur64BitCoMemoryManager>>#isForwardedClassIndex: */
 sqInt
@@ -41435,12 +41365,12 @@ bytesInObject(sqInt objOop)
 		 ? BaseHeaderSize + BaseHeaderSize
 		 : BaseHeaderSize));
 }
-/*	Attempt to change the class of the receiver to the argument given that the 
+/*	Attempt to change the class_ of the receiver to the argument given that the 
 	format of the receiver matches the format of the argument. If successful, 
 	answer 0, otherwise answer an error code indicating the reason for 
 	failure.  
 	Fail if the format of the receiver is incompatible with the format of the 
-	argument, or if the argument is a fixed class and the receiver's size 
+	argument, or if the argument is a fixed class_ and the receiver's size 
 	differs from the size 
 	that an instance of the argument should have. */
 /* Spur64BitMemoryManager>>#changeClassOf:to: */
@@ -41648,7 +41578,7 @@ defaultEdenBytes(void)
 	return (7 * 1024) * 1024;
 }
 /*	Answer the exponent of the argument, a SmallFloat. 
-	See section 61-bit Immediate Floats in the SpurMemoryManager class 
+	See section 61-bit Immediate Floats in the SpurMemoryManager class_ 
 	comment. msb lsb  
 	[8expsubset][52mantissa][1s][3tags] */
 /* Spur64BitMemoryManager>>#exponentOfSmallFloat: */
@@ -41811,7 +41741,7 @@ initSegmentBridgeWithBytesat(usqLong numBytes, sqInt address)
 		}
 	}
 }
-/*	Allocate an instance of a variable class, excepting CompiledMethod. */
+/*	Allocate an instance of a variable class_, excepting CompiledMethod. */
 /* Spur64BitMemoryManager>>#instantiateClass:indexableSize:isPinned:isOldSpace: */
 sqInt
 instantiateClassindexableSizeisPinnedisOldSpace(sqInt classObj, usqInt nElements, sqInt isPinned, sqInt isOldSpace)
@@ -41978,14 +41908,14 @@ instantiateClassindexableSizeisPinnedisOldSpace(sqInt classObj, usqInt nElements
 	strictly positive bit patterns. */
 /* Spur64BitMemoryManager>>#integerObjectOf: */
 sqInt
-integerObjectOf(sqInt value)
+Oop::integerObjectOf(sqInt value)
 {
 	return (((usqInt) value ) << (numTagBits())) + 1;
 }
 /*	Translator produces 'oop >> 3' */
 /* Spur64BitMemoryManager>>#integerValueOf: */
 sqInt
-integerValueOf(sqInt oop)
+(sqInt oop).integerValueOf()
 {
 	return (((((usqInt) oop ) >> 63) == 1)
 		 ? ((((((-(numTagBits())) < 0) ? (((usqInt) oop ) >> (-(-(numTagBits())))) : (((usqInt) oop ) << (-(numTagBits()))))) & 0x1FFFFFFFFFFFFFFFLL) - 0x1FFFFFFFFFFFFFFFLL) - 1
@@ -41999,7 +41929,7 @@ isImmediateFloat(sqInt oop)
 }
 /* Spur64BitMemoryManager>>#isIntegerObject: */
 sqInt
-isIntegerObject(sqInt oop)
+(sqInt oop).isSmallInteger()
 {
 	return oop & (smallIntegerTag());
 }
@@ -42049,7 +41979,7 @@ isSmallFloatValue(double aFloat)
 }
 /*	Answer the number of indexable units in the given object. 
 	For a CompiledMethod, the size of the method header (in bytes) 
-	should be subtracted from the result of this method. */
+	should be subtracted from the result of this_ method. */
 /* Spur64BitMemoryManager>>#lengthOf:format: */
 static sqInt NoDbgRegParms
 lengthOfformat(sqInt objOop, sqInt fmt)
@@ -42101,7 +42031,7 @@ numFreeLists(void)
 /*	Reduce the number of indexable fields in objOop, a pointer object, to 
 	nSlots. Convert the 
 	unused residual to a free chunk. Without changes to 
-	numSlotsForShortening:toIndexableSize: this only works for arrayFormat and 
+	numSlotsForShortening:toIndexableSize: this_ only works for arrayFormat and 
 	longFormat objects. 
 	Answer the number of bytes returned to free memory, which may be zero if 
 	no change 
@@ -42152,7 +42082,7 @@ shortentoIndexableSize(sqInt objOop, sqInt indexableSize)
 		 : ((sqInt) (((usqInt) numSlots ) << (shiftForWord())) ) + (((numSlots >= (numSlotsMask()))
 			 ? BaseHeaderSize + BaseHeaderSize
 			 : BaseHeaderSize))));
-	flag("this should update format for 32-bit indexable words; too lazy today.");
+	flag("this_ should update format for 32-bit indexable words; too lazy today.");
 	if (delta == 0) {
 		return 0;
 	}
@@ -42243,10 +42173,10 @@ shortentoIndexableSize(sqInt objOop, sqInt indexableSize)
 		if (copy & (tagMask())) {
 			goto l4;
 		}
-		if (!(objOop >= PERM_SPACE_START())) {
+		if (!(objOop >= 0x20000000000LL)) {
 			goto l4;
 		}
-		if (copy >= PERM_SPACE_START()) {
+		if (copy >= 0x20000000000LL) {
 			goto l4;
 		}
 		if ((copy >= GIV(nilObj)) && (copy <= GIV(trueObj))) {
@@ -42301,7 +42231,7 @@ shortentoIndexableSize(sqInt objOop, sqInt indexableSize)
 }
 /*	Answer the C double precision floating point value of the argument, a 
 	SmallFloat. See section 61-bit Immediate Floats in the SpurMemoryManager 
-	class comment. 
+	class_ comment. 
 	msb lsb  
 	Decode:				[8expsubset][52mantissa][1s][3tags]  
 	shift away tags:		[ 000 ][8expsubset][52mantissa][1s]  
@@ -42558,12 +42488,12 @@ allWeakSurvivorsOnWeakList(void)
 	the remembered set. One might conclude that if the remembered set is full, 
 	then the right thing 
 	to do is simply to tenure everything, emptying the remembered set. But in 
-	some circumstances this 
+	some circumstances this_ 
 	can be counter-productive, and result in the same situation arising soon 
 	after tenuring everything. 
 	Instead, we can try and selectively prune the remembered set, tenuring 
 	only those objects that 
-	are referenced by many objects in the remembered set. That's what this 
+	are referenced by many objects in the remembered set. That's what this_ 
 	algorithm does. It 
 	reference counts young objects referenced from the remembered set, and 
 	then sets a threshold 
@@ -42572,14 +42502,14 @@ allWeakSurvivorsOnWeakList(void)
 	set to shrink, while not tenuring everything. 
 	 
 	Once in a network monitoring application in a galaxy not dissimilar from 
-	the one this code inhabits, 
-	a tree of nodes referring to large integers was in precisely this 
+	the one this_ code inhabits, 
+	a tree of nodes referring to large integers was in precisely this_ 
 	situation. The nodes were old, and 
-	the integers were in new space. Some of the nodes referred to shared 
+	the integers were in new_ space. Some of the nodes referred to shared 
 	numbers, some their own 
-	unique numbers. The numbers were updated frequently. Were new space simply 
+	unique numbers. The numbers were updated frequently. Were new_ space simply 
 	tenured when the 
-	remembered set was full, the remembered set would soon fill up as new 
+	remembered set was full, the remembered set would soon fill up as new_ 
 	numbers were computed. 
 	Only by selectively pruning the remembered set of nodes that shared data, 
 	was a balance achieved 
@@ -42637,7 +42567,7 @@ computeRefCountToShrinkRememberedSet(void)
 			/* begin fetchPointer:ofObject: */
 			referent = unsignedLongAt((elephant + BaseHeaderSize) + ((sqInt) (((usqInt) j2 ) << (shiftForWord())) ));
 			/* end fetchPointer:ofObject: */
-			if (((referent & (tagMask())) == 0) && ((assert(isNonImmediate(referent)), (oopisLessThan(referent, (GIV(memoryMap)->newSpaceEnd))) && (oopisGreaterThanOrEqualTo(referent, (GIV(memoryMap)->newSpaceStart)))))) {
+			if (((referent & (tagMask())) == 0) && ((assert((referent).isNonImmediate()), (oopisLessThan(referent, (GIV(memoryMap)->newSpaceEnd))) && (oopisGreaterThanOrEqualTo(referent, (GIV(memoryMap)->newSpaceStart)))))) {
 				/* begin rtRefCountOf: */
 				refCount = (((usqInt) (longAt(referent)) ) >> (rememberedBitShift())) & MaxRTRefCount;
 				/* end rtRefCountOf: */
@@ -42822,12 +42752,12 @@ copyAndForward(sqInt survivor)
 	if (format == (weakArrayFormat())) {
 		addToWeakList(survivor);
 	}
-	if ((format == 5) && (!(isScavengeSurvivor((assert((isNonImmediate(newLocation)) && (isObjEphemeron(newLocation))), /* begin fetchPointer:ofObject: */ unsignedLongAt((newLocation + BaseHeaderSize) + (0U << (shiftForWord()))) /* end fetchPointer:ofObject: */))))) {
+	if ((format == 5) && (!(isScavengeSurvivor((assert(((newLocation).isNonImmediate()) && (isObjEphemeron(newLocation))), /* begin fetchPointer:ofObject: */ unsignedLongAt((newLocation + BaseHeaderSize) + (0U << (shiftForWord()))) /* end fetchPointer:ofObject: */))))) {
 		addToEphemeronList(survivor);
 	}
 	return newLocation;
 }
-/*	Copy survivor to oldSpace. Answer the new oop of the object.Should be too infrequent to lower icache density of copyAndForward: */
+/*	Copy survivor to oldSpace. Answer the new_ oop of the object.Should be too infrequent to lower icache density of copyAndForward: */
 /* SpurGenerationScavenger>>#copyToOldSpace:bytes:format: */
 static sqInt NoDbgRegParms NeverInline
 copyToOldSpacebytesformat(sqInt survivor, sqInt bytesInObject, sqInt formatOfSurvivor)
@@ -42853,9 +42783,9 @@ copyToOldSpacebytesformat(sqInt survivor, sqInt bytesInObject, sqInt formatOfSur
 		newStart = allocateOldSpaceChunkOfBytes(bytesInObject);
 		if (!newStart) {
 			if (growResult == null) {
-				error("Could not allocate new object in the old space. It was not possible to allocate a new memory segment");
+				error("Could not allocate new_ object in the old space. It was not possible to allocate a new_ memory segment");
 			} else {
-				error("Could not allocate new object in the old space");
+				error("Could not allocate new_ object in the old space");
 			}
 		}
 	}
@@ -42882,7 +42812,7 @@ copyToOldSpacebytesformat(sqInt survivor, sqInt bytesInObject, sqInt formatOfSur
 	if ((formatOfSurvivor <= 5) || (formatOfSurvivor >= (firstCompiledMethodFormat()))) {
 		for (p = BaseHeaderSize; p <= ((bytesInObject - (survivor - startOfSurvivor)) - BytesPerWord); p += BytesPerWord) {
 			field = longAt(survivor + p);
-			if (((field & (tagMask())) == 0) && ((assert(isNonImmediate(field)), (oopisLessThan(field, (GIV(memoryMap)->newSpaceEnd))) && (oopisGreaterThanOrEqualTo(field, (GIV(memoryMap)->newSpaceStart)))))) {
+			if (((field & (tagMask())) == 0) && ((assert((field).isNonImmediate()), (oopisLessThan(field, (GIV(memoryMap)->newSpaceEnd))) && (oopisGreaterThanOrEqualTo(field, (GIV(memoryMap)->newSpaceStart)))))) {
 				remember(getFromOldSpaceRememberedSet(), newOop);
 				return newOop;
 			}
@@ -42945,7 +42875,7 @@ isMaybeOldScavengeSurvivor(sqInt oop)
 	} else {
 		target = oop;
 	}
-	if (target >= PERM_SPACE_START()) {
+	if (target >= 0x20000000000LL) {
 		return 1;
 	}
 	return (((target & (((getMemoryMap())->spaceMaskToUse))) == (((getMemoryMap())->oldSpaceMask)))
@@ -42988,7 +42918,7 @@ isScavengeSurvivor(sqInt oop)
 	} else {
 		target = oop;
 	}
-	return (!(((target & (tagMask())) == 0) && ((assert(isNonImmediate(target)), (oopisLessThan(target, (GIV(memoryMap)->newSpaceEnd))) && (oopisGreaterThanOrEqualTo(target, (GIV(memoryMap)->newSpaceStart))))))) || (oopisGreaterThanOrEqualToandLessThan(target, ((futureSpace()).start), futureSurvivorStart()));
+	return (!(((target & (tagMask())) == 0) && ((assert((target).isNonImmediate()), (oopisLessThan(target, (GIV(memoryMap)->newSpaceEnd))) && (oopisGreaterThanOrEqualTo(target, (GIV(memoryMap)->newSpaceStart))))))) || (oopisGreaterThanOrEqualToandLessThan(target, ((futureSpace()).start), futureSurvivorStart()));
 }
 /* SpurGenerationScavenger>>#is:onWeaklingList: */
 static sqInt NoDbgRegParms
@@ -43065,7 +42995,7 @@ mapOopsFromPermSpace(void)
 		/* end getMemoryMap */
 		trueObjOop = GIV(trueObj);
 		/* begin permSpaceInitialAddress */
-		permSpaceMinAddress = PERM_SPACE_START();
+		permSpaceMinAddress = 0x20000000000LL;
 		/* end permSpaceInitialAddress */
 		/* begin scavengeReferentsOf:additionalTestingBlock: */
 		/* begin simulationOnly: */
@@ -43167,7 +43097,7 @@ mapOopsFromPermSpace(void)
 					referent3 = referent2;
 					/* end followForwarded: */
 				}
-				if ((assert(isNonImmediate(referent3)), (oopisLessThan(referent3, (GIV(memoryMap)->newSpaceEnd))) && (oopisGreaterThanOrEqualTo(referent3, (GIV(memoryMap)->newSpaceStart))))) {
+				if ((assert((referent3).isNonImmediate()), (oopisLessThan(referent3, (GIV(memoryMap)->newSpaceEnd))) && (oopisGreaterThanOrEqualTo(referent3, (GIV(memoryMap)->newSpaceStart))))) {
 					if (oopisGreaterThanOrEqualToandLessThan(referent3, ((futureSpace()).start), futureSurvivorStart())) {
 						newLocation = referent3;
 						foundNewReferentOrIsWeakling2 = 1;
@@ -43267,8 +43197,8 @@ noUnfiredEphemeronsAtEndOfRememberedSet(void)
 	for (i2 = startIndex; i2 < ((self_in_rememberedSetWithIndexDostartingAt->rememberedSetSize)); i2 += 1) {
 		referrer = (self_in_rememberedSetWithIndexDostartingAt->rememberedSetArray)[i2];
 		{
-			if ((assert(isNonImmediate(referrer)), isEphemeronFormat((((usqInt) (longAt(referrer)) ) >> (formatShift())) & (formatMask())))) {
-				if (!(isScavengeSurvivor((assert((isNonImmediate(referrer)) && (isObjEphemeron(referrer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((referrer + BaseHeaderSize) + (0U << (shiftForWord()))) /* end fetchPointer:ofObject: */)))) {
+			if ((assert((referrer).isNonImmediate()), isEphemeronFormat((((usqInt) (longAt(referrer)) ) >> (formatShift())) & (formatMask())))) {
+				if (!(isScavengeSurvivor((assert(((referrer).isNonImmediate()) && (isObjEphemeron(referrer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((referrer + BaseHeaderSize) + (0U << (shiftForWord()))) /* end fetchPointer:ofObject: */)))) {
 					return 0;
 				}
 			}
@@ -43378,15 +43308,15 @@ printRememberedSet(void)
 }
 /*	There are ephemerons to be scavenged. Scavenge them and fire any whose 
 	keys are 
-	still in pastSpace and/or eden. The unscavenged ephemerons in this cycle 
+	still in pastSpace and/or eden. The unscavenged ephemerons in this_ cycle 
 	can only be 
-	fired if all the unscavenged ephemerons in this cycle are firable, because 
+	fired if all the unscavenged ephemerons in this_ cycle are firable, because 
 	references to ephemeron keys from unfired ephemerons should prevent the 
 	ephemerons with 
 	those keys from firing. So scavenge ephemerons with surviving keys, and 
 	only if none 
 	are found, fire ephemerons with unreferenced keys, and scavenge them. Read 
-	the class comment for a more in-depth description of the algorithm. */
+	the class_ comment for a more in-depth description of the algorithm. */
 /* SpurGenerationScavenger>>#processEphemerons */
 static void
 processEphemerons(void)
@@ -43429,7 +43359,7 @@ processEphemerons(void)
 	while (i2 < (((getFromOldSpaceRememberedSet())->numRememberedEphemerons))) {
 		referrer = ((getFromOldSpaceRememberedSet())->rememberedSetArray)[i2];
 		assert(isEphemeron(referrer));
-		if (isScavengeSurvivor((assert((isNonImmediate(referrer)) && (isObjEphemeron(referrer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((referrer + BaseHeaderSize) + (0U << (shiftForWord()))) /* end fetchPointer:ofObject: */))) {
+		if (isScavengeSurvivor((assert(((referrer).isNonImmediate()) && (isObjEphemeron(referrer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((referrer + BaseHeaderSize) + (0U << (shiftForWord()))) /* end fetchPointer:ofObject: */))) {
 			unfiredEphemeronsScavenged2 = 1;
 			hasNewReferents = scavengeReferentsOfFromOldSpace(referrer);
 			if (hasNewReferents) {
@@ -43495,7 +43425,7 @@ processEphemerons(void)
 			ephemeron = ((getFromOldSpaceRememberedSet())->rememberedSetArray)[i];
 			assert(isEphemeron(ephemeron));
 			{
-				assert((isNonImmediate(ephemeron)) && (isObjEphemeron(ephemeron)));
+				assert(((ephemeron).isNonImmediate()) && (isObjEphemeron(ephemeron)));
 				/* begin fetchPointer:ofObject: */
 				key = unsignedLongAt((ephemeron + BaseHeaderSize) + (0U << (shiftForWord())));
 				/* end fetchPointer:ofObject: */
@@ -43518,7 +43448,7 @@ processEphemerons(void)
 				/* begin fireEphemeron: */
 				{
 					/* begin queueMourner: */
-					assert((isNonImmediate(ephemeron)) && (((formatOf(ephemeron)) == (ephemeronFormat())) || ((formatOf(ephemeron)) == (weakArrayFormat()))));
+					assert(((ephemeron).isNonImmediate()) && (((formatOf(ephemeron)) == (ephemeronFormat())) || ((formatOf(ephemeron)) == (weakArrayFormat()))));
 					assert(!(((formatOf(ephemeron)) == (ephemeronFormat())) && (isonObjStack(ephemeron, GIV(mournQueue)))));
 					/* begin push:onObjStack: */
 					objStack = GIV(mournQueue);
@@ -43615,7 +43545,7 @@ processEphemerons(void)
 			ephemeron2 = referent2;
 			/* end followForwarded: */
 			{
-				assert((isNonImmediate(ephemeron2)) && (isMaybeFiredEphemeron(ephemeron2)));
+				assert(((ephemeron2).isNonImmediate()) && (isMaybeFiredEphemeron(ephemeron2)));
 				/* begin fetchPointer:ofObject: */
 				key2 = unsignedLongAt((ephemeron2 + BaseHeaderSize) + (0U << (shiftForWord())));
 				/* end fetchPointer:ofObject: */
@@ -43624,7 +43554,7 @@ processEphemerons(void)
 				/* begin fireEphemeron: */
 				{
 					/* begin queueMourner: */
-					assert((isNonImmediate(ephemeron2)) && (((formatOf(ephemeron2)) == (ephemeronFormat())) || ((formatOf(ephemeron2)) == (weakArrayFormat()))));
+					assert(((ephemeron2).isNonImmediate()) && (((formatOf(ephemeron2)) == (ephemeronFormat())) || ((formatOf(ephemeron2)) == (weakArrayFormat()))));
 					assert(!(((formatOf(ephemeron2)) == (ephemeronFormat())) && (isonObjStack(ephemeron2, GIV(mournQueue)))));
 					/* begin push:onObjStack: */
 					objStack1 = GIV(mournQueue);
@@ -43674,7 +43604,7 @@ processEphemerons(void)
 	}
 }
 /*	Go through the remembered set and the weak list, nilling references to 
-	any objects that didn't survive the scavenge. Read the class comment 
+	any objects that didn't survive the scavenge. Read the class_ comment 
 	for a more in-depth description of the algorithm. */
 /* SpurGenerationScavenger>>#processWeaklings */
 static void
@@ -43842,7 +43772,7 @@ processWeakSurvivor(sqInt weakObj)
 	return hasYoungReferents;
 }
 /*	scavengeFutureSurvivorSpaceStartingAt: does a depth-first traversal of the 
-	new objects starting at the one at initialAddress in futureSurvivorSpace. */
+	new_ objects starting at the one at initialAddress in futureSurvivorSpace. */
 /* SpurGenerationScavenger>>#scavengeFutureSurvivorSpaceStartingAt: */
 static void NoDbgRegParms
 scavengeFutureSurvivorSpaceStartingAt(sqInt initialAddress)
@@ -43865,9 +43795,9 @@ scavengeFutureSurvivorSpaceStartingAt(sqInt initialAddress)
 	};
 }
 /*	This is the inner loop of the main routine, scavenge. It first scavenges 
-	the new objects immediately 
+	the new_ objects immediately 
 	reachable from old ones. Then it scavenges those that are transitively 
-	reachable. If this results in a 
+	reachable. If this_ results in a 
 	promotion, the promotee gets remembered, and it first scavenges objects 
 	adjacent to the promotee, 
 	then scavenges the ones reachable from the promoted. This loop continues 
@@ -43878,7 +43808,7 @@ scavengeFutureSurvivorSpaceStartingAt(sqInt initialAddress)
 	The previousRememberedSetSize 
 	and previousFutureSurvivorSpaceLimit variables ensure that no object is 
 	scanned twice, as well as 
-	detecting closure. If this were not true, some pointers might get 
+	detecting closure. If this_ were not true, some pointers might get 
 	forwarded twice. 
 	 
 	An extension of the algorithm presented in David's original paper is to 
@@ -43887,13 +43817,13 @@ scavengeFutureSurvivorSpaceStartingAt(sqInt initialAddress)
 	are strong references to them. 
 	Ephemerons should fire if their key is not reachable other than from 
 	ephemerons and weak arrays. 
-	Handle this by maintaining a list for weak arrays and a list for 
+	Handle this_ by maintaining a list for weak arrays and a list for 
 	ephemerons, which allow scavenging these 
-	objects once all other objects in new space have been scavenged, hence 
+	objects once all other objects in new_ space have been scavenged, hence 
 	allowing the scavenger to 
-	detect which referents in new space of weak arrays are dead and of 
+	detect which referents in new_ space of weak arrays are dead and of 
 	ephemeron keys are only live due to 
-	ephemerons. Read the class comment for a more in-depth description of the 
+	ephemerons. Read the class_ comment for a more in-depth description of the 
 	algorithm.  */
 /* SpurGenerationScavenger>>#scavengeLoop */
 static void
@@ -44098,7 +44028,7 @@ scavengeReferentsOfFromOldSpace(sqInt referrer)
 				referent = referent2;
 				/* end followForwarded: */
 			}
-			if ((assert(isNonImmediate(referent)), (oopisLessThan(referent, (GIV(memoryMap)->newSpaceEnd))) && (oopisGreaterThanOrEqualTo(referent, (GIV(memoryMap)->newSpaceStart))))) {
+			if ((assert((referent).isNonImmediate()), (oopisLessThan(referent, (GIV(memoryMap)->newSpaceEnd))) && (oopisGreaterThanOrEqualTo(referent, (GIV(memoryMap)->newSpaceStart))))) {
 				if (oopisGreaterThanOrEqualToandLessThan(referent, ((futureSpace()).start), futureSurvivorStart())) {
 					newLocation = referent;
 					foundNewReferentOrIsWeakling2 = 1;
@@ -44123,9 +44053,9 @@ scavengeReferentsOfFromOldSpace(sqInt referrer)
 	/* end scavengeReferentsOf:additionalTestingBlock: */
 }
 /*	scavengeRememberedSetStartingAt: n traverses objects in the remembered 
-	set starting at the nth one. If the object does not refer to any new 
+	set starting at the nth one. If the object does not refer to any new_ 
 	objects, it 
-	is removed from the set. Otherwise, its new referents are scavenged. Defer 
+	is removed from the set. Otherwise, its new_ referents are scavenged. Defer 
 	scavenging ephemerons until after a complete scavenge has been performed, 
 	so that triggered ephemerons can be fired. Move them to the front of the 
 	set and count them in numRememberedEphemerons for later scanning. */
@@ -44146,7 +44076,7 @@ scavengeRememberedSetStartingAt(sqInt n)
 	sourceIndex = (destIndex = n);
 	while (sourceIndex < (((getFromOldSpaceRememberedSet())->rememberedSetSize))) {
 		referrer = ((getFromOldSpaceRememberedSet())->rememberedSetArray)[sourceIndex];
-		if (((assert(isNonImmediate(referrer)), /* begin isEphemeronFormat: */ (format = (((usqInt) (longAt(referrer)) ) >> (formatShift())) & (formatMask())), format == 5 /* end isEphemeronFormat: */)) && (!(isScavengeSurvivor((assert((isNonImmediate(referrer)) && (isObjEphemeron(referrer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((referrer + BaseHeaderSize) + (0U << (shiftForWord()))) /* end fetchPointer:ofObject: */))))) {
+		if (((assert((referrer).isNonImmediate()), /* begin isEphemeronFormat: */ (format = (((usqInt) (longAt(referrer)) ) >> (formatShift())) & (formatMask())), format == 5 /* end isEphemeronFormat: */)) && (!(isScavengeSurvivor((assert(((referrer).isNonImmediate()) && (isObjEphemeron(referrer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((referrer + BaseHeaderSize) + (0U << (shiftForWord()))) /* end fetchPointer:ofObject: */))))) {
 			assert(destIndex >= (((getFromOldSpaceRememberedSet())->numRememberedEphemerons)));
 			/* begin moveNewEphemeron:destinationIndex: */
 			/* begin getFromOldSpaceRememberedSet */
@@ -44244,7 +44174,7 @@ scavengeUnfiredEphemeronsOnEphemeronList(void)
 		ephemeron = referent;
 		/* end followForwarded: */
 		nextCorpseOffset = ((sqInt) (((usqInt) ((uint32AtPointer(ephemeronCorpse + 4)) & (identityHashHalfWordMask())) ) << (formatFieldWidthShift())) ) + ((((usqInt) (longAt(ephemeronCorpse)) ) >> (formatShift())) & (formatMask()));
-		if (isScavengeSurvivor((assert((isNonImmediate(ephemeron)) && (isObjEphemeron(ephemeron))), /* begin fetchPointer:ofObject: */ unsignedLongAt((ephemeron + BaseHeaderSize) + (0U << (shiftForWord()))) /* end fetchPointer:ofObject: */))) {
+		if (isScavengeSurvivor((assert(((ephemeron).isNonImmediate()) && (isObjEphemeron(ephemeron))), /* begin fetchPointer:ofObject: */ unsignedLongAt((ephemeron + BaseHeaderSize) + (0U << (shiftForWord()))) /* end fetchPointer:ofObject: */))) {
 			if (corpseOffset == previousList) {
 				previousList = nextCorpseOffset;
 			} else {
@@ -44284,7 +44214,7 @@ static void NeverInline
 writeScavengeLog(void)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
-	static char *policyNames[] = {"", "by age", "by class", "to shrink rt", "don't tenure", "mark on tenure"};
+	static char *policyNames[] = {"", "by age", "by class_", "to shrink rt", "don't tenure", "mark on tenure"};
 
 	fprintf(GIV(scavengeLog), "scavenge %ld eden bytes: 0x%lx/%ld past bytes: 0x%lx/%ld\n\trem set: %ld redzone: %ld size: %ld\n", GIV(statScavenges), (GIV(scavengeLogRecord).sEdenBytes), (GIV(scavengeLogRecord).sEdenBytes), (GIV(scavengeLogRecord).sPastBytes), (GIV(scavengeLogRecord).sPastBytes), (GIV(scavengeLogRecord).sRememberedSetSize), (GIV(scavengeLogRecord).sRememberedSetRedZone), (GIV(scavengeLogRecord).sRememberedSetLimit));
 	fprintf(GIV(scavengeLog), ((((GIV(scavengeLogRecord).tTenureCriterion)) == TenureToShrinkRT)
@@ -44335,7 +44265,7 @@ getWord32FromFileswap(sqImageFile aFile, sqInt swapFlag)
 		 ? SQ_SWAP_4_BYTES(w)
 		 : w);
 }
-/*	Append aLong to aFile in this platform's 'natural' byte order. aLong is 
+/*	Append aLong to aFile in this_ platform's 'natural' byte order. aLong is 
 	either 32 or 64 bits, 
 	depending on ObjectMemory. (Bytes will be swapped, if necessary, when the 
 	image is read 
@@ -44356,7 +44286,7 @@ putLongtoFile(sqInt aLong, sqImageFile aFile)
 	}
 	/* end success: */
 }
-/*	Append the 16-bit aShort to aFile in this platform's 'natural' byte order. 
+/*	Append the 16-bit aShort to aFile in this_ platform's 'natural' byte order. 
 	(Bytes will be swapped, if necessary, when the image is read on a 
 	different platform.) Set successFlag to false if the write fails. */
 /* SpurImageWriter>>#putShort:toFile: */
@@ -44375,7 +44305,7 @@ putShorttoFile(short aShort, sqImageFile aFile)
 	}
 	/* end success: */
 }
-/*	Append aWord32 to aFile in this platform's 'natural' byte order. aWord32 
+/*	Append aWord32 to aFile in this_ platform's 'natural' byte order. aWord32 
 	is 32 bits, 
 	depending on ObjectMemory. (Bytes will be swapped, if necessary, when the 
 	image is read 
@@ -44540,7 +44470,7 @@ writeSegmentnextSegmenttoFile(SpurSegmentInfo *segment, SpurSegmentInfo *nextSeg
 	eden 
 	past 
 	old 
-	but this is tricky becaus ethe order in memory is 
+	but this_ is tricky becaus ethe order in memory is 
 	past 
 	eden 
 	old */
@@ -44656,7 +44586,7 @@ activeAndDeferredScan(sqInt anEphemeron)
 	sqInt key;
 
 	assert(isEphemeron(anEphemeron));
-	if ((isImmediate((assert((isNonImmediate(anEphemeron)) && (isObjEphemeron(anEphemeron))), /* begin fetchPointer:ofObject: */ (key = unsignedLongAt((anEphemeron + BaseHeaderSize) + (0U << (shiftForWord())))) /* end fetchPointer:ofObject: */))) || ((((((usqInt) (longAt(key)) ) >> (markedBitFullShift())) & 1) != 0) || (((key & (tagMask())) == 0) && (key >= PERM_SPACE_START())))) {
+	if ((((assert(((anEphemeron).isImmediate().isNonImmediate()) && (isObjEphemeron(anEphemeron))), /* begin fetchPointer:ofObject: */ (key = unsignedLongAt((anEphemeron + BaseHeaderSize) + (0U << (shiftForWord())))) /* end fetchPointer:ofObject: */))) || ((((((usqInt) (longAt(key)) ) >> (markedBitFullShift())) & 1) != 0) || (((key & (tagMask())) == 0) && (key >= 0x20000000000LL)))) {
 		return 0;
 	}
 	return pushOnUnscannedEphemeronsStack(anEphemeron);
@@ -45032,7 +44962,7 @@ allInstancesOf(sqInt aClass)
 		/* begin allHeapEntitiesDo: */
 		/* begin allOldSpaceEntitiesDo: */
 		/* begin allOldSpaceEntitiesFrom:do: */
-		assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+		assert((GIV(nilObj).isOld()));
 		prevPrevObj2 = (prevObj2 = null);
 		objOop2 = GIV(nilObj);
 		while (1) {
@@ -45218,7 +45148,7 @@ allInstancesOf(sqInt aClass)
 		/* begin allHeapEntitiesDo: */
 		/* begin allOldSpaceEntitiesDo: */
 		/* begin allOldSpaceEntitiesFrom:do: */
-		assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+		assert((GIV(nilObj).isOld()));
 		prevPrevObj22 = (prevObj22 = null);
 		objOop22 = GIV(nilObj);
 		while (1) {
@@ -45588,7 +45518,7 @@ allObjects(void)
 	/* begin allHeapEntitiesDo: */
 	/* begin allOldSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop2 = GIV(nilObj);
 	while (1) {
@@ -45911,7 +45841,7 @@ allObjectsUnmarked(void)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -45997,7 +45927,7 @@ allOldMarkedWeakObjectsOnWeaklingStack(void)
 
 	/* begin allOldSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj = (prevObj = null);
 	objOop = GIV(nilObj);
 	while (1) {
@@ -46363,7 +46293,7 @@ allocatePinnedSlots(sqInt nSlots)
 	Try and allocate in a segment that already includes pinned objects. 
 	If the option #avoidSearchingSegmentsWithPinnedObjects is true, we don't 
 	do the search. 
-	For some users this can have a good impact when having many pinned objects 
+	For some users this_ can have a good impact when having many pinned objects 
 	used in FFI calls. 
 	The header of the result will have been filled-in but not the contents. */
 /* SpurMemoryManager>>#allocateSlotsForPinningInOldSpace:bytes:format:classIndex: */
@@ -46879,7 +46809,7 @@ allStrongSlotsOfWeaklingAreMarked(sqInt aWeakling)
 	for (i = 0, iLimiT = ((assert((formatOf(aWeakling)) == (weakArrayFormat())), /* begin fixedFieldsOfClass: */ (objOop = fetchClassOfNonImm(aWeakling)), /* begin fixedFieldsOfClassFormat: */ (classFormat = (unsignedLongAt((objOop + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3), classFormat & ((1U << (fixedFieldsFieldWidth())) - 1) /* end fixedFieldsOfClassFormat: */ /* end fixedFieldsOfClass: */)) - 1; i <= iLimiT; i += 1) {
 		referent = unsignedLongAt((aWeakling + BaseHeaderSize) + ((sqInt) (((usqInt) i ) << (shiftForWord())) ));
 		if ((referent & (tagMask())) == 0) {
-			if (!((((((usqInt) (longAt(referent)) ) >> (markedBitFullShift())) & 1) != 0) || (((referent & (tagMask())) == 0) && (referent >= PERM_SPACE_START())))) {
+			if (!((((((usqInt) (longAt(referent)) ) >> (markedBitFullShift())) & 1) != 0) || (((referent & (tagMask())) == 0) && (referent >= 0x20000000000LL)))) {
 				return 0;
 			}
 		}
@@ -46896,12 +46826,12 @@ allUnscannedEphemeronsAreActive(void)
 
 	for (p = (GIV(unscannedEphemerons)->start); p <= (((GIV(unscannedEphemerons)->top)) - BytesPerOop); p += BytesPerOop) {
 		{
-			assert((isNonImmediate(longAt(p))) && (isMaybeFiredEphemeron(longAt(p))));
+			assert(((longAt(p).isNonImmediate())) && (isMaybeFiredEphemeron(longAt(p))));
 			/* begin fetchPointer:ofObject: */
 			key = unsignedLongAt(((longAt(p)) + BaseHeaderSize) + (0U << (shiftForWord())));
 			/* end fetchPointer:ofObject: */
 		}
-		if ((key & (tagMask())) || ((((((usqInt) (longAt(key)) ) >> (markedBitFullShift())) & 1) != 0) || (((key & (tagMask())) == 0) && (key >= PERM_SPACE_START())))) {
+		if ((key & (tagMask())) || ((((((usqInt) (longAt(key)) ) >> (markedBitFullShift())) & 1) != 0) || (((key & (tagMask())) == 0) && (key >= 0x20000000000LL)))) {
 			return 0;
 		}
 	};
@@ -47322,7 +47252,7 @@ becomewithtwoWaycopyHash(sqInt array1, sqInt array2, sqInt twoWayFlag, sqInt cop
 				if ((o2ClassIndex != 0) && ((classAtIndex(o2ClassIndex)) != obj2)) {
 					o2ClassIndex = 0;
 				}
-				if ((((obj1 & (tagMask())) == 0) && (obj1 >= PERM_SPACE_START())) || (((obj2 & (tagMask())) == 0) && (obj2 >= PERM_SPACE_START()))) {
+				if ((((obj1 & (tagMask())) == 0) && (obj1 >= 0x20000000000LL)) || (((obj2 & (tagMask())) == 0) && (obj2 >= 0x20000000000LL))) {
 					GIV(becomeEffectsFlags) = GIV(becomeEffectsFlags) | BecamePermanentObject;
 				}
 				if (((numSlotsOf(obj1)) == (numSlotsOf(obj2))) && ((o1ClassIndex == 0) && (o2ClassIndex == 0))) {
@@ -47456,10 +47386,10 @@ becomewithtwoWaycopyHash(sqInt array1, sqInt array2, sqInt twoWayFlag, sqInt cop
 				if (obj22 & (tagMask())) {
 					goto l21;
 				}
-				if (!(obj12 >= PERM_SPACE_START())) {
+				if (!(obj12 >= 0x20000000000LL)) {
 					goto l21;
 				}
-				if (obj22 >= PERM_SPACE_START()) {
+				if (obj22 >= 0x20000000000LL) {
 					goto l21;
 				}
 				if ((obj22 >= GIV(nilObj)) && (obj22 <= GIV(trueObj))) {
@@ -47486,7 +47416,7 @@ becomewithtwoWaycopyHash(sqInt array1, sqInt array2, sqInt twoWayFlag, sqInt cop
 					/* end setHashBitsOf:to: */
 				}
 				assert(!(isOopForwarded(obj22)));
-				if (obj12 >= PERM_SPACE_START()) {
+				if (obj12 >= 0x20000000000LL) {
 					GIV(becomeEffectsFlags) = GIV(becomeEffectsFlags) | BecamePermanentObject;
 				}
 				if (((obj12 & ((GIV(memoryMap)->spaceMaskToUse))) == ((GIV(memoryMap)->oldSpaceMask))) && (((obj22 & (tagMask())) == 0) && (((obj22 & ((GIV(memoryMap)->spaceMaskToUse))) == ((GIV(memoryMap)->newSpaceMask))) && (obj22 >= ((GIV(memoryMap)->newSpaceStart)))))) {
@@ -47530,7 +47460,7 @@ becomewithtwoWaycopyHash(sqInt array1, sqInt array2, sqInt twoWayFlag, sqInt cop
 	runLeakCheckerFor(GCModeBecome);
 	return PrimNoErr;
 }
-/*	If this object is old, mark it as a root (because a new object 
+/*	If this_ object is old, mark it as a root (because a new_ object 
 	may be stored into it). */
 /* SpurMemoryManager>>#beRootIfOld: */
 void
@@ -47874,7 +47804,7 @@ checkHeapFreeSpaceIntegrity(void)
 	/* end allNewSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop2 = GIV(nilObj);
 	while (1) {
@@ -48167,7 +48097,7 @@ checkHeapIntegrityclassIndicesShouldBeValid(sqInt excludeUnmarkedObjs, sqInt cla
 						{
 							print("object leak in ");
 							printHex(objOop);
-							print(" invalid class index ");
+							print(" invalid class_ index ");
 							printHex(classIndex);
 							print(" -> ");
 							print(((classOop == null)
@@ -48288,7 +48218,7 @@ checkHeapIntegrityclassIndicesShouldBeValid(sqInt excludeUnmarkedObjs, sqInt cla
 						{
 							print("object leak in ");
 							printHex(objOop);
-							print(" invalid class index ");
+							print(" invalid class_ index ");
 							printHex(classIndex);
 							print(" -> ");
 							print(((classOop == null)
@@ -48344,7 +48274,7 @@ checkHeapIntegrityclassIndicesShouldBeValid(sqInt excludeUnmarkedObjs, sqInt cla
 	/* end allNewSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop2 = GIV(nilObj);
 	while (1) {
@@ -48450,7 +48380,7 @@ checkHeapIntegrityclassIndicesShouldBeValid(sqInt excludeUnmarkedObjs, sqInt cla
 							}
 							ok = 0;
 						}
-						if (((fieldOop & (tagMask())) == 0) && ((assert(isNonImmediate(fieldOop)), (oopisLessThan(fieldOop, (GIV(memoryMap)->newSpaceEnd))) && (oopisGreaterThanOrEqualTo(fieldOop, (GIV(memoryMap)->newSpaceStart)))))) {
+						if (((fieldOop & (tagMask())) == 0) && ((assert((fieldOop).isNonImmediate()), (oopisLessThan(fieldOop, (GIV(memoryMap)->newSpaceEnd))) && (oopisGreaterThanOrEqualTo(fieldOop, (GIV(memoryMap)->newSpaceStart)))))) {
 							containsYoung = 1;
 						}
 					} else {
@@ -48476,7 +48406,7 @@ checkHeapIntegrityclassIndicesShouldBeValid(sqInt excludeUnmarkedObjs, sqInt cla
 							{
 								print("object leak in ");
 								printHex(objOop2);
-								print(" invalid class index ");
+								print(" invalid class_ index ");
 								printHex(classIndex);
 								print(" -> ");
 								print(((classOop == null)
@@ -48505,7 +48435,7 @@ checkHeapIntegrityclassIndicesShouldBeValid(sqInt excludeUnmarkedObjs, sqInt cla
 									}
 									ok = 0;
 								}
-								if (((fieldOop & (tagMask())) == 0) && ((assert(isNonImmediate(fieldOop)), (oopisLessThan(fieldOop, (GIV(memoryMap)->newSpaceEnd))) && (oopisGreaterThanOrEqualTo(fieldOop, (GIV(memoryMap)->newSpaceStart)))))) {
+								if (((fieldOop & (tagMask())) == 0) && ((assert((fieldOop).isNonImmediate()), (oopisLessThan(fieldOop, (GIV(memoryMap)->newSpaceEnd))) && (oopisGreaterThanOrEqualTo(fieldOop, (GIV(memoryMap)->newSpaceStart)))))) {
 									containsYoung = 1;
 								}
 							}
@@ -48720,7 +48650,7 @@ checkHeapIntegrityclassIndicesShouldBeValid(sqInt excludeUnmarkedObjs, sqInt cla
 	return ok;
 }
 /*	Verify that the given oop is legitimate. Check address, header, and size 
-	but not class. 
+	but not class_. 
 	Answer true if OK. Otherwise print reason and answer false. */
 /* SpurMemoryManager>>#checkOkayOop: */
 sqInt
@@ -48804,7 +48734,7 @@ checkOkayOop(usqInt oop)
 	}
 	return 1;
 }
-/*	Attempt to verify that the given obj has a reasonable behavior. The class 
+/*	Attempt to verify that the given obj has a reasonable behavior. The class_ 
 	must be a 
 	valid, non-integer oop and must not be nilObj. It must be a pointers 
 	object with three 
@@ -48826,7 +48756,7 @@ checkOopHasOkayClass(usqInt obj)
 		{
 			print("obj ");
 			printHex(obj);
-			print(" an immediate is not a valid class or behavior");
+			print(" an immediate is not a valid class_ or behavior");
 			/* begin cr */
 			print("\n");
 			/* end cr */
@@ -48837,7 +48767,7 @@ checkOopHasOkayClass(usqInt obj)
 		{
 			print("obj ");
 			printHex(obj);
-			print(" class obj is not ok");
+			print(" class_ obj is not ok");
 			/* begin cr */
 			print("\n");
 			/* end cr */
@@ -48848,7 +48778,7 @@ checkOopHasOkayClass(usqInt obj)
 		{
 			print("obj ");
 			printHex(obj);
-			print(" a class (behavior) must be a pointers object of size >= 3");
+			print(" a class_ (behavior) must be a pointers object of size >= 3");
 			/* begin cr */
 			print("\n");
 			/* end cr */
@@ -48864,7 +48794,7 @@ checkOopHasOkayClass(usqInt obj)
 		{
 			print("obj ");
 			printHex(obj);
-			print(" and its class (behavior) formats differ");
+			print(" and its class_ (behavior) formats differ");
 			/* begin cr */
 			print("\n");
 			/* end cr */
@@ -48958,7 +48888,7 @@ classAtIndexput(sqInt classIndex, sqInt objOop)
 	classTablePage = unsignedLongAt((GIV(hiddenRootsObj) + BaseHeaderSize) + ((sqInt) (((usqInt) fieldIndex ) << (shiftForWord())) ));
 	/* end fetchPointer:ofObject: */
 	if (classTablePage == GIV(nilObj)) {
-		error("attempt to add class to empty page");
+		error("attempt to add class_ to empty page");
 	}
 	/* begin storePointer:ofObject:withValue: */
 	fieldIndex1 = classIndex & ((1U << (classTableMajorIndexShift())) - 1);
@@ -48982,10 +48912,10 @@ classAtIndexput(sqInt classIndex, sqInt objOop)
 	if (objOop & (tagMask())) {
 		goto l2;
 	}
-	if (!(classTablePage >= PERM_SPACE_START())) {
+	if (!(classTablePage >= 0x20000000000LL)) {
 		goto l2;
 	}
-	if (objOop >= PERM_SPACE_START()) {
+	if (objOop >= 0x20000000000LL) {
 		goto l2;
 	}
 	if ((objOop >= GIV(nilObj)) && (objOop <= GIV(trueObj))) {
@@ -49074,7 +49004,7 @@ classFloat(void)
 	return unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassFloat ) << (shiftForWord())) ));
 	/* end fetchPointer:ofObject: */
 }
-/*	Clear any odd bits from the format so that it matches its class's format */
+/*	Clear any odd bits from the format so that it matches its class_'s format */
 /* SpurMemoryManager>>#classFormatForInstanceFormat: */
 static sqInt NoDbgRegParms
 classFormatForInstanceFormat(sqInt aFormat)
@@ -49089,7 +49019,7 @@ classFormatForInstanceFormat(sqInt aFormat)
 		 ? aFormat & -4
 		 : aFormat & -2);
 }
-/*	22-bit class mask => ~ 4M classes */
+/*	22-bit class_ mask => ~ 4M classes */
 /* SpurMemoryManager>>#classIndexFieldWidth */
 sqInt
 classIndexFieldWidth(void)
@@ -49108,7 +49038,7 @@ classIndexFieldWidth(void)
 	the hope that the 
 	32-bit access will be quicker on 64-bits by virtue of fetching half the 
 	bits. But experiments 
-	show that doing this does not produce any increase; at least any signal is 
+	show that doing this_ does not produce any increase; at least any signal is 
 	lost in the noise. */
 /* SpurMemoryManager>>#classIndexOf: */
 sqInt
@@ -49217,7 +49147,7 @@ classTableRootObj(void)
 
 	return GIV(hiddenRootsObj);
 }
-/*	Answer the number of slots for class table pages in the hidden root 
+/*	Answer the number of slots for class_ table pages in the hidden root 
 	object.  */
 /* SpurMemoryManager>>#classTableRootSlots */
 static sqInt
@@ -49414,7 +49344,7 @@ clearLeakMapAndMapAccessibleFreeSpace(void)
 
 	clearHeapMap();
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj = (prevObj = null);
 	objOop2 = GIV(nilObj);
 	while (1) {
@@ -49576,7 +49506,7 @@ clone(sqInt objOop)
 	return cloneshouldAllocateInPermSpace(objOop, 0);
 }
 /*	Attention: the shouldAllocateInPermSpace is only used by the become, as it 
-	handles adding or not the new perm object to the remembered sets */
+	handles adding or not the new_ perm object to the remembered sets */
 /* SpurMemoryManager>>#clone:shouldAllocateInPermSpace: */
 static sqInt NoDbgRegParms
 cloneshouldAllocateInPermSpace(sqInt objOop, sqInt shouldAllocateInPermSpace)
@@ -49875,7 +49805,7 @@ countMarkedAndUnmarkdObjects(sqInt printFlags)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -49976,7 +49906,7 @@ countMarkedAndUnmarkdObjects(sqInt printFlags)
 /*	Compute the current allocated bytes since last set. 
 	This is the cumulative total in statAllocatedBytes plus the allocation 
 	since the last scavenge.Slang infers the type of the difference between two unsigned variables as 
-	signed. In this case we want it to be unsigned. */
+	signed. In this_ case we want it to be unsigned. */
 /* SpurMemoryManager>>#currentAllocatedBytes */
 static usqLong
 currentAllocatedBytes(void)
@@ -50002,7 +49932,7 @@ doMoveToPermSpaceaddToRememberedSet(sqInt objOop, sqInt shouldAddToRememberedSet
 	sqInt i;
 	sqInt newObj;
 	sqInt numLiterals;
-	usqInt numPointerSlots;
+	sqInt numPointerSlots;
 	usqInt numSlots;
 	usqInt numSlots2;
 	usqInt numSlots3;
@@ -50185,10 +50115,10 @@ doMoveToPermSpaceaddToRememberedSet(sqInt objOop, sqInt shouldAddToRememberedSet
 	if (newObj & (tagMask())) {
 		goto l12;
 	}
-	if (!(objOop >= PERM_SPACE_START())) {
+	if (!(objOop >= 0x20000000000LL)) {
 		goto l12;
 	}
-	if (newObj >= PERM_SPACE_START()) {
+	if (newObj >= 0x20000000000LL) {
 		goto l12;
 	}
 	if ((newObj >= GIV(nilObj)) && (newObj <= GIV(trueObj))) {
@@ -50438,7 +50368,7 @@ doValidateObjectMemory(void)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -50531,12 +50461,12 @@ doValidateObjectMemory(void)
 	/* end allObjectsDo: */
 	return returnCode;
 }
-/*	Instantiate an instance of a compact class. ee stands for execution engine 
-	and implies that this allocation will *NOT* cause a GC. N.B. the 
+/*	Instantiate an instance of a compact class_. ee stands for execution engine 
+	and implies that this_ allocation will *NOT* cause a GC. N.B. the 
 	instantiated object 
 	IS NOT FILLED and must be completed before returning it to Smalltalk. 
-	Since this 
-	call is used in routines that do just that we are safe. Break this rule 
+	Since this_ 
+	call is used in routines that do just that we are safe. Break this_ rule 
 	and die in GC. 
 	Result is guaranteed to be young. */
 /* SpurMemoryManager>>#eeInstantiateClassIndex:format:numSlots: */
@@ -50692,10 +50622,10 @@ ensureRoomOnObjStackAt(sqInt objStackRootIndex)
 			if (freeOrNewPage & (tagMask())) {
 				goto l8;
 			}
-			if (!(GIV(hiddenRootsObj) >= PERM_SPACE_START())) {
+			if (!(GIV(hiddenRootsObj) >= 0x20000000000LL)) {
 				goto l8;
 			}
-			if (freeOrNewPage >= PERM_SPACE_START()) {
+			if (freeOrNewPage >= 0x20000000000LL) {
 				goto l8;
 			}
 			if ((freeOrNewPage >= GIV(nilObj)) && (freeOrNewPage <= GIV(trueObj))) {
@@ -50734,10 +50664,10 @@ ensureRoomOnObjStackAt(sqInt objStackRootIndex)
 		if (freeOrNewPage & (tagMask())) {
 			goto l11;
 		}
-		if (!(GIV(hiddenRootsObj) >= PERM_SPACE_START())) {
+		if (!(GIV(hiddenRootsObj) >= 0x20000000000LL)) {
 			goto l11;
 		}
-		if (freeOrNewPage >= PERM_SPACE_START()) {
+		if (freeOrNewPage >= 0x20000000000LL) {
 			goto l11;
 		}
 		if ((freeOrNewPage >= GIV(nilObj)) && (freeOrNewPage <= GIV(trueObj))) {
@@ -50777,7 +50707,7 @@ ensureRoomOnObjStackAt(sqInt objStackRootIndex)
 	assert(isValidObjStackAt(objStackRootIndex));
 	return stackOrNil;
 }
-/*	Enter aBehavior into the class table and answer 0. Otherwise answer a 
+/*	Enter aBehavior into the class_ table and answer 0. Otherwise answer a 
 	primitive failure code. */
 /* SpurMemoryManager>>#enterIntoClassTable: */
 static sqInt NoDbgRegParms
@@ -50843,10 +50773,10 @@ enterIntoClassTable(sqInt aBehavior)
 			if (page & (tagMask())) {
 				goto l2;
 			}
-			if (!(GIV(hiddenRootsObj) >= PERM_SPACE_START())) {
+			if (!(GIV(hiddenRootsObj) >= 0x20000000000LL)) {
 				goto l2;
 			}
-			if (page >= PERM_SPACE_START()) {
+			if (page >= 0x20000000000LL) {
 				goto l2;
 			}
 			if ((page >= GIV(nilObj)) && (page <= GIV(trueObj))) {
@@ -50889,10 +50819,10 @@ enterIntoClassTable(sqInt aBehavior)
 				if (aBehavior & (tagMask())) {
 					goto l4;
 				}
-				if (!(page >= PERM_SPACE_START())) {
+				if (!(page >= 0x20000000000LL)) {
 					goto l4;
 				}
-				if (aBehavior >= PERM_SPACE_START()) {
+				if (aBehavior >= 0x20000000000LL) {
 					goto l4;
 				}
 				if ((aBehavior >= GIV(nilObj)) && (aBehavior <= GIV(trueObj))) {
@@ -51085,16 +51015,16 @@ fetchClassOfNonImm(sqInt objOop)
 	If the tagBits are 010, the oop is a Character. 
 	If the tagBits are 101, the oop is a SmallFloat. 
 	Otherwise it's tagBits are 000, the oop is an address and we fetch the 
-	class from the header 
+	class_ from the header 
 	 
 	In 32 bits, the tagBits are variable. 
 	If the tagBits are X1, the oop is a SmallInteger, and using the tagMask 
 	will return 1 or 3. 
-	Therefore the SmallInteger class is installed in both indexes 1 and 3. 
-	If the tagBits are 10, the oop is a character and the class is installed 
+	Therefore the SmallInteger class_ is installed in both indexes 1 and 3. 
+	If the tagBits are 10, the oop is a character and the class_ is installed 
 	in index 2. 
 	Otherwise the last tagBits are 00, which is an address so we fetch the 
-	class from the header. */
+	class_ from the header. */
 /* SpurMemoryManager>>#fetchClassOf: */
 sqInt
 fetchClassOf(sqInt oop)
@@ -51316,7 +51246,7 @@ findStringBeginningWith(char *aCString)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -51541,7 +51471,7 @@ findString(char *aCString)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -51689,7 +51619,7 @@ firstFixedField(sqInt objOop)
 	i.e. formats 2,3 & 5. 
 	The first indexable field for formats 2 & 5 is the slot count (by 
 	convention, even though that's off the end 
-	of the object). For 3 we must go to the class. */
+	of the object). For 3 we must go to the class_. */
 /* SpurMemoryManager>>#firstIndexableField: */
 void *
 firstIndexableField(sqInt objOop)
@@ -51744,7 +51674,7 @@ fixedFieldsOfClass(sqInt objOop)
 static sqInt NoDbgRegParms
 fixedFieldsOfformatlength(sqInt objOop, sqInt fmt, sqInt wordLength)
 {
-	sqInt class;
+	sqInt class_;
 	sqInt classFormat;
 
 	if ((fmt >= (sixtyFourBitIndexableFormat())) || (fmt == 2)) {
@@ -51753,9 +51683,9 @@ fixedFieldsOfformatlength(sqInt objOop, sqInt fmt, sqInt wordLength)
 	if (fmt < 2) {
 		return wordLength;
 	}
-	class = fetchClassOfNonImm(objOop);
+	class_ = fetchClassOfNonImm(objOop);
 	/* begin fixedFieldsOfClassFormat: */
-	classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+	classFormat = (unsignedLongAt((class_ + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 	return classFormat & ((1U << (fixedFieldsFieldWidth())) - 1);
 	/* end fixedFieldsOfClassFormat: */
 }
@@ -51796,10 +51726,10 @@ fixFollowedFieldofObjectwithInitialValue(sqInt fieldIndex, sqInt anObject, sqInt
 	if (objOop & (tagMask())) {
 		goto l2;
 	}
-	if (!(anObject >= PERM_SPACE_START())) {
+	if (!(anObject >= 0x20000000000LL)) {
 		goto l2;
 	}
-	if (objOop >= PERM_SPACE_START()) {
+	if (objOop >= 0x20000000000LL) {
 		goto l2;
 	}
 	if ((objOop >= GIV(nilObj)) && (objOop <= GIV(trueObj))) {
@@ -51889,10 +51819,10 @@ followForwardedObjectFieldstoDepth(sqInt objOop, sqInt depth)
 				if (oop & (tagMask())) {
 					goto l5;
 				}
-				if (!(objOop >= PERM_SPACE_START())) {
+				if (!(objOop >= 0x20000000000LL)) {
 					goto l5;
 				}
-				if (oop >= PERM_SPACE_START()) {
+				if (oop >= 0x20000000000LL) {
 					goto l5;
 				}
 				if ((oop >= GIV(nilObj)) && (oop <= GIV(trueObj))) {
@@ -51959,7 +51889,7 @@ followObjFieldofObject(sqInt fieldIndex, sqInt anObject)
 	/* begin fetchPointer:ofObject: */
 	objOop = unsignedLongAt((anObject + BaseHeaderSize) + ((sqInt) (((usqInt) fieldIndex ) << (shiftForWord())) ));
 	/* end fetchPointer:ofObject: */
-	assert(isNonImmediate(objOop));
+	assert((objOop).isNonImmediate());
 	if (((long64At(objOop)) & ((classIndexMask()) - (isForwardedObjectClassIndexPun()))) == 0) {
 		objOop = fixFollowedFieldofObjectwithInitialValue(fieldIndex, anObject, objOop);
 	}
@@ -51989,7 +51919,7 @@ formatOfClass(sqInt classPointer)
 	byte boundary 
 	in the fourth byte of the header we could access it via 
 	^(self byteAt: objOop + 3) bitAnd: self formatMask 
-	but al least on e.g. Core i7 x86-64 using the clang 6 compiler, this makes 
+	but al least on e.g. Core i7 x86-64 using the clang 6 compiler, this_ makes 
 	no difference, 
 	or at least any change is in the noise. */
 /* SpurMemoryManager>>#formatOf: */
@@ -52324,7 +52254,7 @@ goodContextSize(sqInt oop)
 	return (numSlots == SmallContextSlots) || (numSlots == LargeContextSlots);
 }
 /*	Attempt to grow memory by at least minAmmount bytes. 
-	Answer the size of the new segment in bytes, or nil if the attempt failed. */
+	Answer the size of the new_ segment in bytes, or nil if the attempt failed. */
 /* SpurMemoryManager>>#growOldSpaceByAtLeast:callingOperation: */
 static size_t NoDbgRegParms
 growOldSpaceByAtLeastcallingOperation(sqInt minAmmount, char *aString)
@@ -52469,10 +52399,10 @@ hasOldReferents(sqInt objOop)
 				if (referenced2 & (tagMask())) {
 					goto l5;
 				}
-				if (!(objOop >= PERM_SPACE_START())) {
+				if (!(objOop >= 0x20000000000LL)) {
 					goto l5;
 				}
-				if (referenced2 >= PERM_SPACE_START()) {
+				if (referenced2 >= 0x20000000000LL) {
 					goto l5;
 				}
 				if ((referenced2 >= GIV(nilObj)) && (referenced2 <= GIV(trueObj))) {
@@ -52547,10 +52477,10 @@ hasYoungReferents(sqInt objOop)
 				if (referenced2 & (tagMask())) {
 					goto l5;
 				}
-				if (!(objOop >= PERM_SPACE_START())) {
+				if (!(objOop >= 0x20000000000LL)) {
 					goto l5;
 				}
-				if (referenced2 >= PERM_SPACE_START()) {
+				if (referenced2 >= 0x20000000000LL) {
 					goto l5;
 				}
 				if ((referenced2 >= GIV(nilObj)) && (referenced2 <= GIV(trueObj))) {
@@ -52942,7 +52872,7 @@ initialInstanceOf(sqInt classObj)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -53138,64 +53068,29 @@ initializeObjectMemory(sqInt bytesToShift)
 
 	assert(BaseHeaderSize == BaseHeaderSize);
 	assert(((sqInt) ((maxSlotsForAlloc()) * BytesPerWord) ) > 0);
-	/* iOS ASLR Debug: Log memory layout */
-	fprintf(stderr, "iOS: [1] initializeObjectMemory START bytesToShift=%lld (0x%llx)\n", (long long)bytesToShift, (long long)bytesToShift);
-	fflush(stderr);
-	fprintf(stderr, "iOS: [2] oldSpaceStart=%p oldSpaceEnd=%p\n", (void*)((GIV(memoryMap)->oldSpaceStart)), (void*)((GIV(memoryMap)->oldSpaceEnd)));
-	fflush(stderr);
-	fprintf(stderr, "iOS: [3] newSpaceStart=%p newSpaceEnd=%p\n", (void*)((GIV(memoryMap)->newSpaceStart)), (void*)((GIV(memoryMap)->newSpaceEnd)));
-	fflush(stderr);
-	fprintf(stderr, "iOS: [4] specialObjectsOop=%p (pre-swizzle)\n", (void*)GIV(specialObjectsOop));
-	fflush(stderr);
-	fprintf(stderr, "iOS: [5] Calling initSegmentBridgeWithBytesat...\n");
-	fflush(stderr);
 	{
 		initSegmentBridgeWithBytesat(2 * BaseHeaderSize, ((GIV(memoryMap)->oldSpaceEnd)) - (2 * BaseHeaderSize));
 	}
-	fprintf(stderr, "iOS: [6] initSegmentBridge done, starting adjustAllOopsBy\n");
-	fflush(stderr);
 	/* begin adjustAllOopsBy: */
 	assert(newSpaceIsEmpty());
 	/* begin countNumClassPagesPreSwizzle: */
 	/* begin objectStartingAt: */
 	address1 = ((sqInt) ((GIV(memoryMap)->oldSpaceStart)) );
-	fprintf(stderr, "iOS: [7] address1 (oldSpaceStart)=%p, reading byte at address1+7\n", (void*)address1);
-	fflush(stderr);
 	numSlots3 = byteAt(address1 + 7);
-	fprintf(stderr, "iOS: [8] numSlots3=%lld\n", (long long)numSlots3);
-	fflush(stderr);
 	firstObj = ((numSlots3 == (numSlotsMask()))
 		 ? address1 + BaseHeaderSize
 		 : address1);
-	fprintf(stderr, "iOS: [9] firstObj=%p\n", (void*)firstObj);
-	fflush(stderr);
 	/* end objectStartingAt: */
-	fprintf(stderr, "iOS: [10] Finding classTableRoot (5th object in heap)...\n");
-	fflush(stderr);
 	classTableRoot = noInlineObjectAfterlimit(noInlineObjectAfterlimit(noInlineObjectAfterlimit(noInlineObjectAfterlimit(firstObj, (GIV(memoryMap)->oldSpaceEnd)), (GIV(memoryMap)->oldSpaceEnd)), (GIV(memoryMap)->oldSpaceEnd)), (GIV(memoryMap)->oldSpaceEnd));
-	fprintf(stderr, "iOS: [11] classTableRoot=%p\n", (void*)classTableRoot);
-	fflush(stderr);
-	fprintf(stderr, "iOS: [12] Computing nilObjPreSwizzle...\n");
-	fflush(stderr);
 	nilObjPreSwizzle = ((GIV(memoryMap)->oldSpaceStart)) - bytesToShift;
-	fprintf(stderr, "iOS: [13] nilObjPreSwizzle=%p\n", (void*)nilObjPreSwizzle);
-	fflush(stderr);
 	/* begin numSlotsOf: */
-	fprintf(stderr, "iOS: [14] Checking classIndexOf(classTableRoot)...\n");
-	fflush(stderr);
 	assert((classIndexOf(classTableRoot)) > (isForwardedObjectClassIndexPun()));
-	fprintf(stderr, "iOS: [15] Reading numSlots2...\n");
-	fflush(stderr);
 	numSlots2 = byteAt(classTableRoot + 7);
 	GIV(numClassTablePages) = ((numSlots2 == (numSlotsMask()))
 		 ? ((usqInt) ((usqInt) ((sqInt) (((usqInt) (longAt(classTableRoot - BaseHeaderSize)) ) << 8) ) ) ) >> 8
 		 : numSlots2);
 	/* end numSlotsOf: */
-	fprintf(stderr, "iOS: [16] numClassTablePages=%lld\n", (long long)GIV(numClassTablePages));
-	fflush(stderr);
 	assert(GIV(numClassTablePages) == ((classTableRootSlots()) + (hiddenRootSlots())));
-	fprintf(stderr, "iOS: [17] Starting classTablePages loop...\n");
-	fflush(stderr);
 	for (i3 = 2; i3 < GIV(numClassTablePages); i3 += 1) {
 		if ((unsignedLongAt((classTableRoot + BaseHeaderSize) + ((sqInt) (((usqInt) i3 ) << (shiftForWord())) ))) == nilObjPreSwizzle) {
 			GIV(numClassTablePages) = i3;
@@ -53205,15 +53100,9 @@ initializeObjectMemory(sqInt bytesToShift)
 	l22:
 	;
 	/* end countNumClassPagesPreSwizzle: */
-	fprintf(stderr, "iOS: [18] Loop done, checking bytesToShift...\n");
-	fflush(stderr);
 	if ((bytesToShift == 0) && ((numSegments()) == 1)) {
-		fprintf(stderr, "iOS: [18a] Skipping swizzle (bytesToShift==0)\n");
-		fflush(stderr);
 		goto l24;
 	}
-	fprintf(stderr, "iOS: [19] Starting swizzle, getting first object...\n");
-	fflush(stderr);
 	/* begin objectStartingAt: */
 	address = ((sqInt) ((GIV(memoryMap)->oldSpaceStart)) );
 	numSlots = byteAt(address + 7);
@@ -53221,16 +53110,7 @@ initializeObjectMemory(sqInt bytesToShift)
 		 ? address + BaseHeaderSize
 		 : address);
 	/* end objectStartingAt: */
-	fprintf(stderr, "iOS: [20] First object at %p, freeOldSpaceStart=%p, starting swizzle loop...\n", (void*)obj, (void*)GIV(freeOldSpaceStart));
-	fflush(stderr);
-	{
-	sqInt swizzleCount = 0;
 	while (oopisLessThan(obj, GIV(freeOldSpaceStart))) {
-		swizzleCount++;
-		if (swizzleCount <= 10 || (swizzleCount % 10000) == 0) {
-			fprintf(stderr, "iOS: [SWIZZLE] obj #%lld at %p classIndex=%lld\n", (long long)swizzleCount, (void*)obj, (long long)((longAt(obj)) & (classIndexMask())));
-			fflush(stderr);
-		}
 		classIndex2 = (longAt(obj)) & (classIndexMask());
 		if (classIndex2 >= (isForwardedObjectClassIndexPun())) {
 			/* begin swizzleFieldsOfObject: */
@@ -53291,9 +53171,6 @@ initializeObjectMemory(sqInt bytesToShift)
 		;
 		/* end objectAfter:limit: */
 	};
-	fprintf(stderr, "iOS: [SWIZZLE] Loop complete, processed %lld objects\n", (long long)swizzleCount);
-	fflush(stderr);
-	}
 	/* begin allPermSpaceObjectsDo: */
 	currentObject = (GIV(memoryMap)->permSpaceStart);
 	while (!(currentObject == GIV(permSpaceFreeStart))) {
@@ -53330,13 +53207,7 @@ initializeObjectMemory(sqInt bytesToShift)
 	l24:
 	;
 	/* end adjustAllOopsBy: */
-	fprintf(stderr, "iOS: [21] Swizzle loop complete, now swizzling specialObjectsOop...\n");
-	fflush(stderr);
-	fprintf(stderr, "iOS: [22] specialObjectsOop before swizzle: %p\n", (void*)GIV(specialObjectsOop));
-	fflush(stderr);
 	GIV(specialObjectsOop) = swizzleObj(GIV(specialObjectsOop));
-	fprintf(stderr, "iOS: [23] specialObjectsOop after swizzle: %p\n", (void*)GIV(specialObjectsOop));
-	fflush(stderr);
 	/* begin fetchPointer:ofObject: */
 	GIV(nilObj) = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) NilObject ) << (shiftForWord())) ));
 	/* end fetchPointer:ofObject: */
@@ -53610,7 +53481,7 @@ inPlaceBecomeandcopyHashFlag(sqInt obj1, sqInt obj2, sqInt copyHashFlag)
 		}
 	}
 }
-/*	Answer the number of slots in a class. For example the instanceSizeOf:  
+/*	Answer the number of slots in a class_. For example the instanceSizeOf:  
 	ClassPoint is 2, for the x & y slots. The instance size of non-pointer 
 	classes is 0. */
 /* SpurMemoryManager>>#instanceSizeOf: */
@@ -53727,7 +53598,7 @@ instSpecOfClassFormat(sqInt classFormat)
 {
 	return (((usqInt) classFormat ) >> (fixedFieldsFieldWidth())) & (formatMask());
 }
-/*	This field in a class's format inst var corresponds to the 5-bit format 
+/*	This field in a class_'s format inst var corresponds to the 5-bit format 
 	field stored in every object header */
 /* SpurMemoryManager>>#instSpecOfClass: */
 static sqInt NoDbgRegParms
@@ -53747,7 +53618,7 @@ isAnyPointerFormat(sqInt format)
 {
 	return (format <= 5) || (format >= (firstCompiledMethodFormat()));
 }
-/*	Answer if this is an indexable object with pointer elements, e.g., an 
+/*	Answer if this_ is an indexable object with pointer elements, e.g., an 
 	array  */
 /* SpurMemoryManager>>#isArrayNonImm: */
 sqInt
@@ -53755,7 +53626,7 @@ isArrayNonImm(sqInt oop)
 {
 	return ((((usqInt) (longAt(oop)) ) >> (formatShift())) & (formatMask())) == 2;
 }
-/*	Answer true if this is an indexable object with pointer elements, e.g., an 
+/*	Answer true if this_ is an indexable object with pointer elements, e.g., an 
 	array  */
 /* SpurMemoryManager>>#isArray: */
 sqInt
@@ -53783,7 +53654,7 @@ isCharacterValue(sqInt anInteger)
 {
 	return (anInteger >= 0) && (anInteger <= ((1U << 30) - 1));
 }
-/*	Answer if aClass exists at only one index in the class table. Be careful 
+/*	Answer if aClass exists at only one index in the class_ table. Be careful 
 	not to 
 	be misled by classes that have puns, such as Array. */
 /* SpurMemoryManager>>#isClassAtUniqueIndex: */
@@ -53904,7 +53775,7 @@ isEphemeron(sqInt objOop)
 {
 	sqInt format;
 
-	assert(isNonImmediate(objOop));
+	assert((objOop).isNonImmediate());
 	/* begin isEphemeronFormat: */
 	format = (((usqInt) (longAt(objOop)) ) >> (formatShift())) & (formatMask());
 	return format == 5;
@@ -53926,8 +53797,8 @@ isForwardedClassTag(sqInt classIndex)
 	isForwardedObjectClassIndexPun being a power of two to generate a more 
 	efficient test than the straight-forward 
 	(self classIndexOf: objOop) = self isForwardedObjectClassIndexPun 
-	at the cost of this being ambiguous with free chunks. So either never 
-	apply this to free chunks 
+	at the cost of this_ being ambiguous with free chunks. So either never 
+	apply this_ to free chunks 
 	or guard with (self isFreeObject: foo) not. So far the idiom has been to 
 	guard with isFreeObject:self assert: (self isFreeObject: objOop) not. */
 /* SpurMemoryManager>>#isForwarded: */
@@ -53950,7 +53821,7 @@ isFreeOop(sqInt oop)
 }
 /* SpurMemoryManager>>#isImmediate: */
 sqInt
-isImmediate(sqInt oop)
+(sqInt oop).isImmediate()
 {
 	return oop & (tagMask());
 }
@@ -54042,7 +53913,7 @@ isLargeFreeObject(sqInt objOop)
 sqInt
 isMarkedOrPermanent(sqInt anOop)
 {
-	return (((((usqInt) (longAt(anOop)) ) >> (markedBitFullShift())) & 1) != 0) || (((anOop & (tagMask())) == 0) && (anOop >= PERM_SPACE_START()));
+	return (((((usqInt) (longAt(anOop)) ) >> (markedBitFullShift())) & 1) != 0) || (((anOop & (tagMask())) == 0) && (anOop >= 0x20000000000LL));
 }
 /* SpurMemoryManager>>#isMaybeFiredEphemeron: */
 static sqInt NoDbgRegParms
@@ -54057,7 +53928,7 @@ isMaybeFiredEphemeron(sqInt objOop)
 }
 /* SpurMemoryManager>>#isNonImmediate: */
 sqInt
-isNonImmediate(sqInt oop)
+(sqInt oop).isNonImmediate()
 {
 	return (oop & (tagMask())) == 0;
 }
@@ -54121,7 +53992,7 @@ isOopMutable(sqInt oop)
 sqInt
 isPermanent(sqInt oop)
 {
-	return ((oop & (tagMask())) == 0) && (oop >= PERM_SPACE_START());
+	return ((oop & (tagMask())) == 0) && (oop >= 0x20000000000LL);
 }
 /* SpurMemoryManager>>#isPermSpaceRememberedSetSane */
 sqInt
@@ -54280,7 +54151,7 @@ isReallyYoungObject(sqInt objOop)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
 
-	assert(isNonImmediate(objOop));
+	assert((objOop).isNonImmediate());
 	return (oopisLessThan(objOop, (GIV(memoryMap)->newSpaceEnd))) && (oopisGreaterThanOrEqualTo(objOop, (GIV(memoryMap)->newSpaceStart)));
 }
 /*	Answer if oop is young. */
@@ -54290,7 +54161,7 @@ isReallyYoung(sqInt oop)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
 
-	return ((oop & (tagMask())) == 0) && ((assert(isNonImmediate(oop)), (oopisLessThan(oop, (GIV(memoryMap)->newSpaceEnd))) && (oopisGreaterThanOrEqualTo(oop, (GIV(memoryMap)->newSpaceStart)))));
+	return ((oop & (tagMask())) == 0) && ((assert((oop).isNonImmediate()), (oopisLessThan(oop, (GIV(memoryMap)->newSpaceEnd))) && (oopisGreaterThanOrEqualTo(oop, (GIV(memoryMap)->newSpaceStart)))));
 }
 /* SpurMemoryManager>>#isRemembered: */
 static sqInt NoDbgRegParms
@@ -54298,7 +54169,7 @@ isRemembered(sqInt objOop)
 {
 	return ((((usqInt) (long64At(objOop)) ) >> (rememberedBitShift())) & 1) != 0;
 }
-/*	Maybe this should be in SpurSegmentManager only */
+/*	Maybe this_ should be in SpurSegmentManager only */
 /* SpurMemoryManager>>#isSegmentBridge: */
 static sqInt NoDbgRegParms
 isSegmentBridge(sqInt objOop)
@@ -54313,7 +54184,7 @@ isSemaphoreOop(sqInt anOop)
 
 	return ((anOop & (tagMask())) == 0) && (((longAt(anOop)) & (classIndexMask())) == (rawHashBitsOf(unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassSemaphore ) << (shiftForWord())) )))));
 }
-/*	This version is private to SpurMemoryManager (for asserts, etc). It does 
+/*	This version is private_ to SpurMemoryManager (for asserts, etc). It does 
 	not take advantage of the power-of0two optimization in isForwarded:. */
 /* SpurMemoryManager>>#isUnambiguouslyForwarder: */
 sqInt
@@ -54372,7 +54243,7 @@ isValidObjStackPagemyIndex(sqInt objStackPage, sqInt myx)
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
 
 	if (!(((longAt(objStackPage)) & (classIndexMask())) == (sixtyFourBitLongsClassIndexPun()))) {
-		GIV(objStackInvalidBecause) = "wrong class index";
+		GIV(objStackInvalidBecause) = "wrong class_ index";
 		GIV(invalidObjStackPage) = objStackPage;
 		return 0;
 	}
@@ -54560,9 +54431,9 @@ isYoung(sqInt oop)
 
 	return ((oop & (tagMask())) == 0) && (((oop & ((GIV(memoryMap)->spaceMaskToUse))) == ((GIV(memoryMap)->newSpaceMask))) && (oop >= ((GIV(memoryMap)->newSpaceStart))));
 }
-/*	Answer if oop is an instance of the given class. If the class has a 
+/*	Answer if oop is an instance of the given class_. If the class_ has a 
 	(non-zero) compactClassIndex use that to speed up the check. N.B. Inlining 
-	should result in classOop not being accessed if oop's compact class index 
+	should result in classOop not being accessed if oop's compact class_ index 
 	and compactClassIndex are non-zero. */
 /* SpurMemoryManager>>#is:instanceOf:compactClassIndex: */
 static sqInt NoDbgRegParms
@@ -54574,7 +54445,7 @@ isinstanceOfcompactClassIndex(sqInt oop, sqInt classOop, sqInt compactClassIndex
 		return 0;
 	}
 	/* begin isClassOfNonImm:equalTo:compactClassIndex: */
-	assert(!(isImmediate(oop)));
+	assert(!((oop).isImmediate()));
 	/* begin classIndexOf: */
 	ccIndex = (longAt(oop)) & (classIndexMask());
 	/* end classIndexOf: */
@@ -54619,7 +54490,7 @@ isonObjStack(sqInt oop, sqInt objStack)
 static sqInt NoDbgRegParms
 keyOfEphemeron(sqInt objOop)
 {
-	assert((isNonImmediate(objOop)) && (isObjEphemeron(objOop)));
+	assert(((objOop).isNonImmediate()) && (isObjEphemeron(objOop)));
 	/* begin fetchPointer:ofObject: */
 	return unsignedLongAt((objOop + BaseHeaderSize) + (0U << (shiftForWord())));
 	/* end fetchPointer:ofObject: */
@@ -54646,7 +54517,7 @@ lastPointerFormat(void)
 	Does not examine the stack pointer of contexts to be sure to swizzle 
 	the nils that fill contexts on snapshot. 
 	It is invariant that on image load no object contains a forwarding 
-	pointer, and the image contains no forwarders (see class comment). */
+	pointer, and the image contains no forwarders (see class_ comment). */
 /* SpurMemoryManager>>#lastPointerOfWhileSwizzling: */
 sqInt
 lastPointerOfWhileSwizzling(sqInt objOop)
@@ -54670,13 +54541,9 @@ lastPointerOfWhileSwizzling(sqInt objOop)
 	if (((header2 & 7) == 1)) {
 		header = header2;
 	} else {
-		/* iOS: CogMethod reference detected - this shouldn't happen on iOS (no JIT) */
-		fprintf(stderr, "iOS: [SWIZZLE-ERROR] CompiledMethod at %p has CogMethod ref header2=%p\n", (void*)objOop, (void*)header2);
-		fflush(stderr);
-		/* On iOS, there's no JIT - if we see a CogMethod reference, we cannot
-		   dereference it. Return 0 to indicate no pointer fields to swizzle.
-		   This is a workaround for images saved from JIT VMs. */
-		return 0;
+		assert(((usqInt) header2 ) < ((GIV(memoryMap)->newSpaceStart)));
+		assert((((((CogMethod *) header2 ))->objectHeader)) == (nullHeaderForMachineCodeMethod()));
+		header = ((((CogMethod *) header2 ))->methodHeader);
 	}
 	/* end methodHeaderOf: */
 	return (((((assert(((header & 7) == 1)), (header >> 3) & AlternateHeaderNumLiteralsMask)) + LiteralStart) - 1) * BytesPerOop) + BaseHeaderSize;
@@ -54907,7 +54774,7 @@ longPrintInstancesWithClassIndex(sqInt classIndex)
 	/* begin allHeapEntitiesDo: */
 	/* begin allOldSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop2 = GIV(nilObj);
 	while (1) {
@@ -55236,7 +55103,7 @@ longPrintReferencesTo(sqInt anOop)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -55454,7 +55321,7 @@ mapMournQueue(void)
 	Mark the argument, and answer if its fields should be scanned now. 
 	Immediate objects don't need to be marked. 
 	Already marked objects have already been processed. 
-	Pure bits objects don't need scanning, although their class does. 
+	Pure bits objects don't need scanning, although their class_ does. 
 	Weak objects should be pushed on the weakling stack. 
 	TODO: something about ephemerons. 
 	Anything else need scanning. */
@@ -55471,10 +55338,10 @@ markAndShouldScan(sqInt objOop)
 	}
 	assert(!(isForwarded(objOop)));
 	if (((((usqInt) (longAt(objOop)) ) >> (markedBitFullShift())) & 1) != 0) {
-		assert(!(isPermanentObject(GIV(memoryMap), objOop)));
+		assert(!((objOop).isPermanent()));
 		return 0;
 	}
-	if (!(objOop >= PERM_SPACE_START())) {
+	if (!(objOop >= 0x20000000000LL)) {
 		/* begin setIsMarkedOf:to: */
 		assert(!(isFreeObject(objOop)));
 		unsignedLongAtput(objOop, (unsignedLongAt(objOop)) | (1ULL << (markedBitFullShift())));
@@ -55509,12 +55376,12 @@ markAndShouldScan(sqInt objOop)
 	}
 	return 1;
 }
-/*	Ensure the class of the argument is marked, pushing it on the markStack if 
+/*	Ensure the class_ of the argument is marked, pushing it on the markStack if 
 	not already marked. 
-	And for one-way become, which can create duplicate entries in the class 
+	And for one-way become, which can create duplicate entries in the class_ 
 	table, make sure 
 	objOop's classIndex refers to the classObj's actual classIndex. 
-	Note that this is recursive, but the metaclass chain should terminate 
+	Note that this_ is recursive, but the metaclass chain should terminate 
 	quickly.  */
 /* SpurMemoryManager>>#markAndTraceClassOf: */
 static void NoDbgRegParms
@@ -55557,7 +55424,7 @@ markAndTraceClassOf(sqInt objOop)
 		longAtput(objOop, ((longAt(objOop)) & (~((usqIntptr_t) (classIndexMask()) ))) + realClassIndex);
 		/* end setClassIndexOf:to: */
 	}
-	if (!((((((usqInt) (longAt(classObj)) ) >> (markedBitFullShift())) & 1) != 0) || (((classObj & (tagMask())) == 0) && (classObj >= PERM_SPACE_START())))) {
+	if (!((((((usqInt) (longAt(classObj)) ) >> (markedBitFullShift())) & 1) != 0) || (((classObj & (tagMask())) == 0) && (classObj >= 0x20000000000LL)))) {
 		/* begin setIsMarkedOf:to: */
 		assert(!(isFreeObject(classObj)));
 		unsignedLongAtput(classObj, (unsignedLongAt(classObj)) | (1ULL << (markedBitFullShift())));
@@ -55579,14 +55446,14 @@ markAndTraceClassOf(sqInt objOop)
 		/* end push:onObjStack: */
 	}
 }
-/*	The hidden roots hold both the class table pages and the obj stacks, 
+/*	The hidden roots hold both the class_ table pages and the obj stacks, 
 	and hence need special treatment. The obj stacks must be marked 
 	specially; their pages must be marked, but only the contents of the 
 	mournQueue should be marked. 
 	 
-	If a class table page is weak we can mark and trace the hiddenRoots, 
-	which will not trace through class table pages because they are weak. 
-	But if class table pages are strong, we must mark the pages and *not* 
+	If a class_ table page is weak we can mark and trace the hiddenRoots, 
+	which will not trace through class_ table pages because they are weak. 
+	But if class_ table pages are strong, we must mark the pages and *not* 
 	trace them so that only classes reachable from the true roots will be 
 	marked, and unreachable classes will be left unmarked. */
 /* SpurMemoryManager>>#markAndTraceHiddenRoots */
@@ -55758,7 +55625,7 @@ markAndTraceObjStackandContents(sqInt stackOrNil, sqInt markAndTraceContents)
 		/* begin fetchPointer:ofObject: */
 		objOop = unsignedLongAt((stackOrNil + BaseHeaderSize) + ((sqInt) (((usqInt) index ) << (shiftForWord())) ));
 		/* end fetchPointer:ofObject: */
-		assert(isNonImmediate(objOop));
+		assert((objOop).isNonImmediate());
 		if (((long64At(objOop)) & ((classIndexMask()) - (isForwardedObjectClassIndexPun()))) == 0) {
 			objOop = fixFollowedFieldofObjectwithInitialValue(index, stackOrNil, objOop);
 		}
@@ -55822,12 +55689,12 @@ markAndTrace(sqInt objOop)
 		}
 		assert(!(isForwarded(objOop)));
 		if (((((usqInt) (longAt(objOop)) ) >> (markedBitFullShift())) & 1) != 0) {
-			assert(!(isPermanentObject(GIV(memoryMap), objOop)));
+			assert(!((objOop).isPermanent()));
 			{
 				return;
 			}
 		}
-		if (!(objOop >= PERM_SPACE_START())) {
+		if (!(objOop >= 0x20000000000LL)) {
 			/* begin setIsMarkedOf:to: */
 			assert(!(isFreeObject(objOop)));
 			unsignedLongAtput(objOop, (unsignedLongAt(objOop)) | (1ULL << (markedBitFullShift())));
@@ -55873,7 +55740,7 @@ markAndTrace(sqInt objOop)
 		if (objToScan & (tagMask())) {
 			scanLargeObject = 1;
 		} else {
-			if ((isEphemeron(objToScan)) && ((isImmediate((key = keyOfEphemeron(objToScan)))) || ((((((usqInt) (longAt(key)) ) >> (markedBitFullShift())) & 1) != 0) || (((key & (tagMask())) == 0) && (key >= PERM_SPACE_START()))))) {
+			if ((isEphemeron(objToScan)) && ((((key = keyOfEphemeron(objToScan).isImmediate()))) || ((((((usqInt) (longAt(key)) ) >> (markedBitFullShift())) & 1) != 0) || (((key & (tagMask())) == 0) && (key >= 0x20000000000LL))))) {
 				/* begin numSlotsOf: */
 				assert((classIndexOf(objToScan)) > (isForwardedObjectClassIndexPun()));
 				numSlots = byteAt(objToScan + 7);
@@ -55884,7 +55751,7 @@ markAndTrace(sqInt objOop)
 			} else {
 				/* begin numStrongSlotsOfInephemeral: */
 				fmt = (((usqInt) (longAt(objToScan)) ) >> (formatShift())) & (formatMask());
-				assert((fmt != (ephemeronFormat())) || ((isImmediate((key2 = keyOfEphemeron(objToScan)))) || (isMarkedOrPermanent(key2))));
+				assert((fmt != (ephemeronFormat())) || ((((key2 = keyOfEphemeron(objToScan).isImmediate()))) || (isMarkedOrPermanent(key2))));
 				if (fmt <= 5) {
 					/* begin numSlotsOf: */
 					assert((classIndexOf(objToScan)) > (isForwardedObjectClassIndexPun()));
@@ -55973,7 +55840,7 @@ markAndTrace(sqInt objOop)
 				/* begin fetchPointer:ofObject: */
 				field = unsignedLongAt((objToScan + BaseHeaderSize) + ((sqInt) (((usqInt) index ) << (shiftForWord())) ));
 				/* end fetchPointer:ofObject: */
-				if (((field & (tagMask())) == 0) && (!(((field & (tagMask())) == 0) && (field >= PERM_SPACE_START())))) {
+				if (((field & (tagMask())) == 0) && (!(((field & (tagMask())) == 0) && (field >= 0x20000000000LL)))) {
 					if (((long64At(field)) & ((classIndexMask()) - (isForwardedObjectClassIndexPun()))) == 0) {
 						field = fixFollowedFieldofObjectwithInitialValue(index, objToScan, field);
 					}
@@ -55983,10 +55850,10 @@ markAndTrace(sqInt objOop)
 						}
 						assert(!(isForwarded(field)));
 						if (((((usqInt) (longAt(field)) ) >> (markedBitFullShift())) & 1) != 0) {
-							assert(!(isPermanentObject(GIV(memoryMap), field)));
+							assert(!((field).isPermanent()));
 							goto l3;
 						}
-						if (!(field >= PERM_SPACE_START())) {
+						if (!(field >= 0x20000000000LL)) {
 							/* begin setIsMarkedOf:to: */
 							assert(!(isFreeObject(field)));
 							unsignedLongAtput(field, (unsignedLongAt(field)) | (1ULL << (markedBitFullShift())));
@@ -56077,7 +55944,7 @@ markAndTrace(sqInt objOop)
 					if (((long64At(field)) & ((classIndexMask()) - (isForwardedObjectClassIndexPun()))) == 0) {
 						field = fixFollowedFieldofObjectwithInitialValue(index, objToScan, field);
 					}
-					if ((!(((field & (tagMask())) == 0) && (field >= PERM_SPACE_START()))) && (markAndShouldScan(field))) {
+					if ((!(((field & (tagMask())) == 0) && (field >= 0x20000000000LL))) && (markAndShouldScan(field))) {
 						/* begin push:onObjStack: */
 						objStack4 = GIV(markStack);
 						assert(addressCouldBeOop(field));
@@ -56147,7 +56014,7 @@ markInactiveEphemerons(void)
 	while (ptr < ((GIV(unscannedEphemerons)->top))) {
 		/* begin followedKeyOfEphemeron: */
 		objOop = (ephemeron = longAt(ptr));
-		assert((isNonImmediate(objOop)) && (isEphemeron(objOop)));
+		assert(((objOop).isNonImmediate()) && (isEphemeron(objOop)));
 		/* begin followOopField:ofObject: */
 		/* begin fetchPointer:ofObject: */
 		oop = unsignedLongAt((objOop + BaseHeaderSize) + (0U << (shiftForWord())));
@@ -56158,7 +56025,7 @@ markInactiveEphemerons(void)
 		key = oop;
 		/* end followOopField:ofObject: */
 		/* end followedKeyOfEphemeron: */
-		if ((key & (tagMask())) || ((((((usqInt) (longAt(key)) ) >> (markedBitFullShift())) & 1) != 0) || (((key & (tagMask())) == 0) && (key >= PERM_SPACE_START())))) {
+		if ((key & (tagMask())) || ((((((usqInt) (longAt(key)) ) >> (markedBitFullShift())) & 1) != 0) || (((key & (tagMask())) == 0) && (key >= 0x20000000000LL)))) {
 			foundInactive = 1;
 			(GIV(unscannedEphemerons)->top = ((GIV(unscannedEphemerons)->top)) - BytesPerOop);
 			if (((GIV(unscannedEphemerons)->top)) > ptr) {
@@ -56178,7 +56045,7 @@ markInactiveEphemerons(void)
 /*	for profilingMark all accessible objects. 
 	objectsShouldBeUnmarkedAndUnmarkedClassesShouldBeExpunged is true if all 
 	objects are unmarked and/or if unmarked classes shoud be removed from the 
-	class table.If the incremental collector is running mark bits may be set; stop it and 
+	class_ table.If the incremental collector is running mark bits may be set; stop it and 
 	clear them if necessary. */
 /* SpurMemoryManager>>#markObjects: */
 static void NoDbgRegParms NeverInline
@@ -56440,7 +56307,7 @@ markObjects(sqInt objectsShouldBeUnmarkedAndUnmarkedClassesShouldBeExpunged)
 					GIV(classTableIndex) = classIndex;
 				}
 			} else {
-				if ((objectsShouldBeUnmarkedAndUnmarkedClassesShouldBeExpunged && (!((((((usqInt) (longAt(classOrNil)) ) >> (markedBitFullShift())) & 1) != 0) || (((classOrNil & (tagMask())) == 0) && (classOrNil >= PERM_SPACE_START()))))) || (((uint32AtPointer(classOrNil + 4)) & (identityHashHalfWordMask())) != classIndex)) {
+				if ((objectsShouldBeUnmarkedAndUnmarkedClassesShouldBeExpunged && (!((((((usqInt) (longAt(classOrNil)) ) >> (markedBitFullShift())) & 1) != 0) || (((classOrNil & (tagMask())) == 0) && (classOrNil >= 0x20000000000LL))))) || (((uint32AtPointer(classOrNil + 4)) & (identityHashHalfWordMask())) != classIndex)) {
 					assert(!(isPermanent(classOrNil)));
 					{
 						assert(!(isOopForwarded(classTablePage)));
@@ -56486,7 +56353,7 @@ markObjects(sqInt objectsShouldBeUnmarkedAndUnmarkedClassesShouldBeExpunged)
 	 
 	Moreover, marking ephemerons from unscannedEphemerons (because we fire 
 	them, or because we realize that they are inactive (ie have a marked key)) 
-	leads to the discover (and markind) of new objects that are possibly 
+	leads to the discover (and markind) of new_ objects that are possibly 
 	weak objects, ephemerons or keys of unscanned ephemerons, forcing us to 
 	continue the work (thus the `repeat` block) */
 /* SpurMemoryManager>>#markWeaklingsAndMarkAndFireEphemerons */
@@ -56563,7 +56430,7 @@ markWeaklingsAndMarkAndFireEphemerons(void)
 							}
 							field = oop;
 							/* end followOopField:ofObject: */
-							if (!((field & (tagMask())) || ((((((usqInt) (longAt(field)) ) >> (markedBitFullShift())) & 1) != 0) || (((field & (tagMask())) == 0) && (field >= PERM_SPACE_START()))))) {
+							if (!((field & (tagMask())) || ((((((usqInt) (longAt(field)) ) >> (markedBitFullShift())) & 1) != 0) || (((field & (tagMask())) == 0) && (field >= 0x20000000000LL))))) {
 								markAndTrace(field);
 							}
 						};
@@ -56595,7 +56462,7 @@ markWeaklingsAndMarkAndFireEphemerons(void)
 				ephemeron1 = longAt(p);
 				{
 					/* begin queueMourner: */
-					assert((isNonImmediate(ephemeron1)) && (((formatOf(ephemeron1)) == (ephemeronFormat())) || ((formatOf(ephemeron1)) == (weakArrayFormat()))));
+					assert(((ephemeron1).isNonImmediate()) && (((formatOf(ephemeron1)) == (ephemeronFormat())) || ((formatOf(ephemeron1)) == (weakArrayFormat()))));
 					assert(!(((formatOf(ephemeron1)) == (ephemeronFormat())) && (isonObjStack(ephemeron1, GIV(mournQueue)))));
 					/* begin push:onObjStack: */
 					objStack = GIV(mournQueue);
@@ -56631,7 +56498,7 @@ markWeaklingsAndMarkAndFireEphemerons(void)
 			while (lastOffsetToScan > nextOffsetToScan) {
 				ephemeron = longAt(nextOffsetToScan);
 				{
-					assert((isNonImmediate(ephemeron)) && (isMaybeFiredEphemeron(ephemeron)));
+					assert(((ephemeron).isNonImmediate()) && (isMaybeFiredEphemeron(ephemeron)));
 					/* begin followOopField:ofObject: */
 					/* begin fetchPointer:ofObject: */
 					oop2 = unsignedLongAt((ephemeron + BaseHeaderSize) + (0U << (shiftForWord())));
@@ -56665,7 +56532,7 @@ markWeaklingsAndMarkAndFireEphemerons(void)
 		}
 	};
 }
-/*	Answers if the code is installed in a class instantiating objects with the 
+/*	Answers if the code is installed in a class_ instantiating objects with the 
 	format. Used in primitive  
 	generation to make a quick path based on where the method is installed. 
 	This method cannot 
@@ -56804,7 +56671,7 @@ moveToPermSpaceAllOldObjects(void)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj = (prevObj = null);
 	objOop2 = GIV(nilObj);
 	while (1) {
@@ -56964,7 +56831,7 @@ moveToPermSpaceInBulk(sqInt anArrayOop)
 		/* begin fetchPointer:ofObject: */
 		objOop = unsignedLongAt((anArrayOop + BaseHeaderSize) + ((sqInt) (((usqInt) index ) << (shiftForWord())) ));
 		/* end fetchPointer:ofObject: */
-		if (!(objOop >= PERM_SPACE_START())) {
+		if (!(objOop >= 0x20000000000LL)) {
 			newObj = doMoveToPermSpaceaddToRememberedSet(objOop, 0);
 			if (!newObj) {
 				return anArrayOop;
@@ -56990,10 +56857,10 @@ moveToPermSpaceInBulk(sqInt anArrayOop)
 			if (newObj & (tagMask())) {
 				goto l5;
 			}
-			if (!(anArrayOop >= PERM_SPACE_START())) {
+			if (!(anArrayOop >= 0x20000000000LL)) {
 				goto l5;
 			}
-			if (newObj >= PERM_SPACE_START()) {
+			if (newObj >= 0x20000000000LL) {
 				goto l5;
 			}
 			if ((newObj >= GIV(nilObj)) && (newObj <= GIV(trueObj))) {
@@ -57239,7 +57106,7 @@ nilUnmarkedWeaklingSlots(void)
 						if (((longAt(referent)) & (classIndexMask())) == (isForwardedObjectClassIndexPun())) {
 							referent = fixFollowedFieldofObjectwithInitialValue(i2, weakling, referent);
 						}
-						if (!((referent & (tagMask())) || ((((((usqInt) (longAt(referent)) ) >> (markedBitFullShift())) & 1) != 0) || (((referent & (tagMask())) == 0) && (referent >= PERM_SPACE_START()))))) {
+						if (!((referent & (tagMask())) || ((((((usqInt) (longAt(referent)) ) >> (markedBitFullShift())) & 1) != 0) || (((referent & (tagMask())) == 0) && (referent >= 0x20000000000LL))))) {
 							{
 								assert(!(isOopForwarded(weakling)));
 								longAtput((weakling + BaseHeaderSize) + ((sqInt) (((usqInt) i2 ) << (shiftForWord())) ), GIV(nilObj));
@@ -57455,7 +57322,7 @@ numBytesOf(sqInt objOop)
 /*	Answer the number of pointer fields in the given object. 
 	Works with CompiledMethods, as well as ordinary objects. */
 /* SpurMemoryManager>>#numPointerSlotsOf: */
-usqInt
+sqInt
 numPointerSlotsOf(sqInt objOop)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
@@ -57516,7 +57383,7 @@ numPointerSlotsOf(sqInt objOop)
 	}
 	return numLiterals + LiteralStart;
 }
-/*	A private internal version of numSlotsOf: that is happy to be applied to 
+/*	A private_ internal version of numSlotsOf: that is happy to be applied to 
 	free or forwarded objects. */
 /* SpurMemoryManager>>#numSlotsOfAny: */
 static usqInt NoDbgRegParms
@@ -57563,7 +57430,7 @@ numStrongSlotsOfInephemeral(sqInt objOop)
 	sqInt sp;
 
 	fmt = (((usqInt) (longAt(objOop)) ) >> (formatShift())) & (formatMask());
-	assert((fmt != (ephemeronFormat())) || ((isImmediate((key = keyOfEphemeron(objOop)))) || (isMarkedOrPermanent(key))));
+	assert((fmt != (ephemeronFormat())) || ((((key = keyOfEphemeron(objOop).isImmediate()))) || (isMarkedOrPermanent(key))));
 	if (fmt <= 5) {
 		/* begin numSlotsOf: */
 		assert((classIndexOf(objOop)) > (isForwardedObjectClassIndexPun()));
@@ -57711,7 +57578,7 @@ objectAfter(sqInt objOop)
 			 : followingWordAddress3);
 		/* end objectAfter:limit: */
 	}
-	if (objOop >= PERM_SPACE_START()) {
+	if (objOop >= 0x20000000000LL) {
 		/* begin objectAfter:limit: */
 		limit1 = ((sqInt) ((GIV(memoryMap)->permSpaceEnd)) );
 		followingWordAddress4 = addressAfter(objOop);
@@ -57840,7 +57707,7 @@ objectBefore(sqInt objOop)
 	}
 	/* begin allOldSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop3 = GIV(nilObj);
 	while (1) {
@@ -57894,7 +57761,7 @@ objectStartingAt(sqInt address)
 }
 /*	This message is deprecated but supported for a while via a tweak to 
 	sqVirtualMachine.[ch] Use fetchLong32, fetchLong64 or fetchPointer instead 
-	for new code */
+	for new_ code */
 /* SpurMemoryManager>>#obsoleteDontUseThisFetchWord:ofObject: */
 sqInt
 obsoleteDontUseThisFetchWordofObject(sqInt fieldIndex, sqInt oop)
@@ -57904,7 +57771,7 @@ obsoleteDontUseThisFetchWordofObject(sqInt fieldIndex, sqInt oop)
 	/* end fetchLong32:ofObject: */
 }
 /*	Verify that the given oop is legitimate. Check address, header, and size 
-	but not class. */
+	but not class_. */
 /* SpurMemoryManager>>#okayOop: */
 static sqInt NoDbgRegParms
 okayOop(sqInt signedOop)
@@ -58004,7 +57871,7 @@ oldSpaceSizeToWrite(void)
 	return total;
 	/* end totalBytesInNonEmptySegments */
 }
-/*	in an effort to fix a compiler bug with two-way become post r3427Allocate two new objects, n1 & n2. Copy the contents appropriately. 
+/*	in an effort to fix a compiler bug with two-way become post r3427Allocate two new_ objects, n1 & n2. Copy the contents appropriately. 
 	Convert obj1 and obj2 into forwarding objects pointing to n2 and n1 
 	respectively  */
 /* SpurMemoryManager>>#outOfPlaceBecome:and:copyHashFlag: */
@@ -58023,14 +57890,14 @@ outOfPlaceBecomeandcopyHashFlag(sqInt obj1, sqInt obj2, sqInt copyHashFlag)
 
 	clone1 = ((((longAt(obj1)) & (classIndexMask())) == ClassMethodContextCompactIndex)
 		 ? cloneContext(obj1)
-		 : cloneshouldAllocateInPermSpace(obj1, obj1 >= PERM_SPACE_START()));
+		 : cloneshouldAllocateInPermSpace(obj1, obj1 >= 0x20000000000LL));
 	if (!clone1) {
 		error("Not enough space to copy the objects in two-way become. This should have been detected before");
 		return;
 	}
 	clone2 = ((((longAt(obj2)) & (classIndexMask())) == ClassMethodContextCompactIndex)
 		 ? cloneContext(obj2)
-		 : cloneshouldAllocateInPermSpace(obj2, obj2 >= PERM_SPACE_START()));
+		 : cloneshouldAllocateInPermSpace(obj2, obj2 >= 0x20000000000LL));
 	if (!clone2) {
 		error("Not enough space to copy the objects in two-way become. This should have been detected before");
 		return;
@@ -58115,10 +57982,10 @@ outOfPlaceBecomeandcopyHashFlag(sqInt obj1, sqInt obj2, sqInt copyHashFlag)
 		if (clone2 & (tagMask())) {
 			goto l4;
 		}
-		if (!(obj1 >= PERM_SPACE_START())) {
+		if (!(obj1 >= 0x20000000000LL)) {
 			goto l4;
 		}
-		if (clone2 >= PERM_SPACE_START()) {
+		if (clone2 >= 0x20000000000LL) {
 			goto l4;
 		}
 		if ((clone2 >= GIV(nilObj)) && (clone2 <= GIV(trueObj))) {
@@ -58171,10 +58038,10 @@ outOfPlaceBecomeandcopyHashFlag(sqInt obj1, sqInt obj2, sqInt copyHashFlag)
 		if (clone1 & (tagMask())) {
 			goto l6;
 		}
-		if (!(obj2 >= PERM_SPACE_START())) {
+		if (!(obj2 >= 0x20000000000LL)) {
 			goto l6;
 		}
-		if (clone1 >= PERM_SPACE_START()) {
+		if (clone1 >= 0x20000000000LL) {
 			goto l6;
 		}
 		if ((clone1 >= GIV(nilObj)) && (clone1 <= GIV(trueObj))) {
@@ -58213,7 +58080,7 @@ pinObject(sqInt objOop)
 	sqInt referent;
 	SpurSegmentInfo *seg;
 
-	assert(isNonImmediate(objOop));
+	assert((objOop).isNonImmediate());
 	flag("policy decision here. if already old, do we clone in a segment containing pinned objects or merely pin?");
 	if ((objOop & ((GIV(memoryMap)->spaceMaskToUse))) == ((GIV(memoryMap)->oldSpaceMask))) {
 		if ((numBytesOf(objOop)) > (1024 * 1024)) {
@@ -58287,10 +58154,10 @@ pinObject(sqInt objOop)
 		if (oldClone & (tagMask())) {
 			goto l6;
 		}
-		if (!(objOop >= PERM_SPACE_START())) {
+		if (!(objOop >= 0x20000000000LL)) {
 			goto l6;
 		}
-		if (oldClone >= PERM_SPACE_START()) {
+		if (oldClone >= 0x20000000000LL) {
 			goto l6;
 		}
 		if ((oldClone >= GIV(nilObj)) && (oldClone <= GIV(trueObj))) {
@@ -58375,7 +58242,7 @@ popObjStack(sqInt objStack)
 	if (195948557 & (tagMask())) {
 		goto l10;
 	}
-	if (!(objStack >= PERM_SPACE_START())) {
+	if (!(objStack >= 0x20000000000LL)) {
 		goto l10;
 	}
 	;
@@ -58429,10 +58296,10 @@ popObjStack(sqInt objStack)
 		if (nextPage & (tagMask())) {
 			goto l8;
 		}
-		if (!(GIV(hiddenRootsObj) >= PERM_SPACE_START())) {
+		if (!(GIV(hiddenRootsObj) >= 0x20000000000LL)) {
 			goto l8;
 		}
-		if (nextPage >= PERM_SPACE_START()) {
+		if (nextPage >= 0x20000000000LL) {
 			goto l8;
 		}
 		if ((nextPage >= GIV(nilObj)) && (nextPage <= GIV(trueObj))) {
@@ -58474,7 +58341,7 @@ popObjStack(sqInt objStack)
 	return top;
 }
 /*	Pop and return the possibly remapped object from the remap buffer. 
-	We support this excessence for compatibility with ObjectMemory. 
+	We support this_ excessence for compatibility with ObjectMemory. 
 	Spur doesn't GC during allocation. */
 /* SpurMemoryManager>>#popRemappableOop */
 sqInt
@@ -58487,19 +58354,19 @@ popRemappableOop(void)
 	GIV(remapBufferCount) -= 1;
 	return oop;
 }
-/*	Scan the class table post-become (iff an active class object was becommed) 
+/*	Scan the class_ table post-become (iff an active class_ object was becommed) 
 	to ensure no 
-	forwarding pointers, and no unhashed classes exist in the class table. 
+	forwarding pointers, and no unhashed classes exist in the class_ table. 
 	 
-	Note that one-way become can cause duplications in the class table. 
+	Note that one-way become can cause duplications in the class_ table. 
 	When can these be eliminated? We use the classTableBitmap to mark 
 	classTable entries 
-	(not the classes themselves, since marking a class doesn't help in knowing 
+	(not the classes themselves, since marking a class_ doesn't help in knowing 
 	if its index is used). 
 	On image load, and during incrememtal scan-mark and full GC, classIndices 
 	are marked. 
 	We can somehow avoid following classes from the classTable until after 
-	this mark phase. */
+	this_ mark phase. */
 /* SpurMemoryManager>>#postBecomeScanClassTable: */
 static void NoDbgRegParms
 postBecomeScanClassTable(sqInt effectsFlags)
@@ -58560,10 +58427,10 @@ postBecomeScanClassTable(sqInt effectsFlags)
 					if (classOrNil & (tagMask())) {
 						goto l6;
 					}
-					if (!(page >= PERM_SPACE_START())) {
+					if (!(page >= 0x20000000000LL)) {
 						goto l6;
 					}
-					if (classOrNil >= PERM_SPACE_START()) {
+					if (classOrNil >= 0x20000000000LL) {
 						goto l6;
 					}
 					if ((classOrNil >= GIV(nilObj)) && (classOrNil <= GIV(trueObj))) {
@@ -58736,7 +58603,7 @@ printActivationsOf(sqInt aMethodObj)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -59028,7 +58895,7 @@ printContextReferencesTo(sqInt anOop)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -59235,7 +59102,7 @@ printForwarders(void)
 	/* begin allHeapEntitiesDo: */
 	/* begin allOldSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop2 = GIV(nilObj);
 	while (1) {
@@ -59506,7 +59373,7 @@ printFreeChunks(void)
 	/* end allNewSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop2 = GIV(nilObj);
 	while (1) {
@@ -59826,7 +59693,7 @@ printInstancesWithClassIndex(sqInt classIndex)
 	/* begin allHeapEntitiesDo: */
 	/* begin allOldSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop2 = GIV(nilObj);
 	while (1) {
@@ -59993,7 +59860,7 @@ printInvalidClassTableEntries(void)
 
 	if (!(validClassTableRootPages())) {
 		{
-			print("class table invalid; cannot print");
+			print("class_ table invalid; cannot print");
 			/* begin cr */
 			print("\n");
 			/* end cr */
@@ -60167,7 +60034,7 @@ printMethodImplementorsOf(sqInt anOop)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -60398,7 +60265,7 @@ printMethodReferencesTo(sqInt anOop)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -60554,7 +60421,7 @@ printObjectsWithHash(sqInt hash)
 	/* begin allHeapEntitiesDo: */
 	/* begin allOldSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop2 = GIV(nilObj);
 	while (1) {
@@ -60857,7 +60724,7 @@ printOopsExcept(sqInt (*function)(sqInt))
 	/* begin allHeapEntitiesDo: */
 	/* begin allOldSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop2 = GIV(nilObj);
 	while (1) {
@@ -61092,7 +60959,7 @@ printOopsSuchThat(sqInt (*function)(sqInt))
 	/* begin allHeapEntitiesDo: */
 	/* begin allOldSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop2 = GIV(nilObj);
 	while (1) {
@@ -61308,7 +61175,7 @@ printReferencesTo(sqInt anOop)
 						l13:
 						;
 						/* end fetchStackPointerOf: */
-						i = ((usqInt) (CtxtTempFrameStart + contextSize) );
+						i = CtxtTempFrameStart + contextSize;
 						goto l12;
 					}
 					/* begin numSlotsOf: */
@@ -61343,7 +61210,7 @@ printReferencesTo(sqInt anOop)
 					assert(((header & 7) == 1));
 					numLiterals = (header >> 3) & AlternateHeaderNumLiteralsMask;
 				}
-				i = ((usqInt) (numLiterals + LiteralStart) );
+				i = numLiterals + LiteralStart;
 				l12:
 				;
 				/* end numPointerSlotsOf: */
@@ -61411,7 +61278,7 @@ printReferencesTo(sqInt anOop)
 						l15:
 						;
 						/* end fetchStackPointerOf: */
-						i = ((usqInt) (CtxtTempFrameStart + contextSize) );
+						i = CtxtTempFrameStart + contextSize;
 						goto l14;
 					}
 					/* begin numSlotsOf: */
@@ -61446,7 +61313,7 @@ printReferencesTo(sqInt anOop)
 					assert(((header & 7) == 1));
 					numLiterals = (header >> 3) & AlternateHeaderNumLiteralsMask;
 				}
-				i = ((usqInt) (numLiterals + LiteralStart) );
+				i = numLiterals + LiteralStart;
 				l14:
 				;
 				/* end numPointerSlotsOf: */
@@ -61493,7 +61360,7 @@ printReferencesTo(sqInt anOop)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -61521,7 +61388,7 @@ printReferencesTo(sqInt anOop)
 							l17:
 							;
 							/* end fetchStackPointerOf: */
-							i = ((usqInt) (CtxtTempFrameStart + contextSize) );
+							i = CtxtTempFrameStart + contextSize;
 							goto l16;
 						}
 						/* begin numSlotsOf: */
@@ -61556,7 +61423,7 @@ printReferencesTo(sqInt anOop)
 						assert(((header & 7) == 1));
 						numLiterals = (header >> 3) & AlternateHeaderNumLiteralsMask;
 					}
-					i = ((usqInt) (numLiterals + LiteralStart) );
+					i = numLiterals + LiteralStart;
 					l16:
 					;
 					/* end numPointerSlotsOf: */
@@ -61625,7 +61492,7 @@ printReferencesTo(sqInt anOop)
 						l19:
 						;
 						/* end fetchStackPointerOf: */
-						i = ((usqInt) (CtxtTempFrameStart + contextSize) );
+						i = CtxtTempFrameStart + contextSize;
 						goto l18;
 					}
 					/* begin numSlotsOf: */
@@ -61660,7 +61527,7 @@ printReferencesTo(sqInt anOop)
 					assert(((header & 7) == 1));
 					numLiterals = (header >> 3) & AlternateHeaderNumLiteralsMask;
 				}
-				i = ((usqInt) (numLiterals + LiteralStart) );
+				i = numLiterals + LiteralStart;
 				l18:
 				;
 				/* end numPointerSlotsOf: */
@@ -61713,7 +61580,7 @@ printUnmarkedOops(void)
 #endif /* LLDB *//*	Attempt to push anEphemeron on the unscanned ephemerons stack 
 	and answer if the attempt succeeded. Note that the ephemeron 
 	stack overflowing isn't a disaster; it simply means treating the 
-	ephemeron as strong in this GC cycle. */
+	ephemeron as strong in this_ GC cycle. */
 /* SpurMemoryManager>>#pushOnUnscannedEphemeronsStack: */
 static sqInt NoDbgRegParms
 pushOnUnscannedEphemeronsStack(sqInt anEphemeron)
@@ -61737,11 +61604,11 @@ pushOnUnscannedEphemeronsStack(sqInt anEphemeron)
 	(GIV(unscannedEphemerons)->top = ((GIV(unscannedEphemerons)->top)) + BytesPerOop);
 	return 1;
 }
-/*	Record the given object in a the remap buffer. Objects in this buffer are 
+/*	Record the given object in a the remap buffer. Objects in this_ buffer are 
 	remapped when a compaction occurs. This facility is used by the 
 	interpreter to ensure that 
 	objects in temporary variables are properly remapped. 
-	We support this excessence for compatibility with ObjectMemory. 
+	We support this_ excessence for compatibility with ObjectMemory. 
 	Spur doesn't GC during allocation. */
 /* SpurMemoryManager>>#pushRemappableOop: */
 void
@@ -61862,7 +61729,7 @@ recreateFromPermSpaceRememberedSet(void)
 	sqInt header;
 	sqInt header2;
 	sqInt numLiterals;
-	usqInt numPointerSlots;
+	sqInt numPointerSlots;
 	usqInt numSlots;
 	sqInt objStackRootIndex;
 	sqInt objStackRootIndex1;
@@ -61894,7 +61761,7 @@ recreateFromPermSpaceRememberedSet(void)
 		/* begin rememberedSet:oop: */
 		rootIndex = (self_in_emptyRememberedSet->rootIndex);
 		anOop = GIV(nilObj);
-		assert(isOldObject(GIV(memoryMap), anOop));
+		assert((anOop).isOld());
 		{
 			assert(!(isOopForwarded(GIV(hiddenRootsObj))));
 			longAtput((GIV(hiddenRootsObj) + BaseHeaderSize) + ((sqInt) (((usqInt) rootIndex ) << (shiftForWord())) ), anOop);
@@ -61918,7 +61785,7 @@ recreateFromPermSpaceRememberedSet(void)
 		/* begin rememberedSet:oop: */
 		rootIndex1 = (self_in_emptyRememberedSet1->rootIndex);
 		anOop1 = GIV(nilObj);
-		assert(isOldObject(GIV(memoryMap), anOop1));
+		assert((anOop1).isOld());
 		{
 			assert(!(isOopForwarded(GIV(hiddenRootsObj))));
 			longAtput((GIV(hiddenRootsObj) + BaseHeaderSize) + ((sqInt) (((usqInt) rootIndex1 ) << (shiftForWord())) ), anOop1);
@@ -62195,7 +62062,7 @@ rememberObjInCorrectRememberedSet(sqInt objOop)
 	if (((objOop & (tagMask())) == 0) && ((objOop & ((GIV(memoryMap)->spaceMaskToUse))) == ((GIV(memoryMap)->oldSpaceMask)))) {
 		return remember(GIV(fromOldSpaceRememberedSet), objOop);
 	}
-	if (((objOop & (tagMask())) == 0) && (objOop >= PERM_SPACE_START())) {
+	if (((objOop & (tagMask())) == 0) && (objOop >= 0x20000000000LL)) {
 		return remember(GIV(fromPermToNewSpaceRememberedSet), objOop);
 	}
 	return objOop;
@@ -62308,8 +62175,8 @@ scavengingGCTenuringIf(sqInt tenuringCriterion)
 		/* end doCheckMemoryMap */
 	}
 	;
-	assert(!(isOldObject(GIV(memoryMap), minCogMethodAddress())));
-	assert(!(isOldObject(GIV(memoryMap), maxCogMethodAddress())));
+	assert(!((minCogMethodAddress().isOld())));
+	assert(!((maxCogMethodAddress().isOld())));
 	/* end checkMemoryMap */
 	/* begin checkFreeSpace: */
 	assert(bitsSetInFreeSpaceMaskForAllFreeLists());
@@ -62608,10 +62475,10 @@ storePointerofObjectwithValue(sqInt fieldIndex, sqInt objOop, sqInt valuePointer
 	if (valuePointer & (tagMask())) {
 		goto l1;
 	}
-	if (!(objOop >= PERM_SPACE_START())) {
+	if (!(objOop >= 0x20000000000LL)) {
 		goto l1;
 	}
-	if (valuePointer >= PERM_SPACE_START()) {
+	if (valuePointer >= 0x20000000000LL) {
 		goto l1;
 	}
 	if ((valuePointer >= GIV(nilObj)) && (valuePointer <= GIV(trueObj))) {
@@ -62626,7 +62493,7 @@ storePointerofObjectwithValue(sqInt fieldIndex, sqInt objOop, sqInt valuePointer
 	/* end possiblePermObjectStoreInto:value: */
 	return unsignedLongAtput((objOop + BaseHeaderSize) + ((sqInt) (((usqInt) fieldIndex ) << (shiftForWord())) ), valuePointer);
 }
-/*	Answer a new String copied from a null-terminated C string, 
+/*	Answer a new_ String copied from a null-terminated C string, 
 	or nil if out of memory. */
 /* SpurMemoryManager>>#stringForCString: */
 sqInt
@@ -62812,7 +62679,7 @@ topOfObjStack(sqInt objStack)
 	/* end fetchPointer:ofObject: */
 }
 /*	Answers the top of the remappable oop stack. Useful when writing loops. 
-	We support this excessence for compatibility with ObjectMemory. 
+	We support this_ excessence for compatibility with ObjectMemory. 
 	Spur doesn't GC during allocation. */
 /* SpurMemoryManager>>#topRemappableOop */
 sqInt
@@ -63169,7 +63036,7 @@ unlinkSolitaryFreeTreeNode(sqInt freeTreeNode)
 sqInt
 unpinObject(sqInt objOop)
 {
-	assert(isNonImmediate(objOop));
+	assert((objOop).isNonImmediate());
 	/* begin setIsPinnedOf:to: */
 	longAtput(objOop, (longAt(objOop)) & (~((usqIntptr_t) (1U << (pinnedBitShift())) )));
 	/* end setIsPinnedOf:to: */
@@ -64131,7 +63998,7 @@ copyAndUnmarkMobileObjects(void)
 	finalObject = ((!GIV(lastMobileObject))
 		 ? GIV(nilObj)
 		 : GIV(lastMobileObject));
-	assert(isOldObject(GIV(memoryMap), GIV(firstFreeObject)));
+	assert((GIV(firstFreeObject).isOld()));
 	assert(oopisLessThanOrEqualTo(finalObject, (GIV(memoryMap)->oldSpaceEnd)));
 	prevPrevObj = (prevObj = null);
 	objOop = GIV(firstFreeObject);
@@ -64416,14 +64283,14 @@ freeFromupTonextObject(usqInt initialToFinger, usqInt limit, sqInt nextObject)
 /*	Return if the heap is fully compacted. 
 	That is, if there are no marked objects after some free chunk. 
 	 
-	The downside of this definition, is that a heap that has a sequence of 
+	The downside of this_ definition, is that a heap that has a sequence of 
 	objects: - marked object 
 	- unmarked object 
 	- free space 
 	- end of the heap 
 	 
 	Is considered compacted, and thus the unmarked object will not be 
-	coallesced with the free space in this passScan for firstFreeObject and firstMobileObject from the start of memory. 
+	coallesced with the free space in this_ passScan for firstFreeObject and firstMobileObject from the start of memory. 
 	Answer if the heap is already fully compacted. */
 /* SpurPlanningCompactor>>#initializeScanCheckingForFullyCompactedHeap */
 static sqInt
@@ -64505,7 +64372,7 @@ planCompactSavingForwarders(void)
 	startOfPreviousPin = 0;
 	GIV(lastMobileObject) = null;
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(firstFreeObject)));
+	assert((GIV(firstFreeObject).isOld()));
 	prevPrevObj = (prevObj = null);
 	objOop = GIV(firstFreeObject);
 	while (1) {
@@ -64631,8 +64498,8 @@ reinitializeScanFrom(sqInt initialObject)
 	}
 	if (GIV(objectAfterLastMobileObject)) {
 		/* begin allOldSpaceEntitiesFrom:to:do: */
-		assert((isNonImmediate(GIV(firstFreeObject))) && (isInSegments(GIV(firstFreeObject))));
-		assert((isNonImmediate(GIV(objectAfterLastMobileObject))) && (isInSegments(GIV(objectAfterLastMobileObject))));
+		assert(((GIV(firstFreeObject).isNonImmediate())) && (isInSegments(GIV(firstFreeObject))));
+		assert(((GIV(objectAfterLastMobileObject).isNonImmediate())) && (isInSegments(GIV(objectAfterLastMobileObject))));
 		prevPrevObj = (prevObj = null);
 		objOop = GIV(firstFreeObject);
 		while (1) {
@@ -64672,7 +64539,7 @@ reinitializeScanFrom(sqInt initialObject)
 		GIV(firstMobileObject) = GIV(objectAfterLastMobileObject);
 	}
 }
-/*	Scavenge or simply follow objOop. Answer the new location of objOop. 
+/*	Scavenge or simply follow objOop. Answer the new_ location of objOop. 
 	The send should have been guarded by a send of shouldRemapOop:. 
 	The method is called remapObj: for compatibility with ObjectMemory. */
 /* SpurPlanningCompactor>>#remapObj: */
@@ -64704,7 +64571,7 @@ remapObj(sqInt objOop)
 	}
 	if (GIV(gcPhaseInProgress) > 0) {
 		if (GIV(gcPhaseInProgress) == ScavengeInProgress) {
-			if ((((resolvedObj & (tagMask())) == 0) && ((assert(isNonImmediate(resolvedObj)), (oopisLessThan(resolvedObj, (GIV(memoryMap)->newSpaceEnd))) && (oopisGreaterThanOrEqualTo(resolvedObj, (GIV(memoryMap)->newSpaceStart)))))) && (!(oopisGreaterThanOrEqualToandLessThan(resolvedObj, ((futureSpace()).start), futureSurvivorStart())))) {
+			if ((((resolvedObj & (tagMask())) == 0) && ((assert((resolvedObj).isNonImmediate()), (oopisLessThan(resolvedObj, (GIV(memoryMap)->newSpaceEnd))) && (oopisGreaterThanOrEqualTo(resolvedObj, (GIV(memoryMap)->newSpaceStart)))))) && (!(oopisGreaterThanOrEqualToandLessThan(resolvedObj, ((futureSpace()).start), futureSurvivorStart())))) {
 				return copyAndForward(resolvedObj);
 			}
 		} else {
@@ -64747,7 +64614,7 @@ scanForFirstFreeAndFirstMobileObjectFrom(sqInt initialObject)
 
 	firstFree = 0;
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), initialObject));
+	assert((initialObject).isOld());
 	prevPrevObj = (prevObj = null);
 	objOop = initialObject;
 	while (1) {
@@ -64832,7 +64699,7 @@ unmarkInitialImmobileObjectsFreeUnmarked(sqInt freeUnmarked)
 
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj = (prevObj = null);
 	objOop2 = GIV(nilObj);
 	while (1) {
@@ -64900,7 +64767,7 @@ unmarkObjectsFromFirstFreeObject(void)
 	startOfFree = 0;
 	freeBytes = 0;
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(firstFreeObject)));
+	assert((GIV(firstFreeObject).isOld()));
 	prevPrevObj = (prevObj = null);
 	objOop = GIV(firstFreeObject);
 	while (1) {
@@ -65036,10 +64903,10 @@ updatePointers(void)
 	sqInt numLiterals2;
 	sqInt numLiterals3;
 	sqInt numLiterals4;
-	usqInt numPointerSlots;
-	usqInt numPointerSlots2;
-	usqInt numPointerSlots3;
-	usqInt numPointerSlots4;
+	sqInt numPointerSlots;
+	sqInt numPointerSlots2;
+	sqInt numPointerSlots3;
+	sqInt numPointerSlots4;
 	usqInt numSlots;
 	usqInt numSlots2;
 	usqInt numSlots22;
@@ -65208,7 +65075,7 @@ updatePointers(void)
 	/* begin updatePointersInInitialImmobileObjects */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj3 = (prevObj3 = null);
 	objOop23 = GIV(nilObj);
 	while (1) {
@@ -65336,7 +65203,7 @@ updatePointers(void)
 	top = (GIV(savedFirstFieldsSpace).start);
 	startOfPreviousPin = 0;
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(firstFreeObject)));
+	assert((GIV(firstFreeObject).isOld()));
 	prevPrevObj4 = (prevObj4 = null);
 	objOop5 = GIV(firstFreeObject);
 	while (1) {
@@ -65500,7 +65367,7 @@ updatePointers(void)
 		/* begin updatePointersInObjectsOverflowingSavedFirstFieldsSpace */
 		/* begin allOldSpaceObjectsFrom:do: */
 		/* begin allOldSpaceEntitiesFrom:do: */
-		assert(isOldObject(GIV(memoryMap), GIV(objectAfterLastMobileObject)));
+		assert((GIV(objectAfterLastMobileObject).isOld()));
 		prevPrevObj = (prevObj = null);
 		objOop2 = GIV(objectAfterLastMobileObject);
 		while (1) {
@@ -65663,10 +65530,10 @@ updatePointersInManagerHeapEntities(void)
 	sqInt numLiterals2;
 	sqInt numLiterals3;
 	sqInt numLiterals4;
-	usqInt numPointerSlots;
-	usqInt numPointerSlots2;
-	usqInt numPointerSlots3;
-	usqInt numPointerSlots4;
+	sqInt numPointerSlots;
+	sqInt numPointerSlots2;
+	sqInt numPointerSlots3;
+	sqInt numPointerSlots4;
 	usqInt numSlots;
 	usqInt numSlots2;
 	usqInt numSlots3;
@@ -66175,7 +66042,7 @@ updatePointersInsavedFirstFieldPointer(sqInt obj, sqInt firstFieldPtr)
 			l5:
 			;
 			/* end fetchStackPointerOf: */
-			numPointerSlots = ((usqInt) (CtxtTempFrameStart + contextSize) );
+			numPointerSlots = CtxtTempFrameStart + contextSize;
 			goto l8;
 		}
 		/* begin numSlotsOf: */
@@ -66198,7 +66065,7 @@ updatePointersInsavedFirstFieldPointer(sqInt obj, sqInt firstFieldPtr)
 		header = field;
 		goto l6;
 	}
-	assert((isNonImmediate(field)) && (field < ((GIV(memoryMap)->newSpaceStart))));
+	assert(((field).isNonImmediate()) && (field < ((GIV(memoryMap)->newSpaceStart))));
 	assert((((((CogMethod *) field ))->objectHeader)) == (nullHeaderForMachineCodeMethod()));
 	header = ((((CogMethod *) field ))->methodHeader);
 	l6:
@@ -66208,7 +66075,7 @@ updatePointersInsavedFirstFieldPointer(sqInt obj, sqInt firstFieldPtr)
 		assert(((header & 7) == 1));
 		numLiterals = (header >> 3) & AlternateHeaderNumLiteralsMask;
 	}
-	numPointerSlots = ((usqInt) (numLiterals + LiteralStart) );
+	numPointerSlots = numLiterals + LiteralStart;
 	l8:
 	;
 	/* end numPointerSlotsWhileCompactingOf:withFormat:savedFirstFieldPointer: */
@@ -66319,7 +66186,7 @@ validRelocationPlanInPass(sqInt onePass)
 	toFinger = GIV(mobileStart);
 	GIV(anomaly) = null;
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(firstMobileObject)));
+	assert((GIV(firstMobileObject).isOld()));
 	prevPrevObj = (prevObj = null);
 	objOop = GIV(firstMobileObject);
 	while (1) {
@@ -67077,47 +66944,18 @@ swizzleObj(sqInt objOop)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
 	sqInt i;
-	sqInt result;
 
 	assert(GIV(canSwizzle));
-
-	/* Log for specialObjectsOop */
-	if (objOop == 0x100010db550LL) {
-		fprintf(stderr, "iOS: [SWIZZLE-SPECIAL] Called with specialObjectsOop=%p\n", (void*)objOop);
-		fprintf(stderr, "iOS: [SWIZZLE-SPECIAL] PERM_SPACE_START=%p numSegments=%lld\n",
-			(void*)PERM_SPACE_START(), (long long)GIV(numSegments));
-		for (i = 0; i < GIV(numSegments); i++) {
-			fprintf(stderr, "iOS: [SWIZZLE-SPECIAL] seg[%lld].segStart=%p .swizzle=%lld\n",
-				(long long)i, (void*)(GIV(segments)[i]).segStart, (long long)(GIV(segments)[i]).swizzle);
-		}
-		fflush(stderr);
-	}
-
-	if (objOop >= PERM_SPACE_START()) {
+	if (objOop >= 0x20000000000LL) {
 		return objOop;
 	}
 	for (i = GIV(numSegments) - 1; i >= 1; i += -1) {
 		if (objOop >= (((GIV(segments)[i]).segStart))) {
-			result = objOop + (((GIV(segments)[i]).swizzle));
-			if (objOop == 0x100010db550LL) {
-				fprintf(stderr, "iOS: [SWIZZLE-SPECIAL] Matched segment %lld, result=%p\n", (long long)i, (void*)result);
-				fflush(stderr);
-			}
-			return result;
+			return objOop + (((GIV(segments)[i]).swizzle));
 		}
 	};
-	result = objOop + (((GIV(segments)[0]).swizzle));
-	if (objOop == 0x100010db550LL) {
-		fprintf(stderr, "iOS: [SWIZZLE-SPECIAL] Using segment 0, result=%p\n", (void*)result);
-		fflush(stderr);
-	}
-	return result;
+	return objOop + (((GIV(segments)[0]).swizzle));
 }
-/* NOTE: Space encoding in swizzle was removed because:
- * - Encoded pointers corrupt memory access (VM uses them directly)
- * - Need to modify ALL memory access to clear bits first
- * - Alternative: Store space info separately or use different approach
- */
 /* SpurSegmentManager>>#totalBytesInNonEmptySegments */
 static size_t
 totalBytesInNonEmptySegments(void)
@@ -67184,7 +67022,7 @@ addIdleUsecs(sqInt idleUsecs)
 	GIV(statIdleUsecs) += idleUsecs;
 }
 /*	Add the given process to the end of the given linked list 
-	and set the backpointer of process to its new list. */
+	and set the backpointer of process to its new_ list. */
 /* StackInterpreter>>#addLastLink:toList: */
 static void NoDbgRegParms
 addLastLinktoList(sqInt proc, sqInt aList)
@@ -67217,10 +67055,10 @@ addLastLinktoList(sqInt proc, sqInt aList)
 		if (proc & (tagMask())) {
 			goto l2;
 		}
-		if (!(aList >= PERM_SPACE_START())) {
+		if (!(aList >= 0x20000000000LL)) {
 			goto l2;
 		}
-		if (proc >= PERM_SPACE_START()) {
+		if (proc >= 0x20000000000LL) {
 			goto l2;
 		}
 		if ((proc >= GIV(nilObj)) && (proc <= GIV(trueObj))) {
@@ -67261,10 +67099,10 @@ addLastLinktoList(sqInt proc, sqInt aList)
 		if (proc & (tagMask())) {
 			goto l4;
 		}
-		if (!(lastLink >= PERM_SPACE_START())) {
+		if (!(lastLink >= 0x20000000000LL)) {
 			goto l4;
 		}
-		if (proc >= PERM_SPACE_START()) {
+		if (proc >= 0x20000000000LL) {
 			goto l4;
 		}
 		if ((proc >= GIV(nilObj)) && (proc <= GIV(trueObj))) {
@@ -67301,10 +67139,10 @@ addLastLinktoList(sqInt proc, sqInt aList)
 	if (proc & (tagMask())) {
 		goto l6;
 	}
-	if (!(aList >= PERM_SPACE_START())) {
+	if (!(aList >= 0x20000000000LL)) {
 		goto l6;
 	}
-	if (proc >= PERM_SPACE_START()) {
+	if (proc >= 0x20000000000LL) {
 		goto l6;
 	}
 	if ((proc >= GIV(nilObj)) && (proc <= GIV(trueObj))) {
@@ -67340,10 +67178,10 @@ addLastLinktoList(sqInt proc, sqInt aList)
 	if (aList & (tagMask())) {
 		goto l8;
 	}
-	if (!(proc >= PERM_SPACE_START())) {
+	if (!(proc >= 0x20000000000LL)) {
 		goto l8;
 	}
-	if (aList >= PERM_SPACE_START()) {
+	if (aList >= 0x20000000000LL) {
 		goto l8;
 	}
 	if ((aList >= GIV(nilObj)) && (aList <= GIV(trueObj))) {
@@ -67359,7 +67197,7 @@ addLastLinktoList(sqInt proc, sqInt aList)
 	unsignedLongAtput((proc + BaseHeaderSize) + ((sqInt) (((usqInt) MyListIndex ) << (shiftForWord())) ), aList);
 	/* end storePointer:ofObject:withValue: */
 }
-/*	Answer if maybeClassObj looks like a class object */
+/*	Answer if maybeClassObj looks like a class_ object */
 /* StackInterpreter>>#addressCouldBeClassObj: */
 static sqInt NoDbgRegParms
 addressCouldBeClassObj(sqInt maybeClassObj)
@@ -67643,7 +67481,7 @@ checkAllAccessibleObjectsOkay(void)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -67954,7 +67792,7 @@ checkIsStillMarriedContextcurrentFP(sqInt aContext, char *currentFP)
 	limitFP = (((thePage == GIV(stackPage)) && (currentFP != null))
 		 ? currentFP
 		 : (thePage->headFP));
-	if (!((maybeFP >= limitFP) && ((isNonImmediate(((sqInt) (pointerForOop(unsignedLongAt(maybeFP + FoxSavedFP))) ))) && (((withSmallIntegerTags(pointerForOop(unsignedLongAt(maybeFP + FoxSavedFP)))) == (unsignedLongAt((aContext + BaseHeaderSize) + ((sqInt) (((usqInt) InstructionPointerIndex ) << (shiftForWord())) )))) && (((isMachineCodeIP(((usqInt) (unsignedLongAt(maybeFP + FoxMethod)) )))
+	if (!((maybeFP >= limitFP) && (((((sqInt).isNonImmediate() (pointerForOop(unsignedLongAt(maybeFP + FoxSavedFP))) ))) && (((withSmallIntegerTags(pointerForOop(unsignedLongAt(maybeFP + FoxSavedFP)))) == (unsignedLongAt((aContext + BaseHeaderSize) + ((sqInt) (((usqInt) InstructionPointerIndex ) << (shiftForWord())) )))) && (((isMachineCodeIP(((usqInt) (unsignedLongAt(maybeFP + FoxMethod)) )))
 		 ? ((unsignedLongAt(maybeFP + FoxMethod)) & MFMethodFlagHasContextFlag) != 0
 		 : (byteAt((maybeFP + FoxIFrameFlags) + 2)) != 0)))))) {
 		return 0;
@@ -68330,7 +68168,7 @@ copiedValueCountOfFullClosure(sqInt closurePointer)
 	Since BitBlt is now a plugin we need to look up BitBltPlugin:=copyBits 
 	and call it. This entire mechanism should eventually go away and be 
 	replaced with a dynamic lookup from BitBltPlugin itself but for backward 
-	compatibility this stub is provided */
+	compatibility this_ stub is provided */
 /* StackInterpreter>>#copyBits */
 sqInt
 copyBits(void)
@@ -68354,7 +68192,7 @@ copyBits(void)
 	BitBltPlugin:=copyBitsFrom:to:at: and call it. This entire mechanism 
 	should eventually go away and be 
 	replaced with a dynamic lookup from BitBltPlugin itself but for backward 
-	compatibility this stub is provided */
+	compatibility this_ stub is provided */
 /* StackInterpreter>>#copyBitsFrom:to:at: */
 sqInt
 copyBitsFromtoat(sqInt x0, sqInt x1, sqInt y)
@@ -68379,7 +68217,7 @@ couldBeProcess(sqInt oop)
 {
 	return (addressCouldBeObj(oop)) && ((((((usqInt) (longAt(oop)) ) >> (formatShift())) & (formatMask())) <= 5) && ((!(((oop & (tagMask())) == 0) && (((longAt(oop)) & (classIndexMask())) == ClassMethodContextCompactIndex))) && (((lengthOfformat(oop, (((usqInt) (longAt(oop)) ) >> (formatShift())) & (formatMask()))) > MyListIndex) && (isContext(unsignedLongAt((oop + BaseHeaderSize) + ((sqInt) (((usqInt) SuspendedContextIndex ) << (shiftForWord())) )))))));
 }
-/*	For testing in Smalltalk, this method should be overridden in a subclass. */
+/*	For testing in Smalltalk, this_ method should be overridden in a subclass. */
 /* StackInterpreter>>#cr */
 static sqInt
 cr(void)
@@ -68406,7 +68244,7 @@ createActualMessageTo(sqInt lookupClass)
 	sqInt numSlots;
 	char *sp;
 
-	assert((isImmediate(GIV(messageSelector))) || (addressCouldBeObj(GIV(messageSelector))));
+	assert(((GIV(messageSelector).isImmediate())) || (addressCouldBeObj(GIV(messageSelector))));
 	/* begin mnuBreakpoint:receiver: */
 	mnuBreakpointreceiver(firstFixedFieldOfMaybeImmediate(GIV(messageSelector)), lengthOfMaybeImmediate(GIV(messageSelector)), null);
 	/* end mnuBreakpoint:receiver: */
@@ -68628,10 +68466,10 @@ divorceFramesIn(StackPage *aStackPage)
 			if (theContext & (tagMask())) {
 				goto l2;
 			}
-			if (!(calleeContext >= PERM_SPACE_START())) {
+			if (!(calleeContext >= 0x20000000000LL)) {
 				goto l2;
 			}
-			if (theContext >= PERM_SPACE_START()) {
+			if (theContext >= 0x20000000000LL) {
 				goto l2;
 			}
 			if ((theContext >= GIV(nilObj)) && (theContext <= GIV(trueObj))) {
@@ -68691,10 +68529,10 @@ divorceFramesIn(StackPage *aStackPage)
 	if (valuePointer1 & (tagMask())) {
 		goto l4;
 	}
-	if (!(theContext >= PERM_SPACE_START())) {
+	if (!(theContext >= 0x20000000000LL)) {
 		goto l4;
 	}
-	if (valuePointer1 >= PERM_SPACE_START()) {
+	if (valuePointer1 >= 0x20000000000LL) {
 		goto l4;
 	}
 	if ((valuePointer1 >= GIV(nilObj)) && (valuePointer1 <= GIV(trueObj))) {
@@ -68712,7 +68550,7 @@ divorceFramesIn(StackPage *aStackPage)
 	(aStackPage->baseFP = 0);
 }
 /*	Divorce a single frame and its context. If it is not the top frame of a 
-	stack this means splitting its stack. */
+	stack this_ means splitting its stack. */
 /* StackInterpreter>>#divorceFrame:andContext: */
 static void NoDbgRegParms
 divorceFrameandContext(char *theFP, sqInt ctxt)
@@ -68835,10 +68673,10 @@ divorceFrameandContext(char *theFP, sqInt ctxt)
 	if (callerCtx & (tagMask())) {
 		goto l3;
 	}
-	if (!(ctxt >= PERM_SPACE_START())) {
+	if (!(ctxt >= 0x20000000000LL)) {
 		goto l3;
 	}
-	if (callerCtx >= PERM_SPACE_START()) {
+	if (callerCtx >= 0x20000000000LL) {
 		goto l3;
 	}
 	if ((callerCtx >= GIV(nilObj)) && (callerCtx <= GIV(trueObj))) {
@@ -69073,7 +68911,7 @@ dummyReferToProxy(void)
 }
 /*	For ``fast'' temporary access (ok, to mitigate slower temp access) we need 
 	fast access to a method's numArgs. Could have a variable set on save and 
-	return. We'll investigate this. For the moment we just use a byte in the 
+	return. We'll investigate this_. For the moment we just use a byte in the 
 	frameFlags field. This is endian dependent. Store numArgs in byte at 
 	FoxFrameFields + 1. 
 	Store hasContext flag in top bit (allows for 64-bit tags) of byte at 
@@ -69332,7 +69170,7 @@ ensureImageFormatIsUpToDate(sqInt swapBytes)
 		/* begin allOldSpaceObjectsDo: */
 		/* begin allOldSpaceObjectsFrom:do: */
 		/* begin allOldSpaceEntitiesFrom:do: */
-		assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+		assert((GIV(nilObj).isOld()));
 		prevPrevObj22 = (prevObj22 = null);
 		objOop222 = GIV(nilObj);
 		while (1) {
@@ -69530,7 +69368,7 @@ ensureImageFormatIsUpToDate(sqInt swapBytes)
 		/* begin allOldSpaceObjectsDo: */
 		/* begin allOldSpaceObjectsFrom:do: */
 		/* begin allOldSpaceEntitiesFrom:do: */
-		assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+		assert((GIV(nilObj).isOld()));
 		prevPrevObj2 = (prevObj2 = null);
 		objOop22 = GIV(nilObj);
 		while (1) {
@@ -70134,7 +69972,7 @@ findHomeForContext(sqInt aContext)
 	}
 	return findHomeForContext(unsignedLongAt((closureOrNil + BaseHeaderSize) + ((sqInt) (((usqInt) FullClosureOuterContextIndex ) << (shiftForWord())) )));
 }
-/*	See findUnwindThroughContext:. Alas this is mutually recursive with 
+/*	See findUnwindThroughContext:. Alas this_ is mutually recursive with 
 	findMethodWithPrimitive:FromFP:SP:ThroughContext: instead of iterative. 
 	We're doing the simplest thing that could possibly work. Niceties can 
 	wait. Being mutually-recursive with findMethodWithPrimitive:FromFP:UpToContext: 
@@ -70529,7 +70367,7 @@ followForwardedFrameContentsstackPointer(char *theFP, char *theSP)
 }
 /*	Force an interrupt check ASAP. 
 	Must set the stack page's limit before stackLimit to avoid 
-	a race condition if this is called from an interrupt handler. */
+	a race condition if this_ is called from an interrupt handler. */
 /* StackInterpreter>>#forceInterruptCheck */
 sqInt
 forceInterruptCheck(void)
@@ -70573,7 +70411,7 @@ frameOfMarriedContext(sqInt aContext)
 	closure of 
 	a block activation is always on the stack above any arguments and the 
 	frame itself. See the diagram in StackInterpreter 
-	class>>initializeFrameIndices.  */
+	class_>>initializeFrameIndices.  */
 /* StackInterpreter>>#frameStackedReceiverOffsetNumArgs: */
 static sqInt NoDbgRegParms
 frameStackedReceiverOffsetNumArgs(sqInt numArgs)
@@ -70584,7 +70422,7 @@ frameStackedReceiverOffsetNumArgs(sqInt numArgs)
 	receiver. The receiver of a message send or the closure of a block 
 	activation is 
 	always on the stack above any arguments and the frame itself. See the 
-	diagram in StackInterpreter class>>initializeFrameIndices. */
+	diagram in StackInterpreter class_>>initializeFrameIndices. */
 /* StackInterpreter>>#frameStackedReceiverOffset: */
 static sqInt NoDbgRegParms
 frameStackedReceiverOffset(char *theFP)
@@ -70618,8 +70456,8 @@ freeUntracedStackPages(void)
 		assert(((thePage->trace = StackPageTraceInvalid)) != 0);
 	};
 }
-/*	Find an actual function pointer for this primitiveIndex. This is an 
-	opportunity to specialise the prim for the relevant class (format for 
+/*	Find an actual function pointer for this_ primitiveIndex. This is an 
+	opportunity to specialise the prim for the relevant class_ (format for 
 	example). Default for now is simply the entry in the base primitiveTable. */
 /* StackInterpreter>>#functionPointerFor:inClass: */
 void (*functionPointerForinClass(sqInt primIdx,sqInt theClass))(void)
@@ -70705,7 +70543,7 @@ handleForwardedSelectorFaultFor(sqInt selectorOop)
 	/* end followForwarded: */
 }
 /*	Handle a send fault that may be due to a send to a forwarded object. 
-	Unforward the receiver on the stack and answer its actual class. */
+	Unforward the receiver on the stack and answer its actual class_. */
 /* StackInterpreter>>#handleForwardedSendFaultForTag: */
 static sqInt NoDbgRegParms
 handleForwardedSendFaultForTag(sqInt classTag)
@@ -71046,12 +70884,12 @@ includesBehaviorThatOf(sqInt aClass, sqInt aSuperclass)
 	large addresses, minus their useless 
 	lowest two bits. If a probe doesn't get a hit, the hash is shifted right 
 	one bit to compute the next probe, 
-	introducing a new randomish bit. The cache is probed CacheProbeMax times 
+	introducing a new_ randomish bit. The cache is probed CacheProbeMax times 
 	before giving up.WARNING: Since the hash computation is based on the object addresses of 
-	the class and selector, we must 
+	the class_ and selector, we must 
 	rehash or flush when compacting storage. We've chosen to flush, since that 
 	also saves the trouble of updating 
-	the addresses of the objects in the cache.classTag is either a class object, if using NewObjectMemory, or a 
+	the addresses of the objects in the cache.classTag is either a class_ object, if using NewObjectMemory, or a 
 	classIndex, if using SpurMemoryManager. */
 /* StackInterpreter>>#inlineLookupInMethodCacheSel:classTag: */
 static sqInt NoDbgRegParms
@@ -71086,7 +70924,7 @@ inlineLookupInMethodCacheSelclassTag(sqInt selector, sqInt classTag)
 }
 /*	the vm has to convert aFilenameString via any canonicalization and 
 	char-mapping and put the result in aCharBuffer. 
-	Note the resolveAliases flag - this is an awful artefact of OSX and Apples 
+	Note the resolveAliases flag - this_ is an awful artefact of OSX and Apples 
 	demented alias handling. When opening a file, the flag must be true, when 
 	closing or renaming it must be false. Sigh. */
 /* StackInterpreter>>#ioFilename:fromString:ofLength:resolveAliases: */
@@ -71184,7 +71022,7 @@ isLiveContext(sqInt oop)
 	if (!(((oop & (tagMask())) == 0) && (((longAt(oop)) & (classIndexMask())) == ClassMethodContextCompactIndex))) {
 		return 0;
 	}
-	if (isNonImmediate(unsignedLongAt((oop + BaseHeaderSize) + ((sqInt) (((usqInt) SenderIndex ) << (shiftForWord())) )))) {
+	if ((unsignedLongAt((oop + BaseHeaderSize).isNonImmediate() + ((sqInt) (((usqInt) SenderIndex ) << (shiftForWord())) )))) {
 		return (((unsignedLongAt((oop + BaseHeaderSize) + ((sqInt) (((usqInt) InstructionPointerIndex ) << (shiftForWord())) ))) & 7) == 1);
 	}
 	return !(isWidowedContext(oop));
@@ -71195,7 +71033,7 @@ isMarriedOrWidowedContext(sqInt aContext)
 {
 	return (((unsignedLongAt((aContext + BaseHeaderSize) + ((sqInt) (((usqInt) SenderIndex ) << (shiftForWord())) ))) & 7) == 1);
 }
-/*	This virtual machine provides two primitives that executes arbitrary 
+/*	This virtual_ machine provides two primitives that executes arbitrary 
 	primitives, one 
 	for indexed primitivces and one for named primitives. These meta 
 	primitives are used 
@@ -71572,7 +71410,7 @@ literalofMethod(sqInt offset, sqInt methodPointer)
 	BitBltPlugin:=loadBitBltFrom and call it. This entire mechanism should 
 	eventually go away and be 
 	replaced with a dynamic lookup from BitBltPlugin itself but for backward 
-	compatibility this stub is provided */
+	compatibility this_ stub is provided */
 /* StackInterpreter>>#loadBitBltFrom: */
 sqInt
 loadBitBltFrom(sqInt bb)
@@ -71626,7 +71464,7 @@ longPrintOop(sqInt oop)
 {
 	sqInt byte;
 	int bytecodesPerLine;
-	sqInt class;
+	sqInt class_;
 	CogMethod *cogMethod;
 	int column;
 	unsigned short field16;
@@ -71653,13 +71491,13 @@ longPrintOop(sqInt oop)
 	}
 	printHex(oop);
 	{
-		class = fetchClassOfNonImm(oop);
-		if (class == null) {
-			print(" has a nil class!!");
+		class_ = fetchClassOfNonImm(oop);
+		if (class_ == null) {
+			print(" has a nil class_!!");
 		} else {
 			{
 				print(": a(n) ");
-				printNameOfClasscount(class, 5);
+				printNameOfClasscount(class_, 5);
 				print(" (");
 			}
 			{
@@ -71667,7 +71505,7 @@ longPrintOop(sqInt oop)
 				print("=>");
 			}
 			{
-				printHexnp(class);
+				printHexnp(class_);
 				print(")");
 			}
 		}
@@ -71980,7 +71818,7 @@ lookupInMethodCacheSelclassTag(sqInt selector, sqInt classTag)
 }
 /* StackInterpreter>>#lookupMethodInClass: */
 static sqInt NoDbgRegParms
-lookupMethodInClass(sqInt class)
+lookupMethodInClass(sqInt class_)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
 	sqInt currentClass;
@@ -72003,26 +71841,26 @@ lookupMethodInClass(sqInt class)
 	sqInt selector;
 	int wrapAround;
 
-	assert(addressCouldBeClassObj(class));
+	assert(addressCouldBeClassObj(class_));
 	/* begin lookupBreakFor: */
-	if ((breakLookupClassTag != null) && ((class == breakLookupClassTag) || (((uint32AtPointer(class + 4)) & (identityHashHalfWordMask())) == breakLookupClassTag))) {
-		warning("lookup class send break (heartbeat suppressed)");
+	if ((breakLookupClassTag != null) && ((class_ == breakLookupClassTag) || (((uint32AtPointer(class_ + 4)) & (identityHashHalfWordMask())) == breakLookupClassTag))) {
+		warning("lookup class_ send break (heartbeat suppressed)");
 	}
 	/* end lookupBreakFor: */
-	currentClass = class;
+	currentClass = class_;
 	while (currentClass != GIV(nilObj)) {
 		/* begin followObjField:ofObject: */
 		/* begin fetchPointer:ofObject: */
 		objOop = unsignedLongAt((currentClass + BaseHeaderSize) + ((sqInt) (((usqInt) MethodDictionaryIndex ) << (shiftForWord())) ));
 		/* end fetchPointer:ofObject: */
-		assert(isNonImmediate(objOop));
+		assert((objOop).isNonImmediate());
 		if (((long64At(objOop)) & ((classIndexMask()) - (isForwardedObjectClassIndexPun()))) == 0) {
 			objOop = fixFollowedFieldofObjectwithInitialValue(MethodDictionaryIndex, currentClass, objOop);
 		}
 		dictionary = objOop;
 		/* end followObjField:ofObject: */
 		if (dictionary == GIV(nilObj)) {
-			createActualMessageTo(class);
+			createActualMessageTo(class_);
 			/* begin splObj: */
 			/* begin fetchPointer:ofObject: */
 			GIV(messageSelector) = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) SelectorCannotInterpret ) << (shiftForWord())) ));
@@ -72060,7 +71898,7 @@ lookupMethodInClass(sqInt class)
 					/* begin fetchPointer:ofObject: */
 					objOop7 = unsignedLongAt((dictionary + BaseHeaderSize) + ((sqInt) (((usqInt) MethodArrayIndex ) << (shiftForWord())) ));
 					/* end fetchPointer:ofObject: */
-					assert(isNonImmediate(objOop7));
+					assert((objOop7).isNonImmediate());
 					if (((long64At(objOop7)) & ((classIndexMask()) - (isForwardedObjectClassIndexPun()))) == 0) {
 						objOop7 = fixFollowedFieldofObjectwithInitialValue(MethodArrayIndex, dictionary, objOop7);
 					}
@@ -72106,7 +71944,7 @@ lookupMethodInClass(sqInt class)
 				/* begin fetchPointer:ofObject: */
 				objOop4 = unsignedLongAt((dictionary + BaseHeaderSize) + ((sqInt) (((usqInt) MethodArrayIndex ) << (shiftForWord())) ));
 				/* end fetchPointer:ofObject: */
-				assert(isNonImmediate(objOop4));
+				assert((objOop4).isNonImmediate());
 				if (((long64At(objOop4)) & ((classIndexMask()) - (isForwardedObjectClassIndexPun()))) == 0) {
 					objOop4 = fixFollowedFieldofObjectwithInitialValue(MethodArrayIndex, dictionary, objOop4);
 				}
@@ -72154,21 +71992,21 @@ lookupMethodInClass(sqInt class)
 	if (GIV(messageSelector) == (splObj(SelectorDoesNotUnderstand))) {
 		error("Recursive not understood error encountered");
 	}
-	createActualMessageTo(class);
+	createActualMessageTo(class_);
 	/* begin splObj: */
 	/* begin fetchPointer:ofObject: */
 	GIV(messageSelector) = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) SelectorDoesNotUnderstand ) << (shiftForWord())) ));
 	/* end fetchPointer:ofObject: */
 	/* end splObj: */
 	sendBreakpointreceiver(GIV(messageSelector) + BaseHeaderSize, lengthOfformat(GIV(messageSelector), (((usqInt) (longAt(GIV(messageSelector))) ) >> (formatShift())) & (formatMask())), null);
-	return lookupMethodInClass(class);
+	return lookupMethodInClass(class_);
 }
-/*	Lookup messageSelector in class. Answer 0 on success. Answer the splObj: 
+/*	Lookup messageSelector in class_. Answer 0 on success. Answer the splObj: 
 	index for the error selector to use on failure rather than performing MNU 
 	processing etc. */
 /* StackInterpreter>>#lookupMNUInClass: */
 static sqInt NoDbgRegParms
-lookupMNUInClass(sqInt class)
+lookupMNUInClass(sqInt class_)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
 	sqInt currentClass;
@@ -72192,17 +72030,17 @@ lookupMNUInClass(sqInt class)
 	int wrapAround;
 
 	/* begin lookupBreakFor: */
-	if ((breakLookupClassTag != null) && ((class == breakLookupClassTag) || (((uint32AtPointer(class + 4)) & (identityHashHalfWordMask())) == breakLookupClassTag))) {
-		warning("lookup class send break (heartbeat suppressed)");
+	if ((breakLookupClassTag != null) && ((class_ == breakLookupClassTag) || (((uint32AtPointer(class_ + 4)) & (identityHashHalfWordMask())) == breakLookupClassTag))) {
+		warning("lookup class_ send break (heartbeat suppressed)");
 	}
 	/* end lookupBreakFor: */
-	currentClass = class;
+	currentClass = class_;
 	while (currentClass != GIV(nilObj)) {
 		/* begin followObjField:ofObject: */
 		/* begin fetchPointer:ofObject: */
 		objOop2 = unsignedLongAt((currentClass + BaseHeaderSize) + ((sqInt) (((usqInt) MethodDictionaryIndex ) << (shiftForWord())) ));
 		/* end fetchPointer:ofObject: */
-		assert(isNonImmediate(objOop2));
+		assert((objOop2).isNonImmediate());
 		if (((long64At(objOop2)) & ((classIndexMask()) - (isForwardedObjectClassIndexPun()))) == 0) {
 			objOop2 = fixFollowedFieldofObjectwithInitialValue(MethodDictionaryIndex, currentClass, objOop2);
 		}
@@ -72246,7 +72084,7 @@ lookupMNUInClass(sqInt class)
 					/* begin fetchPointer:ofObject: */
 					objOop7 = unsignedLongAt((dictionary + BaseHeaderSize) + ((sqInt) (((usqInt) MethodArrayIndex ) << (shiftForWord())) ));
 					/* end fetchPointer:ofObject: */
-					assert(isNonImmediate(objOop7));
+					assert((objOop7).isNonImmediate());
 					if (((long64At(objOop7)) & ((classIndexMask()) - (isForwardedObjectClassIndexPun()))) == 0) {
 						objOop7 = fixFollowedFieldofObjectwithInitialValue(MethodArrayIndex, dictionary, objOop7);
 					}
@@ -72292,7 +72130,7 @@ lookupMNUInClass(sqInt class)
 				/* begin fetchPointer:ofObject: */
 				objOop4 = unsignedLongAt((dictionary + BaseHeaderSize) + ((sqInt) (((usqInt) MethodArrayIndex ) << (shiftForWord())) ));
 				/* end fetchPointer:ofObject: */
-				assert(isNonImmediate(objOop4));
+				assert((objOop4).isNonImmediate());
 				if (((long64At(objOop4)) & ((classIndexMask()) - (isForwardedObjectClassIndexPun()))) == 0) {
 					objOop4 = fixFollowedFieldofObjectwithInitialValue(MethodArrayIndex, dictionary, objOop4);
 				}
@@ -72325,7 +72163,7 @@ lookupMNUInClass(sqInt class)
 		;
 		/* end lookupMethodInDictionary: */
 		if (found) {
-			addNewMethodToCache(class);
+			addNewMethodToCache(class_);
 			return 0;
 		}
 		/* begin followField:ofObject: */
@@ -72338,15 +72176,15 @@ lookupMNUInClass(sqInt class)
 		currentClass = objOop8;
 		/* end followField:ofObject: */
 	};
-	GIV(lkupClass) = class;
+	GIV(lkupClass) = class_;
 	return SelectorDoesNotUnderstand;
 }
-/*	Lookup messageSelector in class. Answer 0 on success. Answer the splObj: 
+/*	Lookup messageSelector in class_. Answer 0 on success. Answer the splObj: 
 	index for the error selector to use on failure rather than performing MNU 
 	processing etc. */
 /* StackInterpreter>>#lookupOrdinaryNoMNUEtcInClass: */
 static sqInt NoDbgRegParms
-lookupOrdinaryNoMNUEtcInClass(sqInt class)
+lookupOrdinaryNoMNUEtcInClass(sqInt class_)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
 	sqInt currentClass;
@@ -72370,17 +72208,17 @@ lookupOrdinaryNoMNUEtcInClass(sqInt class)
 	int wrapAround;
 
 	/* begin lookupBreakFor: */
-	if ((breakLookupClassTag != null) && ((class == breakLookupClassTag) || (((uint32AtPointer(class + 4)) & (identityHashHalfWordMask())) == breakLookupClassTag))) {
-		warning("lookup class send break (heartbeat suppressed)");
+	if ((breakLookupClassTag != null) && ((class_ == breakLookupClassTag) || (((uint32AtPointer(class_ + 4)) & (identityHashHalfWordMask())) == breakLookupClassTag))) {
+		warning("lookup class_ send break (heartbeat suppressed)");
 	}
 	/* end lookupBreakFor: */
-	currentClass = class;
+	currentClass = class_;
 	while (currentClass != GIV(nilObj)) {
 		/* begin followObjField:ofObject: */
 		/* begin fetchPointer:ofObject: */
 		objOop2 = unsignedLongAt((currentClass + BaseHeaderSize) + ((sqInt) (((usqInt) MethodDictionaryIndex ) << (shiftForWord())) ));
 		/* end fetchPointer:ofObject: */
-		assert(isNonImmediate(objOop2));
+		assert((objOop2).isNonImmediate());
 		if (((long64At(objOop2)) & ((classIndexMask()) - (isForwardedObjectClassIndexPun()))) == 0) {
 			objOop2 = fixFollowedFieldofObjectwithInitialValue(MethodDictionaryIndex, currentClass, objOop2);
 		}
@@ -72424,7 +72262,7 @@ lookupOrdinaryNoMNUEtcInClass(sqInt class)
 					/* begin fetchPointer:ofObject: */
 					objOop7 = unsignedLongAt((dictionary + BaseHeaderSize) + ((sqInt) (((usqInt) MethodArrayIndex ) << (shiftForWord())) ));
 					/* end fetchPointer:ofObject: */
-					assert(isNonImmediate(objOop7));
+					assert((objOop7).isNonImmediate());
 					if (((long64At(objOop7)) & ((classIndexMask()) - (isForwardedObjectClassIndexPun()))) == 0) {
 						objOop7 = fixFollowedFieldofObjectwithInitialValue(MethodArrayIndex, dictionary, objOop7);
 					}
@@ -72470,7 +72308,7 @@ lookupOrdinaryNoMNUEtcInClass(sqInt class)
 				/* begin fetchPointer:ofObject: */
 				objOop4 = unsignedLongAt((dictionary + BaseHeaderSize) + ((sqInt) (((usqInt) MethodArrayIndex ) << (shiftForWord())) ));
 				/* end fetchPointer:ofObject: */
-				assert(isNonImmediate(objOop4));
+				assert((objOop4).isNonImmediate());
 				if (((long64At(objOop4)) & ((classIndexMask()) - (isForwardedObjectClassIndexPun()))) == 0) {
 					objOop4 = fixFollowedFieldofObjectwithInitialValue(MethodArrayIndex, dictionary, objOop4);
 				}
@@ -72503,7 +72341,7 @@ lookupOrdinaryNoMNUEtcInClass(sqInt class)
 		;
 		/* end lookupMethodInDictionary: */
 		if (found) {
-			addNewMethodToCache(class);
+			addNewMethodToCache(class_);
 			return 0;
 		}
 		/* begin followField:ofObject: */
@@ -72516,14 +72354,14 @@ lookupOrdinaryNoMNUEtcInClass(sqInt class)
 		currentClass = objOop8;
 		/* end followField:ofObject: */
 	};
-	GIV(lkupClass) = class;
+	GIV(lkupClass) = class_;
 	return SelectorDoesNotUnderstand;
 }
-/*	Lookup selector in class. Answer the method or nil. This is a debugging 
+/*	Lookup selector in class_. Answer the method or nil. This is a debugging 
 	routine. It does /not/ side-effect lookupClass or newMethod. */
 /* StackInterpreter>>#lookupSelector:inClass: */
 sqInt
-lookupSelectorinClass(sqInt selector, sqInt class)
+lookupSelectorinClass(sqInt selector, sqInt class_)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
 	sqInt currentClass;
@@ -72541,13 +72379,13 @@ lookupSelectorinClass(sqInt selector, sqInt class)
 	sqInt objOop4;
 	int wrapAround;
 
-	currentClass = class;
+	currentClass = class_;
 	while (currentClass != GIV(nilObj)) {
 		/* begin followObjField:ofObject: */
 		/* begin fetchPointer:ofObject: */
 		objOop3 = unsignedLongAt((currentClass + BaseHeaderSize) + ((sqInt) (((usqInt) MethodDictionaryIndex ) << (shiftForWord())) ));
 		/* end fetchPointer:ofObject: */
-		assert(isNonImmediate(objOop3));
+		assert((objOop3).isNonImmediate());
 		if (((long64At(objOop3)) & ((classIndexMask()) - (isForwardedObjectClassIndexPun()))) == 0) {
 			objOop3 = fixFollowedFieldofObjectwithInitialValue(MethodDictionaryIndex, currentClass, objOop3);
 		}
@@ -72586,7 +72424,7 @@ lookupSelectorinClass(sqInt selector, sqInt class)
 					/* begin fetchPointer:ofObject: */
 					objOop = unsignedLongAt((dictionary + BaseHeaderSize) + ((sqInt) (((usqInt) MethodArrayIndex ) << (shiftForWord())) ));
 					/* end fetchPointer:ofObject: */
-					assert(isNonImmediate(objOop));
+					assert((objOop).isNonImmediate());
 					if (((long64At(objOop)) & ((classIndexMask()) - (isForwardedObjectClassIndexPun()))) == 0) {
 						objOop = fixFollowedFieldofObjectwithInitialValue(MethodArrayIndex, dictionary, objOop);
 					}
@@ -72748,7 +72586,7 @@ makePointwithxValueyValue(sqInt xValue, sqInt yValue)
 	/* end storePointerUnchecked:ofObject:withValue: */
 	return pointResult;
 }
-/*	Map all oops in the interpreter's state to their new values  
+/*	Map all oops in the interpreter's state to their new_ values  
 	during garbage collection or a become: operation.Assume: All traced variables contain valid oops. */
 /* StackInterpreter>>#mapInterpreterOops */
 static void
@@ -73006,7 +72844,7 @@ marriedContextpointsTostackDeltaForCurrentFrame(sqInt spouseContext, sqInt anOop
 	};
 	return 0;
 }
-/*	Establish aContext at the base of a new stackPage, make the stackPage the 
+/*	Establish aContext at the base of a new_ stackPage, make the stackPage the 
 	active one and set-up the interreter registers. This is used to boot the 
 	system and bring it back after a snapshot. */
 /* StackInterpreter>>#marryContextInNewStackPageAndInitializeInterpreterRegisters: */
@@ -73281,12 +73119,12 @@ methodClassAssociationOf(sqInt methodPointer)
 	/* end fetchPointer:ofObject: */
 	/* end literal:ofMethod: */
 }
-/*	Answer the method class of a method which is the value of an Association 
+/*	Answer the method class_ of a method which is the value of an Association 
 	in the last literal, 
 	or answer nil if there isn't one. 
 	Using a read barrier here simplifies the become implementation and costs 
 	very little 
-	because the class index and ValueIndex of the association almost certainly 
+	because the class_ index and ValueIndex of the association almost certainly 
 	share a cache line. */
 /* StackInterpreter>>#methodClassOf: */
 sqInt
@@ -73455,7 +73293,7 @@ EXPORT(void)
 moduleUnloaded(char *aModuleName)
 {
 }
-/*	Brain-damaged nameOfClass: for C VM. Does *not* answer Foo class for 
+/*	Brain-damaged nameOfClass: for C VM. Does *not* answer Foo class_ for 
 	metaclasses. Use e.g. classIsMeta: to avoid being fooled. */
 /* StackInterpreter>>#nameOfClass: */
 static char * NoDbgRegParms
@@ -73481,10 +73319,10 @@ nameOfClass(sqInt classOop)
 		if (addressCouldBeClassObj(maybeThisClassOop)) {
 			return nameOfClass(unsignedLongAt((classOop + BaseHeaderSize) + ((sqInt) (((usqInt) GIV(thisClassIndex) ) << (shiftForWord())) )));
 		}
-		return "bad class";
+		return "bad class_";
 	}
 	if (!((numSlots > GIV(classNameIndex)) && (((maybeNameOop = unsignedLongAt((classOop + BaseHeaderSize) + ((sqInt) (((usqInt) GIV(classNameIndex) ) << (shiftForWord())) ))), ((maybeNameOop & (tagMask())) == 0) && (((((usqInt) (longAt(maybeNameOop)) ) >> (formatShift())) & (formatMask())) >= (firstByteFormat())))))) {
-		return "bad class";
+		return "bad class_";
 	}
 	return firstIndexableField(maybeNameOop);
 }
@@ -73534,7 +73372,7 @@ numStkPages(void)
 
 	return GIV(numStackPages);
 }
-/*	Answer if objOop looks like a class object. WIth Spur be lenient if the 
+/*	Answer if objOop looks like a class_ object. WIth Spur be lenient if the 
 	object doesn't 
 	yet have a hash (i.e. is not yet in the classTable), and accept forwarding 
 	pointers.  */
@@ -73914,10 +73752,10 @@ primitiveEnterCriticalSection(void)
 		if (activeProc & (tagMask())) {
 			goto l5;
 		}
-		if (!(criticalSection >= PERM_SPACE_START())) {
+		if (!(criticalSection >= 0x20000000000LL)) {
 			goto l5;
 		}
-		if (activeProc >= PERM_SPACE_START()) {
+		if (activeProc >= 0x20000000000LL) {
 			goto l5;
 		}
 		if ((activeProc >= GIV(nilObj)) && (activeProc <= GIV(trueObj))) {
@@ -74112,11 +73950,11 @@ primitiveIndexOf(sqInt methodPointer)
 		 : 0);
 	/* end primitiveIndexOfMethod:header: */
 }
-/*	Put this process on the scheduler's lists thus allowing it to proceed next 
+/*	Put this_ process on the scheduler's lists thus allowing it to proceed next 
 	time there is 
 	a chance for processes of it's priority level. It must go to the back of 
 	its run queue so 
-	as not to preempt any already running processes at this level. If the 
+	as not to preempt any already running processes at this_ level. If the 
 	process's priority 
 	is higher than the current process, preempt the current process. */
 /* StackInterpreter>>#primitiveResume */
@@ -74235,10 +74073,10 @@ primitiveSuspend(void)
 		if (myList & (tagMask())) {
 			goto l7;
 		}
-		if (!(process >= PERM_SPACE_START())) {
+		if (!(process >= 0x20000000000LL)) {
 			goto l7;
 		}
-		if (myList >= PERM_SPACE_START()) {
+		if (myList >= 0x20000000000LL) {
 			goto l7;
 		}
 		if ((myList >= GIV(nilObj)) && (myList <= GIV(trueObj))) {
@@ -74291,10 +74129,10 @@ primitiveSuspend(void)
 		if (nextLink & (tagMask())) {
 			goto l19;
 		}
-		if (!(myList >= PERM_SPACE_START())) {
+		if (!(myList >= 0x20000000000LL)) {
 			goto l19;
 		}
-		if (nextLink >= PERM_SPACE_START()) {
+		if (nextLink >= 0x20000000000LL) {
 			goto l19;
 		}
 		if ((nextLink >= GIV(nilObj)) && (nextLink <= GIV(trueObj))) {
@@ -74361,10 +74199,10 @@ primitiveSuspend(void)
 		if (nextLink & (tagMask())) {
 			goto l12;
 		}
-		if (!(tempLink >= PERM_SPACE_START())) {
+		if (!(tempLink >= 0x20000000000LL)) {
 			goto l12;
 		}
-		if (nextLink >= PERM_SPACE_START()) {
+		if (nextLink >= 0x20000000000LL) {
 			goto l12;
 		}
 		if ((nextLink >= GIV(nilObj)) && (nextLink <= GIV(trueObj))) {
@@ -74401,10 +74239,10 @@ primitiveSuspend(void)
 			if (tempLink & (tagMask())) {
 				goto l16;
 			}
-			if (!(myList >= PERM_SPACE_START())) {
+			if (!(myList >= 0x20000000000LL)) {
 				goto l16;
 			}
-			if (tempLink >= PERM_SPACE_START()) {
+			if (tempLink >= 0x20000000000LL) {
 				goto l16;
 			}
 			if ((tempLink >= GIV(nilObj)) && (tempLink <= GIV(trueObj))) {
@@ -74442,10 +74280,10 @@ primitiveSuspend(void)
 	if (GIV(nilObj) & (tagMask())) {
 		goto l14;
 	}
-	if (!(process >= PERM_SPACE_START())) {
+	if (!(process >= 0x20000000000LL)) {
 		goto l14;
 	}
-	if (GIV(nilObj) >= PERM_SPACE_START()) {
+	if (GIV(nilObj) >= 0x20000000000LL) {
 		goto l14;
 	}
 	if ((GIV(nilObj) >= GIV(nilObj)) && (GIV(nilObj) <= GIV(trueObj))) {
@@ -74485,10 +74323,10 @@ primitiveSuspend(void)
 		if (GIV(nilObj) & (tagMask())) {
 			goto l9;
 		}
-		if (!(process >= PERM_SPACE_START())) {
+		if (!(process >= 0x20000000000LL)) {
 			goto l9;
 		}
-		if (GIV(nilObj) >= PERM_SPACE_START()) {
+		if (GIV(nilObj) >= 0x20000000000LL) {
 			goto l9;
 		}
 		if ((GIV(nilObj) >= GIV(nilObj)) && (GIV(nilObj) <= GIV(trueObj))) {
@@ -74568,7 +74406,7 @@ static void NoDbgRegParms
 printActivationNameForSelectorstartClass(sqInt aSelector, sqInt startClass)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
-	sqInt class;
+	sqInt class_;
 	sqInt classDict;
 	usqInt classDictSize;
 	sqInt currClass;
@@ -74899,7 +74737,7 @@ printAllStacks(void)
 	/* begin allHeapEntitiesDo: */
 	/* begin allOldSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -75205,7 +75043,7 @@ printCallStackOfcurrentFP(sqInt aContext, char *currFP)
 	};
 	return 0;
 }
-/*	For testing in Smalltalk, this method should be overridden in a subclass. */
+/*	For testing in Smalltalk, this_ method should be overridden in a subclass. */
 /* StackInterpreter>>#printChar: */
 void
 printChar(sqInt aByte)
@@ -75330,7 +75168,7 @@ printContext(sqInt aContext)
 		/* begin printMethodFieldForPrintContext: */
 		meth = unsignedLongAt((aContext + BaseHeaderSize) + ((sqInt) (((usqInt) MethodIndex ) << (shiftForWord())) ));
 		if ((((unsignedLongAt((aContext + BaseHeaderSize) + ((sqInt) (((usqInt) SenderIndex ) << (shiftForWord())) ))) & 7) == 1)) {
-			if ((assert(isNonImmediate(meth)), isCogMethodReference(unsignedLongAt((meth + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ))))) {
+			if ((assert((meth).isNonImmediate()), isCogMethodReference(unsignedLongAt((meth + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ))))) {
 				{
 					printHexnp(cogMethodOf(meth));
 					/* begin space */
@@ -75341,7 +75179,7 @@ printContext(sqInt aContext)
 			shortPrintOop(meth);
 		} else {
 			shortPrintOop(meth);
-			if ((assert(isNonImmediate(meth)), isCogMethodReference(unsignedLongAt((meth + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ))))) {
+			if ((assert((meth).isNonImmediate()), isCogMethodReference(unsignedLongAt((meth + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) ))))) {
 				{
 					/* begin space */
 					printChar(' ');
@@ -76243,7 +76081,7 @@ printLikelyImplementorsOfSelector(sqInt selector)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -76794,7 +76632,7 @@ printNameOfClasscount(sqInt classOop, sqInt cnt)
 		return;
 	}
 	if ((classOop == null) || ((classOop == 0) || (cnt <= 0))) {
-		print("bad class");
+		print("bad class_");
 		return;
 	}
 	/* begin numSlotsOf: */
@@ -76806,16 +76644,16 @@ printNameOfClasscount(sqInt classOop, sqInt cnt)
 	/* end numSlotsOf: */
 	if ((numSlots == GIV(metaclassNumSlots)) && (GIV(metaclassNumSlots) > GIV(thisClassIndex))) {
 		printNameOfClasscount(unsignedLongAt((classOop + BaseHeaderSize) + ((sqInt) (((usqInt) GIV(thisClassIndex) ) << (shiftForWord())) )), cnt - 1);
-		print(" class");
+		print(" class_");
 	} else {
 		if (numSlots <= GIV(classNameIndex)) {
-			print("bad class");
+			print("bad class_");
 		} else {
 			printStringOf(unsignedLongAt((classOop + BaseHeaderSize) + ((sqInt) (((usqInt) GIV(classNameIndex) ) << (shiftForWord())) )));
 		}
 	}
 }
-/*	For testing in Smalltalk, this method should be overridden in a subclass. */
+/*	For testing in Smalltalk, this_ method should be overridden in a subclass. */
 /* StackInterpreter>>#printNum: */
 static void NoDbgRegParms
 printNum(sqInt n)
@@ -77351,7 +77189,7 @@ printPointersTo(sqInt anAddress)
 	/* begin allOldSpaceObjectsDo: */
 	/* begin allOldSpaceObjectsFrom:do: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop22 = GIV(nilObj);
 	while (1) {
@@ -77889,7 +77727,7 @@ printStringOf(sqInt oop)
 	}
 	flush();
 }
-/*	For testing in Smalltalk, this method should be overridden in a subclass. */
+/*	For testing in Smalltalk, this_ method should be overridden in a subclass. */
 /* StackInterpreter>>#print: */
 void
 print(char *s)
@@ -77915,7 +77753,7 @@ pushBool(sqInt trueOrFalse)
 }
 /*	The receiver of a message send or the closure of a block activation is 
 	always on the stack above any arguments and the frame itself. See the 
-	diagram in StackInterpreter class>>initializeFrameIndices. */
+	diagram in StackInterpreter class_>>initializeFrameIndices. */
 /* StackInterpreter>>#pushedReceiverOrClosureOfFrame: */
 static sqInt NoDbgRegParms
 pushedReceiverOrClosureOfFrame(char *theFP)
@@ -78032,10 +77870,10 @@ putToSleepyieldingIf(sqInt aProcess, sqInt yieldImplicitly)
 		if (aProcess & (tagMask())) {
 			goto l6;
 		}
-		if (!(processList >= PERM_SPACE_START())) {
+		if (!(processList >= 0x20000000000LL)) {
 			goto l6;
 		}
-		if (aProcess >= PERM_SPACE_START()) {
+		if (aProcess >= 0x20000000000LL) {
 			goto l6;
 		}
 		if ((aProcess >= GIV(nilObj)) && (aProcess <= GIV(trueObj))) {
@@ -78072,10 +77910,10 @@ putToSleepyieldingIf(sqInt aProcess, sqInt yieldImplicitly)
 			if (aProcess & (tagMask())) {
 				goto l10;
 			}
-			if (!(processList >= PERM_SPACE_START())) {
+			if (!(processList >= 0x20000000000LL)) {
 				goto l10;
 			}
-			if (aProcess >= PERM_SPACE_START()) {
+			if (aProcess >= 0x20000000000LL) {
 				goto l10;
 			}
 			if ((aProcess >= GIV(nilObj)) && (aProcess <= GIV(trueObj))) {
@@ -78112,10 +77950,10 @@ putToSleepyieldingIf(sqInt aProcess, sqInt yieldImplicitly)
 			if (firstLink & (tagMask())) {
 				goto l4;
 			}
-			if (!(aProcess >= PERM_SPACE_START())) {
+			if (!(aProcess >= 0x20000000000LL)) {
 				goto l4;
 			}
-			if (firstLink >= PERM_SPACE_START()) {
+			if (firstLink >= 0x20000000000LL) {
 				goto l4;
 			}
 			if ((firstLink >= GIV(nilObj)) && (firstLink <= GIV(trueObj))) {
@@ -78152,10 +77990,10 @@ putToSleepyieldingIf(sqInt aProcess, sqInt yieldImplicitly)
 		if (processList & (tagMask())) {
 			goto l8;
 		}
-		if (!(aProcess >= PERM_SPACE_START())) {
+		if (!(aProcess >= 0x20000000000LL)) {
 			goto l8;
 		}
-		if (processList >= PERM_SPACE_START()) {
+		if (processList >= 0x20000000000LL) {
 			goto l8;
 		}
 		if ((processList >= GIV(nilObj)) && (processList <= GIV(trueObj))) {
@@ -78546,10 +78384,10 @@ removeFirstLinkOfList(sqInt aList)
 		if (next & (tagMask())) {
 			goto l7;
 		}
-		if (!(aList >= PERM_SPACE_START())) {
+		if (!(aList >= 0x20000000000LL)) {
 			goto l7;
 		}
-		if (next >= PERM_SPACE_START()) {
+		if (next >= 0x20000000000LL) {
 			goto l7;
 		}
 		if ((next >= GIV(nilObj)) && (next <= GIV(trueObj))) {
@@ -78970,10 +78808,10 @@ setSignalLowSpaceFlagAndSaveProcess(void)
 		if (activeProc & (tagMask())) {
 			goto l7;
 		}
-		if (!(GIV(specialObjectsOop) >= PERM_SPACE_START())) {
+		if (!(GIV(specialObjectsOop) >= 0x20000000000LL)) {
 			goto l7;
 		}
-		if (activeProc >= PERM_SPACE_START()) {
+		if (activeProc >= 0x20000000000LL) {
 			goto l7;
 		}
 		if ((activeProc >= GIV(nilObj)) && (activeProc <= GIV(trueObj))) {
@@ -79167,7 +79005,7 @@ shortPrintOop(sqInt oop)
 	printHexnp(oop);
 	if (oop & (tagMask())) {
 		if (((oop & 7) == 1)) {
-			vm_printf("=%ld\n", (long)integerValueOf(oop));
+			vm_printf("=%ld\n", (long)(oop).integerValueOf());
 		}
 		if (oop & (characterTag())) {
 			vm_printf("=$%ld ($%lc)\n", (long)characterValueOf(oop), (wint_t)characterValueOf(oop));
@@ -79282,7 +79120,7 @@ showDisplayBitsLeftTopRightBottom(sqInt aForm, sqInt l, sqInt t, sqInt r, sqInt 
 		}
 		showSurfaceFn(surfaceHandle, left, top, right - left, bottom - top);
 	} else {
-		assert(isNonImmediate(((sqInt) displayBits )));
+		assert((((sqInt).isNonImmediate() displayBits )));
 		ioShowDisplay(((sqInt) displayBits ), displayWidth, displayHeight, displayDepth, left, right, top, bottom);
 	}
 	l1:
@@ -79518,7 +79356,7 @@ stackIntegerValue(sqInt offset)
 }
 /*	Answer the actual stackLimit offset in a page. Since stackPageByteSize may 
 	have chosen to shrink a page 
-	this may be less than stackPageFrameBytes, but it should be no more than 
+	this_ may be less than stackPageFrameBytes, but it should be no more than 
 	stackPageFrameBytes.  */
 /* StackInterpreter>>#stackLimitBytes */
 static sqInt
@@ -79652,7 +79490,7 @@ stackPositiveMachineIntegerValue(sqInt offset)
 	}
 	/* begin isClassOfNonImm:equalTo:compactClassIndex: */
 	classOop = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassLargePositiveInteger ) << (shiftForWord())) ));
-	assert(!(isImmediate(integerPointer)));
+	assert(!((integerPointer).isImmediate()));
 	/* begin classIndexOf: */
 	ccIndex = (longAt(integerPointer)) & (classIndexMask());
 	/* end classIndexOf: */
@@ -79740,7 +79578,7 @@ sqInt
 stObjectat(sqInt array, sqInt index)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
-	sqInt class;
+	sqInt class_;
 	sqInt classFormat;
 	sqInt fixedFields;
 	usqLong fmt;
@@ -79798,9 +79636,9 @@ stObjectat(sqInt array, sqInt index)
 		fixedFields = totalLength;
 		goto l5;
 	}
-	class = fetchClassOfNonImm(array);
+	class_ = fetchClassOfNonImm(array);
 	/* begin fixedFieldsOfClassFormat: */
-	classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+	classFormat = (unsignedLongAt((class_ + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 	fixedFields = classFormat & ((1U << (fixedFieldsFieldWidth())) - 1);
 	/* end fixedFieldsOfClassFormat: */
 	l5:
@@ -79874,7 +79712,7 @@ sqInt
 stObjectatput(sqInt array, sqInt index, sqInt value)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
-	sqInt class;
+	sqInt class_;
 	sqInt classFormat;
 	sqInt fixedFields;
 	usqLong fmt;
@@ -79937,9 +79775,9 @@ stObjectatput(sqInt array, sqInt index, sqInt value)
 		fixedFields = totalLength;
 		goto l5;
 	}
-	class = fetchClassOfNonImm(array);
+	class_ = fetchClassOfNonImm(array);
 	/* begin fixedFieldsOfClassFormat: */
-	classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+	classFormat = (unsignedLongAt((class_ + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 	fixedFields = classFormat & ((1U << (fixedFieldsFieldWidth())) - 1);
 	/* end fixedFieldsOfClassFormat: */
 	l5:
@@ -79972,10 +79810,10 @@ stObjectatput(sqInt array, sqInt index, sqInt value)
 			if (value & (tagMask())) {
 				goto l9;
 			}
-			if (!(array >= PERM_SPACE_START())) {
+			if (!(array >= 0x20000000000LL)) {
 				goto l9;
 			}
-			if (value >= PERM_SPACE_START()) {
+			if (value >= 0x20000000000LL) {
 				goto l9;
 			}
 			if ((value >= GIV(nilObj)) && (value <= GIV(trueObj))) {
@@ -80071,11 +79909,11 @@ storeIntegerofObjectwithValue(sqInt fieldIndex, sqInt objectPointer, sqInt integ
 	}
 	return null;
 }
-/*	Set the sender of a frame. If the frame is a base frame then this is 
+/*	Set the sender of a frame. If the frame is a base frame then this_ is 
 	trivial; merely store into the FoxCallerSavedIP/FoxCallerContext field. If 
 	not, then 
 	split the stack at the frame, moving the frame and those hotter than it to 
-	a new stack page. In the new stack page the frame will be the base frame 
+	a new_ stack page. In the new_ stack page the frame will be the base frame 
 	and storing trivial. Answer the possibly changed location of theFP. */
 /* StackInterpreter>>#storeSenderOfFrame:withValue: */
 static char * NoDbgRegParms
@@ -80184,7 +80022,7 @@ storeSenderOfFramewithValue(char *theFP, sqInt anOop)
 sqInt
 stSizeOf(sqInt oop)
 {
-	sqInt class;
+	sqInt class_;
 	sqInt classFormat;
 	sqInt fixedFields;
 	usqLong fmt;
@@ -80237,9 +80075,9 @@ stSizeOf(sqInt oop)
 		fixedFields = totalLength;
 		goto l4;
 	}
-	class = fetchClassOfNonImm(oop);
+	class_ = fetchClassOfNonImm(oop);
 	/* begin fixedFieldsOfClassFormat: */
-	classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+	classFormat = (unsignedLongAt((class_ + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 	fixedFields = classFormat & ((1U << (fixedFieldsFieldWidth())) - 1);
 	/* end fixedFieldsOfClassFormat: */
 	l4:
@@ -80276,7 +80114,7 @@ supendActiveProcess(void)
 	return activeProc;
 }
 /*	Using a read barrier here simplifies the become implementation and costs 
-	very little because the class index and superclass almost certainly share 
+	very little because the class_ index and superclass almost certainly share 
 	a cache line. */
 /* StackInterpreter>>#superclassOf: */
 sqInt
@@ -80367,10 +80205,10 @@ synchronousSignal(sqInt aSemaphore)
 		if (ctxt & (tagMask())) {
 			goto l4;
 		}
-		if (!(proc >= PERM_SPACE_START())) {
+		if (!(proc >= 0x20000000000LL)) {
 			goto l4;
 		}
-		if (ctxt >= PERM_SPACE_START()) {
+		if (ctxt >= 0x20000000000LL) {
 			goto l4;
 		}
 		if ((ctxt >= GIV(nilObj)) && (ctxt <= GIV(trueObj))) {
@@ -80527,10 +80365,10 @@ transferTofrom(sqInt newProc, sqInt sourceCode)
 	if (activeContext & (tagMask())) {
 		goto l6;
 	}
-	if (!(oldProc >= PERM_SPACE_START())) {
+	if (!(oldProc >= 0x20000000000LL)) {
 		goto l6;
 	}
-	if (activeContext >= PERM_SPACE_START()) {
+	if (activeContext >= 0x20000000000LL) {
 		goto l6;
 	}
 	if ((activeContext >= GIV(nilObj)) && (activeContext <= GIV(trueObj))) {
@@ -80566,10 +80404,10 @@ transferTofrom(sqInt newProc, sqInt sourceCode)
 	if (newProc & (tagMask())) {
 		goto l8;
 	}
-	if (!(sched >= PERM_SPACE_START())) {
+	if (!(sched >= 0x20000000000LL)) {
 		goto l8;
 	}
-	if (newProc >= PERM_SPACE_START()) {
+	if (newProc >= 0x20000000000LL) {
 		goto l8;
 	}
 	if ((newProc >= GIV(nilObj)) && (newProc <= GIV(trueObj))) {
@@ -80733,10 +80571,10 @@ ultimateLiteralOfput(sqInt aMethodOop, sqInt aValue)
 		if (aValue & (tagMask())) {
 			goto l1;
 		}
-		if (!(aMethodOop >= PERM_SPACE_START())) {
+		if (!(aMethodOop >= 0x20000000000LL)) {
 			goto l1;
 		}
-		if (aValue >= PERM_SPACE_START()) {
+		if (aValue >= 0x20000000000LL) {
 			goto l1;
 		}
 		if ((aValue >= GIV(nilObj)) && (aValue <= GIV(trueObj))) {
@@ -80798,10 +80636,10 @@ unfollowatIndex(sqInt litVar, sqInt literalIndex)
 	if (followed & (tagMask())) {
 		goto l5;
 	}
-	if (!(GIV(method) >= PERM_SPACE_START())) {
+	if (!(GIV(method) >= 0x20000000000LL)) {
 		goto l5;
 	}
-	if (followed >= PERM_SPACE_START()) {
+	if (followed >= 0x20000000000LL) {
 		goto l5;
 	}
 	if ((followed >= GIV(nilObj)) && (followed <= GIV(trueObj))) {
@@ -80871,10 +80709,10 @@ updateStateOfSpouseContextForFrameWithSP(char *theFP, char *theSP)
 		if (valuePointer & (tagMask())) {
 			goto l3;
 		}
-		if (!(theContext >= PERM_SPACE_START())) {
+		if (!(theContext >= 0x20000000000LL)) {
 			goto l3;
 		}
-		if (valuePointer >= PERM_SPACE_START()) {
+		if (valuePointer >= 0x20000000000LL) {
 			goto l3;
 		}
 		if ((valuePointer >= GIV(nilObj)) && (valuePointer <= GIV(trueObj))) {
@@ -80918,10 +80756,10 @@ updateStateOfSpouseContextForFrameWithSP(char *theFP, char *theSP)
 		if (valuePointer1 & (tagMask())) {
 			goto l5;
 		}
-		if (!(theContext >= PERM_SPACE_START())) {
+		if (!(theContext >= 0x20000000000LL)) {
 			goto l5;
 		}
-		if (valuePointer1 >= PERM_SPACE_START()) {
+		if (valuePointer1 >= 0x20000000000LL) {
 			goto l5;
 		}
 		if ((valuePointer1 >= GIV(nilObj)) && (valuePointer1 <= GIV(trueObj))) {
@@ -80989,7 +80827,7 @@ validStackPageBaseFrames(void)
 	return 1;
 }
 /*	Void the state associated with the long-running primitive check. 
-	This is done when a new semaphore is installed or when it appears 
+	This is done when a new_ semaphore is installed or when it appears 
 	that is longRunningPrimitiveCheckMethod is invalid, e.g. because it 
 	has eben sampled in the middle of a GC. */
 /* StackInterpreter>>#voidLongRunningPrimitive: */
@@ -81006,7 +80844,7 @@ voidLongRunningPrimitive(char *reason)
 /*	Return the highest priority process that is ready to run. 
 	To save time looking at many empty lists before finding a 
 	runnable process the VM maintains a variable holding the 
-	highest priority runnable process. If this variable is 0 then the 
+	highest priority runnable process. If this_ variable is 0 then the 
 	VM does not know the highest priority and must search all lists. 
 	Note: It is a fatal VM error if there is no runnable process. */
 /* StackInterpreter>>#wakeHighestPriority */
@@ -81185,7 +81023,7 @@ cloneContext(sqInt aContext)
 	do all local declarations which may refer to invalid types if FFI is not 
 	enabled.  
 	Method primitiveSameThreadCallout checks if the feature is available. If 
-	so, it calls this method. */
+	so, it calls this_ method. */
 /* StackInterpreterPrimitives>>#doPrimitiveSameThreadCallout */
 
 #if FEATURE_FFI
@@ -81315,7 +81153,7 @@ doPrimitiveSameThreadCallout(void)
 	do all local declarations which may refer to invalid types if FFI is not 
 	enabled.  
 	Method primitiveWorkerCallout checks if the feature is available. If so, 
-	it calls this method. */
+	it calls this_ method. */
 /* StackInterpreterPrimitives>>#doPrimitiveWorkerCallout */
 
 #if FEATURE_THREADED_FFI
@@ -81526,7 +81364,7 @@ doPrimitiveWorkerCallout(void)
 	do all local declarations which may refer to invalid types if FFI is not 
 	enabled.  
 	Method primitiveWorkerExtractReturnValue checks if the feature is 
-	available. If so, it calls this method. */
+	available. If so, it calls this_ method. */
 /* StackInterpreterPrimitives>>#doPrimitiveWorkerExtractReturnValue */
 
 #if FEATURE_THREADED_FFI
@@ -82450,7 +82288,7 @@ primitiveContextAt(void)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
 	sqInt aContext;
-	sqInt class;
+	sqInt class_;
 	sqInt class2;
 	sqInt classFormat;
 	sqInt classFormat1;
@@ -82691,9 +82529,9 @@ primitiveContextAt(void)
 			fixedFields = totalLength;
 			goto l11;
 		}
-		class = fetchClassOfNonImm(aContext);
+		class_ = fetchClassOfNonImm(aContext);
 		/* begin fixedFieldsOfClassFormat: */
-		classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+		classFormat = (unsignedLongAt((class_ + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 		fixedFields = classFormat & ((1U << (fixedFieldsFieldWidth())) - 1);
 		/* end fixedFieldsOfClassFormat: */
 		l11:
@@ -82792,7 +82630,7 @@ primitiveContextAtPut(void)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
 	sqInt aContext;
-	sqInt class;
+	sqInt class_;
 	sqInt classFormat;
 	sqInt fixedFields;
 	usqLong fmt;
@@ -82898,9 +82736,9 @@ primitiveContextAtPut(void)
 			fixedFields = totalLength;
 			goto l12;
 		}
-		class = fetchClassOfNonImm(aContext);
+		class_ = fetchClassOfNonImm(aContext);
 		/* begin fixedFieldsOfClassFormat: */
-		classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+		classFormat = (unsignedLongAt((class_ + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 		fixedFields = classFormat & ((1U << (fixedFieldsFieldWidth())) - 1);
 		/* end fixedFieldsOfClassFormat: */
 		l12:
@@ -82948,10 +82786,10 @@ primitiveContextAtPut(void)
 			if (value & (tagMask())) {
 				goto l17;
 			}
-			if (!(aContext >= PERM_SPACE_START())) {
+			if (!(aContext >= 0x20000000000LL)) {
 				goto l17;
 			}
-			if (value >= PERM_SPACE_START()) {
+			if (value >= 0x20000000000LL) {
 				goto l17;
 			}
 			if ((value >= GIV(nilObj)) && (value <= GIV(trueObj))) {
@@ -83060,7 +82898,7 @@ static void
 primitiveContextSize(void)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
-	sqInt class;
+	sqInt class_;
 	sqInt classFormat;
 	sqInt fixedFields;
 	usqLong fmt;
@@ -83122,9 +82960,9 @@ primitiveContextSize(void)
 		fixedFields = totalLength;
 		goto l5;
 	}
-	class = fetchClassOfNonImm(rcvr);
+	class_ = fetchClassOfNonImm(rcvr);
 	/* begin fixedFieldsOfClassFormat: */
-	classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+	classFormat = (unsignedLongAt((class_ + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 	fixedFields = classFormat & ((1U << (fixedFieldsFieldWidth())) - 1);
 	/* end fixedFieldsOfClassFormat: */
 	l5:
@@ -83285,7 +83123,7 @@ primitiveDoNamedPrimitiveWithArgs(void)
 		goto l17;
 	}
 	/* begin isClassOfNonImm:equalTo:compactClassIndex: */
-	assert(!(isImmediate(spec)));
+	assert(!((spec).isImmediate()));
 	/* begin classIndexOf: */
 	ccIndex = (longAt(spec)) & (classIndexMask());
 	/* end classIndexOf: */
@@ -83516,9 +83354,9 @@ primitiveDoNamedPrimitiveWithArgs(void)
 }
 /*	Implement either ProtoObject>>tryPrimitive: primIndex withArgs: argArray 
 	or Context>>receiver: anObject tryPrimitive: primIndex withArgs: argArray. 
-	If this primitive fails, arrange that its error code is a negative 
+	If this_ primitive fails, arrange that its error code is a negative 
 	integer, to 
-	distinguish between this failing and the primitive it invokes failing.See checkForAndFollowForwardedPrimitiveState */
+	distinguish between this_ failing and the primitive it invokes failing.See checkForAndFollowForwardedPrimitiveState */
 /* StackInterpreterPrimitives>>#primitiveDoPrimitiveWithArgs */
 static void
 primitiveDoPrimitiveWithArgs(void)
@@ -83681,7 +83519,7 @@ primitiveDoPrimitiveWithArgs(void)
 	/* end maybeFailForLastObjectOverwrite */
 	if (!GIV(primFailCode) && ((GIV(framePointer) == savedFramePointer) && (!(isMachineCodeIP(((usqInt) (unsignedLongAt(GIV(framePointer) + FoxMethod)) )))))) {
 		if (GIV(stackPointer) != (savedStackPointer + (nArgs * BytesPerWord))) {
-			flag("Would be nice to make this a message send of e.g. unbalancedPrimitive to the current process or context");
+			flag("Would be nice to make this_ a message send of e.g. unbalancedPrimitive to the current process or context");
 			failUnbalancedPrimitive();
 			GIV(stackPointer) = savedStackPointer;
 		}
@@ -83851,7 +83689,7 @@ primitiveExecuteMethod(void)
 		/* end maybeFailForLastObjectOverwrite */
 		if (!GIV(primFailCode) && ((GIV(framePointer) == savedFramePointer) && (!(isMachineCodeIP(((usqInt) (unsignedLongAt(GIV(framePointer) + FoxMethod)) )))))) {
 			if (GIV(stackPointer) != (savedStackPointer + (nArgs * BytesPerWord))) {
-				flag("Would be nice to make this a message send of e.g. unbalancedPrimitive to the current process or context");
+				flag("Would be nice to make this_ a message send of e.g. unbalancedPrimitive to the current process or context");
 				failUnbalancedPrimitive();
 				GIV(stackPointer) = savedStackPointer;
 			}
@@ -84072,7 +83910,7 @@ primitiveExecuteMethodArgsArray(void)
 		/* end maybeFailForLastObjectOverwrite */
 		if (!GIV(primFailCode) && ((GIV(framePointer) == savedFramePointer) && (!(isMachineCodeIP(((usqInt) (unsignedLongAt(GIV(framePointer) + FoxMethod)) )))))) {
 			if (GIV(stackPointer) != (savedStackPointer + (nArgs * BytesPerWord))) {
-				flag("Would be nice to make this a message send of e.g. unbalancedPrimitive to the current process or context");
+				flag("Would be nice to make this_ a message send of e.g. unbalancedPrimitive to the current process or context");
 				failUnbalancedPrimitive();
 				GIV(stackPointer) = savedStackPointer;
 			}
@@ -84523,10 +84361,10 @@ primitiveFFIFree(void)
 	if (valuePointer & (tagMask())) {
 		goto l4;
 	}
-	if (!(oop >= PERM_SPACE_START())) {
+	if (!(oop >= 0x20000000000LL)) {
 		goto l4;
 	}
-	if (valuePointer >= PERM_SPACE_START()) {
+	if (valuePointer >= 0x20000000000LL) {
 		goto l4;
 	}
 	if ((valuePointer >= GIV(nilObj)) && (valuePointer <= GIV(trueObj))) {
@@ -85507,7 +85345,7 @@ static void
 primitiveInstVarAt(void)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
-	sqInt class;
+	sqInt class_;
 	sqInt classFormat;
 	sqInt fixedFields;
 	usqLong fmt;
@@ -85584,9 +85422,9 @@ primitiveInstVarAt(void)
 		fixedFields = totalLength;
 		goto l7;
 	}
-	class = fetchClassOfNonImm(rcvr);
+	class_ = fetchClassOfNonImm(rcvr);
 	/* begin fixedFieldsOfClassFormat: */
-	classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+	classFormat = (unsignedLongAt((class_ + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 	fixedFields = classFormat & ((1U << (fixedFieldsFieldWidth())) - 1);
 	/* end fixedFieldsOfClassFormat: */
 	l7:
@@ -85641,7 +85479,7 @@ static void
 primitiveInstVarAtPut(void)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
-	sqInt class;
+	sqInt class_;
 	sqInt classFormat;
 	sqInt fixedFields;
 	usqLong fmt;
@@ -85742,9 +85580,9 @@ primitiveInstVarAtPut(void)
 		fixedFields = totalLength;
 		goto l8;
 	}
-	class = fetchClassOfNonImm(rcvr);
+	class_ = fetchClassOfNonImm(rcvr);
 	/* begin fixedFieldsOfClassFormat: */
-	classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+	classFormat = (unsignedLongAt((class_ + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 	fixedFields = classFormat & ((1U << (fixedFieldsFieldWidth())) - 1);
 	/* end fixedFieldsOfClassFormat: */
 	l8:
@@ -85803,10 +85641,10 @@ primitiveInstVarAtPut(void)
 			if (newValue & (tagMask())) {
 				goto l20;
 			}
-			if (!(rcvr >= PERM_SPACE_START())) {
+			if (!(rcvr >= 0x20000000000LL)) {
 				goto l20;
 			}
-			if (newValue >= PERM_SPACE_START()) {
+			if (newValue >= 0x20000000000LL) {
 				goto l20;
 			}
 			if ((newValue >= GIV(nilObj)) && (newValue <= GIV(trueObj))) {
@@ -85880,10 +85718,10 @@ primitiveInstVarAtPut(void)
 		if (newValue & (tagMask())) {
 			goto l19;
 		}
-		if (!(rcvr >= PERM_SPACE_START())) {
+		if (!(rcvr >= 0x20000000000LL)) {
 			goto l19;
 		}
-		if (newValue >= PERM_SPACE_START()) {
+		if (newValue >= 0x20000000000LL) {
 			goto l19;
 		}
 		if ((newValue >= GIV(nilObj)) && (newValue <= GIV(trueObj))) {
@@ -85930,10 +85768,10 @@ primitiveInstVarAtPut(void)
 			if (newValue & (tagMask())) {
 				goto l11;
 			}
-			if (!(rcvr >= PERM_SPACE_START())) {
+			if (!(rcvr >= 0x20000000000LL)) {
 				goto l11;
 			}
-			if (newValue >= PERM_SPACE_START()) {
+			if (newValue >= 0x20000000000LL) {
 				goto l11;
 			}
 			if ((newValue >= GIV(nilObj)) && (newValue <= GIV(trueObj))) {
@@ -86017,7 +85855,7 @@ primitiveIsInPermSpace(void)
 	rcvr = unsignedLongAt(GIV(stackPointer));
 	/* end stackTop */
 	/* begin pop:thenPushBool: */
-	trueOrFalse = ((rcvr & (tagMask())) == 0) && (rcvr >= PERM_SPACE_START());
+	trueOrFalse = ((rcvr & (tagMask())) == 0) && (rcvr >= 0x20000000000LL);
 	unsignedLongAtput((sp = GIV(stackPointer) + (((GIV(argumentCount) + 1) - 1) * BytesPerWord)), ((trueOrFalse)
 		 ? GIV(trueObj)
 		 : GIV(falseObj)));
@@ -88155,10 +87993,10 @@ primitiveLongRunningPrimitive(void)
 		if (lrpcm & (tagMask())) {
 			goto l4;
 		}
-		if (!(result >= PERM_SPACE_START())) {
+		if (!(result >= 0x20000000000LL)) {
 			goto l4;
 		}
-		if (lrpcm >= PERM_SPACE_START()) {
+		if (lrpcm >= 0x20000000000LL) {
 			goto l4;
 		}
 		if ((lrpcm >= GIV(nilObj)) && (lrpcm <= GIV(trueObj))) {
@@ -88205,7 +88043,7 @@ primitiveMoveToPermSpace(void)
 	/* begin stackTop */
 	rcvr = unsignedLongAt(GIV(stackPointer));
 	/* end stackTop */
-	if (rcvr >= PERM_SPACE_START()) {
+	if (rcvr >= 0x20000000000LL) {
 		return;
 	}
 	permObject = moveToPermSpace(rcvr);
@@ -88507,7 +88345,7 @@ primitivePerform(void)
 		/* end maybeFailForLastObjectOverwrite */
 		if (!GIV(primFailCode) && ((GIV(framePointer) == savedFramePointer) && (!(isMachineCodeIP(((usqInt) (unsignedLongAt(GIV(framePointer) + FoxMethod)) )))))) {
 			if (GIV(stackPointer) != (savedStackPointer + (nArgs * BytesPerWord))) {
-				flag("Would be nice to make this a message send of e.g. unbalancedPrimitive to the current process or context");
+				flag("Would be nice to make this_ a message send of e.g. unbalancedPrimitive to the current process or context");
 				failUnbalancedPrimitive();
 				GIV(stackPointer) = savedStackPointer;
 			}
@@ -88726,10 +88564,10 @@ primitiveSignalAtMilliseconds(void)
 			if (sema & (tagMask())) {
 				goto l7;
 			}
-			if (!(GIV(specialObjectsOop) >= PERM_SPACE_START())) {
+			if (!(GIV(specialObjectsOop) >= 0x20000000000LL)) {
 				goto l7;
 			}
-			if (sema >= PERM_SPACE_START()) {
+			if (sema >= 0x20000000000LL) {
 				goto l7;
 			}
 			if ((sema >= GIV(nilObj)) && (sema <= GIV(trueObj))) {
@@ -88777,10 +88615,10 @@ primitiveSignalAtMilliseconds(void)
 			if (GIV(nilObj) & (tagMask())) {
 				goto l4;
 			}
-			if (!(GIV(specialObjectsOop) >= PERM_SPACE_START())) {
+			if (!(GIV(specialObjectsOop) >= 0x20000000000LL)) {
 				goto l4;
 			}
-			if (GIV(nilObj) >= PERM_SPACE_START()) {
+			if (GIV(nilObj) >= 0x20000000000LL) {
 				goto l4;
 			}
 			if ((GIV(nilObj) >= GIV(nilObj)) && (GIV(nilObj) <= GIV(trueObj))) {
@@ -88849,10 +88687,10 @@ primitiveSignalAtUTCMicroseconds(void)
 			if (sema & (tagMask())) {
 				goto l7;
 			}
-			if (!(GIV(specialObjectsOop) >= PERM_SPACE_START())) {
+			if (!(GIV(specialObjectsOop) >= 0x20000000000LL)) {
 				goto l7;
 			}
-			if (sema >= PERM_SPACE_START()) {
+			if (sema >= 0x20000000000LL) {
 				goto l7;
 			}
 			if ((sema >= GIV(nilObj)) && (sema <= GIV(trueObj))) {
@@ -88896,10 +88734,10 @@ primitiveSignalAtUTCMicroseconds(void)
 			if (GIV(nilObj) & (tagMask())) {
 				goto l4;
 			}
-			if (!(GIV(specialObjectsOop) >= PERM_SPACE_START())) {
+			if (!(GIV(specialObjectsOop) >= 0x20000000000LL)) {
 				goto l4;
 			}
-			if (GIV(nilObj) >= PERM_SPACE_START()) {
+			if (GIV(nilObj) >= 0x20000000000LL) {
 				goto l4;
 			}
 			if ((GIV(nilObj) >= GIV(nilObj)) && (GIV(nilObj) <= GIV(trueObj))) {
@@ -88931,7 +88769,7 @@ primitiveSignalAtUTCMicroseconds(void)
 	vars, the named 
 	inst vars precede the indexed ones. In non-object indexed objects (objects 
 	that contain 
-	bits, not object references) this primitive answers the raw integral value 
+	bits, not object references) this_ primitive answers the raw integral value 
 	at each slot.  
 	e.g. for Strings it answers the character code, not the Character object 
 	at each slot. */
@@ -89117,7 +88955,7 @@ primitiveSlotAt(void)
 	vars, the named 
 	inst vars precede the indexed ones. In non-object indexed objects (objects 
 	that contain 
-	bits, not object references) this primitive assigns a raw integral value 
+	bits, not object references) this_ primitive assigns a raw integral value 
 	at each slot. */
 /* StackInterpreterPrimitives>>#primitiveSlotAtPut */
 static void
@@ -89242,10 +89080,10 @@ primitiveSlotAtPut(void)
 					if (newValue & (tagMask())) {
 						goto l21;
 					}
-					if (!(rcvr >= PERM_SPACE_START())) {
+					if (!(rcvr >= 0x20000000000LL)) {
 						goto l21;
 					}
-					if (newValue >= PERM_SPACE_START()) {
+					if (newValue >= 0x20000000000LL) {
 						goto l21;
 					}
 					if ((newValue >= GIV(nilObj)) && (newValue <= GIV(trueObj))) {
@@ -89319,10 +89157,10 @@ primitiveSlotAtPut(void)
 				if (newValue & (tagMask())) {
 					goto l20;
 				}
-				if (!(rcvr >= PERM_SPACE_START())) {
+				if (!(rcvr >= 0x20000000000LL)) {
 					goto l20;
 				}
-				if (newValue >= PERM_SPACE_START()) {
+				if (newValue >= 0x20000000000LL) {
 					goto l20;
 				}
 				if ((newValue >= GIV(nilObj)) && (newValue <= GIV(trueObj))) {
@@ -89367,10 +89205,10 @@ primitiveSlotAtPut(void)
 				if (newValue & (tagMask())) {
 					goto l10;
 				}
-				if (!(rcvr >= PERM_SPACE_START())) {
+				if (!(rcvr >= 0x20000000000LL)) {
 					goto l10;
 				}
-				if (newValue >= PERM_SPACE_START()) {
+				if (newValue >= 0x20000000000LL) {
 					goto l10;
 				}
 				if ((newValue >= GIV(nilObj)) && (newValue <= GIV(trueObj))) {
@@ -89423,7 +89261,7 @@ primitiveSlotAtPut(void)
 	}
 	/* begin isClassOfNonImm:equalTo:compactClassIndex: */
 	classOop = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassLargePositiveInteger ) << (shiftForWord())) ));
-	assert(!(isImmediate(newValue)));
+	assert(!((newValue).isImmediate()));
 	/* begin classIndexOf: */
 	ccIndex = (longAt(newValue)) & (classIndexMask());
 	/* end classIndexOf: */
@@ -91832,7 +91670,7 @@ primitiveStoreUInt8IntoExternalAddress(void)
 	2 args:	set the VM indicated parameter. 
 	 
 	The description of each parameter is available in the Image 
-	(`VirtualMachine>>#parameterLabels`) Do not forget to update it when new 
+	(`VirtualMachine>>#parameterLabels`) Do not forget to update it when new_ 
 	parameters are added. 
 	Otherwise the *real* list is in the code: 
 	`StackInterpreterPrimitives>>#primitiveGetVMParameter:`  */
@@ -92485,10 +92323,10 @@ pruneStackstackp(sqInt anArray, sqInt stackp)
 			if (objOrFP & (tagMask())) {
 				goto l11;
 			}
-			if (!(theStack >= PERM_SPACE_START())) {
+			if (!(theStack >= 0x20000000000LL)) {
 				goto l11;
 			}
-			if (objOrFP >= PERM_SPACE_START()) {
+			if (objOrFP >= 0x20000000000LL) {
 				goto l11;
 			}
 			if ((objOrFP >= GIV(nilObj)) && (objOrFP <= GIV(trueObj))) {
@@ -92590,10 +92428,10 @@ ptEnterInterpreterFromCallback(void *aPointer)
 	if (valuePointer & (tagMask())) {
 		goto l1;
 	}
-	if (!(suspendedProcess >= PERM_SPACE_START())) {
+	if (!(suspendedProcess >= 0x20000000000LL)) {
 		goto l1;
 	}
-	if (valuePointer >= PERM_SPACE_START()) {
+	if (valuePointer >= 0x20000000000LL) {
 		goto l1;
 	}
 	if ((valuePointer >= GIV(nilObj)) && (valuePointer <= GIV(trueObj))) {
@@ -92630,10 +92468,10 @@ ptEnterInterpreterFromCallback(void *aPointer)
 	if (suspendedProcess & (tagMask())) {
 		goto l5;
 	}
-	if (!(GIV(specialObjectsOop) >= PERM_SPACE_START())) {
+	if (!(GIV(specialObjectsOop) >= 0x20000000000LL)) {
 		goto l5;
 	}
-	if (suspendedProcess >= PERM_SPACE_START()) {
+	if (suspendedProcess >= 0x20000000000LL) {
 		goto l5;
 	}
 	if ((suspendedProcess >= GIV(nilObj)) && (suspendedProcess <= GIV(trueObj))) {
@@ -92697,10 +92535,10 @@ ptExitInterpreterToCallback(void *aPointer)
 	if (anObject & (tagMask())) {
 		goto l5;
 	}
-	if (!(GIV(specialObjectsOop) >= PERM_SPACE_START())) {
+	if (!(GIV(specialObjectsOop) >= 0x20000000000LL)) {
 		goto l5;
 	}
-	if (anObject >= PERM_SPACE_START()) {
+	if (anObject >= 0x20000000000LL) {
 		goto l5;
 	}
 	if ((anObject >= GIV(nilObj)) && (anObject <= GIV(trueObj))) {
@@ -92737,10 +92575,10 @@ ptExitInterpreterToCallback(void *aPointer)
 	if (GIV(nilObj) & (tagMask())) {
 		goto l2;
 	}
-	if (!(aProcess >= PERM_SPACE_START())) {
+	if (!(aProcess >= 0x20000000000LL)) {
 		goto l2;
 	}
-	if (GIV(nilObj) >= PERM_SPACE_START()) {
+	if (GIV(nilObj) >= 0x20000000000LL) {
 		goto l2;
 	}
 	if ((GIV(nilObj) >= GIV(nilObj)) && (GIV(nilObj) <= GIV(trueObj))) {
@@ -92828,7 +92666,7 @@ unmarkAfterPathTo(void)
 	/* begin allHeapEntitiesDo: */
 	/* begin allOldSpaceEntitiesDo: */
 	/* begin allOldSpaceEntitiesFrom:do: */
-	assert(isOldObject(GIV(memoryMap), GIV(nilObj)));
+	assert((GIV(nilObj).isOld()));
 	prevPrevObj2 = (prevObj2 = null);
 	objOop2 = GIV(nilObj);
 	while (1) {
@@ -93044,10 +92882,10 @@ writeAddressto(sqInt anOop, void *aValue)
 	if (valuePointer & (tagMask())) {
 		goto l1;
 	}
-	if (!(anOop >= PERM_SPACE_START())) {
+	if (!(anOop >= 0x20000000000LL)) {
 		goto l1;
 	}
-	if (valuePointer >= PERM_SPACE_START()) {
+	if (valuePointer >= 0x20000000000LL) {
 		goto l1;
 	}
 	if ((valuePointer >= GIV(nilObj)) && (valuePointer <= GIV(trueObj))) {
@@ -93362,7 +93200,7 @@ allocateHeap(VMMemoryMap * self_in_allocateHeap)
 	}
 	if (!(((self_in_allocateHeap->codeZoneStart)) == 13421772800LL)) {
 		logError("Could not allocate codeZone in the expected place (%p), got %p", 13421772800LL, (self_in_allocateHeap->codeZoneStart));
-		logWarn("iOS: Address mismatch - continuing anyway");
+		error("Error allocating");
 	}
 	(self_in_allocateHeap->codeZoneEnd = ((self_in_allocateHeap->codeZoneStart)) + ((self_in_allocateHeap->initialCodeZoneSize)));
 	l1:
@@ -93376,7 +93214,7 @@ allocateHeap(VMMemoryMap * self_in_allocateHeap)
 	}
 	if (!(((self_in_allocateHeap->newSpaceStart)) == 14495514624LL)) {
 		logError("Could not allocate newSpace in the expected place (%p), got %p", (self_in_allocateHeap->newSpaceStart), 14495514624LL);
-		logWarn("iOS: Address mismatch - continuing anyway");
+		error("Error allocating");
 	}
 	(self_in_allocateHeap->newSpaceEnd = ((self_in_allocateHeap->newSpaceStart)) + newSpaceSizeToAllocate);
 	/* end allocateNewObjectsSpace */
@@ -93388,25 +93226,15 @@ allocateHeap(VMMemoryMap * self_in_allocateHeap)
 	}
 	if (!(((self_in_allocateHeap->oldSpaceStart)) == 0x10000000000LL)) {
 		logError("Could not allocate oldSpace in the expected place (%p), got %p", (self_in_allocateHeap->oldSpaceStart), 0x10000000000LL);
-		fprintf(stderr, "iOS: [HEAP] oldSpace address mismatch - continuing (oldSpaceStart=%p)...\n", (void*)(self_in_allocateHeap->oldSpaceStart));
-		fflush(stderr);
+		error("Error allocating");
 	}
 	/* begin setOldSpaceEnd: */
 	anInteger = ((sqInt) (((self_in_allocateHeap->oldSpaceStart)) + sizeToAllocate) );
 	(self_in_allocateHeap->oldSpaceEnd) = anInteger;
-	fprintf(stderr, "iOS: [HEAP] oldSpaceEnd=%p, permSpaceStart=%p, checking assert...\n",
-		(void*)anInteger, (void*)(self_in_allocateHeap->permSpaceStart));
-	fflush(stderr);
 	assert((((self_in_allocateHeap->permSpaceStart)) == 0) || (anInteger < ((self_in_allocateHeap->permSpaceStart))));
-	fprintf(stderr, "iOS: [HEAP] assert passed\n");
-	fflush(stderr);
 	/* end setOldSpaceEnd: */
 	/* end allocateOldObjectsSpace */
-	fprintf(stderr, "iOS: [HEAP] oldSpace allocated at %p, calling allocatePermObjectsSpace...\n", (void*)(self_in_allocateHeap->oldSpaceStart));
-	fflush(stderr);
 	allocatePermObjectsSpace(self_in_allocateHeap);
-	fprintf(stderr, "iOS: [HEAP] allocateHeap complete, returning\n");
-	fflush(stderr);
 	return self_in_allocateHeap;
 }
 /* VMMemoryMap>>#allocatePermObjectsSpace */
@@ -93428,7 +93256,7 @@ allocatePermObjectsSpace(VMMemoryMap * self_in_allocatePermObjectsSpace)
 	}
 	if (!(((self_in_allocatePermObjectsSpace->permSpaceStart)) == 0x20000000000LL)) {
 		logError("Could not allocate permSpace in the expected place (%p), got %p", (self_in_allocatePermObjectsSpace->permSpaceStart), 0x20000000000LL);
-		logWarn("iOS: Address mismatch - continuing anyway");
+		error("Error allocating");
 	}
 	(self_in_allocatePermObjectsSpace->permSpaceEnd = ((self_in_allocatePermObjectsSpace->permSpaceStart)) + minSize);
 	/* begin setPermSpaceFreeStart: */
@@ -93450,7 +93278,7 @@ allocateStackPages(VMMemoryMap * self_in_allocateStackPages, sqInt initialStackS
 	}
 	if (!(((self_in_allocateStackPages->stackPagesStart)) == 12884901888LL)) {
 		logError("Could not allocate stack in the expected place (%p), got %p", 12884901888LL, (self_in_allocateStackPages->stackPagesStart));
-		logWarn("iOS: Address mismatch - continuing anyway");
+		error("Error allocating");
 	}
 	(self_in_allocateStackPages->stackPagesEnd = ((self_in_allocateStackPages->stackPagesStart)) + sizeToRequest);
 	memset((self_in_allocateStackPages->stackPagesStart), 0, sizeToRequest);
@@ -93493,102 +93321,19 @@ calculateMaskToUse(VMMemoryMap * self_in_calculateMaskToUse)
 	{
 		allOnes = 0xFFFFFFFFFFFFFFFFULL;
 	}
-	newSpaceFirst = (self_in_calculateMaskToUse->newSpaceStart);
-	oldSpaceFirst = (self_in_calculateMaskToUse->oldSpaceStart);
-
-#ifdef __APPLE__
-	/* iOS/macOS: Calculate masks based on actual allocated addresses.
-	 * We compute a mask that can distinguish between all memory spaces.
-	 * This allows the VM to work with ASLR where addresses are not at fixed locations.
-	 *
-	 * We need a mask M such that:
-	 *   (newSpace & M) != (oldSpace & M) != (permSpace & M)
-	 *
-	 * We find the highest bit that differs between any pair of addresses,
-	 * then use all bits at that level and above as our mask.
-	 */
-	{
-		uint64_t permSpaceFirst = (self_in_calculateMaskToUse->permSpaceStart);
-		uint64_t diffBits;
-		uint64_t mask = 0;
-		int i;
-
-		/* Early initialization: addresses not allocated yet, use placeholder mask */
-		if (newSpaceFirst == 0 && oldSpaceFirst == 0) {
-			/* This will be recalculated after allocateHeap runs */
-			(self_in_calculateMaskToUse->spaceMaskToUse = 0xFFFFFFFF00000000ULL);
-			(self_in_calculateMaskToUse->newSpaceMask = 0);
-			(self_in_calculateMaskToUse->oldSpaceMask = 0);
-			(self_in_calculateMaskToUse->permSpaceMask = 0);
-			logWarn("iOS: Early init - using placeholder mask until memory is allocated\n");
-			return self_in_calculateMaskToUse;
-		}
-
-		/* XOR all pairs to find all differing bits */
-		diffBits = (newSpaceFirst ^ oldSpaceFirst);
-		if (permSpaceFirst != 0) {
-			diffBits |= (newSpaceFirst ^ permSpaceFirst);
-			diffBits |= (oldSpaceFirst ^ permSpaceFirst);
-		}
-
-		/* Find the highest bit that differs - this becomes our distinguishing mask */
-		for (i = 63; i >= 0; i--) {
-			if (diffBits & (1ULL << i)) {
-				/* Include this bit and all higher bits in the mask */
-				mask = ~((1ULL << i) - 1);
-				break;
-			}
-		}
-
-		if (mask == 0) {
-			/* Addresses are identical - this shouldn't happen after allocation */
-			logError("iOS: Memory spaces have identical addresses!");
-			mask = 0xFFFFFFFF00000000ULL; /* fallback mask */
-		}
-
-		/* Verify the mask can distinguish all spaces */
-		{
-			uint64_t newMasked = newSpaceFirst & mask;
-			uint64_t oldMasked = oldSpaceFirst & mask;
-			uint64_t permMasked = permSpaceFirst & mask;
-
-			if (newMasked == oldMasked) {
-				logError("iOS: Mask 0x%llx cannot distinguish newSpace from oldSpace!", (unsigned long long)mask);
-			}
-			if (permSpaceFirst != 0 && (newMasked == permMasked || oldMasked == permMasked)) {
-				logError("iOS: Mask 0x%llx cannot distinguish permSpace!", (unsigned long long)mask);
-			}
-		}
-
-		(self_in_calculateMaskToUse->spaceMaskToUse = mask);
-		logWarn("iOS: Calculated spaceMaskToUse = 0x%llx from newSpace=0x%llx oldSpace=0x%llx permSpace=0x%llx\n",
-				 (unsigned long long)mask,
-				 (unsigned long long)newSpaceFirst,
-				 (unsigned long long)oldSpaceFirst,
-				 (unsigned long long)permSpaceFirst);
-	}
-#else
-	/* Original calculation for non-iOS platforms */
+	newSpaceFirst = 14495514624LL;
 	newSpaceLast = 0xFFFFFFFFFFLL;
 	newSpaceMaskAttempt = (newSpaceLast - newSpaceFirst) ^ allOnes;
+	oldSpaceFirst = 0x10000000000LL;
 	oldSpaceLast = 0x1FFFFFFFFFFLL;
 	oldSpaceMaskAttempt = (oldSpaceLast - oldSpaceFirst) ^ allOnes;
 	(self_in_calculateMaskToUse->spaceMaskToUse = newSpaceMaskAttempt & oldSpaceMaskAttempt);
-#endif
-
 	if (((self_in_calculateMaskToUse->spaceMaskToUse)) == 0) {
-		error("Could not calculate mask to use to identify new/old/perm objects");
+		error("Could not calculate mask to use to identify new_/old/perm objects");
 	}
-	(self_in_calculateMaskToUse->newSpaceMask = (self_in_calculateMaskToUse->newSpaceStart) & ((self_in_calculateMaskToUse->spaceMaskToUse)));
-	(self_in_calculateMaskToUse->oldSpaceMask = (self_in_calculateMaskToUse->oldSpaceStart) & ((self_in_calculateMaskToUse->spaceMaskToUse)));
-	(self_in_calculateMaskToUse->permSpaceMask = (self_in_calculateMaskToUse->permSpaceStart) & ((self_in_calculateMaskToUse->spaceMaskToUse)));
-
-#ifdef __APPLE__
-	logWarn("iOS: Masks - newSpace=0x%llx oldSpace=0x%llx permSpace=0x%llx\n",
-			 (unsigned long long)(self_in_calculateMaskToUse->newSpaceMask),
-			 (unsigned long long)(self_in_calculateMaskToUse->oldSpaceMask),
-			 (unsigned long long)(self_in_calculateMaskToUse->permSpaceMask));
-#endif
+	(self_in_calculateMaskToUse->newSpaceMask = 14495514624LL & ((self_in_calculateMaskToUse->spaceMaskToUse)));
+	(self_in_calculateMaskToUse->oldSpaceMask = 0x10000000000LL & ((self_in_calculateMaskToUse->spaceMaskToUse)));
+	(self_in_calculateMaskToUse->permSpaceMask = 0x20000000000LL & ((self_in_calculateMaskToUse->spaceMaskToUse)));
 	return self_in_calculateMaskToUse;
 }
 /* VMMemoryMap>>#ensureAtLeastPermSpaceOf: */
@@ -93657,7 +93402,7 @@ extendPermObjectsSpaceMinimum(VMMemoryMap * self_in_extendPermObjectsSpaceMinimu
 sqInt
 fixedPermSpaceStart(VMMemoryMap * self_in_fixedPermSpaceStart)
 {
-	return PERM_SPACE_START();
+	return 0x20000000000LL;
 }
 /* VMMemoryMap>>#getNewSpaceStart */
 uint64_t
@@ -93681,29 +93426,19 @@ isInCodeZone(VMMemoryMap * self_in_isInCodeZone, sqInt anOop)
 sqInt
 isOldObject(VMMemoryMap * self_in_isOldObject, sqInt anOop)
 {
-#if PHARO_IOS_OOP_WRAPPER
-	/* iOS ASLR compatibility: use range checking instead of mask-based detection */
-	return (anOop >= ((self_in_isOldObject->oldSpaceStart))) && (anOop < ((self_in_isOldObject->oldSpaceEnd)));
-#else
 	return (anOop & ((self_in_isOldObject->spaceMaskToUse))) == ((self_in_isOldObject->oldSpaceMask));
-#endif
 }
 /* VMMemoryMap>>#isPermanentObject: */
 sqInt
 isPermanentObject(VMMemoryMap * self_in_isPermanentObject, sqInt anOop)
 {
-	return anOop >= PERM_SPACE_START();
+	return anOop >= 0x20000000000LL;
 }
 /* VMMemoryMap>>#isYoungObject: */
 sqInt
 isYoungObject(VMMemoryMap * self_in_isYoungObject, sqInt anOop)
 {
-#if PHARO_IOS_OOP_WRAPPER
-	/* iOS ASLR compatibility: use range checking instead of mask-based detection */
-	return (anOop >= ((self_in_isYoungObject->newSpaceStart))) && (anOop < ((self_in_isYoungObject->newSpaceEnd)));
-#else
 	return ((anOop & ((self_in_isYoungObject->spaceMaskToUse))) == ((self_in_isYoungObject->newSpaceMask))) && (anOop >= ((self_in_isYoungObject->newSpaceStart)));
-#endif
 }
 /* VMMemoryMap>>#permSpaceSize */
 static int64_t NoDbgRegParms
@@ -93887,7 +93622,7 @@ growRememberedSet(VMRememberedSet * self_in_growRememberedSet)
 	}
 	/* begin rememberedSet:oop: */
 	rootIndex = (self_in_growRememberedSet->rootIndex);
-	assert(isOldObject(GIV(memoryMap), newObj));
+	assert((newObj).isOld());
 	{
 		assert(!(isOopForwarded(GIV(hiddenRootsObj))));
 		longAtput((GIV(hiddenRootsObj) + BaseHeaderSize) + ((sqInt) (((usqInt) rootIndex ) << (shiftForWord())) ), newObj);
@@ -93959,7 +93694,7 @@ initializeRememberedSetShouldStartEmpty(VMRememberedSet * self_in_initializeReme
 		/* end allocatePinnedSlots: */
 		/* begin rememberedSet:oop: */
 		rootIndex = (self_in_initializeRememberedSetShouldStartEmpty->rootIndex);
-		assert(isOldObject(GIV(memoryMap), obj));
+		assert((obj).isOld());
 		{
 			assert(!(isOopForwarded(GIV(hiddenRootsObj))));
 			longAtput((GIV(hiddenRootsObj) + BaseHeaderSize) + ((sqInt) (((usqInt) rootIndex ) << (shiftForWord())) ), obj);
@@ -94026,8 +93761,8 @@ rememberWithoutMarkingAsRemembered(VMRememberedSet * self_in_rememberWithoutMark
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
 	sqInt aNewValue;
 
-	assert(isNonImmediate(objOop));
-	assert(!(isYoungObject(GIV(memoryMap), objOop)));
+	assert((objOop).isNonImmediate());
+	assert(!(isYoungObject(getMemoryMap(), objOop)));
 	if (((self_in_rememberWithoutMarkingAsRemembered->rememberedSetSize)) >= ((self_in_rememberWithoutMarkingAsRemembered->rememberedSetLimit))) {
 		growRememberedSet(self_in_rememberWithoutMarkingAsRemembered);
 		if (!((self_in_rememberWithoutMarkingAsRemembered->doFullScan))) {
@@ -94155,7 +93890,7 @@ shrinkRememberedSet(VMRememberedSet * self_in_shrinkRememberedSet)
 	}
 	/* begin rememberedSet:oop: */
 	rootIndex = (self_in_shrinkRememberedSet->rootIndex);
-	assert(isOldObject(GIV(memoryMap), newObj));
+	assert((newObj).isOld());
 	{
 		assert(!(isOopForwarded(GIV(hiddenRootsObj))));
 		longAtput((GIV(hiddenRootsObj) + BaseHeaderSize) + ((sqInt) (((usqInt) rootIndex ) << (shiftForWord())) ), newObj);
@@ -94275,7 +94010,7 @@ markStackPageMostRecentlyUsed(StackPage *page)
 	assert(pageListIsWellFormed());
 }
 /*	<InterpreterStackPage>This method is used to move a page to a position in the list such that it 
-	cannot be deallocated when a new page is allocated, without changing the 
+	cannot be deallocated when a new_ page is allocated, without changing the 
 	most recently 
 	used page. There must be at least 3 pages in the system. So making the 
 	page the MRU's prevPage is sufficient to ensure it won't be deallocated.MRUP-->used page<->used page<->used page<->used page<--LRUP 
