@@ -593,6 +593,17 @@ private:
     PrimitiveResult primitiveLocalDateAndTime(int argCount);       // 251
     PrimitiveResult primitiveNanosecondClock(int argCount);        // 252
 
+    // Misc primitives (222-230)
+    PrimitiveResult primitiveClosureValueNoContextSwitch2(int argCount); // 222
+    PrimitiveResult primitiveClosureValueWithArgsNoContextSwitch(int argCount); // 223
+    PrimitiveResult primitiveSetIdentityHash(int argCount);        // 224
+    PrimitiveResult primitiveLoadInstVar(int argCount);            // 225
+    PrimitiveResult primitiveStringCompare(int argCount);          // 226
+    PrimitiveResult primitiveStringReplace(int argCount);          // 227
+    PrimitiveResult primitiveScreenScale(int argCount);            // 228
+    PrimitiveResult primitiveStringHash2(int argCount);            // 229
+    PrimitiveResult primitiveShrinkMemory(int argCount);           // 230
+
     // String/Array
     PrimitiveResult primitiveStringAt(int argCount);
     PrimitiveResult primitiveStringAtPut(int argCount);

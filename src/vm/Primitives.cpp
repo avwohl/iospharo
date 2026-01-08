@@ -8027,4 +8027,256 @@ PrimitiveResult Interpreter::primitiveNanosecondClock(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== MISC PRIMITIVES (222-230) =====
+
+// Primitive 222: Closure value no context switch (variant 2)
+// closure primitiveClosureValueNoContextSwitch2 -> result
+// Evaluates closure without allowing context switch
+PrimitiveResult Interpreter::primitiveClosureValueNoContextSwitch2(int argCount) {
+    // This is similar to primitiveClosureValueNoContextSwitch (204)
+    // but may have slightly different semantics
+    // For now, fail to Smalltalk fallback
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 223: Closure value with args, no context switch
+// closure argsArray primitiveClosureValueWithArgsNoContextSwitch -> result
+// Evaluates closure with args without allowing context switch
+PrimitiveResult Interpreter::primitiveClosureValueWithArgsNoContextSwitch(int argCount) {
+    // Similar to primitiveClosureValueWithArgs but prevents context switching
+    // For now, fail to Smalltalk fallback
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 224: Set identity hash
+// anObject hash primitiveSetIdentityHash -> anObject
+// Sets the identity hash of an object
+PrimitiveResult Interpreter::primitiveSetIdentityHash(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop hashOop = stackTop();
+    Oop receiver = stackValue(1);
+
+    if (!hashOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    if (receiver.isImmediate()) {
+        // Can't set hash on immediates
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t hash = hashOop.asSmallInteger();
+    if (hash < 0 || hash > 0x3FFFFF) {  // 22-bit hash max
+        return PrimitiveResult::Failure;
+    }
+
+    // Get object header and set hash
+    ObjectHeader* header = receiver.asObjectPtr();
+    header->setIdentityHash(static_cast<uint32_t>(hash));
+
+    pop();  // pop hash argument, leave receiver
+    return PrimitiveResult::Success;
+}
+
+// Primitive 225: Load instance variable (optimized)
+// receiver index primitiveLoadInstVar -> value
+// Optimized load of instance variable by index
+PrimitiveResult Interpreter::primitiveLoadInstVar(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop receiver = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    if (receiver.isImmediate()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t index = indexOop.asSmallInteger();
+    if (index < 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t slotCount = memory_.slotCountOf(receiver);
+    if (static_cast<size_t>(index) >= slotCount) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop value = memory_.fetchPointer(static_cast<size_t>(index), receiver);
+    popN(2);
+    push(value);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 226: String compare (case-sensitive, returns ordering)
+// string1 string2 primitiveStringCompare -> -1/0/1
+// Returns -1 if string1 < string2, 0 if equal, 1 if string1 > string2
+PrimitiveResult Interpreter::primitiveStringCompare(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop string2 = stackTop();
+    Oop string1 = stackValue(1);
+
+    if (string1.isImmediate() || string2.isImmediate()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Extract strings
+    std::string str1 = extractString(memory_, string1);
+    std::string str2 = extractString(memory_, string2);
+
+    int result;
+    if (str1 < str2) {
+        result = -1;
+    } else if (str1 > str2) {
+        result = 1;
+    } else {
+        result = 0;
+    }
+
+    popN(2);
+    push(Oop::fromSmallInteger(result));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 227: String replace (optimized bulk copy)
+// dest destStart destEnd source sourceStart primitiveStringReplace -> dest
+// Copies characters from source to dest
+PrimitiveResult Interpreter::primitiveStringReplace(int argCount) {
+    if (argCount != 4) return PrimitiveResult::Failure;
+
+    Oop sourceStartOop = stackTop();
+    Oop sourceOop = stackValue(1);
+    Oop destEndOop = stackValue(2);
+    Oop destStartOop = stackValue(3);
+    Oop destOop = stackValue(4);
+
+    // Validate integer arguments
+    if (!sourceStartOop.isSmallInteger() || !destEndOop.isSmallInteger() ||
+        !destStartOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    if (destOop.isImmediate() || sourceOop.isImmediate()) {
+        return PrimitiveResult::Failure;
+    }
+
+    if (memory_.isImmutable(destOop)) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t sourceStart = sourceStartOop.asSmallInteger();
+    int64_t destStart = destStartOop.asSmallInteger();
+    int64_t destEnd = destEndOop.asSmallInteger();
+
+    // Convert to 0-based indices
+    if (sourceStart < 1 || destStart < 1 || destEnd < destStart - 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t srcIdx = static_cast<size_t>(sourceStart - 1);
+    size_t dstStart = static_cast<size_t>(destStart - 1);
+    size_t dstEnd = static_cast<size_t>(destEnd);
+    size_t count = dstEnd - dstStart;
+
+    size_t destSize = memory_.byteSizeOf(destOop);
+    size_t sourceSize = memory_.byteSizeOf(sourceOop);
+
+    if (dstEnd > destSize || srcIdx + count > sourceSize) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Copy bytes
+    for (size_t i = 0; i < count; i++) {
+        uint8_t byte = memory_.fetchByte(srcIdx + i, sourceOop);
+        memory_.storeByte(dstStart + i, destOop, byte);
+    }
+
+    popN(4);  // Pop 4 args, leave dest
+    return PrimitiveResult::Success;
+}
+
+// Primitive 228: Screen scale factor
+// primitiveScreenScale -> float (scale factor for HiDPI)
+PrimitiveResult Interpreter::primitiveScreenScale(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Return default scale factor of 1.0 for non-HiDPI
+    // On iOS this would return the actual screen scale
+    // For now, return 2.0 as typical for Retina displays
+
+    // Allocate a boxed float
+    uint32_t floatClassIndex = memory_.indexOfClass(
+        memory_.specialObject(SpecialObjectIndex::ClassFloat));
+    Oop result = memory_.allocateWords(floatClassIndex, 1);
+    if (result.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Store 2.0 as IEEE 754 double
+    double scale = 2.0;
+    uint64_t bits;
+    std::memcpy(&bits, &scale, sizeof(bits));
+    memory_.storeWord64(0, result, bits);
+
+    pop();  // receiver
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 229: String hash (alternative algorithm)
+// aString primitiveStringHash2 -> hash
+// Computes hash using alternative algorithm
+PrimitiveResult Interpreter::primitiveStringHash2(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop receiver = stackTop();
+
+    if (receiver.isImmediate()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Use FNV-1a hash algorithm
+    size_t size = memory_.byteSizeOf(receiver);
+    uint64_t hash = 14695981039346656037ULL;  // FNV offset basis
+    const uint64_t fnvPrime = 1099511628211ULL;
+
+    for (size_t i = 0; i < size; i++) {
+        uint8_t byte = memory_.fetchByte(i, receiver);
+        hash ^= byte;
+        hash *= fnvPrime;
+    }
+
+    // Reduce to SmallInteger range
+    int64_t result = static_cast<int64_t>(hash & 0x3FFFFFFFFFFFFFFFULL);
+
+    pop();
+    push(Oop::fromSmallInteger(result));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 230: Shrink memory
+// bytesToShrink primitiveShrinkMemory -> actualBytesShrunk
+// Attempts to return memory to the OS
+PrimitiveResult Interpreter::primitiveShrinkMemory(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop bytesOop = stackTop();
+    if (!bytesOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Memory shrinking is handled by the GC system
+    // For now, we don't support dynamic memory shrinking
+    // Return 0 to indicate no shrinkage occurred
+    pop();  // argument
+    pop();  // receiver
+    push(Oop::fromSmallInteger(0));
+    return PrimitiveResult::Success;
+}
+
 } // namespace pharo

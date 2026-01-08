@@ -3853,6 +3853,17 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[220] = &Interpreter::primitiveImageFormatVersion;
     primitiveTable_[221] = &Interpreter::primitiveClosureValueWithArgs;
 
+    // Misc primitives (222-230)
+    primitiveTable_[222] = &Interpreter::primitiveClosureValueNoContextSwitch2;
+    primitiveTable_[223] = &Interpreter::primitiveClosureValueWithArgsNoContextSwitch;
+    primitiveTable_[224] = &Interpreter::primitiveSetIdentityHash;
+    primitiveTable_[225] = &Interpreter::primitiveLoadInstVar;
+    primitiveTable_[226] = &Interpreter::primitiveStringCompare;
+    primitiveTable_[227] = &Interpreter::primitiveStringReplace;
+    primitiveTable_[228] = &Interpreter::primitiveScreenScale;
+    primitiveTable_[229] = &Interpreter::primitiveStringHash2;
+    primitiveTable_[230] = &Interpreter::primitiveShrinkMemory;
+
     // Cache flushing primitives (119-120)
     primitiveTable_[119] = &Interpreter::primitiveFlushCacheByMethod;
     primitiveTable_[120] = &Interpreter::primitiveFlushCacheBySelector;
