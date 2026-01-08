@@ -712,7 +712,30 @@ PrimitiveResult Interpreter::primitiveSignal(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveWait(int argCount) {
-    return PrimitiveResult::Failure;  // TODO
+    // Semaphore>>wait - primitive 86
+    std::cerr << "[PRIM] primitiveWait called" << std::endl;
+    // Semaphore layout: slot 0 = firstLink, slot 1 = lastLink, slot 2 = excessSignals
+    Oop semaphore = stackTop();
+    if (!semaphore.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Check excessSignals (slot 2)
+    Oop excessOop = memory_.fetchPointer(2, semaphore);
+    if (excessOop.isSmallInteger()) {
+        int64_t excess = excessOop.asSmallInteger();
+        if (excess > 0) {
+            // Semaphore is signaled - decrement and return immediately
+            memory_.storePointer(2, semaphore, Oop::fromSmallInteger(excess - 1));
+            // Return the semaphore (receiver stays on stack, already there)
+            return PrimitiveResult::Success;
+        }
+    }
+
+    // No signal available - for now, just succeed without blocking
+    // This is incorrect but prevents infinite DNU loops during testing
+    // TODO: Properly suspend the process and reschedule
+    return PrimitiveResult::Success;
 }
 
 // ===== SYSTEM PRIMITIVES =====

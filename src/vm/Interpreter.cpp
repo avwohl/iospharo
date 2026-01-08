@@ -244,6 +244,11 @@ void Interpreter::interpret() {
 
 bool Interpreter::step() {
     if (!running_) {
+        static bool reportedOnce = false;
+        if (!reportedOnce) {
+            std::cerr << "[STEP] First idle - running_ is false" << std::endl;
+            reportedOnce = true;
+        }
         return false;
     }
 
@@ -274,6 +279,36 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
     // - 0x40-0x4B: push temp 16-27
     // - 0x4C-0x4F: push self, true, false, nil
     // - 0x50-0x51: push 0, push 1
+
+    static int bcTrace = 0;
+    if (bcTrace < 0) {  // Disabled for now
+        bcTrace++;
+        // Show method selector for first few bytecodes
+        std::string methodSel = "?";
+        if (homeMethod_.isObject()) {
+            ObjectHeader* mHdr = homeMethod_.asObjectPtr();
+            if (mHdr->slotCount() > 1) {
+                Oop lit1 = mHdr->slotAt(1);
+                if (lit1.isObject() && lit1.rawBits() > 0x10000) {
+                    ObjectHeader* lit1Hdr = lit1.asObjectPtr();
+                    if (lit1Hdr->isBytesObject() && lit1Hdr->byteSize() <= 30) {
+                        methodSel = std::string((char*)lit1Hdr->bytes(), lit1Hdr->byteSize());
+                    }
+                }
+            }
+        }
+        std::cerr << "[BC] " << methodSel << " 0x" << std::hex << (int)bytecode << std::dec
+                  << " sp=" << (stackPointer_ - stackBase_)
+                  << " top=";
+        if (stackPointer_ > stackBase_) {
+            Oop top = stackTop();
+            std::cerr << "0x" << std::hex << top.rawBits() << std::dec;
+            if (top.isSmallInteger()) std::cerr << " (int " << top.asSmallInteger() << ")";
+        } else {
+            std::cerr << "(empty)";
+        }
+        std::cerr << std::endl;
+    }
 
     if (bytecode <= 0x0F) {
         // Sista: 0x00-0x0F (0-15): Push receiver variable 0-15
@@ -691,7 +726,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
 
 void Interpreter::push(Oop value) {
     if (stackPointer_ >= stack_.data() + MaxStackDepth) {
-        // Stack overflow - should signal an error
+        std::cerr << "[STOP] Stack overflow!" << std::endl;
         running_ = false;
         return;
     }
@@ -833,6 +868,7 @@ void Interpreter::returnValue(Oop value) {
         }
 
         // No more work to do
+        std::cerr << "[HALT] No more processes to run, stopping after frame depth=" << frameDepth_ << std::endl;
         running_ = false;
         // Store the return value for inspection
         push(value);
@@ -1231,6 +1267,29 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     // Cache miss - look up method
     Oop method = lookupMethod(selector, rcvrClass);
     if (method.isNil()) {
+        // Debug: show selector name
+        std::string selName = "<non-bytes>";
+        if (selector.isObject()) {
+            ObjectHeader* selHdr = selector.asObjectPtr();
+            if (selHdr->isBytesObject() && selHdr->byteSize() < 100) {
+                selName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+            }
+        }
+        static int lookupFailCount = 0;
+        if (lookupFailCount++ < 5) {
+            std::cerr << "[LOOKUP FAIL] #" << selName << " not found in class 0x"
+                      << std::hex << rcvrClass.rawBits() << std::dec;
+            // Show what the receiver is
+            std::cerr << " receiver=0x" << std::hex << rcvr.rawBits() << std::dec;
+            if (rcvr.isSmallInteger()) {
+                std::cerr << " (SmallInt " << rcvr.asSmallInteger() << ")";
+            } else if (rcvr.isObject()) {
+                ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+                std::cerr << " (classIdx=" << rcvrHdr->classIndex() << " fmt="
+                          << static_cast<int>(rcvrHdr->format()) << ")";
+            }
+            std::cerr << std::endl;
+        }
         sendDoesNotUnderstand(selector, argCount);
         return;
     }
@@ -1281,10 +1340,12 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
             }
         }
 
-        if (depth < 3) {
-            // DEBUG_LOG("[LOOKUP] depth=" << depth << " class=" << className << " (0x" << std::hex << currentClass.rawBits()
-                      // << std::dec << " clsIdx=" << clsHdr->classIndex() << " slots=" << clsHdr->slotCount()
-                      // << ") md=0x" << std::hex << methodDict.rawBits() << std::dec;
+        static int lookupDebugCount = 0;
+        if (depth < 3 && lookupDebugCount < 0) {  // Disabled for now
+            lookupDebugCount++;
+            std::cerr << "[LOOKUP] depth=" << depth << " class=" << className << " (0x" << std::hex << currentClass.rawBits()
+                      << std::dec << " clsIdx=" << clsHdr->classIndex() << " slots=" << clsHdr->slotCount()
+                      << ") md=0x" << std::hex << methodDict.rawBits() << std::dec << std::endl;
         }
         if (!isNilOrEnd(methodDict) && methodDict.isObject()) {
             Oop method = lookupInMethodDict(methodDict, selector);
@@ -1367,7 +1428,7 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
 
     // Debug: show method dict info for the first few lookups
     static int debugCount = 0;
-    bool shouldDebug = (debugCount < 10);
+    bool shouldDebug = (debugCount < 0);  // Disabled for now
     if (shouldDebug) {
         debugCount++;
 
@@ -1389,10 +1450,32 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
             // std::cerr; // DEBUG
         }
 
-        // DEBUG_LOG("[MD] selector=#" << selectorStr << " keySlots=" << keySlotCount
-                  // << " valuesSize=" << valuesSize
-                  // << " mdSlots=" << mdSlotCount
-                  // << " mdFormat=" << static_cast<int>(mdHeader->format());
+        std::cerr << "[MD] selector=#" << selectorStr << " (0x" << std::hex << selector.rawBits()
+                  << " actual=0x" << actualSelector.rawBits() << std::dec << ")"
+                  << " keySlots=" << keySlotCount
+                  << " valuesSize=" << valuesSize
+                  << " mdSlots=" << mdSlotCount
+                  << " mdFormat=" << static_cast<int>(mdHeader->format()) << std::endl;
+
+        // If searching for 'new' in a large dict, dump all selectors that start with 'n'
+        if (selectorStr == "new" && keySlotCount > 500) {
+            std::cerr << "[MD] Searching for 'new' - listing all 'n*' selectors:" << std::endl;
+            int count = 0;
+            for (size_t j = 0; j < keySlotCount && count < 20; ++j) {
+                Oop key = memory_.fetchPointer(j + 2, methodDict);
+                if (key.isObject() && key.rawBits() > 0x10000) {
+                    ObjectHeader* keyHdr = key.asObjectPtr();
+                    if (keyHdr->isBytesObject() && keyHdr->byteSize() > 0) {
+                        const char* bytes = (const char*)keyHdr->bytes();
+                        if (bytes[0] == 'n') {
+                            std::string keyStr(bytes, keyHdr->byteSize());
+                            std::cerr << "[MD]   found: #" << keyStr << " at slot " << j << std::endl;
+                            count++;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
@@ -1404,37 +1487,24 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
     size_t maxSearch = std::min(size, (size_t)1024);
     int nonNilCount = 0;
 
-    // Debug: show first few entries in keysArray to understand structure
-    if (shouldDebug && size <= 50) {
-        // DEBUG: "[MD] First entries of keysArray:"
-        for (size_t j = 0; j < std::min((size_t)10, size); ++j) {
-            Oop entry = memory_.fetchPointer(j, keysArray);
-            // DEBUG_LOG("[MD]   [" << j << "]=0x" << std::hex << entry.rawBits() << std::dec;
-            if (entry.isNil() || entry.rawBits() == nilObj.rawBits() || entry.rawBits() < 0x10000) {
-                // std::cerr << " (nil/empty)";
-            } else if (entry.isObject()) {
-                ObjectHeader* entryHdr = entry.asObjectPtr();
-                // std::cerr << " (fmt=" << static_cast<int>(entryHdr->format())
-                          // << " cls=" << entryHdr->classIndex();
-                if (entryHdr->isBytesObject() && entryHdr->byteSize() <= 20) {
-                    // std::cerr << " \"" << std::string((char*)entryHdr->bytes(), entryHdr->byteSize()) << "\"";
-                } else if (entryHdr->isCompiledMethod()) {
-                    // Get selector from lit[1]
-                    uint64_t mhdr = entryHdr->slots()[0].rawBits();
-                    size_t nLit = (mhdr >> 1) & 0x7FFF;
-                    if (nLit >= 1) {
-                        Oop selLit = memory_.fetchPointer(1, entry);
-                        if (selLit.isObject() && selLit.rawBits() > 0x10000 && selLit.rawBits() < 0x10000000000ULL) {
-                            ObjectHeader* selHdr = selLit.asObjectPtr();
-                            if (selHdr->isBytesObject() && selHdr->byteSize() <= 20) {
-                                // std::cerr << " sel=\"" << std::string((char*)selHdr->bytes(), selHdr->byteSize()) << "\"";
-                            }
-                        }
-                    }
+    // Debug: show first few inline key slots in method dict (slots 2+)
+    if (shouldDebug && keySlotCount <= 50) {
+        std::cerr << "[MD] First inline keys (slots 2+):" << std::endl;
+        for (size_t j = 0; j < std::min((size_t)10, keySlotCount); ++j) {
+            Oop key = memory_.fetchPointer(j + 2, methodDict);  // Keys start at slot 2
+            std::cerr << "[MD]   key[" << j << "]=0x" << std::hex << key.rawBits() << std::dec;
+            if (isNilOrEmpty(key)) {
+                std::cerr << " (nil/empty)";
+            } else if (key.isObject()) {
+                ObjectHeader* keyHdr = key.asObjectPtr();
+                std::cerr << " (fmt=" << static_cast<int>(keyHdr->format())
+                          << " cls=" << keyHdr->classIndex();
+                if (keyHdr->isBytesObject() && keyHdr->byteSize() <= 30) {
+                    std::cerr << " \"" << std::string((char*)keyHdr->bytes(), keyHdr->byteSize()) << "\"";
                 }
-                // std::cerr << ")";
+                std::cerr << ")";
             }
-            // std::cerr; // DEBUG
+            std::cerr << std::endl;
         }
     }
 
@@ -1852,7 +1922,7 @@ void Interpreter::activateBlock(Oop block, int argCount) {
 void Interpreter::pushFrame(Oop method, int argCount) {
     // Save current execution state before switching to new method
     if (frameDepth_ >= MaxFrameDepth) {
-        // ERROR: "[ERROR] Frame stack overflow!"
+        std::cerr << "[STOP] Frame stack overflow! depth=" << frameDepth_ << std::endl;
         running_ = false;
         return;
     }
@@ -1887,7 +1957,7 @@ void Interpreter::pushFrame(Oop method, int argCount) {
 void Interpreter::popFrame() {
     // Restore previous execution state
     if (frameDepth_ == 0) {
-        // DEBUG: "[FRAME] No more frames - stopping execution"
+        std::cerr << "[FRAME] No more frames (frameDepth_=0) - stopping" << std::endl;
         running_ = false;
         return;
     }
@@ -1911,7 +1981,7 @@ void Interpreter::popFrame() {
 
     // If this was the last frame, we're done
     if (frameDepth_ == 0 && frame.savedIP == nullptr) {
-        // DEBUG: "[FRAME] Returned from top-level - stopping execution"
+        std::cerr << "[FRAME] Returned from top-level (savedIP=null) - stopping" << std::endl;
         running_ = false;
     }
 }
@@ -2099,8 +2169,21 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     const int MAX_DNU_DEPTH = 10;
 
     dnuDepth++;
+
+    // Show the selector that triggered DNU
+    if (dnuDepth <= 5) {
+        std::string selName = "<unknown>";
+        if (selector.isObject()) {
+            ObjectHeader* selHdr = selector.asObjectPtr();
+            if (selHdr->isBytesObject() && selHdr->byteSize() < 100) {
+                selName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+            }
+        }
+        std::cerr << "[DNU #" << dnuDepth << "] Missing: #" << selName << std::endl;
+    }
+
     if (dnuDepth > MAX_DNU_DEPTH) {
-        // ERROR_LOG("[ERROR] DNU recursion depth exceeded (" << dnuDepth << "). Halting.";
+        std::cerr << "[STOP] DNU recursion depth exceeded (" << dnuDepth << ")" << std::endl;
         running_ = false;
         dnuDepth = 0;
         return;
@@ -2117,6 +2200,27 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
             origStr = std::string((char*)origHdr->bytes(), origHdr->byteSize());
             // std::cerr << "[DNU] Original selector string: '#" << origStr << "'"; // DEBUG
         }
+    }
+
+    // Fallback for startup to avoid DNU spiral
+    if (origStr == "new" && argCount == 0) {
+        std::cerr << "[DNU] Fallback for #new - returning nil" << std::endl;
+        pop();  // Pop receiver
+        push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+    if (origStr == "receiver:" && argCount == 1) {
+        std::cerr << "[DNU] Fallback for #receiver: - returning receiver" << std::endl;
+        Oop arg = pop();  // Pop argument
+        Oop rcvr = pop();  // Pop receiver (Message object)
+        // Try to store in Message's slot 2 (receiver field)
+        if (rcvr.isObject()) {
+            memory_.storePointer(2, rcvr, arg);
+        }
+        push(rcvr);  // Return self
+        dnuDepth--;
+        return;
     }
 
     // Fallback for stream operations to avoid DNU spiral during startup
@@ -2163,7 +2267,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
     // Safeguard: if we're already handling DNU, prevent infinite recursion
     if (selector.rawBits() == selectors_.doesNotUnderstand.rawBits()) {
-        // ERROR: "[ERROR] Infinite DNU loop detected! Halting."
+        std::cerr << "[STOP] Infinite DNU loop detected!" << std::endl;
         running_ = false;
         dnuDepth = 0;
         return;
@@ -2550,13 +2654,11 @@ void Interpreter::terminateCurrentProcess() {
 }
 
 bool Interpreter::tryReschedule() {
-    // DEBUG: "[SCHED] Attempting to reschedule to another process..."
-
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
     Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
 
     if (!schedulerAssoc.isObject() || schedulerAssoc.rawBits() == nilObj.rawBits()) {
-        // DEBUG: "[SCHED] No scheduler found"
+        std::cerr << "[SCHED] No scheduler found" << std::endl;
         return false;
     }
 
@@ -2619,7 +2721,7 @@ bool Interpreter::tryReschedule() {
         }
     }
 
-    // DEBUG: "[SCHED] No runnable process found"
+    std::cerr << "[SCHED] No runnable process found in " << numQueues << " queues" << std::endl;
     return false;
 }
 
@@ -2741,12 +2843,11 @@ bool Interpreter::bootstrapStartup() {
     // If we've already tried startup methods and they completed,
     // the Smalltalk code has had a chance to run. Don't keep looping.
     if (startupAttempt > 5) {
-        // DEBUG: "[DEBUG] bootstrapStartup: Too many attempts, stopping"
-        // DEBUG: "[DEBUG] The Smalltalk startup code has been executed but returned."
-        // DEBUG: "[DEBUG] This is expected behavior for a headless image."
+        std::cerr << "[BOOTSTRAP] Too many attempts (" << startupAttempt << "), stopping" << std::endl;
         running_ = false;
         return false;
     }
+    std::cerr << "[BOOTSTRAP] Attempt #" << startupAttempt << std::endl;
 
     // DEBUG: "[DEBUG] bootstrapStartup: Trying to find startup globals..."
 
@@ -3141,6 +3242,27 @@ bool Interpreter::executeFromContext(Oop context) {
     receiver_ = memory_.fetchPointer(5, context);
     activeContext_ = context;  // Track for sender chain on return
 
+    // Debug: show what method we're starting with
+    std::cerr << "[STARTUP] method=0x" << std::hex << method_.rawBits() << std::dec;
+    std::cerr << " receiver=0x" << std::hex << receiver_.rawBits() << std::dec;
+    if (method_.isObject()) {
+        ObjectHeader* mHdr = method_.asObjectPtr();
+        std::cerr << " (cls=" << mHdr->classIndex() << " slots=" << mHdr->slotCount() << ")";
+        // Try to get selector from literal 1
+        if (mHdr->slotCount() > 1) {
+            Oop lit1 = mHdr->slotAt(1);
+            if (lit1.isObject() && lit1.rawBits() > 0x10000) {
+                ObjectHeader* lit1Hdr = lit1.asObjectPtr();
+                if (lit1Hdr->isBytesObject() && lit1Hdr->byteSize() <= 50) {
+                    std::cerr << " selector=#" << std::string((char*)lit1Hdr->bytes(), lit1Hdr->byteSize());
+                }
+            }
+        }
+    }
+    std::cerr << std::endl;
+
+    // (receiver inst var debug disabled)
+
     // Set homeMethod_ for literal access
     // For CompiledMethods, homeMethod_ = method_
     // For CompiledBlocks, find the home method through the closure's outer context chain
@@ -3319,10 +3441,8 @@ bool Interpreter::executeFromContext(Oop context) {
     if (savedPC.isSmallInteger()) {
         int64_t pcOffset = savedPC.asSmallInteger();
         if (pcOffset > 0) {
-            // PC is 1-based byte offset from start of method
             instructionPointer_ = methodBytes + pcOffset - 1;
         } else {
-            // Start at beginning of bytecodes
             instructionPointer_ = methodBytes + bytecodeStart;
         }
     } else {
@@ -3351,20 +3471,11 @@ bool Interpreter::executeFromContext(Oop context) {
     // If stackp=5, there are 5 valid items at slots 6,7,8,9,10
 
     if (stackp > 0) {
-        int numStackItems = stackp;  // stackp IS the count of items
+        int numStackItems = stackp;
         if (numStackItems > 0 && numStackItems < 1000) {
-            // DEBUG_LOG("[DEBUG] executeFromContext: Restoring " << numStackItems << " stack items from context (slots " << ContextFixedFields << "-" << (ContextFixedFields + numStackItems - 1) << ")";
-
-            // Restore all items from the context's temp/stack area
-            // The layout is: temps first, then evaluation stack
             for (int i = 0; i < numStackItems; i++) {
                 Oop item = memory_.fetchPointer(ContextFixedFields + i, context);
                 push(item);
-                if (i < numTemps) {
-                    // DEBUG_LOG("[DEBUG]   restored temp[" << i << "] = 0x" << std::hex << item.rawBits() << std::dec;
-                } else {
-                    // DEBUG_LOG("[DEBUG]   restored stack[" << (i - numTemps) << "] = 0x" << std::hex << item.rawBits() << std::dec;
-                }
             }
         }
     }
