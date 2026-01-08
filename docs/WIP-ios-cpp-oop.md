@@ -1,113 +1,101 @@
-# WIP: iOS C++ Oop Wrapper Implementation
+# WIP: iOS Type-Safe C++ Oop Class for ASLR Compatibility
 
-**Last updated:** 2026-01-02 23:30
+**Last updated:** 2026-01-06
 
 ## Problem
-iOS ASLR randomizes memory addresses, breaking Pharo VM's space detection which relies on fixed address ranges (oldSpace at 0x10000000000, etc.). The crash at `0x100010db558` is an unrelocated Spur pointer.
+iOS ASLR randomizes memory addresses, breaking Pharo VM's space detection which relies on fixed address ranges. Previous attempts using runtime masking had bugs because code like `longAt(oop + 8)` corrupts tag bits before masking.
 
-## Solution Approach
+## Solution: Type-Safe C++ with Compile-Time Error Detection
 
-### Attempt 1: Bit Encoding (FAILED)
-Encode memory space in low bits of pointers using C++ Oop wrapper class.
-**Problem**: Encoded pointers corrupt memory access - VM uses them directly.
+Use C++ types that catch pointer manipulation errors at compile time rather than runtime.
 
-### Attempt 2: Range-Based Detection (CURRENT)
-Modify isOldObject/isYoungObject to use actual memory ranges from VMMemoryMap:
-- `isOldObject`: check if `oldSpaceStart <= oop < oldSpaceEnd`
-- `isYoungObject`: check if `newSpaceStart <= oop < newSpaceEnd`
-This works because ranges are set AFTER memory allocation, so they reflect actual ASLR addresses.
+### Key Classes
 
-## Current Status
+1. **Oop** - Tagged object pointer, NO arithmetic operators
+   - Trying `oop + 8` is a compile error
+   - Must use `oop.longAt(8)` or `oop.rawAddress()` instead
 
-### Completed
-1. **Fork created**: https://github.com/avwohl/pharo-vm branch `feat/ios-cpp-oop`
-2. **Rebased to v12.0.0** (was v10.3.9)
-3. **CppCodeGenerator** created in `Slang-iOS` package
-4. **oop.hpp** C++ wrapper class with space encoding
-5. **VMMaker generation working**: `PharoVMMaker generate:outputDirectory:` API discovered
-6. **C-to-C++ transformer** script created: `scripts/c-to-cpp-transform.py`
-7. **Hybrid C/C++ build working**: CMakeLists.txt updated, builds successfully
-8. **oop_wrapper.cpp/h created**: C-callable wrapper functions for space detection
+2. **RawAddress** - Untagged memory address, allows arithmetic
+   - Use for pointer math: `addr + 8`, `addr1 - addr2`
+   - Obtained via `oop.rawAddress()`
 
-### Build Verified
-Hybrid build compiles successfully. The `libPharoVMCore.a` includes all oop_wrapper symbols:
-- `oop_is_young`, `oop_is_old`, `oop_is_permanent`
-- `oop_encode_with_space`, `oop_get_space`
-- `oop_is_immediate`, `oop_is_non_immediate`
-- `oop_integer_value_of`, `oop_integer_object_of`
-- `oop_to_pointer`
+### iOS Tagging Scheme (modified from Spur)
 
-### Completed
-1. **Patched cointerp.c space checks**:
-   - 60 calls patched: `isOldObject(GIV(memoryMap), oop)` → `oop_is_old((uint64_t)(oop))`
-   - Also patched `getMemoryMap()` variant patterns
-   - Build verified: compiles and links successfully
+```
+Bit 0 = 1: Immediate (all immediates have bit 0 set)
+  001 = SmallInteger
+  011 = Character (was 010 in Spur)
+  101 = SmallFloat (was 100 in Spur)
 
-2. **Added space encoding during image swizzle**:
-   - `swizzleObj()` now encodes space in low bits after address adjustment
-   - Permanent space objects → `OOP_SPACE_PERM` encoding
-   - Old space objects (from image file) → `OOP_SPACE_OLD` encoding
+Bit 0 = 0: Object pointer
+  Bits 1-2: Space encoding
+    00 = New space (young generation)
+    01 = Old space (tenured)
+    10 = Perm space (permanent)
+    11 = Code space (reserved)
+  Bits 3-63: Heap address (always 8-byte aligned)
+```
 
-3. **XCFramework built**:
-   - iOS device (arm64)
-   - iOS Simulator (arm64 + x86_64)
-   - Mac Catalyst (arm64 + x86_64)
+The key change from Spur: Character and SmallFloat tags now have bit 0 = 1, which frees bits 1-2 for space encoding in object pointers.
 
-### Current Implementation
-Range-based space detection in isOldObject/isYoungObject/isPermanentObject.
-No pointer modification needed - uses actual memory ranges from VMMemoryMap.
+## Implementation Status
 
-### Previous Blocker (Resolved via Hybrid Approach)
-Pure C++ compilation of cointerp.cpp fails due to C/C++ incompatibilities:
-- `class` keyword used as variable name (200+ occurrences) - FIXED with renaming
-- `sqInt` (long) used to store pointers - C++ doesn't allow implicit conversions
-- Anonymous structs in function pointers
-- void* implicit casts
+### Completed (2026-01-06)
+
+1. **oop.hpp** - Type-safe C++ Oop class (`/Users/wohl/src/pharo/iospharo/src/ios/oop.hpp`)
+   - `Oop` class with NO arithmetic operators
+   - `RawAddress` class for safe pointer arithmetic
+   - Space encoding in bits 1-2
+   - All compile-time tests pass
+
+2. **CppCodeGenerator** - VMMaker code generator (`/Users/wohl/src/pharo/pharo-vm-ios/smalltalksrc/Slang-iOS/CppCodeGenerator.class.st`)
+   - Transforms VMMaker output to use Oop/RawAddress types
+   - Converts memory access patterns automatically
+
+3. **Test suite** - (`/Users/wohl/src/pharo/iospharo/test-cpp-generation/test_oop.cpp`)
+   - Tests all immediate types (SmallInteger, Character)
+   - Tests object pointers with space encoding
+   - Tests memory access
+   - Verifies compile-time error detection
+
+## Compile-Time Error Detection
+
+The following are compile errors (not runtime bugs):
+
+```cpp
+Oop obj = Oop::fromPointer(&heap[0], Space::New);
+
+// These all fail to compile:
+Oop bad1 = obj + 8;           // No arithmetic on Oop
+Oop bad2 = 12345;             // No implicit int->Oop
+int64_t bad3 = obj;           // No implicit Oop->int
+RawAddress bad4 = obj;        // No implicit Oop->RawAddress
+
+// These are correct:
+RawAddress addr = obj.rawAddress();     // Explicit extraction
+RawAddress addr2 = addr + 8;            // Arithmetic on RawAddress OK
+int64_t val = obj.longAt(8);            // Memory access with offset
+Oop slot = obj.oopAt(8);                // Oop access with offset
+```
 
 ## Key Files
 
-### In iospharo
-- `src/ios/cointerp.c` - Current C interpreter (iOS patched)
-- `src/ios/oop_wrapper.cpp` - C++ wrapper (NEW)
-- `src/ios/oop_wrapper.h` - C header for wrapper (NEW)
-- `scripts/c-to-cpp-transform.py` - C to C++ transformer
-- `scripts/generate-cpp-interpreter.st` - VMMaker generation script
+| File | Description |
+|------|-------------|
+| `src/ios/oop.hpp` | C++ Oop and RawAddress classes |
+| `test-cpp-generation/test_oop.cpp` | Test suite |
+| `pharo-vm-ios/smalltalksrc/Slang-iOS/CppCodeGenerator.class.st` | Code generator |
 
-### In pharo-vm-ios fork
-- `smalltalksrc/Slang-iOS/CppCodeGenerator.class.st` - C++ code generator
-- `src/ios/oop.hpp` - C++ Oop wrapper class
-- `smalltalksrc/Slang-iOS/SpurMemoryManager.extension.st` - iOS space checks
-- `smalltalksrc/Slang-iOS/SpurSegmentManager.extension.st` - iOS swizzle
+## Build and Test
 
-## VMMaker Generation Command
 ```bash
-cd ~/src/pharo/pharo-vm/build-gen/build/vmmaker
-./vm/Contents/MacOS/Pharo --headless image/VMMaker.image \
-  perform PharoVMMaker generate:outputDirectory: CoInterpreter /output/path
+cd test-cpp-generation
+clang++ -std=c++17 -I../src/ios -o test_oop test_oop.cpp
+./test_oop
 ```
 
-## Build Commands
-```bash
-# C build (working)
-cmake -G Xcode -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES=arm64 ..
-xcodebuild -scheme PharoVMCore -configuration Release -sdk iphonesimulator
+## Next Steps
 
-# C++ build (not yet working)
-cmake -DUSE_CPP_OOP=ON ...
-```
-
-## Oop Bit Layout
-```
-Bit 0:     isImmediate (1 = SmallInteger/Character)
-Bits 1-2:  Space (00=new, 01=old, 10=perm) when bit 0=0
-Bits 3-63: Payload (value or pointer address)
-```
-
-## Space Check Transformation
-```c
-// Before (address-based, broken on iOS)
-isOldObject(GIV(memoryMap), oop)
-
-// After (bit-based, ASLR compatible)
-oop_is_old(oop)  // calls C++ wrapper
-```
+1. Use CppCodeGenerator to generate cointerp.cpp from VMMaker
+2. Compile generated code with oop.hpp
+3. Run the full VM with iOS space encoding

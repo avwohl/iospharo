@@ -66,12 +66,12 @@ int mmapErrno = 0;
 #define IOS_ARENA_SIZE          (2ULL * 1024 * 1024 * 1024)  /* 2GB total */
 #define IOS_REGION_ALIGNMENT    (256ULL * 1024 * 1024)        /* 256MB alignment */
 
-/* Fixed offsets within the arena */
+/* Fixed offsets within the arena - adjusted to give stack 768MB */
 #define IOS_CODEZONE_OFFSET     (0x00000000ULL)  /* 0 */
 #define IOS_STACK_OFFSET        (0x10000000ULL)  /* 256MB */
-#define IOS_NEWSPACE_OFFSET     (0x20000000ULL)  /* 512MB */
-#define IOS_OLDSPACE_OFFSET     (0x40000000ULL)  /* 1GB */
-#define IOS_PERMSPACE_OFFSET    (0x60000000ULL)  /* 1.5GB */
+#define IOS_NEWSPACE_OFFSET     (0x40000000ULL)  /* 1GB - gives stack 768MB */
+#define IOS_OLDSPACE_OFFSET     (0x50000000ULL)  /* 1.25GB */
+#define IOS_PERMSPACE_OFFSET    (0x70000000ULL)  /* 1.75GB */
 
 /* Arena state */
 static char *iosArenaBase = NULL;

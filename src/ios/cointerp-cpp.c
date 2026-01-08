@@ -58,7 +58,7 @@ warning(char *s) { /* Print an error message but don't necessarily exit. */
 void
 warningat(char *s, int l) { /* ditto with line number. */
 	/* use alloca to call warning so one does not have to remember to set two breakpoints... */
-	char *sl = alloca(strlen(s) + 16);
+	char *sl = (char*)alloca(strlen(s) + 16);
 	sprintf(sl, "%s %d", s, l);
 	warning(sl);
 }
@@ -1222,7 +1222,7 @@ static sqInt noUnscannedEphemerons(void);
 extern sqLong nullHeaderForMachineCodeMethod(void);
 static sqInt NoDbgRegParms numBytesOfBytes(sqInt objOop);
 extern sqInt numBytesOf(sqInt objOop);
-extern sqInt numPointerSlotsOf(sqInt objOop);
+extern usqInt numPointerSlotsOf(sqInt objOop);
 static usqInt NoDbgRegParms numSlotsOfAny(sqInt objOop);
 extern usqInt numSlotsOf(sqInt objOop);
 static sqInt NoDbgRegParms numStrongSlotsOfInephemeral(sqInt objOop);
@@ -1496,10 +1496,10 @@ extern void loadInitialContext(void);
 extern void longPrintOop(sqInt oop);
 extern sqInt longStoreBytecodeForHeader(sqInt methodHeader);
 static sqInt NoDbgRegParms lookupInMethodCacheSelclassTag(sqInt selector, sqInt classTag);
-static sqInt NoDbgRegParms lookupMethodInClass(sqInt class);
-static sqInt NoDbgRegParms lookupMNUInClass(sqInt class);
-static sqInt NoDbgRegParms lookupOrdinaryNoMNUEtcInClass(sqInt class);
-extern sqInt lookupSelectorinClass(sqInt selector, sqInt class);
+static sqInt NoDbgRegParms lookupMethodInClass(sqInt klass);
+static sqInt NoDbgRegParms lookupMNUInClass(sqInt klass);
+static sqInt NoDbgRegParms lookupOrdinaryNoMNUEtcInClass(sqInt klass);
+extern sqInt lookupSelectorinClass(sqInt selector, sqInt klass);
 static void NoDbgRegParms makeContextSnapshotSafe(sqInt ctxt);
 extern usqInt makePointwithxValueyValue(sqInt xValue, sqInt yValue);
 static void mapInterpreterOops(void);
@@ -1557,7 +1557,7 @@ extern void printContext(sqInt aContext);
 static void NoDbgRegParms printDecodeMethodHeaderOop(sqInt methodHeaderOop);
 extern void printExternalHeadFrame(void);
 static sqInt NoDbgRegParms printFrameAndCallersSPshort(char *theFP, char *theSP, sqInt printShort);
-static void NoDbgRegParms printFrameOopat(char *name, char *address);
+static void NoDbgRegParms printFrameOopat(const char *name, char *address);
 static void NoDbgRegParms printFrameOopindexat(char *name, sqInt idx, char *address);
 EXPORT(void) printFramesInPage(StackPage *thePage);
 EXPORT(void) printFramesOnStackPageListInUse(void);
@@ -1586,7 +1586,7 @@ extern void printStackPagesInUse(void);
 static void NoDbgRegParms printStackPageuseCount(StackPage *page, sqInt n);
 extern void printStackReferencesTo(sqInt oop);
 extern void printStringOf(sqInt oop);
-extern void print(char *s);
+extern void print(const char *s);
 extern sqInt pushBool(sqInt trueOrFalse);
 static sqInt NoDbgRegParms pushedReceiverOrClosureOfFrame(char *theFP);
 extern void pushFloat(double f);
@@ -2952,9 +2952,9 @@ interpret(void)
 	sqInt theIndex;
 	void *theStackMemory;
 
-	local_stackPointer = GIV(stackPointer);
-	local_instructionPointer = GIV(instructionPointer);
-	local_framePointer = GIV(framePointer);
+	local_stackPointer = (sqInt)GIV(stackPointer);
+	local_instructionPointer = (sqInt)GIV(instructionPointer);
+	local_framePointer = (sqInt)GIV(framePointer);
 	if (GIV(stackLimit) == 0) {
 		/* begin initStackPagesAndInterpret */
 		sqMakeMemoryNotExecutableFromTo(((usqInt) (startOfObjectMemory(getMemoryMap())) ), ((usqInt) (((getMemoryMap())->oldSpaceEnd)) ));
@@ -2970,7 +2970,7 @@ interpret(void)
 			/* end getMemoryMap */
 			allocateStackPages(aMemoryMap, stackPagesBytes);
 			stackAddress = (aMemoryMap->stackPagesStart);
-			theStackMemory = stackAddress;
+			theStackMemory = (void*)(uintptr_t)stackAddress;
 			/* end initializeWithByteSize:inMemoryMap:for: */
 			/* begin initializeStack:numSlots:pageSize: */
 			stackSlots = stackPagesBytes / BytesPerWord;
@@ -2980,7 +2980,7 @@ interpret(void)
 			/* begin numStkPages */
 			numPages = GIV(numStackPages);
 			/* end numStkPages */
-			pageStructBase = (theStackMemory + (numPages * GIV(bytesPerPage))) + BytesPerWord;
+			pageStructBase = ((char*)theStackMemory + (numPages * GIV(bytesPerPage))) + BytesPerWord;
 			GIV(pages) = ((StackPage *) pageStructBase );
 			assert((((stackPageByteSize()) - (stackLimitBytes())) - (stackLimitOffset())) >= (stackPageHeadroom()));
 			for (index = 0; index < numPages; index += 1) {
@@ -2988,7 +2988,7 @@ interpret(void)
 				page = stackPageAtpages(index, GIV(pages));
 				/* end stackPageAt: */
 				{
-					(page->lastAddress = theStackMemory + (index * GIV(bytesPerPage)));
+					(page->lastAddress = (char*)theStackMemory + (index * GIV(bytesPerPage)));
 					(page->baseAddress = ((page->lastAddress)) + GIV(bytesPerPage));
 					(page->stackLimit = ((page->baseAddress)) - ((((256 * BytesPerWord) < (((stackPageByteSize()) - ((IFrameSlots + 64) * BytesPerWord)) - (osCogStackPageHeadroom()))) ? 256 * BytesPerWord : ((stackPageByteSize()) - ((IFrameSlots + 64) * BytesPerWord)) - (osCogStackPageHeadroom()))));
 					(page->realStackLimit = (page->stackLimit));
@@ -3043,35 +3043,35 @@ interpret(void)
 			/* end stackPagesInitializedAt:totalSize:pageSize: */
 			/* end initStackPages */
 			{
-				GIV(framePointer) = local_framePointer;
-				GIV(instructionPointer) = local_instructionPointer;
-				GIV(stackPointer) = local_stackPointer;
+				GIV(framePointer) = (char*)local_framePointer;
+				GIV(instructionPointer) = (char*)local_instructionPointer;
+				GIV(stackPointer) = (char*)local_stackPointer;
 				loadInitialContext();
-				local_framePointer = GIV(framePointer);
-				local_instructionPointer = GIV(instructionPointer);
-				local_stackPointer = GIV(stackPointer);
+				local_framePointer = (sqInt)GIV(framePointer);
+				local_instructionPointer = (sqInt)GIV(instructionPointer);
+				local_stackPointer = (sqInt)GIV(stackPointer);
 			}
 			ioInitHeartbeat();
 			{
-				GIV(framePointer) = local_framePointer;
-				GIV(instructionPointer) = local_instructionPointer;
-				GIV(stackPointer) = local_stackPointer;
+				GIV(framePointer) = (char*)local_framePointer;
+				GIV(instructionPointer) = (char*)local_instructionPointer;
+				GIV(stackPointer) = (char*)local_stackPointer;
 				initialEnterSmalltalkExecutive();
-				local_framePointer = GIV(framePointer);
-				local_instructionPointer = GIV(instructionPointer);
-				local_stackPointer = GIV(stackPointer);
+				local_framePointer = (sqInt)GIV(framePointer);
+				local_instructionPointer = (sqInt)GIV(instructionPointer);
+				local_stackPointer = (sqInt)GIV(stackPointer);
 			}
 			{
-				GIV(framePointer) = local_framePointer;
-				GIV(instructionPointer) = local_instructionPointer;
-				GIV(stackPointer) = local_stackPointer;
+				GIV(framePointer) = (char*)local_framePointer;
+				GIV(instructionPointer) = (char*)local_instructionPointer;
+				GIV(stackPointer) = (char*)local_stackPointer;
 				return null;
 			}
 		}
 		{
-			GIV(framePointer) = local_framePointer;
-			GIV(instructionPointer) = local_instructionPointer;
-			GIV(stackPointer) = local_stackPointer;
+			GIV(framePointer) = (char*)local_framePointer;
+			GIV(instructionPointer) = (char*)local_instructionPointer;
+			GIV(stackPointer) = (char*)local_stackPointer;
 			return null;
 		}
 		/* end initStackPagesAndInterpret */
@@ -3108,8 +3108,8 @@ interpret(void)
 							/* begin pushReceiverVariable: */
 							/* begin push: */
 							object = unsignedLongAt((longAt(local_framePointer + FoxIFReceiver)) + BaseHeaderSize);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushReceiverVariable: */
 						}
@@ -3135,8 +3135,8 @@ interpret(void)
 							/* begin pushReceiverVariable: */
 							/* begin push: */
 							object = unsignedLongAt(((longAt(local_framePointer + FoxIFReceiver)) + BaseHeaderSize) + 8);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushReceiverVariable: */
 						}
@@ -3162,8 +3162,8 @@ interpret(void)
 							/* begin pushReceiverVariable: */
 							/* begin push: */
 							object = unsignedLongAt(((longAt(local_framePointer + FoxIFReceiver)) + BaseHeaderSize) + 16);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushReceiverVariable: */
 						}
@@ -3189,8 +3189,8 @@ interpret(void)
 							/* begin pushReceiverVariable: */
 							/* begin push: */
 							object = unsignedLongAt(((longAt(local_framePointer + FoxIFReceiver)) + BaseHeaderSize) + 24);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushReceiverVariable: */
 						}
@@ -3216,8 +3216,8 @@ interpret(void)
 							/* begin pushReceiverVariable: */
 							/* begin push: */
 							object = unsignedLongAt(((longAt(local_framePointer + FoxIFReceiver)) + BaseHeaderSize) + 32);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushReceiverVariable: */
 						}
@@ -3243,8 +3243,8 @@ interpret(void)
 							/* begin pushReceiverVariable: */
 							/* begin push: */
 							object = unsignedLongAt(((longAt(local_framePointer + FoxIFReceiver)) + BaseHeaderSize) + 40);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushReceiverVariable: */
 						}
@@ -3270,8 +3270,8 @@ interpret(void)
 							/* begin pushReceiverVariable: */
 							/* begin push: */
 							object = unsignedLongAt(((longAt(local_framePointer + FoxIFReceiver)) + BaseHeaderSize) + 48);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushReceiverVariable: */
 						}
@@ -3297,8 +3297,8 @@ interpret(void)
 							/* begin pushReceiverVariable: */
 							/* begin push: */
 							object = unsignedLongAt(((longAt(local_framePointer + FoxIFReceiver)) + BaseHeaderSize) + 56);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushReceiverVariable: */
 						}
@@ -3324,8 +3324,8 @@ interpret(void)
 							/* begin pushReceiverVariable: */
 							/* begin push: */
 							object = unsignedLongAt(((longAt(local_framePointer + FoxIFReceiver)) + BaseHeaderSize) + 64);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushReceiverVariable: */
 						}
@@ -3351,8 +3351,8 @@ interpret(void)
 							/* begin pushReceiverVariable: */
 							/* begin push: */
 							object = unsignedLongAt(((longAt(local_framePointer + FoxIFReceiver)) + BaseHeaderSize) + 72);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushReceiverVariable: */
 						}
@@ -3378,8 +3378,8 @@ interpret(void)
 							/* begin pushReceiverVariable: */
 							/* begin push: */
 							object = unsignedLongAt(((longAt(local_framePointer + FoxIFReceiver)) + BaseHeaderSize) + 80);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushReceiverVariable: */
 						}
@@ -3405,8 +3405,8 @@ interpret(void)
 							/* begin pushReceiverVariable: */
 							/* begin push: */
 							object = unsignedLongAt(((longAt(local_framePointer + FoxIFReceiver)) + BaseHeaderSize) + 88);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushReceiverVariable: */
 						}
@@ -3432,8 +3432,8 @@ interpret(void)
 							/* begin pushReceiverVariable: */
 							/* begin push: */
 							object = unsignedLongAt(((longAt(local_framePointer + FoxIFReceiver)) + BaseHeaderSize) + 96);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushReceiverVariable: */
 						}
@@ -3459,8 +3459,8 @@ interpret(void)
 							/* begin pushReceiverVariable: */
 							/* begin push: */
 							object = unsignedLongAt(((longAt(local_framePointer + FoxIFReceiver)) + BaseHeaderSize) + 104);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushReceiverVariable: */
 						}
@@ -3486,8 +3486,8 @@ interpret(void)
 							/* begin pushReceiverVariable: */
 							/* begin push: */
 							object = unsignedLongAt(((longAt(local_framePointer + FoxIFReceiver)) + BaseHeaderSize) + 112);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushReceiverVariable: */
 						}
@@ -3513,8 +3513,8 @@ interpret(void)
 							/* begin pushReceiverVariable: */
 							/* begin push: */
 							object = unsignedLongAt(((longAt(local_framePointer + FoxIFReceiver)) + BaseHeaderSize) + 120);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushReceiverVariable: */
 						}
@@ -3542,7 +3542,7 @@ interpret(void)
 							/* begin pushLiteralVariable: */
 							literalIndex = 0;
 							{
-								assert(GIV(method) == (iframeMethod(local_framePointer)));
+								assert(GIV(method) == (iframeMethod((char*)local_framePointer)));
 								/* begin fetchPointer:ofObject: */
 								litVar = unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) (literalIndex + LiteralStart) ) << 3) ));
 								/* end fetchPointer:ofObject: */
@@ -3552,8 +3552,8 @@ interpret(void)
 							}
 							/* begin push: */
 							object = unsignedLongAt((litVar + BaseHeaderSize) + 8);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralVariable: */
 						}
@@ -3581,7 +3581,7 @@ interpret(void)
 							/* begin pushLiteralVariable: */
 							literalIndex = 1;
 							{
-								assert(GIV(method) == (iframeMethod(local_framePointer)));
+								assert(GIV(method) == (iframeMethod((char*)local_framePointer)));
 								/* begin fetchPointer:ofObject: */
 								litVar = unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) (literalIndex + LiteralStart) ) << 3) ));
 								/* end fetchPointer:ofObject: */
@@ -3591,8 +3591,8 @@ interpret(void)
 							}
 							/* begin push: */
 							object = unsignedLongAt((litVar + BaseHeaderSize) + 8);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralVariable: */
 						}
@@ -3620,7 +3620,7 @@ interpret(void)
 							/* begin pushLiteralVariable: */
 							literalIndex = 2;
 							{
-								assert(GIV(method) == (iframeMethod(local_framePointer)));
+								assert(GIV(method) == (iframeMethod((char*)local_framePointer)));
 								/* begin fetchPointer:ofObject: */
 								litVar = unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) (literalIndex + LiteralStart) ) << 3) ));
 								/* end fetchPointer:ofObject: */
@@ -3630,8 +3630,8 @@ interpret(void)
 							}
 							/* begin push: */
 							object = unsignedLongAt((litVar + BaseHeaderSize) + 8);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralVariable: */
 						}
@@ -3659,7 +3659,7 @@ interpret(void)
 							/* begin pushLiteralVariable: */
 							literalIndex = 3;
 							{
-								assert(GIV(method) == (iframeMethod(local_framePointer)));
+								assert(GIV(method) == (iframeMethod((char*)local_framePointer)));
 								/* begin fetchPointer:ofObject: */
 								litVar = unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) (literalIndex + LiteralStart) ) << 3) ));
 								/* end fetchPointer:ofObject: */
@@ -3669,8 +3669,8 @@ interpret(void)
 							}
 							/* begin push: */
 							object = unsignedLongAt((litVar + BaseHeaderSize) + 8);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralVariable: */
 						}
@@ -3698,7 +3698,7 @@ interpret(void)
 							/* begin pushLiteralVariable: */
 							literalIndex = 4;
 							{
-								assert(GIV(method) == (iframeMethod(local_framePointer)));
+								assert(GIV(method) == (iframeMethod((char*)local_framePointer)));
 								/* begin fetchPointer:ofObject: */
 								litVar = unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) (literalIndex + LiteralStart) ) << 3) ));
 								/* end fetchPointer:ofObject: */
@@ -3708,8 +3708,8 @@ interpret(void)
 							}
 							/* begin push: */
 							object = unsignedLongAt((litVar + BaseHeaderSize) + 8);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralVariable: */
 						}
@@ -3737,7 +3737,7 @@ interpret(void)
 							/* begin pushLiteralVariable: */
 							literalIndex = 5;
 							{
-								assert(GIV(method) == (iframeMethod(local_framePointer)));
+								assert(GIV(method) == (iframeMethod((char*)local_framePointer)));
 								/* begin fetchPointer:ofObject: */
 								litVar = unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) (literalIndex + LiteralStart) ) << 3) ));
 								/* end fetchPointer:ofObject: */
@@ -3747,8 +3747,8 @@ interpret(void)
 							}
 							/* begin push: */
 							object = unsignedLongAt((litVar + BaseHeaderSize) + 8);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralVariable: */
 						}
@@ -3776,7 +3776,7 @@ interpret(void)
 							/* begin pushLiteralVariable: */
 							literalIndex = 6;
 							{
-								assert(GIV(method) == (iframeMethod(local_framePointer)));
+								assert(GIV(method) == (iframeMethod((char*)local_framePointer)));
 								/* begin fetchPointer:ofObject: */
 								litVar = unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) (literalIndex + LiteralStart) ) << 3) ));
 								/* end fetchPointer:ofObject: */
@@ -3786,8 +3786,8 @@ interpret(void)
 							}
 							/* begin push: */
 							object = unsignedLongAt((litVar + BaseHeaderSize) + 8);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralVariable: */
 						}
@@ -3815,7 +3815,7 @@ interpret(void)
 							/* begin pushLiteralVariable: */
 							literalIndex = 7;
 							{
-								assert(GIV(method) == (iframeMethod(local_framePointer)));
+								assert(GIV(method) == (iframeMethod((char*)local_framePointer)));
 								/* begin fetchPointer:ofObject: */
 								litVar = unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) (literalIndex + LiteralStart) ) << 3) ));
 								/* end fetchPointer:ofObject: */
@@ -3825,8 +3825,8 @@ interpret(void)
 							}
 							/* begin push: */
 							object = unsignedLongAt((litVar + BaseHeaderSize) + 8);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralVariable: */
 						}
@@ -3854,7 +3854,7 @@ interpret(void)
 							/* begin pushLiteralVariable: */
 							literalIndex = 8;
 							{
-								assert(GIV(method) == (iframeMethod(local_framePointer)));
+								assert(GIV(method) == (iframeMethod((char*)local_framePointer)));
 								/* begin fetchPointer:ofObject: */
 								litVar = unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) (literalIndex + LiteralStart) ) << 3) ));
 								/* end fetchPointer:ofObject: */
@@ -3864,8 +3864,8 @@ interpret(void)
 							}
 							/* begin push: */
 							object = unsignedLongAt((litVar + BaseHeaderSize) + 8);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralVariable: */
 						}
@@ -3893,7 +3893,7 @@ interpret(void)
 							/* begin pushLiteralVariable: */
 							literalIndex = 9;
 							{
-								assert(GIV(method) == (iframeMethod(local_framePointer)));
+								assert(GIV(method) == (iframeMethod((char*)local_framePointer)));
 								/* begin fetchPointer:ofObject: */
 								litVar = unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) (literalIndex + LiteralStart) ) << 3) ));
 								/* end fetchPointer:ofObject: */
@@ -3903,8 +3903,8 @@ interpret(void)
 							}
 							/* begin push: */
 							object = unsignedLongAt((litVar + BaseHeaderSize) + 8);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralVariable: */
 						}
@@ -3932,7 +3932,7 @@ interpret(void)
 							/* begin pushLiteralVariable: */
 							literalIndex = 10;
 							{
-								assert(GIV(method) == (iframeMethod(local_framePointer)));
+								assert(GIV(method) == (iframeMethod((char*)local_framePointer)));
 								/* begin fetchPointer:ofObject: */
 								litVar = unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) (literalIndex + LiteralStart) ) << 3) ));
 								/* end fetchPointer:ofObject: */
@@ -3942,8 +3942,8 @@ interpret(void)
 							}
 							/* begin push: */
 							object = unsignedLongAt((litVar + BaseHeaderSize) + 8);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralVariable: */
 						}
@@ -3971,7 +3971,7 @@ interpret(void)
 							/* begin pushLiteralVariable: */
 							literalIndex = 11;
 							{
-								assert(GIV(method) == (iframeMethod(local_framePointer)));
+								assert(GIV(method) == (iframeMethod((char*)local_framePointer)));
 								/* begin fetchPointer:ofObject: */
 								litVar = unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) (literalIndex + LiteralStart) ) << 3) ));
 								/* end fetchPointer:ofObject: */
@@ -3981,8 +3981,8 @@ interpret(void)
 							}
 							/* begin push: */
 							object = unsignedLongAt((litVar + BaseHeaderSize) + 8);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralVariable: */
 						}
@@ -4010,7 +4010,7 @@ interpret(void)
 							/* begin pushLiteralVariable: */
 							literalIndex = 12;
 							{
-								assert(GIV(method) == (iframeMethod(local_framePointer)));
+								assert(GIV(method) == (iframeMethod((char*)local_framePointer)));
 								/* begin fetchPointer:ofObject: */
 								litVar = unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) (literalIndex + LiteralStart) ) << 3) ));
 								/* end fetchPointer:ofObject: */
@@ -4020,8 +4020,8 @@ interpret(void)
 							}
 							/* begin push: */
 							object = unsignedLongAt((litVar + BaseHeaderSize) + 8);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralVariable: */
 						}
@@ -4049,7 +4049,7 @@ interpret(void)
 							/* begin pushLiteralVariable: */
 							literalIndex = 13;
 							{
-								assert(GIV(method) == (iframeMethod(local_framePointer)));
+								assert(GIV(method) == (iframeMethod((char*)local_framePointer)));
 								/* begin fetchPointer:ofObject: */
 								litVar = unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) (literalIndex + LiteralStart) ) << 3) ));
 								/* end fetchPointer:ofObject: */
@@ -4059,8 +4059,8 @@ interpret(void)
 							}
 							/* begin push: */
 							object = unsignedLongAt((litVar + BaseHeaderSize) + 8);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralVariable: */
 						}
@@ -4088,7 +4088,7 @@ interpret(void)
 							/* begin pushLiteralVariable: */
 							literalIndex = 14;
 							{
-								assert(GIV(method) == (iframeMethod(local_framePointer)));
+								assert(GIV(method) == (iframeMethod((char*)local_framePointer)));
 								/* begin fetchPointer:ofObject: */
 								litVar = unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) (literalIndex + LiteralStart) ) << 3) ));
 								/* end fetchPointer:ofObject: */
@@ -4098,8 +4098,8 @@ interpret(void)
 							}
 							/* begin push: */
 							object = unsignedLongAt((litVar + BaseHeaderSize) + 8);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralVariable: */
 						}
@@ -4127,7 +4127,7 @@ interpret(void)
 							/* begin pushLiteralVariable: */
 							literalIndex = 15;
 							{
-								assert(GIV(method) == (iframeMethod(local_framePointer)));
+								assert(GIV(method) == (iframeMethod((char*)local_framePointer)));
 								/* begin fetchPointer:ofObject: */
 								litVar = unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) (literalIndex + LiteralStart) ) << 3) ));
 								/* end fetchPointer:ofObject: */
@@ -4137,8 +4137,8 @@ interpret(void)
 							}
 							/* begin push: */
 							object = unsignedLongAt((litVar + BaseHeaderSize) + 8);
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralVariable: */
 						}
@@ -4162,8 +4162,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 8) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 8) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4187,8 +4187,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 16) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 16) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4212,8 +4212,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 24) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 24) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4237,8 +4237,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 32) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 32) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4262,8 +4262,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 40) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 40) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4287,8 +4287,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 48) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 48) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4312,8 +4312,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 56) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 56) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4337,8 +4337,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 64) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 64) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4362,8 +4362,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 72) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 72) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4387,8 +4387,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 80) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 80) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4412,8 +4412,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 88) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 88) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4437,8 +4437,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 96) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 96) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4462,8 +4462,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 104) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 104) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4487,8 +4487,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 112) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 112) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4512,8 +4512,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 120) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 120) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4537,8 +4537,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 128) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 128) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4562,8 +4562,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 136) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 136) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4587,8 +4587,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 144) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 144) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4612,8 +4612,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 152) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 152) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4637,8 +4637,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 160) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 160) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4662,8 +4662,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 168) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 168) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4687,8 +4687,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 176) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 176) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4712,8 +4712,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 184) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 184) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4737,8 +4737,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 192) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 192) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4762,8 +4762,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 200) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 200) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4787,8 +4787,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 208) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 208) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4812,8 +4812,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 216) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 216) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4837,8 +4837,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 224) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 224) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4862,8 +4862,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 232) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 232) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4887,8 +4887,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 240) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 240) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4912,8 +4912,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 0xF8) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 0xF8) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4937,8 +4937,8 @@ interpret(void)
 							/* end fetchNextBytecode */
 							/* begin pushLiteralConstant: */
 							/* begin push: */
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 256) /* end fetchPointer:ofObject: */));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + 256) /* end fetchPointer:ofObject: */));
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushLiteralConstant: */
 						}
@@ -4972,8 +4972,8 @@ interpret(void)
 								t7 = unsignedLongAt(((local_framePointer + FoxIFReceiver) - BytesPerWord) + (frameNumArgs * BytesPerWord));
 							}
 							object = t7;
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushTemporaryVariable: */
 						}
@@ -5007,8 +5007,8 @@ interpret(void)
 								t7 = unsignedLongAt(((local_framePointer + FoxIFReceiver) - BytesPerWord) + ((frameNumArgs - 1) * BytesPerWord));
 							}
 							object = t7;
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushTemporaryVariable: */
 						}
@@ -5042,8 +5042,8 @@ interpret(void)
 								t7 = unsignedLongAt(((local_framePointer + FoxIFReceiver) - BytesPerWord) + ((frameNumArgs - 2) * BytesPerWord));
 							}
 							object = t7;
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushTemporaryVariable: */
 						}
@@ -5077,8 +5077,8 @@ interpret(void)
 								t7 = unsignedLongAt(((local_framePointer + FoxIFReceiver) - BytesPerWord) + ((frameNumArgs - 3) * BytesPerWord));
 							}
 							object = t7;
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushTemporaryVariable: */
 						}
@@ -5112,8 +5112,8 @@ interpret(void)
 								t7 = unsignedLongAt(((local_framePointer + FoxIFReceiver) - BytesPerWord) + ((frameNumArgs - 4) * BytesPerWord));
 							}
 							object = t7;
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushTemporaryVariable: */
 						}
@@ -5147,8 +5147,8 @@ interpret(void)
 								t7 = unsignedLongAt(((local_framePointer + FoxIFReceiver) - BytesPerWord) + ((frameNumArgs - 5) * BytesPerWord));
 							}
 							object = t7;
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushTemporaryVariable: */
 						}
@@ -5182,8 +5182,8 @@ interpret(void)
 								t7 = unsignedLongAt(((local_framePointer + FoxIFReceiver) - BytesPerWord) + ((frameNumArgs - 6) * BytesPerWord));
 							}
 							object = t7;
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushTemporaryVariable: */
 						}
@@ -5217,8 +5217,8 @@ interpret(void)
 								t7 = unsignedLongAt(((local_framePointer + FoxIFReceiver) - BytesPerWord) + ((frameNumArgs - 7) * BytesPerWord));
 							}
 							object = t7;
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushTemporaryVariable: */
 						}
@@ -5252,8 +5252,8 @@ interpret(void)
 								t7 = unsignedLongAt(((local_framePointer + FoxIFReceiver) - BytesPerWord) + ((frameNumArgs - 8) * BytesPerWord));
 							}
 							object = t7;
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushTemporaryVariable: */
 						}
@@ -5287,8 +5287,8 @@ interpret(void)
 								t7 = unsignedLongAt(((local_framePointer + FoxIFReceiver) - BytesPerWord) + ((frameNumArgs - 9) * BytesPerWord));
 							}
 							object = t7;
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushTemporaryVariable: */
 						}
@@ -5322,8 +5322,8 @@ interpret(void)
 								t7 = unsignedLongAt(((local_framePointer + FoxIFReceiver) - BytesPerWord) + ((frameNumArgs - 10) * BytesPerWord));
 							}
 							object = t7;
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushTemporaryVariable: */
 						}
@@ -5357,8 +5357,8 @@ interpret(void)
 								t7 = unsignedLongAt(((local_framePointer + FoxIFReceiver) - BytesPerWord) + ((frameNumArgs - 11) * BytesPerWord));
 							}
 							object = t7;
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 							/* end pushTemporaryVariable: */
 						}
@@ -5380,8 +5380,8 @@ interpret(void)
 						/* end fetchByte */
 						/* end fetchNextBytecode */
 						/* begin push: */
-						unsignedLongAtput((sp = local_stackPointer - BytesPerWord), longAt(local_framePointer + FoxIFReceiver));
-						local_stackPointer = sp;
+						unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), longAt(local_framePointer + FoxIFReceiver));
+						local_stackPointer = (sqInt)sp;
 						/* end push: */
 					}
 				}
@@ -5401,8 +5401,8 @@ interpret(void)
 						/* end fetchByte */
 						/* end fetchNextBytecode */
 						/* begin push: */
-						unsignedLongAtput((sp = local_stackPointer - BytesPerWord), GIV(trueObj));
-						local_stackPointer = sp;
+						unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), GIV(trueObj));
+						local_stackPointer = (sqInt)sp;
 						/* end push: */
 					}
 				}
@@ -5422,8 +5422,8 @@ interpret(void)
 						/* end fetchByte */
 						/* end fetchNextBytecode */
 						/* begin push: */
-						unsignedLongAtput((sp = local_stackPointer - BytesPerWord), GIV(falseObj));
-						local_stackPointer = sp;
+						unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), GIV(falseObj));
+						local_stackPointer = (sqInt)sp;
 						/* end push: */
 					}
 				}
@@ -5443,8 +5443,8 @@ interpret(void)
 						/* end fetchByte */
 						/* end fetchNextBytecode */
 						/* begin push: */
-						unsignedLongAtput((sp = local_stackPointer - BytesPerWord), GIV(nilObj));
-						local_stackPointer = sp;
+						unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), GIV(nilObj));
+						local_stackPointer = (sqInt)sp;
 						/* end push: */
 					}
 				}
@@ -5464,8 +5464,8 @@ interpret(void)
 						/* end fetchByte */
 						/* end fetchNextBytecode */
 						/* begin push: */
-						unsignedLongAtput((sp = local_stackPointer - BytesPerWord), ConstZero);
-						local_stackPointer = sp;
+						unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), ConstZero);
+						local_stackPointer = (sqInt)sp;
 						/* end push: */
 					}
 				}
@@ -5485,8 +5485,8 @@ interpret(void)
 						/* end fetchByte */
 						/* end fetchNextBytecode */
 						/* begin push: */
-						unsignedLongAtput((sp = local_stackPointer - BytesPerWord), ConstOne);
-						local_stackPointer = sp;
+						unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), ConstOne);
+						local_stackPointer = (sqInt)sp;
 						/* end push: */
 					}
 				}
@@ -5510,11 +5510,11 @@ interpret(void)
 								if (((isMachineCodeIP(((usqInt) (unsignedLongAt(local_framePointer + FoxMethod)) )))
 									 ? ((unsignedLongAt(local_framePointer + FoxMethod)) & MFMethodFlagHasContextFlag) != 0
 									 : (byteAt((local_framePointer + FoxIFrameFlags) + 2)) != 0)) {
-									assert(isContext(frameContext(local_framePointer)));
+									assert(isContext(frameContext((char*)local_framePointer)));
 									theThingToPush = unsignedLongAt(local_framePointer + FoxThisContext);
 									goto l26;
 								}
-								theThingToPush = marryFrameSP(local_framePointer, local_stackPointer);
+								theThingToPush = marryFrameSP((char*)local_framePointer, (char*)local_stackPointer);
 								l26:
 								;
 								/* end ensureFrameIsMarried:SP: */
@@ -5548,8 +5548,8 @@ interpret(void)
 						/* end fetchByte */
 						/* end fetchNextBytecode */
 						/* begin push: */
-						unsignedLongAtput((sp = local_stackPointer - BytesPerWord), theThingToPush);
-						local_stackPointer = sp;
+						unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), theThingToPush);
+						local_stackPointer = (sqInt)sp;
 						/* end push: */
 						GIV(extB) = 0;
 						GIV(numExtB) = 0;
@@ -5573,8 +5573,8 @@ interpret(void)
 						/* end fetchNextBytecode */
 						/* begin push: */
 						object = unsignedLongAt(local_stackPointer);
-						unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-						local_stackPointer = sp;
+						unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+						local_stackPointer = (sqInt)sp;
 						/* end push: */
 					}
 				}
@@ -5623,23 +5623,23 @@ interpret(void)
 							error("Unknown bytecode");
 						}
 						/* begin ensureFrameIsMarried:SP: */
-						theFP = local_framePointer;
-						theSP = local_stackPointer;
+						theFP = (char*)local_framePointer;
+						theSP = (char*)local_stackPointer;
 						if (((isMachineCodeIP(((usqInt) (unsignedLongAt(theFP + FoxMethod)) )))
 							 ? ((unsignedLongAt(theFP + FoxMethod)) & MFMethodFlagHasContextFlag) != 0
 							 : (byteAt((theFP + FoxIFrameFlags) + 2)) != 0)) {
-							assert(isContext(frameContext(theFP)));
+							assert(isContext(frameContext((char*)theFP)));
 							ourContext = unsignedLongAt(theFP + FoxThisContext);
 							goto l455;
 						}
-						ourContext = marryFrameSP(theFP, theSP);
+						ourContext = marryFrameSP((char*)theFP, (char*)theSP);
 						l455:
 						;
 						/* end ensureFrameIsMarried:SP: */
 						local_instructionPointer -= 1;
 						/* begin push: */
-						unsignedLongAtput((sp = local_stackPointer - BytesPerWord), ourContext);
-						local_stackPointer = sp;
+						unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), ourContext);
+						local_stackPointer = (sqInt)sp;
 						/* end push: */
 						GIV(argumentCount) = 0;
 						goto normalSend;
@@ -5724,18 +5724,18 @@ interpret(void)
 						assert(GIV(stackPage) == (mostRecentlyUsedPage()));
 						assert(!(isFree(GIV(stackPage))));
 						/* begin setHeadFP:andSP:inPage: */
-						theSP3 = local_stackPointer;
-						assert(theSP3 < local_framePointer);
+						theSP3 = (char*)local_stackPointer;
+						assert(theSP3 < (char*)local_framePointer);
 						assert((theSP3 < ((GIV(stackPage)->baseAddress))) && (theSP3 > (((GIV(stackPage)->realStackLimit)) - (LargeContextSlots * BytesPerOop))));
-						assert((local_framePointer < ((GIV(stackPage)->baseAddress))) && (local_framePointer > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
+						assert(((char*)local_framePointer < ((GIV(stackPage)->baseAddress))) && ((char*)local_framePointer > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 						{
-							(GIV(stackPage)->headFP = local_framePointer);
-							(GIV(stackPage)->headSP = theSP3);
+							(GIV(stackPage)->headFP = (char*)local_framePointer);
+							(GIV(stackPage)->headSP = (char*)theSP3);
 						}
 						/* end setHeadFP:andSP:inPage: */
 						assert(pageListIsWellFormed());
 						/* end writeBackHeadFramePointers */
-						closure = unsignedLongAt(local_framePointer + (frameStackedReceiverOffset(local_framePointer)));
+						closure = unsignedLongAt(local_framePointer + (frameStackedReceiverOffset((char*)local_framePointer)));
 						home = null;
 						while (closure != GIV(nilObj)) {
 							int t10;
@@ -5769,8 +5769,8 @@ interpret(void)
 							if (!t10) {
 								/* begin sendCannotReturn: */
 								/* begin ensureFrameIsMarried:SP: */
-								theFP1 = local_framePointer;
-								theSP = local_stackPointer;
+								theFP1 = (char*)local_framePointer;
+								theSP = (char*)local_stackPointer;
 								if (((isMachineCodeIP(((usqInt) (unsignedLongAt(theFP1 + FoxMethod)) )))
 									 ? ((unsignedLongAt(theFP1 + FoxMethod)) & MFMethodFlagHasContextFlag) != 0
 									 : (byteAt((theFP1 + FoxIFrameFlags) + 2)) != 0)) {
@@ -5778,17 +5778,17 @@ interpret(void)
 									ourContext = unsignedLongAt(theFP1 + FoxThisContext);
 									goto l470;
 								}
-								ourContext = marryFrameSP(theFP1, theSP);
+								ourContext = marryFrameSP(theFP1, (char*)theSP);
 								l470:
 								;
 								/* end ensureFrameIsMarried:SP: */
 								/* begin push: */
-								unsignedLongAtput((sp = local_stackPointer - BytesPerWord), ourContext);
-								local_stackPointer = sp;
+								unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), ourContext);
+								local_stackPointer = (sqInt)sp;
 								/* end push: */
 								/* begin push: */
-								unsignedLongAtput((sp2 = local_stackPointer - BytesPerWord), localReturnValue);
-								local_stackPointer = sp2;
+								unsignedLongAtput((sp2 = (char*)(local_stackPointer - BytesPerWord)), localReturnValue);
+								local_stackPointer = (sqInt)sp2;
 								/* end push: */
 								/* begin splObj: */
 								/* begin fetchPointer:ofObject: */
@@ -5820,16 +5820,16 @@ interpret(void)
 							/* end followField:ofObject: */
 						};
 						{
-							GIV(framePointer) = local_framePointer;
+							GIV(framePointer) = (char*)local_framePointer;
 							t17 = findUnwindThroughContext(home);
-							local_framePointer = GIV(framePointer);
+							local_framePointer = (sqInt)GIV(framePointer);
 						}
 						unwindContextOrNilOrZero = t17;
 						if (unwindContextOrNilOrZero == GIV(nilObj)) {
 							/* begin sendCannotReturn: */
 							/* begin ensureFrameIsMarried:SP: */
-							theFP2 = local_framePointer;
-							theSP1 = local_stackPointer;
+							theFP2 = (char*)local_framePointer;
+							theSP1 = (char*)local_stackPointer;
 							if (((isMachineCodeIP(((usqInt) (unsignedLongAt(theFP2 + FoxMethod)) )))
 								 ? ((unsignedLongAt(theFP2 + FoxMethod)) & MFMethodFlagHasContextFlag) != 0
 								 : (byteAt((theFP2 + FoxIFrameFlags) + 2)) != 0)) {
@@ -5842,12 +5842,12 @@ interpret(void)
 							;
 							/* end ensureFrameIsMarried:SP: */
 							/* begin push: */
-							unsignedLongAtput((sp3 = local_stackPointer - BytesPerWord), ourContext2);
-							local_stackPointer = sp3;
+							unsignedLongAtput((sp3 = (char*)(local_stackPointer - BytesPerWord)), ourContext2);
+							local_stackPointer = (sqInt)sp3;
 							/* end push: */
 							/* begin push: */
-							unsignedLongAtput((sp22 = local_stackPointer - BytesPerWord), localReturnValue);
-							local_stackPointer = sp22;
+							unsignedLongAtput((sp22 = (char*)(local_stackPointer - BytesPerWord)), localReturnValue);
+							local_stackPointer = (sqInt)sp22;
 							/* end push: */
 							/* begin splObj: */
 							/* begin fetchPointer:ofObject: */
@@ -5868,25 +5868,25 @@ interpret(void)
 							if (((isMachineCodeIP(((usqInt) (unsignedLongAt(local_framePointer + FoxMethod)) )))
 								 ? ((unsignedLongAt(local_framePointer + FoxMethod)) & MFMethodFlagHasContextFlag) != 0
 								 : (byteAt((local_framePointer + FoxIFrameFlags) + 2)) != 0)) {
-								assert(isContext(frameContext(local_framePointer)));
+								assert(isContext(frameContext((char*)local_framePointer)));
 								ourContext3 = unsignedLongAt(local_framePointer + FoxThisContext);
 								goto l473;
 							}
-							ourContext3 = marryFrameSP(local_framePointer, local_stackPointer);
+							ourContext3 = marryFrameSP((char*)local_framePointer, (char*)local_stackPointer);
 							l473:
 							;
 							/* end ensureFrameIsMarried:SP: */
 							/* begin push: */
-							unsignedLongAtput((sp4 = local_stackPointer - BytesPerWord), ourContext3);
-							local_stackPointer = sp4;
+							unsignedLongAtput((sp4 = (char*)(local_stackPointer - BytesPerWord)), ourContext3);
+							local_stackPointer = (sqInt)sp4;
 							/* end push: */
 							/* begin push: */
-							unsignedLongAtput((sp23 = local_stackPointer - BytesPerWord), localReturnValue);
-							local_stackPointer = sp23;
+							unsignedLongAtput((sp23 = (char*)(local_stackPointer - BytesPerWord)), localReturnValue);
+							local_stackPointer = (sqInt)sp23;
 							/* end push: */
 							/* begin push: */
-							unsignedLongAtput((sp32 = local_stackPointer - BytesPerWord), unwindContextOrNilOrZero);
-							local_stackPointer = sp32;
+							unsignedLongAtput((sp32 = (char*)(local_stackPointer - BytesPerWord)), unwindContextOrNilOrZero);
+							local_stackPointer = (sqInt)sp32;
 							/* end push: */
 							/* begin splObj: */
 							/* begin fetchPointer:ofObject: */
@@ -5903,7 +5903,7 @@ interpret(void)
 						}
 						contextToReturnTo = null;
 						if ((((unsignedLongAt((home + BaseHeaderSize) + ((sqInt) (((usqInt) SenderIndex ) << (shiftForWord())) ))) & 7) == 1)) {
-							assert(checkIsStillMarriedContextcurrentFP(home, local_framePointer));
+							assert(checkIsStillMarriedContextcurrentFP(home, (char*)local_framePointer));
 							/* begin frameOfMarriedContext: */
 							/* begin fetchPointer:ofObject: */
 							senderOop = unsignedLongAt((home + BaseHeaderSize) + ((sqInt) (((usqInt) SenderIndex ) << (shiftForWord())) ));
@@ -5949,7 +5949,7 @@ interpret(void)
 								t5 = t4;
 							}
 							if (t5) {
-								assert(checkIsStillMarriedContextcurrentFP(contextToReturnTo, local_framePointer));
+								assert(checkIsStillMarriedContextcurrentFP(contextToReturnTo, (char*)local_framePointer));
 								/* begin frameOfMarriedContext: */
 								/* begin fetchPointer:ofObject: */
 								senderOop2 = unsignedLongAt((contextToReturnTo + BaseHeaderSize) + ((sqInt) (((usqInt) SenderIndex ) << (shiftForWord())) ));
@@ -5966,18 +5966,18 @@ interpret(void)
 							char * t0;
 
 							{
-								GIV(instructionPointer) = local_instructionPointer;
-								GIV(stackPointer) = local_stackPointer;
+								GIV(instructionPointer) = (char*)local_instructionPointer;
+								GIV(stackPointer) = (char*)local_stackPointer;
 								t0 = establishFrameForContextToReturnTo(contextToReturnTo);
-								local_instructionPointer = GIV(instructionPointer);
-								local_stackPointer = GIV(stackPointer);
+								local_instructionPointer = (sqInt)GIV(instructionPointer);
+								local_stackPointer = (sqInt)GIV(stackPointer);
 							}
 							frameToReturnTo = t0;
 							if (frameToReturnTo == 0) {
 								/* begin sendCannotReturn: */
 								/* begin ensureFrameIsMarried:SP: */
-								theFP3 = local_framePointer;
-								theSP2 = local_stackPointer;
+								theFP3 = (char*)local_framePointer;
+								theSP2 = (char*)local_stackPointer;
 								if (((isMachineCodeIP(((usqInt) (unsignedLongAt(theFP3 + FoxMethod)) )))
 									 ? ((unsignedLongAt(theFP3 + FoxMethod)) & MFMethodFlagHasContextFlag) != 0
 									 : (byteAt((theFP3 + FoxIFrameFlags) + 2)) != 0)) {
@@ -5990,12 +5990,12 @@ interpret(void)
 								;
 								/* end ensureFrameIsMarried:SP: */
 								/* begin push: */
-								unsignedLongAtput((sp5 = local_stackPointer - BytesPerWord), ourContext4);
-								local_stackPointer = sp5;
+								unsignedLongAtput((sp5 = (char*)(local_stackPointer - BytesPerWord)), ourContext4);
+								local_stackPointer = (sqInt)sp5;
 								/* end push: */
 								/* begin push: */
-								unsignedLongAtput((sp24 = local_stackPointer - BytesPerWord), localReturnValue);
-								local_stackPointer = sp24;
+								unsignedLongAtput((sp24 = (char*)(local_stackPointer - BytesPerWord)), localReturnValue);
+								local_stackPointer = (sqInt)sp24;
 								/* end push: */
 								/* begin splObj: */
 								/* begin fetchPointer:ofObject: */
@@ -6094,18 +6094,18 @@ interpret(void)
 							}
 							markStackPageMostRecentlyUsed(newPage);
 							/* end setStackPageAndLimit: */
-							local_stackPointer = (GIV(stackPage)->headSP);
-							local_framePointer = (GIV(stackPage)->headFP);
+							local_stackPointer = (sqInt)(GIV(stackPage)->headSP);
+							local_framePointer = (sqInt)(GIV(stackPage)->headFP);
 						}
-						if (local_framePointer == frameToReturnTo) {
-							local_instructionPointer = pointerForOop(unsignedLongAt(local_stackPointer));
+						if ((char*)local_framePointer == (char*)frameToReturnTo) {
+							local_instructionPointer = (sqInt)pointerForOop(unsignedLongAt(local_stackPointer));
 						} else {
 							do{
-								callerFP = local_framePointer;
-								local_framePointer = pointerForOop(unsignedLongAt(local_framePointer + FoxSavedFP));
-							}while(local_framePointer != frameToReturnTo);
-							local_instructionPointer = pointerForOop(unsignedLongAt(callerFP + FoxCallerSavedIP));
-							local_stackPointer = ((assert(!(isBaseFrame(callerFP))), (callerFP + (frameStackedReceiverOffset(callerFP))) + BytesPerWord)) - BytesPerWord;
+								callerFP = (char*)local_framePointer;
+								local_framePointer = (sqInt)pointerForOop(unsignedLongAt(local_framePointer + FoxSavedFP));
+							}while((char*)local_framePointer != (char*)frameToReturnTo);
+							local_instructionPointer = (sqInt)pointerForOop(unsignedLongAt(callerFP + FoxCallerSavedIP));
+							local_stackPointer = (sqInt)((assert(!(isBaseFrame(callerFP))), (callerFP + (frameStackedReceiverOffset(callerFP))) + BytesPerWord)) - BytesPerWord;
 						}
 						/* begin maybeReturnToMachineCodeFrame */
 						if (((usqInt) ((usqInt) local_instructionPointer ) ) < (startOfObjectMemory(getMemoryMap()))) {
@@ -6113,28 +6113,28 @@ interpret(void)
 								/* begin returnToMachineCodeFrame */
 								assertCStackWellAligned();
 								assert(!(isInstructionPointerInInterpreter(local_instructionPointer)));
-								assert(isMachineCodeFrame(local_framePointer));
-								assertValidExecutionPointersimbarline(((usqInt) local_instructionPointer ), local_framePointer, local_stackPointer, 0, __LINE__);
+								assert(isMachineCodeFrame((char*)local_framePointer));
+								assertValidExecutionPointersimbarline(((usqInt) local_instructionPointer ), (char*)local_framePointer, (char*)local_stackPointer, 0, __LINE__);
 								unsignedLongAtput(local_stackPointer, local_instructionPointer);
 								/* begin push: */
-								unsignedLongAtput((sp6 = local_stackPointer - BytesPerWord), localReturnValue);
-								local_stackPointer = sp6;
+								unsignedLongAtput((sp6 = (char*)(local_stackPointer - BytesPerWord)), localReturnValue);
+								local_stackPointer = (sqInt)sp6;
 								/* end push: */
 								/* begin callEnilopmart: */
 								{
-									GIV(framePointer) = local_framePointer;
-									GIV(instructionPointer) = local_instructionPointer;
-									GIV(stackPointer) = local_stackPointer;
+									GIV(framePointer) = (char*)local_framePointer;
+									GIV(instructionPointer) = (char*)local_instructionPointer;
+									GIV(stackPointer) = (char*)local_stackPointer;
 									ceEnterCogCodePopReceiverReg();
-									local_framePointer = GIV(framePointer);
-									local_instructionPointer = GIV(instructionPointer);
-									local_stackPointer = GIV(stackPointer);
+									local_framePointer = (sqInt)GIV(framePointer);
+									local_instructionPointer = (sqInt)GIV(instructionPointer);
+									local_stackPointer = (sqInt)GIV(stackPointer);
 								}
 								/* end callEnilopmart: */
 								/* end returnToMachineCodeFrame */
 								goto l458;
 							}
-							local_instructionPointer = pointerForOop(unsignedLongAt(local_framePointer + FoxIFSavedIP));
+							local_instructionPointer = (sqInt)pointerForOop(unsignedLongAt(local_framePointer + FoxIFSavedIP));
 						}
 						l458:
 						;
@@ -6272,10 +6272,10 @@ interpret(void)
 							int t17;
 							int t20;
 
-							assert(local_framePointer == ((GIV(stackPage)->baseFP)));
+							assert((char*)local_framePointer == ((GIV(stackPage)->baseFP)));
 							/* begin baseFrameReturn */
 							/* begin frameCallerContext: */
-							assert(isBaseFrame(local_framePointer));
+							assert(isBaseFrame((char*)local_framePointer));
 							/* begin stackPageFor: */
 							/* begin stackPageAt: */
 							thePage2 = stackPageAtpages((assert((((char *) local_framePointer ) >= (GIV(stackBasePlus1) - 1)) && (((char *) local_framePointer ) <= ((char *) GIV(pages) ))), pageIndexForstackBasePlus1bytesPerPage(local_framePointer, GIV(stackBasePlus1), GIV(bytesPerPage))), GIV(pages));
@@ -6376,36 +6376,36 @@ interpret(void)
 									/* begin baseFrameCannotReturnTo: */
 									contextToReturnFrom = longAt(((GIV(stackPage)->baseAddress)) - BytesPerWord);
 									{
-										GIV(framePointer) = local_framePointer;
-										GIV(instructionPointer) = local_instructionPointer;
-										GIV(stackPointer) = local_stackPointer;
+										GIV(framePointer) = (char*)local_framePointer;
+										GIV(instructionPointer) = (char*)local_instructionPointer;
+										GIV(stackPointer) = (char*)local_stackPointer;
 										tearDownAndRebuildFrameForCannotReturnBaseFrameReturnFromtoreturnValue(contextToReturnFrom, contextToReturnTo, localReturnValue);
-										local_framePointer = GIV(framePointer);
-										local_instructionPointer = GIV(instructionPointer);
-										local_stackPointer = GIV(stackPointer);
+										local_framePointer = (sqInt)GIV(framePointer);
+										local_instructionPointer = (sqInt)GIV(instructionPointer);
+										local_stackPointer = (sqInt)GIV(stackPointer);
 									}
 									/* begin externalCannotReturn:from: */
 									/* begin push: */
-									unsignedLongAtput((sp5 = local_stackPointer - BytesPerWord), contextToReturnFrom);
-									local_stackPointer = sp5;
+									unsignedLongAtput((sp5 = (char*)(local_stackPointer - BytesPerWord)), contextToReturnFrom);
+									local_stackPointer = (sqInt)sp5;
 									/* end push: */
 									/* begin push: */
-									unsignedLongAtput((sp2 = local_stackPointer - BytesPerWord), localReturnValue);
-									local_stackPointer = sp2;
+									unsignedLongAtput((sp2 = (char*)(local_stackPointer - BytesPerWord)), localReturnValue);
+									local_stackPointer = (sqInt)sp2;
 									/* end push: */
 									/* begin push: */
-									unsignedLongAtput((sp3 = local_stackPointer - BytesPerWord), local_instructionPointer);
-									local_stackPointer = sp3;
+									unsignedLongAtput((sp3 = (char*)(local_stackPointer - BytesPerWord)), local_instructionPointer);
+									local_stackPointer = (sqInt)sp3;
 									/* end push: */
 									t16 = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) SelectorCannotReturn ) << (shiftForWord())) ));
 									{
-										GIV(framePointer) = local_framePointer;
-										GIV(instructionPointer) = local_instructionPointer;
-										GIV(stackPointer) = local_stackPointer;
+										GIV(framePointer) = (char*)local_framePointer;
+										GIV(instructionPointer) = (char*)local_instructionPointer;
+										GIV(stackPointer) = (char*)local_stackPointer;
 										ceSendAborttonumArgs(t16, contextToReturnFrom, 1);
-										local_framePointer = GIV(framePointer);
-										local_instructionPointer = GIV(instructionPointer);
-										local_stackPointer = GIV(stackPointer);
+										local_framePointer = (sqInt)GIV(framePointer);
+										local_instructionPointer = (sqInt)GIV(instructionPointer);
+										local_stackPointer = (sqInt)GIV(stackPointer);
 									}
 									/* end externalCannotReturn:from: */
 									/* end baseFrameCannotReturnTo: */
@@ -6413,11 +6413,11 @@ interpret(void)
 								}
 								local_instructionPointer = 0;
 								{
-									GIV(instructionPointer) = local_instructionPointer;
-									GIV(stackPointer) = local_stackPointer;
+									GIV(instructionPointer) = (char*)local_instructionPointer;
+									GIV(stackPointer) = (char*)local_stackPointer;
 									t3 = makeBaseFrameFor(contextToReturnTo);
-									local_instructionPointer = GIV(instructionPointer);
-									local_stackPointer = GIV(stackPointer);
+									local_instructionPointer = (sqInt)GIV(instructionPointer);
+									local_stackPointer = (sqInt)GIV(stackPointer);
 								}
 								thePage = t3;
 								theFP = (thePage->headFP);
@@ -6432,42 +6432,42 @@ interpret(void)
 							markStackPageMostRecentlyUsed(thePage);
 							/* end setStackPageAndLimit: */
 							assert((stackPageFor(theFP)) == GIV(stackPage));
-							local_stackPointer = theSP;
-							local_framePointer = theFP;
-							local_instructionPointer = pointerForOop(unsignedLongAt(local_stackPointer));
+							local_stackPointer = (sqInt)theSP;
+							local_framePointer = (sqInt)theFP;
+							local_instructionPointer = (sqInt)pointerForOop(unsignedLongAt(local_stackPointer));
 							/* begin maybeReturnToMachineCodeFrame */
 							if (((usqInt) ((usqInt) local_instructionPointer ) ) < (startOfObjectMemory(getMemoryMap()))) {
 								if (((usqInt) local_instructionPointer ) != (ceReturnToInterpreterPC())) {
 									/* begin returnToMachineCodeFrame */
 									assertCStackWellAligned();
 									assert(!(isInstructionPointerInInterpreter(local_instructionPointer)));
-									assert(isMachineCodeFrame(local_framePointer));
-									assertValidExecutionPointersimbarline(((usqInt) local_instructionPointer ), local_framePointer, local_stackPointer, 0, __LINE__);
+									assert(isMachineCodeFrame((char*)local_framePointer));
+									assertValidExecutionPointersimbarline(((usqInt) local_instructionPointer ), (char*)local_framePointer, (char*)local_stackPointer, 0, __LINE__);
 									unsignedLongAtput(local_stackPointer, local_instructionPointer);
 									/* begin push: */
-									unsignedLongAtput((sp4 = local_stackPointer - BytesPerWord), localReturnValue);
-									local_stackPointer = sp4;
+									unsignedLongAtput((sp4 = (char*)(local_stackPointer - BytesPerWord)), localReturnValue);
+									local_stackPointer = (sqInt)sp4;
 									/* end push: */
 									/* begin callEnilopmart: */
 									{
-										GIV(framePointer) = local_framePointer;
-										GIV(instructionPointer) = local_instructionPointer;
-										GIV(stackPointer) = local_stackPointer;
+										GIV(framePointer) = (char*)local_framePointer;
+										GIV(instructionPointer) = (char*)local_instructionPointer;
+										GIV(stackPointer) = (char*)local_stackPointer;
 										ceEnterCogCodePopReceiverReg();
-										local_framePointer = GIV(framePointer);
-										local_instructionPointer = GIV(instructionPointer);
-										local_stackPointer = GIV(stackPointer);
+										local_framePointer = (sqInt)GIV(framePointer);
+										local_instructionPointer = (sqInt)GIV(instructionPointer);
+										local_stackPointer = (sqInt)GIV(stackPointer);
 									}
 									/* end callEnilopmart: */
 									/* end returnToMachineCodeFrame */
 									goto l498;
 								}
-								local_instructionPointer = pointerForOop(unsignedLongAt(local_framePointer + FoxIFSavedIP));
+								local_instructionPointer = (sqInt)pointerForOop(unsignedLongAt(local_framePointer + FoxIFSavedIP));
 							}
 							l498:
 							;
 							/* end maybeReturnToMachineCodeFrame */
-							assert(checkIsStillMarriedContextcurrentFP(contextToReturnTo, local_framePointer));
+							assert(checkIsStillMarriedContextcurrentFP(contextToReturnTo, (char*)local_framePointer));
 							/* begin setMethod: */
 							aMethodObj1 = unsignedLongAt(local_framePointer + FoxMethod);
 							assert(((usqInt) aMethodObj1 ) >= (startOfObjectMemory(getMemoryMap())));
@@ -6488,39 +6488,39 @@ interpret(void)
 							/* end baseFrameReturn */
 							goto l492;
 						}
-						local_instructionPointer = pointerForOop(unsignedLongAt(local_framePointer + FoxCallerSavedIP));
+						local_instructionPointer = (sqInt)pointerForOop(unsignedLongAt(local_framePointer + FoxCallerSavedIP));
 						local_stackPointer = local_framePointer + (frameStackedReceiverOffsetNumArgs(((isMachineCodeIP(((usqInt) (unsignedLongAt(local_framePointer + FoxMethod)) )))
 							 ? ((((CogMethod *) ((unsignedLongAt(local_framePointer + FoxMethod)) & MFMethodMask) ))->cmNumArgs)
 							 : byteAt((local_framePointer + FoxIFrameFlags) + 1))));
-						local_framePointer = callersFPOrNull;
+						local_framePointer = (sqInt)callersFPOrNull;
 						/* begin maybeReturnToMachineCodeFrame */
 						if (((usqInt) ((usqInt) local_instructionPointer ) ) < (startOfObjectMemory(getMemoryMap()))) {
 							if (((usqInt) local_instructionPointer ) != (ceReturnToInterpreterPC())) {
 								/* begin returnToMachineCodeFrame */
 								assertCStackWellAligned();
 								assert(!(isInstructionPointerInInterpreter(local_instructionPointer)));
-								assert(isMachineCodeFrame(local_framePointer));
-								assertValidExecutionPointersimbarline(((usqInt) local_instructionPointer ), local_framePointer, local_stackPointer, 0, __LINE__);
+								assert(isMachineCodeFrame((char*)local_framePointer));
+								assertValidExecutionPointersimbarline(((usqInt) local_instructionPointer ), (char*)local_framePointer, (char*)local_stackPointer, 0, __LINE__);
 								unsignedLongAtput(local_stackPointer, local_instructionPointer);
 								/* begin push: */
-								unsignedLongAtput((sp = local_stackPointer - BytesPerWord), localReturnValue);
-								local_stackPointer = sp;
+								unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), localReturnValue);
+								local_stackPointer = (sqInt)sp;
 								/* end push: */
 								/* begin callEnilopmart: */
 								{
-									GIV(framePointer) = local_framePointer;
-									GIV(instructionPointer) = local_instructionPointer;
-									GIV(stackPointer) = local_stackPointer;
+									GIV(framePointer) = (char*)local_framePointer;
+									GIV(instructionPointer) = (char*)local_instructionPointer;
+									GIV(stackPointer) = (char*)local_stackPointer;
 									ceEnterCogCodePopReceiverReg();
-									local_framePointer = GIV(framePointer);
-									local_instructionPointer = GIV(instructionPointer);
-									local_stackPointer = GIV(stackPointer);
+									local_framePointer = (sqInt)GIV(framePointer);
+									local_instructionPointer = (sqInt)GIV(instructionPointer);
+									local_stackPointer = (sqInt)GIV(stackPointer);
 								}
 								/* end callEnilopmart: */
 								/* end returnToMachineCodeFrame */
 								goto l494;
 							}
-							local_instructionPointer = pointerForOop(unsignedLongAt(local_framePointer + FoxIFSavedIP));
+							local_instructionPointer = (sqInt)pointerForOop(unsignedLongAt(local_framePointer + FoxIFSavedIP));
 						}
 						l494:
 						;
@@ -6599,8 +6599,8 @@ interpret(void)
 							result = (rcvr >> 3) + (arg >> 3);
 							if ((((((usqInt) result ) >> 60) + 1) & 15) <= 1) {
 								/* begin pop:thenPush: */
-								unsignedLongAtput((sp = local_stackPointer + ((2 - 1) * BytesPerWord)), ((((usqInt) result ) << 3) | 1));
-								local_stackPointer = sp;
+								unsignedLongAtput((sp = (char*)(local_stackPointer + ((2 - 1) * BytesPerWord))), ((((usqInt) result ) << 3) | 1));
+								local_stackPointer = (sqInt)sp;
 								/* end pop:thenPush: */
 								/* begin fetchNextBytecode */
 								/* begin fetchByte */
@@ -6724,8 +6724,8 @@ interpret(void)
 							/* end loadFloatOrIntFrom: */
 							if (!GIV(primFailCode)) {
 								/* begin pop:thenPushFloat: */
-								unsignedLongAtput((sp2 = local_stackPointer + ((2 - 1) * BytesPerWord)), floatObjectOf(rcvr2 + arg2));
-								local_stackPointer = sp2;
+								unsignedLongAtput((sp2 = (char*)(local_stackPointer + ((2 - 1) * BytesPerWord))), floatObjectOf(rcvr2 + arg2));
+								local_stackPointer = (sqInt)sp2;
 								/* end pop:thenPushFloat: */
 							}
 							/* end primitiveFloatAdd:toArg: */
@@ -6792,8 +6792,8 @@ interpret(void)
 							result = (rcvr >> 3) - (arg >> 3);
 							if ((((((usqInt) result ) >> 60) + 1) & 15) <= 1) {
 								/* begin pop:thenPush: */
-								unsignedLongAtput((sp = local_stackPointer + ((2 - 1) * BytesPerWord)), ((((usqInt) result ) << 3) | 1));
-								local_stackPointer = sp;
+								unsignedLongAtput((sp = (char*)(local_stackPointer + ((2 - 1) * BytesPerWord))), ((((usqInt) result ) << 3) | 1));
+								local_stackPointer = (sqInt)sp;
 								/* end pop:thenPush: */
 								/* begin fetchNextBytecode */
 								/* begin fetchByte */
@@ -6917,8 +6917,8 @@ interpret(void)
 							/* end loadFloatOrIntFrom: */
 							if (!GIV(primFailCode)) {
 								/* begin pop:thenPushFloat: */
-								unsignedLongAtput((sp2 = local_stackPointer + ((2 - 1) * BytesPerWord)), floatObjectOf(rcvr2 - arg2));
-								local_stackPointer = sp2;
+								unsignedLongAtput((sp2 = (char*)(local_stackPointer + ((2 - 1) * BytesPerWord))), floatObjectOf(rcvr2 - arg2));
+								local_stackPointer = (sqInt)sp2;
 								/* end pop:thenPushFloat: */
 							}
 							/* end primitiveFloatSubtract:fromArg: */
@@ -7170,8 +7170,8 @@ interpret(void)
 						}
 						currentBytecode = bytecode;
 						/* begin push: */
-						unsignedLongAtput((sp = local_stackPointer - BytesPerWord), GIV(trueObj));
-						local_stackPointer = sp;
+						unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), GIV(trueObj));
+						local_stackPointer = (sqInt)sp;
 						/* end push: */
 					}
 				}
@@ -7398,8 +7398,8 @@ interpret(void)
 						}
 						currentBytecode = bytecode;
 						/* begin push: */
-						unsignedLongAtput((sp = local_stackPointer - BytesPerWord), GIV(falseObj));
-						local_stackPointer = sp;
+						unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), GIV(falseObj));
+						local_stackPointer = (sqInt)sp;
 						/* end push: */
 					}
 				}
@@ -8203,8 +8203,8 @@ interpret(void)
 								result = rcvr * arg;
 								oop = ((((usqInt) result ) << 3) | 1);
 								/* begin pop:thenPush: */
-								unsignedLongAtput((sp = local_stackPointer + ((2 - 1) * BytesPerWord)), oop);
-								local_stackPointer = sp;
+								unsignedLongAtput((sp = (char*)(local_stackPointer + ((2 - 1) * BytesPerWord))), oop);
+								local_stackPointer = (sqInt)sp;
 								/* end pop:thenPush: */
 								/* begin fetchNextBytecode */
 								/* begin fetchByte */
@@ -8328,8 +8328,8 @@ interpret(void)
 							/* end loadFloatOrIntFrom: */
 							if (!GIV(primFailCode)) {
 								/* begin pop:thenPushFloat: */
-								unsignedLongAtput((sp2 = local_stackPointer + ((2 - 1) * BytesPerWord)), floatObjectOf(rcvr2 * arg2));
-								local_stackPointer = sp2;
+								unsignedLongAtput((sp2 = (char*)(local_stackPointer + ((2 - 1) * BytesPerWord))), floatObjectOf(rcvr2 * arg2));
+								local_stackPointer = (sqInt)sp2;
 								/* end pop:thenPushFloat: */
 							}
 							/* end primitiveFloatMultiply:byArg: */
@@ -8408,8 +8408,8 @@ interpret(void)
 								result = rcvr / arg;
 								if ((((((usqInt) result ) >> 60) + 1) & 15) <= 1) {
 									/* begin pop:thenPush: */
-									unsignedLongAtput((sp = local_stackPointer + ((2 - 1) * BytesPerWord)), ((((usqInt) result ) << 3) | 1));
-									local_stackPointer = sp;
+									unsignedLongAtput((sp = (char*)(local_stackPointer + ((2 - 1) * BytesPerWord))), ((((usqInt) result ) << 3) | 1));
+									local_stackPointer = (sqInt)sp;
 									/* end pop:thenPush: */
 									/* begin fetchNextBytecode */
 									/* begin fetchByte */
@@ -8541,8 +8541,8 @@ interpret(void)
 							/* end success: */
 							if (!GIV(primFailCode)) {
 								/* begin pop:thenPushFloat: */
-								unsignedLongAtput((sp2 = local_stackPointer + ((2 - 1) * BytesPerWord)), floatObjectOf(rcvr2 / arg2));
-								local_stackPointer = sp2;
+								unsignedLongAtput((sp2 = (char*)(local_stackPointer + ((2 - 1) * BytesPerWord))), floatObjectOf(rcvr2 / arg2));
+								local_stackPointer = (sqInt)sp2;
 								/* end pop:thenPushFloat: */
 							}
 							/* end primitiveFloatDivide:byArg: */
@@ -8588,8 +8588,8 @@ interpret(void)
 						mod = doPrimitiveModby(unsignedLongAt(local_stackPointer + (1 * BytesPerWord)), unsignedLongAt(local_stackPointer + (0 * BytesPerWord)));
 						if (!GIV(primFailCode)) {
 							/* begin pop:thenPush: */
-							unsignedLongAtput((sp = local_stackPointer + ((2 - 1) * BytesPerWord)), ((((usqInt) mod ) << 3) | 1));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer + ((2 - 1) * BytesPerWord))), ((((usqInt) mod ) << 3) | 1));
+							local_stackPointer = (sqInt)sp;
 							/* end pop:thenPush: */
 							/* begin fetchNextBytecode */
 							/* begin fetchByte */
@@ -8711,8 +8711,8 @@ interpret(void)
 								/* end storePointerUnchecked:ofObject:withValue: */
 							}
 							/* begin pop:thenPush: */
-							unsignedLongAtput((sp = local_stackPointer + ((2 - 1) * BytesPerWord)), pt);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer + ((2 - 1) * BytesPerWord))), pt);
+							local_stackPointer = (sqInt)sp;
 							/* end pop:thenPush: */
 							/* begin fetchNextBytecode */
 							/* begin fetchByte */
@@ -8813,8 +8813,8 @@ interpret(void)
 								shifted = t0;
 							}
 							/* begin pop:thenPush: */
-							unsignedLongAtput((sp = local_stackPointer + ((2 - 1) * BytesPerWord)), shifted);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer + ((2 - 1) * BytesPerWord))), shifted);
+							local_stackPointer = (sqInt)sp;
 							/* end pop:thenPush: */
 						}
 						l152:
@@ -8861,8 +8861,8 @@ interpret(void)
 						quotient = doPrimitiveDivby(unsignedLongAt(local_stackPointer + (1 * BytesPerWord)), unsignedLongAt(local_stackPointer + (0 * BytesPerWord)));
 						if (!GIV(primFailCode)) {
 							/* begin pop:thenPush: */
-							unsignedLongAtput((sp = local_stackPointer + ((2 - 1) * BytesPerWord)), ((((usqInt) quotient ) << 3) | 1));
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer + ((2 - 1) * BytesPerWord))), ((((usqInt) quotient ) << 3) | 1));
+							local_stackPointer = (sqInt)sp;
 							/* end pop:thenPush: */
 							/* begin fetchNextBytecode */
 							/* begin fetchByte */
@@ -8911,8 +8911,8 @@ interpret(void)
 						}
 						if (t3) {
 							/* begin pop:thenPush: */
-							unsignedLongAtput((sp = local_stackPointer + ((2 - 1) * BytesPerWord)), arg & rcvr);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer + ((2 - 1) * BytesPerWord))), arg & rcvr);
+							local_stackPointer = (sqInt)sp;
 							/* end pop:thenPush: */
 							/* begin fetchNextBytecode */
 							/* begin fetchByte */
@@ -8925,9 +8925,9 @@ interpret(void)
 						GIV(primFailCode) = 0;
 						/* end initPrimCall */
 						{
-							GIV(stackPointer) = local_stackPointer;
+							GIV(stackPointer) = (char*)local_stackPointer;
 							primitiveBitAnd();
-							local_stackPointer = GIV(stackPointer);
+							local_stackPointer = (sqInt)GIV(stackPointer);
 						}
 						if (!GIV(primFailCode)) {
 							/* begin fetchNextBytecode */
@@ -8977,8 +8977,8 @@ interpret(void)
 						}
 						if (t3) {
 							/* begin pop:thenPush: */
-							unsignedLongAtput((sp = local_stackPointer + ((2 - 1) * BytesPerWord)), arg | rcvr);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer + ((2 - 1) * BytesPerWord))), arg | rcvr);
+							local_stackPointer = (sqInt)sp;
 							/* end pop:thenPush: */
 							/* begin fetchNextBytecode */
 							/* begin fetchByte */
@@ -8991,9 +8991,9 @@ interpret(void)
 						GIV(primFailCode) = 0;
 						/* end initPrimCall */
 						{
-							GIV(stackPointer) = local_stackPointer;
+							GIV(stackPointer) = (char*)local_stackPointer;
 							primitiveBitOr();
-							local_stackPointer = GIV(stackPointer);
+							local_stackPointer = (sqInt)GIV(stackPointer);
 						}
 						if (!GIV(primFailCode)) {
 							/* begin fetchNextBytecode */
@@ -9325,7 +9325,7 @@ interpret(void)
 							t3 = t2;
 						}
 						if (t3) {
-							rcvr = handleSpecialSelectorSendFaultForfpsp(rcvr, local_framePointer, local_stackPointer);
+							rcvr = handleSpecialSelectorSendFaultForfpsp(rcvr, (char*)local_framePointer, (char*)local_stackPointer);
 						}
 						t5 = (arg & (tagMask())) == 0;
 						if (t5) {
@@ -9334,7 +9334,7 @@ interpret(void)
 							t6 = t5;
 						}
 						if (t6) {
-							arg = handleSpecialSelectorSendFaultForfpsp(arg, local_framePointer, local_stackPointer);
+							arg = handleSpecialSelectorSendFaultForfpsp(arg, (char*)local_framePointer, (char*)local_stackPointer);
 						}
 						/* begin booleanCheatSistaV1: */
 						if (rcvr == arg) {
@@ -9368,7 +9368,7 @@ interpret(void)
 							t2 = t1;
 						}
 						if (t2) {
-							rcvr = handleSpecialSelectorSendFaultForfpsp(rcvr, local_framePointer, local_stackPointer);
+							rcvr = handleSpecialSelectorSendFaultForfpsp(rcvr, (char*)local_framePointer, (char*)local_stackPointer);
 						}
 						/* begin stackTopPut: */
 						if (((tagBits = rcvr & (tagMask()))) != 0) {
@@ -9410,7 +9410,7 @@ interpret(void)
 							t3 = t2;
 						}
 						if (t3) {
-							rcvr = handleSpecialSelectorSendFaultForfpsp(rcvr, local_framePointer, local_stackPointer);
+							rcvr = handleSpecialSelectorSendFaultForfpsp(rcvr, (char*)local_framePointer, (char*)local_stackPointer);
 						}
 						t5 = (arg & (tagMask())) == 0;
 						if (t5) {
@@ -9419,7 +9419,7 @@ interpret(void)
 							t6 = t5;
 						}
 						if (t6) {
-							arg = handleSpecialSelectorSendFaultForfpsp(arg, local_framePointer, local_stackPointer);
+							arg = handleSpecialSelectorSendFaultForfpsp(arg, (char*)local_framePointer, (char*)local_stackPointer);
 						}
 						/* begin booleanCheatSistaV1: */
 						if (rcvr != arg) {
@@ -9468,13 +9468,13 @@ interpret(void)
 							GIV(primFailCode) = 0;
 							/* end initPrimCall */
 							{
-								GIV(framePointer) = local_framePointer;
-								GIV(instructionPointer) = local_instructionPointer;
-								GIV(stackPointer) = local_stackPointer;
+								GIV(framePointer) = (char*)local_framePointer;
+								GIV(instructionPointer) = (char*)local_instructionPointer;
+								GIV(stackPointer) = (char*)local_stackPointer;
 								primitiveFullClosureValue();
-								local_framePointer = GIV(framePointer);
-								local_instructionPointer = GIV(instructionPointer);
-								local_stackPointer = GIV(stackPointer);
+								local_framePointer = (sqInt)GIV(framePointer);
+								local_instructionPointer = (sqInt)GIV(instructionPointer);
+								local_stackPointer = (sqInt)GIV(stackPointer);
 							}
 							if (!GIV(primFailCode)) {
 								/* begin fetchNextBytecode */
@@ -9538,13 +9538,13 @@ interpret(void)
 							GIV(primFailCode) = 0;
 							/* end initPrimCall */
 							{
-								GIV(framePointer) = local_framePointer;
-								GIV(instructionPointer) = local_instructionPointer;
-								GIV(stackPointer) = local_stackPointer;
+								GIV(framePointer) = (char*)local_framePointer;
+								GIV(instructionPointer) = (char*)local_instructionPointer;
+								GIV(stackPointer) = (char*)local_stackPointer;
 								primitiveFullClosureValue();
-								local_framePointer = GIV(framePointer);
-								local_instructionPointer = GIV(instructionPointer);
-								local_stackPointer = GIV(stackPointer);
+								local_framePointer = (sqInt)GIV(framePointer);
+								local_instructionPointer = (sqInt)GIV(instructionPointer);
+								local_stackPointer = (sqInt)GIV(stackPointer);
 							}
 							if (!GIV(primFailCode)) {
 								/* begin fetchNextBytecode */
@@ -9802,7 +9802,7 @@ interpret(void)
 						sqInt tagBits;
 
 						{
-							assert(GIV(method) == (iframeMethod(local_framePointer)));
+							assert(GIV(method) == (iframeMethod((char*)local_framePointer)));
 							/* begin fetchPointer:ofObject: */
 							GIV(messageSelector) = unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) ((currentBytecode & 15) + LiteralStart) ) << (shiftForWord())) ));
 							/* end fetchPointer:ofObject: */
@@ -9847,7 +9847,7 @@ interpret(void)
 						sqInt tagBits;
 
 						{
-							assert(GIV(method) == (iframeMethod(local_framePointer)));
+							assert(GIV(method) == (iframeMethod((char*)local_framePointer)));
 							/* begin fetchPointer:ofObject: */
 							GIV(messageSelector) = unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) ((currentBytecode & 15) + LiteralStart) ) << (shiftForWord())) ));
 							/* end fetchPointer:ofObject: */
@@ -9892,7 +9892,7 @@ interpret(void)
 						sqInt tagBits;
 
 						{
-							assert(GIV(method) == (iframeMethod(local_framePointer)));
+							assert(GIV(method) == (iframeMethod((char*)local_framePointer)));
 							/* begin fetchPointer:ofObject: */
 							GIV(messageSelector) = unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) ((currentBytecode & 15) + LiteralStart) ) << (shiftForWord())) ));
 							/* end fetchPointer:ofObject: */
@@ -10195,16 +10195,16 @@ interpret(void)
 							if (((((usqInt) (longAt(rcvr)) ) >> (immutableBitShift())) & 1) != 0) {
 								/* begin cannotAssign:to:withIndex: */
 								/* begin push: */
-								unsignedLongAtput((sp = local_stackPointer - BytesPerWord), rcvr);
-								local_stackPointer = sp;
+								unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), rcvr);
+								local_stackPointer = (sqInt)sp;
 								/* end push: */
 								/* begin push: */
-								unsignedLongAtput((sp2 = local_stackPointer - BytesPerWord), top);
-								local_stackPointer = sp2;
+								unsignedLongAtput((sp2 = (char*)(local_stackPointer - BytesPerWord)), top);
+								local_stackPointer = (sqInt)sp2;
 								/* end push: */
 								/* begin push: */
-								unsignedLongAtput((sp3 = local_stackPointer - BytesPerWord), ((((usqInt) (instVarIndex + 1) ) << 3) | 1));
-								local_stackPointer = sp3;
+								unsignedLongAtput((sp3 = (char*)(local_stackPointer - BytesPerWord)), ((((usqInt) (instVarIndex + 1) ) << 3) | 1));
+								local_stackPointer = (sqInt)sp3;
 								/* end push: */
 								/* begin splObj: */
 								/* begin fetchPointer:ofObject: */
@@ -10688,23 +10688,23 @@ interpret(void)
 
 							/* begin push: */
 							{
-								GIV(framePointer) = local_framePointer;
-								GIV(instructionPointer) = local_instructionPointer;
-								GIV(stackPointer) = local_stackPointer;
+								GIV(framePointer) = (char*)local_framePointer;
+								GIV(instructionPointer) = (char*)local_instructionPointer;
+								GIV(stackPointer) = (char*)local_stackPointer;
 								t1 = instVarofContext(index, obj);
-								local_framePointer = GIV(framePointer);
-								local_instructionPointer = GIV(instructionPointer);
-								local_stackPointer = GIV(stackPointer);
+								local_framePointer = (sqInt)GIV(framePointer);
+								local_instructionPointer = (sqInt)GIV(instructionPointer);
+								local_stackPointer = (sqInt)GIV(stackPointer);
 							}
 							object = t1;
-							unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-							local_stackPointer = sp;
+							unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+							local_stackPointer = (sqInt)sp;
 							/* end push: */
 						} else {
 							/* begin push: */
 							object1 = unsignedLongAt((obj + BaseHeaderSize) + ((sqInt) (((usqInt) index ) << (shiftForWord())) ));
-							unsignedLongAtput((sp2 = local_stackPointer - BytesPerWord), object1);
-							local_stackPointer = sp2;
+							unsignedLongAtput((sp2 = (char*)(local_stackPointer - BytesPerWord)), object1);
+							local_stackPointer = (sqInt)sp2;
 							/* end push: */
 						}
 						/* end pushMaybeContext:receiverVariable: */
@@ -10733,7 +10733,7 @@ interpret(void)
 						GIV(extA) = 0;
 						/* begin pushLiteralVariable: */
 						{
-							assert(GIV(method) == (iframeMethod(local_framePointer)));
+							assert(GIV(method) == (iframeMethod((char*)local_framePointer)));
 							/* begin fetchPointer:ofObject: */
 							litVar = unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) (index + LiteralStart) ) << (shiftForWord())) ));
 							/* end fetchPointer:ofObject: */
@@ -10743,8 +10743,8 @@ interpret(void)
 						}
 						/* begin push: */
 						object = unsignedLongAt((litVar + BaseHeaderSize) + ((sqInt) (((usqInt) ValueIndex ) << (shiftForWord())) ));
-						unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-						local_stackPointer = sp;
+						unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+						local_stackPointer = (sqInt)sp;
 						/* end push: */
 						/* end pushLiteralVariable: */
 					}
@@ -10769,8 +10769,8 @@ interpret(void)
 						GIV(extA) = 0;
 						/* begin pushLiteralConstant: */
 						/* begin push: */
-						unsignedLongAtput((sp = local_stackPointer - BytesPerWord), (assert(GIV(method) == (iframeMethod(local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) (index + LiteralStart) ) << (shiftForWord())) )) /* end fetchPointer:ofObject: */));
-						local_stackPointer = sp;
+						unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), (assert(GIV(method) == (iframeMethod((char*)local_framePointer))), /* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) (index + LiteralStart) ) << (shiftForWord())) )) /* end fetchPointer:ofObject: */));
+						local_stackPointer = (sqInt)sp;
 						/* end push: */
 						/* end pushLiteralConstant: */
 					}
@@ -10804,8 +10804,8 @@ interpret(void)
 							t9 = unsignedLongAt(((local_framePointer + FoxIFReceiver) - BytesPerWord) + ((frameNumArgs - index) * BytesPerWord));
 						}
 						object = t9;
-						unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-						local_stackPointer = sp;
+						unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+						local_stackPointer = (sqInt)sp;
 						/* end push: */
 					}
 				}
@@ -10889,8 +10889,8 @@ interpret(void)
 							};
 						}
 						/* begin push: */
-						unsignedLongAtput((sp = local_stackPointer - BytesPerWord), array);
-						local_stackPointer = sp;
+						unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), array);
+						local_stackPointer = (sqInt)sp;
 						/* end push: */
 					}
 				}
@@ -10914,8 +10914,8 @@ interpret(void)
 						GIV(extB) = 0;
 						GIV(numExtB) = 0;
 						/* begin push: */
-						unsignedLongAtput((sp = local_stackPointer - BytesPerWord), ((((usqInt) value ) << 3) | 1));
-						local_stackPointer = sp;
+						unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), ((((usqInt) value ) << 3) | 1));
+						local_stackPointer = (sqInt)sp;
 						/* end push: */
 					}
 				}
@@ -10939,8 +10939,8 @@ interpret(void)
 						/* end fetchNextBytecode */
 						/* begin push: */
 						object = ((sqInt) (((usqInt) value ) << (numTagBits())) ) + (characterTag());
-						unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-						local_stackPointer = sp;
+						unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+						local_stackPointer = (sqInt)sp;
 						/* end push: */
 						GIV(numExtB) = (GIV(extB) = 0);
 					}
@@ -10957,7 +10957,7 @@ interpret(void)
 
 						byte = byteAtPointer(++local_instructionPointer);
 						{
-							assert(GIV(method) == (iframeMethod(local_framePointer)));
+							assert(GIV(method) == (iframeMethod((char*)local_framePointer)));
 							/* begin literal:ofMethod: */
 							/* begin fetchPointer:ofObject: */
 							GIV(messageSelector) = unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) (((((usqInt) byte ) >> 3) + ((sqInt) (((usqInt) GIV(extA) ) << 5) )) + LiteralStart) ) << (shiftForWord())) ));
@@ -11114,9 +11114,9 @@ interpret(void)
 											sqInt t0;
 
 											{
-												GIV(framePointer) = local_framePointer;
+												GIV(framePointer) = (char*)local_framePointer;
 												t0 = handleForwardedSelectorFaultFor(GIV(messageSelector));
-												local_framePointer = GIV(framePointer);
+												local_framePointer = (sqInt)GIV(framePointer);
 											}
 											GIV(messageSelector) = t0;
 										}
@@ -11124,11 +11124,11 @@ interpret(void)
 											sqInt t0;
 
 											{
-												GIV(framePointer) = local_framePointer;
-												GIV(stackPointer) = local_stackPointer;
+												GIV(framePointer) = (char*)local_framePointer;
+												GIV(stackPointer) = (char*)local_stackPointer;
 												t0 = handleForwardedSendFaultForTag(classTag);
-												local_framePointer = GIV(framePointer);
-												local_stackPointer = GIV(stackPointer);
+												local_framePointer = (sqInt)GIV(framePointer);
+												local_stackPointer = (sqInt)GIV(stackPointer);
 											}
 											classTag = t0;
 										}
@@ -11201,9 +11201,9 @@ interpret(void)
 										/* end followForwarded: */
 									}
 									{
-										GIV(stackPointer) = local_stackPointer;
+										GIV(stackPointer) = (char*)local_stackPointer;
 										lookupMethodInClass(GIV(lkupClass));
-										local_stackPointer = GIV(stackPointer);
+										local_stackPointer = (sqInt)GIV(stackPointer);
 									}
 									addNewMethodToCache(GIV(lkupClass));
 								}
@@ -11220,24 +11220,24 @@ interpret(void)
 										sqInt t2;
 
 										{
-											GIV(stackPointer) = local_stackPointer;
+											GIV(stackPointer) = (char*)local_stackPointer;
 											executeQuickPrimitive();
-											local_stackPointer = GIV(stackPointer);
+											local_stackPointer = (sqInt)GIV(stackPointer);
 										}
 										/* begin returnToExecutive: */
 										{
-											GIV(stackPointer) = local_stackPointer;
+											GIV(stackPointer) = (char*)local_stackPointer;
 											t2 = popStack();
-											local_stackPointer = GIV(stackPointer);
+											local_stackPointer = (sqInt)GIV(stackPointer);
 										}
 										{
-											GIV(framePointer) = local_framePointer;
-											GIV(instructionPointer) = local_instructionPointer;
-											GIV(stackPointer) = local_stackPointer;
+											GIV(framePointer) = (char*)local_framePointer;
+											GIV(instructionPointer) = (char*)local_instructionPointer;
+											GIV(stackPointer) = (char*)local_stackPointer;
 											returntoExecutive(t2, inInterpreter);
-											local_framePointer = GIV(framePointer);
-											local_instructionPointer = GIV(instructionPointer);
-											local_stackPointer = GIV(stackPointer);
+											local_framePointer = (sqInt)GIV(framePointer);
+											local_instructionPointer = (sqInt)GIV(instructionPointer);
+											local_stackPointer = (sqInt)GIV(stackPointer);
 										}
 										/* end returnToExecutive: */
 										goto l526;
@@ -11252,34 +11252,34 @@ interpret(void)
 									assert((remapBufferCount()) == 0);
 									{
 										nArgs = GIV(argumentCount);
-										savedStackPointer = local_stackPointer;
-										savedFramePointer = local_framePointer;
+										savedStackPointer = (char*)local_stackPointer;
+										savedFramePointer = (char*)local_framePointer;
 									}
 									/* begin initPrimCall */
 									GIV(primFailCode) = 0;
 									/* end initPrimCall */
 									/* begin dispatchFunctionPointer: */
 									{
-										GIV(framePointer) = local_framePointer;
-										GIV(instructionPointer) = local_instructionPointer;
-										GIV(stackPointer) = local_stackPointer;
+										GIV(framePointer) = (char*)local_framePointer;
+										GIV(instructionPointer) = (char*)local_instructionPointer;
+										GIV(stackPointer) = (char*)local_stackPointer;
 										primitiveFunctionPointer();
-										local_framePointer = GIV(framePointer);
-										local_instructionPointer = GIV(instructionPointer);
-										local_stackPointer = GIV(stackPointer);
+										local_framePointer = (sqInt)GIV(framePointer);
+										local_instructionPointer = (sqInt)GIV(instructionPointer);
+										local_stackPointer = (sqInt)GIV(stackPointer);
 									}
 									/* end dispatchFunctionPointer: */
 									assert(maybeLeakCheckExternalPrimCall(GIV(newMethod)));
 									/* begin maybeRetryPrimitiveOnFailure */
 									if (GIV(primFailCode)) {
 										{
-											GIV(framePointer) = local_framePointer;
-											GIV(instructionPointer) = local_instructionPointer;
-											GIV(stackPointer) = local_stackPointer;
+											GIV(framePointer) = (char*)local_framePointer;
+											GIV(instructionPointer) = (char*)local_instructionPointer;
+											GIV(stackPointer) = (char*)local_stackPointer;
 											retryPrimitiveOnFailure();
-											local_framePointer = GIV(framePointer);
-											local_instructionPointer = GIV(instructionPointer);
-											local_stackPointer = GIV(stackPointer);
+											local_framePointer = (sqInt)GIV(framePointer);
+											local_instructionPointer = (sqInt)GIV(instructionPointer);
+											local_stackPointer = (sqInt)GIV(stackPointer);
 										}
 									}
 									/* end maybeRetryPrimitiveOnFailure */
@@ -11308,7 +11308,7 @@ interpret(void)
 										if (t0) {
 											int t0;
 
-											t0 = local_framePointer == savedFramePointer;
+											t0 = (char*)local_framePointer == savedFramePointer;
 											if (t0) {
 												t18 = !(isMachineCodeIP(((usqInt) (unsignedLongAt(local_framePointer + FoxMethod)) )));
 											} else {
@@ -11319,10 +11319,10 @@ interpret(void)
 										}
 									}
 									if (t18) {
-										if (local_stackPointer != (savedStackPointer + (nArgs * BytesPerWord))) {
+										if ((char*)local_stackPointer != (savedStackPointer + (nArgs * BytesPerWord))) {
 											flag("Would be nice to make this a message send of e.g. unbalancedPrimitive to the current process or context");
 											failUnbalancedPrimitive();
-											local_stackPointer = savedStackPointer;
+											local_stackPointer = (sqInt)savedStackPointer;
 										}
 									}
 									if (GIV(nextProfileTick) > 0) {
@@ -11338,18 +11338,18 @@ interpret(void)
 
 										/* begin returnToExecutive: */
 										{
-											GIV(stackPointer) = local_stackPointer;
+											GIV(stackPointer) = (char*)local_stackPointer;
 											t1 = popStack();
-											local_stackPointer = GIV(stackPointer);
+											local_stackPointer = (sqInt)GIV(stackPointer);
 										}
 										{
-											GIV(framePointer) = local_framePointer;
-											GIV(instructionPointer) = local_instructionPointer;
-											GIV(stackPointer) = local_stackPointer;
+											GIV(framePointer) = (char*)local_framePointer;
+											GIV(instructionPointer) = (char*)local_instructionPointer;
+											GIV(stackPointer) = (char*)local_stackPointer;
 											returntoExecutive(t1, inInterpreter);
-											local_framePointer = GIV(framePointer);
-											local_instructionPointer = GIV(instructionPointer);
-											local_stackPointer = GIV(stackPointer);
+											local_framePointer = (sqInt)GIV(framePointer);
+											local_instructionPointer = (sqInt)GIV(instructionPointer);
+											local_stackPointer = (sqInt)GIV(stackPointer);
 										}
 										/* end returnToExecutive: */
 										goto l526;
@@ -11358,13 +11358,13 @@ interpret(void)
 								{
 									;
 									{
-										GIV(framePointer) = local_framePointer;
-										GIV(instructionPointer) = local_instructionPointer;
-										GIV(stackPointer) = local_stackPointer;
+										GIV(framePointer) = (char*)local_framePointer;
+										GIV(instructionPointer) = (char*)local_instructionPointer;
+										GIV(stackPointer) = (char*)local_stackPointer;
 										activateNewMethod();
-										local_framePointer = GIV(framePointer);
-										local_instructionPointer = GIV(instructionPointer);
-										local_stackPointer = GIV(stackPointer);
+										local_framePointer = (sqInt)GIV(framePointer);
+										local_instructionPointer = (sqInt)GIV(instructionPointer);
+										local_stackPointer = (sqInt)GIV(stackPointer);
 									}
 								}
 								l526:
@@ -11389,7 +11389,7 @@ interpret(void)
 					VM_LABEL(extSendSuperBytecode);
 					{
 						sqInt byte;
-						sqInt class;
+						sqInt klass;
 						sqInt classPointer;
 						sqInt err;
 						sqInt err2;
@@ -11421,7 +11421,7 @@ interpret(void)
 
 						byte = byteAtPointer(++local_instructionPointer);
 						{
-							assert(GIV(method) == (iframeMethod(local_framePointer)));
+							assert(GIV(method) == (iframeMethod((char*)local_framePointer)));
 							/* begin literal:ofMethod: */
 							/* begin fetchPointer:ofObject: */
 							GIV(messageSelector) = unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) (((((usqInt) byte ) >> 3) + ((sqInt) (((usqInt) GIV(extA) ) << 5) )) + LiteralStart) ) << (shiftForWord())) ));
@@ -11441,13 +11441,13 @@ interpret(void)
 								/* begin popStack */
 								top = unsignedLongAt(local_stackPointer);
 								local_stackPointer += BytesPerWord;
-								class = top;
+								klass = top;
 								/* end popStack */
-								if (((long64At(class)) & ((classIndexMask()) - (isForwardedObjectClassIndexPun()))) == 0) {
+								if (((long64At(klass)) & ((classIndexMask()) - (isForwardedObjectClassIndexPun()))) == 0) {
 									/* begin followForwarded: */
-									assert(isUnambiguouslyForwarder(class));
+									assert(isUnambiguouslyForwarder(klass));
 									/* begin fetchPointer:ofMaybeForwardedObject: */
-									referent = unsignedLongAt((class + BaseHeaderSize) + (0U << (shiftForWord())));
+									referent = unsignedLongAt((klass + BaseHeaderSize) + (0U << (shiftForWord())));
 									/* end fetchPointer:ofMaybeForwardedObject: */
 									while (1) {
 										int t0;
@@ -11461,12 +11461,12 @@ interpret(void)
 										referent = unsignedLongAt((referent + BaseHeaderSize) + (0U << (shiftForWord())));
 										/* end fetchPointer:ofMaybeForwardedObject: */
 									};
-									class = referent;
+									klass = referent;
 									/* end followForwarded: */
 								}
 								/* begin followField:ofObject: */
 								/* begin fetchPointer:ofObject: */
-								objOop = unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) SuperclassIndex ) << (shiftForWord())) ));
+								objOop = unsignedLongAt((klass + BaseHeaderSize) + ((sqInt) (((usqInt) SuperclassIndex ) << (shiftForWord())) ));
 								/* end fetchPointer:ofObject: */
 								t14 = (objOop & (tagMask())) == 0;
 								if (t14) {
@@ -11475,7 +11475,7 @@ interpret(void)
 									t15 = t14;
 								}
 								if (t15) {
-									objOop = fixFollowedFieldofObjectwithInitialValue(SuperclassIndex, class, objOop);
+									objOop = fixFollowedFieldofObjectwithInitialValue(SuperclassIndex, klass, objOop);
 								}
 								superclass = objOop;
 								/* end followField:ofObject: */
@@ -11805,8 +11805,8 @@ interpret(void)
 									float64Atput((res + BaseHeaderSize) + (1U << 3), tmp);
 									/* end storeFloat64:ofObject:withValue: */
 									/* begin pop:thenPush: */
-									unsignedLongAtput((sp = local_stackPointer + ((2 - 1) * BytesPerWord)), res);
-									local_stackPointer = sp;
+									unsignedLongAtput((sp = (char*)(local_stackPointer + ((2 - 1) * BytesPerWord))), res);
+									local_stackPointer = (sqInt)sp;
 									/* end pop:thenPush: */
 									/* end addFloat64VectorBytecode */
 								}
@@ -11876,8 +11876,8 @@ interpret(void)
 									float64Atput((reg + BaseHeaderSize) + (1U << 3), value1);
 									/* end storeFloat64:ofObject:withValue: */
 									/* begin pop:thenPush: */
-									unsignedLongAtput((sp3 = local_stackPointer + ((2 - 1) * BytesPerWord)), reg);
-									local_stackPointer = sp3;
+									unsignedLongAtput((sp3 = (char*)(local_stackPointer + ((2 - 1) * BytesPerWord))), reg);
+									local_stackPointer = (sqInt)sp3;
 									/* end pop:thenPush: */
 									/* end pushFloat64ArrayToRegisterBytecode */
 								}
@@ -11905,8 +11905,8 @@ interpret(void)
 									float64Atput((array2 + BaseHeaderSize) + ((sqInt) (((usqInt) (index2 + 1) ) << 3) ), value11);
 									/* end storeFloat64:ofObject:withValue: */
 									/* begin pop:thenPush: */
-									unsignedLongAtput((sp4 = local_stackPointer + ((3 - 1) * BytesPerWord)), array2);
-									local_stackPointer = sp4;
+									unsignedLongAtput((sp4 = (char*)(local_stackPointer + ((3 - 1) * BytesPerWord))), array2);
+									local_stackPointer = (sqInt)sp4;
 									/* end pop:thenPush: */
 									/* end storeFloat64RegisterIntoArrayBytecode */
 								}
@@ -11980,8 +11980,8 @@ interpret(void)
 									float32Atput((res2 + BaseHeaderSize) + (3U << 2), tmp2);
 									/* end storeFloat32:ofObject:withValue: */
 									/* begin pop:thenPush: */
-									unsignedLongAtput((sp2 = local_stackPointer + ((2 - 1) * BytesPerWord)), res2);
-									local_stackPointer = sp2;
+									unsignedLongAtput((sp2 = (char*)(local_stackPointer + ((2 - 1) * BytesPerWord))), res2);
+									local_stackPointer = (sqInt)sp2;
 									/* end pop:thenPush: */
 									/* end addFloat32VectorBytecode */
 								}
@@ -12063,8 +12063,8 @@ interpret(void)
 									float32Atput((reg3 + BaseHeaderSize) + (3U << 2), value3);
 									/* end storeFloat32:ofObject:withValue: */
 									/* begin pop:thenPush: */
-									unsignedLongAtput((sp5 = local_stackPointer + ((2 - 1) * BytesPerWord)), reg3);
-									local_stackPointer = sp5;
+									unsignedLongAtput((sp5 = (char*)(local_stackPointer + ((2 - 1) * BytesPerWord))), reg3);
+									local_stackPointer = (sqInt)sp5;
 									/* end pop:thenPush: */
 									/* end pushFloat32ArrayToRegisterBytecode */
 								}
@@ -12104,8 +12104,8 @@ interpret(void)
 									float32Atput((array4 + BaseHeaderSize) + ((sqInt) (((usqInt) (index4 + 3) ) << 2) ), value31);
 									/* end storeFloat32:ofObject:withValue: */
 									/* begin pop:thenPush: */
-									unsignedLongAtput((sp6 = local_stackPointer + ((3 - 1) * BytesPerWord)), array4);
-									local_stackPointer = sp6;
+									unsignedLongAtput((sp6 = (char*)(local_stackPointer + ((3 - 1) * BytesPerWord))), array4);
+									local_stackPointer = (sqInt)sp6;
 									/* end pop:thenPush: */
 									/* end storeFloat32RegisterIntoArrayBytecode */
 								}
@@ -12175,8 +12175,8 @@ interpret(void)
 									float64Atput((res3 + BaseHeaderSize) + (1U << 3), tmp3);
 									/* end storeFloat64:ofObject:withValue: */
 									/* begin pop:thenPush: */
-									unsignedLongAtput((sp7 = local_stackPointer + ((2 - 1) * BytesPerWord)), res3);
-									local_stackPointer = sp7;
+									unsignedLongAtput((sp7 = (char*)(local_stackPointer + ((2 - 1) * BytesPerWord))), res3);
+									local_stackPointer = (sqInt)sp7;
 									/* end pop:thenPush: */
 									/* end subFloat64VectorBytecode */
 								}
@@ -12223,27 +12223,27 @@ interpret(void)
 						if ((offset + bcpcDelta) >= 0) {
 							goto l352;
 						}
-						if (local_stackPointer < GIV(stackLimit)) {
+						if ((char*)local_stackPointer < GIV(stackLimit)) {
 							sqInt t0;
 
 							{
-								GIV(framePointer) = local_framePointer;
-								GIV(instructionPointer) = local_instructionPointer;
-								GIV(stackPointer) = local_stackPointer;
+								GIV(framePointer) = (char*)local_framePointer;
+								GIV(instructionPointer) = (char*)local_instructionPointer;
+								GIV(stackPointer) = (char*)local_stackPointer;
 								t0 = checkForEventsMayContextSwitch(1);
-								local_framePointer = GIV(framePointer);
-								local_instructionPointer = GIV(instructionPointer);
-								local_stackPointer = GIV(stackPointer);
+								local_framePointer = (sqInt)GIV(framePointer);
+								local_instructionPointer = (sqInt)GIV(instructionPointer);
+								local_stackPointer = (sqInt)GIV(stackPointer);
 							}
 							switched = t0;
 							{
-								GIV(framePointer) = local_framePointer;
-								GIV(instructionPointer) = local_instructionPointer;
-								GIV(stackPointer) = local_stackPointer;
+								GIV(framePointer) = (char*)local_framePointer;
+								GIV(instructionPointer) = (char*)local_instructionPointer;
+								GIV(stackPointer) = (char*)local_stackPointer;
 								returnToExecutivepostContextSwitch(1, switched);
-								local_framePointer = GIV(framePointer);
-								local_instructionPointer = GIV(instructionPointer);
-								local_stackPointer = GIV(stackPointer);
+								local_framePointer = (sqInt)GIV(framePointer);
+								local_instructionPointer = (sqInt)GIV(instructionPointer);
+								local_stackPointer = (sqInt)GIV(stackPointer);
 							}
 							if (switched) {
 								goto l352;
@@ -12258,11 +12258,11 @@ interpret(void)
 
 								t0 = ((((oopForPointer(local_instructionPointer)) - (offset + bcpcDelta)) - GIV(method)) - BaseHeaderSize) - 1;
 								{
-									GIV(framePointer) = local_framePointer;
-									GIV(stackPointer) = local_stackPointer;
+									GIV(framePointer) = (char*)local_framePointer;
+									GIV(stackPointer) = (char*)local_stackPointer;
 									attemptToSwitchToMachineCode(t0);
-									local_framePointer = GIV(framePointer);
-									local_stackPointer = GIV(stackPointer);
+									local_framePointer = (sqInt)GIV(framePointer);
+									local_stackPointer = (sqInt)GIV(stackPointer);
 								}
 							}
 							backwardJumpCountByte = 0x7F;
@@ -12471,13 +12471,13 @@ interpret(void)
 							assert(GIV(stackPage) == (mostRecentlyUsedPage()));
 							assert(!(isFree(GIV(stackPage))));
 							/* begin setHeadFP:andSP:inPage: */
-							theSP = local_stackPointer;
-							assert(theSP < local_framePointer);
+							theSP = (char*)local_stackPointer;
+							assert(theSP < (char*)local_framePointer);
 							assert((theSP < ((GIV(stackPage)->baseAddress))) && (theSP > (((GIV(stackPage)->realStackLimit)) - (LargeContextSlots * BytesPerOop))));
-							assert((local_framePointer < ((GIV(stackPage)->baseAddress))) && (local_framePointer > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
+							assert(((char*)local_framePointer < ((GIV(stackPage)->baseAddress))) && ((char*)local_framePointer > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 							{
-								(GIV(stackPage)->headFP = local_framePointer);
-								(GIV(stackPage)->headSP = theSP);
+								(GIV(stackPage)->headFP = (char*)local_framePointer);
+								(GIV(stackPage)->headSP = (char*)theSP);
 							}
 							/* end setHeadFP:andSP:inPage: */
 							assert(pageListIsWellFormed());
@@ -12560,11 +12560,11 @@ interpret(void)
 								/* end storePointer:ofObject:withValue: */
 								if (variableIndex == StackPointerIndex) {
 									{
-										GIV(instructionPointer) = local_instructionPointer;
-										GIV(stackPointer) = local_stackPointer;
+										GIV(instructionPointer) = (char*)local_instructionPointer;
+										GIV(stackPointer) = (char*)local_stackPointer;
 										ensureContextIsExecutionSafeAfterAssignToStackPointer(obj);
-										local_instructionPointer = GIV(instructionPointer);
-										local_stackPointer = GIV(stackPointer);
+										local_instructionPointer = (sqInt)GIV(instructionPointer);
+										local_stackPointer = (sqInt)GIV(stackPointer);
 									}
 								}
 								goto l376;
@@ -12590,8 +12590,8 @@ interpret(void)
 								if (onCurrentPage) {
 									/* begin setStackPointersFromPage: */
 									thePage1 = GIV(stackPage);
-									local_stackPointer = (thePage1->headSP);
-									local_framePointer = (thePage1->headFP);
+									local_stackPointer = (sqInt)(thePage1->headSP);
+									local_framePointer = (sqInt)(thePage1->headFP);
 									/* end setStackPointersFromPage: */
 								} else {
 									markStackPageMostRecentlyUsed(GIV(stackPage));
@@ -12599,11 +12599,11 @@ interpret(void)
 								goto l376;
 							}
 							{
-								GIV(framePointer) = local_framePointer;
-								GIV(stackPointer) = local_stackPointer;
+								GIV(framePointer) = (char*)local_framePointer;
+								GIV(stackPointer) = (char*)local_stackPointer;
 								divorceFrameandContext(theFP, obj);
-								local_framePointer = GIV(framePointer);
-								local_stackPointer = GIV(stackPointer);
+								local_framePointer = (sqInt)GIV(framePointer);
+								local_stackPointer = (sqInt)GIV(stackPointer);
 							}
 							t27 = variableIndex == MethodIndex;
 							if (t27) {
@@ -12620,11 +12620,11 @@ interpret(void)
 							}
 							if (t28) {
 								{
-									GIV(instructionPointer) = local_instructionPointer;
-									GIV(stackPointer) = local_stackPointer;
+									GIV(instructionPointer) = (char*)local_instructionPointer;
+									GIV(stackPointer) = (char*)local_stackPointer;
 									ensureContextHasBytecodePC(obj);
-									local_instructionPointer = GIV(instructionPointer);
-									local_stackPointer = GIV(stackPointer);
+									local_instructionPointer = (sqInt)GIV(instructionPointer);
+									local_stackPointer = (sqInt)GIV(stackPointer);
 								}
 							}
 							/* begin storePointer:ofObject:withValue: */
@@ -12693,15 +12693,15 @@ interpret(void)
 							/* end storePointer:ofObject:withValue: */
 							if (variableIndex == StackPointerIndex) {
 								{
-									GIV(instructionPointer) = local_instructionPointer;
-									GIV(stackPointer) = local_stackPointer;
+									GIV(instructionPointer) = (char*)local_instructionPointer;
+									GIV(stackPointer) = (char*)local_stackPointer;
 									ensureContextIsExecutionSafeAfterAssignToStackPointer(obj);
-									local_instructionPointer = GIV(instructionPointer);
-									local_stackPointer = GIV(stackPointer);
+									local_instructionPointer = (sqInt)GIV(instructionPointer);
+									local_stackPointer = (sqInt)GIV(stackPointer);
 								}
 							}
 							markStackPageMostRecentlyUsed(GIV(stackPage));
-							assertValidExecutionPointersimbarline(((usqInt) local_instructionPointer ), local_framePointer, local_stackPointer, 1, __LINE__);
+							assertValidExecutionPointersimbarline(((usqInt) local_instructionPointer ), (char*)local_framePointer, (char*)local_stackPointer, 1, __LINE__);
 							l376:
 							;
 							/* end instVar:ofContext:put: */
@@ -12719,16 +12719,16 @@ interpret(void)
 								if (((((usqInt) (longAt(obj)) ) >> (immutableBitShift())) & 1) != 0) {
 									/* begin cannotAssign:to:withIndex: */
 									/* begin push: */
-									unsignedLongAtput((sp = local_stackPointer - BytesPerWord), obj);
-									local_stackPointer = sp;
+									unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), obj);
+									local_stackPointer = (sqInt)sp;
 									/* end push: */
 									/* begin push: */
-									unsignedLongAtput((sp2 = local_stackPointer - BytesPerWord), value);
-									local_stackPointer = sp2;
+									unsignedLongAtput((sp2 = (char*)(local_stackPointer - BytesPerWord)), value);
+									local_stackPointer = (sqInt)sp2;
 									/* end push: */
 									/* begin push: */
-									unsignedLongAtput((sp3 = local_stackPointer - BytesPerWord), ((((usqInt) (variableIndex + 1) ) << 3) | 1));
-									local_stackPointer = sp3;
+									unsignedLongAtput((sp3 = (char*)(local_stackPointer - BytesPerWord)), ((((usqInt) (variableIndex + 1) ) << 3) | 1));
+									local_stackPointer = (sqInt)sp3;
 									/* end push: */
 									/* begin splObj: */
 									/* begin fetchPointer:ofObject: */
@@ -12851,7 +12851,7 @@ interpret(void)
 						/* begin storeLiteralVariable:withValue: */
 						/* begin literalMaybeForwarder: */
 						{
-							assert(GIV(method) == (iframeMethod(local_framePointer)));
+							assert(GIV(method) == (iframeMethod((char*)local_framePointer)));
 							/* begin literal:ofMethod: */
 							/* begin fetchPointer:ofObject: */
 							literal = unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) (variableIndex + LiteralStart) ) << (shiftForWord())) ));
@@ -12871,16 +12871,16 @@ interpret(void)
 							if (((((usqInt) (longAt(litVar)) ) >> (immutableBitShift())) & 1) != 0) {
 								/* begin cannotAssign:to:withIndex: */
 								/* begin push: */
-								unsignedLongAtput((sp = local_stackPointer - BytesPerWord), litVar);
-								local_stackPointer = sp;
+								unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), litVar);
+								local_stackPointer = (sqInt)sp;
 								/* end push: */
 								/* begin push: */
-								unsignedLongAtput((sp2 = local_stackPointer - BytesPerWord), value);
-								local_stackPointer = sp2;
+								unsignedLongAtput((sp2 = (char*)(local_stackPointer - BytesPerWord)), value);
+								local_stackPointer = (sqInt)sp2;
 								/* end push: */
 								/* begin push: */
-								unsignedLongAtput((sp3 = local_stackPointer - BytesPerWord), ((((usqInt) (ValueIndex + 1) ) << 3) | 1));
-								local_stackPointer = sp3;
+								unsignedLongAtput((sp3 = (char*)(local_stackPointer - BytesPerWord)), ((((usqInt) (ValueIndex + 1) ) << 3) | 1));
+								local_stackPointer = (sqInt)sp3;
 								/* end push: */
 								/* begin splObj: */
 								/* begin fetchPointer:ofObject: */
@@ -13090,13 +13090,13 @@ interpret(void)
 							assert(GIV(stackPage) == (mostRecentlyUsedPage()));
 							assert(!(isFree(GIV(stackPage))));
 							/* begin setHeadFP:andSP:inPage: */
-							theSP = local_stackPointer;
-							assert(theSP < local_framePointer);
+							theSP = (char*)local_stackPointer;
+							assert(theSP < (char*)local_framePointer);
 							assert((theSP < ((GIV(stackPage)->baseAddress))) && (theSP > (((GIV(stackPage)->realStackLimit)) - (LargeContextSlots * BytesPerOop))));
-							assert((local_framePointer < ((GIV(stackPage)->baseAddress))) && (local_framePointer > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
+							assert(((char*)local_framePointer < ((GIV(stackPage)->baseAddress))) && ((char*)local_framePointer > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 							{
-								(GIV(stackPage)->headFP = local_framePointer);
-								(GIV(stackPage)->headSP = theSP);
+								(GIV(stackPage)->headFP = (char*)local_framePointer);
+								(GIV(stackPage)->headSP = (char*)theSP);
 							}
 							/* end setHeadFP:andSP:inPage: */
 							assert(pageListIsWellFormed());
@@ -13179,11 +13179,11 @@ interpret(void)
 								/* end storePointer:ofObject:withValue: */
 								if (variableIndex == StackPointerIndex) {
 									{
-										GIV(instructionPointer) = local_instructionPointer;
-										GIV(stackPointer) = local_stackPointer;
+										GIV(instructionPointer) = (char*)local_instructionPointer;
+										GIV(stackPointer) = (char*)local_stackPointer;
 										ensureContextIsExecutionSafeAfterAssignToStackPointer(obj);
-										local_instructionPointer = GIV(instructionPointer);
-										local_stackPointer = GIV(stackPointer);
+										local_instructionPointer = (sqInt)GIV(instructionPointer);
+										local_stackPointer = (sqInt)GIV(stackPointer);
 									}
 								}
 								goto l403;
@@ -13209,8 +13209,8 @@ interpret(void)
 								if (onCurrentPage) {
 									/* begin setStackPointersFromPage: */
 									thePage1 = GIV(stackPage);
-									local_stackPointer = (thePage1->headSP);
-									local_framePointer = (thePage1->headFP);
+									local_stackPointer = (sqInt)(thePage1->headSP);
+									local_framePointer = (sqInt)(thePage1->headFP);
 									/* end setStackPointersFromPage: */
 								} else {
 									markStackPageMostRecentlyUsed(GIV(stackPage));
@@ -13218,11 +13218,11 @@ interpret(void)
 								goto l403;
 							}
 							{
-								GIV(framePointer) = local_framePointer;
-								GIV(stackPointer) = local_stackPointer;
+								GIV(framePointer) = (char*)local_framePointer;
+								GIV(stackPointer) = (char*)local_stackPointer;
 								divorceFrameandContext(theFP, obj);
-								local_framePointer = GIV(framePointer);
-								local_stackPointer = GIV(stackPointer);
+								local_framePointer = (sqInt)GIV(framePointer);
+								local_stackPointer = (sqInt)GIV(stackPointer);
 							}
 							t27 = variableIndex == MethodIndex;
 							if (t27) {
@@ -13239,11 +13239,11 @@ interpret(void)
 							}
 							if (t28) {
 								{
-									GIV(instructionPointer) = local_instructionPointer;
-									GIV(stackPointer) = local_stackPointer;
+									GIV(instructionPointer) = (char*)local_instructionPointer;
+									GIV(stackPointer) = (char*)local_stackPointer;
 									ensureContextHasBytecodePC(obj);
-									local_instructionPointer = GIV(instructionPointer);
-									local_stackPointer = GIV(stackPointer);
+									local_instructionPointer = (sqInt)GIV(instructionPointer);
+									local_stackPointer = (sqInt)GIV(stackPointer);
 								}
 							}
 							/* begin storePointer:ofObject:withValue: */
@@ -13312,15 +13312,15 @@ interpret(void)
 							/* end storePointer:ofObject:withValue: */
 							if (variableIndex == StackPointerIndex) {
 								{
-									GIV(instructionPointer) = local_instructionPointer;
-									GIV(stackPointer) = local_stackPointer;
+									GIV(instructionPointer) = (char*)local_instructionPointer;
+									GIV(stackPointer) = (char*)local_stackPointer;
 									ensureContextIsExecutionSafeAfterAssignToStackPointer(obj);
-									local_instructionPointer = GIV(instructionPointer);
-									local_stackPointer = GIV(stackPointer);
+									local_instructionPointer = (sqInt)GIV(instructionPointer);
+									local_stackPointer = (sqInt)GIV(stackPointer);
 								}
 							}
 							markStackPageMostRecentlyUsed(GIV(stackPage));
-							assertValidExecutionPointersimbarline(((usqInt) local_instructionPointer ), local_framePointer, local_stackPointer, 1, __LINE__);
+							assertValidExecutionPointersimbarline(((usqInt) local_instructionPointer ), (char*)local_framePointer, (char*)local_stackPointer, 1, __LINE__);
 							l403:
 							;
 							/* end instVar:ofContext:put: */
@@ -13338,16 +13338,16 @@ interpret(void)
 								if (((((usqInt) (longAt(obj)) ) >> (immutableBitShift())) & 1) != 0) {
 									/* begin cannotAssign:to:withIndex: */
 									/* begin push: */
-									unsignedLongAtput((sp = local_stackPointer - BytesPerWord), obj);
-									local_stackPointer = sp;
+									unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), obj);
+									local_stackPointer = (sqInt)sp;
 									/* end push: */
 									/* begin push: */
-									unsignedLongAtput((sp2 = local_stackPointer - BytesPerWord), anObject);
-									local_stackPointer = sp2;
+									unsignedLongAtput((sp2 = (char*)(local_stackPointer - BytesPerWord)), anObject);
+									local_stackPointer = (sqInt)sp2;
 									/* end push: */
 									/* begin push: */
-									unsignedLongAtput((sp3 = local_stackPointer - BytesPerWord), ((((usqInt) (variableIndex + 1) ) << 3) | 1));
-									local_stackPointer = sp3;
+									unsignedLongAtput((sp3 = (char*)(local_stackPointer - BytesPerWord)), ((((usqInt) (variableIndex + 1) ) << 3) | 1));
+									local_stackPointer = (sqInt)sp3;
 									/* end push: */
 									/* begin splObj: */
 									/* begin fetchPointer:ofObject: */
@@ -13467,7 +13467,7 @@ interpret(void)
 						anObject = unsignedLongAt(local_stackPointer);
 						/* begin literalMaybeForwarder: */
 						{
-							assert(GIV(method) == (iframeMethod(local_framePointer)));
+							assert(GIV(method) == (iframeMethod((char*)local_framePointer)));
 							/* begin literal:ofMethod: */
 							/* begin fetchPointer:ofObject: */
 							literal = unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) (variableIndex + LiteralStart) ) << (shiftForWord())) ));
@@ -13487,16 +13487,16 @@ interpret(void)
 							if (((((usqInt) (longAt(litVar)) ) >> (immutableBitShift())) & 1) != 0) {
 								/* begin cannotAssign:to:withIndex: */
 								/* begin push: */
-								unsignedLongAtput((sp = local_stackPointer - BytesPerWord), litVar);
-								local_stackPointer = sp;
+								unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), litVar);
+								local_stackPointer = (sqInt)sp;
 								/* end push: */
 								/* begin push: */
-								unsignedLongAtput((sp2 = local_stackPointer - BytesPerWord), anObject);
-								local_stackPointer = sp2;
+								unsignedLongAtput((sp2 = (char*)(local_stackPointer - BytesPerWord)), anObject);
+								local_stackPointer = (sqInt)sp2;
 								/* end push: */
 								/* begin push: */
-								unsignedLongAtput((sp3 = local_stackPointer - BytesPerWord), ((((usqInt) (ValueIndex + 1) ) << 3) | 1));
-								local_stackPointer = sp3;
+								unsignedLongAtput((sp3 = (char*)(local_stackPointer - BytesPerWord)), ((((usqInt) (ValueIndex + 1) ) << 3) | 1));
+								local_stackPointer = (sqInt)sp3;
 								/* end push: */
 								/* begin splObj: */
 								/* begin fetchPointer:ofObject: */
@@ -13706,7 +13706,7 @@ interpret(void)
 						GIV(extA) = 0;
 						/* begin literalMaybeForwarder: */
 						{
-							assert(GIV(method) == (iframeMethod(local_framePointer)));
+							assert(GIV(method) == (iframeMethod((char*)local_framePointer)));
 							/* begin literal:ofMethod: */
 							/* begin fetchPointer:ofObject: */
 							literal = unsignedLongAt((GIV(method) + BaseHeaderSize) + ((sqInt) (((usqInt) (compiledBlockLiteralIndex + LiteralStart) ) << (shiftForWord())) ));
@@ -13746,16 +13746,16 @@ interpret(void)
 							/* end nilObject */
 						} else {
 							/* begin ensureFrameIsMarried:SP: */
-							theFP = local_framePointer;
-							theSP = local_stackPointer + (numCopied * BytesPerOop);
+							theFP = (char*)local_framePointer;
+							theSP = (char*)(local_stackPointer + (numCopied * BytesPerOop));
 							if (((isMachineCodeIP(((usqInt) (unsignedLongAt(theFP + FoxMethod)) )))
 								 ? ((unsignedLongAt(theFP + FoxMethod)) & MFMethodFlagHasContextFlag) != 0
 								 : (byteAt((theFP + FoxIFrameFlags) + 2)) != 0)) {
-								assert(isContext(frameContext(theFP)));
+								assert(isContext(frameContext((char*)theFP)));
 								context = unsignedLongAt(theFP + FoxThisContext);
 								goto l423;
 							}
-							context = marryFrameSP(theFP, theSP);
+							context = marryFrameSP((char*)theFP, (char*)theSP);
 							l423:
 							;
 							/* end ensureFrameIsMarried:SP: */
@@ -13854,8 +13854,8 @@ interpret(void)
 						/* end fetchByte */
 						/* end fetchNextBytecode */
 						/* begin push: */
-						unsignedLongAtput((sp = local_stackPointer - BytesPerWord), newClosure);
-						local_stackPointer = sp;
+						unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), newClosure);
+						local_stackPointer = (sqInt)sp;
 						/* end push: */
 						/* end pushFullClosureNumArgs:copiedValues:compiledBlock:receiverIsOnStack:ignoreContext: */
 					}
@@ -13899,8 +13899,8 @@ interpret(void)
 						;
 						/* begin push: */
 						object = unsignedLongAt((tempVector + BaseHeaderSize) + ((sqInt) (((usqInt) remoteTempIndex ) << (shiftForWord())) ));
-						unsignedLongAtput((sp = local_stackPointer - BytesPerWord), object);
-						local_stackPointer = sp;
+						unsignedLongAtput((sp = (char*)(local_stackPointer - BytesPerWord)), object);
+						local_stackPointer = (sqInt)sp;
 						/* end push: */
 						/* end pushRemoteTemp:inVectorAt: */
 					}
@@ -14132,9 +14132,9 @@ interpret(void)
 	};
 	local_instructionPointer -= 1;
 	{
-		GIV(framePointer) = local_framePointer;
-		GIV(instructionPointer) = local_instructionPointer;
-		GIV(stackPointer) = local_stackPointer;
+		GIV(framePointer) = (char*)local_framePointer;
+		GIV(instructionPointer) = (char*)local_instructionPointer;
+		GIV(stackPointer) = (char*)local_stackPointer;
 		return null;
 	}
 	return 0;
@@ -14144,7 +14144,7 @@ static sqInt NoDbgRegParms
 existSegmentinImage(sqInt segmentIndex, sqInt imageFileName)
 {
 	char buffer[255];
-	sqInt fileName;
+	char *fileName;
 
 	{
 		snprintf(buffer, 0xFF, "%s/seg%d%s", ((char *) imageFileName ), ((int) segmentIndex ), ".data");
@@ -14167,7 +14167,7 @@ headerFileNameinImageintobufferSize(sqInt imageFileName, sqInt buffer, sqInt buf
 	char * headerFileName;
 
 	headerFileName = "header.ston";
-	return (snprintf(buffer, bufferSize, "%s/%s", ((char *) imageFileName ), ((char *) headerFileName )), buffer);
+	return (snprintf((char*)buffer, bufferSize, "%s/%s", ((char *) imageFileName ), ((char *) headerFileName )), (sqInt)buffer);
 }
 /* AbstractComposedImageAccess>>#readLineFrom:into:ofSize: */
 static void NoDbgRegParms
@@ -14178,15 +14178,15 @@ readLineFromintoofSize(sqImageFile file, char *lineBuffer, sqInt bufferSize)
 
 	{
 		idx = 0;
-		aCharacter = fgetc(file);
+		aCharacter = fgetc((FILE*)file);
 		while (!(aCharacter == -1)) {
 			if (aCharacter == 10) {
 				aCharacter = -1;
 			} else {
 				if (aCharacter == 13) {
-					aCharacter = fgetc(file);
+					aCharacter = fgetc((FILE*)file);
 					if (aCharacter != 13) {
-						ungetc(aCharacter, file);
+						ungetc(aCharacter, (FILE*)file);
 					}
 					aCharacter = -1;
 				} else {
@@ -14195,7 +14195,7 @@ readLineFromintoofSize(sqImageFile file, char *lineBuffer, sqInt bufferSize)
 					if (bufferSize == (idx + 1)) {
 						aCharacter = -1;
 					} else {
-						aCharacter = fgetc(file);
+						aCharacter = fgetc((FILE*)file);
 					}
 				}
 			}
@@ -14211,7 +14211,7 @@ segmentDataFileinImage(sqInt segmentIndex, sqInt imageFileName)
 
 	/* begin simulationOnly: */
 	/* end simulationOnly: */
-	return (snprintf(buffer, 0xFF, "%s/seg%d%s", ((char *) imageFileName ), ((int) segmentIndex ), ".data"), buffer);
+	return (snprintf(buffer, 0xFF, "%s/seg%d%s", ((char *) imageFileName ), ((int) segmentIndex ), ".data"), (sqInt)buffer);
 }
 /* AbstractComposedImageAccess>>#segmentMetadataFile:inImage: */
 static sqInt NoDbgRegParms
@@ -14222,7 +14222,7 @@ segmentMetadataFileinImage(sqInt segmentIndex, sqInt imageFileName)
 	/* begin simulationOnly: */
 	/* end simulationOnly: */
 	/* begin segmentFileName:withExtension:inImage:into:bufferSize: */
-	return (snprintf(buffer, 0xFF, "%s/seg%d%s", ((char *) imageFileName ), ((int) segmentIndex ), ".ston"), buffer);
+	return (snprintf(buffer, 0xFF, "%s/seg%d%s", ((char *) imageFileName ), ((int) segmentIndex ), ".ston"), (sqInt)buffer);
 	/* end segmentFileName:withExtension:inImage:into:bufferSize: */
 }
 /*	Read and verify the image file version number and return true if the the 
@@ -14430,7 +14430,7 @@ activateCoggedNewMethod(sqInt inInterpreter)
 		/* end push: */
 	};
 	if ((methodHeader & AlternateHeaderHasPrimFlag) && (GIV(primFailCode) != 0)) {
-		reapAndResetErrorCodeToheader(GIV(framePointer), methodHeader);
+		reapAndResetErrorCodeToheader((sqInt)GIV(framePointer), methodHeader);
 	}
 	if (GIV(stackPointer) >= GIV(stackLimit)) {
 		assert(((cogMethod->stackCheckOffset)) > (noCheckEntryOffset()));
@@ -14446,7 +14446,7 @@ activateCoggedNewMethod(sqInt inInterpreter)
 		ceEnterCogCodePopReceiverReg();
 		error("should not be reached");
 	}
-	GIV(instructionPointer) = ((sqInt) cogMethod ) + ((cogMethod->stackCheckOffset));
+	GIV(instructionPointer) = (char*)(((sqInt) cogMethod ) + ((cogMethod->stackCheckOffset)));
 	switched = handleStackOverflowOrEventAllowContextSwitch(canContextSwitchIfActivatingheader(GIV(newMethod), methodHeader));
 	returnToExecutivepostContextSwitch(inInterpreter, switched);
 }
@@ -14492,7 +14492,7 @@ activateNewMethod(void)
 			assert(!(isMachineCodeFrame(GIV(framePointer))));
 			unsignedLongAtput(GIV(framePointer) + FoxIFSavedIP, ((sqInt) GIV(instructionPointer) ));
 			/* end iframeSavedIP:put: */
-			GIV(instructionPointer) = ceReturnToInterpreterPC();
+			GIV(instructionPointer) = (char*)ceReturnToInterpreterPC();
 		}
 		{
 			activateCoggedNewMethod(inInterpreter);
@@ -14517,7 +14517,7 @@ activateNewMethod(void)
 		assert(!(isMachineCodeFrame(GIV(framePointer))));
 		unsignedLongAtput(GIV(framePointer) + FoxIFSavedIP, GIV(instructionPointer));
 		/* end iframeSavedIP:put: */
-		GIV(instructionPointer) = ceReturnToInterpreterPC();
+		GIV(instructionPointer) = (char*)ceReturnToInterpreterPC();
 	}
 	/* begin push: */
 	unsignedLongAtput((sp8 = GIV(stackPointer) - BytesPerWord), GIV(instructionPointer));
@@ -14559,7 +14559,7 @@ activateNewMethod(void)
 		unsignedLongAtput((sp4 = GIV(stackPointer) - BytesPerWord), 0);
 		GIV(stackPointer) = sp4;
 		/* end push: */
-		GIV(instructionPointer) = initialIP - 1;
+		GIV(instructionPointer) = (char*)(initialIP - 1);
 	} else {
 		/* begin push: */
 		object1 = ((usqInt) cogMethod );
@@ -14570,7 +14570,7 @@ activateNewMethod(void)
 		unsignedLongAtput((sp6 = GIV(stackPointer) - BytesPerWord), GIV(nilObj));
 		GIV(stackPointer) = sp6;
 		/* end push: */
-		GIV(instructionPointer) = ((usqInt) cogMethod ) + ((cogMethod->stackCheckOffset));
+		GIV(instructionPointer) = (char*)((usqInt) cogMethod ) + ((cogMethod->stackCheckOffset));
 	}
 	/* begin push: */
 	unsignedLongAtput((sp10 = GIV(stackPointer) - BytesPerWord), rcvr);
@@ -14587,7 +14587,7 @@ activateNewMethod(void)
 			GIV(instructionPointer) += 3;
 		}
 		if (GIV(primFailCode) != 0) {
-			shouldSkipStoreBytecode = reapAndResetErrorCodeToheader(GIV(framePointer), methodHeader2);
+			shouldSkipStoreBytecode = reapAndResetErrorCodeToheader((sqInt)GIV(framePointer), methodHeader2);
 			if ((cogMethod == null) && shouldSkipStoreBytecode) {
 				GIV(instructionPointer) += 2;
 			}
@@ -14847,8 +14847,8 @@ allocateMemoryForImagewithHeader(sqImageFile f, SpurImageHeaderStruct header)
 		/* end allocateMemoryForImageHeader: */
 		if (hasToUseComposedFormat()) {
 			/* begin CIR_doLoadImageFromFile:withHeader: */
-			oldSpaceBytesRead = CIR_readSegmentsFromImageFileheader(f, header);
-			permSpaceBytesRead = CIR_readPermanentSpaceFromImageFileheader(f, header);
+			oldSpaceBytesRead = CIR_readSegmentsFromImageFileheader((sqInt)f, header);
+			permSpaceBytesRead = CIR_readPermanentSpaceFromImageFileheader((sqInt)f, header);
 			bytesRead = oldSpaceBytesRead + permSpaceBytesRead;
 			/* begin initializeInterpreterFromHeader:withBytes: */
 			if (bytesRead != ((header.dataSize))) {
@@ -14922,7 +14922,7 @@ allocateMemoryForImagewithHeader(sqImageFile f, SpurImageHeaderStruct header)
 				/* begin fetchPointer:ofObject: */
 				oop = unsignedLongAt((classArrayObj + BaseHeaderSize) + ((sqInt) (((usqInt) (i5 - 1) ) << (shiftForWord())) ));
 				/* end fetchPointer:ofObject: */
-				if ((((oop & (tagMask())) == 0) && (((((usqInt) (longAt(oop)) ) >> (formatShift())) & (formatMask())) >= (firstByteFormat()))) && (((lengthOfformat(oop, (((usqInt) (longAt(oop)) ) >> (formatShift())) & (formatMask()))) == 5) && ((strncmp("Array", firstFixedField(oop), 5)) == 0))) {
+				if ((((oop & (tagMask())) == 0) && (((((usqInt) (longAt(oop)) ) >> (formatShift())) & (formatMask())) >= (firstByteFormat()))) && (((lengthOfformat(oop, (((usqInt) (longAt(oop)) ) >> (formatShift())) & (formatMask()))) == 5) && ((strncmp("Array", (char*)firstFixedField(oop), 5)) == 0))) {
 					GIV(classNameIndex) = i5 - 1;
 				}
 			};
@@ -15087,7 +15087,7 @@ allocateMemoryForImagewithHeader(sqImageFile f, SpurImageHeaderStruct header)
 				/* begin fetchPointer:ofObject: */
 				oop2 = unsignedLongAt((classArrayObj2 + BaseHeaderSize) + ((sqInt) (((usqInt) (i54 - 1) ) << (shiftForWord())) ));
 				/* end fetchPointer:ofObject: */
-				if ((((oop2 & (tagMask())) == 0) && (((((usqInt) (longAt(oop2)) ) >> (formatShift())) & (formatMask())) >= (firstByteFormat()))) && (((lengthOfformat(oop2, (((usqInt) (longAt(oop2)) ) >> (formatShift())) & (formatMask()))) == 5) && ((strncmp("Array", firstFixedField(oop2), 5)) == 0))) {
+				if ((((oop2 & (tagMask())) == 0) && (((((usqInt) (longAt(oop2)) ) >> (formatShift())) & (formatMask())) >= (firstByteFormat()))) && (((lengthOfformat(oop2, (((usqInt) (longAt(oop2)) ) >> (formatShift())) & (formatMask()))) == 5) && ((strncmp("Array", (char*)firstFixedField(oop2), 5)) == 0))) {
 					GIV(classNameIndex) = i54 - 1;
 				}
 			};
@@ -15213,7 +15213,7 @@ assertValidStackedInstructionPointersInline(StackPage *aStackPage, sqInt ln)
 	}
 	prevFrameWasCogged = 0;
 	if ((GIV(stackPage) == aStackPage) && (GIV(instructionPointer) != 0)) {
-		theIP = GIV(instructionPointer);
+		theIP = (usqInt)GIV(instructionPointer);
 		theFP = GIV(framePointer);
 	} else {
 		theIP = ((usqInt) (unsignedLongAt((aStackPage->headSP))) );
@@ -15641,9 +15641,9 @@ ceBaseFrameReturn(sqInt returnValue)
 		ceEnterCogCodePopReceiverReg();
 		/* end callEnilopmart: */
 	}
-	GIV(instructionPointer) = unsignedLongAt(GIV(stackPointer));
-	if (GIV(instructionPointer) == (ceReturnToInterpreterPC())) {
-		GIV(instructionPointer) = unsignedLongAt(GIV(framePointer) + FoxIFSavedIP);
+	GIV(instructionPointer) = (char*)unsignedLongAt(GIV(stackPointer));
+	if ((usqInt)GIV(instructionPointer) == (ceReturnToInterpreterPC())) {
+		GIV(instructionPointer) = (char*)unsignedLongAt(GIV(framePointer) + FoxIFSavedIP);
 	}
 	/* begin setMethod: */
 	aMethodObj = unsignedLongAt(GIV(framePointer) + FoxMethod);
@@ -15676,7 +15676,7 @@ ceCannotAssignTowithIndexvalueToAssign(sqInt immutableObject, sqInt index, sqInt
 	/* begin popStack */
 	top = unsignedLongAt(GIV(stackPointer));
 	GIV(stackPointer) += BytesPerWord;
-	GIV(instructionPointer) = top;
+	GIV(instructionPointer) = (char*)top;
 	/* end popStack */
 	/* begin push: */
 	unsignedLongAtput((sp = GIV(stackPointer) - BytesPerWord), immutableObject);
@@ -15790,7 +15790,7 @@ ceContextinstVar(sqInt maybeContext, sqInt slotIndex)
 		/* begin popStack */
 		top = unsignedLongAt(GIV(stackPointer));
 		GIV(stackPointer) += BytesPerWord;
-		GIV(instructionPointer) = top;
+		GIV(instructionPointer) = (char*)top;
 		/* end popStack */
 		result = instVarofContext(slotIndex, maybeContext);
 		/* begin push: */
@@ -15824,7 +15824,7 @@ ceContextinstVarvalue(sqInt maybeMarriedContext, sqInt slotIndex, sqInt anOop)
 		/* begin popStack */
 		top = unsignedLongAt(GIV(stackPointer));
 		GIV(stackPointer) += BytesPerWord;
-		GIV(instructionPointer) = top;
+		GIV(instructionPointer) = (char*)top;
 		/* end popStack */
 		/* begin instVar:ofContext:put: */
 		assert(isMarriedOrWidowedContext(maybeMarriedContext));
@@ -15840,7 +15840,7 @@ ceContextinstVarvalue(sqInt maybeMarriedContext, sqInt slotIndex, sqInt anOop)
 		assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 		{
 			(GIV(stackPage)->headFP = GIV(framePointer));
-			(GIV(stackPage)->headSP = theSP);
+			(GIV(stackPage)->headSP = (char*)theSP);
 		}
 		/* end setHeadFP:andSP:inPage: */
 		assert(pageListIsWellFormed());
@@ -16075,7 +16075,7 @@ ceInterpretMethodFromPICreceiver(sqInt aMethodObj, sqInt rcvr)
 	/* begin popStack */
 	top = unsignedLongAt(GIV(stackPointer));
 	GIV(stackPointer) += BytesPerWord;
-	GIV(instructionPointer) = top;
+	GIV(instructionPointer) = (char*)top;
 	/* end popStack */
 	return interpretMethodFromMachineCode();
 }
@@ -16104,7 +16104,7 @@ ceMNUFromPICMNUMethodreceiver(sqInt aMethodObj, sqInt rcvr)
 		/* begin popStack */
 		top = unsignedLongAt(GIV(stackPointer));
 		GIV(stackPointer) += BytesPerWord;
-		GIV(instructionPointer) = top;
+		GIV(instructionPointer) = (char*)top;
 		/* end popStack */
 		createActualMessageTo(((((tagBits = rcvr & (tagMask()))) != 0)
 			 ? (/* begin fetchPointer:ofObject: */ unsignedLongAt((GIV(classTableFirstPage) + BaseHeaderSize) + ((sqInt) (((usqInt) tagBits ) << (shiftForWord())) )) /* end fetchPointer:ofObject: */)
@@ -16229,7 +16229,7 @@ ceNonLocalReturn(sqInt returnValue)
 	assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 	{
 		(GIV(stackPage)->headFP = GIV(framePointer));
-		(GIV(stackPage)->headSP = theSP3);
+		(GIV(stackPage)->headSP = (char*)theSP3);
 	}
 	/* end setHeadFP:andSP:inPage: */
 	assert(pageListIsWellFormed());
@@ -16257,7 +16257,7 @@ ceNonLocalReturn(sqInt returnValue)
 				ourContext = unsignedLongAt(theFP1 + FoxThisContext);
 				goto l8;
 			}
-			ourContext = marryFrameSP(theFP1, theSP);
+			ourContext = marryFrameSP(theFP1, (char*)theSP);
 			l8:
 			;
 			/* end ensureFrameIsMarried:SP: */
@@ -16515,14 +16515,14 @@ ceNonLocalReturn(sqInt returnValue)
 		/* begin popStack */
 		top = unsignedLongAt(GIV(stackPointer));
 		GIV(stackPointer) += BytesPerWord;
-		GIV(instructionPointer) = top;
+		GIV(instructionPointer) = (char*)top;
 		/* end popStack */
 	} else {
 		do{
 			callerFP = GIV(framePointer);
 			GIV(framePointer) = pointerForOop(unsignedLongAt(GIV(framePointer) + FoxSavedFP));
 		}while(GIV(framePointer) != frameToReturnTo);
-		GIV(instructionPointer) = ((usqInt) (pointerForOop(unsignedLongAt(callerFP + FoxCallerSavedIP))) );
+		GIV(instructionPointer) = (char*)((usqInt) (pointerForOop(unsignedLongAt(callerFP + FoxCallerSavedIP))) );
 		{
 			assert(!(isBaseFrame(callerFP)));
 			GIV(stackPointer) = (callerFP + (frameStackedReceiverOffset(callerFP))) + BytesPerWord;
@@ -16538,7 +16538,7 @@ ceReapAndResetErrorCodeFor(CogMethod *cogMethod)
 
 	assert(GIV(primFailCode) != 0);
 	GIV(newMethod) = (cogMethod->methodObject);
-	reapAndResetErrorCodeToheader(GIV(framePointer), (cogMethod->methodHeader));
+	reapAndResetErrorCodeToheader((sqInt)GIV(framePointer), (cogMethod->methodHeader));
 }
 /*	Perform a return from a machine code frame to an interpreted frame. 
 	The machine code has executed a return instruction when the return address 
@@ -16574,7 +16574,7 @@ ceReturnToInterpreter(sqInt anOop)
 	}
 	/* end setMethod: */
 	assertValidExecutionPointersimbarline(unsignedLongAt(GIV(framePointer) + FoxIFSavedIP), GIV(framePointer), GIV(stackPointer), 1, __LINE__);
-	GIV(instructionPointer) = unsignedLongAt(GIV(framePointer) + FoxIFSavedIP);
+	GIV(instructionPointer) = (char*)unsignedLongAt(GIV(framePointer) + FoxIFSavedIP);
 	/* begin push: */
 	unsignedLongAtput((sp = GIV(stackPointer) - BytesPerWord), anOop);
 	GIV(stackPointer) = sp;
@@ -16674,7 +16674,7 @@ ceSendAborttonumArgs(sqInt selector, sqInt rcvr, sqInt numArgs)
 	/* begin popStack */
 	top = unsignedLongAt(GIV(stackPointer));
 	GIV(stackPointer) += BytesPerWord;
-	GIV(instructionPointer) = top;
+	GIV(instructionPointer) = (char*)top;
 	/* end popStack */
 	if (((GIV(newMethod) & (tagMask())) == 0) && ((((((usqInt) (longAt(GIV(newMethod))) ) >> (formatShift())) & (formatMask())) >= (firstCompiledMethodFormat())) && (isCogMethodReference(unsignedLongAt((GIV(newMethod) + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) )))))) {
 		/* begin executeNewMethod */
@@ -16879,7 +16879,7 @@ ceSendFromInLineCacheMiss(CogMethod *cogMethodOrPIC)
 	/* begin popStack */
 	top = unsignedLongAt(GIV(stackPointer));
 	GIV(stackPointer) += BytesPerWord;
-	GIV(instructionPointer) = top;
+	GIV(instructionPointer) = (char*)top;
 	/* end popStack */
 	if (((GIV(newMethod) & (tagMask())) == 0) && ((((((usqInt) (longAt(GIV(newMethod))) ) >> (formatShift())) & (formatMask())) >= (firstCompiledMethodFormat())) && (isCogMethodReference(unsignedLongAt((GIV(newMethod) + BaseHeaderSize) + ((sqInt) (((usqInt) HeaderIndex ) << (shiftForWord())) )))))) {
 		/* begin executeNewMethod */
@@ -17022,9 +17022,9 @@ ceSendMustBeBooleanTointerpretingAtDelta(sqInt aNonBooleanObject, sqInt jumpSize
 	/* begin popStack */
 	top = unsignedLongAt(GIV(stackPointer));
 	GIV(stackPointer) += BytesPerWord;
-	GIV(instructionPointer) = top;
+	GIV(instructionPointer) = (char*)top;
 	/* end popStack */
-	GIV(instructionPointer) = bytecodePCForstartBcpcin(GIV(instructionPointer), startBcpc, cogMethod);
+	GIV(instructionPointer) = (char*)bytecodePCForstartBcpcin((sqInt)GIV(instructionPointer), startBcpc, cogMethod);
 	GIV(instructionPointer) = (((methodObj + BaseHeaderSize) + GIV(instructionPointer)) - jumpSize) - 1;
 	for (p = GIV(stackPointer); p <= (GIV(framePointer) + FoxMFReceiver); p += BytesPerWord) {
 		oop = unsignedLongAt(p);
@@ -17064,7 +17064,7 @@ ceSendMustBeBoolean(sqInt anObject)
 	/* begin popStack */
 	top = unsignedLongAt(GIV(stackPointer));
 	GIV(stackPointer) += BytesPerWord;
-	GIV(instructionPointer) = top;
+	GIV(instructionPointer) = (char*)top;
 	/* end popStack */
 	/* begin push: */
 	unsignedLongAtput((sp = GIV(stackPointer) - BytesPerWord), anObject);
@@ -17249,7 +17249,7 @@ ceSendabovetonumArgs(sqInt selector, sqInt methodClass, sqInt rcvr, sqInt numArg
 		/* begin popStack */
 		top = unsignedLongAt(GIV(stackPointer));
 		GIV(stackPointer) += BytesPerWord;
-		GIV(instructionPointer) = top;
+		GIV(instructionPointer) = (char*)top;
 		/* end popStack */
 		/* begin executeNewMethod */
 		/* begin executeNewMethod: */
@@ -17356,7 +17356,7 @@ ceSendabovetonumArgs(sqInt selector, sqInt methodClass, sqInt rcvr, sqInt numArg
 	/* begin popStack */
 	top2 = unsignedLongAt(GIV(stackPointer));
 	GIV(stackPointer) += BytesPerWord;
-	GIV(instructionPointer) = top2;
+	GIV(instructionPointer) = (char*)top2;
 	/* end popStack */
 	return interpretMethodFromMachineCode();
 }
@@ -17580,7 +17580,7 @@ ceSendsupertonumArgs(sqInt selector, sqInt superNormalBar, sqInt rcvr, sqInt num
 		/* begin popStack */
 		top = unsignedLongAt(GIV(stackPointer));
 		GIV(stackPointer) += BytesPerWord;
-		GIV(instructionPointer) = top;
+		GIV(instructionPointer) = (char*)top;
 		/* end popStack */
 		/* begin executeNewMethod */
 		/* begin executeNewMethod: */
@@ -17687,7 +17687,7 @@ ceSendsupertonumArgs(sqInt selector, sqInt superNormalBar, sqInt rcvr, sqInt num
 	/* begin popStack */
 	top2 = unsignedLongAt(GIV(stackPointer));
 	GIV(stackPointer) += BytesPerWord;
-	GIV(instructionPointer) = top2;
+	GIV(instructionPointer) = (char*)top2;
 	/* end popStack */
 	return interpretMethodFromMachineCode();
 }
@@ -17715,8 +17715,8 @@ ceStackOverflow(sqInt contextSwitchIfNotNil)
 	/* end popStack */
 	cogMethod = ((CogMethod *) ((unsignedLongAt(GIV(framePointer) + FoxMethod)) & MFMethodMask) );
 	assert((cesoRetAddr - (abortOffset())) == ((sqInt) cogMethod ));
-	GIV(instructionPointer) = ((sqInt) cogMethod ) + ((cogMethod->stackCheckOffset));
-	assertValidExecutionPointersimbarline(GIV(instructionPointer), GIV(framePointer), GIV(stackPointer), 0, __LINE__);
+	GIV(instructionPointer) = (char*)(((sqInt) cogMethod ) + ((cogMethod->stackCheckOffset)));
+	assertValidExecutionPointersimbarline((usqInt)GIV(instructionPointer), GIV(framePointer), GIV(stackPointer), 0, __LINE__);
 	GIV(method) = (GIV(newMethod) = (GIV(messageSelector) = GIV(nilObj)));
 	switched = handleStackOverflowOrEventAllowContextSwitch(contextSwitchIfNotNil != 0);
 	returnToExecutivepostContextSwitch(0, switched);
@@ -18119,7 +18119,7 @@ commenceCogCompiledCodeCompaction(void)
 		/* begin popStack */
 		top = unsignedLongAt(GIV(stackPointer));
 		GIV(stackPointer) += BytesPerWord;
-		GIV(instructionPointer) = top;
+		GIV(instructionPointer) = (char*)top;
 		/* end popStack */
 		/* begin writeBackHeadStackPointer */
 		assert((GIV(stackPointer) < ((GIV(stackPage)->baseAddress))) && (GIV(stackPointer) > (((GIV(stackPage)->realStackLimit)) - (LargeContextSlots * BytesPerOop))));
@@ -18224,11 +18224,11 @@ divorceAMachineCodeFrameWithCogMethodin(CogMethod *cogMethod, StackPage *aStackP
 			if (((isMachineCodeIP(((usqInt) (unsignedLongAt(theFP + FoxMethod)) )))
 				 ? ((unsignedLongAt(theFP + FoxMethod)) & MFMethodFlagHasContextFlag) != 0
 				 : (byteAt((theFP + FoxIFrameFlags) + 2)) != 0)) {
-				assert(isContext(frameContext(theFP)));
+				assert(isContext(frameContext((char*)theFP)));
 				theContext = unsignedLongAt(theFP + FoxThisContext);
 				goto l1;
 			}
-			theContext = marryFrameSP(theFP, theSP);
+			theContext = marryFrameSP((char*)theFP, (char*)theSP);
 			l1:
 			;
 			/* end ensureFrameIsMarried:SP: */
@@ -18384,10 +18384,10 @@ enterSmalltalkExecutiveImplementation(void)
 		assert(isOopCompiledMethod(GIV(method)));
 	}
 	/* end setMethod: */
-	if (GIV(instructionPointer) == (ceReturnToInterpreterPC())) {
-		GIV(instructionPointer) = unsignedLongAt(GIV(framePointer) + FoxIFSavedIP);
+	if ((usqInt)GIV(instructionPointer) == (ceReturnToInterpreterPC())) {
+		GIV(instructionPointer) = (char*)unsignedLongAt(GIV(framePointer) + FoxIFSavedIP);
 	}
-	assertValidExecutionPointersimbarline(GIV(instructionPointer), GIV(framePointer), GIV(stackPointer), 1, __LINE__);
+	assertValidExecutionPointersimbarline((usqInt)GIV(instructionPointer), GIV(framePointer), GIV(stackPointer), 1, __LINE__);
 	interpret();
 	return 0;
 }
@@ -18801,14 +18801,14 @@ followForwardingPointersInStackZone(sqInt theBecomeEffectsFlags)
 	assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 	{
 		(GIV(stackPage)->headFP = GIV(framePointer));
-		(GIV(stackPage)->headSP = theSP1);
+		(GIV(stackPage)->headSP = (char*)theSP1);
 	}
 	/* end setHeadFP:andSP:inPage: */
 	assert(pageListIsWellFormed());
 	/* end writeBackHeadFramePointers */
 	if (theBecomeEffectsFlags & BecameCompiledMethodFlag) {
 		if (((long64At(GIV(method))) & ((classIndexMask()) - (isForwardedObjectClassIndexPun()))) == 0) {
-			theIPPtr = GIV(instructionPointer) - GIV(method);
+			theIPPtr = (usqInt)GIV(instructionPointer) - GIV(method);
 			/* begin followForwarded: */
 			assert(isUnambiguouslyForwarder(GIV(method)));
 			/* begin fetchPointer:ofMaybeForwardedObject: */
@@ -18821,7 +18821,7 @@ followForwardingPointersInStackZone(sqInt theBecomeEffectsFlags)
 			};
 			GIV(method) = referent;
 			/* end followForwarded: */
-			GIV(instructionPointer) = GIV(method) + theIPPtr;
+			GIV(instructionPointer) = (char*)(GIV(method) + theIPPtr);
 		}
 		if (((GIV(newMethod) & (tagMask())) == 0) && (((long64At(GIV(newMethod))) & ((classIndexMask()) - (isForwardedObjectClassIndexPun()))) == 0)) {
 			/* begin followForwarded: */
@@ -19154,7 +19154,7 @@ handleMNUInMachineCodeToclassForMessage(sqInt selectorIndex, sqInt rcvr, sqInt c
 	/* begin popStack */
 	top = unsignedLongAt(GIV(stackPointer));
 	GIV(stackPointer) += BytesPerWord;
-	GIV(instructionPointer) = top;
+	GIV(instructionPointer) = (char*)top;
 	/* end popStack */
 	createActualMessageTo(classForMessage);
 	/* begin fetchPointer:ofObject: */
@@ -19244,10 +19244,10 @@ ifValidWriteBackStackPointersSaveTo(void *theCFP, void *theCSP, char **savedFPP,
 		savedSPP[0] = GIV(stackPointer);
 	}
 	if (((((usqInt) theCFP ) & (BytesPerWord - 1)) == 0) && ((((usqInt) theCFP ) >= ((usqInt) (GIV(stackBasePlus1) - 1) )) && (((usqInt) theCFP ) <= ((usqInt) GIV(pages) )))) {
-		GIV(framePointer) = theCFP;
+		GIV(framePointer) = (char*)theCFP;
 	}
 	if (((((usqInt) theCSP ) & (BytesPerWord - 1)) == 0) && ((((usqInt) theCSP ) >= ((usqInt) (GIV(stackBasePlus1) - 1) )) && (((usqInt) theCSP ) <= ((usqInt) GIV(pages) )))) {
-		GIV(stackPointer) = theCSP;
+		GIV(stackPointer) = (char*)theCSP;
 	}
 }
 /* CoInterpreter>>#instructionPointerAddress */
@@ -19289,7 +19289,7 @@ instVarofContext(sqInt offset, sqInt aContext)
 	assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 	{
 		(GIV(stackPage)->headFP = GIV(framePointer));
-		(GIV(stackPage)->headSP = theSP);
+		(GIV(stackPage)->headSP = (char*)theSP);
 	}
 	/* end setHeadFP:andSP:inPage: */
 	assert(pageListIsWellFormed());
@@ -19820,7 +19820,7 @@ mapStackPages(void)
 						unsignedLongAtput(theFP + FoxThisContext, remapObj(unsignedLongAt(theFP + FoxThisContext)));
 					}
 					if (!(GIV(gcPhaseInProgress) == SlidingCompactionInProgress)) {
-						assert((isMarriedOrWidowedContext(frameContext(theFP))) && ((frameOfMarriedContext(frameContext(theFP))) == theFP));
+						assert((isMarriedOrWidowedContext(frameContext((char*)theFP))) && ((frameOfMarriedContext(frameContext((char*)theFP))) == theFP));
 					}
 				}
 				if (!(isMachineCodeIP(((usqInt) (unsignedLongAt(theFP + FoxMethod)) )))) {
@@ -19828,11 +19828,11 @@ mapStackPages(void)
 						if (theIPPtr != 0) {
 							theIP = unsignedLongAt(theIPPtr);
 							if (theIP == (ceReturnToInterpreterPC())) {
-								assert((iframeSavedIP(theFP)) > (iframeMethod(theFP)));
+								assert((iframeSavedIP(theFP)) > (iframeMethod((char*)theFP)));
 								theIPPtr = theFP + FoxIFSavedIP;
 								theIP = unsignedLongAt(theIPPtr);
 							} else {
-								assert(theIP > (iframeMethod(theFP)));
+								assert(theIP > (iframeMethod((char*)theFP)));
 							}
 							theIP -= unsignedLongAt(theFP + FoxMethod);
 						}
@@ -19998,7 +19998,7 @@ markAndTraceStackPage(StackPage *thePage)
 		if (((isMachineCodeIP(((usqInt) (unsignedLongAt(theFP + FoxMethod)) )))
 			 ? ((unsignedLongAt(theFP + FoxMethod)) & MFMethodFlagHasContextFlag) != 0
 			 : (byteAt((theFP + FoxIFrameFlags) + 2)) != 0)) {
-			assert(isContext(frameContext(theFP)));
+			assert(isContext(frameContext((char*)theFP)));
 			markAndTrace(unsignedLongAt(theFP + FoxThisContext));
 		}
 		if (isMachineCodeIP(((usqInt) (unsignedLongAt(theFP + FoxMethod)) ))) {
@@ -20144,7 +20144,7 @@ sqInt
 mcprimFunctionForPrimitiveIndex(sqInt primIndex)
 {
 	if (primIndex == PrimNumberHashMultiply) {
-		return mcprimHashMultiply;
+		return 0; /* mcprimHashMultiply - function reference error */
 	}
 	error("unknown mcprim");
 	return null;
@@ -20494,11 +20494,11 @@ moveFramesInthroughtoPage(StackPage *oldPage, char *theFP, StackPage *newPage)
 	if (((isMachineCodeIP(((usqInt) (unsignedLongAt(theFP + FoxMethod)) )))
 		 ? ((unsignedLongAt(theFP + FoxMethod)) & MFMethodFlagHasContextFlag) != 0
 		 : (byteAt((theFP + FoxIFrameFlags) + 2)) != 0)) {
-		assert(isContext(frameContext(theFP)));
+		assert(isContext(frameContext((char*)theFP)));
 		theContext = unsignedLongAt(theFP + FoxThisContext);
 		goto l4;
 	}
-	theContext = marryFrameSP(theFP, theSP);
+	theContext = marryFrameSP((char*)theFP, (char*)theSP);
 	l4:
 	;
 	/* end ensureFrameIsMarried:SP: */
@@ -21386,7 +21386,7 @@ preGCAction(sqInt gcModeArg)
 			assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 			{
 				(GIV(stackPage)->headFP = GIV(framePointer));
-				(GIV(stackPage)->headSP = theSP);
+				(GIV(stackPage)->headSP = (char*)theSP);
 			}
 			/* end setHeadFP:andSP:inPage: */
 			assert(pageListIsWellFormed());
@@ -21637,7 +21637,7 @@ printFrameMethodFor(char *theFP)
 }
 /* CoInterpreter>>#printFrameThing:at:extraString: */
 static void NoDbgRegParms
-printFrameThingatextraString(char *name, char *address, char *extraStringOrNil)
+printFrameThingatextraString(const char *name, char *address, const char *extraStringOrNil)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
 	sqInt i;
@@ -21796,7 +21796,7 @@ printFrameWithSP(char *theFP, char *theSP)
 	if (((isMachineCodeIP(((usqInt) (unsignedLongAt(theFP + FoxMethod)) )))
 		 ? ((unsignedLongAt(theFP + FoxMethod)) & MFMethodFlagIsBlockFlag) != 0
 		 : (byteAt((theFP + FoxIFrameFlags) + 3)) != 0)) {
-		rcvrOrClosure = unsignedLongAt(theFP + (frameStackedReceiverOffset(theFP)));
+		rcvrOrClosure = unsignedLongAt(theFP + (frameStackedReceiverOffset((char*)theFP)));
 		if (((rcvrOrClosure & (tagMask())) == 0) && ((addressCouldBeObj(rcvrOrClosure)) && ((fetchClassOfNonImm(rcvrOrClosure)) == (unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassBlockClosure ) << (shiftForWord())) )))))) {
 			numTemps = numArgs + (stSizeOf(rcvrOrClosure));
 		} else {
@@ -22230,11 +22230,11 @@ returnToExecutivepostContextSwitch(sqInt inInterpreter, sqInt switchedContext)
 
 	assertCStackWellAligned();
 	if (isMachineCodeIP(((usqInt) (unsignedLongAt(GIV(framePointer) + FoxMethod)) ))) {
-		assertValidExecutionPointersimbarline(GIV(instructionPointer), GIV(framePointer), GIV(stackPointer), 0, __LINE__);
+		assertValidExecutionPointersimbarline((usqInt)GIV(instructionPointer), GIV(framePointer), GIV(stackPointer), 0, __LINE__);
 		if (switchedContext) {
 			cogMethod = ((CogMethod *) ((unsignedLongAt(GIV(framePointer) + FoxMethod)) & MFMethodMask) );
 			assert((((usqInt) GIV(instructionPointer) ) > (minCogMethodAddress())) && (((usqInt) GIV(instructionPointer) ) < (maxCogMethodAddress())));
-			if ((GIV(instructionPointer) != (((sqInt) cogMethod ) + ((cogMethod->stackCheckOffset)))) && (isSendReturnPC(GIV(instructionPointer)))) {
+			if (((sqInt)GIV(instructionPointer) != (((sqInt) cogMethod ) + ((cogMethod->stackCheckOffset)))) && (isSendReturnPC((sqInt)GIV(instructionPointer)))) {
 				assert(addressCouldBeOop(stackTop()));
 				/* begin popStack */
 				top = unsignedLongAt(GIV(stackPointer));
@@ -22272,11 +22272,11 @@ returnToExecutivepostContextSwitch(sqInt inInterpreter, sqInt switchedContext)
 	}
 	/* end setMethod: */
 	fullyInInterpreter = inInterpreter;
-	if (GIV(instructionPointer) == (ceReturnToInterpreterPC())) {
-		GIV(instructionPointer) = ((usqInt) (unsignedLongAt(GIV(framePointer) + FoxIFSavedIP)) );
+	if ((usqInt)GIV(instructionPointer) == (ceReturnToInterpreterPC())) {
+		GIV(instructionPointer) = (char*)((usqInt) (unsignedLongAt(GIV(framePointer) + FoxIFSavedIP)) );
 		fullyInInterpreter = 0;
 	}
-	assertValidExecutionPointersimbarline(GIV(instructionPointer), GIV(framePointer), GIV(stackPointer), 1, __LINE__);
+	assertValidExecutionPointersimbarline((usqInt)GIV(instructionPointer), GIV(framePointer), GIV(stackPointer), 1, __LINE__);
 	if (!fullyInInterpreter) {
 		siglongjmp(reenterInterpreter, ReturnToInterpreter);
 	}
@@ -22299,7 +22299,7 @@ returntoExecutive(sqInt returnValue, sqInt inInterpreter)
 
 	assertCStackWellAligned();
 	if (isMachineCodeIP(((usqInt) (unsignedLongAt(GIV(framePointer) + FoxMethod)) ))) {
-		assertValidExecutionPointersimbarline(GIV(instructionPointer), GIV(framePointer), GIV(stackPointer), 0, __LINE__);
+		assertValidExecutionPointersimbarline((usqInt)GIV(instructionPointer), GIV(framePointer), GIV(stackPointer), 0, __LINE__);
 		/* begin push: */
 		unsignedLongAtput((sp = GIV(stackPointer) - BytesPerWord), GIV(instructionPointer));
 		GIV(stackPointer) = sp;
@@ -22324,10 +22324,10 @@ returntoExecutive(sqInt returnValue, sqInt inInterpreter)
 		assert(isOopCompiledMethod(GIV(method)));
 	}
 	/* end setMethod: */
-	assertValidExecutionPointersimbarline(GIV(instructionPointer), GIV(framePointer), GIV(stackPointer), 1, __LINE__);
-	if (GIV(instructionPointer) == (ceReturnToInterpreterPC())) {
+	assertValidExecutionPointersimbarline((usqInt)GIV(instructionPointer), GIV(framePointer), GIV(stackPointer), 1, __LINE__);
+	if ((usqInt)GIV(instructionPointer) == (ceReturnToInterpreterPC())) {
 		/* begin iframeSavedIP: */
-		GIV(instructionPointer) = unsignedLongAt(GIV(framePointer) + FoxIFSavedIP);
+		GIV(instructionPointer) = (char*)unsignedLongAt(GIV(framePointer) + FoxIFSavedIP);
 		/* end iframeSavedIP: */
 	}
 	if (inInterpreter) {
@@ -22617,7 +22617,7 @@ tearDownAndRebuildFrameForCannotReturnBaseFrameReturnFromtoreturnValue(sqInt con
 	/* end setStackPointersFromPage: */
 	assert((stackTop()) == (ceCannotResumePC()));
 	unsignedLongAtput(GIV(stackPointer), returnValue);
-	GIV(instructionPointer) = ceCannotResumePC();
+	GIV(instructionPointer) = (char*)ceCannotResumePC();
 }
 /* CoInterpreter>>#updateStackZoneReferencesToCompiledCodePreCompaction */
 void
@@ -23487,7 +23487,7 @@ primitiveMethodXray(void)
 				assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 				{
 					(GIV(stackPage)->headFP = GIV(framePointer));
-					(GIV(stackPage)->headSP = theSP);
+					(GIV(stackPage)->headSP = (char*)theSP);
 				}
 				/* end setHeadFP:andSP:inPage: */
 				assert(pageListIsWellFormed());
@@ -23533,7 +23533,7 @@ primitiveMethodXray(void)
 				flags += 8;
 			}
 			if (!alreadyCogged) {
-				safeFreeMethod(cogMethod);
+				safeFreeMethod((sqInt)cogMethod);
 			}
 		}
 	} else {
@@ -23906,7 +23906,7 @@ primitiveSnapshot(void)
 			assert(!(isMachineCodeFrame(GIV(framePointer))));
 			unsignedLongAtput(GIV(framePointer) + FoxIFSavedIP, GIV(instructionPointer));
 			/* end iframeSavedIP:put: */
-			GIV(instructionPointer) = ceReturnToInterpreterPC();
+			GIV(instructionPointer) = (char*)ceReturnToInterpreterPC();
 		}
 		/* begin push: */
 		unsignedLongAtput((sp8 = GIV(stackPointer) - BytesPerWord), GIV(instructionPointer));
@@ -23948,7 +23948,7 @@ primitiveSnapshot(void)
 			unsignedLongAtput((sp42 = GIV(stackPointer) - BytesPerWord), 0);
 			GIV(stackPointer) = sp42;
 			/* end push: */
-			GIV(instructionPointer) = initialIP - 1;
+			GIV(instructionPointer) = (char*)(initialIP - 1);
 		} else {
 			/* begin push: */
 			object1 = ((usqInt) cogMethod );
@@ -23959,7 +23959,7 @@ primitiveSnapshot(void)
 			unsignedLongAtput((sp6 = GIV(stackPointer) - BytesPerWord), GIV(nilObj));
 			GIV(stackPointer) = sp6;
 			/* end push: */
-			GIV(instructionPointer) = ((usqInt) cogMethod ) + ((cogMethod->stackCheckOffset));
+			GIV(instructionPointer) = (char*)((usqInt) cogMethod ) + ((cogMethod->stackCheckOffset));
 		}
 		/* begin push: */
 		unsignedLongAtput((sp10 = GIV(stackPointer) - BytesPerWord), rcvr2);
@@ -23976,7 +23976,7 @@ primitiveSnapshot(void)
 				GIV(instructionPointer) += 3;
 			}
 			if (GIV(primFailCode) != 0) {
-				shouldSkipStoreBytecode = reapAndResetErrorCodeToheader(GIV(framePointer), methodHeader);
+				shouldSkipStoreBytecode = reapAndResetErrorCodeToheader((sqInt)GIV(framePointer), methodHeader);
 				if ((cogMethod == null) && shouldSkipStoreBytecode) {
 					GIV(instructionPointer) += 2;
 				}
@@ -24033,7 +24033,7 @@ primitiveSnapshot(void)
 				assert(!(isMachineCodeFrame(GIV(framePointer))));
 				unsignedLongAtput(GIV(framePointer) + FoxIFSavedIP, GIV(instructionPointer));
 				/* end iframeSavedIP:put: */
-				GIV(instructionPointer) = ceReturnToInterpreterPC();
+				GIV(instructionPointer) = (char*)ceReturnToInterpreterPC();
 			}
 			/* begin push: */
 			unsignedLongAtput((sp82 = GIV(stackPointer) - BytesPerWord), GIV(instructionPointer));
@@ -24075,7 +24075,7 @@ primitiveSnapshot(void)
 				unsignedLongAtput((sp43 = GIV(stackPointer) - BytesPerWord), 0);
 				GIV(stackPointer) = sp43;
 				/* end push: */
-				GIV(instructionPointer) = initialIP2 - 1;
+				GIV(instructionPointer) = (char*)(initialIP2 - 1);
 			} else {
 				/* begin push: */
 				object11 = ((usqInt) cogMethod2 );
@@ -24086,7 +24086,7 @@ primitiveSnapshot(void)
 				unsignedLongAtput((sp62 = GIV(stackPointer) - BytesPerWord), GIV(nilObj));
 				GIV(stackPointer) = sp62;
 				/* end push: */
-				GIV(instructionPointer) = ((usqInt) cogMethod2 ) + ((cogMethod2->stackCheckOffset));
+				GIV(instructionPointer) = (char*)((usqInt) cogMethod2 ) + ((cogMethod2->stackCheckOffset));
 			}
 			/* begin push: */
 			unsignedLongAtput((sp102 = GIV(stackPointer) - BytesPerWord), rcvr3);
@@ -24103,7 +24103,7 @@ primitiveSnapshot(void)
 					GIV(instructionPointer) += 3;
 				}
 				if (GIV(primFailCode) != 0) {
-					shouldSkipStoreBytecode2 = reapAndResetErrorCodeToheader(GIV(framePointer), methodHeader2);
+					shouldSkipStoreBytecode2 = reapAndResetErrorCodeToheader((sqInt)GIV(framePointer), methodHeader2);
 					if ((cogMethod2 == null) && shouldSkipStoreBytecode2) {
 						GIV(instructionPointer) += 2;
 					}
@@ -24339,7 +24339,7 @@ primitiveSnapshot(void)
 			assert(!(isMachineCodeFrame(GIV(framePointer))));
 			unsignedLongAtput(GIV(framePointer) + FoxIFSavedIP, GIV(instructionPointer));
 			/* end iframeSavedIP:put: */
-			GIV(instructionPointer) = ceReturnToInterpreterPC();
+			GIV(instructionPointer) = (char*)ceReturnToInterpreterPC();
 		}
 		/* begin push: */
 		unsignedLongAtput((sp83 = GIV(stackPointer) - BytesPerWord), GIV(instructionPointer));
@@ -24381,7 +24381,7 @@ primitiveSnapshot(void)
 			unsignedLongAtput((sp44 = GIV(stackPointer) - BytesPerWord), 0);
 			GIV(stackPointer) = sp44;
 			/* end push: */
-			GIV(instructionPointer) = initialIP3 - 1;
+			GIV(instructionPointer) = (char*)(initialIP3 - 1);
 		} else {
 			/* begin push: */
 			object12 = ((usqInt) cogMethod3 );
@@ -24392,7 +24392,7 @@ primitiveSnapshot(void)
 			unsignedLongAtput((sp63 = GIV(stackPointer) - BytesPerWord), GIV(nilObj));
 			GIV(stackPointer) = sp63;
 			/* end push: */
-			GIV(instructionPointer) = ((usqInt) cogMethod3 ) + ((cogMethod3->stackCheckOffset));
+			GIV(instructionPointer) = (char*)((usqInt) cogMethod3 ) + ((cogMethod3->stackCheckOffset));
 		}
 		/* begin push: */
 		unsignedLongAtput((sp103 = GIV(stackPointer) - BytesPerWord), rcvr4);
@@ -24409,7 +24409,7 @@ primitiveSnapshot(void)
 				GIV(instructionPointer) += 3;
 			}
 			if (GIV(primFailCode) != 0) {
-				shouldSkipStoreBytecode3 = reapAndResetErrorCodeToheader(GIV(framePointer), methodHeader3);
+				shouldSkipStoreBytecode3 = reapAndResetErrorCodeToheader((sqInt)GIV(framePointer), methodHeader3);
 				if ((cogMethod3 == null) && shouldSkipStoreBytecode3) {
 					GIV(instructionPointer) += 2;
 				}
@@ -24505,7 +24505,7 @@ primitiveTerminateTo(void)
 	assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 	{
 		(GIV(stackPage)->headFP = GIV(framePointer));
-		(GIV(stackPage)->headSP = theSP);
+		(GIV(stackPage)->headSP = (char*)theSP);
 	}
 	/* end setHeadFP:andSP:inPage: */
 	assert(pageListIsWellFormed());
@@ -24538,7 +24538,7 @@ primitiveTerminateTo(void)
 			theFP = pointerForOop(senderOop3 - 1);
 		}
 		/* end frameOfMarriedContext: */
-		if ((theFP == GIV(framePointer)) && (pageToStopOn == GIV(stackPage))) {
+		if (((char*)theFP == GIV(framePointer)) && (pageToStopOn == GIV(stackPage))) {
 			assertValidStackedInstructionPointersInline(GIV(stackPage), __LINE__);
 			if ((pointerForOop(unsignedLongAt(theFP + FoxSavedFP))) != contextsFP) {
 				/* begin frameStackedReceiverOffsetNumArgs: */
@@ -24785,8 +24785,8 @@ primitiveTerminateTo(void)
 		/* begin frameCallerContext:put: */
 		assert((aContextOrNil == (nilObject())) || (isContext(aContextOrNil)));
 		assert(isBaseFrame(theFP));
-		assert(((theFP + (frameStackedReceiverOffset(theFP))) + (2 * BytesPerWord)) == (((stackPageFor(theFP))->baseAddress)));
-		assert((longAt((theFP + (frameStackedReceiverOffset(theFP))) + BytesPerWord)) == (frameContext(theFP)));
+		assert(((theFP + (frameStackedReceiverOffset((char*)theFP))) + (2 * BytesPerWord)) == (((stackPageFor(theFP))->baseAddress)));
+		assert((longAt((theFP + (frameStackedReceiverOffset((char*)theFP))) + BytesPerWord)) == (frameContext((char*)theFP)));
 		longAtput((theFP + (frameStackedReceiverOffsetNumArgs(((isMachineCodeIP(((usqInt) (unsignedLongAt(theFP + FoxMethod)) )))
 			 ? ((((CogMethod *) ((unsignedLongAt(theFP + FoxMethod)) & MFMethodMask) ))->cmNumArgs)
 			 : byteAt((theFP + FoxIFrameFlags) + 1))))) + (2 * BytesPerWord), aContextOrNil);
@@ -24970,11 +24970,11 @@ primitiveVoidVMStateForMethod(void)
 	if (((isMachineCodeIP(((usqInt) (unsignedLongAt(theFP + FoxMethod)) )))
 		 ? ((unsignedLongAt(theFP + FoxMethod)) & MFMethodFlagHasContextFlag) != 0
 		 : (byteAt((theFP + FoxIFrameFlags) + 2)) != 0)) {
-		assert(isContext(frameContext(theFP)));
+		assert(isContext(frameContext((char*)theFP)));
 		activeContext = unsignedLongAt(theFP + FoxThisContext);
 		goto l9;
 	}
-	activeContext = marryFrameSP(theFP, theSP);
+	activeContext = marryFrameSP((char*)theFP, (char*)theSP);
 	l9:
 	;
 	/* end ensureFrameIsMarried:SP: */
@@ -25007,7 +25007,7 @@ primitiveVoidVMStateForMethod(void)
 	assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 	{
 		(GIV(stackPage)->headFP = GIV(framePointer));
-		(GIV(stackPage)->headSP = theSP1);
+		(GIV(stackPage)->headSP = (char*)theSP1);
 	}
 	/* end setHeadFP:andSP:inPage: */
 	assert(pageListIsWellFormed());
@@ -25242,7 +25242,7 @@ primitiveVoidVMStateForMethod(void)
 	/* begin popStack */
 	top2 = unsignedLongAt(GIV(stackPointer));
 	GIV(stackPointer) += BytesPerWord;
-	GIV(instructionPointer) = top2;
+	GIV(instructionPointer) = (char*)top2;
 	/* end popStack */
 	assert((methodObj == (stackTop())) || ((GIV(argumentCount) > 0) && (methodObj == (stackValue(1)))));
 	/* begin pop: */
@@ -25300,7 +25300,7 @@ CIR_readPermanentSpaceFromImageFileheader(sqInt imageFileName, SpurImageHeaderSt
 	sqImageFile file;
 	sqImageFile file2;
 	sqInt fn;
-	sqInt fullFileName;
+	char *fullFileName;
 	sqInt fv;
 	char lineBuffer[1024];
 	char lineBuffer2[1024];
@@ -25351,8 +25351,8 @@ CIR_readPermanentSpaceFromImageFileheader(sqInt imageFileName, SpurImageHeaderSt
 			}
 		}
 		/* begin endOfSTON: */
-		aCharacter = fgetc(file2);
-		ungetc(aCharacter, file2);
+		aCharacter = fgetc((FILE*)file2);
+		ungetc(aCharacter, (FILE*)file2);
 		/* end endOfSTON: */
 	}while(!((aCharacter == -1) || (aCharacter == '}')));
 	/* end readFieldsSTONFrom:into: */
@@ -25361,12 +25361,12 @@ CIR_readPermanentSpaceFromImageFileheader(sqInt imageFileName, SpurImageHeaderSt
 	permSpaceMetadata = metadata;
 	/* end readMetadataFromFileName: */
 	/* end readPermanentSpaceMetadataFromImage: */
-	oldBase = (permSpaceMetadata.startAddress);
+	oldBase = (void*)(permSpaceMetadata.startAddress);
 	dataSize = (permSpaceMetadata.dataSize);
 	if (!(ensureAtLeastPermSpaceOf(getMemoryMap(), dataSize))) {
 		error("Could not allocate PermSpace");
 	}
-	newBase = ((getMemoryMap())->permSpaceStart);
+	newBase = (void*)((getMemoryMap())->permSpaceStart);
 	if (newBase != oldBase) {
 		logError("Expecting Base %p Got %p", oldBase, newBase);
 		unableToReadImageError();
@@ -25383,7 +25383,7 @@ CIR_readPermanentSpaceFromImageFileheader(sqInt imageFileName, SpurImageHeaderSt
 	startingAddress = ((sqInt) (pointerForOop(newBase)) );
 	file = sqImageFileOpen(fullFileName, "rb");
 	if (dataSize > 0) {
-		bytes = sqImageFileRead(startingAddress, sizeof(char), dataSize, file);
+		bytes = sqImageFileRead((void*)startingAddress, sizeof(char), dataSize, file);
 	} else {
 		bytes = 0;
 	}
@@ -25415,10 +25415,10 @@ CIR_readSegmentsFromImageFileheader(sqInt imageFileName, SpurImageHeaderStruct a
 	long long fieldValue;
 	sqImageFile file;
 	sqImageFile file2;
-	sqInt fileName;
+	char *fileName;
 	sqInt fn;
-	sqInt fullFileName;
-	sqInt fullFileName1;
+	char *fullFileName;
+	char *fullFileName1;
 	sqInt fv;
 	char lineBuffer[1024];
 	char lineBuffer2[1024];
@@ -25491,8 +25491,8 @@ CIR_readSegmentsFromImageFileheader(sqInt imageFileName, SpurImageHeaderStruct a
 				}
 			}
 			/* begin endOfSTON: */
-			aCharacter = fgetc(file2);
-			ungetc(aCharacter, file2);
+			aCharacter = fgetc((FILE*)file2);
+			ungetc(aCharacter, (FILE*)file2);
 			/* end endOfSTON: */
 		}while(!((aCharacter == -1) || (aCharacter == '}')));
 		/* end readFieldsSTONFrom:into: */
@@ -25528,7 +25528,7 @@ CIR_readSegmentsFromImageFileheader(sqInt imageFileName, SpurImageHeaderStruct a
 		startingAddress = ((sqInt) (pointerForOop(newBase)) );
 		file = sqImageFileOpen(fullFileName, "rb");
 		if (segmentSize > 0) {
-			bytes = sqImageFileRead(startingAddress, sizeof(char), segmentSize, file);
+			bytes = sqImageFileRead((void*)startingAddress, sizeof(char), segmentSize, file);
 		} else {
 			bytes = 0;
 		}
@@ -25580,8 +25580,8 @@ CIW_writeImageFilefromHeader(char *imageFileName, SpurImageHeaderStruct header)
 	sqInt fieldValue;
 	sqInt fieldValue2;
 	sqImageFile file;
-	sqInt fullFileName;
-	sqInt fullFileName1;
+	char *fullFileName;
+	char *fullFileName1;
 	sqInt i;
 	sqInt iLimiT;
 	ComposedMetadataStruct metadata;
@@ -25621,7 +25621,7 @@ CIW_writeImageFilefromHeader(char *imageFileName, SpurImageHeaderStruct header)
 	/* begin writeHeaderFile:fromHeader: */
 	/* begin simulationOnly: */
 	/* end simulationOnly: */
-	file = sqImageFileOpen(headerFileNameinImageintobufferSize(imageFileName, buffer, 0xFF), "w");
+	file = sqImageFileOpen((char*)headerFileNameinImageintobufferSize((sqInt)imageFileName, (sqInt)buffer, 0xFF), "w");
 	if (!file) {
 		/* begin primitiveFail */
 		if (!GIV(primFailCode)) {
@@ -25633,44 +25633,44 @@ CIW_writeImageFilefromHeader(char *imageFileName, SpurImageHeaderStruct header)
 	/* begin writeHeaderSTON:toFile: */
 	/* begin writeSTON:toFile: */
 	{
-		fprintf(file, "%s {\n", "SpurImageHeaderStruct");
+		fprintf((FILE*)file, "%s {\n", "SpurImageHeaderStruct");
 	}
 	{
-		fprintf(file, fieldFormat(), "dataSize", ((sqInt) ((header.dataSize)) ));
-		fprintf(file, ",\n");
-		fprintf(file, fieldFormat(), "hdrOldSpaceSize", ((sqInt) ((header.hdrOldSpaceSize)) ));
-		fprintf(file, ",\n");
-		fprintf(file, fieldFormat(), "oldBaseAddr", ((sqInt) ((header.oldBaseAddr)) ));
-		fprintf(file, ",\n");
-		fprintf(file, fieldFormat(), "initialSpecialObjectsOop", ((sqInt) ((header.initialSpecialObjectsOop)) ));
-		fprintf(file, ",\n");
-		fprintf(file, fieldFormat(), "headerFlags", ((sqInt) ((header.headerFlags)) ));
-		fprintf(file, ",\n");
-		fprintf(file, fieldFormat(), "extraVMMemory", ((sqInt) ((header.extraVMMemory)) ));
-		fprintf(file, ",\n");
-		fprintf(file, fieldFormat(), "hdrNumStackPages", ((sqInt) ((header.hdrNumStackPages)) ));
-		fprintf(file, ",\n");
-		fprintf(file, fieldFormat(), "hdrCogCodeSize", ((sqInt) ((header.hdrCogCodeSize)) ));
-		fprintf(file, ",\n");
-		fprintf(file, fieldFormat(), "hdrEdenBytes", ((sqInt) ((header.hdrEdenBytes)) ));
-		fprintf(file, ",\n");
-		fprintf(file, fieldFormat(), "hdrMaxExtSemTabSize", ((sqInt) ((header.hdrMaxExtSemTabSize)) ));
-		fprintf(file, ",\n");
-		fprintf(file, fieldFormat(), "firstSegSize", ((sqInt) ((header.firstSegSize)) ));
-		fprintf(file, ",\n");
-		fprintf(file, fieldFormat(), "freeOldSpaceInImage", ((sqInt) ((header.freeOldSpaceInImage)) ));
-		fprintf(file, ",\n");
-		fprintf(file, fieldFormat(), "swapBytes", ((sqInt) ((header.swapBytes)) ));
-		fprintf(file, ",\n");
-		fprintf(file, fieldFormat(), "hdrLastHash", ((sqInt) ((header.hdrLastHash)) ));
-		fprintf(file, ",\n");
-		fprintf(file, fieldFormat(), "imageFormat", ((sqInt) ((header.imageFormat)) ));
-		fprintf(file, ",\n");
-		fprintf(file, fieldFormat(), "imageHeaderSize", ((sqInt) ((header.imageHeaderSize)) ));
-		fprintf(file, ",\n");
-		fprintf(file, fieldFormat(), "imageVersion", ((sqInt) ((header.imageVersion)) ));
+		fprintf((FILE*)file, fieldFormat(), "dataSize", ((sqInt) ((header.dataSize)) ));
+		fprintf((FILE*)file, ",\n");
+		fprintf((FILE*)file, fieldFormat(), "hdrOldSpaceSize", ((sqInt) ((header.hdrOldSpaceSize)) ));
+		fprintf((FILE*)file, ",\n");
+		fprintf((FILE*)file, fieldFormat(), "oldBaseAddr", ((sqInt) ((header.oldBaseAddr)) ));
+		fprintf((FILE*)file, ",\n");
+		fprintf((FILE*)file, fieldFormat(), "initialSpecialObjectsOop", ((sqInt) ((header.initialSpecialObjectsOop)) ));
+		fprintf((FILE*)file, ",\n");
+		fprintf((FILE*)file, fieldFormat(), "headerFlags", ((sqInt) ((header.headerFlags)) ));
+		fprintf((FILE*)file, ",\n");
+		fprintf((FILE*)file, fieldFormat(), "extraVMMemory", ((sqInt) ((header.extraVMMemory)) ));
+		fprintf((FILE*)file, ",\n");
+		fprintf((FILE*)file, fieldFormat(), "hdrNumStackPages", ((sqInt) ((header.hdrNumStackPages)) ));
+		fprintf((FILE*)file, ",\n");
+		fprintf((FILE*)file, fieldFormat(), "hdrCogCodeSize", ((sqInt) ((header.hdrCogCodeSize)) ));
+		fprintf((FILE*)file, ",\n");
+		fprintf((FILE*)file, fieldFormat(), "hdrEdenBytes", ((sqInt) ((header.hdrEdenBytes)) ));
+		fprintf((FILE*)file, ",\n");
+		fprintf((FILE*)file, fieldFormat(), "hdrMaxExtSemTabSize", ((sqInt) ((header.hdrMaxExtSemTabSize)) ));
+		fprintf((FILE*)file, ",\n");
+		fprintf((FILE*)file, fieldFormat(), "firstSegSize", ((sqInt) ((header.firstSegSize)) ));
+		fprintf((FILE*)file, ",\n");
+		fprintf((FILE*)file, fieldFormat(), "freeOldSpaceInImage", ((sqInt) ((header.freeOldSpaceInImage)) ));
+		fprintf((FILE*)file, ",\n");
+		fprintf((FILE*)file, fieldFormat(), "swapBytes", ((sqInt) ((header.swapBytes)) ));
+		fprintf((FILE*)file, ",\n");
+		fprintf((FILE*)file, fieldFormat(), "hdrLastHash", ((sqInt) ((header.hdrLastHash)) ));
+		fprintf((FILE*)file, ",\n");
+		fprintf((FILE*)file, fieldFormat(), "imageFormat", ((sqInt) ((header.imageFormat)) ));
+		fprintf((FILE*)file, ",\n");
+		fprintf((FILE*)file, fieldFormat(), "imageHeaderSize", ((sqInt) ((header.imageHeaderSize)) ));
+		fprintf((FILE*)file, ",\n");
+		fprintf((FILE*)file, fieldFormat(), "imageVersion", ((sqInt) ((header.imageVersion)) ));
 	}
-	fprintf(file, "\n}");
+	fprintf((FILE*)file, "\n}");
 	/* end writeSTON:toFile: */
 	/* end writeHeaderSTON:toFile: */
 	sqImageFileClose(file);
@@ -25684,10 +25684,10 @@ CIW_writeImageFilefromHeader(char *imageFileName, SpurImageHeaderStruct header)
 	/* end beginWriteImageSegments */
 	/* begin ensureDeleteSegments: */
 	segmentIndex2 = 0;
-	while (existSegmentinImage(segmentIndex2, imageFileName)) {
-		r = unlink(segmentMetadataFileinImage(segmentIndex2, imageFileName));
+	while (existSegmentinImage(segmentIndex2, (sqInt)imageFileName)) {
+		r = unlink((char*)segmentMetadataFileinImage(segmentIndex2, (sqInt)imageFileName));
 		if (r != 0) {
-			logError("Error deleting %s", segmentMetadataFileinImage(segmentIndex2, imageFileName));
+			logError("Error deleting %s", (char*)segmentMetadataFileinImage(segmentIndex2, (sqInt)imageFileName));
 			/* begin primitiveFail */
 			if (!GIV(primFailCode)) {
 				GIV(primFailCode) = 1;
@@ -25695,9 +25695,9 @@ CIW_writeImageFilefromHeader(char *imageFileName, SpurImageHeaderStruct header)
 			goto l1;
 			/* end primitiveFail */
 		}
-		r = unlink(segmentDataFileinImage(segmentIndex2, imageFileName));
+		r = unlink((char*)segmentDataFileinImage(segmentIndex2, (sqInt)imageFileName));
 		if (r != 0) {
-			logError("Error deleting %s", segmentDataFileinImage(segmentIndex2, imageFileName));
+			logError("Error deleting %s", (char*)segmentDataFileinImage(segmentIndex2, (sqInt)imageFileName));
 			/* begin primitiveFail */
 			if (!GIV(primFailCode)) {
 				GIV(primFailCode) = 1;
@@ -25752,14 +25752,14 @@ CIW_writeImageFilefromHeader(char *imageFileName, SpurImageHeaderStruct header)
 	}
 	/* begin writeSTON:toFile: */
 	{
-		fprintf(metadataFile, "%s {\n", "ComposedMetadataStruct");
+		fprintf((FILE*)metadataFile, "%s {\n", "ComposedMetadataStruct");
 	}
 	{
-		fprintf(metadataFile, fieldFormat(), "startAddress", ((sqInt) ((metadata.startAddress)) ));
-		fprintf(metadataFile, ",\n");
-		fprintf(metadataFile, fieldFormat(), "dataSize", ((sqInt) ((metadata.dataSize)) ));
+		fprintf((FILE*)metadataFile, fieldFormat(), "startAddress", ((sqInt) ((metadata.startAddress)) ));
+		fprintf((FILE*)metadataFile, ",\n");
+		fprintf((FILE*)metadataFile, fieldFormat(), "dataSize", ((sqInt) ((metadata.dataSize)) ));
 	}
-	fprintf(metadataFile, "\n}");
+	fprintf((FILE*)metadataFile, "\n}");
 	/* end writeSTON:toFile: */
 	sqImageFileClose(metadataFile);
 	l5:
@@ -25790,7 +25790,7 @@ CIW_writeImageFilefromHeader(char *imageFileName, SpurImageHeaderStruct header)
 	}
 	nWritten = 0;
 	if (size > 0) {
-		nWritten = sqImageFileWrite(start, 1, size, dataFile);
+		nWritten = sqImageFileWrite((void*)start, 1, size, dataFile);
 	}
 	sqImageFileClose(dataFile);
 	permanentSpaceBytesWritten = nWritten;
@@ -25819,8 +25819,8 @@ writeSegmentnextIndexinImage(SpurSegmentInfo *segment, sqInt segmentIndex, char 
 	sqImageFile dataFile;
 	sqInt fieldName;
 	sqInt fieldValue;
-	sqInt fullFileName;
-	sqInt fullFileName1;
+	char *fullFileName;
+	char *fullFileName1;
 	ComposedMetadataStruct metadata;
 	sqImageFile metadataFile;
 	sqInt name;
@@ -25860,14 +25860,14 @@ writeSegmentnextIndexinImage(SpurSegmentInfo *segment, sqInt segmentIndex, char 
 	}
 	/* begin writeSTON:toFile: */
 	{
-		fprintf(metadataFile, "%s {\n", "ComposedMetadataStruct");
+		fprintf((FILE*)metadataFile, "%s {\n", "ComposedMetadataStruct");
 	}
 	{
-		fprintf(metadataFile, fieldFormat(), "startAddress", ((sqInt) ((metadata.startAddress)) ));
-		fprintf(metadataFile, ",\n");
-		fprintf(metadataFile, fieldFormat(), "dataSize", ((sqInt) ((metadata.dataSize)) ));
+		fprintf((FILE*)metadataFile, fieldFormat(), "startAddress", ((sqInt) ((metadata.startAddress)) ));
+		fprintf((FILE*)metadataFile, ",\n");
+		fprintf((FILE*)metadataFile, fieldFormat(), "dataSize", ((sqInt) ((metadata.dataSize)) ));
 	}
-	fprintf(metadataFile, "\n}");
+	fprintf((FILE*)metadataFile, "\n}");
 	/* end writeSTON:toFile: */
 	sqImageFileClose(metadataFile);
 	l1:
@@ -25897,7 +25897,7 @@ writeSegmentnextIndexinImage(SpurSegmentInfo *segment, sqInt segmentIndex, char 
 	}
 	nWritten = 0;
 	if (size > 0) {
-		nWritten = sqImageFileWrite(start, 1, size, dataFile);
+		nWritten = sqImageFileWrite((void*)start, 1, size, dataFile);
 	}
 	sqImageFileClose(dataFile);
 	return nWritten;
@@ -26033,7 +26033,7 @@ cStringOrNullFor(sqInt oop)
 	if (len == 0) {
 		return 0;
 	}
-	cString = malloc(len + 1);
+	cString = (char*)malloc(len + 1);
 	if (!cString) {
 		GIV(primFailCode) = PrimErrNoCMemory;
 		return 0;
@@ -26883,7 +26883,7 @@ static void
 primitiveAt(void)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
-	sqInt class;
+	sqInt klass;
 	sqInt classFormat;
 	sqInt fixedFields;
 	usqLong fmt;
@@ -26965,9 +26965,9 @@ primitiveAt(void)
 		fixedFields = totalLength;
 		goto l5;
 	}
-	class = fetchClassOfNonImm(rcvr);
+	klass = fetchClassOfNonImm(rcvr);
 	/* begin fixedFieldsOfClassFormat: */
-	classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+	classFormat = (unsignedLongAt((klass + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 	fixedFields = classFormat & ((1U << (fixedFieldsFieldWidth())) - 1);
 	/* end fixedFieldsOfClassFormat: */
 	l5:
@@ -28663,7 +28663,7 @@ static void
 primitiveControlVMProfiling(void)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
-	sqInt bufferSize;
+	int bufferSize;
 	sqInt numSamples;
 	sqInt onOffBar;
 	char *sp;
@@ -31279,8 +31279,8 @@ primitiveFullClosureValue(void)
 	}
 	assert(!(methodHasCogMethod(closureMethod)));
 	if (!((inInterpreter = !(((usqInt) ((usqInt) GIV(instructionPointer) ) ) < (startOfObjectMemory(getMemoryMap())))))) {
-		if (GIV(instructionPointer) == (ceReturnToInterpreterPC())) {
-			GIV(instructionPointer) = unsignedLongAt(GIV(framePointer) + FoxIFSavedIP);
+		if ((usqInt)GIV(instructionPointer) == (ceReturnToInterpreterPC())) {
+			GIV(instructionPointer) = (char*)unsignedLongAt(GIV(framePointer) + FoxIFSavedIP);
 		}
 	}
 	assert(closureMethod == (fetchPointerofObject(FullClosureCompiledBlockIndex, blockClosure)));
@@ -31356,7 +31356,7 @@ primitiveFullClosureValue(void)
 		GIV(stackPointer) = sp3;
 		/* end push: */
 	};
-	GIV(instructionPointer) = ((closureMethod + ((LiteralStart + ((assert(((methodHeader1 & 7) == 1)), (methodHeader1 >> 3) & AlternateHeaderNumLiteralsMask))) * BytesPerOop)) + BaseHeaderSize) - 1;
+	GIV(instructionPointer) = (char*)((closureMethod + ((LiteralStart + ((assert(((methodHeader1 & 7) == 1)), (methodHeader1 >> 3) & AlternateHeaderNumLiteralsMask))) * BytesPerOop)) + BaseHeaderSize) - 1;
 	/* begin setMethod: */
 	assert(((usqInt) closureMethod ) >= (startOfObjectMemory(getMemoryMap())));
 	{
@@ -31570,8 +31570,8 @@ primitiveFullClosureValueNoContextSwitch(void)
 	}
 	assert(!(methodHasCogMethod(closureMethod)));
 	if (!((inInterpreter = !(((usqInt) ((usqInt) GIV(instructionPointer) ) ) < (startOfObjectMemory(getMemoryMap())))))) {
-		if (GIV(instructionPointer) == (ceReturnToInterpreterPC())) {
-			GIV(instructionPointer) = unsignedLongAt(GIV(framePointer) + FoxIFSavedIP);
+		if ((usqInt)GIV(instructionPointer) == (ceReturnToInterpreterPC())) {
+			GIV(instructionPointer) = (char*)unsignedLongAt(GIV(framePointer) + FoxIFSavedIP);
 		}
 	}
 	assert(closureMethod == (fetchPointerofObject(FullClosureCompiledBlockIndex, blockClosure)));
@@ -31647,7 +31647,7 @@ primitiveFullClosureValueNoContextSwitch(void)
 		GIV(stackPointer) = sp3;
 		/* end push: */
 	};
-	GIV(instructionPointer) = ((closureMethod + ((LiteralStart + ((assert(((methodHeader1 & 7) == 1)), (methodHeader1 >> 3) & AlternateHeaderNumLiteralsMask))) * BytesPerOop)) + BaseHeaderSize) - 1;
+	GIV(instructionPointer) = (char*)((closureMethod + ((LiteralStart + ((assert(((methodHeader1 & 7) == 1)), (methodHeader1 >> 3) & AlternateHeaderNumLiteralsMask))) * BytesPerOop)) + BaseHeaderSize) - 1;
 	/* begin setMethod: */
 	assert(((usqInt) closureMethod ) >= (startOfObjectMemory(getMemoryMap())));
 	{
@@ -31905,8 +31905,8 @@ primitiveFullClosureValueWithArgs(void)
 	}
 	assert(!(methodHasCogMethod(closureMethod)));
 	if (!((inInterpreter = !(((usqInt) ((usqInt) GIV(instructionPointer) ) ) < (startOfObjectMemory(getMemoryMap())))))) {
-		if (GIV(instructionPointer) == (ceReturnToInterpreterPC())) {
-			GIV(instructionPointer) = unsignedLongAt(GIV(framePointer) + FoxIFSavedIP);
+		if ((usqInt)GIV(instructionPointer) == (ceReturnToInterpreterPC())) {
+			GIV(instructionPointer) = (char*)unsignedLongAt(GIV(framePointer) + FoxIFSavedIP);
 		}
 	}
 	assert(closureMethod == (fetchPointerofObject(FullClosureCompiledBlockIndex, blockClosure)));
@@ -31982,7 +31982,7 @@ primitiveFullClosureValueWithArgs(void)
 		GIV(stackPointer) = sp3;
 		/* end push: */
 	};
-	GIV(instructionPointer) = ((closureMethod + ((LiteralStart + ((assert(((methodHeader1 & 7) == 1)), (methodHeader1 >> 3) & AlternateHeaderNumLiteralsMask))) * BytesPerOop)) + BaseHeaderSize) - 1;
+	GIV(instructionPointer) = (char*)((closureMethod + ((LiteralStart + ((assert(((methodHeader1 & 7) == 1)), (methodHeader1 >> 3) & AlternateHeaderNumLiteralsMask))) * BytesPerOop)) + BaseHeaderSize) - 1;
 	/* begin setMethod: */
 	assert(((usqInt) closureMethod ) >= (startOfObjectMemory(getMemoryMap())));
 	{
@@ -32075,7 +32075,7 @@ primitiveGetenv(void)
 		/* end primitiveFailFor: */
 	}
 	var = getenv(key);
-	free(key);
+	free((void*)key);
 	if (var != 0) {
 		result = stringForCString(var);
 		if (!result) {
@@ -34280,7 +34280,7 @@ primitiveNewMethod(void)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
 	sqInt bytecodeCount;
-	sqInt class;
+	sqInt klass;
 	sqInt classFormat;
 	sqInt classIndex;
 	sqInt err;
@@ -34308,14 +34308,14 @@ primitiveNewMethod(void)
 		/* end primitiveFailFor: */
 		return;
 	}
-	class = unsignedLongAt(GIV(stackPointer) + (2 * BytesPerWord));
+	klass = unsignedLongAt(GIV(stackPointer) + (2 * BytesPerWord));
 	{
 		assert(((header & 7) == 1));
 		literalCount = (header >> 3) & AlternateHeaderNumLiteralsMask;
 	}
 	size = ((literalCount + LiteralStart) * BytesPerOop) + bytecodeCount;
 	/* begin instantiateCompiledMethodClass:indexableSize: */
-	classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+	classFormat = (unsignedLongAt((klass + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 	instSpec = (((usqInt) classFormat ) >> (fixedFieldsFieldWidth())) & (formatMask());
 	if (instSpec != (firstCompiledMethodFormat())) {
 		theMethod = null;
@@ -34324,13 +34324,13 @@ primitiveNewMethod(void)
 	numSlots = (size + 7) / 8;
 	instSpec += (8 - size) & 7;
 	{
-		assert(addressCouldBeClassObj(class));
-		classIndex = ((((hash = (uint32AtPointer(class + 4)) & (identityHashHalfWordMask()))) != 0)
+		assert(addressCouldBeClassObj(klass));
+		classIndex = ((((hash = (uint32AtPointer(klass + 4)) & (identityHashHalfWordMask()))) != 0)
 			 ? hash
-			 : ((objCouldBeClassObj(class))
-				 ? ((((err = enterIntoClassTable(class))) != 0)
+			 : ((objCouldBeClassObj(klass))
+				 ? ((((err = enterIntoClassTable(klass))) != 0)
 					 ? -err
-					 : (/* begin rawHashBitsOf: */ (uint32AtPointer(class + 4)) & (identityHashHalfWordMask()) /* end rawHashBitsOf: */))
+					 : (/* begin rawHashBitsOf: */ (uint32AtPointer(klass + 4)) & (identityHashHalfWordMask()) /* end rawHashBitsOf: */))
 				 : -PrimErrBadReceiver));
 	}
 	if (classIndex < 0) {
@@ -34403,7 +34403,7 @@ primitiveNewMethod(void)
 	/* end instantiateCompiledMethodClass:indexableSize: */
 	if (!theMethod) {
 		/* begin primitiveFailFor: */
-		reasonCode = ((isCompiledMethodFormat(instSpecOfClassFormat((unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3)))
+		reasonCode = ((isCompiledMethodFormat(instSpecOfClassFormat((unsignedLongAt((klass + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3)))
 			 ? PrimErrNoMemory
 			 : PrimErrBadReceiver);
 		GIV(primFailCode) = reasonCode;
@@ -35195,7 +35195,7 @@ primitivePathToUsing(void)
 	assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 	{
 		(GIV(stackPage)->headFP = GIV(framePointer));
-		(GIV(stackPage)->headSP = theSP);
+		(GIV(stackPage)->headSP = (char*)theSP);
 	}
 	/* end setHeadFP:andSP:inPage: */
 	assert(pageListIsWellFormed());
@@ -36927,7 +36927,7 @@ static void
 primitiveSize(void)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
-	sqInt class;
+	sqInt klass;
 	sqInt classFormat;
 	sqInt fixedFields;
 	usqLong fmt;
@@ -36993,9 +36993,9 @@ primitiveSize(void)
 		fixedFields = totalLength;
 		goto l4;
 	}
-	class = fetchClassOfNonImm(rcvr);
+	klass = fetchClassOfNonImm(rcvr);
 	/* begin fixedFieldsOfClassFormat: */
-	classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+	classFormat = (unsignedLongAt((klass + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 	fixedFields = classFormat & ((1U << (fixedFieldsFieldWidth())) - 1);
 	/* end fixedFieldsOfClassFormat: */
 	l4:
@@ -38855,12 +38855,12 @@ static void
 primitiveSomeInstance(void)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
-	sqInt class;
+	sqInt klass;
 	sqInt instance;
 	char *sp;
 
-	class = unsignedLongAt(GIV(stackPointer));
-	instance = initialInstanceOf(class);
+	klass = unsignedLongAt(GIV(stackPointer));
+	instance = initialInstanceOf(klass);
 	if (instance == null) {
 		/* begin primitiveFail */
 		if (!GIV(primFailCode)) {
@@ -38936,7 +38936,7 @@ static void
 primitiveStringAt(void)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
-	sqInt class;
+	sqInt klass;
 	sqInt classFormat;
 	sqInt fixedFields;
 	usqLong fmt;
@@ -39018,9 +39018,9 @@ primitiveStringAt(void)
 		fixedFields = totalLength;
 		goto l5;
 	}
-	class = fetchClassOfNonImm(rcvr);
+	klass = fetchClassOfNonImm(rcvr);
 	/* begin fixedFieldsOfClassFormat: */
-	classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+	classFormat = (unsignedLongAt((klass + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 	fixedFields = classFormat & ((1U << (fixedFieldsFieldWidth())) - 1);
 	/* end fixedFieldsOfClassFormat: */
 	l5:
@@ -39123,7 +39123,7 @@ primitiveStringAtPut(void)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
 	sqInt charToPut;
-	sqInt class;
+	sqInt klass;
 	sqInt classFormat;
 	sqInt fixedFields;
 	usqLong fmt;
@@ -39227,9 +39227,9 @@ primitiveStringAtPut(void)
 				fixedFields = totalLength;
 				goto l5;
 			}
-			class = fetchClassOfNonImm(rcvr);
+			klass = fetchClassOfNonImm(rcvr);
 			/* begin fixedFieldsOfClassFormat: */
-			classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+			classFormat = (unsignedLongAt((klass + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 			fixedFields = classFormat & ((1U << (fixedFieldsFieldWidth())) - 1);
 			/* end fixedFieldsOfClassFormat: */
 			l5:
@@ -39486,7 +39486,7 @@ primitiveStringReplace(void)
 	sqInt arrayFmt;
 	sqInt arrayInstSize;
 	sqInt arrayLength;
-	sqInt class;
+	sqInt klass;
 	sqInt class2;
 	sqInt classFormat;
 	sqInt classFormat1;
@@ -39651,9 +39651,9 @@ primitiveStringReplace(void)
 			arrayInstSize = arrayLength;
 			goto l13;
 		}
-		class = fetchClassOfNonImm(array);
+		klass = fetchClassOfNonImm(array);
 		/* begin fixedFieldsOfClassFormat: */
-		classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+		classFormat = (unsignedLongAt((klass + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 		arrayInstSize = classFormat & ((1U << (fixedFieldsFieldWidth())) - 1);
 		/* end fixedFieldsOfClassFormat: */
 		l13:
@@ -43854,7 +43854,7 @@ scavengeLoop(void)
 		assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 		{
 			(GIV(stackPage)->headFP = GIV(framePointer));
-			(GIV(stackPage)->headSP = theSP);
+			(GIV(stackPage)->headSP = (char*)theSP);
 		}
 		/* end setHeadFP:andSP:inPage: */
 		assert(pageListIsWellFormed());
@@ -47204,7 +47204,7 @@ becomewithtwoWaycopyHash(sqInt array1, sqInt array2, sqInt twoWayFlag, sqInt cop
 			assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 			{
 				(GIV(stackPage)->headFP = GIV(framePointer));
-				(GIV(stackPage)->headSP = theSP);
+				(GIV(stackPage)->headSP = (char*)theSP);
 			}
 			/* end setHeadFP:andSP:inPage: */
 			assert(pageListIsWellFormed());
@@ -49188,7 +49188,7 @@ cleanUpPermToNewSpaceRememeberedSet(void)
 			if (((GIV(permSpaceForwardersToCleanUp)->top)) == ((GIV(permSpaceForwardersToCleanUp)->limit))) {
 				/* begin extendObjStack */
 				newSize = ((((GIV(permSpaceForwardersToCleanUp)->limit)) - ((GIV(permSpaceForwardersToCleanUp)->start))) / BytesPerWord) * 2;
-				newStart = realloc((GIV(permSpaceForwardersToCleanUp)->start), BytesPerWord * newSize);
+				newStart = (typeof(newStart))realloc((void*)(GIV(permSpaceForwardersToCleanUp)->start), BytesPerWord * newSize);
 				if (!newStart) {
 					error("Imposible to extend SpurContiguousObjStack");
 				}
@@ -49257,7 +49257,7 @@ cleanUpPermToOldSpaceRememeberedSet(void)
 			if (((GIV(permSpaceForwardersToCleanUp)->top)) == ((GIV(permSpaceForwardersToCleanUp)->limit))) {
 				/* begin extendObjStack */
 				newSize = ((((GIV(permSpaceForwardersToCleanUp)->limit)) - ((GIV(permSpaceForwardersToCleanUp)->start))) / BytesPerWord) * 2;
-				newStart = realloc((GIV(permSpaceForwardersToCleanUp)->start), BytesPerWord * newSize);
+				newStart = (typeof(newStart))realloc((void*)(GIV(permSpaceForwardersToCleanUp)->start), BytesPerWord * newSize);
 				if (!newStart) {
 					error("Imposible to extend SpurContiguousObjStack");
 				}
@@ -51666,7 +51666,7 @@ fixedFieldsOfClass(sqInt objOop)
 static sqInt NoDbgRegParms
 fixedFieldsOfformatlength(sqInt objOop, sqInt fmt, sqInt wordLength)
 {
-	sqInt class;
+	sqInt klass;
 	sqInt classFormat;
 
 	if ((fmt >= (sixtyFourBitIndexableFormat())) || (fmt == 2)) {
@@ -51675,9 +51675,9 @@ fixedFieldsOfformatlength(sqInt objOop, sqInt fmt, sqInt wordLength)
 	if (fmt < 2) {
 		return wordLength;
 	}
-	class = fetchClassOfNonImm(objOop);
+	klass = fetchClassOfNonImm(objOop);
 	/* begin fixedFieldsOfClassFormat: */
-	classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+	classFormat = (unsignedLongAt((klass + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 	return classFormat & ((1U << (fixedFieldsFieldWidth())) - 1);
 	/* end fixedFieldsOfClassFormat: */
 }
@@ -54291,7 +54291,7 @@ isValidObjStackPagemyIndexfirstPage(sqInt objStackPage, sqInt myx, sqInt isFirst
 		}
 		if (!(isValidObjStackPagemyIndex(freeOrNextPage, myx))) {
 			{
-				ns = malloc(((strlen(GIV(objStackInvalidBecause))) + (strlen(", on next page"))) + 2);
+				ns = (sqInt)malloc(((strlen(GIV(objStackInvalidBecause))) + (strlen(", on next page"))) + 2);
 				strcpy(ns, GIV(objStackInvalidBecause));
 				GIV(objStackInvalidBecause) = strcat(ns, ", on next page");
 			}
@@ -56083,7 +56083,7 @@ markObjects(sqInt objectsShouldBeUnmarkedAndUnmarkedClassesShouldBeExpunged)
 	if ((((GIV(unscannedEphemerons)->initialSize)) == null) || (((GIV(unscannedEphemerons)->initialSize)) == 0)) {
 		(GIV(unscannedEphemerons)->initialSize = 10000);
 	}
-	allocation = malloc((sizeof(void *)) * ((GIV(unscannedEphemerons)->initialSize)));
+	allocation = (sqInt)malloc((sizeof(void *)) * ((GIV(unscannedEphemerons)->initialSize)));
 	if (!allocation) {
 		{
 			error("Cannot allocate space for unscanned ephemerons");
@@ -56113,7 +56113,7 @@ markObjects(sqInt objectsShouldBeUnmarkedAndUnmarkedClassesShouldBeExpunged)
 	if ((((GIV(permSpaceForwardersToCleanUp)->initialSize)) == null) || (((GIV(permSpaceForwardersToCleanUp)->initialSize)) == 0)) {
 		(GIV(permSpaceForwardersToCleanUp)->initialSize = 512);
 	}
-	allocation2 = malloc((sizeof(void *)) * ((GIV(permSpaceForwardersToCleanUp)->initialSize)));
+	allocation2 = (sqInt)malloc((sizeof(void *)) * ((GIV(permSpaceForwardersToCleanUp)->initialSize)));
 	if (!allocation2) {
 		{
 			error("Cannot allocate space for Permanent space Forwarders to clean up");
@@ -56144,7 +56144,7 @@ markObjects(sqInt objectsShouldBeUnmarkedAndUnmarkedClassesShouldBeExpunged)
 		assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 		{
 			(GIV(stackPage)->headFP = GIV(framePointer));
-			(GIV(stackPage)->headSP = theSP);
+			(GIV(stackPage)->headSP = (char*)theSP);
 		}
 		/* end setHeadFP:andSP:inPage: */
 		assert(pageListIsWellFormed());
@@ -56752,7 +56752,7 @@ moveToPermSpaceAllOldObjects(void)
 			assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 			{
 				(GIV(stackPage)->headFP = GIV(framePointer));
-				(GIV(stackPage)->headSP = theSP);
+				(GIV(stackPage)->headSP = (char*)theSP);
 			}
 			/* end setHeadFP:andSP:inPage: */
 			assert(pageListIsWellFormed());
@@ -56887,7 +56887,7 @@ moveToPermSpaceInBulk(sqInt anArrayOop)
 			assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 			{
 				(GIV(stackPage)->headFP = GIV(framePointer));
-				(GIV(stackPage)->headSP = theSP);
+				(GIV(stackPage)->headSP = (char*)theSP);
 			}
 			/* end setHeadFP:andSP:inPage: */
 			assert(pageListIsWellFormed());
@@ -56955,7 +56955,7 @@ moveToPermSpace(sqInt objOop)
 			assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 			{
 				(GIV(stackPage)->headFP = GIV(framePointer));
-				(GIV(stackPage)->headSP = theSP);
+				(GIV(stackPage)->headSP = (char*)theSP);
 			}
 			/* end setHeadFP:andSP:inPage: */
 			assert(pageListIsWellFormed());
@@ -61584,7 +61584,7 @@ pushOnUnscannedEphemeronsStack(sqInt anEphemeron)
 	assert(isEphemeron(anEphemeron));
 	if (((GIV(unscannedEphemerons)->top)) >= ((GIV(unscannedEphemerons)->limit))) {
 		desiredSize = (((GIV(unscannedEphemerons)->limit)) - ((GIV(unscannedEphemerons)->start))) * 2;
-		reallocated = realloc((GIV(unscannedEphemerons)->start), desiredSize);
+		reallocated = (typeof(reallocated))realloc((void*)(GIV(unscannedEphemerons)->start), desiredSize);
 		if (!reallocated) {
 			error("Not enough room to grow unscannedEphemerons queue");
 		}
@@ -67605,7 +67605,7 @@ checkForEventsMayContextSwitch(sqInt mayContextSwitch)
 	assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 	{
 		(GIV(stackPage)->headFP = GIV(framePointer));
-		(GIV(stackPage)->headSP = theSP);
+		(GIV(stackPage)->headSP = (char*)theSP);
 	}
 	/* end setHeadFP:andSP:inPage: */
 	assert(pageListIsWellFormed());
@@ -67873,7 +67873,7 @@ checkOkayStackPage(StackPage *thePage)
 		if (((isMachineCodeIP(((usqInt) (unsignedLongAt(theFP + FoxMethod)) )))
 			 ? ((unsignedLongAt(theFP + FoxMethod)) & MFMethodFlagHasContextFlag) != 0
 			 : (byteAt((theFP + FoxIFrameFlags) + 2)) != 0)) {
-			assert(isContext(frameContext(theFP)));
+			assert(isContext(frameContext((char*)theFP)));
 			ok = ok && (checkOkayFields(unsignedLongAt(theFP + FoxThisContext)));
 		}
 		ok = ok && (checkOkayFields(((isMachineCodeIP(((usqInt) (unsignedLongAt(theFP + FoxMethod)) )))
@@ -67917,7 +67917,7 @@ checkOkayStackZone(sqInt writeBack)
 		assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 		{
 			(GIV(stackPage)->headFP = GIV(framePointer));
-			(GIV(stackPage)->headSP = theSP);
+			(GIV(stackPage)->headSP = (char*)theSP);
 		}
 		/* end setHeadFP:andSP:inPage: */
 		assert(pageListIsWellFormed());
@@ -68038,7 +68038,7 @@ checkStackPointerIndexForFrame(char *theFP)
 	StackPage *thePage;
 	char *theSP;
 
-	if (theFP == GIV(framePointer)) {
+	if ((char*)theFP == GIV(framePointer)) {
 		return (((usqInt) ((((isMachineCodeIP(((usqInt) (unsignedLongAt(theFP + FoxMethod)) )))
 			 ? theFP + FoxMFReceiver
 			 : theFP + FoxIFReceiver)) - GIV(stackPointer)) ) >> (shiftForWord())) + (((isMachineCodeIP(((usqInt) (unsignedLongAt(theFP + FoxMethod)) )))
@@ -68360,7 +68360,7 @@ divorceAllFrames(void)
 		assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 		{
 			(GIV(stackPage)->headFP = GIV(framePointer));
-			(GIV(stackPage)->headSP = theSP);
+			(GIV(stackPage)->headSP = (char*)theSP);
 		}
 		/* end setHeadFP:andSP:inPage: */
 		assert(pageListIsWellFormed());
@@ -68372,7 +68372,7 @@ divorceAllFrames(void)
 	if (((isMachineCodeIP(((usqInt) (unsignedLongAt(theFP + FoxMethod)) )))
 		 ? ((unsignedLongAt(theFP + FoxMethod)) & MFMethodFlagHasContextFlag) != 0
 		 : (byteAt((theFP + FoxIFrameFlags) + 2)) != 0)) {
-		assert(isContext(frameContext(theFP)));
+		assert(isContext(frameContext((char*)theFP)));
 		activeContext = unsignedLongAt(theFP + FoxThisContext);
 		goto l2;
 	}
@@ -68421,11 +68421,11 @@ divorceFramesIn(StackPage *aStackPage)
 		if (((isMachineCodeIP(((usqInt) (unsignedLongAt(theFP + FoxMethod)) )))
 			 ? ((unsignedLongAt(theFP + FoxMethod)) & MFMethodFlagHasContextFlag) != 0
 			 : (byteAt((theFP + FoxIFrameFlags) + 2)) != 0)) {
-			assert(isContext(frameContext(theFP)));
+			assert(isContext(frameContext((char*)theFP)));
 			theContext = unsignedLongAt(theFP + FoxThisContext);
 			goto l6;
 		}
-		theContext = marryFrameSP(theFP, theSP);
+		theContext = marryFrameSP((char*)theFP, (char*)theSP);
 		l6:
 		;
 		/* end ensureFrameIsMarried:SP: */
@@ -68435,7 +68435,7 @@ divorceFramesIn(StackPage *aStackPage)
 		assert(!(isOopForwarded(theContext)));
 		longAtput((theContext + BaseHeaderSize) + ((sqInt) (((usqInt) InstructionPointerIndex ) << (shiftForWord())) ), valuePointer);
 		/* end storePointerUnchecked:ofObject:withValue: */
-		assert((frameReceiver(theFP)) == (fetchPointerofObject(ReceiverIndex, theContext)));
+		assert((frameReceiver((char*)theFP)) == (fetchPointerofObject(ReceiverIndex, theContext)));
 		if (calleeContext != null) {
 			/* begin storePointer:ofObject:withValue: */
 			assert(!(isForwarded(calleeContext)));
@@ -68600,7 +68600,7 @@ divorceFrameandContext(char *theFP, sqInt ctxt)
 		callerCtx = unsignedLongAt(callerFP2 + FoxThisContext);
 		goto l7;
 	}
-	callerCtx = marryFrameSP(callerFP2, (assert(!(isBaseFrame(theFP))), (theFP + (frameStackedReceiverOffset(theFP))) + BytesPerWord));
+	callerCtx = marryFrameSP(callerFP2, (assert(!(isBaseFrame(theFP))), (theFP + (frameStackedReceiverOffset((char*)theFP))) + BytesPerWord));
 	/* end ensureFrameIsMarried:SP: */
 	l7:
 	;
@@ -68688,7 +68688,7 @@ divorceFrameandContext(char *theFP, sqInt ctxt)
 		freeStackPage(thePage);
 	} else {
 		callerIP = oopForPointer(pointerForOop(unsignedLongAt(theFP + FoxCallerSavedIP)));
-		callerSP = ((assert(!(isBaseFrame(theFP))), (theFP + (frameStackedReceiverOffset(theFP))) + BytesPerWord)) - BytesPerWord;
+		callerSP = ((assert(!(isBaseFrame(theFP))), (theFP + (frameStackedReceiverOffset((char*)theFP))) + BytesPerWord)) - BytesPerWord;
 		unsignedLongAtput(callerSP, callerIP);
 		/* begin setHeadFP:andSP:inPage: */
 		assert(callerSP < callerFP);
@@ -68958,7 +68958,7 @@ ensureCallerContext(char *theFP)
 		assert(isContext(frameContext(callerFP)));
 		return unsignedLongAt(callerFP + FoxThisContext);
 	}
-	return marryFrameSP(callerFP, (assert(!(isBaseFrame(theFP))), (theFP + (frameStackedReceiverOffset(theFP))) + BytesPerWord));
+	return marryFrameSP(callerFP, (assert(!(isBaseFrame(theFP))), (theFP + (frameStackedReceiverOffset((char*)theFP))) + BytesPerWord));
 	/* end ensureFrameIsMarried:SP: */
 }
 /*	Ensure the image data has been updated to suit the current VM. */
@@ -69458,7 +69458,7 @@ ensureIsBaseFrame(char *aFramePtr)
 	/* end stackPageAt: */
 	/* end stackPageFor: */
 	onCurrent = thePage == GIV(stackPage);
-	theFP = storeSenderOfFramewithValue(theFP, ensureCallerContext(theFP));
+	theFP = storeSenderOfFramewithValue(theFP, ensureCallerContext((char*)theFP));
 	if (onCurrent) {
 		assert(GIV(stackPage) != thePage);
 		/* begin setStackPointersFromPage: */
@@ -70053,10 +70053,10 @@ findMethodWithPrimitiveFromContextUpToContext(sqInt primitive, sqInt senderConte
 				if (((isMachineCodeIP(((usqInt) (unsignedLongAt(theFP + FoxMethod)) )))
 					 ? ((unsignedLongAt(theFP + FoxMethod)) & MFMethodFlagHasContextFlag) != 0
 					 : (byteAt((theFP + FoxIFrameFlags) + 2)) != 0)) {
-					assert(isContext(frameContext(theFP)));
+					assert(isContext(frameContext((char*)theFP)));
 					return unsignedLongAt(theFP + FoxThisContext);
 				}
-				return marryFrameSP(theFP, theSP);
+				return marryFrameSP((char*)theFP, (char*)theSP);
 				/* end ensureFrameIsMarried:SP: */
 			}
 		}
@@ -70252,11 +70252,11 @@ findUnwindThroughContext(sqInt homeContext)
 				if (((isMachineCodeIP(((usqInt) (unsignedLongAt(theFP + FoxMethod)) )))
 					 ? ((unsignedLongAt(theFP + FoxMethod)) & MFMethodFlagHasContextFlag) != 0
 					 : (byteAt((theFP + FoxIFrameFlags) + 2)) != 0)) {
-					assert(isContext(frameContext(theFP)));
+					assert(isContext(frameContext((char*)theFP)));
 					ctxtOrNilOrZero = unsignedLongAt(theFP + FoxThisContext);
 					goto l4;
 				}
-				ctxtOrNilOrZero = marryFrameSP(theFP, theSP);
+				ctxtOrNilOrZero = marryFrameSP((char*)theFP, (char*)theSP);
 				goto l4;
 				/* end ensureFrameIsMarried:SP: */
 			}
@@ -70347,14 +70347,14 @@ followForwardedFrameContentsstackPointer(char *theFP, char *theSP)
 	if (((isMachineCodeIP(((usqInt) (unsignedLongAt(theFP + FoxMethod)) )))
 		 ? ((unsignedLongAt(theFP + FoxMethod)) & MFMethodFlagIsBlockFlag) != 0
 		 : (byteAt((theFP + FoxIFrameFlags) + 3)) != 0)) {
-		assert(oop == (unsignedLongAt(theFP + (frameStackedReceiverOffset(theFP)))));
+		assert(oop == (unsignedLongAt(theFP + (frameStackedReceiverOffset((char*)theFP)))));
 		followForwardedObjectFieldstoDepth(oop, 0);
 	}
 	assert(!(isForwarded(frameMethodObject(theFP))));
 	if (((isMachineCodeIP(((usqInt) (unsignedLongAt(theFP + FoxMethod)) )))
 		 ? ((unsignedLongAt(theFP + FoxMethod)) & MFMethodFlagHasContextFlag) != 0
 		 : (byteAt((theFP + FoxIFrameFlags) + 2)) != 0)) {
-		assert(!(isForwarded(frameContext(theFP))));
+		assert(!(isForwarded(frameContext((char*)theFP))));
 	}
 }
 /*	Force an interrupt check ASAP. 
@@ -70678,7 +70678,7 @@ handleStackOverflow(void)
 		unsignedLongAt(callerFP2 + FoxThisContext);
 		goto l3;
 	}
-	marryFrameSP(callerFP2, (assert(!(isBaseFrame(theFP))), (theFP + (frameStackedReceiverOffset(theFP))) + BytesPerWord));
+	marryFrameSP(callerFP2, (assert(!(isBaseFrame(theFP))), (theFP + (frameStackedReceiverOffset((char*)theFP))) + BytesPerWord));
 	/* end ensureFrameIsMarried:SP: */
 	l3:
 	;
@@ -70735,7 +70735,7 @@ handleStackOverflowOrEventAllowContextSwitch(sqInt mayContextSwitch)
 	assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 	{
 		(GIV(stackPage)->headFP = GIV(framePointer));
-		(GIV(stackPage)->headSP = theSP);
+		(GIV(stackPage)->headSP = (char*)theSP);
 	}
 	/* end setHeadFP:andSP:inPage: */
 	assert(pageListIsWellFormed());
@@ -71456,7 +71456,7 @@ longPrintOop(sqInt oop)
 {
 	sqInt byte;
 	int bytecodesPerLine;
-	sqInt class;
+	sqInt klass;
 	CogMethod *cogMethod;
 	int column;
 	unsigned short field16;
@@ -71483,13 +71483,13 @@ longPrintOop(sqInt oop)
 	}
 	printHex(oop);
 	{
-		class = fetchClassOfNonImm(oop);
-		if (class == null) {
+		klass = fetchClassOfNonImm(oop);
+		if (klass == null) {
 			print(" has a nil class!!");
 		} else {
 			{
 				print(": a(n) ");
-				printNameOfClasscount(class, 5);
+				printNameOfClasscount(klass, 5);
 				print(" (");
 			}
 			{
@@ -71497,7 +71497,7 @@ longPrintOop(sqInt oop)
 				print("=>");
 			}
 			{
-				printHexnp(class);
+				printHexnp(klass);
 				print(")");
 			}
 		}
@@ -71810,7 +71810,7 @@ lookupInMethodCacheSelclassTag(sqInt selector, sqInt classTag)
 }
 /* StackInterpreter>>#lookupMethodInClass: */
 static sqInt NoDbgRegParms
-lookupMethodInClass(sqInt class)
+lookupMethodInClass(sqInt klass)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
 	sqInt currentClass;
@@ -71833,13 +71833,13 @@ lookupMethodInClass(sqInt class)
 	sqInt selector;
 	int wrapAround;
 
-	assert(addressCouldBeClassObj(class));
+	assert(addressCouldBeClassObj(klass));
 	/* begin lookupBreakFor: */
-	if ((breakLookupClassTag != null) && ((class == breakLookupClassTag) || (((uint32AtPointer(class + 4)) & (identityHashHalfWordMask())) == breakLookupClassTag))) {
+	if ((breakLookupClassTag != null) && ((klass == breakLookupClassTag) || (((uint32AtPointer(klass + 4)) & (identityHashHalfWordMask())) == breakLookupClassTag))) {
 		warning("lookup class send break (heartbeat suppressed)");
 	}
 	/* end lookupBreakFor: */
-	currentClass = class;
+	currentClass = klass;
 	while (currentClass != GIV(nilObj)) {
 		/* begin followObjField:ofObject: */
 		/* begin fetchPointer:ofObject: */
@@ -71852,7 +71852,7 @@ lookupMethodInClass(sqInt class)
 		dictionary = objOop;
 		/* end followObjField:ofObject: */
 		if (dictionary == GIV(nilObj)) {
-			createActualMessageTo(class);
+			createActualMessageTo(klass);
 			/* begin splObj: */
 			/* begin fetchPointer:ofObject: */
 			GIV(messageSelector) = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) SelectorCannotInterpret ) << (shiftForWord())) ));
@@ -71984,21 +71984,21 @@ lookupMethodInClass(sqInt class)
 	if (GIV(messageSelector) == (splObj(SelectorDoesNotUnderstand))) {
 		error("Recursive not understood error encountered");
 	}
-	createActualMessageTo(class);
+	createActualMessageTo(klass);
 	/* begin splObj: */
 	/* begin fetchPointer:ofObject: */
 	GIV(messageSelector) = unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) SelectorDoesNotUnderstand ) << (shiftForWord())) ));
 	/* end fetchPointer:ofObject: */
 	/* end splObj: */
 	sendBreakpointreceiver(GIV(messageSelector) + BaseHeaderSize, lengthOfformat(GIV(messageSelector), (((usqInt) (longAt(GIV(messageSelector))) ) >> (formatShift())) & (formatMask())), null);
-	return lookupMethodInClass(class);
+	return lookupMethodInClass(klass);
 }
 /*	Lookup messageSelector in class. Answer 0 on success. Answer the splObj: 
 	index for the error selector to use on failure rather than performing MNU 
 	processing etc. */
 /* StackInterpreter>>#lookupMNUInClass: */
 static sqInt NoDbgRegParms
-lookupMNUInClass(sqInt class)
+lookupMNUInClass(sqInt klass)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
 	sqInt currentClass;
@@ -72022,11 +72022,11 @@ lookupMNUInClass(sqInt class)
 	int wrapAround;
 
 	/* begin lookupBreakFor: */
-	if ((breakLookupClassTag != null) && ((class == breakLookupClassTag) || (((uint32AtPointer(class + 4)) & (identityHashHalfWordMask())) == breakLookupClassTag))) {
+	if ((breakLookupClassTag != null) && ((klass == breakLookupClassTag) || (((uint32AtPointer(klass + 4)) & (identityHashHalfWordMask())) == breakLookupClassTag))) {
 		warning("lookup class send break (heartbeat suppressed)");
 	}
 	/* end lookupBreakFor: */
-	currentClass = class;
+	currentClass = klass;
 	while (currentClass != GIV(nilObj)) {
 		/* begin followObjField:ofObject: */
 		/* begin fetchPointer:ofObject: */
@@ -72155,7 +72155,7 @@ lookupMNUInClass(sqInt class)
 		;
 		/* end lookupMethodInDictionary: */
 		if (found) {
-			addNewMethodToCache(class);
+			addNewMethodToCache(klass);
 			return 0;
 		}
 		/* begin followField:ofObject: */
@@ -72168,7 +72168,7 @@ lookupMNUInClass(sqInt class)
 		currentClass = objOop8;
 		/* end followField:ofObject: */
 	};
-	GIV(lkupClass) = class;
+	GIV(lkupClass) = klass;
 	return SelectorDoesNotUnderstand;
 }
 /*	Lookup messageSelector in class. Answer 0 on success. Answer the splObj: 
@@ -72176,7 +72176,7 @@ lookupMNUInClass(sqInt class)
 	processing etc. */
 /* StackInterpreter>>#lookupOrdinaryNoMNUEtcInClass: */
 static sqInt NoDbgRegParms
-lookupOrdinaryNoMNUEtcInClass(sqInt class)
+lookupOrdinaryNoMNUEtcInClass(sqInt klass)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
 	sqInt currentClass;
@@ -72200,11 +72200,11 @@ lookupOrdinaryNoMNUEtcInClass(sqInt class)
 	int wrapAround;
 
 	/* begin lookupBreakFor: */
-	if ((breakLookupClassTag != null) && ((class == breakLookupClassTag) || (((uint32AtPointer(class + 4)) & (identityHashHalfWordMask())) == breakLookupClassTag))) {
+	if ((breakLookupClassTag != null) && ((klass == breakLookupClassTag) || (((uint32AtPointer(klass + 4)) & (identityHashHalfWordMask())) == breakLookupClassTag))) {
 		warning("lookup class send break (heartbeat suppressed)");
 	}
 	/* end lookupBreakFor: */
-	currentClass = class;
+	currentClass = klass;
 	while (currentClass != GIV(nilObj)) {
 		/* begin followObjField:ofObject: */
 		/* begin fetchPointer:ofObject: */
@@ -72333,7 +72333,7 @@ lookupOrdinaryNoMNUEtcInClass(sqInt class)
 		;
 		/* end lookupMethodInDictionary: */
 		if (found) {
-			addNewMethodToCache(class);
+			addNewMethodToCache(klass);
 			return 0;
 		}
 		/* begin followField:ofObject: */
@@ -72346,14 +72346,14 @@ lookupOrdinaryNoMNUEtcInClass(sqInt class)
 		currentClass = objOop8;
 		/* end followField:ofObject: */
 	};
-	GIV(lkupClass) = class;
+	GIV(lkupClass) = klass;
 	return SelectorDoesNotUnderstand;
 }
 /*	Lookup selector in class. Answer the method or nil. This is a debugging 
 	routine. It does /not/ side-effect lookupClass or newMethod. */
 /* StackInterpreter>>#lookupSelector:inClass: */
 sqInt
-lookupSelectorinClass(sqInt selector, sqInt class)
+lookupSelectorinClass(sqInt selector, sqInt klass)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
 	sqInt currentClass;
@@ -72371,7 +72371,7 @@ lookupSelectorinClass(sqInt selector, sqInt class)
 	sqInt objOop4;
 	int wrapAround;
 
-	currentClass = class;
+	currentClass = klass;
 	while (currentClass != GIV(nilObj)) {
 		/* begin followObjField:ofObject: */
 		/* begin fetchPointer:ofObject: */
@@ -72783,7 +72783,7 @@ marriedContextpointsTostackDeltaForCurrentFrame(sqInt spouseContext, sqInt anOop
 		theFP = pointerForOop(senderOop - 1);
 	}
 	/* end frameOfMarriedContext: */
-	if (theFP == GIV(framePointer)) {
+	if ((char*)theFP == GIV(framePointer)) {
 		theSP = GIV(stackPointer) + (stackDeltaForCurrentFrame * BytesPerWord);
 	} else {
 		/* begin stackPageFor: */
@@ -72827,7 +72827,7 @@ marriedContextpointsTostackDeltaForCurrentFrame(sqInt spouseContext, sqInt anOop
 		theSP += BytesPerWord;
 	};
 	theSP = (theFP + FoxCallerSavedIP) + BytesPerWord;
-	rcvrOffset = theFP + (frameStackedReceiverOffset(theFP));
+	rcvrOffset = theFP + (frameStackedReceiverOffset((char*)theFP));
 	while (theSP <= rcvrOffset) {
 		if (anOop == (unsignedLongAt(theSP))) {
 			return 1;
@@ -72873,7 +72873,7 @@ marryContextInNewStackPageAndInitializeInterpreterRegisters(sqInt aContext)
 	/* begin popStack */
 	top = unsignedLongAt(GIV(stackPointer));
 	GIV(stackPointer) += BytesPerWord;
-	GIV(instructionPointer) = top;
+	GIV(instructionPointer) = (char*)top;
 	/* end popStack */
 }
 /*	Marry an unmarried frame. This means creating a spouse context 
@@ -72938,7 +72938,7 @@ marryFrameSP(char *theFP, char *theSP)
 	if (((isMachineCodeIP(((usqInt) (unsignedLongAt(theFP + FoxMethod)) )))
 		 ? ((unsignedLongAt(theFP + FoxMethod)) & MFMethodFlagIsBlockFlag) != 0
 		 : (byteAt((theFP + FoxIFrameFlags) + 3)) != 0)) {
-		closureOrNil = unsignedLongAt(theFP + (frameStackedReceiverOffset(theFP)));
+		closureOrNil = unsignedLongAt(theFP + (frameStackedReceiverOffset((char*)theFP)));
 	} else {
 		/* begin nilObject */
 		closureOrNil = GIV(nilObj);
@@ -73348,7 +73348,7 @@ noMarkedContextsOnPage(StackPage *thePage)
 		if (((isMachineCodeIP(((usqInt) (unsignedLongAt(theFP + FoxMethod)) )))
 			 ? ((unsignedLongAt(theFP + FoxMethod)) & MFMethodFlagHasContextFlag) != 0
 			 : (byteAt((theFP + FoxIFrameFlags) + 2)) != 0)) {
-			assert(isContext(frameContext(theFP)));
+			assert(isContext(frameContext((char*)theFP)));
 			if (isMarked(unsignedLongAt(theFP + FoxThisContext))) {
 				return 0;
 			}
@@ -74398,7 +74398,7 @@ static void NoDbgRegParms
 printActivationNameForSelectorstartClass(sqInt aSelector, sqInt startClass)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
-	sqInt class;
+	sqInt klass;
 	sqInt classDict;
 	usqInt classDictSize;
 	sqInt currClass;
@@ -75257,7 +75257,7 @@ printFrameAndCallersSPshort(char *theFP, char *theSP, sqInt printShort)
 }
 /* StackInterpreter>>#printFrameOop:at: */
 static void NoDbgRegParms
-printFrameOopat(char *name, char *address)
+printFrameOopat(const char *name, char *address)
 {
 	sqInt i;
 	sqInt iLimiT;
@@ -75465,7 +75465,7 @@ printFrame(char *theFP)
 		return null;
 	}
 	frameAbove = null;
-	if (theFP == GIV(framePointer)) {
+	if ((char*)theFP == GIV(framePointer)) {
 		theSP = GIV(stackPointer);
 	} else {
 		/* begin stackPageFor: */
@@ -77750,7 +77750,7 @@ pushBool(sqInt trueOrFalse)
 static sqInt NoDbgRegParms
 pushedReceiverOrClosureOfFrame(char *theFP)
 {
-	return unsignedLongAt(theFP + (frameStackedReceiverOffset(theFP)));
+	return unsignedLongAt(theFP + (frameStackedReceiverOffset((char*)theFP)));
 }
 /* StackInterpreter>>#pushFloat: */
 void
@@ -78214,7 +78214,7 @@ reestablishContextPriorToCallback(sqInt callbackContext)
 	assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 	{
 		(GIV(stackPage)->headFP = GIV(framePointer));
-		(GIV(stackPage)->headSP = theSP);
+		(GIV(stackPage)->headSP = (char*)theSP);
 	}
 	/* end setHeadFP:andSP:inPage: */
 	assert(pageListIsWellFormed());
@@ -78249,7 +78249,7 @@ reestablishContextPriorToCallback(sqInt callbackContext)
 			if ((unsignedLongAt(theFP + FoxSavedFP)) == 0) {
 				freeStackPage(GIV(stackPage));
 			} else {
-				GIV(instructionPointer) = ((usqInt) (pointerForOop(unsignedLongAt(GIV(framePointer) + FoxCallerSavedIP))) );
+				GIV(instructionPointer) = (char*)((usqInt) (pointerForOop(unsignedLongAt(GIV(framePointer) + FoxCallerSavedIP))) );
 				GIV(stackPointer) = (GIV(framePointer) + (frameStackedReceiverOffset(GIV(framePointer)))) + BytesPerWord;
 				/* begin frameCallerFP: */
 				GIV(framePointer) = pointerForOop(unsignedLongAt(GIV(framePointer) + FoxSavedFP));
@@ -78292,7 +78292,7 @@ reestablishContextPriorToCallback(sqInt callbackContext)
 		/* end stackPageFor: */
 		assert(thePage != GIV(stackPage));
 		GIV(stackPointer) = (findSPOfon(theFP, thePage)) - BytesPerWord;
-		GIV(framePointer) = theFP;
+		GIV(framePointer) = (char*)theFP;
 		assert(GIV(stackPointer) < GIV(framePointer));
 	} else {
 		thePage = makeBaseFrameFor(calloutContext);
@@ -78304,7 +78304,7 @@ reestablishContextPriorToCallback(sqInt callbackContext)
 	/* begin popStack */
 	top = unsignedLongAt(GIV(stackPointer));
 	GIV(stackPointer) += BytesPerWord;
-	GIV(instructionPointer) = top;
+	GIV(instructionPointer) = (char*)top;
 	/* end popStack */
 	/* begin setStackPageAndLimit: */
 	assert(thePage != 0);
@@ -79570,7 +79570,7 @@ sqInt
 stObjectat(sqInt array, sqInt index)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
-	sqInt class;
+	sqInt klass;
 	sqInt classFormat;
 	sqInt fixedFields;
 	usqLong fmt;
@@ -79628,9 +79628,9 @@ stObjectat(sqInt array, sqInt index)
 		fixedFields = totalLength;
 		goto l5;
 	}
-	class = fetchClassOfNonImm(array);
+	klass = fetchClassOfNonImm(array);
 	/* begin fixedFieldsOfClassFormat: */
-	classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+	classFormat = (unsignedLongAt((klass + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 	fixedFields = classFormat & ((1U << (fixedFieldsFieldWidth())) - 1);
 	/* end fixedFieldsOfClassFormat: */
 	l5:
@@ -79704,7 +79704,7 @@ sqInt
 stObjectatput(sqInt array, sqInt index, sqInt value)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
-	sqInt class;
+	sqInt klass;
 	sqInt classFormat;
 	sqInt fixedFields;
 	usqLong fmt;
@@ -79767,9 +79767,9 @@ stObjectatput(sqInt array, sqInt index, sqInt value)
 		fixedFields = totalLength;
 		goto l5;
 	}
-	class = fetchClassOfNonImm(array);
+	klass = fetchClassOfNonImm(array);
 	/* begin fixedFieldsOfClassFormat: */
-	classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+	classFormat = (unsignedLongAt((klass + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 	fixedFields = classFormat & ((1U << (fixedFieldsFieldWidth())) - 1);
 	/* end fixedFieldsOfClassFormat: */
 	l5:
@@ -79925,8 +79925,8 @@ storeSenderOfFramewithValue(char *theFP, sqInt anOop)
 		/* begin frameCallerContext:put: */
 		assert((anOop == (nilObject())) || (isContext(anOop)));
 		assert(isBaseFrame(theFP));
-		assert(((theFP + (frameStackedReceiverOffset(theFP))) + (2 * BytesPerWord)) == (((stackPageFor(theFP))->baseAddress)));
-		assert((longAt((theFP + (frameStackedReceiverOffset(theFP))) + BytesPerWord)) == (frameContext(theFP)));
+		assert(((theFP + (frameStackedReceiverOffset((char*)theFP))) + (2 * BytesPerWord)) == (((stackPageFor(theFP))->baseAddress)));
+		assert((longAt((theFP + (frameStackedReceiverOffset((char*)theFP))) + BytesPerWord)) == (frameContext((char*)theFP)));
 		longAtput((theFP + (frameStackedReceiverOffsetNumArgs(((isMachineCodeIP(((usqInt) (unsignedLongAt(theFP + FoxMethod)) )))
 			 ? ((((CogMethod *) ((unsignedLongAt(theFP + FoxMethod)) & MFMethodMask) ))->cmNumArgs)
 			 : byteAt((theFP + FoxIFrameFlags) + 1))))) + (2 * BytesPerWord), anOop);
@@ -79957,7 +79957,7 @@ storeSenderOfFramewithValue(char *theFP, sqInt anOop)
 		unsignedLongAt(callerFP + FoxThisContext);
 		goto l4;
 	}
-	marryFrameSP(callerFP, (assert(!(isBaseFrame(theFP))), (theFP + (frameStackedReceiverOffset(theFP))) + BytesPerWord));
+	marryFrameSP(callerFP, (assert(!(isBaseFrame(theFP))), (theFP + (frameStackedReceiverOffset((char*)theFP))) + BytesPerWord));
 	/* end ensureFrameIsMarried:SP: */
 	l4:
 	;
@@ -80014,7 +80014,7 @@ storeSenderOfFramewithValue(char *theFP, sqInt anOop)
 sqInt
 stSizeOf(sqInt oop)
 {
-	sqInt class;
+	sqInt klass;
 	sqInt classFormat;
 	sqInt fixedFields;
 	usqLong fmt;
@@ -80067,9 +80067,9 @@ stSizeOf(sqInt oop)
 		fixedFields = totalLength;
 		goto l4;
 	}
-	class = fetchClassOfNonImm(oop);
+	klass = fetchClassOfNonImm(oop);
 	/* begin fixedFieldsOfClassFormat: */
-	classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+	classFormat = (unsignedLongAt((klass + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 	fixedFields = classFormat & ((1U << (fixedFieldsFieldWidth())) - 1);
 	/* end fixedFieldsOfClassFormat: */
 	l4:
@@ -80290,7 +80290,7 @@ transferTofrom(sqInt newProc, sqInt sourceCode)
 	assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 	{
 		(GIV(stackPage)->headFP = GIV(framePointer));
-		(GIV(stackPage)->headSP = theSP1);
+		(GIV(stackPage)->headSP = (char*)theSP1);
 	}
 	/* end setHeadFP:andSP:inPage: */
 	assert(pageListIsWellFormed());
@@ -80328,11 +80328,11 @@ transferTofrom(sqInt newProc, sqInt sourceCode)
 	if (((isMachineCodeIP(((usqInt) (unsignedLongAt(theFP + FoxMethod)) )))
 		 ? ((unsignedLongAt(theFP + FoxMethod)) & MFMethodFlagHasContextFlag) != 0
 		 : (byteAt((theFP + FoxIFrameFlags) + 2)) != 0)) {
-		assert(isContext(frameContext(theFP)));
+		assert(isContext(frameContext((char*)theFP)));
 		activeContext = unsignedLongAt(theFP + FoxThisContext);
 		goto l5;
 	}
-	activeContext = marryFrameSP(theFP, theSP);
+	activeContext = marryFrameSP((char*)theFP, (char*)theSP);
 	l5:
 	;
 	/* end ensureFrameIsMarried:SP: */
@@ -80510,7 +80510,7 @@ transferTofrom(sqInt newProc, sqInt sourceCode)
 	/* begin popStack */
 	top = unsignedLongAt(GIV(stackPointer));
 	GIV(stackPointer) += BytesPerWord;
-	GIV(instructionPointer) = top;
+	GIV(instructionPointer) = (char*)top;
 	/* end popStack */
 	/* begin assertValidExecutionPointe:r:s: */
 	assertValidExecutionPointersimbarline(((usqInt) GIV(instructionPointer) ), GIV(framePointer), GIV(stackPointer), !(isMachineCodeIP(((usqInt) (unsignedLongAt(GIV(framePointer) + FoxMethod)) ))), __LINE__);
@@ -80671,7 +80671,7 @@ updateStateOfSpouseContextForFrameWithSP(char *theFP, char *theSP)
 	theContext = unsignedLongAt(theFP + FoxThisContext);
 	/* end frameContext: */
 	assert(isContext(theContext));
-	assert((frameReceiver(theFP)) == (noFixupFollowFieldofObject(ReceiverIndex, theContext)));
+	assert((frameReceiver((char*)theFP)) == (noFixupFollowFieldofObject(ReceiverIndex, theContext)));
 	tempIndex = ((isMachineCodeIP(((usqInt) (unsignedLongAt(theFP + FoxMethod)) )))
 		 ? ((((CogMethod *) ((unsignedLongAt(theFP + FoxMethod)) & MFMethodMask) ))->cmNumArgs)
 		 : byteAt((theFP + FoxIFrameFlags) + 1));
@@ -80865,7 +80865,7 @@ wakeHighestPriority(void)
 	assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 	{
 		(GIV(stackPage)->headFP = GIV(framePointer));
-		(GIV(stackPage)->headSP = theSP);
+		(GIV(stackPage)->headSP = (char*)theSP);
 	}
 	/* end setHeadFP:andSP:inPage: */
 	assert(pageListIsWellFormed());
@@ -81304,7 +81304,7 @@ doPrimitiveWorkerCallout(void)
 		/* begin argTypeAt: */
 		argType = (cif->arg_types)[i];
 		/* end argTypeAt: */
-		argHolder = malloc((argType->size));
+		argHolder = (sqInt)malloc((argType->size));
 		parameters[i] = argHolder;
 		marshallArgumentFromatIndexintoofTypewithSize(argumentsArrayOop, i, argHolder, (argType->type), (argType->size));
 		if (GIV(primFailCode)) {
@@ -81314,11 +81314,11 @@ doPrimitiveWorkerCallout(void)
 					aPtr = parameters[i2];
 					if (!(aPtr == null)) {
 						parameters[i2] = null;
-						free(aPtr);
+						free((void*)aPtr);
 					}
 				}
 			};
-			free(parameters);
+			free((void*)parameters);
 			/* end freeArgumentsArray:count: */
 			/* begin primitiveFailFor: */
 			return (GIV(primFailCode) = PrimErrBadArgument);
@@ -81326,7 +81326,7 @@ doPrimitiveWorkerCallout(void)
 		}
 	};
 	if (((((cif->rtype))->size)) > 0) {
-		returnHolder = malloc(((((((cif->rtype))->size)) < BytesPerWord) ? BytesPerWord : (((cif->rtype))->size)));
+		returnHolder = (sqInt)malloc(((((((cif->rtype))->size)) < BytesPerWord) ? BytesPerWord : (((cif->rtype))->size)));
 	} else {
 		returnHolder = null;
 	}
@@ -82280,7 +82280,7 @@ primitiveContextAt(void)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
 	sqInt aContext;
-	sqInt class;
+	sqInt klass;
 	sqInt class2;
 	sqInt classFormat;
 	sqInt classFormat1;
@@ -82474,7 +82474,7 @@ primitiveContextAt(void)
 	assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 	{
 		(GIV(stackPage)->headFP = GIV(framePointer));
-		(GIV(stackPage)->headSP = theSP);
+		(GIV(stackPage)->headSP = (char*)theSP);
 	}
 	/* end setHeadFP:andSP:inPage: */
 	assert(pageListIsWellFormed());
@@ -82521,9 +82521,9 @@ primitiveContextAt(void)
 			fixedFields = totalLength;
 			goto l11;
 		}
-		class = fetchClassOfNonImm(aContext);
+		klass = fetchClassOfNonImm(aContext);
 		/* begin fixedFieldsOfClassFormat: */
-		classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+		classFormat = (unsignedLongAt((klass + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 		fixedFields = classFormat & ((1U << (fixedFieldsFieldWidth())) - 1);
 		/* end fixedFieldsOfClassFormat: */
 		l11:
@@ -82622,7 +82622,7 @@ primitiveContextAtPut(void)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
 	sqInt aContext;
-	sqInt class;
+	sqInt klass;
 	sqInt classFormat;
 	sqInt fixedFields;
 	usqLong fmt;
@@ -82681,7 +82681,7 @@ primitiveContextAtPut(void)
 	assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 	{
 		(GIV(stackPage)->headFP = GIV(framePointer));
-		(GIV(stackPage)->headSP = theSP);
+		(GIV(stackPage)->headSP = (char*)theSP);
 	}
 	/* end setHeadFP:andSP:inPage: */
 	assert(pageListIsWellFormed());
@@ -82728,9 +82728,9 @@ primitiveContextAtPut(void)
 			fixedFields = totalLength;
 			goto l12;
 		}
-		class = fetchClassOfNonImm(aContext);
+		klass = fetchClassOfNonImm(aContext);
 		/* begin fixedFieldsOfClassFormat: */
-		classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+		classFormat = (unsignedLongAt((klass + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 		fixedFields = classFormat & ((1U << (fixedFieldsFieldWidth())) - 1);
 		/* end fixedFieldsOfClassFormat: */
 		l12:
@@ -82890,7 +82890,7 @@ static void
 primitiveContextSize(void)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
-	sqInt class;
+	sqInt klass;
 	sqInt classFormat;
 	sqInt fixedFields;
 	usqLong fmt;
@@ -82952,9 +82952,9 @@ primitiveContextSize(void)
 		fixedFields = totalLength;
 		goto l5;
 	}
-	class = fetchClassOfNonImm(rcvr);
+	klass = fetchClassOfNonImm(rcvr);
 	/* begin fixedFieldsOfClassFormat: */
-	classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+	classFormat = (unsignedLongAt((klass + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 	fixedFields = classFormat & ((1U << (fixedFieldsFieldWidth())) - 1);
 	/* end fixedFieldsOfClassFormat: */
 	l5:
@@ -82972,7 +82972,7 @@ primitiveContextSize(void)
 		assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 		{
 			(GIV(stackPage)->headFP = GIV(framePointer));
-			(GIV(stackPage)->headSP = theSP);
+			(GIV(stackPage)->headSP = (char*)theSP);
 		}
 		/* end setHeadFP:andSP:inPage: */
 		assert(pageListIsWellFormed());
@@ -84234,7 +84234,7 @@ primitiveFFIAllocate(void)
 	if (GIV(primFailCode)) {
 		return;
 	}
-	addr = malloc(byteSize);
+	addr = (sqInt)malloc(byteSize);
 	if (addr == 0) {
 		{
 			/* begin primitiveFail */
@@ -84321,7 +84321,7 @@ primitiveFFIFree(void)
 			return;
 		}
 	}
-	free(addr);
+	free((void*)addr);
 	/* begin writeAddress:to: */
 	if (!(isKindOfClass(oop, unsignedLongAt((GIV(specialObjectsOop) + BaseHeaderSize) + ((sqInt) (((usqInt) ClassExternalAddress ) << (shiftForWord())) ))))) {
 		/* begin primitiveFail */
@@ -84708,7 +84708,7 @@ primitiveFindHandlerContext(void)
 	assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 	{
 		(GIV(stackPage)->headFP = GIV(framePointer));
-		(GIV(stackPage)->headSP = theSP);
+		(GIV(stackPage)->headSP = (char*)theSP);
 	}
 	/* end setHeadFP:andSP:inPage: */
 	assert(pageListIsWellFormed());
@@ -84776,7 +84776,7 @@ primitiveFindNextUnwindContext(void)
 	assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 	{
 		(GIV(stackPage)->headFP = GIV(framePointer));
-		(GIV(stackPage)->headSP = theSP);
+		(GIV(stackPage)->headSP = (char*)theSP);
 	}
 	/* end setHeadFP:andSP:inPage: */
 	assert(pageListIsWellFormed());
@@ -84902,7 +84902,7 @@ primitiveFullGC(void)
 	assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 	{
 		(GIV(stackPage)->headFP = GIV(framePointer));
-		(GIV(stackPage)->headSP = theSP);
+		(GIV(stackPage)->headSP = (char*)theSP);
 	}
 	/* end setHeadFP:andSP:inPage: */
 	assert(pageListIsWellFormed());
@@ -85316,7 +85316,7 @@ primitiveIncrementalGC(void)
 	assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 	{
 		(GIV(stackPage)->headFP = GIV(framePointer));
-		(GIV(stackPage)->headSP = theSP);
+		(GIV(stackPage)->headSP = (char*)theSP);
 	}
 	/* end setHeadFP:andSP:inPage: */
 	assert(pageListIsWellFormed());
@@ -85337,7 +85337,7 @@ static void
 primitiveInstVarAt(void)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
-	sqInt class;
+	sqInt klass;
 	sqInt classFormat;
 	sqInt fixedFields;
 	usqLong fmt;
@@ -85414,9 +85414,9 @@ primitiveInstVarAt(void)
 		fixedFields = totalLength;
 		goto l7;
 	}
-	class = fetchClassOfNonImm(rcvr);
+	klass = fetchClassOfNonImm(rcvr);
 	/* begin fixedFieldsOfClassFormat: */
-	classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+	classFormat = (unsignedLongAt((klass + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 	fixedFields = classFormat & ((1U << (fixedFieldsFieldWidth())) - 1);
 	/* end fixedFieldsOfClassFormat: */
 	l7:
@@ -85471,7 +85471,7 @@ static void
 primitiveInstVarAtPut(void)
 {
 	DECL_MAYBE_SQ_GLOBAL_STRUCT;
-	sqInt class;
+	sqInt klass;
 	sqInt classFormat;
 	sqInt fixedFields;
 	usqLong fmt;
@@ -85572,9 +85572,9 @@ primitiveInstVarAtPut(void)
 		fixedFields = totalLength;
 		goto l8;
 	}
-	class = fetchClassOfNonImm(rcvr);
+	klass = fetchClassOfNonImm(rcvr);
 	/* begin fixedFieldsOfClassFormat: */
-	classFormat = (unsignedLongAt((class + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
+	classFormat = (unsignedLongAt((klass + BaseHeaderSize) + ((sqInt) (((usqInt) InstanceSpecificationIndex ) << (shiftForWord())) ))) >> 3;
 	fixedFields = classFormat & ((1U << (fixedFieldsFieldWidth())) - 1);
 	/* end fixedFieldsOfClassFormat: */
 	l8:
@@ -85601,7 +85601,7 @@ primitiveInstVarAtPut(void)
 		assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 		{
 			(GIV(stackPage)->headFP = GIV(framePointer));
-			(GIV(stackPage)->headSP = theSP);
+			(GIV(stackPage)->headSP = (char*)theSP);
 		}
 		/* end setHeadFP:andSP:inPage: */
 		assert(pageListIsWellFormed());
@@ -88138,7 +88138,7 @@ primitiveObjectPointsTo(void)
 				assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 				{
 					(GIV(stackPage)->headFP = GIV(framePointer));
-					(GIV(stackPage)->headSP = theSP);
+					(GIV(stackPage)->headSP = (char*)theSP);
 				}
 				/* end setHeadFP:andSP:inPage: */
 				assert(pageListIsWellFormed());
@@ -88830,7 +88830,7 @@ primitiveSlotAt(void)
 				assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 				{
 					(GIV(stackPage)->headFP = GIV(framePointer));
-					(GIV(stackPage)->headSP = theSP);
+					(GIV(stackPage)->headSP = (char*)theSP);
 				}
 				/* end setHeadFP:andSP:inPage: */
 				assert(pageListIsWellFormed());
@@ -89040,7 +89040,7 @@ primitiveSlotAtPut(void)
 				assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 				{
 					(GIV(stackPage)->headFP = GIV(framePointer));
-					(GIV(stackPage)->headSP = theSP);
+					(GIV(stackPage)->headSP = (char*)theSP);
 				}
 				/* end setHeadFP:andSP:inPage: */
 				assert(pageListIsWellFormed());
@@ -91020,7 +91020,7 @@ primitiveStoreStackp(void)
 	assert((GIV(framePointer) < ((GIV(stackPage)->baseAddress))) && (GIV(framePointer) > (((GIV(stackPage)->realStackLimit)) - ((LargeContextSlots * BytesPerOop) / 2))));
 	{
 		(GIV(stackPage)->headFP = GIV(framePointer));
-		(GIV(stackPage)->headSP = theSP);
+		(GIV(stackPage)->headSP = (char*)theSP);
 	}
 	/* end setHeadFP:andSP:inPage: */
 	assert(pageListIsWellFormed());
@@ -91040,7 +91040,7 @@ primitiveStoreStackp(void)
 		thePage = stackPageAtpages((assert((((char *) theFP ) >= (GIV(stackBasePlus1) - 1)) && (((char *) theFP ) <= ((char *) GIV(pages) ))), pageIndexForstackBasePlus1bytesPerPage(theFP, GIV(stackBasePlus1), GIV(bytesPerPage))), GIV(pages));
 		/* end stackPageAt: */
 		/* end stackPageFor: */
-		if (((onCurrentPage = thePage == GIV(stackPage))) && (theFP == GIV(framePointer))) {
+		if (((onCurrentPage = thePage == GIV(stackPage))) && ((char*)theFP == GIV(framePointer))) {
 			/* begin primitiveFail */
 			if (!GIV(primFailCode)) {
 				GIV(primFailCode) = 1;
@@ -92281,7 +92281,7 @@ pruneStackstackp(sqInt anArray, sqInt stackp)
 			if (((isMachineCodeIP(((usqInt) (unsignedLongAt(theFP + FoxMethod)) )))
 				 ? ((unsignedLongAt(theFP + FoxMethod)) & MFMethodFlagHasContextFlag) != 0
 				 : (byteAt((theFP + FoxIFrameFlags) + 2)) != 0)) {
-				assert(isContext(frameContext(theFP)));
+				assert(isContext(frameContext((char*)theFP)));
 				objOrFP = unsignedLongAt(theFP + FoxThisContext);
 				goto l10;
 			}
@@ -93073,8 +93073,8 @@ readImageNamed(char *imageName)
 				}
 			}
 			/* begin endOfSTON: */
-			aCharacter = fgetc(file);
-			ungetc(aCharacter, file);
+			aCharacter = fgetc((FILE*)file);
+			ungetc(aCharacter, (FILE*)file);
 			/* end endOfSTON: */
 		}while(!((aCharacter == -1) || (aCharacter == '}')));
 		/* end readFieldsSTONFrom:into: */
@@ -93186,7 +93186,7 @@ allocateHeap(VMMemoryMap * self_in_allocateHeap)
 	if (((self_in_allocateHeap->initialCodeZoneSize)) == 0) {
 		goto l1;
 	}
-	(self_in_allocateHeap->codeZoneStart = allocateJITMemory((self_in_allocateHeap->initialCodeZoneSize), 13421772800LL));
+	(self_in_allocateHeap->codeZoneStart = (uint64_t)allocateJITMemory((self_in_allocateHeap->initialCodeZoneSize), 13421772800LL));
 	if (!((self_in_allocateHeap->codeZoneStart))) {
 		insufficientMemoryAvailableError();
 	}
@@ -93273,7 +93273,7 @@ allocateStackPages(VMMemoryMap * self_in_allocateStackPages, sqInt initialStackS
 		error("Error allocating");
 	}
 	(self_in_allocateStackPages->stackPagesEnd = ((self_in_allocateStackPages->stackPagesStart)) + sizeToRequest);
-	memset((self_in_allocateStackPages->stackPagesStart), 0, sizeToRequest);
+	memset((void*)(self_in_allocateStackPages->stackPagesStart), 0, sizeToRequest);
 	{
 		return;
 	}
@@ -93296,7 +93296,7 @@ allocationGranularity(VMMemoryMap * self_in_allocationGranularity)
 		return 0;
 	}
 #  endif /* WIN32 */
-	return self_in_allocationGranularity;
+	return (sqInt)self_in_allocationGranularity;
 }
 /* VMMemoryMap>>#calculateMaskToUse */
 static VMMemoryMap * NoDbgRegParms
@@ -93620,7 +93620,7 @@ growRememberedSet(VMRememberedSet * self_in_growRememberedSet)
 		longAtput((GIV(hiddenRootsObj) + BaseHeaderSize) + ((sqInt) (((usqInt) rootIndex ) << (shiftForWord())) ), newObj);
 	}
 	/* end rememberedSet:oop: */
-	base = ((usqInt *) (firstIndexableField(newObj)) );
+	base = (sqInt*)((usqInt *) (firstIndexableField(newObj)) );
 	for (i = 0; i < ((self_in_growRememberedSet->rememberedSetSize)); i += 1) {
 		base[i] = (self_in_growRememberedSet->rememberedSetArray)[i];
 	};
@@ -93701,7 +93701,7 @@ initializeRememberedSetShouldStartEmpty(VMRememberedSet * self_in_initializeReme
 	}
 	assert((formatOf(obj)) == (wordIndexableFormat()));
 	assert(isPinned(obj));
-	(self_in_initializeRememberedSetShouldStartEmpty->rememberedSetArray = ((usqInt *) (firstIndexableField(obj)) ));
+	(self_in_initializeRememberedSetShouldStartEmpty->rememberedSetArray = (sqInt*)((usqInt *) (firstIndexableField(obj)) ));
 	(self_in_initializeRememberedSetShouldStartEmpty->rememberedSetLimit = numSlotsOf(obj));
 	if (shouldStartEmpty) {
 		(self_in_initializeRememberedSetShouldStartEmpty->rememberedSetSize) = 0;
@@ -93888,7 +93888,7 @@ shrinkRememberedSet(VMRememberedSet * self_in_shrinkRememberedSet)
 		longAtput((GIV(hiddenRootsObj) + BaseHeaderSize) + ((sqInt) (((usqInt) rootIndex ) << (shiftForWord())) ), newObj);
 	}
 	/* end rememberedSet:oop: */
-	base = ((usqInt *) (firstIndexableField(newObj)) );
+	base = (sqInt*)((usqInt *) (firstIndexableField(newObj)) );
 	for (i = 0; i < ((self_in_shrinkRememberedSet->rememberedSetSize)); i += 1) {
 		base[i] = (self_in_shrinkRememberedSet->rememberedSetArray)[i];
 	};
@@ -94141,81 +94141,81 @@ statAverageLivePagesWhenMapping(void)
 
 static char _m[] = "";
 void* vm_exports[][3] = {
-	{(void*)_m, "callbackLeave", (void*)callbackLeave},
+	{(void*)_m, (void*)"callbackLeave", (void*)callbackLeave},
 #if FEATURE_THREADED_FFI
-	{(void*)_m, "doPrimitiveWorkerCallout\000\377", (void*)doPrimitiveWorkerCallout},
+	{(void*)_m, (void*)"doPrimitiveWorkerCallout\000\377", (void*)doPrimitiveWorkerCallout},
 #endif /* FEATURE_THREADED_FFI */
-	{(void*)_m, "moduleUnloaded", (void*)moduleUnloaded},
-	{(void*)_m, "primitiveAddLargeIntegers\000\377", (void*)primitiveAddLargeIntegers},
-	{(void*)_m, "primitiveAllInstances\000\377", (void*)primitiveAllInstances},
-	{(void*)_m, "primitiveAllObjects\000\377", (void*)primitiveAllObjects},
-	{(void*)_m, "primitiveBitAndLargeIntegers\000\377", (void*)primitiveBitAndLargeIntegers},
-	{(void*)_m, "primitiveBitOrLargeIntegers\000\377", (void*)primitiveBitOrLargeIntegers},
-	{(void*)_m, "primitiveBitShiftLargeIntegers\000\377", (void*)primitiveBitShiftLargeIntegers},
-	{(void*)_m, "primitiveBitXorLargeIntegers\000\377", (void*)primitiveBitXorLargeIntegers},
-	{(void*)_m, "primitiveClockLogAddresses\000\377", (void*)primitiveClockLogAddresses},
-	{(void*)_m, "primitiveCompareBytes\000\377", (void*)primitiveCompareBytes},
-	{(void*)_m, "primitiveCrashVM\000\377", (void*)primitiveCrashVM},
-	{(void*)_m, "primitiveDisablePowerManager\000\377", (void*)primitiveDisablePowerManager},
-	{(void*)_m, "primitiveDivideLargeIntegers\000\377", (void*)primitiveDivideLargeIntegers},
-	{(void*)_m, "primitiveDivLargeIntegers\000\377", (void*)primitiveDivLargeIntegers},
-	{(void*)_m, "primitiveEqualLargeIntegers\000\377", (void*)primitiveEqualLargeIntegers},
-	{(void*)_m, "primitiveFFIAllocate\000\377", (void*)primitiveFFIAllocate},
-	{(void*)_m, "primitiveFFIFree\000\377", (void*)primitiveFFIFree},
-	{(void*)_m, "primitiveFFIIntegerAt\000\377", (void*)primitiveFFIIntegerAt},
-	{(void*)_m, "primitiveFFIIntegerAtPut\000\377", (void*)primitiveFFIIntegerAtPut},
-	{(void*)_m, "primitiveGetCurrentWorkingDirectory\000\377", (void*)primitiveGetCurrentWorkingDirectory},
-	{(void*)_m, "primitiveGetenv\000\377", (void*)primitiveGetenv},
-	{(void*)_m, "primitiveGetLogDirectory\000\377", (void*)primitiveGetLogDirectory},
-	{(void*)_m, "primitiveGetWindowLabel\000\377", (void*)primitiveGetWindowLabel},
-	{(void*)_m, "primitiveGetWindowSize\000\377", (void*)primitiveGetWindowSize},
-	{(void*)_m, "primitiveGreaterOrEqualLargeIntegers\000\377", (void*)primitiveGreaterOrEqualLargeIntegers},
-	{(void*)_m, "primitiveGreaterThanLargeIntegers\000\377", (void*)primitiveGreaterThanLargeIntegers},
-	{(void*)_m, "primitiveHeartbeatFrequency\000\377", (void*)primitiveHeartbeatFrequency},
-	{(void*)_m, "primitiveHighResClock\000\377", (void*)primitiveHighResClock},
-	{(void*)_m, "primitiveImageFormatVersion\000\377", (void*)primitiveImageFormatVersion},
-	{(void*)_m, "primitiveInterruptChecksPerMSec\000\377", (void*)primitiveInterruptChecksPerMSec},
-	{(void*)_m, "primitiveIsBigEnder\000\377", (void*)primitiveIsBigEnder},
-	{(void*)_m, "primitiveIsWindowObscured\000\377", (void*)primitiveIsWindowObscured},
-	{(void*)_m, "primitiveLessOrEqualLargeIntegers\000\377", (void*)primitiveLessOrEqualLargeIntegers},
-	{(void*)_m, "primitiveLessThanLargeIntegers\000\377", (void*)primitiveLessThanLargeIntegers},
-	{(void*)_m, "primitiveLoadSymbolFromModule\000\377", (void*)primitiveLoadSymbolFromModule},
-	{(void*)_m, "primitiveLongRunningPrimitive\000\377", (void*)primitiveLongRunningPrimitive},
-	{(void*)_m, "primitiveLongRunningPrimitiveSemaphore\000\377", (void*)primitiveLongRunningPrimitiveSemaphore},
-	{(void*)_m, "primitiveMethodPCData\000\377", (void*)primitiveMethodPCData},
-	{(void*)_m, "primitiveMethodProfilingData\000\377", (void*)primitiveMethodProfilingData},
-	{(void*)_m, "primitiveMillisecondClockMask\000\377", (void*)primitiveMillisecondClockMask},
-	{(void*)_m, "primitiveMinimumUnusedHeadroom\000\377", (void*)primitiveMinimumUnusedHeadroom},
-	{(void*)_m, "primitiveModLargeIntegers\000\377", (void*)primitiveModLargeIntegers},
-	{(void*)_m, "primitiveMultiplyLargeIntegers\000\377", (void*)primitiveMultiplyLargeIntegers},
-	{(void*)_m, "primitiveNotEqualLargeIntegers\000\377", (void*)primitiveNotEqualLargeIntegers},
-	{(void*)_m, "primitivePathToUsing\000\377", (void*)primitivePathToUsing},
-	{(void*)_m, "primitiveProfilePrimitive\000\377", (void*)primitiveProfilePrimitive},
-	{(void*)_m, "primitiveProfileSample\000\377", (void*)primitiveProfileSample},
-	{(void*)_m, "primitiveProfileSemaphore\000\377", (void*)primitiveProfileSemaphore},
-	{(void*)_m, "primitiveProfileStart\000\377", (void*)primitiveProfileStart},
-	{(void*)_m, "primitiveQuoLargeIntegers\000\377", (void*)primitiveQuoLargeIntegers},
-	{(void*)_m, "primitiveRemLargeIntegers\000\377", (void*)primitiveRemLargeIntegers},
-	{(void*)_m, "primitiveSameThreadCallout\000\377", (void*)primitiveSameThreadCallout},
-	{(void*)_m, "primitiveScreenDepth\000\377", (void*)primitiveScreenDepth},
-	{(void*)_m, "primitiveScreenScaleFactor\000\377", (void*)primitiveScreenScaleFactor},
-	{(void*)_m, "primitiveSetGCSemaphore\000\377", (void*)primitiveSetGCSemaphore},
-	{(void*)_m, "primitiveSetLogDirectory\000\377", (void*)primitiveSetLogDirectory},
-	{(void*)_m, "primitiveSetWindowLabel\000\377", (void*)primitiveSetWindowLabel},
-	{(void*)_m, "primitiveSetWindowSize\000\377", (void*)primitiveSetWindowSize},
-	{(void*)_m, "primitiveStringCompareWith\000\377", (void*)primitiveStringCompareWith},
-	{(void*)_m, "primitiveSubtractLargeIntegers\000\377", (void*)primitiveSubtractLargeIntegers},
-	{(void*)_m, "primitiveUtcWithOffset\000\377", (void*)primitiveUtcWithOffset},
-	{(void*)_m, "primitiveVoidReceiver\000\377", (void*)primitiveVoidReceiver},
-	{(void*)_m, "primitiveWorkerCallout\000\377", (void*)primitiveWorkerCallout},
-	{(void*)_m, "primitiveWorkerExtractReturnValue\000\377", (void*)primitiveWorkerExtractReturnValue},
-	{(void*)_m, "printFramesInPage", (void*)printFramesInPage},
-	{(void*)_m, "printFramesOnStackPageListInUse\000\377", (void*)printFramesOnStackPageListInUse},
-	{(void*)_m, "reestablishContextPriorToCallback", (void*)reestablishContextPriorToCallback},
-	{(void*)_m, "segmentContainingObj", (void*)segmentContainingObj},
-	{(void*)_m, "shortPrintFramesInPage", (void*)shortPrintFramesInPage},
-	{(void*)_m, "shortPrintFramesOnStackPageListInUse\000\377", (void*)shortPrintFramesOnStackPageListInUse},
-	{(void*)_m, "statNumGCs\000\377", (void*)statNumGCs},
+	{(void*)_m, (void*)"moduleUnloaded", (void*)moduleUnloaded},
+	{(void*)_m, (void*)"primitiveAddLargeIntegers\000\377", (void*)primitiveAddLargeIntegers},
+	{(void*)_m, (void*)"primitiveAllInstances\000\377", (void*)primitiveAllInstances},
+	{(void*)_m, (void*)"primitiveAllObjects\000\377", (void*)primitiveAllObjects},
+	{(void*)_m, (void*)"primitiveBitAndLargeIntegers\000\377", (void*)primitiveBitAndLargeIntegers},
+	{(void*)_m, (void*)"primitiveBitOrLargeIntegers\000\377", (void*)primitiveBitOrLargeIntegers},
+	{(void*)_m, (void*)"primitiveBitShiftLargeIntegers\000\377", (void*)primitiveBitShiftLargeIntegers},
+	{(void*)_m, (void*)"primitiveBitXorLargeIntegers\000\377", (void*)primitiveBitXorLargeIntegers},
+	{(void*)_m, (void*)"primitiveClockLogAddresses\000\377", (void*)primitiveClockLogAddresses},
+	{(void*)_m, (void*)"primitiveCompareBytes\000\377", (void*)primitiveCompareBytes},
+	{(void*)_m, (void*)"primitiveCrashVM\000\377", (void*)primitiveCrashVM},
+	{(void*)_m, (void*)"primitiveDisablePowerManager\000\377", (void*)primitiveDisablePowerManager},
+	{(void*)_m, (void*)"primitiveDivideLargeIntegers\000\377", (void*)primitiveDivideLargeIntegers},
+	{(void*)_m, (void*)"primitiveDivLargeIntegers\000\377", (void*)primitiveDivLargeIntegers},
+	{(void*)_m, (void*)"primitiveEqualLargeIntegers\000\377", (void*)primitiveEqualLargeIntegers},
+	{(void*)_m, (void*)"primitiveFFIAllocate\000\377", (void*)primitiveFFIAllocate},
+	{(void*)_m, (void*)"primitiveFFIFree\000\377", (void*)primitiveFFIFree},
+	{(void*)_m, (void*)"primitiveFFIIntegerAt\000\377", (void*)primitiveFFIIntegerAt},
+	{(void*)_m, (void*)"primitiveFFIIntegerAtPut\000\377", (void*)primitiveFFIIntegerAtPut},
+	{(void*)_m, (void*)"primitiveGetCurrentWorkingDirectory\000\377", (void*)primitiveGetCurrentWorkingDirectory},
+	{(void*)_m, (void*)"primitiveGetenv\000\377", (void*)primitiveGetenv},
+	{(void*)_m, (void*)"primitiveGetLogDirectory\000\377", (void*)primitiveGetLogDirectory},
+	{(void*)_m, (void*)"primitiveGetWindowLabel\000\377", (void*)primitiveGetWindowLabel},
+	{(void*)_m, (void*)"primitiveGetWindowSize\000\377", (void*)primitiveGetWindowSize},
+	{(void*)_m, (void*)"primitiveGreaterOrEqualLargeIntegers\000\377", (void*)primitiveGreaterOrEqualLargeIntegers},
+	{(void*)_m, (void*)"primitiveGreaterThanLargeIntegers\000\377", (void*)primitiveGreaterThanLargeIntegers},
+	{(void*)_m, (void*)"primitiveHeartbeatFrequency\000\377", (void*)primitiveHeartbeatFrequency},
+	{(void*)_m, (void*)"primitiveHighResClock\000\377", (void*)primitiveHighResClock},
+	{(void*)_m, (void*)"primitiveImageFormatVersion\000\377", (void*)primitiveImageFormatVersion},
+	{(void*)_m, (void*)"primitiveInterruptChecksPerMSec\000\377", (void*)primitiveInterruptChecksPerMSec},
+	{(void*)_m, (void*)"primitiveIsBigEnder\000\377", (void*)primitiveIsBigEnder},
+	{(void*)_m, (void*)"primitiveIsWindowObscured\000\377", (void*)primitiveIsWindowObscured},
+	{(void*)_m, (void*)"primitiveLessOrEqualLargeIntegers\000\377", (void*)primitiveLessOrEqualLargeIntegers},
+	{(void*)_m, (void*)"primitiveLessThanLargeIntegers\000\377", (void*)primitiveLessThanLargeIntegers},
+	{(void*)_m, (void*)"primitiveLoadSymbolFromModule\000\377", (void*)primitiveLoadSymbolFromModule},
+	{(void*)_m, (void*)"primitiveLongRunningPrimitive\000\377", (void*)primitiveLongRunningPrimitive},
+	{(void*)_m, (void*)"primitiveLongRunningPrimitiveSemaphore\000\377", (void*)primitiveLongRunningPrimitiveSemaphore},
+	{(void*)_m, (void*)"primitiveMethodPCData\000\377", (void*)primitiveMethodPCData},
+	{(void*)_m, (void*)"primitiveMethodProfilingData\000\377", (void*)primitiveMethodProfilingData},
+	{(void*)_m, (void*)"primitiveMillisecondClockMask\000\377", (void*)primitiveMillisecondClockMask},
+	{(void*)_m, (void*)"primitiveMinimumUnusedHeadroom\000\377", (void*)primitiveMinimumUnusedHeadroom},
+	{(void*)_m, (void*)"primitiveModLargeIntegers\000\377", (void*)primitiveModLargeIntegers},
+	{(void*)_m, (void*)"primitiveMultiplyLargeIntegers\000\377", (void*)primitiveMultiplyLargeIntegers},
+	{(void*)_m, (void*)"primitiveNotEqualLargeIntegers\000\377", (void*)primitiveNotEqualLargeIntegers},
+	{(void*)_m, (void*)"primitivePathToUsing\000\377", (void*)primitivePathToUsing},
+	{(void*)_m, (void*)"primitiveProfilePrimitive\000\377", (void*)primitiveProfilePrimitive},
+	{(void*)_m, (void*)"primitiveProfileSample\000\377", (void*)primitiveProfileSample},
+	{(void*)_m, (void*)"primitiveProfileSemaphore\000\377", (void*)primitiveProfileSemaphore},
+	{(void*)_m, (void*)"primitiveProfileStart\000\377", (void*)primitiveProfileStart},
+	{(void*)_m, (void*)"primitiveQuoLargeIntegers\000\377", (void*)primitiveQuoLargeIntegers},
+	{(void*)_m, (void*)"primitiveRemLargeIntegers\000\377", (void*)primitiveRemLargeIntegers},
+	{(void*)_m, (void*)"primitiveSameThreadCallout\000\377", (void*)primitiveSameThreadCallout},
+	{(void*)_m, (void*)"primitiveScreenDepth\000\377", (void*)primitiveScreenDepth},
+	{(void*)_m, (void*)"primitiveScreenScaleFactor\000\377", (void*)primitiveScreenScaleFactor},
+	{(void*)_m, (void*)"primitiveSetGCSemaphore\000\377", (void*)primitiveSetGCSemaphore},
+	{(void*)_m, (void*)"primitiveSetLogDirectory\000\377", (void*)primitiveSetLogDirectory},
+	{(void*)_m, (void*)"primitiveSetWindowLabel\000\377", (void*)primitiveSetWindowLabel},
+	{(void*)_m, (void*)"primitiveSetWindowSize\000\377", (void*)primitiveSetWindowSize},
+	{(void*)_m, (void*)"primitiveStringCompareWith\000\377", (void*)primitiveStringCompareWith},
+	{(void*)_m, (void*)"primitiveSubtractLargeIntegers\000\377", (void*)primitiveSubtractLargeIntegers},
+	{(void*)_m, (void*)"primitiveUtcWithOffset\000\377", (void*)primitiveUtcWithOffset},
+	{(void*)_m, (void*)"primitiveVoidReceiver\000\377", (void*)primitiveVoidReceiver},
+	{(void*)_m, (void*)"primitiveWorkerCallout\000\377", (void*)primitiveWorkerCallout},
+	{(void*)_m, (void*)"primitiveWorkerExtractReturnValue\000\377", (void*)primitiveWorkerExtractReturnValue},
+	{(void*)_m, (void*)"printFramesInPage", (void*)printFramesInPage},
+	{(void*)_m, (void*)"printFramesOnStackPageListInUse\000\377", (void*)printFramesOnStackPageListInUse},
+	{(void*)_m, (void*)"reestablishContextPriorToCallback", (void*)reestablishContextPriorToCallback},
+	{(void*)_m, (void*)"segmentContainingObj", (void*)segmentContainingObj},
+	{(void*)_m, (void*)"shortPrintFramesInPage", (void*)shortPrintFramesInPage},
+	{(void*)_m, (void*)"shortPrintFramesOnStackPageListInUse\000\377", (void*)shortPrintFramesOnStackPageListInUse},
+	{(void*)_m, (void*)"statNumGCs\000\377", (void*)statNumGCs},
 	{NULL, NULL, NULL}
 };
 

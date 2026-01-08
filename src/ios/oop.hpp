@@ -1,236 +1,347 @@
 /*
- * oop.hpp - Oop wrapper class for iOS Pharo VM
+ * oop.hpp - Type-safe Oop class for iOS Pharo VM
  *
- * This class wraps 64-bit object pointers (oops) and encodes the memory
- * space (new/old/perm) explicitly in the low bits instead of relying on
- * address ranges. This makes the VM compatible with iOS ASLR.
+ * Pure C++ implementation. No C fallbacks, no gradual migration.
+ * VMMaker generates C++ code that uses these types directly.
  *
- * Bit layout:
- *   Bit 0:     isImmediate flag (1 = SmallInteger/Character, 0 = object pointer)
- *   Bits 1-2:  Space encoding (00=new, 01=old, 10=perm, 11=reserved)
- *              Only meaningful when bit 0 = 0
- *   Bits 3-63: Payload
- *              - For immediates: the immediate value (e.g., SmallInteger)
- *              - For pointers: actual memory address (low 3 bits always 0 due to alignment)
+ * DESIGN PRINCIPLES:
+ * 1. NO implicit conversions - all conversions must be explicit
+ * 2. NO arithmetic operators on Oop - prevents tag bit corruption
+ * 3. Compile errors for incorrect usage, not runtime bugs
  *
- * This matches Spur's existing 3-bit tag scheme but repurposes bits 1-2
- * for explicit space encoding instead of deriving space from address ranges.
+ * iOS TAGGING SCHEME (modified from Spur to allow space encoding):
+ *
+ *   Bit 0 determines immediate vs object pointer:
+ *     Bit 0 = 1: Immediate (value in bits 3-63)
+ *       001 = SmallInteger
+ *       011 = Character (was 010 in original Spur)
+ *       101 = SmallFloat (was 100 in original Spur)
+ *     Bit 0 = 0: Object pointer
+ *       Bits 1-2: Space encoding (00=new, 01=old, 10=perm, 11=code)
+ *       Bits 3-63: Heap address (always 8-byte aligned)
+ *
+ *   During image load (swizzle), original Spur tags are converted:
+ *     Character: 010 -> 011
+ *     SmallFloat: 100 -> 101
+ *     Object pointers: 000 -> space-encoded
  */
 
 #pragma once
-#include <cstdint>
-#include <cassert>
 
-#ifdef __cplusplus
+#include <cstdint>
+#include <cstring>
+#include <cassert>
 
 namespace pharo {
 
-// Memory space identifiers
+// ============================================================================
+// Memory Space
+// ============================================================================
+
 enum class Space : uint8_t {
-    New  = 0,   // Eden/survivor (young generation)
-    Old  = 1,   // Tenured objects
-    Perm = 2,   // Permanent space (read-only after boot)
-    Code = 3    // Reserved for future use
+    New  = 0,   // Young generation  - bits 1-2 = 00
+    Old  = 1,   // Tenured objects   - bits 1-2 = 01
+    Perm = 2,   // Permanent space   - bits 1-2 = 10
+    Code = 3    // Reserved          - bits 1-2 = 11
 };
 
-class Oop {
-private:
-    uint64_t bits_;
+// ============================================================================
+// RawAddress - Actual memory address, no tag bits
+// ============================================================================
 
-    // Tag bit masks
-    static constexpr uint64_t kImmediateTag   = 0x1ULL;
-    static constexpr uint64_t kSpaceMask      = 0x6ULL;   // bits 1-2
-    static constexpr uint64_t kSpaceShift     = 1;
-    static constexpr uint64_t kTagMask        = 0x7ULL;   // bits 0-2
-    static constexpr uint64_t kPointerMask    = ~kTagMask;
-
-    // Spur immediate tags (when bit 0 = 1)
-    // Bits 0-2 encode the immediate type:
-    //   xx1 = SmallInteger (bits 1-2 encode sign/magnitude info)
-    //   010 = Character
-    //   110 = SmallFloat (on 64-bit)
-    static constexpr uint64_t kSmallIntTag    = 0x1ULL;
-    static constexpr uint64_t kCharacterTag   = 0x2ULL;
-    static constexpr uint64_t kSmallFloatTag  = 0x6ULL;
+class RawAddress {
+    char* ptr_;
 
 public:
-    // Default constructor - creates nil (0)
-    constexpr Oop() : bits_(0) {}
+    constexpr RawAddress() : ptr_(nullptr) {}
+    explicit constexpr RawAddress(void* p) : ptr_(static_cast<char*>(p)) {}
+    explicit constexpr RawAddress(char* p) : ptr_(p) {}
+    explicit RawAddress(uint64_t addr) : ptr_(reinterpret_cast<char*>(addr)) {}
 
-    // Explicit construction from raw bits
+    char* ptr() const { return ptr_; }
+    void* voidPtr() const { return ptr_; }
+    uint64_t bits() const { return reinterpret_cast<uint64_t>(ptr_); }
+
+    bool isNull() const { return ptr_ == nullptr; }
+    explicit operator bool() const { return ptr_ != nullptr; }
+
+    // Arithmetic - allowed on RawAddress
+    RawAddress operator+(int64_t offset) const { return RawAddress(ptr_ + offset); }
+    RawAddress operator-(int64_t offset) const { return RawAddress(ptr_ - offset); }
+    int64_t operator-(RawAddress other) const { return ptr_ - other.ptr_; }
+    RawAddress& operator+=(int64_t offset) { ptr_ += offset; return *this; }
+    RawAddress& operator-=(int64_t offset) { ptr_ -= offset; return *this; }
+
+    // Comparison
+    bool operator==(RawAddress other) const { return ptr_ == other.ptr_; }
+    bool operator!=(RawAddress other) const { return ptr_ != other.ptr_; }
+    bool operator<(RawAddress other) const { return ptr_ < other.ptr_; }
+    bool operator<=(RawAddress other) const { return ptr_ <= other.ptr_; }
+    bool operator>(RawAddress other) const { return ptr_ > other.ptr_; }
+    bool operator>=(RawAddress other) const { return ptr_ >= other.ptr_; }
+
+    // Memory access
+    int64_t longAt() const { return *reinterpret_cast<int64_t*>(ptr_); }
+    uint64_t ulongAt() const { return *reinterpret_cast<uint64_t*>(ptr_); }
+    int32_t intAt() const { return *reinterpret_cast<int32_t*>(ptr_); }
+    uint32_t uintAt() const { return *reinterpret_cast<uint32_t*>(ptr_); }
+    int16_t shortAt() const { return *reinterpret_cast<int16_t*>(ptr_); }
+    uint16_t ushortAt() const { return *reinterpret_cast<uint16_t*>(ptr_); }
+    int8_t byteAt() const { return *reinterpret_cast<int8_t*>(ptr_); }
+    uint8_t ubyteAt() const { return *reinterpret_cast<uint8_t*>(ptr_); }
+    double doubleAt() const { return *reinterpret_cast<double*>(ptr_); }
+    float floatAt() const { return *reinterpret_cast<float*>(ptr_); }
+
+    void longAtPut(int64_t v) { *reinterpret_cast<int64_t*>(ptr_) = v; }
+    void ulongAtPut(uint64_t v) { *reinterpret_cast<uint64_t*>(ptr_) = v; }
+    void intAtPut(int32_t v) { *reinterpret_cast<int32_t*>(ptr_) = v; }
+    void uintAtPut(uint32_t v) { *reinterpret_cast<uint32_t*>(ptr_) = v; }
+    void shortAtPut(int16_t v) { *reinterpret_cast<int16_t*>(ptr_) = v; }
+    void ushortAtPut(uint16_t v) { *reinterpret_cast<uint16_t*>(ptr_) = v; }
+    void byteAtPut(int8_t v) { *reinterpret_cast<int8_t*>(ptr_) = v; }
+    void ubyteAtPut(uint8_t v) { *reinterpret_cast<uint8_t*>(ptr_) = v; }
+    void doubleAtPut(double v) { *reinterpret_cast<double*>(ptr_) = v; }
+    void floatAtPut(float v) { *reinterpret_cast<float*>(ptr_) = v; }
+
+    template<typename T> T* as() const { return reinterpret_cast<T*>(ptr_); }
+};
+
+// ============================================================================
+// Oop - Tagged Object Pointer
+// ============================================================================
+
+class Oop {
+    uint64_t bits_;
+
+    // Tag constants - iOS scheme where all immediates have bit 0 = 1
+    static constexpr uint64_t kTagMask       = 0x7ULL;
+    static constexpr uint64_t kTagBits       = 3;
+    static constexpr uint64_t kImmediateBit  = 0x1ULL;  // bit 0 = 1 for all immediates
+    static constexpr uint64_t kSmallIntTag   = 0x1ULL;  // 001
+    static constexpr uint64_t kCharacterTag  = 0x3ULL;  // 011 (was 010 in Spur)
+    static constexpr uint64_t kSmallFloatTag = 0x5ULL;  // 101 (was 100 in Spur)
+    static constexpr uint64_t kSpaceMask     = 0x6ULL;  // bits 1-2 (only for non-immediates)
+    static constexpr uint64_t kSpaceShift    = 1;
+    static constexpr uint64_t kAddressMask   = ~kTagMask;
+
+    // SmallFloat constants
+    static constexpr uint64_t kSmallFloatExponentOffset = 896ULL;
+    static constexpr int kSmallFloatMantissaBits = 52;
+
     explicit constexpr Oop(uint64_t raw) : bits_(raw) {}
 
-    // Copy/move
+public:
+    // ========== Construction ==========
+
+    constexpr Oop() : bits_(0) {}
     Oop(const Oop&) = default;
     Oop(Oop&&) = default;
     Oop& operator=(const Oop&) = default;
     Oop& operator=(Oop&&) = default;
 
-    // Raw bit access
+    // Raw bits access - for generated code interop
     uint64_t bits() const { return bits_; }
-    static Oop fromBits(uint64_t b) { return Oop(b); }
+    static Oop fromBits(uint64_t raw) { return Oop(raw); }
 
-    // ========== Immediate Tests ==========
+    // ========== Type Tests ==========
 
-    bool isImmediate() const {
-        return (bits_ & kImmediateTag) != 0;
-    }
+    // Bit 0 = 1 means immediate, bit 0 = 0 means object pointer
+    bool isImmediate() const { return (bits_ & kImmediateBit) != 0; }
+    bool isNonImmediate() const { return (bits_ & kImmediateBit) == 0; }
 
-    bool isNonImmediate() const {
-        return (bits_ & kImmediateTag) == 0;
-    }
+    // Specific immediate types (exact tag match)
+    bool isSmallInteger() const { return (bits_ & kTagMask) == kSmallIntTag; }
+    bool isCharacter() const { return (bits_ & kTagMask) == kCharacterTag; }
+    bool isSmallFloat() const { return (bits_ & kTagMask) == kSmallFloatTag; }
 
-    bool isSmallInteger() const {
-        // SmallIntegers have bit 0 set
-        return (bits_ & kImmediateTag) != 0;
-        // Note: More precise check would be (bits_ & 0x3) == 1
-    }
+    // ========== SmallInteger ==========
 
-    bool isCharacter() const {
-        return (bits_ & kTagMask) == kCharacterTag;
-    }
-
-    bool isSmallFloat() const {
-        return (bits_ & kTagMask) == kSmallFloatTag;
-    }
-
-    // ========== SmallInteger Operations ==========
-
-    // Spur SmallInteger encoding: (value << 3) | 1
-    // This gives 61 bits of signed integer range
     static Oop fromSmallInteger(int64_t value) {
-        return Oop((static_cast<uint64_t>(value) << 3) | kSmallIntTag);
+        return Oop((static_cast<uint64_t>(value) << kTagBits) | kSmallIntTag);
     }
 
     int64_t toSmallInteger() const {
         assert(isSmallInteger());
-        return static_cast<int64_t>(bits_) >> 3;  // Arithmetic shift preserves sign
+        return static_cast<int64_t>(bits_) >> kTagBits;
     }
 
-    // Aliases matching Spur naming
-    static Oop integerObjectOf(int64_t value) { return fromSmallInteger(value); }
-    int64_t integerValueOf() const { return toSmallInteger(); }
+    static bool canBeSmallInteger(int64_t value) {
+        int64_t top = value >> 60;
+        return top == 0 || top == -1;
+    }
 
-    // ========== Space Queries ==========
+    // ========== Character ==========
+
+    static Oop fromCharacter(uint32_t codepoint) {
+        return Oop((static_cast<uint64_t>(codepoint) << kTagBits) | kCharacterTag);
+    }
+
+    uint32_t toCharacter() const {
+        assert(isCharacter());
+        return static_cast<uint32_t>(bits_ >> kTagBits);
+    }
+
+    // ========== SmallFloat ==========
+
+    static bool canBeSmallFloat(double value) {
+        uint64_t raw;
+        memcpy(&raw, &value, sizeof(raw));
+        uint64_t exp = (raw >> 52) & 0x7FF;
+        uint64_t mantissaLow = raw & 0x7;
+        if (mantissaLow != 0) return false;
+        if (exp == 0 || exp == 0x7FF) return false;
+        if (exp < 896 || exp > 1151) return false;
+        return true;
+    }
+
+    static Oop fromSmallFloat(double value) {
+        assert(canBeSmallFloat(value));
+        uint64_t raw;
+        memcpy(&raw, &value, sizeof(raw));
+        uint64_t rotated = ((raw >> 63) & 1) | (raw << 1);
+        if (rotated > 1) {
+            rotated -= (kSmallFloatExponentOffset << (kSmallFloatMantissaBits + 1));
+        }
+        return Oop((rotated << kTagBits) | kSmallFloatTag);
+    }
+
+    double toSmallFloat() const {
+        assert(isSmallFloat());
+        uint64_t rotated = bits_ >> kTagBits;
+        if (rotated > 1) {
+            rotated += (kSmallFloatExponentOffset << (kSmallFloatMantissaBits + 1));
+        }
+        uint64_t raw = (rotated >> 1) | ((rotated & 1) << 63);
+        double result;
+        memcpy(&result, &raw, sizeof(result));
+        return result;
+    }
+
+    // ========== Space (non-immediates only) ==========
 
     Space space() const {
         assert(isNonImmediate());
         return static_cast<Space>((bits_ & kSpaceMask) >> kSpaceShift);
     }
 
-    bool isInNewSpace() const {
-        return isNonImmediate() && space() == Space::New;
-    }
+    bool isYoung() const { return isNonImmediate() && space() == Space::New; }
+    bool isOld() const { return isNonImmediate() && space() == Space::Old; }
+    bool isPermanent() const { return isNonImmediate() && space() == Space::Perm; }
 
-    bool isInOldSpace() const {
-        return isNonImmediate() && space() == Space::Old;
-    }
-
-    bool isInPermSpace() const {
-        return isNonImmediate() && space() == Space::Perm;
-    }
-
-    // VM-style aliases
-    bool isYoung() const { return isInNewSpace(); }
-    bool isOld() const { return isInOldSpace(); }
-    bool isPermanent() const { return isInPermSpace(); }
-
-    // ========== Pointer Operations ==========
-
-    // Get the actual memory address (strips tag bits)
-    void* rawPointer() const {
+    Oop withSpace(Space s) const {
         assert(isNonImmediate());
-        return reinterpret_cast<void*>(bits_ & kPointerMask);
+        return Oop((bits_ & kAddressMask) | (static_cast<uint64_t>(s) << kSpaceShift));
     }
 
-    // Typed pointer access
-    template<typename T>
-    T* as() const {
-        return static_cast<T*>(rawPointer());
+    // ========== Address (non-immediates only) ==========
+
+    RawAddress rawAddress() const {
+        assert(isNonImmediate());
+        return RawAddress(bits_ & kAddressMask);
     }
 
-    // Create Oop from pointer + space
-    // The pointer must be 8-byte aligned (low 3 bits = 0)
     static Oop fromPointer(void* ptr, Space space) {
         uint64_t addr = reinterpret_cast<uint64_t>(ptr);
-        assert((addr & kTagMask) == 0 && "Pointer must be 8-byte aligned");
+        assert((addr & kTagMask) == 0);
         return Oop(addr | (static_cast<uint64_t>(space) << kSpaceShift));
     }
 
-    // Change space without changing pointer
-    Oop withSpace(Space newSpace) const {
-        assert(isNonImmediate());
-        uint64_t newBits = (bits_ & kPointerMask) | (static_cast<uint64_t>(newSpace) << kSpaceShift);
-        return Oop(newBits);
+    static Oop fromPointer(RawAddress addr, Space space) {
+        return fromPointer(addr.voidPtr(), space);
     }
 
-    // ========== Legacy Oop Conversion ==========
+    template<typename T> T* as() const { return rawAddress().as<T>(); }
 
-    // Convert from legacy Spur oop (address-based space detection)
-    // Used during image loading
-    static Oop fromLegacy(uint64_t legacyOop, Space space) {
-        // Immediates pass through unchanged
-        if (legacyOop & kImmediateTag) {
-            return Oop(legacyOop);
-        }
-        // Re-encode pointer with explicit space
-        void* ptr = reinterpret_cast<void*>(legacyOop & kPointerMask);
-        return fromPointer(ptr, space);
+    // ========== Object Field Access ==========
+
+    static constexpr int64_t BaseHeaderSize = 8;
+    static constexpr int64_t BytesPerSlot = 8;
+
+    uint64_t header() const {
+        return rawAddress().ulongAt();
+    }
+
+    void headerPut(uint64_t h) const {
+        rawAddress().ulongAtPut(h);
+    }
+
+    // Slot access (oop fields, 0-indexed from after header)
+    Oop slotAt(int64_t index) const {
+        assert(index >= 0);
+        return Oop::fromBits((rawAddress() + BaseHeaderSize + index * BytesPerSlot).ulongAt());
+    }
+
+    void slotAtPut(int64_t index, Oop value) const {
+        assert(index >= 0);
+        (rawAddress() + BaseHeaderSize + index * BytesPerSlot).ulongAtPut(value.bits());
+    }
+
+    // Raw byte access (offset from object start)
+    int64_t longAt(int64_t offset) const { return (rawAddress() + offset).longAt(); }
+    uint64_t ulongAt(int64_t offset) const { return (rawAddress() + offset).ulongAt(); }
+    int32_t intAt(int64_t offset) const { return (rawAddress() + offset).intAt(); }
+    uint32_t uintAt(int64_t offset) const { return (rawAddress() + offset).uintAt(); }
+    int16_t shortAt(int64_t offset) const { return (rawAddress() + offset).shortAt(); }
+    uint16_t ushortAt(int64_t offset) const { return (rawAddress() + offset).ushortAt(); }
+    int8_t byteAt(int64_t offset) const { return (rawAddress() + offset).byteAt(); }
+    uint8_t ubyteAt(int64_t offset) const { return (rawAddress() + offset).ubyteAt(); }
+
+    void longAtPut(int64_t offset, int64_t v) const { (rawAddress() + offset).longAtPut(v); }
+    void ulongAtPut(int64_t offset, uint64_t v) const { (rawAddress() + offset).ulongAtPut(v); }
+    void intAtPut(int64_t offset, int32_t v) const { (rawAddress() + offset).intAtPut(v); }
+    void uintAtPut(int64_t offset, uint32_t v) const { (rawAddress() + offset).uintAtPut(v); }
+    void shortAtPut(int64_t offset, int16_t v) const { (rawAddress() + offset).shortAtPut(v); }
+    void ushortAtPut(int64_t offset, uint16_t v) const { (rawAddress() + offset).ushortAtPut(v); }
+    void byteAtPut(int64_t offset, int8_t v) const { (rawAddress() + offset).byteAtPut(v); }
+    void ubyteAtPut(int64_t offset, uint8_t v) const { (rawAddress() + offset).ubyteAtPut(v); }
+
+    // Oop at offset (for reading oop fields at arbitrary offsets)
+    Oop oopAt(int64_t offset) const {
+        return Oop::fromBits((rawAddress() + offset).ulongAt());
+    }
+
+    void oopAtPut(int64_t offset, Oop value) const {
+        (rawAddress() + offset).ulongAtPut(value.bits());
     }
 
     // ========== Special Values ==========
 
-    static Oop nil() { return Oop(0); }  // Adjust if nil has different encoding
+    static Oop nil() { return Oop(0); }
     bool isNil() const { return bits_ == 0; }
     bool notNil() const { return bits_ != 0; }
 
+    // Valid object pointer (non-nil and non-immediate)
+    bool isObjectPointer() const { return notNil() && isNonImmediate(); }
+
     // ========== Comparison ==========
 
-    bool operator==(const Oop& other) const { return bits_ == other.bits_; }
-    bool operator!=(const Oop& other) const { return bits_ != other.bits_; }
-    bool operator<(const Oop& other) const { return bits_ < other.bits_; }
-    bool operator<=(const Oop& other) const { return bits_ <= other.bits_; }
-    bool operator>(const Oop& other) const { return bits_ > other.bits_; }
-    bool operator>=(const Oop& other) const { return bits_ >= other.bits_; }
+    bool operator==(Oop other) const { return bits_ == other.bits_; }
+    bool operator!=(Oop other) const { return bits_ != other.bits_; }
+    bool operator<(Oop other) const { return bits_ < other.bits_; }
+    bool operator<=(Oop other) const { return bits_ <= other.bits_; }
+    bool operator>(Oop other) const { return bits_ > other.bits_; }
+    bool operator>=(Oop other) const { return bits_ >= other.bits_; }
 
-    // ========== Arithmetic (for pointer math) ==========
+    // ========== NO ARITHMETIC OPERATORS ==========
+    // Deliberately omitted. Use rawAddress() for pointer math.
 
-    Oop operator+(int64_t offset) const {
-        return Oop(bits_ + offset);
-    }
+    // ========== Legacy Conversion ==========
 
-    Oop operator-(int64_t offset) const {
-        return Oop(bits_ - offset);
-    }
-
-    int64_t operator-(const Oop& other) const {
-        return static_cast<int64_t>(bits_ - other.bits_);
+    static Oop fromLegacy(uint64_t legacyBits, Space space) {
+        if (legacyBits & kTagMask) return Oop(legacyBits);
+        return fromPointer(reinterpret_cast<void*>(legacyBits), space);
     }
 };
 
-// Ensure Oop is exactly 8 bytes (same as sqInt)
 static_assert(sizeof(Oop) == 8, "Oop must be 8 bytes");
+static_assert(sizeof(RawAddress) == 8, "RawAddress must be 8 bytes");
 
 } // namespace pharo
 
-// C interface for gradual migration
-extern "C" {
+// ============================================================================
+// Global using declarations for generated code
+// ============================================================================
 
-typedef pharo::Oop sqOop;
-
-inline bool sqOopIsImmediate(sqOop oop) { return oop.isImmediate(); }
-inline bool sqOopIsYoung(sqOop oop) { return oop.isYoung(); }
-inline bool sqOopIsOld(sqOop oop) { return oop.isOld(); }
-inline bool sqOopIsPermanent(sqOop oop) { return oop.isPermanent(); }
-inline int64_t sqOopIntegerValue(sqOop oop) { return oop.integerValueOf(); }
-inline sqOop sqOopFromInteger(int64_t val) { return pharo::Oop::fromSmallInteger(val); }
-
-}
-
-#else // Pure C fallback
-
-// For C code that can't use C++, provide minimal compatibility
-typedef uint64_t sqOop;
-#define sqOopIsImmediate(oop) ((oop) & 1)
-
-#endif // __cplusplus
+using pharo::Oop;
+using pharo::RawAddress;
+using pharo::Space;

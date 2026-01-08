@@ -1,0 +1,1007 @@
+/*
+ * ObjectMemory.cpp - Heap Management Implementation
+ */
+
+#include "ObjectMemory.hpp"
+#include <cstdlib>
+#include <cstring>
+#include <algorithm>
+#include <chrono>
+#include <iostream>
+
+namespace pharo {
+
+// ===== CONSTRUCTION / INITIALIZATION =====
+
+ObjectMemory::ObjectMemory() = default;
+
+ObjectMemory::~ObjectMemory() {
+    // Free allocated memory regions
+    if (permSpaceStart_) {
+        std::free(permSpaceStart_);
+    }
+    if (oldSpaceStart_) {
+        std::free(oldSpaceStart_);
+    }
+    if (newSpaceStart_) {
+        std::free(newSpaceStart_);
+    }
+}
+
+bool ObjectMemory::initialize(const MemoryConfig& config) {
+    // Allocate memory regions
+    // Use aligned allocation for 8-byte alignment requirement
+
+    permSpaceStart_ = static_cast<uint8_t*>(
+        std::aligned_alloc(8, config.permSpaceSize));
+    if (!permSpaceStart_) return false;
+    permSpaceEnd_ = permSpaceStart_ + config.permSpaceSize;
+
+    oldSpaceStart_ = static_cast<uint8_t*>(
+        std::aligned_alloc(8, config.oldSpaceSize));
+    if (!oldSpaceStart_) {
+        std::free(permSpaceStart_);
+        permSpaceStart_ = nullptr;
+        return false;
+    }
+    oldSpaceEnd_ = oldSpaceStart_ + config.oldSpaceSize;
+    oldSpaceFree_ = oldSpaceStart_;
+
+    newSpaceStart_ = static_cast<uint8_t*>(
+        std::aligned_alloc(8, config.newSpaceSize));
+    if (!newSpaceStart_) {
+        std::free(permSpaceStart_);
+        std::free(oldSpaceStart_);
+        permSpaceStart_ = nullptr;
+        oldSpaceStart_ = nullptr;
+        return false;
+    }
+    newSpaceEnd_ = newSpaceStart_ + config.newSpaceSize;
+
+    // Split new space into eden and survivor
+    size_t edenSize = (config.newSpaceSize * config.edenRatio) / 100;
+    edenStart_ = newSpaceStart_;
+    edenFree_ = edenStart_;
+    survivorStart_ = newSpaceStart_ + edenSize;
+
+    // Initialize class table
+    classTable_.resize(config.classTableSize, Oop::nil());
+
+    // Zero all memory (objects expect zero-initialized slots)
+    std::memset(permSpaceStart_, 0, config.permSpaceSize);
+    std::memset(oldSpaceStart_, 0, config.oldSpaceSize);
+    std::memset(newSpaceStart_, 0, config.newSpaceSize);
+
+    return true;
+}
+
+// ===== OBJECT ALLOCATION =====
+
+Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
+                                 ObjectFormat format) {
+    // Calculate size: header + slots
+    size_t headerSize = sizeof(ObjectHeader);
+    bool hasOverflow = slotCount >= 255;
+    if (hasOverflow) {
+        headerSize += sizeof(uint64_t);  // Overflow word
+    }
+
+    size_t bodySize = slotCount * sizeof(Oop);
+    size_t totalSize = headerSize + bodySize;
+
+    // Align to 8 bytes
+    totalSize = (totalSize + 7) & ~7ULL;
+
+    // Allocate in eden for new objects
+    ObjectHeader* obj = allocateInEden(totalSize);
+    if (!obj) {
+        // Eden is full, try scavenge
+        scavenge();
+        obj = allocateInEden(totalSize);
+        if (!obj) {
+            // Still can't allocate, fall back to old space
+            obj = allocateRaw(totalSize, Space::Old);
+            if (!obj) return Oop::nil();
+        }
+    }
+
+    // Set up overflow word if needed
+    if (hasOverflow) {
+        uint64_t* overflow = reinterpret_cast<uint64_t*>(obj);
+        *overflow = slotCount;
+        obj = reinterpret_cast<ObjectHeader*>(overflow + 1);
+    }
+
+    initializeHeader(obj, classIndex, slotCount, format);
+
+    // Zero all slots
+    Oop* slots = obj->slots();
+    for (size_t i = 0; i < slotCount; ++i) {
+        slots[i] = nilObject_;
+    }
+
+    bytesAllocated_ += totalSize;
+    return oopFromPointer(obj);
+}
+
+Oop ObjectMemory::allocateBytes(uint32_t classIndex, size_t byteCount) {
+    // Calculate number of 64-bit slots needed
+    size_t slotCount = (byteCount + 7) / 8;
+
+    // Determine the correct format based on padding
+    size_t padding = (slotCount * 8) - byteCount;
+    ObjectFormat format = static_cast<ObjectFormat>(
+        static_cast<int>(ObjectFormat::Indexable8) + padding);
+
+    // Calculate total size
+    size_t headerSize = sizeof(ObjectHeader);
+    bool hasOverflow = slotCount >= 255;
+    if (hasOverflow) {
+        headerSize += sizeof(uint64_t);
+    }
+
+    size_t totalSize = headerSize + slotCount * 8;
+    totalSize = (totalSize + 7) & ~7ULL;
+
+    // Allocate
+    ObjectHeader* obj = allocateInEden(totalSize);
+    if (!obj) {
+        scavenge();
+        obj = allocateInEden(totalSize);
+        if (!obj) {
+            obj = allocateRaw(totalSize, Space::Old);
+            if (!obj) return Oop::nil();
+        }
+    }
+
+    // Handle overflow
+    if (hasOverflow) {
+        uint64_t* overflow = reinterpret_cast<uint64_t*>(obj);
+        *overflow = slotCount;
+        obj = reinterpret_cast<ObjectHeader*>(overflow + 1);
+    }
+
+    initializeHeader(obj, classIndex, slotCount, format);
+
+    // Zero all bytes
+    std::memset(obj->bytes(), 0, slotCount * 8);
+
+    bytesAllocated_ += totalSize;
+    return oopFromPointer(obj);
+}
+
+Oop ObjectMemory::allocateWords(uint32_t classIndex, size_t wordCount) {
+    // Each word is 64 bits = 1 slot
+    size_t slotCount = wordCount;
+
+    size_t headerSize = sizeof(ObjectHeader);
+    bool hasOverflow = slotCount >= 255;
+    if (hasOverflow) {
+        headerSize += sizeof(uint64_t);
+    }
+
+    size_t totalSize = headerSize + slotCount * 8;
+    totalSize = (totalSize + 7) & ~7ULL;
+
+    ObjectHeader* obj = allocateInEden(totalSize);
+    if (!obj) {
+        scavenge();
+        obj = allocateInEden(totalSize);
+        if (!obj) {
+            obj = allocateRaw(totalSize, Space::Old);
+            if (!obj) return Oop::nil();
+        }
+    }
+
+    if (hasOverflow) {
+        uint64_t* overflow = reinterpret_cast<uint64_t*>(obj);
+        *overflow = slotCount;
+        obj = reinterpret_cast<ObjectHeader*>(overflow + 1);
+    }
+
+    initializeHeader(obj, classIndex, slotCount, ObjectFormat::Indexable64);
+    std::memset(obj->bytes(), 0, slotCount * 8);
+
+    bytesAllocated_ += totalSize;
+    return oopFromPointer(obj);
+}
+
+Oop ObjectMemory::shallowCopy(Oop original) {
+    if (!original.isObject()) {
+        return original;  // Immediates are their own copies
+    }
+
+    ObjectHeader* src = original.asObjectPtr();
+    size_t size = src->totalSize();
+
+    ObjectHeader* copy = allocateInEden(size);
+    if (!copy) {
+        scavenge();
+        copy = allocateInEden(size);
+        if (!copy) {
+            copy = allocateRaw(size, Space::Old);
+            if (!copy) return Oop::nil();
+        }
+    }
+
+    // Copy all bytes including header
+    std::memcpy(copy, src, size);
+
+    // Generate new identity hash
+    copy->setIdentityHash(generateHash());
+
+    // Clear GC flags
+    copy->setMarked(false);
+    copy->setRemembered(false);
+
+    bytesAllocated_ += size;
+    return oopFromPointer(copy);
+}
+
+// ===== CLASS TABLE =====
+
+Oop ObjectMemory::classOf(Oop obj) const {
+    if (obj.isSmallInteger()) {
+        return specialObject(SpecialObjectIndex::ClassSmallInteger);
+    }
+    if (obj.isCharacter()) {
+        return specialObject(SpecialObjectIndex::ClassCharacter);
+    }
+    if (obj.isSmallFloat()) {
+        return specialObject(SpecialObjectIndex::ClassFloat);
+    }
+    if (!obj.isObject()) {
+        return Oop::nil();
+    }
+
+    ObjectHeader* header = obj.asObjectPtr();
+    uint32_t classIdx = header->classIndex();
+    Oop cls = classAtIndex(classIdx);
+    if (cls.isNil()) {
+        // std::cerr << "[CLASSOF] obj=0x" << std::hex << obj.rawBits()
+                  // << " classIdx=" << std::dec << classIdx
+                  // << " NOT FOUND in class table" << std::endl;
+    }
+    return cls;
+}
+
+uint32_t ObjectMemory::registerClass(Oop classOop) {
+    uint32_t index = nextClassIndex_++;
+    if (index < classTable_.size()) {
+        classTable_[index] = classOop;
+    }
+    return index;
+}
+
+uint32_t ObjectMemory::indexOfClass(Oop classOop) const {
+    for (uint32_t i = 0; i < classTable_.size(); ++i) {
+        if (classTable_[i] == classOop) {
+            return i;
+        }
+    }
+    return 0;  // Not found
+}
+
+// ===== SPECIAL OBJECTS =====
+
+Oop ObjectMemory::specialObject(SpecialObjectIndex index) const {
+    if (specialObjectsArray_.isNil()) {
+        return Oop::nil();
+    }
+
+    ObjectHeader* array = specialObjectsArray_.asObjectPtr();
+    size_t idx = static_cast<size_t>(index);
+    if (idx >= array->slotCount()) {
+        return Oop::nil();
+    }
+
+    return array->slotAt(idx);
+}
+
+void ObjectMemory::setSpecialObject(SpecialObjectIndex index, Oop value) {
+    if (specialObjectsArray_.isNil()) {
+        return;
+    }
+
+    ObjectHeader* array = specialObjectsArray_.asObjectPtr();
+    size_t idx = static_cast<size_t>(index);
+    if (idx < array->slotCount()) {
+        array->slotAtPut(idx, value);
+    }
+}
+
+void ObjectMemory::cacheSpecialObjects() {
+    nilObject_ = specialObject(SpecialObjectIndex::NilObject);
+    trueObject_ = specialObject(SpecialObjectIndex::TrueObject);
+    falseObject_ = specialObject(SpecialObjectIndex::FalseObject);
+}
+
+// ===== SYMBOL AND GLOBAL LOOKUP =====
+
+bool ObjectMemory::symbolEquals(Oop symbol, const char* str) const {
+    if (!symbol.isObject()) return false;
+
+    ObjectHeader* header = symbol.asObjectPtr();
+    if (!header->isBytesObject()) return false;
+
+    size_t symbolLen = header->byteSize();
+    size_t strLen = std::strlen(str);
+
+    if (symbolLen != strLen) return false;
+
+    const uint8_t* symbolBytes = header->bytes();
+    return std::memcmp(symbolBytes, str, strLen) == 0;
+}
+
+Oop ObjectMemory::findGlobal(const std::string& name) const {
+    // Get SmalltalkDictionary from special objects
+    Oop smalltalkDict = specialObject(SpecialObjectIndex::SmalltalkDictionary);
+    if (smalltalkDict.isNil() || !smalltalkDict.isObject()) {
+        // std::cerr << "[DEBUG] findGlobal: SmalltalkDictionary is nil" << std::endl;
+        return Oop::nil();
+    }
+
+    // Navigate to the actual SystemDictionary (may be wrapped in Environment)
+    ObjectHeader* envHeader = smalltalkDict.asObjectPtr();
+    Oop sysDict = smalltalkDict;
+
+    if (envHeader->slotCount() >= 1) {
+        Oop slot0 = fetchPointer(0, smalltalkDict);
+        if (slot0.isObject() && !slot0.isNil()) {
+            ObjectHeader* slot0Header = slot0.asObjectPtr();
+            if (slot0Header->slotCount() >= 2) {
+                Oop innerSlot0 = fetchPointer(0, slot0);
+                if (innerSlot0.isSmallInteger()) {
+                    sysDict = slot0;  // Use the inner dictionary
+                }
+            }
+        }
+    }
+
+    ObjectHeader* dictHeader = sysDict.asObjectPtr();
+    Oop arraySlot = fetchPointer(1, sysDict);
+
+    if (!arraySlot.isObject() || arraySlot.isNil()) {
+        // std::cerr << "[DEBUG] findGlobal: array slot is nil" << std::endl;
+        return Oop::nil();
+    }
+
+    ObjectHeader* arrayHeader = arraySlot.asObjectPtr();
+    size_t arraySize = arrayHeader->slotCount();
+
+    // Check for overflow header
+    uint64_t headerRaw = arrayHeader->rawHeader();
+    uint64_t slotCountByte = (headerRaw >> 56) & 0xFF;
+    if (slotCountByte == 255) {
+        const uint64_t* overflowPtr = reinterpret_cast<const uint64_t*>(arrayHeader) - 1;
+        uint64_t overflowVal = *overflowPtr;
+        if (overflowVal >= 255 && overflowVal <= 1000000 && (overflowVal >> 32) == 0) {
+            arraySize = static_cast<size_t>(overflowVal);
+        }
+    }
+
+    // Search the array for the named global
+    int totalAssocs = 0;
+    for (size_t i = 0; i < arraySize; ++i) {
+        Oop item = arrayHeader->slotAt(i);
+        if (item.isNil() || !item.isObject()) continue;
+
+        ObjectHeader* itemHeader = item.asObjectPtr();
+        if (itemHeader->slotCount() >= 2) {
+            Oop key = fetchPointer(0, item);
+            if (key.isObject() && !key.isNil()) {
+                ObjectHeader* keyHeader = key.asObjectPtr();
+                if (keyHeader->isBytesObject()) {
+                    totalAssocs++;
+                    if (symbolEquals(key, name.c_str())) {
+                        // std::cerr << "[DEBUG] findGlobal: FOUND '" << name << "'" << std::endl;
+                        return fetchPointer(1, item);
+                    }
+                }
+            }
+        }
+    }
+
+    // std::cerr << "[DEBUG] findGlobal: '" << name << "' not found in main array. Checked " << arraySize
+              // << " slots, found " << totalAssocs << " associations" << std::endl;
+
+    // Modern Pharo might store additional entries in overflow structures at slots 2-5
+    // Let me search those too
+    for (size_t overflowIdx = 2; overflowIdx < dictHeader->slotCount() && overflowIdx < 10; ++overflowIdx) {
+        Oop overflowSlot = fetchPointer(overflowIdx, sysDict);
+        if (!overflowSlot.isObject() || overflowSlot.isNil()) continue;
+
+        ObjectHeader* overflowHeader = overflowSlot.asObjectPtr();
+        // std::cerr << "[DEBUG] findGlobal: searching overflow slot " << overflowIdx
+                  // << " (class=" << overflowHeader->classIndex()
+                  // << " slots=" << overflowHeader->slotCount() << ")" << std::endl;
+
+        // Check if this object contains associations or arrays of associations
+        for (size_t i = 0; i < overflowHeader->slotCount(); ++i) {
+            Oop item = fetchPointer(i, overflowSlot);
+            if (!item.isObject() || item.isNil()) continue;
+
+            ObjectHeader* itemHeader = item.asObjectPtr();
+
+            // Check if it's an array that might contain more associations
+            if (itemHeader->format() == ObjectFormat::Indexable) {
+                // std::cerr << "[DEBUG] findGlobal: overflow[" << overflowIdx << "][" << i
+                          // << "] is array with " << itemHeader->slotCount() << " slots" << std::endl;
+
+                // Search this array for associations
+                for (size_t j = 0; j < itemHeader->slotCount(); ++j) {
+                    Oop assoc = fetchPointer(j, item);
+                    if (!assoc.isObject() || assoc.isNil()) continue;
+
+                    ObjectHeader* assocHeader = assoc.asObjectPtr();
+                    if (assocHeader->slotCount() >= 2) {
+                        Oop key = fetchPointer(0, assoc);
+                        if (symbolEquals(key, name.c_str())) {
+                            // std::cerr << "[DEBUG] findGlobal: FOUND '" << name
+                                      // << "' in overflow[" << overflowIdx << "][" << i << "][" << j << "]" << std::endl;
+                            return fetchPointer(1, assoc);
+                        }
+                    }
+                }
+            }
+
+            // Check if item itself is an association
+            if (itemHeader->slotCount() >= 2) {
+                Oop key = fetchPointer(0, item);
+                if (symbolEquals(key, name.c_str())) {
+                    // std::cerr << "[DEBUG] findGlobal: FOUND '" << name
+                              // << "' in overflow[" << overflowIdx << "][" << i << "]" << std::endl;
+                    return fetchPointer(1, item);
+                }
+            }
+        }
+    }
+
+    // Last resort for 'Smalltalk': try special object index 8 directly
+    // In some images, special object 8 IS the Smalltalk/Environment
+    if (name == "Smalltalk") {
+        // std::cerr << "[DEBUG] findGlobal: trying alternate approach - returning Environment as 'Smalltalk'" << std::endl;
+        // The Environment wrapper at special object 8 can often be used as "Smalltalk"
+        return smalltalkDict;
+    }
+
+    return Oop::nil();
+}
+
+Oop ObjectMemory::createStartupContext(Oop method, Oop receiver) {
+    // Get MethodContext class
+    Oop contextClass = specialObject(SpecialObjectIndex::ClassMethodContext);
+    if (contextClass.isNil()) {
+        return Oop::nil();
+    }
+
+    // Get method header to determine temp count
+    Oop methodHeader = fetchPointer(0, method);
+    if (!methodHeader.isSmallInteger()) {
+        return Oop::nil();
+    }
+
+    int64_t headerBits = methodHeader.asSmallInteger();
+    int numTemps = (headerBits >> 16) & 0xFF;
+    int numLiterals = (headerBits >> 1) & 0x7FFF;
+
+    // MethodContext layout:
+    // slot 0: sender
+    // slot 1: pc (instruction pointer as SmallInteger offset, 1-based)
+    // slot 2: stackp (stack pointer within context)
+    // slot 3: method
+    // slot 4: closureOrNil
+    // slot 5: receiver
+    // slots 6+: arguments, temporaries, stack
+
+    // Context needs: 6 fixed slots + temps + some stack space
+    size_t contextSize = 6 + numTemps + 32;  // 32 extra for stack
+
+    uint32_t classIndex = indexOfClass(contextClass);
+    if (classIndex == 0) {
+        // Context class not in table, try to register it
+        classIndex = const_cast<ObjectMemory*>(this)->registerClass(contextClass);
+    }
+
+    Oop context = allocateSlots(classIndex, contextSize, ObjectFormat::Indexable);
+    if (context.isNil()) {
+        return Oop::nil();
+    }
+
+    // Calculate initial PC (after header + literals)
+    // PC is 1-based byte offset from start of method
+    int initialPC = (1 + numLiterals) * 8 + 1;  // +1 for 1-based
+
+    // Initialize context
+    storePointer(0, context, nil());                              // sender (nil = bottom of stack)
+    storePointer(1, context, Oop::fromSmallInteger(initialPC));   // pc
+    storePointer(2, context, Oop::fromSmallInteger(numTemps + 5)); // stackp
+    storePointer(3, context, method);                              // method
+    storePointer(4, context, nil());                               // closureOrNil
+    storePointer(5, context, receiver);                            // receiver
+
+    // Initialize temporaries to nil
+    for (int i = 0; i < numTemps; ++i) {
+        storePointer(6 + i, context, nil());
+    }
+
+    return context;
+}
+
+// ===== OBJECT ACCESS =====
+
+Oop ObjectMemory::fetchPointer(size_t index, Oop obj) const {
+    if (!obj.isObject()) return Oop::nil();
+    ObjectHeader* header = obj.asObjectPtr();
+    if (index >= header->slotCount()) return Oop::nil();
+    return header->slotAt(index);
+}
+
+void ObjectMemory::storePointer(size_t index, Oop obj, Oop value) {
+    if (!obj.isObject()) return;
+    ObjectHeader* header = obj.asObjectPtr();
+    if (index >= header->slotCount()) return;
+
+    // Check for old->young pointer (needs remembered set)
+    if (isOld(obj) && value.isObject() && isYoung(value)) {
+        rememberObject(obj);
+    }
+
+    header->slotAtPut(index, value);
+}
+
+uint8_t ObjectMemory::fetchByte(size_t index, Oop obj) const {
+    if (!obj.isObject()) return 0;
+    ObjectHeader* header = obj.asObjectPtr();
+    if (index >= header->byteSize()) return 0;
+    return header->byteAt(index);
+}
+
+void ObjectMemory::storeByte(size_t index, Oop obj, uint8_t value) {
+    if (!obj.isObject()) return;
+    ObjectHeader* header = obj.asObjectPtr();
+    if (index >= header->byteSize()) return;
+    header->byteAtPut(index, value);
+}
+
+uint32_t ObjectMemory::fetchWord32(size_t index, Oop obj) const {
+    if (!obj.isObject()) return 0;
+    ObjectHeader* header = obj.asObjectPtr();
+    uint32_t* words = reinterpret_cast<uint32_t*>(header->bytes());
+    return words[index];
+}
+
+void ObjectMemory::storeWord32(size_t index, Oop obj, uint32_t value) {
+    if (!obj.isObject()) return;
+    ObjectHeader* header = obj.asObjectPtr();
+    uint32_t* words = reinterpret_cast<uint32_t*>(header->bytes());
+    words[index] = value;
+}
+
+uint64_t ObjectMemory::fetchWord64(size_t index, Oop obj) const {
+    if (!obj.isObject()) return 0;
+    ObjectHeader* header = obj.asObjectPtr();
+    uint64_t* words = reinterpret_cast<uint64_t*>(header->bytes());
+    return words[index];
+}
+
+void ObjectMemory::storeWord64(size_t index, Oop obj, uint64_t value) {
+    if (!obj.isObject()) return;
+    ObjectHeader* header = obj.asObjectPtr();
+    uint64_t* words = reinterpret_cast<uint64_t*>(header->bytes());
+    words[index] = value;
+}
+
+size_t ObjectMemory::slotCountOf(Oop obj) const {
+    if (!obj.isObject()) return 0;
+    return obj.asObjectPtr()->slotCount();
+}
+
+size_t ObjectMemory::byteSizeOf(Oop obj) const {
+    if (!obj.isObject()) return 0;
+    return obj.asObjectPtr()->byteSize();
+}
+
+size_t ObjectMemory::totalSizeOf(Oop obj) const {
+    if (!obj.isObject()) return 0;
+    return obj.asObjectPtr()->totalSize();
+}
+
+// ===== OBJECT QUERIES =====
+
+bool ObjectMemory::isYoung(Oop obj) const {
+    if (!obj.isObject()) return false;
+    return obj.space() == Space::New;
+}
+
+bool ObjectMemory::isOld(Oop obj) const {
+    if (!obj.isObject()) return false;
+    return obj.space() == Space::Old;
+}
+
+bool ObjectMemory::isPinned(Oop obj) const {
+    if (!obj.isObject()) return false;
+    return obj.asObjectPtr()->isPinned();
+}
+
+bool ObjectMemory::isImmutable(Oop obj) const {
+    if (!obj.isObject()) return true;  // Immediates are immutable
+    return obj.asObjectPtr()->isImmutable();
+}
+
+bool ObjectMemory::isRemembered(Oop obj) const {
+    if (!obj.isObject()) return false;
+    return obj.asObjectPtr()->isRemembered();
+}
+
+bool ObjectMemory::isValidHeapAddress(void* addr) const {
+    uint8_t* p = static_cast<uint8_t*>(addr);
+    return (p >= permSpaceStart_ && p < permSpaceEnd_) ||
+           (p >= oldSpaceStart_ && p < oldSpaceEnd_) ||
+           (p >= newSpaceStart_ && p < newSpaceEnd_);
+}
+
+bool ObjectMemory::isValidObject(Oop obj) const {
+    if (!obj.isObject()) return true;  // Immediates are valid
+    void* ptr = obj.asObjectPtr();
+    return isValidHeapAddress(ptr);
+}
+
+// ===== OBJECT MODIFICATION =====
+
+void ObjectMemory::pinObject(Oop obj) {
+    if (obj.isObject()) {
+        obj.asObjectPtr()->setPinned(true);
+    }
+}
+
+void ObjectMemory::makeImmutable(Oop obj) {
+    if (obj.isObject()) {
+        obj.asObjectPtr()->setImmutable(true);
+    }
+}
+
+bool ObjectMemory::become(Oop obj1, Oop obj2) {
+    if (!obj1.isObject() || !obj2.isObject()) {
+        return false;  // Can only become: heap objects
+    }
+
+    // This is a costly operation - must scan entire heap
+    allObjectsDo([&](Oop obj) {
+        if (!obj.isObject()) return;
+        ObjectHeader* header = obj.asObjectPtr();
+        size_t slots = header->slotCount();
+        for (size_t i = 0; i < slots; ++i) {
+            Oop slot = header->slotAt(i);
+            if (slot == obj1) {
+                header->slotAtPut(i, obj2);
+            } else if (slot == obj2) {
+                header->slotAtPut(i, obj1);
+            }
+        }
+    });
+
+    return true;
+}
+
+bool ObjectMemory::becomeForward(Oop obj1, Oop obj2) {
+    if (!obj1.isObject() || !obj2.isObject()) {
+        return false;
+    }
+
+    allObjectsDo([&](Oop obj) {
+        if (!obj.isObject()) return;
+        ObjectHeader* header = obj.asObjectPtr();
+        size_t slots = header->slotCount();
+        for (size_t i = 0; i < slots; ++i) {
+            if (header->slotAt(i) == obj1) {
+                header->slotAtPut(i, obj2);
+            }
+        }
+    });
+
+    return true;
+}
+
+// ===== IDENTITY HASH =====
+
+uint32_t ObjectMemory::identityHashOf(Oop obj) {
+    if (obj.isSmallInteger()) {
+        // SmallIntegers use their value as hash
+        return static_cast<uint32_t>(obj.asSmallInteger() & 0x3FFFFF);
+    }
+    if (obj.isCharacter()) {
+        return obj.asCharacter() & 0x3FFFFF;
+    }
+    if (!obj.isObject()) {
+        return 0;
+    }
+
+    ObjectHeader* header = obj.asObjectPtr();
+    uint32_t hash = header->identityHash();
+    if (hash == 0) {
+        hash = generateHash();
+        header->setIdentityHash(hash);
+    }
+    return hash;
+}
+
+void ObjectMemory::ensureIdentityHash(Oop obj) {
+    identityHashOf(obj);  // Side effect: generates hash if needed
+}
+
+uint32_t ObjectMemory::generateHash() {
+    // Simple hash generation - just increment counter
+    // Real implementation would use better randomization
+    lastHash_ = (lastHash_ + 1) & 0x3FFFFF;
+    if (lastHash_ == 0) lastHash_ = 1;  // 0 means unhashed
+    return lastHash_;
+}
+
+// ===== GARBAGE COLLECTION =====
+
+GCResult ObjectMemory::scavenge() {
+    auto start = std::chrono::steady_clock::now();
+    GCResult result{0, 0, 0};
+
+    // Simple Cheney-style copying collector for new space
+    // TODO: Implement proper scavenging
+
+    // For now, just promote everything to old space
+    uint8_t* scan = edenStart_;
+    while (scan < edenFree_) {
+        ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(scan);
+        size_t size = obj->totalSize();
+
+        // Copy to old space
+        if (oldSpaceFree_ + size <= oldSpaceEnd_) {
+            std::memcpy(oldSpaceFree_, obj, size);
+            oldSpaceFree_ += size;
+            result.objectsMoved++;
+            result.bytesReclaimed += size;
+        }
+
+        scan += size;
+    }
+
+    // Reset eden
+    edenFree_ = edenStart_;
+
+    auto end = std::chrono::steady_clock::now();
+    result.milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
+        end - start).count();
+
+    gcCount_++;
+    totalGCTime_ += result.milliseconds;
+
+    return result;
+}
+
+GCResult ObjectMemory::incrementalGC() {
+    // For now, just do a scavenge
+    return scavenge();
+}
+
+GCResult ObjectMemory::fullGC() {
+    auto start = std::chrono::steady_clock::now();
+    GCResult result{0, 0, 0};
+
+    // TODO: Implement mark-sweep-compact
+
+    auto end = std::chrono::steady_clock::now();
+    result.milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
+        end - start).count();
+
+    gcCount_++;
+    totalGCTime_ += result.milliseconds;
+
+    return result;
+}
+
+bool ObjectMemory::needsGC() const {
+    if (forceGCFlag_) return true;
+
+    // Check if eden is nearly full
+    size_t edenSize = survivorStart_ - edenStart_;
+    size_t edenUsed = edenFree_ - edenStart_;
+    return edenUsed > (edenSize * 90 / 100);  // 90% full
+}
+
+void ObjectMemory::addRoot(Oop* root) {
+    roots_.push_back(root);
+}
+
+void ObjectMemory::removeRoot(Oop* root) {
+    roots_.erase(std::remove(roots_.begin(), roots_.end(), root), roots_.end());
+}
+
+void ObjectMemory::allObjectsDo(std::function<void(Oop)> callback) {
+    // Helper to scan a memory region
+    auto scanRegion = [&](uint8_t* start, uint8_t* end) {
+        uint8_t* scan = start;
+        while (scan < end) {
+            uint64_t* wordPtr = reinterpret_cast<uint64_t*>(scan);
+            uint64_t word = *wordPtr;
+
+            // Skip zero headers (free space / padding)
+            if (word == 0) {
+                scan += 8;
+                while (scan < end) {
+                    wordPtr = reinterpret_cast<uint64_t*>(scan);
+                    if (*wordPtr != 0) break;
+                    scan += 8;
+                }
+                if (scan >= end) break;
+                word = *wordPtr;
+            }
+
+            // Check for overflow header (next word has numSlots=255)
+            uint64_t* headerPtr = wordPtr;
+            bool hasOverflow = false;
+            if (scan + 8 < end) {
+                uint64_t nextWord = *(wordPtr + 1);
+                if ((nextWord & 0xFF) == 255) {
+                    uint64_t overflowCount = word;
+                    size_t remaining = end - scan;
+                    size_t neededSize = 8 + overflowCount * 8 + 8;
+
+                    if (overflowCount >= 255 && neededSize <= remaining) {
+                        headerPtr = wordPtr + 1;
+                        hasOverflow = true;
+                    } else {
+                        // Invalid overflow - skip past both words
+                        scan += 16;
+                        continue;
+                    }
+                }
+            }
+
+            ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(headerPtr);
+            size_t size = obj->totalSize();
+
+            // Bounds check: size must fit within remaining heap
+            size_t remaining = end - scan;
+            if (size == 0 || size > remaining) {
+                // Invalid size - skip 8 bytes and resync
+                scan += 8;
+                continue;
+            }
+
+            callback(oopFromPointer(obj));
+
+            // Advance past the object
+            scan += size;
+        }
+    };
+
+    // Scan permanent space
+    scanRegion(permSpaceStart_, permSpaceEnd_);
+
+    // Scan old space
+    scanRegion(oldSpaceStart_, oldSpaceFree_);
+
+    // Scan eden
+    scanRegion(edenStart_, edenFree_);
+}
+
+// ===== MEMORY STATISTICS =====
+
+ObjectMemory::Statistics ObjectMemory::statistics() const {
+    Statistics stats;
+    stats.bytesAllocated = bytesAllocated_;
+    stats.bytesFree = (oldSpaceEnd_ - oldSpaceFree_) +
+                      (survivorStart_ - edenFree_);
+    stats.objectCount = 0;  // Would need to count
+    stats.gcCount = gcCount_;
+    stats.totalGCTime = totalGCTime_;
+    return stats;
+}
+
+// ===== PRIVATE HELPERS =====
+
+ObjectHeader* ObjectMemory::allocateRaw(size_t size, Space space) {
+    size = (size + 7) & ~7ULL;  // Align to 8 bytes
+
+    switch (space) {
+        case Space::Perm:
+            // Permanent space not supported for new allocations
+            return nullptr;
+
+        case Space::Old:
+            if (oldSpaceFree_ + size > oldSpaceEnd_) {
+                return nullptr;
+            }
+            {
+                ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(oldSpaceFree_);
+                oldSpaceFree_ += size;
+                return obj;
+            }
+
+        case Space::New:
+            return allocateInEden(size);
+
+        default:
+            return nullptr;
+    }
+}
+
+ObjectHeader* ObjectMemory::allocateInEden(size_t size) {
+    size = (size + 7) & ~7ULL;
+
+    if (edenFree_ + size > survivorStart_) {
+        return nullptr;  // Eden is full
+    }
+
+    ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(edenFree_);
+    edenFree_ += size;
+    return obj;
+}
+
+void ObjectMemory::initializeHeader(ObjectHeader* obj, uint32_t classIndex,
+                                     size_t slotCount, ObjectFormat format) {
+    uint8_t slots = (slotCount >= 255) ? 255 : static_cast<uint8_t>(slotCount);
+    uint64_t header = ObjectHeader::makeHeader(
+        slots,
+        0,  // No hash initially
+        format,
+        classIndex
+    );
+    obj->setRawHeader(header);
+}
+
+Space ObjectMemory::spaceForPointer(void* ptr) const {
+    uint8_t* p = static_cast<uint8_t*>(ptr);
+
+    if (p >= permSpaceStart_ && p < permSpaceEnd_) {
+        return Space::Perm;
+    }
+    if (p >= oldSpaceStart_ && p < oldSpaceEnd_) {
+        return Space::Old;
+    }
+    if (p >= newSpaceStart_ && p < newSpaceEnd_) {
+        return Space::New;
+    }
+
+    // Unknown - default to old
+    return Space::Old;
+}
+
+Oop ObjectMemory::oopFromPointer(ObjectHeader* ptr) const {
+    if (!ptr) return Oop::nil();
+    Space space = spaceForPointer(ptr);
+    return Oop::fromObject(ptr, space);
+}
+
+void ObjectMemory::rememberObject(Oop obj) {
+    if (obj.isObject()) {
+        obj.asObjectPtr()->setRemembered(true);
+    }
+}
+
+Oop ObjectMemory::promoteObject(Oop obj) {
+    if (!obj.isObject() || !isYoung(obj)) {
+        return obj;
+    }
+
+    ObjectHeader* src = obj.asObjectPtr();
+    size_t size = src->totalSize();
+
+    ObjectHeader* dst = allocateRaw(size, Space::Old);
+    if (!dst) {
+        return Oop::nil();  // Out of memory
+    }
+
+    std::memcpy(dst, src, size);
+    return Oop::fromObject(dst, Space::Old);
+}
+
+void ObjectMemory::copyObjectBytes(ObjectHeader* from, ObjectHeader* to) {
+    std::memcpy(to, from, from->totalSize());
+}
+
+void ObjectMemory::updatePointer(Oop& ptr) {
+    // Used during GC to update forwarded pointers
+    // TODO: Implement with forwarding pointers
+}
+
+} // namespace pharo

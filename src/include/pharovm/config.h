@@ -54,7 +54,7 @@
 #define COMPILER_VERSION __VERSION__
 #define VM_BUILD_SOURCE_STRING "iOS-iospharo"
 
-#define ALWAYS_INTERACTIVE OFF
+#define ALWAYS_INTERACTIVE 1
 
 /* VM_LABEL does nothing */
 #define VM_LABEL(foo) 0

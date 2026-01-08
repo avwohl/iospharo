@@ -82,6 +82,9 @@ EXPORT(void) fillParametersFromPList(VMParameters* parameters) {
                 }
             }
         }
+
+        /* iOS display initialization disabled for now - was causing issues */
+        /* TODO: Re-enable once display primitives are confirmed working */
     }
 }
 

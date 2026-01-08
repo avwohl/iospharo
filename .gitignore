@@ -1,6 +1,10 @@
 # Build outputs
 build/
 build-sim/
+build-vm/
+build-cpp/
+build-test/
+build-xcframework/
 DerivedData/
 *.xcworkspace
 *.xcframework
@@ -46,6 +50,16 @@ Thumbs.db
 # Archives
 *.zip
 *.tar.gz
-build-cpp/
-build-test/
+
+# Generated source
 src/generated/
+
+# Test binaries and build artifacts
+test_correct_header
+test_correct_header.cpp
+verify_offset
+verify_offset.cpp
+test-cpp-generation/
+*.dSYM/
+src/vm/build/
+src/vm/test_load_image

@@ -7,6 +7,10 @@
  */
 
 #include <stddef.h>
+#include <stdint.h>
+
+/* Type definitions for VM compatibility */
+typedef uintptr_t usqInt;
 
 /* Stack/Frame pointers */
 void* CFramePointer = NULL;
@@ -38,6 +42,7 @@ void* cePrimReturnEnterCogCode = NULL;
 void* cePrimReturnEnterCogCodeProfiling = NULL;
 
 /* Offsets */
+int abortOffset = 0;
 int cbEntryOffset = 0;
 int cbNoSwitchEntryOffset = 0;
 int cmEntryOffset = 0;
@@ -46,13 +51,22 @@ int missOffset = 0;
 int mnuOffset = 0;
 int numRegArgs = 0;
 
+/* Frame pointer tracking */
+int cFramePointerInUse = 0;
+
 /* Cog method zone */
 void* cogCodeBase = NULL;
 void* cogMethodZone = NULL;
 int cogMethodZoneSize = 0;
-void* minCogMethodAddress = NULL;
-void* maxCogMethodAddress = NULL;
 void* cogCodeConstituents = NULL;
+
+/* minCogMethodAddress and maxCogMethodAddress are functions that return the bounds of the cog method zone.
+ * In interpreter-only mode, these return 0 which means no valid cog method addresses exist.
+ * This causes assertions like (methodHeader >= minCogMethodAddress()) to always be true for the second part,
+ * but since interpreter-only methods have SmallInteger headers (& 7 == 1), the first part of the OR passes.
+ */
+usqInt minCogMethodAddress(void) { return 0; }
+usqInt maxCogMethodAddress(void) { return 0; }
 
 /* Method cache */
 void* methodCache = NULL;
@@ -77,11 +91,19 @@ int numProfileSamples = 0;
 int traceFlags = 0;
 int traceLinkedSendOffset = 0;
 
+/* Implementation of ceCaptureCStackPointers - captures current C stack pointers */
+static void ceCaptureCStackPointersImpl(void) {
+    /* In interpreter-only mode, we don't need to track C stack pointers */
+    /* The JIT needs this to return from machine code to C */
+}
+
+/* Function pointer that the interpreter calls */
+void (*ceCaptureCStackPointers)(void) = ceCaptureCStackPointersImpl;
+
 /* Stub functions - Cog method management */
 void addAllToYoungReferrers(void) {}
 void addCogMethodsToHeapMap(void) {}
 int bytecodePCForstartBcpcin(void* method, int startBcpc) { return startBcpc; }
-void ceCaptureCStackPointers(void* fp, void* sp) { CFramePointer = fp; CStackPointer = sp; }
 void* cogMethodSurrogateAt(void* address) { return NULL; }
 int cogMethodZoneFreeSpace(void) { return 0; }
 void compactCogCompiledCode(void) {}
@@ -180,6 +202,7 @@ int mcPCForBackwardBranchstartBcpcin(void* method, int startBcpc) { return 0; }
 int numMethodsOfType(int type) { return 0; }
 void* profilingDataForinto(void* method, void* buffer) { return NULL; }
 void rewritePrimInvocationInto(void* method, void* target) {}
+void checkIntegrityOfObjectReferencesInCode(int gcModes) {}
 
 /* Send/PIC stubs - called from cointerp but need Cogit implementation */
 void* cogMNUPICSelectorreceivermethodOperandnumArgs(void* sel, void* rcvr, void* methodOp, int numArgs) { return NULL; }

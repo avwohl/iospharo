@@ -186,6 +186,24 @@ set_target_properties(${VM_LIBRARY_NAME} PROPERTIES
     C_STANDARD_REQUIRED ON
 )
 
+# C++ compilation options for legacy C code with pointer/integer mixing
+if(USE_CPP_OOP)
+    target_compile_options(${VM_LIBRARY_NAME} PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:-fpermissive>
+        $<$<COMPILE_LANGUAGE:CXX>:-Wno-writable-strings>
+        $<$<COMPILE_LANGUAGE:CXX>:-Wno-int-to-pointer-cast>
+        $<$<COMPILE_LANGUAGE:CXX>:-Wno-pointer-to-int-cast>
+        $<$<COMPILE_LANGUAGE:CXX>:-Wno-incompatible-pointer-types>
+        $<$<COMPILE_LANGUAGE:CXX>:-Wno-int-conversion>
+        $<$<COMPILE_LANGUAGE:CXX>:-Wno-void-pointer-to-int-cast>
+        $<$<COMPILE_LANGUAGE:CXX>:-Wno-pointer-sign>
+        $<$<COMPILE_LANGUAGE:CXX>:-Wno-incompatible-pointer-types-discards-qualifiers>
+        $<$<COMPILE_LANGUAGE:CXX>:-Wno-implicit-function-declaration>
+        $<$<COMPILE_LANGUAGE:CXX>:-Wno-return-type>
+        $<$<COMPILE_LANGUAGE:CXX>:-ferror-limit=0>
+    )
+endif()
+
 # iOS-specific settings
 set_target_properties(${VM_LIBRARY_NAME} PROPERTIES
     XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "${CMAKE_OSX_DEPLOYMENT_TARGET}"
