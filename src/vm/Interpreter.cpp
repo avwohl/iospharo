@@ -3703,6 +3703,10 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[157] = &Interpreter::primitiveCompareStringCollated;
     primitiveTable_[158] = &Interpreter::primitiveCompareStringNoCase;
 
+    // Become primitives (197-198)
+    primitiveTable_[197] = &Interpreter::primitiveArrayBecomeOneWay;
+    primitiveTable_[198] = &Interpreter::primitiveArrayBecomeOneWayCopyHash;
+
     // Process yield (167)
     primitiveTable_[167] = &Interpreter::primitiveYield;
 
