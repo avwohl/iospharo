@@ -3757,6 +3757,23 @@ void Interpreter::initializePrimitives() {
     // Class structure primitives (253-254)
     primitiveTable_[253] = &Interpreter::primitiveSuperclass;
     primitiveTable_[254] = &Interpreter::primitiveInstSize;
+
+    // Quick return primitives (256-259)
+    primitiveTable_[256] = &Interpreter::primitiveQuickReturnSelf;
+    primitiveTable_[257] = &Interpreter::primitiveQuickReturnTrue;
+    primitiveTable_[258] = &Interpreter::primitiveQuickReturnFalse;
+    primitiveTable_[259] = &Interpreter::primitiveQuickReturnNil;
+
+    // Object format query primitives
+    // Note: These are often accessed via different primitive numbers in different images
+    // We'll wire them to common slots
+    primitiveTable_[15] = &Interpreter::primitiveIsPointers;  // Most common for #isPointers
+
+    // String hash primitive (146)
+    primitiveTable_[146] = &Interpreter::primitiveStringHash;
+
+    // Class name primitive (514)
+    primitiveTable_[514] = &Interpreter::primitiveClassName;
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {

@@ -4778,4 +4778,164 @@ PrimitiveResult Interpreter::primitiveContextSize(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== QUICK RETURN PRIMITIVES =====
+// These are optimized primitives that return special values directly
+
+// Primitive 256: Return self (the receiver)
+PrimitiveResult Interpreter::primitiveQuickReturnSelf(int argCount) {
+    // Stack has receiver at stackValue(argCount)
+    // For quick return, the method body just returns self
+    // Nothing to do - receiver is already the result
+    return PrimitiveResult::Success;
+}
+
+// Primitive 257: Return true
+PrimitiveResult Interpreter::primitiveQuickReturnTrue(int argCount) {
+    // Pop receiver, push true
+    pop();
+    push(memory_.trueObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 258: Return false
+PrimitiveResult Interpreter::primitiveQuickReturnFalse(int argCount) {
+    // Pop receiver, push false
+    pop();
+    push(memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 259: Return nil
+PrimitiveResult Interpreter::primitiveQuickReturnNil(int argCount) {
+    // Pop receiver, push nil
+    pop();
+    push(Oop::nil());
+    return PrimitiveResult::Success;
+}
+
+// ===== OBJECT FORMAT QUERY PRIMITIVES =====
+
+// Primitive 15 variant: Check if object contains bytes
+// receiver isBytes -> Boolean
+PrimitiveResult Interpreter::primitiveIsBytes(int argCount) {
+    Oop obj = stackTop();
+
+    if (obj.isImmediate()) {
+        pop();
+        push(memory_.falseObject());
+        return PrimitiveResult::Success;
+    }
+
+    ObjectHeader* header = obj.asObjectPtr();
+    ObjectFormat fmt = header->format();
+
+    // Byte formats are 16-23 (Indexable8 through Indexable8_7)
+    bool isBytes = (fmt >= ObjectFormat::Indexable8 && fmt <= ObjectFormat::Indexable8_7);
+
+    pop();
+    push(isBytes ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 15 variant: Check if object contains 64-bit words
+// receiver isWords -> Boolean
+PrimitiveResult Interpreter::primitiveIsWords(int argCount) {
+    Oop obj = stackTop();
+
+    if (obj.isImmediate()) {
+        pop();
+        push(memory_.falseObject());
+        return PrimitiveResult::Success;
+    }
+
+    ObjectHeader* header = obj.asObjectPtr();
+    ObjectFormat fmt = header->format();
+
+    // Word64 format is 10 (Indexable64)
+    bool isWords = (fmt == ObjectFormat::Indexable64);
+
+    pop();
+    push(isWords ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 15 variant: Check if object contains pointers (Oops)
+// receiver isPointers -> Boolean
+PrimitiveResult Interpreter::primitiveIsPointers(int argCount) {
+    Oop obj = stackTop();
+
+    if (obj.isImmediate()) {
+        pop();
+        push(memory_.falseObject());
+        return PrimitiveResult::Success;
+    }
+
+    ObjectHeader* header = obj.asObjectPtr();
+    ObjectFormat fmt = header->format();
+
+    // Pointer formats are 0-4 (FixedSize, Indexable, etc.)
+    bool isPointers = (fmt <= ObjectFormat::Weak);
+
+    pop();
+    push(isPointers ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// ===== STRING HASH PRIMITIVE =====
+
+// Primitive 146: Compute hash of a byte object (String, Symbol)
+// This uses a simple polynomial rolling hash
+PrimitiveResult Interpreter::primitiveStringHash(int argCount) {
+    Oop obj = stackTop();
+
+    if (!obj.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* header = obj.asObjectPtr();
+    ObjectFormat fmt = header->format();
+
+    // Must be a byte object (format 16-23)
+    if (fmt < ObjectFormat::Indexable8 || fmt > ObjectFormat::Indexable8_7) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t byteCount = memory_.byteSizeOf(obj);
+    uint8_t* bytes = reinterpret_cast<uint8_t*>(header + 1);
+
+    // Simple polynomial rolling hash
+    uint32_t hash = 5381;  // DJB2 initial value
+    for (size_t i = 0; i < byteCount; ++i) {
+        hash = ((hash << 5) + hash) + bytes[i];  // hash * 33 + byte
+    }
+
+    // Ensure hash fits in SmallInteger range
+    hash = hash & 0x3FFFFFFF;  // 30 bits
+
+    pop();
+    push(Oop::fromSmallInteger(static_cast<int64_t>(hash)));
+    return PrimitiveResult::Success;
+}
+
+// ===== CLASS NAME PRIMITIVE =====
+
+// Primitive 514: Get the name of a class (as a Symbol or String)
+// receiver name -> Symbol
+PrimitiveResult Interpreter::primitiveClassName(int argCount) {
+    Oop classOop = stackTop();
+
+    if (!classOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // In Pharo, class name is stored at slot 6 (after superclass, methodDict, format,
+    // instanceVariables, organization, subclasses)
+    // But the exact layout can vary. Let's use slot 6 as a common position.
+    Oop name = memory_.fetchPointer(6, classOop);
+
+    pop();
+    push(name);
+    return PrimitiveResult::Success;
+}
+
 } // namespace pharo

@@ -614,6 +614,23 @@ private:
     // Context size primitive
     PrimitiveResult primitiveContextSize(int argCount);          // 210
 
+    // Quick return primitives (256-258)
+    PrimitiveResult primitiveQuickReturnSelf(int argCount);      // 256
+    PrimitiveResult primitiveQuickReturnTrue(int argCount);      // 257
+    PrimitiveResult primitiveQuickReturnFalse(int argCount);     // 258
+    PrimitiveResult primitiveQuickReturnNil(int argCount);       // 259
+
+    // Object format query primitives
+    PrimitiveResult primitiveIsBytes(int argCount);              // 15 (part of)
+    PrimitiveResult primitiveIsWords(int argCount);              // 15 (part of)
+    PrimitiveResult primitiveIsPointers(int argCount);           // 15 (part of)
+
+    // String hash primitive
+    PrimitiveResult primitiveStringHash(int argCount);           // 146
+
+    // Class name primitive
+    PrimitiveResult primitiveClassName(int argCount);            // 514
+
     // ===== STARTUP SUPPORT =====
 
     /// Bootstrap startup when active process has nil suspendedContext.
