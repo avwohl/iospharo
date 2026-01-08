@@ -4880,6 +4880,179 @@ PrimitiveResult Interpreter::primitiveContextSize(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== CONTEXT MANIPULATION PRIMITIVES (190-195) =====
+// These primitives allow modifying the fields of a Context object
+// Used for exception handling, debugging, and process manipulation
+
+// Primitive 190: Set the sender of a context
+// receiver privSender: aContext -> receiver
+PrimitiveResult Interpreter::primitiveSetSender(int argCount) {
+    if (argCount != 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop newSender = stackValue(0);
+    Oop context = stackValue(1);
+
+    if (!context.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* header = context.asObjectPtr();
+    if (header->isImmutable()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Sender is at slot 0
+    memory_.storePointer(ContextSenderIndex, context, newSender);
+
+    popN(2);
+    push(context);  // Return receiver
+    return PrimitiveResult::Success;
+}
+
+// Primitive 191: Set the instruction pointer (pc) of a context
+// receiver pc: aSmallInteger -> receiver
+PrimitiveResult Interpreter::primitiveSetInstructionPointer(int argCount) {
+    if (argCount != 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop newPC = stackValue(0);
+    Oop context = stackValue(1);
+
+    if (!context.isObject() || !newPC.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* header = context.asObjectPtr();
+    if (header->isImmutable()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // PC is at slot 1
+    memory_.storePointer(ContextPCIndex, context, newPC);
+
+    popN(2);
+    push(context);  // Return receiver
+    return PrimitiveResult::Success;
+}
+
+// Primitive 192: Set the stack pointer of a context
+// receiver stackp: aSmallInteger -> receiver
+PrimitiveResult Interpreter::primitiveSetStackPointer(int argCount) {
+    if (argCount != 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop newStackp = stackValue(0);
+    Oop context = stackValue(1);
+
+    if (!context.isObject() || !newStackp.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* header = context.asObjectPtr();
+    if (header->isImmutable()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Validate stack pointer is within bounds
+    int64_t sp = newStackp.asSmallInteger();
+    size_t slotCount = header->slotCount();
+    if (sp < 0 || static_cast<size_t>(sp) > slotCount - ContextFixedSlots) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Stackp is at slot 2
+    memory_.storePointer(ContextStackPIndex, context, newStackp);
+
+    popN(2);
+    push(context);  // Return receiver
+    return PrimitiveResult::Success;
+}
+
+// Primitive 193: Set the method of a context
+// receiver method: aCompiledMethod -> receiver
+PrimitiveResult Interpreter::primitiveSetMethod(int argCount) {
+    if (argCount != 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop newMethod = stackValue(0);
+    Oop context = stackValue(1);
+
+    if (!context.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* header = context.asObjectPtr();
+    if (header->isImmutable()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Method is at slot 3
+    memory_.storePointer(ContextMethodIndex, context, newMethod);
+
+    popN(2);
+    push(context);  // Return receiver
+    return PrimitiveResult::Success;
+}
+
+// Primitive 194: Set the receiver of a context
+// receiver receiver: anObject -> receiver (the context)
+PrimitiveResult Interpreter::primitiveSetReceiver(int argCount) {
+    if (argCount != 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop newReceiver = stackValue(0);
+    Oop context = stackValue(1);
+
+    if (!context.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* header = context.asObjectPtr();
+    if (header->isImmutable()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Receiver is at slot 5
+    memory_.storePointer(ContextReceiverIndex, context, newReceiver);
+
+    popN(2);
+    push(context);  // Return receiver (the context)
+    return PrimitiveResult::Success;
+}
+
+// Primitive 195: Set the closure (or nil) of a context
+// receiver closureOrNil: aBlockClosureOrNil -> receiver
+PrimitiveResult Interpreter::primitiveSetClosureOrNil(int argCount) {
+    if (argCount != 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop newClosure = stackValue(0);
+    Oop context = stackValue(1);
+
+    if (!context.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* header = context.asObjectPtr();
+    if (header->isImmutable()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // ClosureOrNil is at slot 4
+    memory_.storePointer(ContextClosureOrNilIndex, context, newClosure);
+
+    popN(2);
+    push(context);  // Return receiver
+    return PrimitiveResult::Success;
+}
+
 // ===== QUICK RETURN PRIMITIVES =====
 // These are optimized primitives that return special values directly
 

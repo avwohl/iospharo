@@ -3779,6 +3779,14 @@ void Interpreter::initializePrimitives() {
 
     // Class name primitive (514)
     primitiveTable_[514] = &Interpreter::primitiveClassName;
+
+    // Context manipulation primitives (190-195)
+    primitiveTable_[190] = &Interpreter::primitiveSetSender;
+    primitiveTable_[191] = &Interpreter::primitiveSetInstructionPointer;
+    primitiveTable_[192] = &Interpreter::primitiveSetStackPointer;
+    primitiveTable_[193] = &Interpreter::primitiveSetMethod;
+    primitiveTable_[194] = &Interpreter::primitiveSetReceiver;
+    primitiveTable_[195] = &Interpreter::primitiveSetClosureOrNil;
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {

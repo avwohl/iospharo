@@ -617,6 +617,14 @@ private:
     // Context size primitive
     PrimitiveResult primitiveContextSize(int argCount);          // 210
 
+    // Context manipulation primitives (190-195)
+    PrimitiveResult primitiveSetSender(int argCount);            // 190 - Context>>privSender:
+    PrimitiveResult primitiveSetInstructionPointer(int argCount); // 191 - Context>>pc:
+    PrimitiveResult primitiveSetStackPointer(int argCount);      // 192 - Context>>stackp:
+    PrimitiveResult primitiveSetMethod(int argCount);            // 193 - Context>>method:
+    PrimitiveResult primitiveSetReceiver(int argCount);          // 194 - Context>>receiver:
+    PrimitiveResult primitiveSetClosureOrNil(int argCount);       // 195 - Context>>closureOrNil:
+
     // Quick return primitives (256-258)
     PrimitiveResult primitiveQuickReturnSelf(int argCount);      // 256
     PrimitiveResult primitiveQuickReturnTrue(int argCount);      // 257
