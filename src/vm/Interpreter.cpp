@@ -3651,6 +3651,10 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[106] = &Interpreter::primitiveScreenSize;
     primitiveTable_[108] = &Interpreter::primitiveScreenDepth;
 
+    // UI primitives (140, 141)
+    primitiveTable_[140] = &Interpreter::primitiveBeep;
+    primitiveTable_[141] = &Interpreter::primitiveClipboardText;
+
     // Time primitives (135-137, 240-241)
     primitiveTable_[135] = &Interpreter::primitiveMillisecondClock;
     primitiveTable_[136] = &Interpreter::primitiveSignalAtMilliseconds;

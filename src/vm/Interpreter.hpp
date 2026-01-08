@@ -267,6 +267,9 @@ private:
     int screenHeight_ = 768;
     int screenDepth_ = 32;
 
+    // Clipboard (simple in-memory storage for headless mode)
+    std::string clipboardText_;
+
     // ===== CACHES =====
 
     std::array<MethodCacheEntry, MethodCacheSize> methodCache_;
@@ -468,6 +471,8 @@ private:
     PrimitiveResult primitiveBeDisplay(int argCount);
     PrimitiveResult primitiveScreenSize(int argCount);           // 106
     PrimitiveResult primitiveScreenDepth(int argCount);          // 108
+    PrimitiveResult primitiveBeep(int argCount);                 // 140
+    PrimitiveResult primitiveClipboardText(int argCount);        // 141
     PrimitiveResult primitiveForceDisplayUpdate(int argCount);
 
     // Time

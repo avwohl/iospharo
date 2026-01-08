@@ -1862,6 +1862,86 @@ PrimitiveResult Interpreter::primitiveScreenDepth(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// Primitive 140: Beep
+// Produces a system beep sound (no-op in headless mode)
+PrimitiveResult Interpreter::primitiveBeep(int argCount) {
+    // In headless mode, this is a no-op
+    // On platforms with audio, this could trigger a system sound
+    // For now, just succeed silently
+    return PrimitiveResult::Success;
+}
+
+// Primitive 141: Get or set clipboard text
+// With no argument: returns clipboard contents as a String
+// With argument: sets clipboard contents (returns receiver)
+PrimitiveResult Interpreter::primitiveClipboardText(int argCount) {
+    if (argCount == 0) {
+        // Get clipboard text
+        Oop result = createStringObject(memory_, clipboardText_);
+        if (result.isNil() && !clipboardText_.empty()) {
+            return PrimitiveResult::Failure;
+        }
+
+        // If clipboard is empty, return empty string
+        if (result.isNil()) {
+            // Try to create an empty string
+            Oop stringClass = memory_.specialObject(SpecialObjectIndex::ClassByteString);
+            if (stringClass.isNil()) {
+                return PrimitiveResult::Failure;
+            }
+            uint32_t classIndex = memory_.indexOfClass(stringClass);
+            if (classIndex == 0) {
+                return PrimitiveResult::Failure;
+            }
+            result = memory_.allocateBytes(classIndex, 0);
+            if (result.isNil()) {
+                return PrimitiveResult::Failure;
+            }
+        }
+
+        pop();  // Pop receiver
+        push(result);
+        return PrimitiveResult::Success;
+    } else if (argCount == 1) {
+        // Set clipboard text
+        Oop textOop = stackValue(0);
+
+        if (!textOop.isObject()) {
+            // If nil, clear clipboard
+            if (textOop.isNil()) {
+                clipboardText_.clear();
+                pop();  // Pop argument, leave receiver
+                return PrimitiveResult::Success;
+            }
+            return PrimitiveResult::Failure;
+        }
+
+        // Extract string from the argument
+        ObjectHeader* header = textOop.asObjectPtr();
+        ObjectFormat format = header->format();
+
+        if (format < ObjectFormat::Indexable8 || format > ObjectFormat::Indexable8_7) {
+            return PrimitiveResult::Failure;  // Not a byte object
+        }
+
+        size_t len = memory_.byteSizeOf(textOop);
+        std::string newText;
+        newText.reserve(len);
+
+        for (size_t i = 0; i < len; ++i) {
+            newText.push_back(static_cast<char>(memory_.fetchByte(i, textOop)));
+        }
+
+        clipboardText_ = newText;
+
+        // Return receiver (pop argument, leave receiver)
+        pop();
+        return PrimitiveResult::Success;
+    }
+
+    return PrimitiveResult::Failure;
+}
+
 // ===== TIME PRIMITIVES =====
 
 PrimitiveResult Interpreter::primitiveMillisecondClock(int argCount) {
