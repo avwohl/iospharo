@@ -125,6 +125,11 @@ Clean C++ VM implementation is functional. Image loads, interpreter initializes,
   - Translates runtime pointers to canonical image format (0x10000000000)
   - Iterates all objects and translates pointer slots
   - Returns true on success
+- **primitiveVMParameter (254)**: Access VM configuration
+  - 0 args: Returns array of all 86 parameters
+  - 1 arg: Returns parameter at index
+  - 2 args: Sets parameter (most read-only)
+  - Reports heap size, GC stats, image format, VM features
 
 ## Key Files
 
