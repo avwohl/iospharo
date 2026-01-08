@@ -139,6 +139,10 @@ Clean C++ VM implementation is functional. Image loads, interpreter initializes,
 - **primitiveLocalMicrosecondClock (241)**: Local time microseconds
 - Uses C++ chrono for cross-platform timing
 
+### 13. Character Conversion Primitives (DONE)
+- **primitiveAsCharacter (170)**: Integer to Character (validates Unicode range)
+- **primitiveAsInteger (171)**: Character to Integer
+
 ## Key Files
 
 ### Clean VM Implementation (src/vm/)
