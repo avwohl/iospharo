@@ -3739,9 +3739,24 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[188] = &Interpreter::primitiveFindHandlerContext;
     primitiveTable_[189] = &Interpreter::primitiveFindNextUnwindContext;
 
-    // Context inspection primitives (211-212)
+    // Context inspection primitives (210-212)
+    primitiveTable_[210] = &Interpreter::primitiveContextSize;
     primitiveTable_[211] = &Interpreter::primitiveContextAt;
     primitiveTable_[212] = &Interpreter::primitiveContextAtPut;
+
+    // Cache flushing primitives (119-120)
+    primitiveTable_[119] = &Interpreter::primitiveFlushCacheByMethod;
+    primitiveTable_[120] = &Interpreter::primitiveFlushCacheBySelector;
+
+    // Perform in superclass primitive (100)
+    primitiveTable_[100] = &Interpreter::primitivePerformInSuperclass;
+
+    // Closure value variant (204)
+    primitiveTable_[204] = &Interpreter::primitiveClosureValueNoContextSwitch;
+
+    // Class structure primitives (253-254)
+    primitiveTable_[253] = &Interpreter::primitiveSuperclass;
+    primitiveTable_[254] = &Interpreter::primitiveInstSize;
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {

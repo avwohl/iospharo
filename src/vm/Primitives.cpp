@@ -4633,4 +4633,149 @@ PrimitiveResult Interpreter::primitiveContextAtPut(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== CACHE FLUSHING PRIMITIVES =====
+
+// Primitive 119: Flush method cache entries for a specific method
+// Called when a method is modified or replaced
+PrimitiveResult Interpreter::primitiveFlushCacheByMethod(int argCount) {
+    // In a full implementation, we'd have a method cache and flush entries
+    // that reference this method. For now, this is a no-op since we don't
+    // have method caching yet.
+
+    // No arguments expected, just return the receiver (the method)
+    // Stack has: receiver (which is already on top), so just succeed
+    return PrimitiveResult::Success;
+}
+
+// Primitive 120: Flush method cache entries for a specific selector
+// Called when any method with this selector might have changed
+PrimitiveResult Interpreter::primitiveFlushCacheBySelector(int argCount) {
+    // In a full implementation, we'd flush all cache entries for this selector.
+    // For now, this is a no-op since we don't have method caching yet.
+
+    // No arguments expected, just return the receiver (the selector)
+    // Stack has: receiver (which is already on top), so just succeed
+    return PrimitiveResult::Success;
+}
+
+// ===== PERFORM IN SUPERCLASS PRIMITIVE =====
+
+// Primitive 100: perform:withArguments:inSuperclass:
+// Sends a message to self but starts lookup from a specified superclass
+PrimitiveResult Interpreter::primitivePerformInSuperclass(int argCount) {
+    // Stack: receiver, selector, argsArray, lookupClass
+    if (argCount != 3) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop lookupClass = stackValue(0);
+    Oop argsArray = stackValue(1);
+    Oop selector = stackValue(2);
+    // receiver is at stackValue(3), will remain on stack after we pop the other args
+
+    if (!argsArray.isObject() || !lookupClass.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get arguments from the array
+    ObjectHeader* argsHeader = argsArray.asObjectPtr();
+    size_t numArgs = argsHeader->slotCount();
+
+    // Look up the method starting from lookupClass
+    Oop method = lookupMethod(lookupClass, selector);
+    if (method.isNil()) {
+        // DNU - fail and let Smalltalk handle it
+        return PrimitiveResult::Failure;
+    }
+
+    // Pop the perform arguments (lookupClass, argsArray, selector)
+    popN(3);
+
+    // Now stack has: receiver
+    // Push arguments from array
+    for (size_t i = 0; i < numArgs; ++i) {
+        push(argsHeader->slotAt(i));
+    }
+
+    // Activate the method (receiver is on stack, followed by args)
+    activateMethod(method, static_cast<int>(numArgs));
+    return PrimitiveResult::Success;
+}
+
+// ===== CLOSURE VALUE VARIANT =====
+
+// Primitive 204: Evaluate a closure without switching context
+// This is used for very simple blocks that shouldn't create a context
+PrimitiveResult Interpreter::primitiveClosureValueNoContextSwitch(int argCount) {
+    // For now, just delegate to normal block value
+    // A full implementation would avoid creating a context frame
+    return primitiveBlockValue(argCount);
+}
+
+// ===== CLASS STRUCTURE PRIMITIVES =====
+
+// Primitive 254: Get the number of named instance variables of a class
+// receiver instSize -> SmallInteger
+PrimitiveResult Interpreter::primitiveInstSize(int argCount) {
+    Oop classOop = stackTop();
+
+    if (!classOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Class format is stored in slot 2 (after superclass and methodDict)
+    // The format encodes the instance size in bits 0-15
+    Oop formatOop = memory_.fetchPointer(2, classOop);
+    if (!formatOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t format = formatOop.asSmallInteger();
+    // Instance size is stored in the low 16 bits
+    int64_t instSize = format & 0xFFFF;
+
+    pop();
+    push(Oop::fromSmallInteger(instSize));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 253: Get the superclass of a class
+// receiver superclass -> Class or nil
+PrimitiveResult Interpreter::primitiveSuperclass(int argCount) {
+    Oop classOop = stackTop();
+
+    if (!classOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Superclass is stored in slot 0
+    Oop superclass = memory_.fetchPointer(0, classOop);
+
+    pop();
+    push(superclass);
+    return PrimitiveResult::Success;
+}
+
+// ===== CONTEXT SIZE PRIMITIVE =====
+
+// Primitive 210: Get the number of temp/stack slots in a context
+// receiver contextSize -> SmallInteger
+PrimitiveResult Interpreter::primitiveContextSize(int argCount) {
+    Oop context = stackTop();
+
+    if (!context.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* header = context.asObjectPtr();
+    size_t slotCount = header->slotCount();
+
+    // Subtract the fixed context fields (sender, pc, stackp, method, closureOrNil, receiver)
+    size_t tempStackSize = slotCount > ContextFixedSlots ? slotCount - ContextFixedSlots : 0;
+
+    pop();
+    push(Oop::fromSmallInteger(static_cast<int64_t>(tempStackSize)));
+    return PrimitiveResult::Success;
+}
+
 } // namespace pharo

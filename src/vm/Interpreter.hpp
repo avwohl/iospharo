@@ -597,6 +597,23 @@ private:
     PrimitiveResult primitiveContextAt(int argCount);            // 211
     PrimitiveResult primitiveContextAtPut(int argCount);         // 212
 
+    // Cache flushing primitives
+    PrimitiveResult primitiveFlushCacheByMethod(int argCount);   // 119
+    PrimitiveResult primitiveFlushCacheBySelector(int argCount); // 120
+
+    // Perform in superclass primitive
+    PrimitiveResult primitivePerformInSuperclass(int argCount);  // 100
+
+    // Closure value variant
+    PrimitiveResult primitiveClosureValueNoContextSwitch(int argCount); // 204
+
+    // Class structure primitives
+    PrimitiveResult primitiveInstSize(int argCount);             // 254
+    PrimitiveResult primitiveSuperclass(int argCount);           // 253
+
+    // Context size primitive
+    PrimitiveResult primitiveContextSize(int argCount);          // 210
+
     // ===== STARTUP SUPPORT =====
 
     /// Bootstrap startup when active process has nil suspendedContext.
