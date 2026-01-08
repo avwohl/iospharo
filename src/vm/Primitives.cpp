@@ -1580,6 +1580,26 @@ static Oop makeFloat(ObjectMemory& memory, double value) {
     return floatObj;
 }
 
+// Primitive 40: Convert integer to Float
+PrimitiveResult Interpreter::primitiveAsFloat(int argCount) {
+    Oop rcvr = stackTop();
+
+    double value;
+    if (rcvr.isSmallInteger()) {
+        value = static_cast<double>(rcvr.asSmallInteger());
+    } else {
+        // Could be LargeInteger - for now just fail
+        return PrimitiveResult::Failure;
+    }
+
+    Oop resultOop = makeFloat(memory_, value);
+    if (resultOop.isNil()) return PrimitiveResult::Failure;
+
+    pop();
+    push(resultOop);
+    return PrimitiveResult::Success;
+}
+
 PrimitiveResult Interpreter::primitiveFloatAdd(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
@@ -1670,6 +1690,48 @@ PrimitiveResult Interpreter::primitiveFloatLessThan(int argCount) {
     return PrimitiveResult::Success;
 }
 
+PrimitiveResult Interpreter::primitiveFloatGreaterThan(int argCount) {
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    double a, b;
+    if (!extractFloat(memory_, rcvr, a) || !extractFloat(memory_, arg, b)) {
+        return PrimitiveResult::Failure;
+    }
+
+    popN(2);
+    push(a > b ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+PrimitiveResult Interpreter::primitiveFloatLessOrEqual(int argCount) {
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    double a, b;
+    if (!extractFloat(memory_, rcvr, a) || !extractFloat(memory_, arg, b)) {
+        return PrimitiveResult::Failure;
+    }
+
+    popN(2);
+    push(a <= b ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+PrimitiveResult Interpreter::primitiveFloatGreaterOrEqual(int argCount) {
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    double a, b;
+    if (!extractFloat(memory_, rcvr, a) || !extractFloat(memory_, arg, b)) {
+        return PrimitiveResult::Failure;
+    }
+
+    popN(2);
+    push(a >= b ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
 PrimitiveResult Interpreter::primitiveFloatEqual(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
@@ -1681,6 +1743,20 @@ PrimitiveResult Interpreter::primitiveFloatEqual(int argCount) {
 
     popN(2);
     push(a == b ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+PrimitiveResult Interpreter::primitiveFloatNotEqual(int argCount) {
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    double a, b;
+    if (!extractFloat(memory_, rcvr, a) || !extractFloat(memory_, arg, b)) {
+        return PrimitiveResult::Failure;
+    }
+
+    popN(2);
+    push(a != b ? memory_.trueObject() : memory_.falseObject());
     return PrimitiveResult::Success;
 }
 
@@ -1706,6 +1782,79 @@ PrimitiveResult Interpreter::primitiveFloatTruncated(int argCount) {
 
     // Result too large for SmallInteger - fail (needs LargeInteger)
     return PrimitiveResult::Failure;
+}
+
+// Primitive 52: Return the fractional part of a Float
+PrimitiveResult Interpreter::primitiveFractionalPart(int argCount) {
+    Oop rcvr = stackTop();
+
+    double value;
+    if (!extractFloat(memory_, rcvr, value)) {
+        return PrimitiveResult::Failure;
+    }
+
+    double intPart;
+    double fracPart = std::modf(value, &intPart);
+
+    Oop resultOop = makeFloat(memory_, fracPart);
+    if (resultOop.isNil()) return PrimitiveResult::Failure;
+
+    pop();
+    push(resultOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 53: Return the exponent of a Float (as used in IEEE representation)
+PrimitiveResult Interpreter::primitiveExponent(int argCount) {
+    Oop rcvr = stackTop();
+
+    double value;
+    if (!extractFloat(memory_, rcvr, value)) {
+        return PrimitiveResult::Failure;
+    }
+
+    if (value == 0.0) {
+        // Exponent of zero is conventionally 0 or undefined
+        pop();
+        push(Oop::fromSmallInteger(0));
+        return PrimitiveResult::Success;
+    }
+
+    // Get the exponent using frexp (returns value in range [0.5, 1) and exponent)
+    int exponent;
+    std::frexp(value, &exponent);
+    // Adjust because frexp returns mantissa in [0.5, 1), Smalltalk expects [1, 2)
+    exponent--;
+
+    pop();
+    push(Oop::fromSmallInteger(exponent));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 54: Multiply a Float by a power of 2 (receiver * 2^arg)
+PrimitiveResult Interpreter::primitiveTimesTwoPower(int argCount) {
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    if (!arg.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+    int64_t power = arg.asSmallInteger();
+
+    double value;
+    if (!extractFloat(memory_, rcvr, value)) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Use ldexp to multiply by 2^power efficiently
+    double result = std::ldexp(value, static_cast<int>(power));
+
+    Oop resultOop = makeFloat(memory_, result);
+    if (resultOop.isNil()) return PrimitiveResult::Failure;
+
+    popN(2);
+    push(resultOop);
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveFloatSquareRoot(int argCount) {
@@ -1738,23 +1887,6 @@ PrimitiveResult Interpreter::primitiveFloatSin(int argCount) {
     }
 
     double result = std::sin(value);
-    Oop resultOop = makeFloat(memory_, result);
-    if (resultOop.isNil()) return PrimitiveResult::Failure;
-
-    pop();
-    push(resultOop);
-    return PrimitiveResult::Success;
-}
-
-PrimitiveResult Interpreter::primitiveFloatCos(int argCount) {
-    Oop rcvr = stackTop();
-
-    double value;
-    if (!extractFloat(memory_, rcvr, value)) {
-        return PrimitiveResult::Failure;
-    }
-
-    double result = std::cos(value);
     Oop resultOop = makeFloat(memory_, result);
     if (resultOop.isNil()) return PrimitiveResult::Failure;
 
@@ -2387,6 +2519,326 @@ PrimitiveResult Interpreter::primitiveLargeIntegerNotEqual(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// Primitive 32: Integer division (truncates toward negative infinity)
+PrimitiveResult Interpreter::primitiveLargeIntegerDiv(int argCount) {
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    std::vector<uint8_t> aMag, bMag;
+    bool aNeg, bNeg;
+
+    if (!extractInteger(memory_, rcvr, aMag, aNeg) ||
+        !extractInteger(memory_, arg, bMag, bNeg)) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Check for division by zero
+    bool bIsZero = bMag.empty() || (bMag.size() == 1 && bMag[0] == 0);
+    if (bIsZero) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Perform unsigned division
+    std::vector<uint8_t> quotient, remainder;
+    divideMagnitudes(aMag, bMag, quotient, remainder);
+
+    // Result sign: negative if signs differ
+    bool resultNeg = (aNeg != bNeg);
+
+    // For div (floor division), if signs differ and there's a remainder, adjust
+    bool hasRemainder = !remainder.empty() && !(remainder.size() == 1 && remainder[0] == 0);
+    if (resultNeg && hasRemainder) {
+        // Add 1 to magnitude for floor division
+        uint16_t carry = 1;
+        for (size_t i = 0; i < quotient.size() && carry; i++) {
+            uint16_t sum = quotient[i] + carry;
+            quotient[i] = sum & 0xFF;
+            carry = sum >> 8;
+        }
+        if (carry) quotient.push_back(1);
+    }
+
+    // Handle zero result
+    if (quotient.empty() || (quotient.size() == 1 && quotient[0] == 0)) {
+        resultNeg = false;
+    }
+
+    Oop resultOop;
+    if (tryConvertToSmallInteger(quotient, resultNeg, resultOop)) {
+        primitiveSuccess(resultOop);
+        return PrimitiveResult::Success;
+    }
+
+    resultOop = makeLargeInteger(memory_, quotient, resultNeg);
+    if (resultOop.isNil()) return PrimitiveResult::Failure;
+
+    primitiveSuccess(resultOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 33: Integer quotient (truncates toward zero)
+PrimitiveResult Interpreter::primitiveLargeIntegerQuo(int argCount) {
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    std::vector<uint8_t> aMag, bMag;
+    bool aNeg, bNeg;
+
+    if (!extractInteger(memory_, rcvr, aMag, aNeg) ||
+        !extractInteger(memory_, arg, bMag, bNeg)) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Check for division by zero
+    bool bIsZero = bMag.empty() || (bMag.size() == 1 && bMag[0] == 0);
+    if (bIsZero) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Perform unsigned division
+    std::vector<uint8_t> quotient, remainder;
+    divideMagnitudes(aMag, bMag, quotient, remainder);
+
+    // Result sign: negative if signs differ (quo truncates toward zero)
+    bool resultNeg = (aNeg != bNeg);
+
+    // Handle zero result
+    if (quotient.empty() || (quotient.size() == 1 && quotient[0] == 0)) {
+        resultNeg = false;
+    }
+
+    Oop resultOop;
+    if (tryConvertToSmallInteger(quotient, resultNeg, resultOop)) {
+        primitiveSuccess(resultOop);
+        return PrimitiveResult::Success;
+    }
+
+    resultOop = makeLargeInteger(memory_, quotient, resultNeg);
+    if (resultOop.isNil()) return PrimitiveResult::Failure;
+
+    primitiveSuccess(resultOop);
+    return PrimitiveResult::Success;
+}
+
+// Helper for bitwise operations on magnitudes (treats as unsigned)
+static std::vector<uint8_t> bitwiseAnd(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
+    size_t minSize = std::min(a.size(), b.size());
+    std::vector<uint8_t> result(minSize);
+    for (size_t i = 0; i < minSize; i++) {
+        result[i] = a[i] & b[i];
+    }
+    // Trim leading zeros
+    while (result.size() > 1 && result.back() == 0) result.pop_back();
+    return result;
+}
+
+static std::vector<uint8_t> bitwiseOr(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
+    size_t maxSize = std::max(a.size(), b.size());
+    std::vector<uint8_t> result(maxSize, 0);
+    for (size_t i = 0; i < a.size(); i++) result[i] |= a[i];
+    for (size_t i = 0; i < b.size(); i++) result[i] |= b[i];
+    // Trim leading zeros
+    while (result.size() > 1 && result.back() == 0) result.pop_back();
+    return result;
+}
+
+static std::vector<uint8_t> bitwiseXor(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
+    size_t maxSize = std::max(a.size(), b.size());
+    std::vector<uint8_t> result(maxSize, 0);
+    for (size_t i = 0; i < a.size(); i++) result[i] = a[i];
+    for (size_t i = 0; i < b.size(); i++) result[i] ^= b[i];
+    // Trim leading zeros
+    while (result.size() > 1 && result.back() == 0) result.pop_back();
+    return result;
+}
+
+// Primitive 34: Bitwise AND
+PrimitiveResult Interpreter::primitiveLargeIntegerBitAnd(int argCount) {
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    std::vector<uint8_t> aMag, bMag;
+    bool aNeg, bNeg;
+
+    if (!extractInteger(memory_, rcvr, aMag, aNeg) ||
+        !extractInteger(memory_, arg, bMag, bNeg)) {
+        return PrimitiveResult::Failure;
+    }
+
+    // For simplicity, only handle positive integers for bitwise ops
+    // (Two's complement for negatives is complex)
+    if (aNeg || bNeg) {
+        return PrimitiveResult::Failure;
+    }
+
+    std::vector<uint8_t> result = bitwiseAnd(aMag, bMag);
+
+    Oop resultOop;
+    if (tryConvertToSmallInteger(result, false, resultOop)) {
+        primitiveSuccess(resultOop);
+        return PrimitiveResult::Success;
+    }
+
+    resultOop = makeLargeInteger(memory_, result, false);
+    if (resultOop.isNil()) return PrimitiveResult::Failure;
+
+    primitiveSuccess(resultOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 35: Bitwise OR
+PrimitiveResult Interpreter::primitiveLargeIntegerBitOr(int argCount) {
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    std::vector<uint8_t> aMag, bMag;
+    bool aNeg, bNeg;
+
+    if (!extractInteger(memory_, rcvr, aMag, aNeg) ||
+        !extractInteger(memory_, arg, bMag, bNeg)) {
+        return PrimitiveResult::Failure;
+    }
+
+    if (aNeg || bNeg) {
+        return PrimitiveResult::Failure;
+    }
+
+    std::vector<uint8_t> result = bitwiseOr(aMag, bMag);
+
+    Oop resultOop;
+    if (tryConvertToSmallInteger(result, false, resultOop)) {
+        primitiveSuccess(resultOop);
+        return PrimitiveResult::Success;
+    }
+
+    resultOop = makeLargeInteger(memory_, result, false);
+    if (resultOop.isNil()) return PrimitiveResult::Failure;
+
+    primitiveSuccess(resultOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 36: Bitwise XOR
+PrimitiveResult Interpreter::primitiveLargeIntegerBitXor(int argCount) {
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    std::vector<uint8_t> aMag, bMag;
+    bool aNeg, bNeg;
+
+    if (!extractInteger(memory_, rcvr, aMag, aNeg) ||
+        !extractInteger(memory_, arg, bMag, bNeg)) {
+        return PrimitiveResult::Failure;
+    }
+
+    if (aNeg || bNeg) {
+        return PrimitiveResult::Failure;
+    }
+
+    std::vector<uint8_t> result = bitwiseXor(aMag, bMag);
+
+    Oop resultOop;
+    if (tryConvertToSmallInteger(result, false, resultOop)) {
+        primitiveSuccess(resultOop);
+        return PrimitiveResult::Success;
+    }
+
+    resultOop = makeLargeInteger(memory_, result, false);
+    if (resultOop.isNil()) return PrimitiveResult::Failure;
+
+    primitiveSuccess(resultOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 37: Bit shift (positive = left, negative = right)
+PrimitiveResult Interpreter::primitiveLargeIntegerBitShift(int argCount) {
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    if (!arg.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+    int64_t shift = arg.asSmallInteger();
+
+    std::vector<uint8_t> aMag;
+    bool aNeg;
+
+    if (!extractInteger(memory_, rcvr, aMag, aNeg)) {
+        return PrimitiveResult::Failure;
+    }
+
+    // For simplicity, only handle positive integers
+    if (aNeg) {
+        return PrimitiveResult::Failure;
+    }
+
+    std::vector<uint8_t> result;
+
+    if (shift >= 0) {
+        // Left shift
+        size_t byteShift = shift / 8;
+        int bitShift = shift % 8;
+
+        result.resize(aMag.size() + byteShift + 1, 0);
+
+        // Copy with byte shift
+        for (size_t i = 0; i < aMag.size(); i++) {
+            result[i + byteShift] = aMag[i];
+        }
+
+        // Apply bit shift within bytes
+        if (bitShift > 0) {
+            uint8_t carry = 0;
+            for (size_t i = byteShift; i < result.size(); i++) {
+                uint16_t val = (static_cast<uint16_t>(result[i]) << bitShift) | carry;
+                result[i] = val & 0xFF;
+                carry = val >> 8;
+            }
+        }
+    } else {
+        // Right shift
+        size_t byteShift = (-shift) / 8;
+        int bitShift = (-shift) % 8;
+
+        if (byteShift >= aMag.size()) {
+            // Shifted to zero
+            result = {0};
+        } else {
+            result.resize(aMag.size() - byteShift, 0);
+
+            // Copy with byte shift
+            for (size_t i = byteShift; i < aMag.size(); i++) {
+                result[i - byteShift] = aMag[i];
+            }
+
+            // Apply bit shift within bytes
+            if (bitShift > 0) {
+                uint8_t carry = 0;
+                for (size_t i = result.size(); i > 0; i--) {
+                    uint16_t val = (static_cast<uint16_t>(result[i-1]) << (8 - bitShift)) | (carry << 8);
+                    carry = result[i-1] & ((1 << bitShift) - 1);
+                    result[i-1] = val >> 8;
+                }
+            }
+        }
+    }
+
+    // Trim leading zeros
+    while (result.size() > 1 && result.back() == 0) result.pop_back();
+
+    Oop resultOop;
+    if (tryConvertToSmallInteger(result, false, resultOop)) {
+        primitiveSuccess(resultOop);
+        return PrimitiveResult::Success;
+    }
+
+    resultOop = makeLargeInteger(memory_, result, false);
+    if (resultOop.isNil()) return PrimitiveResult::Failure;
+
+    primitiveSuccess(resultOop);
+    return PrimitiveResult::Success;
+}
+
 // ===== GC PRIMITIVES =====
 
 PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
@@ -2408,6 +2860,39 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
         primitiveSuccess(Oop::fromSmallInteger(Oop::smallIntegerMax()));
     }
 
+    return PrimitiveResult::Success;
+}
+
+// ===== UTILITY PRIMITIVES =====
+
+// Primitive 89: Flush the method cache
+PrimitiveResult Interpreter::primitiveFlushCache(int argCount) {
+    // Clear the method cache to force re-lookups
+    // This is called after methods are modified or removed
+    flushMethodCache();
+    primitiveSuccess(stackTop());  // Return receiver
+    return PrimitiveResult::Success;
+}
+
+// Primitive 112: Return available memory bytes
+PrimitiveResult Interpreter::primitiveBytesLeft(int argCount) {
+    size_t freeBytes = memory_.freeOldSpaceBytes();
+
+    if (Oop::canBeSmallInteger(static_cast<int64_t>(freeBytes))) {
+        pop();
+        push(Oop::fromSmallInteger(static_cast<int64_t>(freeBytes)));
+    } else {
+        pop();
+        push(Oop::fromSmallInteger(Oop::smallIntegerMax()));
+    }
+
+    return PrimitiveResult::Success;
+}
+
+// Primitive 129: Return the special objects array
+PrimitiveResult Interpreter::primitiveSpecialObjectsOop(int argCount) {
+    pop();
+    push(memory_.specialObjectsArray());
     return PrimitiveResult::Success;
 }
 

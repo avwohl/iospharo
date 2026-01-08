@@ -164,6 +164,43 @@ Extended large integer support with comparison operations:
 - **primitiveFullGC (130)**: Trigger full garbage collection
   - Returns number of free bytes in old space after collection
 
+### 17. Float Primitives (CORRECTED)
+Fixed primitive numbering to match standard Pharo/Squeak VM:
+- **primitiveAsFloat (40)**: Convert integer to Float
+- **primitiveFloatAdd (41)**: Float addition
+- **primitiveFloatSubtract (42)**: Float subtraction
+- **primitiveFloatLessThan (43)**: `<` comparison
+- **primitiveFloatGreaterThan (44)**: `>` comparison
+- **primitiveFloatLessOrEqual (45)**: `<=` comparison
+- **primitiveFloatGreaterOrEqual (46)**: `>=` comparison
+- **primitiveFloatEqual (47)**: `=` comparison
+- **primitiveFloatNotEqual (48)**: `~=` comparison
+- **primitiveFloatMultiply (49)**: Float multiplication
+- **primitiveFloatDivide (50)**: Float division
+- **primitiveFloatTruncated (51)**: Truncate to integer
+- **primitiveFractionalPart (52)**: Get fractional part
+- **primitiveExponent (53)**: Get IEEE exponent
+- **primitiveTimesTwoPower (54)**: Multiply by 2^n (ldexp)
+- **primitiveFloatSquareRoot (55)**: Square root
+- **primitiveFloatSin (56)**: Sine
+- **primitiveFloatArctan (57)**: Arc tangent
+- **primitiveFloatLn (58)**: Natural logarithm
+- **primitiveFloatExp (59)**: Exponential (e^x)
+
+### 18. Large Integer Bitwise Operations (DONE)
+Extended large integer support with division and bitwise operations:
+- **primitiveLargeIntegerDiv (32)**: Floor division (toward -infinity)
+- **primitiveLargeIntegerQuo (33)**: Truncating division (toward zero)
+- **primitiveLargeIntegerBitAnd (34)**: Bitwise AND
+- **primitiveLargeIntegerBitOr (35)**: Bitwise OR
+- **primitiveLargeIntegerBitXor (36)**: Bitwise XOR
+- **primitiveLargeIntegerBitShift (37)**: Bit shift (positive=left, negative=right)
+
+### 19. Utility Primitives (DONE)
+- **primitiveFlushCache (89)**: Clear method cache (for dynamic method changes)
+- **primitiveBytesLeft (112)**: Return free memory bytes
+- **primitiveSpecialObjectsOop (129)**: Return the special objects array
+
 ## Key Files
 
 ### Clean VM Implementation (src/vm/)

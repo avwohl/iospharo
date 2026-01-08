@@ -3544,21 +3544,34 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[29] = &Interpreter::primitiveLargeIntegerMultiply;
     primitiveTable_[30] = &Interpreter::primitiveLargeIntegerDivide;
     primitiveTable_[31] = &Interpreter::primitiveLargeIntegerMod;
+    primitiveTable_[32] = &Interpreter::primitiveLargeIntegerDiv;
+    primitiveTable_[33] = &Interpreter::primitiveLargeIntegerQuo;
+    primitiveTable_[34] = &Interpreter::primitiveLargeIntegerBitAnd;
+    primitiveTable_[35] = &Interpreter::primitiveLargeIntegerBitOr;
+    primitiveTable_[36] = &Interpreter::primitiveLargeIntegerBitXor;
+    primitiveTable_[37] = &Interpreter::primitiveLargeIntegerBitShift;
 
-    // Float primitives (40-59)
-    primitiveTable_[40] = &Interpreter::primitiveFloatAdd;
-    primitiveTable_[41] = &Interpreter::primitiveFloatSubtract;
-    primitiveTable_[42] = &Interpreter::primitiveFloatLessThan;
-    primitiveTable_[46] = &Interpreter::primitiveFloatEqual;
-    primitiveTable_[48] = &Interpreter::primitiveFloatMultiply;
-    primitiveTable_[49] = &Interpreter::primitiveFloatDivide;
-    primitiveTable_[50] = &Interpreter::primitiveFloatTruncated;
-    primitiveTable_[54] = &Interpreter::primitiveFloatSquareRoot;
-    primitiveTable_[55] = &Interpreter::primitiveFloatSin;
-    primitiveTable_[56] = &Interpreter::primitiveFloatArctan;
-    primitiveTable_[57] = &Interpreter::primitiveFloatLn;
-    primitiveTable_[58] = &Interpreter::primitiveFloatExp;
-    primitiveTable_[59] = &Interpreter::primitiveFloatCos;
+    // Float primitives (40-59) - correct Pharo numbering
+    primitiveTable_[40] = &Interpreter::primitiveAsFloat;
+    primitiveTable_[41] = &Interpreter::primitiveFloatAdd;
+    primitiveTable_[42] = &Interpreter::primitiveFloatSubtract;
+    primitiveTable_[43] = &Interpreter::primitiveFloatLessThan;
+    primitiveTable_[44] = &Interpreter::primitiveFloatGreaterThan;
+    primitiveTable_[45] = &Interpreter::primitiveFloatLessOrEqual;
+    primitiveTable_[46] = &Interpreter::primitiveFloatGreaterOrEqual;
+    primitiveTable_[47] = &Interpreter::primitiveFloatEqual;
+    primitiveTable_[48] = &Interpreter::primitiveFloatNotEqual;
+    primitiveTable_[49] = &Interpreter::primitiveFloatMultiply;
+    primitiveTable_[50] = &Interpreter::primitiveFloatDivide;
+    primitiveTable_[51] = &Interpreter::primitiveFloatTruncated;
+    primitiveTable_[52] = &Interpreter::primitiveFractionalPart;
+    primitiveTable_[53] = &Interpreter::primitiveExponent;
+    primitiveTable_[54] = &Interpreter::primitiveTimesTwoPower;
+    primitiveTable_[55] = &Interpreter::primitiveFloatSquareRoot;
+    primitiveTable_[56] = &Interpreter::primitiveFloatSin;
+    primitiveTable_[57] = &Interpreter::primitiveFloatArctan;
+    primitiveTable_[58] = &Interpreter::primitiveFloatLn;
+    primitiveTable_[59] = &Interpreter::primitiveFloatExp;
 
     // Array/Object access primitives (60-68)
     primitiveTable_[60] = &Interpreter::primitiveAt;
@@ -3586,6 +3599,7 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[86] = &Interpreter::primitiveWait;
     primitiveTable_[87] = &Interpreter::primitiveResume;
     primitiveTable_[88] = &Interpreter::primitiveSuspend;
+    primitiveTable_[89] = &Interpreter::primitiveFlushCache;
 
     // String/Array primitives (105)
     primitiveTable_[105] = &Interpreter::primitiveReplaceFromTo;
@@ -3593,6 +3607,7 @@ void Interpreter::initializePrimitives() {
     // Identity and class primitives (110-112, 169)
     primitiveTable_[110] = &Interpreter::primitiveIdentical;
     primitiveTable_[111] = &Interpreter::primitiveClass;
+    primitiveTable_[112] = &Interpreter::primitiveBytesLeft;
     primitiveTable_[169] = &Interpreter::primitiveNotIdentical;
 
     // Character conversion primitives (170-171)
@@ -3603,7 +3618,8 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[113] = &Interpreter::primitiveQuit;
     primitiveTable_[114] = &Interpreter::primitiveExitToDebugger;
 
-    // GC primitives (130)
+    // Special objects and GC primitives (129-130)
+    primitiveTable_[129] = &Interpreter::primitiveSpecialObjectsOop;
     primitiveTable_[130] = &Interpreter::primitiveFullGC;
 
     // Snapshot primitive (131)

@@ -251,6 +251,15 @@ private:
     WellKnownSelectors selectors_;
     std::array<PrimitiveFunc, 576> primitiveTable_;
 
+    /// Clear the method cache (used when methods are modified)
+    void flushMethodCache() {
+        for (auto& entry : methodCache_) {
+            entry.selector = Oop::nil();
+            entry.classOop = Oop::nil();
+            entry.method = Oop::nil();
+        }
+    }
+
     // ===== BYTECODE DISPATCH =====
 
     /// Main bytecode dispatch
@@ -435,39 +444,57 @@ private:
     PrimitiveResult primitiveStringAtPut(int argCount);
     PrimitiveResult primitiveReplaceFromTo(int argCount);
 
-    // Float
-    PrimitiveResult primitiveFloatAdd(int argCount);
-    PrimitiveResult primitiveFloatSubtract(int argCount);
-    PrimitiveResult primitiveFloatMultiply(int argCount);
-    PrimitiveResult primitiveFloatDivide(int argCount);
-    PrimitiveResult primitiveFloatLessThan(int argCount);
-    PrimitiveResult primitiveFloatEqual(int argCount);
-    PrimitiveResult primitiveFloatTruncated(int argCount);
-    PrimitiveResult primitiveFloatSquareRoot(int argCount);
-    PrimitiveResult primitiveFloatSin(int argCount);
-    PrimitiveResult primitiveFloatCos(int argCount);
-    PrimitiveResult primitiveFloatArctan(int argCount);
-    PrimitiveResult primitiveFloatExp(int argCount);
-    PrimitiveResult primitiveFloatLn(int argCount);
+    // Float primitives (40-59)
+    PrimitiveResult primitiveAsFloat(int argCount);           // 40
+    PrimitiveResult primitiveFloatAdd(int argCount);          // 41
+    PrimitiveResult primitiveFloatSubtract(int argCount);     // 42
+    PrimitiveResult primitiveFloatLessThan(int argCount);     // 43
+    PrimitiveResult primitiveFloatGreaterThan(int argCount);  // 44
+    PrimitiveResult primitiveFloatLessOrEqual(int argCount);  // 45
+    PrimitiveResult primitiveFloatGreaterOrEqual(int argCount); // 46
+    PrimitiveResult primitiveFloatEqual(int argCount);        // 47
+    PrimitiveResult primitiveFloatNotEqual(int argCount);     // 48
+    PrimitiveResult primitiveFloatMultiply(int argCount);     // 49
+    PrimitiveResult primitiveFloatDivide(int argCount);       // 50
+    PrimitiveResult primitiveFloatTruncated(int argCount);    // 51
+    PrimitiveResult primitiveFractionalPart(int argCount);    // 52
+    PrimitiveResult primitiveExponent(int argCount);          // 53
+    PrimitiveResult primitiveTimesTwoPower(int argCount);     // 54
+    PrimitiveResult primitiveFloatSquareRoot(int argCount);   // 55
+    PrimitiveResult primitiveFloatSin(int argCount);          // 56
+    PrimitiveResult primitiveFloatArctan(int argCount);       // 57
+    PrimitiveResult primitiveFloatLn(int argCount);           // 58
+    PrimitiveResult primitiveFloatExp(int argCount);          // 59
 
     // Point creation
     PrimitiveResult primitiveMakePoint(int argCount);
 
-    // Large integers
-    PrimitiveResult primitiveLargeIntegerAdd(int argCount);
-    PrimitiveResult primitiveLargeIntegerSubtract(int argCount);
-    PrimitiveResult primitiveLargeIntegerLessThan(int argCount);
-    PrimitiveResult primitiveLargeIntegerGreaterThan(int argCount);
-    PrimitiveResult primitiveLargeIntegerLessOrEqual(int argCount);
-    PrimitiveResult primitiveLargeIntegerGreaterOrEqual(int argCount);
-    PrimitiveResult primitiveLargeIntegerEqual(int argCount);
-    PrimitiveResult primitiveLargeIntegerNotEqual(int argCount);
-    PrimitiveResult primitiveLargeIntegerMultiply(int argCount);
-    PrimitiveResult primitiveLargeIntegerDivide(int argCount);
-    PrimitiveResult primitiveLargeIntegerMod(int argCount);
+    // Large integers (21-37)
+    PrimitiveResult primitiveLargeIntegerAdd(int argCount);       // 21
+    PrimitiveResult primitiveLargeIntegerSubtract(int argCount);  // 22
+    PrimitiveResult primitiveLargeIntegerLessThan(int argCount);  // 23
+    PrimitiveResult primitiveLargeIntegerGreaterThan(int argCount); // 24
+    PrimitiveResult primitiveLargeIntegerLessOrEqual(int argCount); // 25
+    PrimitiveResult primitiveLargeIntegerGreaterOrEqual(int argCount); // 26
+    PrimitiveResult primitiveLargeIntegerEqual(int argCount);     // 27
+    PrimitiveResult primitiveLargeIntegerNotEqual(int argCount);  // 28
+    PrimitiveResult primitiveLargeIntegerMultiply(int argCount);  // 29
+    PrimitiveResult primitiveLargeIntegerDivide(int argCount);    // 30
+    PrimitiveResult primitiveLargeIntegerMod(int argCount);       // 31
+    PrimitiveResult primitiveLargeIntegerDiv(int argCount);       // 32
+    PrimitiveResult primitiveLargeIntegerQuo(int argCount);       // 33
+    PrimitiveResult primitiveLargeIntegerBitAnd(int argCount);    // 34
+    PrimitiveResult primitiveLargeIntegerBitOr(int argCount);     // 35
+    PrimitiveResult primitiveLargeIntegerBitXor(int argCount);    // 36
+    PrimitiveResult primitiveLargeIntegerBitShift(int argCount);  // 37
 
     // GC primitives
     PrimitiveResult primitiveFullGC(int argCount);
+
+    // Utility primitives
+    PrimitiveResult primitiveFlushCache(int argCount);       // 89
+    PrimitiveResult primitiveBytesLeft(int argCount);        // 112
+    PrimitiveResult primitiveSpecialObjectsOop(int argCount); // 129
 
     // ===== STARTUP SUPPORT =====
 
