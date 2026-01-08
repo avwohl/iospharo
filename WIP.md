@@ -1,6 +1,6 @@
 # WIP Notes - iOS Pharo VM Clean C++ Implementation
 
-## Date: 2026-01-07
+## Date: 2026-01-08
 
 ## Current Status
 Clean C++ VM implementation is functional. Image loads, interpreter initializes, and executes Smalltalk bytecode. Headless image runs startup code and goes idle (expected behavior).
@@ -10,21 +10,29 @@ Clean C++ VM implementation is functional. Image loads, interpreter initializes,
 ./test_load_image /tmp/pharo-test/Pharo.image
 - Image loaded: 51 MB Spur 64-bit (format 68021)
 - Objects: 1,326,597 total
-- Interpreter: 183 active bytecode steps before idle
+- Interpreter: 18 active bytecode steps before idle
 - Status: Working correctly for headless image
 ```
 
 ## Completed Work
 
-### 1. Sista V1 Bytecode Format (DONE)
-- Updated all bytecode dispatch from V3PlusClosures to Sista V1
-- Fixed bytecode ranges:
-  - 0x4C = push self (was incorrectly "push literal variable 12")
-  - 0x80-0x8F = short jumps (if true/false)
-  - 0x90-0x9F = jump if true with offset
-  - 0xA0-0xA7 = jump if false with offset
-  - 0xA8-0xAF = extended jumps (types 0-7)
-  - 0xE0-0xEF = Sista extension bytes (extA, extB)
+### 1. Sista V1 Bytecode Dispatch Fix (DONE)
+- **Problem**: The entire 0x80-0xDF bytecode range was incorrectly mapped
+- **Root Cause**: Original implementation used V3PlusClosures layout, not Sista V1
+- **Solution**: Rewrote dispatch using correct Sista V1 mapping from pharo-vm cointerp.c:
+  - 0x80-0x8F = Send literal selector 0-15 with 0 args
+  - 0x90-0x9F = Send literal selector 0-15 with 1 arg
+  - 0xA0-0xAF = Send literal selector 0-15 with 2 args
+  - 0xB0-0xB7 = Short unconditional jump (offset 0-7)
+  - 0xB8-0xBF = Short jump if true
+  - 0xC0-0xC7 = Short jump if false
+  - 0xC8-0xCF = Long jumps (various types)
+  - 0xD0-0xD7 = Pop and store temp 0-7
+  - 0xD8 = Pop stack top
+  - 0xD9 = Unconditional trap
+  - 0xE0-0xEF = Extension bytes (extA, extB)
+- Added `usesSistaV1_` flag for bytecode set detection (header sign bit)
+- Fixed callPrimitive (0xF8) skip: After primitive fails, skip the 3-byte callPrimitive instruction before executing method body
 
 ### 2. mustBeBoolean Infinite Loop Fix (DONE)
 - **Problem**: Non-boolean values in conditionals triggered `sendMustBeBoolean`, whose Smalltalk implementation has its own conditionals, causing infinite recursion
@@ -87,18 +95,29 @@ Uses LOW bits for tags (not high bits):
 
 ### Sista V1 Bytecode Layout
 ```
-0-15:    Push receiver variable 0-15
-16-31:   Push temporary 0-15
-32-63:   Push literal constant 0-31
-64-95:   Push literal variable 0-31
-96-103:  Pop store receiver var 0-7
-104-111: Pop store temporary 0-7
-112-119: Push special (self, true, false, nil, -1, 0, 1, 2)
-120-127: Returns
-128-175: Extended push/store/pop
-176-191: Arithmetic sends
-192-207: Common sends
-208-255: Various sends and jumps
+0x00-0x0F (0-15):     Push receiver variable 0-15
+0x10-0x1F (16-31):    Push temporary 0-15
+0x20-0x3F (32-63):    Push literal constant 0-31
+0x40-0x5F (64-95):    Push literal variable 0-31
+0x60-0x67 (96-103):   Pop store receiver var 0-7
+0x68-0x6F (104-111):  Pop store temporary 0-7
+0x70-0x77 (112-119):  Push special (self, true, false, nil, -1, 0, 1, 2)
+0x78-0x7F (120-127):  Returns (receiver, true, false, nil, top, block)
+0x80-0x8F (128-143):  Send literal 0-15 with 0 args
+0x90-0x9F (144-159):  Send literal 0-15 with 1 arg
+0xA0-0xAF (160-175):  Send literal 0-15 with 2 args
+0xB0-0xB7 (176-183):  Short unconditional jump +1 to +8
+0xB8-0xBF (184-191):  Short jump if true +1 to +8
+0xC0-0xC7 (192-199):  Short jump if false +1 to +8
+0xC8-0xCF (200-207):  Long jumps (extended offset)
+0xD0-0xD7 (208-215):  Pop store temp 0-7
+0xD8 (216):           Pop stack top
+0xD9 (217):           Unconditional trap
+0xE0-0xE7 (224-231):  Extension A (extA)
+0xE8-0xEF (232-239):  Extension B (extB)
+0xF0-0xF7 (240-247):  Extended sends/stores
+0xF8 (248):           Call primitive (skip after prim fails)
+0xF9-0xFF (249-255):  Extended operations (push closure, etc.)
 ```
 
 ## Next Steps (Future Work)
