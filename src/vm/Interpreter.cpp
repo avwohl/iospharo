@@ -3929,6 +3929,14 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[536] = &Interpreter::primitiveObjectSlotAtPut;
     primitiveTable_[537] = &Interpreter::primitiveObjectNumSlots;
     primitiveTable_[538] = &Interpreter::primitiveObjectFormat;
+
+    // Event/input primitives (264-269)
+    primitiveTable_[264] = &Interpreter::primitiveGetNextEvent;
+    primitiveTable_[265] = &Interpreter::primitiveInputSemaphore2;
+    primitiveTable_[266] = &Interpreter::primitiveEventProcessingControl;
+    primitiveTable_[267] = &Interpreter::primitiveSampledSound;
+    primitiveTable_[268] = &Interpreter::primitiveMixedSound;
+    primitiveTable_[269] = &Interpreter::primitiveControlOSProcess;
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {

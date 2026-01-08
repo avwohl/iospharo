@@ -8279,4 +8279,161 @@ PrimitiveResult Interpreter::primitiveShrinkMemory(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== EVENT/INPUT PRIMITIVES (264-269) =====
+
+// Primitive 264: Get next event from event queue
+// eventBuffer primitiveGetNextEvent -> eventBuffer (filled) or nil
+// Fills the event buffer with the next pending event
+PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop eventBuffer = stackTop();
+
+    if (eventBuffer.isImmediate()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Event buffer format (8 slots):
+    // 0: event type (0=none, 1=mouse, 2=key, 3=window, etc.)
+    // 1-7: event-specific data
+
+    // Check buffer has enough slots
+    size_t slotCount = memory_.slotCountOf(eventBuffer);
+    if (slotCount < 8) {
+        return PrimitiveResult::Failure;
+    }
+
+    // For now, return "no event" (type 0)
+    // A full implementation would dequeue from an event queue
+    // populated by the iOS event loop
+    memory_.storePointer(0, eventBuffer, Oop::fromSmallInteger(0));  // No event
+
+    pop();  // pop eventBuffer argument, leave receiver
+    return PrimitiveResult::Success;
+}
+
+// Primitive 265: Set input semaphore (variant 2)
+// semaphoreIndex primitiveInputSemaphore2 -> receiver
+// Sets the semaphore to signal when input is available
+PrimitiveResult Interpreter::primitiveInputSemaphore2(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop semIndexOop = stackTop();
+
+    if (!semIndexOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Store the semaphore index for later signaling
+    // A full implementation would register this with the event system
+    // int64_t semIndex = semIndexOop.asSmallInteger();
+    // inputSemaphoreIndex_ = semIndex;
+
+    pop();  // pop argument, leave receiver
+    return PrimitiveResult::Success;
+}
+
+// Primitive 266: Event processing control
+// controlCode primitiveEventProcessingControl -> result
+// Controls event processing behavior
+PrimitiveResult Interpreter::primitiveEventProcessingControl(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop controlCode = stackTop();
+
+    if (!controlCode.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t code = controlCode.asSmallInteger();
+
+    // Control codes:
+    // 0: Query current state
+    // 1: Enable event processing
+    // 2: Disable event processing
+    // 3: Flush event queue
+
+    int64_t result = 0;
+    switch (code) {
+        case 0:  // Query - return "enabled"
+            result = 1;
+            break;
+        case 1:  // Enable
+            result = 1;
+            break;
+        case 2:  // Disable
+            result = 0;
+            break;
+        case 3:  // Flush
+            result = 0;  // Return count of flushed events
+            break;
+        default:
+            return PrimitiveResult::Failure;
+    }
+
+    pop();  // pop argument
+    pop();  // pop receiver
+    push(Oop::fromSmallInteger(result));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 267: Sampled sound operations
+// args primitiveSampledSound -> result
+// Handles sampled sound playback
+PrimitiveResult Interpreter::primitiveSampledSound(int argCount) {
+    // Sound primitives require platform-specific audio support
+    // For now, fail to Smalltalk fallback which can handle
+    // sound through alternative means or report unavailable
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 268: Mixed sound operations
+// args primitiveMixedSound -> result
+// Handles mixed/synthesized sound
+PrimitiveResult Interpreter::primitiveMixedSound(int argCount) {
+    // Sound primitives require platform-specific audio support
+    // Fail to Smalltalk fallback
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 269: Control OS process
+// controlCode primitiveControlOSProcess -> result
+// Controls the VM's OS process (priority, affinity, etc.)
+PrimitiveResult Interpreter::primitiveControlOSProcess(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop controlCode = stackTop();
+
+    if (!controlCode.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t code = controlCode.asSmallInteger();
+
+    // Control codes:
+    // 0: Query process ID
+    // 1: Query thread count
+    // 2: Set process priority (requires additional arg)
+    // etc.
+
+    int64_t result = 0;
+    switch (code) {
+        case 0:  // Get process ID
+            result = static_cast<int64_t>(getpid());
+            break;
+        case 1:  // Thread count - return 1 for single-threaded
+            result = 1;
+            break;
+        default:
+            // Unknown control code - return 0
+            result = 0;
+            break;
+    }
+
+    pop();  // pop argument
+    pop();  // pop receiver
+    push(Oop::fromSmallInteger(result));
+    return PrimitiveResult::Success;
+}
+
 } // namespace pharo

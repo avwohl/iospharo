@@ -604,6 +604,14 @@ private:
     PrimitiveResult primitiveStringHash2(int argCount);            // 229
     PrimitiveResult primitiveShrinkMemory(int argCount);           // 230
 
+    // Event/input primitives (264-269)
+    PrimitiveResult primitiveGetNextEvent(int argCount);           // 264
+    PrimitiveResult primitiveInputSemaphore2(int argCount);        // 265
+    PrimitiveResult primitiveEventProcessingControl(int argCount); // 266
+    PrimitiveResult primitiveSampledSound(int argCount);           // 267
+    PrimitiveResult primitiveMixedSound(int argCount);             // 268
+    PrimitiveResult primitiveControlOSProcess(int argCount);       // 269
+
     // String/Array
     PrimitiveResult primitiveStringAt(int argCount);
     PrimitiveResult primitiveStringAtPut(int argCount);
