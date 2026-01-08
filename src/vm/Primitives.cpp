@@ -14,6 +14,7 @@
 #include <fstream>
 #include <iostream>
 #include <sys/stat.h>
+#include <sys/utsname.h>
 #include <unistd.h>
 #include <vector>
 
@@ -8546,6 +8547,308 @@ PrimitiveResult Interpreter::primitiveVMProfileStop(int argCount) {
     // For now, return 0 samples
     pop();  // pop receiver
     push(Oop::fromSmallInteger(0));
+    return PrimitiveResult::Success;
+}
+
+// ===== PLATFORM PRIMITIVES (500-513) =====
+
+// Primitive 500: Get environment variable
+// varName primitiveGetEnvironment -> value or nil
+PrimitiveResult Interpreter::primitiveGetEnvironment(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop varNameOop = stackTop();
+
+    if (varNameOop.isImmediate()) {
+        return PrimitiveResult::Failure;
+    }
+
+    std::string varName = extractString(memory_, varNameOop);
+    const char* value = getenv(varName.c_str());
+
+    Oop result;
+    if (value) {
+        result = createStringObject(memory_, value);
+        if (result.isNil()) {
+            return PrimitiveResult::Failure;
+        }
+    } else {
+        result = memory_.nil();
+    }
+
+    popN(2);  // pop varName and receiver
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 501: Set environment variable
+// varName value primitiveSetEnvironment -> success
+PrimitiveResult Interpreter::primitiveSetEnvironment(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop varNameOop = stackValue(1);
+
+    if (varNameOop.isImmediate()) {
+        return PrimitiveResult::Failure;
+    }
+
+    std::string varName = extractString(memory_, varNameOop);
+
+    int result;
+    if (valueOop.isNil()) {
+        // Unset the variable
+        result = unsetenv(varName.c_str());
+    } else {
+        if (valueOop.isImmediate()) {
+            return PrimitiveResult::Failure;
+        }
+        std::string value = extractString(memory_, valueOop);
+        result = setenv(varName.c_str(), value.c_str(), 1);
+    }
+
+    popN(3);  // pop value, varName, and receiver
+    push(result == 0 ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 502: Get current working directory
+// primitiveGetCurrentDirectory -> string
+PrimitiveResult Interpreter::primitiveGetCurrentDirectory(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    char buffer[PATH_MAX];
+    char* cwd = getcwd(buffer, sizeof(buffer));
+
+    if (!cwd) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop result = createStringObject(memory_, cwd);
+    if (result.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    pop();  // receiver
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 503: Set current working directory
+// path primitiveSetCurrentDirectory -> success
+PrimitiveResult Interpreter::primitiveSetCurrentDirectory(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop pathOop = stackTop();
+
+    if (pathOop.isImmediate()) {
+        return PrimitiveResult::Failure;
+    }
+
+    std::string path = extractString(memory_, pathOop);
+    int result = chdir(path.c_str());
+
+    popN(2);  // pop path and receiver
+    push(result == 0 ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 504: Get platform name
+// primitiveGetPlatformName -> string (e.g., "iOS", "Mac OS", "unix")
+PrimitiveResult Interpreter::primitiveGetPlatformName(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+#if defined(__APPLE__)
+    #if TARGET_OS_IOS
+        const char* platform = "iOS";
+    #else
+        const char* platform = "Mac OS";
+    #endif
+#elif defined(__linux__)
+    const char* platform = "linux";
+#else
+    const char* platform = "unix";
+#endif
+
+    Oop result = createStringObject(memory_, platform);
+    if (result.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    pop();  // receiver
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 505: Get OS version
+// primitiveGetOSVersion -> string
+PrimitiveResult Interpreter::primitiveGetOSVersion(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    struct utsname info;
+    if (uname(&info) != 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop result = createStringObject(memory_, info.release);
+    if (result.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    pop();  // receiver
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 506: Get processor count
+// primitiveGetProcessorCount -> integer
+PrimitiveResult Interpreter::primitiveGetProcessorCount(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    long count = sysconf(_SC_NPROCESSORS_ONLN);
+    if (count < 1) count = 1;
+
+    pop();  // receiver
+    push(Oop::fromSmallInteger(static_cast<int64_t>(count)));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 507: Get physical memory size
+// primitiveGetPhysicalMemory -> bytes (as integer)
+PrimitiveResult Interpreter::primitiveGetPhysicalMemory(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    long pages = sysconf(_SC_PHYS_PAGES);
+    long pageSize = sysconf(_SC_PAGE_SIZE);
+
+    int64_t totalMemory = static_cast<int64_t>(pages) * static_cast<int64_t>(pageSize);
+
+    pop();  // receiver
+    push(Oop::fromSmallInteger(totalMemory));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 508: Get host name
+// primitiveGetHostName -> string
+PrimitiveResult Interpreter::primitiveGetHostName(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    char hostname[256];
+    if (gethostname(hostname, sizeof(hostname)) != 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop result = createStringObject(memory_, hostname);
+    if (result.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    pop();  // receiver
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 509: Get user name
+// primitiveGetUserName -> string
+PrimitiveResult Interpreter::primitiveGetUserName(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    const char* username = getenv("USER");
+    if (!username) {
+        username = getenv("LOGNAME");
+    }
+    if (!username) {
+        username = "unknown";
+    }
+
+    Oop result = createStringObject(memory_, username);
+    if (result.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    pop();  // receiver
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 510: Get home directory
+// primitiveGetHomeDirectory -> string
+PrimitiveResult Interpreter::primitiveGetHomeDirectory(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    const char* home = getenv("HOME");
+    if (!home) {
+        home = "/";
+    }
+
+    Oop result = createStringObject(memory_, home);
+    if (result.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    pop();  // receiver
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 511: Get temp directory
+// primitiveGetTempDirectory -> string
+PrimitiveResult Interpreter::primitiveGetTempDirectory(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    const char* temp = getenv("TMPDIR");
+    if (!temp) {
+        temp = "/tmp";
+    }
+
+    Oop result = createStringObject(memory_, temp);
+    if (result.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    pop();  // receiver
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 512: Get VM version string
+// primitiveGetVMVersion -> string
+PrimitiveResult Interpreter::primitiveGetVMVersion(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Return our VM version string
+    const char* version = "iOS Pharo VM 1.0 (Clean C++ Implementation)";
+
+    Oop result = createStringObject(memory_, version);
+    if (result.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    pop();  // receiver
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 513: Get system locale
+// primitiveGetSystemLocale -> string (e.g., "en_US.UTF-8")
+PrimitiveResult Interpreter::primitiveGetSystemLocale(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    const char* locale = getenv("LANG");
+    if (!locale) {
+        locale = getenv("LC_ALL");
+    }
+    if (!locale) {
+        locale = "en_US.UTF-8";
+    }
+
+    Oop result = createStringObject(memory_, locale);
+    if (result.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    pop();  // receiver
+    push(result);
     return PrimitiveResult::Success;
 }
 

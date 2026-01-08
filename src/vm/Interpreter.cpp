@@ -3943,6 +3943,22 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[267] = &Interpreter::primitiveSampledSound;
     primitiveTable_[268] = &Interpreter::primitiveMixedSound;
     primitiveTable_[269] = &Interpreter::primitiveControlOSProcess;
+
+    // Platform primitives (500-513)
+    primitiveTable_[500] = &Interpreter::primitiveGetEnvironment;
+    primitiveTable_[501] = &Interpreter::primitiveSetEnvironment;
+    primitiveTable_[502] = &Interpreter::primitiveGetCurrentDirectory;
+    primitiveTable_[503] = &Interpreter::primitiveSetCurrentDirectory;
+    primitiveTable_[504] = &Interpreter::primitiveGetPlatformName;
+    primitiveTable_[505] = &Interpreter::primitiveGetOSVersion;
+    primitiveTable_[506] = &Interpreter::primitiveGetProcessorCount;
+    primitiveTable_[507] = &Interpreter::primitiveGetPhysicalMemory;
+    primitiveTable_[508] = &Interpreter::primitiveGetHostName;
+    primitiveTable_[509] = &Interpreter::primitiveGetUserName;
+    primitiveTable_[510] = &Interpreter::primitiveGetHomeDirectory;
+    primitiveTable_[511] = &Interpreter::primitiveGetTempDirectory;
+    primitiveTable_[512] = &Interpreter::primitiveGetVMVersion;
+    primitiveTable_[513] = &Interpreter::primitiveGetSystemLocale;
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {

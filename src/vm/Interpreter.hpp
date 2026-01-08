@@ -558,6 +558,22 @@ private:
     PrimitiveResult primitiveObjectNumSlots(int argCount);         // 537
     PrimitiveResult primitiveObjectFormat(int argCount);           // 538
 
+    // Platform primitives (500-513)
+    PrimitiveResult primitiveGetEnvironment(int argCount);         // 500
+    PrimitiveResult primitiveSetEnvironment(int argCount);         // 501
+    PrimitiveResult primitiveGetCurrentDirectory(int argCount);    // 502
+    PrimitiveResult primitiveSetCurrentDirectory(int argCount);    // 503
+    PrimitiveResult primitiveGetPlatformName(int argCount);        // 504
+    PrimitiveResult primitiveGetOSVersion(int argCount);           // 505
+    PrimitiveResult primitiveGetProcessorCount(int argCount);      // 506
+    PrimitiveResult primitiveGetPhysicalMemory(int argCount);      // 507
+    PrimitiveResult primitiveGetHostName(int argCount);            // 508
+    PrimitiveResult primitiveGetUserName(int argCount);            // 509
+    PrimitiveResult primitiveGetHomeDirectory(int argCount);       // 510
+    PrimitiveResult primitiveGetTempDirectory(int argCount);       // 511
+    PrimitiveResult primitiveGetVMVersion(int argCount);           // 512
+    PrimitiveResult primitiveGetSystemLocale(int argCount);        // 513
+
     // String primitives (157-158)
     PrimitiveResult primitiveCompareStringCollated(int argCount);  // 157
     PrimitiveResult primitiveCompareStringNoCase(int argCount);    // 158
