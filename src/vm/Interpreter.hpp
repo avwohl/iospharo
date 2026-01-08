@@ -1128,6 +1128,7 @@ private:
 
     // Class structure primitives
     PrimitiveResult primitiveInstSize(int argCount);             // 254
+    // primitiveSizeInBytesOfInstance declared below (181, also 255)
     PrimitiveResult primitiveSuperclass(int argCount);           // 253
 
     // Context size primitive

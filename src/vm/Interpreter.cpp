@@ -3891,9 +3891,10 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[208] = &Interpreter::primitiveClosureValueUnwind;
     primitiveTable_[209] = &Interpreter::primitiveClosureValueNoUnwind;
 
-    // Class structure primitives (253-254)
+    // Class structure primitives (253-255)
     primitiveTable_[253] = &Interpreter::primitiveSuperclass;
     primitiveTable_[254] = &Interpreter::primitiveInstSize;
+    primitiveTable_[255] = &Interpreter::primitiveSizeInBytesOfInstance;
 
     // Quick return primitives (256-259)
     primitiveTable_[256] = &Interpreter::primitiveQuickReturnSelf;

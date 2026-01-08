@@ -5399,6 +5399,8 @@ PrimitiveResult Interpreter::primitiveInstSize(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// Primitive 255: primitiveSizeInBytesOfInstance - reuses implementation from primitive 181
+
 // Primitive 253: Get the superclass of a class
 // receiver superclass -> Class or nil
 PrimitiveResult Interpreter::primitiveSuperclass(int argCount) {
