@@ -106,6 +106,15 @@ Clean C++ VM implementation is functional. Image loads, interpreter initializes,
 - LargeIntegers stored as little-endian byte arrays
 - Results automatically normalize to SmallInteger when they fit
 
+### 10. String Primitives (DONE)
+- Implemented Character-based string access:
+  - **primitiveStringAt (63)**: Returns Character at index
+  - **primitiveStringAtPut (64)**: Stores Character at index
+- Supports two string formats:
+  - **ByteString** (format 16-23): 1 byte per character, ASCII/Latin-1
+  - **WideString** (format 10-11): 4 bytes per character, full Unicode
+- Features: 1-based indexing, bounds checking, immutability checking
+
 ## Key Files
 
 ### Clean VM Implementation (src/vm/)
