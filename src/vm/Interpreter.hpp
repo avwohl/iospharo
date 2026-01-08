@@ -496,6 +496,18 @@ private:
     PrimitiveResult primitiveBytesLeft(int argCount);        // 112
     PrimitiveResult primitiveSpecialObjectsOop(int argCount); // 129
 
+    // Object enumeration primitives
+    PrimitiveResult primitiveSomeInstance(int argCount);     // 77
+    PrimitiveResult primitiveNextInstance(int argCount);     // 78
+
+    // Array/memory primitives
+    PrimitiveResult primitiveConstantFill(int argCount);     // 145
+    PrimitiveResult primitiveCompareBytes(int argCount);     // 156
+    PrimitiveResult primitiveHashMultiply(int argCount);     // 159
+
+    // Process primitives
+    PrimitiveResult primitiveYield(int argCount);            // 167
+
     // ===== STARTUP SUPPORT =====
 
     /// Bootstrap startup when active process has nil suspendedContext.

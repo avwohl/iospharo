@@ -295,6 +295,12 @@ public:
     /// Iterate over all objects in the heap
     void allObjectsDo(std::function<void(Oop)> callback);
 
+    /// Find the first instance of a class (by class index)
+    Oop firstInstanceOf(uint32_t classIndex);
+
+    /// Find the next instance after a given object
+    Oop nextInstanceAfter(Oop object, uint32_t classIndex);
+
     // ===== MEMORY STATISTICS =====
 
     struct Statistics {

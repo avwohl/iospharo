@@ -2896,4 +2896,257 @@ PrimitiveResult Interpreter::primitiveSpecialObjectsOop(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== OBJECT ENUMERATION PRIMITIVES =====
+
+// Primitive 77: Return the first instance of a class
+PrimitiveResult Interpreter::primitiveSomeInstance(int argCount) {
+    Oop classOop = stackTop();
+
+    if (!classOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get the class index we're looking for
+    uint32_t targetClassIndex = memory_.indexOfClass(classOop);
+
+    // Iterate through all objects in old space to find an instance
+    Oop instance = memory_.firstInstanceOf(targetClassIndex);
+
+    if (instance.isNil()) {
+        return PrimitiveResult::Failure;  // No instances found
+    }
+
+    pop();
+    push(instance);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 78: Return the next instance after this object
+PrimitiveResult Interpreter::primitiveNextInstance(int argCount) {
+    Oop object = stackTop();
+
+    if (!object.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get the class of this object
+    ObjectHeader* header = object.asObjectPtr();
+    uint32_t targetClassIndex = header->classIndex();
+
+    // Find the next instance of the same class after this object
+    Oop nextInstance = memory_.nextInstanceAfter(object, targetClassIndex);
+
+    if (nextInstance.isNil()) {
+        return PrimitiveResult::Failure;  // No more instances
+    }
+
+    pop();
+    push(nextInstance);
+    return PrimitiveResult::Success;
+}
+
+// ===== ARRAY/MEMORY PRIMITIVES =====
+
+// Primitive 145: Fill array with a constant value
+PrimitiveResult Interpreter::primitiveConstantFill(int argCount) {
+    Oop value = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    if (!rcvr.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* header = rcvr.asObjectPtr();
+    ObjectFormat format = header->format();
+    size_t size = memory_.byteSizeOf(rcvr);
+
+    // Handle different formats
+    if (format >= ObjectFormat::Indexable8 && format <= ObjectFormat::Indexable8_7) {
+        // Byte array - value must be SmallInteger 0-255
+        if (!value.isSmallInteger()) {
+            return PrimitiveResult::Failure;
+        }
+        int64_t byteVal = value.asSmallInteger();
+        if (byteVal < 0 || byteVal > 255) {
+            return PrimitiveResult::Failure;
+        }
+
+        uint8_t* bytes = reinterpret_cast<uint8_t*>(header + 1);
+        std::memset(bytes, static_cast<uint8_t>(byteVal), size);
+    } else if (format >= ObjectFormat::Indexable32 && format <= ObjectFormat::Indexable32Odd) {
+        // 32-bit word array
+        if (!value.isSmallInteger()) {
+            return PrimitiveResult::Failure;
+        }
+        int64_t wordVal = value.asSmallInteger();
+
+        uint32_t* words = reinterpret_cast<uint32_t*>(header + 1);
+        size_t wordCount = size / 4;
+        for (size_t i = 0; i < wordCount; i++) {
+            words[i] = static_cast<uint32_t>(wordVal);
+        }
+    } else if (format == ObjectFormat::Indexable64) {
+        // 64-bit word array
+        if (!value.isSmallInteger()) {
+            return PrimitiveResult::Failure;
+        }
+        int64_t quadVal = value.asSmallInteger();
+
+        uint64_t* quads = reinterpret_cast<uint64_t*>(header + 1);
+        size_t quadCount = size / 8;
+        for (size_t i = 0; i < quadCount; i++) {
+            quads[i] = static_cast<uint64_t>(quadVal);
+        }
+    } else if (format <= ObjectFormat::IndexableWithFixed) {
+        // Pointer array - fill slots with the value
+        size_t slotCount = header->slotCount();
+        for (size_t i = 0; i < slotCount; i++) {
+            memory_.storePointer(i, rcvr, value);
+        }
+    } else {
+        return PrimitiveResult::Failure;
+    }
+
+    popN(2);
+    push(rcvr);  // Return receiver
+    return PrimitiveResult::Success;
+}
+
+// Primitive 156: Compare two byte arrays
+PrimitiveResult Interpreter::primitiveCompareBytes(int argCount) {
+    // Arguments: receiver compareTo: arg startingAt: start1 to: stop1 startingAt: start2
+    // Simplified version: receiver compareWith: arg
+    if (argCount < 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    if (!rcvr.isObject() || !arg.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* rcvrHeader = rcvr.asObjectPtr();
+    ObjectHeader* argHeader = arg.asObjectPtr();
+
+    ObjectFormat rcvrFormat = rcvrHeader->format();
+    ObjectFormat argFormat = argHeader->format();
+
+    // Both must be byte-indexable
+    bool rcvrIsBytes = (rcvrFormat >= ObjectFormat::Indexable8 && rcvrFormat <= ObjectFormat::Indexable8_7);
+    bool argIsBytes = (argFormat >= ObjectFormat::Indexable8 && argFormat <= ObjectFormat::Indexable8_7);
+
+    if (!rcvrIsBytes || !argIsBytes) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t rcvrSize = memory_.byteSizeOf(rcvr);
+    size_t argSize = memory_.byteSizeOf(arg);
+
+    uint8_t* rcvrBytes = reinterpret_cast<uint8_t*>(rcvrHeader + 1);
+    uint8_t* argBytes = reinterpret_cast<uint8_t*>(argHeader + 1);
+
+    // Compare byte by byte
+    size_t minSize = std::min(rcvrSize, argSize);
+    int result = std::memcmp(rcvrBytes, argBytes, minSize);
+
+    if (result == 0) {
+        // If equal up to minSize, shorter one is "less"
+        if (rcvrSize < argSize) result = -1;
+        else if (rcvrSize > argSize) result = 1;
+    }
+
+    // Return comparison result as SmallInteger (-1, 0, or 1 style, or actual diff)
+    popN(2);
+    push(Oop::fromSmallInteger(result < 0 ? 1 : (result > 0 ? 3 : 2)));
+    // Convention: 1 = less, 2 = equal, 3 = greater
+    return PrimitiveResult::Success;
+}
+
+// Primitive 159: Hash multiply for collections
+PrimitiveResult Interpreter::primitiveHashMultiply(int argCount) {
+    Oop rcvr = stackTop();
+
+    if (!rcvr.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t hash = rcvr.asSmallInteger();
+
+    // Standard hash multiply used by Squeak/Pharo
+    // hashMultiply is: (hash * 1664525) bitAnd: 16rFFFFFFF
+    const int64_t HashMultiplier = 1664525;
+    const int64_t HashMask = 0x0FFFFFFF;  // 28 bits
+
+    int64_t result = (hash * HashMultiplier) & HashMask;
+
+    pop();
+    push(Oop::fromSmallInteger(result));
+    return PrimitiveResult::Success;
+}
+
+// ===== PROCESS PRIMITIVES =====
+
+// Primitive 167: Yield to other processes of same priority
+PrimitiveResult Interpreter::primitiveYield(int argCount) {
+    // Get the active process
+    Oop activeProcess = getActiveProcess();
+    if (activeProcess.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get the process priority
+    Oop priorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
+    if (!priorityOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+    int64_t priority = priorityOop.asSmallInteger();
+
+    // Get the scheduler and its process lists
+    Oop scheduler = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
+    if (scheduler.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+    Oop schedulerValue = memory_.fetchPointer(1, scheduler);  // Association value
+    Oop processLists = memory_.fetchPointer(SchedulerProcessListsIndex, schedulerValue);
+
+    // Get the list for this priority (1-based index)
+    if (priority < 1) {
+        return PrimitiveResult::Failure;
+    }
+    Oop priorityList = memory_.fetchPointer(priority - 1, processLists);
+
+    // Check if there are other processes at the same priority
+    Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, priorityList);
+
+    if (!firstLink.isNil()) {
+        // There are other processes waiting - put current process at end of queue
+        // and switch to the first one
+
+        // Save current context
+        Oop currentContext = activeContext_;
+        memory_.storePointer(ProcessSuspendedContextIndex, activeProcess, currentContext);
+
+        // Add current process to end of priority list
+        addLastLinkToList(activeProcess, priorityList);
+
+        // Remove first process from list and make it active
+        Oop nextProcess = removeFirstLinkOfList(priorityList);
+        setActiveProcess(nextProcess);
+
+        // Switch to the next process's context
+        Oop newContext = memory_.fetchPointer(ProcessSuspendedContextIndex, nextProcess);
+        memory_.storePointer(ProcessSuspendedContextIndex, nextProcess, Oop::nil());
+
+        if (!newContext.isNil() && newContext.isObject()) {
+            executeFromContext(newContext);
+        }
+    }
+
+    // Return receiver (the process or processor)
+    primitiveSuccess(stackTop());
+    return PrimitiveResult::Success;
+}
+
 } // namespace pharo

@@ -3594,6 +3594,10 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[83] = &Interpreter::primitivePerform;
     primitiveTable_[84] = &Interpreter::primitivePerformWithArgs;
 
+    // Object enumeration primitives (77-78)
+    primitiveTable_[77] = &Interpreter::primitiveSomeInstance;
+    primitiveTable_[78] = &Interpreter::primitiveNextInstance;
+
     // Process/Semaphore primitives (85-89)
     primitiveTable_[85] = &Interpreter::primitiveSignal;
     primitiveTable_[86] = &Interpreter::primitiveWait;
@@ -3632,8 +3636,14 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[240] = &Interpreter::primitiveMicrosecondClock;
     primitiveTable_[241] = &Interpreter::primitiveLocalMicrosecondClock;
 
-    // Object copy primitive (148)
+    // Array/memory primitives (145, 148, 156, 159)
+    primitiveTable_[145] = &Interpreter::primitiveConstantFill;
     primitiveTable_[148] = &Interpreter::primitiveShallowCopy;
+    primitiveTable_[156] = &Interpreter::primitiveCompareBytes;
+    primitiveTable_[159] = &Interpreter::primitiveHashMultiply;
+
+    // Process yield (167)
+    primitiveTable_[167] = &Interpreter::primitiveYield;
 
     // Block primitives (201-206)
     primitiveTable_[201] = &Interpreter::primitiveBlockValue;

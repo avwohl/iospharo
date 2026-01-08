@@ -1004,4 +1004,186 @@ void ObjectMemory::updatePointer(Oop& ptr) {
     // TODO: Implement with forwarding pointers
 }
 
+// ===== OBJECT ENUMERATION =====
+
+Oop ObjectMemory::firstInstanceOf(uint32_t targetClassIndex) {
+    Oop found = Oop::nil();
+
+    // Helper to scan a memory region for the first instance
+    auto scanRegion = [&](uint8_t* start, uint8_t* end) -> bool {
+        uint8_t* scan = start;
+        while (scan < end) {
+            uint64_t* wordPtr = reinterpret_cast<uint64_t*>(scan);
+            uint64_t word = *wordPtr;
+
+            // Skip zero headers (free space / padding)
+            if (word == 0) {
+                scan += 8;
+                while (scan < end) {
+                    wordPtr = reinterpret_cast<uint64_t*>(scan);
+                    if (*wordPtr != 0) break;
+                    scan += 8;
+                }
+                if (scan >= end) break;
+                word = *wordPtr;
+            }
+
+            // Check for overflow header
+            uint64_t* headerPtr = wordPtr;
+            if (scan + 8 < end) {
+                uint64_t nextWord = *(wordPtr + 1);
+                if ((nextWord & 0xFF) == 255) {
+                    uint64_t overflowCount = word;
+                    size_t remaining = end - scan;
+                    size_t neededSize = 8 + overflowCount * 8 + 8;
+
+                    if (overflowCount >= 255 && neededSize <= remaining) {
+                        headerPtr = wordPtr + 1;
+                    } else {
+                        scan += 16;
+                        continue;
+                    }
+                }
+            }
+
+            ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(headerPtr);
+            size_t size = obj->totalSize();
+
+            size_t remaining = end - scan;
+            if (size == 0 || size > remaining) {
+                scan += 8;
+                continue;
+            }
+
+            // Check if this object matches the target class
+            if (obj->classIndex() == targetClassIndex) {
+                found = oopFromPointer(obj);
+                return true;  // Found
+            }
+
+            scan += size;
+        }
+        return false;  // Not found in this region
+    };
+
+    // Search permanent space first
+    if (scanRegion(permSpaceStart_, permSpaceEnd_)) return found;
+
+    // Search old space
+    if (scanRegion(oldSpaceStart_, oldSpaceFree_)) return found;
+
+    // Search eden
+    if (scanRegion(edenStart_, edenFree_)) return found;
+
+    return Oop::nil();  // Not found
+}
+
+Oop ObjectMemory::nextInstanceAfter(Oop afterObject, uint32_t targetClassIndex) {
+    if (!afterObject.isObject()) return Oop::nil();
+
+    // Get the address of the starting object
+    ObjectHeader* startPtr = afterObject.asObjectPtr();
+    uint8_t* startAddr = reinterpret_cast<uint8_t*>(startPtr);
+    size_t startSize = startPtr->totalSize();
+    uint8_t* searchFrom = startAddr + startSize;  // Start searching AFTER this object
+
+    Oop found = Oop::nil();
+    bool foundStart = false;
+
+    // Helper to scan a memory region
+    auto scanRegion = [&](uint8_t* start, uint8_t* end) -> bool {
+        // If we haven't passed the starting object yet, adjust start
+        uint8_t* scan = start;
+        if (!foundStart) {
+            if (searchFrom >= start && searchFrom < end) {
+                scan = searchFrom;
+                foundStart = true;
+            } else if (searchFrom >= end) {
+                return false;  // Starting object is after this region
+            } else {
+                foundStart = true;  // Starting object was in previous region
+            }
+        }
+
+        while (scan < end) {
+            uint64_t* wordPtr = reinterpret_cast<uint64_t*>(scan);
+            uint64_t word = *wordPtr;
+
+            // Skip zero headers
+            if (word == 0) {
+                scan += 8;
+                while (scan < end) {
+                    wordPtr = reinterpret_cast<uint64_t*>(scan);
+                    if (*wordPtr != 0) break;
+                    scan += 8;
+                }
+                if (scan >= end) break;
+                word = *wordPtr;
+            }
+
+            // Check for overflow header
+            uint64_t* headerPtr = wordPtr;
+            if (scan + 8 < end) {
+                uint64_t nextWord = *(wordPtr + 1);
+                if ((nextWord & 0xFF) == 255) {
+                    uint64_t overflowCount = word;
+                    size_t remaining = end - scan;
+                    size_t neededSize = 8 + overflowCount * 8 + 8;
+
+                    if (overflowCount >= 255 && neededSize <= remaining) {
+                        headerPtr = wordPtr + 1;
+                    } else {
+                        scan += 16;
+                        continue;
+                    }
+                }
+            }
+
+            ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(headerPtr);
+            size_t size = obj->totalSize();
+
+            size_t remaining = end - scan;
+            if (size == 0 || size > remaining) {
+                scan += 8;
+                continue;
+            }
+
+            // Check if this object matches the target class
+            if (obj->classIndex() == targetClassIndex) {
+                found = oopFromPointer(obj);
+                return true;  // Found
+            }
+
+            scan += size;
+        }
+        return false;  // Not found in this region
+    };
+
+    // Determine which space the starting object is in and search from there
+    Space startSpace = spaceForPointer(startPtr);
+
+    switch (startSpace) {
+        case Space::Perm:
+            if (scanRegion(permSpaceStart_, permSpaceEnd_)) return found;
+            if (scanRegion(oldSpaceStart_, oldSpaceFree_)) return found;
+            if (scanRegion(edenStart_, edenFree_)) return found;
+            break;
+        case Space::Old:
+            if (scanRegion(oldSpaceStart_, oldSpaceFree_)) return found;
+            if (scanRegion(edenStart_, edenFree_)) return found;
+            break;
+        case Space::New:
+            if (scanRegion(edenStart_, edenFree_)) return found;
+            break;
+        case Space::Reserved:
+            // Reserved space - search all spaces
+            if (scanRegion(permSpaceStart_, permSpaceEnd_)) return found;
+            if (scanRegion(oldSpaceStart_, oldSpaceFree_)) return found;
+            if (scanRegion(edenStart_, edenFree_)) return found;
+            break;
+    }
+
+    return Oop::nil();  // Not found
+}
+
 } // namespace pharo
