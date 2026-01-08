@@ -4880,6 +4880,116 @@ PrimitiveResult Interpreter::primitiveContextSize(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== OBJECT SIZE PRIMITIVES (181-182) =====
+
+// Primitive 181: Get the size in bytes of an instance of a class
+// receiver sizeInBytesOfInstance: numElements -> SmallInteger
+// For variable-size classes, numElements specifies the number of indexable elements
+PrimitiveResult Interpreter::primitiveSizeInBytesOfInstance(int argCount) {
+    Oop classOop;
+    size_t numElements = 0;
+
+    if (argCount == 0) {
+        // No argument - get size for fixed-size instance
+        classOop = stackTop();
+    } else if (argCount == 1) {
+        // One argument - number of indexable elements
+        Oop numElemsOop = stackValue(0);
+        classOop = stackValue(1);
+
+        if (!numElemsOop.isSmallInteger()) {
+            return PrimitiveResult::Failure;
+        }
+        int64_t n = numElemsOop.asSmallInteger();
+        if (n < 0) {
+            return PrimitiveResult::Failure;
+        }
+        numElements = static_cast<size_t>(n);
+    } else {
+        return PrimitiveResult::Failure;
+    }
+
+    if (!classOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get the class format to determine instance structure
+    // Class format is at slot 2 (after superclass, methodDict)
+    Oop formatOop = memory_.fetchPointer(2, classOop);
+    if (!formatOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t format = formatOop.asSmallInteger();
+
+    // Extract instance size (number of fixed fields) from format
+    // In Spur, format encodes: instSize in bits 0-15, format type in bits 16-20
+    size_t instSize = static_cast<size_t>(format & 0xFFFF);
+    int formatType = static_cast<int>((format >> 16) & 0x1F);
+
+    // Calculate total size based on format type
+    size_t totalSlots;
+    size_t bytesPerElement = 8;  // Default: pointer slots (64-bit)
+
+    if (formatType <= 4) {
+        // Pointer object (fixed or variable)
+        totalSlots = instSize + numElements;
+    } else if (formatType >= 16 && formatType <= 23) {
+        // Byte object
+        bytesPerElement = 1;
+        totalSlots = instSize + (numElements + 7) / 8;  // Round up to 64-bit slots
+    } else if (formatType >= 12 && formatType <= 15) {
+        // 16-bit object
+        bytesPerElement = 2;
+        totalSlots = instSize + (numElements + 3) / 4;  // Round up to 64-bit slots
+    } else if (formatType >= 10 && formatType <= 11) {
+        // 32-bit or 64-bit object
+        if (formatType == 10) {
+            bytesPerElement = 8;
+            totalSlots = instSize + numElements;
+        } else {
+            bytesPerElement = 4;
+            totalSlots = instSize + (numElements + 1) / 2;
+        }
+    } else {
+        // CompiledMethod or other special format
+        totalSlots = instSize + numElements;
+    }
+
+    // Add header size (8 bytes for standard header)
+    size_t totalBytes = 8 + totalSlots * 8;
+
+    popN(argCount + 1);
+    push(Oop::fromSmallInteger(static_cast<int64_t>(totalBytes)));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 182: Get the size in bytes of an object
+// receiver sizeInBytes -> SmallInteger
+// Returns the total memory size of the object including header
+PrimitiveResult Interpreter::primitiveSizeInBytes(int argCount) {
+    Oop obj = stackTop();
+
+    if (obj.isImmediate()) {
+        // Immediates don't have a memory size in the traditional sense
+        // Return 0 or fail - we'll return 8 (the size of the Oop itself)
+        pop();
+        push(Oop::fromSmallInteger(8));
+        return PrimitiveResult::Success;
+    }
+
+    if (!obj.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get the total size from the object memory
+    size_t totalSize = memory_.totalSizeOf(obj);
+
+    pop();
+    push(Oop::fromSmallInteger(static_cast<int64_t>(totalSize)));
+    return PrimitiveResult::Success;
+}
+
 // ===== CONTEXT MANIPULATION PRIMITIVES (190-195) =====
 // These primitives allow modifying the fields of a Context object
 // Used for exception handling, debugging, and process manipulation

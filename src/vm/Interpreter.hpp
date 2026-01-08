@@ -617,6 +617,10 @@ private:
     // Context size primitive
     PrimitiveResult primitiveContextSize(int argCount);          // 210
 
+    // Object size primitives (181-182)
+    PrimitiveResult primitiveSizeInBytesOfInstance(int argCount); // 181
+    PrimitiveResult primitiveSizeInBytes(int argCount);           // 182
+
     // Context manipulation primitives (190-195)
     PrimitiveResult primitiveSetSender(int argCount);            // 190 - Context>>privSender:
     PrimitiveResult primitiveSetInstructionPointer(int argCount); // 191 - Context>>pc:

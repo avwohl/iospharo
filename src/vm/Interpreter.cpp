@@ -3780,6 +3780,10 @@ void Interpreter::initializePrimitives() {
     // Class name primitive (514)
     primitiveTable_[514] = &Interpreter::primitiveClassName;
 
+    // Object size primitives (181-182)
+    primitiveTable_[181] = &Interpreter::primitiveSizeInBytesOfInstance;
+    primitiveTable_[182] = &Interpreter::primitiveSizeInBytes;
+
     // Context manipulation primitives (190-195)
     primitiveTable_[190] = &Interpreter::primitiveSetSender;
     primitiveTable_[191] = &Interpreter::primitiveSetInstructionPointer;
