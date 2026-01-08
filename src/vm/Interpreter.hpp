@@ -482,6 +482,11 @@ private:
     PrimitiveResult primitiveFileWrite(int argCount);              // 98
     PrimitiveResult primitiveFileRename(int argCount);             // 99
 
+    // Directory primitives (122-124)
+    PrimitiveResult primitiveDirectoryCreate(int argCount);        // 122
+    PrimitiveResult primitiveDirectoryDelimitor(int argCount);     // 123
+    PrimitiveResult primitiveDirectoryLookup(int argCount);        // 124
+
     // I/O (stubs - iOS-specific implementation elsewhere)
     PrimitiveResult primitiveMousePoint(int argCount);
     PrimitiveResult primitiveMouseButtons(int argCount);

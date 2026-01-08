@@ -10,8 +10,10 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <dirent.h>
 #include <fstream>
 #include <iostream>
+#include <sys/stat.h>
 #include <vector>
 
 namespace pharo {
@@ -6213,6 +6215,158 @@ PrimitiveResult Interpreter::primitiveFileRename(int argCount) {
 
     popN(argCount);
     push(result == 0 ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// ===== DIRECTORY PRIMITIVES =====
+
+// Primitive 122: Create a directory
+// pathString primitiveDirectoryCreate -> boolean
+PrimitiveResult Interpreter::primitiveDirectoryCreate(int argCount) {
+    Oop pathOop = stackTop();
+
+    std::string path = extractString(memory_, pathOop);
+    if (path.empty()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Create directory with rwxr-xr-x permissions
+    int result = mkdir(path.c_str(), 0755);
+
+    pop();
+    push(result == 0 ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 123: Get directory delimiter character
+// primitiveDirectoryDelimitor -> Character
+PrimitiveResult Interpreter::primitiveDirectoryDelimitor(int argCount) {
+    // On Unix/macOS, the delimiter is '/'
+    // Return it as a Character (immediate)
+    pop();  // pop receiver
+
+    // Create a Character for '/'
+    // In Pharo, Character is an immediate with tag
+    // For now, return the ASCII value as a SmallInteger that Smalltalk can convert
+    push(Oop::fromSmallInteger('/'));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 124: Look up directory entry
+// pathString index primitiveDirectoryLookup -> Array or nil
+// Returns an Array with: (name, creationTime, modificationTime, dirFlag, fileSize)
+// or nil if index is out of range
+PrimitiveResult Interpreter::primitiveDirectoryLookup(int argCount) {
+    if (argCount < 2) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop indexOop = stackValue(0);
+    Oop pathOop = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    std::string path = extractString(memory_, pathOop);
+    if (path.empty()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t targetIndex = indexOop.asSmallInteger();
+    if (targetIndex < 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    DIR* dir = opendir(path.c_str());
+    if (!dir) {
+        // Directory doesn't exist or can't be opened
+        popN(argCount);
+        push(Oop::nil());
+        return PrimitiveResult::Success;
+    }
+
+    // Skip to the target entry (1-based index)
+    struct dirent* entry = nullptr;
+    int64_t currentIndex = 0;
+    while ((entry = readdir(dir)) != nullptr) {
+        // Skip . and ..
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        currentIndex++;
+        if (currentIndex == targetIndex) {
+            break;
+        }
+    }
+
+    if (!entry) {
+        // Index out of range
+        closedir(dir);
+        popN(argCount);
+        push(Oop::nil());
+        return PrimitiveResult::Success;
+    }
+
+    // Get file info
+    std::string fullPath = path;
+    if (!fullPath.empty() && fullPath.back() != '/') {
+        fullPath += '/';
+    }
+    fullPath += entry->d_name;
+
+    struct stat statBuf;
+    bool isDir = false;
+    int64_t fileSize = 0;
+    int64_t modTime = 0;
+    int64_t createTime = 0;
+
+    if (stat(fullPath.c_str(), &statBuf) == 0) {
+        isDir = S_ISDIR(statBuf.st_mode);
+        fileSize = statBuf.st_size;
+        modTime = statBuf.st_mtime;
+#ifdef __APPLE__
+        createTime = statBuf.st_birthtime;
+#else
+        createTime = statBuf.st_ctime;  // Use ctime as fallback on Linux
+#endif
+    }
+
+    closedir(dir);
+
+    // Create the result array with 5 elements:
+    // 1: name (String)
+    // 2: creation time (seconds since epoch)
+    // 3: modification time (seconds since epoch)
+    // 4: isDirectory (boolean)
+    // 5: file size (integer)
+
+    Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
+    if (arrayClass.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    uint32_t arrayClassIndex = memory_.indexOfClass(arrayClass);
+    Oop resultArray = memory_.allocateSlots(arrayClassIndex, 5, ObjectFormat::Indexable);
+    if (resultArray.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Create name string
+    Oop nameString = createStringObject(memory_, entry->d_name);
+    if (nameString.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Store the results
+    memory_.storePointer(0, resultArray, nameString);
+    memory_.storePointer(1, resultArray, Oop::fromSmallInteger(createTime));
+    memory_.storePointer(2, resultArray, Oop::fromSmallInteger(modTime));
+    memory_.storePointer(3, resultArray, isDir ? memory_.trueObject() : memory_.falseObject());
+    memory_.storePointer(4, resultArray, Oop::fromSmallInteger(fileSize));
+
+    popN(argCount);
+    push(resultArray);
     return PrimitiveResult::Success;
 }
 

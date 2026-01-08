@@ -3659,6 +3659,11 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[121] = &Interpreter::primitiveImageName;
     primitiveTable_[142] = &Interpreter::primitiveVMPath;
 
+    // Directory primitives (122-124)
+    primitiveTable_[122] = &Interpreter::primitiveDirectoryCreate;
+    primitiveTable_[123] = &Interpreter::primitiveDirectoryDelimitor;
+    primitiveTable_[124] = &Interpreter::primitiveDirectoryLookup;
+
     // Screen primitives (106, 108)
     primitiveTable_[106] = &Interpreter::primitiveScreenSize;
     primitiveTable_[108] = &Interpreter::primitiveScreenDepth;
