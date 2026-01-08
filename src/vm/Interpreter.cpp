@@ -3930,6 +3930,12 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[537] = &Interpreter::primitiveObjectNumSlots;
     primitiveTable_[538] = &Interpreter::primitiveObjectFormat;
 
+    // Profiling primitives (260-263)
+    primitiveTable_[260] = &Interpreter::primitiveVMProfileSamplesInto;
+    primitiveTable_[261] = &Interpreter::primitiveVMProfileInfoInto;
+    primitiveTable_[262] = &Interpreter::primitiveVMProfileStart;
+    primitiveTable_[263] = &Interpreter::primitiveVMProfileStop;
+
     // Event/input primitives (264-269)
     primitiveTable_[264] = &Interpreter::primitiveGetNextEvent;
     primitiveTable_[265] = &Interpreter::primitiveInputSemaphore2;

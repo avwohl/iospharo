@@ -8436,4 +8436,117 @@ PrimitiveResult Interpreter::primitiveControlOSProcess(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== PROFILING PRIMITIVES (260-263) =====
+
+// Primitive 260: VM profile samples into array
+// sampleBuffer primitiveVMProfileSamplesInto -> count
+// Copies profiling samples into the provided buffer
+PrimitiveResult Interpreter::primitiveVMProfileSamplesInto(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop sampleBuffer = stackTop();
+
+    if (sampleBuffer.isImmediate()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Profiling samples would contain:
+    // - Program counter samples
+    // - Method/context information
+    // - Timing data
+
+    // For now, profiling is not implemented
+    // Return 0 samples collected
+    pop();  // pop buffer argument
+    pop();  // pop receiver
+    push(Oop::fromSmallInteger(0));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 261: VM profile info into array
+// infoBuffer primitiveVMProfileInfoInto -> success
+// Copies profiling metadata into the buffer
+PrimitiveResult Interpreter::primitiveVMProfileInfoInto(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop infoBuffer = stackTop();
+
+    if (infoBuffer.isImmediate()) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t slotCount = memory_.slotCountOf(infoBuffer);
+    if (slotCount < 6) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Profile info structure:
+    // 0: total samples collected
+    // 1: samples in VM code
+    // 2: samples in Smalltalk code
+    // 3: profiler status (0=stopped, 1=running)
+    // 4: sample interval (microseconds)
+    // 5: buffer size
+
+    memory_.storePointer(0, infoBuffer, Oop::fromSmallInteger(0));  // total samples
+    memory_.storePointer(1, infoBuffer, Oop::fromSmallInteger(0));  // VM samples
+    memory_.storePointer(2, infoBuffer, Oop::fromSmallInteger(0));  // ST samples
+    memory_.storePointer(3, infoBuffer, Oop::fromSmallInteger(0));  // status: stopped
+    memory_.storePointer(4, infoBuffer, Oop::fromSmallInteger(1000));  // 1ms interval
+    memory_.storePointer(5, infoBuffer, Oop::fromSmallInteger(0));  // buffer size
+
+    pop();  // pop buffer argument
+    pop();  // pop receiver
+    push(memory_.trueObject());  // success
+    return PrimitiveResult::Success;
+}
+
+// Primitive 262: Start VM profiler
+// intervalMicroseconds primitiveVMProfileStart -> success
+// Starts the VM profiler with given sampling interval
+PrimitiveResult Interpreter::primitiveVMProfileStart(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop intervalOop = stackTop();
+
+    if (!intervalOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t interval = intervalOop.asSmallInteger();
+    if (interval <= 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    // A full implementation would:
+    // 1. Set up a timer signal handler
+    // 2. Configure sampling interval
+    // 3. Allocate sample buffer
+    // 4. Start collecting PC samples
+
+    // For now, just acknowledge the request
+    // Profiling requires platform-specific timer support
+    pop();  // pop interval argument
+    pop();  // pop receiver
+    push(memory_.trueObject());  // return true (accepted)
+    return PrimitiveResult::Success;
+}
+
+// Primitive 263: Stop VM profiler
+// primitiveVMProfileStop -> sampleCount
+// Stops the profiler and returns number of samples collected
+PrimitiveResult Interpreter::primitiveVMProfileStop(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // A full implementation would:
+    // 1. Stop the sampling timer
+    // 2. Return the number of samples collected
+    // 3. Keep samples available for retrieval
+
+    // For now, return 0 samples
+    pop();  // pop receiver
+    push(Oop::fromSmallInteger(0));
+    return PrimitiveResult::Success;
+}
+
 } // namespace pharo

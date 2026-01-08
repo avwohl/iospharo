@@ -604,6 +604,12 @@ private:
     PrimitiveResult primitiveStringHash2(int argCount);            // 229
     PrimitiveResult primitiveShrinkMemory(int argCount);           // 230
 
+    // Profiling primitives (260-263)
+    PrimitiveResult primitiveVMProfileSamplesInto(int argCount);   // 260
+    PrimitiveResult primitiveVMProfileInfoInto(int argCount);      // 261
+    PrimitiveResult primitiveVMProfileStart(int argCount);         // 262
+    PrimitiveResult primitiveVMProfileStop(int argCount);          // 263
+
     // Event/input primitives (264-269)
     PrimitiveResult primitiveGetNextEvent(int argCount);           // 264
     PrimitiveResult primitiveInputSemaphore2(int argCount);        // 265
