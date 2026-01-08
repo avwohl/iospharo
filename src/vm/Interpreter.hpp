@@ -412,6 +412,9 @@ private:
     // Control
     PrimitiveResult primitiveBlockValue(int argCount);
     PrimitiveResult primitiveBlockValueWithArgs(int argCount);
+    PrimitiveResult primitiveBlockCopy(int argCount);            // 80
+    PrimitiveResult primitiveValue(int argCount);                // 81
+    PrimitiveResult primitiveValueWithArgs(int argCount);        // 82
 
     // Process/Scheduler
     PrimitiveResult primitiveSuspend(int argCount);

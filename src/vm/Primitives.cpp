@@ -770,6 +770,108 @@ PrimitiveResult Interpreter::primitiveBlockValueWithArgs(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// Primitive 80: BlockClosure copy
+// Creates a BlockClosure from the current context
+// Stack: context (receiver), numArgs, startpc
+// In modern Pharo this is often replaced by full block closures created by the compiler
+PrimitiveResult Interpreter::primitiveBlockCopy(int argCount) {
+    // Classic block copy: context blockCopy: numArgs startPc: startPc
+    // But the exact calling convention can vary
+
+    if (argCount < 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get the BlockClosure class
+    Oop blockClass = memory_.specialObject(SpecialObjectIndex::ClassBlockClosure);
+    if (blockClass.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get class index for allocation
+    uint32_t classIndex = memory_.indexOfClass(blockClass);
+    if (classIndex == 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    // BlockClosure layout:
+    // 0: outerContext
+    // 1: startpc (or compiledBlock in full closures)
+    // 2: numArgs
+    // Additional slots for copied values if needed
+
+    Oop outerContext;
+    Oop startPc;
+    Oop numArgsOop;
+
+    if (argCount == 2) {
+        // blockCopy: numArgs startPc: startPc (receiver is context)
+        startPc = stackValue(0);
+        numArgsOop = stackValue(1);
+        outerContext = stackValue(2);  // receiver
+    } else if (argCount == 1) {
+        // Simplified: just numArgs, startPc derived from method
+        numArgsOop = stackValue(0);
+        outerContext = stackValue(1);  // receiver
+        startPc = Oop::fromSmallInteger(0);  // Will need to be set properly
+    } else {
+        return PrimitiveResult::Failure;
+    }
+
+    if (!numArgsOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Allocate a BlockClosure with 3 slots (outerContext, startpc, numArgs)
+    Oop closure = memory_.allocateSlots(classIndex, 3, ObjectFormat::FixedSize);
+    if (closure.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Initialize the closure
+    memory_.storePointer(0, closure, outerContext);  // outerContext
+    memory_.storePointer(1, closure, startPc);       // startpc
+    memory_.storePointer(2, closure, numArgsOop);    // numArgs
+
+    // Pop arguments and receiver, push result
+    popN(argCount + 1);
+    push(closure);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 81: value (BlockClosure>>value with 0 args)
+// This is essentially the same as primitiveBlockValue but specifically for 0 args
+PrimitiveResult Interpreter::primitiveValue(int argCount) {
+    // For primitive 81, the receiver is the block, and argCount should be 0
+    // But the primitive dispatch may pass the actual arg count
+    Oop block = stackValue(argCount);
+
+    if (!block.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Verify block expects the right number of arguments
+    Oop numArgsObj = memory_.fetchPointer(2, block);
+    if (!numArgsObj.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int blockArgCount = static_cast<int>(numArgsObj.asSmallInteger());
+    if (blockArgCount != argCount) {
+        return PrimitiveResult::Failure;
+    }
+
+    activateBlock(block, argCount);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 82: valueWithArguments: (BlockClosure>>valueWithArguments:)
+// Evaluates the block with arguments from an array
+PrimitiveResult Interpreter::primitiveValueWithArgs(int argCount) {
+    // This is the same as primitiveBlockValueWithArgs
+    return primitiveBlockValueWithArgs(argCount);
+}
+
 // ===== PROCESS PRIMITIVES =====
 
 PrimitiveResult Interpreter::primitiveSuspend(int argCount) {

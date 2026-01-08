@@ -3594,6 +3594,11 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[75] = &Interpreter::primitiveIdentityHash;
     primitiveTable_[76] = &Interpreter::primitiveBasicSize;
 
+    // Block closure primitives (80-82)
+    primitiveTable_[80] = &Interpreter::primitiveBlockCopy;
+    primitiveTable_[81] = &Interpreter::primitiveValue;
+    primitiveTable_[82] = &Interpreter::primitiveValueWithArgs;
+
     // Perform primitives (83-84)
     primitiveTable_[83] = &Interpreter::primitivePerform;
     primitiveTable_[84] = &Interpreter::primitivePerformWithArgs;
