@@ -482,10 +482,12 @@ private:
     PrimitiveResult primitiveFileWrite(int argCount);              // 98
     PrimitiveResult primitiveFileRename(int argCount);             // 99
 
-    // Directory primitives (122-124)
+    // Directory primitives (122-124, 126-127)
     PrimitiveResult primitiveDirectoryCreate(int argCount);        // 122
     PrimitiveResult primitiveDirectoryDelimitor(int argCount);     // 123
     PrimitiveResult primitiveDirectoryLookup(int argCount);        // 124
+    PrimitiveResult primitiveDirectoryDelete(int argCount);        // 126
+    PrimitiveResult primitiveDirectoryGetMacTypeAndCreator(int argCount); // 127
 
     // Additional file primitives (161-164)
     PrimitiveResult primitiveFileStdioHandles(int argCount);       // 161

@@ -6371,6 +6371,68 @@ PrimitiveResult Interpreter::primitiveDirectoryLookup(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// Primitive 126: Delete a directory
+// pathString primitiveDirectoryDelete -> boolean
+PrimitiveResult Interpreter::primitiveDirectoryDelete(int argCount) {
+    Oop pathOop = stackTop();
+
+    std::string path = extractString(memory_, pathOop);
+    if (path.empty()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // rmdir only works on empty directories
+    int result = rmdir(path.c_str());
+
+    pop();
+    push(result == 0 ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 127: Get Mac file type and creator (legacy, returns empty on non-Mac or modern systems)
+// pathString primitiveDirectoryGetMacTypeAndCreator -> Array of (type, creator) or nil
+PrimitiveResult Interpreter::primitiveDirectoryGetMacTypeAndCreator(int argCount) {
+    // On modern systems, Mac type/creator codes are not commonly used
+    // Return an array with empty strings for compatibility
+    Oop pathOop = stackTop();
+
+    std::string path = extractString(memory_, pathOop);
+    if (path.empty()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Check if path exists
+    struct stat statBuf;
+    if (stat(path.c_str(), &statBuf) != 0) {
+        pop();
+        push(Oop::nil());
+        return PrimitiveResult::Success;
+    }
+
+    // Create result array with 2 empty strings (type, creator)
+    Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
+    if (arrayClass.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    uint32_t arrayClassIndex = memory_.indexOfClass(arrayClass);
+    Oop resultArray = memory_.allocateSlots(arrayClassIndex, 2, ObjectFormat::Indexable);
+    if (resultArray.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Create empty strings for type and creator
+    Oop emptyType = createStringObject(memory_, "");
+    Oop emptyCreator = createStringObject(memory_, "");
+
+    memory_.storePointer(0, resultArray, emptyType);
+    memory_.storePointer(1, resultArray, emptyCreator);
+
+    pop();
+    push(resultArray);
+    return PrimitiveResult::Success;
+}
+
 // ===== ADDITIONAL FILE PRIMITIVES =====
 
 // Primitive 161: Get standard I/O file handles
