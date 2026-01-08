@@ -392,6 +392,10 @@ private:
     PrimitiveResult primitiveIdentical(int argCount);
     PrimitiveResult primitiveNotIdentical(int argCount);
 
+    // Character conversion
+    PrimitiveResult primitiveAsCharacter(int argCount);
+    PrimitiveResult primitiveAsInteger(int argCount);
+
     // Behavior
     PrimitiveResult primitivePerform(int argCount);
     PrimitiveResult primitivePerformWithArgs(int argCount);

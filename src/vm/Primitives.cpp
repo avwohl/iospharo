@@ -608,6 +608,38 @@ PrimitiveResult Interpreter::primitiveNotIdentical(int argCount) {
     return PrimitiveResult::Success;
 }
 
+PrimitiveResult Interpreter::primitiveAsCharacter(int argCount) {
+    // Primitive 170: Integer >> asCharacter - convert integer to Character
+    Oop rcvr = stackValue(0);
+
+    if (!rcvr.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t value = rcvr.asSmallInteger();
+
+    // Valid Unicode codepoints are 0 to 0x10FFFF
+    if (value < 0 || value > 0x10FFFF) {
+        return PrimitiveResult::Failure;
+    }
+
+    primitiveSuccess(Oop::fromCharacter(static_cast<uint32_t>(value)));
+    return PrimitiveResult::Success;
+}
+
+PrimitiveResult Interpreter::primitiveAsInteger(int argCount) {
+    // Primitive 171: Character >> asInteger - convert Character to integer
+    Oop rcvr = stackValue(0);
+
+    if (!rcvr.isCharacter()) {
+        return PrimitiveResult::Failure;
+    }
+
+    uint32_t codePoint = rcvr.asCharacter();
+    primitiveSuccess(Oop::fromSmallInteger(codePoint));
+    return PrimitiveResult::Success;
+}
+
 // ===== BEHAVIOR PRIMITIVES =====
 
 PrimitiveResult Interpreter::primitivePerform(int argCount) {

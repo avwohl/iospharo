@@ -3589,6 +3589,10 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[111] = &Interpreter::primitiveClass;
     primitiveTable_[169] = &Interpreter::primitiveNotIdentical;
 
+    // Character conversion primitives (170-171)
+    primitiveTable_[170] = &Interpreter::primitiveAsCharacter;
+    primitiveTable_[171] = &Interpreter::primitiveAsInteger;
+
     // System primitives (113, 114)
     primitiveTable_[113] = &Interpreter::primitiveQuit;
     primitiveTable_[114] = &Interpreter::primitiveExitToDebugger;
