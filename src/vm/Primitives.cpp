@@ -8,6 +8,7 @@
 #include "Interpreter.hpp"
 #include <cmath>
 #include <iostream>
+#include <vector>
 
 namespace pharo {
 
@@ -1289,26 +1290,439 @@ PrimitiveResult Interpreter::primitiveFloatLn(int argCount) {
     return PrimitiveResult::Success;
 }
 
-// ===== LARGE INTEGER PRIMITIVES (stubs) =====
+// ===== LARGE INTEGER PRIMITIVES =====
+
+// Helper: Check if Oop is a LargeInteger (positive or negative)
+static bool isLargeInteger(ObjectMemory& memory, Oop oop, bool& isNegative) {
+    if (!oop.isObject()) return false;
+
+    Oop largePositiveClass = memory.specialObject(SpecialObjectIndex::ClassLargePositiveInteger);
+    Oop largeNegativeClass = memory.specialObject(SpecialObjectIndex::ClassLargeNegativeInteger);
+    Oop objClass = memory.classOf(oop);
+
+    if (objClass.rawBits() == largePositiveClass.rawBits()) {
+        isNegative = false;
+        return true;
+    }
+    if (objClass.rawBits() == largeNegativeClass.rawBits()) {
+        isNegative = true;
+        return true;
+    }
+    return false;
+}
+
+// Helper: Extract magnitude bytes into a vector (little-endian)
+static std::vector<uint8_t> extractMagnitude(ObjectMemory& memory, Oop largeInt) {
+    size_t byteSize = memory.byteSizeOf(largeInt);
+    std::vector<uint8_t> result(byteSize);
+    for (size_t i = 0; i < byteSize; i++) {
+        result[i] = memory.fetchByte(i, largeInt);
+    }
+    // Remove trailing zeros (normalize)
+    while (result.size() > 1 && result.back() == 0) {
+        result.pop_back();
+    }
+    return result;
+}
+
+// Helper: Compare magnitudes (returns -1, 0, or 1)
+static int compareMagnitudes(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
+    if (a.size() != b.size()) {
+        return a.size() < b.size() ? -1 : 1;
+    }
+    for (size_t i = a.size(); i > 0; i--) {
+        if (a[i-1] != b[i-1]) {
+            return a[i-1] < b[i-1] ? -1 : 1;
+        }
+    }
+    return 0;
+}
+
+// Helper: Add two magnitudes
+static std::vector<uint8_t> addMagnitudes(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
+    size_t maxLen = std::max(a.size(), b.size());
+    std::vector<uint8_t> result(maxLen + 1, 0);
+
+    uint16_t carry = 0;
+    for (size_t i = 0; i < maxLen || carry; i++) {
+        uint16_t sum = carry;
+        if (i < a.size()) sum += a[i];
+        if (i < b.size()) sum += b[i];
+        if (i < result.size()) {
+            result[i] = static_cast<uint8_t>(sum & 0xFF);
+        } else {
+            result.push_back(static_cast<uint8_t>(sum & 0xFF));
+        }
+        carry = sum >> 8;
+    }
+
+    // Remove trailing zeros
+    while (result.size() > 1 && result.back() == 0) {
+        result.pop_back();
+    }
+    return result;
+}
+
+// Helper: Subtract magnitudes (assumes a >= b)
+static std::vector<uint8_t> subtractMagnitudes(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
+    std::vector<uint8_t> result(a.size(), 0);
+
+    int16_t borrow = 0;
+    for (size_t i = 0; i < a.size(); i++) {
+        int16_t diff = static_cast<int16_t>(a[i]) - borrow;
+        if (i < b.size()) diff -= b[i];
+        if (diff < 0) {
+            diff += 256;
+            borrow = 1;
+        } else {
+            borrow = 0;
+        }
+        result[i] = static_cast<uint8_t>(diff);
+    }
+
+    // Remove trailing zeros
+    while (result.size() > 1 && result.back() == 0) {
+        result.pop_back();
+    }
+    return result;
+}
+
+// Helper: Multiply two magnitudes
+static std::vector<uint8_t> multiplyMagnitudes(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
+    if (a.empty() || b.empty() || (a.size() == 1 && a[0] == 0) || (b.size() == 1 && b[0] == 0)) {
+        return std::vector<uint8_t>(1, 0);
+    }
+
+    std::vector<uint8_t> result(a.size() + b.size(), 0);
+
+    for (size_t i = 0; i < a.size(); i++) {
+        uint16_t carry = 0;
+        for (size_t j = 0; j < b.size() || carry; j++) {
+            uint32_t prod = result[i + j] + carry;
+            if (j < b.size()) {
+                prod += static_cast<uint32_t>(a[i]) * b[j];
+            }
+            result[i + j] = static_cast<uint8_t>(prod & 0xFF);
+            carry = static_cast<uint16_t>(prod >> 8);
+        }
+    }
+
+    // Remove trailing zeros
+    while (result.size() > 1 && result.back() == 0) {
+        result.pop_back();
+    }
+    return result;
+}
+
+// Helper: Divide magnitudes, returns quotient and remainder
+static void divideMagnitudes(const std::vector<uint8_t>& dividend, const std::vector<uint8_t>& divisor,
+                             std::vector<uint8_t>& quotient, std::vector<uint8_t>& remainder) {
+    // Handle division by zero
+    if (divisor.empty() || (divisor.size() == 1 && divisor[0] == 0)) {
+        quotient = std::vector<uint8_t>(1, 0);
+        remainder = std::vector<uint8_t>(1, 0);
+        return;
+    }
+
+    // If dividend < divisor, quotient = 0, remainder = dividend
+    if (compareMagnitudes(dividend, divisor) < 0) {
+        quotient = std::vector<uint8_t>(1, 0);
+        remainder = dividend;
+        return;
+    }
+
+    // Simple long division algorithm (byte by byte)
+    remainder.clear();
+    quotient.resize(dividend.size(), 0);
+
+    for (int i = static_cast<int>(dividend.size()) - 1; i >= 0; i--) {
+        // Shift remainder left by 8 bits and add next byte
+        remainder.insert(remainder.begin(), dividend[i]);
+
+        // Remove leading zeros from remainder for comparison
+        while (remainder.size() > 1 && remainder.back() == 0) {
+            remainder.pop_back();
+        }
+
+        // Find how many times divisor fits into remainder
+        uint8_t q = 0;
+        while (compareMagnitudes(remainder, divisor) >= 0) {
+            remainder = subtractMagnitudes(remainder, divisor);
+            q++;
+        }
+        quotient[i] = q;
+    }
+
+    // Remove trailing zeros from quotient
+    while (quotient.size() > 1 && quotient.back() == 0) {
+        quotient.pop_back();
+    }
+}
+
+// Helper: Check if magnitude fits in SmallInteger and convert
+static bool tryConvertToSmallInteger(const std::vector<uint8_t>& magnitude, bool isNegative, Oop& result) {
+    // SmallInteger is 61 bits, so max 8 bytes but must check range
+    if (magnitude.size() > 8) return false;
+
+    uint64_t value = 0;
+    for (size_t i = magnitude.size(); i > 0; i--) {
+        value = (value << 8) | magnitude[i - 1];
+    }
+
+    // Check if fits in SmallInteger range (61 bits signed)
+    const int64_t maxPositive = (1LL << 60) - 1;
+    const int64_t minNegative = -(1LL << 60);
+
+    if (isNegative) {
+        if (value > static_cast<uint64_t>(-minNegative)) return false;
+        int64_t signedValue = -static_cast<int64_t>(value);
+        return Oop::tryFromSmallInteger(signedValue, result);
+    } else {
+        if (value > static_cast<uint64_t>(maxPositive)) return false;
+        return Oop::tryFromSmallInteger(static_cast<int64_t>(value), result);
+    }
+}
+
+// Helper: Create LargeInteger from magnitude and sign
+static Oop makeLargeInteger(ObjectMemory& memory, const std::vector<uint8_t>& magnitude, bool isNegative) {
+    // First try to convert to SmallInteger
+    Oop result;
+    if (tryConvertToSmallInteger(magnitude, isNegative, result)) {
+        return result;
+    }
+
+    // Allocate LargeInteger
+    Oop intClass = isNegative
+        ? memory.specialObject(SpecialObjectIndex::ClassLargeNegativeInteger)
+        : memory.specialObject(SpecialObjectIndex::ClassLargePositiveInteger);
+    uint32_t classIndex = memory.indexOfClass(intClass);
+
+    Oop largeInt = memory.allocateBytes(classIndex, magnitude.size());
+    if (largeInt.isNil()) return largeInt;
+
+    // Store magnitude bytes
+    for (size_t i = 0; i < magnitude.size(); i++) {
+        memory.storeByte(i, largeInt, magnitude[i]);
+    }
+
+    return largeInt;
+}
+
+// Helper: Extract integer value (SmallInteger or LargeInteger)
+static bool extractInteger(ObjectMemory& memory, Oop oop, std::vector<uint8_t>& magnitude, bool& isNegative) {
+    if (oop.isSmallInteger()) {
+        int64_t value = oop.asSmallInteger();
+        isNegative = value < 0;
+        uint64_t absValue = isNegative ? static_cast<uint64_t>(-value) : static_cast<uint64_t>(value);
+
+        magnitude.clear();
+        if (absValue == 0) {
+            magnitude.push_back(0);
+        } else {
+            while (absValue > 0) {
+                magnitude.push_back(static_cast<uint8_t>(absValue & 0xFF));
+                absValue >>= 8;
+            }
+        }
+        return true;
+    }
+
+    if (isLargeInteger(memory, oop, isNegative)) {
+        magnitude = extractMagnitude(memory, oop);
+        return true;
+    }
+
+    return false;
+}
 
 PrimitiveResult Interpreter::primitiveLargeIntegerAdd(int argCount) {
-    return PrimitiveResult::Failure;  // TODO
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    std::vector<uint8_t> aMag, bMag;
+    bool aNeg, bNeg;
+
+    if (!extractInteger(memory_, rcvr, aMag, aNeg) ||
+        !extractInteger(memory_, arg, bMag, bNeg)) {
+        return PrimitiveResult::Failure;
+    }
+
+    std::vector<uint8_t> resultMag;
+    bool resultNeg;
+
+    if (aNeg == bNeg) {
+        // Same sign: add magnitudes, keep sign
+        resultMag = addMagnitudes(aMag, bMag);
+        resultNeg = aNeg;
+    } else {
+        // Different signs: subtract smaller from larger
+        int cmp = compareMagnitudes(aMag, bMag);
+        if (cmp >= 0) {
+            resultMag = subtractMagnitudes(aMag, bMag);
+            resultNeg = aNeg;
+        } else {
+            resultMag = subtractMagnitudes(bMag, aMag);
+            resultNeg = bNeg;
+        }
+    }
+
+    // Handle zero (always positive)
+    if (resultMag.size() == 1 && resultMag[0] == 0) {
+        resultNeg = false;
+    }
+
+    Oop result = makeLargeInteger(memory_, resultMag, resultNeg);
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    popN(2);
+    push(result);
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveLargeIntegerSubtract(int argCount) {
-    return PrimitiveResult::Failure;  // TODO
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    std::vector<uint8_t> aMag, bMag;
+    bool aNeg, bNeg;
+
+    if (!extractInteger(memory_, rcvr, aMag, aNeg) ||
+        !extractInteger(memory_, arg, bMag, bNeg)) {
+        return PrimitiveResult::Failure;
+    }
+
+    // a - b = a + (-b)
+    bNeg = !bNeg;
+
+    std::vector<uint8_t> resultMag;
+    bool resultNeg;
+
+    if (aNeg == bNeg) {
+        // Same sign: add magnitudes, keep sign
+        resultMag = addMagnitudes(aMag, bMag);
+        resultNeg = aNeg;
+    } else {
+        // Different signs: subtract smaller from larger
+        int cmp = compareMagnitudes(aMag, bMag);
+        if (cmp >= 0) {
+            resultMag = subtractMagnitudes(aMag, bMag);
+            resultNeg = aNeg;
+        } else {
+            resultMag = subtractMagnitudes(bMag, aMag);
+            resultNeg = bNeg;
+        }
+    }
+
+    // Handle zero (always positive)
+    if (resultMag.size() == 1 && resultMag[0] == 0) {
+        resultNeg = false;
+    }
+
+    Oop result = makeLargeInteger(memory_, resultMag, resultNeg);
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    popN(2);
+    push(result);
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveLargeIntegerMultiply(int argCount) {
-    return PrimitiveResult::Failure;  // TODO
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    std::vector<uint8_t> aMag, bMag;
+    bool aNeg, bNeg;
+
+    if (!extractInteger(memory_, rcvr, aMag, aNeg) ||
+        !extractInteger(memory_, arg, bMag, bNeg)) {
+        return PrimitiveResult::Failure;
+    }
+
+    std::vector<uint8_t> resultMag = multiplyMagnitudes(aMag, bMag);
+    bool resultNeg = (aNeg != bNeg);
+
+    // Handle zero (always positive)
+    if (resultMag.size() == 1 && resultMag[0] == 0) {
+        resultNeg = false;
+    }
+
+    Oop result = makeLargeInteger(memory_, resultMag, resultNeg);
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    popN(2);
+    push(result);
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveLargeIntegerDivide(int argCount) {
-    return PrimitiveResult::Failure;  // TODO
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    std::vector<uint8_t> aMag, bMag;
+    bool aNeg, bNeg;
+
+    if (!extractInteger(memory_, rcvr, aMag, aNeg) ||
+        !extractInteger(memory_, arg, bMag, bNeg)) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Check for division by zero
+    if (bMag.size() == 1 && bMag[0] == 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    std::vector<uint8_t> quotient, remainder;
+    divideMagnitudes(aMag, bMag, quotient, remainder);
+
+    // Check for exact division (remainder must be zero)
+    if (!(remainder.size() == 1 && remainder[0] == 0)) {
+        return PrimitiveResult::Failure;  // Not exact division
+    }
+
+    bool resultNeg = (aNeg != bNeg);
+
+    // Handle zero (always positive)
+    if (quotient.size() == 1 && quotient[0] == 0) {
+        resultNeg = false;
+    }
+
+    Oop result = makeLargeInteger(memory_, quotient, resultNeg);
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    popN(2);
+    push(result);
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveLargeIntegerMod(int argCount) {
-    return PrimitiveResult::Failure;  // TODO
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    std::vector<uint8_t> aMag, bMag;
+    bool aNeg, bNeg;
+
+    if (!extractInteger(memory_, rcvr, aMag, aNeg) ||
+        !extractInteger(memory_, arg, bMag, bNeg)) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Check for division by zero
+    if (bMag.size() == 1 && bMag[0] == 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    std::vector<uint8_t> quotient, remainder;
+    divideMagnitudes(aMag, bMag, quotient, remainder);
+
+    // Remainder has same sign as dividend (truncated division)
+    bool resultNeg = aNeg && !(remainder.size() == 1 && remainder[0] == 0);
+
+    Oop result = makeLargeInteger(memory_, remainder, resultNeg);
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    popN(2);
+    push(result);
+    return PrimitiveResult::Success;
 }
 
 } // namespace pharo
