@@ -4014,6 +4014,18 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[268] = &Interpreter::primitiveMixedSound;
     primitiveTable_[269] = &Interpreter::primitiveControlOSProcess;
 
+    // BitBlt primitives (290-299)
+    primitiveTable_[290] = &Interpreter::primitiveCopyBits;
+    primitiveTable_[291] = &Interpreter::primitiveDrawLoop;
+    primitiveTable_[292] = &Interpreter::primitiveCompressToByteArray;
+    primitiveTable_[293] = &Interpreter::primitiveDecompressFromByteArray;
+    primitiveTable_[294] = &Interpreter::primitiveFindFirstInString;
+    primitiveTable_[295] = &Interpreter::primitiveTranslateStringWithTable;
+    primitiveTable_[296] = &Interpreter::primitiveFindSubstring;
+    primitiveTable_[297] = &Interpreter::primitivePixelValueAt;
+    primitiveTable_[298] = &Interpreter::primitivePixelValueAtPut;
+    primitiveTable_[299] = &Interpreter::primitiveWarpBits;
+
     // Platform primitives (500-513)
     primitiveTable_[500] = &Interpreter::primitiveGetEnvironment;
     primitiveTable_[501] = &Interpreter::primitiveSetEnvironment;

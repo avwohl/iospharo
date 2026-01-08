@@ -688,6 +688,18 @@ private:
     PrimitiveResult primitiveMixedSound(int argCount);             // 268
     PrimitiveResult primitiveControlOSProcess(int argCount);       // 269
 
+    // BitBlt primitives (290-299)
+    PrimitiveResult primitiveCopyBits(int argCount);               // 290
+    // primitiveDrawLoop (291) - uses existing declaration at 104
+    PrimitiveResult primitiveCompressToByteArray(int argCount);    // 292
+    PrimitiveResult primitiveDecompressFromByteArray(int argCount); // 293
+    PrimitiveResult primitiveFindFirstInString(int argCount);      // 294
+    PrimitiveResult primitiveTranslateStringWithTable(int argCount); // 295
+    PrimitiveResult primitiveFindSubstring(int argCount);          // 296
+    PrimitiveResult primitivePixelValueAt(int argCount);           // 297
+    PrimitiveResult primitivePixelValueAtPut(int argCount);        // 298
+    PrimitiveResult primitiveWarpBits(int argCount);               // 299
+
     // String/Array
     PrimitiveResult primitiveStringAt(int argCount);
     PrimitiveResult primitiveStringAtPut(int argCount);

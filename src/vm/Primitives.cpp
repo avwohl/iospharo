@@ -9570,6 +9570,568 @@ PrimitiveResult Interpreter::primitiveControlOSProcess(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== BITBLT PRIMITIVES (290-299) =====
+
+// BitBlt helper: Extract integer field from BitBlt object
+static intptr_t bitBltField(ObjectMemory& memory, Oop bitBlt, size_t index) {
+    Oop field = memory.fetchPointer(index, bitBlt);
+    if (field.isSmallInteger()) {
+        return field.asSmallInteger();
+    }
+    return 0;
+}
+
+// BitBlt field indices (standard Squeak/Pharo layout)
+enum BitBltFields {
+    BBDestForm = 0,
+    BBSourceForm = 1,
+    BBHalftoneForm = 2,
+    BBCombinationRule = 3,
+    BBDestX = 4,
+    BBDestY = 5,
+    BBWidth = 6,
+    BBHeight = 7,
+    BBSourceX = 8,
+    BBSourceY = 9,
+    BBClipX = 10,
+    BBClipY = 11,
+    BBClipWidth = 12,
+    BBClipHeight = 13,
+    BBColorMap = 14
+};
+
+// Form field indices
+enum FormFields {
+    FormBits = 0,
+    FormWidth = 1,
+    FormHeight = 2,
+    FormDepth = 3,
+    FormOffset = 4  // Optional Point for offset
+};
+
+// Primitive 290: Copy bits (main BitBlt operation)
+// aBitBlt primitiveCopyBits -> aBitBlt
+// The core BitBlt operation that copies pixels from source to destination
+PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop bitBlt = stackTop();
+    if (!bitBlt.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Extract BitBlt parameters
+    Oop destForm = memory_.fetchPointer(BBDestForm, bitBlt);
+    Oop sourceForm = memory_.fetchPointer(BBSourceForm, bitBlt);
+    intptr_t combinationRule = bitBltField(memory_, bitBlt, BBCombinationRule);
+    intptr_t destX = bitBltField(memory_, bitBlt, BBDestX);
+    intptr_t destY = bitBltField(memory_, bitBlt, BBDestY);
+    intptr_t width = bitBltField(memory_, bitBlt, BBWidth);
+    intptr_t height = bitBltField(memory_, bitBlt, BBHeight);
+    intptr_t sourceX = bitBltField(memory_, bitBlt, BBSourceX);
+    intptr_t sourceY = bitBltField(memory_, bitBlt, BBSourceY);
+    intptr_t clipX = bitBltField(memory_, bitBlt, BBClipX);
+    intptr_t clipY = bitBltField(memory_, bitBlt, BBClipY);
+    intptr_t clipWidth = bitBltField(memory_, bitBlt, BBClipWidth);
+    intptr_t clipHeight = bitBltField(memory_, bitBlt, BBClipHeight);
+
+    // Validate destination form
+    if (destForm.isNil() || !destForm.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get destination form parameters
+    Oop destBits = memory_.fetchPointer(FormBits, destForm);
+    intptr_t destWidth = bitBltField(memory_, destForm, FormWidth);
+    intptr_t destHeight = bitBltField(memory_, destForm, FormHeight);
+    intptr_t destDepth = bitBltField(memory_, destForm, FormDepth);
+
+    if (destBits.isNil() || !destBits.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Clip the operation to destination bounds
+    if (destX < clipX) {
+        width -= (clipX - destX);
+        sourceX += (clipX - destX);
+        destX = clipX;
+    }
+    if (destY < clipY) {
+        height -= (clipY - destY);
+        sourceY += (clipY - destY);
+        destY = clipY;
+    }
+    if (destX + width > clipX + clipWidth) {
+        width = clipX + clipWidth - destX;
+    }
+    if (destY + height > clipY + clipHeight) {
+        height = clipY + clipHeight - destY;
+    }
+
+    // If nothing to draw, succeed immediately
+    if (width <= 0 || height <= 0) {
+        return PrimitiveResult::Success;
+    }
+
+    // For simple cases (fill operations), implement directly
+    // combinationRule 3 = store (most common for fills)
+    // combinationRule 34 = source (most common for copy)
+    if (sourceForm.isNil() && combinationRule == 3) {
+        // Fill with halftone or solid color
+        Oop halftoneForm = memory_.fetchPointer(BBHalftoneForm, bitBlt);
+
+        // Get fill value (from halftone or default to all 1s)
+        uint32_t fillValue = 0xFFFFFFFF;
+        if (!halftoneForm.isNil() && halftoneForm.isSmallInteger()) {
+            fillValue = static_cast<uint32_t>(halftoneForm.asSmallInteger());
+        }
+
+        // Simple fill implementation for 32-bit depth
+        if (destDepth == 32) {
+            size_t destBytesPerRow = static_cast<size_t>(destWidth * 4);
+
+            for (intptr_t y = 0; y < height; y++) {
+                for (intptr_t x = 0; x < width; x++) {
+                    size_t offset = static_cast<size_t>((destY + y) * destWidth + (destX + x)) * 4;
+                    memory_.storeWord32(offset / 4, destBits, fillValue);
+                }
+            }
+            return PrimitiveResult::Success;
+        }
+    }
+
+    // For complex operations, fail to Smalltalk fallback
+    // A full BitBlt implementation would handle all combination rules,
+    // depths, color maps, etc.
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 291: Draw loop (line drawing for BitBlt)
+// Uses existing primitiveDrawLoop implementation (also primitive 104)
+
+// Primitive 292: Compress bitmap to byte array (RLE compression)
+// bitmap byteArray primitiveCompressToByteArray -> compressedSize
+PrimitiveResult Interpreter::primitiveCompressToByteArray(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop byteArray = stackTop();
+    Oop bitmap = stackValue(1);
+
+    if (!bitmap.isObject() || !byteArray.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get bitmap data
+    size_t bitmapSize = memory_.byteSizeOf(bitmap);
+    size_t destSize = memory_.byteSizeOf(byteArray);
+
+    if (bitmapSize == 0 || destSize == 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Simple RLE compression
+    size_t srcIndex = 0;
+    size_t destIndex = 0;
+    size_t wordCount = bitmapSize / 4;
+
+    while (srcIndex < wordCount && destIndex < destSize - 4) {
+        uint32_t word = memory_.fetchWord32(srcIndex, bitmap);
+
+        // Count consecutive identical words
+        size_t runLength = 1;
+        while (srcIndex + runLength < wordCount &&
+               runLength < 127 &&
+               memory_.fetchWord32(srcIndex + runLength, bitmap) == word) {
+            runLength++;
+        }
+
+        if (runLength >= 2 || word == 0) {
+            // Encode as run
+            memory_.storeByte(destIndex++, byteArray, static_cast<uint8_t>(runLength | 0x80));
+            memory_.storeByte(destIndex++, byteArray, static_cast<uint8_t>((word >> 24) & 0xFF));
+            memory_.storeByte(destIndex++, byteArray, static_cast<uint8_t>((word >> 16) & 0xFF));
+            memory_.storeByte(destIndex++, byteArray, static_cast<uint8_t>((word >> 8) & 0xFF));
+            memory_.storeByte(destIndex++, byteArray, static_cast<uint8_t>(word & 0xFF));
+            srcIndex += runLength;
+        } else {
+            // Encode as literal
+            memory_.storeByte(destIndex++, byteArray, 1);  // Length 1
+            memory_.storeByte(destIndex++, byteArray, static_cast<uint8_t>((word >> 24) & 0xFF));
+            memory_.storeByte(destIndex++, byteArray, static_cast<uint8_t>((word >> 16) & 0xFF));
+            memory_.storeByte(destIndex++, byteArray, static_cast<uint8_t>((word >> 8) & 0xFF));
+            memory_.storeByte(destIndex++, byteArray, static_cast<uint8_t>(word & 0xFF));
+            srcIndex++;
+        }
+    }
+
+    popN(2);  // arguments
+    pop();    // receiver
+    push(Oop::fromSmallInteger(static_cast<intptr_t>(destIndex)));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 293: Decompress byte array to bitmap
+// byteArray bitmap primitiveDecompressFromByteArray -> bitmap
+PrimitiveResult Interpreter::primitiveDecompressFromByteArray(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop bitmap = stackTop();
+    Oop byteArray = stackValue(1);
+
+    if (!bitmap.isObject() || !byteArray.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t srcSize = memory_.byteSizeOf(byteArray);
+    size_t destWords = memory_.byteSizeOf(bitmap) / 4;
+
+    size_t srcIndex = 0;
+    size_t destIndex = 0;
+
+    while (srcIndex < srcSize && destIndex < destWords) {
+        uint8_t header = memory_.fetchByte(srcIndex++, byteArray);
+
+        if (header & 0x80) {
+            // Run-length encoded
+            size_t runLength = header & 0x7F;
+            if (srcIndex + 4 > srcSize) break;
+
+            uint32_t word = (static_cast<uint32_t>(memory_.fetchByte(srcIndex, byteArray)) << 24) |
+                           (static_cast<uint32_t>(memory_.fetchByte(srcIndex + 1, byteArray)) << 16) |
+                           (static_cast<uint32_t>(memory_.fetchByte(srcIndex + 2, byteArray)) << 8) |
+                            static_cast<uint32_t>(memory_.fetchByte(srcIndex + 3, byteArray));
+            srcIndex += 4;
+
+            for (size_t i = 0; i < runLength && destIndex < destWords; i++) {
+                memory_.storeWord32(destIndex++, bitmap, word);
+            }
+        } else {
+            // Literal words
+            size_t literalCount = header;
+            for (size_t i = 0; i < literalCount && destIndex < destWords && srcIndex + 4 <= srcSize; i++) {
+                uint32_t word = (static_cast<uint32_t>(memory_.fetchByte(srcIndex, byteArray)) << 24) |
+                               (static_cast<uint32_t>(memory_.fetchByte(srcIndex + 1, byteArray)) << 16) |
+                               (static_cast<uint32_t>(memory_.fetchByte(srcIndex + 2, byteArray)) << 8) |
+                                static_cast<uint32_t>(memory_.fetchByte(srcIndex + 3, byteArray));
+                srcIndex += 4;
+                memory_.storeWord32(destIndex++, bitmap, word);
+            }
+        }
+    }
+
+    popN(2);  // arguments
+    push(bitmap);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 294: Find first occurrence of character in string
+// aString startIndex char primitiveFindFirstInString -> index or 0
+PrimitiveResult Interpreter::primitiveFindFirstInString(int argCount) {
+    if (argCount != 3) return PrimitiveResult::Failure;
+
+    Oop charOop = stackTop();
+    Oop startIndexOop = stackValue(1);
+    Oop stringOop = stackValue(2);
+
+    if (!startIndexOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+    if (!stringOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    intptr_t startIndex = startIndexOop.asSmallInteger();
+    size_t stringSize = memory_.byteSizeOf(stringOop);
+
+    // Get character to find
+    uint8_t charToFind;
+    if (charOop.isSmallInteger()) {
+        charToFind = static_cast<uint8_t>(charOop.asSmallInteger());
+    } else if (charOop.isCharacter()) {
+        charToFind = static_cast<uint8_t>(charOop.asCharacter());
+    } else {
+        return PrimitiveResult::Failure;
+    }
+
+    // Smalltalk uses 1-based indexing
+    if (startIndex < 1) startIndex = 1;
+
+    // Search for character
+    for (size_t i = static_cast<size_t>(startIndex - 1); i < stringSize; i++) {
+        if (memory_.fetchByte(i, stringOop) == charToFind) {
+            popN(3);  // arguments
+            pop();    // receiver
+            push(Oop::fromSmallInteger(static_cast<intptr_t>(i + 1)));  // 1-based
+            return PrimitiveResult::Success;
+        }
+    }
+
+    // Not found
+    popN(3);
+    pop();
+    push(Oop::fromSmallInteger(0));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 295: Translate string characters using table
+// aString startIndex stopIndex table primitiveTranslateStringWithTable -> aString
+PrimitiveResult Interpreter::primitiveTranslateStringWithTable(int argCount) {
+    if (argCount != 4) return PrimitiveResult::Failure;
+
+    Oop tableOop = stackTop();
+    Oop stopIndexOop = stackValue(1);
+    Oop startIndexOop = stackValue(2);
+    Oop stringOop = stackValue(3);
+
+    if (!startIndexOop.isSmallInteger() || !stopIndexOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+    if (!stringOop.isObject() || !tableOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    intptr_t startIndex = startIndexOop.asSmallInteger();
+    intptr_t stopIndex = stopIndexOop.asSmallInteger();
+    size_t stringSize = memory_.byteSizeOf(stringOop);
+    size_t tableSize = memory_.byteSizeOf(tableOop);
+
+    if (tableSize < 256) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Smalltalk uses 1-based indexing
+    if (startIndex < 1) startIndex = 1;
+    if (stopIndex > static_cast<intptr_t>(stringSize)) stopIndex = static_cast<intptr_t>(stringSize);
+
+    // Translate each character
+    for (intptr_t i = startIndex - 1; i < stopIndex; i++) {
+        uint8_t ch = memory_.fetchByte(static_cast<size_t>(i), stringOop);
+        uint8_t translated = memory_.fetchByte(ch, tableOop);
+        memory_.storeByte(static_cast<size_t>(i), stringOop, translated);
+    }
+
+    popN(4);  // arguments
+    push(stringOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 296: Find substring in string
+// aString key startIndex matchTable primitiveFindSubstring -> index or 0
+PrimitiveResult Interpreter::primitiveFindSubstring(int argCount) {
+    if (argCount != 4) return PrimitiveResult::Failure;
+
+    Oop matchTableOop = stackTop();
+    Oop startIndexOop = stackValue(1);
+    Oop keyOop = stackValue(2);
+    Oop stringOop = stackValue(3);
+
+    if (!startIndexOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+    if (!stringOop.isObject() || !keyOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    intptr_t startIndex = startIndexOop.asSmallInteger();
+    size_t stringSize = memory_.byteSizeOf(stringOop);
+    size_t keySize = memory_.byteSizeOf(keyOop);
+
+    if (keySize == 0) {
+        popN(4);
+        pop();
+        push(Oop::fromSmallInteger(startIndex));
+        return PrimitiveResult::Success;
+    }
+
+    // Check if match table is provided for case-insensitive search
+    bool useMatchTable = matchTableOop.isObject() && memory_.byteSizeOf(matchTableOop) >= 256;
+
+    // Smalltalk uses 1-based indexing
+    if (startIndex < 1) startIndex = 1;
+
+    // Simple substring search
+    for (size_t i = static_cast<size_t>(startIndex - 1); i + keySize <= stringSize; i++) {
+        bool match = true;
+        for (size_t j = 0; j < keySize && match; j++) {
+            uint8_t strChar = memory_.fetchByte(i + j, stringOop);
+            uint8_t keyChar = memory_.fetchByte(j, keyOop);
+
+            if (useMatchTable) {
+                strChar = memory_.fetchByte(strChar, matchTableOop);
+                keyChar = memory_.fetchByte(keyChar, matchTableOop);
+            }
+
+            if (strChar != keyChar) {
+                match = false;
+            }
+        }
+        if (match) {
+            popN(4);
+            pop();
+            push(Oop::fromSmallInteger(static_cast<intptr_t>(i + 1)));  // 1-based
+            return PrimitiveResult::Success;
+        }
+    }
+
+    // Not found
+    popN(4);
+    pop();
+    push(Oop::fromSmallInteger(0));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 297: Get pixel value at coordinates
+// aForm x y primitivePixelValueAt -> pixelValue
+PrimitiveResult Interpreter::primitivePixelValueAt(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop yOop = stackTop();
+    Oop xOop = stackValue(1);
+    Oop formOop = stackValue(2);
+
+    if (!xOop.isSmallInteger() || !yOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+    if (!formOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    intptr_t x = xOop.asSmallInteger();
+    intptr_t y = yOop.asSmallInteger();
+
+    // Get form parameters
+    Oop bits = memory_.fetchPointer(FormBits, formOop);
+    intptr_t width = bitBltField(memory_, formOop, FormWidth);
+    intptr_t height = bitBltField(memory_, formOop, FormHeight);
+    intptr_t depth = bitBltField(memory_, formOop, FormDepth);
+
+    if (bits.isNil() || !bits.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Bounds check
+    if (x < 0 || x >= width || y < 0 || y >= height) {
+        popN(2);  // args
+        pop();    // receiver
+        push(Oop::fromSmallInteger(0));
+        return PrimitiveResult::Success;
+    }
+
+    uint32_t pixelValue = 0;
+
+    if (depth == 32) {
+        size_t offset = static_cast<size_t>(y * width + x);
+        pixelValue = memory_.fetchWord32(offset, bits);
+    } else if (depth == 16) {
+        size_t wordOffset = static_cast<size_t>(y * width + x) / 2;
+        uint32_t word = memory_.fetchWord32(wordOffset, bits);
+        if ((x & 1) == 0) {
+            pixelValue = (word >> 16) & 0xFFFF;
+        } else {
+            pixelValue = word & 0xFFFF;
+        }
+    } else if (depth == 8) {
+        size_t byteOffset = static_cast<size_t>(y * width + x);
+        pixelValue = memory_.fetchByte(byteOffset, bits);
+    } else if (depth == 1) {
+        size_t wordOffset = static_cast<size_t>(y * ((width + 31) / 32) + x / 32);
+        uint32_t word = memory_.fetchWord32(wordOffset, bits);
+        int bitPos = 31 - (x % 32);
+        pixelValue = (word >> bitPos) & 1;
+    } else {
+        return PrimitiveResult::Failure;
+    }
+
+    popN(2);
+    pop();
+    push(Oop::fromSmallInteger(static_cast<intptr_t>(pixelValue)));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 298: Set pixel value at coordinates
+// aForm x y value primitivePixelValueAtPut -> aForm
+PrimitiveResult Interpreter::primitivePixelValueAtPut(int argCount) {
+    if (argCount != 3) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop yOop = stackValue(1);
+    Oop xOop = stackValue(2);
+    Oop formOop = stackValue(3);
+
+    if (!xOop.isSmallInteger() || !yOop.isSmallInteger() || !valueOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+    if (!formOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    intptr_t x = xOop.asSmallInteger();
+    intptr_t y = yOop.asSmallInteger();
+    uint32_t pixelValue = static_cast<uint32_t>(valueOop.asSmallInteger());
+
+    // Get form parameters
+    Oop bits = memory_.fetchPointer(FormBits, formOop);
+    intptr_t width = bitBltField(memory_, formOop, FormWidth);
+    intptr_t height = bitBltField(memory_, formOop, FormHeight);
+    intptr_t depth = bitBltField(memory_, formOop, FormDepth);
+
+    if (bits.isNil() || !bits.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Bounds check
+    if (x < 0 || x >= width || y < 0 || y >= height) {
+        popN(3);
+        push(formOop);
+        return PrimitiveResult::Success;
+    }
+
+    if (depth == 32) {
+        size_t offset = static_cast<size_t>(y * width + x);
+        memory_.storeWord32(offset, bits, pixelValue);
+    } else if (depth == 16) {
+        size_t wordOffset = static_cast<size_t>(y * width + x) / 2;
+        uint32_t word = memory_.fetchWord32(wordOffset, bits);
+        if ((x & 1) == 0) {
+            word = (word & 0x0000FFFF) | ((pixelValue & 0xFFFF) << 16);
+        } else {
+            word = (word & 0xFFFF0000) | (pixelValue & 0xFFFF);
+        }
+        memory_.storeWord32(wordOffset, bits, word);
+    } else if (depth == 8) {
+        size_t byteOffset = static_cast<size_t>(y * width + x);
+        memory_.storeByte(byteOffset, bits, static_cast<uint8_t>(pixelValue));
+    } else if (depth == 1) {
+        size_t wordOffset = static_cast<size_t>(y * ((width + 31) / 32) + x / 32);
+        uint32_t word = memory_.fetchWord32(wordOffset, bits);
+        int bitPos = 31 - (x % 32);
+        if (pixelValue & 1) {
+            word |= (1U << bitPos);
+        } else {
+            word &= ~(1U << bitPos);
+        }
+        memory_.storeWord32(wordOffset, bits, word);
+    } else {
+        return PrimitiveResult::Failure;
+    }
+
+    popN(3);
+    push(formOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 299: Warp bits (texture mapping/rotation)
+// aBitBlt primitiveWarpBits -> aBitBlt
+// Advanced BitBlt with arbitrary quadrilateral source mapping
+PrimitiveResult Interpreter::primitiveWarpBits(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // WarpBlt is complex - it does arbitrary quadrilateral-to-rectangle mapping
+    // Used for rotation, scaling, and texture mapping
+    // For now, fail to Smalltalk fallback
+    return PrimitiveResult::Failure;
+}
+
 // ===== PROFILING PRIMITIVES (260-263) =====
 
 // Primitive 260: VM profile samples into array
