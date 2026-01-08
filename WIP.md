@@ -115,6 +115,17 @@ Clean C++ VM implementation is functional. Image loads, interpreter initializes,
   - **WideString** (format 10-11): 4 bytes per character, full Unicode
 - Features: 1-based indexing, bounds checking, immutability checking
 
+### 11. System Primitives (DONE)
+- **primitiveQuit (113)**: Exit VM with optional exit code
+  - Accepts SmallInteger exit code argument
+  - Calls std::exit() to terminate process
+- **primitiveSnapshot (97)**: Save image to file
+  - Argument: filename as ByteString
+  - Writes Spur 64-bit image header (128 bytes)
+  - Translates runtime pointers to canonical image format (0x10000000000)
+  - Iterates all objects and translates pointer slots
+  - Returns true on success
+
 ## Key Files
 
 ### Clean VM Implementation (src/vm/)
