@@ -487,6 +487,12 @@ private:
     PrimitiveResult primitiveDirectoryDelimitor(int argCount);     // 123
     PrimitiveResult primitiveDirectoryLookup(int argCount);        // 124
 
+    // Additional file primitives (161-164)
+    PrimitiveResult primitiveFileStdioHandles(int argCount);       // 161
+    PrimitiveResult primitiveFileDescriptorType(int argCount);     // 162
+    PrimitiveResult primitiveFileFlush(int argCount);              // 163
+    PrimitiveResult primitiveFileTruncate(int argCount);           // 164
+
     // I/O (stubs - iOS-specific implementation elsewhere)
     PrimitiveResult primitiveMousePoint(int argCount);
     PrimitiveResult primitiveMouseButtons(int argCount);

@@ -3664,6 +3664,12 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[123] = &Interpreter::primitiveDirectoryDelimitor;
     primitiveTable_[124] = &Interpreter::primitiveDirectoryLookup;
 
+    // Additional file primitives (161-164)
+    primitiveTable_[161] = &Interpreter::primitiveFileStdioHandles;
+    primitiveTable_[162] = &Interpreter::primitiveFileDescriptorType;
+    primitiveTable_[163] = &Interpreter::primitiveFileFlush;
+    primitiveTable_[164] = &Interpreter::primitiveFileTruncate;
+
     // Screen primitives (106, 108)
     primitiveTable_[106] = &Interpreter::primitiveScreenSize;
     primitiveTable_[108] = &Interpreter::primitiveScreenDepth;

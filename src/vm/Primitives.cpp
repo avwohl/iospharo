@@ -14,6 +14,7 @@
 #include <fstream>
 #include <iostream>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <vector>
 
 namespace pharo {
@@ -6367,6 +6368,156 @@ PrimitiveResult Interpreter::primitiveDirectoryLookup(int argCount) {
 
     popN(argCount);
     push(resultArray);
+    return PrimitiveResult::Success;
+}
+
+// ===== ADDITIONAL FILE PRIMITIVES =====
+
+// Primitive 161: Get standard I/O file handles
+// primitiveFileStdioHandles -> Array of (stdin, stdout, stderr) handles
+PrimitiveResult Interpreter::primitiveFileStdioHandles(int argCount) {
+    // Register stdin, stdout, stderr if not already registered
+    // Use negative IDs for standard handles to distinguish them
+    static bool stdioInitialized = false;
+    static int stdinId = -1;
+    static int stdoutId = -2;
+    static int stderrId = -3;
+
+    if (!stdioInitialized) {
+        // Store standard handles with special negative IDs
+        openFiles_[-1] = stdin;
+        openFiles_[-2] = stdout;
+        openFiles_[-3] = stderr;
+        stdioInitialized = true;
+    }
+
+    // Create result array with 3 elements
+    Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
+    if (arrayClass.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    uint32_t arrayClassIndex = memory_.indexOfClass(arrayClass);
+    Oop resultArray = memory_.allocateSlots(arrayClassIndex, 3, ObjectFormat::Indexable);
+    if (resultArray.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    memory_.storePointer(0, resultArray, Oop::fromSmallInteger(stdinId));
+    memory_.storePointer(1, resultArray, Oop::fromSmallInteger(stdoutId));
+    memory_.storePointer(2, resultArray, Oop::fromSmallInteger(stderrId));
+
+    pop();  // pop receiver
+    push(resultArray);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 162: Get file descriptor type
+// fileHandle primitiveFileDescriptorType -> integer
+// Returns: 0 = regular file, 1 = directory, 2 = character device, 3 = block device,
+//          4 = FIFO, 5 = socket, 6 = symbolic link, -1 = unknown/invalid
+PrimitiveResult Interpreter::primitiveFileDescriptorType(int argCount) {
+    Oop fileIdOop = stackTop();
+
+    if (!fileIdOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int fileId = static_cast<int>(fileIdOop.asSmallInteger());
+    auto it = openFiles_.find(fileId);
+    if (it == openFiles_.end()) {
+        pop();
+        push(Oop::fromSmallInteger(-1));  // Invalid handle
+        return PrimitiveResult::Success;
+    }
+
+    FILE* file = it->second;
+    int fd = fileno(file);
+
+    struct stat statBuf;
+    if (fstat(fd, &statBuf) != 0) {
+        pop();
+        push(Oop::fromSmallInteger(-1));
+        return PrimitiveResult::Success;
+    }
+
+    int type = -1;
+    if (S_ISREG(statBuf.st_mode)) type = 0;       // Regular file
+    else if (S_ISDIR(statBuf.st_mode)) type = 1;  // Directory
+    else if (S_ISCHR(statBuf.st_mode)) type = 2;  // Character device
+    else if (S_ISBLK(statBuf.st_mode)) type = 3;  // Block device
+    else if (S_ISFIFO(statBuf.st_mode)) type = 4; // FIFO
+#ifdef S_ISSOCK
+    else if (S_ISSOCK(statBuf.st_mode)) type = 5; // Socket
+#endif
+#ifdef S_ISLNK
+    else if (S_ISLNK(statBuf.st_mode)) type = 6;  // Symbolic link
+#endif
+
+    pop();
+    push(Oop::fromSmallInteger(type));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 163: Flush file buffer
+// fileHandle primitiveFileFlush -> fileHandle
+PrimitiveResult Interpreter::primitiveFileFlush(int argCount) {
+    Oop fileIdOop = stackTop();
+
+    if (!fileIdOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int fileId = static_cast<int>(fileIdOop.asSmallInteger());
+    auto it = openFiles_.find(fileId);
+    if (it == openFiles_.end()) {
+        return PrimitiveResult::Failure;
+    }
+
+    fflush(it->second);
+
+    // Return the file handle (leave stack unchanged)
+    return PrimitiveResult::Success;
+}
+
+// Primitive 164: Truncate file to given size
+// fileHandle newSize primitiveFileTruncate -> fileHandle
+PrimitiveResult Interpreter::primitiveFileTruncate(int argCount) {
+    if (argCount < 2) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop sizeOop = stackValue(0);
+    Oop fileIdOop = stackValue(1);
+
+    if (!fileIdOop.isSmallInteger() || !sizeOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int fileId = static_cast<int>(fileIdOop.asSmallInteger());
+    int64_t newSize = sizeOop.asSmallInteger();
+
+    if (newSize < 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    auto it = openFiles_.find(fileId);
+    if (it == openFiles_.end()) {
+        return PrimitiveResult::Failure;
+    }
+
+    FILE* file = it->second;
+    int fd = fileno(file);
+
+    // Flush before truncating
+    fflush(file);
+
+    if (ftruncate(fd, static_cast<off_t>(newSize)) != 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    popN(argCount);
+    push(fileIdOop);  // Return the file handle
     return PrimitiveResult::Success;
 }
 
