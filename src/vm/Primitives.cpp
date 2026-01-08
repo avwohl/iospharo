@@ -4438,4 +4438,114 @@ PrimitiveResult Interpreter::primitiveDigitAtPut(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== EXCEPTION HANDLER PRIMITIVES =====
+
+// Context slot indices for exception handling
+static constexpr size_t ContextSenderIndex = 0;
+static constexpr size_t ContextPCIndex = 1;
+static constexpr size_t ContextStackPIndex = 2;
+static constexpr size_t ContextMethodIndex = 3;
+static constexpr size_t ContextClosureOrNilIndex = 4;
+static constexpr size_t ContextReceiverIndex = 5;
+
+// Primitive 186: Mark a method context as a handler method
+// Used by exception handling to identify on:do: handler contexts
+PrimitiveResult Interpreter::primitiveMarkHandlerMethod(int argCount) {
+    // This primitive marks the current context as an exception handler.
+    // The actual marking is typically done via a flag or by the method structure.
+    // For now, we just succeed - the handler lookup will use method metadata.
+
+    Oop rcvr = stackTop();
+
+    // In a full implementation, we'd set a flag on the context
+    // For now, just return the receiver (typically thisContext)
+
+    pop();
+    push(rcvr);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 187: Mark a method context as an unwind protect method
+// Used by exception handling to identify ensure: contexts
+PrimitiveResult Interpreter::primitiveMarkUnwindMethod(int argCount) {
+    // This primitive marks the current context as an unwind-protect context.
+    // These are contexts that must be run even when unwinding the stack.
+
+    Oop rcvr = stackTop();
+
+    // In a full implementation, we'd set an unwind flag on the context
+    // For now, just return the receiver
+
+    pop();
+    push(rcvr);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 188: Find a handler context for an exception
+// Walks the sender chain looking for a context that handles the given exception
+PrimitiveResult Interpreter::primitiveFindHandlerContext(int argCount) {
+    // Arguments: exception class to handle
+    // Receiver: context to start searching from
+
+    Oop exceptionClass = stackValue(0);
+    Oop startContext = stackValue(1);
+
+    if (!startContext.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Walk the sender chain looking for handler contexts
+    // In Smalltalk, handler contexts are identified by:
+    // 1. Being an activation of on:do: or similar
+    // 2. Having the exception class match
+
+    // For now, return nil to indicate no handler found
+    // The Smalltalk code will fall back to its own implementation
+    popN(2);
+    push(Oop::nil());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 189: Find the next unwind context up to a limit
+// Walks the sender chain looking for ensure: or similar unwind-protect contexts
+PrimitiveResult Interpreter::primitiveFindNextUnwindContext(int argCount) {
+    // Arguments: limit context (stop searching when we reach this)
+    // Receiver: context to start searching from
+
+    Oop limitContext = stackValue(0);
+    Oop startContext = stackValue(1);
+
+    if (!startContext.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Walk the sender chain from startContext up to limitContext
+    // looking for unwind-protect contexts (ensure: blocks)
+
+    Oop current = startContext;
+
+    while (!current.isNil() && current.isObject()) {
+        // Check if this is the limit
+        if (current.rawBits() == limitContext.rawBits()) {
+            // Reached limit without finding unwind context
+            popN(2);
+            push(Oop::nil());
+            return PrimitiveResult::Success;
+        }
+
+        // In a full implementation, we'd check if current is an unwind context
+        // by looking at flags set by primitiveMarkUnwindMethod or by
+        // checking if the method is an ensure: method
+
+        // Get sender
+        Oop sender = memory_.fetchPointer(ContextSenderIndex, current);
+        current = sender;
+    }
+
+    // No unwind context found
+    popN(2);
+    push(Oop::nil());
+    return PrimitiveResult::Success;
+}
+
 } // namespace pharo

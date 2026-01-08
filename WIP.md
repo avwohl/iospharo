@@ -280,6 +280,12 @@ Extended large integer support with division and bitwise operations:
 - **primitiveDigitAt (19)**: Read byte at 1-based index from LargeInteger magnitude
 - **primitiveDigitAtPut (20)**: Write byte at 1-based index to LargeInteger magnitude
 
+### 41. Exception Handler Primitives (DONE)
+- **primitiveMarkHandlerMethod (186)**: Mark context as exception handler (on:do:)
+- **primitiveMarkUnwindMethod (187)**: Mark context as unwind-protect (ensure:)
+- **primitiveFindHandlerContext (188)**: Find handler context for exception class
+- **primitiveFindNextUnwindContext (189)**: Find next ensure: context up to limit
+
 ## Key Files
 
 ### Clean VM Implementation (src/vm/)

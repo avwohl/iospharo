@@ -3732,6 +3732,12 @@ void Interpreter::initializePrimitives() {
     // Float bit access primitives (38-39)
     primitiveTable_[38] = &Interpreter::primitiveFloatAt;
     primitiveTable_[39] = &Interpreter::primitiveFloatAtPut;
+
+    // Exception handler primitives (186-189)
+    primitiveTable_[186] = &Interpreter::primitiveMarkHandlerMethod;
+    primitiveTable_[187] = &Interpreter::primitiveMarkUnwindMethod;
+    primitiveTable_[188] = &Interpreter::primitiveFindHandlerContext;
+    primitiveTable_[189] = &Interpreter::primitiveFindNextUnwindContext;
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {

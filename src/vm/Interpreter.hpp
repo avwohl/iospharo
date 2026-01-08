@@ -587,6 +587,12 @@ private:
     PrimitiveResult primitiveDigitAt(int argCount);          // 19
     PrimitiveResult primitiveDigitAtPut(int argCount);       // 20
 
+    // Exception handler primitives
+    PrimitiveResult primitiveMarkHandlerMethod(int argCount);    // 186
+    PrimitiveResult primitiveMarkUnwindMethod(int argCount);     // 187
+    PrimitiveResult primitiveFindHandlerContext(int argCount);   // 188
+    PrimitiveResult primitiveFindNextUnwindContext(int argCount); // 189
+
     // ===== STARTUP SUPPORT =====
 
     /// Bootstrap startup when active process has nil suspendedContext.
