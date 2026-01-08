@@ -450,12 +450,24 @@ private:
     PrimitiveResult primitiveFloatExp(int argCount);
     PrimitiveResult primitiveFloatLn(int argCount);
 
+    // Point creation
+    PrimitiveResult primitiveMakePoint(int argCount);
+
     // Large integers
     PrimitiveResult primitiveLargeIntegerAdd(int argCount);
     PrimitiveResult primitiveLargeIntegerSubtract(int argCount);
+    PrimitiveResult primitiveLargeIntegerLessThan(int argCount);
+    PrimitiveResult primitiveLargeIntegerGreaterThan(int argCount);
+    PrimitiveResult primitiveLargeIntegerLessOrEqual(int argCount);
+    PrimitiveResult primitiveLargeIntegerGreaterOrEqual(int argCount);
+    PrimitiveResult primitiveLargeIntegerEqual(int argCount);
+    PrimitiveResult primitiveLargeIntegerNotEqual(int argCount);
     PrimitiveResult primitiveLargeIntegerMultiply(int argCount);
     PrimitiveResult primitiveLargeIntegerDivide(int argCount);
     PrimitiveResult primitiveLargeIntegerMod(int argCount);
+
+    // GC primitives
+    PrimitiveResult primitiveFullGC(int argCount);
 
     // ===== STARTUP SUPPORT =====
 

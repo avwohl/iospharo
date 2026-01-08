@@ -143,6 +143,27 @@ Clean C++ VM implementation is functional. Image loads, interpreter initializes,
 - **primitiveAsCharacter (170)**: Integer to Character (validates Unicode range)
 - **primitiveAsInteger (171)**: Character to Integer
 
+### 14. Point Creation (DONE)
+- **primitiveMakePoint (18)**: Create Point from x and y values
+  - Arguments: receiver (x value), argument (y value)
+  - Creates new Point object with x and y slots
+  - Used by `@` message (e.g., `3@4`)
+
+### 15. Large Integer Comparisons (DONE)
+Extended large integer support with comparison operations:
+- **primitiveLargeIntegerLessThan (23)**: `<` comparison
+- **primitiveLargeIntegerGreaterThan (24)**: `>` comparison
+- **primitiveLargeIntegerLessOrEqual (25)**: `<=` comparison
+- **primitiveLargeIntegerGreaterOrEqual (26)**: `>=` comparison
+- **primitiveLargeIntegerEqual (27)**: `=` comparison
+- **primitiveLargeIntegerNotEqual (28)**: `~=` comparison
+- All handle mixed SmallInteger/LargeInteger comparisons
+- Proper signed comparison (negative values less than positive)
+
+### 16. GC Primitives (DONE)
+- **primitiveFullGC (130)**: Trigger full garbage collection
+  - Returns number of free bytes in old space after collection
+
 ## Key Files
 
 ### Clean VM Implementation (src/vm/)

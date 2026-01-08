@@ -315,6 +315,11 @@ public:
     uint8_t* newSpaceStart() const { return newSpaceStart_; }
     uint8_t* permSpaceStart() const { return permSpaceStart_; }
 
+    /// Get free bytes in old space
+    size_t freeOldSpaceBytes() const {
+        return static_cast<size_t>(oldSpaceEnd_ - oldSpaceFree_);
+    }
+
     /// Set the free pointer (for image loading)
     void setOldSpaceFreePointer(uint8_t* ptr) { oldSpaceFree_ = ptr; }
 

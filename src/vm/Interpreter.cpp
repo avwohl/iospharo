@@ -3530,11 +3530,17 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[15] = &Interpreter::primitiveBitOr;
     primitiveTable_[16] = &Interpreter::primitiveBitXor;
     primitiveTable_[17] = &Interpreter::primitiveBitShift;
+    primitiveTable_[18] = &Interpreter::primitiveMakePoint;
 
-    // Float primitives (40-58) - only register those that are implemented
-    // Large integer primitives (21-25, 29-31)
+    // Large integer primitives (21-31)
     primitiveTable_[21] = &Interpreter::primitiveLargeIntegerAdd;
     primitiveTable_[22] = &Interpreter::primitiveLargeIntegerSubtract;
+    primitiveTable_[23] = &Interpreter::primitiveLargeIntegerLessThan;
+    primitiveTable_[24] = &Interpreter::primitiveLargeIntegerGreaterThan;
+    primitiveTable_[25] = &Interpreter::primitiveLargeIntegerLessOrEqual;
+    primitiveTable_[26] = &Interpreter::primitiveLargeIntegerGreaterOrEqual;
+    primitiveTable_[27] = &Interpreter::primitiveLargeIntegerEqual;
+    primitiveTable_[28] = &Interpreter::primitiveLargeIntegerNotEqual;
     primitiveTable_[29] = &Interpreter::primitiveLargeIntegerMultiply;
     primitiveTable_[30] = &Interpreter::primitiveLargeIntegerDivide;
     primitiveTable_[31] = &Interpreter::primitiveLargeIntegerMod;
@@ -3596,6 +3602,9 @@ void Interpreter::initializePrimitives() {
     // System primitives (113, 114)
     primitiveTable_[113] = &Interpreter::primitiveQuit;
     primitiveTable_[114] = &Interpreter::primitiveExitToDebugger;
+
+    // GC primitives (130)
+    primitiveTable_[130] = &Interpreter::primitiveFullGC;
 
     // Snapshot primitive (131)
     primitiveTable_[131] = &Interpreter::primitiveSnapshot;

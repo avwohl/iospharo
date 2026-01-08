@@ -239,6 +239,42 @@ PrimitiveResult Interpreter::primitiveBitShift(int argCount) {
     return PrimitiveResult::Failure;
 }
 
+// ===== POINT PRIMITIVE =====
+
+PrimitiveResult Interpreter::primitiveMakePoint(int argCount) {
+    // Primitive 18: Number @ aNumber - create a Point
+    Oop yArg = stackValue(0);
+    Oop xRcvr = stackValue(1);
+
+    // Both arguments should be numbers (SmallInteger or Float)
+    // For simplicity, we accept SmallIntegers, SmallFloats, or boxed Floats
+    if (!xRcvr.isSmallInteger() && !xRcvr.isSmallFloat() &&
+        !(xRcvr.isObject() && memory_.classOf(xRcvr) == memory_.specialObject(SpecialObjectIndex::ClassFloat))) {
+        return PrimitiveResult::Failure;
+    }
+    if (!yArg.isSmallInteger() && !yArg.isSmallFloat() &&
+        !(yArg.isObject() && memory_.classOf(yArg) == memory_.specialObject(SpecialObjectIndex::ClassFloat))) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get Point class
+    Oop pointClass = memory_.specialObject(SpecialObjectIndex::ClassPoint);
+    uint32_t classIndex = memory_.indexOfClass(pointClass);
+
+    // Allocate Point with 2 slots (x, y)
+    Oop point = memory_.allocateSlots(classIndex, 2);
+    if (point.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Store x and y
+    memory_.storePointer(0, point, xRcvr);  // x
+    memory_.storePointer(1, point, yArg);   // y
+
+    primitiveSuccess(point);
+    return PrimitiveResult::Success;
+}
+
 // ===== COMPARISON PRIMITIVES =====
 
 PrimitiveResult Interpreter::primitiveLessThan(int argCount) {
@@ -2214,6 +2250,164 @@ PrimitiveResult Interpreter::primitiveLargeIntegerMod(int argCount) {
 
     popN(2);
     push(result);
+    return PrimitiveResult::Success;
+}
+
+// Helper: Compare two integers (SmallInteger or LargeInteger)
+// Returns -1, 0, or 1
+static int compareIntegers(ObjectMemory& memory, Oop a, Oop b) {
+    std::vector<uint8_t> aMag, bMag;
+    bool aNeg, bNeg;
+
+    if (!extractInteger(memory, a, aMag, aNeg) ||
+        !extractInteger(memory, b, bMag, bNeg)) {
+        return 0;  // Error case
+    }
+
+    // Handle zero specially
+    bool aIsZero = (aMag.size() == 1 && aMag[0] == 0);
+    bool bIsZero = (bMag.size() == 1 && bMag[0] == 0);
+
+    if (aIsZero && bIsZero) return 0;
+    if (aIsZero) return bNeg ? 1 : -1;
+    if (bIsZero) return aNeg ? -1 : 1;
+
+    // Different signs
+    if (aNeg && !bNeg) return -1;
+    if (!aNeg && bNeg) return 1;
+
+    // Same sign - compare magnitudes
+    int magCmp = compareMagnitudes(aMag, bMag);
+
+    // If both negative, reverse the comparison
+    if (aNeg) magCmp = -magCmp;
+
+    return magCmp;
+}
+
+PrimitiveResult Interpreter::primitiveLargeIntegerLessThan(int argCount) {
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    std::vector<uint8_t> aMag, bMag;
+    bool aNeg, bNeg;
+
+    if (!extractInteger(memory_, rcvr, aMag, aNeg) ||
+        !extractInteger(memory_, arg, bMag, bNeg)) {
+        return PrimitiveResult::Failure;
+    }
+
+    int cmp = compareIntegers(memory_, rcvr, arg);
+    primitiveSuccess(cmp < 0 ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+PrimitiveResult Interpreter::primitiveLargeIntegerGreaterThan(int argCount) {
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    std::vector<uint8_t> aMag, bMag;
+    bool aNeg, bNeg;
+
+    if (!extractInteger(memory_, rcvr, aMag, aNeg) ||
+        !extractInteger(memory_, arg, bMag, bNeg)) {
+        return PrimitiveResult::Failure;
+    }
+
+    int cmp = compareIntegers(memory_, rcvr, arg);
+    primitiveSuccess(cmp > 0 ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+PrimitiveResult Interpreter::primitiveLargeIntegerLessOrEqual(int argCount) {
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    std::vector<uint8_t> aMag, bMag;
+    bool aNeg, bNeg;
+
+    if (!extractInteger(memory_, rcvr, aMag, aNeg) ||
+        !extractInteger(memory_, arg, bMag, bNeg)) {
+        return PrimitiveResult::Failure;
+    }
+
+    int cmp = compareIntegers(memory_, rcvr, arg);
+    primitiveSuccess(cmp <= 0 ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+PrimitiveResult Interpreter::primitiveLargeIntegerGreaterOrEqual(int argCount) {
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    std::vector<uint8_t> aMag, bMag;
+    bool aNeg, bNeg;
+
+    if (!extractInteger(memory_, rcvr, aMag, aNeg) ||
+        !extractInteger(memory_, arg, bMag, bNeg)) {
+        return PrimitiveResult::Failure;
+    }
+
+    int cmp = compareIntegers(memory_, rcvr, arg);
+    primitiveSuccess(cmp >= 0 ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+PrimitiveResult Interpreter::primitiveLargeIntegerEqual(int argCount) {
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    std::vector<uint8_t> aMag, bMag;
+    bool aNeg, bNeg;
+
+    if (!extractInteger(memory_, rcvr, aMag, aNeg) ||
+        !extractInteger(memory_, arg, bMag, bNeg)) {
+        return PrimitiveResult::Failure;
+    }
+
+    int cmp = compareIntegers(memory_, rcvr, arg);
+    primitiveSuccess(cmp == 0 ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+PrimitiveResult Interpreter::primitiveLargeIntegerNotEqual(int argCount) {
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    std::vector<uint8_t> aMag, bMag;
+    bool aNeg, bNeg;
+
+    if (!extractInteger(memory_, rcvr, aMag, aNeg) ||
+        !extractInteger(memory_, arg, bMag, bNeg)) {
+        return PrimitiveResult::Failure;
+    }
+
+    int cmp = compareIntegers(memory_, rcvr, arg);
+    primitiveSuccess(cmp != 0 ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// ===== GC PRIMITIVES =====
+
+PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
+    // Primitive 130: Perform a full garbage collection
+    // Returns the number of bytes of free space after collection
+
+    // Trigger a full garbage collection
+    memory_.fullGC();
+
+    // Get free space after GC
+    size_t freeBytes = memory_.freeOldSpaceBytes();
+
+    // Try to return as SmallInteger
+    if (Oop::canBeSmallInteger(static_cast<int64_t>(freeBytes))) {
+        primitiveSuccess(Oop::fromSmallInteger(static_cast<int64_t>(freeBytes)));
+    } else {
+        // If too large for SmallInteger, return a reasonable estimate
+        // (shouldn't happen in practice, but be safe)
+        primitiveSuccess(Oop::fromSmallInteger(Oop::smallIntegerMax()));
+    }
+
     return PrimitiveResult::Success;
 }
 
