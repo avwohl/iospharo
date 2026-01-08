@@ -3532,21 +3532,27 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[17] = &Interpreter::primitiveBitShift;
 
     // Float primitives (40-58) - only register those that are implemented
+    // Large integer primitives (21-25, 29-31)
+    primitiveTable_[21] = &Interpreter::primitiveLargeIntegerAdd;
+    primitiveTable_[22] = &Interpreter::primitiveLargeIntegerSubtract;
+    primitiveTable_[29] = &Interpreter::primitiveLargeIntegerMultiply;
+    primitiveTable_[30] = &Interpreter::primitiveLargeIntegerDivide;
+    primitiveTable_[31] = &Interpreter::primitiveLargeIntegerMod;
+
+    // Float primitives (40-59)
     primitiveTable_[40] = &Interpreter::primitiveFloatAdd;
     primitiveTable_[41] = &Interpreter::primitiveFloatSubtract;
     primitiveTable_[42] = &Interpreter::primitiveFloatLessThan;
-    // 43-45: Greater/LessOrEqual/GreaterOrEqual not implemented yet
     primitiveTable_[46] = &Interpreter::primitiveFloatEqual;
-    // 47: NotEqual not implemented yet
     primitiveTable_[48] = &Interpreter::primitiveFloatMultiply;
     primitiveTable_[49] = &Interpreter::primitiveFloatDivide;
     primitiveTable_[50] = &Interpreter::primitiveFloatTruncated;
-    // 51-53: FractionPart/Exponent/TimesTwoPower not implemented yet
     primitiveTable_[54] = &Interpreter::primitiveFloatSquareRoot;
     primitiveTable_[55] = &Interpreter::primitiveFloatSin;
     primitiveTable_[56] = &Interpreter::primitiveFloatArctan;
     primitiveTable_[57] = &Interpreter::primitiveFloatLn;
     primitiveTable_[58] = &Interpreter::primitiveFloatExp;
+    primitiveTable_[59] = &Interpreter::primitiveFloatCos;
 
     // Array/Object access primitives (60-68)
     primitiveTable_[60] = &Interpreter::primitiveAt;
@@ -3589,6 +3595,13 @@ void Interpreter::initializePrimitives() {
 
     // Snapshot primitive (131)
     primitiveTable_[131] = &Interpreter::primitiveSnapshot;
+
+    // Time primitives (135-137, 240-241)
+    primitiveTable_[135] = &Interpreter::primitiveMillisecondClock;
+    primitiveTable_[136] = &Interpreter::primitiveSignalAtMilliseconds;
+    primitiveTable_[137] = &Interpreter::primitiveSecondsClock;
+    primitiveTable_[240] = &Interpreter::primitiveMicrosecondClock;
+    primitiveTable_[241] = &Interpreter::primitiveLocalMicrosecondClock;
 
     // Object copy primitive (148)
     primitiveTable_[148] = &Interpreter::primitiveShallowCopy;

@@ -419,6 +419,13 @@ private:
     PrimitiveResult primitiveBeDisplay(int argCount);
     PrimitiveResult primitiveForceDisplayUpdate(int argCount);
 
+    // Time
+    PrimitiveResult primitiveMillisecondClock(int argCount);
+    PrimitiveResult primitiveSecondsClock(int argCount);
+    PrimitiveResult primitiveMicrosecondClock(int argCount);
+    PrimitiveResult primitiveLocalMicrosecondClock(int argCount);
+    PrimitiveResult primitiveSignalAtMilliseconds(int argCount);
+
     // String/Array
     PrimitiveResult primitiveStringAt(int argCount);
     PrimitiveResult primitiveStringAtPut(int argCount);

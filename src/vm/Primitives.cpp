@@ -7,6 +7,7 @@
 
 #include "Interpreter.hpp"
 #include "ImageLoader.hpp"
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
@@ -901,7 +902,21 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveExitToDebugger(int argCount) {
-    return PrimitiveResult::Failure;  // TODO
+    // Primitive 114: Enter debugger / halt VM
+    // Used by Smalltalk Halt and Error handling
+    std::cerr << "[VM] primitiveExitToDebugger called - halting" << std::endl;
+
+    // On debug builds, trigger a breakpoint
+#if defined(__APPLE__) && defined(__arm64__)
+    __builtin_debugtrap();
+#elif defined(__x86_64__) || defined(_M_X64)
+    __builtin_trap();
+#else
+    std::abort();
+#endif
+
+    // Not reached
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
@@ -1205,6 +1220,62 @@ PrimitiveResult Interpreter::primitiveBeDisplay(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveForceDisplayUpdate(int argCount) {
+    return PrimitiveResult::Failure;
+}
+
+// ===== TIME PRIMITIVES =====
+
+PrimitiveResult Interpreter::primitiveMillisecondClock(int argCount) {
+    // Primitive 135: Return milliseconds since VM start or epoch
+    auto now = std::chrono::steady_clock::now();
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now.time_since_epoch()).count();
+
+    // Return low 30 bits to fit in SmallInteger (wraps every ~12 days)
+    int64_t result = ms & 0x3FFFFFFF;
+    primitiveSuccess(Oop::fromSmallInteger(result));
+    return PrimitiveResult::Success;
+}
+
+PrimitiveResult Interpreter::primitiveSecondsClock(int argCount) {
+    // Primitive 137: Return seconds since Smalltalk epoch (Jan 1, 1901)
+    // Unix epoch is Jan 1, 1970 = 2177452800 seconds after Smalltalk epoch
+    const int64_t unixToSmalltalkOffset = 2177452800LL;
+
+    auto now = std::chrono::system_clock::now();
+    auto seconds = std::chrono::duration_cast<std::chrono::seconds>(
+        now.time_since_epoch()).count();
+
+    int64_t smalltalkSeconds = seconds + unixToSmalltalkOffset;
+    primitiveSuccess(Oop::fromSmallInteger(smalltalkSeconds));
+    return PrimitiveResult::Success;
+}
+
+PrimitiveResult Interpreter::primitiveMicrosecondClock(int argCount) {
+    // Primitive 240: Return microseconds (high resolution timer)
+    auto now = std::chrono::high_resolution_clock::now();
+    auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+        now.time_since_epoch()).count();
+
+    // For large values, we need to handle potential overflow
+    // Return as positive integer (may need LargeInteger for full range)
+    if (Oop::canBeSmallInteger(us)) {
+        primitiveSuccess(Oop::fromSmallInteger(us));
+        return PrimitiveResult::Success;
+    }
+
+    // Fall back to Smalltalk for LargeInteger creation
+    return PrimitiveResult::Failure;
+}
+
+PrimitiveResult Interpreter::primitiveLocalMicrosecondClock(int argCount) {
+    // Primitive 241: Same as 240 but for local time
+    return primitiveMicrosecondClock(argCount);
+}
+
+PrimitiveResult Interpreter::primitiveSignalAtMilliseconds(int argCount) {
+    // Primitive 136: Schedule semaphore signal at given milliseconds
+    // For now, just fail - requires timer integration
     return PrimitiveResult::Failure;
 }
 
