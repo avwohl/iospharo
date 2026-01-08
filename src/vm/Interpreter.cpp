@@ -3619,6 +3619,18 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[88] = &Interpreter::primitiveSuspend;
     primitiveTable_[89] = &Interpreter::primitiveFlushCache;
 
+    // File I/O primitives (90-99)
+    primitiveTable_[90] = &Interpreter::primitiveFileAtEnd;
+    primitiveTable_[91] = &Interpreter::primitiveFileClose;
+    primitiveTable_[92] = &Interpreter::primitiveFileGetPosition;
+    primitiveTable_[93] = &Interpreter::primitiveFileOpen;
+    primitiveTable_[94] = &Interpreter::primitiveFileRead;
+    primitiveTable_[95] = &Interpreter::primitiveFileSetPosition;
+    primitiveTable_[96] = &Interpreter::primitiveFileDelete;
+    primitiveTable_[97] = &Interpreter::primitiveFileSize;
+    primitiveTable_[98] = &Interpreter::primitiveFileWrite;
+    primitiveTable_[99] = &Interpreter::primitiveFileRename;
+
     // String/Array primitives (105)
     primitiveTable_[105] = &Interpreter::primitiveReplaceFromTo;
 

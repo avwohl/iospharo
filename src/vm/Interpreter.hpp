@@ -53,7 +53,9 @@
 #include "ObjectMemory.hpp"
 #include <array>
 #include <cstdint>
+#include <cstdio>
 #include <functional>
+#include <map>
 
 namespace pharo {
 
@@ -270,6 +272,10 @@ private:
     // Clipboard (simple in-memory storage for headless mode)
     std::string clipboardText_;
 
+    // File handles (maps Smalltalk file IDs to FILE pointers)
+    std::map<int, FILE*> openFiles_;
+    int nextFileId_ = 1;
+
     // ===== CACHES =====
 
     std::array<MethodCacheEntry, MethodCacheSize> methodCache_;
@@ -463,6 +469,18 @@ private:
     PrimitiveResult primitiveSnapshot(int argCount);
     PrimitiveResult primitiveImageName(int argCount);            // 121
     PrimitiveResult primitiveVMPath(int argCount);               // 142
+
+    // File I/O primitives (90-99)
+    PrimitiveResult primitiveFileAtEnd(int argCount);              // 90
+    PrimitiveResult primitiveFileClose(int argCount);              // 91
+    PrimitiveResult primitiveFileGetPosition(int argCount);        // 92
+    PrimitiveResult primitiveFileOpen(int argCount);               // 93
+    PrimitiveResult primitiveFileRead(int argCount);               // 94
+    PrimitiveResult primitiveFileSetPosition(int argCount);        // 95
+    PrimitiveResult primitiveFileDelete(int argCount);             // 96
+    PrimitiveResult primitiveFileSize(int argCount);               // 97
+    PrimitiveResult primitiveFileWrite(int argCount);              // 98
+    PrimitiveResult primitiveFileRename(int argCount);             // 99
 
     // I/O (stubs - iOS-specific implementation elsewhere)
     PrimitiveResult primitiveMousePoint(int argCount);

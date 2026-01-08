@@ -5872,4 +5872,348 @@ PrimitiveResult Interpreter::primitiveClassName(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== FILE I/O PRIMITIVES =====
+
+// Primitive 90: Test if at end of file
+// fileHandle primitiveFileAtEnd -> boolean
+PrimitiveResult Interpreter::primitiveFileAtEnd(int argCount) {
+    Oop fileIdOop = stackTop();
+
+    if (!fileIdOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int fileId = static_cast<int>(fileIdOop.asSmallInteger());
+    auto it = openFiles_.find(fileId);
+    if (it == openFiles_.end()) {
+        return PrimitiveResult::Failure;
+    }
+
+    FILE* file = it->second;
+    bool atEnd = (feof(file) != 0);
+
+    // If not at EOF, check if next read would hit EOF
+    if (!atEnd) {
+        int c = fgetc(file);
+        if (c == EOF) {
+            atEnd = true;
+        } else {
+            ungetc(c, file);
+        }
+    }
+
+    pop();
+    push(atEnd ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 91: Close a file
+// fileHandle primitiveFileClose -> receiver
+PrimitiveResult Interpreter::primitiveFileClose(int argCount) {
+    Oop fileIdOop = stackTop();
+
+    if (!fileIdOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int fileId = static_cast<int>(fileIdOop.asSmallInteger());
+    auto it = openFiles_.find(fileId);
+    if (it == openFiles_.end()) {
+        return PrimitiveResult::Failure;
+    }
+
+    fclose(it->second);
+    openFiles_.erase(it);
+
+    // Return receiver (leave stack as-is, receiver is below arg)
+    return PrimitiveResult::Success;
+}
+
+// Primitive 92: Get current position in file
+// fileHandle primitiveFileGetPosition -> position
+PrimitiveResult Interpreter::primitiveFileGetPosition(int argCount) {
+    Oop fileIdOop = stackTop();
+
+    if (!fileIdOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int fileId = static_cast<int>(fileIdOop.asSmallInteger());
+    auto it = openFiles_.find(fileId);
+    if (it == openFiles_.end()) {
+        return PrimitiveResult::Failure;
+    }
+
+    long pos = ftell(it->second);
+    if (pos < 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    pop();
+    push(Oop::fromSmallInteger(pos));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 93: Open a file
+// filename writable primitiveFileOpen -> fileHandle (or nil on failure)
+PrimitiveResult Interpreter::primitiveFileOpen(int argCount) {
+    if (argCount < 2) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop writableOop = stackValue(0);  // writable flag
+    Oop filenameOop = stackValue(1);  // filename string
+
+    // Extract filename
+    std::string filename = extractString(memory_, filenameOop);
+    if (filename.empty()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Determine mode based on writable flag
+    bool writable = (writableOop == memory_.trueObject());
+    const char* mode = writable ? "r+b" : "rb";
+
+    FILE* file = fopen(filename.c_str(), mode);
+
+    // If opening for write failed, try creating the file
+    if (!file && writable) {
+        file = fopen(filename.c_str(), "w+b");
+    }
+
+    if (!file) {
+        // Return nil on failure
+        popN(argCount);
+        push(Oop::nil());
+        return PrimitiveResult::Success;
+    }
+
+    // Assign a file ID and store the handle
+    int fileId = nextFileId_++;
+    openFiles_[fileId] = file;
+
+    popN(argCount);
+    push(Oop::fromSmallInteger(fileId));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 94: Read from file
+// fileHandle buffer startIndex count primitiveFileRead -> bytesRead
+PrimitiveResult Interpreter::primitiveFileRead(int argCount) {
+    if (argCount < 4) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop countOop = stackValue(0);
+    Oop startOop = stackValue(1);
+    Oop bufferOop = stackValue(2);
+    Oop fileIdOop = stackValue(3);
+
+    if (!fileIdOop.isSmallInteger() || !startOop.isSmallInteger() || !countOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int fileId = static_cast<int>(fileIdOop.asSmallInteger());
+    int64_t start = startOop.asSmallInteger();  // 1-based in Smalltalk
+    int64_t count = countOop.asSmallInteger();
+
+    if (start < 1 || count < 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    auto it = openFiles_.find(fileId);
+    if (it == openFiles_.end()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Buffer must be a byte object
+    if (!bufferOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t bufferSize = memory_.byteSizeOf(bufferOop);
+    if (static_cast<size_t>(start - 1 + count) > bufferSize) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Read into a temporary buffer
+    std::vector<uint8_t> tempBuffer(count);
+    size_t bytesRead = fread(tempBuffer.data(), 1, count, it->second);
+
+    // Copy to the Smalltalk buffer
+    for (size_t i = 0; i < bytesRead; i++) {
+        memory_.storeByte(start - 1 + i, bufferOop, tempBuffer[i]);
+    }
+
+    popN(argCount);
+    push(Oop::fromSmallInteger(static_cast<int64_t>(bytesRead)));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 95: Set position in file
+// fileHandle position primitiveFileSetPosition -> receiver
+PrimitiveResult Interpreter::primitiveFileSetPosition(int argCount) {
+    if (argCount < 2) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop posOop = stackValue(0);
+    Oop fileIdOop = stackValue(1);
+
+    if (!fileIdOop.isSmallInteger() || !posOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int fileId = static_cast<int>(fileIdOop.asSmallInteger());
+    int64_t pos = posOop.asSmallInteger();
+
+    auto it = openFiles_.find(fileId);
+    if (it == openFiles_.end()) {
+        return PrimitiveResult::Failure;
+    }
+
+    if (fseek(it->second, static_cast<long>(pos), SEEK_SET) != 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    popN(argCount);
+    push(fileIdOop);  // Return the file handle
+    return PrimitiveResult::Success;
+}
+
+// Primitive 96: Delete a file
+// filename primitiveFileDelete -> boolean
+PrimitiveResult Interpreter::primitiveFileDelete(int argCount) {
+    Oop filenameOop = stackTop();
+
+    std::string filename = extractString(memory_, filenameOop);
+    if (filename.empty()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int result = remove(filename.c_str());
+
+    pop();
+    push(result == 0 ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 97: Get file size
+// fileHandle primitiveFileSize -> size
+PrimitiveResult Interpreter::primitiveFileSize(int argCount) {
+    Oop fileIdOop = stackTop();
+
+    if (!fileIdOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int fileId = static_cast<int>(fileIdOop.asSmallInteger());
+    auto it = openFiles_.find(fileId);
+    if (it == openFiles_.end()) {
+        return PrimitiveResult::Failure;
+    }
+
+    FILE* file = it->second;
+
+    // Save current position
+    long currentPos = ftell(file);
+    if (currentPos < 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Seek to end
+    if (fseek(file, 0, SEEK_END) != 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    long size = ftell(file);
+
+    // Restore position
+    fseek(file, currentPos, SEEK_SET);
+
+    if (size < 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    pop();
+    push(Oop::fromSmallInteger(size));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 98: Write to file
+// fileHandle buffer startIndex count primitiveFileWrite -> bytesWritten
+PrimitiveResult Interpreter::primitiveFileWrite(int argCount) {
+    if (argCount < 4) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop countOop = stackValue(0);
+    Oop startOop = stackValue(1);
+    Oop bufferOop = stackValue(2);
+    Oop fileIdOop = stackValue(3);
+
+    if (!fileIdOop.isSmallInteger() || !startOop.isSmallInteger() || !countOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int fileId = static_cast<int>(fileIdOop.asSmallInteger());
+    int64_t start = startOop.asSmallInteger();  // 1-based in Smalltalk
+    int64_t count = countOop.asSmallInteger();
+
+    if (start < 1 || count < 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    auto it = openFiles_.find(fileId);
+    if (it == openFiles_.end()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Buffer must be a byte object
+    if (!bufferOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t bufferSize = memory_.byteSizeOf(bufferOop);
+    if (static_cast<size_t>(start - 1 + count) > bufferSize) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Copy from Smalltalk buffer to temp buffer
+    std::vector<uint8_t> tempBuffer(count);
+    for (int64_t i = 0; i < count; i++) {
+        tempBuffer[i] = memory_.fetchByte(start - 1 + i, bufferOop);
+    }
+
+    size_t bytesWritten = fwrite(tempBuffer.data(), 1, count, it->second);
+
+    popN(argCount);
+    push(Oop::fromSmallInteger(static_cast<int64_t>(bytesWritten)));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 99: Rename a file
+// oldName newName primitiveFileRename -> boolean
+PrimitiveResult Interpreter::primitiveFileRename(int argCount) {
+    if (argCount < 2) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop newNameOop = stackValue(0);
+    Oop oldNameOop = stackValue(1);
+
+    std::string oldName = extractString(memory_, oldNameOop);
+    std::string newName = extractString(memory_, newNameOop);
+
+    if (oldName.empty() || newName.empty()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int result = rename(oldName.c_str(), newName.c_str());
+
+    popN(argCount);
+    push(result == 0 ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
 } // namespace pharo
