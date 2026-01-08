@@ -3656,6 +3656,12 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[113] = &Interpreter::primitiveQuit;
     primitiveTable_[114] = &Interpreter::primitiveExitToDebugger;
 
+    // FFI/External primitives (116-118, 147)
+    primitiveTable_[116] = &Interpreter::primitiveFlushExternalPrimitives;
+    primitiveTable_[117] = &Interpreter::primitiveCalloutToFFI;
+    primitiveTable_[118] = &Interpreter::primitiveDLLCall;
+    primitiveTable_[147] = &Interpreter::primitiveExternalCall;
+
     // Special objects and GC primitives (129-130)
     primitiveTable_[129] = &Interpreter::primitiveSpecialObjectsOop;
     primitiveTable_[130] = &Interpreter::primitiveFullGC;

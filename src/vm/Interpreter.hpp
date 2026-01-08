@@ -519,6 +519,12 @@ private:
     PrimitiveResult primitiveInputWord(int argCount);              // 154
     PrimitiveResult primitiveCompareString(int argCount);          // 155
 
+    // FFI/External primitives (116-118, 147)
+    PrimitiveResult primitiveFlushExternalPrimitives(int argCount); // 116
+    PrimitiveResult primitiveCalloutToFFI(int argCount);           // 117
+    PrimitiveResult primitiveDLLCall(int argCount);                // 118
+    PrimitiveResult primitiveExternalCall(int argCount);           // 147
+
     // String primitives (157-158)
     PrimitiveResult primitiveCompareStringCollated(int argCount);  // 157
     PrimitiveResult primitiveCompareStringNoCase(int argCount);    // 158

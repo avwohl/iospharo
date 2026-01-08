@@ -7094,4 +7094,69 @@ PrimitiveResult Interpreter::primitiveSnapshotEmbedded(int argCount) {
     return PrimitiveResult::Failure;
 }
 
+// ===== FFI/EXTERNAL PRIMITIVES (116-118, 147) =====
+
+// Primitive 116: Flush external primitives cache
+// primitiveFlushExternalPrimitives -> self
+// Clears the cache of loaded external/plugin primitives
+PrimitiveResult Interpreter::primitiveFlushExternalPrimitives(int argCount) {
+    // In a VM with external plugins, this would:
+    // 1. Unload all dynamically loaded primitives
+    // 2. Clear the external primitive lookup cache
+    // 3. Force re-lookup on next call
+
+    // For our minimal VM without external plugins, this is a no-op
+    // Just return success
+    return PrimitiveResult::Success;
+}
+
+// Primitive 117: Call out to FFI (Foreign Function Interface)
+// externalFunction args primitiveCalloutToFFI -> result
+// Calls a foreign function through FFI mechanism
+PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
+    // FFI callout requires:
+    // 1. Function pointer or symbol lookup
+    // 2. Argument marshalling (Smalltalk -> C types)
+    // 3. Actual call
+    // 4. Result marshalling (C -> Smalltalk)
+
+    // Without a full FFI implementation, fail to Smalltalk fallback
+    // Smalltalk code may use alternative mechanisms or report error
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 118: DLL/shared library call
+// moduleName functionName args primitiveDLLCall -> result
+// Calls a function in a dynamically loaded library
+PrimitiveResult Interpreter::primitiveDLLCall(int argCount) {
+    // DLL call requires:
+    // 1. dlopen/LoadLibrary to load the module
+    // 2. dlsym/GetProcAddress to find the function
+    // 3. Calling convention handling
+    // 4. Argument/result marshalling
+
+    // Without full DLL support, fail to Smalltalk
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 147: External primitive call (named primitive)
+// primitiveExternalCall -> result
+// Calls a primitive defined in an external plugin module
+PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
+    // External call uses pragma in method to specify:
+    // <primitive: 'primitiveName' module: 'ModuleName'>
+    // The VM looks up the module, finds the primitive, and calls it
+
+    // This is the general mechanism for plugin primitives
+    // Without plugin support, fail to trigger Smalltalk fallback
+
+    // A full implementation would:
+    // 1. Get module name and primitive name from method literal frame
+    // 2. Load the module if not already loaded
+    // 3. Look up the primitive function
+    // 4. Call it with the current stack/context
+
+    return PrimitiveResult::Failure;
+}
+
 } // namespace pharo
