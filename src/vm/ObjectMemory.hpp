@@ -82,6 +82,7 @@ enum class SpecialObjectIndex : size_t {
     SelectorCannotReturn = 36,
     SelectorAboutToReturn = 40,
     ClassLargeNegativeInteger = 42,
+    ExternalSemaphoreTable = 38,  // Array of external semaphores (signaled by index)
     ClassFullBlockClosure = 59,
     // Add more as needed
     Count = 60

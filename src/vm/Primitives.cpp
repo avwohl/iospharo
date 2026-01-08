@@ -7,6 +7,8 @@
 
 #include "Interpreter.hpp"
 #include "ImageLoader.hpp"
+#include "../platform/DisplaySurface.hpp"
+#include "../platform/EventQueue.hpp"
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -1734,15 +1736,70 @@ PrimitiveResult Interpreter::primitiveKeyboardNext(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveBeDisplay(int argCount) {
-    return PrimitiveResult::Failure;
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Get the receiver (a Form object)
+    Oop form = stackTop();
+    if (!form.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Store as the display form
+    setDisplayForm(form);
+
+    // Extract form dimensions to update screen size
+    // Form slots: 0=bits, 1=width, 2=height, 3=depth
+    Oop widthOop = memory_.fetchPointer(1, form);
+    Oop heightOop = memory_.fetchPointer(2, form);
+    Oop depthOop = memory_.fetchPointer(3, form);
+
+    if (widthOop.isSmallInteger() && heightOop.isSmallInteger() && depthOop.isSmallInteger()) {
+        int width = static_cast<int>(widthOop.asSmallInteger());
+        int height = static_cast<int>(heightOop.asSmallInteger());
+        int depth = static_cast<int>(depthOop.asSmallInteger());
+
+        if (width > 0 && height > 0 && depth > 0) {
+            setScreenSize(width, height);
+            setScreenDepth(depth);
+        }
+    }
+
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveForceDisplayUpdate(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    // On iOS, display updates are handled by the system
-    // This primitive signals that the display should be refreshed
-    // For now, just succeed - actual display update is platform-specific
+    // Copy display form bits to the platform display surface
+    // Form slots: 0=bits, 1=width, 2=height, 3=depth
+    if (pharo::gDisplaySurface && !displayForm_.isNil() && displayForm_.isObject()) {
+        // Get the Form's bits (slot 0)
+        Oop bits = memory_.fetchPointer(0, displayForm_);
+        if (!bits.isNil() && bits.isObject()) {
+            ObjectHeader* bitsHdr = bits.asObjectPtr();
+            uint32_t* srcPixels = reinterpret_cast<uint32_t*>(bitsHdr->bytes());
+            uint32_t* dstPixels = pharo::gDisplaySurface->pixels();
+
+            int srcWidth = screenWidth_;
+            int srcHeight = screenHeight_;
+            int dstWidth = pharo::gDisplaySurface->width();
+            int dstHeight = pharo::gDisplaySurface->height();
+
+            // Copy pixels (handle size mismatch)
+            int copyWidth = std::min(srcWidth, dstWidth);
+            int copyHeight = std::min(srcHeight, dstHeight);
+
+            for (int y = 0; y < copyHeight; y++) {
+                for (int x = 0; x < copyWidth; x++) {
+                    dstPixels[y * dstWidth + x] = srcPixels[y * srcWidth + x];
+                }
+            }
+
+            // Notify platform of update
+            pharo::gDisplaySurface->update();
+        }
+    }
+
     return PrimitiveResult::Success;
 }
 
@@ -9437,8 +9494,10 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
     }
 
     // Event buffer format (8 slots):
-    // 0: event type (0=none, 1=mouse, 2=key, 3=window, etc.)
-    // 1-7: event-specific data
+    // 0: event type (0=none, 1=mouse, 2=key, 6=window, etc.)
+    // 1: timestamp
+    // 2-6: event-specific data
+    // 7: window index
 
     // Check buffer has enough slots
     size_t slotCount = memory_.slotCountOf(eventBuffer);
@@ -9446,10 +9505,22 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // For now, return "no event" (type 0)
-    // A full implementation would dequeue from an event queue
-    // populated by the iOS event loop
-    memory_.storePointer(0, eventBuffer, Oop::fromSmallInteger(0));  // No event
+    // Try to get next event from the queue
+    Event event;
+    if (gEventQueue.pop(event)) {
+        // Fill buffer with event data
+        memory_.storePointer(0, eventBuffer, Oop::fromSmallInteger(event.type));
+        memory_.storePointer(1, eventBuffer, Oop::fromSmallInteger(event.timeStamp));
+        memory_.storePointer(2, eventBuffer, Oop::fromSmallInteger(event.arg1));
+        memory_.storePointer(3, eventBuffer, Oop::fromSmallInteger(event.arg2));
+        memory_.storePointer(4, eventBuffer, Oop::fromSmallInteger(event.arg3));
+        memory_.storePointer(5, eventBuffer, Oop::fromSmallInteger(event.arg4));
+        memory_.storePointer(6, eventBuffer, Oop::fromSmallInteger(event.arg5));
+        memory_.storePointer(7, eventBuffer, Oop::fromSmallInteger(event.windowIndex));
+    } else {
+        // No event available
+        memory_.storePointer(0, eventBuffer, Oop::fromSmallInteger(0));
+    }
 
     pop();  // pop eventBuffer argument, leave receiver
     return PrimitiveResult::Success;
@@ -9467,10 +9538,9 @@ PrimitiveResult Interpreter::primitiveInputSemaphore2(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Store the semaphore index for later signaling
-    // A full implementation would register this with the event system
-    // int64_t semIndex = semIndexOop.asSmallInteger();
-    // inputSemaphoreIndex_ = semIndex;
+    // Store the semaphore index in the event queue
+    int64_t semIndex = semIndexOop.asSmallInteger();
+    gEventQueue.setInputSemaphoreIndex(static_cast<int>(semIndex));
 
     pop();  // pop argument, leave receiver
     return PrimitiveResult::Success;
@@ -9507,8 +9577,9 @@ PrimitiveResult Interpreter::primitiveEventProcessingControl(int argCount) {
         case 2:  // Disable
             result = 0;
             break;
-        case 3:  // Flush
-            result = 0;  // Return count of flushed events
+        case 3:  // Flush event queue
+            gEventQueue.clear();
+            result = 0;
             break;
         default:
             return PrimitiveResult::Failure;

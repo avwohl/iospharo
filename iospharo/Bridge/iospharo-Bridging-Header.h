@@ -53,9 +53,14 @@ int ios_getDisplayHeight(void);
 int ios_getDisplayDepth(void);
 void ios_setDisplaySize(int width, int height);
 
-/* iOS event bridge functions */
+/* iOS event bridge functions (legacy) */
 void ios_queueTouchEvent(int type, int x, int y, int buttons, int modifiers);
 void ios_queueKeyEvent(int charCode, int pressCode, int modifiers);
+
+/* Platform event functions (new C++ EventQueue) */
+void vm_postMouseEvent(int type, int x, int y, int buttons, int modifiers);
+void vm_postKeyEvent(int type, int charCode, int keyCode, int modifiers);
+void vm_postScrollEvent(int x, int y, int deltaX, int deltaY, int modifiers);
 
 /* Touch event types */
 #define IOS_TOUCH_DOWN      0

@@ -52,6 +52,7 @@
 
 #include "ObjectMemory.hpp"
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <functional>
@@ -163,6 +164,7 @@ public:
 
     /// Stop the interpreter
     void stop() { running_ = false; }
+    bool isRunning() const { return running_; }
 
     /// Get the object memory
     ObjectMemory& memory() { return memory_; }
@@ -178,6 +180,8 @@ public:
     void setScreenDepth(int depth) { screenDepth_ = depth; }
     int screenWidth() const { return screenWidth_; }
     int screenHeight() const { return screenHeight_; }
+    Oop displayForm() const { return displayForm_; }
+    void setDisplayForm(Oop form) { displayForm_ = form; }
     int screenDepth() const { return screenDepth_; }
 
     /// Get current execution state
@@ -215,6 +219,18 @@ public:
 
     /// Set the receiver's instance variable
     void setReceiverInstVar(size_t index, Oop value);
+
+    // ===== EXTERNAL SEMAPHORE SIGNALING =====
+
+    /// Signal an external semaphore by index (for I/O events, timers, etc.)
+    /// Called from outside the interpreter (e.g., event handlers)
+    void signalExternalSemaphore(int index);
+
+    /// Check if there are pending external semaphores to signal
+    bool hasPendingSignals() const { return pendingSignalIndex_ > 0; }
+
+    /// Process any pending external semaphore signals (called during interpret loop)
+    void processPendingSignals();
 
     // ===== PRIMITIVE SUPPORT =====
 
@@ -281,6 +297,13 @@ private:
     int screenWidth_ = 1024;
     int screenHeight_ = 768;
     int screenDepth_ = 32;
+
+    // Display Form (the Smalltalk Form that represents the screen)
+    Oop displayForm_ = Oop::nil();
+
+    // External semaphore signaling (for I/O events)
+    // Simple approach: store one pending signal index, process in interpret loop
+    std::atomic<int> pendingSignalIndex_{0};
 
     // Clipboard (simple in-memory storage for headless mode)
     std::string clipboardText_;

@@ -1,0 +1,82 @@
+/*
+ * EventQueue.hpp - Event handling for Pharo VM
+ */
+
+#ifndef PHARO_EVENT_QUEUE_HPP
+#define PHARO_EVENT_QUEUE_HPP
+
+#include <cstdint>
+#include <queue>
+#include <mutex>
+
+namespace pharo {
+
+/// Event types matching Pharo's event encoding
+enum class EventType : int {
+    None = 0,
+    Mouse = 1,
+    Keyboard = 2,
+    WindowMetrics = 6,
+    MouseWheel = 7,
+};
+
+/// Mouse buttons
+enum class MouseButton : int {
+    None = 0,
+    Red = 4,      // Left/primary
+    Yellow = 2,   // Right/secondary
+    Blue = 1,     // Middle
+};
+
+/// Keyboard modifiers
+enum ModifierFlags {
+    ShiftKey = 1,
+    CtrlKey = 2,
+    AltKey = 4,
+    CmdKey = 8,
+};
+
+/// Event structure (matches Pharo's 8-word event buffer)
+struct Event {
+    int type = 0;
+    int timeStamp = 0;
+    int arg1 = 0;
+    int arg2 = 0;
+    int arg3 = 0;
+    int arg4 = 0;
+    int arg5 = 0;
+    int windowIndex = 1;
+};
+
+/// Callback type for event notification
+using EventCallback = void(*)(void* context);
+
+/// Thread-safe event queue
+class EventQueue {
+public:
+    void push(const Event& event);
+    bool pop(Event& event);
+    bool isEmpty() const;
+    void clear();
+
+    /// Set callback to be invoked when events are pushed
+    void setEventCallback(EventCallback callback, void* context);
+
+    /// Set input semaphore index (for VM signaling)
+    void setInputSemaphoreIndex(int index);
+    int getInputSemaphoreIndex() const;
+
+private:
+    mutable std::mutex mutex_;
+    std::queue<Event> events_;
+    EventCallback callback_ = nullptr;
+    void* callbackContext_ = nullptr;
+    int inputSemaphoreIndex_ = 0;
+};
+
+/// Global event queue
+extern EventQueue gEventQueue;
+
+} // namespace pharo
+
+#endif

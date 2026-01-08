@@ -64,12 +64,23 @@ struct PharoCanvasView: UIViewRepresentable {
         // Ensure single tap waits for double tap to fail
         tapGesture.require(toFail: doubleTapGesture)
 
-        // Pan gesture (drag/move)
+        // Pan gesture (drag/move) - single finger
         let panGesture = UIPanGestureRecognizer(
             target: coordinator,
             action: #selector(Coordinator.handlePan(_:))
         )
+        panGesture.minimumNumberOfTouches = 1
+        panGesture.maximumNumberOfTouches = 1
         view.addGestureRecognizer(panGesture)
+
+        // Two-finger pan gesture (scroll)
+        let twoFingerPanGesture = UIPanGestureRecognizer(
+            target: coordinator,
+            action: #selector(Coordinator.handleTwoFingerPan(_:))
+        )
+        twoFingerPanGesture.minimumNumberOfTouches = 2
+        twoFingerPanGesture.maximumNumberOfTouches = 2
+        view.addGestureRecognizer(twoFingerPanGesture)
 
         // Long press gesture (right click)
         let longPressGesture = UILongPressGestureRecognizer(
@@ -177,21 +188,45 @@ struct PharoCanvasView: UIViewRepresentable {
             parent.bridge.hapticFeedback(style: .light)
         }
 
+        @objc func handleTwoFingerPan(_ gesture: UIPanGestureRecognizer) {
+            // Two-finger pan maps to scroll wheel events
+            let point = gesture.location(in: gesture.view)
+            let translation = gesture.translation(in: gesture.view)
+
+            switch gesture.state {
+            case .began, .changed:
+                // Convert translation to scroll delta
+                // Invert Y for natural scrolling (drag down = scroll up)
+                let deltaX = Int(translation.x)
+                let deltaY = Int(-translation.y)
+
+                if deltaX != 0 || deltaY != 0 {
+                    parent.bridge.sendScrollEvent(at: point, deltaX: deltaX, deltaY: deltaY)
+                }
+
+                // Reset translation for incremental updates
+                gesture.setTranslation(.zero, in: gesture.view)
+
+            default:
+                break
+            }
+        }
+
         @objc func handlePinch(_ gesture: UIPinchGestureRecognizer) {
-            // Pinch can be used for zooming the Pharo world
-            // For now, we'll map it to scroll wheel events
+            // Pinch gesture maps to scroll wheel events for zooming
             let point = gesture.location(in: gesture.view)
 
             switch gesture.state {
             case .began, .changed:
-                // Map scale to scroll delta
-                let delta = Int((gesture.scale - 1.0) * 10)
+                // Map scale change to vertical scroll delta
+                // scale > 1.0 = zoom in (positive delta)
+                // scale < 1.0 = zoom out (negative delta)
+                let delta = Int((gesture.scale - 1.0) * 120)  // 120 = one "notch" of scroll
                 if delta != 0 {
-                    // Send as modifier + scroll (Cmd+scroll for zoom in many Pharo tools)
-                    parent.bridge.sendTouchDown(at: point, buttons: IOS_RED_BUTTON, modifiers: IOS_CMD_KEY)
-                    parent.bridge.sendTouchUp(at: point, modifiers: IOS_CMD_KEY)
+                    // Send scroll event with Cmd modifier for zoom behavior
+                    parent.bridge.sendScrollEvent(at: point, deltaX: 0, deltaY: delta, modifiers: IOS_CMD_KEY)
                 }
-                gesture.scale = 1.0
+                gesture.scale = 1.0  // Reset for continuous updates
 
             default:
                 break

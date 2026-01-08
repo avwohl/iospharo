@@ -175,47 +175,51 @@ class PharoBridge: ObservableObject {
     }
 
     // MARK: - Touch Events
+    // Mouse event types for vm_postMouseEvent: 0=move, 1=down, 2=up
 
     /// Send touch down event
     func sendTouchDown(at point: CGPoint, buttons: Int = IOS_RED_BUTTON, modifiers: Int = 0) {
-        ios_queueTouchEvent(Int32(IOS_TOUCH_DOWN),
-                           Int32(point.x), Int32(point.y),
-                           Int32(buttons), Int32(modifiers))
+        vm_postMouseEvent(1, // type: down
+                          Int32(point.x), Int32(point.y),
+                          Int32(buttons), Int32(modifiers))
     }
 
     /// Send touch moved event
     func sendTouchMoved(to point: CGPoint, buttons: Int = IOS_RED_BUTTON, modifiers: Int = 0) {
-        ios_queueTouchEvent(Int32(IOS_TOUCH_MOVED),
-                           Int32(point.x), Int32(point.y),
-                           Int32(buttons), Int32(modifiers))
+        vm_postMouseEvent(0, // type: move
+                          Int32(point.x), Int32(point.y),
+                          Int32(buttons), Int32(modifiers))
     }
 
     /// Send touch up event
     func sendTouchUp(at point: CGPoint, modifiers: Int = 0) {
-        ios_queueTouchEvent(Int32(IOS_TOUCH_UP),
-                           Int32(point.x), Int32(point.y),
-                           0, Int32(modifiers))
+        vm_postMouseEvent(2, // type: up
+                          Int32(point.x), Int32(point.y),
+                          0, Int32(modifiers))
     }
 
     /// Send touch cancelled event
     func sendTouchCancelled(at point: CGPoint) {
-        ios_queueTouchEvent(Int32(IOS_TOUCH_CANCELLED),
-                           Int32(point.x), Int32(point.y),
-                           0, 0)
+        vm_postMouseEvent(2, // type: up (treat cancelled as up)
+                          Int32(point.x), Int32(point.y),
+                          0, 0)
     }
 
     // MARK: - Keyboard Events
+    // Key event types for vm_postKeyEvent: 0=down, 1=up, 2=stroke
 
     /// Send key down event
     func sendKeyDown(_ character: Character, modifiers: Int = 0) {
         guard let scalar = character.unicodeScalars.first else { return }
-        ios_queueKeyEvent(Int32(scalar.value), Int32(IOS_KEY_DOWN), Int32(modifiers))
+        vm_postKeyEvent(0, // type: down
+                        Int32(scalar.value), 0, Int32(modifiers))
     }
 
     /// Send key up event
     func sendKeyUp(_ character: Character, modifiers: Int = 0) {
         guard let scalar = character.unicodeScalars.first else { return }
-        ios_queueKeyEvent(Int32(scalar.value), Int32(IOS_KEY_UP), Int32(modifiers))
+        vm_postKeyEvent(1, // type: up
+                        Int32(scalar.value), 0, Int32(modifiers))
     }
 
     /// Send key typed (down + up)
@@ -229,6 +233,15 @@ class PharoBridge: ObservableObject {
         for char in string {
             sendKeyTyped(char, modifiers: modifiers)
         }
+    }
+
+    // MARK: - Scroll Events
+
+    /// Send scroll wheel event (for pinch zoom, two-finger scroll)
+    func sendScrollEvent(at point: CGPoint, deltaX: Int, deltaY: Int, modifiers: Int = 0) {
+        vm_postScrollEvent(Int32(point.x), Int32(point.y),
+                           Int32(deltaX), Int32(deltaY),
+                           Int32(modifiers))
     }
 
     // MARK: - Utilities

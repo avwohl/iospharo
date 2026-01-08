@@ -239,7 +239,69 @@ bool Interpreter::initialize() {
 
 void Interpreter::interpret() {
     while (running_) {
+        // Process any pending external semaphore signals
+        if (hasPendingSignals()) {
+            processPendingSignals();
+        }
         step();
+    }
+}
+
+// ===== EXTERNAL SEMAPHORE SIGNALING =====
+
+void Interpreter::signalExternalSemaphore(int index) {
+    // Store the index to be processed in the interpret loop
+    // This is thread-safe due to atomic
+    pendingSignalIndex_.store(index, std::memory_order_release);
+}
+
+void Interpreter::processPendingSignals() {
+    int index = pendingSignalIndex_.exchange(0, std::memory_order_acquire);
+    if (index <= 0) return;
+
+    // Get the external semaphore table from special objects
+    Oop semTable = memory_.specialObject(SpecialObjectIndex::ExternalSemaphoreTable);
+    if (semTable.isNil() || !semTable.isObject()) return;
+
+    // Index is 1-based, convert to 0-based array index
+    size_t tableIndex = static_cast<size_t>(index - 1);
+    size_t tableSize = memory_.slotCountOf(semTable);
+    if (tableIndex >= tableSize) return;
+
+    // Get the semaphore at this index
+    Oop semaphore = memory_.fetchPointer(tableIndex, semTable);
+    if (semaphore.isNil() || !semaphore.isObject()) return;
+
+    // Signal the semaphore (same logic as primitiveSignal)
+    Oop nilObj = memory_.nil();
+    Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, semaphore);
+
+    if (firstLink.isNil() || firstLink.rawBits() == nilObj.rawBits()) {
+        // No processes waiting - increment excessSignals
+        Oop excessOop = memory_.fetchPointer(SemaphoreExcessSignalsIndex, semaphore);
+        int64_t excess = excessOop.isSmallInteger() ? excessOop.asSmallInteger() : 0;
+        memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
+                            Oop::fromSmallInteger(excess + 1));
+    } else {
+        // Wake the first waiting process
+        Oop process = removeFirstLinkOfList(semaphore);
+
+        // Get process priority and check if we should preempt
+        Oop processPriorityOop = memory_.fetchPointer(ProcessPriorityIndex, process);
+        int processPriority = static_cast<int>(processPriorityOop.asSmallInteger());
+
+        Oop activeProcess = getActiveProcess();
+        Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
+        int activePriority = static_cast<int>(activePriorityOop.asSmallInteger());
+
+        if (processPriority > activePriority) {
+            // Higher priority - preempt current process
+            putToSleep(activeProcess);
+            transferTo(process);
+        } else {
+            // Same or lower priority - just add to ready queue
+            putToSleep(process);
+        }
     }
 }
 
