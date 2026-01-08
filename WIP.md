@@ -58,6 +58,25 @@ Clean C++ VM implementation is functional. Image loads, interpreter initializes,
   - `Primitives.cpp` - snapshot debug
   - `ObjectMemory.cpp` - various debug logs
 
+### 6. Process Scheduling Primitives (DONE)
+- Implemented full process coordination primitives:
+  - **primitiveSignal (85)**: Semaphore>>signal - wakes waiting process or increments excessSignals
+  - **primitiveWait (86)**: Semaphore>>wait - decrements excessSignals or blocks on semaphore
+  - **primitiveResume (87)**: Process>>resume - adds to scheduler queue, preempts if higher priority
+  - **primitiveSuspend (88)**: Process>>suspend - removes from queue, switches to next process
+- Added helper functions for scheduler management:
+  - `getActiveProcess()` / `setActiveProcess()` - Scheduler access
+  - `addLastLinkToList()` / `removeFirstLinkOfList()` / `removeProcessFromList()` - LinkedList operations
+  - `wakeHighestPriority()` - Find highest priority runnable process
+  - `putToSleep()` - Add process to its priority queue
+  - `transferTo()` - Context switch between processes
+- Added slot index constants for Process, ProcessScheduler, LinkedList, Semaphore objects
+
+### 7. Object Allocation (WORKING)
+- `primitiveNew` and `primitiveNewWithArg` fully functional
+- Eden allocation with simplified scavenge (promotes all to old space)
+- Sufficient for bootstrap and basic workloads
+
 ## Key Files
 
 ### Clean VM Implementation (src/vm/)
@@ -123,9 +142,8 @@ Uses LOW bits for tags (not high bits):
 ## Next Steps (Future Work)
 
 1. **GUI Support**: Implement display primitives for iOS rendering
-2. **Process Scheduling**: Full process scheduler for interactive images
-3. **GC Integration**: Connect to memory management for new object allocation
-4. **iOS Integration**: Bridge to Swift/UIKit for touch events, display
+2. **iOS Integration**: Bridge to Swift/UIKit for touch events, display
+3. **Full GC**: Mark-sweep-compact for long-running applications (simplified scavenge works for now)
 
 ## Previous Notes (Archived)
 
