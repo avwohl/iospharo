@@ -495,11 +495,16 @@ private:
     PrimitiveResult primitiveFileFlush(int argCount);              // 163
     PrimitiveResult primitiveFileTruncate(int argCount);           // 164
 
+    // Display primitives (101-104)
+    PrimitiveResult primitiveBeCursor(int argCount);             // 101
+    PrimitiveResult primitiveBeDisplay(int argCount);            // 102
+    PrimitiveResult primitiveScanCharacters(int argCount);       // 103
+    PrimitiveResult primitiveDrawLoop(int argCount);             // 104
+
     // I/O (stubs - iOS-specific implementation elsewhere)
     PrimitiveResult primitiveMousePoint(int argCount);
     PrimitiveResult primitiveMouseButtons(int argCount);
     PrimitiveResult primitiveKeyboardNext(int argCount);
-    PrimitiveResult primitiveBeDisplay(int argCount);
     PrimitiveResult primitiveScreenSize(int argCount);           // 106
     PrimitiveResult primitiveScreenDepth(int argCount);          // 108
     PrimitiveResult primitiveBeep(int argCount);                 // 140

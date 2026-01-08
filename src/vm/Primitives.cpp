@@ -7002,4 +7002,58 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== DISPLAY PRIMITIVES (101-104) =====
+
+// Primitive 101: Set the mouse cursor
+// cursorForm maskForm primitiveBeCursor -> self
+// In headless mode, this is a no-op
+PrimitiveResult Interpreter::primitiveBeCursor(int argCount) {
+    // In headless/iOS mode, cursor changes are handled by the platform
+    // Just accept the arguments and return success
+    if (argCount >= 1) {
+        pop();  // pop mask or offset
+    }
+    if (argCount >= 2) {
+        pop();  // pop cursor form
+    }
+    // Leave receiver on stack
+    return PrimitiveResult::Success;
+}
+
+// Primitive 102: Make a Form the display
+// Already implemented as primitiveBeDisplay in I/O section
+// This just ensures the primitive table entry works
+
+// Primitive 103: Scan characters for text rendering
+// This is a complex primitive used by CharacterScanner for text layout
+// string startIndex stopIndex stops destX charMap destX lastIndex
+// Returns: stopIndex reached, or last index scanned
+PrimitiveResult Interpreter::primitiveScanCharacters(int argCount) {
+    // CharacterScanner uses this for efficient text scanning
+    // In a minimal implementation, we fail to let Smalltalk handle it
+    // A full implementation would scan characters and compute stop positions
+
+    // The primitive is performance-critical but not essential for correctness
+    // Failing causes fallback to Smalltalk code which is slower but works
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 104: BitBlt draw loop
+// This primitive performs the actual BitBlt copy/combine operations
+// In headless mode or without BitBlt plugin, fail to Smalltalk fallback
+PrimitiveResult Interpreter::primitiveDrawLoop(int argCount) {
+    // BitBlt drawLoop is used for efficient graphics operations
+    // A full implementation would:
+    // 1. Extract BitBlt parameters from receiver
+    // 2. Perform the specified combination rule
+    // 3. Copy pixels from source to destination
+
+    // In headless mode, we can either:
+    // a) Fail to let Smalltalk simulate it (slow but correct)
+    // b) Succeed as no-op if no display
+
+    // For now, fail to ensure correctness through Smalltalk simulation
+    return PrimitiveResult::Failure;
+}
+
 } // namespace pharo
