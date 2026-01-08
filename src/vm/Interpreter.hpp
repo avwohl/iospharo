@@ -583,6 +583,10 @@ private:
     PrimitiveResult primitiveFloatAt(int argCount);          // 38
     PrimitiveResult primitiveFloatAtPut(int argCount);       // 39
 
+    // LargeInteger digit access primitives
+    PrimitiveResult primitiveDigitAt(int argCount);          // 19
+    PrimitiveResult primitiveDigitAtPut(int argCount);       // 20
+
     // ===== STARTUP SUPPORT =====
 
     /// Bootstrap startup when active process has nil suspendedContext.

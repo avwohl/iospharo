@@ -276,6 +276,10 @@ Extended large integer support with division and bitwise operations:
 - **primitiveFloatAt (38)**: Read 32-bit word from Float at index (1 or 2)
 - **primitiveFloatAtPut (39)**: Write 32-bit word to Float at index (1 or 2)
 
+### 40. LargeInteger Digit Access Primitives (DONE)
+- **primitiveDigitAt (19)**: Read byte at 1-based index from LargeInteger magnitude
+- **primitiveDigitAtPut (20)**: Write byte at 1-based index to LargeInteger magnitude
+
 ## Key Files
 
 ### Clean VM Implementation (src/vm/)

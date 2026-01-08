@@ -3532,6 +3532,10 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[17] = &Interpreter::primitiveBitShift;
     primitiveTable_[18] = &Interpreter::primitiveMakePoint;
 
+    // LargeInteger digit access primitives (19-20)
+    primitiveTable_[19] = &Interpreter::primitiveDigitAt;
+    primitiveTable_[20] = &Interpreter::primitiveDigitAtPut;
+
     // Large integer primitives (21-31)
     primitiveTable_[21] = &Interpreter::primitiveLargeIntegerAdd;
     primitiveTable_[22] = &Interpreter::primitiveLargeIntegerSubtract;

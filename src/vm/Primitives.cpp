@@ -4309,4 +4309,133 @@ PrimitiveResult Interpreter::primitiveFloatAtPut(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== LARGEINTEGER DIGIT ACCESS PRIMITIVES =====
+
+// Primitive 19: Read a byte (digit) from a LargeInteger at 1-based index
+// LargeIntegers store their magnitude as little-endian bytes
+PrimitiveResult Interpreter::primitiveDigitAt(int argCount) {
+    Oop indexOop = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t index = indexOop.asSmallInteger();
+    if (index < 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Handle SmallInteger receiver - treat as if it were a LargeInteger
+    if (rcvr.isSmallInteger()) {
+        int64_t value = rcvr.asSmallInteger();
+        // For negative values, use absolute value
+        uint64_t magnitude = static_cast<uint64_t>(value < 0 ? -value : value);
+
+        size_t zeroIndex = static_cast<size_t>(index - 1);
+        if (zeroIndex >= 8) {
+            // Index beyond 8 bytes - return 0
+            popN(2);
+            push(Oop::fromSmallInteger(0));
+            return PrimitiveResult::Success;
+        }
+
+        // Extract the byte at the given position
+        uint8_t digit = (magnitude >> (zeroIndex * 8)) & 0xFF;
+
+        popN(2);
+        push(Oop::fromSmallInteger(digit));
+        return PrimitiveResult::Success;
+    }
+
+    // Must be an object (LargePositiveInteger or LargeNegativeInteger)
+    if (!rcvr.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* header = rcvr.asObjectPtr();
+    ObjectFormat format = header->format();
+
+    // Must be a byte-indexable object (LargeIntegers are stored as bytes)
+    if (format < ObjectFormat::Indexable8 || format > ObjectFormat::Indexable8_7) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t byteSize = memory_.byteSizeOf(rcvr);
+    size_t zeroIndex = static_cast<size_t>(index - 1);
+
+    if (zeroIndex >= byteSize) {
+        // Index beyond the size - return 0 (as if padded with zeros)
+        popN(2);
+        push(Oop::fromSmallInteger(0));
+        return PrimitiveResult::Success;
+    }
+
+    uint8_t* bytes = reinterpret_cast<uint8_t*>(header + 1);
+    uint8_t digit = bytes[zeroIndex];
+
+    popN(2);
+    push(Oop::fromSmallInteger(digit));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 20: Write a byte (digit) to a LargeInteger at 1-based index
+PrimitiveResult Interpreter::primitiveDigitAtPut(int argCount) {
+    Oop valueOop = stackValue(0);
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger() || !valueOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t index = indexOop.asSmallInteger();
+    int64_t value = valueOop.asSmallInteger();
+
+    if (index < 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Value must be a valid byte (0-255)
+    if (value < 0 || value > 255) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Can't modify SmallIntegers
+    if (rcvr.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    if (!rcvr.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* header = rcvr.asObjectPtr();
+    ObjectFormat format = header->format();
+
+    // Must be a byte-indexable object
+    if (format < ObjectFormat::Indexable8 || format > ObjectFormat::Indexable8_7) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Check immutability
+    if (header->isImmutable()) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t byteSize = memory_.byteSizeOf(rcvr);
+    size_t zeroIndex = static_cast<size_t>(index - 1);
+
+    if (zeroIndex >= byteSize) {
+        return PrimitiveResult::Failure;  // Index out of bounds
+    }
+
+    uint8_t* bytes = reinterpret_cast<uint8_t*>(header + 1);
+    bytes[zeroIndex] = static_cast<uint8_t>(value);
+
+    popN(3);
+    push(valueOop);  // Return the stored value
+    return PrimitiveResult::Success;
+}
+
 } // namespace pharo
