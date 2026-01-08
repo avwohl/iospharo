@@ -6896,4 +6896,48 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWayCopyHash(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== CONTEXT PRIMITIVE (203) =====
+
+// Primitive 203: Evaluate block value uninterruptably
+// block primitiveValueUninterruptably -> result
+// Evaluates the block without allowing process switches
+// In our cooperative/single-threaded VM, this is essentially the same as value
+PrimitiveResult Interpreter::primitiveValueUninterruptably(int argCount) {
+    // Get the block closure (receiver)
+    Oop blockOop = stackTop();
+
+    if (!blockOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Check that it's a block closure (has numArgs field)
+    // BlockClosure layout: outerContext, startpc/compiledBlock, numArgs, ...
+    size_t slotCount = memory_.slotCountOf(blockOop);
+    if (slotCount < 3) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get numArgs - block should take 0 arguments for valueUninterruptably
+    Oop numArgsOop = memory_.fetchPointer(2, blockOop);
+    if (!numArgsOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t numArgs = numArgsOop.asSmallInteger();
+    if (numArgs != 0) {
+        // Block requires arguments, fail to let Smalltalk handle it
+        return PrimitiveResult::Failure;
+    }
+
+    // In a cooperative VM without preemptive scheduling, valueUninterruptably
+    // is essentially the same as value. We fail the primitive to let the
+    // Smalltalk fallback code handle the block evaluation, which will:
+    // 1. Disable process switching
+    // 2. Evaluate the block with value
+    // 3. Re-enable process switching
+    // This is the standard pattern - the primitive validates and then fails
+    // to trigger the Smalltalk implementation.
+    return PrimitiveResult::Failure;
+}
+
 } // namespace pharo

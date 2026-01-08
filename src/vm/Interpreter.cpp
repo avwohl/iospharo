@@ -3713,7 +3713,8 @@ void Interpreter::initializePrimitives() {
     // Block primitives (201-206)
     primitiveTable_[201] = &Interpreter::primitiveBlockValue;
     primitiveTable_[202] = &Interpreter::primitiveBlockValueWithArgs;
-    // 203, 204 would be value with more args
+    primitiveTable_[203] = &Interpreter::primitiveValueUninterruptably;
+    // 204 would be value with more args
     primitiveTable_[205] = &Interpreter::primitiveBlockValue;  // value with 1 arg
     primitiveTable_[206] = &Interpreter::primitiveBlockValue;  // value with 2 args
 

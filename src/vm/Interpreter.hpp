@@ -520,6 +520,9 @@ private:
     PrimitiveResult primitiveArrayBecomeOneWay(int argCount);      // 197
     PrimitiveResult primitiveArrayBecomeOneWayCopyHash(int argCount); // 198
 
+    // Context primitive (203)
+    PrimitiveResult primitiveValueUninterruptably(int argCount);   // 203
+
     // Time
     PrimitiveResult primitiveMillisecondClock(int argCount);
     PrimitiveResult primitiveSecondsClock(int argCount);
