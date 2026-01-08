@@ -259,19 +259,6 @@ bool Interpreter::step() {
     // Resetting here would break extension byte chains.
 
     uint8_t bytecode = fetchByte();
-
-    // Trace bytecode execution (only first 500 to avoid spam)
-    static int traceCount = 0;
-    if (traceCount < 500) {
-        // std::cerr << "[EXEC] bc=0x" << std::hex << (int)bytecode << std::dec
-                  // << " SP=" << (stackPointer_ - stackBase_);
-        if (stackPointer_ > stackBase_) {
-            // std::cerr << " top=0x" << std::hex << stackTop().rawBits() << std::dec;
-        }
-        // std::cerr; // DEBUG
-        traceCount++;
-    }
-
     dispatchBytecode(bytecode);
 
     return running_;
@@ -429,9 +416,8 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         shortJumpIfFalse(offset);
     }
     else if (bytecode <= 0x97) {
-        // Sista V1: 0x90-0x97 (144-151): Short unconditional jump (9-16 bytes forward)
-        // Combined with 0x78-0x7F, this gives total range 1-16 bytes
-        int offset = (bytecode & 0x7) + 9;
+        // Sista V1: 0x90-0x97 (144-151): Short unconditional jump (1-8 bytes forward)
+        int offset = (bytecode & 0x7) + 1;
         shortJump(offset);
     }
     else if (bytecode <= 0x9F) {
@@ -833,25 +819,20 @@ void Interpreter::returnValue(Oop value) {
             }
         }
 
-        // DEBUG: "[RETURN] Returning from top-level - attempting reschedule"
-
         // Mark current process as terminated by clearing its suspendedContext
         terminateCurrentProcess();
 
         // Try to find another runnable process
         if (tryReschedule()) {
-            // DEBUG: "[RETURN] Rescheduled to another process"
             return;
         }
 
         // If no other process to run, try startup entry point
-        // DEBUG: "[RETURN] No process to reschedule - trying startup entry"
         if (bootstrapStartup()) {
-            // DEBUG: "[RETURN] Bootstrapped startup"
             return;
         }
 
-        // DEBUG: "[RETURN] Returning from top-level - execution complete"
+        // No more work to do
         running_ = false;
         // Store the return value for inspection
         push(value);
@@ -3340,17 +3321,12 @@ bool Interpreter::executeFromContext(Oop context) {
         if (pcOffset > 0) {
             // PC is 1-based byte offset from start of method
             instructionPointer_ = methodBytes + pcOffset - 1;
-            // DEBUG_LOG("[DEBUG] executeFromContext: Using saved PC offset " << pcOffset
-                      // << " -> byte " << (pcOffset - 1)
-                      // << " (bytecode relative: " << ((pcOffset - 1) - bytecodeStart) << ")";
         } else {
             // Start at beginning of bytecodes
             instructionPointer_ = methodBytes + bytecodeStart;
-            // DEBUG: "[DEBUG] executeFromContext: PC=0, starting at bytecode offset " << bytecodeStart
         }
     } else {
         instructionPointer_ = methodBytes + bytecodeStart;
-        // DEBUG: "[DEBUG] executeFromContext: PC not SmallInteger, starting at bytecode offset " << bytecodeStart
     }
 
     // Get saved stackp - in Pharo, stackp is the 1-based index into the temp/stack area
@@ -3403,12 +3379,7 @@ bool Interpreter::executeFromContext(Oop context) {
     // std::cerr << std::dec; // DEBUG
 
     initializeSelectors();
-    // DEBUG_LOG("[DEBUG] executeFromContext: About to set running_ = true, this=" << (void*)this;
     running_ = true;
-    // DEBUG_LOG("[DEBUG] executeFromContext: running_ is now " << running_ << ", this=" << (void*)this;
-
-    // DEBUG: "[DEBUG] executeFromContext: Interpreter bootstrapped successfully!"
-    // DEBUG_LOG("[DEBUG] executeFromContext: Stack depth=" << (stackPointer_ - stackBase_);
     return true;
 }
 
