@@ -1,5 +1,6 @@
 # Build outputs
 build/
+build-macos/
 build-sim/
 build-vm/
 build-cpp/
