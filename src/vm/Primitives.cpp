@@ -1820,6 +1820,48 @@ PrimitiveResult Interpreter::primitiveVMPath(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== SCREEN PRIMITIVES =====
+
+// Primitive 106: Get the screen size as a Point
+// Returns Point with x = width, y = height
+PrimitiveResult Interpreter::primitiveScreenSize(int argCount) {
+    // Create a Point object with screen dimensions
+    // Point is stored as: x @ y where x and y are SmallIntegers
+
+    // Get the Point class
+    Oop pointClass = memory_.specialObject(SpecialObjectIndex::ClassPoint);
+    if (pointClass.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    uint32_t classIndex = memory_.indexOfClass(pointClass);
+    if (classIndex == 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Allocate a Point with 2 slots (x, y)
+    Oop point = memory_.allocateSlots(classIndex, 2, ObjectFormat::FixedSize);
+    if (point.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Store width and height
+    memory_.storePointer(0, point, Oop::fromSmallInteger(screenWidth_));
+    memory_.storePointer(1, point, Oop::fromSmallInteger(screenHeight_));
+
+    pop();  // Pop receiver
+    push(point);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 108: Get the screen color depth
+// Returns the number of bits per pixel
+PrimitiveResult Interpreter::primitiveScreenDepth(int argCount) {
+    pop();  // Pop receiver
+    push(Oop::fromSmallInteger(screenDepth_));
+    return PrimitiveResult::Success;
+}
+
 // ===== TIME PRIMITIVES =====
 
 PrimitiveResult Interpreter::primitiveMillisecondClock(int argCount) {

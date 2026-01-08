@@ -3647,6 +3647,10 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[121] = &Interpreter::primitiveImageName;
     primitiveTable_[142] = &Interpreter::primitiveVMPath;
 
+    // Screen primitives (106, 108)
+    primitiveTable_[106] = &Interpreter::primitiveScreenSize;
+    primitiveTable_[108] = &Interpreter::primitiveScreenDepth;
+
     // Time primitives (135-137, 240-241)
     primitiveTable_[135] = &Interpreter::primitiveMillisecondClock;
     primitiveTable_[136] = &Interpreter::primitiveSignalAtMilliseconds;

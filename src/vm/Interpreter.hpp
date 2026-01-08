@@ -159,6 +159,13 @@ public:
     const std::string& imageName() const { return imageName_; }
     const std::string& vmPath() const { return vmPath_; }
 
+    /// Set/get screen dimensions
+    void setScreenSize(int width, int height) { screenWidth_ = width; screenHeight_ = height; }
+    void setScreenDepth(int depth) { screenDepth_ = depth; }
+    int screenWidth() const { return screenWidth_; }
+    int screenHeight() const { return screenHeight_; }
+    int screenDepth() const { return screenDepth_; }
+
     /// Get current execution state
     Oop activeContext() const;
     Oop activeMethod() const { return method_; }
@@ -254,6 +261,11 @@ private:
     // System paths
     std::string imageName_;
     std::string vmPath_;
+
+    // Screen dimensions (configurable, defaults for headless)
+    int screenWidth_ = 1024;
+    int screenHeight_ = 768;
+    int screenDepth_ = 32;
 
     // ===== CACHES =====
 
@@ -454,6 +466,8 @@ private:
     PrimitiveResult primitiveMouseButtons(int argCount);
     PrimitiveResult primitiveKeyboardNext(int argCount);
     PrimitiveResult primitiveBeDisplay(int argCount);
+    PrimitiveResult primitiveScreenSize(int argCount);           // 106
+    PrimitiveResult primitiveScreenDepth(int argCount);          // 108
     PrimitiveResult primitiveForceDisplayUpdate(int argCount);
 
     // Time
