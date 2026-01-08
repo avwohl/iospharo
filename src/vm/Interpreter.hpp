@@ -862,6 +862,54 @@ private:
     PrimitiveResult primitiveSystemAvailableMemory(int argCount);   // 418
     PrimitiveResult primitiveSystemDiskSpace(int argCount);         // 419
 
+    // Hardware/sensor primitives (420-429)
+    PrimitiveResult primitiveAccelerometerStart(int argCount);      // 420
+    PrimitiveResult primitiveAccelerometerStop(int argCount);       // 421
+    PrimitiveResult primitiveAccelerometerRead(int argCount);       // 422
+    PrimitiveResult primitiveGyroscopeStart(int argCount);          // 423
+    PrimitiveResult primitiveGyroscopeStop(int argCount);           // 424
+    PrimitiveResult primitiveGyroscopeRead(int argCount);           // 425
+    PrimitiveResult primitiveMagnetometerStart(int argCount);       // 426
+    PrimitiveResult primitiveMagnetometerStop(int argCount);        // 427
+    PrimitiveResult primitiveMagnetometerRead(int argCount);        // 428
+    PrimitiveResult primitiveDeviceMotionRead(int argCount);        // 429
+
+    // Location primitives (430-439)
+    PrimitiveResult primitiveLocationStart(int argCount);           // 430
+    PrimitiveResult primitiveLocationStop(int argCount);            // 431
+    PrimitiveResult primitiveLocationRead(int argCount);            // 432
+    PrimitiveResult primitiveLocationAccuracy(int argCount);        // 433
+    PrimitiveResult primitiveLocationDistance(int argCount);        // 434
+    PrimitiveResult primitiveHeadingStart(int argCount);            // 435
+    PrimitiveResult primitiveHeadingStop(int argCount);             // 436
+    PrimitiveResult primitiveHeadingRead(int argCount);             // 437
+    PrimitiveResult primitiveGeocode(int argCount);                 // 438
+    PrimitiveResult primitiveReverseGeocode(int argCount);          // 439
+
+    // Camera primitives (440-449)
+    PrimitiveResult primitiveCameraCount(int argCount);             // 440
+    PrimitiveResult primitiveCameraOpen(int argCount);              // 441
+    PrimitiveResult primitiveCameraClose(int argCount);             // 442
+    PrimitiveResult primitiveCameraCapture(int argCount);           // 443
+    PrimitiveResult primitiveCameraStartPreview(int argCount);      // 444
+    PrimitiveResult primitiveCameraStopPreview(int argCount);       // 445
+    PrimitiveResult primitiveCameraGetFrame(int argCount);          // 446
+    PrimitiveResult primitiveCameraSetFlash(int argCount);          // 447
+    PrimitiveResult primitiveCameraSetFocus(int argCount);          // 448
+    PrimitiveResult primitiveCameraSetExposure(int argCount);       // 449
+
+    // Notification primitives (450-459)
+    PrimitiveResult primitiveNotificationSchedule(int argCount);    // 450
+    PrimitiveResult primitiveNotificationCancel(int argCount);      // 451
+    PrimitiveResult primitiveNotificationCancelAll(int argCount);   // 452
+    PrimitiveResult primitiveNotificationGetPending(int argCount);  // 453
+    PrimitiveResult primitiveNotificationRequestPermission(int argCount); // 454
+    PrimitiveResult primitiveNotificationGetPermission(int argCount);     // 455
+    PrimitiveResult primitiveNotificationSetBadge(int argCount);    // 456
+    PrimitiveResult primitiveNotificationGetBadge(int argCount);    // 457
+    PrimitiveResult primitiveNotificationRegisterPush(int argCount);// 458
+    PrimitiveResult primitiveNotificationGetToken(int argCount);    // 459
+
     // String/Array
     PrimitiveResult primitiveStringAt(int argCount);
     PrimitiveResult primitiveStringAtPut(int argCount);

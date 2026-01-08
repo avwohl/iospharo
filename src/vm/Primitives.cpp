@@ -11859,6 +11859,500 @@ PrimitiveResult Interpreter::primitiveSystemDiskSpace(int argCount) {
     return PrimitiveResult::Failure;
 }
 
+// ===== HARDWARE/SENSOR PRIMITIVES (420-429) =====
+
+// Sensor state
+static bool accelerometerRunning = false;
+static bool gyroscopeRunning = false;
+static bool magnetometerRunning = false;
+
+// Primitive 420: Start accelerometer
+// interval primitiveAccelerometerStart -> self
+PrimitiveResult Interpreter::primitiveAccelerometerStart(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    // Would use CMMotionManager on iOS
+    accelerometerRunning = true;
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 421: Stop accelerometer
+// primitiveAccelerometerStop -> self
+PrimitiveResult Interpreter::primitiveAccelerometerStop(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    accelerometerRunning = false;
+    pop();
+    return PrimitiveResult::Success;
+}
+
+// Primitive 422: Read accelerometer
+// primitiveAccelerometerRead -> array (x y z) or nil
+PrimitiveResult Interpreter::primitiveAccelerometerRead(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    if (!accelerometerRunning) {
+        pop();
+        push(memory_.nil());
+        return PrimitiveResult::Success;
+    }
+
+    // Return default values (no acceleration, device at rest)
+    Oop array = memory_.allocateSlots(
+        memory_.indexOfClass(memory_.specialObject(SpecialObjectIndex::ClassArray)),
+        3, ObjectFormat::Indexable);
+    if (array.isNil()) return PrimitiveResult::Failure;
+
+    memory_.storePointer(0, array, Oop::fromSmallInteger(0));  // x
+    memory_.storePointer(1, array, Oop::fromSmallInteger(0));  // y
+    memory_.storePointer(2, array, Oop::fromSmallInteger(-1000)); // z (gravity, scaled)
+
+    pop();
+    push(array);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 423: Start gyroscope
+// interval primitiveGyroscopeStart -> self
+PrimitiveResult Interpreter::primitiveGyroscopeStart(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    gyroscopeRunning = true;
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 424: Stop gyroscope
+// primitiveGyroscopeStop -> self
+PrimitiveResult Interpreter::primitiveGyroscopeStop(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    gyroscopeRunning = false;
+    pop();
+    return PrimitiveResult::Success;
+}
+
+// Primitive 425: Read gyroscope
+// primitiveGyroscopeRead -> array (x y z) or nil
+PrimitiveResult Interpreter::primitiveGyroscopeRead(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    if (!gyroscopeRunning) {
+        pop();
+        push(memory_.nil());
+        return PrimitiveResult::Success;
+    }
+
+    Oop array = memory_.allocateSlots(
+        memory_.indexOfClass(memory_.specialObject(SpecialObjectIndex::ClassArray)),
+        3, ObjectFormat::Indexable);
+    if (array.isNil()) return PrimitiveResult::Failure;
+
+    memory_.storePointer(0, array, Oop::fromSmallInteger(0));
+    memory_.storePointer(1, array, Oop::fromSmallInteger(0));
+    memory_.storePointer(2, array, Oop::fromSmallInteger(0));
+
+    pop();
+    push(array);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 426: Start magnetometer
+// interval primitiveMagnetometerStart -> self
+PrimitiveResult Interpreter::primitiveMagnetometerStart(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    magnetometerRunning = true;
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 427: Stop magnetometer
+// primitiveMagnetometerStop -> self
+PrimitiveResult Interpreter::primitiveMagnetometerStop(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    magnetometerRunning = false;
+    pop();
+    return PrimitiveResult::Success;
+}
+
+// Primitive 428: Read magnetometer
+// primitiveMagnetometerRead -> array (x y z) or nil
+PrimitiveResult Interpreter::primitiveMagnetometerRead(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    if (!magnetometerRunning) {
+        pop();
+        push(memory_.nil());
+        return PrimitiveResult::Success;
+    }
+
+    Oop array = memory_.allocateSlots(
+        memory_.indexOfClass(memory_.specialObject(SpecialObjectIndex::ClassArray)),
+        3, ObjectFormat::Indexable);
+    if (array.isNil()) return PrimitiveResult::Failure;
+
+    memory_.storePointer(0, array, Oop::fromSmallInteger(0));
+    memory_.storePointer(1, array, Oop::fromSmallInteger(0));
+    memory_.storePointer(2, array, Oop::fromSmallInteger(0));
+
+    pop();
+    push(array);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 429: Read combined device motion
+// primitiveDeviceMotionRead -> array or nil
+PrimitiveResult Interpreter::primitiveDeviceMotionRead(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Would return combined sensor data
+    pop();
+    push(memory_.nil());
+    return PrimitiveResult::Success;
+}
+
+// ===== LOCATION PRIMITIVES (430-439) =====
+
+static bool locationRunning = false;
+static bool headingRunning = false;
+
+// Primitive 430: Start location updates
+// accuracy primitiveLocationStart -> self
+PrimitiveResult Interpreter::primitiveLocationStart(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    // Would use CLLocationManager on iOS
+    locationRunning = true;
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 431: Stop location updates
+// primitiveLocationStop -> self
+PrimitiveResult Interpreter::primitiveLocationStop(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    locationRunning = false;
+    pop();
+    return PrimitiveResult::Success;
+}
+
+// Primitive 432: Read current location
+// primitiveLocationRead -> array (lat lon alt accuracy) or nil
+PrimitiveResult Interpreter::primitiveLocationRead(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    if (!locationRunning) {
+        pop();
+        push(memory_.nil());
+        return PrimitiveResult::Success;
+    }
+
+    // Return a default location (0, 0)
+    Oop array = memory_.allocateSlots(
+        memory_.indexOfClass(memory_.specialObject(SpecialObjectIndex::ClassArray)),
+        4, ObjectFormat::Indexable);
+    if (array.isNil()) return PrimitiveResult::Failure;
+
+    memory_.storePointer(0, array, Oop::fromSmallInteger(0));  // lat
+    memory_.storePointer(1, array, Oop::fromSmallInteger(0));  // lon
+    memory_.storePointer(2, array, Oop::fromSmallInteger(0));  // alt
+    memory_.storePointer(3, array, Oop::fromSmallInteger(0));  // accuracy
+
+    pop();
+    push(array);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 433: Set location accuracy
+// accuracy primitiveLocationAccuracy -> self
+PrimitiveResult Interpreter::primitiveLocationAccuracy(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 434: Calculate distance between two points
+// lat1 lon1 lat2 lon2 primitiveLocationDistance -> meters
+PrimitiveResult Interpreter::primitiveLocationDistance(int argCount) {
+    if (argCount != 4) return PrimitiveResult::Failure;
+
+    // Would calculate haversine distance
+    popN(4);
+    push(Oop::fromSmallInteger(0));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 435: Start heading updates
+// primitiveHeadingStart -> self
+PrimitiveResult Interpreter::primitiveHeadingStart(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    headingRunning = true;
+    pop();
+    return PrimitiveResult::Success;
+}
+
+// Primitive 436: Stop heading updates
+// primitiveHeadingStop -> self
+PrimitiveResult Interpreter::primitiveHeadingStop(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    headingRunning = false;
+    pop();
+    return PrimitiveResult::Success;
+}
+
+// Primitive 437: Read current heading
+// primitiveHeadingRead -> degrees or nil
+PrimitiveResult Interpreter::primitiveHeadingRead(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    if (!headingRunning) {
+        pop();
+        push(memory_.nil());
+        return PrimitiveResult::Success;
+    }
+
+    pop();
+    push(Oop::fromSmallInteger(0));  // North
+    return PrimitiveResult::Success;
+}
+
+// Primitive 438: Geocode address to coordinates
+// addressString primitiveGeocode -> array (lat lon) or nil
+PrimitiveResult Interpreter::primitiveGeocode(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    // Would use CLGeocoder
+    popN(1);
+    push(memory_.nil());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 439: Reverse geocode coordinates to address
+// lat lon primitiveReverseGeocode -> string or nil
+PrimitiveResult Interpreter::primitiveReverseGeocode(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    // Would use CLGeocoder
+    popN(2);
+    push(memory_.nil());
+    return PrimitiveResult::Success;
+}
+
+// ===== CAMERA PRIMITIVES (440-449) =====
+
+static int cameraCount = 0;  // Would be 2 on most iOS devices
+
+// Primitive 440: Get camera count
+// primitiveCameraCount -> count
+PrimitiveResult Interpreter::primitiveCameraCount(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Would use AVCaptureDevice.devices on iOS
+    pop();
+    push(Oop::fromSmallInteger(cameraCount));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 441: Open camera
+// cameraIndex primitiveCameraOpen -> handle
+PrimitiveResult Interpreter::primitiveCameraOpen(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    // No cameras available
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 442: Close camera
+// handle primitiveCameraClose -> self
+PrimitiveResult Interpreter::primitiveCameraClose(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 443: Capture still image
+// handle primitiveCameraCapture -> byteArray or nil
+PrimitiveResult Interpreter::primitiveCameraCapture(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 444: Start camera preview
+// handle primitiveCameraStartPreview -> self
+PrimitiveResult Interpreter::primitiveCameraStartPreview(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 445: Stop camera preview
+// handle primitiveCameraStopPreview -> self
+PrimitiveResult Interpreter::primitiveCameraStopPreview(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 446: Get preview frame
+// handle form primitiveCameraGetFrame -> boolean
+PrimitiveResult Interpreter::primitiveCameraGetFrame(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    popN(2);
+    push(memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 447: Set flash mode
+// handle mode primitiveCameraSetFlash -> self
+PrimitiveResult Interpreter::primitiveCameraSetFlash(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    popN(2);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 448: Set focus point
+// handle x y primitiveCameraSetFocus -> self
+PrimitiveResult Interpreter::primitiveCameraSetFocus(int argCount) {
+    if (argCount != 3) return PrimitiveResult::Failure;
+
+    popN(3);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 449: Set exposure point
+// handle x y primitiveCameraSetExposure -> self
+PrimitiveResult Interpreter::primitiveCameraSetExposure(int argCount) {
+    if (argCount != 3) return PrimitiveResult::Failure;
+
+    popN(3);
+    return PrimitiveResult::Success;
+}
+
+// ===== NOTIFICATION PRIMITIVES (450-459) =====
+
+static int badgeCount = 0;
+
+// Primitive 450: Schedule local notification
+// title body delay primitiveNotificationSchedule -> id
+PrimitiveResult Interpreter::primitiveNotificationSchedule(int argCount) {
+    if (argCount != 3) return PrimitiveResult::Failure;
+
+    // Would use UNUserNotificationCenter on iOS
+    popN(3);
+    push(Oop::fromSmallInteger(0));  // notification ID
+    return PrimitiveResult::Success;
+}
+
+// Primitive 451: Cancel notification by ID
+// id primitiveNotificationCancel -> self
+PrimitiveResult Interpreter::primitiveNotificationCancel(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 452: Cancel all notifications
+// primitiveNotificationCancelAll -> self
+PrimitiveResult Interpreter::primitiveNotificationCancelAll(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    pop();
+    return PrimitiveResult::Success;
+}
+
+// Primitive 453: Get pending notifications
+// primitiveNotificationGetPending -> array
+PrimitiveResult Interpreter::primitiveNotificationGetPending(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop emptyArray = memory_.allocateSlots(
+        memory_.indexOfClass(memory_.specialObject(SpecialObjectIndex::ClassArray)),
+        0, ObjectFormat::Indexable);
+    if (emptyArray.isNil()) return PrimitiveResult::Failure;
+
+    pop();
+    push(emptyArray);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 454: Request notification permission
+// primitiveNotificationRequestPermission -> self
+PrimitiveResult Interpreter::primitiveNotificationRequestPermission(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Would show permission dialog
+    pop();
+    return PrimitiveResult::Success;
+}
+
+// Primitive 455: Get notification permission status
+// primitiveNotificationGetPermission -> status (0=notDetermined, 1=denied, 2=authorized)
+PrimitiveResult Interpreter::primitiveNotificationGetPermission(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    pop();
+    push(Oop::fromSmallInteger(2));  // Authorized
+    return PrimitiveResult::Success;
+}
+
+// Primitive 456: Set app badge count
+// count primitiveNotificationSetBadge -> self
+PrimitiveResult Interpreter::primitiveNotificationSetBadge(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop countOop = stackTop();
+    if (countOop.isSmallInteger()) {
+        badgeCount = static_cast<int>(countOop.asSmallInteger());
+    }
+
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 457: Get app badge count
+// primitiveNotificationGetBadge -> count
+PrimitiveResult Interpreter::primitiveNotificationGetBadge(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    pop();
+    push(Oop::fromSmallInteger(badgeCount));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 458: Register for push notifications
+// primitiveNotificationRegisterPush -> self
+PrimitiveResult Interpreter::primitiveNotificationRegisterPush(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Would register with APNs
+    pop();
+    return PrimitiveResult::Success;
+}
+
+// Primitive 459: Get push notification token
+// primitiveNotificationGetToken -> string or nil
+PrimitiveResult Interpreter::primitiveNotificationGetToken(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Would return device token if registered
+    pop();
+    push(memory_.nil());
+    return PrimitiveResult::Success;
+}
+
 // ===== PROFILING PRIMITIVES (260-263) =====
 
 // Primitive 260: VM profile samples into array

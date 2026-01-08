@@ -4188,6 +4188,54 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[418] = &Interpreter::primitiveSystemAvailableMemory;
     primitiveTable_[419] = &Interpreter::primitiveSystemDiskSpace;
 
+    // Hardware/sensor primitives (420-429)
+    primitiveTable_[420] = &Interpreter::primitiveAccelerometerStart;
+    primitiveTable_[421] = &Interpreter::primitiveAccelerometerStop;
+    primitiveTable_[422] = &Interpreter::primitiveAccelerometerRead;
+    primitiveTable_[423] = &Interpreter::primitiveGyroscopeStart;
+    primitiveTable_[424] = &Interpreter::primitiveGyroscopeStop;
+    primitiveTable_[425] = &Interpreter::primitiveGyroscopeRead;
+    primitiveTable_[426] = &Interpreter::primitiveMagnetometerStart;
+    primitiveTable_[427] = &Interpreter::primitiveMagnetometerStop;
+    primitiveTable_[428] = &Interpreter::primitiveMagnetometerRead;
+    primitiveTable_[429] = &Interpreter::primitiveDeviceMotionRead;
+
+    // Location primitives (430-439)
+    primitiveTable_[430] = &Interpreter::primitiveLocationStart;
+    primitiveTable_[431] = &Interpreter::primitiveLocationStop;
+    primitiveTable_[432] = &Interpreter::primitiveLocationRead;
+    primitiveTable_[433] = &Interpreter::primitiveLocationAccuracy;
+    primitiveTable_[434] = &Interpreter::primitiveLocationDistance;
+    primitiveTable_[435] = &Interpreter::primitiveHeadingStart;
+    primitiveTable_[436] = &Interpreter::primitiveHeadingStop;
+    primitiveTable_[437] = &Interpreter::primitiveHeadingRead;
+    primitiveTable_[438] = &Interpreter::primitiveGeocode;
+    primitiveTable_[439] = &Interpreter::primitiveReverseGeocode;
+
+    // Camera primitives (440-449)
+    primitiveTable_[440] = &Interpreter::primitiveCameraCount;
+    primitiveTable_[441] = &Interpreter::primitiveCameraOpen;
+    primitiveTable_[442] = &Interpreter::primitiveCameraClose;
+    primitiveTable_[443] = &Interpreter::primitiveCameraCapture;
+    primitiveTable_[444] = &Interpreter::primitiveCameraStartPreview;
+    primitiveTable_[445] = &Interpreter::primitiveCameraStopPreview;
+    primitiveTable_[446] = &Interpreter::primitiveCameraGetFrame;
+    primitiveTable_[447] = &Interpreter::primitiveCameraSetFlash;
+    primitiveTable_[448] = &Interpreter::primitiveCameraSetFocus;
+    primitiveTable_[449] = &Interpreter::primitiveCameraSetExposure;
+
+    // Notification primitives (450-459)
+    primitiveTable_[450] = &Interpreter::primitiveNotificationSchedule;
+    primitiveTable_[451] = &Interpreter::primitiveNotificationCancel;
+    primitiveTable_[452] = &Interpreter::primitiveNotificationCancelAll;
+    primitiveTable_[453] = &Interpreter::primitiveNotificationGetPending;
+    primitiveTable_[454] = &Interpreter::primitiveNotificationRequestPermission;
+    primitiveTable_[455] = &Interpreter::primitiveNotificationGetPermission;
+    primitiveTable_[456] = &Interpreter::primitiveNotificationSetBadge;
+    primitiveTable_[457] = &Interpreter::primitiveNotificationGetBadge;
+    primitiveTable_[458] = &Interpreter::primitiveNotificationRegisterPush;
+    primitiveTable_[459] = &Interpreter::primitiveNotificationGetToken;
+
     // Platform primitives (500-513)
     primitiveTable_[500] = &Interpreter::primitiveGetEnvironment;
     primitiveTable_[501] = &Interpreter::primitiveSetEnvironment;
