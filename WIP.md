@@ -77,6 +77,17 @@ Clean C++ VM implementation is functional. Image loads, interpreter initializes,
 - Eden allocation with simplified scavenge (promotes all to old space)
 - Sufficient for bootstrap and basic workloads
 
+### 8. Float Primitives (DONE)
+- Implemented all 13 float primitives (40-55):
+  - **Arithmetic**: add, subtract, multiply, divide
+  - **Comparison**: lessThan, equal
+  - **Conversion**: truncated (Float to SmallInteger)
+  - **Math**: sqrt, sin, cos, arctan, exp, ln
+- Helper functions:
+  - `extractFloat()` - Extract double from SmallFloat immediate or boxed Float
+  - `makeFloat()` - Create Float result (tries SmallFloat first, allocates boxed if needed)
+- Handles both SmallFloat immediates and boxed Float objects
+
 ## Key Files
 
 ### Clean VM Implementation (src/vm/)
