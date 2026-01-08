@@ -16,10 +16,19 @@ set(VM_SOURCES
     Primitives.cpp
 )
 
-add_library(PharoVMClean STATIC ${VM_SOURCES})
+set(PLATFORM_SOURCES
+    ../platform/DisplaySurface.hpp
+    ../platform/EventQueue.hpp
+    ../platform/EventQueue.cpp
+    ../platform/PlatformBridge.h
+    ../platform/PlatformBridge.cpp
+)
+
+add_library(PharoVMClean STATIC ${VM_SOURCES} ${PLATFORM_SOURCES})
 
 target_include_directories(PharoVMClean PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../platform
 )
 
 target_compile_features(PharoVMClean PUBLIC cxx_std_17)
@@ -38,6 +47,9 @@ target_compile_options(PharoVMClean PRIVATE
     -Wno-unused-parameter
 )
 
-# Test executable
+# Test executables
 add_executable(test_load_image test_load_image.cpp)
 target_link_libraries(test_load_image PharoVMClean)
+
+add_executable(test_platform ../platform/test_platform.cpp)
+target_link_libraries(test_platform PharoVMClean)
