@@ -3707,6 +3707,10 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[197] = &Interpreter::primitiveArrayBecomeOneWay;
     primitiveTable_[198] = &Interpreter::primitiveArrayBecomeOneWayCopyHash;
 
+    // Process/system primitives (172, 179)
+    primitiveTable_[172] = &Interpreter::primitiveSetGCSemaphore;
+    primitiveTable_[179] = &Interpreter::primitiveRelinquishProcessor;
+
     // Process yield (167)
     primitiveTable_[167] = &Interpreter::primitiveYield;
 
