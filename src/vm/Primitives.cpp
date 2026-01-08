@@ -1011,58 +1011,282 @@ PrimitiveResult Interpreter::primitiveReplaceFromTo(int argCount) {
     return PrimitiveResult::Failure;
 }
 
-// ===== FLOAT PRIMITIVES (stubs) =====
+// ===== FLOAT PRIMITIVES =====
+
+// Helper: Extract double from SmallFloat or boxed Float
+static bool extractFloat(ObjectMemory& memory, Oop oop, double& result) {
+    if (oop.isSmallFloat()) {
+        result = oop.asSmallFloat();
+        return true;
+    }
+    if (oop.isObject()) {
+        ObjectHeader* header = oop.asObjectPtr();
+        if (header->format() == ObjectFormat::Indexable64) {
+            uint64_t bits = memory.fetchWord64(0, oop);
+            std::memcpy(&result, &bits, sizeof(double));
+            return true;
+        }
+    }
+    return false;
+}
+
+// Helper: Create Float result (tries SmallFloat first, then allocates boxed Float)
+static Oop makeFloat(ObjectMemory& memory, double value) {
+    // Try to encode as SmallFloat
+    Oop result;
+    if (Oop::tryFromSmallFloat(value, result)) {
+        return result;
+    }
+
+    // Allocate boxed Float
+    Oop floatClass = memory.specialObject(SpecialObjectIndex::ClassFloat);
+    uint32_t classIndex = memory.indexOfClass(floatClass);
+    Oop floatObj = memory.allocateWords(classIndex, 1);  // 1 word = 64 bits
+
+    if (!floatObj.isNil()) {
+        uint64_t bits;
+        std::memcpy(&bits, &value, sizeof(double));
+        memory.storeWord64(0, floatObj, bits);
+    }
+    return floatObj;
+}
 
 PrimitiveResult Interpreter::primitiveFloatAdd(int argCount) {
-    return PrimitiveResult::Failure;  // TODO
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    double a, b;
+    if (!extractFloat(memory_, rcvr, a) || !extractFloat(memory_, arg, b)) {
+        return PrimitiveResult::Failure;
+    }
+
+    double result = a + b;
+    Oop resultOop = makeFloat(memory_, result);
+    if (resultOop.isNil()) return PrimitiveResult::Failure;
+
+    popN(2);
+    push(resultOop);
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveFloatSubtract(int argCount) {
-    return PrimitiveResult::Failure;  // TODO
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    double a, b;
+    if (!extractFloat(memory_, rcvr, a) || !extractFloat(memory_, arg, b)) {
+        return PrimitiveResult::Failure;
+    }
+
+    double result = a - b;
+    Oop resultOop = makeFloat(memory_, result);
+    if (resultOop.isNil()) return PrimitiveResult::Failure;
+
+    popN(2);
+    push(resultOop);
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveFloatMultiply(int argCount) {
-    return PrimitiveResult::Failure;  // TODO
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    double a, b;
+    if (!extractFloat(memory_, rcvr, a) || !extractFloat(memory_, arg, b)) {
+        return PrimitiveResult::Failure;
+    }
+
+    double result = a * b;
+    Oop resultOop = makeFloat(memory_, result);
+    if (resultOop.isNil()) return PrimitiveResult::Failure;
+
+    popN(2);
+    push(resultOop);
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveFloatDivide(int argCount) {
-    return PrimitiveResult::Failure;  // TODO
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    double a, b;
+    if (!extractFloat(memory_, rcvr, a) || !extractFloat(memory_, arg, b)) {
+        return PrimitiveResult::Failure;
+    }
+
+    if (b == 0.0) {
+        return PrimitiveResult::Failure;  // Division by zero
+    }
+
+    double result = a / b;
+    Oop resultOop = makeFloat(memory_, result);
+    if (resultOop.isNil()) return PrimitiveResult::Failure;
+
+    popN(2);
+    push(resultOop);
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveFloatLessThan(int argCount) {
-    return PrimitiveResult::Failure;  // TODO
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    double a, b;
+    if (!extractFloat(memory_, rcvr, a) || !extractFloat(memory_, arg, b)) {
+        return PrimitiveResult::Failure;
+    }
+
+    popN(2);
+    push(a < b ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveFloatEqual(int argCount) {
-    return PrimitiveResult::Failure;  // TODO
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    double a, b;
+    if (!extractFloat(memory_, rcvr, a) || !extractFloat(memory_, arg, b)) {
+        return PrimitiveResult::Failure;
+    }
+
+    popN(2);
+    push(a == b ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveFloatTruncated(int argCount) {
-    return PrimitiveResult::Failure;  // TODO
+    Oop rcvr = stackTop();
+
+    double value;
+    if (!extractFloat(memory_, rcvr, value)) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Truncate toward zero
+    double truncated = std::trunc(value);
+
+    // Try to create SmallInteger from truncated value
+    int64_t intValue = static_cast<int64_t>(truncated);
+    Oop resultOop;
+    if (Oop::tryFromSmallInteger(intValue, resultOop)) {
+        pop();
+        push(resultOop);
+        return PrimitiveResult::Success;
+    }
+
+    // Result too large for SmallInteger - fail (needs LargeInteger)
+    return PrimitiveResult::Failure;
 }
 
 PrimitiveResult Interpreter::primitiveFloatSquareRoot(int argCount) {
-    return PrimitiveResult::Failure;  // TODO
+    Oop rcvr = stackTop();
+
+    double value;
+    if (!extractFloat(memory_, rcvr, value)) {
+        return PrimitiveResult::Failure;
+    }
+
+    if (value < 0.0) {
+        return PrimitiveResult::Failure;  // Negative number
+    }
+
+    double result = std::sqrt(value);
+    Oop resultOop = makeFloat(memory_, result);
+    if (resultOop.isNil()) return PrimitiveResult::Failure;
+
+    pop();
+    push(resultOop);
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveFloatSin(int argCount) {
-    return PrimitiveResult::Failure;  // TODO
+    Oop rcvr = stackTop();
+
+    double value;
+    if (!extractFloat(memory_, rcvr, value)) {
+        return PrimitiveResult::Failure;
+    }
+
+    double result = std::sin(value);
+    Oop resultOop = makeFloat(memory_, result);
+    if (resultOop.isNil()) return PrimitiveResult::Failure;
+
+    pop();
+    push(resultOop);
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveFloatCos(int argCount) {
-    return PrimitiveResult::Failure;  // TODO
+    Oop rcvr = stackTop();
+
+    double value;
+    if (!extractFloat(memory_, rcvr, value)) {
+        return PrimitiveResult::Failure;
+    }
+
+    double result = std::cos(value);
+    Oop resultOop = makeFloat(memory_, result);
+    if (resultOop.isNil()) return PrimitiveResult::Failure;
+
+    pop();
+    push(resultOop);
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveFloatArctan(int argCount) {
-    return PrimitiveResult::Failure;  // TODO
+    Oop rcvr = stackTop();
+
+    double value;
+    if (!extractFloat(memory_, rcvr, value)) {
+        return PrimitiveResult::Failure;
+    }
+
+    double result = std::atan(value);
+    Oop resultOop = makeFloat(memory_, result);
+    if (resultOop.isNil()) return PrimitiveResult::Failure;
+
+    pop();
+    push(resultOop);
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveFloatExp(int argCount) {
-    return PrimitiveResult::Failure;  // TODO
+    Oop rcvr = stackTop();
+
+    double value;
+    if (!extractFloat(memory_, rcvr, value)) {
+        return PrimitiveResult::Failure;
+    }
+
+    double result = std::exp(value);
+    Oop resultOop = makeFloat(memory_, result);
+    if (resultOop.isNil()) return PrimitiveResult::Failure;
+
+    pop();
+    push(resultOop);
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveFloatLn(int argCount) {
-    return PrimitiveResult::Failure;  // TODO
+    Oop rcvr = stackTop();
+
+    double value;
+    if (!extractFloat(memory_, rcvr, value)) {
+        return PrimitiveResult::Failure;
+    }
+
+    if (value <= 0.0) {
+        return PrimitiveResult::Failure;  // Negative or zero
+    }
+
+    double result = std::log(value);
+    Oop resultOop = makeFloat(memory_, result);
+    if (resultOop.isNil()) return PrimitiveResult::Failure;
+
+    pop();
+    push(resultOop);
+    return PrimitiveResult::Success;
 }
 
 // ===== LARGE INTEGER PRIMITIVES (stubs) =====
