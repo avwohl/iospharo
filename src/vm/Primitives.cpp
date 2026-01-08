@@ -1731,7 +1731,12 @@ PrimitiveResult Interpreter::primitiveBeDisplay(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveForceDisplayUpdate(int argCount) {
-    return PrimitiveResult::Failure;
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // On iOS, display updates are handled by the system
+    // This primitive signals that the display should be refreshed
+    // For now, just succeed - actual display update is platform-specific
+    return PrimitiveResult::Success;
 }
 
 // ===== SYSTEM PATH PRIMITIVES =====
@@ -8278,6 +8283,131 @@ PrimitiveResult Interpreter::primitiveShrinkMemory(int argCount) {
     pop();  // receiver
     push(Oop::fromSmallInteger(0));
     return PrimitiveResult::Success;
+}
+
+// ===== MISC PRIMITIVES (232-239) =====
+
+// Primitive 232: Form print (print a Form to printer)
+// aForm primitiveFormPrint -> success
+// Sends a Form to the default printer
+PrimitiveResult Interpreter::primitiveFormPrint(int argCount) {
+    // Printing is platform-specific and not commonly used
+    // Fail to Smalltalk fallback
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 233: Set display mode
+// depth fullscreen primitiveSetDisplayMode -> success
+// Changes display depth and/or fullscreen mode
+PrimitiveResult Interpreter::primitiveSetDisplayMode(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop fullscreenOop = stackTop();
+    Oop depthOop = stackValue(1);
+
+    // Display mode changes are platform-specific
+    // On iOS, the display is managed by the system
+    // Just acknowledge the request
+    popN(2);  // pop arguments, leave receiver
+    return PrimitiveResult::Success;
+}
+
+// Primitive 234: Bitmap decompress from byte array
+// byteArray bitmap primitiveDecompress -> success
+// Decompresses RLE-encoded bitmap data
+PrimitiveResult Interpreter::primitiveBitmapDecompress(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop bitmapOop = stackTop();
+    Oop byteArrayOop = stackValue(1);
+
+    if (byteArrayOop.isImmediate() || bitmapOop.isImmediate()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Bitmap decompression would decode RLE data
+    // This is used for compressed image data
+    // Fail to Smalltalk fallback which has pure Smalltalk implementation
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 235: String compare with collation
+// string1 string2 order primitiveStringCompareWith -> -1/0/1
+// Compares strings using specified collation order
+PrimitiveResult Interpreter::primitiveStringCompareWith(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop orderOop = stackTop();
+    Oop string2Oop = stackValue(1);
+    Oop string1Oop = stackValue(2);
+
+    if (string1Oop.isImmediate() || string2Oop.isImmediate()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Extract strings
+    std::string str1 = extractString(memory_, string1Oop);
+    std::string str2 = extractString(memory_, string2Oop);
+
+    // Basic comparison (ignoring collation order for now)
+    int result;
+    if (str1 < str2) {
+        result = -1;
+    } else if (str1 > str2) {
+        result = 1;
+    } else {
+        result = 0;
+    }
+
+    popN(3);  // pop order, string2, string1
+    pop();    // pop receiver
+    push(Oop::fromSmallInteger(result));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 236: Sampled sound convert
+// srcBuffer destBuffer start count primitiveSampledSoundConvert -> count
+// Converts sampled sound data between formats
+PrimitiveResult Interpreter::primitiveSampledSoundConvert(int argCount) {
+    // Sound conversion is complex and platform-specific
+    // Fail to Smalltalk fallback
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 237: Serial port operation
+// portNum operation data primitiveSerialPortOp -> result
+// Performs serial port operations (open, close, read, write)
+PrimitiveResult Interpreter::primitiveSerialPortOp(int argCount) {
+    // Serial port access is not typically available on iOS
+    // Fail to Smalltalk fallback
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 238: Plugin callback
+// callbackID args primitivePluginCallback -> result
+// Invokes a callback registered by a plugin
+PrimitiveResult Interpreter::primitivePluginCallback(int argCount) {
+    // Plugin callbacks require the plugin infrastructure
+    // Fail to Smalltalk fallback
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 239: Long running primitive
+// primitiveIndex args primitiveLongRunningPrimitive -> result
+// Wraps a primitive that may take a long time, allowing interrupts
+PrimitiveResult Interpreter::primitiveLongRunningPrimitive(int argCount) {
+    if (argCount < 1) return PrimitiveResult::Failure;
+
+    Oop primIndexOop = stackValue(argCount - 1);
+
+    if (!primIndexOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // This primitive is meant to wrap other primitives that might
+    // take a long time, checking for interrupts periodically
+    // For now, just fail to let Smalltalk handle it
+    return PrimitiveResult::Failure;
 }
 
 // ===== EVENT/INPUT PRIMITIVES (264-269) =====

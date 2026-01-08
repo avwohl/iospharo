@@ -3864,6 +3864,17 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[229] = &Interpreter::primitiveStringHash2;
     primitiveTable_[230] = &Interpreter::primitiveShrinkMemory;
 
+    // Misc primitives (231-239)
+    primitiveTable_[231] = &Interpreter::primitiveForceDisplayUpdate;
+    primitiveTable_[232] = &Interpreter::primitiveFormPrint;
+    primitiveTable_[233] = &Interpreter::primitiveSetDisplayMode;
+    primitiveTable_[234] = &Interpreter::primitiveBitmapDecompress;
+    primitiveTable_[235] = &Interpreter::primitiveStringCompareWith;
+    primitiveTable_[236] = &Interpreter::primitiveSampledSoundConvert;
+    primitiveTable_[237] = &Interpreter::primitiveSerialPortOp;
+    primitiveTable_[238] = &Interpreter::primitivePluginCallback;
+    primitiveTable_[239] = &Interpreter::primitiveLongRunningPrimitive;
+
     // Cache flushing primitives (119-120)
     primitiveTable_[119] = &Interpreter::primitiveFlushCacheByMethod;
     primitiveTable_[120] = &Interpreter::primitiveFlushCacheBySelector;

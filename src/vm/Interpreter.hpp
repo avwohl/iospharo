@@ -620,6 +620,16 @@ private:
     PrimitiveResult primitiveStringHash2(int argCount);            // 229
     PrimitiveResult primitiveShrinkMemory(int argCount);           // 230
 
+    // Misc primitives (232-239) - 231 uses existing primitiveForceDisplayUpdate
+    PrimitiveResult primitiveFormPrint(int argCount);              // 232
+    PrimitiveResult primitiveSetDisplayMode(int argCount);         // 233
+    PrimitiveResult primitiveBitmapDecompress(int argCount);       // 234
+    PrimitiveResult primitiveStringCompareWith(int argCount);      // 235
+    PrimitiveResult primitiveSampledSoundConvert(int argCount);    // 236
+    PrimitiveResult primitiveSerialPortOp(int argCount);           // 237
+    PrimitiveResult primitivePluginCallback(int argCount);         // 238
+    PrimitiveResult primitiveLongRunningPrimitive(int argCount);   // 239
+
     // Profiling primitives (260-263)
     PrimitiveResult primitiveVMProfileSamplesInto(int argCount);   // 260
     PrimitiveResult primitiveVMProfileInfoInto(int argCount);      // 261
