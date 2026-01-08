@@ -4140,6 +4140,54 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[378] = &Interpreter::primitiveSSLReceive;
     primitiveTable_[379] = &Interpreter::primitiveSSLStatus;
 
+    // SSL extended primitives (380-389)
+    primitiveTable_[380] = &Interpreter::primitiveSSLSetCertificate;
+    primitiveTable_[381] = &Interpreter::primitiveSSLSetPrivateKey;
+    primitiveTable_[382] = &Interpreter::primitiveSSLGetPeerCertificate;
+    primitiveTable_[383] = &Interpreter::primitiveSSLGetCertificateName;
+    primitiveTable_[384] = &Interpreter::primitiveSSLSetVerifyMode;
+    primitiveTable_[385] = &Interpreter::primitiveSSLGetVerifyResult;
+    primitiveTable_[386] = &Interpreter::primitiveSSLSetSNI;
+    primitiveTable_[387] = &Interpreter::primitiveSSLGetVersion;
+    primitiveTable_[388] = &Interpreter::primitiveSSLGetCipher;
+    primitiveTable_[389] = &Interpreter::primitiveSSLClose;
+
+    // Locale primitives (390-399)
+    primitiveTable_[390] = &Interpreter::primitiveLocaleLanguage;
+    primitiveTable_[391] = &Interpreter::primitiveLocaleCountry;
+    primitiveTable_[392] = &Interpreter::primitiveLocaleCurrencySymbol;
+    primitiveTable_[393] = &Interpreter::primitiveLocaleDecimalSeparator;
+    primitiveTable_[394] = &Interpreter::primitiveLocaleThousandsSeparator;
+    primitiveTable_[395] = &Interpreter::primitiveLocaleDateFormat;
+    primitiveTable_[396] = &Interpreter::primitiveLocaleTimeFormat;
+    primitiveTable_[397] = &Interpreter::primitiveLocaleTimezone;
+    primitiveTable_[398] = &Interpreter::primitiveLocaleTimezoneOffset;
+    primitiveTable_[399] = &Interpreter::primitiveLocaleDaylightSaving;
+
+    // Image/graphics primitives (400-409)
+    primitiveTable_[400] = &Interpreter::primitiveImageReadHeader;
+    primitiveTable_[401] = &Interpreter::primitiveImageReadPixels;
+    primitiveTable_[402] = &Interpreter::primitiveImageWritePNG;
+    primitiveTable_[403] = &Interpreter::primitiveImageWriteJPEG;
+    primitiveTable_[404] = &Interpreter::primitiveImageScale;
+    primitiveTable_[405] = &Interpreter::primitiveImageRotate;
+    primitiveTable_[406] = &Interpreter::primitiveImageComposite;
+    primitiveTable_[407] = &Interpreter::primitiveImageColorConvert;
+    primitiveTable_[408] = &Interpreter::primitiveImageFilter;
+    primitiveTable_[409] = &Interpreter::primitiveImageGetMetadata;
+
+    // System info primitives (410-419)
+    primitiveTable_[410] = &Interpreter::primitiveSystemBatteryLevel;
+    primitiveTable_[411] = &Interpreter::primitiveSystemBatteryState;
+    primitiveTable_[412] = &Interpreter::primitiveSystemScreenBrightness;
+    primitiveTable_[413] = &Interpreter::primitiveSystemSetScreenBrightness;
+    primitiveTable_[414] = &Interpreter::primitiveSystemDeviceModel;
+    primitiveTable_[415] = &Interpreter::primitiveSystemDeviceUUID;
+    primitiveTable_[416] = &Interpreter::primitiveSystemAppVersion;
+    primitiveTable_[417] = &Interpreter::primitiveSystemAppBuild;
+    primitiveTable_[418] = &Interpreter::primitiveSystemAvailableMemory;
+    primitiveTable_[419] = &Interpreter::primitiveSystemDiskSpace;
+
     // Platform primitives (500-513)
     primitiveTable_[500] = &Interpreter::primitiveGetEnvironment;
     primitiveTable_[501] = &Interpreter::primitiveSetEnvironment;

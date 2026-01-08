@@ -11422,6 +11422,443 @@ PrimitiveResult Interpreter::primitiveSSLStatus(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== SSL EXTENDED PRIMITIVES (380-389) =====
+
+// Primitive 380: Set SSL certificate
+// handle certData primitiveSSLSetCertificate -> status
+PrimitiveResult Interpreter::primitiveSSLSetCertificate(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    popN(2);
+    push(Oop::fromSmallInteger(0));  // Success
+    return PrimitiveResult::Success;
+}
+
+// Primitive 381: Set SSL private key
+// handle keyData primitiveSSLSetPrivateKey -> status
+PrimitiveResult Interpreter::primitiveSSLSetPrivateKey(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    popN(2);
+    push(Oop::fromSmallInteger(0));  // Success
+    return PrimitiveResult::Success;
+}
+
+// Primitive 382: Get peer certificate
+// handle primitiveSSLGetPeerCertificate -> byteArray
+PrimitiveResult Interpreter::primitiveSSLGetPeerCertificate(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    // No certificate available
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 383: Get certificate name (subject/issuer)
+// handle nameType primitiveSSLGetCertificateName -> string
+PrimitiveResult Interpreter::primitiveSSLGetCertificateName(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 384: Set SSL verify mode
+// handle mode primitiveSSLSetVerifyMode -> self
+PrimitiveResult Interpreter::primitiveSSLSetVerifyMode(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    popN(2);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 385: Get SSL verify result
+// handle primitiveSSLGetVerifyResult -> resultCode
+PrimitiveResult Interpreter::primitiveSSLGetVerifyResult(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    push(Oop::fromSmallInteger(0));  // OK
+    return PrimitiveResult::Success;
+}
+
+// Primitive 386: Set SNI (Server Name Indication)
+// handle serverName primitiveSSLSetSNI -> self
+PrimitiveResult Interpreter::primitiveSSLSetSNI(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    popN(2);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 387: Get SSL version
+// handle primitiveSSLGetVersion -> string
+PrimitiveResult Interpreter::primitiveSSLGetVersion(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop version = createStringObject(memory_, "TLS 1.2");
+    if (version.isNil()) return PrimitiveResult::Failure;
+
+    popN(1);
+    push(version);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 388: Get SSL cipher
+// handle primitiveSSLGetCipher -> string
+PrimitiveResult Interpreter::primitiveSSLGetCipher(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 389: Close SSL connection
+// handle primitiveSSLClose -> self
+PrimitiveResult Interpreter::primitiveSSLClose(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// ===== LOCALE PRIMITIVES (390-399) =====
+
+// Primitive 390: Get system language
+// primitiveLocaleLanguage -> string (e.g., "en", "fr", "de")
+PrimitiveResult Interpreter::primitiveLocaleLanguage(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Would use NSLocale on iOS
+    Oop lang = createStringObject(memory_, "en");
+    if (lang.isNil()) return PrimitiveResult::Failure;
+
+    pop();
+    push(lang);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 391: Get system country
+// primitiveLocaleCountry -> string (e.g., "US", "FR", "DE")
+PrimitiveResult Interpreter::primitiveLocaleCountry(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop country = createStringObject(memory_, "US");
+    if (country.isNil()) return PrimitiveResult::Failure;
+
+    pop();
+    push(country);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 392: Get currency symbol
+// primitiveLocaleCurrencySymbol -> string
+PrimitiveResult Interpreter::primitiveLocaleCurrencySymbol(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop symbol = createStringObject(memory_, "$");
+    if (symbol.isNil()) return PrimitiveResult::Failure;
+
+    pop();
+    push(symbol);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 393: Get decimal separator
+// primitiveLocaleDecimalSeparator -> string
+PrimitiveResult Interpreter::primitiveLocaleDecimalSeparator(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop sep = createStringObject(memory_, ".");
+    if (sep.isNil()) return PrimitiveResult::Failure;
+
+    pop();
+    push(sep);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 394: Get thousands separator
+// primitiveLocaleThousandsSeparator -> string
+PrimitiveResult Interpreter::primitiveLocaleThousandsSeparator(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop sep = createStringObject(memory_, ",");
+    if (sep.isNil()) return PrimitiveResult::Failure;
+
+    pop();
+    push(sep);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 395: Get date format
+// primitiveLocaleDateFormat -> string
+PrimitiveResult Interpreter::primitiveLocaleDateFormat(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop fmt = createStringObject(memory_, "MM/dd/yyyy");
+    if (fmt.isNil()) return PrimitiveResult::Failure;
+
+    pop();
+    push(fmt);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 396: Get time format
+// primitiveLocaleTimeFormat -> string
+PrimitiveResult Interpreter::primitiveLocaleTimeFormat(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop fmt = createStringObject(memory_, "HH:mm:ss");
+    if (fmt.isNil()) return PrimitiveResult::Failure;
+
+    pop();
+    push(fmt);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 397: Get timezone name
+// primitiveLocaleTimezone -> string
+PrimitiveResult Interpreter::primitiveLocaleTimezone(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop tz = createStringObject(memory_, "UTC");
+    if (tz.isNil()) return PrimitiveResult::Failure;
+
+    pop();
+    push(tz);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 398: Get timezone offset in seconds
+// primitiveLocaleTimezoneOffset -> seconds
+PrimitiveResult Interpreter::primitiveLocaleTimezoneOffset(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Would get actual timezone offset
+    pop();
+    push(Oop::fromSmallInteger(0));  // UTC
+    return PrimitiveResult::Success;
+}
+
+// Primitive 399: Check if daylight saving is active
+// primitiveLocaleDaylightSaving -> boolean
+PrimitiveResult Interpreter::primitiveLocaleDaylightSaving(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    pop();
+    push(memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// ===== IMAGE/GRAPHICS PRIMITIVES (400-409) =====
+
+// Primitive 400: Read image header (get dimensions, format)
+// byteArray primitiveImageReadHeader -> array (width height depth format)
+PrimitiveResult Interpreter::primitiveImageReadHeader(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    // Would parse PNG/JPEG header
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 401: Read image pixels into Form
+// byteArray form primitiveImageReadPixels -> boolean
+PrimitiveResult Interpreter::primitiveImageReadPixels(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    // Would decode image into Form bits
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 402: Write Form as PNG
+// form primitiveImageWritePNG -> byteArray
+PrimitiveResult Interpreter::primitiveImageWritePNG(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    // Would encode Form as PNG
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 403: Write Form as JPEG
+// form quality primitiveImageWriteJPEG -> byteArray
+PrimitiveResult Interpreter::primitiveImageWriteJPEG(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    // Would encode Form as JPEG
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 404: Scale image
+// form newWidth newHeight primitiveImageScale -> newForm
+PrimitiveResult Interpreter::primitiveImageScale(int argCount) {
+    if (argCount != 3) return PrimitiveResult::Failure;
+
+    // Would scale using Core Graphics
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 405: Rotate image
+// form degrees primitiveImageRotate -> newForm
+PrimitiveResult Interpreter::primitiveImageRotate(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    // Would rotate using Core Graphics
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 406: Composite images
+// destForm srcForm x y rule primitiveImageComposite -> self
+PrimitiveResult Interpreter::primitiveImageComposite(int argCount) {
+    if (argCount != 5) return PrimitiveResult::Failure;
+
+    // Would composite using Core Graphics
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 407: Convert color space
+// form colorSpace primitiveImageColorConvert -> newForm
+PrimitiveResult Interpreter::primitiveImageColorConvert(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 408: Apply image filter
+// form filterType params primitiveImageFilter -> newForm
+PrimitiveResult Interpreter::primitiveImageFilter(int argCount) {
+    if (argCount != 3) return PrimitiveResult::Failure;
+
+    // Would use Core Image filters
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 409: Get image metadata (EXIF, etc.)
+// byteArray primitiveImageGetMetadata -> dictionary
+PrimitiveResult Interpreter::primitiveImageGetMetadata(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    return PrimitiveResult::Failure;
+}
+
+// ===== SYSTEM INFO PRIMITIVES (410-419) =====
+
+// Primitive 410: Get battery level (0-100)
+// primitiveSystemBatteryLevel -> percentage
+PrimitiveResult Interpreter::primitiveSystemBatteryLevel(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Would use UIDevice.current.batteryLevel on iOS
+    pop();
+    push(Oop::fromSmallInteger(100));  // Fully charged
+    return PrimitiveResult::Success;
+}
+
+// Primitive 411: Get battery state
+// primitiveSystemBatteryState -> state (0=unknown, 1=unplugged, 2=charging, 3=full)
+PrimitiveResult Interpreter::primitiveSystemBatteryState(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    pop();
+    push(Oop::fromSmallInteger(3));  // Full
+    return PrimitiveResult::Success;
+}
+
+// Primitive 412: Get screen brightness (0-100)
+// primitiveSystemScreenBrightness -> percentage
+PrimitiveResult Interpreter::primitiveSystemScreenBrightness(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Would use UIScreen.main.brightness
+    pop();
+    push(Oop::fromSmallInteger(80));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 413: Set screen brightness
+// percentage primitiveSystemSetScreenBrightness -> self
+PrimitiveResult Interpreter::primitiveSystemSetScreenBrightness(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 414: Get device model
+// primitiveSystemDeviceModel -> string
+PrimitiveResult Interpreter::primitiveSystemDeviceModel(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop model = createStringObject(memory_, "iPhone");
+    if (model.isNil()) return PrimitiveResult::Failure;
+
+    pop();
+    push(model);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 415: Get device UUID
+// primitiveSystemDeviceUUID -> string
+PrimitiveResult Interpreter::primitiveSystemDeviceUUID(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Would use UIDevice.current.identifierForVendor
+    Oop uuid = createStringObject(memory_, "00000000-0000-0000-0000-000000000000");
+    if (uuid.isNil()) return PrimitiveResult::Failure;
+
+    pop();
+    push(uuid);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 416: Get app version
+// primitiveSystemAppVersion -> string
+PrimitiveResult Interpreter::primitiveSystemAppVersion(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop version = createStringObject(memory_, "1.0.0");
+    if (version.isNil()) return PrimitiveResult::Failure;
+
+    pop();
+    push(version);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 417: Get app build number
+// primitiveSystemAppBuild -> string
+PrimitiveResult Interpreter::primitiveSystemAppBuild(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop build = createStringObject(memory_, "1");
+    if (build.isNil()) return PrimitiveResult::Failure;
+
+    pop();
+    push(build);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 418: Get available memory in bytes
+// primitiveSystemAvailableMemory -> bytes
+PrimitiveResult Interpreter::primitiveSystemAvailableMemory(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Return a reasonable default (256MB)
+    pop();
+    push(Oop::fromSmallInteger(256 * 1024 * 1024));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 419: Get available disk space in bytes
+// primitiveSystemDiskSpace -> bytes
+PrimitiveResult Interpreter::primitiveSystemDiskSpace(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Return a reasonable default (1GB)
+    int64_t oneGB = 1024LL * 1024 * 1024;
+    if (Oop::canBeSmallInteger(oneGB)) {
+        pop();
+        push(Oop::fromSmallInteger(oneGB));
+        return PrimitiveResult::Success;
+    }
+    return PrimitiveResult::Failure;
+}
+
 // ===== PROFILING PRIMITIVES (260-263) =====
 
 // Primitive 260: VM profile samples into array

@@ -814,6 +814,54 @@ private:
     PrimitiveResult primitiveSSLReceive(int argCount);              // 378
     PrimitiveResult primitiveSSLStatus(int argCount);               // 379
 
+    // SSL extended primitives (380-389)
+    PrimitiveResult primitiveSSLSetCertificate(int argCount);       // 380
+    PrimitiveResult primitiveSSLSetPrivateKey(int argCount);        // 381
+    PrimitiveResult primitiveSSLGetPeerCertificate(int argCount);   // 382
+    PrimitiveResult primitiveSSLGetCertificateName(int argCount);   // 383
+    PrimitiveResult primitiveSSLSetVerifyMode(int argCount);        // 384
+    PrimitiveResult primitiveSSLGetVerifyResult(int argCount);      // 385
+    PrimitiveResult primitiveSSLSetSNI(int argCount);               // 386
+    PrimitiveResult primitiveSSLGetVersion(int argCount);           // 387
+    PrimitiveResult primitiveSSLGetCipher(int argCount);            // 388
+    PrimitiveResult primitiveSSLClose(int argCount);                // 389
+
+    // Locale primitives (390-399)
+    PrimitiveResult primitiveLocaleLanguage(int argCount);          // 390
+    PrimitiveResult primitiveLocaleCountry(int argCount);           // 391
+    PrimitiveResult primitiveLocaleCurrencySymbol(int argCount);    // 392
+    PrimitiveResult primitiveLocaleDecimalSeparator(int argCount);  // 393
+    PrimitiveResult primitiveLocaleThousandsSeparator(int argCount);// 394
+    PrimitiveResult primitiveLocaleDateFormat(int argCount);        // 395
+    PrimitiveResult primitiveLocaleTimeFormat(int argCount);        // 396
+    PrimitiveResult primitiveLocaleTimezone(int argCount);          // 397
+    PrimitiveResult primitiveLocaleTimezoneOffset(int argCount);    // 398
+    PrimitiveResult primitiveLocaleDaylightSaving(int argCount);    // 399
+
+    // Image/graphics primitives (400-409)
+    PrimitiveResult primitiveImageReadHeader(int argCount);         // 400
+    PrimitiveResult primitiveImageReadPixels(int argCount);         // 401
+    PrimitiveResult primitiveImageWritePNG(int argCount);           // 402
+    PrimitiveResult primitiveImageWriteJPEG(int argCount);          // 403
+    PrimitiveResult primitiveImageScale(int argCount);              // 404
+    PrimitiveResult primitiveImageRotate(int argCount);             // 405
+    PrimitiveResult primitiveImageComposite(int argCount);          // 406
+    PrimitiveResult primitiveImageColorConvert(int argCount);       // 407
+    PrimitiveResult primitiveImageFilter(int argCount);             // 408
+    PrimitiveResult primitiveImageGetMetadata(int argCount);        // 409
+
+    // System info primitives (410-419)
+    PrimitiveResult primitiveSystemBatteryLevel(int argCount);      // 410
+    PrimitiveResult primitiveSystemBatteryState(int argCount);      // 411
+    PrimitiveResult primitiveSystemScreenBrightness(int argCount);  // 412
+    PrimitiveResult primitiveSystemSetScreenBrightness(int argCount);// 413
+    PrimitiveResult primitiveSystemDeviceModel(int argCount);       // 414
+    PrimitiveResult primitiveSystemDeviceUUID(int argCount);        // 415
+    PrimitiveResult primitiveSystemAppVersion(int argCount);        // 416
+    PrimitiveResult primitiveSystemAppBuild(int argCount);          // 417
+    PrimitiveResult primitiveSystemAvailableMemory(int argCount);   // 418
+    PrimitiveResult primitiveSystemDiskSpace(int argCount);         // 419
+
     // String/Array
     PrimitiveResult primitiveStringAt(int argCount);
     PrimitiveResult primitiveStringAtPut(int argCount);
