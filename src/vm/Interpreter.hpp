@@ -525,6 +525,9 @@ private:
     PrimitiveResult primitiveDLLCall(int argCount);                // 118
     PrimitiveResult primitiveExternalCall(int argCount);           // 147
 
+    // Socket primitive (133)
+    PrimitiveResult primitiveSocket(int argCount);                 // 133
+
     // String primitives (157-158)
     PrimitiveResult primitiveCompareStringCollated(int argCount);  // 157
     PrimitiveResult primitiveCompareStringNoCase(int argCount);    // 158

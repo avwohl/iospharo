@@ -7159,4 +7159,33 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
     return PrimitiveResult::Failure;
 }
 
+// ===== SOCKET PRIMITIVE (133) =====
+
+// Primitive 133: Socket operations
+// This is a dispatcher primitive - the actual operation is determined by
+// the first argument which specifies the socket function to perform
+// socketOp args... primitiveSocket -> result
+PrimitiveResult Interpreter::primitiveSocket(int argCount) {
+    // Socket primitive is typically used as a gateway to multiple socket operations:
+    // - Create socket
+    // - Connect
+    // - Bind
+    // - Listen
+    // - Accept
+    // - Send/Receive
+    // - Close
+    // etc.
+
+    // The first argument usually specifies which operation to perform
+    // Without full socket support, fail to Smalltalk fallback
+    // Smalltalk networking code may use alternative mechanisms or report unavailable
+
+    // A full implementation would:
+    // 1. Check operation code in first argument
+    // 2. Dispatch to appropriate socket operation
+    // 3. Handle platform-specific socket API
+
+    return PrimitiveResult::Failure;
+}
+
 } // namespace pharo

@@ -3662,6 +3662,9 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[118] = &Interpreter::primitiveDLLCall;
     primitiveTable_[147] = &Interpreter::primitiveExternalCall;
 
+    // Socket primitive (133)
+    primitiveTable_[133] = &Interpreter::primitiveSocket;
+
     // Special objects and GC primitives (129-130)
     primitiveTable_[129] = &Interpreter::primitiveSpecialObjectsOop;
     primitiveTable_[130] = &Interpreter::primitiveFullGC;
