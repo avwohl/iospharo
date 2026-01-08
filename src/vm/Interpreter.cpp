@@ -3708,6 +3708,26 @@ void Interpreter::initializePrimitives() {
 
     // Instance adoption primitive (160)
     primitiveTable_[160] = &Interpreter::primitiveAdoptInstance;
+
+    // Object pinning primitives (183-185)
+    primitiveTable_[183] = &Interpreter::primitiveIsPinned;
+    primitiveTable_[184] = &Interpreter::primitivePin;
+    primitiveTable_[185] = &Interpreter::primitiveUnpin;
+
+    // Memory management primitives (125, 176, 180)
+    primitiveTable_[125] = &Interpreter::primitiveSignalAtBytesLeft;
+    primitiveTable_[176] = &Interpreter::primitiveMaxIdentityHash;
+    primitiveTable_[180] = &Interpreter::primitiveGrowMemory;
+
+    // Interrupt semaphore primitive (134)
+    primitiveTable_[134] = &Interpreter::primitiveInterruptSemaphore;
+
+    // Context termination primitive (196)
+    primitiveTable_[196] = &Interpreter::primitiveTerminateTo;
+
+    // Float bit access primitives (38-39)
+    primitiveTable_[38] = &Interpreter::primitiveFloatAt;
+    primitiveTable_[39] = &Interpreter::primitiveFloatAtPut;
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {

@@ -563,6 +563,26 @@ private:
     // Instance adoption primitive
     PrimitiveResult primitiveAdoptInstance(int argCount);    // 160
 
+    // Object pinning primitives
+    PrimitiveResult primitiveIsPinned(int argCount);         // 183
+    PrimitiveResult primitivePin(int argCount);              // 184
+    PrimitiveResult primitiveUnpin(int argCount);            // 185
+
+    // Memory management primitives
+    PrimitiveResult primitiveMaxIdentityHash(int argCount);  // 176
+    PrimitiveResult primitiveGrowMemory(int argCount);       // 180
+    PrimitiveResult primitiveSignalAtBytesLeft(int argCount); // 125
+
+    // Interrupt semaphore primitive
+    PrimitiveResult primitiveInterruptSemaphore(int argCount); // 134
+
+    // Context termination primitive
+    PrimitiveResult primitiveTerminateTo(int argCount);      // 196
+
+    // Float bit access primitives
+    PrimitiveResult primitiveFloatAt(int argCount);          // 38
+    PrimitiveResult primitiveFloatAtPut(int argCount);       // 39
+
     // ===== STARTUP SUPPORT =====
 
     /// Bootstrap startup when active process has nil suspendedContext.

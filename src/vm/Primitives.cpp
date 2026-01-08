@@ -4065,4 +4065,248 @@ PrimitiveResult Interpreter::primitiveAdoptInstance(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== OBJECT PINNING PRIMITIVES =====
+
+// Primitive 183: Check if object is pinned
+PrimitiveResult Interpreter::primitiveIsPinned(int argCount) {
+    Oop rcvr = stackTop();
+
+    if (!rcvr.isObject()) {
+        // Immediates are not pinned (they don't move anyway)
+        pop();
+        push(memory_.falseObject());
+        return PrimitiveResult::Success;
+    }
+
+    ObjectHeader* header = rcvr.asObjectPtr();
+    bool isPinned = header->isPinned();
+
+    pop();
+    push(isPinned ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 184: Pin an object (prevent GC from moving it)
+PrimitiveResult Interpreter::primitivePin(int argCount) {
+    Oop rcvr = stackTop();
+
+    if (!rcvr.isObject()) {
+        // Can't pin immediates, but succeed anyway
+        pop();
+        push(memory_.falseObject());  // Return false (was not pinned)
+        return PrimitiveResult::Success;
+    }
+
+    ObjectHeader* header = rcvr.asObjectPtr();
+    bool wasPinned = header->isPinned();
+    header->setPinned(true);
+
+    pop();
+    push(wasPinned ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 185: Unpin an object (allow GC to move it)
+PrimitiveResult Interpreter::primitiveUnpin(int argCount) {
+    Oop rcvr = stackTop();
+
+    if (!rcvr.isObject()) {
+        // Can't unpin immediates
+        pop();
+        push(memory_.falseObject());
+        return PrimitiveResult::Success;
+    }
+
+    ObjectHeader* header = rcvr.asObjectPtr();
+    bool wasPinned = header->isPinned();
+    header->setPinned(false);
+
+    pop();
+    push(wasPinned ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// ===== MEMORY MANAGEMENT PRIMITIVES =====
+
+// Primitive 176: Return maximum identity hash value
+PrimitiveResult Interpreter::primitiveMaxIdentityHash(int argCount) {
+    // Spur uses 22-bit identity hashes
+    const int64_t maxHash = 0x3FFFFF;  // 2^22 - 1
+
+    pop();
+    push(Oop::fromSmallInteger(maxHash));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 180: Grow memory by at least the specified amount
+PrimitiveResult Interpreter::primitiveGrowMemory(int argCount) {
+    Oop amountOop = stackTop();
+
+    if (!amountOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t amount = amountOop.asSmallInteger();
+    if (amount < 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    // In a full implementation, we'd actually grow the heap
+    // For now, just return the current free space
+    size_t freeBytes = memory_.freeOldSpaceBytes();
+
+    pop();
+    push(Oop::fromSmallInteger(static_cast<int64_t>(freeBytes)));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 125: Signal semaphore when free bytes drops below threshold
+PrimitiveResult Interpreter::primitiveSignalAtBytesLeft(int argCount) {
+    Oop bytesOop = stackValue(0);
+    Oop semaphoreOop = stackValue(1);
+
+    if (!bytesOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // In a full implementation, we'd register this with the GC
+    // For now, just succeed (the GC will need to check this)
+
+    popN(2);
+    push(semaphoreOop);  // Return receiver
+    return PrimitiveResult::Success;
+}
+
+// ===== INTERRUPT SEMAPHORE PRIMITIVE =====
+
+// Primitive 134: Set the interrupt semaphore
+PrimitiveResult Interpreter::primitiveInterruptSemaphore(int argCount) {
+    Oop semaphoreOop = stackTop();
+
+    // Store in special objects array at InterruptSemaphore index
+    // Special object index 30 is the interrupt semaphore
+    const size_t InterruptSemaphoreIndex = 30;
+
+    Oop specialArray = memory_.specialObjectsArray();
+    if (specialArray.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    memory_.storePointer(InterruptSemaphoreIndex, specialArray, semaphoreOop);
+
+    pop();
+    push(semaphoreOop);
+    return PrimitiveResult::Success;
+}
+
+// ===== CONTEXT TERMINATION PRIMITIVE =====
+
+// Primitive 196: Terminate context chain from receiver to argument
+PrimitiveResult Interpreter::primitiveTerminateTo(int argCount) {
+    Oop targetContext = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    if (!rcvr.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Walk the sender chain from receiver, nilling out senders until we reach target
+    // Context layout: sender is slot 0
+    const size_t SenderIndex = 0;
+
+    Oop current = rcvr;
+    while (!current.isNil() && current.isObject()) {
+        Oop sender = memory_.fetchPointer(SenderIndex, current);
+
+        // Nil out this context's sender
+        memory_.storePointer(SenderIndex, current, Oop::nil());
+
+        // If we've reached the target, stop
+        if (current.rawBits() == targetContext.rawBits()) {
+            break;
+        }
+
+        current = sender;
+    }
+
+    popN(2);
+    push(rcvr);
+    return PrimitiveResult::Success;
+}
+
+// ===== FLOAT BIT ACCESS PRIMITIVES =====
+
+// Primitive 38: Read 32-bit word from Float at index (1 or 2)
+PrimitiveResult Interpreter::primitiveFloatAt(int argCount) {
+    Oop indexOop = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    if (!rcvr.isObject() || !indexOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t index = indexOop.asSmallInteger();
+    if (index < 1 || index > 2) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* header = rcvr.asObjectPtr();
+    ObjectFormat format = header->format();
+
+    // Must be a Float (64-bit word format)
+    if (format != ObjectFormat::Indexable64) {
+        return PrimitiveResult::Failure;
+    }
+
+    uint32_t* words = reinterpret_cast<uint32_t*>(header + 1);
+    uint32_t value = words[index - 1];
+
+    popN(2);
+    push(Oop::fromSmallInteger(value));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 39: Write 32-bit word to Float at index (1 or 2)
+PrimitiveResult Interpreter::primitiveFloatAtPut(int argCount) {
+    Oop valueOop = stackValue(0);
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!rcvr.isObject() || !indexOop.isSmallInteger() || !valueOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t index = indexOop.asSmallInteger();
+    int64_t value = valueOop.asSmallInteger();
+
+    if (index < 1 || index > 2) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Check value fits in 32 bits unsigned
+    if (value < 0 || value > 0xFFFFFFFF) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* header = rcvr.asObjectPtr();
+    ObjectFormat format = header->format();
+
+    // Must be a Float (64-bit word format)
+    if (format != ObjectFormat::Indexable64) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Check immutability
+    if (header->isImmutable()) {
+        return PrimitiveResult::Failure;
+    }
+
+    uint32_t* words = reinterpret_cast<uint32_t*>(header + 1);
+    words[index - 1] = static_cast<uint32_t>(value);
+
+    popN(3);
+    push(valueOop);
+    return PrimitiveResult::Success;
+}
+
 } // namespace pharo

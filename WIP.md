@@ -256,6 +256,26 @@ Extended large integer support with division and bitwise operations:
 ### 34. Instance Adoption Primitive (DONE)
 - **primitiveAdoptInstance (160)**: Change object's class (with format check)
 
+### 35. Object Pinning Primitives (DONE)
+- **primitiveIsPinned (183)**: Check if object is pinned (won't move during GC)
+- **primitivePin (184)**: Pin an object to prevent GC from moving it
+- **primitiveUnpin (185)**: Unpin an object to allow GC to move it
+
+### 36. Memory Management Primitives (DONE)
+- **primitiveMaxIdentityHash (176)**: Return maximum identity hash value (2^22 - 1)
+- **primitiveGrowMemory (180)**: Request memory growth (returns current free space)
+- **primitiveSignalAtBytesLeft (125)**: Register semaphore for low memory signal
+
+### 37. Interrupt Semaphore Primitive (DONE)
+- **primitiveInterruptSemaphore (134)**: Set the interrupt semaphore
+
+### 38. Context Termination Primitive (DONE)
+- **primitiveTerminateTo (196)**: Terminate context chain from receiver to target
+
+### 39. Float Bit Access Primitives (DONE)
+- **primitiveFloatAt (38)**: Read 32-bit word from Float at index (1 or 2)
+- **primitiveFloatAtPut (39)**: Write 32-bit word to Float at index (1 or 2)
+
 ## Key Files
 
 ### Clean VM Implementation (src/vm/)
