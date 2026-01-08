@@ -697,44 +697,180 @@ PrimitiveResult Interpreter::primitiveBlockValueWithArgs(int argCount) {
     return PrimitiveResult::Success;
 }
 
-// ===== PROCESS PRIMITIVES (stubs) =====
+// ===== PROCESS PRIMITIVES =====
 
 PrimitiveResult Interpreter::primitiveSuspend(int argCount) {
-    return PrimitiveResult::Failure;  // TODO
+    // Primitive 88: Process>>suspend
+    // Suspend the receiver process. If it's the active process, switch to next.
+    // Returns the list the process was on (or nil if it was running).
+    Oop process = stackTop();  // Receiver is the process to suspend
+
+    if (!process.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop activeProcess = getActiveProcess();
+    Oop nilObj = memory_.nil();
+
+    if (process.rawBits() == activeProcess.rawBits()) {
+        // Suspending ourselves - return nil (we weren't on any list, we were running)
+        pop();  // Remove receiver
+        push(nilObj);  // Push result (nil)
+
+        // Find next runnable process and switch to it
+        Oop nextProcess = wakeHighestPriority();
+        if (nextProcess.isNil() || nextProcess.rawBits() == nilObj.rawBits()) {
+            // No other process to run - this shouldn't happen
+            return PrimitiveResult::Failure;
+        }
+        transferTo(nextProcess);
+        return PrimitiveResult::Success;
+    }
+
+    // Suspending another process - it must be on some list
+    Oop myList = memory_.fetchPointer(ProcessMyListIndex, process);
+    if (myList.isNil() || myList.rawBits() == nilObj.rawBits()) {
+        // Process not on any list - can't suspend (already suspended?)
+        return PrimitiveResult::Failure;
+    }
+
+    // Remove from its current list
+    removeProcessFromList(process, myList);
+
+    // Return the list it was on
+    pop();  // Remove receiver
+    push(myList);  // Push result (the list)
+
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveResume(int argCount) {
-    return PrimitiveResult::Failure;  // TODO
+    // Primitive 87: Process>>resume
+    // Resume a suspended process. Add to scheduler queue.
+    // If it has higher priority than current, preempt.
+    Oop process = stackTop();  // Receiver is the process to resume
+
+    if (!process.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Verify process has a valid suspended context
+    Oop context = memory_.fetchPointer(ProcessSuspendedContextIndex, process);
+    Oop nilObj = memory_.nil();
+    if (context.isNil() || context.rawBits() == nilObj.rawBits() || !context.isObject()) {
+        return PrimitiveResult::Failure;  // Can't resume without a valid context
+    }
+
+    // Get priorities to check for preemption
+    Oop processPriorityOop = memory_.fetchPointer(ProcessPriorityIndex, process);
+    int processPriority = static_cast<int>(processPriorityOop.asSmallInteger());
+
+    Oop activeProcess = getActiveProcess();
+    Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
+    int activePriority = static_cast<int>(activePriorityOop.asSmallInteger());
+
+    if (processPriority > activePriority) {
+        // Resumed process has higher priority - preempt current process
+        // Put current process to sleep
+        putToSleep(activeProcess);
+        // Switch to resumed process (don't put it to sleep, just run it)
+        transferTo(process);
+    } else {
+        // Same or lower priority - just add to ready queue
+        putToSleep(process);
+    }
+
+    // Return the process (receiver stays on stack)
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveSignal(int argCount) {
-    return PrimitiveResult::Failure;  // TODO
-}
+    // Primitive 85: Semaphore>>signal
+    // Signal a semaphore. If processes are waiting, wake the first one.
+    // Otherwise increment excessSignals.
+    Oop semaphore = stackTop();  // Receiver
 
-PrimitiveResult Interpreter::primitiveWait(int argCount) {
-    // Semaphore>>wait - primitive 86
-    std::cerr << "[PRIM] primitiveWait called" << std::endl;
-    // Semaphore layout: slot 0 = firstLink, slot 1 = lastLink, slot 2 = excessSignals
-    Oop semaphore = stackTop();
     if (!semaphore.isObject()) {
         return PrimitiveResult::Failure;
     }
 
-    // Check excessSignals (slot 2)
-    Oop excessOop = memory_.fetchPointer(2, semaphore);
+    Oop nilObj = memory_.nil();
+    Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, semaphore);
+
+    if (firstLink.isNil() || firstLink.rawBits() == nilObj.rawBits()) {
+        // No processes waiting - increment excessSignals
+        Oop excessOop = memory_.fetchPointer(SemaphoreExcessSignalsIndex, semaphore);
+        int64_t excess = excessOop.isSmallInteger() ? excessOop.asSmallInteger() : 0;
+        memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
+                            Oop::fromSmallInteger(excess + 1));
+        // Return receiver (semaphore stays on stack)
+        return PrimitiveResult::Success;
+    }
+
+    // Wake the first waiting process
+    Oop process = removeFirstLinkOfList(semaphore);
+
+    // Get process priority and check if we should preempt
+    Oop processPriorityOop = memory_.fetchPointer(ProcessPriorityIndex, process);
+    int processPriority = static_cast<int>(processPriorityOop.asSmallInteger());
+
+    Oop activeProcess = getActiveProcess();
+    Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
+    int activePriority = static_cast<int>(activePriorityOop.asSmallInteger());
+
+    if (processPriority > activePriority) {
+        // Higher priority - preempt current process
+        putToSleep(activeProcess);
+        transferTo(process);
+    } else {
+        // Same or lower priority - just add to ready queue
+        putToSleep(process);
+    }
+
+    return PrimitiveResult::Success;
+}
+
+PrimitiveResult Interpreter::primitiveWait(int argCount) {
+    // Primitive 86: Semaphore>>wait
+    // Wait on a semaphore. If excessSignals > 0, decrement and return.
+    // Otherwise suspend current process on the semaphore's wait list.
+    Oop semaphore = stackTop();  // Receiver
+
+    if (!semaphore.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Check excessSignals (slot 2 of Semaphore)
+    Oop excessOop = memory_.fetchPointer(SemaphoreExcessSignalsIndex, semaphore);
     if (excessOop.isSmallInteger()) {
         int64_t excess = excessOop.asSmallInteger();
         if (excess > 0) {
             // Semaphore is signaled - decrement and return immediately
-            memory_.storePointer(2, semaphore, Oop::fromSmallInteger(excess - 1));
-            // Return the semaphore (receiver stays on stack, already there)
+            memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
+                                Oop::fromSmallInteger(excess - 1));
+            // Return the semaphore (receiver stays on stack)
             return PrimitiveResult::Success;
         }
     }
 
-    // No signal available - for now, just succeed without blocking
-    // This is incorrect but prevents infinite DNU loops during testing
-    // TODO: Properly suspend the process and reschedule
+    // No signal available - must wait
+    // Add current process to semaphore's wait list
+    Oop activeProcess = getActiveProcess();
+    addLastLinkToList(activeProcess, semaphore);
+
+    // Find next runnable process and switch to it
+    Oop nextProcess = wakeHighestPriority();
+    Oop nilObj = memory_.nil();
+    if (nextProcess.isNil() || nextProcess.rawBits() == nilObj.rawBits()) {
+        // No other process - this is bad, but we can't do much
+        // Remove ourselves from the wait list and fail
+        removeFirstLinkOfList(semaphore);
+        return PrimitiveResult::Failure;
+    }
+
+    transferTo(nextProcess);
+
+    // When we return here (after being signaled), the result is the semaphore
     return PrimitiveResult::Success;
 }
 

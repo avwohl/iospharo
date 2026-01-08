@@ -63,6 +63,23 @@ constexpr size_t MaxStackDepth = 4096;
 /// Method cache size (must be power of 2)
 constexpr size_t MethodCacheSize = 2048;
 
+// ===== PROCESS/SCHEDULER OBJECT SLOT INDICES =====
+
+/// Process object slots
+constexpr int ProcessNextLinkIndex = 0;         // nextLink (for LinkedList chain)
+constexpr int ProcessSuspendedContextIndex = 1; // suspendedContext
+constexpr int ProcessPriorityIndex = 2;         // priority (SmallInteger 1-80)
+constexpr int ProcessMyListIndex = 3;           // myList (the list process is in)
+
+/// ProcessScheduler slots
+constexpr int SchedulerProcessListsIndex = 0;   // quiescentProcessLists
+constexpr int SchedulerActiveProcessIndex = 1;  // activeProcess
+
+/// LinkedList/Semaphore slots
+constexpr int LinkedListFirstLinkIndex = 0;     // firstLink
+constexpr int LinkedListLastLinkIndex = 1;      // lastLink
+constexpr int SemaphoreExcessSignalsIndex = 2;  // excessSignals (Semaphore only)
+
 /// Primitive function result
 enum class PrimitiveResult {
     Success,    // Primitive completed, result on stack
@@ -475,6 +492,32 @@ private:
 
     /// Initialize well-known selectors
     void initializeSelectors();
+
+    // ===== PROCESS SCHEDULING HELPERS =====
+
+    /// Get current active process from scheduler
+    Oop getActiveProcess();
+
+    /// Set the active process in scheduler
+    void setActiveProcess(Oop process);
+
+    /// Add process to end of a LinkedList
+    void addLastLinkToList(Oop process, Oop list);
+
+    /// Remove and return first process from a LinkedList
+    Oop removeFirstLinkOfList(Oop list);
+
+    /// Remove specific process from a LinkedList
+    bool removeProcessFromList(Oop process, Oop list);
+
+    /// Find and return highest priority runnable process
+    Oop wakeHighestPriority();
+
+    /// Add process to its priority queue
+    void putToSleep(Oop process);
+
+    /// Context switch to a different process
+    void transferTo(Oop newProcess);
 };
 
 } // namespace pharo

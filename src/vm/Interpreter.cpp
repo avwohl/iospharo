@@ -2504,6 +2504,167 @@ void Interpreter::terminateCurrentProcess() {
     memory_.storePointer(0, activeProcess, nilObj);
 }
 
+Oop Interpreter::getActiveProcess() {
+    Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
+    Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);  // value of Association
+    return memory_.fetchPointer(SchedulerActiveProcessIndex, scheduler);
+}
+
+void Interpreter::setActiveProcess(Oop process) {
+    Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
+    Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
+    memory_.storePointer(SchedulerActiveProcessIndex, scheduler, process);
+}
+
+void Interpreter::addLastLinkToList(Oop process, Oop list) {
+    Oop nilObj = memory_.nil();
+
+    // Set process.nextLink = nil (it's the last one)
+    memory_.storePointer(ProcessNextLinkIndex, process, nilObj);
+
+    // Set process.myList = list
+    memory_.storePointer(ProcessMyListIndex, process, list);
+
+    // Check if list is empty
+    Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, list);
+    if (firstLink.isNil() || firstLink.rawBits() == nilObj.rawBits()) {
+        // Empty list - process becomes both first and last
+        memory_.storePointer(LinkedListFirstLinkIndex, list, process);
+    } else {
+        // Non-empty list - append to last element
+        Oop lastLink = memory_.fetchPointer(LinkedListLastLinkIndex, list);
+        memory_.storePointer(ProcessNextLinkIndex, lastLink, process);
+    }
+    memory_.storePointer(LinkedListLastLinkIndex, list, process);
+}
+
+Oop Interpreter::removeFirstLinkOfList(Oop list) {
+    Oop nilObj = memory_.nil();
+
+    Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, list);
+    Oop last = memory_.fetchPointer(LinkedListLastLinkIndex, list);
+
+    if (first.rawBits() == last.rawBits()) {
+        // Only one element - list becomes empty
+        memory_.storePointer(LinkedListFirstLinkIndex, list, nilObj);
+        memory_.storePointer(LinkedListLastLinkIndex, list, nilObj);
+    } else {
+        // Multiple elements - advance firstLink to next
+        Oop next = memory_.fetchPointer(ProcessNextLinkIndex, first);
+        memory_.storePointer(LinkedListFirstLinkIndex, list, next);
+    }
+
+    // Clear removed process's links
+    memory_.storePointer(ProcessNextLinkIndex, first, nilObj);
+    memory_.storePointer(ProcessMyListIndex, first, nilObj);
+
+    return first;
+}
+
+bool Interpreter::removeProcessFromList(Oop process, Oop list) {
+    Oop nilObj = memory_.nil();
+    Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, list);
+
+    if (first.rawBits() == process.rawBits()) {
+        // Process is first in list
+        removeFirstLinkOfList(list);
+        return true;
+    }
+
+    // Search for process in list
+    Oop prev = first;
+    Oop current = memory_.fetchPointer(ProcessNextLinkIndex, prev);
+
+    while (!current.isNil() && current.rawBits() != nilObj.rawBits()) {
+        if (current.rawBits() == process.rawBits()) {
+            // Found it - unlink
+            Oop next = memory_.fetchPointer(ProcessNextLinkIndex, current);
+            memory_.storePointer(ProcessNextLinkIndex, prev, next);
+
+            // Update lastLink if needed
+            Oop lastLink = memory_.fetchPointer(LinkedListLastLinkIndex, list);
+            if (lastLink.rawBits() == process.rawBits()) {
+                memory_.storePointer(LinkedListLastLinkIndex, list, prev);
+            }
+
+            // Clear process's links
+            memory_.storePointer(ProcessNextLinkIndex, process, nilObj);
+            memory_.storePointer(ProcessMyListIndex, process, nilObj);
+            return true;
+        }
+        prev = current;
+        current = memory_.fetchPointer(ProcessNextLinkIndex, current);
+    }
+    return false;
+}
+
+Oop Interpreter::wakeHighestPriority() {
+    Oop nilObj = memory_.nil();
+    Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
+    Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
+    Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
+
+    ObjectHeader* listsHeader = schedLists.asObjectPtr();
+    size_t numPriorities = listsHeader->slotCount();
+
+    // Search from highest to lowest priority
+    for (int p = static_cast<int>(numPriorities) - 1; p >= 0; p--) {
+        Oop processList = memory_.fetchPointer(p, schedLists);
+        Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, processList);
+
+        if (!first.isNil() && first.rawBits() != nilObj.rawBits()) {
+            // Found a runnable process - remove and return it
+            return removeFirstLinkOfList(processList);
+        }
+    }
+
+    // No runnable process found - this should not happen in a working system
+    return nilObj;
+}
+
+void Interpreter::putToSleep(Oop process) {
+    Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
+    Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
+    Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
+
+    // Get process priority (1-based SmallInteger)
+    Oop priorityOop = memory_.fetchPointer(ProcessPriorityIndex, process);
+    int priority = static_cast<int>(priorityOop.asSmallInteger());
+
+    // Get the appropriate priority list (0-indexed in array)
+    Oop processList = memory_.fetchPointer(priority - 1, schedLists);
+
+    addLastLinkToList(process, processList);
+}
+
+void Interpreter::transferTo(Oop newProcess) {
+    Oop oldProcess = getActiveProcess();
+
+    if (oldProcess.rawBits() == newProcess.rawBits()) {
+        return;  // Already running this process
+    }
+
+    // Save current execution state to old process's suspendedContext
+    // For now, we rely on activeContext_ being updated appropriately
+    // The context should already reflect current execution state
+    if (!activeContext_.isNil() && activeContext_.isObject()) {
+        memory_.storePointer(ProcessSuspendedContextIndex, oldProcess, activeContext_);
+    }
+
+    // Switch to new process
+    setActiveProcess(newProcess);
+
+    // Get new process's suspended context
+    Oop newContext = memory_.fetchPointer(ProcessSuspendedContextIndex, newProcess);
+
+    // Reset interpreter state
+    stackPointer_ = stackBase_;
+    frameDepth_ = 0;
+
+    // Resume execution from the new context
+    executeFromContext(newContext);
+}
+
 bool Interpreter::tryReschedule() {
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
     Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
