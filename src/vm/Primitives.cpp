@@ -7664,4 +7664,130 @@ PrimitiveResult Interpreter::primitiveAllObjectsInMemory(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== REFLECTION PRIMITIVES (535-538) =====
+
+// Primitive 535: Object slot at (0-based raw access)
+// anObject index primitiveObjectSlotAt -> value
+// Raw slot access without inst var mapping
+PrimitiveResult Interpreter::primitiveObjectSlotAt(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop receiver = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    if (receiver.isImmediate()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t index = indexOop.asSmallInteger();
+    if (index < 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t slotCount = memory_.slotCountOf(receiver);
+    if (static_cast<size_t>(index) >= slotCount) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop value = memory_.fetchPointer(static_cast<size_t>(index), receiver);
+    popN(2);  // pop index and receiver
+    push(value);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 536: Object slot at put (0-based raw access)
+// anObject index value primitiveObjectSlotAtPut -> value
+// Raw slot store without inst var mapping
+PrimitiveResult Interpreter::primitiveObjectSlotAtPut(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop value = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop receiver = stackValue(2);
+
+    if (!indexOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    if (receiver.isImmediate()) {
+        return PrimitiveResult::Failure;
+    }
+
+    if (memory_.isImmutable(receiver)) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t index = indexOop.asSmallInteger();
+    if (index < 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t slotCount = memory_.slotCountOf(receiver);
+    if (static_cast<size_t>(index) >= slotCount) {
+        return PrimitiveResult::Failure;
+    }
+
+    memory_.storePointer(static_cast<size_t>(index), receiver, value);
+    popN(3);  // pop value, index, and receiver
+    push(value);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 537: Object num slots
+// anObject primitiveObjectNumSlots -> integer
+// Returns the total number of slots in an object
+PrimitiveResult Interpreter::primitiveObjectNumSlots(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop receiver = stackTop();
+
+    if (receiver.isImmediate()) {
+        // Immediates have 0 slots
+        pop();
+        push(Oop::fromSmallInteger(0));
+        return PrimitiveResult::Success;
+    }
+
+    size_t slotCount = memory_.slotCountOf(receiver);
+    pop();
+    push(Oop::fromSmallInteger(static_cast<int64_t>(slotCount)));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 538: Object format
+// anObject primitiveObjectFormat -> formatCode
+// Returns the object format code from the header
+PrimitiveResult Interpreter::primitiveObjectFormat(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop receiver = stackTop();
+
+    if (receiver.isImmediate()) {
+        // Return a special code for immediates
+        // SmallInteger = -1, Character = -2, SmallFloat = -3
+        int64_t code;
+        if (receiver.isSmallInteger()) {
+            code = -1;
+        } else if (receiver.isCharacter()) {
+            code = -2;
+        } else {
+            code = -3;  // SmallFloat
+        }
+        pop();
+        push(Oop::fromSmallInteger(code));
+        return PrimitiveResult::Success;
+    }
+
+    // Get format from object header
+    ObjectHeader* header = receiver.asObjectPtr();
+    int64_t format = static_cast<int64_t>(header->format());
+    pop();
+    push(Oop::fromSmallInteger(format));
+    return PrimitiveResult::Success;
+}
+
 } // namespace pharo

@@ -3899,6 +3899,12 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[532] = &Interpreter::primitiveStringDecode;
     primitiveTable_[533] = &Interpreter::primitiveCharacterAsciiValue;
     primitiveTable_[534] = &Interpreter::primitiveAllObjectsInMemory;
+
+    // Reflection primitives (535-538)
+    primitiveTable_[535] = &Interpreter::primitiveObjectSlotAt;
+    primitiveTable_[536] = &Interpreter::primitiveObjectSlotAtPut;
+    primitiveTable_[537] = &Interpreter::primitiveObjectNumSlots;
+    primitiveTable_[538] = &Interpreter::primitiveObjectFormat;
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {

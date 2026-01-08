@@ -552,6 +552,12 @@ private:
     PrimitiveResult primitiveCharacterAsciiValue(int argCount);    // 533
     PrimitiveResult primitiveAllObjectsInMemory(int argCount);     // 534
 
+    // Reflection primitives (535-538)
+    PrimitiveResult primitiveObjectSlotAt(int argCount);           // 535
+    PrimitiveResult primitiveObjectSlotAtPut(int argCount);        // 536
+    PrimitiveResult primitiveObjectNumSlots(int argCount);         // 537
+    PrimitiveResult primitiveObjectFormat(int argCount);           // 538
+
     // String primitives (157-158)
     PrimitiveResult primitiveCompareStringCollated(int argCount);  // 157
     PrimitiveResult primitiveCompareStringNoCase(int argCount);    // 158
