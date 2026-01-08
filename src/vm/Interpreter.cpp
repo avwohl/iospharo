@@ -3704,6 +3704,19 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[240] = &Interpreter::primitiveMicrosecondClock;
     primitiveTable_[241] = &Interpreter::primitiveLocalMicrosecondClock;
 
+    // Time primitives (242-252)
+    primitiveTable_[242] = &Interpreter::primitiveUTCMicrosecondClock;
+    primitiveTable_[243] = &Interpreter::primitiveLocalTimezone;
+    primitiveTable_[244] = &Interpreter::primitiveTimezoneOffset;
+    primitiveTable_[245] = &Interpreter::primitiveDaylightSavingTimeOffset;
+    primitiveTable_[246] = &Interpreter::primitiveVMOffsetToUTC;
+    primitiveTable_[247] = &Interpreter::primitivePosixMicrosecondClockWithOffset;
+    primitiveTable_[248] = &Interpreter::primitiveSystemTimezone;
+    primitiveTable_[249] = &Interpreter::primitiveHighResClock;
+    primitiveTable_[250] = &Interpreter::primitiveUTCDateAndTime;
+    primitiveTable_[251] = &Interpreter::primitiveLocalDateAndTime;
+    primitiveTable_[252] = &Interpreter::primitiveNanosecondClock;
+
     // Array/memory primitives (145, 148, 156, 159)
     primitiveTable_[145] = &Interpreter::primitiveConstantFill;
     primitiveTable_[148] = &Interpreter::primitiveShallowCopy;

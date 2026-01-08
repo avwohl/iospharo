@@ -7790,4 +7790,241 @@ PrimitiveResult Interpreter::primitiveObjectFormat(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== TIME PRIMITIVES (242-252) =====
+
+// Primitive 242: UTC Microsecond clock
+// primitiveUTCMicrosecondClock -> microseconds since Posix epoch in UTC
+PrimitiveResult Interpreter::primitiveUTCMicrosecondClock(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    auto now = std::chrono::system_clock::now();
+    auto duration = now.time_since_epoch();
+    int64_t microseconds = std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
+
+    pop();  // receiver
+    push(Oop::fromSmallInteger(microseconds));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 243: Local timezone name
+// primitiveLocalTimezone -> string with timezone name
+PrimitiveResult Interpreter::primitiveLocalTimezone(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Get timezone name from system
+    time_t now = time(nullptr);
+    struct tm* local = localtime(&now);
+
+    // tm_zone contains the timezone abbreviation (e.g., "PST", "EST")
+    const char* tzName = local->tm_zone ? local->tm_zone : "UTC";
+
+    // Create string object for timezone name
+    Oop result = createStringObject(memory_, tzName);
+    if (result.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    pop();  // receiver
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 244: Timezone offset from UTC in minutes
+// primitiveTimezoneOffset -> offset in minutes (negative for west of UTC)
+PrimitiveResult Interpreter::primitiveTimezoneOffset(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    time_t now = time(nullptr);
+    struct tm* local = localtime(&now);
+
+    // tm_gmtoff is seconds east of UTC
+    int64_t offsetMinutes = local->tm_gmtoff / 60;
+
+    pop();  // receiver
+    push(Oop::fromSmallInteger(offsetMinutes));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 245: Daylight saving time offset in minutes
+// primitiveDaylightSavingTimeOffset -> DST offset (usually 0 or 60)
+PrimitiveResult Interpreter::primitiveDaylightSavingTimeOffset(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    time_t now = time(nullptr);
+    struct tm* local = localtime(&now);
+
+    // tm_isdst > 0 means DST is in effect
+    int64_t dstOffset = local->tm_isdst > 0 ? 60 : 0;
+
+    pop();  // receiver
+    push(Oop::fromSmallInteger(dstOffset));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 246: VM's offset to UTC in microseconds
+// primitiveVMOffsetToUTC -> offset in microseconds
+PrimitiveResult Interpreter::primitiveVMOffsetToUTC(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    time_t now = time(nullptr);
+    struct tm* local = localtime(&now);
+
+    // Convert seconds to microseconds
+    int64_t offsetMicroseconds = static_cast<int64_t>(local->tm_gmtoff) * 1000000LL;
+
+    pop();  // receiver
+    push(Oop::fromSmallInteger(offsetMicroseconds));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 247: Posix microsecond clock with UTC offset
+// primitivePosixMicrosecondClockWithOffset -> { microseconds. offsetMicroseconds }
+PrimitiveResult Interpreter::primitivePosixMicrosecondClockWithOffset(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Get current time
+    auto now = std::chrono::system_clock::now();
+    auto duration = now.time_since_epoch();
+    int64_t microseconds = std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
+
+    // Get timezone offset
+    time_t nowTime = time(nullptr);
+    struct tm* local = localtime(&nowTime);
+    int64_t offsetMicroseconds = static_cast<int64_t>(local->tm_gmtoff) * 1000000LL;
+
+    // Allocate a 2-element array for result
+    uint32_t arrayClassIndex = memory_.indexOfClass(
+        memory_.specialObject(SpecialObjectIndex::ClassArray));
+    Oop result = memory_.allocateSlots(arrayClassIndex, 2);
+    if (result.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    memory_.storePointer(0, result, Oop::fromSmallInteger(microseconds));
+    memory_.storePointer(1, result, Oop::fromSmallInteger(offsetMicroseconds));
+
+    pop();  // receiver
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 248: System timezone (full name)
+// primitiveSystemTimezone -> string with full timezone name
+PrimitiveResult Interpreter::primitiveSystemTimezone(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Try to get TZ environment variable or use system default
+    const char* tz = getenv("TZ");
+    if (!tz || strlen(tz) == 0) {
+        // Fall back to abbreviation
+        time_t now = time(nullptr);
+        struct tm* local = localtime(&now);
+        tz = local->tm_zone ? local->tm_zone : "UTC";
+    }
+
+    Oop result = createStringObject(memory_, tz);
+    if (result.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    pop();  // receiver
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 249: High resolution clock (monotonic)
+// primitiveHighResClock -> nanoseconds from monotonic clock
+PrimitiveResult Interpreter::primitiveHighResClock(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    auto now = std::chrono::steady_clock::now();
+    auto duration = now.time_since_epoch();
+    int64_t nanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
+
+    pop();  // receiver
+    push(Oop::fromSmallInteger(nanoseconds));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 250: UTC date and time components
+// primitiveUTCDateAndTime -> array of {year, month, day, hour, minute, second, microsecond}
+PrimitiveResult Interpreter::primitiveUTCDateAndTime(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    auto now = std::chrono::system_clock::now();
+    auto duration = now.time_since_epoch();
+    auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
+
+    time_t nowTime = std::chrono::system_clock::to_time_t(now);
+    struct tm* utc = gmtime(&nowTime);
+
+    // Allocate 7-element array
+    uint32_t arrayClassIndex = memory_.indexOfClass(
+        memory_.specialObject(SpecialObjectIndex::ClassArray));
+    Oop result = memory_.allocateSlots(arrayClassIndex, 7);
+    if (result.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    memory_.storePointer(0, result, Oop::fromSmallInteger(utc->tm_year + 1900));
+    memory_.storePointer(1, result, Oop::fromSmallInteger(utc->tm_mon + 1));
+    memory_.storePointer(2, result, Oop::fromSmallInteger(utc->tm_mday));
+    memory_.storePointer(3, result, Oop::fromSmallInteger(utc->tm_hour));
+    memory_.storePointer(4, result, Oop::fromSmallInteger(utc->tm_min));
+    memory_.storePointer(5, result, Oop::fromSmallInteger(utc->tm_sec));
+    memory_.storePointer(6, result, Oop::fromSmallInteger(microseconds % 1000000));
+
+    pop();  // receiver
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 251: Local date and time components
+// primitiveLocalDateAndTime -> array of {year, month, day, hour, minute, second, microsecond, offset}
+PrimitiveResult Interpreter::primitiveLocalDateAndTime(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    auto now = std::chrono::system_clock::now();
+    auto duration = now.time_since_epoch();
+    auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
+
+    time_t nowTime = std::chrono::system_clock::to_time_t(now);
+    struct tm* local = localtime(&nowTime);
+
+    // Allocate 8-element array (includes timezone offset)
+    uint32_t arrayClassIndex = memory_.indexOfClass(
+        memory_.specialObject(SpecialObjectIndex::ClassArray));
+    Oop result = memory_.allocateSlots(arrayClassIndex, 8);
+    if (result.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    memory_.storePointer(0, result, Oop::fromSmallInteger(local->tm_year + 1900));
+    memory_.storePointer(1, result, Oop::fromSmallInteger(local->tm_mon + 1));
+    memory_.storePointer(2, result, Oop::fromSmallInteger(local->tm_mday));
+    memory_.storePointer(3, result, Oop::fromSmallInteger(local->tm_hour));
+    memory_.storePointer(4, result, Oop::fromSmallInteger(local->tm_min));
+    memory_.storePointer(5, result, Oop::fromSmallInteger(local->tm_sec));
+    memory_.storePointer(6, result, Oop::fromSmallInteger(microseconds % 1000000));
+    memory_.storePointer(7, result, Oop::fromSmallInteger(local->tm_gmtoff / 60));  // offset in minutes
+
+    pop();  // receiver
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 252: Nanosecond clock
+// primitiveNanosecondClock -> nanoseconds since epoch
+PrimitiveResult Interpreter::primitiveNanosecondClock(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    auto now = std::chrono::high_resolution_clock::now();
+    auto duration = now.time_since_epoch();
+    int64_t nanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
+
+    pop();  // receiver
+    push(Oop::fromSmallInteger(nanoseconds));
+    return PrimitiveResult::Success;
+}
+
 } // namespace pharo

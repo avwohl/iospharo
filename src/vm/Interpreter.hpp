@@ -580,6 +580,19 @@ private:
     PrimitiveResult primitiveLocalMicrosecondClock(int argCount);
     PrimitiveResult primitiveSignalAtMilliseconds(int argCount);
 
+    // Time primitives (242-252)
+    PrimitiveResult primitiveUTCMicrosecondClock(int argCount);    // 242
+    PrimitiveResult primitiveLocalTimezone(int argCount);          // 243
+    PrimitiveResult primitiveTimezoneOffset(int argCount);         // 244
+    PrimitiveResult primitiveDaylightSavingTimeOffset(int argCount); // 245
+    PrimitiveResult primitiveVMOffsetToUTC(int argCount);          // 246
+    PrimitiveResult primitivePosixMicrosecondClockWithOffset(int argCount); // 247
+    PrimitiveResult primitiveSystemTimezone(int argCount);         // 248
+    PrimitiveResult primitiveHighResClock(int argCount);           // 249
+    PrimitiveResult primitiveUTCDateAndTime(int argCount);         // 250
+    PrimitiveResult primitiveLocalDateAndTime(int argCount);       // 251
+    PrimitiveResult primitiveNanosecondClock(int argCount);        // 252
+
     // String/Array
     PrimitiveResult primitiveStringAt(int argCount);
     PrimitiveResult primitiveStringAtPut(int argCount);
