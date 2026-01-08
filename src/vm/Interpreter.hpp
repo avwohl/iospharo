@@ -539,6 +539,30 @@ private:
     PrimitiveResult primitiveBehaviorHash(int argCount);     // 175
     PrimitiveResult primitiveChangeClass(int argCount);      // 115
 
+    // 16-bit array access primitives
+    PrimitiveResult primitiveShortAt(int argCount);          // 143
+    PrimitiveResult primitiveShortAtPut(int argCount);       // 144
+
+    // Raw object iteration primitives
+    PrimitiveResult primitiveSomeObject(int argCount);       // 138
+    PrimitiveResult primitiveNextObject(int argCount);       // 139
+
+    // VM attribute primitive
+    PrimitiveResult primitiveGetAttribute(int argCount);     // 149
+
+    // Immutability primitives
+    PrimitiveResult primitiveGetImmutability(int argCount);  // 150
+    PrimitiveResult primitiveSetImmutability(int argCount);  // 151
+
+    // Object copy primitive
+    PrimitiveResult primitiveCopyObject(int argCount);       // 168
+
+    // Compiled method creation primitive
+    PrimitiveResult primitiveNewMethod(int argCount);        // 79
+
+    // Instance adoption primitive
+    PrimitiveResult primitiveAdoptInstance(int argCount);    // 160
+
     // ===== STARTUP SUPPORT =====
 
     /// Bootstrap startup when active process has nil suspendedContext.

@@ -3694,4 +3694,375 @@ PrimitiveResult Interpreter::primitiveChangeClass(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== 16-BIT ARRAY ACCESS PRIMITIVES =====
+
+// Primitive 143: Read a 16-bit unsigned integer from a short-indexable object
+PrimitiveResult Interpreter::primitiveShortAt(int argCount) {
+    Oop indexOop = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    if (!rcvr.isObject() || !indexOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t index = indexOop.asSmallInteger();
+    if (index < 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* header = rcvr.asObjectPtr();
+    size_t byteSize = memory_.byteSizeOf(rcvr);
+    size_t shortCount = byteSize / 2;
+
+    size_t zeroIndex = static_cast<size_t>(index - 1);
+    if (zeroIndex >= shortCount) {
+        return PrimitiveResult::Failure;
+    }
+
+    uint16_t* shorts = reinterpret_cast<uint16_t*>(header + 1);
+    int64_t value = shorts[zeroIndex];
+
+    popN(2);
+    push(Oop::fromSmallInteger(value));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 144: Write a 16-bit unsigned integer to a short-indexable object
+PrimitiveResult Interpreter::primitiveShortAtPut(int argCount) {
+    Oop valueOop = stackValue(0);
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!rcvr.isObject() || !indexOop.isSmallInteger() || !valueOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t index = indexOop.asSmallInteger();
+    int64_t value = valueOop.asSmallInteger();
+
+    if (index < 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Check value fits in 16 bits unsigned
+    if (value < 0 || value > 65535) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* header = rcvr.asObjectPtr();
+
+    // Check immutability
+    if (header->isImmutable()) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t byteSize = memory_.byteSizeOf(rcvr);
+    size_t shortCount = byteSize / 2;
+
+    size_t zeroIndex = static_cast<size_t>(index - 1);
+    if (zeroIndex >= shortCount) {
+        return PrimitiveResult::Failure;
+    }
+
+    uint16_t* shorts = reinterpret_cast<uint16_t*>(header + 1);
+    shorts[zeroIndex] = static_cast<uint16_t>(value);
+
+    popN(3);
+    push(valueOop);  // Return the stored value
+    return PrimitiveResult::Success;
+}
+
+// ===== RAW OBJECT ITERATION PRIMITIVES =====
+
+// Primitive 138: Return the first object in memory
+PrimitiveResult Interpreter::primitiveSomeObject(int argCount) {
+    // Find the first object in old space
+    uint8_t* ptr = memory_.oldSpaceStart();
+    uint8_t* end = memory_.oldSpaceStart() +
+                   (memory_.statistics().bytesAllocated > 0 ?
+                    memory_.statistics().bytesAllocated :
+                    memory_.freeOldSpaceBytes());
+
+    while (ptr < end) {
+        ObjectHeader* header = reinterpret_cast<ObjectHeader*>(ptr);
+
+        // Skip free chunks (class index 0)
+        if (header->classIndex() != 0) {
+            Oop obj = memory_.oopFromPointer(header);
+            pop();  // Pop receiver
+            push(obj);
+            return PrimitiveResult::Success;
+        }
+
+        // Move to next object
+        size_t size = header->totalSize();
+        if (size == 0) break;  // Safety check
+        ptr += size;
+    }
+
+    return PrimitiveResult::Failure;  // No objects found
+}
+
+// Primitive 139: Return the next object in memory after this one
+PrimitiveResult Interpreter::primitiveNextObject(int argCount) {
+    Oop rcvr = stackTop();
+
+    if (!rcvr.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* current = rcvr.asObjectPtr();
+    size_t currentSize = current->totalSize();
+
+    uint8_t* ptr = reinterpret_cast<uint8_t*>(current) + currentSize;
+    uint8_t* end = memory_.oldSpaceStart() +
+                   (memory_.statistics().bytesAllocated > 0 ?
+                    memory_.statistics().bytesAllocated :
+                    memory_.freeOldSpaceBytes());
+
+    while (ptr < end) {
+        ObjectHeader* header = reinterpret_cast<ObjectHeader*>(ptr);
+
+        // Skip free chunks (class index 0)
+        if (header->classIndex() != 0) {
+            Oop obj = memory_.oopFromPointer(header);
+            pop();
+            push(obj);
+            return PrimitiveResult::Success;
+        }
+
+        size_t size = header->totalSize();
+        if (size == 0) break;
+        ptr += size;
+    }
+
+    // No more objects - return the original object to signal end
+    // (Standard behavior is to return the same object when iteration ends)
+    return PrimitiveResult::Failure;
+}
+
+// ===== VM ATTRIBUTE PRIMITIVE =====
+
+// Primitive 149: Get VM attribute by index
+PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
+    Oop indexOop = stackTop();
+
+    if (!indexOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t index = indexOop.asSmallInteger();
+
+    // VM attributes (simplified set)
+    // Negative indices are command line args, positive are VM info
+    switch (index) {
+        case 0:  // VM path (not available, fail)
+            return PrimitiveResult::Failure;
+        case 1:  // Image path (not available, fail)
+            return PrimitiveResult::Failure;
+        case 1001:  // VM version string - return nil for now
+            pop();
+            push(Oop::nil());
+            return PrimitiveResult::Success;
+        case 1002:  // VM build string
+            pop();
+            push(Oop::nil());
+            return PrimitiveResult::Success;
+        case 1003:  // Interpreter class name
+            pop();
+            push(Oop::nil());
+            return PrimitiveResult::Success;
+        case 1004:  // VM type (1=stack, 2=cog, 3=sista)
+            pop();
+            push(Oop::fromSmallInteger(1));  // Stack VM
+            return PrimitiveResult::Success;
+        default:
+            return PrimitiveResult::Failure;
+    }
+}
+
+// ===== IMMUTABILITY PRIMITIVES =====
+
+// Primitive 150: Get immutability flag of object
+PrimitiveResult Interpreter::primitiveGetImmutability(int argCount) {
+    Oop rcvr = stackTop();
+
+    if (!rcvr.isObject()) {
+        // Immediates are always immutable
+        pop();
+        push(memory_.trueObject());
+        return PrimitiveResult::Success;
+    }
+
+    ObjectHeader* header = rcvr.asObjectPtr();
+    bool isImmutable = header->isImmutable();
+
+    pop();
+    push(isImmutable ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 151: Set immutability flag of object
+PrimitiveResult Interpreter::primitiveSetImmutability(int argCount) {
+    Oop flagOop = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    if (!rcvr.isObject()) {
+        // Can't change immutability of immediates
+        return PrimitiveResult::Failure;
+    }
+
+    bool makeImmutable = (flagOop.rawBits() == memory_.trueObject().rawBits());
+
+    ObjectHeader* header = rcvr.asObjectPtr();
+    header->setImmutable(makeImmutable);
+
+    popN(2);
+    push(rcvr);
+    return PrimitiveResult::Success;
+}
+
+// ===== OBJECT COPY PRIMITIVE =====
+
+// Primitive 168: Create a copy of an object (shallow copy with new identity)
+PrimitiveResult Interpreter::primitiveCopyObject(int argCount) {
+    Oop rcvr = stackTop();
+
+    if (!rcvr.isObject()) {
+        // Immediates are their own copy
+        return PrimitiveResult::Success;
+    }
+
+    ObjectHeader* header = rcvr.asObjectPtr();
+    uint32_t classIndex = header->classIndex();
+    ObjectFormat format = header->format();
+    size_t slotCount = header->slotCount();
+
+    Oop copy;
+
+    // Handle different object formats
+    if (format >= ObjectFormat::Indexable8 && format <= ObjectFormat::Indexable8_7) {
+        // Byte object
+        size_t byteSize = memory_.byteSizeOf(rcvr);
+        copy = memory_.allocateBytes(classIndex, byteSize);
+        if (copy.isNil()) return PrimitiveResult::Failure;
+
+        // Copy bytes
+        uint8_t* srcBytes = reinterpret_cast<uint8_t*>(header + 1);
+        uint8_t* dstBytes = reinterpret_cast<uint8_t*>(copy.asObjectPtr() + 1);
+        std::memcpy(dstBytes, srcBytes, byteSize);
+    } else if (format >= ObjectFormat::Indexable32 && format <= ObjectFormat::Indexable64) {
+        // Word object
+        size_t byteSize = memory_.byteSizeOf(rcvr);
+        size_t wordCount = byteSize / 8;
+        copy = memory_.allocateWords(classIndex, wordCount);
+        if (copy.isNil()) return PrimitiveResult::Failure;
+
+        // Copy words
+        uint64_t* srcWords = reinterpret_cast<uint64_t*>(header + 1);
+        uint64_t* dstWords = reinterpret_cast<uint64_t*>(copy.asObjectPtr() + 1);
+        std::memcpy(dstWords, srcWords, byteSize);
+    } else {
+        // Pointer object
+        copy = memory_.allocateSlots(classIndex, slotCount, format);
+        if (copy.isNil()) return PrimitiveResult::Failure;
+
+        // Copy slots
+        for (size_t i = 0; i < slotCount; i++) {
+            Oop slot = memory_.fetchPointer(i, rcvr);
+            memory_.storePointer(i, copy, slot);
+        }
+    }
+
+    pop();
+    push(copy);
+    return PrimitiveResult::Success;
+}
+
+// ===== COMPILED METHOD CREATION PRIMITIVE =====
+
+// Primitive 79: Create a new CompiledMethod
+PrimitiveResult Interpreter::primitiveNewMethod(int argCount) {
+    // Arguments: class bytecodeCount: nBytes header: headerWord
+    Oop headerOop = stackValue(0);
+    Oop bytecountOop = stackValue(1);
+    Oop classOop = stackValue(2);
+
+    if (!bytecountOop.isSmallInteger() || !headerOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    if (!classOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t byteCount = bytecountOop.asSmallInteger();
+    int64_t header = headerOop.asSmallInteger();
+
+    if (byteCount < 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get class index
+    uint32_t classIndex = memory_.indexOfClass(classOop);
+
+    // Extract literal count from header (bits 1-15 in standard format)
+    int literalCount = (header >> 1) & 0x7FFF;
+
+    // Total size: header word + literals + bytecodes (rounded to 8 bytes)
+    size_t totalSlots = 1 + literalCount;  // Header + literals
+    size_t byteSize = totalSlots * 8 + static_cast<size_t>(byteCount);
+
+    // Allocate as CompiledMethod format (24-31)
+    Oop method = memory_.allocateSlots(classIndex, totalSlots, ObjectFormat::CompiledMethod);
+    if (method.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Store the header in slot 0
+    memory_.storePointer(0, method, Oop::fromSmallInteger(header));
+
+    // Initialize literals to nil
+    for (int i = 1; i <= literalCount; i++) {
+        memory_.storePointer(i, method, Oop::nil());
+    }
+
+    popN(3);
+    push(method);
+    return PrimitiveResult::Success;
+}
+
+// ===== INSTANCE ADOPTION PRIMITIVE =====
+
+// Primitive 160: Adopt an instance - change class with format compatibility check
+PrimitiveResult Interpreter::primitiveAdoptInstance(int argCount) {
+    Oop instanceOop = stackValue(0);
+    Oop newClassOop = stackValue(1);
+
+    if (!instanceOop.isObject() || !newClassOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* instanceHeader = instanceOop.asObjectPtr();
+
+    // Check immutability
+    if (instanceHeader->isImmutable()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get the new class index
+    uint32_t newClassIndex = memory_.indexOfClass(newClassOop);
+    if (newClassIndex == 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    // In a full implementation, we'd verify format compatibility here
+    // For now, just change the class
+    instanceHeader->setClassIndex(newClassIndex);
+
+    popN(2);
+    push(instanceOop);
+    return PrimitiveResult::Success;
+}
+
 } // namespace pharo

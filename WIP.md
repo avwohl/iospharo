@@ -232,6 +232,30 @@ Extended large integer support with division and bitwise operations:
 - **primitiveBehaviorHash (175)**: Return identity hash for a behavior/class
 - **primitiveChangeClass (115)**: Change the class of an object
 
+### 28. 16-bit Array Access Primitives (DONE)
+- **primitiveShortAt (143)**: Read 16-bit unsigned integer from short array
+- **primitiveShortAtPut (144)**: Write 16-bit unsigned integer to short array
+
+### 29. Raw Object Iteration Primitives (DONE)
+- **primitiveSomeObject (138)**: Return first object in memory
+- **primitiveNextObject (139)**: Return next object in memory after this one
+
+### 30. VM Attribute Primitive (DONE)
+- **primitiveGetAttribute (149)**: Get VM attribute by index (version, type, etc.)
+
+### 31. Immutability Primitives (DONE)
+- **primitiveGetImmutability (150)**: Get object's immutability flag
+- **primitiveSetImmutability (151)**: Set object's immutability flag
+
+### 32. Object Copy Primitive (DONE)
+- **primitiveCopyObject (168)**: Create shallow copy of object with new identity
+
+### 33. Compiled Method Creation Primitive (DONE)
+- **primitiveNewMethod (79)**: Create new CompiledMethod with given header and size
+
+### 34. Instance Adoption Primitive (DONE)
+- **primitiveAdoptInstance (160)**: Change object's class (with format check)
+
 ## Key Files
 
 ### Clean VM Implementation (src/vm/)

@@ -3684,6 +3684,30 @@ void Interpreter::initializePrimitives() {
     // Class/behavior primitives (115, 175)
     primitiveTable_[115] = &Interpreter::primitiveChangeClass;
     primitiveTable_[175] = &Interpreter::primitiveBehaviorHash;
+
+    // 16-bit array access primitives (143-144)
+    primitiveTable_[143] = &Interpreter::primitiveShortAt;
+    primitiveTable_[144] = &Interpreter::primitiveShortAtPut;
+
+    // Raw object iteration primitives (138-139)
+    primitiveTable_[138] = &Interpreter::primitiveSomeObject;
+    primitiveTable_[139] = &Interpreter::primitiveNextObject;
+
+    // VM attribute primitive (149)
+    primitiveTable_[149] = &Interpreter::primitiveGetAttribute;
+
+    // Immutability primitives (150-151)
+    primitiveTable_[150] = &Interpreter::primitiveGetImmutability;
+    primitiveTable_[151] = &Interpreter::primitiveSetImmutability;
+
+    // Object copy primitive (168)
+    primitiveTable_[168] = &Interpreter::primitiveCopyObject;
+
+    // Compiled method creation primitive (79)
+    primitiveTable_[79] = &Interpreter::primitiveNewMethod;
+
+    // Instance adoption primitive (160)
+    primitiveTable_[160] = &Interpreter::primitiveAdoptInstance;
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {
