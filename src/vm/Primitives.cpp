@@ -905,7 +905,107 @@ PrimitiveResult Interpreter::primitiveExitToDebugger(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
-    return PrimitiveResult::Failure;  // TODO
+    // Primitive 254: Access VM parameters
+    // With 0 args: return array of all parameters
+    // With 1 arg (index): return parameter at index
+    // With 2 args (index, value): set parameter and return old value
+
+    const int paramsArraySize = 86;
+
+    // Helper to get a parameter value
+    auto getParameter = [this](int index) -> Oop {
+        switch (index) {
+            case 1:  // Total heap size (old space)
+                return Oop::fromSmallInteger(
+                    memory_.oldSpaceEnd() - memory_.oldSpaceStart());
+            case 2:  // Free space in young generation
+                return Oop::fromSmallInteger(0);  // Simplified
+            case 3:  // Total memory size
+                return Oop::fromSmallInteger(
+                    memory_.oldSpaceEnd() - memory_.oldSpaceStart());
+            case 7:  // Full GC count
+                return Oop::fromSmallInteger(memory_.statistics().gcCount);
+            case 8:  // Full GC time (ms)
+                return Oop::fromSmallInteger(memory_.statistics().totalGCTime);
+            case 9:  // Scavenge count
+                return Oop::fromSmallInteger(0);
+            case 10: // Scavenge time (ms)
+                return Oop::fromSmallInteger(0);
+            case 11: // Tenures count
+                return Oop::fromSmallInteger(0);
+            case 40: // Bytes per word
+                return Oop::fromSmallInteger(8);  // 64-bit
+            case 41: // Image format version
+                return Oop::fromSmallInteger(68021);  // Spur 64-bit
+            case 42: // Number of stack pages
+                return Oop::fromSmallInteger(1);
+            case 44: // Eden size
+                return Oop::fromSmallInteger(22003584);
+            case 46: // Cog code size
+                return Oop::fromSmallInteger(0);  // No JIT
+            case 48: // VM flags
+                return Oop::fromSmallInteger(0);
+            case 65: // VM features (immutability support, etc.)
+                return Oop::fromSmallInteger(2);  // Immutability supported
+            default:
+                return Oop::fromSmallInteger(0);
+        }
+    };
+
+    if (argCount == 0) {
+        // Return array of all parameters
+        Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
+        uint32_t classIndex = memory_.indexOfClass(arrayClass);
+        Oop result = memory_.allocateSlots(classIndex, paramsArraySize);
+        if (result.isNil()) {
+            return PrimitiveResult::Failure;
+        }
+
+        for (int i = 0; i < paramsArraySize; i++) {
+            Oop value = getParameter(i + 1);  // 1-based
+            memory_.storePointer(i, result, value);
+        }
+
+        primitiveSuccess(result);
+        return PrimitiveResult::Success;
+    }
+
+    if (argCount == 1) {
+        // Get single parameter
+        Oop indexOop = stackValue(0);
+        if (!indexOop.isSmallInteger()) {
+            return PrimitiveResult::Failure;
+        }
+
+        int64_t index = indexOop.asSmallInteger();
+        if (index < 1 || index > paramsArraySize) {
+            return PrimitiveResult::Failure;
+        }
+
+        Oop result = getParameter(static_cast<int>(index));
+        primitiveSuccess(result);
+        return PrimitiveResult::Success;
+    }
+
+    if (argCount == 2) {
+        // Set parameter (most are read-only, just return old value)
+        Oop indexOop = stackValue(1);
+        if (!indexOop.isSmallInteger()) {
+            return PrimitiveResult::Failure;
+        }
+
+        int64_t index = indexOop.asSmallInteger();
+        if (index < 1 || index > paramsArraySize) {
+            return PrimitiveResult::Failure;
+        }
+
+        // Return old value (we don't actually set most parameters)
+        Oop result = getParameter(static_cast<int>(index));
+        primitiveSuccess(result);
+        return PrimitiveResult::Success;
+    }
+
+    return PrimitiveResult::Failure;
 }
 
 // Helper: Extract string from ByteString Oop
