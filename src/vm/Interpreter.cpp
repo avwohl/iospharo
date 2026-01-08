@@ -3584,6 +3584,11 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[63] = &Interpreter::primitiveStringAt;
     primitiveTable_[64] = &Interpreter::primitiveStringAtPut;
 
+    // Stream primitives (65-67)
+    primitiveTable_[65] = &Interpreter::primitiveNext;
+    primitiveTable_[66] = &Interpreter::primitiveNextPut;
+    primitiveTable_[67] = &Interpreter::primitiveAtEnd;
+
     // Object creation/access primitives (68-79)
     primitiveTable_[68] = &Interpreter::primitiveBasicAt;
     primitiveTable_[69] = &Interpreter::primitiveBasicAtPut;

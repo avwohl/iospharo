@@ -676,6 +676,189 @@ PrimitiveResult Interpreter::primitiveAsInteger(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== STREAM PRIMITIVES (65-67) =====
+// Stream object layout (ReadStream, WriteStream, etc.):
+// 0: array (the underlying collection)
+// 1: position (current index, 0-based internally)
+// 2: readLimit (for ReadStream) or writeLimit
+
+static constexpr size_t StreamArrayIndex = 0;
+static constexpr size_t StreamPositionIndex = 1;
+static constexpr size_t StreamLimitIndex = 2;
+
+// Primitive 65: Stream>>next - get next element and advance position
+PrimitiveResult Interpreter::primitiveNext(int argCount) {
+    Oop stream = stackTop();
+
+    if (!stream.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get stream fields
+    Oop array = memory_.fetchPointer(StreamArrayIndex, stream);
+    Oop positionOop = memory_.fetchPointer(StreamPositionIndex, stream);
+    Oop limitOop = memory_.fetchPointer(StreamLimitIndex, stream);
+
+    if (!positionOop.isSmallInteger() || !limitOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t position = positionOop.asSmallInteger();
+    int64_t limit = limitOop.asSmallInteger();
+
+    // Check if at end
+    if (position >= limit) {
+        return PrimitiveResult::Failure;  // At end, let Smalltalk handle it
+    }
+
+    if (!array.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* arrayHeader = array.asObjectPtr();
+    ObjectFormat format = arrayHeader->format();
+
+    Oop result;
+
+    // Handle different array types
+    if (format >= ObjectFormat::Indexable8 && format <= ObjectFormat::Indexable8_7) {
+        // Byte array or String - return Character
+        size_t byteCount = memory_.byteSizeOf(array);
+        if (static_cast<size_t>(position) >= byteCount) {
+            return PrimitiveResult::Failure;
+        }
+        uint8_t byte = memory_.fetchByte(static_cast<size_t>(position), array);
+        result = Oop::fromCharacter(byte);
+    } else if (format <= ObjectFormat::Weak) {
+        // Pointer array - return element
+        size_t slotCount = arrayHeader->slotCount();
+        if (static_cast<size_t>(position) >= slotCount) {
+            return PrimitiveResult::Failure;
+        }
+        result = memory_.fetchPointer(static_cast<size_t>(position), array);
+    } else {
+        // Other formats not supported
+        return PrimitiveResult::Failure;
+    }
+
+    // Advance position
+    memory_.storePointer(StreamPositionIndex, stream,
+                         Oop::fromSmallInteger(position + 1));
+
+    pop();
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 66: Stream>>nextPut: - store element and advance position
+PrimitiveResult Interpreter::primitiveNextPut(int argCount) {
+    if (argCount != 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop value = stackValue(0);
+    Oop stream = stackValue(1);
+
+    if (!stream.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get stream fields
+    Oop array = memory_.fetchPointer(StreamArrayIndex, stream);
+    Oop positionOop = memory_.fetchPointer(StreamPositionIndex, stream);
+    Oop limitOop = memory_.fetchPointer(StreamLimitIndex, stream);
+
+    if (!positionOop.isSmallInteger() || !limitOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t position = positionOop.asSmallInteger();
+
+    if (!array.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* arrayHeader = array.asObjectPtr();
+    ObjectFormat format = arrayHeader->format();
+
+    // Handle different array types
+    if (format >= ObjectFormat::Indexable8 && format <= ObjectFormat::Indexable8_7) {
+        // Byte array or String - store byte from Character or SmallInteger
+        size_t byteCount = memory_.byteSizeOf(array);
+        if (static_cast<size_t>(position) >= byteCount) {
+            return PrimitiveResult::Failure;
+        }
+
+        uint8_t byte;
+        if (value.isCharacter()) {
+            byte = static_cast<uint8_t>(value.asCharacter());
+        } else if (value.isSmallInteger()) {
+            int64_t intVal = value.asSmallInteger();
+            if (intVal < 0 || intVal > 255) {
+                return PrimitiveResult::Failure;
+            }
+            byte = static_cast<uint8_t>(intVal);
+        } else {
+            return PrimitiveResult::Failure;
+        }
+
+        memory_.storeByte(static_cast<size_t>(position), array, byte);
+    } else if (format <= ObjectFormat::Weak) {
+        // Pointer array - store element
+        size_t slotCount = arrayHeader->slotCount();
+        if (static_cast<size_t>(position) >= slotCount) {
+            return PrimitiveResult::Failure;
+        }
+        memory_.storePointer(static_cast<size_t>(position), array, value);
+    } else {
+        // Other formats not supported
+        return PrimitiveResult::Failure;
+    }
+
+    // Advance position
+    int64_t newPosition = position + 1;
+    memory_.storePointer(StreamPositionIndex, stream,
+                         Oop::fromSmallInteger(newPosition));
+
+    // Update limit if we're past it (for WriteStream)
+    int64_t limit = limitOop.asSmallInteger();
+    if (newPosition > limit) {
+        memory_.storePointer(StreamLimitIndex, stream,
+                             Oop::fromSmallInteger(newPosition));
+    }
+
+    // Return the value that was stored
+    popN(2);
+    push(value);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 67: Stream>>atEnd - check if stream is at end
+PrimitiveResult Interpreter::primitiveAtEnd(int argCount) {
+    Oop stream = stackTop();
+
+    if (!stream.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get stream fields
+    Oop positionOop = memory_.fetchPointer(StreamPositionIndex, stream);
+    Oop limitOop = memory_.fetchPointer(StreamLimitIndex, stream);
+
+    if (!positionOop.isSmallInteger() || !limitOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t position = positionOop.asSmallInteger();
+    int64_t limit = limitOop.asSmallInteger();
+
+    bool atEnd = (position >= limit);
+
+    pop();
+    push(atEnd ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
 // ===== BEHAVIOR PRIMITIVES =====
 
 PrimitiveResult Interpreter::primitivePerform(int argCount) {

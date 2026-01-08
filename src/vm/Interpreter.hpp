@@ -405,6 +405,11 @@ private:
     PrimitiveResult primitiveAsCharacter(int argCount);
     PrimitiveResult primitiveAsInteger(int argCount);
 
+    // Stream primitives (65-67)
+    PrimitiveResult primitiveNext(int argCount);                 // 65
+    PrimitiveResult primitiveNextPut(int argCount);              // 66
+    PrimitiveResult primitiveAtEnd(int argCount);                // 67
+
     // Behavior
     PrimitiveResult primitivePerform(int argCount);
     PrimitiveResult primitivePerformWithArgs(int argCount);
