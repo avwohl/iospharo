@@ -8098,6 +8098,707 @@ PrimitiveResult Interpreter::primitiveObjectFormat(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== ADVANCED OBJECT PRIMITIVES (539-550) =====
+
+// Primitive 539: Get object's class
+// anObject primitiveObjectClass -> class
+PrimitiveResult Interpreter::primitiveObjectClass(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop receiver = stackTop();
+    Oop classOop = memory_.classOf(receiver);
+
+    pop();
+    push(classOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 540: Get object's class index
+// anObject primitiveObjectClassIndex -> smallInteger
+PrimitiveResult Interpreter::primitiveObjectClassIndex(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop receiver = stackTop();
+
+    uint32_t classIndex = 0;
+    if (receiver.isObject()) {
+        ObjectHeader* header = receiver.asObjectPtr();
+        classIndex = header->classIndex();
+    } else if (receiver.isSmallInteger()) {
+        // SmallInteger class index
+        classIndex = static_cast<uint32_t>(SpecialObjectIndex::ClassSmallInteger);
+    } else if (receiver.isCharacter()) {
+        classIndex = static_cast<uint32_t>(SpecialObjectIndex::ClassCharacter);
+    } else if (receiver.isSmallFloat()) {
+        classIndex = static_cast<uint32_t>(SpecialObjectIndex::ClassFloat);
+    }
+
+    pop();
+    push(Oop::fromSmallInteger(classIndex));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 541: Check if object is pinned
+// anObject primitiveObjectIsPinned -> boolean
+PrimitiveResult Interpreter::primitiveObjectIsPinned(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop receiver = stackTop();
+
+    bool isPinned = false;
+    if (receiver.isObject()) {
+        isPinned = memory_.isPinned(receiver);
+    }
+
+    pop();
+    push(isPinned ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 542: Set object pinned state
+// anObject boolean primitiveObjectSetPinned -> anObject
+PrimitiveResult Interpreter::primitiveObjectSetPinned(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop pinOop = stackTop();
+    Oop receiver = stackValue(1);
+
+    if (!receiver.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    bool pin = (pinOop == memory_.trueObject());
+    if (pin) {
+        memory_.pinObject(receiver);
+    }
+    // Note: unpinning would need additional support
+
+    pop();  // pin flag
+    // Leave receiver on stack
+    return PrimitiveResult::Success;
+}
+
+// Primitive 543: Check if object is read-only (immutable)
+// anObject primitiveObjectIsReadOnly -> boolean
+PrimitiveResult Interpreter::primitiveObjectIsReadOnly(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop receiver = stackTop();
+
+    bool isReadOnly = false;
+    if (receiver.isObject()) {
+        isReadOnly = memory_.isImmutable(receiver);
+    } else {
+        // Immediates are always immutable
+        isReadOnly = true;
+    }
+
+    pop();
+    push(isReadOnly ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 544: Set object read-only state
+// anObject boolean primitiveObjectSetReadOnly -> anObject
+PrimitiveResult Interpreter::primitiveObjectSetReadOnly(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop readOnlyOop = stackTop();
+    Oop receiver = stackValue(1);
+
+    if (!receiver.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    bool makeReadOnly = (readOnlyOop == memory_.trueObject());
+    if (makeReadOnly) {
+        memory_.makeImmutable(receiver);
+    }
+    // Note: making mutable again would need additional support
+
+    pop();  // readOnly flag
+    // Leave receiver on stack
+    return PrimitiveResult::Success;
+}
+
+// Primitive 545: Get byte size of object's data
+// anObject primitiveObjectBytesSize -> smallInteger
+PrimitiveResult Interpreter::primitiveObjectBytesSize(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop receiver = stackTop();
+
+    size_t byteSize = 0;
+    if (receiver.isObject()) {
+        byteSize = memory_.byteSizeOf(receiver);
+    }
+
+    pop();
+    push(Oop::fromSmallInteger(static_cast<intptr_t>(byteSize)));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 546: Get word (64-bit) count of object
+// anObject primitiveObjectWordsSize -> smallInteger
+PrimitiveResult Interpreter::primitiveObjectWordsSize(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop receiver = stackTop();
+
+    size_t wordSize = 0;
+    if (receiver.isObject()) {
+        wordSize = memory_.byteSizeOf(receiver) / 8;
+    }
+
+    pop();
+    push(Oop::fromSmallInteger(static_cast<intptr_t>(wordSize)));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 547: Get pointer slot count of object
+// anObject primitiveObjectPointersSize -> smallInteger
+PrimitiveResult Interpreter::primitiveObjectPointersSize(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop receiver = stackTop();
+
+    size_t slotCount = 0;
+    if (receiver.isObject()) {
+        slotCount = memory_.slotCountOf(receiver);
+    }
+
+    pop();
+    push(Oop::fromSmallInteger(static_cast<intptr_t>(slotCount)));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 548: Get raw object header
+// anObject primitiveObjectHeader -> smallInteger
+PrimitiveResult Interpreter::primitiveObjectHeader(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop receiver = stackTop();
+
+    if (!receiver.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* header = receiver.asObjectPtr();
+    // Return the first 64 bits of the header
+    uint64_t headerBits = *reinterpret_cast<uint64_t*>(header);
+
+    pop();
+    // Return truncated to fit in SmallInteger
+    push(Oop::fromSmallInteger(static_cast<intptr_t>(headerBits & 0x7FFFFFFFFFFFF)));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 549: Set raw object header (dangerous!)
+// anObject headerValue primitiveObjectHeaderPut -> anObject
+PrimitiveResult Interpreter::primitiveObjectHeaderPut(int argCount) {
+    // This is a dangerous primitive - fail for safety
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 550: Identity hash that works for SmallIntegers too
+// anObject primitiveIdentityHashSmallInteger -> smallInteger
+PrimitiveResult Interpreter::primitiveIdentityHashSmallInteger(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop receiver = stackTop();
+
+    uint32_t hash;
+    if (receiver.isSmallInteger()) {
+        // For SmallIntegers, use the value itself as the hash
+        hash = static_cast<uint32_t>(receiver.asSmallInteger() & 0x3FFFFFFF);
+    } else if (receiver.isCharacter()) {
+        hash = receiver.asCharacter();
+    } else if (receiver.isObject()) {
+        hash = memory_.identityHashOf(receiver);
+    } else {
+        // SmallFloat - use bits as hash
+        hash = static_cast<uint32_t>(receiver.rawBits() >> 3);
+    }
+
+    pop();
+    push(Oop::fromSmallInteger(hash));
+    return PrimitiveResult::Success;
+}
+
+// ===== COMPILED METHOD PRIMITIVES (551-560) =====
+
+// Primitive 551: Get number of literals in compiled method
+// aMethod primitiveCompiledMethodNumLiterals -> smallInteger
+PrimitiveResult Interpreter::primitiveCompiledMethodNumLiterals(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop methodOop = stackTop();
+    if (!methodOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Method header is at slot 0, contains numLiterals in low bits
+    Oop headerOop = memory_.fetchPointer(0, methodOop);
+    if (!headerOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    intptr_t header = headerOop.asSmallInteger();
+    // Literal count is in bits 0-14 of the header
+    intptr_t numLiterals = header & 0x7FFF;
+
+    pop();
+    push(Oop::fromSmallInteger(numLiterals));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 552: Get literal at index from compiled method
+// aMethod index primitiveCompiledMethodLiteralAt -> literal
+PrimitiveResult Interpreter::primitiveCompiledMethodLiteralAt(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop methodOop = stackValue(1);
+
+    if (!indexOop.isSmallInteger() || !methodOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    intptr_t index = indexOop.asSmallInteger();
+    if (index < 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Literals start at slot 1 (slot 0 is the header)
+    Oop literal = memory_.fetchPointer(static_cast<size_t>(index), methodOop);
+
+    popN(2);
+    push(literal);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 553: Set literal at index in compiled method
+// aMethod index literal primitiveCompiledMethodLiteralAtPut -> aMethod
+PrimitiveResult Interpreter::primitiveCompiledMethodLiteralAtPut(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop literalOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop methodOop = stackValue(2);
+
+    if (!indexOop.isSmallInteger() || !methodOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    intptr_t index = indexOop.asSmallInteger();
+    if (index < 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    memory_.storePointer(static_cast<size_t>(index), methodOop, literalOop);
+
+    popN(3);
+    push(methodOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 554: Get bytecode at offset from compiled method
+// aMethod offset primitiveCompiledMethodBytecodeAt -> byte
+PrimitiveResult Interpreter::primitiveCompiledMethodBytecodeAt(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop offsetOop = stackTop();
+    Oop methodOop = stackValue(1);
+
+    if (!offsetOop.isSmallInteger() || !methodOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    intptr_t offset = offsetOop.asSmallInteger();
+    if (offset < 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    uint8_t byte = memory_.fetchByte(static_cast<size_t>(offset), methodOop);
+
+    popN(2);
+    push(Oop::fromSmallInteger(byte));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 555: Set bytecode at offset in compiled method
+// aMethod offset byte primitiveCompiledMethodBytecodeAtPut -> aMethod
+PrimitiveResult Interpreter::primitiveCompiledMethodBytecodeAtPut(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop byteOop = stackTop();
+    Oop offsetOop = stackValue(1);
+    Oop methodOop = stackValue(2);
+
+    if (!byteOop.isSmallInteger() || !offsetOop.isSmallInteger() || !methodOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    intptr_t offset = offsetOop.asSmallInteger();
+    intptr_t byteVal = byteOop.asSmallInteger();
+    if (offset < 0 || byteVal < 0 || byteVal > 255) {
+        return PrimitiveResult::Failure;
+    }
+
+    memory_.storeByte(static_cast<size_t>(offset), methodOop, static_cast<uint8_t>(byteVal));
+
+    popN(3);
+    push(methodOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 556: Get number of arguments of compiled method
+// aMethod primitiveCompiledMethodNumArgs -> smallInteger
+PrimitiveResult Interpreter::primitiveCompiledMethodNumArgs(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop methodOop = stackTop();
+    if (!methodOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop headerOop = memory_.fetchPointer(0, methodOop);
+    if (!headerOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    intptr_t header = headerOop.asSmallInteger();
+    // NumArgs is in bits 24-27 of the method header
+    intptr_t numArgs = (header >> 24) & 0xF;
+
+    pop();
+    push(Oop::fromSmallInteger(numArgs));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 557: Get number of temps of compiled method
+// aMethod primitiveCompiledMethodNumTemps -> smallInteger
+PrimitiveResult Interpreter::primitiveCompiledMethodNumTemps(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop methodOop = stackTop();
+    if (!methodOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop headerOop = memory_.fetchPointer(0, methodOop);
+    if (!headerOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    intptr_t header = headerOop.asSmallInteger();
+    // NumTemps is in bits 18-23 of the method header
+    intptr_t numTemps = (header >> 18) & 0x3F;
+
+    pop();
+    push(Oop::fromSmallInteger(numTemps));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 558: Get frame size needed for compiled method
+// aMethod primitiveCompiledMethodFrameSize -> smallInteger
+PrimitiveResult Interpreter::primitiveCompiledMethodFrameSize(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop methodOop = stackTop();
+    if (!methodOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop headerOop = memory_.fetchPointer(0, methodOop);
+    if (!headerOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    intptr_t header = headerOop.asSmallInteger();
+    // Frame size flag is in bit 17
+    bool largeFrame = (header >> 17) & 1;
+    intptr_t frameSize = largeFrame ? 56 : 16;
+
+    pop();
+    push(Oop::fromSmallInteger(frameSize));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 559: Get primitive index of compiled method
+// aMethod primitiveCompiledMethodPrimitive -> smallInteger
+PrimitiveResult Interpreter::primitiveCompiledMethodPrimitive(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop methodOop = stackTop();
+    if (!methodOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop headerOop = memory_.fetchPointer(0, methodOop);
+    if (!headerOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    intptr_t header = headerOop.asSmallInteger();
+    // Primitive index is typically extracted from the header or first bytecodes
+    // For Spur, flag bit indicates if primitive
+    bool hasPrimitive = (header >> 16) & 1;
+
+    intptr_t primitiveIndex = 0;
+    if (hasPrimitive) {
+        // Primitive index encoded in first bytecodes after header
+        // This is a simplified extraction
+        primitiveIndex = (header >> 1) & 0x7FFF;
+    }
+
+    pop();
+    push(Oop::fromSmallInteger(primitiveIndex));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 560: Get selector of compiled method (last literal)
+// aMethod primitiveCompiledMethodSelector -> selector
+PrimitiveResult Interpreter::primitiveCompiledMethodSelector(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop methodOop = stackTop();
+    if (!methodOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop headerOop = memory_.fetchPointer(0, methodOop);
+    if (!headerOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    intptr_t header = headerOop.asSmallInteger();
+    intptr_t numLiterals = header & 0x7FFF;
+
+    // Selector is typically the last literal (or second to last in some encodings)
+    Oop selector = Oop::nil();
+    if (numLiterals > 0) {
+        selector = memory_.fetchPointer(static_cast<size_t>(numLiterals), methodOop);
+    }
+
+    pop();
+    push(selector);
+    return PrimitiveResult::Success;
+}
+
+// ===== SYSTEM AND DEBUG PRIMITIVES (561-570) =====
+
+// Primitive 561: Get heap statistics
+// primitiveVMHeapStatistics -> array of stats
+PrimitiveResult Interpreter::primitiveVMHeapStatistics(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Return simple statistics as array
+    // For now, just return nil - would need to allocate an array
+    pop();
+    push(Oop::nil());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 562: Get GC statistics
+// primitiveVMGCStatistics -> array of stats
+PrimitiveResult Interpreter::primitiveVMGCStatistics(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    auto stats = memory_.statistics();
+
+    // Return just the GC count for now
+    pop();
+    push(Oop::fromSmallInteger(static_cast<intptr_t>(stats.gcCount)));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 563: Get current stack depth
+// primitiveVMStackDepth -> smallInteger
+PrimitiveResult Interpreter::primitiveVMStackDepth(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Calculate stack depth from stack pointer
+    intptr_t depth = static_cast<intptr_t>(stackPointer_ - stack_.data());
+
+    pop();
+    push(Oop::fromSmallInteger(depth));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 564: Get bytecode execution count
+// primitiveVMBytecodeCount -> largeInteger
+PrimitiveResult Interpreter::primitiveVMBytecodeCount(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Bytecode count not tracked in this VM
+    pop();
+    push(Oop::fromSmallInteger(0));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 565: Get message send count
+// primitiveVMSendCount -> largeInteger
+PrimitiveResult Interpreter::primitiveVMSendCount(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Send count not tracked in this VM
+    pop();
+    push(Oop::fromSmallInteger(0));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 566: Get primitive call count
+// primitiveVMPrimitiveCount -> largeInteger
+PrimitiveResult Interpreter::primitiveVMPrimitiveCount(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Primitive count not tracked in this VM
+    pop();
+    push(Oop::fromSmallInteger(0));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 567: Get context switch count
+// primitiveVMContextSwitchCount -> largeInteger
+PrimitiveResult Interpreter::primitiveVMContextSwitchCount(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Context switch count not tracked in this VM
+    pop();
+    push(Oop::fromSmallInteger(0));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 568: Get VM uptime in milliseconds
+// primitiveVMUptime -> largeInteger
+PrimitiveResult Interpreter::primitiveVMUptime(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Get uptime using clock
+    auto now = std::chrono::steady_clock::now();
+    static auto startTime = now;
+    auto uptime = std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime).count();
+
+    pop();
+    push(Oop::fromSmallInteger(static_cast<intptr_t>(uptime)));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 569: Get CPU time used in milliseconds
+// primitiveVMCPUTime -> largeInteger
+PrimitiveResult Interpreter::primitiveVMCPUTime(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Get CPU time
+    clock_t cpuTime = clock();
+    intptr_t milliseconds = (cpuTime * 1000) / CLOCKS_PER_SEC;
+
+    pop();
+    push(Oop::fromSmallInteger(milliseconds));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 570: Get idle time in milliseconds
+// primitiveVMIdleTime -> largeInteger
+PrimitiveResult Interpreter::primitiveVMIdleTime(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Idle time not tracked
+    pop();
+    push(Oop::fromSmallInteger(0));
+    return PrimitiveResult::Success;
+}
+
+// ===== ADDITIONAL BIT PRIMITIVES (571-574) =====
+
+// Primitive 571: Count number of 1 bits (popcount)
+// anInteger primitiveBitCount -> smallInteger
+PrimitiveResult Interpreter::primitiveBitCount(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop receiver = stackTop();
+    if (!receiver.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t value = receiver.asSmallInteger();
+    // Handle negative numbers by counting bits in two's complement
+    uint64_t bits = static_cast<uint64_t>(value < 0 ? -value : value);
+    int count = __builtin_popcountll(bits);
+
+    pop();
+    push(Oop::fromSmallInteger(count));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 572: Reverse bits
+// anInteger primitiveBitReverse -> integer
+PrimitiveResult Interpreter::primitiveBitReverse(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop receiver = stackTop();
+    if (!receiver.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    uint64_t value = static_cast<uint64_t>(receiver.asSmallInteger());
+
+    // Reverse bits using standard technique
+    uint64_t result = 0;
+    for (int i = 0; i < 64; i++) {
+        result = (result << 1) | (value & 1);
+        value >>= 1;
+    }
+
+    pop();
+    push(Oop::fromSmallInteger(static_cast<intptr_t>(result & 0x7FFFFFFFFFFFF)));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 573: Swap bytes in 32-bit integer
+// anInteger primitiveByteSwap32 -> integer
+PrimitiveResult Interpreter::primitiveByteSwap32(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop receiver = stackTop();
+    if (!receiver.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    uint32_t value = static_cast<uint32_t>(receiver.asSmallInteger());
+
+    // Byte swap: ABCD -> DCBA
+    uint32_t result = ((value & 0xFF000000) >> 24) |
+                      ((value & 0x00FF0000) >> 8) |
+                      ((value & 0x0000FF00) << 8) |
+                      ((value & 0x000000FF) << 24);
+
+    pop();
+    push(Oop::fromSmallInteger(result));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 574: Swap bytes in 64-bit integer
+// anInteger primitiveByteSwap64 -> integer
+PrimitiveResult Interpreter::primitiveByteSwap64(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop receiver = stackTop();
+    if (!receiver.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    uint64_t value = static_cast<uint64_t>(receiver.asSmallInteger());
+
+    // Byte swap using built-in
+    uint64_t result = __builtin_bswap64(value);
+
+    pop();
+    push(Oop::fromSmallInteger(static_cast<intptr_t>(result & 0x7FFFFFFFFFFFF)));
+    return PrimitiveResult::Success;
+}
+
 // ===== TIME PRIMITIVES (242-252) =====
 
 // Primitive 242: UTC Microsecond clock

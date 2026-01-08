@@ -558,6 +558,50 @@ private:
     PrimitiveResult primitiveObjectNumSlots(int argCount);         // 537
     PrimitiveResult primitiveObjectFormat(int argCount);           // 538
 
+    // Advanced object primitives (539-550)
+    PrimitiveResult primitiveObjectClass(int argCount);            // 539
+    PrimitiveResult primitiveObjectClassIndex(int argCount);       // 540
+    PrimitiveResult primitiveObjectIsPinned(int argCount);         // 541
+    PrimitiveResult primitiveObjectSetPinned(int argCount);        // 542
+    PrimitiveResult primitiveObjectIsReadOnly(int argCount);       // 543
+    PrimitiveResult primitiveObjectSetReadOnly(int argCount);      // 544
+    PrimitiveResult primitiveObjectBytesSize(int argCount);        // 545
+    PrimitiveResult primitiveObjectWordsSize(int argCount);        // 546
+    PrimitiveResult primitiveObjectPointersSize(int argCount);     // 547
+    PrimitiveResult primitiveObjectHeader(int argCount);           // 548
+    PrimitiveResult primitiveObjectHeaderPut(int argCount);        // 549
+    PrimitiveResult primitiveIdentityHashSmallInteger(int argCount); // 550
+
+    // Method and class primitives (551-560)
+    PrimitiveResult primitiveCompiledMethodNumLiterals(int argCount); // 551
+    PrimitiveResult primitiveCompiledMethodLiteralAt(int argCount);   // 552
+    PrimitiveResult primitiveCompiledMethodLiteralAtPut(int argCount); // 553
+    PrimitiveResult primitiveCompiledMethodBytecodeAt(int argCount);  // 554
+    PrimitiveResult primitiveCompiledMethodBytecodeAtPut(int argCount); // 555
+    PrimitiveResult primitiveCompiledMethodNumArgs(int argCount);     // 556
+    PrimitiveResult primitiveCompiledMethodNumTemps(int argCount);    // 557
+    PrimitiveResult primitiveCompiledMethodFrameSize(int argCount);   // 558
+    PrimitiveResult primitiveCompiledMethodPrimitive(int argCount);   // 559
+    PrimitiveResult primitiveCompiledMethodSelector(int argCount);    // 560
+
+    // System and debug primitives (561-570)
+    PrimitiveResult primitiveVMHeapStatistics(int argCount);       // 561
+    PrimitiveResult primitiveVMGCStatistics(int argCount);         // 562
+    PrimitiveResult primitiveVMStackDepth(int argCount);           // 563
+    PrimitiveResult primitiveVMBytecodeCount(int argCount);        // 564
+    PrimitiveResult primitiveVMSendCount(int argCount);            // 565
+    PrimitiveResult primitiveVMPrimitiveCount(int argCount);       // 566
+    PrimitiveResult primitiveVMContextSwitchCount(int argCount);   // 567
+    PrimitiveResult primitiveVMUptime(int argCount);               // 568
+    PrimitiveResult primitiveVMCPUTime(int argCount);              // 569
+    PrimitiveResult primitiveVMIdleTime(int argCount);             // 570
+
+    // Additional bit primitives (571-574)
+    PrimitiveResult primitiveBitCount(int argCount);               // 571
+    PrimitiveResult primitiveBitReverse(int argCount);             // 572
+    PrimitiveResult primitiveByteSwap32(int argCount);             // 573
+    PrimitiveResult primitiveByteSwap64(int argCount);             // 574
+
     // Platform primitives (500-513)
     PrimitiveResult primitiveGetEnvironment(int argCount);         // 500
     PrimitiveResult primitiveSetEnvironment(int argCount);         // 501

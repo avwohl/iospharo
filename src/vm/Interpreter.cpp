@@ -3956,6 +3956,50 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[537] = &Interpreter::primitiveObjectNumSlots;
     primitiveTable_[538] = &Interpreter::primitiveObjectFormat;
 
+    // Advanced object primitives (539-550)
+    primitiveTable_[539] = &Interpreter::primitiveObjectClass;
+    primitiveTable_[540] = &Interpreter::primitiveObjectClassIndex;
+    primitiveTable_[541] = &Interpreter::primitiveObjectIsPinned;
+    primitiveTable_[542] = &Interpreter::primitiveObjectSetPinned;
+    primitiveTable_[543] = &Interpreter::primitiveObjectIsReadOnly;
+    primitiveTable_[544] = &Interpreter::primitiveObjectSetReadOnly;
+    primitiveTable_[545] = &Interpreter::primitiveObjectBytesSize;
+    primitiveTable_[546] = &Interpreter::primitiveObjectWordsSize;
+    primitiveTable_[547] = &Interpreter::primitiveObjectPointersSize;
+    primitiveTable_[548] = &Interpreter::primitiveObjectHeader;
+    primitiveTable_[549] = &Interpreter::primitiveObjectHeaderPut;
+    primitiveTable_[550] = &Interpreter::primitiveIdentityHashSmallInteger;
+
+    // Method and class primitives (551-560)
+    primitiveTable_[551] = &Interpreter::primitiveCompiledMethodNumLiterals;
+    primitiveTable_[552] = &Interpreter::primitiveCompiledMethodLiteralAt;
+    primitiveTable_[553] = &Interpreter::primitiveCompiledMethodLiteralAtPut;
+    primitiveTable_[554] = &Interpreter::primitiveCompiledMethodBytecodeAt;
+    primitiveTable_[555] = &Interpreter::primitiveCompiledMethodBytecodeAtPut;
+    primitiveTable_[556] = &Interpreter::primitiveCompiledMethodNumArgs;
+    primitiveTable_[557] = &Interpreter::primitiveCompiledMethodNumTemps;
+    primitiveTable_[558] = &Interpreter::primitiveCompiledMethodFrameSize;
+    primitiveTable_[559] = &Interpreter::primitiveCompiledMethodPrimitive;
+    primitiveTable_[560] = &Interpreter::primitiveCompiledMethodSelector;
+
+    // System and debug primitives (561-570)
+    primitiveTable_[561] = &Interpreter::primitiveVMHeapStatistics;
+    primitiveTable_[562] = &Interpreter::primitiveVMGCStatistics;
+    primitiveTable_[563] = &Interpreter::primitiveVMStackDepth;
+    primitiveTable_[564] = &Interpreter::primitiveVMBytecodeCount;
+    primitiveTable_[565] = &Interpreter::primitiveVMSendCount;
+    primitiveTable_[566] = &Interpreter::primitiveVMPrimitiveCount;
+    primitiveTable_[567] = &Interpreter::primitiveVMContextSwitchCount;
+    primitiveTable_[568] = &Interpreter::primitiveVMUptime;
+    primitiveTable_[569] = &Interpreter::primitiveVMCPUTime;
+    primitiveTable_[570] = &Interpreter::primitiveVMIdleTime;
+
+    // Additional bit primitives (571-574)
+    primitiveTable_[571] = &Interpreter::primitiveBitCount;
+    primitiveTable_[572] = &Interpreter::primitiveBitReverse;
+    primitiveTable_[573] = &Interpreter::primitiveByteSwap32;
+    primitiveTable_[574] = &Interpreter::primitiveByteSwap64;
+
     // Profiling primitives (260-263)
     primitiveTable_[260] = &Interpreter::primitiveVMProfileSamplesInto;
     primitiveTable_[261] = &Interpreter::primitiveVMProfileInfoInto;
