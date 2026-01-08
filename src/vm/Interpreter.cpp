@@ -3738,6 +3738,10 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[187] = &Interpreter::primitiveMarkUnwindMethod;
     primitiveTable_[188] = &Interpreter::primitiveFindHandlerContext;
     primitiveTable_[189] = &Interpreter::primitiveFindNextUnwindContext;
+
+    // Context inspection primitives (211-212)
+    primitiveTable_[211] = &Interpreter::primitiveContextAt;
+    primitiveTable_[212] = &Interpreter::primitiveContextAtPut;
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {

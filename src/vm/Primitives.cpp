@@ -4548,4 +4548,89 @@ PrimitiveResult Interpreter::primitiveFindNextUnwindContext(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== CONTEXT INSPECTION PRIMITIVES =====
+
+// Context layout:
+// 0: sender
+// 1: pc (instruction pointer as SmallInteger)
+// 2: stackp (stack pointer as SmallInteger)
+// 3: method
+// 4: closureOrNil
+// 5: receiver
+// 6+: temps and stack
+
+static constexpr size_t ContextFixedSlots = 6;  // Fixed fields before temps/stack
+
+// Primitive 211: Read a temp/stack slot from a context at 1-based index
+// Index 1 is the first temp, after the fixed context fields
+PrimitiveResult Interpreter::primitiveContextAt(int argCount) {
+    Oop indexOop = stackValue(0);
+    Oop context = stackValue(1);
+
+    if (!context.isObject() || !indexOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t index = indexOop.asSmallInteger();
+    if (index < 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* header = context.asObjectPtr();
+    size_t slotCount = header->slotCount();
+
+    // Convert to 0-based index into temp/stack area
+    size_t zeroIndex = static_cast<size_t>(index - 1);
+    size_t actualSlot = ContextFixedSlots + zeroIndex;
+
+    if (actualSlot >= slotCount) {
+        return PrimitiveResult::Failure;  // Index out of bounds
+    }
+
+    Oop value = memory_.fetchPointer(actualSlot, context);
+
+    popN(2);
+    push(value);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 212: Write a temp/stack slot in a context at 1-based index
+PrimitiveResult Interpreter::primitiveContextAtPut(int argCount) {
+    Oop value = stackValue(0);
+    Oop indexOop = stackValue(1);
+    Oop context = stackValue(2);
+
+    if (!context.isObject() || !indexOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t index = indexOop.asSmallInteger();
+    if (index < 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* header = context.asObjectPtr();
+
+    // Check immutability
+    if (header->isImmutable()) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t slotCount = header->slotCount();
+
+    // Convert to 0-based index into temp/stack area
+    size_t zeroIndex = static_cast<size_t>(index - 1);
+    size_t actualSlot = ContextFixedSlots + zeroIndex;
+
+    if (actualSlot >= slotCount) {
+        return PrimitiveResult::Failure;  // Index out of bounds
+    }
+
+    memory_.storePointer(actualSlot, context, value);
+
+    popN(3);
+    push(value);  // Return the stored value
+    return PrimitiveResult::Success;
+}
+
 } // namespace pharo

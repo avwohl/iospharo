@@ -593,6 +593,10 @@ private:
     PrimitiveResult primitiveFindHandlerContext(int argCount);   // 188
     PrimitiveResult primitiveFindNextUnwindContext(int argCount); // 189
 
+    // Context inspection primitives
+    PrimitiveResult primitiveContextAt(int argCount);            // 211
+    PrimitiveResult primitiveContextAtPut(int argCount);         // 212
+
     // ===== STARTUP SUPPORT =====
 
     /// Bootstrap startup when active process has nil suspendedContext.
