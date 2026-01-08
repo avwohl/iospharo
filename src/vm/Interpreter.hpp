@@ -778,6 +778,42 @@ private:
     PrimitiveResult primitiveJoystickAxisValue(int argCount);       // 288
     PrimitiveResult primitiveJoystickHatValue(int argCount);        // 289
 
+    // Socket primitives (350-359)
+    PrimitiveResult primitiveSocketCreate(int argCount);            // 350
+    PrimitiveResult primitiveSocketDestroy(int argCount);           // 351
+    PrimitiveResult primitiveSocketConnect(int argCount);           // 352
+    PrimitiveResult primitiveSocketListen(int argCount);            // 353
+    PrimitiveResult primitiveSocketAccept(int argCount);            // 354
+    PrimitiveResult primitiveSocketSend(int argCount);              // 355
+    PrimitiveResult primitiveSocketReceive(int argCount);           // 356
+    PrimitiveResult primitiveSocketStatus(int argCount);            // 357
+    PrimitiveResult primitiveSocketError(int argCount);             // 358
+    PrimitiveResult primitiveSocketLocalAddress(int argCount);      // 359
+
+    // Clipboard/drag-drop primitives (360-369)
+    // primitiveClipboardText is at 141, reused for 360
+    PrimitiveResult primitiveClipboardTextStore(int argCount);      // 361
+    PrimitiveResult primitiveClipboardHasText(int argCount);        // 362
+    PrimitiveResult primitiveClipboardClear(int argCount);          // 363
+    PrimitiveResult primitiveDragDropFileCount(int argCount);       // 364
+    PrimitiveResult primitiveDragDropFileName(int argCount);        // 365
+    PrimitiveResult primitiveDragDropRequestFile(int argCount);     // 366
+    PrimitiveResult primitiveDragDropCancel(int argCount);          // 367
+    PrimitiveResult primitiveClipboardFormats(int argCount);        // 368
+    PrimitiveResult primitiveClipboardDataForFormat(int argCount);  // 369
+
+    // Misc plugin primitives (370-379)
+    PrimitiveResult primitiveUUIDGenerate(int argCount);            // 370
+    PrimitiveResult primitiveUUIDParse(int argCount);               // 371
+    PrimitiveResult primitiveUUIDToString(int argCount);            // 372
+    PrimitiveResult primitiveSSLCreate(int argCount);               // 373
+    PrimitiveResult primitiveSSLDestroy(int argCount);              // 374
+    PrimitiveResult primitiveSSLConnect(int argCount);              // 375
+    PrimitiveResult primitiveSSLAccept(int argCount);               // 376
+    PrimitiveResult primitiveSSLSend(int argCount);                 // 377
+    PrimitiveResult primitiveSSLReceive(int argCount);              // 378
+    PrimitiveResult primitiveSSLStatus(int argCount);               // 379
+
     // String/Array
     PrimitiveResult primitiveStringAt(int argCount);
     PrimitiveResult primitiveStringAtPut(int argCount);

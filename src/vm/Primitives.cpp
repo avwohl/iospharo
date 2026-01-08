@@ -11052,6 +11052,376 @@ PrimitiveResult Interpreter::primitiveJoystickHatValue(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== SOCKET PRIMITIVES (350-359) =====
+
+// Socket status values
+enum SocketStatus {
+    SocketInvalid = -1,
+    SocketUnconnected = 0,
+    SocketWaitingForConnection = 1,
+    SocketConnected = 2,
+    SocketOtherEndClosed = 3,
+    SocketThisEndClosed = 4
+};
+
+// Primitive 350: Create a socket
+// type primitiveSocketCreate -> handle
+PrimitiveResult Interpreter::primitiveSocketCreate(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop typeOop = stackTop();
+    if (!typeOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    // Would create a socket using BSD sockets
+    // For now, return failure (not implemented)
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 351: Destroy a socket
+// handle primitiveSocketDestroy -> self
+PrimitiveResult Interpreter::primitiveSocketDestroy(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 352: Connect socket to address
+// handle address port primitiveSocketConnect -> self
+PrimitiveResult Interpreter::primitiveSocketConnect(int argCount) {
+    if (argCount != 3) return PrimitiveResult::Failure;
+
+    // Would initiate connection
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 353: Listen on socket
+// handle backlog primitiveSocketListen -> self
+PrimitiveResult Interpreter::primitiveSocketListen(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 354: Accept connection on socket
+// handle primitiveSocketAccept -> newHandle
+PrimitiveResult Interpreter::primitiveSocketAccept(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 355: Send data on socket
+// handle buffer start count primitiveSocketSend -> bytesSent
+PrimitiveResult Interpreter::primitiveSocketSend(int argCount) {
+    if (argCount != 4) return PrimitiveResult::Failure;
+
+    // Would send data
+    popN(4);
+    push(Oop::fromSmallInteger(0));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 356: Receive data from socket
+// handle buffer start count primitiveSocketReceive -> bytesReceived
+PrimitiveResult Interpreter::primitiveSocketReceive(int argCount) {
+    if (argCount != 4) return PrimitiveResult::Failure;
+
+    // Would receive data
+    popN(4);
+    push(Oop::fromSmallInteger(0));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 357: Get socket status
+// handle primitiveSocketStatus -> status
+PrimitiveResult Interpreter::primitiveSocketStatus(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    push(Oop::fromSmallInteger(SocketInvalid));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 358: Get socket error
+// handle primitiveSocketError -> errorCode
+PrimitiveResult Interpreter::primitiveSocketError(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    push(Oop::fromSmallInteger(0));  // No error
+    return PrimitiveResult::Success;
+}
+
+// Primitive 359: Get socket local address
+// handle primitiveSocketLocalAddress -> byteArray
+PrimitiveResult Interpreter::primitiveSocketLocalAddress(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    return PrimitiveResult::Failure;
+}
+
+// ===== CLIPBOARD/DRAG-DROP PRIMITIVES (360-369) =====
+
+// Primitive 360: primitiveClipboardText is reused from primitive 141
+
+// Primitive 361: Store text to clipboard
+// string primitiveClipboardTextStore -> self
+PrimitiveResult Interpreter::primitiveClipboardTextStore(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop stringOop = stackTop();
+    if (stringOop.isImmediate()) return PrimitiveResult::Failure;
+
+    // Would store to UIPasteboard
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 362: Check if clipboard has text
+// primitiveClipboardHasText -> boolean
+PrimitiveResult Interpreter::primitiveClipboardHasText(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    pop();
+    push(memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 363: Clear clipboard
+// primitiveClipboardClear -> self
+PrimitiveResult Interpreter::primitiveClipboardClear(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    pop();
+    return PrimitiveResult::Success;
+}
+
+// Primitive 364: Get drag-drop file count
+// primitiveDragDropFileCount -> count
+PrimitiveResult Interpreter::primitiveDragDropFileCount(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    pop();
+    push(Oop::fromSmallInteger(0));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 365: Get drag-drop file name
+// index primitiveDragDropFileName -> string
+PrimitiveResult Interpreter::primitiveDragDropFileName(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 366: Request drag-drop file
+// index primitiveDragDropRequestFile -> self
+PrimitiveResult Interpreter::primitiveDragDropRequestFile(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 367: Cancel drag-drop
+// primitiveDragDropCancel -> self
+PrimitiveResult Interpreter::primitiveDragDropCancel(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    pop();
+    return PrimitiveResult::Success;
+}
+
+// Primitive 368: Get clipboard formats
+// primitiveClipboardFormats -> array
+PrimitiveResult Interpreter::primitiveClipboardFormats(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Return empty array
+    Oop emptyArray = memory_.allocateSlots(
+        memory_.indexOfClass(memory_.specialObject(SpecialObjectIndex::ClassArray)),
+        0, ObjectFormat::Indexable);
+    if (emptyArray.isNil()) return PrimitiveResult::Failure;
+
+    pop();
+    push(emptyArray);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 369: Get clipboard data for format
+// format primitiveClipboardDataForFormat -> data
+PrimitiveResult Interpreter::primitiveClipboardDataForFormat(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    return PrimitiveResult::Failure;
+}
+
+// ===== MISC PLUGIN PRIMITIVES (370-379) =====
+
+// Primitive 370: Generate UUID
+// byteArray primitiveUUIDGenerate -> self (fills byteArray with 16 random bytes)
+PrimitiveResult Interpreter::primitiveUUIDGenerate(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop bufferOop = stackTop();
+    if (bufferOop.isImmediate()) return PrimitiveResult::Failure;
+
+    size_t size = memory_.byteSizeOf(bufferOop);
+    if (size < 16) return PrimitiveResult::Failure;
+
+    // Generate 16 random bytes for UUID
+    for (size_t i = 0; i < 16; i++) {
+        memory_.storeByte(i, bufferOop, static_cast<uint8_t>(rand() & 0xFF));
+    }
+
+    // Set version (4) and variant bits
+    uint8_t byte6 = memory_.fetchByte(6, bufferOop);
+    memory_.storeByte(6, bufferOop, (byte6 & 0x0F) | 0x40);  // Version 4
+    uint8_t byte8 = memory_.fetchByte(8, bufferOop);
+    memory_.storeByte(8, bufferOop, (byte8 & 0x3F) | 0x80);  // Variant 1
+
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 371: Parse UUID from string
+// string byteArray primitiveUUIDParse -> boolean
+PrimitiveResult Interpreter::primitiveUUIDParse(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop bufferOop = stackTop();
+    Oop stringOop = stackValue(1);
+
+    if (stringOop.isImmediate() || bufferOop.isImmediate()) {
+        return PrimitiveResult::Failure;
+    }
+
+    std::string uuidStr = extractString(memory_, stringOop);
+    if (uuidStr.length() < 32) {
+        popN(2);
+        push(memory_.falseObject());
+        return PrimitiveResult::Success;
+    }
+
+    // Simple UUID parsing (accepts with or without dashes)
+    size_t byteIndex = 0;
+    size_t strIndex = 0;
+    while (byteIndex < 16 && strIndex < uuidStr.length()) {
+        if (uuidStr[strIndex] == '-') {
+            strIndex++;
+            continue;
+        }
+        if (strIndex + 1 >= uuidStr.length()) break;
+
+        char hex[3] = { uuidStr[strIndex], uuidStr[strIndex + 1], 0 };
+        uint8_t byte = static_cast<uint8_t>(strtol(hex, nullptr, 16));
+        memory_.storeByte(byteIndex, bufferOop, byte);
+        byteIndex++;
+        strIndex += 2;
+    }
+
+    popN(2);
+    push(byteIndex == 16 ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 372: Convert UUID to string
+// byteArray primitiveUUIDToString -> string
+PrimitiveResult Interpreter::primitiveUUIDToString(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop bufferOop = stackTop();
+    if (bufferOop.isImmediate()) return PrimitiveResult::Failure;
+
+    size_t size = memory_.byteSizeOf(bufferOop);
+    if (size < 16) return PrimitiveResult::Failure;
+
+    // Format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    char uuidStr[37];
+    int pos = 0;
+    for (size_t i = 0; i < 16; i++) {
+        if (i == 4 || i == 6 || i == 8 || i == 10) {
+            uuidStr[pos++] = '-';
+        }
+        uint8_t byte = memory_.fetchByte(i, bufferOop);
+        snprintf(&uuidStr[pos], 3, "%02x", byte);
+        pos += 2;
+    }
+    uuidStr[36] = '\0';
+
+    Oop result = createStringObject(memory_, uuidStr);
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    popN(1);
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 373: Create SSL context
+// primitiveSSLCreate -> handle
+PrimitiveResult Interpreter::primitiveSSLCreate(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Would use Security framework on iOS
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 374: Destroy SSL context
+// handle primitiveSSLDestroy -> self
+PrimitiveResult Interpreter::primitiveSSLDestroy(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 375: SSL connect (handshake on existing socket)
+// handle socketHandle primitiveSSLConnect -> status
+PrimitiveResult Interpreter::primitiveSSLConnect(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 376: SSL accept (server handshake)
+// handle socketHandle primitiveSSLAccept -> status
+PrimitiveResult Interpreter::primitiveSSLAccept(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 377: SSL send
+// handle buffer start count primitiveSSLSend -> bytesSent
+PrimitiveResult Interpreter::primitiveSSLSend(int argCount) {
+    if (argCount != 4) return PrimitiveResult::Failure;
+
+    popN(4);
+    push(Oop::fromSmallInteger(0));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 378: SSL receive
+// handle buffer start count primitiveSSLReceive -> bytesReceived
+PrimitiveResult Interpreter::primitiveSSLReceive(int argCount) {
+    if (argCount != 4) return PrimitiveResult::Failure;
+
+    popN(4);
+    push(Oop::fromSmallInteger(0));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 379: SSL status
+// handle primitiveSSLStatus -> status
+PrimitiveResult Interpreter::primitiveSSLStatus(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    push(Oop::fromSmallInteger(0));  // Not connected
+    return PrimitiveResult::Success;
+}
+
 // ===== PROFILING PRIMITIVES (260-263) =====
 
 // Primitive 260: VM profile samples into array

@@ -4104,6 +4104,42 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[288] = &Interpreter::primitiveJoystickAxisValue;
     primitiveTable_[289] = &Interpreter::primitiveJoystickHatValue;
 
+    // Socket primitives (350-359)
+    primitiveTable_[350] = &Interpreter::primitiveSocketCreate;
+    primitiveTable_[351] = &Interpreter::primitiveSocketDestroy;
+    primitiveTable_[352] = &Interpreter::primitiveSocketConnect;
+    primitiveTable_[353] = &Interpreter::primitiveSocketListen;
+    primitiveTable_[354] = &Interpreter::primitiveSocketAccept;
+    primitiveTable_[355] = &Interpreter::primitiveSocketSend;
+    primitiveTable_[356] = &Interpreter::primitiveSocketReceive;
+    primitiveTable_[357] = &Interpreter::primitiveSocketStatus;
+    primitiveTable_[358] = &Interpreter::primitiveSocketError;
+    primitiveTable_[359] = &Interpreter::primitiveSocketLocalAddress;
+
+    // Clipboard/drag-drop primitives (360-369)
+    primitiveTable_[360] = &Interpreter::primitiveClipboardText;
+    primitiveTable_[361] = &Interpreter::primitiveClipboardTextStore;
+    primitiveTable_[362] = &Interpreter::primitiveClipboardHasText;
+    primitiveTable_[363] = &Interpreter::primitiveClipboardClear;
+    primitiveTable_[364] = &Interpreter::primitiveDragDropFileCount;
+    primitiveTable_[365] = &Interpreter::primitiveDragDropFileName;
+    primitiveTable_[366] = &Interpreter::primitiveDragDropRequestFile;
+    primitiveTable_[367] = &Interpreter::primitiveDragDropCancel;
+    primitiveTable_[368] = &Interpreter::primitiveClipboardFormats;
+    primitiveTable_[369] = &Interpreter::primitiveClipboardDataForFormat;
+
+    // Misc plugin primitives (370-379)
+    primitiveTable_[370] = &Interpreter::primitiveUUIDGenerate;
+    primitiveTable_[371] = &Interpreter::primitiveUUIDParse;
+    primitiveTable_[372] = &Interpreter::primitiveUUIDToString;
+    primitiveTable_[373] = &Interpreter::primitiveSSLCreate;
+    primitiveTable_[374] = &Interpreter::primitiveSSLDestroy;
+    primitiveTable_[375] = &Interpreter::primitiveSSLConnect;
+    primitiveTable_[376] = &Interpreter::primitiveSSLAccept;
+    primitiveTable_[377] = &Interpreter::primitiveSSLSend;
+    primitiveTable_[378] = &Interpreter::primitiveSSLReceive;
+    primitiveTable_[379] = &Interpreter::primitiveSSLStatus;
+
     // Platform primitives (500-513)
     primitiveTable_[500] = &Interpreter::primitiveGetEnvironment;
     primitiveTable_[501] = &Interpreter::primitiveSetEnvironment;
