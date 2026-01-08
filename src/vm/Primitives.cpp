@@ -6679,4 +6679,121 @@ PrimitiveResult Interpreter::primitiveCompareString(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== STRING PRIMITIVES (157-158) =====
+
+// Helper: Convert character to lowercase for case-insensitive comparison
+static inline uint8_t toLower(uint8_t c) {
+    if (c >= 'A' && c <= 'Z') {
+        return c + ('a' - 'A');
+    }
+    return c;
+}
+
+// Primitive 157: Compare strings with collation order
+// string1 string2 orderTable primitiveCompareStringCollated -> integer
+// orderTable is a 256-byte array mapping characters to their sort order
+// Returns: 1 if string1 < string2, 2 if equal, 3 if string1 > string2
+PrimitiveResult Interpreter::primitiveCompareStringCollated(int argCount) {
+    if (argCount < 3) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop orderTableOop = stackValue(0);
+    Oop string2Oop = stackValue(1);
+    Oop string1Oop = stackValue(2);
+
+    if (!string1Oop.isObject() || !string2Oop.isObject() || !orderTableOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t len1 = memory_.byteSizeOf(string1Oop);
+    size_t len2 = memory_.byteSizeOf(string2Oop);
+    size_t orderTableSize = memory_.byteSizeOf(orderTableOop);
+
+    // Order table should have 256 entries
+    if (orderTableSize < 256) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t minLen = (len1 < len2) ? len1 : len2;
+
+    int result = 2;  // Default: equal (using Smalltalk convention: 1=less, 2=equal, 3=greater)
+    for (size_t i = 0; i < minLen; i++) {
+        uint8_t c1 = memory_.fetchByte(i, string1Oop);
+        uint8_t c2 = memory_.fetchByte(i, string2Oop);
+
+        // Look up collation order
+        uint8_t order1 = memory_.fetchByte(c1, orderTableOop);
+        uint8_t order2 = memory_.fetchByte(c2, orderTableOop);
+
+        if (order1 < order2) {
+            result = 1;  // string1 < string2
+            break;
+        } else if (order1 > order2) {
+            result = 3;  // string1 > string2
+            break;
+        }
+    }
+
+    // If all compared bytes are equal, shorter string is "less"
+    if (result == 2) {
+        if (len1 < len2) {
+            result = 1;
+        } else if (len1 > len2) {
+            result = 3;
+        }
+    }
+
+    popN(argCount);
+    push(Oop::fromSmallInteger(result));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 158: Compare strings case-insensitively
+// string1 string2 primitiveCompareStringNoCase -> integer
+// Returns: 1 if string1 < string2, 2 if equal, 3 if string1 > string2
+PrimitiveResult Interpreter::primitiveCompareStringNoCase(int argCount) {
+    if (argCount < 2) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop string2Oop = stackValue(0);
+    Oop string1Oop = stackValue(1);
+
+    if (!string1Oop.isObject() || !string2Oop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t len1 = memory_.byteSizeOf(string1Oop);
+    size_t len2 = memory_.byteSizeOf(string2Oop);
+    size_t minLen = (len1 < len2) ? len1 : len2;
+
+    int result = 2;  // Default: equal
+    for (size_t i = 0; i < minLen; i++) {
+        uint8_t c1 = toLower(memory_.fetchByte(i, string1Oop));
+        uint8_t c2 = toLower(memory_.fetchByte(i, string2Oop));
+
+        if (c1 < c2) {
+            result = 1;  // string1 < string2
+            break;
+        } else if (c1 > c2) {
+            result = 3;  // string1 > string2
+            break;
+        }
+    }
+
+    // If all compared bytes are equal, shorter string is "less"
+    if (result == 2) {
+        if (len1 < len2) {
+            result = 1;
+        } else if (len1 > len2) {
+            result = 3;
+        }
+    }
+
+    popN(argCount);
+    push(Oop::fromSmallInteger(result));
+    return PrimitiveResult::Success;
+}
+
 } // namespace pharo

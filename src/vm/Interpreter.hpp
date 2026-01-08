@@ -512,6 +512,10 @@ private:
     PrimitiveResult primitiveInputWord(int argCount);              // 154
     PrimitiveResult primitiveCompareString(int argCount);          // 155
 
+    // String primitives (157-158)
+    PrimitiveResult primitiveCompareStringCollated(int argCount);  // 157
+    PrimitiveResult primitiveCompareStringNoCase(int argCount);    // 158
+
     // Time
     PrimitiveResult primitiveMillisecondClock(int argCount);
     PrimitiveResult primitiveSecondsClock(int argCount);

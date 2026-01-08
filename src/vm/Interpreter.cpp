@@ -3699,6 +3699,10 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[154] = &Interpreter::primitiveInputWord;
     primitiveTable_[155] = &Interpreter::primitiveCompareString;
 
+    // String primitives (157-158)
+    primitiveTable_[157] = &Interpreter::primitiveCompareStringCollated;
+    primitiveTable_[158] = &Interpreter::primitiveCompareStringNoCase;
+
     // Process yield (167)
     primitiveTable_[167] = &Interpreter::primitiveYield;
 
