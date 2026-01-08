@@ -910,6 +910,54 @@ private:
     PrimitiveResult primitiveNotificationRegisterPush(int argCount);// 458
     PrimitiveResult primitiveNotificationGetToken(int argCount);    // 459
 
+    // In-app purchase primitives (460-469)
+    PrimitiveResult primitiveIAPCanMakePayments(int argCount);      // 460
+    PrimitiveResult primitiveIAPRequestProducts(int argCount);      // 461
+    PrimitiveResult primitiveIAPGetProducts(int argCount);          // 462
+    PrimitiveResult primitiveIAPPurchase(int argCount);             // 463
+    PrimitiveResult primitiveIAPRestore(int argCount);              // 464
+    PrimitiveResult primitiveIAPGetTransactions(int argCount);      // 465
+    PrimitiveResult primitiveIAPFinishTransaction(int argCount);    // 466
+    PrimitiveResult primitiveIAPGetReceipt(int argCount);           // 467
+    PrimitiveResult primitiveIAPRefreshReceipt(int argCount);       // 468
+    PrimitiveResult primitiveIAPGetSubscriptionStatus(int argCount);// 469
+
+    // Sharing/social primitives (470-479)
+    PrimitiveResult primitiveShareText(int argCount);               // 470
+    PrimitiveResult primitiveShareImage(int argCount);              // 471
+    PrimitiveResult primitiveShareURL(int argCount);                // 472
+    PrimitiveResult primitiveShareFile(int argCount);               // 473
+    PrimitiveResult primitiveOpenURL(int argCount);                 // 474
+    PrimitiveResult primitiveCanOpenURL(int argCount);              // 475
+    PrimitiveResult primitiveMailCompose(int argCount);             // 476
+    PrimitiveResult primitiveMessageCompose(int argCount);          // 477
+    PrimitiveResult primitiveSocialPost(int argCount);              // 478
+    PrimitiveResult primitivePrint(int argCount);                   // 479
+
+    // Keychain/security primitives (480-489)
+    PrimitiveResult primitiveKeychainSet(int argCount);             // 480
+    PrimitiveResult primitiveKeychainGet(int argCount);             // 481
+    PrimitiveResult primitiveKeychainDelete(int argCount);          // 482
+    PrimitiveResult primitiveKeychainHas(int argCount);             // 483
+    PrimitiveResult primitiveBiometricAvailable(int argCount);      // 484
+    PrimitiveResult primitiveBiometricAuthenticate(int argCount);   // 485
+    PrimitiveResult primitiveCryptoRandomBytes(int argCount);       // 486
+    PrimitiveResult primitiveCryptoHash(int argCount);              // 487
+    PrimitiveResult primitiveCryptoHMAC(int argCount);              // 488
+    PrimitiveResult primitiveCryptoEncrypt(int argCount);           // 489
+
+    // Misc platform primitives (490-499)
+    PrimitiveResult primitiveHapticFeedback(int argCount);          // 490
+    PrimitiveResult primitiveVibrate(int argCount);                 // 491
+    PrimitiveResult primitiveFlashlight(int argCount);              // 492
+    PrimitiveResult primitiveIdleTimerDisable(int argCount);        // 493
+    PrimitiveResult primitiveStatusBarHide(int argCount);           // 494
+    PrimitiveResult primitiveStatusBarStyle(int argCount);          // 495
+    PrimitiveResult primitiveOrientationLock(int argCount);         // 496
+    PrimitiveResult primitiveOrientationGet(int argCount);          // 497
+    PrimitiveResult primitiveAppReview(int argCount);               // 498
+    PrimitiveResult primitiveAppSettings(int argCount);             // 499
+
     // String/Array
     PrimitiveResult primitiveStringAt(int argCount);
     PrimitiveResult primitiveStringAtPut(int argCount);

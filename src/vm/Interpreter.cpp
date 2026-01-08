@@ -4236,6 +4236,54 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[458] = &Interpreter::primitiveNotificationRegisterPush;
     primitiveTable_[459] = &Interpreter::primitiveNotificationGetToken;
 
+    // In-app purchase primitives (460-469)
+    primitiveTable_[460] = &Interpreter::primitiveIAPCanMakePayments;
+    primitiveTable_[461] = &Interpreter::primitiveIAPRequestProducts;
+    primitiveTable_[462] = &Interpreter::primitiveIAPGetProducts;
+    primitiveTable_[463] = &Interpreter::primitiveIAPPurchase;
+    primitiveTable_[464] = &Interpreter::primitiveIAPRestore;
+    primitiveTable_[465] = &Interpreter::primitiveIAPGetTransactions;
+    primitiveTable_[466] = &Interpreter::primitiveIAPFinishTransaction;
+    primitiveTable_[467] = &Interpreter::primitiveIAPGetReceipt;
+    primitiveTable_[468] = &Interpreter::primitiveIAPRefreshReceipt;
+    primitiveTable_[469] = &Interpreter::primitiveIAPGetSubscriptionStatus;
+
+    // Sharing/social primitives (470-479)
+    primitiveTable_[470] = &Interpreter::primitiveShareText;
+    primitiveTable_[471] = &Interpreter::primitiveShareImage;
+    primitiveTable_[472] = &Interpreter::primitiveShareURL;
+    primitiveTable_[473] = &Interpreter::primitiveShareFile;
+    primitiveTable_[474] = &Interpreter::primitiveOpenURL;
+    primitiveTable_[475] = &Interpreter::primitiveCanOpenURL;
+    primitiveTable_[476] = &Interpreter::primitiveMailCompose;
+    primitiveTable_[477] = &Interpreter::primitiveMessageCompose;
+    primitiveTable_[478] = &Interpreter::primitiveSocialPost;
+    primitiveTable_[479] = &Interpreter::primitivePrint;
+
+    // Keychain/security primitives (480-489)
+    primitiveTable_[480] = &Interpreter::primitiveKeychainSet;
+    primitiveTable_[481] = &Interpreter::primitiveKeychainGet;
+    primitiveTable_[482] = &Interpreter::primitiveKeychainDelete;
+    primitiveTable_[483] = &Interpreter::primitiveKeychainHas;
+    primitiveTable_[484] = &Interpreter::primitiveBiometricAvailable;
+    primitiveTable_[485] = &Interpreter::primitiveBiometricAuthenticate;
+    primitiveTable_[486] = &Interpreter::primitiveCryptoRandomBytes;
+    primitiveTable_[487] = &Interpreter::primitiveCryptoHash;
+    primitiveTable_[488] = &Interpreter::primitiveCryptoHMAC;
+    primitiveTable_[489] = &Interpreter::primitiveCryptoEncrypt;
+
+    // Misc platform primitives (490-499)
+    primitiveTable_[490] = &Interpreter::primitiveHapticFeedback;
+    primitiveTable_[491] = &Interpreter::primitiveVibrate;
+    primitiveTable_[492] = &Interpreter::primitiveFlashlight;
+    primitiveTable_[493] = &Interpreter::primitiveIdleTimerDisable;
+    primitiveTable_[494] = &Interpreter::primitiveStatusBarHide;
+    primitiveTable_[495] = &Interpreter::primitiveStatusBarStyle;
+    primitiveTable_[496] = &Interpreter::primitiveOrientationLock;
+    primitiveTable_[497] = &Interpreter::primitiveOrientationGet;
+    primitiveTable_[498] = &Interpreter::primitiveAppReview;
+    primitiveTable_[499] = &Interpreter::primitiveAppSettings;
+
     // Platform primitives (500-513)
     primitiveTable_[500] = &Interpreter::primitiveGetEnvironment;
     primitiveTable_[501] = &Interpreter::primitiveSetEnvironment;

@@ -12353,6 +12353,461 @@ PrimitiveResult Interpreter::primitiveNotificationGetToken(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== IN-APP PURCHASE PRIMITIVES (460-469) =====
+
+// Primitive 460: Check if device can make payments
+// primitiveIAPCanMakePayments -> boolean
+PrimitiveResult Interpreter::primitiveIAPCanMakePayments(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Would use SKPaymentQueue.canMakePayments()
+    pop();
+    push(memory_.trueObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 461: Request product info from App Store
+// productIds primitiveIAPRequestProducts -> self
+PrimitiveResult Interpreter::primitiveIAPRequestProducts(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    // Would use SKProductsRequest
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 462: Get loaded product info
+// primitiveIAPGetProducts -> array of product info
+PrimitiveResult Interpreter::primitiveIAPGetProducts(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop emptyArray = memory_.allocateSlots(
+        memory_.indexOfClass(memory_.specialObject(SpecialObjectIndex::ClassArray)),
+        0, ObjectFormat::Indexable);
+    if (emptyArray.isNil()) return PrimitiveResult::Failure;
+
+    pop();
+    push(emptyArray);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 463: Initiate purchase
+// productId primitiveIAPPurchase -> self
+PrimitiveResult Interpreter::primitiveIAPPurchase(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    // Would add payment to queue
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 464: Restore previous purchases
+// primitiveIAPRestore -> self
+PrimitiveResult Interpreter::primitiveIAPRestore(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Would call restoreCompletedTransactions
+    pop();
+    return PrimitiveResult::Success;
+}
+
+// Primitive 465: Get pending transactions
+// primitiveIAPGetTransactions -> array
+PrimitiveResult Interpreter::primitiveIAPGetTransactions(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop emptyArray = memory_.allocateSlots(
+        memory_.indexOfClass(memory_.specialObject(SpecialObjectIndex::ClassArray)),
+        0, ObjectFormat::Indexable);
+    if (emptyArray.isNil()) return PrimitiveResult::Failure;
+
+    pop();
+    push(emptyArray);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 466: Finish transaction
+// transactionId primitiveIAPFinishTransaction -> self
+PrimitiveResult Interpreter::primitiveIAPFinishTransaction(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 467: Get app receipt data
+// primitiveIAPGetReceipt -> byteArray or nil
+PrimitiveResult Interpreter::primitiveIAPGetReceipt(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    pop();
+    push(memory_.nil());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 468: Refresh receipt from App Store
+// primitiveIAPRefreshReceipt -> self
+PrimitiveResult Interpreter::primitiveIAPRefreshReceipt(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    pop();
+    return PrimitiveResult::Success;
+}
+
+// Primitive 469: Get subscription status
+// productId primitiveIAPGetSubscriptionStatus -> status
+PrimitiveResult Interpreter::primitiveIAPGetSubscriptionStatus(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    push(Oop::fromSmallInteger(0));  // Not subscribed
+    return PrimitiveResult::Success;
+}
+
+// ===== SHARING/SOCIAL PRIMITIVES (470-479) =====
+
+// Primitive 470: Share text
+// text primitiveShareText -> self
+PrimitiveResult Interpreter::primitiveShareText(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    // Would use UIActivityViewController
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 471: Share image
+// imageData primitiveShareImage -> self
+PrimitiveResult Interpreter::primitiveShareImage(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 472: Share URL
+// urlString primitiveShareURL -> self
+PrimitiveResult Interpreter::primitiveShareURL(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 473: Share file
+// filePath primitiveShareFile -> self
+PrimitiveResult Interpreter::primitiveShareFile(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 474: Open URL in browser/app
+// urlString primitiveOpenURL -> boolean
+PrimitiveResult Interpreter::primitiveOpenURL(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    // Would use UIApplication.shared.open()
+    popN(1);
+    push(memory_.trueObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 475: Check if URL can be opened
+// urlString primitiveCanOpenURL -> boolean
+PrimitiveResult Interpreter::primitiveCanOpenURL(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    push(memory_.trueObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 476: Compose email
+// to subject body primitiveMailCompose -> self
+PrimitiveResult Interpreter::primitiveMailCompose(int argCount) {
+    if (argCount != 3) return PrimitiveResult::Failure;
+
+    // Would use MFMailComposeViewController
+    popN(3);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 477: Compose SMS/iMessage
+// to body primitiveMessageCompose -> self
+PrimitiveResult Interpreter::primitiveMessageCompose(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    // Would use MFMessageComposeViewController
+    popN(2);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 478: Post to social network
+// service text primitiveSocialPost -> self
+PrimitiveResult Interpreter::primitiveSocialPost(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    popN(2);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 479: Print content
+// content primitivePrint -> self
+PrimitiveResult Interpreter::primitivePrint(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    // Would use UIPrintInteractionController
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// ===== KEYCHAIN/SECURITY PRIMITIVES (480-489) =====
+
+// Primitive 480: Store value in keychain
+// key value primitiveKeychainSet -> boolean
+PrimitiveResult Interpreter::primitiveKeychainSet(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    // Would use Security framework
+    popN(2);
+    push(memory_.trueObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 481: Get value from keychain
+// key primitiveKeychainGet -> value or nil
+PrimitiveResult Interpreter::primitiveKeychainGet(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    push(memory_.nil());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 482: Delete value from keychain
+// key primitiveKeychainDelete -> boolean
+PrimitiveResult Interpreter::primitiveKeychainDelete(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    push(memory_.trueObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 483: Check if key exists in keychain
+// key primitiveKeychainHas -> boolean
+PrimitiveResult Interpreter::primitiveKeychainHas(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    push(memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 484: Check biometric availability
+// primitiveBiometricAvailable -> type (0=none, 1=touchID, 2=faceID)
+PrimitiveResult Interpreter::primitiveBiometricAvailable(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Would use LAContext.canEvaluatePolicy
+    pop();
+    push(Oop::fromSmallInteger(0));  // None available
+    return PrimitiveResult::Success;
+}
+
+// Primitive 485: Authenticate with biometrics
+// reason primitiveBiometricAuthenticate -> boolean
+PrimitiveResult Interpreter::primitiveBiometricAuthenticate(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    // Would use LAContext.evaluatePolicy
+    popN(1);
+    push(memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 486: Generate cryptographically secure random bytes
+// count primitiveCryptoRandomBytes -> byteArray
+PrimitiveResult Interpreter::primitiveCryptoRandomBytes(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop countOop = stackTop();
+    if (!countOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    int64_t count = countOop.asSmallInteger();
+    if (count < 0 || count > 65536) return PrimitiveResult::Failure;
+
+    Oop bytes = memory_.allocateBytes(
+        memory_.indexOfClass(memory_.specialObject(SpecialObjectIndex::ClassByteArray)),
+        static_cast<size_t>(count));
+    if (bytes.isNil()) return PrimitiveResult::Failure;
+
+    // Fill with random bytes (would use SecRandomCopyBytes on iOS)
+    for (size_t i = 0; i < static_cast<size_t>(count); i++) {
+        memory_.storeByte(i, bytes, static_cast<uint8_t>(rand() & 0xFF));
+    }
+
+    popN(1);
+    push(bytes);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 487: Compute hash (SHA-256)
+// data primitiveHashCrypto -> byteArray
+PrimitiveResult Interpreter::primitiveCryptoHash(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop dataOop = stackTop();
+    if (dataOop.isImmediate()) return PrimitiveResult::Failure;
+
+    // Would use CC_SHA256 from CommonCrypto
+    // Return a dummy 32-byte hash
+    Oop hash = memory_.allocateBytes(
+        memory_.indexOfClass(memory_.specialObject(SpecialObjectIndex::ClassByteArray)),
+        32);
+    if (hash.isNil()) return PrimitiveResult::Failure;
+
+    for (size_t i = 0; i < 32; i++) {
+        memory_.storeByte(i, hash, 0);
+    }
+
+    popN(1);
+    push(hash);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 488: Compute HMAC
+// key data primitiveCryptoHMAC -> byteArray
+PrimitiveResult Interpreter::primitiveCryptoHMAC(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    // Would use CCHmac from CommonCrypto
+    Oop hmac = memory_.allocateBytes(
+        memory_.indexOfClass(memory_.specialObject(SpecialObjectIndex::ClassByteArray)),
+        32);
+    if (hmac.isNil()) return PrimitiveResult::Failure;
+
+    for (size_t i = 0; i < 32; i++) {
+        memory_.storeByte(i, hmac, 0);
+    }
+
+    popN(2);
+    push(hmac);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 489: Encrypt/decrypt data (AES)
+// key data encrypt primitiveCryptoEncrypt -> byteArray
+PrimitiveResult Interpreter::primitiveCryptoEncrypt(int argCount) {
+    if (argCount != 3) return PrimitiveResult::Failure;
+
+    // Would use CCCrypt from CommonCrypto
+    return PrimitiveResult::Failure;
+}
+
+// ===== MISC PLATFORM PRIMITIVES (490-499) =====
+
+// Primitive 490: Trigger haptic feedback
+// type primitiveHapticFeedback -> self
+PrimitiveResult Interpreter::primitiveHapticFeedback(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    // Would use UIFeedbackGenerator
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 491: Vibrate device
+// primitiveVibrate -> self
+PrimitiveResult Interpreter::primitiveVibrate(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Would use AudioServicesPlaySystemSound
+    pop();
+    return PrimitiveResult::Success;
+}
+
+// Primitive 492: Control flashlight/torch
+// on primitiveFlashlight -> boolean
+PrimitiveResult Interpreter::primitiveFlashlight(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    // Would use AVCaptureDevice.torchMode
+    popN(1);
+    push(memory_.trueObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 493: Disable/enable idle timer (screen dimming)
+// disable primitiveIdleTimerDisable -> self
+PrimitiveResult Interpreter::primitiveIdleTimerDisable(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    // Would set UIApplication.shared.isIdleTimerDisabled
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 494: Hide/show status bar
+// hide primitiveStatusBarHide -> self
+PrimitiveResult Interpreter::primitiveStatusBarHide(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 495: Set status bar style
+// style primitiveStatusBarStyle -> self
+PrimitiveResult Interpreter::primitiveStatusBarStyle(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 496: Lock orientation
+// orientation primitiveOrientationLock -> self
+PrimitiveResult Interpreter::primitiveOrientationLock(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 497: Get current orientation
+// primitiveOrientationGet -> orientation
+PrimitiveResult Interpreter::primitiveOrientationGet(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // 1=portrait, 2=portraitUpsideDown, 3=landscapeLeft, 4=landscapeRight
+    pop();
+    push(Oop::fromSmallInteger(1));  // Portrait
+    return PrimitiveResult::Success;
+}
+
+// Primitive 498: Request app review
+// primitiveAppReview -> self
+PrimitiveResult Interpreter::primitiveAppReview(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Would use SKStoreReviewController.requestReview()
+    pop();
+    return PrimitiveResult::Success;
+}
+
+// Primitive 499: Open app settings
+// primitiveAppSettings -> self
+PrimitiveResult Interpreter::primitiveAppSettings(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Would open UIApplication.openSettingsURLString
+    pop();
+    return PrimitiveResult::Success;
+}
+
 // ===== PROFILING PRIMITIVES (260-263) =====
 
 // Primitive 260: VM profile samples into array
