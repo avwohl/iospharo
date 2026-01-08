@@ -732,6 +732,28 @@ private:
     PrimitiveResult primitiveSoundEnableAEC(int argCount);         // 328
     PrimitiveResult primitiveSoundSupportsAEC(int argCount);       // 329
 
+    // MIDI primitives (330-349)
+    PrimitiveResult primitiveMIDIGetPortCount(int argCount);       // 330
+    PrimitiveResult primitiveMIDIGetPortName(int argCount);        // 331
+    PrimitiveResult primitiveMIDIOpenPort(int argCount);           // 332
+    PrimitiveResult primitiveMIDIClosePort(int argCount);          // 333
+    PrimitiveResult primitiveMIDIRead(int argCount);               // 334
+    PrimitiveResult primitiveMIDIWrite(int argCount);              // 335
+    PrimitiveResult primitiveMIDIGetClock(int argCount);           // 336
+    PrimitiveResult primitiveMIDISetClock(int argCount);           // 337
+    PrimitiveResult primitiveMIDIParameterGet(int argCount);       // 338
+    PrimitiveResult primitiveMIDIParameterSet(int argCount);       // 339
+    PrimitiveResult primitiveMIDIDriverVersion(int argCount);      // 340
+    PrimitiveResult primitiveMIDIPortType(int argCount);           // 341
+    PrimitiveResult primitiveMIDIDeviceID(int argCount);           // 342
+    PrimitiveResult primitiveMIDIFlushPort(int argCount);          // 343
+    PrimitiveResult primitiveMIDISendNoteOn(int argCount);         // 344
+    PrimitiveResult primitiveMIDISendNoteOff(int argCount);        // 345
+    PrimitiveResult primitiveMIDISendController(int argCount);     // 346
+    PrimitiveResult primitiveMIDISendProgramChange(int argCount);  // 347
+    PrimitiveResult primitiveMIDISendPitchBend(int argCount);      // 348
+    PrimitiveResult primitiveMIDISendSysEx(int argCount);          // 349
+
     // String/Array
     PrimitiveResult primitiveStringAt(int argCount);
     PrimitiveResult primitiveStringAtPut(int argCount);

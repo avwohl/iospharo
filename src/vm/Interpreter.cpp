@@ -4058,6 +4058,28 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[328] = &Interpreter::primitiveSoundEnableAEC;
     primitiveTable_[329] = &Interpreter::primitiveSoundSupportsAEC;
 
+    // MIDI primitives (330-349)
+    primitiveTable_[330] = &Interpreter::primitiveMIDIGetPortCount;
+    primitiveTable_[331] = &Interpreter::primitiveMIDIGetPortName;
+    primitiveTable_[332] = &Interpreter::primitiveMIDIOpenPort;
+    primitiveTable_[333] = &Interpreter::primitiveMIDIClosePort;
+    primitiveTable_[334] = &Interpreter::primitiveMIDIRead;
+    primitiveTable_[335] = &Interpreter::primitiveMIDIWrite;
+    primitiveTable_[336] = &Interpreter::primitiveMIDIGetClock;
+    primitiveTable_[337] = &Interpreter::primitiveMIDISetClock;
+    primitiveTable_[338] = &Interpreter::primitiveMIDIParameterGet;
+    primitiveTable_[339] = &Interpreter::primitiveMIDIParameterSet;
+    primitiveTable_[340] = &Interpreter::primitiveMIDIDriverVersion;
+    primitiveTable_[341] = &Interpreter::primitiveMIDIPortType;
+    primitiveTable_[342] = &Interpreter::primitiveMIDIDeviceID;
+    primitiveTable_[343] = &Interpreter::primitiveMIDIFlushPort;
+    primitiveTable_[344] = &Interpreter::primitiveMIDISendNoteOn;
+    primitiveTable_[345] = &Interpreter::primitiveMIDISendNoteOff;
+    primitiveTable_[346] = &Interpreter::primitiveMIDISendController;
+    primitiveTable_[347] = &Interpreter::primitiveMIDISendProgramChange;
+    primitiveTable_[348] = &Interpreter::primitiveMIDISendPitchBend;
+    primitiveTable_[349] = &Interpreter::primitiveMIDISendSysEx;
+
     // Platform primitives (500-513)
     primitiveTable_[500] = &Interpreter::primitiveGetEnvironment;
     primitiveTable_[501] = &Interpreter::primitiveSetEnvironment;

@@ -10547,6 +10547,295 @@ PrimitiveResult Interpreter::primitiveSoundSupportsAEC(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== MIDI PRIMITIVES (330-349) =====
+
+// MIDI state
+static bool midiInitialized = false;
+static int midiPortCount = 0;
+
+// Primitive 330: Get MIDI port count
+// primitiveMIDIGetPortCount -> count
+PrimitiveResult Interpreter::primitiveMIDIGetPortCount(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // On iOS, would use CoreMIDI to enumerate ports
+    // For now, return 0 (no MIDI ports available)
+    pop();
+    push(Oop::fromSmallInteger(midiPortCount));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 331: Get MIDI port name
+// portIndex primitiveMIDIGetPortName -> string
+PrimitiveResult Interpreter::primitiveMIDIGetPortName(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    // No ports available, so any index is invalid
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 332: Open MIDI port
+// portIndex primitiveMIDIOpenPort -> handle
+PrimitiveResult Interpreter::primitiveMIDIOpenPort(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    // No ports available
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 333: Close MIDI port
+// handle primitiveMIDIClosePort -> self
+PrimitiveResult Interpreter::primitiveMIDIClosePort(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop handleOop = stackTop();
+    if (!handleOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    // Would close the MIDI port
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 334: Read MIDI data
+// handle buffer primitiveMIDIRead -> bytesRead
+PrimitiveResult Interpreter::primitiveMIDIRead(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    // No data available from non-existent ports
+    popN(2);
+    push(Oop::fromSmallInteger(0));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 335: Write MIDI data
+// handle buffer primitiveMIDIWrite -> bytesWritten
+PrimitiveResult Interpreter::primitiveMIDIWrite(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop bufferOop = stackTop();
+    Oop handleOop = stackValue(1);
+
+    if (handleOop.isImmediate() || bufferOop.isImmediate()) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t byteCount = memory_.byteSizeOf(bufferOop);
+
+    // Would write MIDI data to the port
+    popN(2);
+    push(Oop::fromSmallInteger(static_cast<int64_t>(byteCount)));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 336: Get MIDI clock
+// primitiveMIDIGetClock -> microseconds
+PrimitiveResult Interpreter::primitiveMIDIGetClock(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Return system time in microseconds
+    auto now = std::chrono::steady_clock::now();
+    auto micros = std::chrono::duration_cast<std::chrono::microseconds>(
+        now.time_since_epoch()).count();
+
+    pop();
+    // Return lower 31 bits as SmallInteger
+    push(Oop::fromSmallInteger(micros & 0x7FFFFFFF));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 337: Set MIDI clock
+// microseconds primitiveMIDISetClock -> self
+PrimitiveResult Interpreter::primitiveMIDISetClock(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    // Cannot set system MIDI clock
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 338: Get MIDI parameter
+// paramID primitiveMIDIParameterGet -> value
+PrimitiveResult Interpreter::primitiveMIDIParameterGet(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop paramOop = stackTop();
+    if (!paramOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    // Return 0 for all parameters
+    popN(1);
+    push(Oop::fromSmallInteger(0));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 339: Set MIDI parameter
+// paramID value primitiveMIDIParameterSet -> self
+PrimitiveResult Interpreter::primitiveMIDIParameterSet(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    // Ignore parameter setting
+    popN(2);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 340: Get MIDI driver version
+// primitiveMIDIDriverVersion -> version
+PrimitiveResult Interpreter::primitiveMIDIDriverVersion(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Return version 1
+    pop();
+    push(Oop::fromSmallInteger(1));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 341: Get MIDI port type
+// portIndex primitiveMIDIPortType -> type
+PrimitiveResult Interpreter::primitiveMIDIPortType(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    // No ports available
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 342: Get MIDI device ID
+// portIndex primitiveMIDIDeviceID -> deviceID
+PrimitiveResult Interpreter::primitiveMIDIDeviceID(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    // No ports available
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 343: Flush MIDI port
+// handle primitiveMIDIFlushPort -> self
+PrimitiveResult Interpreter::primitiveMIDIFlushPort(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 344: Send MIDI Note On
+// handle channel note velocity primitiveMIDISendNoteOn -> self
+PrimitiveResult Interpreter::primitiveMIDISendNoteOn(int argCount) {
+    if (argCount != 4) return PrimitiveResult::Failure;
+
+    Oop velocityOop = stackTop();
+    Oop noteOop = stackValue(1);
+    Oop channelOop = stackValue(2);
+    Oop handleOop = stackValue(3);
+
+    if (!velocityOop.isSmallInteger() || !noteOop.isSmallInteger() ||
+        !channelOop.isSmallInteger() || !handleOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Would send: 0x90 | channel, note, velocity
+    popN(4);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 345: Send MIDI Note Off
+// handle channel note velocity primitiveMIDISendNoteOff -> self
+PrimitiveResult Interpreter::primitiveMIDISendNoteOff(int argCount) {
+    if (argCount != 4) return PrimitiveResult::Failure;
+
+    Oop velocityOop = stackTop();
+    Oop noteOop = stackValue(1);
+    Oop channelOop = stackValue(2);
+    Oop handleOop = stackValue(3);
+
+    if (!velocityOop.isSmallInteger() || !noteOop.isSmallInteger() ||
+        !channelOop.isSmallInteger() || !handleOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Would send: 0x80 | channel, note, velocity
+    popN(4);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 346: Send MIDI Controller
+// handle channel controller value primitiveMIDISendController -> self
+PrimitiveResult Interpreter::primitiveMIDISendController(int argCount) {
+    if (argCount != 4) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop controllerOop = stackValue(1);
+    Oop channelOop = stackValue(2);
+    Oop handleOop = stackValue(3);
+
+    if (!valueOop.isSmallInteger() || !controllerOop.isSmallInteger() ||
+        !channelOop.isSmallInteger() || !handleOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Would send: 0xB0 | channel, controller, value
+    popN(4);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 347: Send MIDI Program Change
+// handle channel program primitiveMIDISendProgramChange -> self
+PrimitiveResult Interpreter::primitiveMIDISendProgramChange(int argCount) {
+    if (argCount != 3) return PrimitiveResult::Failure;
+
+    Oop programOop = stackTop();
+    Oop channelOop = stackValue(1);
+    Oop handleOop = stackValue(2);
+
+    if (!programOop.isSmallInteger() || !channelOop.isSmallInteger() ||
+        !handleOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Would send: 0xC0 | channel, program
+    popN(3);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 348: Send MIDI Pitch Bend
+// handle channel value primitiveMIDISendPitchBend -> self
+PrimitiveResult Interpreter::primitiveMIDISendPitchBend(int argCount) {
+    if (argCount != 3) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop channelOop = stackValue(1);
+    Oop handleOop = stackValue(2);
+
+    if (!valueOop.isSmallInteger() || !channelOop.isSmallInteger() ||
+        !handleOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Would send: 0xE0 | channel, lsb, msb (14-bit value)
+    popN(3);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 349: Send MIDI System Exclusive
+// handle buffer primitiveMIDISendSysEx -> self
+PrimitiveResult Interpreter::primitiveMIDISendSysEx(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop bufferOop = stackTop();
+    Oop handleOop = stackValue(1);
+
+    if (handleOop.isImmediate() || bufferOop.isImmediate()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Would send SysEx data (buffer should start with 0xF0 and end with 0xF7)
+    popN(2);
+    return PrimitiveResult::Success;
+}
+
 // ===== PROFILING PRIMITIVES (260-263) =====
 
 // Primitive 260: VM profile samples into array
