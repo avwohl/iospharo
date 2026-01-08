@@ -700,6 +700,38 @@ private:
     PrimitiveResult primitivePixelValueAtPut(int argCount);        // 298
     PrimitiveResult primitiveWarpBits(int argCount);               // 299
 
+    // Sound primitives (300-329)
+    PrimitiveResult primitiveSoundStart(int argCount);             // 300
+    PrimitiveResult primitiveSoundStartWithSemaphore(int argCount); // 301
+    PrimitiveResult primitiveSoundStop(int argCount);              // 302
+    PrimitiveResult primitiveSoundAvailableSpace(int argCount);    // 303
+    PrimitiveResult primitiveSoundPlaySamples(int argCount);       // 304
+    PrimitiveResult primitiveSoundPlaySilence(int argCount);       // 305
+    PrimitiveResult primitiveSoundGetVolume(int argCount);         // 306
+    PrimitiveResult primitiveSoundSetVolume(int argCount);         // 307
+    PrimitiveResult primitiveSoundSetStereoBalance(int argCount);  // 308
+    PrimitiveResult primitiveSoundGetSampleRate(int argCount);     // 309
+    PrimitiveResult primitiveSoundSetSampleRate(int argCount);     // 310
+    PrimitiveResult primitiveSoundRecordStart(int argCount);       // 311
+    PrimitiveResult primitiveSoundRecordStop(int argCount);        // 312
+    PrimitiveResult primitiveSoundRecordSamplesInto(int argCount); // 313
+    PrimitiveResult primitiveSoundGetRecordLevel(int argCount);    // 314
+    PrimitiveResult primitiveSoundSetRecordLevel(int argCount);    // 315
+    PrimitiveResult primitiveSoundRecordSamplesAvailable(int argCount); // 316
+    PrimitiveResult primitiveSoundCodecStatus(int argCount);       // 317
+    PrimitiveResult primitiveSoundMixerStart(int argCount);        // 318
+    PrimitiveResult primitiveSoundMixerStop(int argCount);         // 319
+    PrimitiveResult primitiveSoundMixerPlayChannel(int argCount);  // 320
+    PrimitiveResult primitiveSoundMixerSetVolume(int argCount);    // 321
+    PrimitiveResult primitiveSoundMixerSetPan(int argCount);       // 322
+    PrimitiveResult primitiveSoundMixerStopChannel(int argCount);  // 323
+    PrimitiveResult primitiveSoundMixerChannelDone(int argCount);  // 324
+    PrimitiveResult primitiveSoundMixerChannelPosition(int argCount); // 325
+    PrimitiveResult primitiveSoundInsertSamples(int argCount);     // 326
+    PrimitiveResult primitiveSoundStartBuffered(int argCount);     // 327
+    PrimitiveResult primitiveSoundEnableAEC(int argCount);         // 328
+    PrimitiveResult primitiveSoundSupportsAEC(int argCount);       // 329
+
     // String/Array
     PrimitiveResult primitiveStringAt(int argCount);
     PrimitiveResult primitiveStringAtPut(int argCount);

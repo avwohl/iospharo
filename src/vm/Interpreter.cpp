@@ -4026,6 +4026,38 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[298] = &Interpreter::primitivePixelValueAtPut;
     primitiveTable_[299] = &Interpreter::primitiveWarpBits;
 
+    // Sound primitives (300-329)
+    primitiveTable_[300] = &Interpreter::primitiveSoundStart;
+    primitiveTable_[301] = &Interpreter::primitiveSoundStartWithSemaphore;
+    primitiveTable_[302] = &Interpreter::primitiveSoundStop;
+    primitiveTable_[303] = &Interpreter::primitiveSoundAvailableSpace;
+    primitiveTable_[304] = &Interpreter::primitiveSoundPlaySamples;
+    primitiveTable_[305] = &Interpreter::primitiveSoundPlaySilence;
+    primitiveTable_[306] = &Interpreter::primitiveSoundGetVolume;
+    primitiveTable_[307] = &Interpreter::primitiveSoundSetVolume;
+    primitiveTable_[308] = &Interpreter::primitiveSoundSetStereoBalance;
+    primitiveTable_[309] = &Interpreter::primitiveSoundGetSampleRate;
+    primitiveTable_[310] = &Interpreter::primitiveSoundSetSampleRate;
+    primitiveTable_[311] = &Interpreter::primitiveSoundRecordStart;
+    primitiveTable_[312] = &Interpreter::primitiveSoundRecordStop;
+    primitiveTable_[313] = &Interpreter::primitiveSoundRecordSamplesInto;
+    primitiveTable_[314] = &Interpreter::primitiveSoundGetRecordLevel;
+    primitiveTable_[315] = &Interpreter::primitiveSoundSetRecordLevel;
+    primitiveTable_[316] = &Interpreter::primitiveSoundRecordSamplesAvailable;
+    primitiveTable_[317] = &Interpreter::primitiveSoundCodecStatus;
+    primitiveTable_[318] = &Interpreter::primitiveSoundMixerStart;
+    primitiveTable_[319] = &Interpreter::primitiveSoundMixerStop;
+    primitiveTable_[320] = &Interpreter::primitiveSoundMixerPlayChannel;
+    primitiveTable_[321] = &Interpreter::primitiveSoundMixerSetVolume;
+    primitiveTable_[322] = &Interpreter::primitiveSoundMixerSetPan;
+    primitiveTable_[323] = &Interpreter::primitiveSoundMixerStopChannel;
+    primitiveTable_[324] = &Interpreter::primitiveSoundMixerChannelDone;
+    primitiveTable_[325] = &Interpreter::primitiveSoundMixerChannelPosition;
+    primitiveTable_[326] = &Interpreter::primitiveSoundInsertSamples;
+    primitiveTable_[327] = &Interpreter::primitiveSoundStartBuffered;
+    primitiveTable_[328] = &Interpreter::primitiveSoundEnableAEC;
+    primitiveTable_[329] = &Interpreter::primitiveSoundSupportsAEC;
+
     // Platform primitives (500-513)
     primitiveTable_[500] = &Interpreter::primitiveGetEnvironment;
     primitiveTable_[501] = &Interpreter::primitiveSetEnvironment;
