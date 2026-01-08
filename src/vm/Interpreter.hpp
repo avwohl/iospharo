@@ -89,6 +89,15 @@ enum class PrimitiveResult {
     Error,      // Fatal error, stop execution
 };
 
+/// Detailed execution result (for debugging/tracing)
+enum class ExecuteResult {
+    Active,             // Executed a bytecode
+    Idle,               // No active process
+    PrimitiveExecuted,  // Executed a primitive
+    MessageSent,        // Sent a message
+    Error,              // Execution error
+};
+
 /// Forward declaration
 class Interpreter;
 
@@ -148,6 +157,9 @@ public:
 
     /// Execute a single bytecode (for debugging)
     bool step();
+
+    /// Execute a single bytecode with detailed result
+    ExecuteResult stepDetailed();
 
     /// Stop the interpreter
     void stop() { running_ = false; }
@@ -259,6 +271,7 @@ private:
     // Execution control
     bool running_;
     bool primitiveFailed_;
+    int lastPrimitiveIndex_ = 0;  // For stepDetailed() tracking
 
     // System paths
     std::string imageName_;

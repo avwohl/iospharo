@@ -1403,12 +1403,13 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
         }
     }
 
+    std::cerr << "[VM] primitiveQuit called with exitCode=" << exitCode << " - stopping interpreter\n";
+
     running_ = false;
 
-    // Actually exit the process
-    std::exit(exitCode);
+    // Don't actually exit - just stop the interpreter so tests can see what happened
+    // std::exit(exitCode);
 
-    // Not reached, but for completeness
     return PrimitiveResult::Success;
 }
 

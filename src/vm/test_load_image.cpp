@@ -9,6 +9,7 @@
 #include "Interpreter.hpp"
 #include <iostream>
 #include <iomanip>
+#include <chrono>
 
 using namespace pharo;
 
@@ -262,20 +263,27 @@ int main(int argc, char* argv[]) {
 
         // Run bytecode steps for testing
         std::cout << "\n=== Execution Test ===" << std::endl;
-        std::cout << "Running 10000 bytecode steps..." << std::endl;
+        int totalSteps = 10000;
+        std::cout << "Running " << totalSteps << " bytecode steps..." << std::endl;
         int activeSteps = 0;
         int idleSteps = 0;
-        for (int i = 0; i < 10000; i++) {
-            if (i % 1000 == 0) {
-                std::cout << "[Step " << (i+1) << "] active=" << activeSteps << " idle=" << idleSteps << std::endl;
-            }
-            if (interpreter.step()) {
+
+        for (int i = 0; i < totalSteps; i++) {
+            bool result = interpreter.step();
+            if (result) {
                 activeSteps++;
+                idleSteps = 0;  // Reset consecutive idle count
             } else {
                 idleSteps++;
+                // If we get too many consecutive idle steps, stop
+                if (idleSteps > 100) {
+                    std::cout << "Interpreter stopped (100 consecutive idle steps) at step " << i << std::endl;
+                    break;
+                }
             }
         }
-        std::cout << "Execution completed: " << activeSteps << " active steps, " << idleSteps << " idle steps" << std::endl;
+        std::cout << "\n=== Execution Summary ===" << std::endl;
+        std::cout << "Active bytecode steps: " << activeSteps << std::endl;
     } else {
         std::cout << "Interpreter initialization failed (may need process setup)" << std::endl;
     }

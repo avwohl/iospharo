@@ -265,6 +265,51 @@ bool Interpreter::step() {
     return running_;
 }
 
+ExecuteResult Interpreter::stepDetailed() {
+    if (!running_) {
+        return ExecuteResult::Idle;
+    }
+
+    // Check if we've run past the end of bytecodes
+    if (instructionPointer_ >= bytecodeEnd_) {
+        returnValue(receiver_);
+        return running_ ? ExecuteResult::Active : ExecuteResult::Idle;
+    }
+
+    // Track what we're about to do
+    uint8_t bytecode = fetchByte();
+
+    // Check if this is a send bytecode (message send)
+    bool isSend = (bytecode >= 0x60 && bytecode <= 0x7F) ||  // Sista send
+                  (bytecode >= 0x80 && bytecode <= 0x8F) ||  // V3 send
+                  (bytecode >= 0xB0 && bytecode <= 0xBF) ||  // Arithmetic sends
+                  (bytecode >= 0xC0 && bytecode <= 0xCF) ||  // More sends
+                  (bytecode >= 0xD0 && bytecode <= 0xDF) ||  // Send literal 0-15
+                  (bytecode >= 0xEA && bytecode <= 0xED) ||  // Extended sends
+                  bytecode == 0xF8 || bytecode == 0xF9;      // Super sends
+
+    // Reset primitive tracking before dispatch
+    lastPrimitiveIndex_ = 0;
+
+    dispatchBytecode(bytecode);
+
+    if (!running_) {
+        return ExecuteResult::Idle;
+    }
+
+    // Check if a primitive was executed
+    if (lastPrimitiveIndex_ > 0) {
+        return ExecuteResult::PrimitiveExecuted;
+    }
+
+    // Check if a message was sent
+    if (isSend) {
+        return ExecuteResult::MessageSent;
+    }
+
+    return ExecuteResult::Active;
+}
+
 // ===== BYTECODE DISPATCH =====
 
 void Interpreter::dispatchBytecode(uint8_t bytecode) {
@@ -1212,8 +1257,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     // Check for invalid receiver (could be from out-of-bounds literal access)
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
     if (rcvr.rawBits() == 0 || rcvr.rawBits() == nilObj.rawBits()) {
-        // Receiver is nil - pop args and return nil without triggering DNU
-        // DEBUG: "[SEND] Receiver is nil - returning nil instead of sending"
         popN(argCount + 1);  // Pop args and receiver
         push(nilObj);
         return;
@@ -1221,11 +1264,9 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
     // Determine receiver's class
     Oop rcvrClass = memory_.classOf(rcvr);
-    // DEBUG_LOG("[SEND] rcvrClass=0x" << std::hex << rcvrClass.rawBits() << std::dec;
 
     // Check for invalid class (can happen with corrupted state)
     if (rcvrClass.rawBits() == 0) {
-        // DEBUG: "[SEND] Invalid receiver class - returning nil"
         popN(argCount + 1);
         push(nilObj);
         return;
@@ -1262,7 +1303,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     // Check for primitive
     int primIndex = primitiveIndexOf(method);
     if (primIndex > 0) {
-        // IMPORTANT: set argCount_ before calling primitive
         argCount_ = argCount;
         primitiveFailed_ = false;
         PrimitiveResult result = executePrimitive(primIndex, argCount);
@@ -4324,6 +4364,12 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
     }
 
     PrimitiveResult result = (this->*prim)(argCount);
+
+    // Track successful primitive execution for stepDetailed()
+    if (result == PrimitiveResult::Success) {
+        lastPrimitiveIndex_ = primitiveIndex;
+    }
+
     return result;
 }
 
