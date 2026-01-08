@@ -3893,6 +3893,12 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[528] = &Interpreter::primitiveGetExtraWordAt;
     primitiveTable_[529] = &Interpreter::primitiveSetExtraWordAt;
     primitiveTable_[530] = &Interpreter::primitiveImmediateAsInteger;
+
+    // String/encoding primitives (531-534)
+    primitiveTable_[531] = &Interpreter::primitiveStringEncode;
+    primitiveTable_[532] = &Interpreter::primitiveStringDecode;
+    primitiveTable_[533] = &Interpreter::primitiveCharacterAsciiValue;
+    primitiveTable_[534] = &Interpreter::primitiveAllObjectsInMemory;
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {

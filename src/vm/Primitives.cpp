@@ -7570,4 +7570,98 @@ PrimitiveResult Interpreter::primitiveImmediateAsInteger(int argCount) {
     return PrimitiveResult::Failure;
 }
 
+// ===== STRING/ENCODING PRIMITIVES (531-534) =====
+
+// Primitive 531: String encode
+// aString encoding primitiveStringEncode -> encodedBytes
+// Converts a string to bytes in specified encoding
+PrimitiveResult Interpreter::primitiveStringEncode(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop encodingOop = stackTop();
+    Oop stringOop = stackValue(1);
+
+    if (stringOop.isImmediate()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // For simplicity, only support UTF-8 (encoding 0) and Latin-1 (encoding 1)
+    // In reality, Smalltalk has a rich encoding system
+    // Fail to let Smalltalk handle complex encodings
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 532: String decode
+// aByteArray encoding primitiveStringDecode -> string
+// Converts bytes in specified encoding to a string
+PrimitiveResult Interpreter::primitiveStringDecode(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    // Similar to encode, fail to Smalltalk for complex handling
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 533: Character ASCII value
+// aCharacter primitiveCharacterAsciiValue -> integer
+// Returns the ASCII/Unicode code point of a character
+PrimitiveResult Interpreter::primitiveCharacterAsciiValue(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop receiver = stackTop();
+
+    // For Character immediate
+    if (receiver.isCharacter()) {
+        pop();
+        push(Oop::fromSmallInteger(receiver.asCharacter()));
+        return PrimitiveResult::Success;
+    }
+
+    // For Character object (legacy boxed characters)
+    if (!receiver.isImmediate()) {
+        // Character objects have their value stored in first slot
+        Oop value = memory_.fetchPointer(0, receiver);
+        if (value.isSmallInteger()) {
+            pop();
+            push(value);
+            return PrimitiveResult::Success;
+        }
+    }
+
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 534: All objects in memory (debugging/development)
+// primitiveAllObjectsInMemory -> array
+// Returns an array of all objects currently in the heap
+PrimitiveResult Interpreter::primitiveAllObjectsInMemory(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // This is an expensive operation - collects all heap objects
+    std::vector<Oop> allObjects;
+
+    memory_.allObjectsDo([&](Oop obj) {
+        if (!obj.isImmediate()) {
+            allObjects.push_back(obj);
+        }
+    });
+
+    // Allocate result array
+    uint32_t arrayClassIndex = memory_.indexOfClass(
+        memory_.specialObject(SpecialObjectIndex::ClassArray));
+
+    Oop result = memory_.allocateSlots(arrayClassIndex, allObjects.size());
+    if (result.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Fill result array
+    for (size_t i = 0; i < allObjects.size(); i++) {
+        memory_.storePointer(i, result, allObjects[i]);
+    }
+
+    pop();  // receiver
+    push(result);
+    return PrimitiveResult::Success;
+}
+
 } // namespace pharo

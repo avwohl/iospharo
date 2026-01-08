@@ -546,6 +546,12 @@ private:
     PrimitiveResult primitiveSetExtraWordAt(int argCount);         // 529
     PrimitiveResult primitiveImmediateAsInteger(int argCount);     // 530
 
+    // String/encoding primitives (531-534)
+    PrimitiveResult primitiveStringEncode(int argCount);           // 531
+    PrimitiveResult primitiveStringDecode(int argCount);           // 532
+    PrimitiveResult primitiveCharacterAsciiValue(int argCount);    // 533
+    PrimitiveResult primitiveAllObjectsInMemory(int argCount);     // 534
+
     // String primitives (157-158)
     PrimitiveResult primitiveCompareStringCollated(int argCount);  // 157
     PrimitiveResult primitiveCompareStringNoCase(int argCount);    // 158
