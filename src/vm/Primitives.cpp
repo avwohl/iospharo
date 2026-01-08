@@ -872,6 +872,160 @@ PrimitiveResult Interpreter::primitiveValueWithArgs(int argCount) {
     return primitiveBlockValueWithArgs(argCount);
 }
 
+// Primitive 200: Create a closure with copied values
+// This is used by the compiler to create closures that capture variables
+// Stack: outerContext, numArgs, compiledBlock/startPc, copiedValue1, copiedValue2, ...
+PrimitiveResult Interpreter::primitiveClosureCopyWithCopiedValues(int argCount) {
+    // In Spur/Cog, this creates a FullBlockClosure or BlockClosure with copied values
+    // argCount includes: numCopied values + 3 (outerContext, numArgs, compiledBlock)
+
+    if (argCount < 3) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t numCopied = static_cast<size_t>(argCount - 3);
+
+    // Get the BlockClosure or FullBlockClosure class
+    Oop blockClass = memory_.specialObject(SpecialObjectIndex::ClassBlockClosure);
+    if (blockClass.isNil()) {
+        // Try FullBlockClosure
+        blockClass = memory_.specialObject(SpecialObjectIndex::ClassFullBlockClosure);
+    }
+    if (blockClass.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    uint32_t classIndex = memory_.indexOfClass(blockClass);
+    if (classIndex == 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Stack layout (top to bottom):
+    // copiedN, ..., copied1, compiledBlock, numArgs, outerContext
+    Oop compiledBlock = stackValue(static_cast<size_t>(numCopied));
+    Oop numArgsOop = stackValue(static_cast<size_t>(numCopied + 1));
+    Oop outerContext = stackValue(static_cast<size_t>(numCopied + 2));
+
+    if (!numArgsOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // BlockClosure layout:
+    // 0: outerContext
+    // 1: startpc/compiledBlock
+    // 2: numArgs
+    // 3+: copied values
+
+    size_t totalSlots = 3 + numCopied;
+    Oop closure = memory_.allocateSlots(classIndex, totalSlots, ObjectFormat::FixedSize);
+    if (closure.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Initialize the closure
+    memory_.storePointer(0, closure, outerContext);
+    memory_.storePointer(1, closure, compiledBlock);
+    memory_.storePointer(2, closure, numArgsOop);
+
+    // Copy the captured values (in reverse order from stack)
+    for (size_t i = 0; i < numCopied; ++i) {
+        Oop copiedValue = stackValue(numCopied - 1 - i);
+        memory_.storePointer(3 + i, closure, copiedValue);
+    }
+
+    // Pop all arguments and push result
+    popN(static_cast<size_t>(argCount));
+    push(closure);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 207: Full closure value (for closures with many arguments)
+// This handles FullBlockClosures which may have more complex activation
+PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
+    Oop closure = stackValue(static_cast<size_t>(argCount));
+
+    if (!closure.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get numArgs from the closure (slot 2)
+    Oop numArgsOop = memory_.fetchPointer(2, closure);
+    if (!numArgsOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int closureNumArgs = static_cast<int>(numArgsOop.asSmallInteger());
+    if (closureNumArgs != argCount) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Activate the closure - same as regular block activation
+    activateBlock(closure, argCount);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 208: Closure value with unwind protection
+// Evaluates a closure but ensures unwind actions are executed
+// Used for ensure: blocks
+PrimitiveResult Interpreter::primitiveClosureValueUnwind(int argCount) {
+    // This primitive is called when evaluating a block that needs
+    // unwind protection (like ensure: blocks)
+
+    // For a basic implementation, we can just evaluate the block normally
+    // Full unwind semantics require integration with exception handling
+
+    Oop closure = stackValue(static_cast<size_t>(argCount));
+
+    if (!closure.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Verify argument count
+    Oop numArgsOop = memory_.fetchPointer(2, closure);
+    if (!numArgsOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int closureNumArgs = static_cast<int>(numArgsOop.asSmallInteger());
+    if (closureNumArgs != argCount) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Mark this activation for unwind protection
+    // In a full implementation, we'd set a flag on the context
+    // For now, just activate normally
+    activateBlock(closure, argCount);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 209: Closure value without unwind (optimization)
+// Evaluates a closure skipping unwind protection checks
+// Used when we know no unwind is needed
+PrimitiveResult Interpreter::primitiveClosureValueNoUnwind(int argCount) {
+    // This is an optimized path that skips unwind checking
+    // For our implementation, it's the same as normal block value
+
+    Oop closure = stackValue(static_cast<size_t>(argCount));
+
+    if (!closure.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Verify argument count
+    Oop numArgsOop = memory_.fetchPointer(2, closure);
+    if (!numArgsOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int closureNumArgs = static_cast<int>(numArgsOop.asSmallInteger());
+    if (closureNumArgs != argCount) {
+        return PrimitiveResult::Failure;
+    }
+
+    activateBlock(closure, argCount);
+    return PrimitiveResult::Success;
+}
+
 // ===== PROCESS PRIMITIVES =====
 
 PrimitiveResult Interpreter::primitiveSuspend(int argCount) {

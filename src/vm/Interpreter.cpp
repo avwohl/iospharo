@@ -3759,6 +3759,12 @@ void Interpreter::initializePrimitives() {
     // Closure value variant (204)
     primitiveTable_[204] = &Interpreter::primitiveClosureValueNoContextSwitch;
 
+    // Closure primitives (200, 207-209)
+    primitiveTable_[200] = &Interpreter::primitiveClosureCopyWithCopiedValues;
+    primitiveTable_[207] = &Interpreter::primitiveFullClosureValue;
+    primitiveTable_[208] = &Interpreter::primitiveClosureValueUnwind;
+    primitiveTable_[209] = &Interpreter::primitiveClosureValueNoUnwind;
+
     // Class structure primitives (253-254)
     primitiveTable_[253] = &Interpreter::primitiveSuperclass;
     primitiveTable_[254] = &Interpreter::primitiveInstSize;
