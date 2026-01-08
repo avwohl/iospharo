@@ -3827,6 +3827,12 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[211] = &Interpreter::primitiveContextAt;
     primitiveTable_[212] = &Interpreter::primitiveContextAtPut;
 
+    // Image segment primitives (213-216)
+    primitiveTable_[213] = &Interpreter::primitiveStoreImageSegment;
+    primitiveTable_[214] = &Interpreter::primitiveLoadImageSegment;
+    primitiveTable_[215] = &Interpreter::primitiveArraySwap;
+    primitiveTable_[216] = &Interpreter::primitiveFindRoots;
+
     // Cache flushing primitives (119-120)
     primitiveTable_[119] = &Interpreter::primitiveFlushCacheByMethod;
     primitiveTable_[120] = &Interpreter::primitiveFlushCacheBySelector;

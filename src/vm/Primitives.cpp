@@ -7188,4 +7188,144 @@ PrimitiveResult Interpreter::primitiveSocket(int argCount) {
     return PrimitiveResult::Failure;
 }
 
+// ===== IMAGE SEGMENT PRIMITIVES (213-216) =====
+
+// Primitive 213: Store image segment
+// arrayOfRoots arrayOfObjects segmentWordArray primitiveStoreImageSegment -> rootsArray or fail
+// Stores objects into a segment format suitable for file storage
+PrimitiveResult Interpreter::primitiveStoreImageSegment(int argCount) {
+    if (argCount != 3) return PrimitiveResult::Failure;
+
+    Oop segmentWordArray = stackTop();
+    Oop arrayOfObjects = stackValue(1);
+    Oop arrayOfRoots = stackValue(2);
+
+    // Validate all arguments are arrays
+    if (segmentWordArray.isImmediate() || arrayOfObjects.isImmediate() || arrayOfRoots.isImmediate()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Image segment storage is a complex operation that:
+    // 1. Traverses all objects reachable from arrayOfObjects
+    // 2. Copies them into a portable binary format in segmentWordArray
+    // 3. Records external references in arrayOfRoots
+    // 4. Handles object identity and class table mapping
+
+    // Without full image segment support, fail to Smalltalk
+    // The Smalltalk code can handle serialization via other means
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 214: Load image segment
+// segmentWordArray outPointers primitiveLoadImageSegment -> arrayOfObjects or fail
+// Loads objects from a segment format back into the heap
+PrimitiveResult Interpreter::primitiveLoadImageSegment(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop outPointers = stackTop();
+    Oop segmentWordArray = stackValue(1);
+
+    // Validate arguments
+    if (segmentWordArray.isImmediate() || outPointers.isImmediate()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Image segment loading is a complex operation that:
+    // 1. Parses the binary format from segmentWordArray
+    // 2. Allocates and reconstructs all objects
+    // 3. Resolves external references using outPointers
+    // 4. Updates class indices to match current class table
+
+    // Without full image segment support, fail to Smalltalk
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 215: Array swap
+// array1 array2 primitiveArraySwap -> receiver
+// Swaps contents of two arrays element by element
+PrimitiveResult Interpreter::primitiveArraySwap(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop array2 = stackTop();
+    Oop array1 = stackValue(1);
+    Oop receiver = stackValue(2);
+
+    // Validate arguments are non-immediate
+    if (array1.isImmediate() || array2.isImmediate()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get sizes
+    size_t size1 = memory_.slotCountOf(array1);
+    size_t size2 = memory_.slotCountOf(array2);
+
+    // Arrays must be same size
+    if (size1 != size2) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Check immutability
+    if (memory_.isImmutable(array1) || memory_.isImmutable(array2)) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Swap all elements
+    for (size_t i = 0; i < size1; i++) {
+        Oop temp = memory_.fetchPointer(i, array1);
+        memory_.storePointer(i, array1, memory_.fetchPointer(i, array2));
+        memory_.storePointer(i, array2, temp);
+    }
+
+    popN(2);  // Pop arguments, leave receiver
+    return PrimitiveResult::Success;
+}
+
+// Primitive 216: Find roots (objects pointing to an object)
+// anObject primitiveFindRoots -> arrayOfRoots
+// Finds all objects that reference the given object
+PrimitiveResult Interpreter::primitiveFindRoots(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop targetObject = stackTop();
+
+    // We need to find all objects that reference targetObject
+    // This requires a full heap scan
+
+    // Collect all objects that point to target
+    std::vector<Oop> roots;
+
+    memory_.allObjectsDo([&](Oop obj) {
+        if (obj.isImmediate()) return;
+
+        // Check each slot
+        size_t slotCount = memory_.slotCountOf(obj);
+        for (size_t i = 0; i < slotCount; i++) {
+            Oop slot = memory_.fetchPointer(i, obj);
+            if (slot == targetObject) {
+                roots.push_back(obj);
+                break;  // Only add each object once
+            }
+        }
+    });
+
+    // Allocate result array
+    uint32_t arrayClassIndex = memory_.classOf(memory_.specialObject(SpecialObjectIndex::ClassArray)).isImmediate()
+        ? static_cast<uint32_t>(memory_.specialObject(SpecialObjectIndex::ClassArray).asSmallInteger())
+        : memory_.indexOfClass(memory_.specialObject(SpecialObjectIndex::ClassArray));
+
+    Oop result = memory_.allocateSlots(arrayClassIndex, roots.size());
+    if (result.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Fill result array
+    for (size_t i = 0; i < roots.size(); i++) {
+        memory_.storePointer(i, result, roots[i]);
+    }
+
+    pop();
+    push(result);
+    return PrimitiveResult::Success;
+}
+
 } // namespace pharo

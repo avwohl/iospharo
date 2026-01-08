@@ -1,8 +1,7 @@
 # Claude Code Instructions
 
 ## Git Workflow
-- Commit frequently, especially on pauses when stopping to chat
-- Use small, incremental commits with clear messages
+- Use large commits to stop less fequently
 - Always run `git status` before and after commits to verify state
 
 ## Project Context

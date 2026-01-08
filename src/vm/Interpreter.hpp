@@ -528,6 +528,12 @@ private:
     // Socket primitive (133)
     PrimitiveResult primitiveSocket(int argCount);                 // 133
 
+    // Image segment primitives (213-216)
+    PrimitiveResult primitiveStoreImageSegment(int argCount);      // 213
+    PrimitiveResult primitiveLoadImageSegment(int argCount);       // 214
+    PrimitiveResult primitiveArraySwap(int argCount);              // 215
+    PrimitiveResult primitiveFindRoots(int argCount);              // 216
+
     // String primitives (157-158)
     PrimitiveResult primitiveCompareStringCollated(int argCount);  // 157
     PrimitiveResult primitiveCompareStringNoCase(int argCount);    // 158
