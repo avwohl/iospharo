@@ -130,6 +130,14 @@ Clean C++ VM implementation is functional. Image loads, interpreter initializes,
   - 1 arg: Returns parameter at index
   - 2 args: Sets parameter (most read-only)
   - Reports heap size, GC stats, image format, VM features
+- **primitiveExitToDebugger (114)**: Halt VM with debug trap
+
+### 12. Time Primitives (DONE)
+- **primitiveMillisecondClock (135)**: Milliseconds since VM start (wraps ~12 days)
+- **primitiveSecondsClock (137)**: Seconds since Smalltalk epoch (Jan 1, 1901)
+- **primitiveMicrosecondClock (240)**: High-resolution microsecond timer
+- **primitiveLocalMicrosecondClock (241)**: Local time microseconds
+- Uses C++ chrono for cross-platform timing
 
 ## Key Files
 
