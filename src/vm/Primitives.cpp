@@ -1403,7 +1403,13 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
         }
     }
 
-    std::cerr << "[VM] primitiveQuit called with exitCode=" << exitCode << " - stopping interpreter\n";
+    std::cerr << "\n[VM] primitiveQuit called with exitCode=" << exitCode << "\n";
+    std::cerr << "[VM] This usually means the image couldn't complete startup.\n";
+    std::cerr << "[VM] Common reasons:\n";
+    std::cerr << "[VM]   - No display/UI available\n";
+    std::cerr << "[VM]   - Missing session manager\n";
+    std::cerr << "[VM]   - Startup error handling triggered quit\n";
+    std::cerr << "[VM] Stopping interpreter (not exiting process).\n\n";
 
     running_ = false;
 

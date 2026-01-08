@@ -264,7 +264,7 @@ int main(int argc, char* argv[]) {
         // Run bytecode steps for testing
         std::cout << "\n=== Execution Test ===" << std::endl;
         int totalSteps = 10000;
-        std::cout << "Running " << totalSteps << " bytecode steps..." << std::endl;
+        std::cout << "Running up to " << totalSteps << " bytecode steps..." << std::endl;
         int activeSteps = 0;
         int idleSteps = 0;
 
