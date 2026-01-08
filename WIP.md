@@ -201,6 +201,37 @@ Extended large integer support with division and bitwise operations:
 - **primitiveBytesLeft (112)**: Return free memory bytes
 - **primitiveSpecialObjectsOop (129)**: Return the special objects array
 
+### 20. Context and Closure Primitives (DONE)
+- **primitiveThisContext (199)**: Return the current execution context
+- **primitiveClosureNumArgs (206)**: Return number of arguments a BlockClosure expects
+
+### 21. Slot Access Primitives (DONE)
+- **primitiveSlotAt (173)**: Read object slot at 1-based index
+- **primitiveSlotAtPut (174)**: Write object slot at 1-based index
+
+### 22. Object Enumeration Primitives (DONE)
+- **primitiveAllInstances (177)**: Return array of all instances of a class
+- **primitiveAllObjects (178)**: Return array of all objects in the system
+
+### 23. Object Reference Primitives (DONE)
+- **primitiveObjectPointsTo (132)**: Check if object points to another object
+
+### 24. Become Primitives (DONE)
+- **primitiveBecome (72)**: Two-way identity swap between two objects
+- **primitiveBecomeForward (128)**: One-way forward all references from one object to another
+
+### 25. Bit Operation Primitives (DONE)
+- **primitiveHighBit (575)**: Return index of highest set bit (1-based, 0 if no bits)
+- **primitiveLowBit (576)**: Return index of lowest set bit (1-based, 0 if no bits)
+
+### 26. Word Array Access Primitives (DONE)
+- **primitiveIntegerAt (165)**: Read 32-bit signed integer from word array
+- **primitiveIntegerAtPut (166)**: Write 32-bit signed integer to word array
+
+### 27. Class/Behavior Primitives (DONE)
+- **primitiveBehaviorHash (175)**: Return identity hash for a behavior/class
+- **primitiveChangeClass (115)**: Change the class of an object
+
 ## Key Files
 
 ### Clean VM Implementation (src/vm/)

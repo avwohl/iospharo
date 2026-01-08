@@ -508,6 +508,37 @@ private:
     // Process primitives
     PrimitiveResult primitiveYield(int argCount);            // 167
 
+    // Context primitives
+    PrimitiveResult primitiveThisContext(int argCount);      // 199
+    PrimitiveResult primitiveClosureNumArgs(int argCount);   // 206
+
+    // Slot access primitives
+    PrimitiveResult primitiveSlotAt(int argCount);           // 173
+    PrimitiveResult primitiveSlotAtPut(int argCount);        // 174
+
+    // Object enumeration primitives
+    PrimitiveResult primitiveAllInstances(int argCount);     // 177
+    PrimitiveResult primitiveAllObjects(int argCount);       // 178
+
+    // Object reference primitives
+    PrimitiveResult primitiveObjectPointsTo(int argCount);   // 132
+
+    // Become primitives
+    PrimitiveResult primitiveBecome(int argCount);           // 72
+    PrimitiveResult primitiveBecomeForward(int argCount);    // 128
+
+    // Bit operation primitives
+    PrimitiveResult primitiveHighBit(int argCount);          // 575
+    PrimitiveResult primitiveLowBit(int argCount);           // 576
+
+    // Word array access primitives
+    PrimitiveResult primitiveIntegerAt(int argCount);        // 165
+    PrimitiveResult primitiveIntegerAtPut(int argCount);     // 166
+
+    // Class/behavior primitives
+    PrimitiveResult primitiveBehaviorHash(int argCount);     // 175
+    PrimitiveResult primitiveChangeClass(int argCount);      // 115
+
     // ===== STARTUP SUPPORT =====
 
     /// Bootstrap startup when active process has nil suspendedContext.

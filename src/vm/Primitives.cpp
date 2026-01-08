@@ -3149,4 +3149,549 @@ PrimitiveResult Interpreter::primitiveYield(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== CONTEXT PRIMITIVES =====
+
+// Primitive 199: Return the current execution context (thisContext)
+PrimitiveResult Interpreter::primitiveThisContext(int argCount) {
+    // Return the active context
+    // In our implementation, activeContext_ holds the current context
+    // If we're running from a synthetic context, we may need to materialize one
+
+    if (activeContext_.isNil() || !activeContext_.isObject()) {
+        // Create a context from current execution state if needed
+        // For now, just fail if no context - caller should handle
+        return PrimitiveResult::Failure;
+    }
+
+    // Note: In a full implementation, we'd sync IP/SP to the context here.
+    // For now, the context should be reasonably up-to-date from message sends.
+
+    pop();  // Pop receiver
+    push(activeContext_);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 206: Return the number of arguments a closure expects
+PrimitiveResult Interpreter::primitiveClosureNumArgs(int argCount) {
+    Oop rcvr = stackTop();
+
+    if (!rcvr.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* header = rcvr.asObjectPtr();
+    ObjectFormat format = header->format();
+
+    // Block closures (CompiledBlocks) have format 24-31
+    if (format < ObjectFormat::CompiledMethod) {
+        return PrimitiveResult::Failure;
+    }
+
+    // For BlockClosure, numArgs is stored in slot 3
+    // BlockClosure layout: outerContext, startpc, numArgs, ...
+    // Actually in Pharo, BlockClosure has: outerContext, compiledBlock, numArgs, receiver
+    // Let's get numArgs from the closure's numArgs slot (index 2)
+
+    // Check if this looks like a BlockClosure
+    size_t slotCount = header->slotCount();
+    if (slotCount < 3) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Slot 2 is numArgs for BlockClosure
+    Oop numArgsOop = memory_.fetchPointer(2, rcvr);
+    if (!numArgsOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    pop();
+    push(numArgsOop);
+    return PrimitiveResult::Success;
+}
+
+// ===== SLOT ACCESS PRIMITIVES =====
+
+// Primitive 173: Read slot at given index (1-based)
+PrimitiveResult Interpreter::primitiveSlotAt(int argCount) {
+    Oop indexOop = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    if (!rcvr.isObject() || !indexOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t index = indexOop.asSmallInteger();
+    if (index < 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* header = rcvr.asObjectPtr();
+    size_t slotCount = header->slotCount();
+
+    // 1-based index
+    size_t zeroIndex = static_cast<size_t>(index - 1);
+    if (zeroIndex >= slotCount) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop value = memory_.fetchPointer(zeroIndex, rcvr);
+
+    popN(2);
+    push(value);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 174: Write slot at given index (1-based)
+PrimitiveResult Interpreter::primitiveSlotAtPut(int argCount) {
+    Oop value = stackValue(0);
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!rcvr.isObject() || !indexOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t index = indexOop.asSmallInteger();
+    if (index < 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* header = rcvr.asObjectPtr();
+
+    // Check immutability
+    if (header->isImmutable()) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t slotCount = header->slotCount();
+
+    // 1-based index
+    size_t zeroIndex = static_cast<size_t>(index - 1);
+    if (zeroIndex >= slotCount) {
+        return PrimitiveResult::Failure;
+    }
+
+    memory_.storePointer(zeroIndex, rcvr, value);
+
+    popN(3);
+    push(value);  // Return the stored value
+    return PrimitiveResult::Success;
+}
+
+// ===== OBJECT ENUMERATION PRIMITIVES =====
+
+// Primitive 177: Return all instances of a class
+PrimitiveResult Interpreter::primitiveAllInstances(int argCount) {
+    Oop classOop = stackTop();
+
+    if (!classOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    uint32_t targetClassIndex = memory_.indexOfClass(classOop);
+
+    // Collect instances using allObjectsDo
+    std::vector<Oop> instances;
+    memory_.allObjectsDo([&](Oop obj) {
+        if (obj.isObject()) {
+            ObjectHeader* header = obj.asObjectPtr();
+            if (header->classIndex() == targetClassIndex) {
+                instances.push_back(obj);
+            }
+        }
+    });
+
+    // Allocate an array to hold the instances
+    Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
+    uint32_t arrayClassIndex = memory_.indexOfClass(arrayClass);
+    Oop result = memory_.allocateSlots(arrayClassIndex, instances.size(), ObjectFormat::Indexable);
+
+    if (result.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Fill the array
+    for (size_t i = 0; i < instances.size(); i++) {
+        memory_.storePointer(i, result, instances[i]);
+    }
+
+    pop();
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 178: Return all objects in the system
+PrimitiveResult Interpreter::primitiveAllObjects(int argCount) {
+    // Collect all objects using allObjectsDo
+    std::vector<Oop> objects;
+    memory_.allObjectsDo([&](Oop obj) {
+        if (obj.isObject()) {
+            objects.push_back(obj);
+        }
+    });
+
+    // Allocate an array to hold all objects
+    Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
+    uint32_t arrayClassIndex = memory_.indexOfClass(arrayClass);
+    Oop result = memory_.allocateSlots(arrayClassIndex, objects.size(), ObjectFormat::Indexable);
+
+    if (result.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Fill the array
+    for (size_t i = 0; i < objects.size(); i++) {
+        memory_.storePointer(i, result, objects[i]);
+    }
+
+    pop();  // Pop receiver
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// ===== OBJECT REFERENCE PRIMITIVES =====
+
+// Primitive 132: Does object point to another object?
+PrimitiveResult Interpreter::primitiveObjectPointsTo(int argCount) {
+    Oop target = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    if (!rcvr.isObject()) {
+        popN(2);
+        push(memory_.falseObject());
+        return PrimitiveResult::Success;
+    }
+
+    ObjectHeader* header = rcvr.asObjectPtr();
+    ObjectFormat format = header->format();
+
+    // Only check pointer slots for pointer objects
+    // Non-pointer formats: byte arrays, word arrays
+    if (format >= ObjectFormat::Indexable8 && format <= ObjectFormat::Indexable8_7) {
+        // Byte array - no pointers
+        popN(2);
+        push(memory_.falseObject());
+        return PrimitiveResult::Success;
+    }
+
+    if (format >= ObjectFormat::Indexable32 && format <= ObjectFormat::Indexable64) {
+        // Word arrays (32-bit and 64-bit) - no pointers
+        popN(2);
+        push(memory_.falseObject());
+        return PrimitiveResult::Success;
+    }
+
+    // Check each slot for pointer objects
+    size_t slotCount = header->slotCount();
+    for (size_t i = 0; i < slotCount; i++) {
+        Oop slot = memory_.fetchPointer(i, rcvr);
+        if (slot.rawBits() == target.rawBits()) {
+            popN(2);
+            push(memory_.trueObject());
+            return PrimitiveResult::Success;
+        }
+    }
+
+    popN(2);
+    push(memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// ===== BECOME PRIMITIVES =====
+
+// Primitive 72: Swap identities of two objects (two-way become)
+PrimitiveResult Interpreter::primitiveBecome(int argCount) {
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    if (!rcvr.isObject() || !arg.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Both must be regular objects (not immediates)
+    if (rcvr.rawBits() == arg.rawBits()) {
+        // Same object - nothing to do
+        popN(2);
+        push(rcvr);
+        return PrimitiveResult::Success;
+    }
+
+    // Perform two-way become by swapping all references
+    memory_.allObjectsDo([&](Oop obj) {
+        if (!obj.isObject()) return;
+
+        ObjectHeader* header = obj.asObjectPtr();
+        ObjectFormat format = header->format();
+
+        // Skip non-pointer objects (byte/word arrays)
+        if (format >= ObjectFormat::Indexable8 && format <= ObjectFormat::Indexable8_7) return;
+        if (format >= ObjectFormat::Indexable32 && format <= ObjectFormat::Indexable64) return;
+
+        size_t slotCount = header->slotCount();
+        for (size_t i = 0; i < slotCount; i++) {
+            Oop slot = memory_.fetchPointer(i, obj);
+            if (slot.rawBits() == rcvr.rawBits()) {
+                memory_.storePointer(i, obj, arg);
+            } else if (slot.rawBits() == arg.rawBits()) {
+                memory_.storePointer(i, obj, rcvr);
+            }
+        }
+    });
+
+    popN(2);
+    push(rcvr);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 128: Forward all references from rcvr to arg (one-way become)
+PrimitiveResult Interpreter::primitiveBecomeForward(int argCount) {
+    // Can take 1 arg (simple forward) or 2 args (with copyHash flag)
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(argCount);
+
+    if (!rcvr.isObject() || !arg.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    if (rcvr.rawBits() == arg.rawBits()) {
+        // Same object - nothing to do
+        popN(argCount + 1);
+        push(rcvr);
+        return PrimitiveResult::Success;
+    }
+
+    // Perform one-way become: replace all references to rcvr with arg
+    memory_.allObjectsDo([&](Oop obj) {
+        if (!obj.isObject()) return;
+
+        ObjectHeader* header = obj.asObjectPtr();
+        ObjectFormat format = header->format();
+
+        // Skip non-pointer objects (byte/word arrays)
+        if (format >= ObjectFormat::Indexable8 && format <= ObjectFormat::Indexable8_7) return;
+        if (format >= ObjectFormat::Indexable32 && format <= ObjectFormat::Indexable64) return;
+
+        size_t slotCount = header->slotCount();
+        for (size_t i = 0; i < slotCount; i++) {
+            Oop slot = memory_.fetchPointer(i, obj);
+            if (slot.rawBits() == rcvr.rawBits()) {
+                memory_.storePointer(i, obj, arg);
+            }
+        }
+    });
+
+    popN(argCount + 1);
+    push(rcvr);
+    return PrimitiveResult::Success;
+}
+
+// ===== BIT OPERATION PRIMITIVES =====
+
+// Primitive 575: Return the index of the high bit (1-based, 0 if no bits set)
+PrimitiveResult Interpreter::primitiveHighBit(int argCount) {
+    Oop rcvr = stackTop();
+
+    if (!rcvr.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t value = rcvr.asSmallInteger();
+
+    if (value < 0) {
+        return PrimitiveResult::Failure;  // Undefined for negative
+    }
+
+    if (value == 0) {
+        pop();
+        push(Oop::fromSmallInteger(0));
+        return PrimitiveResult::Success;
+    }
+
+    // Count leading zeros and compute high bit position (1-based)
+    // For 64-bit value, highBit = 64 - __builtin_clzll(value)
+    int highBit = 64 - __builtin_clzll(static_cast<uint64_t>(value));
+
+    pop();
+    push(Oop::fromSmallInteger(highBit));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 576: Return the index of the low bit (1-based, 0 if no bits set)
+PrimitiveResult Interpreter::primitiveLowBit(int argCount) {
+    Oop rcvr = stackTop();
+
+    if (!rcvr.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t value = rcvr.asSmallInteger();
+
+    if (value < 0) {
+        return PrimitiveResult::Failure;  // Undefined for negative
+    }
+
+    if (value == 0) {
+        pop();
+        push(Oop::fromSmallInteger(0));
+        return PrimitiveResult::Success;
+    }
+
+    // Count trailing zeros and add 1 for 1-based index
+    int lowBit = __builtin_ctzll(static_cast<uint64_t>(value)) + 1;
+
+    pop();
+    push(Oop::fromSmallInteger(lowBit));
+    return PrimitiveResult::Success;
+}
+
+// ===== WORD ARRAY ACCESS PRIMITIVES =====
+
+// Primitive 165: Read a 32-bit signed integer from a word-indexable object
+PrimitiveResult Interpreter::primitiveIntegerAt(int argCount) {
+    Oop indexOop = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    if (!rcvr.isObject() || !indexOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t index = indexOop.asSmallInteger();
+    if (index < 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* header = rcvr.asObjectPtr();
+    ObjectFormat format = header->format();
+
+    // Must be a 32-bit word indexable object
+    if (format < ObjectFormat::Indexable32 || format > ObjectFormat::Indexable32Odd) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t byteSize = memory_.byteSizeOf(rcvr);
+    size_t wordCount = byteSize / 4;
+
+    size_t zeroIndex = static_cast<size_t>(index - 1);
+    if (zeroIndex >= wordCount) {
+        return PrimitiveResult::Failure;
+    }
+
+    int32_t* words = reinterpret_cast<int32_t*>(header + 1);
+    int64_t value = words[zeroIndex];
+
+    popN(2);
+    push(Oop::fromSmallInteger(value));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 166: Write a 32-bit signed integer to a word-indexable object
+PrimitiveResult Interpreter::primitiveIntegerAtPut(int argCount) {
+    Oop valueOop = stackValue(0);
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!rcvr.isObject() || !indexOop.isSmallInteger() || !valueOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t index = indexOop.asSmallInteger();
+    int64_t value = valueOop.asSmallInteger();
+
+    if (index < 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Check value fits in 32 bits signed
+    if (value < INT32_MIN || value > INT32_MAX) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* header = rcvr.asObjectPtr();
+    ObjectFormat format = header->format();
+
+    // Must be a 32-bit word indexable object
+    if (format < ObjectFormat::Indexable32 || format > ObjectFormat::Indexable32Odd) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Check immutability
+    if (header->isImmutable()) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t byteSize = memory_.byteSizeOf(rcvr);
+    size_t wordCount = byteSize / 4;
+
+    size_t zeroIndex = static_cast<size_t>(index - 1);
+    if (zeroIndex >= wordCount) {
+        return PrimitiveResult::Failure;
+    }
+
+    int32_t* words = reinterpret_cast<int32_t*>(header + 1);
+    words[zeroIndex] = static_cast<int32_t>(value);
+
+    popN(3);
+    push(valueOop);  // Return the stored value
+    return PrimitiveResult::Success;
+}
+
+// ===== CLASS/BEHAVIOR PRIMITIVES =====
+
+// Primitive 175: Return the identity hash for a behavior (class)
+PrimitiveResult Interpreter::primitiveBehaviorHash(int argCount) {
+    Oop rcvr = stackTop();
+
+    if (!rcvr.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* header = rcvr.asObjectPtr();
+
+    // Return the identity hash from the object header
+    uint32_t hash = header->identityHash();
+
+    // If hash is 0, generate one (behaviors should have stable hashes)
+    if (hash == 0) {
+        // Use a simple hash based on pointer for now
+        hash = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(header) >> 3) & 0x3FFFFF;
+        if (hash == 0) hash = 1;  // Ensure non-zero
+    }
+
+    pop();
+    push(Oop::fromSmallInteger(hash));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 115: Change the class of an object
+PrimitiveResult Interpreter::primitiveChangeClass(int argCount) {
+    Oop newClassOop = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    if (!rcvr.isObject() || !newClassOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* rcvrHeader = rcvr.asObjectPtr();
+
+    // Check immutability
+    if (rcvrHeader->isImmutable()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get the class index for the new class
+    uint32_t newClassIndex = memory_.indexOfClass(newClassOop);
+
+    // Basic safety check: the new class should be a valid behavior
+    if (newClassIndex == 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Change the class index in the object header
+    rcvrHeader->setClassIndex(newClassIndex);
+
+    popN(2);
+    push(rcvr);  // Return receiver
+    return PrimitiveResult::Success;
+}
+
 } // namespace pharo

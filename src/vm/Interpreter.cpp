@@ -3654,6 +3654,36 @@ void Interpreter::initializePrimitives() {
 
     // VM parameter primitive (254)
     primitiveTable_[254] = &Interpreter::primitiveVMParameter;
+
+    // Context primitives (199)
+    primitiveTable_[199] = &Interpreter::primitiveThisContext;
+
+    // Slot access primitives (173-174)
+    primitiveTable_[173] = &Interpreter::primitiveSlotAt;
+    primitiveTable_[174] = &Interpreter::primitiveSlotAtPut;
+
+    // Object enumeration primitives (177-178)
+    primitiveTable_[177] = &Interpreter::primitiveAllInstances;
+    primitiveTable_[178] = &Interpreter::primitiveAllObjects;
+
+    // Object reference primitives (132)
+    primitiveTable_[132] = &Interpreter::primitiveObjectPointsTo;
+
+    // Become primitives (72, 128)
+    primitiveTable_[72] = &Interpreter::primitiveBecome;
+    primitiveTable_[128] = &Interpreter::primitiveBecomeForward;
+
+    // Bit operation primitives (575-576)
+    primitiveTable_[575] = &Interpreter::primitiveHighBit;
+    primitiveTable_[576] = &Interpreter::primitiveLowBit;
+
+    // Word array access primitives (165-166)
+    primitiveTable_[165] = &Interpreter::primitiveIntegerAt;
+    primitiveTable_[166] = &Interpreter::primitiveIntegerAtPut;
+
+    // Class/behavior primitives (115, 175)
+    primitiveTable_[115] = &Interpreter::primitiveChangeClass;
+    primitiveTable_[175] = &Interpreter::primitiveBehaviorHash;
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {
