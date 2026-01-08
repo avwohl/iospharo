@@ -754,6 +754,30 @@ private:
     PrimitiveResult primitiveMIDISendPitchBend(int argCount);      // 348
     PrimitiveResult primitiveMIDISendSysEx(int argCount);          // 349
 
+    // Serial port primitives (270-279)
+    PrimitiveResult primitiveSerialPortCount(int argCount);         // 270
+    PrimitiveResult primitiveSerialPortName(int argCount);          // 271
+    PrimitiveResult primitiveSerialPortOpen(int argCount);          // 272
+    PrimitiveResult primitiveSerialPortClose(int argCount);         // 273
+    PrimitiveResult primitiveSerialPortRead(int argCount);          // 274
+    PrimitiveResult primitiveSerialPortWrite(int argCount);         // 275
+    PrimitiveResult primitiveSerialPortSetParams(int argCount);     // 276
+    PrimitiveResult primitiveSerialPortGetParams(int argCount);     // 277
+    PrimitiveResult primitiveSerialPortDataAvailable(int argCount); // 278
+    PrimitiveResult primitiveSerialPortFlush(int argCount);         // 279
+
+    // Joystick primitives (280-289)
+    PrimitiveResult primitiveJoystickCount(int argCount);           // 280
+    PrimitiveResult primitiveJoystickName(int argCount);            // 281
+    PrimitiveResult primitiveJoystickOpen(int argCount);            // 282
+    PrimitiveResult primitiveJoystickClose(int argCount);           // 283
+    PrimitiveResult primitiveJoystickRead(int argCount);            // 284
+    PrimitiveResult primitiveJoystickButtonCount(int argCount);     // 285
+    PrimitiveResult primitiveJoystickAxisCount(int argCount);       // 286
+    PrimitiveResult primitiveJoystickButtonState(int argCount);     // 287
+    PrimitiveResult primitiveJoystickAxisValue(int argCount);       // 288
+    PrimitiveResult primitiveJoystickHatValue(int argCount);        // 289
+
     // String/Array
     PrimitiveResult primitiveStringAt(int argCount);
     PrimitiveResult primitiveStringAtPut(int argCount);

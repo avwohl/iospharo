@@ -10836,6 +10836,222 @@ PrimitiveResult Interpreter::primitiveMIDISendSysEx(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== SERIAL PORT PRIMITIVES (270-279) =====
+
+// Serial port state
+static int serialPortCount = 0;
+
+// Primitive 270: Get serial port count
+// primitiveSerialPortCount -> count
+PrimitiveResult Interpreter::primitiveSerialPortCount(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // iOS doesn't expose traditional serial ports
+    // Would use External Accessory framework for MFi devices
+    pop();
+    push(Oop::fromSmallInteger(serialPortCount));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 271: Get serial port name
+// portIndex primitiveSerialPortName -> string
+PrimitiveResult Interpreter::primitiveSerialPortName(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    // No ports available
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 272: Open serial port
+// portIndex baudRate dataBits stopBits parity primitiveSerialPortOpen -> handle
+PrimitiveResult Interpreter::primitiveSerialPortOpen(int argCount) {
+    if (argCount != 5) return PrimitiveResult::Failure;
+
+    // No ports available on iOS
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 273: Close serial port
+// handle primitiveSerialPortClose -> self
+PrimitiveResult Interpreter::primitiveSerialPortClose(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 274: Read from serial port
+// handle buffer primitiveSerialPortRead -> bytesRead
+PrimitiveResult Interpreter::primitiveSerialPortRead(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    // No data available
+    popN(2);
+    push(Oop::fromSmallInteger(0));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 275: Write to serial port
+// handle buffer primitiveSerialPortWrite -> bytesWritten
+PrimitiveResult Interpreter::primitiveSerialPortWrite(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop bufferOop = stackTop();
+    if (bufferOop.isImmediate()) return PrimitiveResult::Failure;
+
+    size_t byteCount = memory_.byteSizeOf(bufferOop);
+
+    popN(2);
+    push(Oop::fromSmallInteger(static_cast<int64_t>(byteCount)));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 276: Set serial port parameters
+// handle baudRate dataBits stopBits parity primitiveSerialPortSetParams -> self
+PrimitiveResult Interpreter::primitiveSerialPortSetParams(int argCount) {
+    if (argCount != 5) return PrimitiveResult::Failure;
+
+    popN(5);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 277: Get serial port parameters
+// handle primitiveSerialPortGetParams -> array (baudRate dataBits stopBits parity)
+PrimitiveResult Interpreter::primitiveSerialPortGetParams(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    // No ports available
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 278: Check if data available on serial port
+// handle primitiveSerialPortDataAvailable -> bytesAvailable
+PrimitiveResult Interpreter::primitiveSerialPortDataAvailable(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    push(Oop::fromSmallInteger(0));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 279: Flush serial port buffers
+// handle primitiveSerialPortFlush -> self
+PrimitiveResult Interpreter::primitiveSerialPortFlush(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// ===== JOYSTICK PRIMITIVES (280-289) =====
+
+// Joystick state
+static int joystickCount = 0;
+
+// Primitive 280: Get joystick count
+// primitiveJoystickCount -> count
+PrimitiveResult Interpreter::primitiveJoystickCount(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // iOS supports game controllers via GameController framework
+    // For now, return 0
+    pop();
+    push(Oop::fromSmallInteger(joystickCount));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 281: Get joystick name
+// joystickIndex primitiveJoystickName -> string
+PrimitiveResult Interpreter::primitiveJoystickName(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    // No joysticks available
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 282: Open joystick
+// joystickIndex primitiveJoystickOpen -> handle
+PrimitiveResult Interpreter::primitiveJoystickOpen(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    // No joysticks available
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 283: Close joystick
+// handle primitiveJoystickClose -> self
+PrimitiveResult Interpreter::primitiveJoystickClose(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 284: Read joystick state (all axes and buttons)
+// handle primitiveJoystickRead -> array
+PrimitiveResult Interpreter::primitiveJoystickRead(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    // No joysticks available
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 285: Get joystick button count
+// handle primitiveJoystickButtonCount -> count
+PrimitiveResult Interpreter::primitiveJoystickButtonCount(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    push(Oop::fromSmallInteger(0));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 286: Get joystick axis count
+// handle primitiveJoystickAxisCount -> count
+PrimitiveResult Interpreter::primitiveJoystickAxisCount(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    popN(1);
+    push(Oop::fromSmallInteger(0));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 287: Get joystick button state
+// handle buttonIndex primitiveJoystickButtonState -> boolean
+PrimitiveResult Interpreter::primitiveJoystickButtonState(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    popN(2);
+    push(memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 288: Get joystick axis value
+// handle axisIndex primitiveJoystickAxisValue -> value (-1.0 to 1.0 as SmallInteger -32768 to 32767)
+PrimitiveResult Interpreter::primitiveJoystickAxisValue(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    popN(2);
+    push(Oop::fromSmallInteger(0));  // Center position
+    return PrimitiveResult::Success;
+}
+
+// Primitive 289: Get joystick hat/POV value
+// handle hatIndex primitiveJoystickHatValue -> value (direction in degrees, -1 for center)
+PrimitiveResult Interpreter::primitiveJoystickHatValue(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    popN(2);
+    push(Oop::fromSmallInteger(-1));  // Center/neutral position
+    return PrimitiveResult::Success;
+}
+
 // ===== PROFILING PRIMITIVES (260-263) =====
 
 // Primitive 260: VM profile samples into array

@@ -4080,6 +4080,30 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[348] = &Interpreter::primitiveMIDISendPitchBend;
     primitiveTable_[349] = &Interpreter::primitiveMIDISendSysEx;
 
+    // Serial port primitives (270-279)
+    primitiveTable_[270] = &Interpreter::primitiveSerialPortCount;
+    primitiveTable_[271] = &Interpreter::primitiveSerialPortName;
+    primitiveTable_[272] = &Interpreter::primitiveSerialPortOpen;
+    primitiveTable_[273] = &Interpreter::primitiveSerialPortClose;
+    primitiveTable_[274] = &Interpreter::primitiveSerialPortRead;
+    primitiveTable_[275] = &Interpreter::primitiveSerialPortWrite;
+    primitiveTable_[276] = &Interpreter::primitiveSerialPortSetParams;
+    primitiveTable_[277] = &Interpreter::primitiveSerialPortGetParams;
+    primitiveTable_[278] = &Interpreter::primitiveSerialPortDataAvailable;
+    primitiveTable_[279] = &Interpreter::primitiveSerialPortFlush;
+
+    // Joystick primitives (280-289)
+    primitiveTable_[280] = &Interpreter::primitiveJoystickCount;
+    primitiveTable_[281] = &Interpreter::primitiveJoystickName;
+    primitiveTable_[282] = &Interpreter::primitiveJoystickOpen;
+    primitiveTable_[283] = &Interpreter::primitiveJoystickClose;
+    primitiveTable_[284] = &Interpreter::primitiveJoystickRead;
+    primitiveTable_[285] = &Interpreter::primitiveJoystickButtonCount;
+    primitiveTable_[286] = &Interpreter::primitiveJoystickAxisCount;
+    primitiveTable_[287] = &Interpreter::primitiveJoystickButtonState;
+    primitiveTable_[288] = &Interpreter::primitiveJoystickAxisValue;
+    primitiveTable_[289] = &Interpreter::primitiveJoystickHatValue;
+
     // Platform primitives (500-513)
     primitiveTable_[500] = &Interpreter::primitiveGetEnvironment;
     primitiveTable_[501] = &Interpreter::primitiveSetEnvironment;
