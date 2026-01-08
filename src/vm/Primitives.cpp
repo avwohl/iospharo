@@ -7056,4 +7056,42 @@ PrimitiveResult Interpreter::primitiveDrawLoop(int argCount) {
     return PrimitiveResult::Failure;
 }
 
+// Primitive 107: Show a rectangle of the display
+// left top right bottom primitiveShowDisplayRect -> self
+// Updates the specified rectangle of the display
+PrimitiveResult Interpreter::primitiveShowDisplayRect(int argCount) {
+    // In headless mode, display updates are no-ops
+    // A full implementation would:
+    // 1. Get the display form
+    // 2. Copy the specified rectangle to the screen
+    // 3. Flush the display
+
+    // Pop all arguments (left, top, right, bottom)
+    if (argCount >= 4) {
+        popN(4);
+    } else if (argCount > 0) {
+        popN(argCount);
+    }
+
+    // Leave receiver on stack, return success (no-op in headless)
+    return PrimitiveResult::Success;
+}
+
+// Primitive 109: Snapshot with embedded sources
+// filename embedded primitiveSnapshotEmbedded -> boolean
+// Creates an image snapshot, optionally embedding sources
+PrimitiveResult Interpreter::primitiveSnapshotEmbedded(int argCount) {
+    // This is a variant of snapshot that can embed sources in the image
+    // For now, fail to let Smalltalk handle it or use the basic snapshot
+
+    // In a full implementation:
+    // 1. Get filename and embedded flag
+    // 2. Write image file with optional embedded sources
+    // 3. Return true on success
+
+    // For now, fail to trigger Smalltalk fallback
+    // which may use the standard snapshot mechanism
+    return PrimitiveResult::Failure;
+}
+
 } // namespace pharo

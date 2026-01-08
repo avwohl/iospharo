@@ -3631,11 +3631,13 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[98] = &Interpreter::primitiveFileWrite;
     primitiveTable_[99] = &Interpreter::primitiveFileRename;
 
-    // Display primitives (101-104)
+    // Display primitives (101-104, 107, 109)
     primitiveTable_[101] = &Interpreter::primitiveBeCursor;
     primitiveTable_[102] = &Interpreter::primitiveBeDisplay;
     primitiveTable_[103] = &Interpreter::primitiveScanCharacters;
     primitiveTable_[104] = &Interpreter::primitiveDrawLoop;
+    primitiveTable_[107] = &Interpreter::primitiveShowDisplayRect;
+    primitiveTable_[109] = &Interpreter::primitiveSnapshotEmbedded;
 
     // String/Array primitives (105)
     primitiveTable_[105] = &Interpreter::primitiveReplaceFromTo;
