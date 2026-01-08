@@ -534,6 +534,18 @@ private:
     PrimitiveResult primitiveArraySwap(int argCount);              // 215
     PrimitiveResult primitiveFindRoots(int argCount);              // 216
 
+    // Object/memory primitives (217-221)
+    PrimitiveResult primitiveVMFunctionality(int argCount);        // 217
+    PrimitiveResult primitiveIdentityHash32(int argCount);         // 218
+    PrimitiveResult primitiveGrowMemoryByAtLeast(int argCount);    // 219
+    PrimitiveResult primitiveImageFormatVersion(int argCount);     // 220
+    PrimitiveResult primitiveClosureValueWithArgs(int argCount);   // 221
+
+    // System primitives (528-530)
+    PrimitiveResult primitiveGetExtraWordAt(int argCount);         // 528
+    PrimitiveResult primitiveSetExtraWordAt(int argCount);         // 529
+    PrimitiveResult primitiveImmediateAsInteger(int argCount);     // 530
+
     // String primitives (157-158)
     PrimitiveResult primitiveCompareStringCollated(int argCount);  // 157
     PrimitiveResult primitiveCompareStringNoCase(int argCount);    // 158

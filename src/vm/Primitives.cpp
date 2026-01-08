@@ -7328,4 +7328,246 @@ PrimitiveResult Interpreter::primitiveFindRoots(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== OBJECT/MEMORY PRIMITIVES (217-221) =====
+
+// Primitive 217: VM Functionality
+// primitiveVMFunctionality -> capabilities integer
+// Returns a bitmap of VM capabilities
+PrimitiveResult Interpreter::primitiveVMFunctionality(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Return a bitmap of supported features:
+    // Bit 0: supportsClosures (yes)
+    // Bit 1: supportsGarbageCollection (yes)
+    // Bit 2: supportsFFI (limited)
+    // Bit 3: supports64BitArithmetic (yes)
+    // etc.
+
+    uint64_t capabilities = 0;
+    capabilities |= (1 << 0);  // closures
+    capabilities |= (1 << 1);  // GC
+    // capabilities |= (1 << 2);  // FFI (not fully supported)
+    capabilities |= (1 << 3);  // 64-bit arithmetic
+    capabilities |= (1 << 4);  // immutability
+    capabilities |= (1 << 5);  // pinning
+    capabilities |= (1 << 6);  // ephemerons (TBD)
+
+    pop();  // receiver
+    push(Oop::fromSmallInteger(static_cast<int64_t>(capabilities)));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 218: Identity hash (32-bit)
+// anObject primitiveIdentityHash32 -> hash32
+// Returns the full 32-bit identity hash
+PrimitiveResult Interpreter::primitiveIdentityHash32(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop receiver = stackTop();
+
+    // SmallIntegers use their value as hash
+    if (receiver.isSmallInteger()) {
+        int64_t val = receiver.asSmallInteger();
+        pop();
+        push(Oop::fromSmallInteger(val & 0xFFFFFFFF));
+        return PrimitiveResult::Success;
+    }
+
+    // Characters use their code point
+    if (receiver.isCharacter()) {
+        pop();
+        push(Oop::fromSmallInteger(receiver.asCharacter()));
+        return PrimitiveResult::Success;
+    }
+
+    // Get full 32-bit hash from object header
+    uint32_t hash = memory_.identityHashOf(receiver);
+    pop();
+    push(Oop::fromSmallInteger(static_cast<int64_t>(hash)));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 219: Grow memory by at least N bytes
+// bytesToGrow primitiveGrowMemoryByAtLeast -> actualBytesGrown or 0
+PrimitiveResult Interpreter::primitiveGrowMemoryByAtLeast(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop bytesArg = stackTop();
+    if (!bytesArg.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t bytesRequested = bytesArg.asSmallInteger();
+    if (bytesRequested < 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Memory growth is handled by the GC system
+    // For now, we don't support dynamic memory growth
+    // Return 0 to indicate no growth occurred
+    pop();  // argument
+    pop();  // receiver
+    push(Oop::fromSmallInteger(0));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 220: Image format version
+// primitiveImageFormatVersion -> formatVersion
+// Returns the image format this VM supports
+PrimitiveResult Interpreter::primitiveImageFormatVersion(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Return Spur 64-bit format (68002 is typical Spur 64-bit)
+    // We support the iOS-specific format with low-bit encoding
+    int64_t formatVersion = 68002;
+
+    pop();  // receiver
+    push(Oop::fromSmallInteger(formatVersion));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 221: Closure value with args (alternative entry)
+// closureOrBlock argArray primitiveClosureValueWithArgs -> result
+// Evaluates a closure with arguments from an array
+PrimitiveResult Interpreter::primitiveClosureValueWithArgs(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop argArray = stackTop();
+    Oop closure = stackValue(1);
+
+    // Validate closure
+    if (closure.isImmediate()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Validate args is an array
+    if (argArray.isImmediate()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get number of arguments from array
+    size_t numArgs = memory_.slotCountOf(argArray);
+
+    // Get closure's expected argument count from numArgs field
+    // Closure format: outerContext, startpc, numArgs, ...
+    Oop numArgsOop = memory_.fetchPointer(2, closure);  // numArgs at index 2
+    if (!numArgsOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t expectedArgs = static_cast<size_t>(numArgsOop.asSmallInteger());
+    if (numArgs != expectedArgs) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Pop argArray, then push each argument from array
+    pop();  // argArray
+
+    // Push arguments onto stack (closure is already there)
+    for (size_t i = 0; i < numArgs; i++) {
+        Oop arg = memory_.fetchPointer(i, argArray);
+        push(arg);
+    }
+
+    // Now the stack has: closure arg1 arg2 ... argN
+    // Activate the closure - this will be handled by the caller
+    // For now, fail to Smalltalk which will handle block activation
+    return PrimitiveResult::Failure;
+}
+
+// ===== SYSTEM PRIMITIVES (528-530) =====
+
+// Primitive 528: Get extra word from object header
+// anObject index primitiveGetExtraWordAt -> word
+// Gets extra header data (used for overflow header, extra class data, etc.)
+PrimitiveResult Interpreter::primitiveGetExtraWordAt(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop receiver = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    if (receiver.isImmediate()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Extra words are typically used for overflow headers in Spur
+    // For basic implementation, we only support index 0 which is the
+    // first word before the main header (if present)
+
+    int64_t index = indexOop.asSmallInteger();
+    if (index < 0 || index > 0) {
+        // Only support index 0 for now
+        return PrimitiveResult::Failure;
+    }
+
+    // Get the raw header - in Spur, objects with >254 slots have an
+    // extra word before the header containing the actual size
+    // For now, return 0 indicating no extra word
+    popN(2);  // pop index and receiver
+    push(Oop::fromSmallInteger(0));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 529: Set extra word in object header
+// anObject index value primitiveSetExtraWordAt -> receiver
+// Sets extra header data
+PrimitiveResult Interpreter::primitiveSetExtraWordAt(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop receiver = stackValue(2);
+
+    if (!indexOop.isSmallInteger() || !valueOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    if (receiver.isImmediate()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Setting extra header words is not generally supported
+    // as it could corrupt the heap
+    // Fail to Smalltalk
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 530: Immediate as integer
+// anImmediate primitiveImmediateAsInteger -> integerValue
+// Returns the raw integer encoding of an immediate
+PrimitiveResult Interpreter::primitiveImmediateAsInteger(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop receiver = stackTop();
+
+    // Extract the underlying bits as an integer
+    // This is useful for debugging and low-level operations
+    if (receiver.isSmallInteger()) {
+        // Already an integer, return as-is
+        return PrimitiveResult::Success;  // receiver is already on stack
+    }
+
+    if (receiver.isCharacter()) {
+        pop();
+        push(Oop::fromSmallInteger(receiver.asCharacter()));
+        return PrimitiveResult::Success;
+    }
+
+    if (receiver.isSmallFloat()) {
+        // Return the bits of the float encoding
+        // This gives access to the IEEE representation
+        pop();
+        // For floats, return the raw bits as large integer if needed
+        // For simplicity, fail to Smalltalk for non-small values
+        return PrimitiveResult::Failure;
+    }
+
+    // Non-immediate objects fail
+    return PrimitiveResult::Failure;
+}
+
 } // namespace pharo

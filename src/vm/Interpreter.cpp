@@ -3833,6 +3833,13 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[215] = &Interpreter::primitiveArraySwap;
     primitiveTable_[216] = &Interpreter::primitiveFindRoots;
 
+    // Object/memory primitives (217-221)
+    primitiveTable_[217] = &Interpreter::primitiveVMFunctionality;
+    primitiveTable_[218] = &Interpreter::primitiveIdentityHash32;
+    primitiveTable_[219] = &Interpreter::primitiveGrowMemoryByAtLeast;
+    primitiveTable_[220] = &Interpreter::primitiveImageFormatVersion;
+    primitiveTable_[221] = &Interpreter::primitiveClosureValueWithArgs;
+
     // Cache flushing primitives (119-120)
     primitiveTable_[119] = &Interpreter::primitiveFlushCacheByMethod;
     primitiveTable_[120] = &Interpreter::primitiveFlushCacheBySelector;
@@ -3881,6 +3888,11 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[193] = &Interpreter::primitiveSetMethod;
     primitiveTable_[194] = &Interpreter::primitiveSetReceiver;
     primitiveTable_[195] = &Interpreter::primitiveSetClosureOrNil;
+
+    // System primitives (528-530)
+    primitiveTable_[528] = &Interpreter::primitiveGetExtraWordAt;
+    primitiveTable_[529] = &Interpreter::primitiveSetExtraWordAt;
+    primitiveTable_[530] = &Interpreter::primitiveImmediateAsInteger;
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {
