@@ -3693,6 +3693,12 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[156] = &Interpreter::primitiveCompareBytes;
     primitiveTable_[159] = &Interpreter::primitiveHashMultiply;
 
+    // System primitives (152-155)
+    primitiveTable_[152] = &Interpreter::primitiveSetFullScreen;
+    primitiveTable_[153] = &Interpreter::primitiveInputSemaphore;
+    primitiveTable_[154] = &Interpreter::primitiveInputWord;
+    primitiveTable_[155] = &Interpreter::primitiveCompareString;
+
     // Process yield (167)
     primitiveTable_[167] = &Interpreter::primitiveYield;
 

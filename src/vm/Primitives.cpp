@@ -6583,4 +6583,100 @@ PrimitiveResult Interpreter::primitiveFileTruncate(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== SYSTEM PRIMITIVES (152-155) =====
+
+// Primitive 152: Set or query full screen mode
+// bool primitiveSetFullScreen -> self (sets mode)
+// primitiveSetFullScreen -> bool (queries mode)
+PrimitiveResult Interpreter::primitiveSetFullScreen(int argCount) {
+    static bool isFullScreen = false;
+
+    if (argCount == 1) {
+        // Set full screen mode
+        Oop arg = stackTop();
+        isFullScreen = (arg == memory_.trueObject());
+        pop();  // pop argument, leave receiver
+        return PrimitiveResult::Success;
+    } else {
+        // Query full screen mode
+        pop();
+        push(isFullScreen ? memory_.trueObject() : memory_.falseObject());
+        return PrimitiveResult::Success;
+    }
+}
+
+// Primitive 153: Set the input semaphore
+// semaphore primitiveInputSemaphore -> self
+PrimitiveResult Interpreter::primitiveInputSemaphore(int argCount) {
+    if (argCount < 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop semaphoreOop = stackTop();
+
+    // Store the input semaphore for later signaling
+    // In a full implementation, this would be used to signal input events
+    // For now, just accept and store it (could add inputSemaphore_ field)
+    (void)semaphoreOop;  // Acknowledge parameter
+
+    pop();  // pop semaphore, leave receiver
+    return PrimitiveResult::Success;
+}
+
+// Primitive 154: Get raw input word (for low-level input handling)
+// primitiveInputWord -> integer
+PrimitiveResult Interpreter::primitiveInputWord(int argCount) {
+    // In headless mode, return 0 (no input)
+    // A full implementation would return encoded keyboard/mouse state
+    pop();
+    push(Oop::fromSmallInteger(0));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 155: Compare two strings (case-sensitive byte comparison)
+// string1 string2 primitiveCompareString -> integer
+// Returns: -1 if string1 < string2, 0 if equal, 1 if string1 > string2
+PrimitiveResult Interpreter::primitiveCompareString(int argCount) {
+    if (argCount < 2) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop string2Oop = stackValue(0);
+    Oop string1Oop = stackValue(1);
+
+    if (!string1Oop.isObject() || !string2Oop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t len1 = memory_.byteSizeOf(string1Oop);
+    size_t len2 = memory_.byteSizeOf(string2Oop);
+    size_t minLen = (len1 < len2) ? len1 : len2;
+
+    int result = 0;
+    for (size_t i = 0; i < minLen; i++) {
+        uint8_t c1 = memory_.fetchByte(i, string1Oop);
+        uint8_t c2 = memory_.fetchByte(i, string2Oop);
+        if (c1 < c2) {
+            result = -1;
+            break;
+        } else if (c1 > c2) {
+            result = 1;
+            break;
+        }
+    }
+
+    // If all compared bytes are equal, shorter string is "less"
+    if (result == 0) {
+        if (len1 < len2) {
+            result = -1;
+        } else if (len1 > len2) {
+            result = 1;
+        }
+    }
+
+    popN(argCount);
+    push(Oop::fromSmallInteger(result));
+    return PrimitiveResult::Success;
+}
+
 } // namespace pharo

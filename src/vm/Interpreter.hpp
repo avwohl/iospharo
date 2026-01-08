@@ -506,6 +506,12 @@ private:
     PrimitiveResult primitiveClipboardText(int argCount);        // 141
     PrimitiveResult primitiveForceDisplayUpdate(int argCount);
 
+    // System primitives (152-155)
+    PrimitiveResult primitiveSetFullScreen(int argCount);          // 152
+    PrimitiveResult primitiveInputSemaphore(int argCount);         // 153
+    PrimitiveResult primitiveInputWord(int argCount);              // 154
+    PrimitiveResult primitiveCompareString(int argCount);          // 155
+
     // Time
     PrimitiveResult primitiveMillisecondClock(int argCount);
     PrimitiveResult primitiveSecondsClock(int argCount);
