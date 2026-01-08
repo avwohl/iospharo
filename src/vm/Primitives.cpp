@@ -6,7 +6,10 @@
  */
 
 #include "Interpreter.hpp"
+#include "ImageLoader.hpp"
 #include <cmath>
+#include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <vector>
 
@@ -878,7 +881,22 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
 // ===== SYSTEM PRIMITIVES =====
 
 PrimitiveResult Interpreter::primitiveQuit(int argCount) {
+    // Smalltalk quitPrimitive / Smalltalk exit: exitCode
+    int exitCode = 0;
+
+    if (argCount >= 1) {
+        Oop arg = stackValue(0);
+        if (arg.isSmallInteger()) {
+            exitCode = static_cast<int>(arg.asSmallInteger());
+        }
+    }
+
     running_ = false;
+
+    // Actually exit the process
+    std::exit(exitCode);
+
+    // Not reached, but for completeness
     return PrimitiveResult::Success;
 }
 
@@ -890,12 +908,181 @@ PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
     return PrimitiveResult::Failure;  // TODO
 }
 
+// Helper: Extract string from ByteString Oop
+static std::string extractString(ObjectMemory& memory, Oop stringOop) {
+    if (!stringOop.isObject()) return "";
+
+    ObjectHeader* header = stringOop.asObjectPtr();
+    ObjectFormat format = header->format();
+
+    // Must be a ByteString (format 16-23)
+    if (format < ObjectFormat::Indexable8 || format > ObjectFormat::Indexable8_7) {
+        return "";
+    }
+
+    size_t len = header->byteSize();
+    std::string result(len, '\0');
+    for (size_t i = 0; i < len; i++) {
+        result[i] = static_cast<char>(header->byteAt(i));
+    }
+    return result;
+}
+
+// Helper: Translate runtime Oop to image format (for saving)
+static uint64_t oopToImageFormat(Oop oop, uint8_t* runtimeBase, uint64_t imageBase) {
+    if (oop.isImmediate() || oop.isNil()) {
+        // Immediates and nil don't need translation
+        return oop.rawBits();
+    }
+
+    // Get the object address and translate to image space
+    ObjectHeader* ptr = oop.asObjectPtr();
+    uint64_t runtimeAddr = reinterpret_cast<uint64_t>(ptr);
+    uint64_t baseAddr = reinterpret_cast<uint64_t>(runtimeBase);
+
+    // Calculate offset from runtime base and add to image base
+    uint64_t offset = runtimeAddr - baseAddr;
+    return imageBase + offset;
+}
+
 PrimitiveResult Interpreter::primitiveSnapshot(int argCount) {
-    // When resuming from a snapshot, return false to indicate "we just loaded"
-    // (true = successfully saved, false = resuming from load)
-    // This allows the snapshot code to know it should exit the save path
-    // std::cerr << "[PRIM] primitiveSnapshot called - returning false (resuming)" << std::endl;
-    primitiveSuccess(memory_.falseObject());
+    // primitiveSnapshot / primitiveSnapshotEmbedded
+    // Argument: optional filename (String)
+    // Returns: true if save succeeded, false if resuming from load
+
+    std::string filename;
+
+    if (argCount >= 1) {
+        Oop arg = stackValue(0);
+        filename = extractString(memory_, arg);
+    }
+
+    if (filename.empty()) {
+        // No filename provided - fail
+        return PrimitiveResult::Failure;
+    }
+
+    // Open output file
+    std::ofstream file(filename, std::ios::binary);
+    if (!file) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Standard Spur 64-bit image base address
+    const uint64_t imageBase = 0x10000000000ULL;
+
+    // Calculate heap size (old space used)
+    uint8_t* heapStart = memory_.oldSpaceStart();
+    uint8_t* heapEnd = memory_.oldSpaceEnd();
+    size_t heapSize = heapEnd - heapStart;
+
+    // Build image header
+    SpurImageHeader header = {};
+    header.imageFormat = 68021;  // Spur 64-bit
+    header.headerSize = 128;     // Standard header size
+    header.imageBytes = heapSize;
+    header.startOfMemory = imageBase;
+
+    // Translate special objects array pointer
+    header.specialObjectsOop = oopToImageFormat(
+        memory_.specialObjectsArray(), heapStart, imageBase);
+
+    header.lastHash = 0;  // Will be updated on next allocation
+    header.screenSize = 0;
+    header.imageHeaderFlags = 0x2;  // Preemption yields
+    header.extraVMMemory = 0;
+    header.numStackPages = 0;
+    header.cogCodeSize = 0;
+    header.edenBytes = 22003584;  // Default eden size
+    header.maxExtSemTabSize = 0;
+    header.unused1 = 0;
+    header.firstSegmentBytes = heapSize;
+    header.freeOldSpaceInImage = 0;
+
+    // Write header (128 bytes, padded)
+    file.write(reinterpret_cast<const char*>(&header.imageFormat), 4);
+    file.write(reinterpret_cast<const char*>(&header.headerSize), 4);
+    file.write(reinterpret_cast<const char*>(&header.imageBytes), 8);
+    file.write(reinterpret_cast<const char*>(&header.startOfMemory), 8);
+    file.write(reinterpret_cast<const char*>(&header.specialObjectsOop), 8);
+    file.write(reinterpret_cast<const char*>(&header.lastHash), 8);
+    file.write(reinterpret_cast<const char*>(&header.screenSize), 8);
+    file.write(reinterpret_cast<const char*>(&header.imageHeaderFlags), 8);
+    file.write(reinterpret_cast<const char*>(&header.extraVMMemory), 4);
+    file.write(reinterpret_cast<const char*>(&header.numStackPages), 2);
+    file.write(reinterpret_cast<const char*>(&header.cogCodeSize), 2);
+    file.write(reinterpret_cast<const char*>(&header.edenBytes), 4);
+    file.write(reinterpret_cast<const char*>(&header.maxExtSemTabSize), 2);
+    file.write(reinterpret_cast<const char*>(&header.unused1), 2);
+    file.write(reinterpret_cast<const char*>(&header.firstSegmentBytes), 8);
+    file.write(reinterpret_cast<const char*>(&header.freeOldSpaceInImage), 8);
+
+    // Pad to 128 bytes
+    size_t written = 4 + 4 + 8 + 8 + 8 + 8 + 8 + 8 + 4 + 2 + 2 + 4 + 2 + 2 + 8 + 8;
+    std::vector<char> padding(128 - written, 0);
+    file.write(padding.data(), padding.size());
+
+    // Now write the heap data with pointer translation
+    // We need to iterate through all objects and translate pointers
+
+    // Make a copy of heap for translation
+    std::vector<uint8_t> heapCopy(heapStart, heapEnd);
+
+    // Iterate through objects and translate pointers
+    uint8_t* pos = heapCopy.data();
+    uint8_t* end = pos + heapSize;
+
+    while (pos < end) {
+        ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(pos);
+        uint64_t rawHeader = obj->rawHeader();
+
+        // Check for overflow header (numSlots == 255)
+        size_t numSlots = (rawHeader >> 56) & 0xFF;
+        size_t actualSlots = numSlots;
+
+        if (numSlots == 255) {
+            // Overflow: previous 8 bytes contain actual slot count
+            if (pos >= heapCopy.data() + 8) {
+                uint64_t* overflowSlot = reinterpret_cast<uint64_t*>(pos - 8);
+                actualSlots = *overflowSlot;
+            }
+        }
+
+        // Get format to determine if this is a pointer object
+        uint8_t format = (rawHeader >> 24) & 0x1F;
+
+        // Pointer objects: format 0-5
+        if (format <= 5 && actualSlots > 0) {
+            // Translate each slot
+            Oop* slots = reinterpret_cast<Oop*>(pos + 8);
+            for (size_t i = 0; i < actualSlots; i++) {
+                Oop oldOop = slots[i];
+                uint64_t translated = oopToImageFormat(oldOop, heapStart, imageBase);
+                *reinterpret_cast<uint64_t*>(&slots[i]) = translated;
+            }
+        }
+
+        // Move to next object
+        size_t objectSize = 8 + actualSlots * 8;  // Header + slots
+        if (objectSize < 16) objectSize = 16;     // Minimum object size
+
+        // Align to 8 bytes
+        objectSize = (objectSize + 7) & ~7ULL;
+
+        pos += objectSize;
+    }
+
+    // Write the translated heap
+    file.write(reinterpret_cast<const char*>(heapCopy.data()), heapSize);
+
+    file.close();
+
+    if (!file) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Return true to indicate successful save
+    primitiveSuccess(memory_.trueObject());
     return PrimitiveResult::Success;
 }
 
