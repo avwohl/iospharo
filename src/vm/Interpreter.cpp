@@ -3912,6 +3912,21 @@ void Interpreter::initializePrimitives() {
     // Class name primitive (514)
     primitiveTable_[514] = &Interpreter::primitiveClassName;
 
+    // FFI and system primitives (515-527)
+    primitiveTable_[515] = &Interpreter::primitiveVMInformation;
+    primitiveTable_[516] = &Interpreter::primitiveImageBaseAddress;
+    primitiveTable_[517] = &Interpreter::primitiveHighestAvailableAddress;
+    primitiveTable_[518] = &Interpreter::primitiveIsContextPostMortem;
+    primitiveTable_[519] = &Interpreter::primitiveSandboxedArgs;
+    primitiveTable_[520] = &Interpreter::primitiveDebugHalt;
+    primitiveTable_[521] = &Interpreter::primitiveFlushExternalPrimitiveOf;
+    primitiveTable_[522] = &Interpreter::primitivePrepareStackForNonLocalReturn;
+    primitiveTable_[523] = &Interpreter::primitiveContextInstructionPointer;
+    primitiveTable_[524] = &Interpreter::primitiveExternalObjectAccess;
+    primitiveTable_[525] = &Interpreter::primitiveByteArrayToInt32;
+    primitiveTable_[526] = &Interpreter::primitiveInt32ToByteArray;
+    primitiveTable_[527] = &Interpreter::primitivePointerAddress;
+
     // Object size primitives (181-182)
     primitiveTable_[181] = &Interpreter::primitiveSizeInBytesOfInstance;
     primitiveTable_[182] = &Interpreter::primitiveSizeInBytes;

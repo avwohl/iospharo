@@ -848,6 +848,21 @@ private:
     // Class name primitive
     PrimitiveResult primitiveClassName(int argCount);            // 514
 
+    // FFI and system primitives (515-527)
+    PrimitiveResult primitiveVMInformation(int argCount);        // 515
+    PrimitiveResult primitiveImageBaseAddress(int argCount);     // 516
+    PrimitiveResult primitiveHighestAvailableAddress(int argCount); // 517
+    PrimitiveResult primitiveIsContextPostMortem(int argCount);  // 518
+    PrimitiveResult primitiveSandboxedArgs(int argCount);        // 519
+    PrimitiveResult primitiveDebugHalt(int argCount);            // 520
+    PrimitiveResult primitiveFlushExternalPrimitiveOf(int argCount); // 521
+    PrimitiveResult primitivePrepareStackForNonLocalReturn(int argCount); // 522
+    PrimitiveResult primitiveContextInstructionPointer(int argCount); // 523
+    PrimitiveResult primitiveExternalObjectAccess(int argCount); // 524
+    PrimitiveResult primitiveByteArrayToInt32(int argCount);     // 525
+    PrimitiveResult primitiveInt32ToByteArray(int argCount);     // 526
+    PrimitiveResult primitivePointerAddress(int argCount);       // 527
+
     // ===== STARTUP SUPPORT =====
 
     /// Bootstrap startup when active process has nil suspendedContext.

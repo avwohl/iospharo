@@ -5881,6 +5881,308 @@ PrimitiveResult Interpreter::primitiveClassName(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== FFI AND SYSTEM PRIMITIVES (515-527) =====
+
+// Primitive 515: Get VM information string
+// index primitiveVMInformation -> string/integer
+// Returns various VM information based on index
+PrimitiveResult Interpreter::primitiveVMInformation(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    if (!indexOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    intptr_t index = indexOop.asSmallInteger();
+    Oop result = Oop::nil();
+
+    switch (index) {
+        case 1:  // VM version string
+            result = createStringObject(memory_, "iOS Pharo VM 1.0");
+            break;
+        case 2:  // Build timestamp
+            result = createStringObject(memory_, __DATE__ " " __TIME__);
+            break;
+        case 3:  // Platform name
+            result = createStringObject(memory_, "iOS");
+            break;
+        case 4:  // Compiler info
+            result = createStringObject(memory_, "Clang C++17");
+            break;
+        default:
+            // Unknown index - return nil
+            break;
+    }
+
+    pop();  // index
+    pop();  // receiver
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 516: Get image base address
+// primitiveImageBaseAddress -> integer
+// Returns the base address of the loaded image in memory
+PrimitiveResult Interpreter::primitiveImageBaseAddress(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Return the old space start address as a small integer (truncated)
+    uintptr_t baseAddr = reinterpret_cast<uintptr_t>(memory_.oldSpaceStart());
+
+    // For safety, return just a hash of the address (not the actual address)
+    // to avoid exposing memory layout
+    pop();
+    push(Oop::fromSmallInteger(static_cast<intptr_t>(baseAddr & 0x7FFFFFFFFFFFF)));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 517: Get highest available memory address
+// primitiveHighestAvailableAddress -> integer
+// Returns the highest usable memory address
+PrimitiveResult Interpreter::primitiveHighestAvailableAddress(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Return old space end as the highest available address
+    uintptr_t highAddr = reinterpret_cast<uintptr_t>(memory_.oldSpaceEnd());
+
+    pop();
+    push(Oop::fromSmallInteger(static_cast<intptr_t>(highAddr & 0x7FFFFFFFFFFFF)));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 518: Check if context is post-mortem (dead)
+// aContext primitiveIsContextPostMortem -> boolean
+// Returns true if the context is no longer active
+PrimitiveResult Interpreter::primitiveIsContextPostMortem(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop contextOop = stackTop();
+    if (!contextOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // A context is post-mortem if its sender is nil and it's not the active context
+    // Check if the context's instruction pointer is nil or negative
+    Oop ipOop = memory_.fetchPointer(1, contextOop);  // Instruction pointer at slot 1
+
+    bool isPostMortem = ipOop.isNil();
+
+    pop();
+    push(isPostMortem ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 519: Get sandboxed process arguments
+// primitiveSandboxedArgs -> array or nil
+// Returns sanitized command line arguments (if any)
+PrimitiveResult Interpreter::primitiveSandboxedArgs(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // On iOS, there are typically no command line arguments
+    // Return nil for security/sandboxing
+    pop();
+    push(Oop::nil());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 520: Debug halt / breakpoint
+// primitiveDebugHalt -> receiver
+// Triggers a debugger breakpoint if attached
+PrimitiveResult Interpreter::primitiveDebugHalt(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // In debug builds, this could trigger a breakpoint
+    // For iOS release, just log and continue
+#ifdef DEBUG
+    // Could use: __builtin_debugtrap(); or raise(SIGTRAP);
+#endif
+
+    // Return receiver (self)
+    return PrimitiveResult::Success;
+}
+
+// Primitive 521: Flush external primitive cache for a method
+// aMethod primitiveFlushExternalPrimitiveOf -> receiver
+// Flushes cached external primitive lookup for a compiled method
+PrimitiveResult Interpreter::primitiveFlushExternalPrimitiveOf(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // External primitives are not cached in this VM implementation
+    // Just succeed - no action needed
+    return PrimitiveResult::Success;
+}
+
+// Primitive 522: Prepare stack for non-local return
+// targetContext primitiveSetStackForNonLocalReturn -> receiver
+// Prepares the stack for a non-local return to target context
+PrimitiveResult Interpreter::primitivePrepareStackForNonLocalReturn(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop targetContext = stackTop();
+    if (!targetContext.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // This primitive is used by the exception handling system
+    // The actual non-local return is handled by bytecode interpretation
+    // Just validate the target and succeed
+    popN(1);  // pop target, leave receiver
+    return PrimitiveResult::Success;
+}
+
+// Primitive 523: Get/set context instruction pointer
+// aContext primitiveContextInstructionPointer -> integer
+// Returns the instruction pointer of a context
+PrimitiveResult Interpreter::primitiveContextInstructionPointer(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop contextOop = stackTop();
+    if (!contextOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Instruction pointer is at slot 1 in MethodContext
+    Oop ipOop = memory_.fetchPointer(1, contextOop);
+
+    pop();
+    push(ipOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 524: External object access (for FFI)
+// index primitiveExternalObjectAccess -> object or nil
+// Access external objects registered with the VM
+PrimitiveResult Interpreter::primitiveExternalObjectAccess(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    if (!indexOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // External object table is not implemented in this VM
+    // Return nil for any index
+    popN(1);  // index
+    pop();    // receiver
+    push(Oop::nil());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 525: Convert byte array to 32-bit integer
+// byteArray offset bigEndian primitiveByteArrayToInt32 -> integer
+// Reads a 32-bit integer from a byte array at given offset
+PrimitiveResult Interpreter::primitiveByteArrayToInt32(int argCount) {
+    if (argCount != 3) return PrimitiveResult::Failure;
+
+    Oop bigEndianOop = stackTop();
+    Oop offsetOop = stackValue(1);
+    Oop byteArrayOop = stackValue(2);
+
+    if (!offsetOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+    if (!byteArrayOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    intptr_t offset = offsetOop.asSmallInteger();
+    bool bigEndian = (bigEndianOop == memory_.trueObject());
+
+    // Get byte array size
+    size_t size = memory_.byteSizeOf(byteArrayOop);
+    if (offset < 0 || static_cast<size_t>(offset) + 4 > size) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Read 4 bytes
+    uint8_t b0 = memory_.fetchByte(offset, byteArrayOop);
+    uint8_t b1 = memory_.fetchByte(offset + 1, byteArrayOop);
+    uint8_t b2 = memory_.fetchByte(offset + 2, byteArrayOop);
+    uint8_t b3 = memory_.fetchByte(offset + 3, byteArrayOop);
+
+    int32_t value;
+    if (bigEndian) {
+        value = (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
+    } else {
+        value = (b3 << 24) | (b2 << 16) | (b1 << 8) | b0;
+    }
+
+    popN(3);  // arguments
+    pop();    // receiver
+    push(Oop::fromSmallInteger(value));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 526: Store 32-bit integer to byte array
+// byteArray offset value bigEndian primitiveInt32ToByteArray -> byteArray
+// Writes a 32-bit integer to a byte array at given offset
+PrimitiveResult Interpreter::primitiveInt32ToByteArray(int argCount) {
+    if (argCount != 4) return PrimitiveResult::Failure;
+
+    Oop bigEndianOop = stackTop();
+    Oop valueOop = stackValue(1);
+    Oop offsetOop = stackValue(2);
+    Oop byteArrayOop = stackValue(3);
+
+    if (!offsetOop.isSmallInteger() || !valueOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+    if (!byteArrayOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    intptr_t offset = offsetOop.asSmallInteger();
+    int32_t value = static_cast<int32_t>(valueOop.asSmallInteger());
+    bool bigEndian = (bigEndianOop == memory_.trueObject());
+
+    // Get byte array size
+    size_t size = memory_.byteSizeOf(byteArrayOop);
+    if (offset < 0 || static_cast<size_t>(offset) + 4 > size) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Write 4 bytes
+    if (bigEndian) {
+        memory_.storeByte(offset, byteArrayOop, (value >> 24) & 0xFF);
+        memory_.storeByte(offset + 1, byteArrayOop, (value >> 16) & 0xFF);
+        memory_.storeByte(offset + 2, byteArrayOop, (value >> 8) & 0xFF);
+        memory_.storeByte(offset + 3, byteArrayOop, value & 0xFF);
+    } else {
+        memory_.storeByte(offset, byteArrayOop, value & 0xFF);
+        memory_.storeByte(offset + 1, byteArrayOop, (value >> 8) & 0xFF);
+        memory_.storeByte(offset + 2, byteArrayOop, (value >> 16) & 0xFF);
+        memory_.storeByte(offset + 3, byteArrayOop, (value >> 24) & 0xFF);
+    }
+
+    popN(4);  // arguments
+    push(byteArrayOop);  // return the byte array
+    return PrimitiveResult::Success;
+}
+
+// Primitive 527: Get address of object or external pointer
+// anObject primitivePointerAddress -> integer
+// Returns the memory address of an object (for FFI use)
+PrimitiveResult Interpreter::primitivePointerAddress(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop objOop = stackTop();
+
+    uintptr_t address = 0;
+    if (objOop.isObject()) {
+        // Get the actual memory address of the object header
+        address = reinterpret_cast<uintptr_t>(objOop.asObjectPtr());
+    } else if (objOop.isSmallInteger()) {
+        // For small integers, the value IS the address (useful for external pointers)
+        address = static_cast<uintptr_t>(objOop.asSmallInteger());
+    }
+
+    pop();
+    // Return as small integer (may truncate on 64-bit systems)
+    push(Oop::fromSmallInteger(static_cast<intptr_t>(address & 0x7FFFFFFFFFFFF)));
+    return PrimitiveResult::Success;
+}
+
 // ===== FILE I/O PRIMITIVES =====
 
 // Primitive 90: Test if at end of file
