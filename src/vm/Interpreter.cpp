@@ -3643,6 +3643,10 @@ void Interpreter::initializePrimitives() {
     // Snapshot primitive (131)
     primitiveTable_[131] = &Interpreter::primitiveSnapshot;
 
+    // System path primitives (121, 142)
+    primitiveTable_[121] = &Interpreter::primitiveImageName;
+    primitiveTable_[142] = &Interpreter::primitiveVMPath;
+
     // Time primitives (135-137, 240-241)
     primitiveTable_[135] = &Interpreter::primitiveMillisecondClock;
     primitiveTable_[136] = &Interpreter::primitiveSignalAtMilliseconds;

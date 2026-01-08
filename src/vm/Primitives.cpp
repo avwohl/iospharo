@@ -1730,6 +1730,96 @@ PrimitiveResult Interpreter::primitiveForceDisplayUpdate(int argCount) {
     return PrimitiveResult::Failure;
 }
 
+// ===== SYSTEM PATH PRIMITIVES =====
+
+// Helper function to create a String object from a C++ string
+static Oop createStringObject(ObjectMemory& memory, const std::string& str) {
+    // Get the ByteString class
+    Oop stringClass = memory.specialObject(SpecialObjectIndex::ClassByteString);
+    if (stringClass.isNil()) {
+        return Oop::nil();
+    }
+
+    uint32_t classIndex = memory.indexOfClass(stringClass);
+    if (classIndex == 0) {
+        return Oop::nil();
+    }
+
+    // Allocate a byte object for the string
+    Oop stringObj = memory.allocateBytes(classIndex, str.size());
+    if (stringObj.isNil()) {
+        return Oop::nil();
+    }
+
+    // Copy the string contents
+    for (size_t i = 0; i < str.size(); ++i) {
+        memory.storeByte(i, stringObj, static_cast<uint8_t>(str[i]));
+    }
+
+    return stringObj;
+}
+
+// Primitive 121: Get or set the image file name
+// With no argument: returns the image name as a String
+// With argument: sets the image name (returns receiver)
+PrimitiveResult Interpreter::primitiveImageName(int argCount) {
+    if (argCount == 0) {
+        // Get image name
+        Oop result = createStringObject(memory_, imageName_);
+        if (result.isNil()) {
+            return PrimitiveResult::Failure;
+        }
+
+        pop();  // Pop receiver
+        push(result);
+        return PrimitiveResult::Success;
+    } else if (argCount == 1) {
+        // Set image name
+        Oop nameOop = stackValue(0);
+
+        if (!nameOop.isObject()) {
+            return PrimitiveResult::Failure;
+        }
+
+        // Extract string from the argument
+        ObjectHeader* header = nameOop.asObjectPtr();
+        ObjectFormat format = header->format();
+
+        if (format < ObjectFormat::Indexable8 || format > ObjectFormat::Indexable8_7) {
+            return PrimitiveResult::Failure;  // Not a byte object
+        }
+
+        size_t len = memory_.byteSizeOf(nameOop);
+        std::string newName;
+        newName.reserve(len);
+
+        for (size_t i = 0; i < len; ++i) {
+            newName.push_back(static_cast<char>(memory_.fetchByte(i, nameOop)));
+        }
+
+        imageName_ = newName;
+
+        // Return receiver (pop argument, leave receiver)
+        pop();
+        return PrimitiveResult::Success;
+    }
+
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 142: Get the VM executable path
+// Returns the path to the VM as a String
+PrimitiveResult Interpreter::primitiveVMPath(int argCount) {
+    Oop result = createStringObject(memory_, vmPath_);
+    if (result.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    pop();  // Pop receiver
+    push(result);
+    return PrimitiveResult::Success;
+}
+
 // ===== TIME PRIMITIVES =====
 
 PrimitiveResult Interpreter::primitiveMillisecondClock(int argCount) {

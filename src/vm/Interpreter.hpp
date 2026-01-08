@@ -153,6 +153,12 @@ public:
     /// Get the object memory
     ObjectMemory& memory() { return memory_; }
 
+    /// Set/get system paths
+    void setImageName(const std::string& name) { imageName_ = name; }
+    void setVMPath(const std::string& path) { vmPath_ = path; }
+    const std::string& imageName() const { return imageName_; }
+    const std::string& vmPath() const { return vmPath_; }
+
     /// Get current execution state
     Oop activeContext() const;
     Oop activeMethod() const { return method_; }
@@ -244,6 +250,10 @@ private:
     // Execution control
     bool running_;
     bool primitiveFailed_;
+
+    // System paths
+    std::string imageName_;
+    std::string vmPath_;
 
     // ===== CACHES =====
 
@@ -436,6 +446,8 @@ private:
     PrimitiveResult primitiveExitToDebugger(int argCount);
     PrimitiveResult primitiveVMParameter(int argCount);
     PrimitiveResult primitiveSnapshot(int argCount);
+    PrimitiveResult primitiveImageName(int argCount);            // 121
+    PrimitiveResult primitiveVMPath(int argCount);               // 142
 
     // I/O (stubs - iOS-specific implementation elsewhere)
     PrimitiveResult primitiveMousePoint(int argCount);
