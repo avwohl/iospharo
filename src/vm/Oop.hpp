@@ -110,10 +110,8 @@ public:
     /// Extract SmallInteger value. Caller must verify isSmallInteger() first.
     int64_t asSmallInteger() const {
         assert(isSmallInteger());
-        // Mask off bit 63 which may be used as a GC/marking flag in the image
-        // Then arithmetic right shift to extract the 60-bit signed value
-        uint64_t masked = bits_ & 0x7FFFFFFFFFFFFFFFULL;
-        return static_cast<int64_t>(masked) >> 3;
+        // Arithmetic right shift preserves sign bit for negative numbers
+        return static_cast<int64_t>(bits_) >> 3;
     }
 
     /// Extract Character codepoint. Caller must verify isCharacter() first.
