@@ -88,6 +88,24 @@ Clean C++ VM implementation is functional. Image loads, interpreter initializes,
   - `makeFloat()` - Create Float result (tries SmallFloat first, allocates boxed if needed)
 - Handles both SmallFloat immediates and boxed Float objects
 
+### 9. Large Integer Primitives (DONE)
+- Implemented arbitrary-precision arithmetic for LargePositiveInteger and LargeNegativeInteger:
+  - **primitiveLargeIntegerAdd (21)**: Addition with sign handling
+  - **primitiveLargeIntegerSubtract (22)**: Subtraction via negation
+  - **primitiveLargeIntegerMultiply (29)**: Multiplication
+  - **primitiveLargeIntegerDivide (30)**: Exact integer division
+  - **primitiveLargeIntegerMod (31)**: Modulo operation
+- Helper functions:
+  - `isLargeInteger()` - Detect LargePositiveInteger/LargeNegativeInteger
+  - `extractMagnitude()` - Get byte array from LargeInteger
+  - `compareMagnitudes()` / `addMagnitudes()` / `subtractMagnitudes()` - Magnitude operations
+  - `multiplyMagnitudes()` / `divideMagnitudes()` - Long multiplication/division
+  - `tryConvertToSmallInteger()` - Normalize to SmallInteger when possible
+  - `makeLargeInteger()` - Allocate LargeInteger from magnitude
+  - `extractInteger()` - Handle both SmallInteger and LargeInteger inputs
+- LargeIntegers stored as little-endian byte arrays
+- Results automatically normalize to SmallInteger when they fit
+
 ## Key Files
 
 ### Clean VM Implementation (src/vm/)
