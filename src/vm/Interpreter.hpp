@@ -221,6 +221,9 @@ private:
     int extA_;  // Extension A - modifies literal/temp index
     int extB_;  // Extension B - modifies numArgs/other
 
+    // Bytecode set detection (method header bit 31: 0=V3PlusClosures, 1=SistaV1)
+    bool usesSistaV1_;
+
     // Execution control
     bool running_;
     bool primitiveFailed_;

@@ -36,8 +36,6 @@ inline uint8_t extractNumSlots(uint64_t header) {
 LoadResult ImageLoader::load(const std::string& path, ObjectMemory& memory) {
     LoadResult result;
 
-    // std::cerr << "[DEBUG] Opening image file..." << std::endl;
-
     // Open the image file
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) {
@@ -46,36 +44,30 @@ LoadResult ImageLoader::load(const std::string& path, ObjectMemory& memory) {
     }
 
     // Step 1: Read and validate header
-    // std::cerr << "[DEBUG] Step 1: Reading header..." << std::endl;
     if (!readHeader(file, result)) {
         return result;
     }
 
     // Step 2: Load heap data
-    // std::cerr << "[DEBUG] Step 2: Loading heap data..." << std::endl;
     if (!loadHeapData(file, memory, result)) {
         return result;
     }
 
     // Step 3: Relocate pointers
-    // std::cerr << "[DEBUG] Step 3: Relocating pointers..." << std::endl;
     if (!relocatePointers(memory, result)) {
         return result;
     }
 
     // Step 4: Set up special objects
-    // std::cerr << "[DEBUG] Step 4: Setting up special objects..." << std::endl;
     if (!setupSpecialObjects(memory, result)) {
         return result;
     }
 
     // Step 5: Build class table
-    // std::cerr << "[DEBUG] Step 5: Building class table..." << std::endl;
     if (!buildClassTable(memory, result)) {
         return result;
     }
 
-    // std::cerr << "[DEBUG] Image loading complete!" << std::endl;
     result.success = true;
     return result;
 }
@@ -408,33 +400,33 @@ bool ImageLoader::relocatePointers(ObjectMemory& memory, LoadResult& result) {
         bool isCompiledMethod = (format >= 24 && format <= 31);
 
         if (hasPointers) {
-            // All slots are pointers
+            // All slots are pointers or SmallIntegers - relocate all
             for (size_t i = 0; i < slotCount; ++i) {
                 pointerCount++;
                 uint64_t oldValue = firstSlot[i];
-                if (isObjectPointer(oldValue)) {
-                    firstSlot[i] = relocatePointer(oldValue);
-                    relocatedCount++;
-                }
+                // relocatePointer handles both object pointers AND SmallIntegers
+                firstSlot[i] = relocatePointer(oldValue);
+                if (oldValue != firstSlot[i]) relocatedCount++;
             }
         } else if (isCompiledMethod) {
-            // Compiled methods have pointer fields followed by bytecodes
-            // The number of literal slots is encoded in the first slot
+            // Compiled methods have header + literals followed by bytecodes
+            // First convert the header SmallInteger to get correct numLiterals
             if (slotCount > 0) {
-                uint64_t methodHeader = firstSlot[0];
-                // SmallInteger uses 3-bit tag (001), value in bits 63-3
-                // After decoding, numLiterals is in bits 0-14
-                int64_t headerValue = static_cast<int64_t>(methodHeader) >> 3;
+                // First, convert the method header (slot 0) from Spur format
+                uint64_t oldHeader = firstSlot[0];
+                firstSlot[0] = relocatePointer(oldHeader);  // Convert SmallInteger
+
+                // Now decode numLiterals using OUR format (3-bit tag)
+                int64_t headerValue = static_cast<int64_t>(firstSlot[0]) >> 3;
                 size_t numLiterals = headerValue & 0x7FFF;
+
                 // Relocate the literals (slots 1..numLiterals inclusive)
                 size_t pointerSlots = std::min(numLiterals + 1, slotCount);
-                for (size_t i = 0; i < pointerSlots; ++i) {
+                for (size_t i = 1; i < pointerSlots; ++i) {
                     pointerCount++;
                     uint64_t oldValue = firstSlot[i];
-                    if (isObjectPointer(oldValue)) {
-                        firstSlot[i] = relocatePointer(oldValue);
-                        relocatedCount++;
-                    }
+                    firstSlot[i] = relocatePointer(oldValue);
+                    if (oldValue != firstSlot[i]) relocatedCount++;
                 }
             }
         }
@@ -491,9 +483,8 @@ void ImageLoader::relocateObjectSlots(uint64_t* headerPtr) {
     uint64_t* slots = headerPtr + 1;
     for (size_t i = 0; i < slotCount; ++i) {
         uint64_t oldValue = slots[i];
-        if (isObjectPointer(oldValue)) {
-            slots[i] = relocatePointer(oldValue);
-        }
+        // relocatePointer handles both object pointers and SmallIntegers
+        slots[i] = relocatePointer(oldValue);
     }
 }
 
@@ -509,84 +500,12 @@ bool ImageLoader::setupSpecialObjects(ObjectMemory& memory, LoadResult& result) 
         return false;
     }
 
-    // Get the array header and slots
-    ObjectHeader* arrayHeader = specialObjects.asObjectPtr();
-    size_t slotCount = arrayHeader->slotCount();
-    uint64_t* slots = reinterpret_cast<uint64_t*>(arrayHeader + 1);
+    // NOTE: The special objects array slots were ALREADY relocated during step 3 (relocatePointers)
+    // since the array is part of the heap. We should NOT relocate them again here.
+    // The slots now contain addresses relative to newBase_, not oldBase_.
 
-    // std::cerr << "[DEBUG] Relocating special objects array: " << slotCount
-              // << " slots" << std::endl;
-
-    // First, relocate the special objects array's own slots
-    for (size_t i = 0; i < slotCount; ++i) {
-        uint64_t oldValue = slots[i];
-        if (isObjectPointer(oldValue)) {
-            slots[i] = relocatePointer(oldValue);
-        }
-    }
-
-    // Now recursively relocate objects pointed to by critical special objects
-    // Slot 3 = SchedulerAssociation, Slot 4 = maybe activeProcess, etc.
-    for (size_t i = 0; i < slotCount && i < 20; ++i) {
-        uint64_t slotVal = slots[i];
-        if ((slotVal & 7) == 0 && slotVal != 0) {  // Object pointer
-            uint64_t* objPtr = reinterpret_cast<uint64_t*>(slotVal);
-
-            // For associations (like SchedulerAssociation), force manual relocation
-            // The scheduler association at slot 3 may be inside another object and
-            // missed by forEachObject. Force relocation of its key/value slots.
-            if (i == 3) {  // SchedulerAssociation
-                // Regardless of header, treat slots 0 and 1 (at objPtr[1] and objPtr[2]) as oops
-                uint64_t keyOop = objPtr[1];
-                uint64_t valueOop = objPtr[2];
-
-                // std::cerr << "[DEBUG] SchedulerAssociation at 0x" << std::hex << slotVal << std::endl;
-                // std::cerr << "[DEBUG] Key oop (BEFORE): 0x" << keyOop << std::endl;
-                // std::cerr << "[DEBUG] Value oop (BEFORE): 0x" << valueOop << std::dec << std::endl;
-
-                // Force relocate key and value
-                if (isObjectPointer(keyOop)) {
-                    objPtr[1] = relocatePointer(keyOop);
-                    // std::cerr << "[DEBUG] Key oop (AFTER): 0x" << std::hex << objPtr[1] << std::dec << std::endl;
-                }
-                if (isObjectPointer(valueOop)) {
-                    objPtr[2] = relocatePointer(valueOop);
-                    // std::cerr << "[DEBUG] Value oop (AFTER): 0x" << std::hex << objPtr[2] << std::dec << std::endl;
-                }
-
-                // Now relocate the ProcessScheduler's slots
-                uint64_t relocatedValueOop = objPtr[2];
-                // std::cerr << "[DEBUG] ProcessScheduler oop = 0x" << std::hex << relocatedValueOop
-                          // << " (offset 0x" << (relocatedValueOop - newBase_) << ")" << std::dec << std::endl;
-
-                if ((relocatedValueOop & 7) == 0 && relocatedValueOop != 0) {
-                    // valueOop points to header; slots are 8 bytes after
-                    uint64_t* psHeaderPtr = reinterpret_cast<uint64_t*>(relocatedValueOop);
-                    uint64_t psHeader = *psHeaderPtr;
-                    uint8_t psSlotCount = extractNumSlots(psHeader);
-                    uint8_t psFormat = extractFormat(psHeader);
-                    // std::cerr << "[DEBUG] ProcessScheduler header=0x" << std::hex << psHeader
-                              // << " slots=" << std::dec << (int)psSlotCount
-                              // << " format=" << (int)psFormat << std::endl;
-                    uint64_t* psSlots = psHeaderPtr + 1;
-                    // Show first few slots before relocation
-                    // std::cerr << "[DEBUG] ProcessScheduler slots BEFORE:" << std::endl;
-                    for (int s = 0; s < 5 && s < psSlotCount; s++) {
-                        // std::cerr << "  [" << s << "]: 0x" << std::hex << psSlots[s] << std::dec << std::endl;
-                    }
-                    relocateObjectSlots(psHeaderPtr);
-                    // std::cerr << "[DEBUG] ProcessScheduler slots AFTER:" << std::endl;
-                    for (int s = 0; s < 5 && s < psSlotCount; s++) {
-                        // std::cerr << "  [" << s << "]: 0x" << std::hex << psSlots[s] << std::dec << std::endl;
-                    }
-                }
-            } else {
-                // For other special objects, use normal relocation
-                relocateObjectSlots(objPtr);
-            }
-        }
-    }
-
+    // NOTE: All objects in the heap (including those pointed to by the special objects array)
+    // were ALREADY relocated during step 3 (relocatePointers). We should NOT relocate them again.
     memory.setSpecialObjectsArray(specialObjects);
     memory.cacheSpecialObjects();
 
@@ -632,12 +551,6 @@ bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
     ObjectHeader* hiddenRootsHdr = reinterpret_cast<ObjectHeader*>(heapStart);
     uint64_t hiddenRootsRaw = hiddenRootsHdr->rawHeader();
 
-    // std::cerr << "[DEBUG] hiddenRoots at offset 0x0:" << std::endl;
-    // std::cerr << "  header: 0x" << std::hex << hiddenRootsRaw << std::dec << std::endl;
-    // std::cerr << "  format: " << static_cast<int>(hiddenRootsHdr->format()) << std::endl;
-    // std::cerr << "  slots: " << hiddenRootsHdr->slotCount() << std::endl;
-    // std::cerr << "  classIndex: " << hiddenRootsHdr->classIndex() << std::endl;
-
     size_t hiddenRootsSlots = hiddenRootsHdr->slotCount();
     if (hiddenRootsSlots == 0) {
         // std::cerr << "[DEBUG] hiddenRoots has 0 slots, trying alternate location..." << std::endl;
@@ -658,20 +571,13 @@ bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
 
     {
         Oop classTableFirstPageOop = hiddenRootsHdr->slotAt(0);
-        // std::cerr << "[DEBUG] classTableFirstPage oop: 0x" << std::hex << classTableFirstPageOop.rawBits()
-                  // << std::dec << std::endl;
 
         if (classTableFirstPageOop.isNil() || !classTableFirstPageOop.isObject()) {
-            // std::cerr << "[DEBUG] classTableFirstPage is nil or not an object" << std::endl;
             goto fallback_scan;
         }
 
         ObjectHeader* classTableFirstPageHdr = classTableFirstPageOop.asObjectPtr();
         size_t numPages = classTableFirstPageHdr->slotCount();
-
-        // std::cerr << "[DEBUG] classTableFirstPage:" << std::endl;
-        // std::cerr << "  format: " << static_cast<int>(classTableFirstPageHdr->format()) << std::endl;
-        // std::cerr << "  numPages: " << numPages << std::endl;
 
         // Iterate through each page
         for (size_t pageNum = 0; pageNum < numPages && pageNum < 20; pageNum++) {
@@ -703,8 +609,6 @@ bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
             }
         }
 
-        // std::cerr << "[DEBUG] Loaded " << totalClasses << " classes from " << numPages
-                  // << " class table pages" << std::endl;
         return true;
     }
 
@@ -724,11 +628,6 @@ fallback_scan:
     ObjectHeader* hrHdr = reinterpret_cast<ObjectHeader*>(heapStart + 0x30);
     auto hrFmt = hrHdr->format();
     size_t hrSlots = hrHdr->slotCount();
-
-    // std::cerr << "[DEBUG] hiddenRoots at 0x30:" << std::endl;
-    // std::cerr << "  format: " << static_cast<int>(hrFmt) << std::endl;
-    // std::cerr << "  slots: " << hrSlots << std::endl;
-    // std::cerr << "  classIndex: " << hrHdr->classIndex() << std::endl;
 
     // hiddenRoots should be format 9 (Indexable64) with slots
     if (hrFmt != ObjectFormat::Indexable64 || hrSlots < 1) {
@@ -970,10 +869,6 @@ direct_scan:
             memory.setClassAtIndex(identHash, classOop);
             registeredClasses++;
 
-            if (registeredClasses <= 20) {
-                // std::cerr << "[DEBUG] Registered class at index " << identHash
-                          // << " (metaclass=" << metaclassIdx << ")" << std::endl;
-            }
         }
 
         scanPtr += objSize;
@@ -1099,7 +994,16 @@ bool ImageLoader::isObjectPointer(uint64_t bits) const {
 
 uint64_t ImageLoader::relocatePointer(uint64_t oldOop) const {
     if (oldOop == 0) return 0;  // nil stays nil
-    if (oldOop & 1) return oldOop;  // Immediates don't relocate
+
+    // Check for immediate values (bit 0 = 1)
+    // Spur 64-bit uses 3-bit tags just like us:
+    // - SmallInteger: tag 001 (bits 2:0), value in bits 63:3
+    // - Character: tag 010
+    // - SmallFloat: tag 100
+    // So immediates don't need format conversion, just return as-is
+    if (oldOop & 1) {
+        return oldOop;  // Immediates don't relocate
+    }
 
     // Extract the address part (clear low 3 bits)
     uint64_t oldAddr = oldOop & ~7ULL;

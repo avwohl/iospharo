@@ -24,6 +24,7 @@ Interpreter::Interpreter(ObjectMemory& memory)
     , argCount_(0)
     , extA_(0)
     , extB_(0)
+    , usesSistaV1_(true)  // Default to SistaV1, will be set per method
     , running_(false)
     , primitiveFailed_(false)
 {
@@ -244,11 +245,6 @@ void Interpreter::interpret() {
 
 bool Interpreter::step() {
     if (!running_) {
-        static bool reportedOnce = false;
-        if (!reportedOnce) {
-            std::cerr << "[STEP] First idle - running_ is false" << std::endl;
-            reportedOnce = true;
-        }
         return false;
     }
 
@@ -280,226 +276,233 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
     // - 0x4C-0x4F: push self, true, false, nil
     // - 0x50-0x51: push 0, push 1
 
-    static int bcTrace = 0;
-    if (bcTrace < 0) {  // Disabled for now
-        bcTrace++;
-        // Show method selector for first few bytecodes
-        std::string methodSel = "?";
-        if (homeMethod_.isObject()) {
-            ObjectHeader* mHdr = homeMethod_.asObjectPtr();
-            if (mHdr->slotCount() > 1) {
-                Oop lit1 = mHdr->slotAt(1);
-                if (lit1.isObject() && lit1.rawBits() > 0x10000) {
-                    ObjectHeader* lit1Hdr = lit1.asObjectPtr();
-                    if (lit1Hdr->isBytesObject() && lit1Hdr->byteSize() <= 30) {
-                        methodSel = std::string((char*)lit1Hdr->bytes(), lit1Hdr->byteSize());
-                    }
-                }
-            }
-        }
-        std::cerr << "[BC] " << methodSel << " 0x" << std::hex << (int)bytecode << std::dec
-                  << " sp=" << (stackPointer_ - stackBase_)
-                  << " top=";
-        if (stackPointer_ > stackBase_) {
-            Oop top = stackTop();
-            std::cerr << "0x" << std::hex << top.rawBits() << std::dec;
-            if (top.isSmallInteger()) std::cerr << " (int " << top.asSmallInteger() << ")";
-        } else {
-            std::cerr << "(empty)";
-        }
-        std::cerr << std::endl;
-    }
-
     if (bytecode <= 0x0F) {
-        // Sista: 0x00-0x0F (0-15): Push receiver variable 0-15
+        // Both: 0x00-0x0F (0-15): Push receiver variable 0-15
         pushReceiverVariable(bytecode);
     }
     else if (bytecode <= 0x1F) {
-        // Sista: 0x10-0x1F (16-31): Push literal variable 0-15
-        pushLiteralVariable(bytecode - 0x10);
+        // 0x10-0x1F (16-31): Differs by bytecode set
+        if (usesSistaV1_) {
+            // Sista: push literal variable 0-15
+            pushLiteralVariable(bytecode - 0x10);
+        } else {
+            // V3: push temp 0-15
+            pushTemporary(bytecode - 0x10);
+        }
     }
     else if (bytecode <= 0x2F) {
-        // Sista: 0x20-0x2F (32-47): Push literal constant 0-15
+        // 0x20-0x2F (32-47): Push literal constant 0-15 (both sets)
         pushLiteralConstant(bytecode - 0x20);
     }
     else if (bytecode <= 0x3F) {
-        // Sista: 0x30-0x3F (48-63): Push temp 0-15
-        pushTemporary(bytecode - 0x30);
-    }
-    else if (bytecode <= 0x4B) {
-        // Sista: 0x40-0x4B (64-75): Push temp 16-27
-        pushTemporary(16 + bytecode - 0x40);
-    }
-    else if (bytecode <= 0x4F) {
-        // Sista: 0x4C-0x4F (76-79): Push specials
-        switch (bytecode) {
-            case 0x4C: push(receiver_); break;              // push self
-            case 0x4D: push(memory_.trueObject()); break;   // push true
-            case 0x4E: push(memory_.falseObject()); break;  // push false
-            case 0x4F: push(memory_.nil()); break;          // push nil
+        // 0x30-0x3F (48-63): Differs by bytecode set
+        if (usesSistaV1_) {
+            // Sista: push temp 0-15
+            pushTemporary(bytecode - 0x30);
+        } else {
+            // V3: push literal constant 16-31
+            pushLiteralConstant(bytecode - 0x30 + 16);
         }
-    }
-    else if (bytecode <= 0x51) {
-        // Sista: 0x50-0x51 (80-81): Push small integers
-        switch (bytecode) {
-            case 0x50: push(Oop::fromSmallInteger(0)); break;  // push 0
-            case 0x51: push(Oop::fromSmallInteger(1)); break;  // push 1
-        }
-    }
-    else if (bytecode <= 0x57) {
-        // Sista V1: 0x52-0x57 (82-87): Extended push operations
-        switch (bytecode) {
-            case 0x52: // Push thisContext
-                push(activeContext_);
-                break;
-            case 0x53: // Push literal var at index (extA gives extended index)
-            {
-                int index = extA_;
-                extA_ = 0;
-                pushLiteralVariable(index);
-                break;
-            }
-            case 0x54: // Push closure copy (numCopied in extB)
-                createBlock();
-                break;
-            case 0x55: // Push integer -n (extB has n as signed)
-            {
-                int value = extB_;
-                extB_ = 0;
-                push(Oop::fromSmallInteger(value));
-                break;
-            }
-            case 0x56: // Push character (extB has codepoint)
-            {
-                uint32_t codepoint = static_cast<uint32_t>(extB_) & 0xFFFFFF;
-                extB_ = 0;
-                push(Oop::fromCharacter(codepoint));
-                break;
-            }
-            case 0x57: // Extended push (type in bits 6-7, index in bits 0-5 plus extA)
-            {
-                uint8_t desc = fetchByte();
-                int type = (desc >> 6) & 0x3;
-                int index = (extA_ << 6) | (desc & 0x3F);
-                extA_ = 0;
-                switch (type) {
-                    case 0: pushReceiverVariable(index); break;
-                    case 1: pushTemporary(index); break;
-                    case 2: pushLiteralConstant(index); break;
-                    case 3: pushLiteralVariable(index); break;
-                }
-                break;
-            }
-        }
-    }
-    else if (bytecode <= 0x5B) {
-        // Sista: 0x58-0x5B (88-91): Return operations
-        switch (bytecode) {
-            case 0x58: returnValue(receiver_); break;              // return self
-            case 0x59: returnValue(memory_.trueObject()); break;   // return true
-            case 0x5A: returnValue(memory_.falseObject()); break;  // return false
-            case 0x5B: returnValue(memory_.nil()); break;          // return nil
-        }
-    }
-    else if (bytecode <= 0x5C) {
-        // Sista: 0x5C (92): Return top of stack
-        returnFromMethod();
-    }
-    else if (bytecode <= 0x5D) {
-        // Sista: 0x5D (93): Block return (return top from block)
-        returnFromBlock();
     }
     else if (bytecode <= 0x5F) {
-        // Sista V1: 0x5E-0x5F (94-95): NOP and trap
-        if (bytecode == 0x5E) {
-            // NOP - do nothing
+        // 0x40-0x5F (64-95): Differs significantly between V3 and Sista
+        if (!usesSistaV1_) {
+            // V3PlusClosures: 0x40-0x5F = push literal variable 0-31
+            pushLiteralVariable(bytecode - 0x40);
         } else {
-            // 0x5F: Trap - for debugging
-            // WARN: "[BYTECODE] Trap bytecode 0x5F encountered"
+            // Sista V1 handling
+            if (bytecode <= 0x4B) {
+                // 0x40-0x4B: Push temp 16-27
+                pushTemporary(16 + bytecode - 0x40);
+            } else if (bytecode <= 0x4F) {
+                // 0x4C-0x4F: Push specials
+                switch (bytecode) {
+                    case 0x4C: push(receiver_); break;              // push self
+                    case 0x4D: push(memory_.trueObject()); break;   // push true
+                    case 0x4E: push(memory_.falseObject()); break;  // push false
+                    case 0x4F: push(memory_.nil()); break;          // push nil
+                }
+            } else if (bytecode <= 0x51) {
+                // 0x50-0x51: Push small integers
+                switch (bytecode) {
+                    case 0x50: push(Oop::fromSmallInteger(0)); break;  // push 0
+                    case 0x51: push(Oop::fromSmallInteger(1)); break;  // push 1
+                }
+            } else {
+                // 0x52-0x5F: Extended push operations and returns
+                switch (bytecode) {
+                    case 0x52: // Push thisContext
+                        push(activeContext_);
+                        break;
+                    case 0x53: // Push literal var at index
+                    {
+                        int index = extA_;
+                        extA_ = 0;
+                        pushLiteralVariable(index);
+                        break;
+                    }
+                    case 0x54: // Push closure copy
+                        createBlock();
+                        break;
+                    case 0x55: // Push integer
+                    {
+                        int value = extB_;
+                        extB_ = 0;
+                        push(Oop::fromSmallInteger(value));
+                        break;
+                    }
+                    case 0x56: // Push character
+                    {
+                        uint32_t codepoint = static_cast<uint32_t>(extB_) & 0xFFFFFF;
+                        extB_ = 0;
+                        push(Oop::fromCharacter(codepoint));
+                        break;
+                    }
+                    case 0x57: // Extended push
+                    {
+                        uint8_t desc = fetchByte();
+                        int type = (desc >> 6) & 0x3;
+                        int index = (extA_ << 6) | (desc & 0x3F);
+                        extA_ = 0;
+                        switch (type) {
+                            case 0: pushReceiverVariable(index); break;
+                            case 1: pushTemporary(index); break;
+                            case 2: pushLiteralConstant(index); break;
+                            case 3: pushLiteralVariable(index); break;
+                        }
+                        break;
+                    }
+                    case 0x58: returnValue(receiver_); break;              // return self
+                    case 0x59: returnValue(memory_.trueObject()); break;   // return true
+                    case 0x5A: returnValue(memory_.falseObject()); break;  // return false
+                    case 0x5B: returnValue(memory_.nil()); break;          // return nil
+                    case 0x5C: returnFromMethod(); break;                  // return top
+                    case 0x5D: returnFromBlock(); break;                   // block return
+                    case 0x5E: /* NOP */ break;
+                    case 0x5F: /* Trap */ break;
+                }
+            }
         }
     }
-    else if (bytecode <= 0x67) {
-        // Sista: 0x60-0x67 (96-103): Pop and store receiver variable 0-7
-        Oop value = pop();
-        setReceiverInstVar(bytecode - 0x60, value);
-    }
     else if (bytecode <= 0x6F) {
-        // Sista: 0x68-0x6F (104-111): Pop and store temp 0-7
-        Oop value = pop();
-        setTemporary(bytecode - 0x68, value);
-    }
-    else if (bytecode <= 0x77) {
-        // Sista: 0x70-0x77 (112-119): Pop and store literal variable 0-7
-        Oop value = pop();
-        Oop assoc = literal(bytecode - 0x70);
-        if (assoc.isObject()) {
-            memory_.storePointer(1, assoc, value);
+        // 0x60-0x6F (96-111): Pop and store - same in both sets
+        if (bytecode <= 0x67) {
+            // Pop and store receiver variable 0-7
+            Oop value = pop();
+            setReceiverInstVar(bytecode - 0x60, value);
+        } else {
+            // Pop and store temp 0-7
+            Oop value = pop();
+            setTemporary(bytecode - 0x68, value);
         }
     }
     else if (bytecode <= 0x7F) {
-        // Sista: 0x78-0x7F (120-127): Short jumps
-        shortJump(bytecode - 0x78 + 1);
-    }
-    else if (bytecode <= 0x87) {
-        // Sista V1: 0x80-0x87 (128-135): Short jump if true (1-8 bytes forward)
-        int offset = (bytecode & 0x7) + 1;
-        shortJumpIfTrue(offset);
+        // 0x70-0x7F (112-127): Differs between V3 and Sista
+        if (!usesSistaV1_) {
+            // V3PlusClosures:
+            // 0x70-0x77: push specials (self, true, false, nil, -1, 0, 1, 2)
+            // 0x78-0x7B: return (self, true, false, nil)
+            // 0x7C: return top
+            // 0x7D: block return
+            // 0x7E-0x7F: extension bytecodes (unused in basic V3)
+            if (bytecode <= 0x77) {
+                switch (bytecode) {
+                    case 0x70: push(receiver_); break;              // push self
+                    case 0x71: push(memory_.trueObject()); break;   // push true
+                    case 0x72: push(memory_.falseObject()); break;  // push false
+                    case 0x73: push(memory_.nil()); break;          // push nil
+                    case 0x74: push(Oop::fromSmallInteger(-1)); break; // push -1
+                    case 0x75: push(Oop::fromSmallInteger(0)); break;  // push 0
+                    case 0x76: push(Oop::fromSmallInteger(1)); break;  // push 1
+                    case 0x77: push(Oop::fromSmallInteger(2)); break;  // push 2
+                }
+            } else if (bytecode <= 0x7B) {
+                switch (bytecode) {
+                    case 0x78: returnValue(receiver_); break;
+                    case 0x79: returnValue(memory_.trueObject()); break;
+                    case 0x7A: returnValue(memory_.falseObject()); break;
+                    case 0x7B: returnValue(memory_.nil()); break;
+                }
+            } else if (bytecode == 0x7C) {
+                returnFromMethod();
+            } else if (bytecode == 0x7D) {
+                returnFromBlock();
+            } else {
+                // 0x7E-0x7F: V3 extension bytecodes (not commonly used)
+            }
+        } else {
+            // Sista V1:
+            // 0x70-0x77: Pop and store literal variable 0-7
+            // 0x78-0x7F: Short jumps 1-8
+            if (bytecode <= 0x77) {
+                Oop value = pop();
+                Oop assoc = literal(bytecode - 0x70);
+                if (assoc.isObject()) {
+                    memory_.storePointer(1, assoc, value);
+                }
+            } else {
+                shortJump(bytecode - 0x78 + 1);
+            }
+        }
     }
     else if (bytecode <= 0x8F) {
-        // Sista V1: 0x88-0x8F (136-143): Short jump if false (1-8 bytes forward)
-        int offset = (bytecode & 0x7) + 1;
-        shortJumpIfFalse(offset);
-    }
-    else if (bytecode <= 0x97) {
-        // Sista V1: 0x90-0x97 (144-151): Short unconditional jump (1-8 bytes forward)
-        int offset = (bytecode & 0x7) + 1;
-        shortJump(offset);
+        // Sista V1: 0x80-0x8F (128-143): Send literal selector 0-15 with 0 args
+        int litIndex = bytecode & 0x0F;
+        Oop selector = literal(litIndex);
+        sendSelector(selector, 0);
     }
     else if (bytecode <= 0x9F) {
-        // Sista V1: 0x98-0x9F (152-159): Pop and short jump if true (1-8 bytes)
-        int offset = (bytecode & 0x7) + 1;
-        Oop value = pop();
-        if (isTrue(value)) {
-            shortJump(offset);
-        }
-        // Non-booleans treated as false (don't jump)
-    }
-    else if (bytecode <= 0xA7) {
-        // Sista V1: 0xA0-0xA7 (160-167): Pop and short jump if false (1-8 bytes)
-        int offset = (bytecode & 0x7) + 1;
-        Oop value = pop();
-        if (!isTrue(value)) {
-            // Jump if false OR if non-boolean
-            shortJump(offset);
-        }
+        // Sista V1: 0x90-0x9F (144-159): Send literal selector 0-15 with 1 arg
+        int litIndex = bytecode & 0x0F;
+        Oop selector = literal(litIndex);
+        sendSelector(selector, 1);
     }
     else if (bytecode <= 0xAF) {
-        // Sista V1: 0xA8-0xAF (168-175): Extended jumps using extB
-        // The specific jump type depends on extB_ value set by a preceding 0xE1
-        int jumpType = bytecode & 0x7;
+        // Sista V1: 0xA0-0xAF (160-175): Send literal selector 0-15 with 2 args
+        int litIndex = bytecode & 0x0F;
+        Oop selector = literal(litIndex);
+        sendSelector(selector, 2);
+    }
+    else if (bytecode <= 0xB7) {
+        // Sista V1: 0xB0-0xB7 (176-183): Short unconditional jump (1-8 bytes forward)
+        int offset = (bytecode & 0x07) + 1;
+        shortJump(offset);
+    }
+    else if (bytecode <= 0xBF) {
+        // Sista V1: 0xB8-0xBF (184-191): Short conditional jump if true (1-8 bytes)
+        int offset = (bytecode & 0x07) + 1;
+        shortJumpIfTrue(offset);
+    }
+    else if (bytecode <= 0xC7) {
+        // Sista V1: 0xC0-0xC7 (192-199): Short conditional jump if false (1-8 bytes)
+        int offset = (bytecode & 0x07) + 1;
+        shortJumpIfFalse(offset);
+    }
+    else if (bytecode <= 0xCF) {
+        // Sista V1: 0xC8-0xCF (200-207): Long jumps (with extension byte)
+        // The jump offset is encoded in the next byte, extended by extB
         uint8_t offsetByte = fetchByte();
         int offset = (extB_ << 8) | offsetByte;
         extB_ = 0;  // Reset extension
 
+        int jumpType = bytecode & 0x07;
         switch (jumpType) {
             case 0: // Long unconditional jump
-                shortJump(offset);
+                instructionPointer_ += offset;
                 break;
             case 1: // Long jump if true
                 {
                     Oop value = pop();
                     if (isTrue(value)) {
-                        shortJump(offset);
+                        instructionPointer_ += offset;
                     }
-                    // Non-booleans treated as false (don't jump)
                 }
                 break;
             case 2: // Long jump if false
                 {
                     Oop value = pop();
                     if (!isTrue(value)) {
-                        // Jump if false OR if non-boolean
-                        shortJump(offset);
+                        instructionPointer_ += offset;
                     }
                 }
                 break;
@@ -507,63 +510,49 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 {
                     Oop value = pop();
                     if (isTrue(value)) {
-                        shortJump(offset);
+                        instructionPointer_ += offset;
                     }
-                    // Non-booleans treated as false (don't jump)
                 }
                 break;
             case 4: // Long pop and jump if false
                 {
                     Oop value = pop();
                     if (!isTrue(value)) {
-                        // Jump if false OR if non-boolean
-                        shortJump(offset);
+                        instructionPointer_ += offset;
                     }
                 }
-                break;
-            case 5: // Long jump if nil (pop value and jump if nil)
-                {
-                    Oop value = pop();
-                    Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
-                    if (value.rawBits() == nilObj.rawBits() || value.isNil()) {
-                        shortJump(offset);
-                    }
-                }
-                break;
-            case 6: // Long jump if not nil (pop value and jump if not nil)
-                {
-                    Oop value = pop();
-                    Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
-                    if (value.rawBits() != nilObj.rawBits() && !value.isNil()) {
-                        shortJump(offset);
-                    }
-                }
-                break;
-            case 7: // Reserved - treat as no-op
                 break;
             default:
-                // WARN_LOG("[BYTECODE] Unknown Sista extended jump: 0x" << std::hex
-                          // << (int)bytecode << " type=" << jumpType << std::dec;
+                // Reserved
                 break;
         }
     }
-    else if (bytecode <= 0xBF) {
-        // Sista V1: 0xB0-0xBF (176-191): Send arithmetic special selector 0-15
-        // These are: + - < > <= >= = ~= * / \\ @ bitShift: // bitAnd: bitOr:
-        arithmeticSend(bytecode - 0xB0);
+    else if (bytecode <= 0xD7) {
+        // Sista V1: 0xD0-0xD7 (208-215): Store and pop temp 0-7
+        int tempIndex = bytecode & 0x07;
+        Oop value = pop();
+        setTemporary(tempIndex, value);
     }
-    else if (bytecode <= 0xCF) {
-        // Sista V1: 0xC0-0xCF (192-207): Send common special selector 16-31
-        // These are: at: at:put: size next nextPut: atEnd == class blockCopy: value value: do: new new: x y
-        commonSend(bytecode - 0xC0);
+    else if (bytecode == 0xD8) {
+        // Sista V1: 0xD8 (216): Pop stack (discard top of stack)
+        pop();
+    }
+    else if (bytecode == 0xD9) {
+        // Sista V1: 0xD9 (217): Unconditional trap (debugging)
+        running_ = false;
     }
     else if (bytecode <= 0xDF) {
-        // Sista V1: 0xD0-0xDF (208-223): Send literal selector 0-15 with 0 args
-        int litIndex = bytecode - 0xD0;
-        Oop selector = literal(litIndex);
-        sendSelector(selector, 0);
+        // Sista V1: 0xDA-0xDF (218-223): Various extended operations
+        // These are typically used for debugging or reserved - no-op
     }
     else if (bytecode <= 0xE7) {
+        // 0xE0-0xE7 (224-231): Differs by bytecode set
+        if (!usesSistaV1_) {
+            // V3PlusClosures: 0xE0-0xE7 = Send literal selector 0-7 with 2 args
+            int litIndex = bytecode - 0xE0;
+            Oop selector = literal(litIndex);
+            sendSelector(selector, 2);
+        } else {
         // Sista V1: 0xE0-0xE7 (224-231): Extension and extended operations
         switch (bytecode) {
             case 0xE0: // Extension A - modifies next bytecode's literal/temp index
@@ -675,6 +664,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 break;
             }
         }
+        }  // End of Sista V1 else branch
     }
     else if (bytecode <= 0xEF) {
         // Sista V1: 0xE8-0xEF (232-239): Stack operations and closures
@@ -726,7 +716,6 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
 
 void Interpreter::push(Oop value) {
     if (stackPointer_ >= stack_.data() + MaxStackDepth) {
-        std::cerr << "[STOP] Stack overflow!" << std::endl;
         running_ = false;
         return;
     }
@@ -868,7 +857,6 @@ void Interpreter::returnValue(Oop value) {
         }
 
         // No more work to do
-        std::cerr << "[HALT] No more processes to run, stopping after frame depth=" << frameDepth_ << std::endl;
         running_ = false;
         // Store the return value for inspection
         push(value);
@@ -1220,9 +1208,6 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 void Interpreter::sendSelector(Oop selector, int argCount) {
     // Get receiver (under the arguments on stack)
     Oop rcvr = stackValue(argCount);
-    // DEBUG_LOG("[SEND] selector=0x" << std::hex << selector.rawBits()
-              // << " rcvr=0x" << rcvr.rawBits() << std::dec
-              // << " argCount=" << argCount;
 
     // Check for invalid receiver (could be from out-of-bounds literal access)
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
@@ -1267,29 +1252,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     // Cache miss - look up method
     Oop method = lookupMethod(selector, rcvrClass);
     if (method.isNil()) {
-        // Debug: show selector name
-        std::string selName = "<non-bytes>";
-        if (selector.isObject()) {
-            ObjectHeader* selHdr = selector.asObjectPtr();
-            if (selHdr->isBytesObject() && selHdr->byteSize() < 100) {
-                selName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-            }
-        }
-        static int lookupFailCount = 0;
-        if (lookupFailCount++ < 5) {
-            std::cerr << "[LOOKUP FAIL] #" << selName << " not found in class 0x"
-                      << std::hex << rcvrClass.rawBits() << std::dec;
-            // Show what the receiver is
-            std::cerr << " receiver=0x" << std::hex << rcvr.rawBits() << std::dec;
-            if (rcvr.isSmallInteger()) {
-                std::cerr << " (SmallInt " << rcvr.asSmallInteger() << ")";
-            } else if (rcvr.isObject()) {
-                ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
-                std::cerr << " (classIdx=" << rcvrHdr->classIndex() << " fmt="
-                          << static_cast<int>(rcvrHdr->format()) << ")";
-            }
-            std::cerr << std::endl;
-        }
         sendDoesNotUnderstand(selector, argCount);
         return;
     }
@@ -1341,7 +1303,7 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
         }
 
         static int lookupDebugCount = 0;
-        if (depth < 3 && lookupDebugCount < 0) {  // Disabled for now
+        if (depth < 5 && lookupDebugCount < 0) {  // Disabled
             lookupDebugCount++;
             std::cerr << "[LOOKUP] depth=" << depth << " class=" << className << " (0x" << std::hex << currentClass.rawBits()
                       << std::dec << " clsIdx=" << clsHdr->classIndex() << " slots=" << clsHdr->slotCount()
@@ -1857,9 +1819,20 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     int64_t headerBits = methodHeader.asSmallInteger();
     int numLiterals = headerBits & 0x7FFF;  // bits 0-14 are numLiterals
 
+    // Detect bytecode set: sign bit (bit 63) = 0 for V3PlusClosures, 1 for SistaV1
+    // In 64-bit Spur, negative header means alternate bytecode set (SistaV1)
+    usesSistaV1_ = headerBits < 0;
+
     uint8_t* methodBytes = methodObj->bytes();
     size_t bytecodeStart = (1 + numLiterals) * 8;
     instructionPointer_ = methodBytes + bytecodeStart;
+
+    // Skip past callPrimitive bytecode (0xF8 lowByte highByte) if present
+    // In Sista V1, primitive methods start with callPrimitive which should be skipped
+    // when the primitive fails and we fall through to execute bytecodes
+    if (usesSistaV1_ && instructionPointer_[0] == 0xF8) {
+        instructionPointer_ += 3;  // Skip 0xF8 + 2 bytes of primitive index
+    }
 
     // Set bytecode end
     size_t totalBytes = methodObj->byteSize();
@@ -1922,7 +1895,6 @@ void Interpreter::activateBlock(Oop block, int argCount) {
 void Interpreter::pushFrame(Oop method, int argCount) {
     // Save current execution state before switching to new method
     if (frameDepth_ >= MaxFrameDepth) {
-        std::cerr << "[STOP] Frame stack overflow! depth=" << frameDepth_ << std::endl;
         running_ = false;
         return;
     }
@@ -1957,7 +1929,6 @@ void Interpreter::pushFrame(Oop method, int argCount) {
 void Interpreter::popFrame() {
     // Restore previous execution state
     if (frameDepth_ == 0) {
-        std::cerr << "[FRAME] No more frames (frameDepth_=0) - stopping" << std::endl;
         running_ = false;
         return;
     }
@@ -1981,7 +1952,6 @@ void Interpreter::popFrame() {
 
     // If this was the last frame, we're done
     if (frameDepth_ == 0 && frame.savedIP == nullptr) {
-        std::cerr << "[FRAME] Returned from top-level (savedIP=null) - stopping" << std::endl;
         running_ = false;
     }
 }
@@ -2009,110 +1979,7 @@ Oop Interpreter::literal(size_t index) const {
         size_t numLiterals = headerBits & 0x7FFF;  // bits 0-14
 
         if (index >= numLiterals) {
-            // Out of bounds - detailed investigation
-            static int warnCount = 0;
-            if (warnCount < 3) {
-                ObjectHeader* methodObj = literalMethod.asObjectPtr();
-                // std::cerr << "\n=== LITERAL OOB INVESTIGATION ==="; // DEBUG
-                // std::cerr << "Requested literal index: " << index << ", numLiterals: " << numLiterals; // DEBUG
-                // std::cerr << "Method header raw: 0x" << std::hex << methodHeader.rawBits() << std::dec; // DEBUG
-                // std::cerr << "Method header value: " << headerBits; // DEBUG
-                // std::cerr << "Object header: slots=" << methodObj->slotCount() << " format=" << (int)methodObj->format(); // DEBUG
-
-                // Dump ALL slots to see the full method structure
-                // std::cerr << "Full method slots:"; // DEBUG
-                uint64_t* slots = reinterpret_cast<uint64_t*>(methodObj + 1);
-                size_t totalSlots = methodObj->slotCount();
-                for (size_t i = 0; i < totalSlots && i < 15; i++) {
-                    // std::cerr << "  slot[" << i << "] = 0x" << std::hex << slots[i] << std::dec;
-                    if ((slots[i] & 7) == 1) {
-                        int64_t val = static_cast<int64_t>(slots[i] & 0x7FFFFFFFFFFFFFFFULL) >> 3;
-                        // std::cerr << " (SmallInt: " << val << ")";
-                    } else if ((slots[i] & 7) == 0 && slots[i] != 0) {
-                        // Could be object pointer - check if reasonable
-                        // std::cerr << " (ptr?)";
-                    }
-                    // std::cerr; // DEBUG
-                }
-
-                // Show bytecodes
-                size_t bytecodeStart = (1 + numLiterals) * 8;
-                uint8_t* bytes = methodObj->bytes();
-                size_t totalSize = methodObj->totalSize();
-                // std::cerr << "Bytecodes (starting at offset " << bytecodeStart << "):"; // DEBUG
-                // std::cerr << "  ";
-                for (size_t i = bytecodeStart; i < totalSize && i < bytecodeStart + 30; i++) {
-                    // if (bytes[i] < 16) std::cerr << "0";
-                    // std::cerr << std::hex << (int)bytes[i] << " ";
-                }
-                // std::cerr << std::dec; // DEBUG
-
-                // Check current IP position
-                uint8_t* methodBytes = methodObj->bytes();
-                ptrdiff_t ipOffset = instructionPointer_ - methodBytes;
-                // std::cerr << "Current IP offset: " << ipOffset << " (bytecode offset: " << (ipOffset - (int)bytecodeStart) << ")"; // DEBUG
-
-                // Decode the bytecode that caused this
-                if (ipOffset > 0 && ipOffset < (int)totalSize) {
-                    uint8_t prevByte = bytes[ipOffset - 1];
-                    // std::cerr << "Previous bytecode: 0x" << std::hex << (int)prevByte << std::dec;
-                    // V3PlusClosures interpretation
-                    if (prevByte >= 0x40 && prevByte <= 0x5F) {
-                        // std::cerr << " (V3: push literal var " << (prevByte - 0x40) << ")";
-                    } else if (prevByte >= 0x20 && prevByte <= 0x3F) {
-                        // std::cerr << " (V3: push literal const " << (prevByte - 0x20) << ")";
-                    }
-                    // Sista V1 interpretation for comparison
-                    // std::cerr << " | Sista: ";
-                    if (prevByte >= 0x00 && prevByte <= 0x0F) {
-                        // std::cerr << "push rcvr var " << (int)prevByte;
-                    } else if (prevByte >= 0x10 && prevByte <= 0x1F) {
-                        // std::cerr << "push lit var " << (prevByte - 0x10);
-                    } else if (prevByte >= 0x20 && prevByte <= 0x2F) {
-                        // std::cerr << "push lit const " << (prevByte - 0x20);
-                    } else if (prevByte >= 0x30 && prevByte <= 0x3F) {
-                        // std::cerr << "push temp " << (prevByte - 0x30);
-                    } else if (prevByte >= 0x40 && prevByte <= 0x4F) {
-                        // std::cerr << "push lit const " << (prevByte - 0x40 + 16);
-                    } else if (prevByte >= 0x50 && prevByte <= 0x5F) {
-                        // std::cerr << "push lit var " << (prevByte - 0x50 + 16);
-                    } else if (prevByte >= 0x60 && prevByte <= 0x7F) {
-                        // std::cerr << "extended/special";
-                    }
-                    // std::cerr; // DEBUG
-                }
-
-                // Try to identify the method by looking up selector in last literal
-                if (numLiterals > 0) {
-                    Oop lastLiteral = memory_.fetchPointer(numLiterals, literalMethod);
-                    // std::cerr << "Last literal (method selector assoc?): 0x" << std::hex << lastLiteral.rawBits() << std::dec;
-                    if (lastLiteral.isObject()) {
-                        ObjectHeader* assocHdr = lastLiteral.asObjectPtr();
-                        // std::cerr << " (cls=" << assocHdr->classIndex() << " slots=" << assocHdr->slotCount() << ")";
-                        // If it's an Association (typically has 2 slots: key, value)
-                        if (assocHdr->slotCount() >= 2) {
-                            Oop selector = assocHdr->slotAt(0);  // key is usually the selector
-                            if (selector.isObject()) {
-                                ObjectHeader* selHdr = selector.asObjectPtr();
-                                // Symbols have format 16-23 (byte objects)
-                                if ((int)selHdr->format() >= 16 && (int)selHdr->format() <= 23) {
-                                    // std::cerr << " selector='";
-                                    uint8_t* selBytes = selHdr->bytes();
-                                    size_t selLen = selHdr->byteSize();
-                                    for (size_t i = 0; i < selLen && i < 50; i++) {
-                                        // std::cerr << (char)selBytes[i];
-                                    }
-                                    // std::cerr << "'";
-                                }
-                            }
-                        }
-                    }
-                    // std::cerr; // DEBUG
-                }
-
-                // std::cerr << "=================================\n"; // DEBUG
-                warnCount++;
-            }
+            // Out of bounds - return nil
             return memory_.specialObject(SpecialObjectIndex::NilObject);
         }
     }
@@ -2170,20 +2037,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
     dnuDepth++;
 
-    // Show the selector that triggered DNU
-    if (dnuDepth <= 5) {
-        std::string selName = "<unknown>";
-        if (selector.isObject()) {
-            ObjectHeader* selHdr = selector.asObjectPtr();
-            if (selHdr->isBytesObject() && selHdr->byteSize() < 100) {
-                selName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-            }
-        }
-        std::cerr << "[DNU #" << dnuDepth << "] Missing: #" << selName << std::endl;
-    }
-
     if (dnuDepth > MAX_DNU_DEPTH) {
-        std::cerr << "[STOP] DNU recursion depth exceeded (" << dnuDepth << ")" << std::endl;
         running_ = false;
         dnuDepth = 0;
         return;
@@ -2204,14 +2058,12 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
     // Fallback for startup to avoid DNU spiral
     if (origStr == "new" && argCount == 0) {
-        std::cerr << "[DNU] Fallback for #new - returning nil" << std::endl;
         pop();  // Pop receiver
         push(memory_.nil());
         dnuDepth--;
         return;
     }
     if (origStr == "receiver:" && argCount == 1) {
-        std::cerr << "[DNU] Fallback for #receiver: - returning receiver" << std::endl;
         Oop arg = pop();  // Pop argument
         Oop rcvr = pop();  // Pop receiver (Message object)
         // Try to store in Message's slot 2 (receiver field)
@@ -2267,7 +2119,6 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
     // Safeguard: if we're already handling DNU, prevent infinite recursion
     if (selector.rawBits() == selectors_.doesNotUnderstand.rawBits()) {
-        std::cerr << "[STOP] Infinite DNU loop detected!" << std::endl;
         running_ = false;
         dnuDepth = 0;
         return;
@@ -2658,7 +2509,6 @@ bool Interpreter::tryReschedule() {
     Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
 
     if (!schedulerAssoc.isObject() || schedulerAssoc.rawBits() == nilObj.rawBits()) {
-        std::cerr << "[SCHED] No scheduler found" << std::endl;
         return false;
     }
 
@@ -2721,7 +2571,6 @@ bool Interpreter::tryReschedule() {
         }
     }
 
-    std::cerr << "[SCHED] No runnable process found in " << numQueues << " queues" << std::endl;
     return false;
 }
 
@@ -2843,11 +2692,9 @@ bool Interpreter::bootstrapStartup() {
     // If we've already tried startup methods and they completed,
     // the Smalltalk code has had a chance to run. Don't keep looping.
     if (startupAttempt > 5) {
-        std::cerr << "[BOOTSTRAP] Too many attempts (" << startupAttempt << "), stopping" << std::endl;
         running_ = false;
         return false;
     }
-    std::cerr << "[BOOTSTRAP] Attempt #" << startupAttempt << std::endl;
 
     // DEBUG: "[DEBUG] bootstrapStartup: Trying to find startup globals..."
 
@@ -3242,27 +3089,6 @@ bool Interpreter::executeFromContext(Oop context) {
     receiver_ = memory_.fetchPointer(5, context);
     activeContext_ = context;  // Track for sender chain on return
 
-    // Debug: show what method we're starting with
-    std::cerr << "[STARTUP] method=0x" << std::hex << method_.rawBits() << std::dec;
-    std::cerr << " receiver=0x" << std::hex << receiver_.rawBits() << std::dec;
-    if (method_.isObject()) {
-        ObjectHeader* mHdr = method_.asObjectPtr();
-        std::cerr << " (cls=" << mHdr->classIndex() << " slots=" << mHdr->slotCount() << ")";
-        // Try to get selector from literal 1
-        if (mHdr->slotCount() > 1) {
-            Oop lit1 = mHdr->slotAt(1);
-            if (lit1.isObject() && lit1.rawBits() > 0x10000) {
-                ObjectHeader* lit1Hdr = lit1.asObjectPtr();
-                if (lit1Hdr->isBytesObject() && lit1Hdr->byteSize() <= 50) {
-                    std::cerr << " selector=#" << std::string((char*)lit1Hdr->bytes(), lit1Hdr->byteSize());
-                }
-            }
-        }
-    }
-    std::cerr << std::endl;
-
-    // (receiver inst var debug disabled)
-
     // Set homeMethod_ for literal access
     // For CompiledMethods, homeMethod_ = method_
     // For CompiledBlocks, find the home method through the closure's outer context chain
@@ -3423,6 +3249,10 @@ bool Interpreter::executeFromContext(Oop context) {
     int numLiterals = headerBits & 0x7FFF;  // bits 0-14 are numLiterals
     int numTemps = (headerBits >> 16) & 0xFF;
 
+    // Detect bytecode set: sign bit (bit 63) = 0 for V3PlusClosures, 1 for SistaV1
+    // In 64-bit Spur, negative header means alternate bytecode set (SistaV1)
+    usesSistaV1_ = headerBits < 0;
+
     uint8_t* methodBytes = methodObj->bytes();
     size_t bytecodeStart = (1 + numLiterals) * 8;
 
@@ -3444,9 +3274,17 @@ bool Interpreter::executeFromContext(Oop context) {
             instructionPointer_ = methodBytes + pcOffset - 1;
         } else {
             instructionPointer_ = methodBytes + bytecodeStart;
+            // Skip past callPrimitive if at start
+            if (usesSistaV1_ && instructionPointer_[0] == 0xF8) {
+                instructionPointer_ += 3;
+            }
         }
     } else {
         instructionPointer_ = methodBytes + bytecodeStart;
+        // Skip past callPrimitive if at start
+        if (usesSistaV1_ && instructionPointer_[0] == 0xF8) {
+            instructionPointer_ += 3;
+        }
     }
 
     // Get saved stackp - in Pharo, stackp is the 1-based index into the temp/stack area
