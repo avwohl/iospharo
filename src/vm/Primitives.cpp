@@ -921,14 +921,116 @@ PrimitiveResult Interpreter::primitiveForceDisplayUpdate(int argCount) {
     return PrimitiveResult::Failure;
 }
 
-// ===== STRING/ARRAY PRIMITIVES =====
+// ===== STRING PRIMITIVES =====
 
 PrimitiveResult Interpreter::primitiveStringAt(int argCount) {
-    return primitiveAt(argCount);  // Same as at:
+    // String>>at: - returns Character at index
+    Oop index = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    if (!index.isSmallInteger() || !rcvr.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t idx = index.asSmallInteger();
+    if (idx < 1) {
+        return PrimitiveResult::Failure;  // 1-based indexing
+    }
+
+    ObjectHeader* header = rcvr.asObjectPtr();
+    size_t arrayIndex = static_cast<size_t>(idx - 1);
+    ObjectFormat format = header->format();
+
+    // ByteString: format 16-23 (Indexable8 through Indexable8_7)
+    if (format >= ObjectFormat::Indexable8 && format <= ObjectFormat::Indexable8_7) {
+        if (arrayIndex >= header->byteSize()) {
+            return PrimitiveResult::Failure;
+        }
+        uint8_t byte = header->byteAt(arrayIndex);
+        // Return as Character immediate
+        primitiveSuccess(Oop::fromCharacter(byte));
+        return PrimitiveResult::Success;
+    }
+    // WideString: format 10-11 (Indexable32, Indexable32Odd) - 32-bit characters
+    else if (format == ObjectFormat::Indexable32 || format == ObjectFormat::Indexable32Odd) {
+        size_t numChars = header->byteSize() / 4;
+        if (arrayIndex >= numChars) {
+            return PrimitiveResult::Failure;
+        }
+        // Read 4 bytes as little-endian 32-bit value
+        size_t byteOffset = arrayIndex * 4;
+        uint32_t codePoint = header->byteAt(byteOffset) |
+                            (header->byteAt(byteOffset + 1) << 8) |
+                            (header->byteAt(byteOffset + 2) << 16) |
+                            (header->byteAt(byteOffset + 3) << 24);
+        primitiveSuccess(Oop::fromCharacter(codePoint));
+        return PrimitiveResult::Success;
+    }
+
+    return PrimitiveResult::Failure;
 }
 
 PrimitiveResult Interpreter::primitiveStringAtPut(int argCount) {
-    return primitiveAtPut(argCount);  // Same as at:put:
+    // String>>at:put: - stores Character at index
+    Oop value = stackValue(0);
+    Oop index = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!index.isSmallInteger() || !rcvr.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Value must be a Character
+    if (!value.isCharacter()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t idx = index.asSmallInteger();
+    if (idx < 1) {
+        return PrimitiveResult::Failure;  // 1-based indexing
+    }
+
+    ObjectHeader* header = rcvr.asObjectPtr();
+
+    // Check immutability
+    if (header->isImmutable()) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t arrayIndex = static_cast<size_t>(idx - 1);
+    ObjectFormat format = header->format();
+    uint32_t codePoint = value.asCharacter();
+
+    // ByteString: format 16-23 (Indexable8 through Indexable8_7)
+    if (format >= ObjectFormat::Indexable8 && format <= ObjectFormat::Indexable8_7) {
+        if (arrayIndex >= header->byteSize()) {
+            return PrimitiveResult::Failure;
+        }
+        // Check that character fits in a byte
+        if (codePoint > 255) {
+            return PrimitiveResult::Failure;
+        }
+        header->byteAtPut(arrayIndex, static_cast<uint8_t>(codePoint));
+        primitiveSuccess(value);  // Return the character
+        return PrimitiveResult::Success;
+    }
+    // WideString: format 10-11 (Indexable32, Indexable32Odd) - 32-bit characters
+    else if (format == ObjectFormat::Indexable32 || format == ObjectFormat::Indexable32Odd) {
+        size_t numChars = header->byteSize() / 4;
+        if (arrayIndex >= numChars) {
+            return PrimitiveResult::Failure;
+        }
+        // Store 4 bytes as little-endian 32-bit value
+        size_t byteOffset = arrayIndex * 4;
+        header->byteAtPut(byteOffset, codePoint & 0xFF);
+        header->byteAtPut(byteOffset + 1, (codePoint >> 8) & 0xFF);
+        header->byteAtPut(byteOffset + 2, (codePoint >> 16) & 0xFF);
+        header->byteAtPut(byteOffset + 3, (codePoint >> 24) & 0xFF);
+        primitiveSuccess(value);  // Return the character
+        return PrimitiveResult::Success;
+    }
+
+    return PrimitiveResult::Failure;
 }
 
 PrimitiveResult Interpreter::primitiveReplaceFromTo(int argCount) {
