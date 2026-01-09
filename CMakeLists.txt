@@ -13,6 +13,7 @@ set(VM_SOURCES
     src/vm/Primitives.cpp
     src/platform/EventQueue.cpp
     src/platform/PlatformBridge.cpp
+    src/platform/iOSBridge.cpp
 )
 
 add_library(PharoVMCore STATIC ${VM_SOURCES})

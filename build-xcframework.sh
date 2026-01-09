@@ -33,7 +33,7 @@ cmake -G Xcode \
     -B "$BUILD_BASE/ios-device" \
     -S .
 
-xcodebuild -project "$BUILD_BASE/ios-device/iospharo.xcodeproj" \
+xcodebuild -project "$BUILD_BASE/ios-device/PharoVM.xcodeproj" \
     -scheme PharoVMCore \
     -configuration Release \
     -sdk iphoneos \
@@ -53,7 +53,7 @@ cmake -G Xcode \
     -B "$BUILD_BASE/ios-simulator" \
     -S .
 
-xcodebuild -project "$BUILD_BASE/ios-simulator/iospharo.xcodeproj" \
+xcodebuild -project "$BUILD_BASE/ios-simulator/PharoVM.xcodeproj" \
     -scheme PharoVMCore \
     -configuration Release \
     -sdk iphonesimulator \
@@ -77,7 +77,7 @@ cmake -G Xcode \
 cd "$BUILD_BASE/maccatalyst"
 
 # Build arm64
-xcodebuild -project iospharo.xcodeproj \
+xcodebuild -project PharoVM.xcodeproj \
     -scheme PharoVMCore \
     -configuration Release \
     -destination 'platform=macOS,variant=Mac Catalyst,arch=arm64' \
@@ -88,7 +88,7 @@ xcodebuild -project iospharo.xcodeproj \
 mv Release-maccatalyst/libPharoVMCore.a Release-maccatalyst/libPharoVMCore-arm64.a
 
 # Build x86_64
-xcodebuild -project iospharo.xcodeproj \
+xcodebuild -project PharoVM.xcodeproj \
     -scheme PharoVMCore \
     -configuration Release \
     -destination 'platform=macOS,variant=Mac Catalyst,arch=x86_64' \
