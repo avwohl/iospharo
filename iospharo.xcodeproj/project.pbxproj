@@ -144,6 +144,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = A70001 /* Build configuration list for PBXNativeTarget "iospharo" */;
 			buildPhases = (
+				A50004 /* Check XCFramework Freshness */,
 				A50002 /* Sources */,
 				A30001 /* Frameworks */,
 				A50003 /* Resources */,
@@ -196,6 +197,38 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		A50004 /* Check XCFramework Freshness */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(PROJECT_DIR)/src/vm/ImageLoader.cpp",
+				"$(PROJECT_DIR)/src/vm/Interpreter.cpp",
+				"$(PROJECT_DIR)/src/vm/ObjectMemory.cpp",
+				"$(PROJECT_DIR)/src/vm/Primitives.cpp",
+				"$(PROJECT_DIR)/src/vm/ImageLoader.hpp",
+				"$(PROJECT_DIR)/src/vm/Interpreter.hpp",
+				"$(PROJECT_DIR)/src/vm/ObjectMemory.hpp",
+				"$(PROJECT_DIR)/src/vm/ObjectHeader.hpp",
+				"$(PROJECT_DIR)/src/vm/Oop.hpp",
+				"$(PROJECT_DIR)/PharoVMCore.xcframework/Info.plist",
+			);
+			name = "Check XCFramework Freshness";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "# Check if PharoVMCore.xcframework is older than VM source files\nXCFRAMEWORK=\"${PROJECT_DIR}/PharoVMCore.xcframework/Info.plist\"\nSRC_DIR=\"${PROJECT_DIR}/src/vm\"\n\nif [ ! -f \"$XCFRAMEWORK\" ]; then\n    echo \"error: PharoVMCore.xcframework not found!\"\n    echo \"error: Run ./build-xcframework.sh to build it.\"\n    exit 1\nfi\n\nXCF_TIME=$(stat -f %m \"$XCFRAMEWORK\")\n\n# Check all .cpp and .hpp files in src/vm\nfor src in \"$SRC_DIR\"/*.cpp \"$SRC_DIR\"/*.hpp; do\n    if [ -f \"$src\" ]; then\n        SRC_TIME=$(stat -f %m \"$src\")\n        if [ \"$SRC_TIME\" -gt \"$XCF_TIME\" ]; then\n            echo \"error: PharoVMCore.xcframework is STALE!\"\n            echo \"error: $(basename $src) is newer than xcframework.\"\n            echo \"error: Run ./build-xcframework.sh to rebuild.\"\n            exit 1\n        fi\n    fi\ndone\n\necho \"PharoVMCore.xcframework is up-to-date.\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXResourcesBuildPhase section */
 		A50003 /* Resources */ = {
