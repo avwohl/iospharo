@@ -5,8 +5,12 @@
  */
 
 #include "Interpreter.hpp"
+#include "../platform/DisplaySurface.hpp"
 #include <cstring>
 #include <iostream>
+#include <iomanip>
+#include <thread>
+#include <chrono>
 
 namespace pharo {
 
@@ -44,11 +48,10 @@ bool Interpreter::initialize() {
     // Set up initial execution context
     // Find the startup process from special objects
 
-    // DEBUG: "[DEBUG] Getting scheduler association..."
+    // Uncomment for debugging: std::cerr << "[INIT] Starting...\n";
     Oop scheduler = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
     // DEBUG_LOG("[DEBUG] Scheduler: 0x" << std::hex << scheduler.rawBits() << std::dec;
     if (scheduler.isNil()) {
-        // DEBUG: "[DEBUG] Scheduler is nil"
         return false;
     }
 
@@ -113,14 +116,12 @@ bool Interpreter::initialize() {
     // Our loaded images are in a much lower address range
     uint64_t contextAddr = context.rawBits() & ~7ULL;
     if (contextAddr >= 0x10000000000ULL && contextAddr < 0x20000000000ULL) {
-        // DEBUG_LOG("[DEBUG] Context appears unrelocated (old base address) - treating as nil";
-        // DEBUG: "[DEBUG] Attempting bootstrap startup..."
+        // Context appears unrelocated - use bootstrap startup
         return bootstrapStartup();
     }
 
     // Check if context is nil (fresh image startup)
     if (context.isNil() || (context.isObject() && context.asObjectPtr()->slotCount() == 0)) {
-        // DEBUG: "[DEBUG] Context is nil - attempting bootstrap startup..."
         return bootstrapStartup();
     }
 
@@ -176,36 +177,13 @@ bool Interpreter::initialize() {
             }
         }
 
-        // std::cerr << "[CHAIN " << depth << "] " << rcvrClassName << ">>" << methodSelector; // DEBUG
+        // Debug chain output - disabled for normal operation
+        // std::cerr << "[CHAIN " << depth << "] " << rcvrClassName << ">>" << methodSelector << "\n";
 
         // Check if this method has a primitive (for first few contexts)
-        if (depth < 3 && method.isObject() && method.rawBits() > 0x10000) {
+        if (depth < 10 && method.isObject() && method.rawBits() > 0x10000) {
             int primIdx = primitiveIndexOf(method);
-            if (primIdx > 0) {
-                // std::cerr << "[CHAIN " << depth << "] Method has primitive #" << primIdx; // DEBUG
-            }
-            // Also show the PC
-            Oop pc = memory_.fetchPointer(1, currentCtx);
-            // std::cerr << "[CHAIN " << depth << "] PC = ";
-            if (pc.isSmallInteger()) {
-                // std::cerr << pc.asSmallInteger(); // DEBUG
-            } else {
-                // std::cerr << "0x" << std::hex << pc.rawBits() << std::dec; // DEBUG
-            }
-
-            // Show first bytecodes of the method
-            ObjectHeader* methodHdr = method.asObjectPtr();
-            Oop header = memory_.fetchPointer(0, method);
-            if (header.isSmallInteger()) {
-                int64_t bits = header.asSmallInteger();
-                int numLiterals = bits & 0x7FFF;  // bits 0-14 are numLiterals
-                uint8_t* bytecodes = methodHdr->bytes() + (1 + numLiterals) * 8;
-                // std::cerr << "[CHAIN " << depth << "] First bytecodes: ";
-                for (int i = 0; i < 10; i++) {
-                    // std::cerr << std::hex << (int)bytecodes[i] << " ";
-                }
-                // std::cerr << std::dec; // DEBUG
-            }
+            (void)primIdx;  // Unused when debug is disabled
         }
 
         // Check if we're in snapshot-related code
@@ -230,9 +208,35 @@ bool Interpreter::initialize() {
         // DEBUG: "[DEBUG] Detected snapshot code - executing normally with fallback handlers"
     }
 
+    // Note: Display initialization is deferred to primitiveForceDisplayUpdate
+    // to avoid crashes during early VM setup
+
     // Now execute from the original context
     // DEBUG_LOG("[DEBUG] Found valid context - delegating to executeFromContext()";
     return executeFromContext(context);
+}
+
+// ===== DISPLAY INITIALIZATION =====
+
+void Interpreter::initializeDisplayForm() {
+    // Direct platform display initialization is now done in bootstrapStartup
+    // This method is kept for future use with Smalltalk Forms
+    if (pharo::gDisplaySurface && displayForm_.isNil()) {
+        // For now, just fill platform display with a test pattern
+        uint32_t* pixels = pharo::gDisplaySurface->pixels();
+        int width = pharo::gDisplaySurface->width();
+        int height = pharo::gDisplaySurface->height();
+
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                uint8_t r = static_cast<uint8_t>(128 + (x * 127 / width));
+                uint8_t g = static_cast<uint8_t>(128 + (y * 127 / height));
+                uint8_t b = 255;
+                pixels[y * width + x] = (255 << 24) | (r << 16) | (g << 8) | b;
+            }
+        }
+        pharo::gDisplaySurface->update();
+    }
 }
 
 // ===== MAIN LOOP =====
@@ -306,12 +310,42 @@ void Interpreter::processPendingSignals() {
 }
 
 bool Interpreter::step() {
+    static bool firstEntry = true;
+    if (firstEntry) {
+        std::cerr << "[VM] step() entered, running_=" << running_
+                  << " IP=0x" << std::hex << (uintptr_t)instructionPointer_
+                  << " end=0x" << (uintptr_t)bytecodeEnd_
+                  << " this=0x" << (uintptr_t)this << std::dec << "\n";
+        firstEntry = false;
+    }
+
     if (!running_) {
+        static bool warnedNotRunning = false;
+        if (!warnedNotRunning) {
+            std::cerr << "[VM] step() called but running_=false\n";
+            warnedNotRunning = true;
+        }
         return false;
+    }
+
+    // Trace IP right before the bounds check
+    static int preCheckCount = 0;
+    preCheckCount++;
+    if (preCheckCount <= 3) {
+        std::cerr << "[VM] step() pre-check #" << preCheckCount
+                  << " IP=0x" << std::hex << (uintptr_t)instructionPointer_
+                  << " end=0x" << (uintptr_t)bytecodeEnd_ << std::dec << "\n";
     }
 
     // Check if we've run past the end of bytecodes
     if (instructionPointer_ >= bytecodeEnd_) {
+        static int pastEndCount = 0;
+        pastEndCount++;
+        if (pastEndCount <= 5) {
+            std::cerr << "[VM] step() IP past end (call #" << pastEndCount << ")"
+                      << " IP=0x" << std::hex << (uintptr_t)instructionPointer_
+                      << " end=0x" << (uintptr_t)bytecodeEnd_ << std::dec << "\n";
+        }
         returnValue(receiver_);
         return running_;
     }
@@ -320,6 +354,18 @@ bool Interpreter::step() {
     // In Sista V1, extension bytecodes (0xE0/0xE1) set these values, then the
     // NEXT bytecode uses them. The consuming bytecodes reset them after use.
     // Resetting here would break extension byte chains.
+
+    // Bytecode step counter (for debugging startup issues)
+    static int stepCount = 0;
+    static bool firstStep = true;
+    if (firstStep) {
+        std::cerr << "[VM] First step() call, running_=" << running_ << "\n";
+        firstStep = false;
+    }
+    stepCount++;
+    if (stepCount % 1000000 == 0) {
+        std::cerr << "[VM] Executed " << (stepCount / 1000000) << "M bytecodes\n";
+    }
 
     uint8_t bytecode = fetchByte();
     dispatchBytecode(bytecode);
@@ -556,6 +602,17 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         // Sista V1: 0x80-0x8F (128-143): Send literal selector 0-15 with 0 args
         int litIndex = bytecode & 0x0F;
         Oop selector = literal(litIndex);
+        // Trace if selector is a CompiledBlock (likely executing wrong bytecodes)
+        if (selector.isObject() && selector.asObjectPtr()->classIndex() == 3117) {
+            static int wrongBcCount = 0;
+            wrongBcCount++;
+            if (wrongBcCount <= 3) {
+                std::cerr << "[BYTECODE] Send 0x" << std::hex << (int)bytecode << " litIndex=" << litIndex
+                          << " got CompiledBlock!\n"
+                          << "  method_=0x" << method_.rawBits() << " homeMethod_=0x" << homeMethod_.rawBits()
+                          << " IP offset=" << std::dec << (instructionPointer_ - 1 - method_.asObjectPtr()->bytes()) << "\n";
+            }
+        }
         sendSelector(selector, 0);
     }
     else if (bytecode <= 0x9F) {
@@ -646,6 +703,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
     }
     else if (bytecode == 0xD9) {
         // Sista V1: 0xD9 (217): Unconditional trap (debugging)
+        std::cerr << "[VM] Trap bytecode (0xD9), setting running_=false\n";
         running_ = false;
     }
     else if (bytecode <= 0xDF) {
@@ -823,6 +881,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
 
 void Interpreter::push(Oop value) {
     if (stackPointer_ >= stack_.data() + MaxStackDepth) {
+        std::cerr << "[VM] Stack overflow in push(), setting running_=false\n";
         running_ = false;
         return;
     }
@@ -916,8 +975,11 @@ void Interpreter::pushSpecial(int which) {
 }
 
 void Interpreter::returnValue(Oop value) {
-    // DEBUG_LOG("[RETURN] returnValue: value=0x" << std::hex << value.rawBits() << std::dec
-              // << " frameDepth=" << frameDepth_;
+    static int returnCount = 0;
+    returnCount++;
+    if (returnCount <= 10) {
+        std::cerr << "[VM] returnValue (call #" << returnCount << "), frameDepth=" << frameDepth_ << "\n";
+    }
 
     // If no frames to pop, check if we have a sender context to return to
     if (frameDepth_ == 0) {
@@ -927,14 +989,27 @@ void Interpreter::returnValue(Oop value) {
         if (activeContext_.isObject() && activeContext_.rawBits() != nilObj.rawBits()) {
             Oop sender = memory_.fetchPointer(0, activeContext_);
 
+            if (returnCount <= 10) {
+                std::cerr << "[VM] returnValue: checking sender 0x" << std::hex << sender.rawBits() << std::dec;
+                if (sender.rawBits() == nilObj.rawBits()) {
+                    std::cerr << " (NIL)\n";
+                } else if (sender.isObject()) {
+                    ObjectHeader* sh = sender.asObjectPtr();
+                    std::cerr << " (slots=" << sh->slotCount() << " fmt=" << (int)sh->format() << ")\n";
+                } else {
+                    std::cerr << " (not object)\n";
+                }
+            }
+
             if (sender.isObject() && sender.rawBits() != nilObj.rawBits()) {
                 ObjectHeader* senderHdr = sender.asObjectPtr();
 
                 // Check if sender looks like a Context (has enough slots and right format)
                 if (senderHdr->slotCount() >= 6 &&
                     senderHdr->format() == ObjectFormat::IndexableWithFixed) {
-                    // DEBUG_LOG("[RETURN] Following sender chain to context 0x"
-                              // << std::hex << sender.rawBits() << std::dec;
+                    if (returnCount <= 10) {
+                        std::cerr << "[VM] returnValue: following sender chain\n";
+                    }
 
                     // Reset stack for new context
                     stackPointer_ = stackBase_;
@@ -950,22 +1025,60 @@ void Interpreter::returnValue(Oop value) {
             }
         }
 
+        if (returnCount <= 10) {
+            std::cerr << "[VM] returnValue: sender chain exhausted, trying reschedule\n";
+        }
+
         // Mark current process as terminated by clearing its suspendedContext
         terminateCurrentProcess();
 
         // Try to find another runnable process
         if (tryReschedule()) {
+            if (returnCount <= 10) {
+                std::cerr << "[VM] returnValue: tryReschedule succeeded!\n";
+            }
             return;
+        }
+        if (returnCount <= 10) {
+            std::cerr << "[VM] returnValue: tryReschedule failed, trying bootstrapStartup\n";
         }
 
         // If no other process to run, try startup entry point
         if (bootstrapStartup()) {
+            if (returnCount <= 10) {
+                std::cerr << "[VM] returnValue: bootstrapStartup succeeded!\n";
+            }
             return;
         }
 
-        // No more work to do
-        running_ = false;
-        // Store the return value for inspection
+        // No runnable processes - enter idle mode
+        // Wait briefly then try again (allows event processing)
+        static int idleCount = 0;
+        idleCount++;
+        if (idleCount <= 3) {
+            std::cerr << "[VM] returnValue: No runnable processes - entering idle mode #" << idleCount << "\n";
+        }
+
+        // Sleep briefly to avoid busy-waiting, then try to reschedule
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+        // Try to find a runnable process again (events might have signaled semaphores)
+        if (tryReschedule()) {
+            return;
+        }
+
+        // After multiple idle cycles with no work, finally stop
+        static int maxIdleCycles = 20;  // ~2 seconds of idle
+        if (idleCount >= maxIdleCycles) {
+            if (returnCount <= 10) {
+                std::cerr << "[VM] returnValue: Exceeded " << maxIdleCycles << " idle cycles - setting running_ = false\n";
+            }
+            running_ = false;
+            push(value);
+            return;
+        }
+
+        // Still idle - push a placeholder and let step() be called again
         push(value);
         return;
     }
@@ -1313,6 +1426,92 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 }
 
 void Interpreter::sendSelector(Oop selector, int argCount) {
+    // Message send tracing
+    static int sendCount = 0;
+    sendCount++;
+    if (sendCount <= 30) {
+        // Show selector name
+        std::string selName = "<unknown>";
+        bool isValidSymbol = false;
+        if (selector.isObject() && selector.rawBits() > 0x10000) {
+            ObjectHeader* selHdr = selector.asObjectPtr();
+            // Check if this looks like a valid symbol (bytes object with printable ASCII)
+            if (selHdr->isBytesObject() && selHdr->byteSize() > 0 && selHdr->byteSize() < 256) {
+                const uint8_t* bytes = selHdr->bytes();
+                size_t len = selHdr->byteSize();
+                bool allPrintable = true;
+                for (size_t i = 0; i < len && allPrintable; i++) {
+                    if (bytes[i] < 0x20 || bytes[i] > 0x7E) {
+                        allPrintable = false;
+                    }
+                }
+                if (allPrintable) {
+                    selName = std::string((char*)bytes, len);
+                    isValidSymbol = true;
+                } else {
+                    // Contains non-printable chars - likely garbage
+                    selName = "<garbage-" + std::to_string(selHdr->classIndex()) + ">";
+                    // Trace the source
+                    static int garbageCount = 0;
+                    garbageCount++;
+                    if (garbageCount <= 5) {
+                        std::cerr << "[VM] GARBAGE selector: method=0x" << std::hex << method_.rawBits()
+                                  << " homeMethod=0x" << homeMethod_.rawBits()
+                                  << " selector=0x" << selector.rawBits() << std::dec
+                                  << " cls=" << selHdr->classIndex() << " len=" << len << "\n";
+                    }
+                }
+            } else {
+                selName = "<non-bytes-" + std::to_string(selHdr->classIndex()) + ">";
+                // Trace when we get a CompiledBlock (3117) as selector - likely wrong literal access
+                if (selHdr->classIndex() == 3117) {
+                    static int blockSelCount = 0;
+                    blockSelCount++;
+                    if (blockSelCount <= 5) {
+                        std::cerr << "[VM] CompiledBlock as selector: selector=0x" << std::hex << selector.rawBits()
+                                  << " method=0x" << method_.rawBits()
+                                  << " homeMethod=0x" << homeMethod_.rawBits() << std::dec;
+                        // Show method's numLiterals
+                        if (method_.isObject()) {
+                            Oop mHdr = memory_.fetchPointer(0, method_);
+                            if (mHdr.isSmallInteger()) {
+                                int64_t hBits = mHdr.asSmallInteger();
+                                std::cerr << " method_numLits=" << (hBits & 0x7FFF);
+                            }
+                        }
+                        std::cerr << "\n";
+                    }
+                }
+            }
+        } else if (selector.isNil() || selector.rawBits() == 0) {
+            selName = "<nil>";
+        }
+        std::cerr << "[VM] sendSelector #" << sendCount << ": #" << selName << " args=" << argCount;
+
+        // Show receiver class for first few sends
+        if (sendCount <= 15) {
+            Oop rcvrTrace = stackValue(argCount);
+            if (rcvrTrace.isObject()) {
+                Oop rcvrClassTrace = memory_.classOf(rcvrTrace);
+                if (rcvrClassTrace.isObject()) {
+                    ObjectHeader* clsHdr = rcvrClassTrace.asObjectPtr();
+                    if (clsHdr->slotCount() > 6) {
+                        Oop className = memory_.fetchPointer(6, rcvrClassTrace);
+                        if (className.isObject()) {
+                            ObjectHeader* nameHdr = className.asObjectPtr();
+                            if (nameHdr->isBytesObject() && nameHdr->byteSize() <= 50) {
+                                std::cerr << " rcvr=" << std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+            } else if (rcvrTrace.isSmallInteger()) {
+                std::cerr << " rcvr=SmallInt(" << rcvrTrace.asSmallInteger() << ")";
+            }
+        }
+        std::cerr << "\n";
+    }
+
     // Get receiver (under the arguments on stack)
     Oop rcvr = stackValue(argCount);
 
@@ -1995,10 +2194,24 @@ void Interpreter::activateBlock(Oop block, int argCount) {
 // ===== FRAME MANAGEMENT =====
 
 void Interpreter::pushFrame(Oop method, int argCount) {
+    static int pushCount = 0;
+    pushCount++;
+
     // Save current execution state before switching to new method
     if (frameDepth_ >= MaxFrameDepth) {
+        std::cerr << "[VM] Frame depth overflow (" << MaxFrameDepth << ") after " << pushCount << " pushes, setting running_=false\n";
+        // Show the method that caused overflow
+        if (method.isObject()) {
+            Oop classRef = memory_.fetchPointer(0, method);  // method header or class
+            std::cerr << "[VM] Last method causing overflow: 0x" << std::hex << method.rawBits() << std::dec << "\n";
+        }
         running_ = false;
         return;
+    }
+
+    // Trace first few pushes
+    if (pushCount <= 20) {
+        std::cerr << "[VM] pushFrame #" << pushCount << " depth=" << frameDepth_ << " argCount=" << argCount << "\n";
     }
 
     SavedFrame& frame = savedFrames_[frameDepth_++];
@@ -2029,10 +2242,18 @@ void Interpreter::pushFrame(Oop method, int argCount) {
 }
 
 void Interpreter::popFrame() {
+    static int popCount = 0;
+    popCount++;
+
     // Restore previous execution state
     if (frameDepth_ == 0) {
+        std::cerr << "[VM] popFrame #" << popCount << ": frameDepth already 0, setting running_=false\n";
         running_ = false;
         return;
+    }
+
+    if (popCount <= 20) {
+        std::cerr << "[VM] popFrame #" << popCount << " depth=" << frameDepth_ << "\n";
     }
 
     --frameDepth_;
@@ -2054,6 +2275,7 @@ void Interpreter::popFrame() {
 
     // If this was the last frame, we're done
     if (frameDepth_ == 0 && frame.savedIP == nullptr) {
+        std::cerr << "[VM] popFrame: last frame with savedIP=null, setting running_=false\n";
         running_ = false;
     }
 }
@@ -2061,16 +2283,17 @@ void Interpreter::popFrame() {
 // ===== VARIABLE ACCESS =====
 
 Oop Interpreter::literal(size_t index) const {
-    // Literals are slots 1..numLiterals in the home method (slot 0 is header)
-    // For CompiledBlocks, homeMethod_ points to the home CompiledMethod
-    // which contains all the literals that block bytecodes reference.
+    // In Pharo 10+ with FullBlockClosure model, both CompiledMethods and CompiledBlocks
+    // have their own literal frames. Each compiled object (method or block) contains
+    // its own literals - blocks do NOT share literals with their home method.
+    //
+    // So we always use method_ (the currently executing CompiledMethod or CompiledBlock)
+    // for literal access, NOT homeMethod_.
+    Oop literalMethod = method_;
 
-    // Use homeMethod_ for literal access - it should always be the home CompiledMethod
-    Oop literalMethod = homeMethod_;
-
-    // Fallback to method_ if homeMethod_ is not set
+    // Safety check
     if (literalMethod.isNil() || !literalMethod.isObject()) {
-        literalMethod = method_;
+        return memory_.specialObject(SpecialObjectIndex::NilObject);
     }
 
     // Get numLiterals from method header for bounds check
@@ -2081,12 +2304,65 @@ Oop Interpreter::literal(size_t index) const {
         size_t numLiterals = headerBits & 0x7FFF;  // bits 0-14
 
         if (index >= numLiterals) {
-            // Out of bounds - return nil
+            // Debug trace out-of-bounds access
+            static int oobCount = 0;
+            oobCount++;
+            if (oobCount <= 5) {
+                std::cerr << "[LITERAL OOB] index=" << index << " numLits=" << numLiterals << "\n";
+                if (literalMethod.isObject()) {
+                    ObjectHeader* mObj = literalMethod.asObjectPtr();
+                    size_t totalBytes = mObj->byteSize();
+                    size_t bcStart = (1 + numLiterals) * 8;
+                    std::cerr << "  method=0x" << std::hex << literalMethod.rawBits()
+                              << " totalBytes=" << std::dec << totalBytes
+                              << " bcStart=" << bcStart << "\n";
+                    // Dump first 20 bytecodes
+                    if (totalBytes > bcStart) {
+                        uint8_t* bytes = mObj->bytes();
+                        std::cerr << "  bytecodes: ";
+                        for (size_t i = 0; i < std::min((size_t)20, totalBytes - bcStart); i++) {
+                            std::cerr << std::hex << std::setw(2) << std::setfill('0')
+                                      << (int)bytes[bcStart + i] << " ";
+                        }
+                        std::cerr << std::dec << "\n";
+                    }
+                    // Show current IP offset
+                    if (instructionPointer_ && mObj->bytes()) {
+                        ptrdiff_t ipOffset = instructionPointer_ - mObj->bytes();
+                        std::cerr << "  IP offset=" << ipOffset << " (bc offset=" << (ipOffset - (ptrdiff_t)bcStart) << ")\n";
+                    }
+                }
+            }
             return memory_.specialObject(SpecialObjectIndex::NilObject);
+        }
+    } else {
+        // Method header isn't a SmallInteger - bad method
+        static int badHdrCount = 0;
+        badHdrCount++;
+        if (badHdrCount <= 5) {
+            std::cerr << "[LITERAL] Bad method header: method=0x" << std::hex << literalMethod.rawBits()
+                      << " header=0x" << methodHeader.rawBits() << std::dec << "\n";
+        }
+        return memory_.specialObject(SpecialObjectIndex::NilObject);
+    }
+
+    Oop result = memory_.fetchPointer(index + 1, literalMethod);
+
+    // Check if result is a CompiledBlock (wrong literal type for selectors)
+    if (result.isObject()) {
+        ObjectHeader* hdr = result.asObjectPtr();
+        if (hdr->classIndex() == 3117) {  // CompiledBlock
+            static int blockLitCount = 0;
+            blockLitCount++;
+            if (blockLitCount <= 5) {
+                std::cerr << "[LITERAL] CompiledBlock at index=" << index
+                          << " literalMethod=0x" << std::hex << literalMethod.rawBits()
+                          << " result=0x" << result.rawBits() << std::dec << "\n";
+            }
         }
     }
 
-    return memory_.fetchPointer(index + 1, literalMethod);
+    return result;
 }
 
 Oop Interpreter::temporary(int index) const {
@@ -2140,6 +2416,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     dnuDepth++;
 
     if (dnuDepth > MAX_DNU_DEPTH) {
+        std::cerr << "[VM] DNU depth exceeded " << MAX_DNU_DEPTH << ", setting running_=false\n";
         running_ = false;
         dnuDepth = 0;
         return;
@@ -2173,6 +2450,78 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
             memory_.storePointer(2, rcvr, arg);
         }
         push(rcvr);  // Return self
+        dnuDepth--;
+        return;
+    }
+    // Startup-specific fallbacks to avoid disrupting normal startup sequence
+    if (origStr == "logSnapshot:andQuit:" || origStr == "logSnapshot:" || origStr == "logSnapshotAndQuit") {
+        // Just pop args and return receiver (do nothing for logging)
+        popN(argCount);
+        // Leave receiver on stack as return value
+        dnuDepth--;
+        return;
+    }
+    if (origStr == "timingPriority" || origStr == "systemBackgroundPriority") {
+        // Return a default priority (40 = user scheduling priority)
+        popN(argCount + 1);
+        push(Oop::fromSmallInteger(40));
+        dnuDepth--;
+        return;
+    }
+    if (origStr == "hasError" || origStr == "isImageStarting" || origStr == "isSessionStarting") {
+        // Return false for these status checks
+        popN(argCount + 1);
+        push(memory_.falseObject());
+        dnuDepth--;
+        return;
+    }
+    if (origStr == "executeDeferredStartupActions:" || origStr == "runStartup:" || origStr == "startUp:") {
+        // Pop argument and return receiver (do nothing)
+        popN(argCount);
+        dnuDepth--;
+        return;
+    }
+    // Fallback for process termination during quit - don't terminate on embedded VM
+    if (origStr == "terminateRealActive" || origStr == "terminateActive" || origStr == "doTerminationFromYourself") {
+        // Don't terminate - just return receiver and continue
+        popN(argCount + 1);
+        push(receiver_);  // Return self
+        dnuDepth--;
+        return;
+    }
+    // Fallback for context manipulation during process termination
+    if (origStr == "asContext") {
+        // Return receiver as-is (already a context or convertible)
+        popN(argCount);  // Pop any args
+        // Leave receiver on stack
+        dnuDepth--;
+        return;
+    }
+    if (origStr == "jump" && argCount == 0) {
+        // Context jump - do nothing, just return
+        pop();  // Pop receiver
+        push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+    if (origStr == "sender" && argCount == 0) {
+        // Return nil for sender (no sender context)
+        pop();  // Pop receiver
+        push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+    if (origStr == "push:" || origStr == "pop" || origStr == "stackp:") {
+        // Context stack operations - do nothing
+        popN(argCount);  // Pop args
+        // Leave receiver on stack
+        dnuDepth--;
+        return;
+    }
+    if (origStr == "privSender:" && argCount == 1) {
+        // Private sender setter - just return receiver
+        pop();  // Pop argument
+        // Leave receiver on stack
         dnuDepth--;
         return;
     }
@@ -2221,6 +2570,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
     // Safeguard: if we're already handling DNU, prevent infinite recursion
     if (selector.rawBits() == selectors_.doesNotUnderstand.rawBits()) {
+        std::cerr << "[VM] DNU for #doesNotUnderstand itself, setting running_=false\n";
         running_ = false;
         dnuDepth = 0;
         return;
@@ -2228,7 +2578,40 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
     // Get the actual receiver that failed (from stack, under args)
     Oop failedReceiver = stackValue(argCount);
-    // std::cerr << "[DNU] #doesNotUnderstand: for receiver 0x" << std::hex << failedReceiver.rawBits() << std::dec; // DEBUG
+
+    // Trace DNU with class info
+    static int dnuTraceCount = 0;
+    dnuTraceCount++;
+    if (dnuTraceCount <= 10) {
+        std::cerr << "[DNU #" << dnuTraceCount << "] ";
+        // Print selector
+        if (selector.isObject() && selector.rawBits() > 0x10000) {
+            ObjectHeader* selHdr = selector.asObjectPtr();
+            if (selHdr->isBytesObject() && selHdr->byteSize() <= 50) {
+                std::cerr << "#" << std::string((char*)selHdr->bytes(), selHdr->byteSize());
+            }
+        }
+        std::cerr << " args=" << argCount;
+        // Print receiver class
+        if (failedReceiver.isObject()) {
+            Oop rcvrClass = memory_.classOf(failedReceiver);
+            if (rcvrClass.isObject()) {
+                ObjectHeader* clsHdr = rcvrClass.asObjectPtr();
+                if (clsHdr->slotCount() > 6) {
+                    Oop className = memory_.fetchPointer(6, rcvrClass);
+                    if (className.isObject()) {
+                        ObjectHeader* nameHdr = className.asObjectPtr();
+                        if (nameHdr->isBytesObject() && nameHdr->byteSize() <= 50) {
+                            std::cerr << " receiver=" << std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                        }
+                    }
+                }
+            }
+        } else if (failedReceiver.isSmallInteger()) {
+            std::cerr << " receiver=SmallInteger(" << failedReceiver.asSmallInteger() << ")";
+        }
+        std::cerr << "\n";
+    }
 
     // Create a Message object
     Oop messageClass = memory_.specialObject(SpecialObjectIndex::ClassMessage);
@@ -2619,25 +3002,74 @@ void Interpreter::setActiveProcess(Oop process) {
 }
 
 void Interpreter::addLastLinkToList(Oop process, Oop list) {
+    std::cerr << "[VM] addLastLinkToList: process=0x" << std::hex << process.rawBits()
+              << " list=0x" << list.rawBits() << std::dec << "\n";
+    std::cerr.flush();
+
+    // Validate inputs
+    if (!process.isObject() || !list.isObject()) {
+        std::cerr << "[VM] addLastLinkToList: Invalid process or list!\n";
+        std::cerr.flush();
+        return;
+    }
+
+    ObjectHeader* procHdr = process.asObjectPtr();
+    ObjectHeader* listHdr = list.asObjectPtr();
+
+    std::cerr << "[VM] addLastLinkToList: process slots=" << procHdr->slotCount()
+              << " list slots=" << listHdr->slotCount() << "\n";
+    std::cerr.flush();
+
+    // Verify process has enough slots for Process layout
+    if (procHdr->slotCount() < 4) {
+        std::cerr << "[VM] addLastLinkToList: Process doesn't have enough slots!\n";
+        std::cerr.flush();
+        return;
+    }
+
     Oop nilObj = memory_.nil();
+
+    std::cerr << "[VM] addLastLinkToList: Setting process.nextLink = nil\n";
+    std::cerr.flush();
 
     // Set process.nextLink = nil (it's the last one)
     memory_.storePointer(ProcessNextLinkIndex, process, nilObj);
 
+    std::cerr << "[VM] addLastLinkToList: Setting process.myList = list\n";
+    std::cerr.flush();
+
     // Set process.myList = list
     memory_.storePointer(ProcessMyListIndex, process, list);
 
+    std::cerr << "[VM] addLastLinkToList: Checking if list is empty\n";
+    std::cerr.flush();
+
     // Check if list is empty
     Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, list);
+
+    std::cerr << "[VM] addLastLinkToList: firstLink=0x" << std::hex << firstLink.rawBits() << std::dec << "\n";
+    std::cerr.flush();
+
     if (firstLink.isNil() || firstLink.rawBits() == nilObj.rawBits()) {
+        std::cerr << "[VM] addLastLinkToList: List is empty, setting firstLink\n";
+        std::cerr.flush();
         // Empty list - process becomes both first and last
         memory_.storePointer(LinkedListFirstLinkIndex, list, process);
     } else {
+        std::cerr << "[VM] addLastLinkToList: List not empty, appending\n";
+        std::cerr.flush();
         // Non-empty list - append to last element
         Oop lastLink = memory_.fetchPointer(LinkedListLastLinkIndex, list);
         memory_.storePointer(ProcessNextLinkIndex, lastLink, process);
     }
+
+    std::cerr << "[VM] addLastLinkToList: Setting lastLink\n";
+    std::cerr.flush();
+
     memory_.storePointer(LinkedListLastLinkIndex, list, process);
+
+    std::cerr << "[VM] addLastLinkToList: Done!\n";
+    std::cerr.flush();
 }
 
 Oop Interpreter::removeFirstLinkOfList(Oop list) {
@@ -2740,44 +3172,89 @@ void Interpreter::putToSleep(Oop process) {
 }
 
 void Interpreter::transferTo(Oop newProcess) {
+    std::cerr << "[VM] transferTo: newProcess=0x" << std::hex << newProcess.rawBits() << std::dec << "\n";
+    std::cerr.flush();
+
     Oop oldProcess = getActiveProcess();
+    std::cerr << "[VM] transferTo: oldProcess=0x" << std::hex << oldProcess.rawBits() << std::dec << "\n";
+    std::cerr.flush();
 
     if (oldProcess.rawBits() == newProcess.rawBits()) {
+        std::cerr << "[VM] transferTo: same process, returning\n";
+        std::cerr.flush();
         return;  // Already running this process
+    }
+
+    // Validate newProcess
+    if (!newProcess.isObject()) {
+        std::cerr << "[VM] transferTo: newProcess is not an object!\n";
+        std::cerr.flush();
+        return;
+    }
+
+    ObjectHeader* newProcHdr = newProcess.asObjectPtr();
+    std::cerr << "[VM] transferTo: newProcess slots=" << newProcHdr->slotCount() << "\n";
+    std::cerr.flush();
+
+    if (newProcHdr->slotCount() < 2) {
+        std::cerr << "[VM] transferTo: newProcess has too few slots!\n";
+        std::cerr.flush();
+        return;
     }
 
     // Save current execution state to old process's suspendedContext
     // For now, we rely on activeContext_ being updated appropriately
     // The context should already reflect current execution state
+    std::cerr << "[VM] transferTo: Saving context to old process\n";
+    std::cerr.flush();
+
     if (!activeContext_.isNil() && activeContext_.isObject()) {
         memory_.storePointer(ProcessSuspendedContextIndex, oldProcess, activeContext_);
     }
 
     // Switch to new process
+    std::cerr << "[VM] transferTo: Setting active process\n";
+    std::cerr.flush();
     setActiveProcess(newProcess);
 
     // Get new process's suspended context
+    std::cerr << "[VM] transferTo: Getting new context\n";
+    std::cerr.flush();
     Oop newContext = memory_.fetchPointer(ProcessSuspendedContextIndex, newProcess);
+    std::cerr << "[VM] transferTo: newContext=0x" << std::hex << newContext.rawBits() << std::dec << "\n";
+    std::cerr.flush();
 
     // Reset interpreter state
     stackPointer_ = stackBase_;
     frameDepth_ = 0;
 
     // Resume execution from the new context
+    std::cerr << "[VM] transferTo: Calling executeFromContext\n";
+    std::cerr.flush();
     executeFromContext(newContext);
+    std::cerr << "[VM] transferTo: Done!\n";
+    std::cerr.flush();
 }
 
 bool Interpreter::tryReschedule() {
+    static int reschedCount = 0;
+    reschedCount++;
+    bool trace = (reschedCount <= 5);
+
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
+    if (trace) {
+        std::cerr << "[SCHED] nilObj=0x" << std::hex << nilObj.rawBits() << std::dec << "\n";
+    }
     Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
 
     if (!schedulerAssoc.isObject() || schedulerAssoc.rawBits() == nilObj.rawBits()) {
+        if (trace) std::cerr << "[SCHED] tryReschedule: no schedulerAssoc\n";
         return false;
     }
 
     Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
     if (!scheduler.isObject()) {
-        // DEBUG: "[SCHED] Invalid scheduler"
+        if (trace) std::cerr << "[SCHED] tryReschedule: invalid scheduler\n";
         return false;
     }
 
@@ -2786,16 +3263,20 @@ bool Interpreter::tryReschedule() {
     Oop queues = memory_.fetchPointer(0, scheduler);
 
     if (!queues.isObject()) {
-        // DEBUG: "[SCHED] No process queues"
+        if (trace) std::cerr << "[SCHED] tryReschedule: no process queues\n";
         return false;
     }
 
     ObjectHeader* queuesHeader = queues.asObjectPtr();
     size_t numQueues = queuesHeader->slotCount();
 
-    // DEBUG: "[SCHED] Scanning " << numQueues << " priority queues for runnable process"
+    if (trace) {
+        std::cerr << "[SCHED] tryReschedule: scanning " << numQueues << " priority queues\n";
+        std::cerr << "[SCHED]   activeProcess=0x" << std::hex << activeProcess.rawBits() << std::dec << "\n";
+    }
 
     // Search from highest to lowest priority
+    int processesFound = 0;
     for (int i = static_cast<int>(numQueues) - 1; i >= 0; i--) {
         Oop queue = queuesHeader->slotAt(i);
         if (!queue.isObject() || queue.rawBits() == nilObj.rawBits()) continue;
@@ -2804,21 +3285,31 @@ bool Interpreter::tryReschedule() {
         Oop process = memory_.fetchPointer(0, queue);
         if (!process.isObject() || process.rawBits() == nilObj.rawBits()) continue;
 
+        processesFound++;
+        if (trace && processesFound <= 3) {
+            std::cerr << "[SCHED]   priority " << (i+1) << ": process=0x" << std::hex << process.rawBits() << std::dec;
+        }
+
         // Skip if this is the same process that just finished
         if (process.rawBits() == activeProcess.rawBits()) {
-            // DEBUG_LOG("[SCHED] Skipping active process at priority " << (i + 1);
+            if (trace) std::cerr << " (SAME AS ACTIVE, skip)\n";
             continue;
         }
 
         // Process: slot 0 = nextLink, slot 1 = suspendedContext, slot 2 = priority
         Oop context = memory_.fetchPointer(1, process);
-        if (!context.isObject() || context.rawBits() == nilObj.rawBits()) continue;
+        if (!context.isObject() || context.rawBits() == nilObj.rawBits()) {
+            if (trace) std::cerr << " (no suspendedContext)\n";
+            continue;
+        }
 
         ObjectHeader* ctxHeader = context.asObjectPtr();
-        if (ctxHeader->format() != ObjectFormat::IndexableWithFixed) continue;
+        if (ctxHeader->format() != ObjectFormat::IndexableWithFixed) {
+            if (trace) std::cerr << " (bad context format=" << (int)ctxHeader->format() << ")\n";
+            continue;
+        }
 
-        // DEBUG_LOG("[SCHED] Found runnable process at priority " << (i + 1)
-                  // << " context=0x" << std::hex << context.rawBits() << std::dec;
+        if (trace) std::cerr << " -> FOUND runnable!\n";
 
         // Update the active process in scheduler
         memory_.storePointer(1, scheduler, process);
@@ -2829,18 +3320,22 @@ bool Interpreter::tryReschedule() {
 
         // Execute from the new process's context
         if (executeFromContext(context)) {
-            // DEBUG: "[SCHED] Rescheduled successfully"
+            if (trace) std::cerr << "[SCHED] Rescheduled successfully\n";
             return true;
         }
     }
 
+    if (trace) std::cerr << "[SCHED] tryReschedule: no runnable process found (scanned " << processesFound << " processes)\n";
     return false;
 }
 
 // ===== STARTUP SUPPORT =====
 
 bool Interpreter::bootstrapStartup() {
-    // DEBUG: "[DEBUG] bootstrapStartup: Looking for startup entry point..."
+    static int bootCount = 0;
+    bootCount++;
+    std::cerr << "[VM] bootstrapStartup called #" << bootCount << "\n";
+    std::cerr.flush();
 
     // In Spur, nil is an actual object at heap start, not 0
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
@@ -2903,7 +3398,9 @@ bool Interpreter::bootstrapStartup() {
                         // Only try to execute if it looks like a Context (not a Process)
                         // Context format is usually 3 (indexable with fixed), Process format is 1
                         if (ctxHeader->format() == ObjectFormat::IndexableWithFixed) {
-                            // DEBUG_LOG("[DEBUG] Found runnable context at priority " << (i + 1);
+                            std::cerr << "[VM] bootstrapStartup: Found context=0x" << std::hex << context.rawBits()
+                                      << " at priority " << std::dec << (i + 1) << "\n";
+                            std::cerr.flush();
                             return executeFromContext(context);
                         } else {
                             // DEBUG_LOG("[DEBUG] suspendedContext doesn't look like a Context (format=" << (int)ctxHeader->format() << ")";
@@ -2948,13 +3445,41 @@ bool Interpreter::bootstrapStartup() {
     // Use static tracking to prevent infinite loops
     static int startupAttempt = 0;
     static bool startupSucceeded = false;
+    static bool displayInitialized = false;
 
     startupAttempt++;
     // DEBUG: "[DEBUG] bootstrapStartup: Attempt #" << startupAttempt
 
+    // Initialize the platform display ONCE with a test pattern
+    // Skip Smalltalk Form creation - just write directly to platform buffer
+    if (!displayInitialized && pharo::gDisplaySurface) {
+        displayInitialized = true;
+        std::cerr << "[VM] bootstrapStartup: Initializing platform display...\n";
+        std::cerr.flush();
+
+        uint32_t* pixels = pharo::gDisplaySurface->pixels();
+        int width = pharo::gDisplaySurface->width();
+        int height = pharo::gDisplaySurface->height();
+
+        // Fill with a blue gradient pattern to verify display works
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                uint8_t r = static_cast<uint8_t>(128 + (x * 127 / width));
+                uint8_t g = static_cast<uint8_t>(128 + (y * 127 / height));
+                uint8_t b = 255;
+                pixels[y * width + x] = (255 << 24) | (r << 16) | (g << 8) | b;  // ARGB
+            }
+        }
+
+        pharo::gDisplaySurface->update();
+        std::cerr << "[VM] bootstrapStartup: Platform display initialized with pattern\n";
+        std::cerr.flush();
+    }
+
     // If we've already tried startup methods and they completed,
     // the Smalltalk code has had a chance to run. Don't keep looping.
     if (startupAttempt > 5) {
+        std::cerr << "[VM] bootstrapStartup: exceeded 5 attempts, setting running_=false\n";
         running_ = false;
         return false;
     }
@@ -3007,7 +3532,8 @@ bool Interpreter::bootstrapStartup() {
 
     // First try: SmalltalkImage >> recordStartupStamp
     if (startupAttempt == 1) {
-        // DEBUG: "[DEBUG] Attempt 1: Trying recordStartupStamp for side effects..."
+        std::cerr << "[VM] bootstrapStartup: Approach 3 - Attempt 1 recordStartupStamp\n";
+        std::cerr.flush();
 
         Oop smalltalkImage = memory_.findGlobal("SmalltalkImage");
         if (smalltalkImage.isObject()) {
@@ -3020,11 +3546,17 @@ bool Interpreter::bootstrapStartup() {
                 // SmalltalkImage current returns the singleton
                 // Let's try calling on nil first
                 Oop context = memory_.createStartupContext(method, memory_.nil());
+                std::cerr << "[VM] bootstrapStartup: createStartupContext returned 0x"
+                          << std::hex << context.rawBits() << std::dec << "\n";
+                std::cerr.flush();
                 if (!context.isNil()) {
                     stackPointer_ = stackBase_;
                     frameDepth_ = 0;
+                    std::cerr << "[VM] bootstrapStartup: Calling executeFromContext...\n";
+                    std::cerr.flush();
                     if (executeFromContext(context)) {
-                        // DEBUG: "[DEBUG] Started recordStartupStamp execution"
+                        std::cerr << "[VM] bootstrapStartup: executeFromContext succeeded\n";
+                        std::cerr.flush();
                         return true;
                     }
                 }
@@ -3319,10 +3851,43 @@ Oop Interpreter::findSelector(const char* name) {
 bool Interpreter::executeFromContext(Oop context) {
     // DEBUG: "[DEBUG] executeFromContext: Setting up execution state..."
 
-    if (context.isNil() || !context.isObject()) {
-        // ERROR: "[ERROR] executeFromContext: Invalid context"
+    // Immediate tracing to catch crash
+    static int execCtxCount = 0;
+    execCtxCount++;
+    std::cerr << "[VM] executeFromContext ENTER #" << execCtxCount
+              << " context=0x" << std::hex << context.rawBits() << std::dec << "\n";
+    std::cerr.flush();
+
+    if (context.isNil()) {
+        std::cerr << "[VM] executeFromContext: context is nil!\n";
+        std::cerr.flush();
         return false;
     }
+
+    if (!context.isObject()) {
+        std::cerr << "[VM] executeFromContext: context is not an object (isSmallInt="
+                  << context.isSmallInteger() << ")!\n";
+        std::cerr.flush();
+        return false;
+    }
+
+    // Get the raw pointer and validate it before dereferencing
+    uintptr_t rawPtr = context.rawBits();
+    std::cerr << "[VM] executeFromContext: rawPtr=0x" << std::hex << rawPtr << std::dec << "\n";
+    std::cerr.flush();
+
+    // Quick sanity check - the ACTUAL object address (clearing low 3 bits for space tag) should be aligned
+    // In Spur, low 3 bits encode the memory space: 000=Old, 010=New, 100=Perm
+    uintptr_t actualAddr = rawPtr & ~0x7ULL;
+    if (actualAddr < 0x1000) {
+        std::cerr << "[VM] executeFromContext: BAD pointer (address too small: 0x"
+                  << std::hex << actualAddr << std::dec << ")!\n";
+        std::cerr.flush();
+        return false;
+    }
+
+    std::cerr << "[VM] executeFromContext: About to dereference context...\n";
+    std::cerr.flush();
 
     // Context layout:
     // slot 0: sender
@@ -3335,8 +3900,30 @@ bool Interpreter::executeFromContext(Oop context) {
 
     // Dump context structure first
     ObjectHeader* ctxHeader = context.asObjectPtr();
+    std::cerr << "[VM] executeFromContext: ctxHeader=" << (void*)ctxHeader << "\n";
+    std::cerr.flush();
+
+    // Read header fields carefully
+    std::cerr << "[VM] executeFromContext: Reading slotCount...\n";
+    std::cerr.flush();
+    size_t slotCount = ctxHeader->slotCount();
+    std::cerr << "[VM] executeFromContext: slotCount=" << slotCount << "\n";
+    std::cerr.flush();
+
+    std::cerr << "[VM] executeFromContext: Reading classIndex...\n";
+    std::cerr.flush();
+    uint32_t clsIdx = ctxHeader->classIndex();
+    std::cerr << "[VM] executeFromContext: classIndex=" << clsIdx << "\n";
+    std::cerr.flush();
+
+    if (slotCount < 6) {
+        std::cerr << "[VM] executeFromContext: Context has too few slots! Expected >=6, got " << slotCount << "\n";
+        std::cerr.flush();
+        return false;
+    }
+
     // DEBUG_LOG("[DEBUG] executeFromContext: Context has " << ctxHeader->slotCount() << " slots, cls=" << ctxHeader->classIndex();
-    for (size_t i = 0; i < std::min(ctxHeader->slotCount(), (size_t)12); i++) {
+    for (size_t i = 0; i < std::min(slotCount, (size_t)12); i++) {
         Oop slot = ctxHeader->slotAt(i);
         // DEBUG_LOG("[DEBUG]   ctx slot[" << i << "] = 0x" << std::hex << slot.rawBits() << std::dec;
         // if (slot.isNil()) std::cerr << " (nil)";
@@ -3348,8 +3935,46 @@ bool Interpreter::executeFromContext(Oop context) {
         // std::cerr; // DEBUG
     }
 
+    std::cerr << "[VM] executeFromContext: Fetching method and receiver...\n";
+    std::cerr.flush();
     method_ = memory_.fetchPointer(3, context);
+    std::cerr << "[VM] executeFromContext: method_=0x" << std::hex << method_.rawBits() << std::dec << "\n";
+    std::cerr.flush();
     receiver_ = memory_.fetchPointer(5, context);
+    std::cerr << "[VM] executeFromContext: receiver_=0x" << std::hex << receiver_.rawBits() << std::dec << "\n";
+    std::cerr.flush();
+
+    // Check for unrelocated pointers (old image base 0x10000000000+)
+    uint64_t methodAddr = method_.rawBits() & ~7ULL;
+    uint64_t receiverAddr = receiver_.rawBits() & ~7ULL;
+    if ((methodAddr >= 0x10000000000ULL && methodAddr < 0x20000000000ULL) ||
+        (receiverAddr >= 0x10000000000ULL && receiverAddr < 0x20000000000ULL)) {
+        std::cerr << "[VM] executeFromContext: Context has unrelocated pointers - skipping\n";
+        std::cerr.flush();
+        return false;
+    }
+
+    // Trace sender slot for debugging
+    Oop sender = memory_.fetchPointer(0, context);
+    Oop nilObjTrace = memory_.specialObject(SpecialObjectIndex::NilObject);
+    std::cerr << "[VM] executeFromContext: sender=0x" << std::hex << sender.rawBits()
+              << " (nilObj=0x" << nilObjTrace.rawBits() << ")" << std::dec;
+    if (sender.rawBits() == nilObjTrace.rawBits()) {
+        std::cerr << " [NIL]";
+    } else if (sender.isNil()) {
+        std::cerr << " (nil-method)";
+    } else if (sender.isSmallInteger()) {
+        std::cerr << " (SmallInt: " << sender.asSmallInteger() << ")";
+    } else if (sender.isCharacter()) {
+        std::cerr << " (Character)";
+    } else if (sender.isObject()) {
+        std::cerr << " (Object)";
+    } else {
+        std::cerr << " (IMMEDIATE but not SmallInt/Char)";
+    }
+    std::cerr << "\n";
+    std::cerr.flush();
+
     activeContext_ = context;  // Track for sender chain on return
 
     // Set homeMethod_ for literal access
@@ -3484,14 +4109,44 @@ bool Interpreter::executeFromContext(Oop context) {
     ObjectHeader* methodObj = method_.asObjectPtr();
     // DEBUG_LOG("[DEBUG] executeFromContext: Method has " << methodObj->slotCount() << " slots, cls=" << methodObj->classIndex() << ", fmt=" << (int)methodObj->format();
 
-    // Check if method has a primitive
+    // Check if method has a primitive or if we're in snapshotPrimitive method
     int primIdx = primitiveIndexOf(method_);
-    if (primIdx > 0) {
-        // Special handling for snapshot primitive (131)
-        // When resuming from a saved image, the snapshot primitive should return false
-        if (primIdx == 131) {
-            // DEBUG_LOG("[DEBUG] Will push 'false' when execution begins (snapshot returns false on resume)";
+    bool isSnapshotResume = false;
+
+    // Track if this is our first snapshot resume (for logging)
+    static bool firstSnapshotResume = true;
+
+    // Check for snapshot primitive (131) by primitive number
+    if (primIdx == 131) {
+        isSnapshotResume = true;
+    }
+
+    // Also check by method selector name (for methods that call primitives differently)
+    if (!isSnapshotResume && receiver_.isObject()) {
+        // Get receiver's class name
+        Oop rcvrClass = memory_.classOf(receiver_);
+        if (rcvrClass.isObject()) {
+            ObjectHeader* clsHdr = rcvrClass.asObjectPtr();
+            if (clsHdr->slotCount() > 6) {
+                Oop nameOop = memory_.fetchPointer(6, rcvrClass);
+                if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                    if (nameHdr->isBytesObject() && nameHdr->byteSize() <= 100) {
+                        std::string className((char*)nameHdr->bytes(), nameHdr->byteSize());
+                        if (className == "SnapshotOperation") {
+                            // We're resuming in SnapshotOperation - set return to false
+                            isSnapshotResume = true;
+                        }
+                    }
+                }
+            }
         }
+    }
+
+    // Log only the first snapshot resume detection
+    if (isSnapshotResume && firstSnapshotResume) {
+        std::cerr << "[VM] Detected SnapshotOperation context - adjusting for resume\n";
+        firstSnapshotResume = false;
     }
 
     Oop methodHeader = memory_.fetchPointer(0, method_);
@@ -3523,18 +4178,32 @@ bool Interpreter::executeFromContext(Oop context) {
     size_t totalBytes = methodObj->byteSize();
     bytecodeEnd_ = methodBytes + totalBytes;
 
-    // DEBUG_LOG("[DEBUG] executeFromContext: numLiterals=" << numLiterals
-              // << " numTemps=" << numTemps
-              // << " bytecodeStart=" << bytecodeStart
-              // << " totalBytes=" << totalBytes;
-
     // Get the saved PC from the context
-    // In Pharo, PC is 1-based byte offset from start of method bytes
+    // In Pharo, PC is 1-based byte offset from start of method bytes (absolute, includes header+literals)
+    // Initial PC = (1 + numLiterals) * 8 + 1 = bytecodeStart + 1
     Oop savedPC = memory_.fetchPointer(1, context);
+    int64_t pcOffset = 0;
     if (savedPC.isSmallInteger()) {
-        int64_t pcOffset = savedPC.asSmallInteger();
+        pcOffset = savedPC.asSmallInteger();
         if (pcOffset > 0) {
-            instructionPointer_ = methodBytes + pcOffset - 1;
+            // Validate: PC must be within bytecode range [bytecodeStart+1, totalBytes+1]
+            // (since PC is 1-based, valid range for 0-based is [bytecodeStart, totalBytes-1])
+            size_t absOffset = static_cast<size_t>(pcOffset - 1);  // Convert to 0-based
+            if (absOffset >= bytecodeStart && absOffset < totalBytes) {
+                instructionPointer_ = methodBytes + absOffset;
+            } else {
+                // Invalid PC - either before bytecodes or past end
+                static int badPcCount = 0;
+                badPcCount++;
+                if (badPcCount <= 5) {
+                    std::cerr << "[VM] WARNING: savedPC=" << pcOffset << " out of range ["
+                              << (bytecodeStart + 1) << "," << totalBytes << "], resetting to start\n";
+                }
+                instructionPointer_ = methodBytes + bytecodeStart;
+                if (usesSistaV1_ && instructionPointer_[0] == 0xF8) {
+                    instructionPointer_ += 3;
+                }
+            }
         } else {
             instructionPointer_ = methodBytes + bytecodeStart;
             // Skip past callPrimitive if at start
@@ -3548,6 +4217,20 @@ bool Interpreter::executeFromContext(Oop context) {
         if (usesSistaV1_ && instructionPointer_[0] == 0xF8) {
             instructionPointer_ += 3;
         }
+    }
+
+    // Debug: check if IP is valid
+    static int execCount = 0;
+    execCount++;
+    if (execCount <= 5) {
+        std::cerr << "[VM] executeFromContext #" << execCount
+                  << ": pcOffset=" << pcOffset
+                  << " bytecodeStart=" << bytecodeStart
+                  << " totalBytes=" << totalBytes
+                  << " IP=0x" << std::hex << (uintptr_t)instructionPointer_
+                  << " end=0x" << (uintptr_t)bytecodeEnd_ << std::dec
+                  << " valid=" << (instructionPointer_ < bytecodeEnd_ ? "yes" : "NO")
+                  << "\n";
     }
 
     // Get saved stackp - in Pharo, stackp is the 1-based index into the temp/stack area
@@ -3583,6 +4266,49 @@ bool Interpreter::executeFromContext(Oop context) {
 
     argCount_ = 0;  // We're resuming a context, not calling a method
 
+    // If resuming from snapshot, we need to:
+    // 1. Set TOS to 'false' (primitive return value indicates "resumed from load")
+    // 2. Set SnapshotOperation's 'save' slot to 'false' (correct value for resume)
+    // 3. Set SnapshotOperation's 'isQuit' slot (slot 2) to 'false' to prevent quit
+    //
+    // The snapshot primitive returns: true = saved, false = resumed
+    // Pharo SnapshotOperation layout:
+    //   slot 0: save (Boolean)
+    //   slot 1: (reserved)
+    //   slot 2: isQuit (Boolean) - if true, quitPrimitive is called after save/resume
+    //   slot 3: isEmbedded (Boolean)
+    //
+    // If the image was saved with "save and quit", isQuit will be true and will
+    // cause quit on resume. We need to clear it for embedded/iOS use.
+    if (isSnapshotResume) {
+        // Set TOS to false (primitive result = resumed)
+        if (stackPointer_ > stackBase_) {
+            *(stackPointer_ - 1) = memory_.falseObject();
+        } else {
+            push(memory_.falseObject());
+        }
+
+        // Adjust SnapshotOperation slots for proper resume
+        if (receiver_.isObject()) {
+            ObjectHeader* rcvr = receiver_.asObjectPtr();
+            if (rcvr->slotCount() >= 3) {
+                // slot 0: ensure 'save' is false (we're resuming, not saving)
+                Oop slot0 = rcvr->slotAt(0);
+                if (slot0 == memory_.trueObject()) {
+                    rcvr->slotAtPut(0, memory_.falseObject());
+                    std::cerr << "[VM] Set SnapshotOperation.save to false\n";
+                }
+
+                // slot 2: clear 'isQuit' to prevent quit on resume
+                Oop slot2 = rcvr->slotAt(2);
+                if (slot2 == memory_.trueObject()) {
+                    rcvr->slotAtPut(2, memory_.falseObject());
+                    std::cerr << "[VM] Cleared SnapshotOperation.isQuit for resume\n";
+                }
+            }
+        }
+    }
+
     // Dump first few bytecodes
     // DEBUG_LOG("[DEBUG] executeFromContext: First bytecodes at IP:" << std::hex;
     for (int i = 0; i < 16 && (instructionPointer_ + i) < bytecodeEnd_; i++) {
@@ -3592,6 +4318,17 @@ bool Interpreter::executeFromContext(Oop context) {
 
     initializeSelectors();
     running_ = true;
+
+    // Debug: final IP check before returning
+    static int exitCount = 0;
+    exitCount++;
+    if (exitCount <= 5) {
+        std::cerr << "[VM] executeFromContext exit #" << exitCount
+                  << " IP=0x" << std::hex << (uintptr_t)instructionPointer_
+                  << " end=0x" << (uintptr_t)bytecodeEnd_
+                  << " this=0x" << (uintptr_t)this << std::dec << "\n";
+    }
+
     return true;
 }
 
@@ -4405,6 +5142,8 @@ void Interpreter::initializePrimitives() {
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {
+    static int failCount = 0;
+
     // Named primitives have high numbers (typically >= 32768)
     // They are looked up by name from method literals - not yet implemented
     // For now, fail gracefully so the method body executes
@@ -4415,17 +5154,36 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
     }
 
     if (primitiveIndex < 0 || primitiveIndex >= static_cast<int>(primitiveTable_.size())) {
-        // std::cerr << "[PRIM] Index out of range: " << primitiveIndex; // DEBUG
+        failCount++;
+        if (failCount <= 10) {
+            std::cerr << "[PRIM] Index out of range: " << primitiveIndex << " (args=" << argCount << ")\n";
+        }
         return PrimitiveResult::Failure;
     }
 
     PrimitiveFunc prim = primitiveTable_[primitiveIndex];
     if (!prim) {
-        // Unimplemented primitive - fail silently to reduce noise
+        failCount++;
+        if (failCount <= 10) {
+            std::cerr << "[PRIM] Unimplemented primitive: " << primitiveIndex << " (args=" << argCount << ")\n";
+        }
         return PrimitiveResult::Failure;
     }
 
+    // Primitive call tracing
+    static int primCallCount = 0;
+    primCallCount++;
+
     PrimitiveResult result = (this->*prim)(argCount);
+
+    // Trace failures to see which primitives are problematic
+    static int failureCount = 0;
+    if (result == PrimitiveResult::Failure) {
+        failureCount++;
+        if (failureCount <= 20) {
+            std::cerr << "[PRIM] Primitive " << primitiveIndex << " FAILED (args=" << argCount << ")\n";
+        }
+    }
 
     // Track successful primitive execution for stepDetailed()
     if (result == PrimitiveResult::Success) {

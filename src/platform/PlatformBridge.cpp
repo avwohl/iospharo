@@ -95,6 +95,12 @@ bool vm_loadImage(const char* imagePath) {
     gInterpreter = new pharo::Interpreter(*gMemory);
     if (!gInterpreter->initialize()) return false;
 
+    // Apply display size if already set (vm_setDisplaySize may be called before vm_loadImage)
+    if (gDisplay) {
+        gInterpreter->setScreenSize(gDisplay->width(), gDisplay->height());
+        gInterpreter->setScreenDepth(gDisplay->depth());
+    }
+
     // Register event callback to signal input semaphore when events arrive
     pharo::gEventQueue.setEventCallback(eventCallback, nullptr);
 
@@ -104,12 +110,16 @@ bool vm_loadImage(const char* imagePath) {
 void vm_run(void) {
     if (!gInterpreter || gRunning) return;
 
+    std::cerr << "[PB] vm_run: starting thread\n";
+
     gRunning = true;
     gVMThread = std::thread([]() {
+        std::cerr << "[PB] Thread started, isRunning=" << gInterpreter->isRunning() << "\n";
         while (gRunning && gInterpreter->isRunning()) {
             gInterpreter->step();
         }
         gRunning = false;
+        std::cerr << "[PB] Thread finished\n";
     });
 }
 

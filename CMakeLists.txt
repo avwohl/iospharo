@@ -8,6 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # VM Core Library
 set(VM_SOURCES
     src/vm/ObjectMemory.cpp
+    src/vm/ImageLoader.cpp
     src/vm/Interpreter.cpp
     src/vm/Primitives.cpp
     src/platform/EventQueue.cpp

@@ -182,6 +182,7 @@ public:
     int screenHeight() const { return screenHeight_; }
     Oop displayForm() const { return displayForm_; }
     void setDisplayForm(Oop form) { displayForm_ = form; }
+    void initializeDisplayForm();  // Create and set up display Form
     int screenDepth() const { return screenDepth_; }
 
     /// Get current execution state
@@ -316,7 +317,7 @@ private:
 
     std::array<MethodCacheEntry, MethodCacheSize> methodCache_;
     WellKnownSelectors selectors_;
-    std::array<PrimitiveFunc, 576> primitiveTable_;
+    std::array<PrimitiveFunc, 600> primitiveTable_;
 
     /// Clear the method cache (used when methods are modified)
     void flushMethodCache() {
