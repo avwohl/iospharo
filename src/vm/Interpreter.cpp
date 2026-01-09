@@ -3374,74 +3374,39 @@ void Interpreter::setActiveProcess(Oop process) {
 }
 
 void Interpreter::addLastLinkToList(Oop process, Oop list) {
-    std::cerr << "[VM] addLastLinkToList: process=0x" << std::hex << process.rawBits()
-              << " list=0x" << list.rawBits() << std::dec << "\n";
-    std::cerr.flush();
-
     // Validate inputs
     if (!process.isObject() || !list.isObject()) {
-        std::cerr << "[VM] addLastLinkToList: Invalid process or list!\n";
-        std::cerr.flush();
         return;
     }
 
     ObjectHeader* procHdr = process.asObjectPtr();
-    ObjectHeader* listHdr = list.asObjectPtr();
-
-    std::cerr << "[VM] addLastLinkToList: process slots=" << procHdr->slotCount()
-              << " list slots=" << listHdr->slotCount() << "\n";
-    std::cerr.flush();
 
     // Verify process has enough slots for Process layout
     if (procHdr->slotCount() < 4) {
-        std::cerr << "[VM] addLastLinkToList: Process doesn't have enough slots!\n";
-        std::cerr.flush();
         return;
     }
 
     Oop nilObj = memory_.nil();
 
-    std::cerr << "[VM] addLastLinkToList: Setting process.nextLink = nil\n";
-    std::cerr.flush();
-
     // Set process.nextLink = nil (it's the last one)
     memory_.storePointer(ProcessNextLinkIndex, process, nilObj);
-
-    std::cerr << "[VM] addLastLinkToList: Setting process.myList = list\n";
-    std::cerr.flush();
 
     // Set process.myList = list
     memory_.storePointer(ProcessMyListIndex, process, list);
 
-    std::cerr << "[VM] addLastLinkToList: Checking if list is empty\n";
-    std::cerr.flush();
-
     // Check if list is empty
     Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, list);
 
-    std::cerr << "[VM] addLastLinkToList: firstLink=0x" << std::hex << firstLink.rawBits() << std::dec << "\n";
-    std::cerr.flush();
-
     if (firstLink.isNil() || firstLink.rawBits() == nilObj.rawBits()) {
-        std::cerr << "[VM] addLastLinkToList: List is empty, setting firstLink\n";
-        std::cerr.flush();
         // Empty list - process becomes both first and last
         memory_.storePointer(LinkedListFirstLinkIndex, list, process);
     } else {
-        std::cerr << "[VM] addLastLinkToList: List not empty, appending\n";
-        std::cerr.flush();
         // Non-empty list - append to last element
         Oop lastLink = memory_.fetchPointer(LinkedListLastLinkIndex, list);
         memory_.storePointer(ProcessNextLinkIndex, lastLink, process);
     }
 
-    std::cerr << "[VM] addLastLinkToList: Setting lastLink\n";
-    std::cerr.flush();
-
     memory_.storePointer(LinkedListLastLinkIndex, list, process);
-
-    std::cerr << "[VM] addLastLinkToList: Done!\n";
-    std::cerr.flush();
 }
 
 Oop Interpreter::removeFirstLinkOfList(Oop list) {
@@ -4334,45 +4299,36 @@ Oop Interpreter::findSelector(const char* name) {
 }
 
 bool Interpreter::executeFromContext(Oop context) {
-    // DEBUG: "[DEBUG] executeFromContext: Setting up execution state..."
+    // Reset interpreter stack - each context execution starts fresh
+    // The context object stores the Smalltalk stack state, which we'll restore below
+    stackPointer_ = stackBase_;
+    frameDepth_ = 0;
 
     // Immediate tracing to catch crash
     static int execCtxCount = 0;
     execCtxCount++;
-    std::cerr << "[VM] executeFromContext ENTER #" << execCtxCount
-              << " context=0x" << std::hex << context.rawBits() << std::dec << "\n";
-    std::cerr.flush();
+    if (execCtxCount <= 10 || execCtxCount % 1000 == 0) {
+        std::cerr << "[VM] executeFromContext #" << execCtxCount
+                  << " context=0x" << std::hex << context.rawBits() << std::dec << "\n";
+    }
 
     if (context.isNil()) {
-        std::cerr << "[VM] executeFromContext: context is nil!\n";
-        std::cerr.flush();
         return false;
     }
 
     if (!context.isObject()) {
-        std::cerr << "[VM] executeFromContext: context is not an object (isSmallInt="
-                  << context.isSmallInteger() << ")!\n";
-        std::cerr.flush();
         return false;
     }
 
     // Get the raw pointer and validate it before dereferencing
     uintptr_t rawPtr = context.rawBits();
-    std::cerr << "[VM] executeFromContext: rawPtr=0x" << std::hex << rawPtr << std::dec << "\n";
-    std::cerr.flush();
 
     // Quick sanity check - the ACTUAL object address (clearing low 3 bits for space tag) should be aligned
     // In Spur, low 3 bits encode the memory space: 000=Old, 010=New, 100=Perm
     uintptr_t actualAddr = rawPtr & ~0x7ULL;
     if (actualAddr < 0x1000) {
-        std::cerr << "[VM] executeFromContext: BAD pointer (address too small: 0x"
-                  << std::hex << actualAddr << std::dec << ")!\n";
-        std::cerr.flush();
         return false;
     }
-
-    std::cerr << "[VM] executeFromContext: About to dereference context...\n";
-    std::cerr.flush();
 
     // Context layout:
     // slot 0: sender
@@ -4383,51 +4339,15 @@ bool Interpreter::executeFromContext(Oop context) {
     // slot 5: receiver
     // slot 6+: temps and stack values
 
-    // Dump context structure first
     ObjectHeader* ctxHeader = context.asObjectPtr();
-    std::cerr << "[VM] executeFromContext: ctxHeader=" << (void*)ctxHeader << "\n";
-    std::cerr.flush();
-
-    // Read header fields carefully
-    std::cerr << "[VM] executeFromContext: Reading slotCount...\n";
-    std::cerr.flush();
     size_t slotCount = ctxHeader->slotCount();
-    std::cerr << "[VM] executeFromContext: slotCount=" << slotCount << "\n";
-    std::cerr.flush();
-
-    std::cerr << "[VM] executeFromContext: Reading classIndex...\n";
-    std::cerr.flush();
-    uint32_t clsIdx = ctxHeader->classIndex();
-    std::cerr << "[VM] executeFromContext: classIndex=" << clsIdx << "\n";
-    std::cerr.flush();
 
     if (slotCount < 6) {
-        std::cerr << "[VM] executeFromContext: Context has too few slots! Expected >=6, got " << slotCount << "\n";
-        std::cerr.flush();
         return false;
     }
 
-    // DEBUG_LOG("[DEBUG] executeFromContext: Context has " << ctxHeader->slotCount() << " slots, cls=" << ctxHeader->classIndex();
-    for (size_t i = 0; i < std::min(slotCount, (size_t)12); i++) {
-        Oop slot = ctxHeader->slotAt(i);
-        // DEBUG_LOG("[DEBUG]   ctx slot[" << i << "] = 0x" << std::hex << slot.rawBits() << std::dec;
-        // if (slot.isNil()) std::cerr << " (nil)";
-        // else if (slot.isSmallInteger()) std::cerr << " (SmallInt: " << slot.asSmallInteger() << ")";
-        // else if (slot.isObject()) {
-        //     ObjectHeader* h = slot.asObjectPtr();
-        //     std::cerr << " (obj: " << h->slotCount() << " slots, cls=" << h->classIndex() << ", fmt=" << (int)h->format() << ")";
-        // }
-        // std::cerr; // DEBUG
-    }
-
-    std::cerr << "[VM] executeFromContext: Fetching method and receiver...\n";
-    std::cerr.flush();
     method_ = memory_.fetchPointer(3, context);
-    std::cerr << "[VM] executeFromContext: method_=0x" << std::hex << method_.rawBits() << std::dec << "\n";
-    std::cerr.flush();
     receiver_ = memory_.fetchPointer(5, context);
-    std::cerr << "[VM] executeFromContext: receiver_=0x" << std::hex << receiver_.rawBits() << std::dec << "\n";
-    std::cerr.flush();
 
     // Check for and fix unrelocated pointers (old image base 0x10000000000+)
     // The old Spur 64-bit image base is 0x10000000000 (1TB)
@@ -4500,26 +4420,6 @@ bool Interpreter::executeFromContext(Oop context) {
                       << " to 0x" << newAddr << std::dec << "\n";
         }
     }
-
-    // Trace sender slot for debugging
-    Oop nilObjTrace = memory_.specialObject(SpecialObjectIndex::NilObject);
-    std::cerr << "[VM] executeFromContext: sender=0x" << std::hex << sender.rawBits()
-              << " (nilObj=0x" << nilObjTrace.rawBits() << ")" << std::dec;
-    if (sender.rawBits() == nilObjTrace.rawBits()) {
-        std::cerr << " [NIL]";
-    } else if (sender.isNil()) {
-        std::cerr << " (nil-method)";
-    } else if (sender.isSmallInteger()) {
-        std::cerr << " (SmallInt: " << sender.asSmallInteger() << ")";
-    } else if (sender.isCharacter()) {
-        std::cerr << " (Character)";
-    } else if (sender.isObject()) {
-        std::cerr << " (Object)";
-    } else {
-        std::cerr << " (IMMEDIATE but not SmallInt/Char)";
-    }
-    std::cerr << "\n";
-    std::cerr.flush();
 
     activeContext_ = context;  // Track for sender chain on return
 
