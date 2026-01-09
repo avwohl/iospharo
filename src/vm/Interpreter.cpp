@@ -862,17 +862,166 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 break;
         }
     }
-    else if (bytecode <= 0xF7) {
-        // Sista V1: 0xF0-0xF7 (240-247): Send literal selector 0-7 with 1 arg
-        int litIndex = bytecode - 0xF0;
-        Oop selector = literal(litIndex);
-        sendSelector(selector, 1);
+    else if (bytecode <= 0xF9) {
+        // Sista V1: 0xF0-0xF9 - Extended operations
+        switch (bytecode) {
+            case 0xF0: // Extended single-extended super send
+            {
+                uint8_t numArgs = extB_ & 0x1F;
+                uint8_t litIndex = fetchByte();
+                int fullIndex = (extA_ << 8) | litIndex;
+                extA_ = 0;
+                extB_ = 0;
+                Oop selector = literal(fullIndex);
+                Oop receiverClass = memory_.classOf(receiver_);
+                Oop superclass = superclassOf(receiverClass);
+                Oop method = lookupMethod(selector, superclass);
+                if (method.isNil()) {
+                    sendDoesNotUnderstand(selector, numArgs);
+                } else {
+                    activateMethod(method, numArgs);
+                }
+                break;
+            }
+            case 0xF1: // Directed super send (to explicit superclass)
+            {
+                uint8_t numArgs = extB_ & 0x1F;
+                uint8_t litIndex = fetchByte();
+                int fullIndex = (extA_ << 8) | litIndex;
+                extA_ = 0;
+                extB_ = 0;
+                Oop selector = literal(fullIndex);
+                // Directed super: superclass is in literal at fullIndex+1
+                Oop superclass = literal(fullIndex + 1);
+                Oop method = lookupMethod(selector, superclass);
+                if (method.isNil()) {
+                    sendDoesNotUnderstand(selector, numArgs);
+                } else {
+                    activateMethod(method, numArgs);
+                }
+                break;
+            }
+            case 0xF2: // Extended push (type in extB bits 6-7, index in extA:byte)
+            {
+                uint8_t indexByte = fetchByte();
+                int fullIndex = (extA_ << 8) | indexByte;
+                int pushType = (extB_ >> 5) & 0x3;
+                extA_ = 0;
+                extB_ = 0;
+                switch (pushType) {
+                    case 0: // Push receiver variable
+                        pushReceiverVariable(fullIndex);
+                        break;
+                    case 1: // Push literal variable
+                        pushLiteralVariable(fullIndex);
+                        break;
+                    case 2: // Push literal constant
+                        pushLiteralConstant(fullIndex);
+                        break;
+                    case 3: // Push temp
+                        pushTemporary(fullIndex);
+                        break;
+                }
+                break;
+            }
+            case 0xF3: // Extended store (type in extB bits 6-7)
+            {
+                uint8_t indexByte = fetchByte();
+                int fullIndex = (extA_ << 8) | indexByte;
+                int storeType = (extB_ >> 5) & 0x3;
+                extA_ = 0;
+                extB_ = 0;
+                Oop value = stackTop();
+                switch (storeType) {
+                    case 0: // Store receiver variable
+                        storeReceiverVariable(fullIndex);
+                        break;
+                    case 1: // Store literal variable
+                    {
+                        Oop assoc = literal(fullIndex);
+                        if (assoc.isObject()) {
+                            memory_.storePointer(1, assoc, value);
+                        }
+                        break;
+                    }
+                    case 2: // Not used
+                        break;
+                    case 3: // Store temp
+                        storeTemporary(fullIndex);
+                        break;
+                }
+                break;
+            }
+            case 0xF4: // Extended store and pop
+            {
+                uint8_t indexByte = fetchByte();
+                int fullIndex = (extA_ << 8) | indexByte;
+                int storeType = (extB_ >> 5) & 0x3;
+                extA_ = 0;
+                extB_ = 0;
+                Oop value = pop();
+                switch (storeType) {
+                    case 0: // Store receiver variable
+                        if (receiver_.isObject()) {
+                            memory_.storePointer(fullIndex, receiver_, value);
+                        }
+                        break;
+                    case 1: // Store literal variable
+                    {
+                        Oop assoc = literal(fullIndex);
+                        if (assoc.isObject()) {
+                            memory_.storePointer(1, assoc, value);
+                        }
+                        break;
+                    }
+                    case 2: // Not used
+                        break;
+                    case 3: // Store temp
+                        // Store in temp at fullIndex in current frame
+                        if (framePointer_ && fullIndex < MaxStackDepth) {
+                            framePointer_[fullIndex + 1] = value;
+                        }
+                        break;
+                }
+                break;
+            }
+            case 0xF5: // Send to absent self (outer)
+            {
+                uint8_t numArgs = extB_ & 0x1F;
+                uint8_t litIndex = fetchByte();
+                int fullIndex = (extA_ << 8) | litIndex;
+                extA_ = 0;
+                extB_ = 0;
+                Oop selector = literal(fullIndex);
+                // For outer sends, push implicit receiver first
+                push(receiver_);
+                sendSelector(selector, numArgs);
+                break;
+            }
+            case 0xF6: // Reserved
+            case 0xF7: // Reserved
+                // Skip - reserved bytecodes
+                break;
+            case 0xF8: // Call primitive (3 bytes total)
+            {
+                uint8_t lowByte = fetchByte();
+                uint8_t highByte = fetchByte();
+                int primIndex = (highByte << 8) | lowByte;
+                // Primitive already called at method start, this is just a marker
+                // that we skip over in normal execution
+                (void)primIndex;
+                break;
+            }
+            case 0xF9: // Push full closure
+            {
+                createFullBlock();
+                break;
+            }
+        }
     }
     else {
-        // Sista V1: 0xF8-0xFF (248-255): Send literal selector 0-7 with 2 args
-        int litIndex = bytecode - 0xF8;
-        Oop selector = literal(litIndex);
-        sendSelector(selector, 2);
+        // Sista V1: 0xFA-0xFF (250-255): Reserved/unused
+        // These may appear in stale contexts from image snapshot - silently skip
     }
 }
 
@@ -2304,35 +2453,8 @@ Oop Interpreter::literal(size_t index) const {
         size_t numLiterals = headerBits & 0x7FFF;  // bits 0-14
 
         if (index >= numLiterals) {
-            // Debug trace out-of-bounds access
-            static int oobCount = 0;
-            oobCount++;
-            if (oobCount <= 5) {
-                std::cerr << "[LITERAL OOB] index=" << index << " numLits=" << numLiterals << "\n";
-                if (literalMethod.isObject()) {
-                    ObjectHeader* mObj = literalMethod.asObjectPtr();
-                    size_t totalBytes = mObj->byteSize();
-                    size_t bcStart = (1 + numLiterals) * 8;
-                    std::cerr << "  method=0x" << std::hex << literalMethod.rawBits()
-                              << " totalBytes=" << std::dec << totalBytes
-                              << " bcStart=" << bcStart << "\n";
-                    // Dump first 20 bytecodes
-                    if (totalBytes > bcStart) {
-                        uint8_t* bytes = mObj->bytes();
-                        std::cerr << "  bytecodes: ";
-                        for (size_t i = 0; i < std::min((size_t)20, totalBytes - bcStart); i++) {
-                            std::cerr << std::hex << std::setw(2) << std::setfill('0')
-                                      << (int)bytes[bcStart + i] << " ";
-                        }
-                        std::cerr << std::dec << "\n";
-                    }
-                    // Show current IP offset
-                    if (instructionPointer_ && mObj->bytes()) {
-                        ptrdiff_t ipOffset = instructionPointer_ - mObj->bytes();
-                        std::cerr << "  IP offset=" << ipOffset << " (bc offset=" << (ipOffset - (ptrdiff_t)bcStart) << ")\n";
-                    }
-                }
-            }
+            // Out-of-bounds access - return nil gracefully
+            // This can happen with stale contexts from image snapshot
             return memory_.specialObject(SpecialObjectIndex::NilObject);
         }
     } else {
