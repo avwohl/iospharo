@@ -382,6 +382,11 @@ Oop ObjectMemory::findGlobal(const std::string& name) const {
 
     // Search the array for the named global
     int totalAssocs = 0;
+    bool debugWorld = (name == "World" || name == "UIManager");
+    if (debugWorld) {
+        std::cerr << "[findGlobal] Searching for '" << name << "' in array of " << arraySize << " slots\n";
+        std::cerr.flush();
+    }
     for (size_t i = 0; i < arraySize; ++i) {
         Oop item = arrayHeader->slotAt(i);
         if (item.isNil() || !item.isObject()) continue;
@@ -394,7 +399,10 @@ Oop ObjectMemory::findGlobal(const std::string& name) const {
                 if (keyHeader->isBytesObject()) {
                     totalAssocs++;
                     if (symbolEquals(key, name.c_str())) {
-                        // std::cerr << "[DEBUG] findGlobal: FOUND '" << name << "'" << std::endl;
+                        if (debugWorld) {
+                            std::cerr << "[findGlobal] FOUND '" << name << "' at slot " << i << "\n";
+                            std::cerr.flush();
+                        }
                         return fetchPointer(1, item);
                     }
                 }
@@ -402,8 +410,11 @@ Oop ObjectMemory::findGlobal(const std::string& name) const {
         }
     }
 
-    // std::cerr << "[DEBUG] findGlobal: '" << name << "' not found in main array. Checked " << arraySize
-              // << " slots, found " << totalAssocs << " associations" << std::endl;
+    if (debugWorld) {
+        std::cerr << "[findGlobal] '" << name << "' not found in main array. Checked " << arraySize
+                  << " slots, found " << totalAssocs << " associations\n";
+        std::cerr.flush();
+    }
 
     // Modern Pharo might store additional entries in overflow structures at slots 2-5
     // Let me search those too
@@ -460,11 +471,13 @@ Oop ObjectMemory::findGlobal(const std::string& name) const {
     // Last resort for 'Smalltalk': try special object index 8 directly
     // In some images, special object 8 IS the Smalltalk/Environment
     if (name == "Smalltalk") {
-        // std::cerr << "[DEBUG] findGlobal: trying alternate approach - returning Environment as 'Smalltalk'" << std::endl;
-        // The Environment wrapper at special object 8 can often be used as "Smalltalk"
         return smalltalkDict;
     }
 
+    if (debugWorld) {
+        std::cerr << "[findGlobal] '" << name << "' NOT FOUND anywhere, returning nil\n";
+        std::cerr.flush();
+    }
     return Oop::nil();
 }
 

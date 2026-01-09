@@ -1664,6 +1664,32 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     // Get receiver (under the arguments on stack)
     Oop rcvr = stackValue(argCount);
 
+    // ===== INTERCEPT TERMINATION SELECTORS =====
+    // During embedded VM startup, prevent process termination from quit sequence
+    // The SnapshotOperation's isQuit=true path tries to terminate processes before
+    // UI initialization completes. We intercept these selectors and return self.
+    if (selector.isObject() && selector.rawBits() > 0x10000) {
+        ObjectHeader* selHdr = selector.asObjectPtr();
+        if (selHdr->isBytesObject() && selHdr->byteSize() > 0 && selHdr->byteSize() < 50) {
+            std::string selStr((char*)selHdr->bytes(), selHdr->byteSize());
+            // Check for termination-related selectors
+            if (selStr == "terminateRealActive" || selStr == "terminateActive" ||
+                selStr == "doTerminationFromYourself" || selStr == "terminate" ||
+                selStr == "primTerminate" || selStr == "primitiveTerminateTo" ||
+                selStr == "terminateTo:") {
+                static int termInterceptCount = 0;
+                termInterceptCount++;
+                if (termInterceptCount <= 10) {
+                    std::cerr << "[VM] INTERCEPT #" << selStr << " - preventing termination during startup\n";
+                }
+                // Pop args and receiver, push receiver back (return self)
+                popN(argCount + 1);
+                push(rcvr);
+                return;
+            }
+        }
+    }
+
     // Check for invalid receiver (could be from out-of-bounds literal access)
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
     if (rcvr.rawBits() == 0 || rcvr.rawBits() == nilObj.rawBits()) {
@@ -3600,8 +3626,8 @@ bool Interpreter::bootstrapStartup() {
 
     // If we've already tried startup methods and they completed,
     // the Smalltalk code has had a chance to run. Don't keep looping.
-    if (startupAttempt > 5) {
-        std::cerr << "[VM] bootstrapStartup: exceeded 5 attempts, setting running_=false\n";
+    if (startupAttempt > 6) {
+        std::cerr << "[VM] bootstrapStartup: exceeded 6 attempts, setting running_=false\n";
         running_ = false;
         return false;
     }
@@ -3711,17 +3737,88 @@ bool Interpreter::bootstrapStartup() {
         }
     }
 
-    // Third try: Try Object >> yourself just to prove basic execution works
+    // Third try: Try to start World UI loop
     if (startupAttempt == 3) {
-        // DEBUG_LOG("[DEBUG] Attempt 3: Trying minimal execution (Object >> yourself)...";
+        std::cerr << "[VM] bootstrapStartup: Attempt 3 - Looking for World...\n";
+        std::cerr.flush();
 
+        // Find World class - Note: World is a global that holds the current WorldMorph
+        Oop world = memory_.findGlobal("World");
+        std::cerr << "[VM] bootstrapStartup: findGlobal(World) returned 0x" << std::hex
+                  << world.rawBits() << std::dec << "\n";
+        std::cerr.flush();
+
+        if (!world.isNil() && world.isObject()) {
+            std::cerr << "[VM] bootstrapStartup: Found World instance (not class)\n";
+            std::cerr.flush();
+
+            // Check World object structure
+            ObjectHeader* worldHdr = world.asObjectPtr();
+            uint32_t worldClassIdx = worldHdr->classIndex();
+            std::cerr << "[VM] bootstrapStartup: World classIndex = " << worldClassIdx
+                      << " slots=" << worldHdr->slotCount() << " format=" << (int)worldHdr->format() << "\n";
+            std::cerr.flush();
+
+            // World is an instance of WorldMorph - get its class for method lookup
+            Oop worldClass = memory_.classOf(world);
+            std::cerr << "[VM] bootstrapStartup: World class (from classOf) = 0x" << std::hex
+                      << worldClass.rawBits() << std::dec << "\n";
+            std::cerr.flush();
+
+            // Try getting class directly from class table
+            Oop worldClassDirect = memory_.classAtIndex(worldClassIdx);
+            std::cerr << "[VM] bootstrapStartup: World class (from classAtIndex) = 0x" << std::hex
+                      << worldClassDirect.rawBits() << std::dec << "\n";
+            std::cerr.flush();
+
+            // If classOf failed, try looking up WorldMorph by name
+            if (worldClass.isNil() || worldClass.rawBits() == 0) {
+                std::cerr << "[VM] bootstrapStartup: classOf failed, trying to find WorldMorph class by name\n";
+                std::cerr.flush();
+                worldClass = memory_.findGlobal("WorldMorph");
+                std::cerr << "[VM] bootstrapStartup: WorldMorph = 0x" << std::hex
+                          << worldClass.rawBits() << std::dec << "\n";
+                std::cerr.flush();
+            }
+
+            // Try to call doOneCycle on the World instance
+            Oop method = lookupMethodInClass(worldClass, "doOneCycle");
+            if (!method.isNil() && method.isObject()) {
+                std::cerr << "[VM] bootstrapStartup: Found doOneCycle method\n";
+                std::cerr.flush();
+                Oop context = memory_.createStartupContext(method, world);  // Pass instance, not class
+                if (!context.isNil()) {
+                    stackPointer_ = stackBase_;
+                    frameDepth_ = 0;
+                    if (executeFromContext(context)) {
+                        std::cerr << "[VM] bootstrapStartup: Started World>>doOneCycle\n";
+                        return true;
+                    }
+                }
+            } else {
+                std::cerr << "[VM] bootstrapStartup: doOneCycle method not found in class\n";
+                std::cerr.flush();
+            }
+        } else {
+            std::cerr << "[VM] bootstrapStartup: World not found (nil or not object)\n";
+            std::cerr.flush();
+        }
+
+        // Also try UIManager
+        Oop uiManager = memory_.findGlobal("UIManager");
+        std::cerr << "[VM] bootstrapStartup: UIManager = 0x" << std::hex
+                  << uiManager.rawBits() << std::dec << "\n";
+        std::cerr.flush();
+    }
+
+    // Fourth try: Try Object >> yourself just to prove basic execution works
+    if (startupAttempt == 4) {
         Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
         if (arrayClass.isObject()) {
             Oop selector = findSelector("yourself");
             if (!selector.isNil()) {
                 Oop method = lookupMethod(selector, arrayClass);
                 if (!method.isNil() && method.isObject()) {
-                    // Create a simple array as receiver
                     Oop receiver = memory_.allocateSlots(arrayClass.asObjectPtr()->classIndex(), 0);
                     if (receiver.isObject()) {
                         Oop context = memory_.createStartupContext(method, receiver);
@@ -3729,7 +3826,6 @@ bool Interpreter::bootstrapStartup() {
                             stackPointer_ = stackBase_;
                             frameDepth_ = 0;
                             if (executeFromContext(context)) {
-                                // DEBUG: "[DEBUG] Started minimal execution"
                                 return true;
                             }
                         }
@@ -4066,18 +4162,79 @@ bool Interpreter::executeFromContext(Oop context) {
     std::cerr << "[VM] executeFromContext: receiver_=0x" << std::hex << receiver_.rawBits() << std::dec << "\n";
     std::cerr.flush();
 
-    // Check for unrelocated pointers (old image base 0x10000000000+)
+    // Check for and fix unrelocated pointers (old image base 0x10000000000+)
+    // The old Spur 64-bit image base is 0x10000000000 (1TB)
+    const uint64_t OLD_IMAGE_BASE = 0x10000000000ULL;
+    uint64_t newBase = reinterpret_cast<uint64_t>(memory_.oldSpaceStart());
+
     uint64_t methodAddr = method_.rawBits() & ~7ULL;
     uint64_t receiverAddr = receiver_.rawBits() & ~7ULL;
-    if ((methodAddr >= 0x10000000000ULL && methodAddr < 0x20000000000ULL) ||
-        (receiverAddr >= 0x10000000000ULL && receiverAddr < 0x20000000000ULL)) {
-        std::cerr << "[VM] executeFromContext: Context has unrelocated pointers - skipping\n";
-        std::cerr.flush();
-        return false;
+
+    bool methodUnrelocated = (methodAddr >= OLD_IMAGE_BASE && methodAddr < OLD_IMAGE_BASE * 2);
+    bool receiverUnrelocated = (receiverAddr >= OLD_IMAGE_BASE && receiverAddr < OLD_IMAGE_BASE * 2);
+
+    if (methodUnrelocated || receiverUnrelocated) {
+        static int fixCount = 0;
+        fixCount++;
+
+        // Fix method pointer if needed
+        if (methodUnrelocated) {
+            uint64_t offset = methodAddr - OLD_IMAGE_BASE;
+            uint64_t newAddr = newBase + offset;
+            ObjectHeader* newMethodPtr = reinterpret_cast<ObjectHeader*>(newAddr);
+            method_ = memory_.oopFromPointer(newMethodPtr);
+
+            if (fixCount <= 5) {
+                std::cerr << "[VM] FIX: method_ relocated from 0x" << std::hex << methodAddr
+                          << " to 0x" << newAddr << std::dec << "\n";
+            }
+
+            // Also fix the context slot
+            ObjectHeader* ctxHdr = context.asObjectPtr();
+            ctxHdr->slotAtPut(3, method_);
+        }
+
+        // Fix receiver pointer if needed
+        if (receiverUnrelocated) {
+            uint64_t offset = receiverAddr - OLD_IMAGE_BASE;
+            uint64_t newAddr = newBase + offset;
+            ObjectHeader* newRcvrPtr = reinterpret_cast<ObjectHeader*>(newAddr);
+            receiver_ = memory_.oopFromPointer(newRcvrPtr);
+
+            if (fixCount <= 5) {
+                std::cerr << "[VM] FIX: receiver_ relocated from 0x" << std::hex << receiverAddr
+                          << " to 0x" << newAddr << std::dec << "\n";
+            }
+
+            // Also fix the context slot
+            ObjectHeader* ctxHdr = context.asObjectPtr();
+            ctxHdr->slotAtPut(5, receiver_);
+        }
+
+        if (fixCount <= 5) {
+            std::cerr << "[VM] executeFromContext: Fixed unrelocated pointers in context (fix #" << fixCount << ")\n";
+        }
+    }
+
+    // Fix sender slot if unrelocated
+    Oop sender = memory_.fetchPointer(0, context);
+    uint64_t senderAddr = sender.rawBits() & ~7ULL;
+    if (senderAddr >= OLD_IMAGE_BASE && senderAddr < OLD_IMAGE_BASE * 2) {
+        uint64_t offset = senderAddr - OLD_IMAGE_BASE;
+        uint64_t newAddr = newBase + offset;
+        ObjectHeader* newSenderPtr = reinterpret_cast<ObjectHeader*>(newAddr);
+        sender = memory_.oopFromPointer(newSenderPtr);
+        ObjectHeader* ctxHdr = context.asObjectPtr();
+        ctxHdr->slotAtPut(0, sender);
+        static int senderFixCount = 0;
+        senderFixCount++;
+        if (senderFixCount <= 3) {
+            std::cerr << "[VM] FIX: sender relocated from 0x" << std::hex << senderAddr
+                      << " to 0x" << newAddr << std::dec << "\n";
+        }
     }
 
     // Trace sender slot for debugging
-    Oop sender = memory_.fetchPointer(0, context);
     Oop nilObjTrace = memory_.specialObject(SpecialObjectIndex::NilObject);
     std::cerr << "[VM] executeFromContext: sender=0x" << std::hex << sender.rawBits()
               << " (nilObj=0x" << nilObjTrace.rawBits() << ")" << std::dec;
