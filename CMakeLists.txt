@@ -34,6 +34,9 @@ target_link_libraries(test_load_image PharoVMCore)
 add_executable(test_platform src/platform/test_platform.cpp)
 target_link_libraries(test_platform PharoVMCore)
 
+add_executable(test_ios_bridge src/platform/test_ios_bridge.cpp)
+target_link_libraries(test_ios_bridge PharoVMCore)
+
 message(STATUS "PharoVM Clean C++ configured")
 message(STATUS "  Build tests with: make test_load_image test_platform")
 message(STATUS "  For Swift apps, use Xcode with the bridging header")

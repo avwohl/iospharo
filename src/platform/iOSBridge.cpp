@@ -78,6 +78,13 @@ int vm_init(VMParameters* parameters) {
         return 0;
     }
 
+    // Set up a default display surface BEFORE loading image, but only if not already set
+    // This ensures the VM has somewhere to render during startup
+    // The actual size will be updated when the Metal view appears
+    if (vm_getDisplayWidth() == 0) {
+        vm_setDisplaySize(1024, 768, 32);
+    }
+
     // Load the image if specified
     if (parameters->imageFileName) {
         if (!vm_loadImage(parameters->imageFileName)) {
@@ -95,6 +102,8 @@ void vm_run_interpreter(void) {
         // Sleep to avoid busy-wait
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
+    // CRITICAL: Must call vm_stop to join the thread, otherwise std::terminate is called
+    vm_stop();
 }
 
 // ===== iOS Display Bridge =====

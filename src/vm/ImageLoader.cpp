@@ -36,37 +36,55 @@ inline uint8_t extractNumSlots(uint64_t header) {
 LoadResult ImageLoader::load(const std::string& path, ObjectMemory& memory) {
     LoadResult result;
 
+    std::cerr << "[ImageLoader] Loading: " << path << "\n";
+
     // Open the image file
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) {
         result.error = "Cannot open image file: " + path;
+        std::cerr << "[ImageLoader] " << result.error << "\n";
         return result;
     }
 
     // Step 1: Read and validate header
+    std::cerr << "[ImageLoader] Step 1: Reading header\n";
     if (!readHeader(file, result)) {
+        std::cerr << "[ImageLoader] Header read failed: " << result.error << "\n";
         return result;
     }
+    std::cerr << "[ImageLoader] Header read OK\n";
 
     // Step 2: Load heap data
+    std::cerr << "[ImageLoader] Step 2: Loading heap data\n";
     if (!loadHeapData(file, memory, result)) {
+        std::cerr << "[ImageLoader] Heap load failed: " << result.error << "\n";
         return result;
     }
+    std::cerr << "[ImageLoader] Heap loaded OK\n";
 
     // Step 3: Relocate pointers
+    std::cerr << "[ImageLoader] Step 3: Relocating pointers\n";
     if (!relocatePointers(memory, result)) {
+        std::cerr << "[ImageLoader] Relocate failed: " << result.error << "\n";
         return result;
     }
+    std::cerr << "[ImageLoader] Pointers relocated OK\n";
 
     // Step 4: Set up special objects
+    std::cerr << "[ImageLoader] Step 4: Setting up special objects\n";
     if (!setupSpecialObjects(memory, result)) {
+        std::cerr << "[ImageLoader] Special objects failed: " << result.error << "\n";
         return result;
     }
+    std::cerr << "[ImageLoader] Special objects OK\n";
 
     // Step 5: Build class table
+    std::cerr << "[ImageLoader] Step 5: Building class table\n";
     if (!buildClassTable(memory, result)) {
+        std::cerr << "[ImageLoader] Class table failed: " << result.error << "\n";
         return result;
     }
+    std::cerr << "[ImageLoader] Class table OK\n";
 
     result.success = true;
     return result;
@@ -552,58 +570,39 @@ bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
     uint64_t hiddenRootsRaw = hiddenRootsHdr->rawHeader();
 
     size_t hiddenRootsSlots = hiddenRootsHdr->slotCount();
-    std::cerr << "[ClassTable] heapStart=0x" << std::hex << (uintptr_t)heapStart
-              << " hiddenRoots@0: slots=" << std::dec << hiddenRootsSlots
-              << " fmt=" << (int)hiddenRootsHdr->format() << "\n";
-
     if (hiddenRootsSlots == 0) {
         // Maybe hiddenRoots is not at offset 0, try offset 0x8
         hiddenRootsHdr = reinterpret_cast<ObjectHeader*>(heapStart + 0x8);
         hiddenRootsRaw = hiddenRootsHdr->rawHeader();
         hiddenRootsSlots = hiddenRootsHdr->slotCount();
-        std::cerr << "[ClassTable] At offset 0x8: slots=" << hiddenRootsSlots
-                  << " fmt=" << (int)hiddenRootsHdr->format() << "\n";
     }
 
     // Slot 0 of hiddenRoots should be the classTableFirstPage array
     if (hiddenRootsSlots < 1) {
-        std::cerr << "[ClassTable] hiddenRoots has <1 slots, going to fallback_scan\n";
         // Fall back to scanning approach
         goto fallback_scan;
     }
 
     {
-        std::cerr << "[ClassTable] hiddenRoots at 0x" << std::hex << (uintptr_t)hiddenRootsHdr
-                  << " slots=" << std::dec << hiddenRootsSlots << "\n";
-
         Oop classTableFirstPageOop = hiddenRootsHdr->slotAt(0);
-        std::cerr << "[ClassTable] slot0 = 0x" << std::hex << classTableFirstPageOop.rawBits()
-                  << " isNil=" << classTableFirstPageOop.isNil()
-                  << " isObject=" << classTableFirstPageOop.isObject() << std::dec << "\n";
 
         if (classTableFirstPageOop.isNil() || !classTableFirstPageOop.isObject()) {
-            std::cerr << "[ClassTable] Going to fallback_scan because slot0 is nil or not object\n";
             goto fallback_scan;
         }
 
         ObjectHeader* classTableFirstPageHdr = classTableFirstPageOop.asObjectPtr();
         size_t numPages = classTableFirstPageHdr->slotCount();
 
-        std::cerr << "[ClassTable] Building from " << numPages << " pages\n";
-
         // Iterate through each page
         for (size_t pageNum = 0; pageNum < numPages && pageNum < 20; pageNum++) {
             Oop pageOop = classTableFirstPageHdr->slotAt(pageNum);
 
             if (pageOop.isNil() || !pageOop.isObject()) {
-                std::cerr << "[ClassTable] Page " << pageNum << " is nil/not-object\n";
                 continue;
             }
 
             ObjectHeader* pageHdr = pageOop.asObjectPtr();
             size_t pageSlots = pageHdr->slotCount();
-
-            std::cerr << "[ClassTable] Page " << pageNum << ": " << pageSlots << " slots\n";
 
             // Each slot in the page is a class object pointer
             for (size_t i = 0; i < pageSlots; i++) {
@@ -625,14 +624,6 @@ bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
     }
 
 fallback_scan:
-    std::cerr << "[ClassTable] fallback_scan: checking heap layout at start:\n";
-    for (int off = 0; off <= 0x48; off += 0x8) {
-        ObjectHeader* hdr = reinterpret_cast<ObjectHeader*>(heapStart + off);
-        std::cerr << "  [0x" << std::hex << off << std::dec << "]: slots=" << hdr->slotCount()
-                  << " fmt=" << (int)hdr->format()
-                  << " cls=" << hdr->classIndex() << "\n";
-    }
-
     // In Spur, the layout at start of old space is:
     //   offset 0x0:  nil object (format 0, 0 slots)
     //   offset 0x10: false object (format 0, 0 slots)
@@ -643,59 +634,20 @@ fallback_scan:
     // classTableFirstPage[N] -> page N (array of ~1024 class pointers)
 
     // Find the hiddenRoots object at offset 0x30
-    ObjectHeader* hrHdr = reinterpret_cast<ObjectHeader*>(heapStart + 0x30);
-    auto hrFmt = hrHdr->format();
-    size_t hrSlots = hrHdr->slotCount();
-
-    std::cerr << "[ClassTable] hiddenRoots@0x30: fmt=" << (int)hrFmt << " slots=" << hrSlots << "\n";
-
-    // hiddenRoots should be format 9 (Indexable64) with slots
-    if (hrFmt != ObjectFormat::Indexable64 || hrSlots < 1) {
-        std::cerr << "[ClassTable] hiddenRoots@0x30 doesn't match expected format, trying direct_scan\n";
-        goto direct_scan;
-    }
-
     {
-        std::cerr << "[ClassTable] Good! hiddenRoots@0x30 looks correct, reading classTableFirstPage\n";
-        // Debug: dump raw bytes around 0x30-0x70
-        std::cerr << "[ClassTable] Raw bytes at 0x30-0x78:\n";
-        for (int off = 0x30; off < 0x78; off += 8) {
-            uint64_t val = *reinterpret_cast<uint64_t*>(heapStart + off);
-            std::cerr << "  0x" << std::hex << off << ": 0x" << val << std::dec << "\n";
+        ObjectHeader* hrHdr = reinterpret_cast<ObjectHeader*>(heapStart + 0x30);
+        auto hrFmt = hrHdr->format();
+        size_t hrSlots = hrHdr->slotCount();
+
+        // hiddenRoots should be format 9 (Indexable64) with slots
+        if (hrFmt != ObjectFormat::Indexable64 || hrSlots < 1) {
+            goto direct_scan;
         }
 
-        // Dump first 10 slots of hiddenRoots to understand structure
-        // Also check raw bytes at the object body
-        uint64_t* rawSlots = reinterpret_cast<uint64_t*>(hrHdr + 1);  // Skip header
-        std::cerr << "[ClassTable] First 10 raw slot values (hex) at hiddenRoots body:\n";
-        for (int i = 0; i < 10 && i < static_cast<int>(hrSlots); i++) {
-            std::cerr << "  raw[" << i << "]: 0x" << std::hex << rawSlots[i] << std::dec << "\n";
-        }
-
-        std::cerr << "[ClassTable] First 10 slots of hiddenRoots@0x30 (via slotAt):\n";
-        for (int i = 0; i < 10 && i < static_cast<int>(hrSlots); i++) {
-            Oop slotOop = hrHdr->slotAt(i);
-            std::cerr << "  [" << i << "]: 0x" << std::hex << slotOop.rawBits() << std::dec;
-            if (slotOop.isNil()) std::cerr << " (nil)";
-            else if (slotOop.isSmallInteger()) std::cerr << " (int=" << slotOop.asSmallInteger() << ")";
-            else if (slotOop.isObject()) std::cerr << " (object)";
-            std::cerr << "\n";
-        }
-
-        // The class table pages might be directly embedded in hiddenRoots
-        // or might be pointed to by slot 0
         Oop classTableFirstPageOop = hrHdr->slotAt(0);
-        std::cerr << "[ClassTable] classTableFirstPage slot0 = 0x" << std::hex
-                  << classTableFirstPageOop.rawBits()
-                  << " isNil=" << classTableFirstPageOop.isNil()
-                  << " isObject=" << classTableFirstPageOop.isObject() << std::dec << "\n";
 
         if (classTableFirstPageOop.isNil() || !classTableFirstPageOop.isObject()) {
-            std::cerr << "[ClassTable] slot0 is nil or not object, trying direct use of hiddenRoots\n";
             // Try using hiddenRoots itself as the class table first page
-            // Each slot points to a class object
-            // std::cerr << "[DEBUG] Trying to use hiddenRoots slots directly as class table..." << std::endl;
-
             for (size_t i = 0; i < hrSlots; i++) {
                 Oop classOop = hrHdr->slotAt(i);
                 if (!classOop.isNil() && classOop.isObject()) {
@@ -705,7 +657,6 @@ fallback_scan:
             }
 
             if (totalClasses > 0) {
-                // std::cerr << "[DEBUG] Loaded " << totalClasses << " classes directly from hiddenRoots" << std::endl;
                 return true;
             }
 
@@ -915,7 +866,7 @@ direct_scan:
         scanned++;
     }
 
-    std::cerr << "[ClassTable] Registered " << registeredClasses << " classes via heap scan" << std::endl;
+    // Classes registered via heap scan: registeredClasses
 
     // Try special approach: check special objects that ARE classes
     // SO 5, 6, 7, 9, etc. should be class objects
@@ -1026,60 +977,106 @@ bool ImageLoader::isObjectPointer(uint64_t bits) const {
 uint64_t ImageLoader::relocatePointer(uint64_t oldOop) const {
     if (oldOop == 0) return 0;  // nil stays nil
 
-    // Check for immediate values (bit 0 = 1)
-    // Spur 64-bit uses 3-bit tags just like us:
-    // - SmallInteger: tag 001 (bits 2:0), value in bits 63:3
-    // - Character: tag 010
-    // - SmallFloat: tag 100
-    // So immediates don't need format conversion, just return as-is
-    if (oldOop & 1) {
-        return oldOop;  // Immediates don't relocate
+    // Check for immediate values using SPUR's encoding (the image format)
+    // Standard Spur 64-bit immediate tags:
+    // - Object pointer: tag 000 (8-byte aligned address)
+    // - SmallInteger: bit 0 = 1 (any odd number)
+    // - Character: tag 010 (bit 0 = 0, but bits 2:1 = 01)
+    // - SmallFloat: tag 100 (bit 0 = 0, but bits 2:1 = 10)
+    //
+    // So immediates are: any value with (tag & 7) != 0
+    // Only tag == 0 (all low 3 bits zero) is an object pointer
+    uint64_t tag = oldOop & 7;
+    if (tag != 0) {
+        // This is an immediate value (SmallInteger, Character, or SmallFloat)
+        // Convert from Spur encoding to our encoding if needed
+        if (tag == 1 || tag == 3 || tag == 5 || tag == 7) {
+            // SmallInteger (odd): already compatible with our tag 001
+            return oldOop;
+        } else if (tag == 2) {
+            // Spur Character (010) -> our Character (011)
+            // Value is in bits 63:3, shift and re-tag
+            uint64_t value = oldOop >> 3;
+            return (value << 3) | 0x3;  // Our CharacterTag
+        } else if (tag == 4) {
+            // Spur SmallFloat (100) -> our SmallFloat (101)
+            uint64_t value = oldOop >> 3;
+            return (value << 3) | 0x5;  // Our SmallFloatTag
+        } else if (tag == 6) {
+            // Tag 110 - reserved/unused in Spur, treat as immediate
+            return oldOop;
+        }
+        // Any other tag - don't relocate
+        return oldOop;
     }
 
-    // Extract the address part (clear low 3 bits)
-    uint64_t oldAddr = oldOop & ~7ULL;
+    // It's an object pointer (tag = 000, 8-byte aligned address)
+    // Only relocate if it's within the old heap bounds
+    if (oldOop < oldBase_ || oldOop >= oldBase_ + loadedSize_) {
+        // Pointer outside old heap - could be special value, already relocated,
+        // or from another segment. Don't relocate.
+        return oldOop;
+    }
 
     // Calculate new address
-    uint64_t newAddr = oldAddr - oldBase_ + newBase_;
-
-    // In the original Spur format, bits 0-2 might encode space info
-    // We need to set our space encoding (bits 1-2 = 00 for old space)
-    // Bit 0 stays 0 for object pointers
-    return newAddr;  // Space encoding is 00 (old space) by default
+    uint64_t newAddr = oldOop - oldBase_ + newBase_;
+    return newAddr;
 }
 
 Oop ImageLoader::rawToOop(uint64_t raw, ObjectMemory& memory) const {
     if (raw == 0) return Oop::nil();
-    if (raw & 1) {
-        // Immediate - determine type and convert
-        uint64_t tag = raw & 7;
-        if (tag == 1) {
-            // SmallInteger
+
+    // Check tag - handles both Spur and our encoding
+    uint64_t tag = raw & 7;
+    if (tag != 0) {
+        // Immediate value
+        if (tag == 1 || tag == 3 || tag == 5 || tag == 7) {
+            // Odd tags (SmallInteger variants or our Character/SmallFloat)
+            if (tag == 1) {
+                // SmallInteger (both Spur and ours use tag 001)
+                int64_t value = static_cast<int64_t>(raw) >> 3;
+                return Oop::fromSmallInteger(value);
+            } else if (tag == 3) {
+                // Our Character encoding (011)
+                uint32_t codepoint = static_cast<uint32_t>((raw >> 3) & 0x1FFFFFFF);
+                return Oop::fromCharacter(codepoint);
+            } else if (tag == 5) {
+                // Our SmallFloat encoding (101)
+                Oop result;
+                uint64_t rotated = raw >> 3;
+                uint64_t doubleBits = (rotated >> 61) | (rotated << 3);
+                double value;
+                std::memcpy(&value, &doubleBits, sizeof(double));
+                if (!Oop::tryFromSmallFloat(value, result)) {
+                    return Oop::fromSmallInteger(0);
+                }
+                return result;
+            }
+            // tag == 7: treat as SmallInteger
             int64_t value = static_cast<int64_t>(raw) >> 3;
             return Oop::fromSmallInteger(value);
-        } else if (tag == 3) {
-            // Character
+        } else if (tag == 2) {
+            // Spur Character (010) - convert to our format
             uint32_t codepoint = static_cast<uint32_t>((raw >> 3) & 0x1FFFFFFF);
             return Oop::fromCharacter(codepoint);
-        } else if (tag == 5) {
-            // SmallFloat - complex encoding, preserve raw bits for now
-            // The encoding may differ between VMs
+        } else if (tag == 4) {
+            // Spur SmallFloat (100) - convert to our format
             Oop result;
-            // Try to create SmallFloat, fall back if encoding differs
             uint64_t rotated = raw >> 3;
             uint64_t doubleBits = (rotated >> 61) | (rotated << 3);
             double value;
             std::memcpy(&value, &doubleBits, sizeof(double));
             if (!Oop::tryFromSmallFloat(value, result)) {
-                // Fall back to zero - image may use different encoding
                 return Oop::fromSmallInteger(0);
             }
             return result;
         }
+        // tag == 6: reserved, treat as SmallInteger (best effort)
+        return Oop::fromSmallInteger(static_cast<int64_t>(raw) >> 3);
     }
 
-    // Object pointer
-    ObjectHeader* ptr = reinterpret_cast<ObjectHeader*>(raw & ~7ULL);
+    // Object pointer (tag = 000)
+    ObjectHeader* ptr = reinterpret_cast<ObjectHeader*>(raw);
     return memory.oopFromPointer(ptr);
 }
 

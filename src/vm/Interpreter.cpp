@@ -239,6 +239,198 @@ void Interpreter::initializeDisplayForm() {
     }
 }
 
+void Interpreter::renderWorldMorphs() {
+    // Render World's morphs directly to the platform display
+    // This bypasses NullWorldRenderer and draws morphs ourselves
+    if (!pharo::gDisplaySurface) return;
+
+    static int totalMorphsDrawn = 0;
+
+    // Find the World global
+    Oop world = memory_.findGlobal("World");
+    if (world.isNil() || !world.isObject()) return;
+
+    uint32_t* pixels = pharo::gDisplaySurface->pixels();
+    int dispWidth = pharo::gDisplaySurface->width();
+    int dispHeight = pharo::gDisplaySurface->height();
+    Oop nilObj = memory_.nil();
+
+    // Helper to get morph class name
+    auto getMorphClassName = [this](Oop morph) -> std::string {
+        Oop morphClass = memory_.classOf(morph);
+        if (morphClass.isObject()) {
+            ObjectHeader* clsHdr = morphClass.asObjectPtr();
+            if (clsHdr->slotCount() > 6) {
+                Oop clsName = memory_.fetchPointer(6, morphClass);
+                if (clsName.isObject()) {
+                    ObjectHeader* nameHdr = clsName.asObjectPtr();
+                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                        return std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                    }
+                }
+            }
+        }
+        return "Unknown";
+    };
+
+    // Helper to extract color from a Color object
+    auto extractColor = [this, nilObj](Oop colorObj) -> uint32_t {
+        if (colorObj.isNil() || !colorObj.isObject()) return 0xFFCCCCCC;
+
+        // Color stores RGB in slot 0 (may be SmallInteger or Float-based)
+        Oop rgb = memory_.fetchPointer(0, colorObj);
+        if (rgb.isSmallInteger()) {
+            int rgbVal = static_cast<int>(rgb.asSmallInteger());
+            return 0xFF000000 | (rgbVal & 0xFFFFFF);
+        }
+        return 0xFFCCCCCC;
+    };
+
+    // Helper to extract rectangle from a slot
+    auto extractRect = [this](Oop rect, int& x1, int& y1, int& x2, int& y2) -> bool {
+        if (rect.isNil() || !rect.isObject()) return false;
+
+        // Rectangle slots: 0=origin (Point), 1=corner (Point)
+        Oop origin = memory_.fetchPointer(0, rect);
+        Oop corner = memory_.fetchPointer(1, rect);
+        if (origin.isNil() || corner.isNil()) return false;
+        if (!origin.isObject() || !corner.isObject()) return false;
+
+        // Point slots: 0=x, 1=y
+        Oop originX = memory_.fetchPointer(0, origin);
+        Oop originY = memory_.fetchPointer(1, origin);
+        Oop cornerX = memory_.fetchPointer(0, corner);
+        Oop cornerY = memory_.fetchPointer(1, corner);
+
+        x1 = originX.isSmallInteger() ? static_cast<int>(originX.asSmallInteger()) : 0;
+        y1 = originY.isSmallInteger() ? static_cast<int>(originY.asSmallInteger()) : 0;
+        x2 = cornerX.isSmallInteger() ? static_cast<int>(cornerX.asSmallInteger()) : 0;
+        y2 = cornerY.isSmallInteger() ? static_cast<int>(cornerY.asSmallInteger()) : 0;
+
+        return true;
+    };
+
+    // Helper to extract bounds from a morph
+    auto extractBounds = [this, nilObj, &extractRect, dispWidth, dispHeight, &getMorphClassName]
+            (Oop morph, int& x1, int& y1, int& x2, int& y2) -> bool {
+        // Try bounds (slot 0) first
+        if (extractRect(memory_.fetchPointer(0, morph), x1, y1, x2, y2)) {
+            // Check if bounds are valid (non-zero size)
+            if (x2 - x1 > 0 && y2 - y1 > 0) return true;
+        }
+
+        // Try fullBounds (slot 3) as fallback
+        if (extractRect(memory_.fetchPointer(3, morph), x1, y1, x2, y2)) {
+            if (x2 - x1 > 0 && y2 - y1 > 0) return true;
+        }
+
+        // Assign fallback bounds based on morph class (for headless images)
+        std::string className = getMorphClassName(morph);
+        if (className == "MenubarMorph") {
+            x1 = 0; y1 = 0; x2 = dispWidth; y2 = 25;
+            return true;
+        } else if (className == "TaskbarMorph") {
+            x1 = 0; y1 = dispHeight - 40; x2 = dispWidth; y2 = dispHeight;
+            return true;
+        } else if (className == "SpWindow" || className == "SystemWindow") {
+            x1 = 50; y1 = 50; x2 = dispWidth - 100; y2 = dispHeight - 100;
+            return true;
+        } else if (className.find("Grip") != std::string::npos) {
+            // Window grips - skip (will be positioned relative to window)
+            return false;
+        }
+
+        // For other morphs with zero bounds, skip rendering
+        return false;
+    };
+
+    // Recursive morph rendering function
+    std::function<void(Oop, int, int)> renderMorph = [&](Oop morph, int depth, int index) {
+        if (morph.isNil() || !morph.isObject()) return;
+        if (depth > 20) return;  // Prevent infinite recursion
+
+        totalMorphsDrawn++;
+
+        // Get bounds
+        int x1, y1, x2, y2;
+        if (!extractBounds(morph, x1, y1, x2, y2)) return;
+
+        // Get color
+        Oop morphColor = memory_.fetchPointer(4, morph);
+        uint32_t colorARGB = extractColor(morphColor);
+
+        // Skip if bounds are invalid or too small (but don't skip for depth > 0)
+        bool hasBounds = (x2 - x1 >= 1 && y2 - y1 >= 1);
+
+        // Clamp to display bounds
+        int cx1 = std::max(0, std::min(x1, dispWidth));
+        int cy1 = std::max(0, std::min(y1, dispHeight));
+        int cx2 = std::max(0, std::min(x2, dispWidth));
+        int cy2 = std::max(0, std::min(y2, dispHeight));
+
+        // Draw filled rectangle if we have valid bounds
+        if (hasBounds && cx2 > cx1 && cy2 > cy1) {
+            for (int y = cy1; y < cy2; y++) {
+                for (int x = cx1; x < cx2; x++) {
+                    pixels[y * dispWidth + x] = colorARGB;
+                }
+            }
+
+            // Draw a 1-pixel darker border for visibility
+            uint32_t borderColor = ((colorARGB & 0xFF000000)) |
+                                   (((colorARGB >> 16) & 0xFF) * 3 / 4 << 16) |
+                                   (((colorARGB >> 8) & 0xFF) * 3 / 4 << 8) |
+                                   ((colorARGB & 0xFF) * 3 / 4);
+
+            // Top and bottom borders
+            for (int x = cx1; x < cx2; x++) {
+                if (cy1 < dispHeight) pixels[cy1 * dispWidth + x] = borderColor;
+                if (cy2 - 1 >= 0 && cy2 - 1 < dispHeight) pixels[(cy2 - 1) * dispWidth + x] = borderColor;
+            }
+            // Left and right borders
+            for (int y = cy1; y < cy2; y++) {
+                if (cx1 < dispWidth) pixels[y * dispWidth + cx1] = borderColor;
+                if (cx2 - 1 >= 0 && cx2 - 1 < dispWidth) pixels[y * dispWidth + cx2 - 1] = borderColor;
+            }
+        }
+
+        // Recursively render submorphs
+        Oop submorphs = memory_.fetchPointer(2, morph);
+        if (submorphs.isNil() || !submorphs.isObject()) return;
+
+        ObjectHeader* subHdr = submorphs.asObjectPtr();
+        size_t numSubmorphs = subHdr->slotCount();
+
+        for (size_t i = 0; i < numSubmorphs; i++) {
+            Oop submorph = subHdr->slotAt(i);
+            renderMorph(submorph, depth + 1, static_cast<int>(i));
+        }
+    };
+
+    // Clear to World's color first
+    Oop worldColor = memory_.fetchPointer(4, world);
+    uint32_t worldColorARGB = extractColor(worldColor);
+    for (int i = 0; i < dispWidth * dispHeight; i++) {
+        pixels[i] = worldColorARGB;
+    }
+
+    totalMorphsDrawn = 0;
+
+    // Get World's submorphs and render recursively
+    Oop submorphs = memory_.fetchPointer(2, world);
+    if (!submorphs.isNil() && submorphs.isObject()) {
+        ObjectHeader* subHdr = submorphs.asObjectPtr();
+        size_t numSubmorphs = subHdr->slotCount();
+
+        for (size_t i = 0; i < numSubmorphs; i++) {
+            Oop submorph = subHdr->slotAt(i);
+            renderMorph(submorph, 0, static_cast<int>(i));
+        }
+    }
+
+    pharo::gDisplaySurface->update();
+}
+
 // ===== MAIN LOOP =====
 
 void Interpreter::interpret() {
@@ -310,42 +502,12 @@ void Interpreter::processPendingSignals() {
 }
 
 bool Interpreter::step() {
-    static bool firstEntry = true;
-    if (firstEntry) {
-        std::cerr << "[VM] step() entered, running_=" << running_
-                  << " IP=0x" << std::hex << (uintptr_t)instructionPointer_
-                  << " end=0x" << (uintptr_t)bytecodeEnd_
-                  << " this=0x" << (uintptr_t)this << std::dec << "\n";
-        firstEntry = false;
-    }
-
     if (!running_) {
-        static bool warnedNotRunning = false;
-        if (!warnedNotRunning) {
-            std::cerr << "[VM] step() called but running_=false\n";
-            warnedNotRunning = true;
-        }
         return false;
-    }
-
-    // Trace IP right before the bounds check
-    static int preCheckCount = 0;
-    preCheckCount++;
-    if (preCheckCount <= 3) {
-        std::cerr << "[VM] step() pre-check #" << preCheckCount
-                  << " IP=0x" << std::hex << (uintptr_t)instructionPointer_
-                  << " end=0x" << (uintptr_t)bytecodeEnd_ << std::dec << "\n";
     }
 
     // Check if we've run past the end of bytecodes
     if (instructionPointer_ >= bytecodeEnd_) {
-        static int pastEndCount = 0;
-        pastEndCount++;
-        if (pastEndCount <= 5) {
-            std::cerr << "[VM] step() IP past end (call #" << pastEndCount << ")"
-                      << " IP=0x" << std::hex << (uintptr_t)instructionPointer_
-                      << " end=0x" << (uintptr_t)bytecodeEnd_ << std::dec << "\n";
-        }
         returnValue(receiver_);
         return running_;
     }
@@ -355,16 +517,14 @@ bool Interpreter::step() {
     // NEXT bytecode uses them. The consuming bytecodes reset them after use.
     // Resetting here would break extension byte chains.
 
-    // Bytecode step counter (for debugging startup issues)
+    // Bytecode step counter for periodic updates
     static int stepCount = 0;
-    static bool firstStep = true;
-    if (firstStep) {
-        std::cerr << "[VM] First step() call, running_=" << running_ << "\n";
-        firstStep = false;
-    }
     stepCount++;
-    if (stepCount % 1000000 == 0) {
-        std::cerr << "[VM] Executed " << (stepCount / 1000000) << "M bytecodes\n";
+
+    // Periodic display update - trigger every 10000 steps to ensure rendering happens
+    // even if NullWorldRenderer doesn't call displayWorldStateOf:during:
+    if (stepCount % 10000 == 0 && pharo::gDisplaySurface) {
+        pharo::gDisplaySurface->update();
     }
 
     uint8_t bytecode = fetchByte();
@@ -429,44 +589,55 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
     // - 0x4C-0x4F: push self, true, false, nil
     // - 0x50-0x51: push 0, push 1
 
+    // ========================================================================
+    // SISTA V1 BYTECODE DECODER (Pharo 10+)
+    // Based on EncoderForSistaV1 specification
+    // ========================================================================
+
     if (bytecode <= 0x0F) {
-        // Both: 0x00-0x0F (0-15): Push receiver variable 0-15
+        // 0x00-0x0F: Push Receiver Variable 0-15 (same in V3 and Sista)
         pushReceiverVariable(bytecode);
     }
     else if (bytecode <= 0x1F) {
-        // 0x10-0x1F (16-31): Differs by bytecode set
+        // 0x10-0x1F: Differs by bytecode set
         if (usesSistaV1_) {
-            // Sista: push literal variable 0-15
+            // Sista V1: Push Literal Variable 0-15 (dereference Association)
             pushLiteralVariable(bytecode - 0x10);
         } else {
             // V3: push temp 0-15
             pushTemporary(bytecode - 0x10);
         }
     }
-    else if (bytecode <= 0x2F) {
-        // 0x20-0x2F (32-47): Push literal constant 0-15 (both sets)
-        pushLiteralConstant(bytecode - 0x20);
-    }
     else if (bytecode <= 0x3F) {
-        // 0x30-0x3F (48-63): Differs by bytecode set
+        // 0x20-0x3F: Differs by bytecode set
         if (usesSistaV1_) {
-            // Sista: push temp 0-15
-            pushTemporary(bytecode - 0x30);
+            // Sista V1: Push Literal Constant 0-31 (push literal directly)
+            pushLiteralConstant(bytecode - 0x20);
         } else {
-            // V3: push literal constant 16-31
-            pushLiteralConstant(bytecode - 0x30 + 16);
+            // V3: 0x20-0x2F = push literal 0-15, 0x30-0x3F = push literal 16-31
+            pushLiteralConstant(bytecode - 0x20);
         }
     }
     else if (bytecode <= 0x5F) {
-        // 0x40-0x5F (64-95): Differs significantly between V3 and Sista
+        // 0x40-0x5F: Differs significantly between V3 and Sista
         if (!usesSistaV1_) {
             // V3PlusClosures: 0x40-0x5F = push literal variable 0-31
             pushLiteralVariable(bytecode - 0x40);
         } else {
-            // Sista V1 handling
-            if (bytecode <= 0x4B) {
-                // 0x40-0x4B: Push temp 16-27
-                pushTemporary(16 + bytecode - 0x40);
+            // Sista V1:
+            // 0x40-0x47: Push Temp 0-7
+            // 0x48-0x4B: Push Temp 8-11
+            // 0x4C: Push self, 0x4D: Push true, 0x4E: Push false, 0x4F: Push nil
+            // 0x50: Push 0, 0x51: Push 1, 0x52: Push thisContext, 0x53: Dup
+            // 0x54-0x57: UNASSIGNED
+            // 0x58: Return self, 0x59: Return true, 0x5A: Return false, 0x5B: Return nil
+            // 0x5C: Return top, 0x5D: BlockReturn nil, 0x5E: BlockReturn top, 0x5F: Nop
+            if (bytecode <= 0x47) {
+                // 0x40-0x47: Push Temp 0-7
+                pushTemporary(bytecode - 0x40);
+            } else if (bytecode <= 0x4B) {
+                // 0x48-0x4B: Push Temp 8-11
+                pushTemporary(8 + bytecode - 0x48);
             } else if (bytecode <= 0x4F) {
                 // 0x4C-0x4F: Push specials
                 switch (bytecode) {
@@ -475,99 +646,66 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                     case 0x4E: push(memory_.falseObject()); break;  // push false
                     case 0x4F: push(memory_.nil()); break;          // push nil
                 }
-            } else if (bytecode <= 0x51) {
-                // 0x50-0x51: Push small integers
+            } else if (bytecode <= 0x53) {
+                // 0x50-0x53: Special pushes
                 switch (bytecode) {
                     case 0x50: push(Oop::fromSmallInteger(0)); break;  // push 0
                     case 0x51: push(Oop::fromSmallInteger(1)); break;  // push 1
+                    case 0x52: push(activeContext_); break;            // push thisContext
+                    case 0x53: push(stackTop()); break;                // duplicate top
                 }
+            } else if (bytecode <= 0x57) {
+                // 0x54-0x57: UNASSIGNED in Sista V1
+                // These should not appear in valid Pharo code
             } else {
-                // 0x52-0x5F: Extended push operations and returns
+                // 0x58-0x5F: Returns and special operations
                 switch (bytecode) {
-                    case 0x52: // Push thisContext
-                        push(activeContext_);
-                        break;
-                    case 0x53: // Push literal var at index
-                    {
-                        int index = extA_;
-                        extA_ = 0;
-                        pushLiteralVariable(index);
-                        break;
-                    }
-                    case 0x54: // Push closure copy
-                        createBlock();
-                        break;
-                    case 0x55: // Push integer
-                    {
-                        int value = extB_;
-                        extB_ = 0;
-                        push(Oop::fromSmallInteger(value));
-                        break;
-                    }
-                    case 0x56: // Push character
-                    {
-                        uint32_t codepoint = static_cast<uint32_t>(extB_) & 0xFFFFFF;
-                        extB_ = 0;
-                        push(Oop::fromCharacter(codepoint));
-                        break;
-                    }
-                    case 0x57: // Extended push
-                    {
-                        uint8_t desc = fetchByte();
-                        int type = (desc >> 6) & 0x3;
-                        int index = (extA_ << 6) | (desc & 0x3F);
-                        extA_ = 0;
-                        switch (type) {
-                            case 0: pushReceiverVariable(index); break;
-                            case 1: pushTemporary(index); break;
-                            case 2: pushLiteralConstant(index); break;
-                            case 3: pushLiteralVariable(index); break;
-                        }
-                        break;
-                    }
                     case 0x58: returnValue(receiver_); break;              // return self
                     case 0x59: returnValue(memory_.trueObject()); break;   // return true
                     case 0x5A: returnValue(memory_.falseObject()); break;  // return false
                     case 0x5B: returnValue(memory_.nil()); break;          // return nil
                     case 0x5C: returnFromMethod(); break;                  // return top
-                    case 0x5D: returnFromBlock(); break;                   // block return
-                    case 0x5E: /* NOP */ break;
-                    case 0x5F: /* Trap */ break;
+                    case 0x5D: returnValue(memory_.nil()); break;          // block return nil
+                    case 0x5E: returnFromBlock(); break;                   // block return top
+                    case 0x5F: /* Nop */ break;
                 }
             }
         }
     }
     else if (bytecode <= 0x6F) {
-        // 0x60-0x6F (96-111): Pop and store - same in both sets
-        if (bytecode <= 0x67) {
-            // Pop and store receiver variable 0-7
-            Oop value = pop();
-            setReceiverInstVar(bytecode - 0x60, value);
+        // 0x60-0x6F: Differs between V3 and Sista
+        if (!usesSistaV1_) {
+            // V3: Pop and store receiver variable 0-7 / temp 0-7
+            if (bytecode <= 0x67) {
+                Oop value = pop();
+                setReceiverInstVar(bytecode - 0x60, value);
+            } else {
+                Oop value = pop();
+                setTemporary(bytecode - 0x68, value);
+            }
         } else {
-            // Pop and store temp 0-7
-            Oop value = pop();
-            setTemporary(bytecode - 0x68, value);
+            // Sista V1: 0x60-0x6F = Send Arithmetic Message 0-15
+            // (+, -, <, >, <=, >=, =, ~=, *, /, \\, @, bitShift:, //, bitAnd:, bitOr:)
+            sendArithmetic(bytecode - 0x60);
         }
     }
     else if (bytecode <= 0x7F) {
-        // 0x70-0x7F (112-127): Differs between V3 and Sista
+        // 0x70-0x7F: Differs between V3 and Sista
         if (!usesSistaV1_) {
             // V3PlusClosures:
             // 0x70-0x77: push specials (self, true, false, nil, -1, 0, 1, 2)
             // 0x78-0x7B: return (self, true, false, nil)
-            // 0x7C: return top
-            // 0x7D: block return
-            // 0x7E-0x7F: extension bytecodes (unused in basic V3)
+            // 0x7C: return top, 0x7D: block return
             if (bytecode <= 0x77) {
                 switch (bytecode) {
-                    case 0x70: push(receiver_); break;              // push self
-                    case 0x71: push(memory_.trueObject()); break;   // push true
-                    case 0x72: push(memory_.falseObject()); break;  // push false
-                    case 0x73: push(memory_.nil()); break;          // push nil
-                    case 0x74: push(Oop::fromSmallInteger(-1)); break; // push -1
-                    case 0x75: push(Oop::fromSmallInteger(0)); break;  // push 0
-                    case 0x76: push(Oop::fromSmallInteger(1)); break;  // push 1
-                    case 0x77: push(Oop::fromSmallInteger(2)); break;  // push 2
+                    case 0x70: push(receiver_); break;
+                    case 0x71: push(memory_.trueObject()); break;
+                    case 0x72: push(memory_.falseObject()); break;
+                    case 0x73: push(memory_.nil()); break;
+                    case 0x74: push(Oop::fromSmallInteger(-1)); break;
+                    case 0x75: push(Oop::fromSmallInteger(0)); break;
+                    case 0x76: push(Oop::fromSmallInteger(1)); break;
+                    case 0x77: push(Oop::fromSmallInteger(2)); break;
                 }
             } else if (bytecode <= 0x7B) {
                 switch (bytecode) {
@@ -580,22 +718,11 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 returnFromMethod();
             } else if (bytecode == 0x7D) {
                 returnFromBlock();
-            } else {
-                // 0x7E-0x7F: V3 extension bytecodes (not commonly used)
             }
         } else {
-            // Sista V1:
-            // 0x70-0x77: Pop and store literal variable 0-7
-            // 0x78-0x7F: Short jumps 1-8
-            if (bytecode <= 0x77) {
-                Oop value = pop();
-                Oop assoc = literal(bytecode - 0x70);
-                if (assoc.isObject()) {
-                    memory_.storePointer(1, assoc, value);
-                }
-            } else {
-                shortJump(bytecode - 0x78 + 1);
-            }
+            // Sista V1: 0x70-0x7F = Send Special Message 0-15
+            // (at:, at:put:, size, next, nextPut:, atEnd, ==, class, ~~, value, value:, do:, new, new:, x, y)
+            sendSpecial(bytecode - 0x70);
         }
     }
     else if (bytecode <= 0x8F) {
@@ -643,53 +770,10 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         shortJumpIfFalse(offset);
     }
     else if (bytecode <= 0xCF) {
-        // Sista V1: 0xC8-0xCF (200-207): Long jumps (with extension byte)
-        // The jump offset is encoded in the next byte, extended by extB
-        uint8_t offsetByte = fetchByte();
-        int offset = (extB_ << 8) | offsetByte;
-        extB_ = 0;  // Reset extension
-
-        int jumpType = bytecode & 0x07;
-        switch (jumpType) {
-            case 0: // Long unconditional jump
-                instructionPointer_ += offset;
-                break;
-            case 1: // Long jump if true
-                {
-                    Oop value = pop();
-                    if (isTrue(value)) {
-                        instructionPointer_ += offset;
-                    }
-                }
-                break;
-            case 2: // Long jump if false
-                {
-                    Oop value = pop();
-                    if (!isTrue(value)) {
-                        instructionPointer_ += offset;
-                    }
-                }
-                break;
-            case 3: // Long pop and jump if true
-                {
-                    Oop value = pop();
-                    if (isTrue(value)) {
-                        instructionPointer_ += offset;
-                    }
-                }
-                break;
-            case 4: // Long pop and jump if false
-                {
-                    Oop value = pop();
-                    if (!isTrue(value)) {
-                        instructionPointer_ += offset;
-                    }
-                }
-                break;
-            default:
-                // Reserved
-                break;
-        }
+        // Sista V1: 0xC8-0xCF (200-207): Pop and Store Receiver Variable 0-7
+        int varIndex = bytecode & 0x07;
+        Oop value = pop();
+        setReceiverInstVar(varIndex, value);
     }
     else if (bytecode <= 0xD7) {
         // Sista V1: 0xD0-0xD7 (208-215): Store and pop temp 0-7
@@ -711,168 +795,132 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         // These are typically used for debugging or reserved - no-op
     }
     else if (bytecode <= 0xE7) {
-        // 0xE0-0xE7 (224-231): Differs by bytecode set
+        // ========================================================================
+        // Sista V1: 0xE0-0xE7 (224-231): 2-byte bytecodes - Extensions and Push operations
+        // ========================================================================
         if (!usesSistaV1_) {
             // V3PlusClosures: 0xE0-0xE7 = Send literal selector 0-7 with 2 args
             int litIndex = bytecode - 0xE0;
             Oop selector = literal(litIndex);
             sendSelector(selector, 2);
         } else {
-        // Sista V1: 0xE0-0xE7 (224-231): Extension and extended operations
-        switch (bytecode) {
-            case 0xE0: // Extension A - modifies next bytecode's literal/temp index
-            {
-                uint8_t extByte = fetchByte();
-                extA_ = (extA_ << 8) | extByte;
-                break;
-            }
-            case 0xE1: // Extension B - modifies next bytecode's numArgs/other
-            {
-                uint8_t extByte = fetchByte();
-                // Sign extend if high bit set (extB can be negative for backward jumps)
-                if (extByte >= 128) {
-                    extB_ = (extB_ << 8) | extByte | 0xFFFFFF00;
-                } else {
-                    extB_ = (extB_ << 8) | extByte;
+            switch (bytecode) {
+                case 0xE0: // 224: Extend A (unsigned) - modifies next bytecode's index
+                {
+                    uint8_t extByte = fetchByte();
+                    extA_ = (extA_ << 8) | extByte;
+                    break;
                 }
-                break;
-            }
-            case 0xE2: // Extended push (uses extA)
-            {
-                uint8_t desc = fetchByte();
-                int type = (desc >> 6) & 0x3;
-                int index = (extA_ << 6) | (desc & 0x3F);
-                extA_ = 0;  // Reset extension
-                switch (type) {
-                    case 0: pushReceiverVariable(index); break;
-                    case 1: pushTemporary(index); break;
-                    case 2: pushLiteralConstant(index); break;
-                    case 3: pushLiteralVariable(index); break;
-                }
-                break;
-            }
-            case 0xE3: // Extended store (uses extA)
-            {
-                uint8_t desc = fetchByte();
-                int type = (desc >> 6) & 0x3;
-                int index = (extA_ << 6) | (desc & 0x3F);
-                extA_ = 0;
-                Oop value = stackTop();
-                switch (type) {
-                    case 0: setReceiverInstVar(index, value); break;
-                    case 1: setTemporary(index, value); break;
-                    case 2: /* illegal */ break;
-                    case 3: {
-                        Oop assoc = literal(index);
-                        memory_.storePointer(1, assoc, value);
-                        break;
+                case 0xE1: // 225: Extend B (signed) - modifies next bytecode's numArgs/offset
+                {
+                    uint8_t extByte = fetchByte();
+                    // Sign extend if high bit set
+                    if (extByte >= 128) {
+                        extB_ = (extB_ << 8) | extByte | 0xFFFFFF00;
+                    } else {
+                        extB_ = (extB_ << 8) | extByte;
                     }
+                    break;
                 }
-                break;
-            }
-            case 0xE4: // Extended pop and store (uses extA)
-            {
-                uint8_t desc = fetchByte();
-                int type = (desc >> 6) & 0x3;
-                int index = (extA_ << 6) | (desc & 0x3F);
-                extA_ = 0;
-                Oop value = pop();
-                switch (type) {
-                    case 0: setReceiverInstVar(index, value); break;
-                    case 1: setTemporary(index, value); break;
-                    case 2: /* illegal */ break;
-                    case 3: {
-                        Oop assoc = literal(index);
-                        memory_.storePointer(1, assoc, value);
-                        break;
+                case 0xE2: // 226: Push Receiver Variable #iiiiiiii (+ extA * 256)
+                {
+                    uint8_t indexByte = fetchByte();
+                    int fullIndex = (extA_ << 8) | indexByte;
+                    extA_ = 0;
+                    pushReceiverVariable(fullIndex);
+                    break;
+                }
+                case 0xE3: // 227: Push Literal Variable #iiiiiiii (+ extA * 256)
+                {
+                    uint8_t indexByte = fetchByte();
+                    int fullIndex = (extA_ << 8) | indexByte;
+                    extA_ = 0;
+                    pushLiteralVariable(fullIndex);
+                    break;
+                }
+                case 0xE4: // 228: Push Literal Constant #iiiiiiii (+ extA * 256)
+                {
+                    uint8_t indexByte = fetchByte();
+                    int fullIndex = (extA_ << 8) | indexByte;
+                    extA_ = 0;
+                    pushLiteralConstant(fullIndex);
+                    break;
+                }
+                case 0xE5: // 229: Push Temporary Variable #iiiiiiii
+                {
+                    uint8_t indexByte = fetchByte();
+                    pushTemporary(indexByte);
+                    break;
+                }
+                case 0xE6: // 230: UNASSIGNED (was pushNClosureTemps)
+                    fetchByte();  // Skip the argument byte
+                    break;
+                case 0xE7: // 231: Push Array (j=0) or Pop into Array (j=1)
+                {
+                    // jkkkkkkk: j=operation type, kkkkkkk=array size
+                    uint8_t desc = fetchByte();
+                    int arraySize = desc & 0x7F;
+                    bool popIntoArray = (desc >> 7) != 0;
+
+                    // Create array
+                    Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
+                    uint32_t classIndex = memory_.indexOfClass(arrayClass);
+                    Oop array = memory_.allocateSlots(classIndex, arraySize);
+
+                    if (popIntoArray) {
+                        // Pop arraySize elements into new array
+                        for (int i = arraySize - 1; i >= 0; i--) {
+                            memory_.storePointer(i, array, pop());
+                        }
                     }
+                    push(array);
+                    break;
                 }
-                break;
-            }
-            case 0xE5: // Extended single-byte send (uses extA for lit index, extB for numArgs)
-            {
-                uint8_t litIndex = fetchByte();
-                int fullIndex = (extA_ << 8) | litIndex;
-                int numArgs = extB_ & 0xFF;  // Low byte of extB
-                extA_ = 0;
-                extB_ = 0;
-                Oop selector = literal(fullIndex);
-                sendSelector(selector, numArgs);
-                break;
-            }
-            case 0xE6: // Extended double-byte super send
-            {
-                uint8_t numArgs = fetchByte();
-                uint8_t litIndex = fetchByte();
-                int fullIndex = (extA_ << 8) | litIndex;
-                extA_ = 0;
-                // Super send starts lookup from superclass
-                Oop selector = literal(fullIndex);
-                Oop receiverClass = memory_.classOf(receiver_);
-                Oop superclass = superclassOf(receiverClass);
-                Oop method = lookupMethod(selector, superclass);
-                if (method.isNil()) {
-                    sendDoesNotUnderstand(selector, numArgs);
-                } else {
-                    activateMethod(method, numArgs);
-                }
-                break;
-            }
-            case 0xE7: // Extended double-byte send
-            {
-                uint8_t numArgs = fetchByte();
-                uint8_t litIndex = fetchByte();
-                int fullIndex = (extA_ << 8) | litIndex;
-                extA_ = 0;
-                Oop selector = literal(fullIndex);
-                sendSelector(selector, numArgs);
-                break;
             }
         }
-        }  // End of Sista V1 else branch
     }
     else if (bytecode <= 0xEF) {
-        // Sista V1: 0xE8-0xEF (232-239): Stack operations and closures
+        // ========================================================================
+        // Sista V1: 0xE8-0xEF (232-239): 2-byte bytecodes - Push/Send/Jump
+        // ========================================================================
         switch (bytecode) {
-            case 0xE8: // Pop
-                popStack();
-                break;
-            case 0xE9: // Duplicate
-                duplicateTop();
-                break;
-            case 0xEA: // Push thisContext
-                push(activeContext_);
-                break;
-            case 0xEB: // Push closure copy (block creation)
+            case 0xE8: // 232: Push Integer #iiiiiiii (+ extB * 256, signed)
             {
-                // Sista closure encoding: extA has blockSize, extB has numCopied
-                createBlock();
+                uint8_t intByte = fetchByte();
+                int value = (extB_ << 8) | intByte;
+                extB_ = 0;
+                push(Oop::fromSmallInteger(value));
                 break;
             }
-            case 0xEC: // Push implicit receiver (for outer sends)
-                push(receiver_);
-                break;
-            case 0xED: // Push closure copy (full block)
-                createFullBlock();
-                break;
-            case 0xEE: // Reserved
-            case 0xEF: // Reserved
-                // WARN_LOG("[BYTECODE] Reserved Sista bytecode: 0x" << std::hex
-                          // << (int)bytecode << std::dec;
-                break;
-        }
-    }
-    else if (bytecode <= 0xF9) {
-        // Sista V1: 0xF0-0xF9 - Extended operations
-        switch (bytecode) {
-            case 0xF0: // Extended single-extended super send
+            case 0xE9: // 233: Push Character #iiiiiiii (+ extB * 256)
             {
-                uint8_t numArgs = extB_ & 0x1F;
-                uint8_t litIndex = fetchByte();
-                int fullIndex = (extA_ << 8) | litIndex;
+                uint8_t charByte = fetchByte();
+                int codePoint = (extB_ << 8) | charByte;
+                extB_ = 0;
+                // Create Character object - character is stored as immediate
+                push(Oop::fromCharacter(codePoint));
+                break;
+            }
+            case 0xEA: // 234: Send Literal Selector #iiiii (+ extA*32) with jjj (+ extB*8) args
+            {
+                uint8_t desc = fetchByte();
+                int selectorIndex = ((extA_ << 5) | (desc >> 3)) & 0xFFFF;
+                int numArgs = ((extB_ << 3) | (desc & 0x07)) & 0xFF;
                 extA_ = 0;
                 extB_ = 0;
-                Oop selector = literal(fullIndex);
+                Oop selector = literal(selectorIndex);
+                sendSelector(selector, numArgs);
+                break;
+            }
+            case 0xEB: // 235: Send To Superclass (same encoding as 0xEA)
+            {
+                uint8_t desc = fetchByte();
+                int selectorIndex = ((extA_ << 5) | (desc >> 3)) & 0xFFFF;
+                int numArgs = ((extB_ << 3) | (desc & 0x07)) & 0xFF;
+                extA_ = 0;
+                extB_ = 0;
+                Oop selector = literal(selectorIndex);
+                // Super send: lookup from superclass of method's defining class
                 Oop receiverClass = memory_.classOf(receiver_);
                 Oop superclass = superclassOf(receiverClass);
                 Oop method = lookupMethod(selector, superclass);
@@ -883,145 +931,201 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 }
                 break;
             }
-            case 0xF1: // Directed super send (to explicit superclass)
+            case 0xEC: // 236: Call Mapped Inlined Primitive #iiiiiiii
             {
-                uint8_t numArgs = extB_ & 0x1F;
-                uint8_t litIndex = fetchByte();
-                int fullIndex = (extA_ << 8) | litIndex;
-                extA_ = 0;
-                extB_ = 0;
-                Oop selector = literal(fullIndex);
-                // Directed super: superclass is in literal at fullIndex+1
-                Oop superclass = literal(fullIndex + 1);
-                Oop method = lookupMethod(selector, superclass);
-                if (method.isNil()) {
-                    sendDoesNotUnderstand(selector, numArgs);
-                } else {
-                    activateMethod(method, numArgs);
-                }
+                uint8_t primByte = fetchByte();
+                // Inlined primitives are handled specially by the JIT
+                // For interpreter, we just execute the fallback code
+                (void)primByte;
                 break;
             }
-            case 0xF2: // Extended push (type in extB bits 6-7, index in extA:byte)
+            case 0xED: // 237: Jump #iiiiiiii (+ extB * 256, signed)
             {
-                uint8_t indexByte = fetchByte();
-                int fullIndex = (extA_ << 8) | indexByte;
-                int pushType = (extB_ >> 5) & 0x3;
-                extA_ = 0;
+                uint8_t offsetByte = fetchByte();
+                int offset = (extB_ << 8) | offsetByte;
                 extB_ = 0;
-                switch (pushType) {
-                    case 0: // Push receiver variable
-                        pushReceiverVariable(fullIndex);
-                        break;
-                    case 1: // Push literal variable
-                        pushLiteralVariable(fullIndex);
-                        break;
-                    case 2: // Push literal constant
-                        pushLiteralConstant(fullIndex);
-                        break;
-                    case 3: // Push temp
-                        pushTemporary(fullIndex);
-                        break;
-                }
+                instructionPointer_ += offset;
                 break;
             }
-            case 0xF3: // Extended store (type in extB bits 6-7)
+            case 0xEE: // 238: Pop and Jump On True #iiiiiiii (+ extB * 256)
             {
-                uint8_t indexByte = fetchByte();
-                int fullIndex = (extA_ << 8) | indexByte;
-                int storeType = (extB_ >> 5) & 0x3;
-                extA_ = 0;
-                extB_ = 0;
-                Oop value = stackTop();
-                switch (storeType) {
-                    case 0: // Store receiver variable
-                        storeReceiverVariable(fullIndex);
-                        break;
-                    case 1: // Store literal variable
-                    {
-                        Oop assoc = literal(fullIndex);
-                        if (assoc.isObject()) {
-                            memory_.storePointer(1, assoc, value);
-                        }
-                        break;
-                    }
-                    case 2: // Not used
-                        break;
-                    case 3: // Store temp
-                        storeTemporary(fullIndex);
-                        break;
-                }
-                break;
-            }
-            case 0xF4: // Extended store and pop
-            {
-                uint8_t indexByte = fetchByte();
-                int fullIndex = (extA_ << 8) | indexByte;
-                int storeType = (extB_ >> 5) & 0x3;
-                extA_ = 0;
+                uint8_t offsetByte = fetchByte();
+                int offset = (extB_ << 8) | offsetByte;
                 extB_ = 0;
                 Oop value = pop();
-                switch (storeType) {
-                    case 0: // Store receiver variable
-                        if (receiver_.isObject()) {
-                            memory_.storePointer(fullIndex, receiver_, value);
-                        }
-                        break;
-                    case 1: // Store literal variable
-                    {
-                        Oop assoc = literal(fullIndex);
-                        if (assoc.isObject()) {
-                            memory_.storePointer(1, assoc, value);
-                        }
-                        break;
-                    }
-                    case 2: // Not used
-                        break;
-                    case 3: // Store temp
-                        // Store in temp at fullIndex in current frame
-                        if (framePointer_ && fullIndex < MaxStackDepth) {
-                            framePointer_[fullIndex + 1] = value;
-                        }
-                        break;
+                if (isTrue(value)) {
+                    instructionPointer_ += offset;
                 }
                 break;
             }
-            case 0xF5: // Send to absent self (outer)
+            case 0xEF: // 239: Pop and Jump On False #iiiiiiii (+ extB * 256)
             {
-                uint8_t numArgs = extB_ & 0x1F;
-                uint8_t litIndex = fetchByte();
-                int fullIndex = (extA_ << 8) | litIndex;
-                extA_ = 0;
+                uint8_t offsetByte = fetchByte();
+                int offset = (extB_ << 8) | offsetByte;
                 extB_ = 0;
-                Oop selector = literal(fullIndex);
-                // For outer sends, push implicit receiver first
-                push(receiver_);
-                sendSelector(selector, numArgs);
+                Oop value = pop();
+                if (!isTrue(value)) {
+                    instructionPointer_ += offset;
+                }
                 break;
             }
-            case 0xF6: // Reserved
-            case 0xF7: // Reserved
-                // Skip - reserved bytecodes
-                break;
-            case 0xF8: // Call primitive (3 bytes total)
+        }
+    }
+    else if (bytecode <= 0xF7) {
+        // ========================================================================
+        // Sista V1: 0xF0-0xF7 (240-247): 2-byte bytecodes - Store operations
+        // ========================================================================
+        switch (bytecode) {
+            case 0xF0: // 240: Pop and Store Receiver Variable #iiiiiiii (+ extA * 256)
             {
-                uint8_t lowByte = fetchByte();
-                uint8_t highByte = fetchByte();
-                int primIndex = (highByte << 8) | lowByte;
-                // Primitive already called at method start, this is just a marker
-                // that we skip over in normal execution
-                (void)primIndex;
+                uint8_t indexByte = fetchByte();
+                int fullIndex = (extA_ << 8) | indexByte;
+                extA_ = 0;
+                Oop value = pop();
+                setReceiverInstVar(fullIndex, value);
                 break;
             }
-            case 0xF9: // Push full closure
+            case 0xF1: // 241: Pop and Store Literal Variable #iiiiiiii (+ extA * 256)
             {
-                createFullBlock();
+                uint8_t indexByte = fetchByte();
+                int fullIndex = (extA_ << 8) | indexByte;
+                extA_ = 0;
+                Oop value = pop();
+                Oop assoc = literal(fullIndex);
+                if (assoc.isObject()) {
+                    memory_.storePointer(1, assoc, value);  // Store in Association's value slot
+                }
                 break;
             }
+            case 0xF2: // 242: Pop and Store Temporary Variable #iiiiiiii
+            {
+                uint8_t indexByte = fetchByte();
+                Oop value = pop();
+                setTemporary(indexByte, value);
+                break;
+            }
+            case 0xF3: // 243: Store Receiver Variable #iiiiiiii (+ extA * 256) - no pop
+            {
+                uint8_t indexByte = fetchByte();
+                int fullIndex = (extA_ << 8) | indexByte;
+                extA_ = 0;
+                Oop value = stackTop();
+                setReceiverInstVar(fullIndex, value);
+                break;
+            }
+            case 0xF4: // 244: Store Literal Variable #iiiiiiii (+ extA * 256) - no pop
+            {
+                uint8_t indexByte = fetchByte();
+                int fullIndex = (extA_ << 8) | indexByte;
+                extA_ = 0;
+                Oop value = stackTop();
+                Oop assoc = literal(fullIndex);
+                if (assoc.isObject()) {
+                    memory_.storePointer(1, assoc, value);
+                }
+                break;
+            }
+            case 0xF5: // 245: Store Temporary Variable #iiiiiiii - no pop
+            {
+                uint8_t indexByte = fetchByte();
+                Oop value = stackTop();
+                setTemporary(indexByte, value);
+                break;
+            }
+            case 0xF6: // 246: UNASSIGNED
+            case 0xF7: // 247: UNASSIGNED
+                fetchByte();  // Skip argument byte
+                break;
         }
     }
     else {
-        // Sista V1: 0xFA-0xFF (250-255): Reserved/unused
-        // These may appear in stale contexts from image snapshot - silently skip
+        // ========================================================================
+        // Sista V1: 0xF8-0xFF (248-255): 3-byte bytecodes
+        // ========================================================================
+        switch (bytecode) {
+            case 0xF8: // 248: Call Primitive
+            {
+                // iiiiiiii mssjjjjj: primitive = iiiiiiii + (jjjjj * 256)
+                // m=1: inlined primitive, ss: operation set
+                uint8_t primLowByte = fetchByte();
+                uint8_t flagsAndHigh = fetchByte();
+                int primIndex = primLowByte | ((flagsAndHigh & 0x1F) << 8);
+                // Primitive is called at method activation, this bytecode is skipped
+                (void)primIndex;
+                break;
+            }
+            case 0xF9: // 249: Push FullBlockClosure
+            {
+                // xxxxxxxx siyyyyyy: literal index xxxxxxxx (+extA*256)
+                // numCopied yyyyyy, s=receiverOnStack, i=ignoreOuterContext
+                uint8_t litIndex = fetchByte();
+                uint8_t flags = fetchByte();
+                int fullLitIndex = (extA_ << 8) | litIndex;
+                extA_ = 0;
+                int numCopied = flags & 0x3F;
+                bool receiverOnStack = (flags >> 7) & 1;
+                bool ignoreOuterContext = (flags >> 6) & 1;
+                (void)receiverOnStack;
+                (void)ignoreOuterContext;
+                createFullBlockWithLiteral(fullLitIndex, numCopied);
+                break;
+            }
+            case 0xFA: // 250: Push Closure
+            {
+                // eeiiikkk jjjjjjjj: numCopied iii (+extA//16*8), numArgs kkk (+extA\16*8)
+                // blockSize jjjjjjjj (+extB*256), ee=num extension bytes
+                uint8_t desc = fetchByte();
+                uint8_t blockSizeLow = fetchByte();
+                int numCopied = ((desc >> 3) & 0x07) | ((extA_ >> 4) << 3);
+                int numArgs = (desc & 0x07) | ((extA_ & 0x0F) << 3);
+                int blockSize = (extB_ << 8) | blockSizeLow;
+                extA_ = 0;
+                extB_ = 0;
+                createBlockWithArgs(numArgs, numCopied, blockSize);
+                break;
+            }
+            case 0xFB: // 251: Push Temp At kkkkkkkk In Temp Vector At jjjjjjjj
+            {
+                uint8_t tempIndex = fetchByte();
+                uint8_t vectorIndex = fetchByte();
+                // Get temp vector from outer context
+                Oop tempVector = temporary(vectorIndex);
+                if (tempVector.isObject()) {
+                    Oop value = memory_.fetchPointer(tempIndex, tempVector);
+                    push(value);
+                } else {
+                    push(memory_.nil());
+                }
+                break;
+            }
+            case 0xFC: // 252: Store Temp At kkkkkkkk In Temp Vector At jjjjjjjj (no pop)
+            {
+                uint8_t tempIndex = fetchByte();
+                uint8_t vectorIndex = fetchByte();
+                Oop value = stackTop();
+                Oop tempVector = temporary(vectorIndex);
+                if (tempVector.isObject()) {
+                    memory_.storePointer(tempIndex, tempVector, value);
+                }
+                break;
+            }
+            case 0xFD: // 253: Pop and Store Temp At kkkkkkkk In Temp Vector At jjjjjjjj
+            {
+                uint8_t tempIndex = fetchByte();
+                uint8_t vectorIndex = fetchByte();
+                Oop value = pop();
+                Oop tempVector = temporary(vectorIndex);
+                if (tempVector.isObject()) {
+                    memory_.storePointer(tempIndex, tempVector, value);
+                }
+                break;
+            }
+            case 0xFE: // 254: UNASSIGNED
+            case 0xFF: // 255: UNASSIGNED
+                fetchByte();
+                fetchByte();
+                break;
+        }
     }
 }
 
@@ -1096,6 +1200,24 @@ void Interpreter::pushLiteralVariable(int index) {
     // V3PlusClosures: Simple literal variable push, no extensions
     // Literal variable is an Association, fetch its value
     Oop assoc = literal(index);
+
+    // Validate that we actually have an Association-like object (pointer object with at least 2 slots)
+    // NOT a Symbol/String (byte object)
+    if (!assoc.isObject() || assoc.isNil()) {
+        push(memory_.nil());
+        return;
+    }
+
+    ObjectHeader* header = assoc.asObjectPtr();
+
+    // Check if it's a byte object (Symbol, String) - unexpected but handle gracefully
+    if (header->isBytesObject()) {
+        // Push the symbol itself to avoid crash (wrong but won't corrupt)
+        push(assoc);
+        return;
+    }
+
+    // Normal case: Association with key in slot 0, value in slot 1
     Oop value = memory_.fetchPointer(1, assoc);  // Association>>value
     push(value);
 }
@@ -1124,12 +1246,6 @@ void Interpreter::pushSpecial(int which) {
 }
 
 void Interpreter::returnValue(Oop value) {
-    static int returnCount = 0;
-    returnCount++;
-    if (returnCount <= 10) {
-        std::cerr << "[VM] returnValue (call #" << returnCount << "), frameDepth=" << frameDepth_ << "\n";
-    }
-
     // If no frames to pop, check if we have a sender context to return to
     if (frameDepth_ == 0) {
         // Check if current context has a sender
@@ -1138,28 +1254,12 @@ void Interpreter::returnValue(Oop value) {
         if (activeContext_.isObject() && activeContext_.rawBits() != nilObj.rawBits()) {
             Oop sender = memory_.fetchPointer(0, activeContext_);
 
-            if (returnCount <= 10) {
-                std::cerr << "[VM] returnValue: checking sender 0x" << std::hex << sender.rawBits() << std::dec;
-                if (sender.rawBits() == nilObj.rawBits()) {
-                    std::cerr << " (NIL)\n";
-                } else if (sender.isObject()) {
-                    ObjectHeader* sh = sender.asObjectPtr();
-                    std::cerr << " (slots=" << sh->slotCount() << " fmt=" << (int)sh->format() << ")\n";
-                } else {
-                    std::cerr << " (not object)\n";
-                }
-            }
-
             if (sender.isObject() && sender.rawBits() != nilObj.rawBits()) {
                 ObjectHeader* senderHdr = sender.asObjectPtr();
 
                 // Check if sender looks like a Context (has enough slots and right format)
                 if (senderHdr->slotCount() >= 6 &&
                     senderHdr->format() == ObjectFormat::IndexableWithFixed) {
-                    if (returnCount <= 10) {
-                        std::cerr << "[VM] returnValue: following sender chain\n";
-                    }
-
                     // Reset stack for new context
                     stackPointer_ = stackBase_;
 
@@ -1174,42 +1274,27 @@ void Interpreter::returnValue(Oop value) {
             }
         }
 
-        if (returnCount <= 10) {
-            std::cerr << "[VM] returnValue: sender chain exhausted, trying reschedule\n";
-        }
-
         // Mark current process as terminated by clearing its suspendedContext
         terminateCurrentProcess();
 
         // Try to find another runnable process
         if (tryReschedule()) {
-            if (returnCount <= 10) {
-                std::cerr << "[VM] returnValue: tryReschedule succeeded!\n";
-            }
             return;
-        }
-        if (returnCount <= 10) {
-            std::cerr << "[VM] returnValue: tryReschedule failed, trying bootstrapStartup\n";
         }
 
         // If no other process to run, try startup entry point
         if (bootstrapStartup()) {
-            if (returnCount <= 10) {
-                std::cerr << "[VM] returnValue: bootstrapStartup succeeded!\n";
-            }
             return;
         }
 
         // No runnable processes - enter idle mode
-        // Wait briefly then try again (allows event processing)
-        static int idleCount = 0;
-        idleCount++;
-        if (idleCount <= 3) {
-            std::cerr << "[VM] returnValue: No runnable processes - entering idle mode #" << idleCount << "\n";
-        }
+        // This is a good time to update the display since a doOneCycle just completed
+
+        // Render World's morphs directly - bypass NullWorldRenderer
+        renderWorldMorphs();
 
         // Sleep briefly to avoid busy-waiting, then try to reschedule
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
         // Try to find a runnable process again (events might have signaled semaphores)
         if (tryReschedule()) {
@@ -1217,11 +1302,10 @@ void Interpreter::returnValue(Oop value) {
         }
 
         // After multiple idle cycles with no work, finally stop
-        static int maxIdleCycles = 20;  // ~2 seconds of idle
+        static int idleCount = 0;
+        static int maxIdleCycles = 500;  // ~5 seconds of idle
+        idleCount++;
         if (idleCount >= maxIdleCycles) {
-            if (returnCount <= 10) {
-                std::cerr << "[VM] returnValue: Exceeded " << maxIdleCycles << " idle cycles - setting running_ = false\n";
-            }
             running_ = false;
             push(value);
             return;
@@ -1562,6 +1646,18 @@ void Interpreter::commonSend(int which) {
     sendSelector(selector, argCount);
 }
 
+void Interpreter::sendArithmetic(int which) {
+    // Sista V1: Send arithmetic message (special selectors 0-15)
+    // Delegates to existing arithmeticSend implementation
+    arithmeticSend(which);
+}
+
+void Interpreter::sendSpecial(int which) {
+    // Sista V1: Send special message (special selectors 0-15 map to selectors 16-31)
+    // Delegates to existing commonSend implementation which handles selectors 16-31
+    commonSend(which);
+}
+
 void Interpreter::sendLiteralZeroArgs(int literalIndex) {
     sendSelector(literal(literalIndex), 0);
 }
@@ -1578,7 +1674,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     // Message send tracing
     static int sendCount = 0;
     sendCount++;
-    if (sendCount <= 30) {
+    if (sendCount <= 50) {
         // Show selector name
         std::string selName = "<unknown>";
         bool isValidSymbol = false;
@@ -1638,7 +1734,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         std::cerr << "[VM] sendSelector #" << sendCount << ": #" << selName << " args=" << argCount;
 
         // Show receiver class for first few sends
-        if (sendCount <= 15) {
+        if (sendCount <= 50) {
             Oop rcvrTrace = stackValue(argCount);
             if (rcvrTrace.isObject()) {
                 Oop rcvrClassTrace = memory_.classOf(rcvrTrace);
@@ -1686,6 +1782,75 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 popN(argCount + 1);
                 push(rcvr);
                 return;
+            }
+
+            // ===== INTERCEPT NullWorldRenderer DISPLAY METHODS =====
+            // Make NullWorldRenderer actually render to our display surface
+            if (selStr == "displayWorldStateOf:during:" && argCount == 2) {
+                // Check if receiver is NullWorldRenderer
+                Oop rcvrClass = memory_.classOf(rcvr);
+                if (rcvrClass.isObject()) {
+                    Oop className = memory_.fetchPointer(6, rcvrClass);  // Class name at slot 6
+                    if (className.isObject()) {
+                        ObjectHeader* nameHdr = className.asObjectPtr();
+                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                            std::string rcvrClassName((char*)nameHdr->bytes(), nameHdr->byteSize());
+                            if (rcvrClassName == "NullWorldRenderer") {
+                                static bool firstIntercept = true;
+                                if (firstIntercept) {
+                                    std::cerr << "[VM] INTERCEPT displayWorldStateOf:during: on NullWorldRenderer\n";
+                                    firstIntercept = false;
+                                }
+
+                                // Get the arguments: world and block
+                                Oop drawBlock = stackValue(0);  // The drawing block
+                                Oop worldArg = stackValue(1);   // The world
+
+                                // If we have a display form, execute the block with its canvas
+                                if (!displayForm_.isNil() && displayForm_.isObject()) {
+                                    // Create or get canvas for the display form
+                                    // For now, just trigger a display update
+                                    if (pharo::gDisplaySurface) {
+                                        pharo::gDisplaySurface->update();
+                                    }
+                                }
+
+                                // Pop args and receiver, push receiver (return self)
+                                popN(argCount + 1);
+                                push(rcvr);
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Intercept checkForNewScreenSize to set up display
+            if (selStr == "checkForNewScreenSize" && argCount == 0) {
+                Oop rcvrClass = memory_.classOf(rcvr);
+                if (rcvrClass.isObject()) {
+                    Oop className = memory_.fetchPointer(6, rcvrClass);
+                    if (className.isObject()) {
+                        ObjectHeader* nameHdr = className.asObjectPtr();
+                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                            std::string rcvrClassName((char*)nameHdr->bytes(), nameHdr->byteSize());
+                            if (rcvrClassName == "NullWorldRenderer") {
+                                static bool firstCheck = true;
+                                if (firstCheck) {
+                                    std::cerr << "[VM] INTERCEPT checkForNewScreenSize - setting up display\n";
+                                    firstCheck = false;
+
+                                    // Try to create/initialize display Form
+                                    initializeDisplayForm();
+                                }
+                                // Return self (screen size unchanged)
+                                popN(argCount + 1);
+                                push(rcvr);
+                                return;
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -2970,6 +3135,65 @@ void Interpreter::createFullBlock() {
     createBlock();  // Simplified - treat same for now
 }
 
+void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied) {
+    // Sista V1 0xF9: Push FullBlockClosure
+    // The closure's code is in a CompiledBlock literal at litIndex
+    Oop compiledBlock = literal(litIndex);
+
+    // Create FullBlockClosure
+    Oop blockClass = memory_.specialObject(SpecialObjectIndex::ClassBlockClosure);
+    size_t slots = 3 + numCopied;  // outerContext, compiledBlock, numArgs, copied...
+    Oop block = memory_.allocateSlots(
+        memory_.indexOfClass(blockClass), slots, ObjectFormat::Indexable);
+
+    // Set fields
+    memory_.storePointer(0, block, activeContext_);  // outerContext
+    memory_.storePointer(1, block, compiledBlock);   // compiledBlock (instead of startPC)
+
+    // Get numArgs from the CompiledBlock's header (first slot) if possible
+    int numArgs = 0;
+    if (compiledBlock.isObject()) {
+        Oop methodHeader = memory_.fetchPointer(0, compiledBlock);
+        if (methodHeader.isSmallInteger()) {
+            int64_t headerBits = methodHeader.asSmallInteger();
+            numArgs = headerBits & 0x0F;  // numArgs in low bits
+        }
+    }
+    memory_.storePointer(2, block, Oop::fromSmallInteger(numArgs));
+
+    // Copy values from stack
+    for (int i = numCopied - 1; i >= 0; --i) {
+        memory_.storePointer(3 + i, block, pop());
+    }
+
+    push(block);
+}
+
+void Interpreter::createBlockWithArgs(int numArgs, int numCopied, int blockSize) {
+    // Sista V1 0xFA: Push Closure (inline block)
+    // Create BlockClosure
+    Oop blockClass = memory_.specialObject(SpecialObjectIndex::ClassBlockClosure);
+    size_t slots = 3 + numCopied;  // outerContext, startPC, numArgs, copied...
+    Oop block = memory_.allocateSlots(
+        memory_.indexOfClass(blockClass), slots, ObjectFormat::Indexable);
+
+    // Set fields
+    memory_.storePointer(0, block, activeContext_);  // outerContext
+    memory_.storePointer(1, block, Oop::fromSmallInteger(
+        instructionPointer_ - method_.asObjectPtr()->bytes()));  // startPC
+    memory_.storePointer(2, block, Oop::fromSmallInteger(numArgs));
+
+    // Copy values from stack
+    for (int i = numCopied - 1; i >= 0; --i) {
+        memory_.storePointer(3 + i, block, pop());
+    }
+
+    // Skip block bytecodes
+    instructionPointer_ += blockSize;
+
+    push(block);
+}
+
 void Interpreter::initializeSelectors() {
     // DEBUG: "[DEBUG] initializeSelectors: Starting..."
 
@@ -3435,19 +3659,20 @@ bool Interpreter::tryReschedule() {
 
         processesFound++;
         if (trace && processesFound <= 3) {
-            std::cerr << "[SCHED]   priority " << (i+1) << ": process=0x" << std::hex << process.rawBits() << std::dec;
+            std::cerr << "[SCHED]   priority " << (i+1) << ": process=0x" << std::hex << process.rawBits() << std::dec << std::flush;
         }
 
         // Skip if this is the same process that just finished
         if (process.rawBits() == activeProcess.rawBits()) {
-            if (trace) std::cerr << " (SAME AS ACTIVE, skip)\n";
+            if (trace) std::cerr << " (SAME AS ACTIVE, skip)\n" << std::flush;
             continue;
         }
 
         // Process: slot 0 = nextLink, slot 1 = suspendedContext, slot 2 = priority
         Oop context = memory_.fetchPointer(1, process);
+        if (trace) std::cerr << " ctx=0x" << std::hex << context.rawBits() << std::dec << std::flush;
         if (!context.isObject() || context.rawBits() == nilObj.rawBits()) {
-            if (trace) std::cerr << " (no suspendedContext)\n";
+            if (trace) std::cerr << " (no suspendedContext)\n" << std::flush;
             continue;
         }
 
@@ -3622,12 +3847,37 @@ bool Interpreter::bootstrapStartup() {
         pharo::gDisplaySurface->update();
         std::cerr << "[VM] bootstrapStartup: Platform display initialized with pattern\n";
         std::cerr.flush();
+
+        // Try to find and activate the Display Form from the image
+        // This connects Pharo's Display object to our display surface
+        std::cerr << "[VM] bootstrapStartup: Looking for Display global...\n";
+        std::cerr.flush();
+        Oop displayObj = memory_.findGlobal("Display");
+        std::cerr << "[VM] bootstrapStartup: findGlobal returned 0x" << std::hex << displayObj.rawBits() << std::dec << "\n";
+        std::cerr.flush();
+        if (!displayObj.isNil() && displayObj.isObject()) {
+            std::cerr << "[VM] bootstrapStartup: Found Display object, calling beDisplay\n";
+            // Call beDisplay on it (primitive 126)
+            setDisplayForm(displayObj);
+
+            // Get the Form's dimensions and update our screen size
+            // Form slots: 0=bits, 1=width, 2=height, 3=depth
+            Oop widthOop = memory_.fetchPointer(1, displayObj);
+            Oop heightOop = memory_.fetchPointer(2, displayObj);
+            if (widthOop.isSmallInteger() && heightOop.isSmallInteger()) {
+                int formWidth = static_cast<int>(widthOop.asSmallInteger());
+                int formHeight = static_cast<int>(heightOop.asSmallInteger());
+                std::cerr << "[VM] bootstrapStartup: Display Form is " << formWidth << "x" << formHeight << "\n";
+            }
+        } else {
+            std::cerr << "[VM] bootstrapStartup: Display object not found\n";
+        }
     }
 
-    // If we've already tried startup methods and they completed,
-    // the Smalltalk code has had a chance to run. Don't keep looping.
-    if (startupAttempt > 6) {
-        std::cerr << "[VM] bootstrapStartup: exceeded 6 attempts, setting running_=false\n";
+    // If we've already tried many startup attempts, eventually give up.
+    // But allow many more attempts for the UI loop to run.
+    if (startupAttempt > 1000) {
+        std::cerr << "[VM] bootstrapStartup: exceeded 1000 attempts, setting running_=false\n";
         running_ = false;
         return false;
     }
@@ -3737,15 +3987,22 @@ bool Interpreter::bootstrapStartup() {
         }
     }
 
-    // Third try: Try to start World UI loop
-    if (startupAttempt == 3) {
-        std::cerr << "[VM] bootstrapStartup: Attempt 3 - Looking for World...\n";
+    // Third try and beyond: Keep calling World>>doOneCycle for UI loop
+    if (startupAttempt >= 3 && startupAttempt <= 100) {
+        std::cerr << "[VM] bootstrapStartup: Attempt " << startupAttempt << " - Looking for World...\n";
         std::cerr.flush();
 
         // Find World class - Note: World is a global that holds the current WorldMorph
         Oop world = memory_.findGlobal("World");
         std::cerr << "[VM] bootstrapStartup: findGlobal(World) returned 0x" << std::hex
                   << world.rawBits() << std::dec << "\n";
+        std::cerr.flush();
+
+        // Check for OSWindowWorldRenderer class
+        Oop osRenderer = memory_.findGlobal("OSWindowWorldRenderer");
+        std::cerr << "[VM] bootstrapStartup: OSWindowWorldRenderer = 0x" << std::hex
+                  << osRenderer.rawBits() << std::dec
+                  << (osRenderer.isNil() ? " (NOT FOUND)" : " (FOUND)") << "\n";
         std::cerr.flush();
 
         if (!world.isNil() && world.isObject()) {
@@ -4725,7 +4982,7 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[73] = &Interpreter::primitiveInstVarAt;
     primitiveTable_[74] = &Interpreter::primitiveInstVarAtPut;
     primitiveTable_[75] = &Interpreter::primitiveIdentityHash;
-    primitiveTable_[76] = &Interpreter::primitiveBasicSize;
+    primitiveTable_[76] = &Interpreter::primitiveSetStackPointer;  // Context>>stackp:
 
     // Block closure primitives (80-82)
     primitiveTable_[80] = &Interpreter::primitiveBlockCopy;
@@ -4762,7 +5019,7 @@ void Interpreter::initializePrimitives() {
     // Display primitives (101-104, 107, 109)
     primitiveTable_[101] = &Interpreter::primitiveBeCursor;
     primitiveTable_[102] = &Interpreter::primitiveBeDisplay;
-    primitiveTable_[103] = &Interpreter::primitiveScanCharacters;
+    primitiveTable_[103] = &Interpreter::primitiveForceDisplayUpdate;  // iOS: forceDisplayUpdate (was scanCharacters)
     primitiveTable_[104] = &Interpreter::primitiveDrawLoop;
     primitiveTable_[107] = &Interpreter::primitiveShowDisplayRect;
     primitiveTable_[109] = &Interpreter::primitiveSnapshotEmbedded;
@@ -5019,9 +5276,10 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[208] = &Interpreter::primitiveClosureValueUnwind;
     primitiveTable_[209] = &Interpreter::primitiveClosureValueNoUnwind;
 
-    // Class structure primitives (253-255)
+    // Class structure primitives (253, 255)
+    // NOTE: 254 is primitiveVMParameter - do NOT override here!
     primitiveTable_[253] = &Interpreter::primitiveSuperclass;
-    primitiveTable_[254] = &Interpreter::primitiveInstSize;
+    // primitiveTable_[254] - already set to primitiveVMParameter above
     primitiveTable_[255] = &Interpreter::primitiveSizeInBytesOfInstance;
 
     // Quick return primitives (256-259)
@@ -5030,10 +5288,8 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[258] = &Interpreter::primitiveQuickReturnFalse;
     primitiveTable_[259] = &Interpreter::primitiveQuickReturnNil;
 
-    // Object format query primitives
-    // Note: These are often accessed via different primitive numbers in different images
-    // We'll wire them to common slots
-    primitiveTable_[15] = &Interpreter::primitiveIsPointers;  // Most common for #isPointers
+    // NOTE: Primitive 15 is primitiveBitOr (SmallInteger>>bitOr:)
+    // Do NOT override it here - primitiveIsPointers is not a standard primitive
 
     // String hash primitive (146)
     primitiveTable_[146] = &Interpreter::primitiveStringHash;

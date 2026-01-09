@@ -190,11 +190,15 @@ private:
 
         // Class index 0 is free chunk marker - valid but rare
         // Very large class indices are suspicious
-        // Typical images have < 100k classes
-        if (classIndex > 0x100000) return false;
+        // Typical Pharo images have < 20k classes, be conservative with 50k limit
+        if (classIndex > 50000) return false;
 
-        // Reserved bits between format and hash (bits 29-31) should usually be 0
-        // But this isn't a hard requirement, so we don't check
+        // Also reject if high bits of header look like ASCII (indicates misaligned scan)
+        uint8_t highByte = (word >> 56) & 0xFF;
+        if (highByte >= 0x20 && highByte < 0x7F) {
+            // Looks like ASCII - probably misaligned into string data
+            return false;
+        }
 
         return true;
     }

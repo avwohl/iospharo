@@ -31,6 +31,13 @@ public:
     size_t pitch() const override { return width_ * 4; }
 
     void invalidateRect(int x, int y, int w, int h) override {
+        static int invalidateCount = 0;
+        invalidateCount++;
+        if (invalidateCount <= 5) {
+            std::cerr << "[DISPLAY] invalidateRect #" << invalidateCount
+                      << " (" << x << "," << y << "," << w << "," << h << ")"
+                      << " callback=" << (updateCallback_ ? "set" : "null") << "\n";
+        }
         if (updateCallback_) {
             updateCallback_(x, y, w, h, context_);
         }
@@ -73,7 +80,11 @@ static void eventCallback(void* context) {
 extern "C" {
 
 bool vm_initialize(size_t heapSize) {
-    if (gMemory) return true;
+    std::cerr << "[PB] vm_initialize: heapSize=" << heapSize << "\n";
+    if (gMemory) {
+        std::cerr << "[PB] vm_initialize: already initialized\n";
+        return true;
+    }
 
     gMemory = new pharo::ObjectMemory();
     pharo::MemoryConfig config;
@@ -81,19 +92,33 @@ bool vm_initialize(size_t heapSize) {
     config.newSpaceSize = 32 * 1024 * 1024;
     config.permSpaceSize = 8 * 1024 * 1024;
 
-    return gMemory->initialize(config);
+    bool result = gMemory->initialize(config);
+    std::cerr << "[PB] vm_initialize: " << (result ? "success" : "failed") << "\n";
+    return result;
 }
 
 bool vm_loadImage(const char* imagePath) {
-    if (!gMemory) return false;
+    if (!gMemory) {
+        std::cerr << "[PB] vm_loadImage: gMemory is null\n";
+        return false;
+    }
 
+    std::cerr << "[PB] vm_loadImage: Loading " << imagePath << "\n";
     pharo::ImageLoader loader;
     pharo::LoadResult result = loader.load(imagePath, *gMemory);
 
-    if (!result.success) return false;
+    if (!result.success) {
+        std::cerr << "[PB] vm_loadImage: Image load failed\n";
+        return false;
+    }
+    std::cerr << "[PB] vm_loadImage: Image loaded successfully\n";
 
     gInterpreter = new pharo::Interpreter(*gMemory);
-    if (!gInterpreter->initialize()) return false;
+    if (!gInterpreter->initialize()) {
+        std::cerr << "[PB] vm_loadImage: Interpreter init failed\n";
+        return false;
+    }
+    std::cerr << "[PB] vm_loadImage: Interpreter initialized\n";
 
     // Apply display size if already set (vm_setDisplaySize may be called before vm_loadImage)
     if (gDisplay) {
@@ -115,6 +140,15 @@ void vm_run(void) {
     gRunning = true;
     gVMThread = std::thread([]() {
         std::cerr << "[PB] Thread started, isRunning=" << gInterpreter->isRunning() << "\n";
+
+        // Post a window resize event to trigger Pharo layout
+        // This tells Pharo the display size so it can lay out morphs properly
+        if (gDisplay) {
+            std::cerr << "[PB] Posting initial window resize event: "
+                      << gDisplay->width() << "x" << gDisplay->height() << "\n";
+            vm_postWindowEvent(gDisplay->width(), gDisplay->height());
+        }
+
         while (gRunning && gInterpreter->isRunning()) {
             gInterpreter->step();
         }

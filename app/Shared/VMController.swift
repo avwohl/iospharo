@@ -1,5 +1,8 @@
 import Foundation
 import Combine
+import os.log
+
+private let logger = Logger(subsystem: "com.awohl.pharo", category: "VMController")
 
 class VMController: ObservableObject {
     @Published var isRunning = false
@@ -12,38 +15,49 @@ class VMController: ObservableObject {
 
     func initialize() {
         statusMessage = "Initializing VM..."
+        logger.info("[VMController] initialize() called")
 
         let heapSize = 256 * 1024 * 1024  // 256 MB
+        logger.info("[VMController] Calling vm_initialize with heapSize=\(heapSize)")
         guard vm_initialize(heapSize) else {
             statusMessage = "Failed to initialize VM"
+            logger.info("[VMController] vm_initialize FAILED")
             return
         }
+        logger.info("[VMController] vm_initialize SUCCESS")
 
         // Set up display
         vm_setDisplaySize(Int32(displayWidth), Int32(displayHeight), 32)
         displayPixels = vm_getDisplayPixels()
+        logger.info("[VMController] Display set up")
 
         statusMessage = "VM initialized"
     }
 
     func loadImage(path: String) {
         statusMessage = "Loading image..."
+        logger.info("[VMController] loadImage() called with path=\(path)")
 
         guard vm_loadImage(path) else {
             statusMessage = "Failed to load image"
+            logger.info("[VMController] vm_loadImage FAILED")
             return
         }
 
         isLoaded = true
         statusMessage = "Image loaded"
+        logger.info("[VMController] vm_loadImage SUCCESS, isLoaded=true")
     }
 
     func start() {
+        logger.info("[VMController] start() called")
         guard isLoaded && !isRunning else { return }
 
         statusMessage = "Running..."
+        logger.info("[VMController] Calling vm_run()")
         vm_run()
         isRunning = true
+        logger.info("[VMController] vm_run() returned, isRunning=true")
     }
 
     func stop() {

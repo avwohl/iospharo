@@ -183,6 +183,7 @@ public:
     Oop displayForm() const { return displayForm_; }
     void setDisplayForm(Oop form) { displayForm_ = form; }
     void initializeDisplayForm();  // Create and set up display Form
+    void renderWorldMorphs();      // Direct rendering of World's morphs
     int screenDepth() const { return screenDepth_; }
 
     /// Get current execution state
@@ -362,6 +363,8 @@ private:
     // Sends
     void arithmeticSend(int which);
     void commonSend(int which);
+    void sendArithmetic(int which);
+    void sendSpecial(int which);
     void sendLiteralZeroArgs(int literalIndex);
     void sendLiteralOneArg(int literalIndex);
     void sendLiteralTwoArgs(int literalIndex);
@@ -372,6 +375,8 @@ private:
     void popStack();
     void createBlock();
     void createFullBlock();
+    void createFullBlockWithLiteral(int litIndex, int numCopied);
+    void createBlockWithArgs(int numArgs, int numCopied, int blockSize);
 
     // ===== MESSAGE SENDING =====
 

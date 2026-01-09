@@ -333,6 +333,19 @@ public:
     /// Wrap a raw pointer as an Oop with correct space encoding
     Oop oopFromPointer(ObjectHeader* ptr) const;
 
+    /// Check if an Oop points to a valid location within any heap space
+    bool isValidPointer(Oop oop) const {
+        if (!oop.isObject() || oop.isNil()) return false;
+        uint8_t* ptr = reinterpret_cast<uint8_t*>(oop.asObjectPtr());
+        // Check if it's in old space
+        if (ptr >= oldSpaceStart_ && ptr < oldSpaceEnd_) return true;
+        // Check if it's in new space
+        if (ptr >= newSpaceStart_ && ptr < newSpaceEnd_) return true;
+        // Check if it's in perm space
+        if (ptr >= permSpaceStart_ && ptr < permSpaceEnd_) return true;
+        return false;
+    }
+
 private:
     // Memory regions
     uint8_t* permSpaceStart_ = nullptr;

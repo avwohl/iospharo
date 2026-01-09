@@ -254,6 +254,32 @@ Oop ObjectMemory::classOf(Oop obj) const {
         return Oop::nil();
     }
 
+    // Validate pointer before dereferencing to catch corruption
+    if (!isValidPointer(obj)) {
+        static int corruptCount = 0;
+        corruptCount++;
+        if (corruptCount <= 20) {
+            uint64_t bits = obj.rawBits();
+            std::cerr << "[CLASSOF] INVALID POINTER #" << corruptCount
+                      << ": 0x" << std::hex << bits << std::dec;
+            // Try to decode as ASCII to help identify corruption source
+            char ascii[9];
+            for (int i = 0; i < 8; i++) {
+                uint8_t byte = (bits >> (i * 8)) & 0xFF;
+                ascii[i] = (byte >= 0x20 && byte < 0x7F) ? (char)byte : '.';
+            }
+            ascii[8] = '\0';
+            std::cerr << " ASCII(LE)=\"" << ascii << "\"";
+            // Also show reversed (big endian)
+            for (int i = 0; i < 4; i++) {
+                std::swap(ascii[i], ascii[7-i]);
+            }
+            std::cerr << " ASCII(BE)=\"" << ascii << "\"\n";
+            std::cerr.flush();
+        }
+        return Oop::nil();  // Return nil instead of crashing
+    }
+
     ObjectHeader* header = obj.asObjectPtr();
     uint32_t classIdx = header->classIndex();
     Oop cls = classAtIndex(classIdx);
@@ -382,7 +408,7 @@ Oop ObjectMemory::findGlobal(const std::string& name) const {
 
     // Search the array for the named global
     int totalAssocs = 0;
-    bool debugWorld = (name == "World" || name == "UIManager");
+    bool debugWorld = (name == "World" || name == "UIManager" || name == "Display" || name == "OSWindowWorldRenderer");
     if (debugWorld) {
         std::cerr << "[findGlobal] Searching for '" << name << "' in array of " << arraySize << " slots\n";
         std::cerr.flush();
@@ -390,23 +416,29 @@ Oop ObjectMemory::findGlobal(const std::string& name) const {
     for (size_t i = 0; i < arraySize; ++i) {
         Oop item = arrayHeader->slotAt(i);
         if (item.isNil() || !item.isObject()) continue;
+        if (!isValidPointer(item)) continue;  // Validate pointer
 
         ObjectHeader* itemHeader = item.asObjectPtr();
-        if (itemHeader->slotCount() >= 2) {
-            Oop key = fetchPointer(0, item);
-            if (key.isObject() && !key.isNil()) {
-                ObjectHeader* keyHeader = key.asObjectPtr();
-                if (keyHeader->isBytesObject()) {
-                    totalAssocs++;
-                    if (symbolEquals(key, name.c_str())) {
-                        if (debugWorld) {
-                            std::cerr << "[findGlobal] FOUND '" << name << "' at slot " << i << "\n";
-                            std::cerr.flush();
-                        }
-                        return fetchPointer(1, item);
-                    }
-                }
+        size_t slotCount = itemHeader->slotCount();
+        if (slotCount < 2 || slotCount > 100) continue;  // Sanity check
+
+        Oop key = fetchPointer(0, item);
+        if (!key.isObject() || key.isNil()) continue;
+        if (!isValidPointer(key)) continue;  // Validate key pointer
+
+        ObjectHeader* keyHeader = key.asObjectPtr();
+        if (!keyHeader->isBytesObject()) continue;
+
+        size_t keySize = keyHeader->byteSize();
+        if (keySize > 1000) continue;  // Sanity check
+
+        totalAssocs++;
+        if (symbolEquals(key, name.c_str())) {
+            if (debugWorld) {
+                std::cerr << "[findGlobal] FOUND '" << name << "' at slot " << i << "\n";
+                std::cerr.flush();
             }
+            return fetchPointer(1, item);
         }
     }
 
@@ -417,52 +449,58 @@ Oop ObjectMemory::findGlobal(const std::string& name) const {
     }
 
     // Modern Pharo might store additional entries in overflow structures at slots 2-5
-    // Let me search those too
-    for (size_t overflowIdx = 2; overflowIdx < dictHeader->slotCount() && overflowIdx < 10; ++overflowIdx) {
+    // Let me search those too (with defensive pointer validation)
+    size_t dictSlots = dictHeader->slotCount();
+    if (dictSlots > 100) dictSlots = 10;  // Sanity limit
+
+    for (size_t overflowIdx = 2; overflowIdx < dictSlots; ++overflowIdx) {
         Oop overflowSlot = fetchPointer(overflowIdx, sysDict);
         if (!overflowSlot.isObject() || overflowSlot.isNil()) continue;
 
+        // Validate pointer is within heap
+        if (!isValidPointer(overflowSlot)) continue;
+
         ObjectHeader* overflowHeader = overflowSlot.asObjectPtr();
-        // std::cerr << "[DEBUG] findGlobal: searching overflow slot " << overflowIdx
-                  // << " (class=" << overflowHeader->classIndex()
-                  // << " slots=" << overflowHeader->slotCount() << ")" << std::endl;
+        size_t overflowSlots = overflowHeader->slotCount();
+        if (overflowSlots > 100000) continue;  // Sanity limit
 
         // Check if this object contains associations or arrays of associations
-        for (size_t i = 0; i < overflowHeader->slotCount(); ++i) {
+        for (size_t i = 0; i < overflowSlots; ++i) {
             Oop item = fetchPointer(i, overflowSlot);
             if (!item.isObject() || item.isNil()) continue;
+            if (!isValidPointer(item)) continue;
 
             ObjectHeader* itemHeader = item.asObjectPtr();
+            size_t itemSlots = itemHeader->slotCount();
+            if (itemSlots > 100000) continue;  // Sanity limit
 
             // Check if it's an array that might contain more associations
-            if (itemHeader->format() == ObjectFormat::Indexable) {
-                // std::cerr << "[DEBUG] findGlobal: overflow[" << overflowIdx << "][" << i
-                          // << "] is array with " << itemHeader->slotCount() << " slots" << std::endl;
-
+            if (itemHeader->format() == ObjectFormat::Indexable && itemSlots < 10000) {
                 // Search this array for associations
-                for (size_t j = 0; j < itemHeader->slotCount(); ++j) {
+                for (size_t j = 0; j < itemSlots; ++j) {
                     Oop assoc = fetchPointer(j, item);
                     if (!assoc.isObject() || assoc.isNil()) continue;
+                    if (!isValidPointer(assoc)) continue;
 
                     ObjectHeader* assocHeader = assoc.asObjectPtr();
-                    if (assocHeader->slotCount() >= 2) {
+                    if (assocHeader->slotCount() >= 2 && assocHeader->slotCount() < 100) {
                         Oop key = fetchPointer(0, assoc);
-                        if (symbolEquals(key, name.c_str())) {
-                            // std::cerr << "[DEBUG] findGlobal: FOUND '" << name
-                                      // << "' in overflow[" << overflowIdx << "][" << i << "][" << j << "]" << std::endl;
-                            return fetchPointer(1, assoc);
+                        if (key.isObject() && !key.isNil() && isValidPointer(key)) {
+                            if (symbolEquals(key, name.c_str())) {
+                                return fetchPointer(1, assoc);
+                            }
                         }
                     }
                 }
             }
 
             // Check if item itself is an association
-            if (itemHeader->slotCount() >= 2) {
+            if (itemSlots >= 2 && itemSlots < 100) {
                 Oop key = fetchPointer(0, item);
-                if (symbolEquals(key, name.c_str())) {
-                    // std::cerr << "[DEBUG] findGlobal: FOUND '" << name
-                              // << "' in overflow[" << overflowIdx << "][" << i << "]" << std::endl;
-                    return fetchPointer(1, item);
+                if (key.isObject() && !key.isNil() && isValidPointer(key)) {
+                    if (symbolEquals(key, name.c_str())) {
+                        return fetchPointer(1, item);
+                    }
                 }
             }
         }
@@ -546,9 +584,58 @@ Oop ObjectMemory::createStartupContext(Oop method, Oop receiver) {
 
 Oop ObjectMemory::fetchPointer(size_t index, Oop obj) const {
     if (!obj.isObject()) return Oop::nil();
+
+    // Validate pointer before dereferencing
+    if (!isValidPointer(obj)) {
+        static int fetchCorruptCount = 0;
+        fetchCorruptCount++;
+        if (fetchCorruptCount <= 10) {
+            std::cerr << "[FETCH] INVALID obj pointer: 0x" << std::hex << obj.rawBits()
+                      << std::dec << " index=" << index << "\n";
+            std::cerr.flush();
+        }
+        return Oop::nil();
+    }
+
     ObjectHeader* header = obj.asObjectPtr();
+
     if (index >= header->slotCount()) return Oop::nil();
-    return header->slotAt(index);
+
+    Oop result = header->slotAt(index);
+
+    // Warn if result looks like ASCII data (potential corruption)
+    // ASCII characters typically have bytes in range 0x20-0x7E
+    if (result.isObject() && result.rawBits() != 0) {
+        uint64_t bits = result.rawBits();
+        int asciiCount = 0;
+        for (int i = 0; i < 8; i++) {
+            uint8_t byte = (bits >> (i * 8)) & 0xFF;
+            if (byte >= 0x20 && byte < 0x7F) asciiCount++;
+        }
+        // If 6+ bytes look like ASCII, this might be corrupted string data
+        if (asciiCount >= 6 && !isValidPointer(result)) {
+            static int asciiCorruptCount = 0;
+            asciiCorruptCount++;
+            if (asciiCorruptCount <= 10) {
+                char ascii[9];
+                for (int i = 0; i < 8; i++) {
+                    uint8_t byte = (bits >> (i * 8)) & 0xFF;
+                    ascii[i] = (byte >= 0x20 && byte < 0x7F) ? (char)byte : '.';
+                }
+                ascii[8] = '\0';
+                std::cerr << "[FETCH] WARNING: slot " << index << " of obj 0x"
+                          << std::hex << obj.rawBits() << " contains ASCII-like data: \""
+                          << ascii << "\" (0x" << bits << std::dec << ")\n";
+                // Show object header info
+                std::cerr << "  obj classIdx=" << header->classIndex()
+                          << " format=" << (int)header->format()
+                          << " slots=" << header->slotCount() << "\n";
+                std::cerr.flush();
+            }
+        }
+    }
+
+    return result;
 }
 
 void ObjectMemory::storePointer(size_t index, Oop obj, Oop value) {
