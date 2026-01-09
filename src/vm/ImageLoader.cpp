@@ -860,8 +860,13 @@ direct_scan:
     scanned = 0;
     size_t registeredClasses = 0;
 
-    // Also track what indices we need but haven't found
-    std::set<uint32_t> neededIndices = {3075, 3077, 3079, 3080, 3085, 3086, 3092, 3102, 3121, 3135, 3139, 4735};
+    // Classes in Pharo/Spur typically have:
+    // - Format 0-1 (Fixed size pointer objects)
+    // - At least 8 slots (superclass, methodDict, format, etc.)
+    // - A metaclass as their classIndex (also a class, so typically > 1000)
+    // - An identityHash that becomes their class table index
+    //
+    // We cast a wide net and register anything that looks like a class
 
     while (scanPtr < scanEnd && scanned < 2000000) {
         ObjectHeader* hdr = reinterpret_cast<ObjectHeader*>(scanPtr);
@@ -882,46 +887,35 @@ direct_scan:
             continue;
         }
 
-        // Expanded criteria for class detection:
-        // - Format 1 (FixedSize) with 10-20 slots
-        // - Metaclass index > 1000 (allow wider range)
-        bool looksLikeClass = (fmt == ObjectFormat::FixedSize && slots >= 10 && slots <= 20);
-
-        // Get identity hash
+        // Get identity hash - this is the class table index for class objects
         uint32_t identHash = hdr->identityHash();
 
-        // If identHash matches a needed index, definitely register
-        if (looksLikeClass && neededIndices.count(identHash) > 0) {
-            Oop classOop = memory.oopFromPointer(hdr);
-            memory.setClassAtIndex(identHash, classOop);
-            registeredClasses++;
-            // std::cerr << "[DEBUG] Found needed class at index " << identHash
-                      // << " (metaclass=" << metaclassIdx << ", slots=" << slots << ")" << std::endl;
-            neededIndices.erase(identHash);
-        }
-        // Also register if it looks like a class in the expected range
-        else if (looksLikeClass && metaclassIdx >= 3000 && metaclassIdx < 6000 &&
-                 identHash > 0 && identHash < 10000) {
-            Oop classOop = memory.oopFromPointer(hdr);
-            memory.setClassAtIndex(identHash, classOop);
-            registeredClasses++;
+        // Very inclusive class detection:
+        // - Format 0, 1, or 5 (fixed size pointer objects, or ephemeron-like)
+        // - At least 8 slots (classes have superclass, methodDict, format, instanceVars, etc.)
+        // - identityHash > 0 and < 100000 (valid class index range)
+        // - classIndex (metaclass) > 0 (non-nil class)
+        bool looksLikeClass = (fmt == ObjectFormat::ZeroSized ||
+                               fmt == ObjectFormat::FixedSize ||
+                               static_cast<int>(fmt) == 5);
+        looksLikeClass = looksLikeClass && (slots >= 8 && slots <= 30);
+        looksLikeClass = looksLikeClass && (identHash > 0 && identHash < 100000);
+        looksLikeClass = looksLikeClass && (metaclassIdx > 0);
 
+        if (looksLikeClass) {
+            // Only register if not already registered (first occurrence wins)
+            if (memory.classAtIndex(identHash).isNil()) {
+                Oop classOop = memory.oopFromPointer(hdr);
+                memory.setClassAtIndex(identHash, classOop);
+                registeredClasses++;
+            }
         }
 
         scanPtr += objSize;
         scanned++;
     }
 
-    // std::cerr << "[DEBUG] Registered " << registeredClasses << " classes using identity hash" << std::endl;
-
-    // Report missing needed indices
-    if (!neededIndices.empty()) {
-        // std::cerr << "[DEBUG] Still missing " << neededIndices.size() << " needed class indices: ";
-        for (uint32_t idx : neededIndices) {
-            // std::cerr << idx << " ";
-        }
-        // std::cerr << std::endl;
-    }
+    std::cerr << "[ClassTable] Registered " << registeredClasses << " classes via heap scan" << std::endl;
 
     // Try special approach: check special objects that ARE classes
     // SO 5, 6, 7, 9, etc. should be class objects
