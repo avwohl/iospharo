@@ -57,6 +57,7 @@
 #include <cstdio>
 #include <functional>
 #include <map>
+#include <thread>
 
 namespace pharo {
 
@@ -166,6 +167,10 @@ public:
     void stop() { running_ = false; }
     bool isRunning() const { return running_; }
 
+    /// Start/stop the heartbeat thread (must be called from main thread)
+    void startHeartbeat();
+    void stopHeartbeat();
+
     /// Get the object memory
     ObjectMemory& memory() { return memory_; }
 
@@ -184,6 +189,8 @@ public:
     void setDisplayForm(Oop form) { displayForm_ = form; }
     void initializeDisplayForm();  // Create and set up display Form
     void renderWorldMorphs();      // Direct rendering of World's morphs
+    void syncDisplayToSurface();   // Copy Display Form to platform surface
+    void ensureDisplayForm(int width, int height, int depth);  // Create Form and bind to Display global
     int screenDepth() const { return screenDepth_; }
 
     /// Get current execution state
@@ -233,6 +240,9 @@ public:
 
     /// Process any pending external semaphore signals (called during interpret loop)
     void processPendingSignals();
+
+    /// Check timer semaphore and signal if time has elapsed
+    void checkTimerSemaphore();
 
     // ===== PRIMITIVE SUPPORT =====
 
@@ -306,6 +316,14 @@ private:
     // External semaphore signaling (for I/O events)
     // Simple approach: store one pending signal index, process in interpret loop
     std::atomic<int> pendingSignalIndex_{0};
+
+    // Timer/delay semaphore (for Delay class)
+    Oop timerSemaphore_ = Oop::nil();
+    int64_t nextWakeupTime_ = 0;  // 0 means no timer set
+
+    // Heartbeat thread
+    std::atomic<bool> heartbeatRunning_{false};
+    std::thread heartbeatThread_;
 
     // Clipboard (simple in-memory storage for headless mode)
     std::string clipboardText_;
@@ -1070,7 +1088,7 @@ private:
     PrimitiveResult primitiveYield(int argCount);            // 167
 
     // Context primitives
-    PrimitiveResult primitiveThisContext(int argCount);      // 199
+    PrimitiveResult primitiveExceptionMarker(int argCount);  // 199 (exception handler marker, always fails)
     PrimitiveResult primitiveClosureNumArgs(int argCount);   // 206
 
     // Slot access primitives

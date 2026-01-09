@@ -321,9 +321,24 @@ bool ImageLoader::relocatePointers(ObjectMemory& memory, LoadResult& result) {
     bool visitedSchedulerAssoc = false;
     size_t schedulerOffset = schedulerAssocOffset;  // forEachObject visits by header offset
 
+    // Track if we visit the Float values array (at offset 0x30971e8)
+    static bool visitedFloatValuesArray = false;
+    static size_t maxOffsetSeen = 0;
+
     forEachObject([this, &objectCount, &pointerCount, &relocatedCount, &visitedSchedulerAssoc, schedulerOffset](uint64_t* headerPtr, size_t size) {
         objectCount++;
         size_t offset = reinterpret_cast<uint8_t*>(headerPtr) - loadedData_;
+
+        // Track maximum offset reached
+        if (offset > maxOffsetSeen) maxOffsetSeen = offset;
+
+        // Track Float values array visit (for debugging)
+        if (offset == 0x30971e8) {
+            visitedFloatValuesArray = true;
+        }
+
+        // Debug tracing for objects near Float values array (disabled - keep for future debugging)
+        // if (offset >= 0x3095000 && offset <= 0x3098000) { ... }
 
         // Check if we visit the scheduler association
         if (offset == schedulerOffset) {
@@ -391,7 +406,8 @@ bool ImageLoader::relocatePointers(ObjectMemory& memory, LoadResult& result) {
 
             if (looksLikeOverflow) {
                 slotCount = overflowCount;
-                headerSize = 16;  // Overflow header included
+                // NOTE: headerSize stays at 8. The overflow word is at headerPtr - 1,
+                // BEFORE the header, so it's not part of the size from headerPtr forward.
             } else {
                 // Not overflow - exactly 255 slots
                 slotCount = 255;
@@ -423,8 +439,11 @@ bool ImageLoader::relocatePointers(ObjectMemory& memory, LoadResult& result) {
                 pointerCount++;
                 uint64_t oldValue = firstSlot[i];
                 // relocatePointer handles both object pointers AND SmallIntegers
-                firstSlot[i] = relocatePointer(oldValue);
-                if (oldValue != firstSlot[i]) relocatedCount++;
+                uint64_t newValue = relocatePointer(oldValue);
+                // Debug tracing for specific pointers (disabled)
+                // if (oldValue == 0x1000044c070ULL) { ... }
+                firstSlot[i] = newValue;
+                if (oldValue != newValue) relocatedCount++;
             }
         } else if (isCompiledMethod) {
             // Compiled methods have header + literals followed by bytecodes
@@ -451,9 +470,9 @@ bool ImageLoader::relocatePointers(ObjectMemory& memory, LoadResult& result) {
         // Byte/word objects don't have pointers to relocate
     });
 
+    // Relocation summary (reduced verbosity)
     // std::cerr << "[DEBUG] Relocation: " << objectCount << " objects, "
-              // << relocatedCount << " pointers relocated" << std::endl;
-    // std::cerr << "[DEBUG] Visited scheduler association: " << (visitedSchedulerAssoc ? "YES" : "NO") << std::endl;
+    //           << relocatedCount << " pointers relocated" << std::endl;
 
     // DEBUG: Check the same offset after relocation
     size_t testOff = 0x296e0;
@@ -1121,7 +1140,10 @@ size_t ImageLoader::objectSize(uint64_t* headerPtr) const {
 
         if (looksLikeOverflow) {
             slotCount = overflowCount;
-            headerSize += 8;  // Overflow word
+            // NOTE: Do NOT add 8 for overflow word here!
+            // The overflow word is at headerPtr - 1, BEFORE the header.
+            // When we calculate size, we measure from header forward,
+            // so the overflow word was already passed and doesn't count.
         } else {
             // Not overflow - exactly 255 slots
             slotCount = 255;

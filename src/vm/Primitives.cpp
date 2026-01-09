@@ -7,12 +7,14 @@
 
 #include "Interpreter.hpp"
 #include "ImageLoader.hpp"
+#include "FFI.hpp"
 #include "../platform/DisplaySurface.hpp"
 #include "../platform/EventQueue.hpp"
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <dirent.h>
+#include <thread>
 #include <fstream>
 #include <iostream>
 #include <sys/stat.h>
@@ -364,15 +366,41 @@ PrimitiveResult Interpreter::primitiveNotEqual(int argCount) {
 // ===== OBJECT ACCESS PRIMITIVES (60-75) =====
 
 PrimitiveResult Interpreter::primitiveAt(int argCount) {
+    static int atFailCount = 0;
     Oop index = stackValue(0);
     Oop rcvr = stackValue(1);
 
     if (!index.isSmallInteger() || !rcvr.isObject()) {
+        if (atFailCount++ < 5) {
+            std::cerr << "[PRIM60] at: FAIL - index isSmallInt=" << index.isSmallInteger()
+                      << " rcvr isObject=" << rcvr.isObject()
+                      << " index=0x" << std::hex << index.rawBits() << std::dec;
+            // Show what the index object is if it's an object
+            if (index.isObject()) {
+                ObjectHeader* idxHdr = index.asObjectPtr();
+                std::cerr << " (classIdx=" << idxHdr->classIndex() << " format=" << (int)idxHdr->format()
+                          << " slots=" << idxHdr->slotCount() << ")";
+                // Try to identify if it's a block closure
+                if (idxHdr->classIndex() >= 100 && idxHdr->classIndex() <= 200) {
+                    std::cerr << " [possibly closure/context]";
+                }
+            }
+            std::cerr << "\n";
+            // Also dump what the receiver looks like
+            if (rcvr.isObject()) {
+                ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+                std::cerr << "[PRIM60]   rcvr: classIdx=" << rcvrHdr->classIndex()
+                          << " slots=" << rcvrHdr->slotCount() << "\n";
+            }
+        }
         return PrimitiveResult::Failure;
     }
 
     int64_t idx = index.asSmallInteger();
     if (idx < 1) {
+        if (atFailCount++ < 5) {
+            std::cerr << "[PRIM60] at: FAIL - idx=" << idx << " (< 1)\n";
+        }
         return PrimitiveResult::Failure;  // 1-based indexing
     }
 
@@ -381,6 +409,9 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
 
     if (header->isBytesObject()) {
         if (arrayIndex >= header->byteSize()) {
+            if (atFailCount++ < 5) {
+                std::cerr << "[PRIM60] at: FAIL - bytes index " << arrayIndex << " >= size " << header->byteSize() << "\n";
+            }
             return PrimitiveResult::Failure;
         }
         uint8_t byte = header->byteAt(arrayIndex);
@@ -388,12 +419,18 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
         return PrimitiveResult::Success;
     } else if (header->isPointersObject()) {
         if (arrayIndex >= header->slotCount()) {
+            if (atFailCount++ < 5) {
+                std::cerr << "[PRIM60] at: FAIL - slot index " << arrayIndex << " >= slotCount " << header->slotCount() << "\n";
+            }
             return PrimitiveResult::Failure;
         }
         primitiveSuccess(header->slotAt(arrayIndex));
         return PrimitiveResult::Success;
     }
 
+    if (atFailCount++ < 5) {
+        std::cerr << "[PRIM60] at: FAIL - not bytes or pointers, format=" << (int)header->format() << "\n";
+    }
     return PrimitiveResult::Failure;
 }
 
@@ -913,16 +950,42 @@ PrimitiveResult Interpreter::primitivePerformWithArgs(int argCount) {
 // ===== BLOCK PRIMITIVES =====
 
 PrimitiveResult Interpreter::primitiveBlockValue(int argCount) {
+    static int valueCallCount = 0;
+    valueCallCount++;
+
     Oop block = stackValue(argCount);
+
+    // Debug: show block value calls
+    if (valueCallCount <= 10) {
+        std::cerr << "[PRIM_VALUE] primitiveBlockValue #" << valueCallCount
+                  << " argCount=" << argCount
+                  << " block=0x" << std::hex << block.rawBits() << std::dec << "\n";
+        // Show block's numArgs
+        if (block.isObject()) {
+            Oop numArgsObj = memory_.fetchPointer(2, block);
+            std::cerr << "[PRIM_VALUE]   block numArgs slot=0x" << std::hex << numArgsObj.rawBits() << std::dec;
+            if (numArgsObj.isSmallInteger()) {
+                std::cerr << " (=" << numArgsObj.asSmallInteger() << ")";
+            }
+            std::cerr << "\n";
+        }
+    }
 
     // Verify arg count matches block's numArgs
     Oop numArgsObj = memory_.fetchPointer(2, block);
     if (!numArgsObj.isSmallInteger()) {
+        if (valueCallCount <= 10) {
+            std::cerr << "[PRIM_VALUE]   FAIL: numArgsObj not SmallInteger\n";
+        }
         return PrimitiveResult::Failure;
     }
 
     int blockArgCount = static_cast<int>(numArgsObj.asSmallInteger());
     if (blockArgCount != argCount) {
+        if (valueCallCount <= 10) {
+            std::cerr << "[PRIM_VALUE]   FAIL: argCount mismatch (block wants "
+                      << blockArgCount << ", got " << argCount << ")\n";
+        }
         return PrimitiveResult::Failure;
     }
 
@@ -1034,9 +1097,18 @@ PrimitiveResult Interpreter::primitiveBlockCopy(int argCount) {
 // Primitive 81: value (BlockClosure>>value with 0 args)
 // This is essentially the same as primitiveBlockValue but specifically for 0 args
 PrimitiveResult Interpreter::primitiveValue(int argCount) {
+    static int prim81Count = 0;
+    prim81Count++;
+
     // For primitive 81, the receiver is the block, and argCount should be 0
     // But the primitive dispatch may pass the actual arg count
     Oop block = stackValue(argCount);
+
+    if (prim81Count <= 10) {
+        std::cerr << "[PRIM81] primitiveValue #" << prim81Count
+                  << " argCount=" << argCount
+                  << " block=0x" << std::hex << block.rawBits() << std::dec << "\n";
+    }
 
     if (!block.isObject()) {
         return PrimitiveResult::Failure;
@@ -1050,6 +1122,10 @@ PrimitiveResult Interpreter::primitiveValue(int argCount) {
 
     int blockArgCount = static_cast<int>(numArgsObj.asSmallInteger());
     if (blockArgCount != argCount) {
+        if (prim81Count <= 10) {
+            std::cerr << "[PRIM81]   FAIL: argCount mismatch (block wants "
+                      << blockArgCount << ", got " << argCount << ")\n";
+        }
         return PrimitiveResult::Failure;
     }
 
@@ -1134,7 +1210,15 @@ PrimitiveResult Interpreter::primitiveClosureCopyWithCopiedValues(int argCount) 
 // Primitive 207: Full closure value (for closures with many arguments)
 // This handles FullBlockClosures which may have more complex activation
 PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
+    static int prim207Count = 0;
+    prim207Count++;
+
     Oop closure = stackValue(static_cast<size_t>(argCount));
+
+    if (prim207Count <= 10) {
+        std::cerr << "[PRIM207] primitiveFullClosureValue #" << prim207Count
+                  << " argCount=" << argCount << "\n";
+    }
 
     if (!closure.isObject()) {
         return PrimitiveResult::Failure;
@@ -1148,6 +1232,9 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
 
     int closureNumArgs = static_cast<int>(numArgsOop.asSmallInteger());
     if (closureNumArgs != argCount) {
+        if (prim207Count <= 10) {
+            std::cerr << "[PRIM207]   FAIL: wants " << closureNumArgs << " got " << argCount << "\n";
+        }
         return PrimitiveResult::Failure;
     }
 
@@ -1160,11 +1247,12 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
 // Evaluates a closure but ensures unwind actions are executed
 // Used for ensure: blocks
 PrimitiveResult Interpreter::primitiveClosureValueUnwind(int argCount) {
-    // This primitive is called when evaluating a block that needs
-    // unwind protection (like ensure: blocks)
-
-    // For a basic implementation, we can just evaluate the block normally
-    // Full unwind semantics require integration with exception handling
+    static int prim208Count = 0;
+    prim208Count++;
+    if (prim208Count <= 10) {
+        std::cerr << "[PRIM208] primitiveClosureValueUnwind #" << prim208Count
+                  << " argCount=" << argCount << "\n";
+    }
 
     Oop closure = stackValue(static_cast<size_t>(argCount));
 
@@ -1194,8 +1282,12 @@ PrimitiveResult Interpreter::primitiveClosureValueUnwind(int argCount) {
 // Evaluates a closure skipping unwind protection checks
 // Used when we know no unwind is needed
 PrimitiveResult Interpreter::primitiveClosureValueNoUnwind(int argCount) {
-    // This is an optimized path that skips unwind checking
-    // For our implementation, it's the same as normal block value
+    static int prim209Count = 0;
+    prim209Count++;
+    if (prim209Count <= 10) {
+        std::cerr << "[PRIM209] primitiveClosureValueNoUnwind #" << prim209Count
+                  << " argCount=" << argCount << "\n";
+    }
 
     Oop closure = stackValue(static_cast<size_t>(argCount));
 
@@ -1933,17 +2025,47 @@ PrimitiveResult Interpreter::primitiveBeDisplay(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveForceDisplayUpdate(int argCount) {
-    static bool firstCall = true;
-    if (firstCall) {
-        std::cerr << "[VM] primitiveForceDisplayUpdate called\n";
-        firstCall = false;
+    static int callCount = 0;
+    callCount++;
+    // Log first 20 calls with detailed info
+    bool shouldLog = (callCount <= 20);
+
+    if (shouldLog) {
+        std::cerr << "[VM] primitiveForceDisplayUpdate #" << callCount
+                  << " displayForm_=" << (displayForm_.isNil() ? "nil" : "set")
+                  << " gDisplaySurface=" << (pharo::gDisplaySurface ? "set" : "nil") << "\n";
     }
 
     if (argCount != 0) return PrimitiveResult::Failure;
 
     // If no display surface, nothing to do
     if (!pharo::gDisplaySurface) {
+        if (shouldLog) std::cerr << "[VM] primitiveForceDisplayUpdate: no display surface\n";
         return PrimitiveResult::Success;
+    }
+
+    // Auto-discover Display global if displayForm_ not set
+    if (displayForm_.isNil()) {
+        Oop display = memory_.findGlobal("Display");
+        if (!display.isNil() && display.isObject()) {
+            displayForm_ = display;
+            std::cerr << "[VM] primitiveForceDisplayUpdate: Found Display global!\n";
+
+            // Extract dimensions from the Form
+            // Form slots: 0=bits, 1=width, 2=height, 3=depth
+            Oop widthOop = memory_.fetchPointer(1, display);
+            Oop heightOop = memory_.fetchPointer(2, display);
+            Oop depthOop = memory_.fetchPointer(3, display);
+            if (widthOop.isSmallInteger() && heightOop.isSmallInteger()) {
+                int formWidth = widthOop.asSmallInteger();
+                int formHeight = heightOop.asSmallInteger();
+                int formDepth = depthOop.isSmallInteger() ? depthOop.asSmallInteger() : 32;
+                std::cerr << "[VM] Display Form size: " << formWidth << "x" << formHeight
+                          << " depth=" << formDepth << "\n";
+            }
+        } else {
+            if (shouldLog) std::cerr << "[VM] primitiveForceDisplayUpdate: Display global not found\n";
+        }
     }
 
     uint32_t* dstPixels = pharo::gDisplaySurface->pixels();
@@ -1959,22 +2081,62 @@ PrimitiveResult Interpreter::primitiveForceDisplayUpdate(int argCount) {
             ObjectHeader* bitsHdr = bits.asObjectPtr();
             uint32_t* srcPixels = reinterpret_cast<uint32_t*>(bitsHdr->bytes());
 
-            int srcWidth = screenWidth_;
-            int srcHeight = screenHeight_;
+            // Get actual dimensions from the Form
+            Oop widthOop = memory_.fetchPointer(1, displayForm_);
+            Oop heightOop = memory_.fetchPointer(2, displayForm_);
+            Oop depthOop = memory_.fetchPointer(3, displayForm_);
+
+            int srcWidth = widthOop.isSmallInteger() ? widthOop.asSmallInteger() : screenWidth_;
+            int srcHeight = heightOop.isSmallInteger() ? heightOop.asSmallInteger() : screenHeight_;
+            int srcDepth = depthOop.isSmallInteger() ? depthOop.asSmallInteger() : 32;
 
             // Copy pixels (handle size mismatch)
             int copyWidth = std::min(srcWidth, dstWidth);
             int copyHeight = std::min(srcHeight, dstHeight);
 
-            for (int y = 0; y < copyHeight; y++) {
-                for (int x = 0; x < copyWidth; x++) {
-                    dstPixels[y * dstWidth + x] = srcPixels[y * srcWidth + x];
+            if (shouldLog) {
+                std::cerr << "[VM] primitiveForceDisplayUpdate: copying " << copyWidth << "x" << copyHeight
+                          << " pixels from Form (depth=" << srcDepth << ") to surface\n";
+            }
+
+            // Handle pixel format conversion
+            // Pharo Forms are ARGB (or BGRA depending on endianness)
+            // iOS expects BGRA (little-endian: ARGB in memory order)
+            if (srcDepth == 32) {
+                for (int y = 0; y < copyHeight; y++) {
+                    for (int x = 0; x < copyWidth; x++) {
+                        uint32_t pixel = srcPixels[y * srcWidth + x];
+                        // Pharo 32-bit Forms are typically ARGB
+                        // Our display expects ARGB as well, so direct copy should work
+                        dstPixels[y * dstWidth + x] = pixel;
+                    }
+                }
+            } else if (srcDepth == 16) {
+                // 16-bit: RGB565 format
+                uint16_t* src16 = reinterpret_cast<uint16_t*>(srcPixels);
+                for (int y = 0; y < copyHeight; y++) {
+                    for (int x = 0; x < copyWidth; x++) {
+                        uint16_t pixel = src16[y * srcWidth + x];
+                        uint8_t r = ((pixel >> 11) & 0x1F) << 3;
+                        uint8_t g = ((pixel >> 5) & 0x3F) << 2;
+                        uint8_t b = (pixel & 0x1F) << 3;
+                        dstPixels[y * dstWidth + x] = (255 << 24) | (r << 16) | (g << 8) | b;
+                    }
+                }
+            } else {
+                // Other depths: just copy as-is
+                for (int y = 0; y < copyHeight; y++) {
+                    for (int x = 0; x < copyWidth; x++) {
+                        dstPixels[y * dstWidth + x] = srcPixels[y * srcWidth + x];
+                    }
                 }
             }
 
             // Notify platform of update
             pharo::gDisplaySurface->update();
             return PrimitiveResult::Success;
+        } else {
+            if (shouldLog) std::cerr << "[VM] primitiveForceDisplayUpdate: Form bits are nil\n";
         }
     }
 
@@ -2095,10 +2257,11 @@ PrimitiveResult Interpreter::primitiveVMPath(int argCount) {
 // Primitive 106: Get the screen size as a Point
 // Returns Point with x = width, y = height
 PrimitiveResult Interpreter::primitiveScreenSize(int argCount) {
-    static bool firstCall = true;
-    if (firstCall) {
-        std::cerr << "[VM] primitiveScreenSize called, returning " << screenWidth_ << "x" << screenHeight_ << "\n";
-        firstCall = false;
+    static int callCount = 0;
+    callCount++;
+    // Log first 20 calls to catch OSiOSDriver.isSupported check
+    if (callCount <= 20) {
+        std::cerr << "[VM] primitiveScreenSize #" << callCount << " size=" << screenWidth_ << "x" << screenHeight_ << "\n";
     }
 
     // Create a Point object with screen dimensions
@@ -2107,17 +2270,20 @@ PrimitiveResult Interpreter::primitiveScreenSize(int argCount) {
     // Get the Point class
     Oop pointClass = memory_.specialObject(SpecialObjectIndex::ClassPoint);
     if (pointClass.isNil()) {
+        std::cerr << "[VM] primitiveScreenSize FAILED: Point class is nil\n";
         return PrimitiveResult::Failure;
     }
 
     uint32_t classIndex = memory_.indexOfClass(pointClass);
     if (classIndex == 0) {
+        std::cerr << "[VM] primitiveScreenSize FAILED: Point classIndex is 0\n";
         return PrimitiveResult::Failure;
     }
 
     // Allocate a Point with 2 slots (x, y)
     Oop point = memory_.allocateSlots(classIndex, 2, ObjectFormat::FixedSize);
     if (point.isNil()) {
+        std::cerr << "[VM] primitiveScreenSize FAILED: Could not allocate Point\n";
         return PrimitiveResult::Failure;
     }
 
@@ -2127,6 +2293,9 @@ PrimitiveResult Interpreter::primitiveScreenSize(int argCount) {
 
     pop();  // Pop receiver
     push(point);
+    if (callCount <= 20) {
+        std::cerr << "[VM] primitiveScreenSize SUCCESS: returned Point\n";
+    }
     return PrimitiveResult::Success;
 }
 
@@ -2270,8 +2439,41 @@ PrimitiveResult Interpreter::primitiveLocalMicrosecondClock(int argCount) {
 
 PrimitiveResult Interpreter::primitiveSignalAtMilliseconds(int argCount) {
     // Primitive 136: Schedule semaphore signal at given milliseconds
-    // For now, just fail - requires timer integration
-    return PrimitiveResult::Failure;
+    // Arguments: semaphore, milliseconds
+    // Sets up a timer to signal the semaphore at the given time
+
+    if (argCount != 2) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop msOop = stackValue(0);      // milliseconds (SmallInteger)
+    Oop semaphore = stackValue(1);  // receiver (the semaphore)
+
+    if (!msOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t targetMs = msOop.asSmallInteger();
+
+    // If target time is 0 or semaphore is nil, cancel the timer
+    if (targetMs == 0 || semaphore.isNil()) {
+        timerSemaphore_ = Oop::nil();
+        nextWakeupTime_ = 0;
+        primitiveSuccess(semaphore);  // Return receiver
+        return PrimitiveResult::Success;
+    }
+
+    // Store the timer info
+    timerSemaphore_ = semaphore;
+    nextWakeupTime_ = targetMs;
+
+    static int logCount = 0;
+    if (logCount++ < 5) {
+        std::cerr << "[VM] primitiveSignalAtMilliseconds: set wakeup at " << targetMs << " ms\n";
+    }
+
+    primitiveSuccess(semaphore);  // Return receiver
+    return PrimitiveResult::Success;
 }
 
 // ===== STRING PRIMITIVES =====
@@ -4017,6 +4219,11 @@ PrimitiveResult Interpreter::primitiveHashMultiply(int argCount) {
 
 // Primitive 167: Yield to other processes of same priority
 PrimitiveResult Interpreter::primitiveYield(int argCount) {
+    static int yieldCount = 0;
+    static int noSwitchCount = 0;
+
+    yieldCount++;
+
     // Get the active process
     Oop activeProcess = getActiveProcess();
     if (activeProcess.isNil()) {
@@ -4050,6 +4257,7 @@ PrimitiveResult Interpreter::primitiveYield(int argCount) {
     if (!firstLink.isNil()) {
         // There are other processes waiting - put current process at end of queue
         // and switch to the first one
+        noSwitchCount = 0;  // Reset counter
 
         // Save current context
         Oop currentContext = activeContext_;
@@ -4069,6 +4277,19 @@ PrimitiveResult Interpreter::primitiveYield(int argCount) {
         if (!newContext.isNil() && newContext.isObject()) {
             executeFromContext(newContext);
         }
+    } else {
+        // No process switch happened - track consecutive yields without switch
+        noSwitchCount++;
+
+        // If we're spin-yielding (no other process to switch to), sleep briefly
+        // This prevents CPU spinning when the delay mechanism isn't working
+        if (noSwitchCount > 10) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            noSwitchCount = 0;  // Reset after sleeping
+
+            // Process any pending external semaphore signals
+            processPendingSignals();
+        }
     }
 
     // Return receiver (the process or processor)
@@ -4078,24 +4299,14 @@ PrimitiveResult Interpreter::primitiveYield(int argCount) {
 
 // ===== CONTEXT PRIMITIVES =====
 
-// Primitive 199: Return the current execution context (thisContext)
-PrimitiveResult Interpreter::primitiveThisContext(int argCount) {
-    // Return the active context
-    // In our implementation, activeContext_ holds the current context
-    // If we're running from a synthetic context, we may need to materialize one
-
-    if (activeContext_.isNil() || !activeContext_.isObject()) {
-        // Create a context from current execution state if needed
-        // For now, just fail if no context - caller should handle
-        return PrimitiveResult::Failure;
-    }
-
-    // Note: In a full implementation, we'd sync IP/SP to the context here.
-    // For now, the context should be reasonably up-to-date from message sends.
-
-    pop();  // Pop receiver
-    push(activeContext_);
-    return PrimitiveResult::Success;
+// Primitive 199: Exception handler marker (NOT thisContext!)
+// This primitive is used by BlockClosure>>on:do: as a marker for exception handling.
+// It should ALWAYS fail so the method falls through to 'self value' which evaluates the block.
+// The actual thisContext primitive is 185.
+PrimitiveResult Interpreter::primitiveExceptionMarker(int argCount) {
+    // Always fail - this is just a marker primitive
+    // The Smalltalk code falls through to 'self value' after this fails
+    return PrimitiveResult::Failure;
 }
 
 // Primitive 206: Return the number of arguments a closure expects
@@ -7699,15 +7910,221 @@ PrimitiveResult Interpreter::primitiveFlushExternalPrimitives(int argCount) {
 // externalFunction args primitiveCalloutToFFI -> result
 // Calls a foreign function through FFI mechanism
 PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
-    // FFI callout requires:
-    // 1. Function pointer or symbol lookup
-    // 2. Argument marshalling (Smalltalk -> C types)
-    // 3. Actual call
-    // 4. Result marshalling (C -> Smalltalk)
+    static bool ffiInitialized = false;
+    static int callCount = 0;
+    callCount++;
 
-    // Without a full FFI implementation, fail to Smalltalk fallback
-    // Smalltalk code may use alternative mechanisms or report error
-    return PrimitiveResult::Failure;
+    // Initialize FFI on first call
+    if (!ffiInitialized) {
+        ffiInitialized = ffi::initializeFFI();
+        if (!ffiInitialized) {
+            std::cerr << "[FFI] Failed to initialize FFI system\n";
+            return PrimitiveResult::Failure;
+        }
+    }
+
+    // The FFI call specification comes from the method's literals
+    // We need to find it in the current method
+    Oop method = method_;  // Current method being executed
+    if (method.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get the literal frame to find the FFI spec
+    // The spec is typically an array like #( returnType funcName ( argTypes... ) )
+    // For now, we'll try to extract function name from the method pragmas
+
+    // Log first few calls for debugging
+    if (callCount <= 10) {
+        std::cerr << "[FFI] primitiveCalloutToFFI #" << callCount << " argCount=" << argCount << "\n";
+    }
+
+    // Get receiver - for SDL2 calls this is usually the SDL2 class or an external object
+    Oop receiver = stackValue(argCount);
+
+    // Try to find function name from method literals
+    // In Pharo FFI, the ffiCall: pragma contains the spec
+    ObjectHeader* methodHdr = method.asObjectPtr();
+    size_t numLiterals = methodHdr->slotCount();
+
+    std::string funcName;
+    std::vector<std::string> argTypeNames;
+    std::string returnTypeName = "int";
+
+    // Scan literals for an array that looks like an FFI spec
+    for (size_t i = 0; i < numLiterals && funcName.empty(); i++) {
+        Oop lit = memory_.fetchPointer(i, method);
+        if (lit.isObject()) {
+            ObjectHeader* litHdr = lit.asObjectPtr();
+            uint32_t format = static_cast<uint32_t>(litHdr->format());
+
+            // Check if it's an Array (format 2 = indexable pointers)
+            if (format == 2) {
+                size_t arrSize = litHdr->slotCount();
+                if (arrSize >= 2) {
+                    // First element might be return type, second might be function name
+                    Oop first = memory_.fetchPointer(0, lit);
+                    Oop second = memory_.fetchPointer(1, lit);
+
+                    // Check if second element is a symbol (function name)
+                    if (second.isObject()) {
+                        ObjectHeader* secondHdr = second.asObjectPtr();
+                        uint32_t secondFormat = static_cast<uint32_t>(secondHdr->format());
+                        // Format 16-23 are byte strings
+                        if (secondFormat >= 16 && secondFormat <= 23) {
+                            size_t len = secondHdr->byteSize();
+                            const char* bytes = reinterpret_cast<const char*>(secondHdr->bytes());
+                            std::string name(bytes, len);
+
+                            // Check if it looks like an SDL function
+                            if (name.find("SDL_") == 0) {
+                                funcName = name;
+
+                                // Get return type from first element
+                                if (first.isObject()) {
+                                    ObjectHeader* firstHdr = first.asObjectPtr();
+                                    uint32_t firstFormat = static_cast<uint32_t>(firstHdr->format());
+                                    if (firstFormat >= 16 && firstFormat <= 23) {
+                                        size_t retLen = firstHdr->byteSize();
+                                        const char* retBytes = reinterpret_cast<const char*>(firstHdr->bytes());
+                                        returnTypeName = std::string(retBytes, retLen);
+                                    }
+                                }
+
+                                if (callCount <= 10) {
+                                    std::cerr << "[FFI] Found SDL function: " << funcName
+                                              << " returns: " << returnTypeName << "\n";
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (funcName.empty()) {
+        if (callCount <= 10) {
+            std::cerr << "[FFI] Could not find function name in method literals\n";
+        }
+        return PrimitiveResult::Failure;
+    }
+
+    // Look up the function
+    void* funcPtr = ffi::lookupFunction("SDL2", funcName);
+    if (!funcPtr) {
+        std::cerr << "[FFI] Function not found: " << funcName << "\n";
+        return PrimitiveResult::Failure;
+    }
+
+    // Marshal arguments from stack
+    std::vector<ffi::FFIType> argTypes;
+    std::vector<uint64_t> argValues;
+
+    for (int i = argCount - 1; i >= 0; i--) {
+        Oop arg = stackValue(i);
+
+        if (arg.isSmallInteger()) {
+            argTypes.push_back(ffi::FFIType::Int64);
+            argValues.push_back(static_cast<uint64_t>(arg.asSmallInteger()));
+        } else if (arg.isObject()) {
+            // Could be an ExternalAddress, ByteArray, or String
+            ObjectHeader* argHdr = arg.asObjectPtr();
+            uint32_t argFormat = static_cast<uint32_t>(argHdr->format());
+
+            if (argFormat >= 16 && argFormat <= 23) {
+                // Byte object - pass pointer to bytes
+                argTypes.push_back(ffi::FFIType::Pointer);
+                argValues.push_back(reinterpret_cast<uint64_t>(argHdr->bytes()));
+            } else if (argFormat == 2 && argHdr->slotCount() >= 1) {
+                // Could be ExternalAddress - check first slot
+                Oop firstSlot = memory_.fetchPointer(0, arg);
+                if (firstSlot.isSmallInteger()) {
+                    // Treat as address
+                    argTypes.push_back(ffi::FFIType::Pointer);
+                    argValues.push_back(static_cast<uint64_t>(firstSlot.asSmallInteger()));
+                } else {
+                    argTypes.push_back(ffi::FFIType::Pointer);
+                    argValues.push_back(reinterpret_cast<uint64_t>(arg.asObjectPtr()));
+                }
+            } else {
+                // Pass object pointer
+                argTypes.push_back(ffi::FFIType::Pointer);
+                argValues.push_back(reinterpret_cast<uint64_t>(arg.asObjectPtr()));
+            }
+        } else {
+            // Unknown type
+            argTypes.push_back(ffi::FFIType::Int64);
+            argValues.push_back(0);
+        }
+    }
+
+    // Determine return type
+    ffi::FFIType returnType = ffi::parseType(returnTypeName);
+
+    // Call the function
+    ffi::FFIResult result = ffi::callFunction(funcPtr, argTypes, argValues, returnType);
+
+    if (!result.success) {
+        std::cerr << "[FFI] Call failed: " << result.error << "\n";
+        return PrimitiveResult::Failure;
+    }
+
+    // Marshal result back to Smalltalk
+    Oop resultOop;
+    switch (result.type) {
+        case ffi::FFIType::Void:
+            resultOop = receiver;  // Return receiver for void functions
+            break;
+
+        case ffi::FFIType::Bool:
+            resultOop = result.intValue ? memory_.trueObject() : memory_.falseObject();
+            break;
+
+        case ffi::FFIType::Int8:
+        case ffi::FFIType::Int16:
+        case ffi::FFIType::Int32:
+        case ffi::FFIType::UInt8:
+        case ffi::FFIType::UInt16:
+        case ffi::FFIType::UInt32:
+            resultOop = Oop::fromSmallInteger(static_cast<int64_t>(result.intValue));
+            break;
+
+        case ffi::FFIType::Int64:
+        case ffi::FFIType::UInt64:
+            // May need to box large integers
+            if (result.intValue <= INT32_MAX && static_cast<int64_t>(result.intValue) >= INT32_MIN) {
+                resultOop = Oop::fromSmallInteger(static_cast<int64_t>(result.intValue));
+            } else {
+                // TODO: Create LargeInteger
+                resultOop = Oop::fromSmallInteger(static_cast<int64_t>(result.intValue & 0x7FFFFFFF));
+            }
+            break;
+
+        case ffi::FFIType::Pointer:
+            // Create ExternalAddress or return SmallInteger if it fits
+            if (result.ptrValue == nullptr) {
+                resultOop = Oop::nil();
+            } else {
+                // For now, return as SmallInteger (truncated)
+                // TODO: Create proper ExternalAddress
+                resultOop = Oop::fromSmallInteger(static_cast<int64_t>(result.intValue));
+            }
+            break;
+
+        default:
+            resultOop = Oop::nil();
+            break;
+    }
+
+    // Use primitiveSuccess which handles stack correctly
+    primitiveSuccess(resultOop);
+
+    if (callCount <= 10) {
+        std::cerr << "[FFI] " << funcName << " returned successfully\n";
+    }
+
+    return PrimitiveResult::Success;
 }
 
 // Primitive 118: DLL/shared library call
@@ -9731,6 +10148,21 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
     if (trace) std::cerr << "[PRIM264] eventBuffer slotCount=" << slotCount << "\n";
     if (slotCount < 7) {
         if (trace) std::cerr << "[PRIM264] Slot count < 7, failing\n";
+        return PrimitiveResult::Failure;
+    }
+
+    // Additional validation: event buffer should be an Array-like object
+    // Check the class index - Array class is typically around 51 in Pharo images
+    // Also check that slot 0 contains a SmallInteger (event type)
+    ObjectHeader* bufHdr = eventBuffer.asObjectPtr();
+    uint32_t classIdx = bufHdr->classIndex();
+    Oop slot0 = memory_.fetchPointer(0, eventBuffer);
+    if (trace) std::cerr << "[PRIM264] classIdx=" << classIdx << " slot0 isSmallInt=" << slot0.isSmallInteger() << "\n";
+
+    // Event buffers are Arrays (class ~51) with SmallInteger in slot 0
+    // Reject objects that don't look like event buffers
+    if (classIdx > 100 || !slot0.isSmallInteger()) {
+        if (trace) std::cerr << "[PRIM264] Not an event buffer (classIdx=" << classIdx << "), failing\n";
         return PrimitiveResult::Failure;
     }
 

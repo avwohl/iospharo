@@ -239,15 +239,110 @@ void Interpreter::initializeDisplayForm() {
     }
 }
 
+void Interpreter::ensureDisplayForm(int width, int height, int depth) {
+    // Check if Display already exists
+    Oop existingDisplay = memory_.findGlobal("Display");
+    if (!existingDisplay.isNil() && existingDisplay.isObject()) {
+        std::cerr << "[VM] ensureDisplayForm: Display already exists\n";
+        displayForm_ = existingDisplay;
+        return;
+    }
+
+    std::cerr << "[VM] ensureDisplayForm: Creating " << width << "x" << height << "x" << depth << " Form\n";
+
+    // Find Form and Bitmap classes
+    Oop formClass = memory_.findGlobal("Form");
+    Oop bitmapClass = memory_.findGlobal("Bitmap");
+
+    if (formClass.isNil() || !formClass.isObject()) {
+        std::cerr << "[VM] ensureDisplayForm: Form class not found\n";
+        return;
+    }
+    if (bitmapClass.isNil() || !bitmapClass.isObject()) {
+        std::cerr << "[VM] ensureDisplayForm: Bitmap class not found\n";
+        return;
+    }
+
+    uint32_t formClassIdx = memory_.indexOfClass(formClass);
+    uint32_t bitmapClassIdx = memory_.indexOfClass(bitmapClass);
+
+    if (formClassIdx == 0 || bitmapClassIdx == 0) {
+        std::cerr << "[VM] ensureDisplayForm: Classes not in class table\n";
+        return;
+    }
+
+    std::cerr << "[VM] ensureDisplayForm: Form classIdx=" << formClassIdx
+              << ", Bitmap classIdx=" << bitmapClassIdx << "\n";
+
+    // Allocate bitmap for pixels (32-bit pixels = 1 word each for 32-bit depth)
+    size_t pixelCount = static_cast<size_t>(width) * height;
+    Oop bitmapObj = memory_.allocateWords(bitmapClassIdx, pixelCount);
+
+    if (bitmapObj.isNil()) {
+        std::cerr << "[VM] ensureDisplayForm: Failed to allocate bitmap\n";
+        return;
+    }
+    std::cerr << "[VM] ensureDisplayForm: Allocated bitmap for " << pixelCount << " pixels\n";
+
+    // Fill bitmap with gray to make it visible
+    ObjectHeader* bitmapHdr = bitmapObj.asObjectPtr();
+    uint32_t* pixels = reinterpret_cast<uint32_t*>(bitmapHdr->bytes());
+    for (size_t i = 0; i < pixelCount; i++) {
+        pixels[i] = 0xFF808080;  // Gray
+    }
+
+    // Allocate Form with 5 slots: bits, width, height, depth, offset
+    Oop formObj = memory_.allocateSlots(formClassIdx, 5);
+
+    if (formObj.isNil()) {
+        std::cerr << "[VM] ensureDisplayForm: Failed to allocate Form\n";
+        return;
+    }
+    std::cerr << "[VM] ensureDisplayForm: Allocated Form object\n";
+
+    // Set Form slots
+    memory_.storePointer(0, formObj, bitmapObj);                    // bits
+    memory_.storePointer(1, formObj, Oop::fromSmallInteger(width)); // width
+    memory_.storePointer(2, formObj, Oop::fromSmallInteger(height)); // height
+    memory_.storePointer(3, formObj, Oop::fromSmallInteger(depth));  // depth
+    memory_.storePointer(4, formObj, Oop::fromSmallInteger(0));      // offset (0@0)
+
+    // Store locally
+    displayForm_ = formObj;
+    setScreenSize(width, height);
+    setScreenDepth(depth);
+
+    // CRITICAL: Bind to 'Display' global so Morphic can find it
+    if (memory_.setGlobal("Display", formObj)) {
+        std::cerr << "[VM] ensureDisplayForm: SUCCESS - Bound Form to 'Display' global\n";
+    } else {
+        std::cerr << "[VM] ensureDisplayForm: WARNING - Failed to bind Display global\n";
+    }
+
+    // Verify it was bound
+    Oop checkDisplay = memory_.findGlobal("Display");
+    if (!checkDisplay.isNil()) {
+        std::cerr << "[VM] ensureDisplayForm: Verified Display global exists\n";
+    } else {
+        std::cerr << "[VM] ensureDisplayForm: ERROR - Display still not found after binding!\n";
+    }
+}
+
 void Interpreter::renderWorldMorphs() {
     // Render World's morphs directly to the platform display
     // This bypasses NullWorldRenderer and draws morphs ourselves
     if (!pharo::gDisplaySurface) return;
 
     static int totalMorphsDrawn = 0;
+    static int renderCallCount = 0;
+    renderCallCount++;
 
     // Find the World global
     Oop world = memory_.findGlobal("World");
+    if (renderCallCount <= 3) {
+        std::cerr << "[RENDER] renderWorldMorphs #" << renderCallCount
+                  << " World=" << (world.isNil() ? "nil" : "found") << "\n";
+    }
     if (world.isNil() || !world.isObject()) return;
 
     uint32_t* pixels = pharo::gDisplaySurface->pixels();
@@ -431,6 +526,167 @@ void Interpreter::renderWorldMorphs() {
     pharo::gDisplaySurface->update();
 }
 
+// ===== DISPLAY SYNCHRONIZATION =====
+// Copies Pharo's Display Form to the platform display surface
+
+void Interpreter::syncDisplayToSurface() {
+    if (!pharo::gDisplaySurface) return;
+
+    static int syncCallCount = 0;
+    syncCallCount++;
+
+    // Auto-discover Display global if displayForm_ not set
+    if (displayForm_.isNil()) {
+        // First try direct Display global
+        Oop display = memory_.findGlobal("Display");
+
+        // If not found, try to get Display from World
+        if (display.isNil()) {
+            Oop world = memory_.findGlobal("World");
+            if (!world.isNil() && world.isObject()) {
+                ObjectHeader* worldHdr = world.asObjectPtr();
+                size_t worldSlots = worldHdr->slotCount();
+
+                static bool dumpedWorld = false;
+                if (!dumpedWorld) {
+                    dumpedWorld = true;
+                    std::cerr << "[SYNC] World has " << worldSlots << " slots, classIdx=" << worldHdr->classIndex() << "\n";
+
+                    // Look for Forms in World's slots
+                    for (size_t i = 0; i < std::min(worldSlots, size_t(20)); i++) {
+                        Oop slot = memory_.fetchPointer(i, world);
+                        std::cerr << "[SYNC]   World slot[" << i << "]: ";
+                        if (slot.isNil()) {
+                            std::cerr << "nil\n";
+                        } else if (slot.isSmallInteger()) {
+                            std::cerr << "SmallInt=" << slot.asSmallInteger() << "\n";
+                        } else if (slot.isObject()) {
+                            ObjectHeader* slotHdr = slot.asObjectPtr();
+                            std::cerr << "object classIdx=" << slotHdr->classIndex()
+                                      << " slots=" << slotHdr->slotCount() << "\n";
+                        } else {
+                            std::cerr << "other\n";
+                        }
+                    }
+                }
+
+                // Try to find a Form by scanning all slots
+                for (size_t i = 0; i < worldSlots && display.isNil(); i++) {
+                    Oop slot = memory_.fetchPointer(i, world);
+                    if (!slot.isNil() && slot.isObject()) {
+                        ObjectHeader* slotHdr = slot.asObjectPtr();
+                        // Check if it looks like a Form (4+ slots, slot1 and slot2 are SmallIntegers)
+                        if (slotHdr->slotCount() >= 4) {
+                            Oop s1 = memory_.fetchPointer(1, slot);
+                            Oop s2 = memory_.fetchPointer(2, slot);
+                            if (s1.isSmallInteger() && s2.isSmallInteger()) {
+                                int w = s1.asSmallInteger();
+                                int h = s2.asSmallInteger();
+                                if (w > 0 && w < 10000 && h > 0 && h < 10000) {
+                                    Oop bits = memory_.fetchPointer(0, slot);
+                                    if (bits.isObject()) {
+                                        display = slot;
+                                        std::cerr << "[SYNC] Found Form at World slot " << i
+                                                  << " (" << w << "x" << h << ")\n";
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!display.isNil() && display.isObject()) {
+            displayForm_ = display;
+            std::cerr << "[SYNC] Found display form at sync #" << syncCallCount << "!\n";
+
+            // Log Form dimensions
+            Oop widthOop = memory_.fetchPointer(1, display);
+            Oop heightOop = memory_.fetchPointer(2, display);
+            Oop depthOop = memory_.fetchPointer(3, display);
+            if (widthOop.isSmallInteger() && heightOop.isSmallInteger()) {
+                std::cerr << "[SYNC] Display Form: " << widthOop.asSmallInteger()
+                          << "x" << heightOop.asSmallInteger()
+                          << " depth=" << (depthOop.isSmallInteger() ? depthOop.asSmallInteger() : 32) << "\n";
+            }
+
+            // Log Form bits
+            Oop bits = memory_.fetchPointer(0, display);
+            std::cerr << "[SYNC] Display bits: " << (bits.isNil() ? "nil" : (bits.isObject() ? "object" : "immediate")) << "\n";
+        } else {
+            static int noDisplayCount = 0;
+            noDisplayCount++;
+            if (noDisplayCount <= 3) {
+                std::cerr << "[SYNC] Display form not found (attempt #" << noDisplayCount << ")\n";
+            }
+        }
+    }
+
+    // If no display form found, try direct morph rendering
+    if (displayForm_.isNil()) {
+        static int directRenderCount = 0;
+        directRenderCount++;
+        if (directRenderCount <= 3) {
+            std::cerr << "[SYNC] No Form - trying direct morph rendering\n";
+        }
+        renderWorldMorphs();
+        return;
+    }
+
+    // Get the Form's bits (slot 0)
+    Oop bits = memory_.fetchPointer(0, displayForm_);
+    if (bits.isNil() || !bits.isObject()) return;
+
+    ObjectHeader* bitsHdr = bits.asObjectPtr();
+    uint32_t* srcPixels = reinterpret_cast<uint32_t*>(bitsHdr->bytes());
+
+    // Get Form dimensions
+    Oop widthOop = memory_.fetchPointer(1, displayForm_);
+    Oop heightOop = memory_.fetchPointer(2, displayForm_);
+    Oop depthOop = memory_.fetchPointer(3, displayForm_);
+
+    int srcWidth = widthOop.isSmallInteger() ? widthOop.asSmallInteger() : screenWidth_;
+    int srcHeight = heightOop.isSmallInteger() ? heightOop.asSmallInteger() : screenHeight_;
+    int srcDepth = depthOop.isSmallInteger() ? depthOop.asSmallInteger() : 32;
+
+    // Sample some pixels from Form to check if Morphic has drawn to it
+    static int sampleLogCount = 0;
+    if (sampleLogCount < 5 && srcPixels) {
+        sampleLogCount++;
+        uint32_t corner = srcPixels[0];
+        uint32_t center = srcPixels[(srcHeight/2) * srcWidth + srcWidth/2];
+        uint32_t nonZeroCount = 0;
+        for (int i = 0; i < 1000 && i < srcWidth * srcHeight; i++) {
+            if (srcPixels[i] != 0) nonZeroCount++;
+        }
+        std::cerr << "[SYNC] Form sampling #" << sampleLogCount
+                  << " corner=0x" << std::hex << corner
+                  << " center=0x" << center << std::dec
+                  << " nonZero=" << nonZeroCount << "/1000\n";
+    }
+
+    uint32_t* dstPixels = pharo::gDisplaySurface->pixels();
+    int dstWidth = pharo::gDisplaySurface->width();
+    int dstHeight = pharo::gDisplaySurface->height();
+
+    int copyWidth = std::min(srcWidth, dstWidth);
+    int copyHeight = std::min(srcHeight, dstHeight);
+
+    if (copyWidth <= 0 || copyHeight <= 0) return;
+
+    // Copy pixels (32-bit assumed for now)
+    if (srcDepth == 32) {
+        for (int y = 0; y < copyHeight; y++) {
+            for (int x = 0; x < copyWidth; x++) {
+                dstPixels[y * dstWidth + x] = srcPixels[y * srcWidth + x];
+            }
+        }
+    }
+
+    pharo::gDisplaySurface->update();
+}
+
 // ===== MAIN LOOP =====
 
 void Interpreter::interpret() {
@@ -439,7 +695,138 @@ void Interpreter::interpret() {
         if (hasPendingSignals()) {
             processPendingSignals();
         }
+
+        // Check timer and signal delay semaphore if time has elapsed
+        checkTimerSemaphore();
+
         step();
+    }
+}
+
+void Interpreter::checkTimerSemaphore() {
+    if (nextWakeupTime_ == 0 || timerSemaphore_.isNil()) {
+        return;  // No timer set
+    }
+
+    // Get current time in milliseconds
+    auto now = std::chrono::steady_clock::now();
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now.time_since_epoch()).count();
+
+    if (ms >= nextWakeupTime_) {
+        // Time has elapsed - signal the semaphore
+        static int signalCount = 0;
+        if (signalCount++ < 10) {
+            std::cerr << "[VM] Timer fired at " << ms << " (target was " << nextWakeupTime_ << ")\n";
+        }
+
+        // Signal the timer semaphore
+        Oop semaphore = timerSemaphore_;
+        timerSemaphore_ = Oop::nil();
+        nextWakeupTime_ = 0;
+
+        // Same signal logic as primitiveSignal
+        Oop nilObj = memory_.nil();
+        Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, semaphore);
+
+        if (firstLink.isNil() || firstLink.rawBits() == nilObj.rawBits()) {
+            // No processes waiting - increment excessSignals
+            Oop excessOop = memory_.fetchPointer(SemaphoreExcessSignalsIndex, semaphore);
+            int64_t excess = excessOop.isSmallInteger() ? excessOop.asSmallInteger() : 0;
+            memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
+                                Oop::fromSmallInteger(excess + 1));
+        } else {
+            // Wake the first waiting process
+            Oop process = removeFirstLinkOfList(semaphore);
+
+            // Get process priority and check if we should preempt
+            Oop processPriorityOop = memory_.fetchPointer(ProcessPriorityIndex, process);
+            int processPriority = static_cast<int>(processPriorityOop.asSmallInteger());
+
+            Oop activeProcess = getActiveProcess();
+            Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
+            int activePriority = static_cast<int>(activePriorityOop.asSmallInteger());
+
+            if (processPriority > activePriority) {
+                // Higher priority - preempt current process
+                putToSleep(activeProcess);
+                transferTo(process);
+            } else {
+                // Same or lower priority - just add to ready queue
+                putToSleep(process);
+            }
+        }
+    }
+}
+
+// ===== HEARTBEAT THREAD =====
+
+void Interpreter::startHeartbeat() {
+    if (heartbeatRunning_) return;
+
+    heartbeatRunning_ = true;
+    heartbeatThread_ = std::thread([this]() {
+        std::cerr << "[HEARTBEAT] Started\n";
+        int tickCount = 0;
+        int displayUpdateCount = 0;
+
+        while (heartbeatRunning_) {
+            // Sleep for ~1ms between ticks (like official VM heartbeat)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+            tickCount++;
+
+            // Check timer semaphore and signal if expired
+            if (nextWakeupTime_ != 0 && !timerSemaphore_.isNil()) {
+                auto now = std::chrono::steady_clock::now();
+                auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now.time_since_epoch()).count();
+
+                if (ms >= nextWakeupTime_) {
+                    if (tickCount < 100 || tickCount % 1000 == 0) {
+                        std::cerr << "[HEARTBEAT] Timer expired at " << ms << "ms, signaling\n";
+                    }
+                    // Signal the timer semaphore by incrementing its excessSignals
+                    Oop semaphore = timerSemaphore_;
+                    timerSemaphore_ = Oop::nil();
+                    nextWakeupTime_ = 0;
+
+                    // Increment excessSignals - this will wake up waiting processes
+                    if (semaphore.isObject()) {
+                        Oop excessOop = memory_.fetchPointer(SemaphoreExcessSignalsIndex, semaphore);
+                        int64_t excess = excessOop.isSmallInteger() ? excessOop.asSmallInteger() : 0;
+                        memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
+                                            Oop::fromSmallInteger(excess + 1));
+                    }
+                }
+            }
+
+            // Every ~33ms (30fps), sync Display Form to platform surface
+            if (tickCount % 33 == 0) {
+                syncDisplayToSurface();
+                displayUpdateCount++;
+                if (displayUpdateCount <= 5) {
+                    std::cerr << "[HEARTBEAT] Display sync #" << displayUpdateCount << "\n";
+                }
+            }
+
+            // Log status at 500ms
+            if (tickCount == 500) {
+                std::cerr << "[HEARTBEAT] 500ms, running=" << running_
+                          << " timerSet=" << (nextWakeupTime_ != 0) << "\n";
+            }
+        }
+
+        std::cerr << "[HEARTBEAT] Stopped\n";
+    });
+}
+
+void Interpreter::stopHeartbeat() {
+    if (!heartbeatRunning_) return;
+
+    heartbeatRunning_ = false;
+    if (heartbeatThread_.joinable()) {
+        heartbeatThread_.join();
     }
 }
 
@@ -516,16 +903,6 @@ bool Interpreter::step() {
     // In Sista V1, extension bytecodes (0xE0/0xE1) set these values, then the
     // NEXT bytecode uses them. The consuming bytecodes reset them after use.
     // Resetting here would break extension byte chains.
-
-    // Bytecode step counter for periodic updates
-    static int stepCount = 0;
-    stepCount++;
-
-    // Periodic display update - trigger every 10000 steps to ensure rendering happens
-    // even if NullWorldRenderer doesn't call displayWorldStateOf:during:
-    if (stepCount % 10000 == 0 && pharo::gDisplaySurface) {
-        pharo::gDisplaySurface->update();
-    }
 
     uint8_t bytecode = fetchByte();
     dispatchBytecode(bytecode);
@@ -729,15 +1106,42 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         // Sista V1: 0x80-0x8F (128-143): Send literal selector 0-15 with 0 args
         int litIndex = bytecode & 0x0F;
         Oop selector = literal(litIndex);
-        // Trace if selector is a CompiledBlock (likely executing wrong bytecodes)
-        if (selector.isObject() && selector.asObjectPtr()->classIndex() == 3117) {
-            static int wrongBcCount = 0;
-            wrongBcCount++;
-            if (wrongBcCount <= 3) {
-                std::cerr << "[BYTECODE] Send 0x" << std::hex << (int)bytecode << " litIndex=" << litIndex
-                          << " got CompiledBlock!\n"
-                          << "  method_=0x" << method_.rawBits() << " homeMethod_=0x" << homeMethod_.rawBits()
-                          << " IP offset=" << std::dec << (instructionPointer_ - 1 - method_.asObjectPtr()->bytes()) << "\n";
+        // Trace sends with 0 args where selector has colons (should have args!)
+        if (selector.isObject() && selector.rawBits() > 0x10000) {
+            ObjectHeader* selHdr = selector.asObjectPtr();
+            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                std::string selStr((char*)selHdr->bytes(), selHdr->byteSize());
+                if (selStr.find(':') != std::string::npos) {
+                    static int zeroArgKwCount = 0;
+                    zeroArgKwCount++;
+                    if (zeroArgKwCount <= 5) {
+                        std::cerr << "[BYTECODE] Send 0x" << std::hex << (int)bytecode
+                                  << " (0-arg) selector=" << selStr << " but has colon!\n"
+                                  << "  method=0x" << method_.rawBits()
+                                  << " methodCls=" << std::dec << method_.asObjectPtr()->classIndex()
+                                  << " litIdx=" << litIndex << "\n";
+                        // Show surrounding bytecodes and method info
+                        uint8_t* bytesBase = method_.asObjectPtr()->bytes();
+                        int offset = static_cast<int>(instructionPointer_ - 1 - bytesBase);
+                        // Get numLiterals from method header
+                        Oop mHdr = memory_.fetchPointer(0, method_);
+                        int64_t hdrBits = mHdr.isSmallInteger() ? mHdr.asSmallInteger() : 0;
+                        int numLits = hdrBits & 0x7FFF;
+                        int expectedBcStart = (1 + numLits) * 8;
+                        std::cerr << "  IP offset=" << offset << " numLits=" << numLits
+                                  << " expectedBcStart=" << expectedBcStart << "\n";
+                        std::cerr << "  bytes around:\n    ";
+                        for (int i = offset - 3; i <= offset + 5; i++) {
+                            if (i >= 0 && i < 100) {
+                                if (i == offset) std::cerr << "[";
+                                std::cerr << std::hex << std::setw(2) << std::setfill('0') << (int)bytesBase[i];
+                                if (i == offset) std::cerr << "]";
+                                std::cerr << " ";
+                            }
+                        }
+                        std::cerr << std::dec << "\n";
+                    }
+                }
             }
         }
         sendSelector(selector, 0);
@@ -1088,12 +1492,36 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
             {
                 uint8_t tempIndex = fetchByte();
                 uint8_t vectorIndex = fetchByte();
-                // Get temp vector from outer context
+                // Get temp vector from current context temps
                 Oop tempVector = temporary(vectorIndex);
+                static int remoteTempCount = 0;
+                remoteTempCount++;
+                if (remoteTempCount <= 10) {
+                    std::cerr << "[REMOTE] pushRemoteTemp #" << remoteTempCount
+                              << " tempIdx=" << (int)tempIndex << " vecIdx=" << (int)vectorIndex
+                              << " tempVector=0x" << std::hex << tempVector.rawBits() << std::dec;
+                    if (tempVector.isObject()) {
+                        ObjectHeader* vHdr = tempVector.asObjectPtr();
+                        std::cerr << " (classIdx=" << vHdr->classIndex() << " slots=" << memory_.slotCountOf(tempVector) << ")";
+                    } else if (tempVector.isSmallInteger()) {
+                        std::cerr << " (SmallInt=" << tempVector.asSmallInteger() << ")";
+                    }
+                    std::cerr << "\n";
+                }
                 if (tempVector.isObject()) {
                     Oop value = memory_.fetchPointer(tempIndex, tempVector);
+                    if (remoteTempCount <= 10) {
+                        std::cerr << "[REMOTE]   value=0x" << std::hex << value.rawBits() << std::dec;
+                        if (value.isSmallInteger()) {
+                            std::cerr << " (SmallInt=" << value.asSmallInteger() << ")";
+                        }
+                        std::cerr << "\n";
+                    }
                     push(value);
                 } else {
+                    if (remoteTempCount <= 10) {
+                        std::cerr << "[REMOTE]   tempVector is NOT object, pushing nil\n";
+                    }
                     push(memory_.nil());
                 }
                 break;
@@ -1671,7 +2099,7 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 }
 
 void Interpreter::sendSelector(Oop selector, int argCount) {
-    // Message send tracing
+    // Message send tracing (limited to first 50 for cleaner output)
     static int sendCount = 0;
     sendCount++;
     if (sendCount <= 50) {
@@ -1731,6 +2159,42 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         } else if (selector.isNil() || selector.rawBits() == 0) {
             selName = "<nil>";
         }
+        // Validate argCount matches number of colons in selector
+        // (Skip binary selectors like +, -, *, /, =, <, >, etc. which have 1 arg but no colon)
+        if (isValidSymbol && selName.size() > 0) {
+            int expectedArgs = 0;
+            for (char c : selName) {
+                if (c == ':') expectedArgs++;
+            }
+            // Only flag mismatch for keyword selectors (contain colons)
+            if (expectedArgs > 0 && expectedArgs != argCount && sendCount <= 100) {
+                std::cerr << "[VM] ARG MISMATCH: selector=#" << selName
+                          << " expected " << expectedArgs << " args, got " << argCount
+                          << " method=0x" << std::hex << method_.rawBits() << std::dec;
+                // Check if method is a CompiledBlock
+                if (method_.isObject()) {
+                    ObjectHeader* mHdr = method_.asObjectPtr();
+                    std::cerr << " methodCls=" << mHdr->classIndex();
+                    if (mHdr->classIndex() == 3117) {
+                        std::cerr << " (CompiledBlock)";
+                    } else if (mHdr->classIndex() == 3101) {
+                        std::cerr << " (CompiledMethod)";
+                    }
+                    // Show the literal at index 0 to help identify
+                    Oop lit0 = memory_.fetchPointer(1, method_);  // slot 1 is first literal (slot 0 is header)
+                    if (lit0.isObject()) {
+                        ObjectHeader* litHdr = lit0.asObjectPtr();
+                        if (litHdr->isBytesObject() && litHdr->byteSize() < 50) {
+                            std::string litStr((char*)litHdr->bytes(), litHdr->byteSize());
+                            std::cerr << " lit0=" << litStr;
+                        } else {
+                            std::cerr << " lit0cls=" << litHdr->classIndex();
+                        }
+                    }
+                }
+                std::cerr << "\n";
+            }
+        }
         std::cerr << "[VM] sendSelector #" << sendCount << ": #" << selName << " args=" << argCount;
 
         // Show receiver class for first few sends
@@ -1760,6 +2224,32 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     // Get receiver (under the arguments on stack)
     Oop rcvr = stackValue(argCount);
 
+    // Debug: trace receiver for problematic sends
+    if (sendCount == 16 || (rcvr.isObject() && !memory_.isValidPointer(rcvr))) {
+        std::cerr << "[SEND_DEBUG] #" << sendCount << " rcvr=0x" << std::hex << rcvr.rawBits()
+                  << " isSmallInt=" << rcvr.isSmallInteger()
+                  << " isObj=" << rcvr.isObject()
+                  << " isSmallFloat=" << rcvr.isSmallFloat() << std::dec;
+        if (rcvr.isObject()) {
+            std::cerr << " validPtr=" << memory_.isValidPointer(rcvr);
+        }
+        if (rcvr.isSmallFloat()) {
+            Oop floatClass = memory_.specialObject(SpecialObjectIndex::ClassFloat);
+            std::cerr << " floatClass=0x" << std::hex << floatClass.rawBits()
+                      << " validClass=" << memory_.isValidPointer(floatClass) << std::dec;
+            // Check class structure
+            if (floatClass.isObject() && memory_.isValidPointer(floatClass)) {
+                Oop superclass = memory_.fetchPointer(0, floatClass);
+                Oop methodDict = memory_.fetchPointer(1, floatClass);
+                std::cerr << "\n  superclass=0x" << std::hex << superclass.rawBits()
+                          << " valid=" << memory_.isValidPointer(superclass);
+                std::cerr << " methodDict=0x" << methodDict.rawBits()
+                          << " valid=" << memory_.isValidPointer(methodDict) << std::dec;
+            }
+        }
+        std::cerr << "\n";
+    }
+
     // ===== INTERCEPT TERMINATION SELECTORS =====
     // During embedded VM startup, prevent process termination from quit sequence
     // The SnapshotOperation's isQuit=true path tries to terminate processes before
@@ -1770,54 +2260,231 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             std::string selStr((char*)selHdr->bytes(), selHdr->byteSize());
             // Check for termination-related selectors
             if (selStr == "terminateRealActive" || selStr == "terminateActive" ||
-                selStr == "doTerminationFromYourself" || selStr == "terminate" ||
-                selStr == "primTerminate" || selStr == "primitiveTerminateTo" ||
-                selStr == "terminateTo:") {
+                selStr == "doTerminationFromYourself") {
                 static int termInterceptCount = 0;
                 termInterceptCount++;
                 if (termInterceptCount <= 10) {
-                    std::cerr << "[VM] INTERCEPT #" << selStr << " - preventing termination during startup\n";
+                    std::cerr << "[VM] INTERCEPT #" << selStr << " - terminating and rescheduling\n";
                 }
-                // Pop args and receiver, push receiver back (return self)
+                // Actually terminate the process and switch to another
                 popN(argCount + 1);
+
+                // Mark current process as terminated
+                terminateCurrentProcess();
+
+                // Try to find another runnable process
+                if (tryReschedule()) {
+                    return;
+                }
+
+                // No other process - try bootstrap
+                if (bootstrapStartup()) {
+                    return;
+                }
+
+                // No processes to run - just return self
                 push(rcvr);
                 return;
             }
 
-            // ===== INTERCEPT NullWorldRenderer DISPLAY METHODS =====
-            // Make NullWorldRenderer actually render to our display surface
-            if (selStr == "displayWorldStateOf:during:" && argCount == 2) {
-                // Check if receiver is NullWorldRenderer
+            // ===== INTERCEPT Form class >> extent:depth: =====
+            // When NullWorldRenderer creates a temp Form for drawing, we return Display instead.
+            // This causes all drawing to go to Display, which we sync to native surface.
+            if (selStr == "extent:depth:" && argCount == 2) {
+                static int extentDepthCalls = 0;
+                extentDepthCalls++;
+                bool shouldLog = (extentDepthCalls <= 20);
+
+                // Check if receiver is a class object with name
+                if (rcvr.isObject()) {
+                    // For class-side method: rcvr is the class (e.g., Form)
+                    // Slot 6 of a class is its name (a Symbol)
+                    Oop maybeName = memory_.fetchPointer(6, rcvr);
+                    std::string name;
+                    if (maybeName.isObject()) {
+                        ObjectHeader* nameHdr = maybeName.asObjectPtr();
+                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                            name = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                        }
+                    }
+
+                    if (shouldLog) {
+                        std::cerr << "[VM] extent:depth: #" << extentDepthCalls
+                                  << " receiver class name='" << name << "'\n";
+                    }
+
+                    if (name == "Form") {
+                        // This is Form class receiving extent:depth:
+                        // Return our Display Form instead of creating new one
+                        Oop display = memory_.findGlobal("Display");
+                        if (!display.isNil() && display.isObject()) {
+                            if (shouldLog) {
+                                std::cerr << "[VM] INTERCEPT Form extent:depth: #" << extentDepthCalls
+                                          << " - returning Display\n";
+                            }
+
+                            // Pop args and receiver, push Display
+                            popN(argCount + 1);
+                            push(display);
+                            return;
+                        }
+                    }
+                }
+            }
+
+            // ===== Debug: check World/ActiveWorld globals on first send =====
+            static bool checkedWorldGlobals = false;
+            if (!checkedWorldGlobals && selStr == "doOneCycle" && argCount == 0) {
+                checkedWorldGlobals = true;
+                Oop world = memory_.findGlobal("World");
+                Oop activeWorld = memory_.findGlobal("ActiveWorld");
+                std::cerr << "[VM] GLOBAL CHECK: World=" << (world.isNil() ? "nil" : "exists")
+                          << " ActiveWorld=" << (activeWorld.isNil() ? "nil" : "exists") << "\n";
+
+                // If World exists, check its class
+                if (!world.isNil() && world.isObject()) {
+                    Oop worldClass = memory_.classOf(world);
+                    if (worldClass.isObject()) {
+                        Oop clsName = memory_.fetchPointer(6, worldClass);
+                        if (clsName.isObject()) {
+                            ObjectHeader* nameHdr = clsName.asObjectPtr();
+                            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                                std::string name((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                std::cerr << "[VM] World class: " << name << "\n";
+                            }
+                        }
+                    }
+
+                    // Check World's worldState slot (slot 3 in WorldMorph)
+                    // WorldMorph inherits from PasteUpMorph -> Morph, check slots
+                    ObjectHeader* worldHdr = world.asObjectPtr();
+                    std::cerr << "[VM] World has " << worldHdr->slotCount() << " slots\n";
+                    if (worldHdr->slotCount() >= 4) {
+                        Oop worldState = memory_.fetchPointer(3, world);
+                        if (!worldState.isNil() && worldState.isObject()) {
+                            Oop wsClass = memory_.classOf(worldState);
+                            if (wsClass.isObject()) {
+                                Oop wsName = memory_.fetchPointer(6, wsClass);
+                                if (wsName.isObject()) {
+                                    ObjectHeader* nameHdr = wsName.asObjectPtr();
+                                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                                        std::string name((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                        std::cerr << "[VM] World worldState class: " << name << "\n";
+                                    }
+                                }
+                            }
+                        } else {
+                            std::cerr << "[VM] World worldState: nil\n";
+                        }
+                    }
+                }
+            }
+
+            // Trace onErrorDo: to understand why block isn't executing
+            if (selStr == "onErrorDo:" && argCount == 1) {
+                static int onErrorCount = 0;
+                onErrorCount++;
+                if (onErrorCount <= 3) {
+                    if (rcvr.isObject()) {
+                        ObjectHeader* hdr = rcvr.asObjectPtr();
+                        uint64_t rawHdr = hdr->rawHeader();
+                        uint32_t rcvrClassIdx = hdr->classIndex();
+                        size_t slotCount = hdr->slotCount();
+                        auto format = hdr->format();
+
+                        // Look up class in table
+                        Oop classObj = memory_.classAtIndex(rcvrClassIdx);
+                        std::string className = "NOT_IN_TABLE";
+                        if (!classObj.isNil() && classObj.isObject()) {
+                            Oop nameObj = memory_.fetchPointer(6, classObj);
+                            if (nameObj.isObject()) {
+                                ObjectHeader* nameHdr = nameObj.asObjectPtr();
+                                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                                    className = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                }
+                            }
+                        }
+
+                        std::cerr << "[VM] TRACE onErrorDo: #" << onErrorCount
+                                  << " rcvr=0x" << std::hex << rcvr.rawBits()
+                                  << " rawHdr=0x" << rawHdr << std::dec
+                                  << " classIdx=" << rcvrClassIdx
+                                  << " class=" << className
+                                  << " slots=" << slotCount
+                                  << " format=" << static_cast<int>(format) << "\n";
+                    }
+                }
+            }
+
+            // Log key selectors during render path - always log important ones
+            static int renderPathSelectors = 0;
+            if (renderPathSelectors < 500) {
+                if (selStr == "doOneCycleNow" || selStr == "doOneCycleFor:" ||
+                    selStr == "displayWorldState:ofWorld:" || selStr == "drawDuring:" ||
+                    selStr == "doDrawCycleWith:" || selStr == "displayWorld:" ||
+                    selStr == "displayWorldState:" || selStr == "displayWorld" ||
+                    selStr == "runStepMethods" || selStr == "runStepMethodsIn:" ||
+                    selStr == "processStepMessage" || selStr == "checkIfUpdateNeeded" ||
+                    selStr == "displayWorldSafely:" || selStr == "extent:depth:" ||
+                    selStr == "terminate" || selStr == "suspendAndTerminate" ||
+                    selStr == "terminateInRecovery" || selStr == "error:" ||
+                    selStr == "doesNotUnderstand:" || selStr == "halt" ||
+                    selStr == "on:do:" || selStr == "value" ||
+                    selStr == "cannotReturn:" || selStr == "mustBeBoolean") {
+                    renderPathSelectors++;
+                    std::cerr << "[VM] RENDER_PATH #" << renderPathSelectors << ": #" << selStr << "\n";
+                }
+            }
+
+            // ===== INTERCEPT WorldState >> runStepMethodsIn: =====
+            // Skip the entire method to avoid getting stuck in deferredUIMessages loop
+            // This allows displayWorldSafely: to be called
+            if (selStr == "runStepMethodsIn:" && argCount == 1) {
                 Oop rcvrClass = memory_.classOf(rcvr);
                 if (rcvrClass.isObject()) {
-                    Oop className = memory_.fetchPointer(6, rcvrClass);  // Class name at slot 6
+                    Oop className = memory_.fetchPointer(6, rcvrClass);
                     if (className.isObject()) {
                         ObjectHeader* nameHdr = className.asObjectPtr();
                         if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
                             std::string rcvrClassName((char*)nameHdr->bytes(), nameHdr->byteSize());
-                            if (rcvrClassName == "NullWorldRenderer") {
-                                static bool firstIntercept = true;
-                                if (firstIntercept) {
-                                    std::cerr << "[VM] INTERCEPT displayWorldStateOf:during: on NullWorldRenderer\n";
-                                    firstIntercept = false;
+                            if (rcvrClassName == "WorldState") {
+                                static int skipCount = 0;
+                                skipCount++;
+                                if (skipCount <= 10) {
+                                    std::cerr << "[VM] INTERCEPT runStepMethodsIn: #" << skipCount
+                                              << " - skipping to allow displayWorldSafely:\n";
                                 }
-
-                                // Get the arguments: world and block
-                                Oop drawBlock = stackValue(0);  // The drawing block
-                                Oop worldArg = stackValue(1);   // The world
-
-                                // If we have a display form, execute the block with its canvas
-                                if (!displayForm_.isNil() && displayForm_.isObject()) {
-                                    // Create or get canvas for the display form
-                                    // For now, just trigger a display update
-                                    if (pharo::gDisplaySurface) {
-                                        pharo::gDisplaySurface->update();
-                                    }
-                                }
-
                                 // Pop args and receiver, push receiver (return self)
                                 popN(argCount + 1);
                                 push(rcvr);
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ===== INTERCEPT WorldState >> checkIfUpdateNeeded =====
+            // Force it to return true so Morphic actually renders
+            if (selStr == "checkIfUpdateNeeded" && argCount == 0) {
+                Oop rcvrClass = memory_.classOf(rcvr);
+                if (rcvrClass.isObject()) {
+                    Oop className = memory_.fetchPointer(6, rcvrClass);
+                    if (className.isObject()) {
+                        ObjectHeader* nameHdr = className.asObjectPtr();
+                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                            std::string rcvrClassName((char*)nameHdr->bytes(), nameHdr->byteSize());
+                            if (rcvrClassName == "WorldState") {
+                                static int interceptCount = 0;
+                                interceptCount++;
+                                if (interceptCount <= 20) {
+                                    std::cerr << "[VM] INTERCEPT checkIfUpdateNeeded #" << interceptCount
+                                              << " - forcing true\n";
+                                }
+
+                                // Pop receiver, push true (force update)
+                                popN(1);  // no args
+                                push(memory_.trueObject());
                                 return;
                             }
                         }
@@ -1884,6 +2551,20 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             primitiveFailed_ = false;
             PrimitiveResult result = executePrimitive(cached->primitiveIndex, argCount);
             if (result == PrimitiveResult::Success) {
+                // Debug: trace cached primitive success
+                static int cachedPrimCount = 0;
+                cachedPrimCount++;
+                if (cachedPrimCount <= 20 && sendCount <= 60) {
+                    std::cerr << "[CACHE_PRIM] selector #" << sendCount << " prim=" << cached->primitiveIndex
+                              << " stackTop=0x" << std::hex << stackTop().rawBits() << std::dec;
+                    if (stackTop().isSmallInteger()) {
+                        std::cerr << " (SmallInt=" << stackTop().asSmallInteger() << ")";
+                    } else if (stackTop().isObject()) {
+                        ObjectHeader* h = stackTop().asObjectPtr();
+                        std::cerr << " (classIdx=" << h->classIndex() << ")";
+                    }
+                    std::cerr << "\n";
+                }
                 return;  // Primitive handled it
             }
         }
@@ -1901,6 +2582,35 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     // Cache the method
     cacheMethod(selector, rcvrClass, method);
 
+    // Debug: trace method lookup for specific selectors
+    if (sendCount >= 38 && sendCount <= 45) {
+        // Get selector name for trace
+        std::string selName = "<unknown>";
+        if (selector.isObject() && selector.rawBits() > 0x10000) {
+            ObjectHeader* selHdr = selector.asObjectPtr();
+            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                selName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+            }
+        }
+        int primIdx = primitiveIndexOf(method);
+        std::cerr << "[LOOKUP_DEBUG] selector #" << sendCount << " '" << selName << "'"
+                  << " method=0x" << std::hex << method.rawBits() << std::dec
+                  << " primIdx=" << primIdx;
+        if (method.isObject()) {
+            ObjectHeader* mh = method.asObjectPtr();
+            std::cerr << " methodClassIdx=" << mh->classIndex();
+            // Show first few bytecodes
+            Oop hdr = memory_.fetchPointer(0, method);
+            if (hdr.isSmallInteger()) {
+                int64_t hb = hdr.asSmallInteger();
+                int numLit = hb & 0x7FFF;
+                uint8_t* bc = mh->bytes() + (1 + numLit) * 8;
+                std::cerr << " bytecodes=[" << (int)bc[0] << "," << (int)bc[1] << "," << (int)bc[2] << "]";
+            }
+        }
+        std::cerr << "\n";
+    }
+
     // Check for primitive
     int primIndex = primitiveIndexOf(method);
     if (primIndex > 0) {
@@ -1908,8 +2618,23 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         primitiveFailed_ = false;
         PrimitiveResult result = executePrimitive(primIndex, argCount);
         if (result == PrimitiveResult::Success) {
+            // Debug: trace primitive success
+            static int primSuccessCount = 0;
+            primSuccessCount++;
+            if (primSuccessCount <= 20 && sendCount <= 60) {
+                std::cerr << "[PRIM_OK] selector #" << sendCount << " prim=" << primIndex
+                          << " stackTop=0x" << std::hex << stackTop().rawBits() << std::dec;
+                if (stackTop().isSmallInteger()) {
+                    std::cerr << " (SmallInt=" << stackTop().asSmallInteger() << ")";
+                } else if (stackTop().isObject()) {
+                    ObjectHeader* h = stackTop().asObjectPtr();
+                    std::cerr << " (classIdx=" << h->classIndex() << ")";
+                }
+                std::cerr << "\n";
+            }
             return;
         }
+        // Primitive failed - fall through to method activation
     }
 
     activateMethod(method, argCount);
@@ -1944,11 +2669,22 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
         }
 
         static int lookupDebugCount = 0;
-        if (depth < 5 && lookupDebugCount < 0) {  // Disabled
+        // Enable tracing when we detect invalid pointer (happens early in method lookup for #rounded)
+        bool shouldTrace = (lookupDebugCount < 30) && (!memory_.isValidPointer(methodDict) || !memory_.isValidPointer(currentClass));
+        if (shouldTrace || lookupDebugCount < 5) {
             lookupDebugCount++;
             std::cerr << "[LOOKUP] depth=" << depth << " class=" << className << " (0x" << std::hex << currentClass.rawBits()
                       << std::dec << " clsIdx=" << clsHdr->classIndex() << " slots=" << clsHdr->slotCount()
-                      << ") md=0x" << std::hex << methodDict.rawBits() << std::dec << std::endl;
+                      << ") md=0x" << std::hex << methodDict.rawBits()
+                      << " valid=" << memory_.isValidPointer(methodDict) << std::dec;
+            // Check if class or methodDict pointer looks unrelocated (in old base range)
+            if (!memory_.isValidPointer(currentClass)) {
+                std::cerr << " *** CLASS INVALID ***";
+            }
+            if (!memory_.isValidPointer(methodDict)) {
+                std::cerr << " *** MD INVALID ***";
+            }
+            std::cerr << std::endl;
         }
         if (!isNilOrEnd(methodDict) && methodDict.isObject()) {
             Oop method = lookupInMethodDict(methodDict, selector);
@@ -2161,10 +2897,102 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
 
         // Check for exact match first (key is selector Symbol)
         if (key.rawBits() == actualSelector.rawBits() || key.rawBits() == selector.rawBits()) {
-            // if (shouldDebug) { ... }
+            // Debug: trace "hands" lookup specifically
+            if (selectorStr == "hands") {
+                std::cerr << "[MD-HANDS-EXACT] Found 'hands' via exact match at i=" << i
+                          << " mdSlotIndex=" << mdSlotIndex
+                          << " valuesSize=" << valuesSize
+                          << " keySlotCount=" << keySlotCount << "\n";
+                // Show key at current slot
+                std::cerr << "[MD-HANDS-EXACT]   key=0x" << std::hex << key.rawBits() << std::dec;
+                if (key.isObject()) {
+                    ObjectHeader* kh = key.asObjectPtr();
+                    if (kh->isBytesObject() && kh->byteSize() < 50) {
+                        std::cerr << " \"" << std::string((char*)kh->bytes(), kh->byteSize()) << "\"";
+                    }
+                }
+                std::cerr << "\n";
+                // Show values array structure
+                std::cerr << "[MD-HANDS-EXACT]   valuesArray=0x" << std::hex << valuesArray.rawBits() << std::dec << "\n";
+                // Show method at index i in valuesArray
+                if (i < valuesSize) {
+                    Oop method = memory_.fetchPointer(i, valuesArray);
+                    std::cerr << "[MD-HANDS-EXACT]   valuesArray[" << i << "]=0x" << std::hex << method.rawBits() << std::dec;
+                    if (method.isObject()) {
+                        ObjectHeader* mh = method.asObjectPtr();
+                        std::cerr << " classIdx=" << mh->classIndex() << " format=" << (int)mh->format();
+                        Oop hdr = memory_.fetchPointer(0, method);
+                        if (hdr.isSmallInteger()) {
+                            int64_t hb = hdr.asSmallInteger();
+                            int numLit = hb & 0x7FFF;
+                            bool hasPrim = (hb >> 30) & 1;
+                            // In CompiledMethod, the bytecodes are at a specific offset
+                            // Format 24-31: CompiledMethod
+                            // The header encodes numLiterals, then literals, then bytecodes
+                            uint8_t* bc = mh->bytes() + (1 + numLit) * 8;
+                            std::cerr << " numLit=" << numLit << " hasPrim=" << hasPrim;
+                            std::cerr << "\n[MD-HANDS-EXACT]     header=0x" << std::hex << hb << std::dec;
+                            // Dump first 16 bytes of bytecodes
+                            std::cerr << "\n[MD-HANDS-EXACT]     bytecodes(16): ";
+                            for (int j = 0; j < 16; j++) {
+                                std::cerr << (int)bc[j] << " ";
+                            }
+                            // Also dump raw bytes starting from bytes()
+                            std::cerr << "\n[MD-HANDS-EXACT]     raw bytes(48): ";
+                            uint8_t* rawBytes = mh->bytes();
+                            for (int j = 0; j < 48; j++) {
+                                if (j == (1 + numLit) * 8) std::cerr << "| ";  // Mark bytecode start
+                                std::cerr << (int)rawBytes[j] << " ";
+                            }
+                            // Also show the selector from the method's literal 1
+                            if (numLit >= 1) {
+                                Oop selLit = memory_.fetchPointer(1, method);
+                                std::cerr << "\n[MD-HANDS-EXACT]     method's selector (lit1)=0x"
+                                          << std::hex << selLit.rawBits() << std::dec;
+                                if (selLit.isObject()) {
+                                    ObjectHeader* sh = selLit.asObjectPtr();
+                                    if (sh->isBytesObject() && sh->byteSize() < 50) {
+                                        std::cerr << " \"" << std::string((char*)sh->bytes(), sh->byteSize()) << "\"";
+                                    } else if (sh->format() == ObjectFormat::FixedSize && sh->slotCount() >= 1) {
+                                        // AdditionalMethodState - selector at slot 0
+                                        Oop realSel = memory_.fetchPointer(0, selLit);
+                                        if (realSel.isObject()) {
+                                            ObjectHeader* rsh = realSel.asObjectPtr();
+                                            if (rsh->isBytesObject() && rsh->byteSize() < 50) {
+                                                std::cerr << " AMS->\"" << std::string((char*)rsh->bytes(), rsh->byteSize()) << "\"";
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    std::cerr << "\n";
+                }
+            }
             // Return corresponding method from valuesArray
             if (i < valuesSize) {
-                return memory_.fetchPointer(i, valuesArray);
+                Oop method = memory_.fetchPointer(i, valuesArray);
+                // Validate method before returning - skip invalid/unrelocated pointers
+                if (method.isObject() && !memory_.isValidPointer(method)) {
+                    static int invalidMethodCount = 0;
+                    invalidMethodCount++;
+                    if (invalidMethodCount <= 10) {
+                        // Print valuesArray object info to understand why it wasn't relocated
+                        ObjectHeader* vaHdr = valuesArray.asObjectPtr();
+                        uintptr_t vaOffset = reinterpret_cast<uint8_t*>(vaHdr) - memory_.oldSpaceStart();
+                        std::cerr << "[MD] INVALID METHOD #" << invalidMethodCount
+                                  << " at valuesArray[" << i << "]=0x" << std::hex << method.rawBits()
+                                  << " selector=" << selectorStr
+                                  << " valuesArray=0x" << valuesArray.rawBits()
+                                  << " vaOffset=0x" << vaOffset
+                                  << " fmt=" << static_cast<int>(vaHdr->format())
+                                  << " slots=" << std::dec << vaHdr->slotCount()
+                                  << " - SKIPPING (will cause DNU)\n";
+                    }
+                    return Oop::nil();  // Return nil to trigger DNU instead of crashing
+                }
+                return method;
             }
             return Oop::nil();
         }
@@ -2201,7 +3029,26 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
         if (keyHdr->isBytesObject()) {
             // Compare key Symbol with selector
             if (!selectorStr.empty() && memory_.symbolEquals(key, selectorStr.c_str())) {
-                // DEBUG: "[MD] Found method at slot " << i << " for selector \"" << selectorStr << "\""
+                // Debug: trace "hands" lookup specifically
+                if (selectorStr == "hands") {
+                    std::cerr << "[MD-HANDS] Found 'hands' at i=" << i
+                              << " valuesSize=" << valuesSize;
+                    if (i < valuesSize) {
+                        Oop method = memory_.fetchPointer(i, valuesArray);
+                        std::cerr << " method=0x" << std::hex << method.rawBits() << std::dec;
+                        if (method.isObject()) {
+                            ObjectHeader* mh = method.asObjectPtr();
+                            Oop hdr = memory_.fetchPointer(0, method);
+                            if (hdr.isSmallInteger()) {
+                                int64_t hb = hdr.asSmallInteger();
+                                int numLit = hb & 0x7FFF;
+                                uint8_t* bc = mh->bytes() + (1 + numLit) * 8;
+                                std::cerr << " bytecodes=[" << (int)bc[0] << "," << (int)bc[1] << "," << (int)bc[2] << "]";
+                            }
+                        }
+                    }
+                    std::cerr << "\n";
+                }
                 // Return corresponding method from valuesArray
                 if (i < valuesSize) {
                     return memory_.fetchPointer(i, valuesArray);
@@ -2308,6 +3155,18 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
 
                     if (!selectorStr.empty() && memory_.symbolEquals(actualSelector, selectorStr.c_str())) {
                         // DEBUG_LOG("[MD] Found method at " << i << " (selector at lit[1])";
+                        // Validate method before returning - skip invalid/unrelocated pointers
+                        if (key.isObject() && !memory_.isValidPointer(key)) {
+                            static int invalidKeyMethodCount = 0;
+                            invalidKeyMethodCount++;
+                            if (invalidKeyMethodCount <= 10) {
+                                std::cerr << "[MD] INVALID KEY-METHOD #" << invalidKeyMethodCount
+                                          << " at index=" << i << " key=0x" << std::hex << key.rawBits()
+                                          << " selector=" << selectorStr << std::dec
+                                          << " - SKIPPING (will cause DNU)\n";
+                            }
+                            return Oop::nil();  // Return nil to trigger DNU instead of crashing
+                        }
                         return key;  // The key IS the method
                     }
                 }
@@ -2321,7 +3180,20 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
             if (!selectorStr.empty() && memory_.symbolEquals(key, selectorStr.c_str())) {
                 // if (shouldDebug) { ... }
                 if (hasValuesArray) {
-                    return memory_.fetchPointer(i, valuesArray);
+                    Oop method = memory_.fetchPointer(i, valuesArray);
+                    // Validate method before returning - skip invalid/unrelocated pointers
+                    if (method.isObject() && !memory_.isValidPointer(method)) {
+                        static int invalidMethod2Count = 0;
+                        invalidMethod2Count++;
+                        if (invalidMethod2Count <= 10) {
+                            std::cerr << "[MD] INVALID METHOD2 #" << invalidMethod2Count
+                                      << " at valuesArray[" << i << "]=0x" << std::hex << method.rawBits()
+                                      << " selector=" << selectorStr << std::dec
+                                      << " - SKIPPING (will cause DNU)\n";
+                        }
+                        return Oop::nil();  // Return nil to trigger DNU instead of crashing
+                    }
+                    return method;
                 }
             }
         }
@@ -2504,31 +3376,156 @@ void Interpreter::activateMethod(Oop method, int argCount) {
 }
 
 void Interpreter::activateBlock(Oop block, int argCount) {
-    // BlockClosure layout:
+    static int activateCount = 0;
+    activateCount++;
+
+    // BlockClosure/FullBlockClosure layout:
     // 0: outerContext
-    // 1: startPC (SmallInteger)
+    // 1: startPC (SmallInteger) for old BlockClosure, OR
+    //    compiledBlock (Object) for FullBlockClosure
     // 2: numArgs (SmallInteger)
     // 3+: copied values
 
-    Oop startPC = memory_.fetchPointer(1, block);
-    if (!startPC.isSmallInteger()) {
+    Oop slot1 = memory_.fetchPointer(1, block);
+
+    // Debug: show stack before activation (first few times)
+    if (activateCount <= 5) {
+        std::cerr << "[BLOCK] activateBlock #" << activateCount << " argCount=" << argCount << "\n";
+        std::cerr << "[BLOCK]   block=0x" << std::hex << block.rawBits() << std::dec << "\n";
+        std::cerr << "[BLOCK]   slot1=0x" << std::hex << slot1.rawBits() << std::dec
+                  << " isSmallInt=" << slot1.isSmallInteger()
+                  << " isObject=" << slot1.isObject() << "\n";
+        for (int i = 0; i <= argCount; i++) {
+            Oop val = stackValue(i);
+            std::cerr << "[BLOCK]   stack[" << i << "]=0x" << std::hex << val.rawBits() << std::dec;
+            if (val.isSmallInteger()) {
+                std::cerr << " (SmallInt=" << val.asSmallInteger() << ")";
+            }
+            std::cerr << "\n";
+        }
+    }
+
+    Oop outerContext = memory_.fetchPointer(0, block);
+    Oop methodToExecute;
+    uint8_t* startAddress = nullptr;
+
+    if (slot1.isSmallInteger()) {
+        // Old-style BlockClosure: slot 1 is startPC
+        int64_t startPC = slot1.asSmallInteger();
+        // Get the method from outer context
+        Oop outerMethod = memory_.fetchPointer(3, outerContext);
+        methodToExecute = outerMethod;
+        ObjectHeader* methodObj = outerMethod.asObjectPtr();
+        startAddress = methodObj->bytes() + startPC;
+
+        if (activateCount <= 5) {
+            std::cerr << "[BLOCK]   Old-style BlockClosure: startPC=" << startPC << "\n";
+        }
+    } else if (slot1.isObject()) {
+        // FullBlockClosure: slot 1 is compiledBlock (the actual method to execute)
+        Oop compiledBlock = slot1;
+        methodToExecute = compiledBlock;
+        ObjectHeader* blockObj = compiledBlock.asObjectPtr();
+        // CompiledBlock bytecodes start after the header
+        // In Pharo's CompiledBlock, the header info tells us where bytecodes start
+        // For CompiledBlock, bytecodes typically start after fixed slots
+        Oop header = memory_.fetchPointer(0, compiledBlock);
+        int64_t headerBits = header.asSmallInteger();
+        // CompiledCode header format (after SmallInteger decode):
+        // bits 0-15: numLiterals, bits 16-23: numTemps, bits 24-27: numArgs
+        int numLiterals = headerBits & 0xFFFF;
+        // Bytecodes start after header slot and literal slots
+        // Header is slot 0, literals are slots 1 to numLiterals
+        // Each slot is 8 bytes, so bytecodes start at (1 + numLiterals) * 8
+        size_t bytecodeOffset = (1 + numLiterals) * 8;
+        startAddress = blockObj->bytes() + bytecodeOffset;
+
+        if (activateCount <= 5) {
+            std::cerr << "[BLOCK]   FullBlockClosure: compiledBlock=0x" << std::hex << compiledBlock.rawBits() << std::dec
+                      << " numLiterals=" << numLiterals
+                      << " bytecodeOffset=" << bytecodeOffset << "\n";
+        }
+    } else {
+        if (activateCount <= 5) {
+            std::cerr << "[BLOCK]   ERROR: slot1 is neither SmallInteger nor Object\n";
+        }
         primitiveFail();
         return;
     }
 
-    // Get the method from outer context
-    Oop outerContext = memory_.fetchPointer(0, block);
-    Oop outerMethod = memory_.fetchPointer(3, outerContext);
+    pushFrame(methodToExecute, argCount);
 
-    pushFrame(outerMethod, argCount);
+    method_ = methodToExecute;
+    // For FullBlockClosure, homeMethod should be from the compiledBlock's slot 2 or outerContext
+    if (slot1.isObject()) {
+        // CompiledBlock slot 2 is the home method
+        Oop homeFromBlock = memory_.fetchPointer(2, slot1);
+        if (homeFromBlock.isObject()) {
+            homeMethod_ = homeFromBlock;
+        } else {
+            // Fall back to getting from outer context
+            homeMethod_ = memory_.fetchPointer(3, outerContext);
+        }
+    } else {
+        homeMethod_ = memory_.fetchPointer(3, outerContext);
+    }
 
-    method_ = outerMethod;
-    homeMethod_ = outerMethod;  // Home method from outer context for literal access
     argCount_ = argCount;
-    receiver_ = memory_.fetchPointer(5, outerContext);  // Receiver from outer
 
-    ObjectHeader* methodObj = method_.asObjectPtr();
-    instructionPointer_ = methodObj->bytes() + startPC.asSmallInteger();
+    // Receiver from outer context (slot 5 is receiver in context layout)
+    if (outerContext.isObject() && !outerContext.isNil()) {
+        receiver_ = memory_.fetchPointer(5, outerContext);
+    } else {
+        receiver_ = memory_.nil();
+    }
+
+    // CRITICAL: Copy the copied values from the closure into the temp area
+    // BlockClosure/FullBlockClosure layout:
+    // 0: outerContext
+    // 1: startPC/compiledBlock
+    // 2: numArgs
+    // 3+: copied values (including temp vectors for remote temps)
+    size_t blockSlots = memory_.slotCountOf(block);
+    int numCopied = static_cast<int>(blockSlots) - 3;  // Fixed slots are 0,1,2
+
+    if (numCopied > 0 && activateCount <= 5) {
+        std::cerr << "[BLOCK]   Copying " << numCopied << " values from closure to temps\n";
+    }
+
+    for (int i = 0; i < numCopied; i++) {
+        Oop copiedValue = memory_.fetchPointer(3 + i, block);
+        // Copied values go after the arguments in the temp area
+        setTemporary(argCount + i, copiedValue);
+        if (activateCount <= 5) {
+            std::cerr << "[BLOCK]     temp(" << (argCount + i) << ") = 0x" << std::hex << copiedValue.rawBits() << std::dec;
+            if (copiedValue.isSmallInteger()) {
+                std::cerr << " (SmallInt=" << copiedValue.asSmallInteger() << ")";
+            } else if (copiedValue.isObject()) {
+                ObjectHeader* cHdr = copiedValue.asObjectPtr();
+                std::cerr << " (classIdx=" << cHdr->classIndex() << " slots=" << memory_.slotCountOf(copiedValue) << ")";
+            }
+            std::cerr << "\n";
+        }
+    }
+
+    instructionPointer_ = startAddress;
+
+    // Set bytecode end based on method size
+    ObjectHeader* methodHdr = methodToExecute.asObjectPtr();
+    bytecodeEnd_ = methodHdr->bytes() + methodHdr->byteSize();
+
+    // Debug: show frame state after activation
+    if (activateCount <= 5) {
+        std::cerr << "[BLOCK]   after activation: framePointer_=" << (void*)framePointer_
+                  << " stackPointer_=" << (void*)stackPointer_ << "\n";
+        std::cerr << "[BLOCK]   method_=0x" << std::hex << method_.rawBits()
+                  << " IP=" << (void*)instructionPointer_ << std::dec << "\n";
+        std::cerr << "[BLOCK]   temp(0)=0x" << std::hex << temporary(0).rawBits() << std::dec;
+        if (temporary(0).isSmallInteger()) {
+            std::cerr << " (SmallInt=" << temporary(0).asSmallInteger() << ")";
+        }
+        std::cerr << "\n";
+    }
 }
 
 // ===== FRAME MANAGEMENT =====
@@ -2550,7 +3547,7 @@ void Interpreter::pushFrame(Oop method, int argCount) {
     }
 
     // Trace first few pushes
-    if (pushCount <= 20) {
+    if (pushCount <= 100) {
         std::cerr << "[VM] pushFrame #" << pushCount << " depth=" << frameDepth_ << " argCount=" << argCount << "\n";
     }
 
@@ -2592,7 +3589,7 @@ void Interpreter::popFrame() {
         return;
     }
 
-    if (popCount <= 20) {
+    if (popCount <= 100) {
         std::cerr << "[VM] popFrame #" << popCount << " depth=" << frameDepth_ << "\n";
     }
 
@@ -2679,12 +3676,16 @@ Oop Interpreter::literal(size_t index) const {
 }
 
 Oop Interpreter::temporary(int index) const {
-    // Temporaries are after args in the frame
-    return *(framePointer_ + argCount_ + 1 + index);
+    // In Sista bytecodes, temp indices 0..argCount-1 are the arguments,
+    // and indices argCount+ are local temps/copied values.
+    // Frame layout: [receiver, arg0, arg1, ..., temp0, temp1, ...]
+    // So all are accessed at framePointer_[1 + index]
+    return *(framePointer_ + 1 + index);
 }
 
 void Interpreter::setTemporary(int index, Oop value) {
-    *(framePointer_ + argCount_ + 1 + index) = value;
+    // Same layout as temporary() - see comment above
+    *(framePointer_ + 1 + index) = value;
 }
 
 Oop Interpreter::argument(int index) const {
@@ -3023,7 +4024,31 @@ bool Interpreter::isFalse(Oop value) const {
 
 Oop Interpreter::superclassOf(Oop classOop) const {
     // Class layout: superclass is slot 0
-    return memory_.fetchPointer(0, classOop);
+    Oop result = memory_.fetchPointer(0, classOop);
+
+    // Debug: trace invalid superclass pointers
+    if (result.isObject() && !result.isNil() && !memory_.isValidPointer(result)) {
+        static int invalidSuperclassCount = 0;
+        invalidSuperclassCount++;
+        if (invalidSuperclassCount <= 10) {
+            std::string className = "<unknown>";
+            if (classOop.isObject()) {
+                Oop nameOop = memory_.fetchPointer(6, classOop);
+                if (nameOop.isObject()) {
+                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                        className = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                    }
+                }
+            }
+            std::cerr << "[SUPER] INVALID superclass #" << invalidSuperclassCount
+                      << " of " << className
+                      << " class=0x" << std::hex << classOop.rawBits()
+                      << " superclass=0x" << result.rawBits() << std::dec << "\n";
+        }
+    }
+
+    return result;
 }
 
 Oop Interpreter::methodDictOf(Oop classOop) const {
@@ -3064,10 +4089,26 @@ int Interpreter::primitiveIndexOf(Oop method) const {
     // Or in simpler encoding for common primitives:
     // The primitive number may be embedded in special send bytecodes
 
+    // Debug tracing for primitiveIndexOf
+    static int primIdxDebugCount = 0;
+    primIdxDebugCount++;
+    bool tracePrimIdx = (primIdxDebugCount <= 30);
+
+    if (tracePrimIdx) {
+        std::cerr << "[PRIM_IDX] #" << primIdxDebugCount
+                  << " method=0x" << std::hex << method.rawBits() << std::dec
+                  << " numLit=" << numLiterals
+                  << " hasPrim=" << hasPrimitive
+                  << " firstByte=" << (int)bytecodes[0] << "\n";
+    }
+
     // Check for callPrimitive bytecode (248 = 0xf8)
     if (bytecodes[0] == 248) {
         // callPrimitive: 248 lowByte highByte
         int primIndex = bytecodes[1] | (bytecodes[2] << 8);
+        if (tracePrimIdx) {
+            std::cerr << "[PRIM_IDX]   -> primIndex=" << primIndex << " from bytecodes[0]=248\n";
+        }
         return primIndex;
     }
 
@@ -3077,6 +4118,9 @@ int Interpreter::primitiveIndexOf(Oop method) const {
         for (int i = 0; i < 20; i++) {
             if (bytecodes[i] == 248) {
                 int primIndex = bytecodes[i+1] | (bytecodes[i+2] << 8);
+                if (tracePrimIdx) {
+                    std::cerr << "[PRIM_IDX]   -> primIndex=" << primIndex << " from bytecodes[" << i << "]=248\n";
+                }
                 return primIndex;
             }
         }
@@ -3141,22 +4185,120 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied) {
     Oop compiledBlock = literal(litIndex);
 
     // Create FullBlockClosure
-    Oop blockClass = memory_.specialObject(SpecialObjectIndex::ClassBlockClosure);
+    // Get the class from special objects - index 59 is ClassFullBlockClosure
+    Oop blockClass = memory_.specialObject(SpecialObjectIndex::ClassFullBlockClosure);
+
+    static bool debugOnce = false;
+    if (!debugOnce) {
+        debugOnce = true;
+        std::cerr << "[VM] Creating FullBlockClosure: blockClass=0x" << std::hex
+                  << blockClass.rawBits() << std::dec
+                  << " isNil=" << blockClass.isNil()
+                  << " isObj=" << blockClass.isObject() << "\n";
+        if (blockClass.isObject()) {
+            ObjectHeader* clsHdr = blockClass.asObjectPtr();
+            std::cerr << "[VM]   blockClass header classIndex=" << clsHdr->classIndex()
+                      << " (points to its metaclass)\n";
+            // Get the class name from slot 6
+            Oop clsName = memory_.fetchPointer(6, blockClass);  // name slot
+            if (clsName.isObject()) {
+                ObjectHeader* nameHdr = clsName.asObjectPtr();
+                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                    std::string name((char*)nameHdr->bytes(), nameHdr->byteSize());
+                    std::cerr << "[VM]   blockClass name from slot 6 = '" << name << "'\n";
+                }
+            }
+            // Also check slot 0 which might be the superclass
+            Oop slot0 = memory_.fetchPointer(0, blockClass);
+            if (slot0.isObject()) {
+                Oop supName = memory_.fetchPointer(6, slot0);
+                if (supName.isObject()) {
+                    ObjectHeader* nameHdr = supName.asObjectPtr();
+                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                        std::string name((char*)nameHdr->bytes(), nameHdr->byteSize());
+                        std::cerr << "[VM]   blockClass superclass name = '" << name << "'\n";
+                    }
+                }
+            }
+        }
+    }
+
+    // Fall back to BlockClosure if FullBlockClosure not found
+    if (blockClass.isNil() || !blockClass.isObject()) {
+        blockClass = memory_.specialObject(SpecialObjectIndex::ClassBlockClosure);
+    }
+
+    // The class index for instances is the index in the class table where this class is stored
+    // NOT the classIndex of the class object itself (which is the metaclass index)
+    // We need to find where blockClass is in the class table
+    uint32_t classIdx = 0;
+    if (blockClass.isObject()) {
+        // The class object's header has a classIndex that points to its metaclass
+        // But for instances, we need the class's own index in the class table
+        // Search for this class object in the class table
+        for (uint32_t i = 1; i < 10000; i++) {
+            Oop cls = memory_.classAtIndex(i);
+            if (cls.rawBits() == blockClass.rawBits()) {
+                classIdx = i;
+                static bool logged = false;
+                if (!logged) {
+                    std::cerr << "[VM] FullBlockClosure class is at classTable[" << classIdx << "]\n";
+                    logged = true;
+                }
+                break;
+            }
+        }
+    }
+
+    if (classIdx == 0) {
+        std::cerr << "[VM] ERROR: Could not find FullBlockClosure class in class table!\n";
+        // Try to find it by name
+        for (uint32_t i = 1; i < 10000; i++) {
+            Oop cls = memory_.classAtIndex(i);
+            if (!cls.isNil() && cls.isObject()) {
+                Oop clsName = memory_.fetchPointer(6, cls);
+                if (clsName.isObject()) {
+                    ObjectHeader* nameHdr = clsName.asObjectPtr();
+                    if (nameHdr->isBytesObject() && nameHdr->byteSize() == 16) {
+                        std::string name((char*)nameHdr->bytes(), 16);
+                        if (name == "FullBlockClosure") {
+                            classIdx = i;
+                            std::cerr << "[VM] Found FullBlockClosure by name at classTable[" << classIdx << "]\n";
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (classIdx == 0) {
+        classIdx = 38;  // Last resort - BlockClosure in many images
+        std::cerr << "[VM] Using fallback BlockClosure index " << classIdx << "\n";
+    }
+
     size_t slots = 3 + numCopied;  // outerContext, compiledBlock, numArgs, copied...
-    Oop block = memory_.allocateSlots(
-        memory_.indexOfClass(blockClass), slots, ObjectFormat::Indexable);
+    Oop block = memory_.allocateSlots(classIdx, slots, ObjectFormat::Indexable);
 
     // Set fields
     memory_.storePointer(0, block, activeContext_);  // outerContext
     memory_.storePointer(1, block, compiledBlock);   // compiledBlock (instead of startPC)
 
-    // Get numArgs from the CompiledBlock's header (first slot) if possible
+    // Get numArgs from the CompiledBlock's header (first slot)
+    // In Pharo, CompiledCode header format has numArgs in bits 24-27:
+    // numArgs = (header bitAnd: 16rF000000) >> 24
     int numArgs = 0;
     if (compiledBlock.isObject()) {
         Oop methodHeader = memory_.fetchPointer(0, compiledBlock);
         if (methodHeader.isSmallInteger()) {
             int64_t headerBits = methodHeader.asSmallInteger();
-            numArgs = headerBits & 0x0F;  // numArgs in low bits
+            numArgs = (headerBits >> 24) & 0x0F;  // numArgs in bits 24-27
+            static int blockDebug = 0;
+            blockDebug++;
+            if (blockDebug <= 5) {
+                std::cerr << "[VM] Block header=0x" << std::hex << headerBits << std::dec
+                          << " numArgs=" << numArgs << "\n";
+            }
         }
     }
     memory_.storePointer(2, block, Oop::fromSmallInteger(numArgs));
@@ -3610,6 +4752,16 @@ bool Interpreter::tryReschedule() {
     if (trace) {
         std::cerr << "[SCHED] tryReschedule: scanning " << numQueues << " priority queues\n";
         std::cerr << "[SCHED]   activeProcess=0x" << std::hex << activeProcess.rawBits() << std::dec << "\n";
+        // Dump all non-empty queues to understand process state
+        for (size_t i = 0; i < numQueues; i++) {
+            Oop queue = queuesHeader->slotAt(i);
+            if (queue.isObject() && queue.rawBits() != nilObj.rawBits()) {
+                Oop first = memory_.fetchPointer(0, queue);
+                if (first.isObject() && first.rawBits() != nilObj.rawBits()) {
+                    std::cerr << "[SCHED]   queue[" << (i+1) << "] has processes\n";
+                }
+            }
+        }
     }
 
     // Search from highest to lowest priority
@@ -3835,7 +4987,69 @@ bool Interpreter::bootstrapStartup() {
                 std::cerr << "[VM] bootstrapStartup: Display Form is " << formWidth << "x" << formHeight << "\n";
             }
         } else {
-            std::cerr << "[VM] bootstrapStartup: Display object not found\n";
+            std::cerr << "[VM] bootstrapStartup: Display object not found, creating one\n";
+
+            // Try to create a display Form directly
+            // Form structure: 0=bits, 1=width, 2=height, 3=depth, 4=offset
+            int dispWidth = pharo::gDisplaySurface ? pharo::gDisplaySurface->width() : 1024;
+            int dispHeight = pharo::gDisplaySurface ? pharo::gDisplaySurface->height() : 768;
+
+            // Find Form and Bitmap classes
+            Oop formClass = memory_.findGlobal("Form");
+            Oop bitmapClass = memory_.findGlobal("Bitmap");
+
+            std::cerr << "[VM] bootstrapStartup: Form class = 0x" << std::hex << formClass.rawBits()
+                      << ", Bitmap class = 0x" << bitmapClass.rawBits() << std::dec << "\n";
+
+            if (!formClass.isNil() && formClass.isObject() &&
+                !bitmapClass.isNil() && bitmapClass.isObject()) {
+
+                uint32_t formClassIdx = memory_.indexOfClass(formClass);
+                uint32_t bitmapClassIdx = memory_.indexOfClass(bitmapClass);
+
+                std::cerr << "[VM] bootstrapStartup: Form classIdx=" << formClassIdx
+                          << ", Bitmap classIdx=" << bitmapClassIdx << "\n";
+
+                if (formClassIdx > 0 && bitmapClassIdx > 0) {
+                    // Allocate bitmap for pixels (32-bit pixels = 1 word each)
+                    size_t pixelCount = static_cast<size_t>(dispWidth) * dispHeight;
+                    Oop bitmapObj = memory_.allocateWords(bitmapClassIdx, pixelCount);
+
+                    if (!bitmapObj.isNil()) {
+                        std::cerr << "[VM] bootstrapStartup: Created bitmap for "
+                                  << dispWidth << "x" << dispHeight << " pixels\n";
+
+                        // Allocate form with 5 slots
+                        Oop formObj = memory_.allocateSlots(formClassIdx, 5);
+
+                        if (!formObj.isNil()) {
+                            std::cerr << "[VM] bootstrapStartup: Created form object\n";
+
+                            // Set form slots: bits, width, height, depth, offset
+                            memory_.storePointer(0, formObj, bitmapObj);
+                            memory_.storePointer(1, formObj, Oop::fromSmallInteger(dispWidth));
+                            memory_.storePointer(2, formObj, Oop::fromSmallInteger(dispHeight));
+                            memory_.storePointer(3, formObj, Oop::fromSmallInteger(32));
+                            memory_.storePointer(4, formObj, Oop::fromSmallInteger(0));  // offset = 0@0
+
+                            // Set as display form locally
+                            setDisplayForm(formObj);
+                            setScreenSize(dispWidth, dispHeight);
+                            setScreenDepth(32);
+
+                            // CRITICAL: Bind to 'Display' global so Morphic can find it
+                            if (memory_.setGlobal("Display", formObj)) {
+                                std::cerr << "[VM] bootstrapStartup: Bound Form to 'Display' global\n";
+                            } else {
+                                std::cerr << "[VM] bootstrapStartup: WARNING - Failed to bind Display global\n";
+                            }
+
+                            std::cerr << "[VM] bootstrapStartup: Set displayForm to created form "
+                                      << dispWidth << "x" << dispHeight << "\n";
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -4304,13 +5518,10 @@ bool Interpreter::executeFromContext(Oop context) {
     stackPointer_ = stackBase_;
     frameDepth_ = 0;
 
-    // Immediate tracing to catch crash
+    // Execution context tracing (limited)
     static int execCtxCount = 0;
     execCtxCount++;
-    if (execCtxCount <= 10 || execCtxCount % 1000 == 0) {
-        std::cerr << "[VM] executeFromContext #" << execCtxCount
-                  << " context=0x" << std::hex << context.rawBits() << std::dec << "\n";
-    }
+    // Disabled for cleaner output: if (execCtxCount <= 10) { ... }
 
     if (context.isNil()) {
         return false;
@@ -5041,7 +6252,8 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[254] = &Interpreter::primitiveVMParameter;
 
     // Context primitives (199)
-    primitiveTable_[199] = &Interpreter::primitiveThisContext;
+    // Primitive 199 is the exception handler marker - MUST fail to allow 'self value' to run
+    primitiveTable_[199] = &Interpreter::primitiveExceptionMarker;
 
     // Slot access primitives (173-174)
     primitiveTable_[173] = &Interpreter::primitiveSlotAt;

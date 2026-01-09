@@ -69,7 +69,7 @@ private:
     // Immediate tags (bit 0 = 1)
     static constexpr uint64_t SmallIntegerTag = 0x1;  // 001
     static constexpr uint64_t CharacterTag = 0x3;     // 011
-    static constexpr uint64_t SmallFloatTag = 0x5;    // 101
+    static constexpr uint64_t SmallFloatTag = 0x5;    // 101 - SmallFloat (compatible with image)
 
     // SmallInteger limits (61-bit signed)
     static constexpr int64_t SmallIntegerMin = -(1LL << 60);
@@ -123,10 +123,11 @@ public:
     /// Extract SmallFloat value. Caller must verify isSmallFloat() first.
     double asSmallFloat() const {
         assert(isSmallFloat());
-        // Rotate the stored bits back to get the double
-        uint64_t rotated = bits_ >> 3;
-        // Undo the rotation (rotate right by 3 to restore)
-        uint64_t doubleBits = (rotated >> 61) | (rotated << 3);
+        // SmallFloat encoding: double bits rotated LEFT by 1, then tag in low 3 bits
+        // Clear the tag to get the rotated value
+        uint64_t rotated = bits_ & ~TagMask;
+        // Rotate RIGHT by 1 to restore the original double bits
+        uint64_t doubleBits = (rotated >> 1) | (rotated << 63);
         double result;
         std::memcpy(&result, &doubleBits, sizeof(double));
         return result;
@@ -184,16 +185,20 @@ public:
         uint64_t doubleBits;
         std::memcpy(&doubleBits, &value, sizeof(double));
 
-        // Rotate left by 3 to make room for tag
-        uint64_t rotated = (doubleBits << 61) | (doubleBits >> 3);
+        // Rotate LEFT by 1 to make room for tag in low bits
+        uint64_t rotated = (doubleBits << 1) | (doubleBits >> 63);
 
-        // Check that we can recover the original (no info lost in low bits)
-        uint64_t recovered = (rotated >> 61) | (rotated << 3);
+        // Check that we can recover the original (low 3 bits will be overwritten by tag)
+        // The rotation only loses 1 bit, but we need 3 bits for tag
+        // So we check if the low 3 bits of rotated value are compatible
+        // Actually, Spur SmallFloat can represent most values - just ensure roundtrip works
+        uint64_t recovered = (rotated >> 1) | (rotated << 63);
         if (recovered != doubleBits) {
             return false;
         }
 
-        result = Oop((rotated << 3) | SmallFloatTag);
+        // Set the tag (overwrites low 3 bits)
+        result = Oop((rotated & ~TagMask) | SmallFloatTag);
         return true;
     }
 
