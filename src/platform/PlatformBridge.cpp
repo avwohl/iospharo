@@ -12,47 +12,99 @@
 #include <atomic>
 #include <chrono>
 #include <vector>
+#include <mutex>
 
 namespace pharo {
     DisplaySurface* gDisplaySurface = nullptr;
 }
 
-// Simple display surface backed by a pixel buffer
+// Simple display surface backed by a pixel buffer (thread-safe)
 class SimpleDisplaySurface : public pharo::DisplaySurface {
 public:
     SimpleDisplaySurface(int w, int h, int d) : width_(w), height_(h), depth_(d) {
         pixels_.resize(w * h);
     }
 
-    int width() const override { return width_; }
-    int height() const override { return height_; }
-    int depth() const override { return depth_; }
-    uint32_t* pixels() override { return pixels_.data(); }
-    size_t pitch() const override { return width_ * 4; }
+    int width() const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return width_;
+    }
+    int height() const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return height_;
+    }
+    int depth() const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return depth_;
+    }
+    uint32_t* pixels() override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return pixels_.data();
+    }
+    size_t pitch() const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return width_ * 4;
+    }
+
+    // Safe access: get dimensions and pointer together atomically
+    void getBufferInfo(int& w, int& h, uint32_t*& pixels, size_t& size) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        w = width_;
+        h = height_;
+        pixels = pixels_.data();
+        size = pixels_.size();
+    }
 
     void invalidateRect(int x, int y, int w, int h) override {
         static int invalidateCount = 0;
         invalidateCount++;
         if (invalidateCount <= 5) {
+            std::lock_guard<std::mutex> lock(mutex_);
             std::cerr << "[DISPLAY] invalidateRect #" << invalidateCount
                       << " (" << x << "," << y << "," << w << "," << h << ")"
                       << " callback=" << (updateCallback_ ? "set" : "null") << "\n";
         }
-        if (updateCallback_) {
-            updateCallback_(x, y, w, h, context_);
+        DisplayUpdateFunc cb = nullptr;
+        void* ctx = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            cb = updateCallback_;
+            ctx = context_;
+        }
+        if (cb) {
+            cb(x, y, w, h, ctx);
         }
     }
 
     void update() override {
-        invalidateRect(0, 0, width_, height_);
+        std::cerr << "[DisplaySurface] update() called\n";
+        int w, h;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            w = width_;
+            h = height_;
+        }
+        std::cerr << "[DisplaySurface] update() calling invalidateRect 0,0," << w << "," << h << "\n";
+        invalidateRect(0, 0, w, h);
+        std::cerr << "[DisplaySurface] update() done\n";
     }
 
     void setCallback(DisplayUpdateFunc cb, void* ctx) {
+        std::lock_guard<std::mutex> lock(mutex_);
         updateCallback_ = cb;
         context_ = ctx;
     }
 
+    void resize(int w, int h, int d) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        width_ = w;
+        height_ = h;
+        depth_ = d;
+        pixels_.resize(w * h);
+    }
+
 private:
+    mutable std::mutex mutex_;
     int width_, height_, depth_;
     std::vector<uint32_t> pixels_;
     DisplayUpdateFunc updateCallback_ = nullptr;
@@ -65,6 +117,10 @@ static pharo::Interpreter* gInterpreter = nullptr;
 static SimpleDisplaySurface* gDisplay = nullptr;
 static std::thread gVMThread;
 static std::atomic<bool> gRunning{false};
+
+// Pending display callback (registered before display exists)
+static DisplayUpdateFunc gPendingCallback = nullptr;
+static void* gPendingCallbackContext = nullptr;
 
 // Event callback to signal the input semaphore
 static void eventCallback(void* context) {
@@ -124,6 +180,13 @@ bool vm_loadImage(const char* imagePath) {
     if (gDisplay) {
         gInterpreter->setScreenSize(gDisplay->width(), gDisplay->height());
         gInterpreter->setScreenDepth(gDisplay->depth());
+
+        // Ensure Display Form exists and is bound to 'Display' global
+        // This is critical for Morphic rendering
+        if (gInterpreter->displayForm().isNil()) {
+            std::cerr << "[PB] vm_loadImage: Creating Display Form...\n";
+            gInterpreter->ensureDisplayForm(gDisplay->width(), gDisplay->height(), gDisplay->depth());
+        }
     }
 
     // Register event callback to signal input semaphore when events arrive
@@ -137,6 +200,9 @@ void vm_run(void) {
 
     std::cerr << "[PB] vm_run: starting thread\n";
 
+    // Start the heartbeat thread (handles timers, like official VM)
+    gInterpreter->startHeartbeat();
+
     gRunning = true;
     gVMThread = std::thread([]() {
         std::cerr << "[PB] Thread started, isRunning=" << gInterpreter->isRunning() << "\n";
@@ -147,6 +213,24 @@ void vm_run(void) {
             std::cerr << "[PB] Posting initial window resize event: "
                       << gDisplay->width() << "x" << gDisplay->height() << "\n";
             vm_postWindowEvent(gDisplay->width(), gDisplay->height());
+
+            // Show a test pattern to verify display pipeline works
+            // This proves native rendering works even before Pharo renders
+            int w = gDisplay->width();
+            int h = gDisplay->height();
+            uint32_t* pixels = gDisplay->pixels();
+            std::cerr << "[PB] Drawing startup test pattern " << w << "x" << h << "\n";
+            for (int y = 0; y < h; y++) {
+                for (int x = 0; x < w; x++) {
+                    // Purple gradient to distinguish from Pharo content
+                    uint8_t r = static_cast<uint8_t>(100 + (x * 100 / w));
+                    uint8_t g = static_cast<uint8_t>(50);
+                    uint8_t b = static_cast<uint8_t>(100 + (y * 100 / h));
+                    pixels[y * w + x] = (255 << 24) | (r << 16) | (g << 8) | b;
+                }
+            }
+            gDisplay->update();
+            std::cerr << "[PB] Test pattern drawn and update() called\n";
         }
 
         while (gRunning && gInterpreter->isRunning()) {
@@ -162,6 +246,10 @@ void vm_stop(void) {
     if (gVMThread.joinable()) {
         gVMThread.join();
     }
+    // Stop the heartbeat thread
+    if (gInterpreter) {
+        gInterpreter->stopHeartbeat();
+    }
 }
 
 bool vm_isRunning(void) {
@@ -169,9 +257,20 @@ bool vm_isRunning(void) {
 }
 
 void vm_setDisplaySize(int width, int height, int depth) {
-    if (gDisplay) delete gDisplay;
-    gDisplay = new SimpleDisplaySurface(width, height, depth);
-    pharo::gDisplaySurface = gDisplay;
+    if (gDisplay) {
+        // Resize existing display (thread-safe: doesn't delete the object)
+        gDisplay->resize(width, height, depth);
+    } else {
+        // Create new display
+        gDisplay = new SimpleDisplaySurface(width, height, depth);
+        pharo::gDisplaySurface = gDisplay;
+
+        // Apply pending callback if one was registered before display existed
+        if (gPendingCallback) {
+            std::cerr << "[PB] Applying pending display callback\n";
+            gDisplay->setCallback(gPendingCallback, gPendingCallbackContext);
+        }
+    }
 
     // Also update the interpreter's screen size
     if (gInterpreter) {
@@ -193,6 +292,11 @@ int vm_getDisplayHeight(void) {
 }
 
 void vm_setDisplayUpdateCallback(DisplayUpdateFunc callback, void* context) {
+    // Always store the callback (in case display doesn't exist yet)
+    gPendingCallback = callback;
+    gPendingCallbackContext = context;
+
+    // Apply immediately if display exists
     if (gDisplay) {
         gDisplay->setCallback(callback, context);
     }

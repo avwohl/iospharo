@@ -7,11 +7,100 @@
 #include "ObjectMemory.hpp"
 #include "ImageLoader.hpp"
 #include "Interpreter.hpp"
+#include "../platform/DisplaySurface.hpp"
 #include <iostream>
 #include <iomanip>
 #include <chrono>
+#include <vector>
+#include <cstring>
+#include <unordered_map>
 
 using namespace pharo;
+
+// Test display surface for verifying Morphic rendering
+class TestDisplaySurface : public DisplaySurface {
+private:
+    int width_;
+    int height_;
+    std::vector<uint32_t> pixels_;
+    int updateCount_ = 0;
+    uint32_t initialChecksum_ = 0;
+
+public:
+    TestDisplaySurface(int w, int h) : width_(w), height_(h), pixels_(w * h, 0xFF808080) {
+        // Initialize with gray pattern so we can detect changes
+        initialChecksum_ = checksum();
+    }
+
+    int width() const override { return width_; }
+    int height() const override { return height_; }
+    int depth() const override { return 32; }
+
+    uint32_t* pixels() override { return pixels_.data(); }
+    size_t pitch() const override { return width_ * sizeof(uint32_t); }
+
+    void invalidateRect(int x, int y, int w, int h) override {
+        // Could track dirty regions, but for testing we just note it
+    }
+
+    void update() override {
+        updateCount_++;
+    }
+
+    int getUpdateCount() const { return updateCount_; }
+
+    uint32_t checksum() const {
+        uint32_t sum = 0;
+        for (size_t i = 0; i < pixels_.size(); i += 100) {
+            sum ^= pixels_[i];
+            sum = (sum << 7) | (sum >> 25);
+        }
+        return sum;
+    }
+
+    bool hasPixelsChanged() const {
+        return checksum() != initialChecksum_;
+    }
+
+    void printStats() const {
+        std::cout << "\n=== Display Surface Stats ===" << std::endl;
+        std::cout << "Size: " << width_ << "x" << height_ << std::endl;
+        std::cout << "Update calls: " << updateCount_ << std::endl;
+        std::cout << "Pixels changed: " << (hasPixelsChanged() ? "YES" : "NO") << std::endl;
+        std::cout << "Initial checksum: 0x" << std::hex << initialChecksum_ << std::dec << std::endl;
+        std::cout << "Current checksum: 0x" << std::hex << checksum() << std::dec << std::endl;
+
+        // Sample some pixels to see what's there
+        std::cout << "\nSample pixels:" << std::endl;
+        int samples[][2] = {{0,0}, {100,100}, {width_/2, height_/2}, {width_-1, height_-1}};
+        for (auto& s : samples) {
+            int x = s[0], y = s[1];
+            if (x < width_ && y < height_) {
+                uint32_t p = pixels_[y * width_ + x];
+                std::cout << "  [" << x << "," << y << "]: 0x" << std::hex << p << std::dec
+                          << " (A=" << ((p >> 24) & 0xFF)
+                          << " R=" << ((p >> 16) & 0xFF)
+                          << " G=" << ((p >> 8) & 0xFF)
+                          << " B=" << (p & 0xFF) << ")" << std::endl;
+            }
+        }
+
+        // Count unique colors
+        std::unordered_map<uint32_t, int> colorCounts;
+        for (uint32_t p : pixels_) {
+            colorCounts[p]++;
+        }
+        std::cout << "\nUnique colors: " << colorCounts.size() << std::endl;
+        if (colorCounts.size() <= 10) {
+            for (auto& [color, count] : colorCounts) {
+                std::cout << "  0x" << std::hex << color << std::dec << ": " << count << " pixels" << std::endl;
+            }
+        }
+    }
+};
+
+// Global test surface
+static TestDisplaySurface* gTestSurface = nullptr;
 
 void printHeader(const SpurImageHeader& header) {
     std::cout << "=== Image Header ===" << std::endl;
@@ -253,6 +342,13 @@ int main(int argc, char* argv[]) {
     printMemoryStats(memory);
     countObjects(memory);
 
+    // Create test display surface for Morphic rendering
+    std::cout << "\n=== Display Surface Setup ===" << std::endl;
+    gTestSurface = new TestDisplaySurface(1024, 768);
+    gDisplaySurface = gTestSurface;  // Set global for VM to use
+    std::cout << "Created " << gTestSurface->width() << "x" << gTestSurface->height()
+              << " test display surface" << std::endl;
+
     // Try to initialize interpreter
     std::cout << "\n=== Interpreter Initialization ===" << std::endl;
     Interpreter interpreter(memory);
@@ -261,9 +357,13 @@ int main(int argc, char* argv[]) {
         std::cout << "Active method: 0x" << std::hex
                   << interpreter.activeMethod().rawBits() << std::dec << std::endl;
 
+        // Start the heartbeat thread for display sync
+        std::cout << "Starting heartbeat thread..." << std::endl;
+        interpreter.startHeartbeat();
+
         // Run bytecode steps for testing
         std::cout << "\n=== Execution Test ===" << std::endl;
-        int totalSteps = 10000;
+        int totalSteps = 100000;  // Run more steps to allow Morphic to render
         std::cout << "Running up to " << totalSteps << " bytecode steps..." << std::endl;
         int activeSteps = 0;
         int idleSteps = 0;
@@ -284,8 +384,20 @@ int main(int argc, char* argv[]) {
         }
         std::cout << "\n=== Execution Summary ===" << std::endl;
         std::cout << "Active bytecode steps: " << activeSteps << std::endl;
+
+        // Stop the heartbeat thread
+        std::cout << "Stopping heartbeat thread..." << std::endl;
+        interpreter.stopHeartbeat();
     } else {
         std::cout << "Interpreter initialization failed (may need process setup)" << std::endl;
+    }
+
+    // Print display surface stats
+    if (gTestSurface) {
+        gTestSurface->printStats();
+        delete gTestSurface;
+        gTestSurface = nullptr;
+        gDisplaySurface = nullptr;
     }
 
     std::cout << "\n=== Test Complete ===" << std::endl;

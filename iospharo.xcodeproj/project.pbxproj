@@ -19,6 +19,7 @@
 		A10009 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A20009 /* Metal.framework */; };
 		A1000A /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000A /* MetalKit.framework */; };
 		A1000B /* PharoVMCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000B /* PharoVMCore.xcframework */; };
+		A1000C /* libffi.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000F /* libffi.xcframework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -36,6 +37,7 @@
 		A2000C /* iospharo-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "iospharo-Bridging-Header.h"; sourceTree = "<group>"; };
 		A2000D /* iospharo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = iospharo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A2000E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A2000F /* libffi.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = libffi.xcframework; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -47,6 +49,7 @@
 				A10009 /* Metal.framework in Frameworks */,
 				A1000A /* MetalKit.framework in Frameworks */,
 				A1000B /* PharoVMCore.xcframework in Frameworks */,
+				A1000C /* libffi.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -125,6 +128,7 @@
 				A20009 /* Metal.framework */,
 				A2000A /* MetalKit.framework */,
 				A2000B /* PharoVMCore.xcframework */,
+				A2000F /* libffi.xcframework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";

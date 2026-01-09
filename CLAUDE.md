@@ -23,6 +23,12 @@ The authoritative source is the class comment in the Pharo source:
 **Warning:** Online resources often document the older V3PlusClosures bytecode set, not Sista V1.
 The bytecode ranges 0xE0-0xFF are completely different between the two sets.
 
+## Image Compatibility
+- The VM must work with standard Pharo images that other VM clients use for release
+- Do NOT create iOS-specific images that require special preparation
+- Any testing with modified images is fine, but the goal is normal image compatibility
+- The display driver (OSiOSDriver) should work without requiring image-side changes
+
 ## Debugging
 - Always test on Mac first - it starts up much faster than the iOS simulator
 - Use `./build/test_load_image <image-path>` for quick VM testing

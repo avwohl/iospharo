@@ -186,6 +186,11 @@ public:
     /// Returns the value (not the Association), nil if not found.
     Oop findGlobal(const std::string& name) const;
 
+    /// Set a global in SmalltalkDictionary.
+    /// If the global exists, updates its value. Otherwise creates new binding.
+    /// Returns true if successful.
+    bool setGlobal(const std::string& name, Oop value);
+
     /// Create a minimal MethodContext for startup.
     /// @param method The CompiledMethod to execute
     /// @param receiver The object to receive the message (self)

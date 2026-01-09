@@ -519,6 +519,155 @@ Oop ObjectMemory::findGlobal(const std::string& name) const {
     return Oop::nil();
 }
 
+bool ObjectMemory::setGlobal(const std::string& name, Oop value) {
+    // Get SmalltalkDictionary from special objects
+    Oop smalltalkDict = specialObject(SpecialObjectIndex::SmalltalkDictionary);
+    if (smalltalkDict.isNil() || !smalltalkDict.isObject()) {
+        std::cerr << "[setGlobal] SmalltalkDictionary is nil\n";
+        return false;
+    }
+
+    // Navigate to the actual SystemDictionary (may be wrapped in Environment)
+    ObjectHeader* envHeader = smalltalkDict.asObjectPtr();
+    Oop sysDict = smalltalkDict;
+
+    if (envHeader->slotCount() >= 1) {
+        Oop slot0 = fetchPointer(0, smalltalkDict);
+        if (slot0.isObject() && !slot0.isNil()) {
+            ObjectHeader* slot0Header = slot0.asObjectPtr();
+            if (slot0Header->slotCount() >= 2) {
+                Oop innerSlot0 = fetchPointer(0, slot0);
+                if (innerSlot0.isSmallInteger()) {
+                    sysDict = slot0;  // Use the inner dictionary
+                }
+            }
+        }
+    }
+
+    Oop arraySlot = fetchPointer(1, sysDict);
+    if (!arraySlot.isObject() || arraySlot.isNil()) {
+        std::cerr << "[setGlobal] array slot is nil\n";
+        return false;
+    }
+
+    ObjectHeader* arrayHeader = arraySlot.asObjectPtr();
+    size_t arraySize = arrayHeader->slotCount();
+
+    // Check for overflow header
+    uint64_t headerRaw = arrayHeader->rawHeader();
+    uint64_t slotCountByte = (headerRaw >> 56) & 0xFF;
+    if (slotCountByte == 255) {
+        const uint64_t* overflowPtr = reinterpret_cast<const uint64_t*>(arrayHeader) - 1;
+        uint64_t overflowVal = *overflowPtr;
+        if (overflowVal >= 255 && overflowVal <= 1000000 && (overflowVal >> 32) == 0) {
+            arraySize = static_cast<size_t>(overflowVal);
+        }
+    }
+
+    // Search for existing binding
+    for (size_t i = 0; i < arraySize; ++i) {
+        Oop item = arrayHeader->slotAt(i);
+        if (item.isNil() || !item.isObject()) continue;
+        if (!isValidPointer(item)) continue;
+
+        ObjectHeader* itemHeader = item.asObjectPtr();
+        size_t slotCount = itemHeader->slotCount();
+        if (slotCount < 2 || slotCount > 100) continue;
+
+        Oop key = fetchPointer(0, item);
+        if (!key.isObject() || key.isNil()) continue;
+        if (!isValidPointer(key)) continue;
+
+        ObjectHeader* keyHeader = key.asObjectPtr();
+        if (!keyHeader->isBytesObject()) continue;
+
+        if (symbolEquals(key, name.c_str())) {
+            // Found existing binding - update its value (slot 1)
+            storePointer(1, item, value);
+            std::cerr << "[setGlobal] Updated existing '" << name << "' binding\n";
+            return true;
+        }
+    }
+
+    // Not found - need to create new binding
+    // This is more complex as we'd need to create an Association and add to dictionary
+    // For now, just report failure for non-existing globals
+    std::cerr << "[setGlobal] '" << name << "' not found - creating new binding not yet implemented\n";
+
+    // Try to find an empty slot and create an Association
+    // Association has 2 slots: key (Symbol) and value
+    // We need to find/create the symbol first
+
+    // Find Symbol class to create the key
+    Oop symbolClass = findGlobal("Symbol");
+    if (symbolClass.isNil()) {
+        std::cerr << "[setGlobal] Cannot find Symbol class\n";
+        return false;
+    }
+
+    // Find Association class
+    Oop assocClass = findGlobal("Association");
+    if (assocClass.isNil()) {
+        std::cerr << "[setGlobal] Cannot find Association class\n";
+        return false;
+    }
+
+    uint32_t assocClassIdx = indexOfClass(assocClass);
+    if (assocClassIdx == 0) {
+        std::cerr << "[setGlobal] Association class not in class table\n";
+        return false;
+    }
+
+    // Create symbol for the name
+    uint32_t symbolClassIdx = indexOfClass(symbolClass);
+    if (symbolClassIdx == 0) {
+        std::cerr << "[setGlobal] Symbol class not in class table\n";
+        return false;
+    }
+
+    // Allocate symbol (byte object)
+    Oop symbolObj = allocateBytes(symbolClassIdx, name.size());
+    if (symbolObj.isNil()) {
+        std::cerr << "[setGlobal] Failed to allocate symbol\n";
+        return false;
+    }
+
+    // Copy name into symbol
+    ObjectHeader* symHdr = symbolObj.asObjectPtr();
+    std::memcpy(symHdr->bytes(), name.c_str(), name.size());
+
+    // Allocate Association (2 pointer slots)
+    Oop assocObj = allocateSlots(assocClassIdx, 2);
+    if (assocObj.isNil()) {
+        std::cerr << "[setGlobal] Failed to allocate association\n";
+        return false;
+    }
+
+    // Set association key and value
+    storePointer(0, assocObj, symbolObj);
+    storePointer(1, assocObj, value);
+
+    // Find empty slot in dictionary array and add the association
+    // Note: Empty slots may contain the nil object, not raw 0
+    Oop nilObj = specialObject(SpecialObjectIndex::NilObject);
+    int emptySlotCount = 0;
+
+    for (size_t i = 0; i < arraySize; ++i) {
+        Oop item = arrayHeader->slotAt(i);
+        // Check for both raw 0 and the nil object
+        if (item.rawBits() == 0 || item.rawBits() == nilObj.rawBits()) {
+            emptySlotCount++;
+            // Found empty slot - store the association
+            storePointer(i, arraySlot, assocObj);
+            std::cerr << "[setGlobal] Created new '" << name << "' binding at slot " << i << "\n";
+            return true;
+        }
+    }
+
+    std::cerr << "[setGlobal] No empty slot found in dictionary (checked " << arraySize << " slots, " << emptySlotCount << " empty)\n";
+    return false;
+}
+
 Oop ObjectMemory::createStartupContext(Oop method, Oop receiver) {
     // Get MethodContext class
     Oop contextClass = specialObject(SpecialObjectIndex::ClassMethodContext);

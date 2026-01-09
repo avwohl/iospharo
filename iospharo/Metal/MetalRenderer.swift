@@ -147,8 +147,8 @@ class MetalRenderer: NSObject, MTKViewDelegate {
     }
 
     func draw(in view: MTKView) {
-        // Update texture if display changed
-        if bridge?.displayNeedsUpdate == true {
+        // Update texture if display changed OR if we don't have a texture yet
+        if bridge?.displayNeedsUpdate == true || displayTexture == nil {
             updateDisplayTexture()
             bridge?.displayDidUpdate()
         }

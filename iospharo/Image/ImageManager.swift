@@ -43,9 +43,19 @@ class ImageManager: ObservableObject {
 
     // MARK: - Public Methods
 
-    /// Check for existing image in Documents
+    /// Check for existing image in Documents or Bundle
     func checkForExistingImage() {
-        let imageFiles = findImageFiles()
+        // First check Documents directory
+        var imageFiles = findImageFiles()
+
+        // If no image in Documents, check app bundle for development
+        if imageFiles.isEmpty {
+            if let bundledImage = Bundle.main.url(forResource: "Pharo-iOS-Ready", withExtension: "image") {
+                imageFiles.append(bundledImage)
+            } else if let bundledImage = Bundle.main.url(forResource: "Pharo", withExtension: "image") {
+                imageFiles.append(bundledImage)
+            }
+        }
 
         if let firstImage = imageFiles.first {
             imagePath = firstImage.path

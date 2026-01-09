@@ -505,6 +505,13 @@ void Interpreter::renderWorldMorphs() {
     // Clear to World's color first
     Oop worldColor = memory_.fetchPointer(4, world);
     uint32_t worldColorARGB = extractColor(worldColor);
+
+    if (renderCallCount <= 3) {
+        std::cerr << "[RENDER] World color slot[4]: "
+                  << (worldColor.isNil() ? "nil" : (worldColor.isObject() ? "object" : "immediate"))
+                  << " -> 0x" << std::hex << worldColorARGB << std::dec << "\n";
+    }
+
     for (int i = 0; i < dispWidth * dispHeight; i++) {
         pixels[i] = worldColorARGB;
     }
@@ -517,9 +524,31 @@ void Interpreter::renderWorldMorphs() {
         ObjectHeader* subHdr = submorphs.asObjectPtr();
         size_t numSubmorphs = subHdr->slotCount();
 
+        if (renderCallCount <= 3) {
+            std::cerr << "[RENDER] World has " << numSubmorphs << " submorphs\n";
+        }
+
         for (size_t i = 0; i < numSubmorphs; i++) {
             Oop submorph = subHdr->slotAt(i);
+            if (renderCallCount <= 3 && i < 10) {
+                std::string className = getMorphClassName(submorph);
+                int x1, y1, x2, y2;
+                bool hasBounds = extractBounds(submorph, x1, y1, x2, y2);
+                Oop subColor = memory_.fetchPointer(4, submorph);
+                uint32_t subColorARGB = extractColor(subColor);
+                std::cerr << "[RENDER]   submorph[" << i << "]: " << className
+                          << " color=0x" << std::hex << subColorARGB << std::dec
+                          << " bounds=" << (hasBounds ? "yes" : "no");
+                if (hasBounds) {
+                    std::cerr << " (" << x1 << "," << y1 << ")-(" << x2 << "," << y2 << ")";
+                }
+                std::cerr << "\n";
+            }
             renderMorph(submorph, 0, static_cast<int>(i));
+        }
+
+        if (renderCallCount <= 3) {
+            std::cerr << "[RENDER] Total morphs drawn: " << totalMorphsDrawn << "\n";
         }
     }
 
