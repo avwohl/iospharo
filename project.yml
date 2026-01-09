@@ -1,0 +1,48 @@
+name: PharoVM
+options:
+  bundleIdPrefix: com.pharo
+  deploymentTarget:
+    macOS: "13.0"
+  xcodeVersion: "15.0"
+  createIntermediateGroups: true
+
+settings:
+  CLANG_CXX_LANGUAGE_STANDARD: c++17
+  SWIFT_VERSION: "5.9"
+
+targets:
+  PharoVMCore:
+    type: library.static
+    platform: macOS
+    sources:
+      - path: src/vm/ObjectMemory.cpp
+      - path: src/vm/ImageLoader.cpp
+      - path: src/vm/Interpreter.cpp
+      - path: src/vm/Primitives.cpp
+      - path: src/platform/EventQueue.cpp
+      - path: src/platform/PlatformBridge.cpp
+    settings:
+      HEADER_SEARCH_PATHS:
+        - $(SRCROOT)/src/vm
+        - $(SRCROOT)/src/platform
+      GCC_WARN_UNUSED_VARIABLE: NO
+
+  PharoMac:
+    type: application
+    platform: macOS
+    sources:
+      - path: app/macOS
+        excludes:
+          - "*.h"
+      - path: app/Shared
+    dependencies:
+      - target: PharoVMCore
+      - sdk: libc++.tbd
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.pharo.mac
+      SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/app/macOS/PharoVM-Bridging-Header.h
+      HEADER_SEARCH_PATHS:
+        - $(SRCROOT)/src/platform
+      INFOPLIST_FILE: app/macOS/Info.plist
+      OTHER_LDFLAGS:
+        - -lc++

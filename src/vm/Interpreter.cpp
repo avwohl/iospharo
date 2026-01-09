@@ -3771,6 +3771,16 @@ bool Interpreter::bootstrapStartup() {
                       << worldClassDirect.rawBits() << std::dec << "\n";
             std::cerr.flush();
 
+            // Debug: check class table around this index
+            std::cerr << "[VM] Class table check around index " << worldClassIdx << ":\n";
+            for (uint32_t i = std::max(0u, worldClassIdx - 5); i < worldClassIdx + 10; ++i) {
+                Oop cls = memory_.classAtIndex(i);
+                if (!cls.isNil() && cls.rawBits() != 0) {
+                    std::cerr << "  [" << i << "]: 0x" << std::hex << cls.rawBits() << std::dec << "\n";
+                }
+            }
+            std::cerr.flush();
+
             // If classOf failed, try looking up WorldMorph by name
             if (worldClass.isNil() || worldClass.rawBits() == 0) {
                 std::cerr << "[VM] bootstrapStartup: classOf failed, trying to find WorldMorph class by name\n";

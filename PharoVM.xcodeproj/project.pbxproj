@@ -1,0 +1,488 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0483278C264D80D850BCCF7A /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCF7994D8282C8AFF86A29F6 /* ContentView.swift */; };
+		19851F44890324DBDEF11BEA /* PharoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7ADA627AC846C8285049359 /* PharoApp.swift */; };
+		2E3CA3BBBEFF61F048BC96F8 /* PharoCanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77A56CF9928E604BC118FF48 /* PharoCanvasView.swift */; };
+		3C789CFE26908A4F2101DAE5 /* libc++.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 56AB57EB9AB71AA57CCAB4DF /* libc++.tbd */; };
+		66A9E7E819E831150FA38776 /* ObjectMemory.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 860241C14388A5535E5D8250 /* ObjectMemory.cpp */; };
+		9B9D45927FB86BED2F553AD3 /* libPharoVMCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 8B752DA31A8CA9AEFD346EC7 /* libPharoVMCore.a */; };
+		9CC0640CCADEEF4BF0EA12F0 /* ImageLoader.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 243DF9A8597AD01B05C5086F /* ImageLoader.cpp */; };
+		BE99860420570D7DCE165F3B /* PlatformBridge.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 8242F3243BFCEED9BE3F510E /* PlatformBridge.cpp */; };
+		D063763CCA7D6DD5A56CBE91 /* Primitives.cpp in Sources */ = {isa = PBXBuildFile; fileRef = B6043364D96D46409534D4F2 /* Primitives.cpp */; };
+		D9B81F1B80D814F2D45C8AFF /* EventQueue.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 8B44E411C9482639A8E8D4C6 /* EventQueue.cpp */; };
+		DC0CF5D0A6830E0F558F5B56 /* Interpreter.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 417815BE94A86E220E37210F /* Interpreter.cpp */; };
+		E4F4D78BD07F5DAB10B5A7C2 /* VMController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71C9AB71222C7DE577294DC0 /* VMController.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		C7CD532ABEB5FECEDE238531 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 203ED69A7859CF8BE002BF17 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = EFDA085EACA0C869323C2ED6;
+			remoteInfo = PharoVMCore;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		243DF9A8597AD01B05C5086F /* ImageLoader.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ImageLoader.cpp; sourceTree = "<group>"; };
+		417815BE94A86E220E37210F /* Interpreter.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = Interpreter.cpp; sourceTree = "<group>"; };
+		56AB57EB9AB71AA57CCAB4DF /* libc++.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = "libc++.tbd"; path = "usr/lib/libc++.tbd"; sourceTree = SDKROOT; };
+		71C9AB71222C7DE577294DC0 /* VMController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VMController.swift; sourceTree = "<group>"; };
+		77A56CF9928E604BC118FF48 /* PharoCanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PharoCanvasView.swift; sourceTree = "<group>"; };
+		8242F3243BFCEED9BE3F510E /* PlatformBridge.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = PlatformBridge.cpp; sourceTree = "<group>"; };
+		860241C14388A5535E5D8250 /* ObjectMemory.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ObjectMemory.cpp; sourceTree = "<group>"; };
+		8B44E411C9482639A8E8D4C6 /* EventQueue.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = EventQueue.cpp; sourceTree = "<group>"; };
+		8B752DA31A8CA9AEFD346EC7 /* libPharoVMCore.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libPharoVMCore.a; sourceTree = BUILT_PRODUCTS_DIR; };
+		A25A21ED20FC01E8C23BF8C9 /* PharoMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PharoMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B6043364D96D46409534D4F2 /* Primitives.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = Primitives.cpp; sourceTree = "<group>"; };
+		C7ADA627AC846C8285049359 /* PharoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PharoApp.swift; sourceTree = "<group>"; };
+		DCF7994D8282C8AFF86A29F6 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		EC666F71F38A9BAEC6D7CE66 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		1C3CD409B0C0332857728095 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9B9D45927FB86BED2F553AD3 /* libPharoVMCore.a in Frameworks */,
+				3C789CFE26908A4F2101DAE5 /* libc++.tbd in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		03E9C596B5AFDEF355AB400C /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				56AB57EB9AB71AA57CCAB4DF /* libc++.tbd */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		1AC58072D2B2B0F780D715EF /* src */ = {
+			isa = PBXGroup;
+			children = (
+				D98A78EEF9FAB2F6AFBF5902 /* platform */,
+				361F8A0D082AA502F2A55AAC /* vm */,
+			);
+			path = src;
+			sourceTree = "<group>";
+		};
+		23E11D40869CEADA0D6CBEC1 /* macOS */ = {
+			isa = PBXGroup;
+			children = (
+				EC666F71F38A9BAEC6D7CE66 /* Info.plist */,
+				C7ADA627AC846C8285049359 /* PharoApp.swift */,
+			);
+			path = macOS;
+			sourceTree = "<group>";
+		};
+		361F8A0D082AA502F2A55AAC /* vm */ = {
+			isa = PBXGroup;
+			children = (
+				243DF9A8597AD01B05C5086F /* ImageLoader.cpp */,
+				417815BE94A86E220E37210F /* Interpreter.cpp */,
+				860241C14388A5535E5D8250 /* ObjectMemory.cpp */,
+				B6043364D96D46409534D4F2 /* Primitives.cpp */,
+			);
+			path = vm;
+			sourceTree = "<group>";
+		};
+		452B82DD0948CD602C5BE523 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				DCF7994D8282C8AFF86A29F6 /* ContentView.swift */,
+				77A56CF9928E604BC118FF48 /* PharoCanvasView.swift */,
+				71C9AB71222C7DE577294DC0 /* VMController.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		6EA42A320EC72DB2C6EBD44E = {
+			isa = PBXGroup;
+			children = (
+				DC1F124208BFA154EEA89201 /* app */,
+				1AC58072D2B2B0F780D715EF /* src */,
+				03E9C596B5AFDEF355AB400C /* Frameworks */,
+				7C87EC6B7FD789272623488C /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		7C87EC6B7FD789272623488C /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				8B752DA31A8CA9AEFD346EC7 /* libPharoVMCore.a */,
+				A25A21ED20FC01E8C23BF8C9 /* PharoMac.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		D98A78EEF9FAB2F6AFBF5902 /* platform */ = {
+			isa = PBXGroup;
+			children = (
+				8B44E411C9482639A8E8D4C6 /* EventQueue.cpp */,
+				8242F3243BFCEED9BE3F510E /* PlatformBridge.cpp */,
+			);
+			path = platform;
+			sourceTree = "<group>";
+		};
+		DC1F124208BFA154EEA89201 /* app */ = {
+			isa = PBXGroup;
+			children = (
+				23E11D40869CEADA0D6CBEC1 /* macOS */,
+				452B82DD0948CD602C5BE523 /* Shared */,
+			);
+			path = app;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		9594AEFF3F3ADCABA72BBB44 /* PharoMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1E0A63C5372D174BEA842A02 /* Build configuration list for PBXNativeTarget "PharoMac" */;
+			buildPhases = (
+				4463748F55094DFCB5D0E6E2 /* Sources */,
+				1C3CD409B0C0332857728095 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B2F5EEE93826593371864159 /* PBXTargetDependency */,
+			);
+			name = PharoMac;
+			packageProductDependencies = (
+			);
+			productName = PharoMac;
+			productReference = A25A21ED20FC01E8C23BF8C9 /* PharoMac.app */;
+			productType = "com.apple.product-type.application";
+		};
+		EFDA085EACA0C869323C2ED6 /* PharoVMCore */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = DA324F2799C7FA2D609156F5 /* Build configuration list for PBXNativeTarget "PharoVMCore" */;
+			buildPhases = (
+				96D46D90997137E779C52C4B /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = PharoVMCore;
+			packageProductDependencies = (
+			);
+			productName = PharoVMCore;
+			productReference = 8B752DA31A8CA9AEFD346EC7 /* libPharoVMCore.a */;
+			productType = "com.apple.product-type.library.static";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		203ED69A7859CF8BE002BF17 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1500;
+			};
+			buildConfigurationList = AEDDA11A0144FA5A5A1CAF93 /* Build configuration list for PBXProject "PharoVM" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 6EA42A320EC72DB2C6EBD44E;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				9594AEFF3F3ADCABA72BBB44 /* PharoMac */,
+				EFDA085EACA0C869323C2ED6 /* PharoVMCore */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		4463748F55094DFCB5D0E6E2 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0483278C264D80D850BCCF7A /* ContentView.swift in Sources */,
+				19851F44890324DBDEF11BEA /* PharoApp.swift in Sources */,
+				2E3CA3BBBEFF61F048BC96F8 /* PharoCanvasView.swift in Sources */,
+				E4F4D78BD07F5DAB10B5A7C2 /* VMController.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		96D46D90997137E779C52C4B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D9B81F1B80D814F2D45C8AFF /* EventQueue.cpp in Sources */,
+				9CC0640CCADEEF4BF0EA12F0 /* ImageLoader.cpp in Sources */,
+				DC0CF5D0A6830E0F558F5B56 /* Interpreter.cpp in Sources */,
+				66A9E7E819E831150FA38776 /* ObjectMemory.cpp in Sources */,
+				BE99860420570D7DCE165F3B /* PlatformBridge.cpp in Sources */,
+				D063763CCA7D6DD5A56CBE91 /* Primitives.cpp in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		B2F5EEE93826593371864159 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = EFDA085EACA0C869323C2ED6 /* PharoVMCore */;
+			targetProxy = C7CD532ABEB5FECEDE238531 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		51B7C619ADF143461F50D8C1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "c++17";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Debug;
+		};
+		633D6B34826CC9ADFE080556 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				GCC_WARN_UNUSED_VARIABLE = NO;
+				HEADER_SEARCH_PATHS = (
+					"$(SRCROOT)/src/vm",
+					"$(SRCROOT)/src/platform",
+				);
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.pharo.PharoVMCore;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Release;
+		};
+		664B072CE64D73E54816A217 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				GCC_WARN_UNUSED_VARIABLE = NO;
+				HEADER_SEARCH_PATHS = (
+					"$(SRCROOT)/src/vm",
+					"$(SRCROOT)/src/platform",
+				);
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.pharo.PharoVMCore;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Debug;
+		};
+		B147AF8E1B3FD63DDFDCDE45 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "c++17";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Release;
+		};
+		DB5E1F0E635AA9E3C99078A7 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				COMBINE_HIDPI_IMAGES = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(SRCROOT)/src/platform",
+				);
+				INFOPLIST_FILE = app/macOS/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"-lc++",
+					"-ObjC",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.pharo.mac;
+				SDKROOT = macosx;
+				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/app/macOS/PharoVM-Bridging-Header.h";
+			};
+			name = Debug;
+		};
+		E195D6602827F4D268FC0678 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				COMBINE_HIDPI_IMAGES = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(SRCROOT)/src/platform",
+				);
+				INFOPLIST_FILE = app/macOS/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"-lc++",
+					"-ObjC",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.pharo.mac;
+				SDKROOT = macosx;
+				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/app/macOS/PharoVM-Bridging-Header.h";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1E0A63C5372D174BEA842A02 /* Build configuration list for PBXNativeTarget "PharoMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DB5E1F0E635AA9E3C99078A7 /* Debug */,
+				E195D6602827F4D268FC0678 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		AEDDA11A0144FA5A5A1CAF93 /* Build configuration list for PBXProject "PharoVM" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				51B7C619ADF143461F50D8C1 /* Debug */,
+				B147AF8E1B3FD63DDFDCDE45 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		DA324F2799C7FA2D609156F5 /* Build configuration list for PBXNativeTarget "PharoVMCore" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				664B072CE64D73E54816A217 /* Debug */,
+				633D6B34826CC9ADFE080556 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 203ED69A7859CF8BE002BF17 /* Project object */;
+}

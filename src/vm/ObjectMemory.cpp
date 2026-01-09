@@ -496,7 +496,8 @@ Oop ObjectMemory::createStartupContext(Oop method, Oop receiver) {
 
     int64_t headerBits = methodHeader.asSmallInteger();
     int numTemps = (headerBits >> 16) & 0xFF;
-    int numLiterals = (headerBits >> 1) & 0x7FFF;
+    // In Spur 64-bit, numLiterals is in bits 0-14 (no shift needed)
+    int numLiterals = headerBits & 0x7FFF;
 
     // MethodContext layout:
     // slot 0: sender
