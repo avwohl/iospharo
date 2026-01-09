@@ -552,46 +552,58 @@ bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
     uint64_t hiddenRootsRaw = hiddenRootsHdr->rawHeader();
 
     size_t hiddenRootsSlots = hiddenRootsHdr->slotCount();
+    std::cerr << "[ClassTable] heapStart=0x" << std::hex << (uintptr_t)heapStart
+              << " hiddenRoots@0: slots=" << std::dec << hiddenRootsSlots
+              << " fmt=" << (int)hiddenRootsHdr->format() << "\n";
+
     if (hiddenRootsSlots == 0) {
-        // std::cerr << "[DEBUG] hiddenRoots has 0 slots, trying alternate location..." << std::endl;
         // Maybe hiddenRoots is not at offset 0, try offset 0x8
         hiddenRootsHdr = reinterpret_cast<ObjectHeader*>(heapStart + 0x8);
         hiddenRootsRaw = hiddenRootsHdr->rawHeader();
         hiddenRootsSlots = hiddenRootsHdr->slotCount();
-        // std::cerr << "[DEBUG] At offset 0x8: slots=" << hiddenRootsSlots
-                  // << " fmt=" << static_cast<int>(hiddenRootsHdr->format()) << std::endl;
+        std::cerr << "[ClassTable] At offset 0x8: slots=" << hiddenRootsSlots
+                  << " fmt=" << (int)hiddenRootsHdr->format() << "\n";
     }
 
     // Slot 0 of hiddenRoots should be the classTableFirstPage array
     if (hiddenRootsSlots < 1) {
-        // std::cerr << "[DEBUG] hiddenRoots doesn't have enough slots for class table" << std::endl;
+        std::cerr << "[ClassTable] hiddenRoots has <1 slots, going to fallback_scan\n";
         // Fall back to scanning approach
         goto fallback_scan;
     }
 
     {
+        std::cerr << "[ClassTable] hiddenRoots at 0x" << std::hex << (uintptr_t)hiddenRootsHdr
+                  << " slots=" << std::dec << hiddenRootsSlots << "\n";
+
         Oop classTableFirstPageOop = hiddenRootsHdr->slotAt(0);
+        std::cerr << "[ClassTable] slot0 = 0x" << std::hex << classTableFirstPageOop.rawBits()
+                  << " isNil=" << classTableFirstPageOop.isNil()
+                  << " isObject=" << classTableFirstPageOop.isObject() << std::dec << "\n";
 
         if (classTableFirstPageOop.isNil() || !classTableFirstPageOop.isObject()) {
+            std::cerr << "[ClassTable] Going to fallback_scan because slot0 is nil or not object\n";
             goto fallback_scan;
         }
 
         ObjectHeader* classTableFirstPageHdr = classTableFirstPageOop.asObjectPtr();
         size_t numPages = classTableFirstPageHdr->slotCount();
 
+        std::cerr << "[ClassTable] Building from " << numPages << " pages\n";
+
         // Iterate through each page
         for (size_t pageNum = 0; pageNum < numPages && pageNum < 20; pageNum++) {
             Oop pageOop = classTableFirstPageHdr->slotAt(pageNum);
 
             if (pageOop.isNil() || !pageOop.isObject()) {
-                // std::cerr << "[DEBUG] Page " << pageNum << " is nil, skipping" << std::endl;
+                std::cerr << "[ClassTable] Page " << pageNum << " is nil/not-object\n";
                 continue;
             }
 
             ObjectHeader* pageHdr = pageOop.asObjectPtr();
             size_t pageSlots = pageHdr->slotCount();
 
-            // std::cerr << "[DEBUG] Page " << pageNum << ": " << pageSlots << " slots" << std::endl;
+            std::cerr << "[ClassTable] Page " << pageNum << ": " << pageSlots << " slots\n";
 
             // Each slot in the page is a class object pointer
             for (size_t i = 0; i < pageSlots; i++) {
@@ -613,7 +625,13 @@ bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
     }
 
 fallback_scan:
-    // std::cerr << "[DEBUG] Falling back to Spur class table structure navigation..." << std::endl;
+    std::cerr << "[ClassTable] fallback_scan: checking heap layout at start:\n";
+    for (int off = 0; off <= 0x48; off += 0x8) {
+        ObjectHeader* hdr = reinterpret_cast<ObjectHeader*>(heapStart + off);
+        std::cerr << "  [0x" << std::hex << off << std::dec << "]: slots=" << hdr->slotCount()
+                  << " fmt=" << (int)hdr->format()
+                  << " cls=" << hdr->classIndex() << "\n";
+    }
 
     // In Spur, the layout at start of old space is:
     //   offset 0x0:  nil object (format 0, 0 slots)
@@ -629,32 +647,51 @@ fallback_scan:
     auto hrFmt = hrHdr->format();
     size_t hrSlots = hrHdr->slotCount();
 
+    std::cerr << "[ClassTable] hiddenRoots@0x30: fmt=" << (int)hrFmt << " slots=" << hrSlots << "\n";
+
     // hiddenRoots should be format 9 (Indexable64) with slots
     if (hrFmt != ObjectFormat::Indexable64 || hrSlots < 1) {
-        // std::cerr << "[DEBUG] hiddenRoots at 0x30 doesn't look right, trying direct scan..." << std::endl;
+        std::cerr << "[ClassTable] hiddenRoots@0x30 doesn't match expected format, trying direct_scan\n";
         goto direct_scan;
     }
 
     {
+        std::cerr << "[ClassTable] Good! hiddenRoots@0x30 looks correct, reading classTableFirstPage\n";
+        // Debug: dump raw bytes around 0x30-0x70
+        std::cerr << "[ClassTable] Raw bytes at 0x30-0x78:\n";
+        for (int off = 0x30; off < 0x78; off += 8) {
+            uint64_t val = *reinterpret_cast<uint64_t*>(heapStart + off);
+            std::cerr << "  0x" << std::hex << off << ": 0x" << val << std::dec << "\n";
+        }
+
         // Dump first 10 slots of hiddenRoots to understand structure
-        // std::cerr << "[DEBUG] First 10 slots of hiddenRoots:" << std::endl;
+        // Also check raw bytes at the object body
+        uint64_t* rawSlots = reinterpret_cast<uint64_t*>(hrHdr + 1);  // Skip header
+        std::cerr << "[ClassTable] First 10 raw slot values (hex) at hiddenRoots body:\n";
+        for (int i = 0; i < 10 && i < static_cast<int>(hrSlots); i++) {
+            std::cerr << "  raw[" << i << "]: 0x" << std::hex << rawSlots[i] << std::dec << "\n";
+        }
+
+        std::cerr << "[ClassTable] First 10 slots of hiddenRoots@0x30 (via slotAt):\n";
         for (int i = 0; i < 10 && i < static_cast<int>(hrSlots); i++) {
             Oop slotOop = hrHdr->slotAt(i);
-            // std::cerr << "  [" << i << "]: 0x" << std::hex << slotOop.rawBits() << std::dec;
-            // if (slotOop.isNil()) std::cerr << " (nil)";
-            // else if (slotOop.isSmallInteger()) std::cerr << " (int=" << slotOop.asSmallInteger() << ")";
-            // else if (slotOop.isObject()) std::cerr << " (object)";
-            // std::cerr << std::endl;
+            std::cerr << "  [" << i << "]: 0x" << std::hex << slotOop.rawBits() << std::dec;
+            if (slotOop.isNil()) std::cerr << " (nil)";
+            else if (slotOop.isSmallInteger()) std::cerr << " (int=" << slotOop.asSmallInteger() << ")";
+            else if (slotOop.isObject()) std::cerr << " (object)";
+            std::cerr << "\n";
         }
 
         // The class table pages might be directly embedded in hiddenRoots
         // or might be pointed to by slot 0
         Oop classTableFirstPageOop = hrHdr->slotAt(0);
-        // std::cerr << "[DEBUG] classTableFirstPage oop: 0x" << std::hex
-                  // << classTableFirstPageOop.rawBits() << std::dec << std::endl;
+        std::cerr << "[ClassTable] classTableFirstPage slot0 = 0x" << std::hex
+                  << classTableFirstPageOop.rawBits()
+                  << " isNil=" << classTableFirstPageOop.isNil()
+                  << " isObject=" << classTableFirstPageOop.isObject() << std::dec << "\n";
 
         if (classTableFirstPageOop.isNil() || !classTableFirstPageOop.isObject()) {
-            // std::cerr << "[DEBUG] classTableFirstPage is nil or not an object" << std::endl;
+            std::cerr << "[ClassTable] slot0 is nil or not object, trying direct use of hiddenRoots\n";
             // Try using hiddenRoots itself as the class table first page
             // Each slot points to a class object
             // std::cerr << "[DEBUG] Trying to use hiddenRoots slots directly as class table..." << std::endl;
