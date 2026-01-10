@@ -1,0 +1,33 @@
+WIP Debug Notes - Display Rendering Issue
+=========================================
+Date: 2025-01-10
+
+SYMPTOM:
+- Two whitish squares on a black background
+- Left square has a flashing black square inside it
+
+INVESTIGATION:
+1. Added Mac Catalyst support to libffi.xcframework and SDL2.xcframework
+2. Mac Catalyst builds now succeed
+3. Display is rendering but not correctly
+
+CURRENT DEBUG OUTPUT ADDED:
+- renderWorldMorphs() now logs:
+  - WORLD color=0x... (background color)
+  - WORLD has N submorphs (count of top-level morphs)
+  - MORPH[depth.index] ClassName bounds=(x1,y1)-(x2,y2) color=0x... (for each morph)
+
+CHANGES MADE:
+1. Fixed extractColor() to handle BoxedFloat64 (Pharo stores Color RGB as floats)
+2. Added magenta (0xFFFF00FF) as debug color for unhandled color types
+3. Added debug output to understand morph rendering
+
+LIKELY ISSUES:
+- World's color may be extracting incorrectly (black = 0xFF000000)
+- Morph bounds may not be set in headless image (using fallback bounds)
+- Color extraction may be failing for some morph types
+
+NEXT STEPS:
+- Run app and check console for debug output
+- Identify what the two whitish squares are (class names)
+- Fix color/bounds extraction based on actual data

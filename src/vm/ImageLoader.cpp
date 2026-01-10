@@ -36,8 +36,6 @@ inline uint8_t extractNumSlots(uint64_t header) {
 LoadResult ImageLoader::load(const std::string& path, ObjectMemory& memory) {
     LoadResult result;
 
-    std::cerr << "[ImageLoader] Loading: " << path << "\n";
-
     // Open the image file
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) {
@@ -47,44 +45,34 @@ LoadResult ImageLoader::load(const std::string& path, ObjectMemory& memory) {
     }
 
     // Step 1: Read and validate header
-    std::cerr << "[ImageLoader] Step 1: Reading header\n";
     if (!readHeader(file, result)) {
         std::cerr << "[ImageLoader] Header read failed: " << result.error << "\n";
         return result;
     }
-    std::cerr << "[ImageLoader] Header read OK\n";
 
     // Step 2: Load heap data
-    std::cerr << "[ImageLoader] Step 2: Loading heap data\n";
     if (!loadHeapData(file, memory, result)) {
         std::cerr << "[ImageLoader] Heap load failed: " << result.error << "\n";
         return result;
     }
-    std::cerr << "[ImageLoader] Heap loaded OK\n";
 
     // Step 3: Relocate pointers
-    std::cerr << "[ImageLoader] Step 3: Relocating pointers\n";
     if (!relocatePointers(memory, result)) {
         std::cerr << "[ImageLoader] Relocate failed: " << result.error << "\n";
         return result;
     }
-    std::cerr << "[ImageLoader] Pointers relocated OK\n";
 
     // Step 4: Set up special objects
-    std::cerr << "[ImageLoader] Step 4: Setting up special objects\n";
     if (!setupSpecialObjects(memory, result)) {
         std::cerr << "[ImageLoader] Special objects failed: " << result.error << "\n";
         return result;
     }
-    std::cerr << "[ImageLoader] Special objects OK\n";
 
     // Step 5: Build class table
-    std::cerr << "[ImageLoader] Step 5: Building class table\n";
     if (!buildClassTable(memory, result)) {
         std::cerr << "[ImageLoader] Class table failed: " << result.error << "\n";
         return result;
     }
-    std::cerr << "[ImageLoader] Class table OK\n";
 
     result.success = true;
     return result;
@@ -205,21 +193,6 @@ bool ImageLoader::relocatePointers(ObjectMemory& memory, LoadResult& result) {
     size_t objectCount = 0;
     size_t pointerCount = 0;
     size_t relocatedCount = 0;
-
-    // Check special objects array directly
-    size_t specArrayOffset = header_.specialObjectsOop - header_.startOfMemory;
-    // std::cerr << "[DEBUG] Special objects array at offset 0x" << std::hex << specArrayOffset << std::dec << std::endl;
-    uint64_t* specArray = reinterpret_cast<uint64_t*>(loadedData_ + specArrayOffset);
-    // Show header and first 10 slots
-    // std::cerr << "[DEBUG] SpecialObjects header: 0x" << std::hex << specArray[0] << std::dec << std::endl;
-    for (int i = 0; i < 10; i++) {
-        uint64_t val = specArray[i + 1];  // Skip header
-        // std::cerr << "  [" << i << "]: 0x" << std::hex << val;
-        if (val >= header_.startOfMemory && val < header_.startOfMemory + loadedSize_) {
-            // std::cerr << " (offset 0x" << (val - header_.startOfMemory) << ")";
-        }
-        // std::cerr << std::dec << std::endl;
-    }
 
     // First, verify the special objects array structure directly
     // Special objects array header should be at specArrayOffset
@@ -598,7 +571,6 @@ bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
 
     // Slot 0 of hiddenRoots should be the classTableFirstPage array
     if (hiddenRootsSlots < 1) {
-        // Fall back to scanning approach
         goto fallback_scan;
     }
 
@@ -685,24 +657,16 @@ fallback_scan:
         ObjectHeader* classTableFirstPageHdr = classTableFirstPageOop.asObjectPtr();
         size_t numPages = classTableFirstPageHdr->slotCount();
 
-        // std::cerr << "[DEBUG] classTableFirstPage:" << std::endl;
-        // std::cerr << "  format: " << static_cast<int>(classTableFirstPageHdr->format()) << std::endl;
-        // std::cerr << "  numPages: " << numPages << std::endl;
-
         // Iterate through each page pointer
         for (size_t pageNum = 0; pageNum < numPages && pageNum < 20; pageNum++) {
             Oop pageOop = classTableFirstPageHdr->slotAt(pageNum);
 
             if (pageOop.isNil() || !pageOop.isObject()) {
-                // std::cerr << "[DEBUG] Page " << pageNum << " is nil, skipping" << std::endl;
                 continue;
             }
 
             ObjectHeader* pageHdr = pageOop.asObjectPtr();
             size_t pageSlots = pageHdr->slotCount();
-
-            // std::cerr << "[DEBUG] Page " << pageNum << ": " << pageSlots << " slots, fmt="
-                      // << static_cast<int>(pageHdr->format()) << std::endl;
 
             // Each slot in the page is a class object pointer
             for (size_t i = 0; i < pageSlots; i++) {
@@ -720,13 +684,10 @@ fallback_scan:
             }
         }
 
-        // std::cerr << "[DEBUG] Loaded " << totalClasses << " classes from " << numPages
-                  // << " class table pages via hiddenRoots" << std::endl;
         return true;
     }
 
 direct_scan:
-    // std::cerr << "[DEBUG] Direct scan: building class table by scanning all objects..." << std::endl;
 
     // Alternative approach: For each object in the heap, register its class
     // if we can find the actual class object. This builds the class table
@@ -862,13 +823,13 @@ direct_scan:
 
         // Very inclusive class detection:
         // - Format 0, 1, or 5 (fixed size pointer objects, or ephemeron-like)
-        // - At least 8 slots (classes have superclass, methodDict, format, instanceVars, etc.)
+        // - At least 6 slots (metaclasses have ~6 slots, regular classes have 12+)
         // - identityHash > 0 and < 100000 (valid class index range)
         // - classIndex (metaclass) > 0 (non-nil class)
         bool looksLikeClass = (fmt == ObjectFormat::ZeroSized ||
                                fmt == ObjectFormat::FixedSize ||
                                static_cast<int>(fmt) == 5);
-        looksLikeClass = looksLikeClass && (slots >= 8 && slots <= 30);
+        looksLikeClass = looksLikeClass && (slots >= 6 && slots <= 30);  // Changed from 8 to 6 to include metaclasses
         looksLikeClass = looksLikeClass && (identHash > 0 && identHash < 100000);
         looksLikeClass = looksLikeClass && (metaclassIdx > 0);
 
@@ -966,13 +927,7 @@ direct_scan:
     // std::cerr << "[DEBUG] Class index range: " << minIdx << " - " << maxIdx << std::endl;
 
     // DEBUG: Check the test offset after class table setup
-    size_t testOff = 0x296e0;
-    if (testOff + 8 <= loadedSize_) {
-        uint64_t val = *reinterpret_cast<uint64_t*>(loadedData_ + testOff);
-        // std::cerr << "[DEBUG] After buildClassTable: offset 0x" << std::hex << testOff
-                  // << " value=0x" << val << std::dec << std::endl;
-    }
-
+    (void)registeredClasses;  // Suppress unused warning
     return true;
 }
 

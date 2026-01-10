@@ -1294,6 +1294,10 @@ private:
     /// Get the superclass of a class
     Oop superclassOf(Oop classOop) const;
 
+    /// Get the class where a CompiledMethod is defined (from last literal)
+    /// This is critical for super sends which must lookup from method's defining class
+    Oop methodClassOf(Oop method) const;
+
     /// Get the method dictionary of a class
     Oop methodDictOf(Oop classOop) const;
 

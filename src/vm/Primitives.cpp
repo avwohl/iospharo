@@ -10626,8 +10626,9 @@ enum FormFields {
 PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     static int bitBltCallCount = 0;
     bitBltCallCount++;
-    if (bitBltCallCount <= 5) {
-        std::cerr << "[BITBLT] primitiveCopyBits #" << bitBltCallCount << " argCount=" << argCount << "\n";
+    // Always log first 20 BitBlt calls to verify primitive 96 is working
+    if (bitBltCallCount <= 20) {
+        std::cerr << "[BITBLT] *** primitiveCopyBits CALLED *** #" << bitBltCallCount << " argCount=" << argCount << "\n";
     }
     if (argCount != 0) return PrimitiveResult::Failure;
 

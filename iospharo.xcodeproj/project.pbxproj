@@ -202,6 +202,17 @@
 		};
 /* End PBXProject section */
 
+/* Begin PBXResourcesBuildPhase section */
+		A50003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10008 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
 /* Begin PBXShellScriptBuildPhase section */
 		A50004 /* Check XCFramework Freshness */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -233,17 +244,6 @@
 			shellScript = "# Check if PharoVMCore.xcframework is older than VM source files\nXCFRAMEWORK=\"${PROJECT_DIR}/PharoVMCore.xcframework/Info.plist\"\nSRC_DIR=\"${PROJECT_DIR}/src/vm\"\n\nif [ ! -f \"$XCFRAMEWORK\" ]; then\n    echo \"error: PharoVMCore.xcframework not found!\"\n    echo \"error: Run ./build-xcframework.sh to build it.\"\n    exit 1\nfi\n\nXCF_TIME=$(stat -f %m \"$XCFRAMEWORK\")\n\n# Check all .cpp and .hpp files in src/vm\nfor src in \"$SRC_DIR\"/*.cpp \"$SRC_DIR\"/*.hpp; do\n    if [ -f \"$src\" ]; then\n        SRC_TIME=$(stat -f %m \"$src\")\n        if [ \"$SRC_TIME\" -gt \"$XCF_TIME\" ]; then\n            echo \"error: PharoVMCore.xcframework is STALE!\"\n            echo \"error: $(basename $src) is newer than xcframework.\"\n            echo \"error: Run ./build-xcframework.sh to rebuild.\"\n            exit 1\n        fi\n    fi\ndone\n\necho \"PharoVMCore.xcframework is up-to-date.\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
-
-/* Begin PBXResourcesBuildPhase section */
-		A50003 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				A10008 /* Assets.xcassets in Resources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		A50002 /* Sources */ = {

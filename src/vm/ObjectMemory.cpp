@@ -283,10 +283,14 @@ Oop ObjectMemory::classOf(Oop obj) const {
     ObjectHeader* header = obj.asObjectPtr();
     uint32_t classIdx = header->classIndex();
     Oop cls = classAtIndex(classIdx);
-    if (cls.isNil()) {
-        // std::cerr << "[CLASSOF] obj=0x" << std::hex << obj.rawBits()
-                  // << " classIdx=" << std::dec << classIdx
-                  // << " NOT FOUND in class table" << std::endl;
+    if (cls.isNil() || cls.rawBits() == 0) {
+        static int nilClassCount = 0;
+        nilClassCount++;
+        if (nilClassCount <= 20 || classIdx == 3156) {
+            std::cerr << "[CLASSOF] obj=0x" << std::hex << obj.rawBits()
+                      << " classIdx=" << std::dec << classIdx
+                      << " NOT FOUND in class table (tableSize=" << classTable_.size() << ")\n";
+        }
     }
     return cls;
 }
@@ -408,11 +412,6 @@ Oop ObjectMemory::findGlobal(const std::string& name) const {
 
     // Search the array for the named global
     int totalAssocs = 0;
-    bool debugWorld = (name == "World" || name == "UIManager" || name == "Display" || name == "OSWindowWorldRenderer");
-    if (debugWorld) {
-        std::cerr << "[findGlobal] Searching for '" << name << "' in array of " << arraySize << " slots\n";
-        std::cerr.flush();
-    }
     for (size_t i = 0; i < arraySize; ++i) {
         Oop item = arrayHeader->slotAt(i);
         if (item.isNil() || !item.isObject()) continue;
@@ -434,19 +433,10 @@ Oop ObjectMemory::findGlobal(const std::string& name) const {
 
         totalAssocs++;
         if (symbolEquals(key, name.c_str())) {
-            if (debugWorld) {
-                std::cerr << "[findGlobal] FOUND '" << name << "' at slot " << i << "\n";
-                std::cerr.flush();
-            }
             return fetchPointer(1, item);
         }
     }
-
-    if (debugWorld) {
-        std::cerr << "[findGlobal] '" << name << "' not found in main array. Checked " << arraySize
-                  << " slots, found " << totalAssocs << " associations\n";
-        std::cerr.flush();
-    }
+    (void)totalAssocs;  // Suppress unused warning
 
     // Modern Pharo might store additional entries in overflow structures at slots 2-5
     // Let me search those too (with defensive pointer validation)
@@ -512,10 +502,6 @@ Oop ObjectMemory::findGlobal(const std::string& name) const {
         return smalltalkDict;
     }
 
-    if (debugWorld) {
-        std::cerr << "[findGlobal] '" << name << "' NOT FOUND anywhere, returning nil\n";
-        std::cerr.flush();
-    }
     return Oop::nil();
 }
 
