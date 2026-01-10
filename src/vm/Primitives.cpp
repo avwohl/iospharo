@@ -2207,6 +2207,7 @@ PrimitiveResult Interpreter::primitiveForceDisplayUpdate(int argCount) {
 }
 
 // ===== SYSTEM PATH PRIMITIVES =====
+// Note: primitiveCopyBits (BitBlt, primitive 96) is defined later in this file
 
 // Helper function to create a String object from a C++ string
 static Oop createStringObject(ObjectMemory& memory, const std::string& str) {
@@ -10113,6 +10114,25 @@ PrimitiveResult Interpreter::primitiveSetDisplayMode(int argCount) {
     // On iOS, the display is managed by the system
     // Just acknowledge the request
     popN(2);  // pop arguments, leave receiver
+    return PrimitiveResult::Success;
+}
+
+// Primitive 91: Test display depth
+// depth primitiveTestDisplayDepth -> boolean
+// Tests if a given display depth is supported
+PrimitiveResult Interpreter::primitiveTestDisplayDepth(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop depthOop = stackTop();
+    if (!depthOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    int depth = static_cast<int>(depthOop.asSmallInteger());
+
+    // iOS supports 32-bit color
+    bool supported = (depth == 32 || depth == 16 || depth == 8 || depth == 1);
+
+    popN(argCount + 1);  // pop arg and receiver
+    push(supported ? memory_.trueObject() : memory_.falseObject());
     return PrimitiveResult::Success;
 }
 

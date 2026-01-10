@@ -6560,17 +6560,18 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[88] = &Interpreter::primitiveSuspend;
     primitiveTable_[89] = &Interpreter::primitiveFlushCache;
 
-    // File I/O primitives (90-99)
-    primitiveTable_[90] = &Interpreter::primitiveFileAtEnd;
-    primitiveTable_[91] = &Interpreter::primitiveFileClose;
-    primitiveTable_[92] = &Interpreter::primitiveFileGetPosition;
-    primitiveTable_[93] = &Interpreter::primitiveFileOpen;
-    primitiveTable_[94] = &Interpreter::primitiveFileRead;
-    primitiveTable_[95] = &Interpreter::primitiveFileSetPosition;
-    primitiveTable_[96] = &Interpreter::primitiveFileDelete;
-    primitiveTable_[97] = &Interpreter::primitiveFileSize;
-    primitiveTable_[98] = &Interpreter::primitiveFileWrite;
-    primitiveTable_[99] = &Interpreter::primitiveFileRename;
+    // I/O primitives (90-99) - NOT file I/O, these are input/display/system
+    // Note: File primitives are via FilePlugin (named primitives), not numbered
+    primitiveTable_[90] = &Interpreter::primitiveMousePoint;           // was Blue Book mouse point
+    primitiveTable_[91] = &Interpreter::primitiveTestDisplayDepth;
+    primitiveTable_[92] = &Interpreter::primitiveSetDisplayMode;
+    primitiveTable_[93] = &Interpreter::primitiveInputSemaphore;
+    primitiveTable_[94] = &Interpreter::primitiveGetNextEvent;
+    primitiveTable_[95] = &Interpreter::primitiveInputWord;
+    primitiveTable_[96] = &Interpreter::primitiveCopyBits;             // BitBlt!
+    primitiveTable_[97] = &Interpreter::primitiveSnapshot;
+    primitiveTable_[98] = &Interpreter::primitiveStoreImageSegment;
+    primitiveTable_[99] = &Interpreter::primitiveLoadImageSegment;
 
     // Display primitives (101-104, 107, 109)
     primitiveTable_[101] = &Interpreter::primitiveBeCursor;

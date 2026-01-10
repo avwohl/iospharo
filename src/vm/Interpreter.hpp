@@ -727,6 +727,7 @@ private:
     // Misc primitives (232-239) - 231 uses existing primitiveForceDisplayUpdate
     PrimitiveResult primitiveFormPrint(int argCount);              // 232
     PrimitiveResult primitiveSetDisplayMode(int argCount);         // 233
+    PrimitiveResult primitiveTestDisplayDepth(int argCount);       // 91 (also 91)
     PrimitiveResult primitiveBitmapDecompress(int argCount);       // 234
     PrimitiveResult primitiveStringCompareWith(int argCount);      // 235
     PrimitiveResult primitiveSampledSoundConvert(int argCount);    // 236
