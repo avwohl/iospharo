@@ -315,7 +315,7 @@ uint32_t ObjectMemory::indexOfClass(Oop classOop) const {
 // ===== SPECIAL OBJECTS =====
 
 Oop ObjectMemory::specialObject(SpecialObjectIndex index) const {
-    if (specialObjectsArray_.isNil()) {
+    if (specialObjectsArray_.isNil() || !specialObjectsArray_.isObject()) {
         return Oop::nil();
     }
 
@@ -329,7 +329,7 @@ Oop ObjectMemory::specialObject(SpecialObjectIndex index) const {
 }
 
 void ObjectMemory::setSpecialObject(SpecialObjectIndex index, Oop value) {
-    if (specialObjectsArray_.isNil()) {
+    if (specialObjectsArray_.isNil() || !specialObjectsArray_.isObject()) {
         return;
     }
 

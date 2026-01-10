@@ -1,33 +1,60 @@
-WIP Debug Notes - Display Rendering Issue
-=========================================
+WIP Debug Notes - Display Rendering
+====================================
 Date: 2025-01-10
 
-SYMPTOM:
-- Two whitish squares on a black background
-- Left square has a flashing black square inside it
+STATUS: WORKING
+Display now renders World morphs correctly with proper colors and bounds.
 
-INVESTIGATION:
-1. Added Mac Catalyst support to libffi.xcframework and SDL2.xcframework
-2. Mac Catalyst builds now succeed
-3. Display is rendering but not correctly
-
-CURRENT DEBUG OUTPUT ADDED:
-- renderWorldMorphs() now logs:
-  - WORLD color=0x... (background color)
-  - WORLD has N submorphs (count of top-level morphs)
-  - MORPH[depth.index] ClassName bounds=(x1,y1)-(x2,y2) color=0x... (for each morph)
+CURRENT BEHAVIOR:
+- World background fills entire display first
+- Morphs render recursively on top with proper bounds
+- Black morphs (text areas, content panels) are skipped to show underlying structure
+- SmallFloat coordinates are now decoded correctly
+- Sample output:
+  - World background (0xff2f0bc2): ~48% of display
+  - SpWindow (0xffad2b4a): ~46% of display
+  - Blue areas (ImageMorph, etc.): ~5% of display
+  - Various border colors: small amounts
 
 CHANGES MADE:
-1. Fixed extractColor() to handle BoxedFloat64 (Pharo stores Color RGB as floats)
-2. Added magenta (0xFFFF00FF) as debug color for unhandled color types
-3. Added debug output to understand morph rendering
+1. Fixed Oop tag encoding for Spur 64-bit:
+   - SmallInteger tag: 1 (001)
+   - Character tag: 2 (010)
+   - SmallFloat tag: 5 (101)
+   - Object pointer tag: 0 (000)
 
-LIKELY ISSUES:
-- World's color may be extracting incorrectly (black = 0xFF000000)
-- Morph bounds may not be set in headless image (using fallback bounds)
-- Color extraction may be failing for some morph types
+2. Fixed fromObject() - no longer encodes space in low bits
+   (Spur 64-bit uses tag 0 for all object pointers)
+
+3. Modified syncDisplayToSurface() to always use renderWorldMorphs()
+   instead of copying from Display Form (BitBlt not yet working)
+
+4. Added skip for black morphs in renderMorph()
+   (These are typically text areas or content panels)
+
+5. Fixed SmallFloat64 decoding algorithm:
+   - Changed exponent offset from 0x3800000000000000 to 0x7000000000000000
+   - Offset represents 896 << 53 (in rotated position where sign is at LSB)
+   - Algorithm: remove tag >> add offset >> rotate right to restore sign bit
+   - Reference: https://clementbera.wordpress.com/2018/11/09/64-bits-immediate-floats/
+
+6. Fixed SmallFloat64 encoding algorithm:
+   - Rotate left 1 (move sign to LSB)
+   - Subtract 0x7000000000000000 offset
+   - Shift left 3 and add tag 5
+
+7. Cleaned up debug output from Interpreter.cpp
+
+VERIFIED WORKING:
+- SmallFloat encoding/decoding roundtrip for values like 1.0, 168.0, 80.0, -42.5, 0.0, 1024.0, 0.5
+- Morphs with SmallFloat coordinates now render correctly (e.g., ImageMorph)
+- Display shows proper color distribution without black overwrite
+
+REMAINING ISSUES:
+- No text rendering yet (black text areas are skipped)
+- Some primitive failures (267, 198) but not affecting display
 
 NEXT STEPS:
-- Run app and check console for debug output
-- Identify what the two whitish squares are (class names)
-- Fix color/bounds extraction based on actual data
+- Implement basic text rendering
+- Fix remaining primitive failures
+- Test on iOS device/simulator

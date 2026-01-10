@@ -67,9 +67,15 @@ private:
     static constexpr uint64_t SpaceShift = 1;
 
     // Immediate tags (bit 0 = 1)
+    // Spur 64-bit immediate tags:
+    // Tag 0 (000) = object pointer
+    // Tag 1 (001) = SmallInteger
+    // Tag 2 (010) = Character (some sources say 011, but image uses 010)
+    // Tag 4 (100) = SmallFloat (Clément Béra's blog)
+    // Tag 5 (101) = SmallFloat (what the image actually uses)
     static constexpr uint64_t SmallIntegerTag = 0x1;  // 001
-    static constexpr uint64_t CharacterTag = 0x3;     // 011
-    static constexpr uint64_t SmallFloatTag = 0x5;    // 101 - SmallFloat (compatible with image)
+    static constexpr uint64_t CharacterTag = 0x2;     // 010
+    static constexpr uint64_t SmallFloatTag = 0x5;    // 101 - what the Pharo image uses
 
     // SmallInteger limits (61-bit signed)
     static constexpr int64_t SmallIntegerMin = -(1LL << 60);
@@ -88,10 +94,15 @@ public:
     // ===== TYPE PREDICATES =====
 
     /// Is this an immediate value (SmallInteger, Character, or SmallFloat)?
-    bool isImmediate() const { return bits_ & ImmediateBit; }
+    /// In Spur 64-bit, tags 1, 2, and 5 are immediates; tag 0 is object pointer
+    bool isImmediate() const {
+        uint64_t tag = bits_ & TagMask;
+        return tag == SmallIntegerTag || tag == CharacterTag || tag == SmallFloatTag;
+    }
 
     /// Is this a heap-allocated object pointer?
-    bool isObject() const { return !isImmediate() && bits_ != 0; }
+    /// Tag 0 = object pointer (and non-nil)
+    bool isObject() const { return (bits_ & TagMask) == 0 && bits_ != 0; }
 
     /// Is this a SmallInteger immediate?
     bool isSmallInteger() const { return (bits_ & TagMask) == SmallIntegerTag; }
@@ -123,11 +134,32 @@ public:
     /// Extract SmallFloat value. Caller must verify isSmallFloat() first.
     double asSmallFloat() const {
         assert(isSmallFloat());
-        // SmallFloat encoding: double bits rotated LEFT by 1, then tag in low 3 bits
-        // Clear the tag to get the rotated value
-        uint64_t rotated = bits_ & ~TagMask;
-        // Rotate RIGHT by 1 to restore the original double bits
-        uint64_t doubleBits = (rotated >> 1) | (rotated << 63);
+        // Spur SmallFloat64 encoding (from Clément Béra's blog):
+        // https://clementbera.wordpress.com/2018/11/09/64-bits-immediate-floats/
+        //
+        // Encoding moves sign bit to LSB (rotate left 1), subtracts exponent offset,
+        // then shifts left 3 and adds tag.
+        //
+        // Decoding reverses this:
+        // 1. Right-shift by 3 to remove tag
+        // 2. Check for ±0 (shifted <= 1)
+        // 3. Add exponent offset 0x7000000000000000 (this is 896 << 53, in rotated position)
+        // 4. Rotate right by 1 to restore sign bit to MSB
+
+        uint64_t shifted = bits_ >> 3;  // Remove tag
+
+        // Handle ±0 special cases: after removing tag, 0 means +0, 1 means -0
+        if (shifted <= 1) {
+            if (shifted == 0) return 0.0;
+            return -0.0;
+        }
+
+        // Add exponent offset (in rotated position where sign is at LSB)
+        uint64_t withOffset = shifted + 0x7000000000000000ULL;
+
+        // Rotate right by 1 to restore sign bit to position 63
+        uint64_t doubleBits = (withOffset >> 1) | (withOffset << 63);
+
         double result;
         std::memcpy(&result, &doubleBits, sizeof(double));
         return result;
@@ -135,17 +167,19 @@ public:
 
     // ===== OBJECT POINTER ACCESS =====
 
-    /// Get the memory space of this object. Caller must verify isObject() first.
+    /// Get the memory space of this object.
+    /// Note: In Spur 64-bit, space is not encoded in the pointer.
+    /// This always returns Old for now - proper space tracking requires address range checks.
     Space space() const {
         assert(isObject());
-        return static_cast<Space>((bits_ & SpaceMask) >> SpaceShift);
+        return Space::Old;  // TODO: Implement proper space detection by address range
     }
 
     /// Get pointer to object header. Caller must verify isObject() first.
     ObjectHeader* asObjectPtr() const {
         assert(isObject());
-        // Clear the low 3 bits to get aligned address
-        return reinterpret_cast<ObjectHeader*>(bits_ & ~TagMask);
+        // Object pointers in Spur 64-bit have tag 0, so no bits to clear
+        return reinterpret_cast<ObjectHeader*>(bits_);
     }
 
     /// Get raw address value for debugging/hashing
@@ -182,36 +216,58 @@ public:
         if (std::isnan(value) || std::isinf(value)) {
             return false;
         }
+
         uint64_t doubleBits;
         std::memcpy(&doubleBits, &value, sizeof(double));
 
-        // Rotate LEFT by 1 to make room for tag in low bits
-        uint64_t rotated = (doubleBits << 1) | (doubleBits >> 63);
-
-        // Check that we can recover the original (low 3 bits will be overwritten by tag)
-        // The rotation only loses 1 bit, but we need 3 bits for tag
-        // So we check if the low 3 bits of rotated value are compatible
-        // Actually, Spur SmallFloat can represent most values - just ensure roundtrip works
-        uint64_t recovered = (rotated >> 1) | (rotated << 63);
-        if (recovered != doubleBits) {
-            return false;
+        // Handle ±0 special cases
+        if (doubleBits == 0) {
+            result = Oop(SmallFloatTag);  // +0.0
+            return true;
+        }
+        if (doubleBits == 0x8000000000000000ULL) {
+            result = Oop(SmallFloatTag | 8);  // -0.0 (tag + bit 3 set)
+            return true;
         }
 
-        // Set the tag (overwrites low 3 bits)
-        result = Oop((rotated & ~TagMask) | SmallFloatTag);
+        // Spur SmallFloat64 encoding:
+        // 1. Rotate left by 1 (move sign bit to LSB)
+        uint64_t rotated = (doubleBits << 1) | (doubleBits >> 63);
+
+        // 2. Subtract exponent offset - check for underflow (value out of range)
+        if (rotated < 0x7000000000000000ULL) {
+            return false;  // Exponent too small for SmallFloat
+        }
+        uint64_t adjusted = rotated - 0x7000000000000000ULL;
+
+        // 3. Check that the adjusted value fits in 61 bits (after shifting left 3)
+        if (adjusted > 0x1FFFFFFFFFFFFFFFULL) {
+            return false;  // Exponent too large for SmallFloat
+        }
+
+        // 4. Shift left by 3 and add tag
+        result = Oop((adjusted << 3) | SmallFloatTag);
+
+        // Verify roundtrip
+        if (result.asSmallFloat() != value) {
+            return false;
+        }
         return true;
     }
 
     // ===== OBJECT POINTER CONSTRUCTOR =====
 
-    /// Create an Oop from an object pointer and its memory space.
-    static Oop fromObject(ObjectHeader* obj, Space space) {
+    /// Create an Oop from an object pointer.
+    /// In Spur 64-bit, object pointers have tag 0 (no bits set in low 3).
+    /// Space is determined by address range, not by tag bits.
+    static Oop fromObject(ObjectHeader* obj, Space /*space*/ = Space::Old) {
         if (obj == nullptr) {
             return Oop(0);  // nil
         }
         uint64_t addr = reinterpret_cast<uint64_t>(obj);
         assert((addr & TagMask) == 0 && "Object must be 8-byte aligned");
-        return Oop(addr | (static_cast<uint64_t>(space) << SpaceShift));
+        // Object pointers in Spur have tag 0 - just use the raw address
+        return Oop(addr);
     }
 
     // ===== SPECIAL VALUES =====

@@ -290,6 +290,40 @@ void testOopTagging() {
     std::cout << "nil:              0x" << std::hex << nil.rawBits() << std::dec;
     std::cout << " isNil=" << nil.isNil() << std::endl;
 
+    // Test SmallFloat encoding/decoding
+    std::cout << "\nSmallFloat tests:" << std::endl;
+    Oop sf;
+    double testValues[] = {1.0, 168.0, 80.0, -42.5, 0.0, 1024.0, 0.5};
+    for (double val : testValues) {
+        if (Oop::tryFromSmallFloat(val, sf)) {
+            double decoded = sf.asSmallFloat();
+            std::cout << "  " << val << " -> 0x" << std::hex << sf.rawBits() << std::dec
+                      << " -> " << decoded;
+            if (decoded == val) std::cout << " OK";
+            else std::cout << " FAIL";
+            std::cout << std::endl;
+        } else {
+            std::cout << "  " << val << " cannot be encoded as SmallFloat" << std::endl;
+        }
+    }
+
+    // Test decoding known Pharo values (tag 5)
+    std::cout << "\nDecoding known SmallFloat values from Pharo:" << std::endl;
+    uint64_t known[] = {0x8540000000000005, 0x8650000000000005, 0x8000000000000005};
+    for (uint64_t bits : known) {
+        Oop oop = Oop::nil();
+        // Manually create Oop from raw bits for testing
+        Oop* oopPtr = &oop;
+        std::memcpy(oopPtr, &bits, sizeof(bits));
+        if (oop.isSmallFloat()) {
+            std::cout << "  0x" << std::hex << bits << std::dec
+                      << " -> " << oop.asSmallFloat() << std::endl;
+        } else {
+            std::cout << "  0x" << std::hex << bits << std::dec
+                      << " is not SmallFloat (tag=" << (bits & 7) << ")" << std::endl;
+        }
+    }
+
     // Verify tagging uses low bits (iOS ASLR compatible)
     std::cout << "\nTag verification (should use low 3 bits only):" << std::endl;
     std::cout << "  SmallInteger tag: " << (si.rawBits() & 7) << " (expected 1)" << std::endl;

@@ -336,6 +336,7 @@ void Interpreter::renderWorldMorphs() {
 
         // Color stores RGB in slot 0 (privateRGB - may be SmallInteger or Float)
         Oop rgb = memory_.fetchPointer(0, colorObj);
+
         if (rgb.isSmallInteger()) {
             int rgbVal = static_cast<int>(rgb.asSmallInteger());
             return 0xFF000000 | (rgbVal & 0xFFFFFF);
@@ -351,9 +352,8 @@ void Interpreter::renderWorldMorphs() {
             }
         }
 
-        // Try to read alpha from slot 1 (for TranslucentColor)
-        // For now, return a distinctive debug color to identify unhandled cases
-        return 0xFFFF00FF;  // Magenta for unhandled color types
+        // Return a default gray color for unhandled cases
+        return 0xFFCCCCCC;
     };
 
     // Helper to extract rectangle from a slot
@@ -372,10 +372,20 @@ void Interpreter::renderWorldMorphs() {
         Oop cornerX = memory_.fetchPointer(0, corner);
         Oop cornerY = memory_.fetchPointer(1, corner);
 
-        x1 = originX.isSmallInteger() ? static_cast<int>(originX.asSmallInteger()) : 0;
-        y1 = originY.isSmallInteger() ? static_cast<int>(originY.asSmallInteger()) : 0;
-        x2 = cornerX.isSmallInteger() ? static_cast<int>(cornerX.asSmallInteger()) : 0;
-        y2 = cornerY.isSmallInteger() ? static_cast<int>(cornerY.asSmallInteger()) : 0;
+        // Extract coordinates - handle both SmallInteger and SmallFloat
+        auto extractCoord = [](Oop coord) -> int {
+            if (coord.isSmallInteger()) {
+                return static_cast<int>(coord.asSmallInteger());
+            } else if (coord.isSmallFloat()) {
+                return static_cast<int>(coord.asSmallFloat());
+            }
+            return 0;
+        };
+
+        x1 = extractCoord(originX);
+        y1 = extractCoord(originY);
+        x2 = extractCoord(cornerX);
+        y2 = extractCoord(cornerY);
 
         return true;
     };
@@ -415,7 +425,6 @@ void Interpreter::renderWorldMorphs() {
     };
 
     // Recursive morph rendering function
-    static int debugCounter = 0;
     std::function<void(Oop, int, int)> renderMorph = [&](Oop morph, int depth, int index) {
         if (morph.isNil() || !morph.isObject()) return;
         if (depth > 20) return;  // Prevent infinite recursion
@@ -430,14 +439,9 @@ void Interpreter::renderWorldMorphs() {
         Oop morphColor = memory_.fetchPointer(4, morph);
         uint32_t colorARGB = extractColor(morphColor);
 
-        // Debug output for first few renders
-        if (debugCounter < 50 && depth <= 1) {
-            std::string className = getMorphClassName(morph);
-            std::cerr << "MORPH[" << depth << "." << index << "] " << className
-                      << " bounds=(" << x1 << "," << y1 << ")-(" << x2 << "," << y2 << ")"
-                      << " color=0x" << std::hex << colorARGB << std::dec << std::endl;
-            debugCounter++;
-        }
+        // Skip black morphs (they're likely text areas or transparent)
+        // This is a temporary workaround until text rendering is implemented
+        if ((colorARGB & 0xFFFFFF) == 0) return;  // Skip pure black
 
         // Skip if bounds are invalid or too small (but don't skip for depth > 0)
         bool hasBounds = (x2 - x1 >= 1 && y2 - y1 >= 1);
@@ -491,12 +495,6 @@ void Interpreter::renderWorldMorphs() {
     Oop worldColor = memory_.fetchPointer(4, world);
     uint32_t worldColorARGB = extractColor(worldColor);
 
-    static bool worldDebugDone = false;
-    if (!worldDebugDone) {
-        std::cerr << "WORLD color=0x" << std::hex << worldColorARGB << std::dec << std::endl;
-        worldDebugDone = true;
-    }
-
     for (int i = 0; i < dispWidth * dispHeight; i++) {
         pixels[i] = worldColorARGB;
     }
@@ -509,12 +507,6 @@ void Interpreter::renderWorldMorphs() {
         ObjectHeader* subHdr = submorphs.asObjectPtr();
         size_t numSubmorphs = subHdr->slotCount();
 
-        static bool submorphDebugDone = false;
-        if (!submorphDebugDone) {
-            std::cerr << "WORLD has " << numSubmorphs << " submorphs" << std::endl;
-            submorphDebugDone = true;
-        }
-
         for (size_t i = 0; i < numSubmorphs; i++) {
             Oop submorph = subHdr->slotAt(i);
             renderMorph(submorph, 0, static_cast<int>(i));
@@ -525,11 +517,19 @@ void Interpreter::renderWorldMorphs() {
 }
 
 // ===== DISPLAY SYNCHRONIZATION =====
-// Copies Pharo's Display Form to the platform display surface
+// Until BitBlt primitives are fully working, bypass Display Form and
+// render World morphs directly.
 
 void Interpreter::syncDisplayToSurface() {
     if (!pharo::gDisplaySurface) return;
 
+    // For now, always use direct morph rendering instead of Display Form
+    // This works around BitBlt not updating the Form properly
+    renderWorldMorphs();
+    return;
+
+    // TODO: Re-enable Display Form path once BitBlt primitives work correctly
+#if 0
     // Auto-discover Display global if displayForm_ not set
     if (displayForm_.isNil()) {
         // First try direct Display global
@@ -613,6 +613,7 @@ void Interpreter::syncDisplayToSurface() {
     }
 
     pharo::gDisplaySurface->update();
+#endif
 }
 
 // ===== MAIN LOOP =====
@@ -2134,7 +2135,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             }
 
             // ===== INTERCEPT WorldState >> doOneCycleFor: =====
-            // Force a simple display update when Morphic's complex path fails
+            // Render World's morphs directly instead of using NullWorldRenderer
             if (selStr == "doOneCycleFor:" && argCount == 1) {
                 Oop rcvrClass = memory_.classOf(rcvr);
                 if (rcvrClass.isObject()) {
@@ -2144,50 +2145,8 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                         if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
                             std::string rcvrClassName((char*)nameHdr->bytes(), nameHdr->byteSize());
                             if (rcvrClassName == "WorldState") {
-                                // Get the World argument
-                                Oop world = stackValue(0);
-
-                                // Try to trigger actual Morphic rendering
-                                Oop display = memory_.findGlobal("Display");
-                                if (!display.isNil() && display.isObject() && !world.isNil() && world.isObject()) {
-                                    // Get Display's bits
-                                    Oop bits = memory_.fetchPointer(0, display);
-                                    if (bits.isObject()) {
-                                        ObjectHeader* bitsHdr = bits.asObjectPtr();
-                                        if (bitsHdr->format() == ObjectFormat::Indexable64 ||
-                                            bitsHdr->format() == ObjectFormat::Indexable32) {
-                                            uint32_t* pixels = reinterpret_cast<uint32_t*>(bitsHdr->bytes());
-                                            size_t pixelCount = bitsHdr->byteSize() / 4;
-
-                                            // Draw a simple Morphic-like background
-                                            // Light gray background with darker border
-                                            for (size_t i = 0; i < pixelCount; i++) {
-                                                int x = i % 1024;
-                                                int y = i / 1024;
-
-                                                // Create a window-like appearance
-                                                if (x < 10 || x >= 1014 || y < 30 || y >= 758) {
-                                                    // Border: dark gray
-                                                    pixels[i] = 0xFF404040;
-                                                } else if (y < 30) {
-                                                    // Title bar: blue gradient
-                                                    pixels[i] = 0xFF0066CC;
-                                                } else {
-                                                    // Content area: light gray with subtle pattern
-                                                    uint8_t shade = 200 + ((x ^ y) & 0x0F);
-                                                    pixels[i] = 0xFF000000 | (shade << 16) | (shade << 8) | shade;
-                                                }
-                                            }
-
-                                            // Draw a simple text area (just a rectangle for now)
-                                            for (int ty = 100; ty < 150; ty++) {
-                                                for (int tx = 100; tx < 400; tx++) {
-                                                    pixels[ty * 1024 + tx] = 0xFF000080;  // Dark blue text area
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                                // Render World's morphs directly to the display surface
+                                renderWorldMorphs();
 
                                 // Return receiver (WorldState) to continue
                                 popN(argCount + 1);
