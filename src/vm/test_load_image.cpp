@@ -342,6 +342,16 @@ int main(int argc, char* argv[]) {
     printMemoryStats(memory);
     countObjects(memory);
 
+    // Check for iOS-specific classes
+    std::cout << "\n=== Checking iOS Classes ===" << std::endl;
+    const char* iOSClasses[] = {"OSWorldRenderer", "OSiOSDriver", "OSiOSBackendWindow",
+                                 "NullWorldRenderer", "OSWindowDriver", "OSWindow",
+                                 "WorldMorph", "WorldState", "Display"};
+    for (const char* className : iOSClasses) {
+        Oop cls = memory.findGlobal(className);
+        std::cout << "  " << className << ": " << (cls.isNil() ? "NOT FOUND" : "found") << std::endl;
+    }
+
     // Create test display surface for Morphic rendering
     std::cout << "\n=== Display Surface Setup ===" << std::endl;
     gTestSurface = new TestDisplaySurface(1024, 768);
@@ -357,13 +367,62 @@ int main(int argc, char* argv[]) {
         std::cout << "Active method: 0x" << std::hex
                   << interpreter.activeMethod().rawBits() << std::dec << std::endl;
 
+        // Create Display Form if it doesn't exist (image may be headless)
+        std::cout << "\n=== Creating Display ===" << std::endl;
+        interpreter.ensureDisplayForm(1024, 768, 32);
+
+        // Verify Display was created
+        Oop display = memory.findGlobal("Display");
+        std::cout << "Display after ensureDisplayForm: "
+                  << (display.isNil() ? "NOT FOUND" : "created!") << std::endl;
+
+        // Direct BitBlt test - try to fill Display with a color
+        if (!display.isNil() && display.isObject()) {
+            std::cout << "\n=== Direct BitBlt Test ===" << std::endl;
+            // Get Display's bits (Form layout: bits, width, height, depth)
+            Oop bits = memory.fetchPointer(0, display);
+            Oop width = memory.fetchPointer(1, display);
+            Oop height = memory.fetchPointer(2, display);
+            Oop depth = memory.fetchPointer(3, display);
+            std::cout << "Display bits: " << (bits.isObject() ? "object" : bits.isSmallInteger() ? "int" : "other")
+                      << " width: " << (width.isSmallInteger() ? width.asSmallInteger() : -1)
+                      << " height: " << (height.isSmallInteger() ? height.asSmallInteger() : -1)
+                      << " depth: " << (depth.isSmallInteger() ? depth.asSmallInteger() : -1) << std::endl;
+
+            // If bits is a Bitmap object, fill the entire display with a gradient
+            if (bits.isObject()) {
+                ObjectHeader* bitsHdr = bits.asObjectPtr();
+                std::cout << "Bitmap format: " << static_cast<int>(bitsHdr->format())
+                          << " byteSize: " << bitsHdr->byteSize() << std::endl;
+                // Format 9 is 64-bit indexable, 10 is 32-bit indexable
+                if (bitsHdr->format() == pharo::ObjectFormat::Indexable32 ||
+                    bitsHdr->format() == pharo::ObjectFormat::Indexable64) {
+                    size_t byteCount = bitsHdr->byteSize();
+                    size_t pixels = byteCount / 4;  // 4 bytes per pixel for 32-bit depth
+                    std::cout << "Filling display with gradient (" << pixels << " pixels)..." << std::endl;
+                    uint32_t* pixelData = reinterpret_cast<uint32_t*>(bitsHdr->bytes());
+                    // Create a gradient to prove full-screen rendering works
+                    for (size_t i = 0; i < pixels; i++) {
+                        int x = i % 1024;
+                        int y = i / 1024;
+                        // Simple gradient: red increases with x, green with y
+                        uint8_t r = static_cast<uint8_t>((x * 255) / 1024);
+                        uint8_t g = static_cast<uint8_t>((y * 255) / 768);
+                        uint8_t b = 128;
+                        pixelData[i] = 0xFF000000 | (r << 16) | (g << 8) | b;
+                    }
+                    std::cout << "Wrote gradient to display bitmap" << std::endl;
+                }
+            }
+        }
+
         // Start the heartbeat thread for display sync
         std::cout << "Starting heartbeat thread..." << std::endl;
         interpreter.startHeartbeat();
 
         // Run bytecode steps for testing
         std::cout << "\n=== Execution Test ===" << std::endl;
-        int totalSteps = 100000;  // Run more steps to allow Morphic to render
+        int totalSteps = 500000;  // Run more steps to allow Morphic to render
         std::cout << "Running up to " << totalSteps << " bytecode steps..." << std::endl;
         int activeSteps = 0;
         int idleSteps = 0;

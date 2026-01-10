@@ -45,11 +45,12 @@ target_compile_options(PharoVMCore PRIVATE
     -Wall -Wextra -Wno-unused-parameter
 )
 
-# Link SDL2 static library
+# Link SDL2 static library with force_load to ensure all symbols are available for dlsym
 set(SDL2_LIBRARY ${CMAKE_SOURCE_DIR}/SDL2.xcframework/${XCFRAMEWORK_PLATFORM}/libSDL2.a)
 if(EXISTS ${SDL2_LIBRARY})
-    target_link_libraries(PharoVMCore ${SDL2_LIBRARY})
-    message(STATUS "Using SDL2: ${SDL2_LIBRARY}")
+    # Force load all symbols from SDL2 so they're available via dlsym at runtime
+    target_link_libraries(PharoVMCore "-Wl,-force_load,${SDL2_LIBRARY}")
+    message(STATUS "Using SDL2 (force_load): ${SDL2_LIBRARY}")
 endif()
 
 # Link libffi static library

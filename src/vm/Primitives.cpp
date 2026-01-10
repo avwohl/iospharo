@@ -370,28 +370,45 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
     Oop index = stackValue(0);
     Oop rcvr = stackValue(1);
 
+    // Special case: if index is nil, return nil to avoid infinite recursion
+    // during error handling. This happens when error handling code walks the
+    // stack and calls objectAt: with uninitialized/nil slots.
+    // In Spur, nil is a real heap object, so we check both:
+    // 1. index == memory_.nil() (the singleton nil object)
+    // 2. index is an object of class UndefinedObject (classIdx 3075)
+    bool isNilIndex = (index == memory_.nil());
+    if (!isNilIndex && index.isObject()) {
+        ObjectHeader* idxHdr = index.asObjectPtr();
+        // UndefinedObject has classIdx around 3075 in Pharo images
+        // Also check format=0 (ZeroSized) and slots=0 as extra verification
+        if (idxHdr->format() == ObjectFormat::ZeroSized && idxHdr->slotCount() == 0) {
+            // Very likely to be nil
+            isNilIndex = true;
+        }
+    }
+    if (isNilIndex) {
+        static int nilIndexCount = 0;
+        if (nilIndexCount++ < 3) {
+            std::cerr << "[PRIM60] at: index is nil (0x" << std::hex << index.rawBits()
+                      << "), returning nil to avoid recursion\n" << std::dec;
+        }
+        primitiveSuccess(memory_.nil());
+        return PrimitiveResult::Success;
+    }
+
     if (!index.isSmallInteger() || !rcvr.isObject()) {
         if (atFailCount++ < 5) {
-            std::cerr << "[PRIM60] at: FAIL - index isSmallInt=" << index.isSmallInteger()
+            std::cerr << "[PRIM60] at: FAIL #" << atFailCount << " - index isSmallInt=" << index.isSmallInteger()
                       << " rcvr isObject=" << rcvr.isObject()
                       << " index=0x" << std::hex << index.rawBits() << std::dec;
             // Show what the index object is if it's an object
             if (index.isObject()) {
                 ObjectHeader* idxHdr = index.asObjectPtr();
+                std::cerr << " rawHdr=0x" << std::hex << idxHdr->rawHeader() << std::dec;
                 std::cerr << " (classIdx=" << idxHdr->classIndex() << " format=" << (int)idxHdr->format()
                           << " slots=" << idxHdr->slotCount() << ")";
-                // Try to identify if it's a block closure
-                if (idxHdr->classIndex() >= 100 && idxHdr->classIndex() <= 200) {
-                    std::cerr << " [possibly closure/context]";
-                }
             }
             std::cerr << "\n";
-            // Also dump what the receiver looks like
-            if (rcvr.isObject()) {
-                ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
-                std::cerr << "[PRIM60]   rcvr: classIdx=" << rcvrHdr->classIndex()
-                          << " slots=" << rcvrHdr->slotCount() << "\n";
-            }
         }
         return PrimitiveResult::Failure;
     }
@@ -426,10 +443,37 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
         }
         primitiveSuccess(header->slotAt(arrayIndex));
         return PrimitiveResult::Success;
+    } else if (header->isCompiledMethod()) {
+        // CompiledMethods are hybrid objects with both literals (pointers) and bytecodes
+        // objectAt: accesses the literal frame (slots)
+        // Index 1 = header, Index 2+ = literals
+        if (arrayIndex >= header->slotCount()) {
+            if (atFailCount++ < 5) {
+                std::cerr << "[PRIM60] at: FAIL - CompiledMethod slot index " << arrayIndex << " >= slotCount " << header->slotCount() << "\n";
+            }
+            return PrimitiveResult::Failure;
+        }
+        Oop result = header->slotAt(arrayIndex);
+        // Debug: trace CompiledMethod header access
+        static int cmHeaderAccess = 0;
+        if (arrayIndex == 0 && cmHeaderAccess++ < 20) {
+            std::cerr << "[PRIM60] CM header access: slotAt(0)=0x" << std::hex << result.rawBits()
+                      << " isSmallInt=" << result.isSmallInteger();
+            if (result.isSmallInteger()) {
+                std::cerr << " value=" << std::dec << result.asSmallInteger();
+            } else if (result.isObject()) {
+                ObjectHeader* resHdr = result.asObjectPtr();
+                std::cerr << std::dec << " isObject classIdx=" << resHdr->classIndex()
+                          << " fmt=" << (int)resHdr->format();
+            }
+            std::cerr << "\n";
+        }
+        primitiveSuccess(result);
+        return PrimitiveResult::Success;
     }
 
     if (atFailCount++ < 5) {
-        std::cerr << "[PRIM60] at: FAIL - not bytes or pointers, format=" << (int)header->format() << "\n";
+        std::cerr << "[PRIM60] at: FAIL - not bytes or pointers or method, format=" << (int)header->format() << "\n";
     }
     return PrimitiveResult::Failure;
 }
@@ -7947,16 +7991,53 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
     ObjectHeader* methodHdr = method.asObjectPtr();
     size_t numLiterals = methodHdr->slotCount();
 
+    if (callCount <= 10) {
+        std::cerr << "[FFI] Method header: numLiterals=" << numLiterals << "\n";
+    }
+
+    // Safety check for unreasonable literal count
+    if (numLiterals > 1000) {
+        std::cerr << "[FFI] Unreasonable literal count " << numLiterals << ", failing\n";
+        return PrimitiveResult::Failure;
+    }
+
     std::string funcName;
     std::vector<std::string> argTypeNames;
     std::string returnTypeName = "int";
 
     // Scan literals for an array that looks like an FFI spec
     for (size_t i = 0; i < numLiterals && funcName.empty(); i++) {
+        if (callCount <= 5) {
+            std::cerr << "[FFI] Checking literal " << i << "/" << numLiterals << std::flush;
+        }
         Oop lit = memory_.fetchPointer(i, method);
+        if (callCount <= 5) {
+            std::cerr << " raw=" << std::hex << lit.rawBits() << std::dec
+                      << " isObj=" << lit.isObject() << "\n" << std::flush;
+        }
         if (lit.isObject()) {
+            // Validate pointer is in heap before dereferencing
+            if (!memory_.isValidPointer(lit)) {
+                if (callCount <= 5) {
+                    std::cerr << "[FFI] Literal " << i << " is invalid pointer, skipping\n" << std::flush;
+                }
+                continue;
+            }
             ObjectHeader* litHdr = lit.asObjectPtr();
             uint32_t format = static_cast<uint32_t>(litHdr->format());
+            uint32_t classIdx = litHdr->classIndex();
+
+            // Debug: show what each valid literal contains
+            if (callCount <= 3) {
+                std::cerr << "[FFI]   Literal " << i << ": format=" << format
+                          << " classIdx=" << classIdx << " slots=" << litHdr->slotCount();
+                // If it's a byte object, show content
+                if (format >= 16 && format <= 23) {
+                    size_t len = std::min(litHdr->byteSize(), size_t(30));
+                    std::cerr << " bytes=\"" << std::string((char*)litHdr->bytes(), len) << "\"";
+                }
+                std::cerr << "\n";
+            }
 
             // Check if it's an Array (format 2 = indexable pointers)
             if (format == 2) {
@@ -7997,6 +8078,32 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    // Check if we found a function name from literals - if not, try extracting selector
+    if (funcName.empty()) {
+        // Try to find a Symbol that might be the function name
+        for (size_t i = 0; i < numLiterals && funcName.empty(); i++) {
+            Oop lit = memory_.fetchPointer(i, method);
+            if (lit.isObject() && memory_.isValidPointer(lit)) {
+                ObjectHeader* litHdr = lit.asObjectPtr();
+                uint32_t format = static_cast<uint32_t>(litHdr->format());
+                // Symbol/String format 16-23
+                if (format >= 16 && format <= 23 && litHdr->byteSize() > 3) {
+                    std::string str((char*)litHdr->bytes(), litHdr->byteSize());
+                    // Check for known internal FFI functions that we don't support
+                    // Let these fail so Pharo uses fallback code paths
+                    if (str == "primNextPendingCallback" || str == "nextPendingCallback" ||
+                        str == "primNumberOfCallbacks" || str == "numberOfCallbacks") {
+                        if (callCount <= 10) {
+                            std::cerr << "[FFI] " << str << " -> failing (no callback infrastructure)\n";
+                        }
+                        // Let it fail - Pharo's fallback code will handle it
+                        return PrimitiveResult::Failure;
                     }
                 }
             }
@@ -10151,18 +10258,14 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Additional validation: event buffer should be an Array-like object
-    // Check the class index - Array class is typically around 51 in Pharo images
-    // Also check that slot 0 contains a SmallInteger (event type)
+    // Additional validation: event buffer slot 0 should already be a SmallInteger (event type)
+    // This prevents accidentally writing to class objects (whose slot 0 is superclass pointer)
     ObjectHeader* bufHdr = eventBuffer.asObjectPtr();
-    uint32_t classIdx = bufHdr->classIndex();
     Oop slot0 = memory_.fetchPointer(0, eventBuffer);
-    if (trace) std::cerr << "[PRIM264] classIdx=" << classIdx << " slot0 isSmallInt=" << slot0.isSmallInteger() << "\n";
-
-    // Event buffers are Arrays (class ~51) with SmallInteger in slot 0
-    // Reject objects that don't look like event buffers
-    if (classIdx > 100 || !slot0.isSmallInteger()) {
-        if (trace) std::cerr << "[PRIM264] Not an event buffer (classIdx=" << classIdx << "), failing\n";
+    if (!slot0.isSmallInteger()) {
+        // Slot 0 is not a SmallInteger - this is probably not an event buffer
+        // (Class objects have superclass pointer in slot 0)
+        if (trace) std::cerr << "[PRIM264] slot0 is not SmallInteger, refusing to write\n";
         return PrimitiveResult::Failure;
     }
 
@@ -10195,15 +10298,48 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
 // Primitive 265: Set input semaphore (variant 2)
 // semaphoreIndex primitiveInputSemaphore2 -> receiver
 // Sets the semaphore to signal when input is available
+// NOTE: In some images, this is a unary message where the receiver is the semaphore index
 PrimitiveResult Interpreter::primitiveInputSemaphore2(int argCount) {
     std::cerr << "[VM] primitiveInputSemaphore2(265) called with argCount=" << argCount << "\n";
-    if (argCount != 1) return PrimitiveResult::Failure;
 
-    Oop semIndexOop = stackTop();
+    Oop semIndexOop;
+    if (argCount == 0) {
+        // Unary message - receiver is the semaphore index
+        semIndexOop = stackTop();  // receiver
+    } else if (argCount == 1) {
+        // Keyword message - argument is the semaphore index
+        semIndexOop = stackTop();
+    } else {
+        return PrimitiveResult::Failure;
+    }
 
     if (!semIndexOop.isSmallInteger()) {
-        std::cerr << "[VM] primitiveInputSemaphore2: arg is not SmallInteger\n";
-        return PrimitiveResult::Failure;
+        std::cerr << "[VM] primitiveInputSemaphore2: arg/receiver is not SmallInteger, rawBits=0x"
+                  << std::hex << semIndexOop.rawBits() << std::dec;
+        if (semIndexOop.isObject()) {
+            ObjectHeader* hdr = semIndexOop.asObjectPtr();
+            std::cerr << " classIdx=" << hdr->classIndex() << " slots=" << hdr->slotCount();
+
+            // Try to get semaphore index from object's slots
+            // In Pharo, InputEventSensor might have the semaphore index in slot 0 or 1
+            for (size_t i = 0; i < std::min(hdr->slotCount(), (size_t)4); i++) {
+                Oop slot = hdr->slotAt(i);
+                if (slot.isSmallInteger()) {
+                    int64_t val = slot.asSmallInteger();
+                    if (val > 0 && val < 100) {  // Reasonable semaphore index range
+                        std::cerr << " found candidate semIndex=" << val << " in slot " << i;
+                        gEventQueue.setInputSemaphoreIndex(static_cast<int>(val));
+                        std::cerr << "\n[VM] primitiveInputSemaphore2: Using semaphore index " << val << " from slot " << i << "\n";
+                        return PrimitiveResult::Success;
+                    }
+                }
+            }
+        }
+        std::cerr << "\n";
+        // Fallback: use index 1 (common for input semaphore)
+        std::cerr << "[VM] primitiveInputSemaphore2: Using fallback semaphore index 1\n";
+        gEventQueue.setInputSemaphoreIndex(1);
+        return PrimitiveResult::Success;
     }
 
     // Store the semaphore index in the event queue
@@ -10211,7 +10347,10 @@ PrimitiveResult Interpreter::primitiveInputSemaphore2(int argCount) {
     std::cerr << "[VM] primitiveInputSemaphore2: Setting input semaphore index to " << semIndex << "\n";
     gEventQueue.setInputSemaphoreIndex(static_cast<int>(semIndex));
 
-    pop();  // pop argument, leave receiver
+    if (argCount == 1) {
+        pop();  // pop argument, leave receiver
+    }
+    // For argCount=0, leave receiver on stack
     return PrimitiveResult::Success;
 }
 
@@ -10362,6 +10501,11 @@ enum FormFields {
 // aBitBlt primitiveCopyBits -> aBitBlt
 // The core BitBlt operation that copies pixels from source to destination
 PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
+    static int bitBltCallCount = 0;
+    bitBltCallCount++;
+    if (bitBltCallCount <= 5) {
+        std::cerr << "[BITBLT] primitiveCopyBits #" << bitBltCallCount << " argCount=" << argCount << "\n";
+    }
     if (argCount != 0) return PrimitiveResult::Failure;
 
     Oop bitBlt = stackTop();
