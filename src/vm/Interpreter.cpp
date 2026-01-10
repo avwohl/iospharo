@@ -6573,16 +6573,16 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[98] = &Interpreter::primitiveStoreImageSegment;
     primitiveTable_[99] = &Interpreter::primitiveLoadImageSegment;
 
-    // Display primitives (101-104, 107, 109)
+    // Display primitives (101-109) - per Cog VM spec
     primitiveTable_[101] = &Interpreter::primitiveBeCursor;
     primitiveTable_[102] = &Interpreter::primitiveBeDisplay;
-    primitiveTable_[103] = &Interpreter::primitiveForceDisplayUpdate;  // iOS: forceDisplayUpdate (was scanCharacters)
-    primitiveTable_[104] = &Interpreter::primitiveDrawLoop;
-    primitiveTable_[107] = &Interpreter::primitiveShowDisplayRect;
-    primitiveTable_[109] = &Interpreter::primitiveSnapshotEmbedded;
-
-    // String/Array primitives (105)
-    primitiveTable_[105] = &Interpreter::primitiveReplaceFromTo;
+    primitiveTable_[103] = &Interpreter::primitiveScanCharacters;      // was incorrectly forceDisplayUpdate
+    primitiveTable_[104] = &Interpreter::primitiveFailure;                // obsolete drawLoop
+    primitiveTable_[105] = &Interpreter::primitiveStringReplace;       // was primitiveReplaceFromTo
+    primitiveTable_[106] = &Interpreter::primitiveScreenSize;
+    primitiveTable_[107] = &Interpreter::primitiveFailure;                // was incorrectly showDisplayRect
+    primitiveTable_[108] = &Interpreter::primitiveFailure;                // was incorrectly screenDepth
+    primitiveTable_[109] = &Interpreter::primitiveFailure;                // was incorrectly snapshotEmbedded
 
     // Identity and class primitives (110-112, 169)
     primitiveTable_[110] = &Interpreter::primitiveIdentical;
@@ -6598,32 +6598,29 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[113] = &Interpreter::primitiveQuit;
     primitiveTable_[114] = &Interpreter::primitiveExitToDebugger;
 
-    // FFI/External primitives (116-118, 147)
-    primitiveTable_[116] = &Interpreter::primitiveFlushExternalPrimitives;
-    primitiveTable_[117] = &Interpreter::primitiveCalloutToFFI;
-    primitiveTable_[118] = &Interpreter::primitiveDLLCall;
-    primitiveTable_[147] = &Interpreter::primitiveExternalCall;
+    // System primitives (115-120) - per Cog VM spec
+    primitiveTable_[115] = &Interpreter::primitiveChangeClass;
+    primitiveTable_[116] = &Interpreter::primitiveFlushCacheByMethod;
+    primitiveTable_[117] = &Interpreter::primitiveExternalCall;        // named primitive dispatch
+    primitiveTable_[118] = &Interpreter::primitiveDoPrimitiveWithArgs;
+    primitiveTable_[119] = &Interpreter::primitiveFlushCacheBySelector;
+    primitiveTable_[120] = &Interpreter::primitiveCalloutToFFI;        // FFI callout
 
-    // Socket primitive (133)
-    primitiveTable_[133] = &Interpreter::primitiveSocket;
-
-    // Special objects and GC primitives (129-130)
+    // Miscellaneous primitives (121-134) - per Cog VM spec
+    primitiveTable_[121] = &Interpreter::primitiveImageName;
+    primitiveTable_[122] = &Interpreter::primitiveNoop;                // was incorrectly directoryCreate
+    primitiveTable_[123] = &Interpreter::primitiveFailure;                // marker, was directoryDelimitor
+    primitiveTable_[124] = &Interpreter::primitiveLowSpaceSemaphore;   // was incorrectly directoryLookup
+    primitiveTable_[125] = &Interpreter::primitiveSignalAtBytesLeft;
+    primitiveTable_[126] = &Interpreter::primitiveDeferDisplayUpdates; // was incorrectly directoryDelete
+    primitiveTable_[127] = &Interpreter::primitiveShowDisplayRect;     // was incorrectly directoryGetMacTypeAndCreator
+    primitiveTable_[128] = &Interpreter::primitiveArrayBecome;         // was incorrectly becomeForward
     primitiveTable_[129] = &Interpreter::primitiveSpecialObjectsOop;
     primitiveTable_[130] = &Interpreter::primitiveFullGC;
-
-    // Snapshot primitive (131)
-    primitiveTable_[131] = &Interpreter::primitiveSnapshot;
-
-    // System path primitives (121, 142)
-    primitiveTable_[121] = &Interpreter::primitiveImageName;
-    primitiveTable_[142] = &Interpreter::primitiveVMPath;
-
-    // Directory primitives (122-124, 126-127)
-    primitiveTable_[122] = &Interpreter::primitiveDirectoryCreate;
-    primitiveTable_[123] = &Interpreter::primitiveDirectoryDelimitor;
-    primitiveTable_[124] = &Interpreter::primitiveDirectoryLookup;
-    primitiveTable_[126] = &Interpreter::primitiveDirectoryDelete;
-    primitiveTable_[127] = &Interpreter::primitiveDirectoryGetMacTypeAndCreator;
+    primitiveTable_[131] = &Interpreter::primitiveIncrementalGC;       // was incorrectly snapshot
+    primitiveTable_[132] = &Interpreter::primitiveObjectPointsTo;
+    primitiveTable_[133] = &Interpreter::primitiveSetInterruptKey;     // was incorrectly socket
+    primitiveTable_[134] = &Interpreter::primitiveInterruptSemaphore;
 
     // Additional file primitives (161-164)
     primitiveTable_[161] = &Interpreter::primitiveFileStdioHandles;
@@ -6631,9 +6628,8 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[163] = &Interpreter::primitiveFileFlush;
     primitiveTable_[164] = &Interpreter::primitiveFileTruncate;
 
-    // Screen primitives (106, 108)
-    primitiveTable_[106] = &Interpreter::primitiveScreenSize;
-    primitiveTable_[108] = &Interpreter::primitiveScreenDepth;
+    // Note: 106 already set above, 108 is primitiveFail per spec
+    primitiveTable_[142] = &Interpreter::primitiveVMPath;
 
     // UI primitives (140, 141)
     primitiveTable_[140] = &Interpreter::primitiveBeep;
@@ -6659,135 +6655,106 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[251] = &Interpreter::primitiveLocalDateAndTime;
     primitiveTable_[252] = &Interpreter::primitiveNanosecondClock;
 
-    // Array/memory primitives (145, 148, 156, 159)
+    // Array/memory primitives (145-149) - per Cog VM spec
     primitiveTable_[145] = &Interpreter::primitiveConstantFill;
-    primitiveTable_[148] = &Interpreter::primitiveShallowCopy;
-    primitiveTable_[156] = &Interpreter::primitiveCompareBytes;
+    primitiveTable_[146] = &Interpreter::primitiveFailure;                // reserved
+    primitiveTable_[147] = &Interpreter::primitiveFailure;                // was incorrectly externalCall
+    primitiveTable_[148] = &Interpreter::primitiveClone;               // primitiveShallowCopy is alias
+    primitiveTable_[149] = &Interpreter::primitiveGetAttribute;
+
+    // File area primitives (150-160) - per Cog VM spec
+    primitiveTable_[150] = &Interpreter::primitiveFailure;                // FilePlugin territory
+    primitiveTable_[151] = &Interpreter::primitiveFailure;
+    primitiveTable_[152] = &Interpreter::primitiveFailure;
+    primitiveTable_[153] = &Interpreter::primitiveFailure;
+    primitiveTable_[154] = &Interpreter::primitiveFailure;
+    primitiveTable_[155] = &Interpreter::primitiveFailure;
+    primitiveTable_[156] = &Interpreter::primitiveFailure;
+    primitiveTable_[157] = &Interpreter::primitiveFailure;
+    primitiveTable_[158] = &Interpreter::primitiveCompareWith;         // was incorrectly compareStringNoCase
     primitiveTable_[159] = &Interpreter::primitiveHashMultiply;
+    primitiveTable_[160] = &Interpreter::primitiveAdoptInstance;
 
-    // System primitives (152-155)
-    primitiveTable_[152] = &Interpreter::primitiveSetFullScreen;
-    primitiveTable_[153] = &Interpreter::primitiveInputSemaphore;
-    primitiveTable_[154] = &Interpreter::primitiveInputWord;
-    primitiveTable_[155] = &Interpreter::primitiveCompareString;
-
-    // String primitives (157-158)
-    primitiveTable_[157] = &Interpreter::primitiveCompareStringCollated;
-    primitiveTable_[158] = &Interpreter::primitiveCompareStringNoCase;
-
-    // Become primitives (197-198)
-    primitiveTable_[197] = &Interpreter::primitiveArrayBecomeOneWay;
-    primitiveTable_[198] = &Interpreter::primitiveArrayBecomeOneWayCopyHash;
-
-    // Process/system primitives (172, 179)
-    primitiveTable_[172] = &Interpreter::primitiveSetGCSemaphore;
-    primitiveTable_[179] = &Interpreter::primitiveRelinquishProcessor;
-
-    // Process yield (167)
+    // Identity/immutability primitives (161-169)
+    primitiveTable_[161] = &Interpreter::primitiveSetIdentityHash;     // was incorrectly fileStdioHandles
+    primitiveTable_[162] = &Interpreter::primitiveFailure;
+    primitiveTable_[163] = &Interpreter::primitiveGetImmutability;     // was incorrectly fileFlush
+    primitiveTable_[164] = &Interpreter::primitiveSetImmutability;     // was incorrectly fileTruncate
+    primitiveTable_[165] = &Interpreter::primitiveIntegerAt;
+    primitiveTable_[166] = &Interpreter::primitiveIntegerAtPut;
     primitiveTable_[167] = &Interpreter::primitiveYield;
+    primitiveTable_[168] = &Interpreter::primitiveCopyObject;
 
-    // Block primitives (201-206)
-    primitiveTable_[201] = &Interpreter::primitiveBlockValue;
-    primitiveTable_[202] = &Interpreter::primitiveBlockValueWithArgs;
-    primitiveTable_[203] = &Interpreter::primitiveValueUninterruptably;
-    // 204 would be value with more args
-    primitiveTable_[205] = &Interpreter::primitiveBlockValue;  // value with 1 arg
-    primitiveTable_[206] = &Interpreter::primitiveBlockValue;  // value with 2 args
+    // Spur memory primitives (170-184) - per Cog VM spec
+    primitiveTable_[170] = &Interpreter::primitiveAsCharacter;
+    primitiveTable_[171] = &Interpreter::primitiveImmediateAsInteger;  // was incorrectly asInteger
+    primitiveTable_[172] = &Interpreter::primitiveFetchNextMourner;    // was incorrectly setGCSemaphore
+    primitiveTable_[173] = &Interpreter::primitiveSlotAt;
+    primitiveTable_[174] = &Interpreter::primitiveSlotAtPut;
+    primitiveTable_[175] = &Interpreter::primitiveBehaviorHash;
+    primitiveTable_[176] = &Interpreter::primitiveMaxIdentityHash;
+    primitiveTable_[177] = &Interpreter::primitiveAllInstances;
+    primitiveTable_[178] = &Interpreter::primitiveAllObjects;
+    primitiveTable_[179] = &Interpreter::primitiveFailure;                // was incorrectly relinquishProcessor
+    primitiveTable_[180] = &Interpreter::primitiveGrowMemoryByAtLeast;
+    primitiveTable_[181] = &Interpreter::primitiveSizeInBytesOfInstance;
+    primitiveTable_[182] = &Interpreter::primitiveSizeInBytes;
+    primitiveTable_[183] = &Interpreter::primitiveIsPinned;
+    primitiveTable_[184] = &Interpreter::primitivePin;
+
+    // Critical section primitives (185-187) - per Cog VM spec
+    primitiveTable_[185] = &Interpreter::primitiveExitCriticalSection;
+    primitiveTable_[186] = &Interpreter::primitiveEnterCriticalSection;
+    primitiveTable_[187] = &Interpreter::primitiveTestAndSetOwnershipOfCriticalSection;
+
+    // Method execution primitives (188-189)
+    primitiveTable_[188] = &Interpreter::primitiveExecuteMethodArgsArray;
+    primitiveTable_[189] = &Interpreter::primitiveExecuteMethod;
+
+    // Unwind/exception primitives (195-199) - per Cog VM spec
+    primitiveTable_[195] = &Interpreter::primitiveFindNextUnwindContext;
+    primitiveTable_[196] = &Interpreter::primitiveTerminateTo;
+    primitiveTable_[197] = &Interpreter::primitiveFindHandlerContext;  // was incorrectly arrayBecomeOneWay
+    primitiveTable_[198] = &Interpreter::primitiveFailure;                // marker, was arrayBecomeOneWayCopyHash
+    primitiveTable_[199] = &Interpreter::primitiveFailure;                // marker for exception handler
+
+    // Closure primitives (200-209) - per Cog VM spec
+    primitiveTable_[200] = &Interpreter::primitiveClosureCopyWithCopiedValues;
+    primitiveTable_[201] = &Interpreter::primitiveBlockValue;          // closureValue (0 args)
+    primitiveTable_[202] = &Interpreter::primitiveBlockValue;          // closureValue (1 arg)
+    primitiveTable_[203] = &Interpreter::primitiveBlockValue;          // closureValue (2 args)
+    primitiveTable_[204] = &Interpreter::primitiveClosureValueNoContextSwitch;
+    primitiveTable_[205] = &Interpreter::primitiveBlockValue;          // closureValue (4 args)
+    primitiveTable_[206] = &Interpreter::primitiveClosureValueWithArgs;
+    primitiveTable_[207] = &Interpreter::primitiveFullClosureValue;
+    primitiveTable_[208] = &Interpreter::primitiveClosureValueUnwind;
+    primitiveTable_[209] = &Interpreter::primitiveClosureValueNoUnwind;
+
+    // Context primitives (210-215) - per Cog VM spec
+    primitiveTable_[210] = &Interpreter::primitiveContextAt;           // was incorrectly contextSize
+    primitiveTable_[211] = &Interpreter::primitiveContextAtPut;        // was incorrectly contextAt
+    primitiveTable_[212] = &Interpreter::primitiveContextSize;         // was incorrectly contextAtPut
+    primitiveTable_[213] = &Interpreter::primitiveFailure;                // was incorrectly storeImageSegment
+    primitiveTable_[214] = &Interpreter::primitiveFailure;                // was incorrectly loadImageSegment
+    primitiveTable_[215] = &Interpreter::primitiveFailure;
+
+    // Miscellaneous system primitives
+    primitiveTable_[72] = &Interpreter::primitiveArrayBecomeOneWay;    // Blue Book: primitiveBecome
+    primitiveTable_[79] = &Interpreter::primitiveNewMethod;
+    primitiveTable_[138] = &Interpreter::primitiveSomeObject;
+    primitiveTable_[139] = &Interpreter::primitiveNextObject;
+    primitiveTable_[143] = &Interpreter::primitiveShortAt;
+    primitiveTable_[144] = &Interpreter::primitiveShortAtPut;
 
     // VM parameter primitive (254)
     primitiveTable_[254] = &Interpreter::primitiveVMParameter;
-
-    // Context primitives (199)
-    // Primitive 199 is the exception handler marker - MUST fail to allow 'self value' to run
-    primitiveTable_[199] = &Interpreter::primitiveExceptionMarker;
-
-    // Slot access primitives (173-174)
-    primitiveTable_[173] = &Interpreter::primitiveSlotAt;
-    primitiveTable_[174] = &Interpreter::primitiveSlotAtPut;
-
-    // Object enumeration primitives (177-178)
-    primitiveTable_[177] = &Interpreter::primitiveAllInstances;
-    primitiveTable_[178] = &Interpreter::primitiveAllObjects;
-
-    // Object reference primitives (132)
-    primitiveTable_[132] = &Interpreter::primitiveObjectPointsTo;
-
-    // Become primitives (72, 128)
-    primitiveTable_[72] = &Interpreter::primitiveBecome;
-    primitiveTable_[128] = &Interpreter::primitiveBecomeForward;
 
     // Bit operation primitives (575-576)
     primitiveTable_[575] = &Interpreter::primitiveHighBit;
     primitiveTable_[576] = &Interpreter::primitiveLowBit;
 
-    // Word array access primitives (165-166)
-    primitiveTable_[165] = &Interpreter::primitiveIntegerAt;
-    primitiveTable_[166] = &Interpreter::primitiveIntegerAtPut;
-
-    // Class/behavior primitives (115, 175)
-    primitiveTable_[115] = &Interpreter::primitiveChangeClass;
-    primitiveTable_[175] = &Interpreter::primitiveBehaviorHash;
-
-    // 16-bit array access primitives (143-144)
-    primitiveTable_[143] = &Interpreter::primitiveShortAt;
-    primitiveTable_[144] = &Interpreter::primitiveShortAtPut;
-
-    // Raw object iteration primitives (138-139)
-    primitiveTable_[138] = &Interpreter::primitiveSomeObject;
-    primitiveTable_[139] = &Interpreter::primitiveNextObject;
-
-    // VM attribute primitive (149)
-    primitiveTable_[149] = &Interpreter::primitiveGetAttribute;
-
-    // Immutability primitives (150-151)
-    primitiveTable_[150] = &Interpreter::primitiveGetImmutability;
-    primitiveTable_[151] = &Interpreter::primitiveSetImmutability;
-
-    // Object copy primitive (168)
-    primitiveTable_[168] = &Interpreter::primitiveCopyObject;
-
-    // Compiled method creation primitive (79)
-    primitiveTable_[79] = &Interpreter::primitiveNewMethod;
-
-    // Instance adoption primitive (160)
-    primitiveTable_[160] = &Interpreter::primitiveAdoptInstance;
-
-    // Object pinning primitives (183-185)
-    primitiveTable_[183] = &Interpreter::primitiveIsPinned;
-    primitiveTable_[184] = &Interpreter::primitivePin;
-    primitiveTable_[185] = &Interpreter::primitiveUnpin;
-
-    // Memory management primitives (125, 176, 180)
-    primitiveTable_[125] = &Interpreter::primitiveSignalAtBytesLeft;
-    primitiveTable_[176] = &Interpreter::primitiveMaxIdentityHash;
-    primitiveTable_[180] = &Interpreter::primitiveGrowMemory;
-
-    // Interrupt semaphore primitive (134)
-    primitiveTable_[134] = &Interpreter::primitiveInterruptSemaphore;
-
-    // Context termination primitive (196)
-    primitiveTable_[196] = &Interpreter::primitiveTerminateTo;
-
-    // Float bit access primitives (38-39)
-    primitiveTable_[38] = &Interpreter::primitiveFloatAt;
-    primitiveTable_[39] = &Interpreter::primitiveFloatAtPut;
-
-    // Exception handler primitives (186-189)
-    primitiveTable_[186] = &Interpreter::primitiveMarkHandlerMethod;
-    primitiveTable_[187] = &Interpreter::primitiveMarkUnwindMethod;
-    primitiveTable_[188] = &Interpreter::primitiveFindHandlerContext;
-    primitiveTable_[189] = &Interpreter::primitiveFindNextUnwindContext;
-
-    // Context inspection primitives (210-212)
-    primitiveTable_[210] = &Interpreter::primitiveContextSize;
-    primitiveTable_[211] = &Interpreter::primitiveContextAt;
-    primitiveTable_[212] = &Interpreter::primitiveContextAtPut;
-
-    // Image segment primitives (213-216)
-    primitiveTable_[213] = &Interpreter::primitiveStoreImageSegment;
-    primitiveTable_[214] = &Interpreter::primitiveLoadImageSegment;
-    primitiveTable_[215] = &Interpreter::primitiveArraySwap;
-    primitiveTable_[216] = &Interpreter::primitiveFindRoots;
+    // Note: 210-215 already set above per Cog VM spec
+    primitiveTable_[216] = &Interpreter::primitiveFailure;
 
     // Object/memory primitives (217-221)
     primitiveTable_[217] = &Interpreter::primitiveVMFunctionality;
@@ -6807,32 +6774,19 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[229] = &Interpreter::primitiveStringHash2;
     primitiveTable_[230] = &Interpreter::primitiveShrinkMemory;
 
-    // Misc primitives (231-239)
+    // Misc primitives (230-239) - per Cog VM spec
+    primitiveTable_[230] = &Interpreter::primitiveRelinquishProcessor;  // correct location!
     primitiveTable_[231] = &Interpreter::primitiveForceDisplayUpdate;
     primitiveTable_[232] = &Interpreter::primitiveFormPrint;
-    primitiveTable_[233] = &Interpreter::primitiveSetDisplayMode;
-    primitiveTable_[234] = &Interpreter::primitiveBitmapDecompress;
-    primitiveTable_[235] = &Interpreter::primitiveStringCompareWith;
-    primitiveTable_[236] = &Interpreter::primitiveSampledSoundConvert;
-    primitiveTable_[237] = &Interpreter::primitiveSerialPortOp;
-    primitiveTable_[238] = &Interpreter::primitivePluginCallback;
-    primitiveTable_[239] = &Interpreter::primitiveLongRunningPrimitive;
+    primitiveTable_[233] = &Interpreter::primitiveSetFullScreen;        // was incorrectly setDisplayMode
+    primitiveTable_[234] = &Interpreter::primitiveFailure;
+    primitiveTable_[235] = &Interpreter::primitiveFailure;
+    primitiveTable_[236] = &Interpreter::primitiveFailure;
+    primitiveTable_[237] = &Interpreter::primitiveFailure;
+    primitiveTable_[238] = &Interpreter::primitiveFloatArrayAt;
+    primitiveTable_[239] = &Interpreter::primitiveFloatArrayAtPut;
 
-    // Cache flushing primitives (119-120)
-    primitiveTable_[119] = &Interpreter::primitiveFlushCacheByMethod;
-    primitiveTable_[120] = &Interpreter::primitiveFlushCacheBySelector;
-
-    // Perform in superclass primitive (100)
-    primitiveTable_[100] = &Interpreter::primitivePerformInSuperclass;
-
-    // Closure value variant (204)
-    primitiveTable_[204] = &Interpreter::primitiveClosureValueNoContextSwitch;
-
-    // Closure primitives (200, 207-209)
-    primitiveTable_[200] = &Interpreter::primitiveClosureCopyWithCopiedValues;
-    primitiveTable_[207] = &Interpreter::primitiveFullClosureValue;
-    primitiveTable_[208] = &Interpreter::primitiveClosureValueUnwind;
-    primitiveTable_[209] = &Interpreter::primitiveClosureValueNoUnwind;
+    // Note: 100, 119-120, 200-209 already set above per Cog VM spec
 
     // Class structure primitives (253, 255)
     // NOTE: 254 is primitiveVMParameter - do NOT override here!
@@ -6846,11 +6800,7 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[258] = &Interpreter::primitiveQuickReturnFalse;
     primitiveTable_[259] = &Interpreter::primitiveQuickReturnNil;
 
-    // NOTE: Primitive 15 is primitiveBitOr (SmallInteger>>bitOr:)
-    // Do NOT override it here - primitiveIsPointers is not a standard primitive
-
-    // String hash primitive (146)
-    primitiveTable_[146] = &Interpreter::primitiveStringHash;
+    // Note: 146 is primitiveFail per spec, not stringHash
 
     // Class name primitive (514)
     primitiveTable_[514] = &Interpreter::primitiveClassName;
@@ -6870,17 +6820,9 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[526] = &Interpreter::primitiveInt32ToByteArray;
     primitiveTable_[527] = &Interpreter::primitivePointerAddress;
 
-    // Object size primitives (181-182)
-    primitiveTable_[181] = &Interpreter::primitiveSizeInBytesOfInstance;
-    primitiveTable_[182] = &Interpreter::primitiveSizeInBytes;
-
-    // Context manipulation primitives (190-195)
-    primitiveTable_[190] = &Interpreter::primitiveSetSender;
-    primitiveTable_[191] = &Interpreter::primitiveSetInstructionPointer;
-    primitiveTable_[192] = &Interpreter::primitiveSetStackPointer;
-    primitiveTable_[193] = &Interpreter::primitiveSetMethod;
-    primitiveTable_[194] = &Interpreter::primitiveSetReceiver;
-    primitiveTable_[195] = &Interpreter::primitiveSetClosureOrNil;
+    // Note: 181-182 already set above
+    // Note: 190-194 are primitiveFail per Cog VM spec
+    // Note: 195 is primitiveFindNextUnwindContext (set above)
 
     // System primitives (528-530)
     primitiveTable_[528] = &Interpreter::primitiveGetExtraWordAt;

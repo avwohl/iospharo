@@ -24,6 +24,109 @@
 
 namespace pharo {
 
+// ===== PRIMITIVE FAILURE STUB =====
+// This is used for primitives that should always fail (fall back to Smalltalk)
+PrimitiveResult Interpreter::primitiveFailure(int argCount) {
+    (void)argCount;
+    return PrimitiveResult::Failure;
+}
+
+// ===== STUB PRIMITIVES (unimplemented, always fail) =====
+PrimitiveResult Interpreter::primitiveNoop(int argCount) {
+    (void)argCount;
+    return PrimitiveResult::Success;  // noop succeeds by doing nothing
+}
+
+PrimitiveResult Interpreter::primitiveLowSpaceSemaphore(int argCount) {
+    (void)argCount;
+    return PrimitiveResult::Failure;  // stub - let Smalltalk handle
+}
+
+PrimitiveResult Interpreter::primitiveDeferDisplayUpdates(int argCount) {
+    (void)argCount;
+    return PrimitiveResult::Success;  // ignore display update deferral
+}
+
+PrimitiveResult Interpreter::primitiveArrayBecome(int argCount) {
+    // This is the two-way become - redirect to the implementation
+    return primitiveBecomeForward(argCount);  // use becomeForward as fallback
+}
+
+PrimitiveResult Interpreter::primitiveIncrementalGC(int argCount) {
+    (void)argCount;
+    // Incremental GC - we don't have one, just succeed
+    return PrimitiveResult::Success;
+}
+
+PrimitiveResult Interpreter::primitiveSetInterruptKey(int argCount) {
+    (void)argCount;
+    // Set interrupt key - acknowledge but don't do anything
+    return PrimitiveResult::Success;
+}
+
+PrimitiveResult Interpreter::primitiveClone(int argCount) {
+    return primitiveShallowCopy(argCount);  // clone is same as shallowCopy
+}
+
+PrimitiveResult Interpreter::primitiveDoPrimitiveWithArgs(int argCount) {
+    (void)argCount;
+    return PrimitiveResult::Failure;  // complex primitive - let Smalltalk handle
+}
+
+// Note: primitiveScanCharacters, primitiveStringReplace, primitiveSetIdentityHash,
+// primitiveImmediateAsInteger are defined later in this file with full implementations
+
+PrimitiveResult Interpreter::primitiveCompareWith(int argCount) {
+    (void)argCount;
+    return PrimitiveResult::Failure;  // string comparison - let Smalltalk handle
+}
+
+PrimitiveResult Interpreter::primitiveFetchNextMourner(int argCount) {
+    (void)argCount;
+    return PrimitiveResult::Failure;  // GC mourner queue - let Smalltalk handle
+}
+
+PrimitiveResult Interpreter::primitiveExitCriticalSection(int argCount) {
+    (void)argCount;
+    return PrimitiveResult::Failure;  // critical section - let Smalltalk handle
+}
+
+PrimitiveResult Interpreter::primitiveEnterCriticalSection(int argCount) {
+    (void)argCount;
+    return PrimitiveResult::Failure;  // critical section - let Smalltalk handle
+}
+
+PrimitiveResult Interpreter::primitiveTestAndSetOwnershipOfCriticalSection(int argCount) {
+    (void)argCount;
+    return PrimitiveResult::Failure;  // critical section - let Smalltalk handle
+}
+
+PrimitiveResult Interpreter::primitiveExecuteMethodArgsArray(int argCount) {
+    (void)argCount;
+    return PrimitiveResult::Failure;  // method execution - let Smalltalk handle
+}
+
+PrimitiveResult Interpreter::primitiveExecuteMethod(int argCount) {
+    (void)argCount;
+    return PrimitiveResult::Failure;  // method execution - let Smalltalk handle
+}
+
+// Note: primitiveFindHandlerContext, primitiveContextAt, primitiveContextAtPut,
+// primitiveSetFullScreen are defined later in this file with full implementations
+
+// Note: primitiveClosureValue, primitiveClosureValueWithArgs, primitiveFullClosureValue*
+// are defined later in this file with full implementations
+
+PrimitiveResult Interpreter::primitiveFloatArrayAt(int argCount) {
+    (void)argCount;
+    return PrimitiveResult::Failure;  // float array access - let Smalltalk handle
+}
+
+PrimitiveResult Interpreter::primitiveFloatArrayAtPut(int argCount) {
+    (void)argCount;
+    return PrimitiveResult::Failure;  // float array access - let Smalltalk handle
+}
+
 // ===== ARITHMETIC PRIMITIVES (1-17) =====
 
 PrimitiveResult Interpreter::primitiveAdd(int argCount) {

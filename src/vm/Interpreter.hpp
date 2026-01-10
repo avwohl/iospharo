@@ -450,6 +450,26 @@ private:
     // ===== PRIMITIVE IMPLEMENTATIONS =====
     // (See Primitives.cpp for implementations)
 
+    // Stub primitives (always fail or succeed with no-op)
+    PrimitiveResult primitiveFailure(int argCount);
+    PrimitiveResult primitiveNoop(int argCount);
+    PrimitiveResult primitiveLowSpaceSemaphore(int argCount);
+    PrimitiveResult primitiveDeferDisplayUpdates(int argCount);
+    PrimitiveResult primitiveArrayBecome(int argCount);
+    PrimitiveResult primitiveIncrementalGC(int argCount);
+    PrimitiveResult primitiveSetInterruptKey(int argCount);
+    PrimitiveResult primitiveClone(int argCount);
+    PrimitiveResult primitiveDoPrimitiveWithArgs(int argCount);
+    PrimitiveResult primitiveCompareWith(int argCount);
+    PrimitiveResult primitiveFetchNextMourner(int argCount);
+    PrimitiveResult primitiveExitCriticalSection(int argCount);
+    PrimitiveResult primitiveEnterCriticalSection(int argCount);
+    PrimitiveResult primitiveTestAndSetOwnershipOfCriticalSection(int argCount);
+    PrimitiveResult primitiveExecuteMethodArgsArray(int argCount);
+    PrimitiveResult primitiveExecuteMethod(int argCount);
+    PrimitiveResult primitiveFloatArrayAt(int argCount);
+    PrimitiveResult primitiveFloatArrayAtPut(int argCount);
+
     // Arithmetic
     PrimitiveResult primitiveAdd(int argCount);
     PrimitiveResult primitiveSubtract(int argCount);
