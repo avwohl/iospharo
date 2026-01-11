@@ -121,6 +121,7 @@ struct PharoCanvasView: UIViewRepresentable {
 
         @objc func handleTap(_ gesture: UITapGestureRecognizer) {
             let point = gesture.location(in: gesture.view)
+            print("[TAP] at \(point)")
 
             // Single tap = red button click
             parent.bridge.sendTouchDown(at: point, buttons: IOS_RED_BUTTON)

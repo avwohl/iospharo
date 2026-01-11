@@ -332,6 +332,9 @@ private:
     int selectedMenuIndex_ = -1;  // -1 = no menu selected
     int prevSelectedMenuIndex_ = -1;  // Previous frame's menu state for dirty tracking
     std::vector<std::pair<int, int>> menuItemBounds_;  // Stored menu item X bounds (start, end)
+    int menuBarTop_ = 0;     // Top of menu bar in pixels
+    int menuBarBottom_ = 0;  // Bottom of menu bar in pixels
+    int menuBarScale_ = 1;   // Scale factor (2 for Retina)
 
     // Dropdown menu state for click handling
     struct DropdownState {

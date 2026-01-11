@@ -503,7 +503,7 @@ static const uint8_t font5x7[96][7] = {
 
 // Draw text using Core Graphics for proper anti-aliased font rendering
 static void drawText(uint32_t* pixels, int dispWidth, int dispHeight,
-                     int x, int y, const std::string& text, uint32_t color) {
+                     int x, int y, const std::string& text, uint32_t color, int fontSize = 14) {
 #if __APPLE__
     if (text.empty()) return;
 
@@ -513,10 +513,9 @@ static void drawText(uint32_t* pixels, int dispWidth, int dispHeight,
     CGFloat green = ((color >> 8) & 0xFF) / 255.0;
     CGFloat blue = (color & 0xFF) / 255.0;
 
-    // Create a small bitmap context just for this text
-    int fontSize = 14;
-    int textWidth = static_cast<int>(text.length()) * fontSize;  // Rough estimate
-    int textHeight = fontSize + 4;
+    // Create a generous text buffer - Helvetica chars are roughly 0.6 * fontSize wide
+    int textWidth = static_cast<int>(text.length()) * fontSize;  // Generous estimate
+    int textHeight = fontSize + 8;  // Extra room for ascenders/descenders
 
     // Clamp to display bounds
     if (x < 0 || y < 0 || x >= dispWidth || y >= dispHeight) return;
@@ -815,13 +814,28 @@ void Interpreter::renderWorldMorphs() {
         // Use a safe offset that works for both regular and Retina displays
         int titleBarOffset = (dispHeight > 1000) ? 56 : 28;  // Retina vs regular
 
-        // Draw menu bar background (bright red for debug visibility)
-        uint32_t menuBarColor = 0xFFFF0000;  // Bright red for debugging
-        for (int y = titleBarOffset; y < titleBarOffset + menuBarHeight; y++) {
+        // Scale menu bar height for Retina
+        int scaledMenuBarHeight = (dispHeight > 1000) ? menuBarHeight * 2 : menuBarHeight;
+
+        // Draw menu bar background - Mac-style light gray with subtle gradient
+        // Top color slightly lighter, bottom slightly darker for depth
+        for (int y = titleBarOffset; y < titleBarOffset + scaledMenuBarHeight; y++) {
+            // Subtle gradient from 0xF6 at top to 0xE8 at bottom
+            int progress = y - titleBarOffset;
+            int gray = 246 - (progress * 14 / scaledMenuBarHeight);  // 0xF6 to 0xE8
+            uint32_t menuBarColor = 0xFF000000 | (gray << 16) | (gray << 8) | gray;
             for (int x = 0; x < dispWidth; x++) {
                 if (y < dispHeight) {
                     pixels[y * dispWidth + x] = menuBarColor;
                 }
+            }
+        }
+
+        // Draw bottom border line (subtle shadow)
+        int borderY = titleBarOffset + scaledMenuBarHeight - 1;
+        if (borderY < dispHeight) {
+            for (int x = 0; x < dispWidth; x++) {
+                pixels[borderY * dispWidth + x] = 0xFFD0D0D0;  // Light gray border
             }
         }
 
@@ -843,8 +857,8 @@ void Interpreter::renderWorldMorphs() {
             fflush(logFile);
         }
 
-        // Menu item text color (white)
-        uint32_t textColor = 0xFFFFFFFF;
+        // Menu item text color (dark gray for readability on light background)
+        uint32_t textColor = 0xFF1A1A1A;
 
         // Collect menu item labels
         std::vector<std::string> labels;
@@ -931,24 +945,61 @@ void Interpreter::renderWorldMorphs() {
         }
 
         // Draw menu item labels with proper spacing
-        int textX = 10;  // Starting x position
-        int textY = titleBarOffset + (menuBarHeight - 14) / 2;  // Vertically center below title bar
-        int spacing = 24;  // Space between items
+        // Note: On Retina, we're drawing directly to a pixel buffer at 2x physical resolution
+        // The scaledMenuBarHeight is already in physical pixels
+        bool isRetina = dispWidth > 1500;
+        // Use a large enough font that it's clearly visible in the menu bar
+        int fontSize = isRetina ? 48 : 24;  // ~24pt appearance on Retina for better readability
+        int textX = isRetina ? 32 : 16;  // Starting x position with padding
+        int textY = titleBarOffset + (scaledMenuBarHeight - fontSize) / 2;  // Center vertically
+        int itemSpacing = isRetina ? 56 : 28;  // Space between items
+        int charWidth = isRetina ? 26 : 13;  // Approximate char width for larger font
 
         if (logFile && renderCallCount <= 3) {
-            fprintf(logFile, "[MENUBAR] Drawing text at y=%d (offset=%d), menuBarHeight=%d\n",
-                    textY, titleBarOffset, menuBarHeight);
+            fprintf(logFile, "[MENUBAR] Drawing text at y=%d (offset=%d), scaledMenuBarHeight=%d, isRetina=%d, fontSize=%d\n",
+                    textY, titleBarOffset, scaledMenuBarHeight, isRetina ? 1 : 0, fontSize);
             fflush(logFile);
         }
 
+        // Clear and rebuild menu item bounds
+        menuItemBounds_.clear();
+
+        int itemIndex = 0;
         for (const std::string& label : labels) {
             if (logFile && renderCallCount <= 3) {
-                fprintf(logFile, "[MENUBAR] drawText('%s') at x=%d y=%d\n", label.c_str(), textX, textY);
+                fprintf(logFile, "[MENUBAR] drawText('%s') at x=%d y=%d fontSize=%d\n", label.c_str(), textX, textY, fontSize);
                 fflush(logFile);
             }
-            drawText(pixels, dispWidth, dispHeight, textX, textY, label, textColor);
-            textX += static_cast<int>(label.length()) * 12 + spacing;  // 12 = 6*2 char width
+            int itemWidth = static_cast<int>(label.length()) * charWidth;
+            int itemPadding = isRetina ? 16 : 8;
+
+            // Highlight selected menu item
+            if (selectedMenuIndex_ == itemIndex) {
+                // Draw highlight background (darker blue)
+                uint32_t highlightColor = 0xFF3478F6;  // macOS blue selection color
+                for (int hy = titleBarOffset; hy < titleBarOffset + scaledMenuBarHeight - 1; hy++) {
+                    for (int hx = textX - itemPadding; hx < textX + itemWidth + itemPadding && hx < dispWidth; hx++) {
+                        if (hx >= 0 && hy >= 0 && hy < dispHeight) {
+                            pixels[hy * dispWidth + hx] = highlightColor;
+                        }
+                    }
+                }
+                // Use white text on blue background
+                drawText(pixels, dispWidth, dispHeight, textX, textY, label, 0xFFFFFFFF, fontSize);
+            } else {
+                drawText(pixels, dispWidth, dispHeight, textX, textY, label, textColor, fontSize);
+            }
+
+            // Store bounds for click detection (in pixels) - include padding
+            menuItemBounds_.push_back({textX - itemPadding, textX + itemWidth + itemPadding});
+            textX += itemWidth + itemSpacing;
+            itemIndex++;
         }
+
+        // Store menu bar bounds for click detection
+        menuBarTop_ = titleBarOffset;
+        menuBarBottom_ = titleBarOffset + scaledMenuBarHeight;
+        menuBarScale_ = isRetina ? 2 : 1;
 
         totalMorphsDrawn++;
     };
@@ -963,7 +1014,7 @@ void Interpreter::renderWorldMorphs() {
 
         // Handle MenubarMorph specially - draw with text
         if (className == "MenubarMorph") {
-            renderMenuBar(morph, 28);  // 28 pixel height
+            renderMenuBar(morph, 44);  // 44 pixel height (88 on Retina)
             return;  // Don't recurse into menu bar submorphs
         }
 
@@ -1110,16 +1161,44 @@ void Interpreter::renderWorldMorphs() {
 
 void Interpreter::processInputEvents() {
     // Process pending events from the event queue
-    // For now, just poll for click events
+    static FILE* logFile = fopen("/tmp/iospharo-events.log", "a");
+    static int callCount = 0;
+    callCount++;
+
+    // Log every 100th call to show we're being called
+    if (logFile && callCount % 100 == 0) {
+        fprintf(logFile, "[PROCESS] processInputEvents called %d times\n", callCount);
+        fflush(logFile);
+    }
 
     pharo::Event event;
     while (pharo::gEventQueue.pop(event)) {
+        // Log all events
+        if (logFile) {
+            fprintf(logFile, "[EVENT] type=%d args=%d,%d,%d,%d,%d\n",
+                    event.type, event.arg1, event.arg2, event.arg3, event.arg4, event.arg5);
+            fflush(logFile);
+        }
         if (event.type == static_cast<int>(pharo::EventType::Mouse)) {
-            int mouseType = event.arg3;  // 0=move, 1=down, 2=up
-            int x = event.arg1;
-            int y = event.arg2;
+            int mouseType = event.arg5;  // 0=move, 1=down, 2=up (stored in arg5!)
+            // Event coordinates are in points (logical pixels)
+            // Scale to physical pixels for Retina displays
+            int x = event.arg1 * menuBarScale_;
+            int y = event.arg2 * menuBarScale_;
+
+            if (logFile) {
+                fprintf(logFile, "[MOUSE] type=%d at x=%d y=%d (raw: %d,%d) scale=%d\n",
+                        mouseType, x, y, event.arg1, event.arg2, menuBarScale_);
+                fflush(logFile);
+            }
 
             if (mouseType == 1) {  // Mouse down
+                if (logFile) {
+                    fprintf(logFile, "[CLICK] at x=%d y=%d (scaled), menuBar y=%d-%d\n",
+                            x, y, menuBarTop_, menuBarBottom_);
+                    fflush(logFile);
+                }
+
                 // Check if clicking in dropdown menu area
                 if (dropdownState_.valid &&
                     x >= dropdownState_.x && x < dropdownState_.x + dropdownState_.width &&
@@ -1130,13 +1209,43 @@ void Interpreter::processInputEvents() {
                         invokeMenuItemAction(dropdownState_.itemMorphs[itemIndex]);
                     }
                     dropdownState_.valid = false;  // Close dropdown
-                } else {
-                    // Check if clicking in menu bar (top ~40 pixels)
-                    if (y < 50) {
-                        // Menu bar click - could open a menu here
-                        // For now, just note the click location
+                    selectedMenuIndex_ = -1;
+                }
+                // Check if clicking in menu bar
+                else if (y >= menuBarTop_ && y < menuBarBottom_ && !menuItemBounds_.empty()) {
+                    // Find which menu item was clicked
+                    int clickedIndex = -1;
+                    for (size_t i = 0; i < menuItemBounds_.size(); i++) {
+                        if (x >= menuItemBounds_[i].first && x < menuItemBounds_[i].second) {
+                            clickedIndex = static_cast<int>(i);
+                            break;
+                        }
                     }
-                    dropdownState_.valid = false;  // Close any open dropdown
+
+                    if (logFile) {
+                        fprintf(logFile, "[CLICK] Menu item index: %d (of %zu items)\n",
+                                clickedIndex, menuItemBounds_.size());
+                        fflush(logFile);
+                    }
+
+                    if (clickedIndex >= 0) {
+                        // Toggle menu: if same menu clicked again, close it
+                        if (selectedMenuIndex_ == clickedIndex) {
+                            selectedMenuIndex_ = -1;
+                            dropdownState_.valid = false;
+                        } else {
+                            selectedMenuIndex_ = clickedIndex;
+                            // TODO: Open dropdown for this menu
+                        }
+                    } else {
+                        // Clicked in menu bar but not on an item
+                        selectedMenuIndex_ = -1;
+                        dropdownState_.valid = false;
+                    }
+                } else {
+                    // Clicked outside menu bar - close any open menu
+                    selectedMenuIndex_ = -1;
+                    dropdownState_.valid = false;
                 }
             }
         }
