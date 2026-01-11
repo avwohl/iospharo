@@ -18,8 +18,8 @@ namespace pharo {
     DisplaySurface* gDisplaySurface = nullptr;
 }
 
-// Double-buffered display surface with safe copy-out for Metal
-// Key insight: never let pointers escape - copy to Metal's buffer under lock
+// Double-buffered display surface with resize detection
+// Uses generation counter to let Metal know when resize is in progress
 class SimpleDisplaySurface : public pharo::DisplaySurface {
 public:
     SimpleDisplaySurface(int w, int h, int d) : width_(w), height_(h), depth_(d) {
@@ -46,7 +46,7 @@ public:
         return backBuffer_.data();
     }
 
-    // Returns front buffer for display (legacy - avoid using)
+    // Returns front buffer for display
     uint32_t* frontPixels() {
         std::lock_guard<std::mutex> lock(mutex_);
         return frontBuffer_.data();
@@ -57,7 +57,7 @@ public:
         return width_ * 4;
     }
 
-    // Legacy API - returns pointer (unsafe during resize)
+    // Get buffer info with generation counter for resize detection
     void getBufferInfo(int& w, int& h, uint32_t*& pixels, size_t& size) {
         std::lock_guard<std::mutex> lock(mutex_);
         w = width_;
@@ -66,19 +66,16 @@ public:
         size = frontBuffer_.size();
     }
 
-    // SAFE API: Copy front buffer to destination under lock
-    // Returns true if copy succeeded, false if dest too small
-    // This is the only safe way for Metal to get display data
-    bool copyToBuffer(uint32_t* dest, size_t destSize, int& outWidth, int& outHeight) {
+    // Get current generation (increments on resize)
+    uint32_t getGeneration() const {
         std::lock_guard<std::mutex> lock(mutex_);
-        outWidth = width_;
-        outHeight = height_;
-        size_t needed = static_cast<size_t>(width_) * height_;
-        if (destSize < needed || !dest) {
-            return false;
-        }
-        std::memcpy(dest, frontBuffer_.data(), needed * sizeof(uint32_t));
-        return true;
+        return generation_;
+    }
+
+    // Check if resize is in progress (skip frames during resize)
+    bool isResizing() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return resizing_;
     }
 
     void invalidateRect(int x, int y, int w, int h) override {
@@ -99,6 +96,7 @@ public:
         {
             std::lock_guard<std::mutex> lock(mutex_);
             std::swap(backBuffer_, frontBuffer_);
+            resizing_ = false;  // VM has rendered a frame, resize complete
         }
         invalidateRect(0, 0, width_, height_);
     }
@@ -112,16 +110,24 @@ public:
     void resize(int w, int h, int d) {
         std::lock_guard<std::mutex> lock(mutex_);
 
+        // Skip if same size
+        if (w == width_ && h == height_ && d == depth_) {
+            return;
+        }
+
+        // Mark resize in progress
+        resizing_ = true;
+        generation_++;
+
         // Update dimensions
         width_ = w;
         height_ = h;
         depth_ = d;
 
-        // Resize buffers - fill with gray (no old content copy to avoid stretching)
+        // Resize buffers
         backBuffer_.resize(w * h);
         frontBuffer_.resize(w * h);
-        std::fill(backBuffer_.begin(), backBuffer_.end(), 0xFF808080);
-        std::fill(frontBuffer_.begin(), frontBuffer_.end(), 0xFF808080);
+        // Don't fill - let VM render fresh content
     }
 
 private:
@@ -131,6 +137,8 @@ private:
     std::vector<uint32_t> frontBuffer_;  // Swapped from back on update()
     DisplayUpdateFunc updateCallback_ = nullptr;
     void* context_ = nullptr;
+    uint32_t generation_ = 0;  // Increments on resize
+    bool resizing_ = false;    // True during resize until VM renders
 };
 
 // Global state
@@ -337,12 +345,14 @@ void vm_getDisplayBufferInfo(DisplayBufferInfo* info) {
 }
 
 bool vm_copyDisplayBuffer(uint32_t* dest, size_t destSize, int* outWidth, int* outHeight) {
-    if (!gDisplay || !dest || !outWidth || !outHeight) {
-        if (outWidth) *outWidth = 0;
-        if (outHeight) *outHeight = 0;
-        return false;
-    }
-    return gDisplay->copyToBuffer(dest, destSize, *outWidth, *outHeight);
+    // Not used anymore but kept for API compatibility
+    if (outWidth) *outWidth = 0;
+    if (outHeight) *outHeight = 0;
+    return false;
+}
+
+bool vm_isDisplayResizing(void) {
+    return gDisplay ? gDisplay->isResizing() : false;
 }
 
 void vm_setDisplayUpdateCallback(DisplayUpdateFunc callback, void* context) {

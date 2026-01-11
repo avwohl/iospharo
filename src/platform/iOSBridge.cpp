@@ -162,6 +162,10 @@ bool ios_copyDisplayBuffer(uint32_t* dest, size_t destSize, int* outWidth, int* 
     return vm_copyDisplayBuffer(dest, destSize, outWidth, outHeight);
 }
 
+bool ios_isDisplayResizing(void) {
+    return vm_isDisplayResizing();
+}
+
 // ===== Legacy Touch/Key Events (redirect to new API) =====
 
 void ios_queueTouchEvent(int type, int x, int y, int buttons, int modifiers) {

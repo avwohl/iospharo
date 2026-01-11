@@ -23,10 +23,6 @@ class MetalRenderer: NSObject, MTKViewDelegate {
     private var textureWidth: Int = 0
     private var textureHeight: Int = 0
 
-    // Local buffer for safe copy from VM (prevents tearing)
-    private var localBuffer: [UInt32] = []
-    private var localBufferCapacity: Int = 0
-
     // Reference to bridge
     private weak var bridge: PharoBridge?
 
@@ -84,35 +80,21 @@ class MetalRenderer: NSObject, MTKViewDelegate {
 
     // MARK: - Texture Management
 
-    /// Update the display texture from VM framebuffer using safe copy
+    /// Update the display texture from VM framebuffer
     func updateDisplayTexture() {
-        guard bridge != nil else { return }
+        guard let bridge = bridge else { return }
 
-        // Get current size to know buffer requirements
-        let (_, currentWidth, currentHeight, _) = bridge!.getDisplayBufferInfo()
-        guard currentWidth > 0 && currentHeight > 0 else { return }
-
-        let needed = currentWidth * currentHeight
-
-        // Ensure local buffer is large enough
-        if localBufferCapacity < needed {
-            localBufferCapacity = needed + needed / 4  // 25% extra to reduce reallocations
-            localBuffer = [UInt32](repeating: 0, count: localBufferCapacity)
+        // Skip updates during resize - keep showing old texture
+        if ios_isDisplayResizing() {
+            return
         }
 
-        // Safe copy: holds lock during entire copy operation
-        var outWidth: Int32 = 0
-        var outHeight: Int32 = 0
-        let success = localBuffer.withUnsafeMutableBufferPointer { ptr -> Bool in
-            guard let baseAddress = ptr.baseAddress else { return false }
-            return ios_copyDisplayBuffer(baseAddress, localBufferCapacity, &outWidth, &outHeight)
+        // Get display info atomically
+        let (pixels, width, height, _) = bridge.getDisplayBufferInfo()
+
+        guard let bits = pixels, width > 0, height > 0 else {
+            return
         }
-
-        guard success else { return }
-
-        let width = Int(outWidth)
-        let height = Int(outHeight)
-        guard width > 0 && height > 0 else { return }
 
         // Recreate texture if size changed
         if displayTexture == nil ||
@@ -121,23 +103,22 @@ class MetalRenderer: NSObject, MTKViewDelegate {
             createTexture(width: width, height: height)
         }
 
-        guard let texture = displayTexture else { return }
+        guard let texture = displayTexture else {
+            return
+        }
 
-        // Copy from local buffer to texture (local buffer is stable)
+        // Copy framebuffer to texture
         let region = MTLRegion(
             origin: MTLOrigin(x: 0, y: 0, z: 0),
             size: MTLSize(width: width, height: height, depth: 1)
         )
 
-        localBuffer.withUnsafeBufferPointer { ptr in
-            guard let baseAddress = ptr.baseAddress else { return }
-            texture.replace(
-                region: region,
-                mipmapLevel: 0,
-                withBytes: baseAddress,
-                bytesPerRow: width * 4
-            )
-        }
+        texture.replace(
+            region: region,
+            mipmapLevel: 0,
+            withBytes: bits,
+            bytesPerRow: width * 4
+        )
     }
 
     private func createTexture(width: Int, height: Int) {

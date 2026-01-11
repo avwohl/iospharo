@@ -42,6 +42,9 @@ void vm_getDisplayBufferInfo(DisplayBufferInfo* info);
 // This prevents tearing by not letting pointers escape
 bool vm_copyDisplayBuffer(uint32_t* dest, size_t destSize, int* outWidth, int* outHeight);
 
+// Check if display is being resized (Metal should skip updates during resize)
+bool vm_isDisplayResizing(void);
+
 // Display callback (called when VM wants to update screen)
 typedef void (*DisplayUpdateFunc)(int x, int y, int w, int h, void* context);
 void vm_setDisplayUpdateCallback(DisplayUpdateFunc callback, void* context);
