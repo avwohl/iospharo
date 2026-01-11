@@ -97,11 +97,39 @@ public:
 
     void resize(int w, int h, int d) {
         std::lock_guard<std::mutex> lock(mutex_);
+
+        // Preserve old dimensions for content copy
+        int oldWidth = width_;
+        int oldHeight = height_;
+
+        // Save old front buffer content
+        std::vector<uint32_t> oldFront = frontBuffer_;
+
+        // Update dimensions
         width_ = w;
         height_ = h;
         depth_ = d;
+
+        // Resize buffers
         backBuffer_.resize(w * h);
         frontBuffer_.resize(w * h);
+
+        // Fill new buffer with gray background (avoids black flash)
+        uint32_t grayBg = 0xFF808080;  // ARGB gray
+        std::fill(frontBuffer_.begin(), frontBuffer_.end(), grayBg);
+        std::fill(backBuffer_.begin(), backBuffer_.end(), grayBg);
+
+        // Copy old content to new buffer (preserves what fits)
+        if (oldWidth > 0 && oldHeight > 0 && !oldFront.empty()) {
+            int copyW = std::min(oldWidth, w);
+            int copyH = std::min(oldHeight, h);
+            for (int y = 0; y < copyH; y++) {
+                for (int x = 0; x < copyW; x++) {
+                    frontBuffer_[y * w + x] = oldFront[y * oldWidth + x];
+                    backBuffer_[y * w + x] = oldFront[y * oldWidth + x];
+                }
+            }
+        }
     }
 
 private:
