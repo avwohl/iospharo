@@ -182,7 +182,7 @@ class PharoBridge: ObservableObject {
 
     /// Send touch down event
     func sendTouchDown(at point: CGPoint, buttons: Int = IOS_RED_BUTTON, modifiers: Int = 0) {
-        print("[BRIDGE] sendTouchDown at \(point) buttons=\(buttons)")
+        NSLog("[BRIDGE] sendTouchDown at \(point) buttons=\(buttons)")
         vm_postMouseEvent(1, // type: down
                           Int32(point.x), Int32(point.y),
                           Int32(buttons), Int32(modifiers))

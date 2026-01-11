@@ -1434,9 +1434,20 @@ void Interpreter::processInputEvents() {
                 if (dropdownState_.valid &&
                     x >= dropdownState_.x && x < dropdownState_.x + dropdownState_.width &&
                     y >= dropdownState_.y && y < dropdownState_.y + dropdownState_.height) {
-                    // Calculate which item was clicked
-                    int itemIndex = (y - dropdownState_.y) / dropdownState_.lineHeight;
+                    // Calculate which item was clicked (account for padding)
+                    int relativeY = y - dropdownState_.y - (menuBarScale_ == 2 ? 16 : 8);  // Subtract padding
+                    int itemIndex = relativeY / dropdownState_.lineHeight;
+                    if (logFile) {
+                        fprintf(logFile, "[DROPDOWN CLICK] at y=%d, relY=%d, lineHeight=%d, itemIndex=%d (of %zu)\n",
+                                y, relativeY, dropdownState_.lineHeight, itemIndex,
+                                dropdownState_.itemMorphs.size());
+                        fflush(logFile);
+                    }
                     if (itemIndex >= 0 && itemIndex < static_cast<int>(dropdownState_.itemMorphs.size())) {
+                        if (logFile) {
+                            fprintf(logFile, "[DROPDOWN CLICK] Invoking action for item %d\n", itemIndex);
+                            fflush(logFile);
+                        }
                         invokeMenuItemAction(dropdownState_.itemMorphs[itemIndex]);
                     }
                     dropdownState_.valid = false;  // Close dropdown
@@ -1459,7 +1470,7 @@ void Interpreter::processInputEvents() {
                         fflush(logFile);
                     }
 
-                    if (timeSinceLastClick < 600 && isSameLocation) {
+                    if (timeSinceLastClick < 200 && isSameLocation) {
                         if (logFile) {
                             fprintf(logFile, "[CLICK] Ignored duplicate click (debounce)\n");
                             fflush(logFile);
@@ -1510,18 +1521,50 @@ void Interpreter::processInputEvents() {
 }
 
 void Interpreter::invokeMenuItemAction(Oop menuItemMorph) {
+    static FILE* logFile = fopen("/tmp/iospharo-menu-action.log", "a");
+
     // Extract action from menu item and queue it for execution
-    if (menuItemMorph.isNil() || !menuItemMorph.isObject()) return;
+    if (menuItemMorph.isNil() || !menuItemMorph.isObject()) {
+        if (logFile) {
+            fprintf(logFile, "[INVOKE] menuItemMorph is nil or not object\n");
+            fflush(logFile);
+        }
+        return;
+    }
+
+    // Get the class name of the menu item
+    std::string menuItemClass = "Unknown";
+    Oop itemClass = memory_.classOf(menuItemMorph);
+    if (itemClass.isObject()) {
+        ObjectHeader* clsHdr = itemClass.asObjectPtr();
+        if (clsHdr->slotCount() > 6) {
+            Oop className = memory_.fetchPointer(6, itemClass);
+            if (className.isObject()) {
+                ObjectHeader* nameHdr = className.asObjectPtr();
+                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                    menuItemClass = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                }
+            }
+        }
+    }
+    if (logFile) {
+        fprintf(logFile, "[INVOKE] Menu item class: %s\n", menuItemClass.c_str());
+        fflush(logFile);
+    }
 
     ObjectHeader* morphHdr = menuItemMorph.asObjectPtr();
     size_t slotCount = morphHdr->slotCount();
+    if (logFile) {
+        fprintf(logFile, "[INVOKE] Slot count: %zu\n", slotCount);
+        fflush(logFile);
+    }
 
     Oop selector = Oop::nil();
     Oop target = Oop::nil();
     Oop actionBlock = Oop::nil();
 
     // Search slots for action-related objects
-    for (size_t i = 5; i < std::min(slotCount, (size_t)15); i++) {
+    for (size_t i = 5; i < std::min(slotCount, (size_t)20); i++) {
         Oop slot = memory_.fetchPointer(i, menuItemMorph);
         if (slot.isNil()) continue;
 
@@ -1539,6 +1582,19 @@ void Interpreter::invokeMenuItemAction(Oop menuItemMorph) {
                         }
                     }
                 }
+            }
+
+            if (logFile) {
+                fprintf(logFile, "[INVOKE] Slot %zu: class=%s\n", i, slotClassName.c_str());
+                // If it's a symbol, print its value
+                if (slotClassName == "ByteSymbol" || slotClassName == "Symbol") {
+                    ObjectHeader* symHdr = slot.asObjectPtr();
+                    if (symHdr->isBytesObject() && symHdr->byteSize() < 100) {
+                        std::string symVal((char*)symHdr->bytes(), symHdr->byteSize());
+                        fprintf(logFile, "[INVOKE]   Symbol value: '%s'\n", symVal.c_str());
+                    }
+                }
+                fflush(logFile);
             }
 
             // Check if it's a Symbol (potential selector)
@@ -1589,15 +1645,38 @@ void Interpreter::invokeMenuItemAction(Oop menuItemMorph) {
             pendingMenuAction_.selector = valueSel;
             pendingMenuAction_.receiver = actionBlock;
             pendingMenuAction_.pending = true;
+            if (logFile) {
+                fprintf(logFile, "[INVOKE] Queued block action with #value\n");
+                fflush(logFile);
+            }
+        } else if (logFile) {
+            fprintf(logFile, "[INVOKE] Could not find #value selector for block\n");
+            fflush(logFile);
         }
     } else if (!selector.isNil() && !target.isNil()) {
         pendingMenuAction_.selector = selector;
         pendingMenuAction_.receiver = target;
         pendingMenuAction_.pending = true;
+        if (logFile) {
+            fprintf(logFile, "[INVOKE] Queued selector+target action\n");
+            fflush(logFile);
+        }
     } else if (!selector.isNil()) {
         pendingMenuAction_.selector = selector;
         pendingMenuAction_.receiver = menuItemMorph;
         pendingMenuAction_.pending = true;
+        if (logFile) {
+            fprintf(logFile, "[INVOKE] Queued selector-only action\n");
+            fflush(logFile);
+        }
+    } else {
+        if (logFile) {
+            fprintf(logFile, "[INVOKE] No action found - selector=%s, target=%s, block=%s\n",
+                    selector.isNil() ? "nil" : "set",
+                    target.isNil() ? "nil" : "set",
+                    actionBlock.isNil() ? "nil" : "set");
+            fflush(logFile);
+        }
     }
 }
 
