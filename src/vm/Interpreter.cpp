@@ -822,6 +822,14 @@ void Interpreter::renderWorldMorphs() {
         int scaledMenuBarHeight = (dispHeight > 1000) ? menuBarHeight * 2 : menuBarHeight;
 
         // Draw menu bar background - Mac-style light gray with subtle gradient
+        // Fill from y=0 to cover any gaps below the native title bar
+        // Use solid gray for the area under the title bar (traffic lights)
+        uint32_t titleAreaColor = 0xFFF6F6F6;  // Light gray matching top of menu bar
+        for (int y = 0; y < titleBarOffset && y < dispHeight; y++) {
+            for (int x = 0; x < dispWidth; x++) {
+                pixels[y * dispWidth + x] = titleAreaColor;
+            }
+        }
         // Top color slightly lighter, bottom slightly darker for depth
         for (int y = titleBarOffset; y < titleBarOffset + scaledMenuBarHeight; y++) {
             // Subtle gradient from 0xF6 at top to 0xE8 at bottom
@@ -955,7 +963,11 @@ void Interpreter::renderWorldMorphs() {
         // Use a large enough font that it's clearly visible in the menu bar
         int fontSize = isRetina ? 48 : 24;  // ~24pt appearance on Retina for better readability
         int textX = isRetina ? 32 : 16;  // Starting x position with padding
-        int textY = titleBarOffset + (scaledMenuBarHeight - fontSize) / 2;  // Center vertically
+        // Center the x-height (lowercase letters without ascenders/descenders) vertically
+        // Text buffer: baseline is at 0.95*fontSize from top, x-height center is ~0.70*fontSize from top
+        int menuBarCenter = titleBarOffset + scaledMenuBarHeight / 2;
+        int xHeightCenterInBuffer = static_cast<int>(fontSize * 0.70);
+        int textY = menuBarCenter - xHeightCenterInBuffer;
         int itemSpacing = isRetina ? 56 : 28;  // Space between items
         int charWidth = isRetina ? 26 : 13;  // Approximate char width for larger font
 
