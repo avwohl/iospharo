@@ -294,18 +294,282 @@ void Interpreter::ensureDisplayForm(int width, int height, int depth) {
     memory_.setGlobal("Display", formObj);
 }
 
+// ===== BITMAP FONT FOR TEXT RENDERING =====
+// Simple 5x7 bitmap font for menu bar text
+
+static const uint8_t font5x7[96][7] = {
+    // ASCII 32-127 (space through tilde)
+    // Each character is 5 pixels wide, 7 pixels tall
+    // Space (32)
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    // ! (33)
+    {0x04, 0x04, 0x04, 0x04, 0x00, 0x04, 0x00},
+    // " (34)
+    {0x0A, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00},
+    // # (35)
+    {0x0A, 0x1F, 0x0A, 0x0A, 0x1F, 0x0A, 0x00},
+    // $ (36)
+    {0x04, 0x0F, 0x14, 0x0E, 0x05, 0x1E, 0x04},
+    // % (37)
+    {0x19, 0x19, 0x02, 0x04, 0x08, 0x13, 0x13},
+    // & (38)
+    {0x08, 0x14, 0x14, 0x08, 0x15, 0x12, 0x0D},
+    // ' (39)
+    {0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00},
+    // ( (40)
+    {0x02, 0x04, 0x08, 0x08, 0x08, 0x04, 0x02},
+    // ) (41)
+    {0x08, 0x04, 0x02, 0x02, 0x02, 0x04, 0x08},
+    // * (42)
+    {0x00, 0x04, 0x15, 0x0E, 0x15, 0x04, 0x00},
+    // + (43)
+    {0x00, 0x04, 0x04, 0x1F, 0x04, 0x04, 0x00},
+    // , (44)
+    {0x00, 0x00, 0x00, 0x00, 0x04, 0x04, 0x08},
+    // - (45)
+    {0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00},
+    // . (46)
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00},
+    // / (47)
+    {0x01, 0x01, 0x02, 0x04, 0x08, 0x10, 0x10},
+    // 0 (48)
+    {0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E},
+    // 1 (49)
+    {0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E},
+    // 2 (50)
+    {0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F},
+    // 3 (51)
+    {0x0E, 0x11, 0x01, 0x06, 0x01, 0x11, 0x0E},
+    // 4 (52)
+    {0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02},
+    // 5 (53)
+    {0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E},
+    // 6 (54)
+    {0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E},
+    // 7 (55)
+    {0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08},
+    // 8 (56)
+    {0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E},
+    // 9 (57)
+    {0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C},
+    // : (58)
+    {0x00, 0x04, 0x00, 0x00, 0x04, 0x00, 0x00},
+    // ; (59)
+    {0x00, 0x04, 0x00, 0x00, 0x04, 0x04, 0x08},
+    // < (60)
+    {0x02, 0x04, 0x08, 0x10, 0x08, 0x04, 0x02},
+    // = (61)
+    {0x00, 0x00, 0x1F, 0x00, 0x1F, 0x00, 0x00},
+    // > (62)
+    {0x08, 0x04, 0x02, 0x01, 0x02, 0x04, 0x08},
+    // ? (63)
+    {0x0E, 0x11, 0x01, 0x02, 0x04, 0x00, 0x04},
+    // @ (64)
+    {0x0E, 0x11, 0x17, 0x15, 0x17, 0x10, 0x0E},
+    // A (65)
+    {0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11},
+    // B (66)
+    {0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E},
+    // C (67)
+    {0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E},
+    // D (68)
+    {0x1C, 0x12, 0x11, 0x11, 0x11, 0x12, 0x1C},
+    // E (69)
+    {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F},
+    // F (70)
+    {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10},
+    // G (71)
+    {0x0E, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0F},
+    // H (72)
+    {0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11},
+    // I (73)
+    {0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E},
+    // J (74)
+    {0x07, 0x02, 0x02, 0x02, 0x02, 0x12, 0x0C},
+    // K (75)
+    {0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11},
+    // L (76)
+    {0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F},
+    // M (77)
+    {0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11},
+    // N (78)
+    {0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11},
+    // O (79)
+    {0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E},
+    // P (80)
+    {0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10},
+    // Q (81)
+    {0x0E, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0D},
+    // R (82)
+    {0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11},
+    // S (83)
+    {0x0E, 0x11, 0x10, 0x0E, 0x01, 0x11, 0x0E},
+    // T (84)
+    {0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04},
+    // U (85)
+    {0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E},
+    // V (86)
+    {0x11, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x04},
+    // W (87)
+    {0x11, 0x11, 0x11, 0x15, 0x15, 0x1B, 0x11},
+    // X (88)
+    {0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11},
+    // Y (89)
+    {0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04},
+    // Z (90)
+    {0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F},
+    // [ (91)
+    {0x0E, 0x08, 0x08, 0x08, 0x08, 0x08, 0x0E},
+    // \ (92)
+    {0x10, 0x10, 0x08, 0x04, 0x02, 0x01, 0x01},
+    // ] (93)
+    {0x0E, 0x02, 0x02, 0x02, 0x02, 0x02, 0x0E},
+    // ^ (94)
+    {0x04, 0x0A, 0x11, 0x00, 0x00, 0x00, 0x00},
+    // _ (95)
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1F},
+    // ` (96)
+    {0x08, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00},
+    // a (97)
+    {0x00, 0x00, 0x0E, 0x01, 0x0F, 0x11, 0x0F},
+    // b (98)
+    {0x10, 0x10, 0x1E, 0x11, 0x11, 0x11, 0x1E},
+    // c (99)
+    {0x00, 0x00, 0x0E, 0x10, 0x10, 0x10, 0x0E},
+    // d (100)
+    {0x01, 0x01, 0x0F, 0x11, 0x11, 0x11, 0x0F},
+    // e (101)
+    {0x00, 0x00, 0x0E, 0x11, 0x1F, 0x10, 0x0E},
+    // f (102)
+    {0x06, 0x08, 0x1E, 0x08, 0x08, 0x08, 0x08},
+    // g (103)
+    {0x00, 0x00, 0x0F, 0x11, 0x0F, 0x01, 0x0E},
+    // h (104)
+    {0x10, 0x10, 0x1E, 0x11, 0x11, 0x11, 0x11},
+    // i (105)
+    {0x04, 0x00, 0x0C, 0x04, 0x04, 0x04, 0x0E},
+    // j (106)
+    {0x02, 0x00, 0x02, 0x02, 0x02, 0x12, 0x0C},
+    // k (107)
+    {0x10, 0x10, 0x12, 0x14, 0x18, 0x14, 0x12},
+    // l (108)
+    {0x0C, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E},
+    // m (109)
+    {0x00, 0x00, 0x1A, 0x15, 0x15, 0x15, 0x15},
+    // n (110)
+    {0x00, 0x00, 0x1E, 0x11, 0x11, 0x11, 0x11},
+    // o (111)
+    {0x00, 0x00, 0x0E, 0x11, 0x11, 0x11, 0x0E},
+    // p (112)
+    {0x00, 0x00, 0x1E, 0x11, 0x1E, 0x10, 0x10},
+    // q (113)
+    {0x00, 0x00, 0x0F, 0x11, 0x0F, 0x01, 0x01},
+    // r (114)
+    {0x00, 0x00, 0x16, 0x19, 0x10, 0x10, 0x10},
+    // s (115)
+    {0x00, 0x00, 0x0E, 0x10, 0x0E, 0x01, 0x1E},
+    // t (116)
+    {0x08, 0x08, 0x1E, 0x08, 0x08, 0x09, 0x06},
+    // u (117)
+    {0x00, 0x00, 0x11, 0x11, 0x11, 0x11, 0x0E},
+    // v (118)
+    {0x00, 0x00, 0x11, 0x11, 0x11, 0x0A, 0x04},
+    // w (119)
+    {0x00, 0x00, 0x11, 0x15, 0x15, 0x15, 0x0A},
+    // x (120)
+    {0x00, 0x00, 0x11, 0x0A, 0x04, 0x0A, 0x11},
+    // y (121)
+    {0x00, 0x00, 0x11, 0x11, 0x0F, 0x01, 0x0E},
+    // z (122)
+    {0x00, 0x00, 0x1F, 0x02, 0x04, 0x08, 0x1F},
+    // { (123)
+    {0x02, 0x04, 0x04, 0x08, 0x04, 0x04, 0x02},
+    // | (124)
+    {0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04},
+    // } (125)
+    {0x08, 0x04, 0x04, 0x02, 0x04, 0x04, 0x08},
+    // ~ (126)
+    {0x00, 0x08, 0x15, 0x02, 0x00, 0x00, 0x00},
+    // DEL (127) - blank
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+};
+
+// Draw text using the bitmap font (scaled 2x for readability)
+static void drawText(uint32_t* pixels, int dispWidth, int dispHeight,
+                     int x, int y, const std::string& text, uint32_t color) {
+    const int scale = 2;  // 2x scale for readability
+    const int charWidth = 5 * scale + scale;  // 5 pixels + 1 pixel spacing, scaled
+    const int charHeight = 7 * scale;
+
+    for (size_t i = 0; i < text.length(); i++) {
+        char ch = text[i];
+        if (ch < 32 || ch > 127) ch = '?';
+        int charIdx = ch - 32;
+
+        int baseX = x + static_cast<int>(i) * charWidth;
+
+        for (int row = 0; row < 7; row++) {
+            uint8_t rowBits = font5x7[charIdx][row];
+            for (int col = 0; col < 5; col++) {
+                if (rowBits & (0x10 >> col)) {
+                    // Draw scaled pixel
+                    for (int sy = 0; sy < scale; sy++) {
+                        for (int sx = 0; sx < scale; sx++) {
+                            int px = baseX + col * scale + sx;
+                            int py = y + row * scale + sy;
+                            if (px >= 0 && px < dispWidth && py >= 0 && py < dispHeight) {
+                                pixels[py * dispWidth + px] = color;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 void Interpreter::renderWorldMorphs() {
     // Render World's morphs directly to the platform display
     // This bypasses NullWorldRenderer and draws morphs ourselves
     if (!pharo::gDisplaySurface) return;
 
+    // Throttle to ~60fps to prevent flickering
+    static auto lastRenderTime = std::chrono::steady_clock::now();
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRenderTime);
+    if (elapsed.count() < 16) {  // Less than ~16ms = 60fps
+        return;  // Skip this frame
+    }
+    lastRenderTime = now;
+
     static int totalMorphsDrawn = 0;
     static int renderCallCount = 0;
     renderCallCount++;
 
+    // Debug logging to file (first 10 calls only)
+    static FILE* logFile = nullptr;
+    if (!logFile) {
+        logFile = fopen("/tmp/iospharo-render.log", "w");
+    }
+    if (logFile && renderCallCount <= 10) {
+        fprintf(logFile, "[RENDER #%d] Starting renderWorldMorphs\n", renderCallCount);
+        fflush(logFile);
+    }
+
     // Find the World global
     Oop world = memory_.findGlobal("World");
-    if (world.isNil() || !world.isObject()) return;
+    if (world.isNil() || !world.isObject()) {
+        if (logFile && renderCallCount <= 10) {
+            fprintf(logFile, "[RENDER #%d] World not found or nil\n", renderCallCount);
+            fflush(logFile);
+        }
+        return;
+    }
+
+    if (logFile && renderCallCount <= 10) {
+        fprintf(logFile, "[RENDER #%d] World found at 0x%llx\n", renderCallCount, (unsigned long long)world.rawBits());
+        fflush(logFile);
+    }
 
     uint32_t* pixels = pharo::gDisplaySurface->pixels();
     int dispWidth = pharo::gDisplaySurface->width();
@@ -424,10 +688,172 @@ void Interpreter::renderWorldMorphs() {
         return false;
     };
 
+    // Helper to extract string from a string object (ByteString, WideString, etc.)
+    auto extractString = [this](Oop strObj) -> std::string {
+        if (strObj.isNil() || !strObj.isObject()) return "";
+        ObjectHeader* hdr = strObj.asObjectPtr();
+        if (hdr->isBytesObject() && hdr->byteSize() < 100) {
+            return std::string((char*)hdr->bytes(), hdr->byteSize());
+        }
+        return "";
+    };
+
+    // Helper to render MenubarMorph with text
+    auto renderMenuBar = [&](Oop menubarMorph, int menuBarHeight) {
+        // Draw menu bar background (dark gray)
+        uint32_t menuBarColor = 0xFF3C3C3C;  // Dark gray
+        for (int y = 0; y < menuBarHeight; y++) {
+            for (int x = 0; x < dispWidth; x++) {
+                pixels[y * dispWidth + x] = menuBarColor;
+            }
+        }
+
+        // Get submorphs (menu items)
+        Oop submorphs = memory_.fetchPointer(2, menubarMorph);
+        if (submorphs.isNil() || !submorphs.isObject()) {
+            if (logFile && renderCallCount <= 10) {
+                fprintf(logFile, "[MENUBAR] No submorphs found\n");
+                fflush(logFile);
+            }
+            return;
+        }
+
+        ObjectHeader* subHdr = submorphs.asObjectPtr();
+        size_t numItems = subHdr->slotCount();
+
+        if (logFile && renderCallCount <= 10) {
+            fprintf(logFile, "[MENUBAR] Found %zu menu items\n", numItems);
+            fflush(logFile);
+        }
+
+        // Menu item text color (white)
+        uint32_t textColor = 0xFFFFFFFF;
+
+        // Collect menu item labels
+        std::vector<std::string> labels;
+        for (size_t i = 0; i < numItems; i++) {
+            Oop item = subHdr->slotAt(i);
+            if (item.isNil() || !item.isObject()) continue;
+
+            // Try to extract label from menu item
+            // MenubarItemMorph or similar - try slot 5 (label) or look for StringMorph submorph
+            std::string label;
+
+            // Check slots 5-10 for potential label
+            ObjectHeader* itemHdr = item.asObjectPtr();
+            for (size_t slot = 5; slot < std::min((size_t)15, itemHdr->slotCount()); slot++) {
+                Oop slotVal = memory_.fetchPointer(slot, item);
+                if (slotVal.isNil() || !slotVal.isObject()) continue;
+
+                // Check if it's a string
+                ObjectHeader* slotHdr = slotVal.asObjectPtr();
+                if (slotHdr->isBytesObject() && slotHdr->byteSize() > 0 && slotHdr->byteSize() < 50) {
+                    std::string s((char*)slotHdr->bytes(), slotHdr->byteSize());
+                    // Filter: must be readable text (printable ASCII)
+                    bool valid = true;
+                    for (char c : s) {
+                        if (c < 32 || c > 126) { valid = false; break; }
+                    }
+                    if (valid && s.length() > 0 && s.length() < 20) {
+                        label = s;
+                        break;
+                    }
+                }
+            }
+
+            // If no label found in item, check its submorphs for StringMorph
+            if (label.empty()) {
+                Oop itemSubmorphs = memory_.fetchPointer(2, item);
+                if (!itemSubmorphs.isNil() && itemSubmorphs.isObject()) {
+                    ObjectHeader* isHdr = itemSubmorphs.asObjectPtr();
+                    for (size_t j = 0; j < isHdr->slotCount(); j++) {
+                        Oop subm = isHdr->slotAt(j);
+                        if (subm.isNil() || !subm.isObject()) continue;
+
+                        // Check if it's a StringMorph by looking for a string in slot 5+
+                        ObjectHeader* submHdr = subm.asObjectPtr();
+                        for (size_t slot = 5; slot < std::min((size_t)15, submHdr->slotCount()); slot++) {
+                            Oop slotVal = memory_.fetchPointer(slot, subm);
+                            if (slotVal.isNil() || !slotVal.isObject()) continue;
+
+                            ObjectHeader* svHdr = slotVal.asObjectPtr();
+                            if (svHdr->isBytesObject() && svHdr->byteSize() > 0 && svHdr->byteSize() < 50) {
+                                std::string s((char*)svHdr->bytes(), svHdr->byteSize());
+                                bool valid = true;
+                                for (char c : s) {
+                                    if (c < 32 || c > 126) { valid = false; break; }
+                                }
+                                if (valid && s.length() > 0 && s.length() < 20) {
+                                    label = s;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!label.empty()) break;
+                    }
+                }
+            }
+
+            if (!label.empty()) {
+                labels.push_back(label);
+                if (logFile && renderCallCount <= 10) {
+                    fprintf(logFile, "[MENUBAR] Item %zu label: '%s'\n", i, label.c_str());
+                    fflush(logFile);
+                }
+            } else {
+                if (logFile && renderCallCount <= 10) {
+                    fprintf(logFile, "[MENUBAR] Item %zu: no label found\n", i);
+                    fflush(logFile);
+                }
+            }
+        }
+
+        if (logFile && renderCallCount <= 10) {
+            fprintf(logFile, "[MENUBAR] Total labels: %zu\n", labels.size());
+            fflush(logFile);
+        }
+
+        // Draw menu item labels with proper spacing
+        int textX = 10;  // Starting x position
+        int textY = (menuBarHeight - 14) / 2;  // Vertically center (14 = 7*2 scaled font height)
+        int spacing = 24;  // Space between items
+
+        for (const std::string& label : labels) {
+            drawText(pixels, dispWidth, dispHeight, textX, textY, label, textColor);
+            textX += static_cast<int>(label.length()) * 12 + spacing;  // 12 = 6*2 char width
+        }
+
+        totalMorphsDrawn++;
+    };
+
     // Recursive morph rendering function
     std::function<void(Oop, int, int)> renderMorph = [&](Oop morph, int depth, int index) {
         if (morph.isNil() || !morph.isObject()) return;
         if (depth > 20) return;  // Prevent infinite recursion
+
+        // Check for special morphs that need custom rendering
+        std::string className = getMorphClassName(morph);
+
+        // Handle MenubarMorph specially - draw with text
+        if (className == "MenubarMorph") {
+            renderMenuBar(morph, 28);  // 28 pixel height
+            return;  // Don't recurse into menu bar submorphs
+        }
+
+        // Skip TaskbarMorph for now (just draw background)
+        if (className == "TaskbarMorph") {
+            // Draw simple gray taskbar
+            int taskbarHeight = 40;
+            int taskbarY = dispHeight - taskbarHeight;
+            uint32_t taskbarColor = 0xFF2A2A2A;
+            for (int y = taskbarY; y < dispHeight; y++) {
+                for (int x = 0; x < dispWidth; x++) {
+                    pixels[y * dispWidth + x] = taskbarColor;
+                }
+            }
+            totalMorphsDrawn++;
+            return;
+        }
 
         totalMorphsDrawn++;
 
@@ -495,6 +921,12 @@ void Interpreter::renderWorldMorphs() {
     Oop worldColor = memory_.fetchPointer(4, world);
     uint32_t worldColorARGB = extractColor(worldColor);
 
+    if (logFile && renderCallCount <= 10) {
+        fprintf(logFile, "[RENDER #%d] World color = 0x%08x, display %dx%d\n",
+                renderCallCount, worldColorARGB, dispWidth, dispHeight);
+        fflush(logFile);
+    }
+
     for (int i = 0; i < dispWidth * dispHeight; i++) {
         pixels[i] = worldColorARGB;
     }
@@ -507,13 +939,162 @@ void Interpreter::renderWorldMorphs() {
         ObjectHeader* subHdr = submorphs.asObjectPtr();
         size_t numSubmorphs = subHdr->slotCount();
 
+        if (logFile && renderCallCount <= 10) {
+            fprintf(logFile, "[RENDER #%d] World has %zu submorphs\n", renderCallCount, numSubmorphs);
+            fflush(logFile);
+        }
+
         for (size_t i = 0; i < numSubmorphs; i++) {
             Oop submorph = subHdr->slotAt(i);
+            if (logFile && renderCallCount <= 10 && i < 5) {
+                std::string cn = getMorphClassName(submorph);
+                fprintf(logFile, "[RENDER #%d]   submorph[%zu] = %s\n", renderCallCount, i, cn.c_str());
+                fflush(logFile);
+            }
             renderMorph(submorph, 0, static_cast<int>(i));
+        }
+    } else {
+        if (logFile && renderCallCount <= 10) {
+            fprintf(logFile, "[RENDER #%d] No submorphs found\n", renderCallCount);
+            fflush(logFile);
         }
     }
 
+    if (logFile && renderCallCount <= 10) {
+        fprintf(logFile, "[RENDER #%d] Done, drew %d morphs\n", renderCallCount, totalMorphsDrawn);
+        fflush(logFile);
+    }
+
     pharo::gDisplaySurface->update();
+}
+
+// ===== INPUT EVENT PROCESSING =====
+
+void Interpreter::processInputEvents() {
+    // Process pending events from the event queue
+    // For now, just poll for click events
+
+    pharo::Event event;
+    while (pharo::gEventQueue.pop(event)) {
+        if (event.type == static_cast<int>(pharo::EventType::Mouse)) {
+            int mouseType = event.arg3;  // 0=move, 1=down, 2=up
+            int x = event.arg1;
+            int y = event.arg2;
+
+            if (mouseType == 1) {  // Mouse down
+                // Check if clicking in dropdown menu area
+                if (dropdownState_.valid &&
+                    x >= dropdownState_.x && x < dropdownState_.x + dropdownState_.width &&
+                    y >= dropdownState_.y && y < dropdownState_.y + dropdownState_.height) {
+                    // Calculate which item was clicked
+                    int itemIndex = (y - dropdownState_.y) / dropdownState_.lineHeight;
+                    if (itemIndex >= 0 && itemIndex < static_cast<int>(dropdownState_.itemMorphs.size())) {
+                        invokeMenuItemAction(dropdownState_.itemMorphs[itemIndex]);
+                    }
+                    dropdownState_.valid = false;  // Close dropdown
+                } else {
+                    // Check if clicking in menu bar (top ~40 pixels)
+                    if (y < 50) {
+                        // Menu bar click - could open a menu here
+                        // For now, just note the click location
+                    }
+                    dropdownState_.valid = false;  // Close any open dropdown
+                }
+            }
+        }
+    }
+}
+
+void Interpreter::invokeMenuItemAction(Oop menuItemMorph) {
+    // Extract action from menu item and queue it for execution
+    if (menuItemMorph.isNil() || !menuItemMorph.isObject()) return;
+
+    ObjectHeader* morphHdr = menuItemMorph.asObjectPtr();
+    size_t slotCount = morphHdr->slotCount();
+
+    Oop selector = Oop::nil();
+    Oop target = Oop::nil();
+    Oop actionBlock = Oop::nil();
+
+    // Search slots for action-related objects
+    for (size_t i = 5; i < std::min(slotCount, (size_t)15); i++) {
+        Oop slot = memory_.fetchPointer(i, menuItemMorph);
+        if (slot.isNil()) continue;
+
+        if (slot.isObject()) {
+            Oop slotClass = memory_.classOf(slot);
+            std::string slotClassName = "Unknown";
+            if (slotClass.isObject()) {
+                ObjectHeader* scHdr = slotClass.asObjectPtr();
+                if (scHdr->slotCount() > 6) {
+                    Oop scName = memory_.fetchPointer(6, slotClass);
+                    if (scName.isObject()) {
+                        ObjectHeader* scnHdr = scName.asObjectPtr();
+                        if (scnHdr->isBytesObject() && scnHdr->byteSize() < 50) {
+                            slotClassName = std::string((char*)scnHdr->bytes(), scnHdr->byteSize());
+                        }
+                    }
+                }
+            }
+
+            // Check if it's a Symbol (potential selector)
+            if (slotClassName == "ByteSymbol" || slotClassName == "Symbol") {
+                if (selector.isNil()) selector = slot;
+            }
+            // Check if it's a Block (action block)
+            else if (slotClassName.find("Block") != std::string::npos) {
+                actionBlock = slot;
+            }
+            // First non-symbol, non-block object could be target
+            else if (target.isNil() && selector.isNil()) {
+                if (slotClassName.find("Morph") == std::string::npos) {
+                    target = slot;
+                }
+            }
+        }
+    }
+
+    // Queue the action for safe execution
+    if (!actionBlock.isNil()) {
+        // Find #value selector from special selectors
+        Oop valueSel = Oop::nil();
+        Oop specialObjs = memory_.specialObjectsArray();
+        if (!specialObjs.isNil() && specialObjs.isObject()) {
+            ObjectHeader* soHdr = specialObjs.asObjectPtr();
+            if (soHdr->slotCount() > 23) {
+                Oop selArray = memory_.fetchPointer(23, specialObjs);
+                if (!selArray.isNil() && selArray.isObject()) {
+                    ObjectHeader* saHdr = selArray.asObjectPtr();
+                    for (size_t i = 0; i < saHdr->slotCount(); i++) {
+                        Oop sel = saHdr->slotAt(i);
+                        if (sel.isObject()) {
+                            ObjectHeader* selHdr = sel.asObjectPtr();
+                            if (selHdr->isBytesObject() && selHdr->byteSize() == 5) {
+                                if (memcmp(selHdr->bytes(), "value", 5) == 0) {
+                                    valueSel = sel;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!valueSel.isNil()) {
+            pendingMenuAction_.selector = valueSel;
+            pendingMenuAction_.receiver = actionBlock;
+            pendingMenuAction_.pending = true;
+        }
+    } else if (!selector.isNil() && !target.isNil()) {
+        pendingMenuAction_.selector = selector;
+        pendingMenuAction_.receiver = target;
+        pendingMenuAction_.pending = true;
+    } else if (!selector.isNil()) {
+        pendingMenuAction_.selector = selector;
+        pendingMenuAction_.receiver = menuItemMorph;
+        pendingMenuAction_.pending = true;
+    }
 }
 
 // ===== DISPLAY SYNCHRONIZATION =====
@@ -2145,8 +2726,28 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                         if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
                             std::string rcvrClassName((char*)nameHdr->bytes(), nameHdr->byteSize());
                             if (rcvrClassName == "WorldState") {
+                                // Process any pending input events
+                                processInputEvents();
+
                                 // Render World's morphs directly to the display surface
                                 renderWorldMorphs();
+
+                                // Execute pending menu action if any
+                                if (pendingMenuAction_.pending) {
+                                    Oop actionSel = pendingMenuAction_.selector;
+                                    Oop actionRcvr = pendingMenuAction_.receiver;
+                                    pendingMenuAction_.pending = false;
+                                    pendingMenuAction_.selector = Oop::nil();
+                                    pendingMenuAction_.receiver = Oop::nil();
+
+                                    // Pop doOneCycleFor:'s args and receiver
+                                    popN(argCount + 1);
+
+                                    // Set up the action call
+                                    push(actionRcvr);
+                                    sendSelector(actionSel, 0);  // #value takes no args
+                                    return;
+                                }
 
                                 // Return receiver (WorldState) to continue
                                 popN(argCount + 1);

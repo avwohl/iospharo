@@ -56,14 +56,6 @@ public:
     }
 
     void invalidateRect(int x, int y, int w, int h) override {
-        static int invalidateCount = 0;
-        invalidateCount++;
-        if (invalidateCount <= 5) {
-            std::lock_guard<std::mutex> lock(mutex_);
-            std::cerr << "[DISPLAY] invalidateRect #" << invalidateCount
-                      << " (" << x << "," << y << "," << w << "," << h << ")"
-                      << " callback=" << (updateCallback_ ? "set" : "null") << "\n";
-        }
         DisplayUpdateFunc cb = nullptr;
         void* ctx = nullptr;
         {
@@ -77,16 +69,13 @@ public:
     }
 
     void update() override {
-        std::cerr << "[DisplaySurface] update() called\n";
         int w, h;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             w = width_;
             h = height_;
         }
-        std::cerr << "[DisplaySurface] update() calling invalidateRect 0,0," << w << "," << h << "\n";
         invalidateRect(0, 0, w, h);
-        std::cerr << "[DisplaySurface] update() done\n";
     }
 
     void setCallback(DisplayUpdateFunc cb, void* ctx) {

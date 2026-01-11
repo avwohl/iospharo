@@ -165,8 +165,11 @@ class PharoBridge: ObservableObject {
     /// Notify VM of view size change
     func setDisplaySize(width: Int, height: Int) {
         ios_setDisplaySize(Int32(width), Int32(height))
-        displayWidth = width
-        displayHeight = height
+        // Defer property updates to avoid "Publishing changes from within view updates" warning
+        Task { @MainActor in
+            self.displayWidth = width
+            self.displayHeight = height
+        }
     }
 
     /// Mark display as refreshed

@@ -189,7 +189,9 @@ public:
     void setDisplayForm(Oop form) { displayForm_ = form; }
     void initializeDisplayForm();  // Create and set up display Form
     void renderWorldMorphs();      // Direct rendering of World's morphs
+    void processInputEvents();     // Process pending input events
     void syncDisplayToSurface();   // Copy Display Form to platform surface
+    void invokeMenuItemAction(Oop menuItemMorph);  // Invoke action from menu item click
     void ensureDisplayForm(int width, int height, int depth);  // Create Form and bind to Display global
     int screenDepth() const { return screenDepth_; }
 
@@ -312,6 +314,53 @@ private:
 
     // Display Form (the Smalltalk Form that represents the screen)
     Oop displayForm_ = Oop::nil();
+
+    // Mouse tracking for event handling
+    int lastMouseX_ = 0;
+    int lastMouseY_ = 0;
+    int lastMouseButtons_ = 0;
+    int lastMouseEventType_ = 0;  // 0=move, 1=down, 2=up
+
+    // Pending click info for Pharo
+    int pendingClickX_ = 0;
+    int pendingClickY_ = 0;
+    int pendingClickButtons_ = 0;
+    int pendingClickType_ = 0;
+    bool hasPendingClick_ = false;
+
+    // Menu interaction state (for direct menu handling)
+    int selectedMenuIndex_ = -1;  // -1 = no menu selected
+    int prevSelectedMenuIndex_ = -1;  // Previous frame's menu state for dirty tracking
+    std::vector<std::pair<int, int>> menuItemBounds_;  // Stored menu item X bounds (start, end)
+
+    // Dropdown menu state for click handling
+    struct DropdownState {
+        int x = 0, y = 0, width = 0, height = 0;  // Dropdown bounds
+        int lineHeight = 0;
+        std::vector<Oop> itemMorphs;  // The actual menu item morphs for action invocation
+        bool valid = false;
+    };
+    DropdownState dropdownState_;
+
+    // Pending menu action (queued for safe execution)
+    struct PendingMenuAction {
+        Oop selector = Oop::nil();
+        Oop receiver = Oop::nil();
+        bool pending = false;
+    };
+    PendingMenuAction pendingMenuAction_;
+
+    // Debug: visual click indicator
+    int debugClickX_ = -1;
+    int debugClickY_ = -1;
+    int debugClickFrame_ = 0;  // Frame counter for fade-out
+
+    // Dirty rectangle tracking for efficient redraws
+    struct DirtyRect {
+        int x1, y1, x2, y2;
+        bool valid = false;
+    };
+    DirtyRect dirtyMenuDropdown_;  // Track dropdown area changes
 
     // External semaphore signaling (for I/O events)
     // Simple approach: store one pending signal index, process in interpret loop

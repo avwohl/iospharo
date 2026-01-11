@@ -10423,57 +10423,41 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
 // Sets the semaphore to signal when input is available
 // NOTE: In some images, this is a unary message where the receiver is the semaphore index
 PrimitiveResult Interpreter::primitiveInputSemaphore2(int argCount) {
-    std::cerr << "[VM] primitiveInputSemaphore2(265) called with argCount=" << argCount << "\n";
-
     Oop semIndexOop;
     if (argCount == 0) {
-        // Unary message - receiver is the semaphore index
         semIndexOop = stackTop();  // receiver
     } else if (argCount == 1) {
-        // Keyword message - argument is the semaphore index
         semIndexOop = stackTop();
     } else {
         return PrimitiveResult::Failure;
     }
 
     if (!semIndexOop.isSmallInteger()) {
-        std::cerr << "[VM] primitiveInputSemaphore2: arg/receiver is not SmallInteger, rawBits=0x"
-                  << std::hex << semIndexOop.rawBits() << std::dec;
         if (semIndexOop.isObject()) {
             ObjectHeader* hdr = semIndexOop.asObjectPtr();
-            std::cerr << " classIdx=" << hdr->classIndex() << " slots=" << hdr->slotCount();
-
             // Try to get semaphore index from object's slots
-            // In Pharo, InputEventSensor might have the semaphore index in slot 0 or 1
             for (size_t i = 0; i < std::min(hdr->slotCount(), (size_t)4); i++) {
                 Oop slot = hdr->slotAt(i);
                 if (slot.isSmallInteger()) {
                     int64_t val = slot.asSmallInteger();
-                    if (val > 0 && val < 100) {  // Reasonable semaphore index range
-                        std::cerr << " found candidate semIndex=" << val << " in slot " << i;
+                    if (val > 0 && val < 100) {
                         gEventQueue.setInputSemaphoreIndex(static_cast<int>(val));
-                        std::cerr << "\n[VM] primitiveInputSemaphore2: Using semaphore index " << val << " from slot " << i << "\n";
                         return PrimitiveResult::Success;
                     }
                 }
             }
         }
-        std::cerr << "\n";
         // Fallback: use index 1 (common for input semaphore)
-        std::cerr << "[VM] primitiveInputSemaphore2: Using fallback semaphore index 1\n";
         gEventQueue.setInputSemaphoreIndex(1);
         return PrimitiveResult::Success;
     }
 
-    // Store the semaphore index in the event queue
     int64_t semIndex = semIndexOop.asSmallInteger();
-    std::cerr << "[VM] primitiveInputSemaphore2: Setting input semaphore index to " << semIndex << "\n";
     gEventQueue.setInputSemaphoreIndex(static_cast<int>(semIndex));
 
     if (argCount == 1) {
         pop();  // pop argument, leave receiver
     }
-    // For argCount=0, leave receiver on stack
     return PrimitiveResult::Success;
 }
 

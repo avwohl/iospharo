@@ -1,7 +1,7 @@
 # Claude Code Instructions
 
 ## Git Workflow
-- Use large commits to stop less fequently
+- **Commit frequently**: Commit at least every 15 minutes to avoid losing work from mishandled stash/checkout operations
 - Always run `git status` before and after commits to verify state
 
 ## Project Context
@@ -30,6 +30,8 @@ The bytecode ranges 0xE0-0xFF are completely different between the two sets.
 - The display driver (OSiOSDriver) should work without requiring image-side changes
 
 ## Debugging
+- **Debug before asking**: Always run the app and check logs yourself before asking the user to test. Use `/tmp/iospharo-render.log` and other log files to diagnose issues.
 - Always test on Mac first - it starts up much faster than the iOS simulator
 - Use `./build/test_load_image <image-path>` for quick VM testing
 - Build with `cmake --build build` from the project root
+- Full build cycle: `cmake --build build-app && ./build-xcframework.sh && xcodebuild -project iospharo.xcodeproj -scheme iospharo -configuration Debug -destination 'platform=macOS,variant=Mac Catalyst' build`
