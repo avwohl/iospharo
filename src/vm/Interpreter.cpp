@@ -515,8 +515,9 @@ static void drawText(uint32_t* pixels, int dispWidth, int dispHeight,
 
     // Create a generous text buffer - Helvetica chars are roughly 0.6 * fontSize wide
     int textWidth = static_cast<int>(text.length()) * fontSize;  // Generous estimate
-    // Font metrics: ascender ~80% of fontSize, descender ~20%, so total height ~100%+
-    int textHeight = static_cast<int>(fontSize * 1.4);  // Extra room for ascenders/descenders
+    // Font metrics: ascender can be up to 95% of fontSize for some fonts
+    // Use 2x fontSize to ensure we have enough room for any font
+    int textHeight = static_cast<int>(fontSize * 2.0);  // Generous room for tall glyphs
 
     // Clamp to display bounds
     if (x < 0 || y < 0 || x >= dispWidth || y >= dispHeight) return;
@@ -591,8 +592,8 @@ static void drawText(uint32_t* pixels, int dispWidth, int dispHeight,
     if (line) {
         // Position text baseline - need room for ascenders ABOVE and descenders BELOW
         // After the Y-flip transform, Y=0 is at top, Y increases downward
-        // Ascender is ~80% of fontSize, so position baseline there to leave room above
-        CGFloat baseline = fontSize * 0.82;  // Room for ascenders above baseline
+        // Ascender can be up to 95% of fontSize for system fonts
+        CGFloat baseline = fontSize * 0.95;  // Room for tall ascenders
         CGContextSetTextPosition(ctx, 0, baseline);
         CTLineDraw(line, ctx);
         CFRelease(line);
