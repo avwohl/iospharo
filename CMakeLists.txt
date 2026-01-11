@@ -63,11 +63,12 @@ endif()
 # Platform-specific frameworks
 if(APPLE)
     if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
-        # iOS frameworks for SDL2
+        # iOS frameworks for SDL2 and text rendering
         target_link_libraries(PharoVMCore
             "-framework UIKit"
             "-framework Foundation"
             "-framework CoreGraphics"
+            "-framework CoreText"
             "-framework QuartzCore"
             "-framework Metal"
             "-framework CoreAudio"
@@ -78,10 +79,12 @@ if(APPLE)
             "-framework CoreMotion"
         )
     else()
-        # macOS frameworks for SDL2
+        # macOS frameworks for SDL2 and text rendering
         target_link_libraries(PharoVMCore
             "-framework Cocoa"
             "-framework IOKit"
+            "-framework CoreGraphics"
+            "-framework CoreText"
             "-framework CoreAudio"
             "-framework AudioToolbox"
             "-framework CoreVideo"

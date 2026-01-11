@@ -13,6 +13,13 @@
 #include <thread>
 #include <chrono>
 
+#if __APPLE__
+#include <CoreGraphics/CoreGraphics.h>
+#include <CoreText/CoreText.h>
+// Undefine Objective-C's nil macro to avoid conflict with Oop::nil()
+#undef nil
+#endif
+
 namespace pharo {
 
 // ===== CONSTRUCTION =====
@@ -494,38 +501,142 @@ static const uint8_t font5x7[96][7] = {
     {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
 };
 
-// Draw text using the bitmap font (scaled 2x for readability)
+// Draw text using Core Graphics for proper anti-aliased font rendering
 static void drawText(uint32_t* pixels, int dispWidth, int dispHeight,
                      int x, int y, const std::string& text, uint32_t color) {
-    const int scale = 2;  // 2x scale for readability
-    const int charWidth = 5 * scale + scale;  // 5 pixels + 1 pixel spacing, scaled
-    const int charHeight = 7 * scale;
+#if __APPLE__
+    if (text.empty()) return;
 
-    for (size_t i = 0; i < text.length(); i++) {
-        char ch = text[i];
-        if (ch < 32 || ch > 127) ch = '?';
-        int charIdx = ch - 32;
+    // Extract color components (ARGB format)
+    CGFloat alpha = ((color >> 24) & 0xFF) / 255.0;
+    CGFloat red = ((color >> 16) & 0xFF) / 255.0;
+    CGFloat green = ((color >> 8) & 0xFF) / 255.0;
+    CGFloat blue = (color & 0xFF) / 255.0;
 
-        int baseX = x + static_cast<int>(i) * charWidth;
+    // Create a small bitmap context just for this text
+    int fontSize = 14;
+    int textWidth = static_cast<int>(text.length()) * fontSize;  // Rough estimate
+    int textHeight = fontSize + 4;
 
-        for (int row = 0; row < 7; row++) {
-            uint8_t rowBits = font5x7[charIdx][row];
-            for (int col = 0; col < 5; col++) {
-                if (rowBits & (0x10 >> col)) {
-                    // Draw scaled pixel
-                    for (int sy = 0; sy < scale; sy++) {
-                        for (int sx = 0; sx < scale; sx++) {
-                            int px = baseX + col * scale + sx;
-                            int py = y + row * scale + sy;
-                            if (px >= 0 && px < dispWidth && py >= 0 && py < dispHeight) {
-                                pixels[py * dispWidth + px] = color;
-                            }
-                        }
+    // Clamp to display bounds
+    if (x < 0 || y < 0 || x >= dispWidth || y >= dispHeight) return;
+    if (x + textWidth > dispWidth) textWidth = dispWidth - x;
+    if (y + textHeight > dispHeight) textHeight = dispHeight - y;
+
+    // Create bitmap context with ARGB format matching our display buffer
+    // On Apple platforms (little-endian), use ARGB with native byte order
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGContextRef ctx = CGBitmapContextCreate(
+        nullptr,  // Let CG allocate memory
+        textWidth, textHeight,
+        8,  // bits per component
+        textWidth * 4,  // bytes per row
+        colorSpace,
+        kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Host  // ARGB native
+    );
+    CGColorSpaceRelease(colorSpace);
+
+    if (!ctx) return;
+
+    // Clear to transparent
+    CGContextClearRect(ctx, CGRectMake(0, 0, textWidth, textHeight));
+
+    // Transform to normal text coordinates (flip Y axis)
+    // CG has origin at bottom-left with Y going up
+    // We want origin at top-left with Y going down
+    CGContextTranslateCTM(ctx, 0, textHeight);
+    CGContextScaleCTM(ctx, 1.0, -1.0);
+
+    // Set up text rendering
+    CGContextSetRGBFillColor(ctx, red, green, blue, alpha);
+    CGContextSetTextDrawingMode(ctx, kCGTextFill);
+
+    // Create font
+    CTFontRef font = CTFontCreateWithName(CFSTR("Helvetica"), fontSize, nullptr);
+    if (!font) {
+        font = CTFontCreateWithName(CFSTR("Arial"), fontSize, nullptr);
+    }
+    if (!font) {
+        CGContextRelease(ctx);
+        return;
+    }
+
+    // Create attributed string
+    CFStringRef cfText = CFStringCreateWithCString(nullptr, text.c_str(), kCFStringEncodingUTF8);
+    if (!cfText) {
+        CFRelease(font);
+        CGContextRelease(ctx);
+        return;
+    }
+
+    CFStringRef keys[] = { kCTFontAttributeName, kCTForegroundColorFromContextAttributeName };
+    CFTypeRef values[] = { font, kCFBooleanTrue };
+    CFDictionaryRef attrs = CFDictionaryCreate(nullptr, (const void**)keys, (const void**)values, 2,
+                                                &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+
+    CFAttributedStringRef attrString = CFAttributedStringCreate(nullptr, cfText, attrs);
+    CFRelease(cfText);
+    CFRelease(attrs);
+
+    if (!attrString) {
+        CFRelease(font);
+        CGContextRelease(ctx);
+        return;
+    }
+
+    // Create line and draw
+    CTLineRef line = CTLineCreateWithAttributedString(attrString);
+    CFRelease(attrString);
+
+    if (line) {
+        // Position text baseline - need room for descenders below and ascenders above
+        // With transformed coords (Y going down), a higher Y value means lower on screen
+        CGContextSetTextPosition(ctx, 0, textHeight - 2);  // Leave 2px margin at bottom for descenders
+        CTLineDraw(line, ctx);
+        CFRelease(line);
+    }
+
+    CFRelease(font);
+
+    // Copy rendered text to pixel buffer
+    // Note: CGBitmapContext stores pixels bottom-up, but we transformed drawing to top-down
+    // The pixel data is still stored bottom-up, so we need to flip Y when reading
+    uint32_t* textPixels = (uint32_t*)CGBitmapContextGetData(ctx);
+    if (textPixels) {
+        for (int ty = 0; ty < textHeight; ty++) {
+            for (int tx = 0; tx < textWidth; tx++) {
+                int destX = x + tx;
+                int destY = y + ty;
+                if (destX >= 0 && destX < dispWidth && destY >= 0 && destY < dispHeight) {
+                    // Bitmap data is stored bottom-up, flip Y to read correctly
+                    int srcY = textHeight - 1 - ty;
+                    uint32_t srcPixel = textPixels[srcY * textWidth + tx];
+                    // ARGB format with native byte order: 0xAARRGGBB as uint32_t
+                    uint8_t srcAlpha = (srcPixel >> 24) & 0xFF;
+                    uint8_t srcR = (srcPixel >> 16) & 0xFF;
+                    uint8_t srcG = (srcPixel >> 8) & 0xFF;
+                    uint8_t srcB = srcPixel & 0xFF;
+                    if (srcAlpha > 0) {
+                        // Alpha blend (source is premultiplied alpha)
+                        uint32_t destPixel = pixels[destY * dispWidth + destX];
+                        uint8_t destR = (destPixel >> 16) & 0xFF;
+                        uint8_t destG = (destPixel >> 8) & 0xFF;
+                        uint8_t destB = destPixel & 0xFF;
+
+                        // For premultiplied alpha: out = src + dest * (1 - srcAlpha)
+                        uint8_t outR = srcR + (destR * (255 - srcAlpha)) / 255;
+                        uint8_t outG = srcG + (destG * (255 - srcAlpha)) / 255;
+                        uint8_t outB = srcB + (destB * (255 - srcAlpha)) / 255;
+
+                        pixels[destY * dispWidth + destX] = 0xFF000000 | (outR << 16) | (outG << 8) | outB;
                     }
                 }
             }
         }
     }
+
+    CGContextRelease(ctx);
+#endif
 }
 
 void Interpreter::renderWorldMorphs() {
@@ -704,8 +815,8 @@ void Interpreter::renderWorldMorphs() {
         // Use a safe offset that works for both regular and Retina displays
         int titleBarOffset = (dispHeight > 1000) ? 56 : 28;  // Retina vs regular
 
-        // Draw menu bar background (dark gray)
-        uint32_t menuBarColor = 0xFF3C3C3C;  // Dark gray
+        // Draw menu bar background (bright red for debug visibility)
+        uint32_t menuBarColor = 0xFFFF0000;  // Bright red for debugging
         for (int y = titleBarOffset; y < titleBarOffset + menuBarHeight; y++) {
             for (int x = 0; x < dispWidth; x++) {
                 if (y < dispHeight) {
