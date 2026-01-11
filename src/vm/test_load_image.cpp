@@ -72,7 +72,7 @@ public:
 
         // Sample some pixels to see what's there
         std::cout << "\nSample pixels:" << std::endl;
-        int samples[][2] = {{0,0}, {100,100}, {width_/2, height_/2}, {width_-1, height_-1}};
+        int samples[][2] = {{0,0}, {10,35}, {100,100}, {width_/2, height_/2}, {width_-1, height_-1}};
         for (auto& s : samples) {
             int x = s[0], y = s[1];
             if (x < width_ && y < height_) {

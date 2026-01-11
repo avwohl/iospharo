@@ -700,11 +700,17 @@ void Interpreter::renderWorldMorphs() {
 
     // Helper to render MenubarMorph with text
     auto renderMenuBar = [&](Oop menubarMorph, int menuBarHeight) {
+        // Offset below Mac title bar (title bar is ~28px, but in Retina it's ~56px)
+        // Use a safe offset that works for both regular and Retina displays
+        int titleBarOffset = (dispHeight > 1000) ? 56 : 28;  // Retina vs regular
+
         // Draw menu bar background (dark gray)
         uint32_t menuBarColor = 0xFF3C3C3C;  // Dark gray
-        for (int y = 0; y < menuBarHeight; y++) {
+        for (int y = titleBarOffset; y < titleBarOffset + menuBarHeight; y++) {
             for (int x = 0; x < dispWidth; x++) {
-                pixels[y * dispWidth + x] = menuBarColor;
+                if (y < dispHeight) {
+                    pixels[y * dispWidth + x] = menuBarColor;
+                }
             }
         }
 
@@ -815,10 +821,20 @@ void Interpreter::renderWorldMorphs() {
 
         // Draw menu item labels with proper spacing
         int textX = 10;  // Starting x position
-        int textY = (menuBarHeight - 14) / 2;  // Vertically center (14 = 7*2 scaled font height)
+        int textY = titleBarOffset + (menuBarHeight - 14) / 2;  // Vertically center below title bar
         int spacing = 24;  // Space between items
 
+        if (logFile && renderCallCount <= 3) {
+            fprintf(logFile, "[MENUBAR] Drawing text at y=%d (offset=%d), menuBarHeight=%d\n",
+                    textY, titleBarOffset, menuBarHeight);
+            fflush(logFile);
+        }
+
         for (const std::string& label : labels) {
+            if (logFile && renderCallCount <= 3) {
+                fprintf(logFile, "[MENUBAR] drawText('%s') at x=%d y=%d\n", label.c_str(), textX, textY);
+                fflush(logFile);
+            }
             drawText(pixels, dispWidth, dispHeight, textX, textY, label, textColor);
             textX += static_cast<int>(label.length()) * 12 + spacing;  // 12 = 6*2 char width
         }

@@ -3,6 +3,7 @@
  */
 
 #include "EventQueue.hpp"
+#include <iostream>
 
 namespace pharo {
 
@@ -53,6 +54,9 @@ void EventQueue::setEventCallback(EventCallback callback, void* context) {
 
 void EventQueue::setInputSemaphoreIndex(int index) {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (inputSemaphoreIndex_ != index) {
+        std::cerr << "[QUEUE] Setting input semaphore index: " << inputSemaphoreIndex_ << " -> " << index << "\n";
+    }
     inputSemaphoreIndex_ = index;
 }
 

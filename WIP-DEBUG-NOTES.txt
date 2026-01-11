@@ -5,6 +5,12 @@ Date: 2025-01-10
 STATUS: WORKING
 Display now renders World morphs correctly with proper colors and bounds.
 
+BUILDING:
+After modifying any C++ source files (e.g., Interpreter.cpp):
+1. For Mac testing: cmake --build build-app
+2. For iOS/Xcode: ./build-xcframework.sh
+   This rebuilds PharoVMCore.xcframework for all platforms.
+
 CURRENT BEHAVIOR:
 - World background fills entire display first
 - Morphs render recursively on top with proper bounds
@@ -45,16 +51,86 @@ CHANGES MADE:
 
 7. Cleaned up debug output from Interpreter.cpp
 
+8. Fixed TaskbarMorph/MenubarMorph visibility:
+   - System morphs (MenubarMorph, TaskbarMorph) have forced standard bounds
+   - MenubarMorph: full width, offset below macOS title bar
+   - TaskbarMorph: full width at bottom
+   - These are set regardless of actual slot values (layout may not be initialized at startup)
+
+9. Added basic text rendering:
+   - 5x7 bitmap font for printable ASCII (32-126)
+   - Text extracted from slots 5-11 (different morphs store text in different slots)
+   - Auto-contrast: white text on dark backgrounds, black on light
+   - Text morphs detected by class name containing: String, Label, MenuItem, Item
+
+10. Added Retina display support:
+    - Detects Retina by checking if display width > 1500px
+    - Scales coordinates 2x for Retina (menu bar offset, morph bounds)
+    - Font scale: 3x on Retina, 2x on standard displays
+    - MenubarItemMorph bounds scaled to match display resolution
+
 VERIFIED WORKING:
 - SmallFloat encoding/decoding roundtrip for values like 1.0, 168.0, 80.0, -42.5, 0.0, 1024.0, 0.5
 - Morphs with SmallFloat coordinates now render correctly (e.g., ImageMorph)
 - Display shows proper color distribution without black overwrite
+- TaskbarMorph renders at bottom of screen
+- MenubarMorph renders at top of screen (properly offset for macOS title bar)
+- Text extraction and bitmap font rendering working!
+- Menu items show text: "Pharo", "Browse", "Debug", "Sources", "System", "Library", "Windows", "Help"
+- Menu bar and taskbar render ON TOP of other morphs (z-order fix)
+- Rate limiting to 30 FPS to prevent flashing
+- Mac Catalyst app runs and displays correctly on Retina displays
+
+EVENT HANDLING (2026-01-10):
+- Added processInputEvents() to read events from queue during render loop
+- Force-set input semaphore index to 1 at startup (Pharo's EventSensor doesn't run)
+- Implemented primitiveMousePoint (90) - returns tracked mouse position
+- Implemented primitiveInputWord (95) - returns tracked button state
+- Added menu click detection in processInputEvents()
+- Events ARE being received and processed - see [CLICK] logs
+
+ISSUE: Pharo's event loop isn't running because:
+- No process waits on the input semaphore (excessSignals just accumulate)
+- EventSensor polling isn't happening without OSiOSDriver
+- primitiveGetNextEvent (264) is only called once during startup
+
+WORKAROUND IMPLEMENTED:
+- Direct menu click handling in C++ processInputEvents()
+- Track selectedMenuIndex_ for which menu is clicked
+- Menu bar click detection based on y-coordinate and x-position
+- Dropdown menu rendering when menu is selected:
+  - Light gray dropdown box appears below clicked menu
+  - Tries to extract menu item text from Pharo menu structures
+  - Falls back to "(Menu not loaded)" placeholder if structure not found
+  - Click outside menu or click same menu to close
+
+CLICK DETECTION FIX (2026-01-10):
+**ROOT CAUSE**: Coordinate system mismatch!
+- Touch events from iOS are in POINTS (logical pixels)
+- Display surface and menu bar detection were in PIXELS (physical pixels)
+- On Retina: 1 point = 2 pixels
+- Touch at y=40 points was compared to menu bar at y=56-100 pixels → NEVER MATCHED
+
+**FIX**: Scale touch coordinates to pixels before menu detection:
+```cpp
+int x = event.arg1 * scale;  // Convert points to pixels
+int y = event.arg2 * scale;  // Convert points to pixels
+```
+Now touch at y=40 points → y=80 pixels (on Retina), which IS in menu bar range.
+
+Also added:
+- Visual click indicator: red circle at click position
+- Shows "M:X" next to click where X is selected menu index
+- Simplified dropdown rendering (doesn't depend on extractBounds)
+- processInputEvents() called in renderWorldMorphs() as fallback
+- Immediate render triggered when click detected
 
 REMAINING ISSUES:
-- No text rendering yet (black text areas are skipped)
 - Some primitive failures (267, 198) but not affecting display
+- Text rendering is basic (no kerning, no Unicode beyond ASCII)
+- Full Pharo event dispatch not working (requires OSiOSDriver in image)
 
 NEXT STEPS:
-- Implement basic text rendering
-- Fix remaining primitive failures
-- Test on iOS device/simulator
+- Test on iOS device/simulator with visual debug indicator
+- Improve text rendering (Unicode support, proper font metrics)
+- Consider adding OSiOSDriver to image for full event handling
