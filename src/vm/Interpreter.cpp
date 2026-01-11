@@ -515,7 +515,8 @@ static void drawText(uint32_t* pixels, int dispWidth, int dispHeight,
 
     // Create a generous text buffer - Helvetica chars are roughly 0.6 * fontSize wide
     int textWidth = static_cast<int>(text.length()) * fontSize;  // Generous estimate
-    int textHeight = fontSize + 8;  // Extra room for ascenders/descenders
+    // Font metrics: ascender ~80% of fontSize, descender ~20%, so total height ~100%+
+    int textHeight = static_cast<int>(fontSize * 1.4);  // Extra room for ascenders/descenders
 
     // Clamp to display bounds
     if (x < 0 || y < 0 || x >= dispWidth || y >= dispHeight) return;
@@ -588,9 +589,11 @@ static void drawText(uint32_t* pixels, int dispWidth, int dispHeight,
     CFRelease(attrString);
 
     if (line) {
-        // Position text baseline - need room for descenders below and ascenders above
-        // With transformed coords (Y going down), a higher Y value means lower on screen
-        CGContextSetTextPosition(ctx, 0, textHeight - 2);  // Leave 2px margin at bottom for descenders
+        // Position text baseline - need room for ascenders ABOVE and descenders BELOW
+        // After the Y-flip transform, Y=0 is at top, Y increases downward
+        // Ascender is ~80% of fontSize, so position baseline there to leave room above
+        CGFloat baseline = fontSize * 0.82;  // Room for ascenders above baseline
+        CGContextSetTextPosition(ctx, 0, baseline);
         CTLineDraw(line, ctx);
         CFRelease(line);
     }

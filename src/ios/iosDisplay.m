@@ -10,6 +10,9 @@
 #include "pharovm/pharo.h"
 #include "iospharo/iosDisplay.h"
 
+/* Forward declaration from PlatformBridge */
+extern uint32_t* vm_getDisplayPixels(void);
+
 /* Display state */
 static void* displayBitsBuffer = NULL;
 static int currentWidth = 1024;
@@ -40,6 +43,12 @@ void ios_registerDisplayUpdateCallback(IOSDisplayUpdateCallback callback) {
 }
 
 void* ios_getDisplayBits(void) {
+    // First try the C++ platform bridge display surface (used for direct morph rendering)
+    uint32_t* platformPixels = vm_getDisplayPixels();
+    if (platformPixels) {
+        return platformPixels;
+    }
+    // Fall back to VM's display form bits
     return displayBitsBuffer;
 }
 
