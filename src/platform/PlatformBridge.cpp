@@ -18,12 +18,18 @@ namespace pharo {
     DisplaySurface* gDisplaySurface = nullptr;
 }
 
-// Double-buffered display surface to prevent flickering (thread-safe)
+// Triple-buffered display surface to prevent tearing during resize
+// Uses three buffers: VM writes to back, swap promotes back->ready->front
+// Metal always reads from a stable front buffer that's never written during read
 class SimpleDisplaySurface : public pharo::DisplaySurface {
 public:
     SimpleDisplaySurface(int w, int h, int d) : width_(w), height_(h), depth_(d) {
-        backBuffer_.resize(w * h);
-        frontBuffer_.resize(w * h);
+        buffers_[0].resize(w * h);
+        buffers_[1].resize(w * h);
+        buffers_[2].resize(w * h);
+        backIdx_ = 0;
+        frontIdx_ = 1;
+        // Buffer 2 is spare
     }
 
     int width() const override {
@@ -39,16 +45,16 @@ public:
         return depth_;
     }
 
-    // Returns back buffer for rendering
+    // Returns back buffer for VM rendering
     uint32_t* pixels() override {
         std::lock_guard<std::mutex> lock(mutex_);
-        return backBuffer_.data();
+        return buffers_[backIdx_].data();
     }
 
     // Returns front buffer for display (Metal reads this)
     uint32_t* frontPixels() {
         std::lock_guard<std::mutex> lock(mutex_);
-        return frontBuffer_.data();
+        return buffers_[frontIdx_].data();
     }
 
     size_t pitch() const override {
@@ -57,12 +63,13 @@ public:
     }
 
     // Safe access: get dimensions and pointer together atomically
+    // Returns front buffer which is stable (not being written to)
     void getBufferInfo(int& w, int& h, uint32_t*& pixels, size_t& size) {
         std::lock_guard<std::mutex> lock(mutex_);
         w = width_;
         h = height_;
-        pixels = frontBuffer_.data();  // Return front buffer for display
-        size = frontBuffer_.size();
+        pixels = buffers_[frontIdx_].data();
+        size = buffers_[frontIdx_].size();
     }
 
     void invalidateRect(int x, int y, int w, int h) override {
@@ -78,13 +85,13 @@ public:
         }
     }
 
-    // Called when a frame is complete - swaps buffers
+    // Called when a frame is complete - swaps back to front
+    // This is atomic - just changes an index, no copying
     void update() override {
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            // Swap back buffer to front buffer (copy for simplicity)
-            // A true swap would exchange pointers, but copy is safer
-            std::copy(backBuffer_.begin(), backBuffer_.end(), frontBuffer_.begin());
+            // Swap: back becomes front, old front becomes new back
+            std::swap(backIdx_, frontIdx_);
         }
         invalidateRect(0, 0, width_, height_);
     }
@@ -98,35 +105,32 @@ public:
     void resize(int w, int h, int d) {
         std::lock_guard<std::mutex> lock(mutex_);
 
-        // Preserve old dimensions for content copy
+        // Preserve old dimensions and front buffer content
         int oldWidth = width_;
         int oldHeight = height_;
-
-        // Save old front buffer content
-        std::vector<uint32_t> oldFront = frontBuffer_;
+        std::vector<uint32_t> oldFront = buffers_[frontIdx_];
 
         // Update dimensions
         width_ = w;
         height_ = h;
         depth_ = d;
 
-        // Resize buffers
-        backBuffer_.resize(w * h);
-        frontBuffer_.resize(w * h);
+        // Resize all buffers
+        for (int i = 0; i < 3; i++) {
+            buffers_[i].resize(w * h);
+            // Fill with gray background
+            std::fill(buffers_[i].begin(), buffers_[i].end(), 0xFF808080);
+        }
 
-        // Fill new buffer with gray background (avoids black flash)
-        uint32_t grayBg = 0xFF808080;  // ARGB gray
-        std::fill(frontBuffer_.begin(), frontBuffer_.end(), grayBg);
-        std::fill(backBuffer_.begin(), backBuffer_.end(), grayBg);
-
-        // Copy old content to new buffer (preserves what fits)
+        // Copy old content to all buffers (preserves what fits)
         if (oldWidth > 0 && oldHeight > 0 && !oldFront.empty()) {
             int copyW = std::min(oldWidth, w);
             int copyH = std::min(oldHeight, h);
-            for (int y = 0; y < copyH; y++) {
-                for (int x = 0; x < copyW; x++) {
-                    frontBuffer_[y * w + x] = oldFront[y * oldWidth + x];
-                    backBuffer_[y * w + x] = oldFront[y * oldWidth + x];
+            for (int i = 0; i < 3; i++) {
+                for (int y = 0; y < copyH; y++) {
+                    for (int x = 0; x < copyW; x++) {
+                        buffers_[i][y * w + x] = oldFront[y * oldWidth + x];
+                    }
                 }
             }
         }
@@ -135,8 +139,9 @@ public:
 private:
     mutable std::mutex mutex_;
     int width_, height_, depth_;
-    std::vector<uint32_t> backBuffer_;   // Rendering writes here
-    std::vector<uint32_t> frontBuffer_;  // Metal reads from here
+    std::vector<uint32_t> buffers_[3];  // Triple buffer
+    int backIdx_ = 0;   // VM writes here
+    int frontIdx_ = 1;  // Metal reads here
     DisplayUpdateFunc updateCallback_ = nullptr;
     void* context_ = nullptr;
 };
