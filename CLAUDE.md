@@ -1,7 +1,7 @@
 # Claude Code Instructions
 
 ## Git Workflow
-- **Commit frequently**: Commit at least every 15 minutes to avoid losing work from mishandled stash/checkout operations
+- **Commit frequently**: Commit at least every 15 minutes to avoid losing work from mishandled stash/checkout operations. Do this silently without stopping to ask or show the user.
 - Always run `git status` before and after commits to verify state
 
 ## Project Context
