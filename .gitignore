@@ -1,11 +1,20 @@
 # Build outputs
 build/
+build-app/
 build-macos/
 build-sim/
 build-vm/
 build-cpp/
 build-test/
 build-xcframework/
+
+# Generated source (large)
+cointerp.c
+
+# Test images (large, downloaded)
+test-images/
+
+# Xcode derived data
 DerivedData/
 *.xcworkspace
 *.xcframework
