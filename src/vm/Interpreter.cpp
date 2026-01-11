@@ -960,14 +960,25 @@ void Interpreter::renderWorldMorphs() {
             fflush(logFile);
         }
 
+        // First pass: render all submorphs EXCEPT MenubarMorph (render it last so it's on top)
+        Oop menubarMorph = Oop::nil();
         for (size_t i = 0; i < numSubmorphs; i++) {
             Oop submorph = subHdr->slotAt(i);
+            std::string cn = getMorphClassName(submorph);
             if (logFile && renderCallCount <= 10 && i < 5) {
-                std::string cn = getMorphClassName(submorph);
                 fprintf(logFile, "[RENDER #%d]   submorph[%zu] = %s\n", renderCallCount, i, cn.c_str());
                 fflush(logFile);
             }
-            renderMorph(submorph, 0, static_cast<int>(i));
+            if (cn == "MenubarMorph") {
+                menubarMorph = submorph;  // Save for later, render last
+            } else {
+                renderMorph(submorph, 0, static_cast<int>(i));
+            }
+        }
+
+        // Second pass: render MenubarMorph last so it's always on top
+        if (!menubarMorph.isNil()) {
+            renderMorph(menubarMorph, 0, 0);
         }
     } else {
         if (logFile && renderCallCount <= 10) {
