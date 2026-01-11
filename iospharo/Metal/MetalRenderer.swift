@@ -82,13 +82,11 @@ class MetalRenderer: NSObject, MTKViewDelegate {
 
     /// Update the display texture from VM framebuffer
     func updateDisplayTexture() {
-        guard let bits = bridge?.getDisplayBits() else {
-            return
-        }
+        // Get all display info atomically to prevent tearing during resize
+        guard let bridge = bridge else { return }
+        let (pixels, width, height, _) = bridge.getDisplayBufferInfo()
 
-        let (width, height) = bridge?.getDisplaySize() ?? (0, 0)
-
-        guard width > 0 && height > 0 else {
+        guard let bits = pixels, width > 0, height > 0 else {
             return
         }
 

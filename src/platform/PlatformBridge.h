@@ -26,6 +26,17 @@ uint32_t* vm_getDisplayPixels(void);
 int vm_getDisplayWidth(void);
 int vm_getDisplayHeight(void);
 
+// Atomic display info (prevents tearing during resize)
+typedef struct {
+    uint32_t* pixels;
+    int width;
+    int height;
+    size_t size;  // Total pixels (width * height)
+} DisplayBufferInfo;
+
+// Get all display info atomically - use this instead of separate calls
+void vm_getDisplayBufferInfo(DisplayBufferInfo* info);
+
 // Display callback (called when VM wants to update screen)
 typedef void (*DisplayUpdateFunc)(int x, int y, int w, int h, void* context);
 void vm_setDisplayUpdateCallback(DisplayUpdateFunc callback, void* context);

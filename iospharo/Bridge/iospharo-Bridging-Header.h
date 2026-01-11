@@ -53,6 +53,16 @@ int ios_getDisplayHeight(void);
 int ios_getDisplayDepth(void);
 void ios_setDisplaySize(int width, int height);
 
+/* Atomic display info (prevents tearing during resize) */
+typedef struct {
+    uint32_t* pixels;
+    int width;
+    int height;
+    size_t size;  // Total pixels (width * height)
+} IOSDisplayBufferInfo;
+
+void ios_getDisplayBufferInfo(IOSDisplayBufferInfo* info);
+
 /* iOS event bridge functions (legacy) */
 void ios_queueTouchEvent(int type, int x, int y, int buttons, int modifiers);
 void ios_queueKeyEvent(int charCode, int pressCode, int modifiers);

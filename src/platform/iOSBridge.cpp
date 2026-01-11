@@ -139,6 +139,25 @@ void ios_setDisplaySize(int width, int height) {
     vm_setDisplaySize(width, height, 32);
 }
 
+// iOS version of DisplayBufferInfo
+typedef struct {
+    uint32_t* pixels;
+    int width;
+    int height;
+    size_t size;
+} IOSDisplayBufferInfo;
+
+void ios_getDisplayBufferInfo(IOSDisplayBufferInfo* info) {
+    if (!info) return;
+    // Use the atomic vm_ function
+    DisplayBufferInfo vmInfo;
+    vm_getDisplayBufferInfo(&vmInfo);
+    info->pixels = vmInfo.pixels;
+    info->width = vmInfo.width;
+    info->height = vmInfo.height;
+    info->size = vmInfo.size;
+}
+
 // ===== Legacy Touch/Key Events (redirect to new API) =====
 
 void ios_queueTouchEvent(int type, int x, int y, int buttons, int modifiers) {

@@ -323,6 +323,27 @@ int vm_getDisplayHeight(void) {
     return gDisplay ? gDisplay->height() : 0;
 }
 
+void vm_getDisplayBufferInfo(DisplayBufferInfo* info) {
+    if (!info) return;
+
+    if (gDisplay) {
+        // Get all info atomically with a single lock
+        int w, h;
+        uint32_t* pixels;
+        size_t size;
+        gDisplay->getBufferInfo(w, h, pixels, size);
+        info->pixels = pixels;
+        info->width = w;
+        info->height = h;
+        info->size = size;
+    } else {
+        info->pixels = nullptr;
+        info->width = 0;
+        info->height = 0;
+        info->size = 0;
+    }
+}
+
 void vm_setDisplayUpdateCallback(DisplayUpdateFunc callback, void* context) {
     // Always store the callback (in case display doesn't exist yet)
     gPendingCallback = callback;

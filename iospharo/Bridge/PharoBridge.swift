@@ -157,6 +157,13 @@ class PharoBridge: ObservableObject {
         return (Int(ios_getDisplayWidth()), Int(ios_getDisplayHeight()))
     }
 
+    /// Get all display info atomically (prevents tearing during resize)
+    func getDisplayBufferInfo() -> (pixels: UnsafeMutablePointer<UInt32>?, width: Int, height: Int, size: Int) {
+        var info = IOSDisplayBufferInfo()
+        ios_getDisplayBufferInfo(&info)
+        return (info.pixels, Int(info.width), Int(info.height), Int(info.size))
+    }
+
     /// Get display depth (bits per pixel)
     func getDisplayDepth() -> Int {
         return Int(ios_getDisplayDepth())
