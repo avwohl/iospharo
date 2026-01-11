@@ -81,13 +81,9 @@ class MetalRenderer: NSObject, MTKViewDelegate {
     // MARK: - Texture Management
 
     /// Update the display texture from VM framebuffer
+    /// WIP: Resize tearing not fully fixed yet
     func updateDisplayTexture() {
         guard let bridge = bridge else { return }
-
-        // Skip updates during resize - keep showing old texture
-        if ios_isDisplayResizing() {
-            return
-        }
 
         // Get display info atomically
         let (pixels, width, height, _) = bridge.getDisplayBufferInfo()

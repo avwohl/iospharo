@@ -18,8 +18,8 @@ namespace pharo {
     DisplaySurface* gDisplaySurface = nullptr;
 }
 
-// Double-buffered display surface with resize detection
-// Uses generation counter to let Metal know when resize is in progress
+// Double-buffered display surface
+// WIP: Resize tearing not fully fixed - needs proper synchronization
 class SimpleDisplaySurface : public pharo::DisplaySurface {
 public:
     SimpleDisplaySurface(int w, int h, int d) : width_(w), height_(h), depth_(d) {
@@ -40,13 +40,11 @@ public:
         return depth_;
     }
 
-    // Returns back buffer for VM rendering
     uint32_t* pixels() override {
         std::lock_guard<std::mutex> lock(mutex_);
         return backBuffer_.data();
     }
 
-    // Returns front buffer for display
     uint32_t* frontPixels() {
         std::lock_guard<std::mutex> lock(mutex_);
         return frontBuffer_.data();
@@ -57,7 +55,6 @@ public:
         return width_ * 4;
     }
 
-    // Get buffer info with generation counter for resize detection
     void getBufferInfo(int& w, int& h, uint32_t*& pixels, size_t& size) {
         std::lock_guard<std::mutex> lock(mutex_);
         w = width_;
@@ -66,16 +63,8 @@ public:
         size = frontBuffer_.size();
     }
 
-    // Get current generation (increments on resize)
-    uint32_t getGeneration() const {
-        std::lock_guard<std::mutex> lock(mutex_);
-        return generation_;
-    }
-
-    // Check if resize is in progress (skip frames during resize)
     bool isResizing() const {
-        std::lock_guard<std::mutex> lock(mutex_);
-        return resizing_;
+        return false;  // Disabled - was causing deadlock
     }
 
     void invalidateRect(int x, int y, int w, int h) override {
@@ -91,12 +80,10 @@ public:
         }
     }
 
-    // Called when a frame is complete - swaps back to front
     void update() override {
         {
             std::lock_guard<std::mutex> lock(mutex_);
             std::swap(backBuffer_, frontBuffer_);
-            resizing_ = false;  // VM has rendered a frame, resize complete
         }
         invalidateRect(0, 0, width_, height_);
     }
@@ -109,36 +96,21 @@ public:
 
     void resize(int w, int h, int d) {
         std::lock_guard<std::mutex> lock(mutex_);
-
-        // Skip if same size
-        if (w == width_ && h == height_ && d == depth_) {
-            return;
-        }
-
-        // Mark resize in progress
-        resizing_ = true;
-        generation_++;
-
-        // Update dimensions
+        if (w == width_ && h == height_ && d == depth_) return;
         width_ = w;
         height_ = h;
         depth_ = d;
-
-        // Resize buffers
         backBuffer_.resize(w * h);
         frontBuffer_.resize(w * h);
-        // Don't fill - let VM render fresh content
     }
 
 private:
     mutable std::mutex mutex_;
     int width_, height_, depth_;
-    std::vector<uint32_t> backBuffer_;   // VM writes here
-    std::vector<uint32_t> frontBuffer_;  // Swapped from back on update()
+    std::vector<uint32_t> backBuffer_;
+    std::vector<uint32_t> frontBuffer_;
     DisplayUpdateFunc updateCallback_ = nullptr;
     void* context_ = nullptr;
-    uint32_t generation_ = 0;  // Increments on resize
-    bool resizing_ = false;    // True during resize until VM renders
 };
 
 // Global state
