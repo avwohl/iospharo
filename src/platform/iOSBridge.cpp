@@ -158,6 +158,10 @@ void ios_getDisplayBufferInfo(IOSDisplayBufferInfo* info) {
     info->size = vmInfo.size;
 }
 
+bool ios_copyDisplayBuffer(uint32_t* dest, size_t destSize, int* outWidth, int* outHeight) {
+    return vm_copyDisplayBuffer(dest, destSize, outWidth, outHeight);
+}
+
 // ===== Legacy Touch/Key Events (redirect to new API) =====
 
 void ios_queueTouchEvent(int type, int x, int y, int buttons, int modifiers) {

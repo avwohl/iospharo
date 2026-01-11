@@ -63,6 +63,9 @@ typedef struct {
 
 void ios_getDisplayBufferInfo(IOSDisplayBufferInfo* info);
 
+/* SAFE: Copy display to destination buffer under lock (prevents tearing) */
+bool ios_copyDisplayBuffer(uint32_t* dest, size_t destSize, int* outWidth, int* outHeight);
+
 /* iOS event bridge functions (legacy) */
 void ios_queueTouchEvent(int type, int x, int y, int buttons, int modifiers);
 void ios_queueKeyEvent(int charCode, int pressCode, int modifiers);

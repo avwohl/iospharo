@@ -37,6 +37,11 @@ typedef struct {
 // Get all display info atomically - use this instead of separate calls
 void vm_getDisplayBufferInfo(DisplayBufferInfo* info);
 
+// SAFE: Copy display buffer to destination (holds lock during copy)
+// Returns true if successful, false if dest too small
+// This prevents tearing by not letting pointers escape
+bool vm_copyDisplayBuffer(uint32_t* dest, size_t destSize, int* outWidth, int* outHeight);
+
 // Display callback (called when VM wants to update screen)
 typedef void (*DisplayUpdateFunc)(int x, int y, int w, int h, void* context);
 void vm_setDisplayUpdateCallback(DisplayUpdateFunc callback, void* context);
