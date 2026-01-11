@@ -331,7 +331,11 @@ private:
     // Menu interaction state (for direct menu handling)
     int selectedMenuIndex_ = -1;  // -1 = no menu selected
     int prevSelectedMenuIndex_ = -1;  // Previous frame's menu state for dirty tracking
+    int64_t lastMenuClickTime_ = 0;  // Debounce duplicate clicks
+    int lastMenuClickX_ = -1000;     // Last click X coordinate
+    int lastMenuClickY_ = -1000;     // Last click Y coordinate
     std::vector<std::pair<int, int>> menuItemBounds_;  // Stored menu item X bounds (start, end)
+    std::vector<Oop> menuBarItemMorphs_;  // The actual menu bar item morphs for dropdown access
     int menuBarTop_ = 0;     // Top of menu bar in pixels
     int menuBarBottom_ = 0;  // Bottom of menu bar in pixels
     int menuBarScale_ = 1;   // Scale factor (2 for Retina)

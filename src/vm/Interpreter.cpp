@@ -872,8 +872,9 @@ void Interpreter::renderWorldMorphs() {
         // Menu item text color (dark gray for readability on light background)
         uint32_t textColor = 0xFF1A1A1A;
 
-        // Collect menu item labels
+        // Collect menu item labels and store morphs for dropdown access
         std::vector<std::string> labels;
+        menuBarItemMorphs_.clear();
         for (size_t i = 0; i < numItems; i++) {
             Oop item = subHdr->slotAt(i);
             if (item.isNil() || !item.isObject()) continue;
@@ -939,6 +940,7 @@ void Interpreter::renderWorldMorphs() {
 
             if (!label.empty()) {
                 labels.push_back(label);
+                menuBarItemMorphs_.push_back(item);  // Store morph for dropdown access
                 if (logFile && renderCallCount <= 10) {
                     fprintf(logFile, "[MENUBAR] Item %zu label: '%s'\n", i, label.c_str());
                     fflush(logFile);
@@ -1016,6 +1018,219 @@ void Interpreter::renderWorldMorphs() {
         menuBarTop_ = titleBarOffset;
         menuBarBottom_ = titleBarOffset + scaledMenuBarHeight;
         menuBarScale_ = isRetina ? 2 : 1;
+
+        // Render dropdown menu if a menu is selected
+        if (selectedMenuIndex_ >= 0 && selectedMenuIndex_ < static_cast<int>(menuBarItemMorphs_.size())) {
+            Oop selectedItem = menuBarItemMorphs_[selectedMenuIndex_];
+
+            // Find the menu associated with this menu bar item
+            // In Pharo, the menu is typically in slot 6 or nearby slots
+            Oop menuMorph = Oop::nil();
+            ObjectHeader* itemHdr = selectedItem.asObjectPtr();
+
+            // Look for MenuMorph in slots
+            for (size_t slot = 5; slot < std::min((size_t)20, itemHdr->slotCount()); slot++) {
+                Oop slotVal = memory_.fetchPointer(slot, selectedItem);
+                if (slotVal.isNil() || !slotVal.isObject()) continue;
+
+                // Check if it's a MenuMorph
+                Oop slotClass = memory_.classOf(slotVal);
+                if (slotClass.isObject()) {
+                    ObjectHeader* classHdr = slotClass.asObjectPtr();
+                    if (classHdr->slotCount() > 6) {
+                        Oop className = memory_.fetchPointer(6, slotClass);
+                        if (className.isObject()) {
+                            ObjectHeader* nameHdr = className.asObjectPtr();
+                            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                                std::string cn((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                if (cn.find("Menu") != std::string::npos) {
+                                    menuMorph = slotVal;
+                                    if (logFile) {
+                                        fprintf(logFile, "[DROPDOWN] Found menu in slot %zu: %s\n", slot, cn.c_str());
+                                        fflush(logFile);
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Collect dropdown item labels
+            std::vector<std::string> dropdownLabels;
+            std::vector<Oop> dropdownItemMorphs;
+
+            if (!menuMorph.isNil() && menuMorph.isObject()) {
+                // Get submorphs from the menu
+                Oop menuSubmorphs = memory_.fetchPointer(2, menuMorph);
+                if (!menuSubmorphs.isNil() && menuSubmorphs.isObject()) {
+                    ObjectHeader* msHdr = menuSubmorphs.asObjectPtr();
+                    size_t numMenuItems = msHdr->slotCount();
+
+                    if (logFile) {
+                        fprintf(logFile, "[DROPDOWN] Menu has %zu items\n", numMenuItems);
+                        fflush(logFile);
+                    }
+
+                    for (size_t mi = 0; mi < numMenuItems; mi++) {
+                        Oop menuItem = msHdr->slotAt(mi);
+                        if (menuItem.isNil() || !menuItem.isObject()) continue;
+
+                        // Extract label from menu item using same logic as menu bar
+                        std::string itemLabel;
+                        ObjectHeader* miHdr = menuItem.asObjectPtr();
+
+                        // Check slots for string label
+                        for (size_t slot = 5; slot < std::min((size_t)15, miHdr->slotCount()); slot++) {
+                            Oop slotVal = memory_.fetchPointer(slot, menuItem);
+                            if (slotVal.isNil() || !slotVal.isObject()) continue;
+
+                            ObjectHeader* slotHdr = slotVal.asObjectPtr();
+                            if (slotHdr->isBytesObject() && slotHdr->byteSize() > 0 && slotHdr->byteSize() < 100) {
+                                std::string s((char*)slotHdr->bytes(), slotHdr->byteSize());
+                                bool valid = true;
+                                for (char c : s) {
+                                    if (c < 32 || c > 126) { valid = false; break; }
+                                }
+                                if (valid && s.length() > 0) {
+                                    itemLabel = s;
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Also check submorphs for label
+                        if (itemLabel.empty()) {
+                            Oop itemSubmorphs = memory_.fetchPointer(2, menuItem);
+                            if (!itemSubmorphs.isNil() && itemSubmorphs.isObject()) {
+                                ObjectHeader* isHdr = itemSubmorphs.asObjectPtr();
+                                for (size_t j = 0; j < isHdr->slotCount() && itemLabel.empty(); j++) {
+                                    Oop subm = isHdr->slotAt(j);
+                                    if (subm.isNil() || !subm.isObject()) continue;
+
+                                    ObjectHeader* submHdr = subm.asObjectPtr();
+                                    for (size_t slot = 5; slot < std::min((size_t)15, submHdr->slotCount()); slot++) {
+                                        Oop slotVal = memory_.fetchPointer(slot, subm);
+                                        if (slotVal.isNil() || !slotVal.isObject()) continue;
+
+                                        ObjectHeader* svHdr = slotVal.asObjectPtr();
+                                        if (svHdr->isBytesObject() && svHdr->byteSize() > 0 && svHdr->byteSize() < 100) {
+                                            std::string s((char*)svHdr->bytes(), svHdr->byteSize());
+                                            bool valid = true;
+                                            for (char c : s) {
+                                                if (c < 32 || c > 126) { valid = false; break; }
+                                            }
+                                            if (valid && s.length() > 0) {
+                                                itemLabel = s;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (!itemLabel.empty()) {
+                            dropdownLabels.push_back(itemLabel);
+                            dropdownItemMorphs.push_back(menuItem);
+                            if (logFile) {
+                                fprintf(logFile, "[DROPDOWN] Item %zu: '%s'\n", mi, itemLabel.c_str());
+                                fflush(logFile);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Draw dropdown if we have items
+            if (!dropdownLabels.empty()) {
+                // Calculate dropdown dimensions
+                int dropdownFontSize = fontSize;
+                int lineHeight = static_cast<int>(dropdownFontSize * 1.5);
+                int dropdownPadding = isRetina ? 16 : 8;
+
+                // Find max label width
+                int maxLabelWidth = 0;
+                for (const auto& lbl : dropdownLabels) {
+                    int w = static_cast<int>(lbl.length()) * charWidth;
+                    if (w > maxLabelWidth) maxLabelWidth = w;
+                }
+
+                int dropdownWidth = maxLabelWidth + dropdownPadding * 4;
+                int dropdownHeight = static_cast<int>(dropdownLabels.size()) * lineHeight + dropdownPadding * 2;
+
+                // Position dropdown below the selected menu item
+                int dropdownX = (selectedMenuIndex_ < static_cast<int>(menuItemBounds_.size()))
+                    ? menuItemBounds_[selectedMenuIndex_].first : textX;
+                int dropdownY = titleBarOffset + scaledMenuBarHeight;
+
+                // Draw dropdown background (white with subtle shadow)
+                uint32_t bgColor = 0xFFFAFAFA;
+                uint32_t borderColor = 0xFFCCCCCC;
+                uint32_t shadowColor = 0x20000000;  // Semi-transparent black
+
+                // Draw shadow (offset by 2 pixels)
+                for (int sy = dropdownY + 2; sy < dropdownY + dropdownHeight + 4 && sy < dispHeight; sy++) {
+                    for (int sx = dropdownX + 2; sx < dropdownX + dropdownWidth + 4 && sx < dispWidth; sx++) {
+                        if (sx >= 0 && sy >= 0) {
+                            pixels[sy * dispWidth + sx] = shadowColor;
+                        }
+                    }
+                }
+
+                // Draw background
+                for (int dy = dropdownY; dy < dropdownY + dropdownHeight && dy < dispHeight; dy++) {
+                    for (int dx = dropdownX; dx < dropdownX + dropdownWidth && dx < dispWidth; dx++) {
+                        if (dx >= 0 && dy >= 0) {
+                            pixels[dy * dispWidth + dx] = bgColor;
+                        }
+                    }
+                }
+
+                // Draw border
+                for (int dx = dropdownX; dx < dropdownX + dropdownWidth && dx < dispWidth; dx++) {
+                    if (dx >= 0) {
+                        if (dropdownY >= 0 && dropdownY < dispHeight)
+                            pixels[dropdownY * dispWidth + dx] = borderColor;
+                        int bottomY = dropdownY + dropdownHeight - 1;
+                        if (bottomY >= 0 && bottomY < dispHeight)
+                            pixels[bottomY * dispWidth + dx] = borderColor;
+                    }
+                }
+                for (int dy = dropdownY; dy < dropdownY + dropdownHeight && dy < dispHeight; dy++) {
+                    if (dy >= 0) {
+                        if (dropdownX >= 0 && dropdownX < dispWidth)
+                            pixels[dy * dispWidth + dropdownX] = borderColor;
+                        int rightX = dropdownX + dropdownWidth - 1;
+                        if (rightX >= 0 && rightX < dispWidth)
+                            pixels[dy * dispWidth + rightX] = borderColor;
+                    }
+                }
+
+                // Draw menu item labels
+                int itemY = dropdownY + dropdownPadding;
+                for (size_t di = 0; di < dropdownLabels.size(); di++) {
+                    drawText(pixels, dispWidth, dispHeight,
+                             dropdownX + dropdownPadding * 2, itemY,
+                             dropdownLabels[di], textColor, dropdownFontSize);
+                    itemY += lineHeight;
+                }
+
+                // Store dropdown state for click handling
+                dropdownState_.x = dropdownX;
+                dropdownState_.y = dropdownY;
+                dropdownState_.width = dropdownWidth;
+                dropdownState_.height = dropdownHeight;
+                dropdownState_.lineHeight = lineHeight;
+                dropdownState_.itemMorphs = dropdownItemMorphs;
+                dropdownState_.valid = true;
+            } else {
+                dropdownState_.valid = false;
+            }
+        } else {
+            dropdownState_.valid = false;
+        }
 
         totalMorphsDrawn++;
     };
@@ -1229,6 +1444,32 @@ void Interpreter::processInputEvents() {
                 }
                 // Check if clicking in menu bar
                 else if (y >= menuBarTop_ && y < menuBarBottom_ && !menuItemBounds_.empty()) {
+                    // Debounce: ignore duplicate clicks within 100ms
+                    auto now = std::chrono::steady_clock::now();
+                    int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        now.time_since_epoch()).count();
+
+                    int64_t timeSinceLastClick = nowMs - lastMenuClickTime_;
+                    // Check if this is a duplicate click at the same location
+                    bool isSameLocation = (std::abs(x - lastMenuClickX_) < 20 &&
+                                           std::abs(y - lastMenuClickY_) < 20);
+                    if (logFile) {
+                        fprintf(logFile, "[DEBOUNCE] Time: %lld ms, same location: %d\n",
+                                timeSinceLastClick, isSameLocation ? 1 : 0);
+                        fflush(logFile);
+                    }
+
+                    if (timeSinceLastClick < 600 && isSameLocation) {
+                        if (logFile) {
+                            fprintf(logFile, "[CLICK] Ignored duplicate click (debounce)\n");
+                            fflush(logFile);
+                        }
+                        continue;  // Skip duplicate click
+                    }
+                    lastMenuClickTime_ = nowMs;
+                    lastMenuClickX_ = x;
+                    lastMenuClickY_ = y;
+
                     // Find which menu item was clicked
                     int clickedIndex = -1;
                     for (size_t i = 0; i < menuItemBounds_.size(); i++) {
