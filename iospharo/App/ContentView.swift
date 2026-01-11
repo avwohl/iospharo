@@ -56,20 +56,9 @@ struct ContentView: View {
     // MARK: - Views
 
     private var pharoCanvas: some View {
-        VStack(spacing: 0) {
-            // Pharo display
-            PharoCanvasView(bridge: bridge)
-                .edgesIgnoringSafeArea(.all)
-
-            // Keyboard toggle for text input
-            if showingKeyboard {
-                keyboardBar
-            }
-        }
-        .overlay(alignment: .topTrailing) {
-            // Toolbar overlay
-            toolbarOverlay
-        }
+        // Pharo display - MTKView handles events directly
+        PharoCanvasView(bridge: bridge)
+            .edgesIgnoringSafeArea(.all)
     }
 
     private var downloadingView: some View {
