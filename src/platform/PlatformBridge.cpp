@@ -18,11 +18,12 @@ namespace pharo {
     DisplaySurface* gDisplaySurface = nullptr;
 }
 
-// Simple display surface backed by a pixel buffer (thread-safe)
+// Double-buffered display surface to prevent flickering (thread-safe)
 class SimpleDisplaySurface : public pharo::DisplaySurface {
 public:
     SimpleDisplaySurface(int w, int h, int d) : width_(w), height_(h), depth_(d) {
-        pixels_.resize(w * h);
+        backBuffer_.resize(w * h);
+        frontBuffer_.resize(w * h);
     }
 
     int width() const override {
@@ -37,10 +38,19 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         return depth_;
     }
+
+    // Returns back buffer for rendering
     uint32_t* pixels() override {
         std::lock_guard<std::mutex> lock(mutex_);
-        return pixels_.data();
+        return backBuffer_.data();
     }
+
+    // Returns front buffer for display (Metal reads this)
+    uint32_t* frontPixels() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return frontBuffer_.data();
+    }
+
     size_t pitch() const override {
         std::lock_guard<std::mutex> lock(mutex_);
         return width_ * 4;
@@ -51,8 +61,8 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         w = width_;
         h = height_;
-        pixels = pixels_.data();
-        size = pixels_.size();
+        pixels = frontBuffer_.data();  // Return front buffer for display
+        size = frontBuffer_.size();
     }
 
     void invalidateRect(int x, int y, int w, int h) override {
@@ -68,14 +78,15 @@ public:
         }
     }
 
+    // Called when a frame is complete - swaps buffers
     void update() override {
-        int w, h;
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            w = width_;
-            h = height_;
+            // Swap back buffer to front buffer (copy for simplicity)
+            // A true swap would exchange pointers, but copy is safer
+            std::copy(backBuffer_.begin(), backBuffer_.end(), frontBuffer_.begin());
         }
-        invalidateRect(0, 0, w, h);
+        invalidateRect(0, 0, width_, height_);
     }
 
     void setCallback(DisplayUpdateFunc cb, void* ctx) {
@@ -89,13 +100,15 @@ public:
         width_ = w;
         height_ = h;
         depth_ = d;
-        pixels_.resize(w * h);
+        backBuffer_.resize(w * h);
+        frontBuffer_.resize(w * h);
     }
 
 private:
     mutable std::mutex mutex_;
     int width_, height_, depth_;
-    std::vector<uint32_t> pixels_;
+    std::vector<uint32_t> backBuffer_;   // Rendering writes here
+    std::vector<uint32_t> frontBuffer_;  // Metal reads from here
     DisplayUpdateFunc updateCallback_ = nullptr;
     void* context_ = nullptr;
 };
@@ -269,7 +282,9 @@ void vm_setDisplaySize(int width, int height, int depth) {
 }
 
 uint32_t* vm_getDisplayPixels(void) {
-    return gDisplay ? gDisplay->pixels() : nullptr;
+    // Return front buffer for display (Metal reads this)
+    // Rendering writes to back buffer via gDisplay->pixels()
+    return gDisplay ? gDisplay->frontPixels() : nullptr;
 }
 
 int vm_getDisplayWidth(void) {
