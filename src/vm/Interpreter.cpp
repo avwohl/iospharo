@@ -4629,9 +4629,23 @@ void Interpreter::pushFrame(Oop method, int argCount) {
     frame.savedFP = framePointer_;
     frame.savedArgCount = argCount_;
 
-    if (frameLog) {
-        fprintf(frameLog, "[PUSH_FRAME] pushed to depth=%d savedIP=%p\n",
-                frameDepth_, (void*)frame.savedIP);
+    if (frameLog && frameDepth_ > 400) {
+        // Only log deep frames to identify recursion
+        // Get selector from method if possible
+        std::string methodInfo = "unknown";
+        if (method.isObject() && method.rawBits() > 0x10000) {
+            ObjectHeader* mHdr = method.asObjectPtr();
+            if (mHdr->slotCount() > 1) {
+                Oop lit1 = mHdr->slotAt(1);
+                if (lit1.isObject() && lit1.rawBits() > 0x10000) {
+                    ObjectHeader* litHdr = lit1.asObjectPtr();
+                    if (litHdr->isBytesObject() && litHdr->byteSize() < 50) {
+                        methodInfo = std::string((char*)litHdr->bytes(), litHdr->byteSize());
+                    }
+                }
+            }
+        }
+        fprintf(frameLog, "[PUSH_FRAME] depth=%zu method=%s\n", frameDepth_, methodInfo.c_str());
         fflush(frameLog);
     }
 
@@ -4891,6 +4905,15 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     if (origStr == "addTopicSpec:" && argCount == 1) {
         pop();  // Pop argument
         // Leave receiver on stack as return value
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #slotScope - compiler scope chain method that can recurse infinitely
+    // if scopes are misconfigured. Return nil to break the chain.
+    if (origStr == "slotScope" && argCount == 0) {
+        pop();  // Pop receiver
+        push(memory_.nil());  // Return nil to end scope chain
         dnuDepth--;
         return;
     }
