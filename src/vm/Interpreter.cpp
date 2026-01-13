@@ -1431,6 +1431,15 @@ void Interpreter::processInputEvents() {
                 }
 
                 // Check if clicking in dropdown menu area
+                // Log dropdown click check
+                if (logFile) {
+                    fprintf(logFile, "[DROPDOWN CHECK] valid=%d x=%d y=%d bounds=(%d,%d,%d,%d)\n",
+                            dropdownState_.valid ? 1 : 0, x, y,
+                            dropdownState_.x, dropdownState_.y,
+                            dropdownState_.x + dropdownState_.width,
+                            dropdownState_.y + dropdownState_.height);
+                    fflush(logFile);
+                }
                 if (dropdownState_.valid &&
                     x >= dropdownState_.x && x < dropdownState_.x + dropdownState_.width &&
                     y >= dropdownState_.y && y < dropdownState_.y + dropdownState_.height) {
