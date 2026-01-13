@@ -339,6 +339,7 @@ void vm_setDisplayUpdateCallback(DisplayUpdateFunc callback, void* context) {
 }
 
 void vm_postMouseEvent(int type, int x, int y, int buttons, int modifiers) {
+    std::cerr << "[VM MOUSE] type=" << type << " x=" << x << " y=" << y << " buttons=" << buttons << "\n";
     pharo::Event event;
     event.type = static_cast<int>(pharo::EventType::Mouse);
     event.timeStamp = static_cast<int>(

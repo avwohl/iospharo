@@ -28,16 +28,30 @@ class PharoMTKView: MTKView {
         isUserInteractionEnabled = true
         isMultipleTouchEnabled = true
 
-        #if targetEnvironment(macCatalyst)
-        // Enable pointer interaction for Mac Catalyst cursor customization
-        let pointerInteraction = UIPointerInteraction(delegate: self)
-        addInteraction(pointerInteraction)
-        #endif
+        // Note: Removed UIPointerInteraction as it might be consuming click events
+        // #if targetEnvironment(macCatalyst)
+        // let pointerInteraction = UIPointerInteraction(delegate: self)
+        // addInteraction(pointerInteraction)
+        // #endif
     }
 
     // Make view able to become first responder to receive touch events
     override var canBecomeFirstResponder: Bool {
         return true
+    }
+
+    // Override hitTest to log when touches are reaching this view
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let result = super.hitTest(point, with: event)
+        NSLog("[HITTEST] point=\(point) event=\(String(describing: event?.type.rawValue)) result=\(String(describing: result))")
+        return result
+    }
+
+    // Override point(inside:with:) to log
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        let result = super.point(inside: point, with: event)
+        NSLog("[POINT] point=\(point) inside=\(result)")
+        return result
     }
 
     override func didMoveToWindow() {
@@ -54,9 +68,12 @@ class PharoMTKView: MTKView {
     // MARK: - Touch Handling (works on iOS and Mac Catalyst)
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let touch = touches.first, let bridge = bridge else { return }
-        let point = touch.location(in: self)
-        print("[TOUCH] began at \(point)")
+        let point = touches.first?.location(in: self) ?? .zero
+        NSLog("[TOUCH] touchesBegan at \(point), bridge=\(String(describing: bridge))")
+        guard let touch = touches.first, let bridge = bridge else {
+            NSLog("[TOUCH] ERROR: touch or bridge nil!")
+            return
+        }
 
         // Determine button based on touch type
         var buttons = IOS_RED_BUTTON
@@ -114,23 +131,17 @@ class PharoMTKView: MTKView {
     #endif
 }
 
-#if targetEnvironment(macCatalyst)
-// MARK: - Pointer Interaction Delegate for Mac Catalyst
-
-extension PharoMTKView: UIPointerInteractionDelegate {
-    func pointerInteraction(_ interaction: UIPointerInteraction, regionFor request: UIPointerRegionRequest, defaultRegion: UIPointerRegion) -> UIPointerRegion? {
-        // Track pointer movement for hover effects
-        let point = request.location
-        // Could send hover events here if needed
-        return defaultRegion
-    }
-
-    func pointerInteraction(_ interaction: UIPointerInteraction, styleFor region: UIPointerRegion) -> UIPointerStyle? {
-        // Use crosshair cursor for the canvas
-        return UIPointerStyle(effect: .automatic(UITargetedPreview(view: self)))
-    }
-}
-#endif
+// Note: UIPointerInteractionDelegate removed - was potentially consuming click events
+// #if targetEnvironment(macCatalyst)
+// extension PharoMTKView: UIPointerInteractionDelegate {
+//     func pointerInteraction(_ interaction: UIPointerInteraction, regionFor request: UIPointerRegionRequest, defaultRegion: UIPointerRegion) -> UIPointerRegion? {
+//         return defaultRegion
+//     }
+//     func pointerInteraction(_ interaction: UIPointerInteraction, styleFor region: UIPointerRegion) -> UIPointerStyle? {
+//         return UIPointerStyle(effect: .automatic(UITargetedPreview(view: self)))
+//     }
+// }
+// #endif
 
 // MARK: - View Controller for proper event handling
 
@@ -152,6 +163,21 @@ class PharoCanvasViewController: UIViewController {
         mtkView.preferredFramesPerSecond = 60
 
         view.addSubview(mtkView)
+
+        // Add a test button to verify clicks work
+        let testButton = UIButton(type: .system)
+        testButton.setTitle("Test Click", for: .normal)
+        testButton.backgroundColor = .red
+        testButton.setTitleColor(.white, for: .normal)
+        testButton.translatesAutoresizingMaskIntoConstraints = false
+        testButton.addTarget(self, action: #selector(testButtonTapped), for: .touchUpInside)
+        view.addSubview(testButton)
+        NSLayoutConstraint.activate([
+            testButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            testButton.topAnchor.constraint(equalTo: view.topAnchor, constant: 100),
+            testButton.widthAnchor.constraint(equalToConstant: 100),
+            testButton.heightAnchor.constraint(equalToConstant: 50)
+        ])
 
         // Constrain to fill parent
         NSLayoutConstraint.activate([
@@ -176,10 +202,20 @@ class PharoCanvasViewController: UIViewController {
         super.viewDidAppear(animated)
         mtkView.becomeFirstResponder()
         NSLog("[VC] viewDidAppear, mtkView isFirstResponder: \(mtkView.isFirstResponder)")
+        NSLog("[VC] view.frame: \(view.frame)")
+        NSLog("[VC] mtkView.frame: \(mtkView.frame)")
+        NSLog("[VC] mtkView.isUserInteractionEnabled: \(mtkView.isUserInteractionEnabled)")
+        NSLog("[VC] bridge: \(String(describing: bridge))")
+
+        // Add a timer to periodically log that the app is alive
+        Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            NSLog("[HEARTBEAT] App is running, mtkView.isFirstResponder: \(self?.mtkView?.isFirstResponder ?? false)")
+        }
     }
 
     private func setupGestureRecognizers() {
-        // NOTE: Add gestures to view (not mtkView) for reliable Mac Catalyst click handling
+        // Add gestures directly to mtkView for Mac Catalyst click handling
+        let targetView = mtkView!
 
         // Single tap gesture (primary click) - critical for Mac Catalyst
         let singleTapGesture = UITapGestureRecognizer(
@@ -187,8 +223,8 @@ class PharoCanvasViewController: UIViewController {
             action: #selector(handleSingleTap(_:))
         )
         singleTapGesture.numberOfTapsRequired = 1
-        view.addGestureRecognizer(singleTapGesture)
-        NSLog("[VC] Added single tap gesture to view")
+        targetView.addGestureRecognizer(singleTapGesture)
+        NSLog("[VC] Added single tap gesture to mtkView")
 
         // Double tap gesture (double click)
         let doubleTapGesture = UITapGestureRecognizer(
@@ -196,10 +232,11 @@ class PharoCanvasViewController: UIViewController {
             action: #selector(handleDoubleTap(_:))
         )
         doubleTapGesture.numberOfTapsRequired = 2
-        view.addGestureRecognizer(doubleTapGesture)
+        targetView.addGestureRecognizer(doubleTapGesture)
 
-        // Single tap requires double tap to fail
-        singleTapGesture.require(toFail: doubleTapGesture)
+        // Single tap requires double tap to fail - but this adds 200ms delay
+        // For better responsiveness, remove this requirement
+        // singleTapGesture.require(toFail: doubleTapGesture)
 
         // Pan gesture for mouse drags
         let panGesture = UIPanGestureRecognizer(
@@ -208,7 +245,7 @@ class PharoCanvasViewController: UIViewController {
         )
         panGesture.minimumNumberOfTouches = 1
         panGesture.maximumNumberOfTouches = 1
-        view.addGestureRecognizer(panGesture)
+        targetView.addGestureRecognizer(panGesture)
 
         // Two-finger pan gesture (scroll)
         let twoFingerPanGesture = UIPanGestureRecognizer(
@@ -217,7 +254,7 @@ class PharoCanvasViewController: UIViewController {
         )
         twoFingerPanGesture.minimumNumberOfTouches = 2
         twoFingerPanGesture.maximumNumberOfTouches = 2
-        view.addGestureRecognizer(twoFingerPanGesture)
+        targetView.addGestureRecognizer(twoFingerPanGesture)
 
         // Long press gesture (right click on iOS)
         let longPressGesture = UILongPressGestureRecognizer(
@@ -225,7 +262,7 @@ class PharoCanvasViewController: UIViewController {
             action: #selector(handleLongPress(_:))
         )
         longPressGesture.minimumPressDuration = 0.5
-        view.addGestureRecognizer(longPressGesture)
+        targetView.addGestureRecognizer(longPressGesture)
 
         // Two-finger tap (middle click)
         let twoFingerTapGesture = UITapGestureRecognizer(
@@ -233,24 +270,33 @@ class PharoCanvasViewController: UIViewController {
             action: #selector(handleTwoFingerTap(_:))
         )
         twoFingerTapGesture.numberOfTouchesRequired = 2
-        view.addGestureRecognizer(twoFingerTapGesture)
+        targetView.addGestureRecognizer(twoFingerTapGesture)
 
         // Pinch gesture (zoom)
         let pinchGesture = UIPinchGestureRecognizer(
             target: self,
             action: #selector(handlePinch(_:))
         )
-        view.addGestureRecognizer(pinchGesture)
+        targetView.addGestureRecognizer(pinchGesture)
 
-        NSLog("[VC] Setup %d gesture recognizers on view", view.gestureRecognizers?.count ?? 0)
+        NSLog("[VC] Setup %d gesture recognizers on mtkView", targetView.gestureRecognizers?.count ?? 0)
+    }
+
+    // MARK: - Test Button Handler
+
+    @objc func testButtonTapped() {
+        NSLog("[BUTTON] Test button was clicked!")
     }
 
     // MARK: - Gesture Handlers
 
     @objc func handleSingleTap(_ gesture: UITapGestureRecognizer) {
-        guard let bridge = bridge else { return }
         let point = gesture.location(in: mtkView)  // Get location relative to MTKView
-        NSLog("[SINGLE TAP] at \(point)")
+        NSLog("[SINGLE TAP] at \(point), bridge=\(String(describing: bridge))")
+        guard let bridge = bridge else {
+            NSLog("[SINGLE TAP] ERROR: bridge is nil!")
+            return
+        }
 
         bridge.sendTouchDown(at: point, buttons: IOS_RED_BUTTON)
         bridge.sendTouchUp(at: point)
