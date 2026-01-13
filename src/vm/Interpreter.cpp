@@ -1625,8 +1625,23 @@ void Interpreter::invokeMenuItemAction(Oop menuItemMorph) {
 
     // Queue the action for safe execution
     if (!actionBlock.isNil()) {
-        // Find #value selector from special selectors
-        Oop valueSel = Oop::nil();
+        // Check block's numArgs to decide between value and value:
+        Oop numArgsObj = memory_.fetchPointer(2, actionBlock);
+        int blockNumArgs = 0;
+        if (numArgsObj.isSmallInteger()) {
+            blockNumArgs = static_cast<int>(numArgsObj.asSmallInteger());
+        }
+
+        if (logFile) {
+            fprintf(logFile, "[INVOKE] Block numArgs=%d\n", blockNumArgs);
+            fflush(logFile);
+        }
+
+        // Find appropriate selector from special selectors
+        Oop targetSel = Oop::nil();
+        const char* selectorName = (blockNumArgs == 0) ? "value" : "value:";
+        size_t selectorLen = strlen(selectorName);
+
         Oop specialObjs = memory_.specialObjectsArray();
         if (!specialObjs.isNil() && specialObjs.isObject()) {
             ObjectHeader* soHdr = specialObjs.asObjectPtr();
@@ -1638,9 +1653,9 @@ void Interpreter::invokeMenuItemAction(Oop menuItemMorph) {
                         Oop sel = saHdr->slotAt(i);
                         if (sel.isObject()) {
                             ObjectHeader* selHdr = sel.asObjectPtr();
-                            if (selHdr->isBytesObject() && selHdr->byteSize() == 5) {
-                                if (memcmp(selHdr->bytes(), "value", 5) == 0) {
-                                    valueSel = sel;
+                            if (selHdr->isBytesObject() && selHdr->byteSize() == selectorLen) {
+                                if (memcmp(selHdr->bytes(), selectorName, selectorLen) == 0) {
+                                    targetSel = sel;
                                     break;
                                 }
                             }
@@ -1650,21 +1665,26 @@ void Interpreter::invokeMenuItemAction(Oop menuItemMorph) {
             }
         }
 
-        if (!valueSel.isNil()) {
-            pendingMenuAction_.selector = valueSel;
+        if (!targetSel.isNil()) {
+            pendingMenuAction_.selector = targetSel;
             pendingMenuAction_.receiver = actionBlock;
+            pendingMenuAction_.argCount = (blockNumArgs > 0) ? 1 : 0;
+            pendingMenuAction_.argument = (blockNumArgs > 0) ? menuItemMorph : Oop::nil();
             pendingMenuAction_.pending = true;
             if (logFile) {
-                fprintf(logFile, "[INVOKE] Queued block action with #value\n");
+                fprintf(logFile, "[INVOKE] Queued block action with #%s (argCount=%d)\n",
+                        selectorName, pendingMenuAction_.argCount);
                 fflush(logFile);
             }
         } else if (logFile) {
-            fprintf(logFile, "[INVOKE] Could not find #value selector for block\n");
+            fprintf(logFile, "[INVOKE] Could not find #%s selector for block\n", selectorName);
             fflush(logFile);
         }
     } else if (!selector.isNil() && !target.isNil()) {
         pendingMenuAction_.selector = selector;
         pendingMenuAction_.receiver = target;
+        pendingMenuAction_.argument = Oop::nil();
+        pendingMenuAction_.argCount = 0;
         pendingMenuAction_.pending = true;
         if (logFile) {
             fprintf(logFile, "[INVOKE] Queued selector+target action\n");
@@ -1673,6 +1693,8 @@ void Interpreter::invokeMenuItemAction(Oop menuItemMorph) {
     } else if (!selector.isNil()) {
         pendingMenuAction_.selector = selector;
         pendingMenuAction_.receiver = menuItemMorph;
+        pendingMenuAction_.argument = Oop::nil();
+        pendingMenuAction_.argCount = 0;
         pendingMenuAction_.pending = true;
         if (logFile) {
             fprintf(logFile, "[INVOKE] Queued selector-only action\n");
@@ -2725,6 +2747,13 @@ void Interpreter::pushSpecial(int which) {
 }
 
 void Interpreter::returnValue(Oop value) {
+    static FILE* frameLog = fopen("/tmp/iospharo-frame.log", "a");
+
+    if (frameLog) {
+        fprintf(frameLog, "[RETURN_VALUE] frameDepth=%d\n", frameDepth_);
+        fflush(frameLog);
+    }
+
     // If no frames to pop, check if we have a sender context to return to
     if (frameDepth_ == 0) {
         // Check if current context has a sender
@@ -3329,9 +3358,13 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                                 if (pendingMenuAction_.pending) {
                                     Oop actionSel = pendingMenuAction_.selector;
                                     Oop actionRcvr = pendingMenuAction_.receiver;
+                                    Oop actionArg = pendingMenuAction_.argument;
+                                    int actionArgCount = pendingMenuAction_.argCount;
                                     pendingMenuAction_.pending = false;
                                     pendingMenuAction_.selector = Oop::nil();
                                     pendingMenuAction_.receiver = Oop::nil();
+                                    pendingMenuAction_.argument = Oop::nil();
+                                    pendingMenuAction_.argCount = 0;
 
                                     // Log the action being executed
                                     std::string selStr = "<unknown>";
@@ -3355,10 +3388,12 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                                         }
                                     }
                                     if (actionLog) {
-                                        fprintf(actionLog, "[EXEC] About to execute #%s on %s\n", selStr.c_str(), rcvrClass.c_str());
+                                        fprintf(actionLog, "[EXEC] About to execute #%s on %s with %d args\n",
+                                                selStr.c_str(), rcvrClass.c_str(), actionArgCount);
                                         fflush(actionLog);
                                     }
-                                    std::cerr << "[MENU-ACTION] Executing #" << selStr << " on " << rcvrClass << "\n";
+                                    std::cerr << "[MENU-ACTION] Executing #" << selStr << " on " << rcvrClass
+                                              << " with " << actionArgCount << " args\n";
                                     std::cerr.flush();
 
                                     // Pop doOneCycleFor:'s args and receiver
@@ -3366,11 +3401,14 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
                                     // Set up the action call
                                     push(actionRcvr);
+                                    if (actionArgCount > 0 && !actionArg.isNil()) {
+                                        push(actionArg);
+                                    }
                                     if (actionLog) {
                                         fprintf(actionLog, "[EXEC] Calling sendSelector now\n");
                                         fflush(actionLog);
                                     }
-                                    sendSelector(actionSel, 0);  // #value takes no args
+                                    sendSelector(actionSel, actionArgCount);
                                     if (actionLog) {
                                         fprintf(actionLog, "[EXEC] sendSelector returned\n");
                                         fflush(actionLog);
@@ -4495,6 +4533,8 @@ void Interpreter::activateBlock(Oop block, int argCount) {
 // ===== FRAME MANAGEMENT =====
 
 void Interpreter::pushFrame(Oop method, int argCount) {
+    static FILE* frameLog = fopen("/tmp/iospharo-frame.log", "a");
+
     // Save current execution state before switching to new method
     if (frameDepth_ >= MaxFrameDepth) {
         running_ = false;
@@ -4510,7 +4550,11 @@ void Interpreter::pushFrame(Oop method, int argCount) {
     frame.savedFP = framePointer_;
     frame.savedArgCount = argCount_;
 
-    // DEBUG_LOG("[FRAME] Push frame #" << frameDepth_ << " savedIP=" << (void*)frame.savedIP;
+    if (frameLog) {
+        fprintf(frameLog, "[PUSH_FRAME] pushed to depth=%d savedIP=%p\n",
+                frameDepth_, (void*)frame.savedIP);
+        fflush(frameLog);
+    }
 
     // Calculate number of temporaries for the new method
     Oop newMethodHeader = memory_.fetchPointer(0, method);
@@ -4529,14 +4573,26 @@ void Interpreter::pushFrame(Oop method, int argCount) {
 }
 
 void Interpreter::popFrame() {
+    static FILE* frameLog = fopen("/tmp/iospharo-frame.log", "a");
+
     // Restore previous execution state
     if (frameDepth_ == 0) {
+        if (frameLog) {
+            fprintf(frameLog, "[POP_FRAME] frameDepth==0, setting running_=false\n");
+            fflush(frameLog);
+        }
         running_ = false;
         return;
     }
 
     --frameDepth_;
     SavedFrame& frame = savedFrames_[frameDepth_];
+
+    if (frameLog) {
+        fprintf(frameLog, "[POP_FRAME] popping to depth=%d savedIP=%p\n",
+                frameDepth_, (void*)frame.savedIP);
+        fflush(frameLog);
+    }
 
     // Reset stack to frame pointer (discards temps and locals)
     stackPointer_ = framePointer_;
@@ -4552,6 +4608,10 @@ void Interpreter::popFrame() {
 
     // If this was the last frame, we're done
     if (frameDepth_ == 0 && frame.savedIP == nullptr) {
+        if (frameLog) {
+            fprintf(frameLog, "[POP_FRAME] last frame with null savedIP, setting running_=false\n");
+            fflush(frameLog);
+        }
         running_ = false;
     }
 }

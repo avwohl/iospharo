@@ -353,6 +353,8 @@ private:
     struct PendingMenuAction {
         Oop selector = Oop::nil();
         Oop receiver = Oop::nil();
+        Oop argument = Oop::nil();  // Optional argument for value: or cull:
+        int argCount = 0;           // 0 for value, 1 for value:
         bool pending = false;
     };
     PendingMenuAction pendingMenuAction_;
