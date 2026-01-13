@@ -1614,10 +1614,26 @@ void Interpreter::invokeMenuItemAction(Oop menuItemMorph) {
             else if (slotClassName.find("Block") != std::string::npos) {
                 actionBlock = slot;
             }
-            // First non-symbol, non-block object could be target
-            else if (target.isNil() && selector.isNil()) {
-                if (slotClassName.find("Morph") == std::string::npos) {
+            // Potential target - but skip known non-target types
+            else if (target.isNil()) {
+                // Skip display/rendering related objects that are not action targets
+                bool isSkipType = (slotClassName.find("Morph") != std::string::npos ||
+                    slotClassName.find("Font") != std::string::npos ||
+                    slotClassName.find("Color") != std::string::npos ||
+                    slotClassName.find("Form") != std::string::npos ||
+                    slotClassName.find("Extension") != std::string::npos ||
+                    slotClassName == "True" ||
+                    slotClassName == "False" ||
+                    slotClassName == "Array");
+
+                // "Unknown" at slot 14 is often the actual target (class lookup failed)
+                // Accept it if we're at the typical action slot position
+                if (!isSkipType || (slotClassName == "Unknown" && i >= 14)) {
                     target = slot;
+                    if (logFile) {
+                        fprintf(logFile, "[INVOKE]   -> Setting as potential target (slot %zu)\n", i);
+                        fflush(logFile);
+                    }
                 }
             }
         }
