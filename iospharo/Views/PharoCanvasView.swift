@@ -40,19 +40,8 @@ class PharoMTKView: MTKView {
         return true
     }
 
-    // Override hitTest to log when touches are reaching this view
-    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        let result = super.hitTest(point, with: event)
-        NSLog("[HITTEST] point=\(point) event=\(String(describing: event?.type.rawValue)) result=\(String(describing: result))")
-        return result
-    }
-
-    // Override point(inside:with:) to log
-    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        let result = super.point(inside: point, with: event)
-        NSLog("[POINT] point=\(point) inside=\(result)")
-        return result
-    }
+    // NOTE: hitTest and point(inside:) debug logging removed (was too verbose)
+    // Override these methods if debugging touch event delivery issues
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
@@ -68,12 +57,8 @@ class PharoMTKView: MTKView {
     // MARK: - Touch Handling (works on iOS and Mac Catalyst)
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        let point = touches.first?.location(in: self) ?? .zero
-        NSLog("[TOUCH] touchesBegan at \(point), bridge=\(String(describing: bridge))")
-        guard let touch = touches.first, let bridge = bridge else {
-            NSLog("[TOUCH] ERROR: touch or bridge nil!")
-            return
-        }
+        guard let touch = touches.first, let bridge = bridge else { return }
+        let point = touch.location(in: self)
 
         // Determine button based on touch type
         var buttons = IOS_RED_BUTTON
@@ -192,10 +177,7 @@ class PharoCanvasViewController: UIViewController {
         NSLog("[VC] mtkView.isUserInteractionEnabled: \(mtkView.isUserInteractionEnabled)")
         NSLog("[VC] bridge: \(String(describing: bridge))")
 
-        // Add a timer to periodically log that the app is alive
-        Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
-            NSLog("[HEARTBEAT] App is running, mtkView.isFirstResponder: \(self?.mtkView?.isFirstResponder ?? false)")
-        }
+        // Heartbeat timer removed - was too verbose for normal use
     }
 
     private func setupGestureRecognizers() {
@@ -271,13 +253,8 @@ class PharoCanvasViewController: UIViewController {
     // MARK: - Gesture Handlers
 
     @objc func handleSingleTap(_ gesture: UITapGestureRecognizer) {
+        guard let bridge = bridge else { return }
         let point = gesture.location(in: mtkView)  // Get location relative to MTKView
-        NSLog("[SINGLE TAP] at \(point), bridge=\(String(describing: bridge))")
-        guard let bridge = bridge else {
-            NSLog("[SINGLE TAP] ERROR: bridge is nil!")
-            return
-        }
-
         bridge.sendTouchDown(at: point, buttons: IOS_RED_BUTTON)
         bridge.sendTouchUp(at: point)
     }
