@@ -1617,11 +1617,15 @@ void Interpreter::invokeMenuItemAction(Oop menuItemMorph) {
             // Potential target - but skip known non-target types
             else if (target.isNil()) {
                 // Skip display/rendering related objects that are not action targets
+                // ByteString at slot 8 is the menu item label, not the target
+                // UndefinedObject is nil - never a valid target
                 bool isSkipType = (slotClassName.find("Morph") != std::string::npos ||
                     slotClassName.find("Font") != std::string::npos ||
                     slotClassName.find("Color") != std::string::npos ||
                     slotClassName.find("Form") != std::string::npos ||
                     slotClassName.find("Extension") != std::string::npos ||
+                    slotClassName.find("String") != std::string::npos ||  // ByteString is label
+                    slotClassName == "UndefinedObject" ||  // nil is never a valid target
                     slotClassName == "True" ||
                     slotClassName == "False" ||
                     slotClassName == "Array");
