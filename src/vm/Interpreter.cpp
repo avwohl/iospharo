@@ -1530,7 +1530,12 @@ void Interpreter::processInputEvents() {
 }
 
 void Interpreter::invokeMenuItemAction(Oop menuItemMorph) {
+    std::cerr << "[INVOKE] invokeMenuItemAction called, menuItemMorph.rawBits()=" << menuItemMorph.rawBits() << "\n";
     static FILE* logFile = fopen("/tmp/iospharo-menu-action.log", "a");
+    if (logFile) {
+        fprintf(logFile, "[INVOKE] Function called with rawBits=%llu\n", (unsigned long long)menuItemMorph.rawBits());
+        fflush(logFile);
+    }
 
     // Extract action from menu item and queue it for execution
     if (menuItemMorph.isNil() || !menuItemMorph.isObject()) {
@@ -3225,6 +3230,35 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 }
 
 void Interpreter::sendSelector(Oop selector, int argCount) {
+    // Recursion detection - break infinite recursion patterns
+    // Compare by string content since same symbol may have different Oops
+    static std::string lastSelStr;
+    static int sameSelCount = 0;
+    std::string selStr;
+    if (selector.isObject() && selector.rawBits() > 0x10000) {
+        ObjectHeader* selHdr = selector.asObjectPtr();
+        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+            selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+        }
+    }
+    if (!selStr.empty() && selStr == lastSelStr) {
+        sameSelCount++;
+        if (sameSelCount > 50) {
+            // Same selector called 50+ times in a row - likely infinite recursion
+            std::cerr << "[RECURSION] Breaking infinite loop: #" << selStr
+                      << " called " << sameSelCount << " times\n";
+            // Pop args and receiver, return nil
+            popN(argCount + 1);
+            push(memory_.nil());
+            sameSelCount = 0;
+            lastSelStr.clear();
+            return;
+        }
+    } else {
+        lastSelStr = selStr;
+        sameSelCount = 1;
+    }
+
     // Message send tracing (limited to first 50 for cleaner output)
     static int sendCount = 0;
     sendCount++;
@@ -4614,6 +4648,55 @@ void Interpreter::activateBlock(Oop block, int argCount) {
 void Interpreter::pushFrame(Oop method, int argCount) {
     static FILE* frameLog = fopen("/tmp/iospharo-frame.log", "a");
 
+    // Get method name/selector for recursion detection
+    std::string methodName = "";
+    if (method.isObject() && method.rawBits() > 0x10000) {
+        ObjectHeader* mHdr = method.asObjectPtr();
+        if (mHdr->slotCount() > 1) {
+            Oop lit1 = mHdr->slotAt(1);
+            if (lit1.isObject() && lit1.rawBits() > 0x10000) {
+                ObjectHeader* litHdr = lit1.asObjectPtr();
+                if (litHdr->isBytesObject() && litHdr->byteSize() < 50) {
+                    methodName = std::string((char*)litHdr->bytes(), litHdr->byteSize());
+                }
+            }
+        }
+    }
+
+    // Recursion detection - check if same method NAME is being pushed repeatedly
+    // This catches indirect recursion where different classes have same-named methods
+    static std::string lastMethodName = "";
+    static int sameMethodCount = 0;
+    static std::string bannedMethod = "";
+    static int bannedCallsRemaining = 0;
+
+    // If a method is banned, return nil immediately for all calls to it
+    if (!methodName.empty() && methodName == bannedMethod && bannedCallsRemaining > 0) {
+        bannedCallsRemaining--;
+        push(memory_.nil());
+        return;
+    }
+
+    if (!methodName.empty() && methodName == lastMethodName) {
+        sameMethodCount++;
+        if (sameMethodCount > 10) {
+            // Same method name pushed 10+ times - likely infinite recursion
+            std::cerr << "[RECURSION] Breaking infinite recursion: method " << methodName
+                      << " pushed " << sameMethodCount << " times at depth " << frameDepth_ << "\n";
+            // Ban this method for the next 1000 calls to break the recursion completely
+            bannedMethod = methodName;
+            bannedCallsRemaining = 1000;
+            // Push nil as return value and skip the method call entirely
+            push(memory_.nil());
+            sameMethodCount = 0;
+            lastMethodName = "";
+            return;
+        }
+    } else {
+        lastMethodName = methodName;
+        sameMethodCount = 1;
+    }
+
     // Save current execution state before switching to new method
     if (frameDepth_ >= MaxFrameDepth) {
         running_ = false;
@@ -4631,21 +4714,8 @@ void Interpreter::pushFrame(Oop method, int argCount) {
 
     if (frameLog && frameDepth_ > 400) {
         // Only log deep frames to identify recursion
-        // Get selector from method if possible
-        std::string methodInfo = "unknown";
-        if (method.isObject() && method.rawBits() > 0x10000) {
-            ObjectHeader* mHdr = method.asObjectPtr();
-            if (mHdr->slotCount() > 1) {
-                Oop lit1 = mHdr->slotAt(1);
-                if (lit1.isObject() && lit1.rawBits() > 0x10000) {
-                    ObjectHeader* litHdr = lit1.asObjectPtr();
-                    if (litHdr->isBytesObject() && litHdr->byteSize() < 50) {
-                        methodInfo = std::string((char*)litHdr->bytes(), litHdr->byteSize());
-                    }
-                }
-            }
-        }
-        fprintf(frameLog, "[PUSH_FRAME] depth=%zu method=%s\n", frameDepth_, methodInfo.c_str());
+        fprintf(frameLog, "[PUSH_FRAME] depth=%zu method=%s\n", frameDepth_,
+                methodName.empty() ? "unknown" : methodName.c_str());
         fflush(frameLog);
     }
 
