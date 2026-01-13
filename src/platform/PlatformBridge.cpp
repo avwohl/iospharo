@@ -18,11 +18,15 @@ namespace pharo {
     DisplaySurface* gDisplaySurface = nullptr;
 }
 
-// Double-buffered display surface
-// WIP: Resize tearing not fully fixed - needs proper synchronization
+// Double-buffered display surface with deferred resize
+// Resize is queued and applied during buffer swap to prevent tearing
 class SimpleDisplaySurface : public pharo::DisplaySurface {
 public:
-    SimpleDisplaySurface(int w, int h, int d) : width_(w), height_(h), depth_(d) {
+    SimpleDisplaySurface(int w, int h, int d)
+        : width_(w), height_(h), depth_(d),
+          frontWidth_(w), frontHeight_(h),
+          pendingWidth_(0), pendingHeight_(0), pendingDepth_(0),
+          pendingResize_(false) {
         backBuffer_.resize(w * h);
         frontBuffer_.resize(w * h);
     }
@@ -55,16 +59,18 @@ public:
         return width_ * 4;
     }
 
+    // Returns front buffer info - this buffer remains valid until next update()
     void getBufferInfo(int& w, int& h, uint32_t*& pixels, size_t& size) {
         std::lock_guard<std::mutex> lock(mutex_);
-        w = width_;
-        h = height_;
+        w = frontWidth_;
+        h = frontHeight_;
         pixels = frontBuffer_.data();
         size = frontBuffer_.size();
     }
 
     bool isResizing() const {
-        return false;  // Disabled - was causing deadlock
+        std::lock_guard<std::mutex> lock(mutex_);
+        return pendingResize_;
     }
 
     void invalidateRect(int x, int y, int w, int h) override {
@@ -81,11 +87,26 @@ public:
     }
 
     void update() override {
+        int newWidth, newHeight;
         {
             std::lock_guard<std::mutex> lock(mutex_);
+
+            // Apply pending resize to front buffer during swap
+            if (pendingResize_) {
+                frontBuffer_.resize(pendingWidth_ * pendingHeight_);
+                frontWidth_ = pendingWidth_;
+                frontHeight_ = pendingHeight_;
+                pendingResize_ = false;
+            }
+
             std::swap(backBuffer_, frontBuffer_);
+            std::swap(width_, frontWidth_);
+            std::swap(height_, frontHeight_);
+
+            newWidth = width_;
+            newHeight = height_;
         }
-        invalidateRect(0, 0, width_, height_);
+        invalidateRect(0, 0, newWidth, newHeight);
     }
 
     void setCallback(DisplayUpdateFunc cb, void* ctx) {
@@ -94,21 +115,39 @@ public:
         context_ = ctx;
     }
 
+    // Queue resize - applied during next update() to prevent tearing
     void resize(int w, int h, int d) {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (w == width_ && h == height_ && d == depth_) return;
+        if (w == width_ && h == height_ && d == depth_ && !pendingResize_) return;
+
+        // Resize back buffer immediately (VM renders here)
         width_ = w;
         height_ = h;
         depth_ = d;
         backBuffer_.resize(w * h);
-        frontBuffer_.resize(w * h);
+
+        // Queue front buffer resize for next swap (Metal reads from front)
+        pendingWidth_ = w;
+        pendingHeight_ = h;
+        pendingDepth_ = d;
+        pendingResize_ = true;
     }
 
 private:
     mutable std::mutex mutex_;
+
+    // Back buffer dimensions (current rendering target)
     int width_, height_, depth_;
     std::vector<uint32_t> backBuffer_;
+
+    // Front buffer dimensions (current display)
+    int frontWidth_, frontHeight_;
     std::vector<uint32_t> frontBuffer_;
+
+    // Pending resize (applied during swap)
+    int pendingWidth_, pendingHeight_, pendingDepth_;
+    bool pendingResize_;
+
     DisplayUpdateFunc updateCallback_ = nullptr;
     void* context_ = nullptr;
 };
