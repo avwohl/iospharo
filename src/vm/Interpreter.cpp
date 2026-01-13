@@ -3316,6 +3316,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                                 renderWorldMorphs();
 
                                 // Execute pending menu action if any
+                                static FILE* actionLog = fopen("/tmp/iospharo-action-exec.log", "a");
                                 if (pendingMenuAction_.pending) {
                                     Oop actionSel = pendingMenuAction_.selector;
                                     Oop actionRcvr = pendingMenuAction_.receiver;
@@ -3344,14 +3345,27 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                                             }
                                         }
                                     }
+                                    if (actionLog) {
+                                        fprintf(actionLog, "[EXEC] About to execute #%s on %s\n", selStr.c_str(), rcvrClass.c_str());
+                                        fflush(actionLog);
+                                    }
                                     std::cerr << "[MENU-ACTION] Executing #" << selStr << " on " << rcvrClass << "\n";
+                                    std::cerr.flush();
 
                                     // Pop doOneCycleFor:'s args and receiver
                                     popN(argCount + 1);
 
                                     // Set up the action call
                                     push(actionRcvr);
+                                    if (actionLog) {
+                                        fprintf(actionLog, "[EXEC] Calling sendSelector now\n");
+                                        fflush(actionLog);
+                                    }
                                     sendSelector(actionSel, 0);  // #value takes no args
+                                    if (actionLog) {
+                                        fprintf(actionLog, "[EXEC] sendSelector returned\n");
+                                        fflush(actionLog);
+                                    }
                                     return;
                                 }
 
