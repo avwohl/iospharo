@@ -3060,9 +3060,29 @@ void Interpreter::arithmeticSend(int which) {
         case 8: selector = selectors_.multiply; break;
         case 9: selector = selectors_.divide; break;
         default:
-            // For other arithmetic ops, look up the literal
-            selector = literal(which);
+            // For arithmetic ops 10-15 (\\, @, bitShift:, //, bitAnd:, bitOr:),
+            // look up from special selectors array, NOT from literals!
+            {
+                Oop specialSelectors = memory_.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
+                if (specialSelectors.isObject() && specialSelectors.rawBits() > 0x10000) {
+                    ObjectHeader* ssHdr = specialSelectors.asObjectPtr();
+                    size_t selectorSlot = which * 2;  // Each selector has 2 entries
+                    if (selectorSlot < ssHdr->slotCount()) {
+                        selector = ssHdr->slotAt(selectorSlot);
+                    } else {
+                        selector = Oop::nil();
+                    }
+                } else {
+                    selector = Oop::nil();
+                }
+            }
             break;
+    }
+
+    if (selector.isNil()) {
+        // Fallback: return receiver for unsupported operations
+        pop();  // Pop argument, leave receiver
+        return;
     }
 
     sendSelector(selector, argCount);
@@ -3188,6 +3208,44 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     // Message send tracing (limited to first 50 for cleaner output)
     static int sendCount = 0;
     sendCount++;
+
+    // Menu action tracing
+    static FILE* menuTrace = nullptr;
+    if (menuActionTraceCount_ > 0) {
+        if (!menuTrace) {
+            menuTrace = fopen("/tmp/iospharo-menu-trace.log", "a");
+        }
+        if (menuTrace) {
+            menuActionTraceCount_--;
+            std::string selName = "<unknown>";
+            if (selector.isObject() && selector.rawBits() > 0x10000) {
+                ObjectHeader* selHdr = selector.asObjectPtr();
+                if (selHdr->isBytesObject() && selHdr->byteSize() < 100) {
+                    selName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                }
+            }
+            Oop rcvr = stackValue(argCount);
+            std::string rcvrClassName = "<unknown>";
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                Oop cls = memory_.classOf(rcvr);
+                if (cls.isObject()) {
+                    Oop nameOop = memory_.fetchPointer(6, cls);
+                    if (nameOop.isObject()) {
+                        ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                            rcvrClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                        }
+                    }
+                }
+            } else if (rcvr.isSmallInteger()) {
+                rcvrClassName = "SmallInteger";
+            }
+            fprintf(menuTrace, "[TRACE %d] Send #%s to %s (args=%d)\n",
+                    200 - menuActionTraceCount_, selName.c_str(), rcvrClassName.c_str(), argCount);
+            fflush(menuTrace);
+        }
+    }
+
     if (sendCount <= 50) {
         // Show selector name
         std::string selName = "<unknown>";
@@ -3405,9 +3463,10 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                                         push(actionArg);
                                     }
                                     if (actionLog) {
-                                        fprintf(actionLog, "[EXEC] Calling sendSelector now\n");
+                                        fprintf(actionLog, "[EXEC] Calling sendSelector now, enabling trace for 200 sends\n");
                                         fflush(actionLog);
                                     }
+                                    menuActionTraceCount_ = 200;  // Trace next 200 message sends
                                     sendSelector(actionSel, actionArgCount);
                                     if (actionLog) {
                                         fprintf(actionLog, "[EXEC] sendSelector returned\n");

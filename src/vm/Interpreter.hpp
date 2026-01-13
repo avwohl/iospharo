@@ -358,6 +358,7 @@ private:
         bool pending = false;
     };
     PendingMenuAction pendingMenuAction_;
+    int menuActionTraceCount_ = 0;  // Number of sends to trace after menu action
 
     // Debug: visual click indicator
     int debugClickX_ = -1;

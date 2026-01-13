@@ -354,17 +354,41 @@ PrimitiveResult Interpreter::primitiveBitShift(int argCount) {
 
 PrimitiveResult Interpreter::primitiveMakePoint(int argCount) {
     // Primitive 18: Number @ aNumber - create a Point
+    static int callCount = 0;
+    static FILE* pointLog = nullptr;
+    callCount++;
+
+    if (!pointLog) {
+        pointLog = fopen("/tmp/iospharo-point.log", "a");
+    }
+
     Oop yArg = stackValue(0);
     Oop xRcvr = stackValue(1);
+
+    if (pointLog && callCount <= 20) {
+        fprintf(pointLog, "[POINT %d] primitiveMakePoint: x=0x%llx y=0x%llx\n",
+                callCount, (unsigned long long)xRcvr.rawBits(), (unsigned long long)yArg.rawBits());
+        fprintf(pointLog, "[POINT %d]   xRcvr.isSmallInt=%d yArg.isSmallInt=%d\n",
+                callCount, xRcvr.isSmallInteger() ? 1 : 0, yArg.isSmallInteger() ? 1 : 0);
+        fflush(pointLog);
+    }
 
     // Both arguments should be numbers (SmallInteger or Float)
     // For simplicity, we accept SmallIntegers, SmallFloats, or boxed Floats
     if (!xRcvr.isSmallInteger() && !xRcvr.isSmallFloat() &&
         !(xRcvr.isObject() && memory_.classOf(xRcvr) == memory_.specialObject(SpecialObjectIndex::ClassFloat))) {
+        if (pointLog && callCount <= 20) {
+            fprintf(pointLog, "[POINT %d]   FAIL: xRcvr not a number\n", callCount);
+            fflush(pointLog);
+        }
         return PrimitiveResult::Failure;
     }
     if (!yArg.isSmallInteger() && !yArg.isSmallFloat() &&
         !(yArg.isObject() && memory_.classOf(yArg) == memory_.specialObject(SpecialObjectIndex::ClassFloat))) {
+        if (pointLog && callCount <= 20) {
+            fprintf(pointLog, "[POINT %d]   FAIL: yArg not a number\n", callCount);
+            fflush(pointLog);
+        }
         return PrimitiveResult::Failure;
     }
 
@@ -372,15 +396,30 @@ PrimitiveResult Interpreter::primitiveMakePoint(int argCount) {
     Oop pointClass = memory_.specialObject(SpecialObjectIndex::ClassPoint);
     uint32_t classIndex = memory_.indexOfClass(pointClass);
 
+    if (pointLog && callCount <= 20) {
+        fprintf(pointLog, "[POINT %d]   pointClass=0x%llx classIndex=%u\n",
+                callCount, (unsigned long long)pointClass.rawBits(), classIndex);
+        fflush(pointLog);
+    }
+
     // Allocate Point with 2 slots (x, y)
     Oop point = memory_.allocateSlots(classIndex, 2);
     if (point.isNil()) {
+        if (pointLog && callCount <= 20) {
+            fprintf(pointLog, "[POINT %d]   FAIL: allocation failed\n", callCount);
+            fflush(pointLog);
+        }
         return PrimitiveResult::Failure;
     }
 
     // Store x and y
     memory_.storePointer(0, point, xRcvr);  // x
     memory_.storePointer(1, point, yArg);   // y
+
+    if (pointLog && callCount <= 20) {
+        fprintf(pointLog, "[POINT %d]   SUCCESS: point=0x%llx\n", callCount, (unsigned long long)point.rawBits());
+        fflush(pointLog);
+    }
 
     primitiveSuccess(point);
     return PrimitiveResult::Success;
