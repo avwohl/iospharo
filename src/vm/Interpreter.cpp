@@ -4685,7 +4685,15 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     }
     if (!skipLog) {
         std::cerr << "[DNU] Selector '#" << origStr << "' not found on " << rcvrClassName
-                  << " (args=" << argCount << ")\n";
+                  << " (args=" << argCount << ") len=" << origStr.length() << "\n";
+    }
+    // Debug: Check why fallbacks aren't matching
+    if (origStr.length() == 5) {
+        std::cerr << "[DNU-DEBUG] 5-char selector bytes: ";
+        for (size_t i = 0; i < origStr.length(); i++) {
+            std::cerr << std::hex << (int)(unsigned char)origStr[i] << " ";
+        }
+        std::cerr << std::dec << "\n";
     }
 
     // Fallback for startup to avoid DNU spiral
