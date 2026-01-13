@@ -39,6 +39,7 @@ typedef struct VMParameters_ {
 /* VM lifecycle functions */
 int vm_init(VMParameters* parameters);
 void vm_run_interpreter(void);
+void vm_stop(void);  // Must be called before app exit to prevent crash
 int vm_main_with_parameters(VMParameters* parameters);
 void vm_parameters_init(VMParameters* parameters);
 void vm_parameters_destroy(VMParameters* parameters);

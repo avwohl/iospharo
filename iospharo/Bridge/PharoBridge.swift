@@ -292,6 +292,18 @@ class PharoBridge: ObservableObject {
         case medium = 1
         case heavy = 2
     }
+
+    // MARK: - Shutdown
+
+    /// Stop the VM - MUST be called before app exit to prevent crash
+    func stop() {
+        guard isRunning else { return }
+        NSLog("[BRIDGE] Stopping VM...")
+        vm_stop()
+        NSLog("[BRIDGE] VM stopped")
+        isRunning = false
+        isInitialized = false
+    }
 }
 
 // MARK: - Button/Modifier Constants
