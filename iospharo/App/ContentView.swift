@@ -17,8 +17,9 @@ struct ContentView: View {
 
     var body: some View {
         ZStack {
-            // Background
+            // Background - must not intercept touches
             Color.black.edgesIgnoringSafeArea(.all)
+                .allowsHitTesting(false)
 
             // Main content based on state
             if bridge.isRunning {

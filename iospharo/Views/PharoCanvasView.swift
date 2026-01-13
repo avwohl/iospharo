@@ -164,21 +164,6 @@ class PharoCanvasViewController: UIViewController {
 
         view.addSubview(mtkView)
 
-        // Add a test button to verify clicks work
-        let testButton = UIButton(type: .system)
-        testButton.setTitle("Test Click", for: .normal)
-        testButton.backgroundColor = .red
-        testButton.setTitleColor(.white, for: .normal)
-        testButton.translatesAutoresizingMaskIntoConstraints = false
-        testButton.addTarget(self, action: #selector(testButtonTapped), for: .touchUpInside)
-        view.addSubview(testButton)
-        NSLayoutConstraint.activate([
-            testButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            testButton.topAnchor.constraint(equalTo: view.topAnchor, constant: 100),
-            testButton.widthAnchor.constraint(equalToConstant: 100),
-            testButton.heightAnchor.constraint(equalToConstant: 50)
-        ])
-
         // Constrain to fill parent
         NSLayoutConstraint.activate([
             mtkView.topAnchor.constraint(equalTo: view.topAnchor),
@@ -214,8 +199,9 @@ class PharoCanvasViewController: UIViewController {
     }
 
     private func setupGestureRecognizers() {
-        // Add gestures directly to mtkView for Mac Catalyst click handling
-        let targetView = mtkView!
+        // NOTE: For Mac Catalyst, gesture recognizers MUST be on the VC's view (not MTKView)
+        // Otherwise clicks don't register properly
+        let targetView = view!
 
         // Single tap gesture (primary click) - critical for Mac Catalyst
         let singleTapGesture = UITapGestureRecognizer(
@@ -224,7 +210,7 @@ class PharoCanvasViewController: UIViewController {
         )
         singleTapGesture.numberOfTapsRequired = 1
         targetView.addGestureRecognizer(singleTapGesture)
-        NSLog("[VC] Added single tap gesture to mtkView")
+        NSLog("[VC] Added single tap gesture to targetView")
 
         // Double tap gesture (double click)
         let doubleTapGesture = UITapGestureRecognizer(
@@ -279,13 +265,7 @@ class PharoCanvasViewController: UIViewController {
         )
         targetView.addGestureRecognizer(pinchGesture)
 
-        NSLog("[VC] Setup %d gesture recognizers on mtkView", targetView.gestureRecognizers?.count ?? 0)
-    }
-
-    // MARK: - Test Button Handler
-
-    @objc func testButtonTapped() {
-        NSLog("[BUTTON] Test button was clicked!")
+        NSLog("[VC] Setup %d gesture recognizers on view (for Mac Catalyst)", targetView.gestureRecognizers?.count ?? 0)
     }
 
     // MARK: - Gesture Handlers
