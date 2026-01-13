@@ -4804,6 +4804,10 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     dnuDepth++;
 
     if (dnuDepth > MAX_DNU_DEPTH) {
+        std::cerr << "[DNU] MAX_DNU_DEPTH exceeded! Stopping VM.\n";
+        std::cerr << "[DNU] Last selector attempted: " << (selector.isObject() && selector.rawBits() > 0x10000 ?
+            std::string((char*)selector.asObjectPtr()->bytes(),
+                        std::min((size_t)50, selector.asObjectPtr()->byteSize())) : "unknown") << "\n";
         running_ = false;
         dnuDepth = 0;
         return;
@@ -4874,6 +4878,15 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         // Return an empty ReadStream (just return nil for now)
         pop();  // Pop receiver
         push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #addTopicSpec: - menu system sends this during action execution
+    // MorphicRenderLoop should not receive this, return receiver to continue
+    if (origStr == "addTopicSpec:" && argCount == 1) {
+        pop();  // Pop argument
+        // Leave receiver on stack as return value
         dnuDepth--;
         return;
     }
@@ -5250,6 +5263,10 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     push(originalReceiver);
     push(message);
     sendSelector(selectors_.doesNotUnderstand, 1);
+
+    // Decrement after setting up the DNU send - the depth was meant to track
+    // nested calls within a single DNU handling chain, not sequential DNUs
+    dnuDepth--;
 }
 
 void Interpreter::sendMustBeBoolean(Oop value) {
