@@ -285,7 +285,31 @@ Oop ObjectMemory::classOf(Oop obj) const {
     Oop cls = classAtIndex(classIdx);
     if (cls.isNil() || cls.rawBits() == 0) {
         static int nilClassCount = 0;
+        static uint32_t lastBadClassIdx = 0;
+        static int sameClassIdxCount = 0;
+
         nilClassCount++;
+
+        // Detect infinite loop on same bad classIdx
+        if (classIdx == lastBadClassIdx) {
+            sameClassIdxCount++;
+            if (sameClassIdxCount > 100) {
+                // We're stuck in a loop - log once
+                if (sameClassIdxCount == 101) {
+                    std::cerr << "[CLASSOF] STUCK IN LOOP on classIdx=" << classIdx
+                              << " - loop detected, returning nil\n";
+                }
+                // Just return nil - caller should handle
+                // Reset count periodically to allow recovery
+                if (sameClassIdxCount > 1000) {
+                    sameClassIdxCount = 0;
+                }
+            }
+        } else {
+            lastBadClassIdx = classIdx;
+            sameClassIdxCount = 1;
+        }
+
         if (nilClassCount <= 20 || classIdx == 3156) {
             std::cerr << "[CLASSOF] obj=0x" << std::hex << obj.rawBits()
                       << " classIdx=" << std::dec << classIdx

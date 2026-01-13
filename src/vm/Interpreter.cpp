@@ -4696,6 +4696,30 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         std::cerr << std::dec << "\n";
     }
 
+    // Fallback for empty/corrupted selectors - sign of memory corruption
+    if (origStr.empty()) {
+        static int emptySelCount = 0;
+        emptySelCount++;
+        if (emptySelCount <= 10) {
+            std::cerr << "[DNU] EMPTY SELECTOR - likely memory corruption, returning nil\n";
+        }
+        // Pop args and receiver, push nil
+        popN(argCount + 1);
+        push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #readStream on non-collection objects
+    // MorphicRenderLoop incorrectly receives this during menu action execution
+    if (origStr == "readStream" && argCount == 0) {
+        // Return an empty ReadStream (just return nil for now)
+        pop();  // Pop receiver
+        push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+
     // Fallback for startup to avoid DNU spiral
     if (origStr == "new" && argCount == 0) {
         pop();  // Pop receiver
