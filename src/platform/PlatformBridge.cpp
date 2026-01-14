@@ -281,9 +281,8 @@ void vm_run(void) {
             std::cerr << "[PB] Test pattern drawn and update() called\n";
         }
 
-        while (gRunning && gInterpreter->isRunning()) {
-            gInterpreter->step();
-        }
+        // Call interpret() which includes periodic event processing and semaphore handling
+        gInterpreter->interpret();
         gRunning = false;
         std::cerr << "[PB] Thread finished\n";
     });

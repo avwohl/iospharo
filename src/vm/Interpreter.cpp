@@ -1020,6 +1020,11 @@ void Interpreter::renderWorldMorphs() {
         menuBarScale_ = isRetina ? 2 : 1;
 
         // Render dropdown menu if a menu is selected
+        if (logFile) {
+            fprintf(logFile, "[MENUBAR] selectedMenuIndex_=%d menuBarItemMorphs_.size()=%zu\n",
+                    selectedMenuIndex_, menuBarItemMorphs_.size());
+            fflush(logFile);
+        }
         if (selectedMenuIndex_ >= 0 && selectedMenuIndex_ < static_cast<int>(menuBarItemMorphs_.size())) {
             Oop selectedItem = menuBarItemMorphs_[selectedMenuIndex_];
 
@@ -1144,6 +1149,13 @@ void Interpreter::renderWorldMorphs() {
             }
 
             // Draw dropdown if we have items
+            if (logFile) {
+                fprintf(logFile, "[DROPDOWN] dropdownLabels.size()=%zu\n", dropdownLabels.size());
+                for (const auto& lbl : dropdownLabels) {
+                    fprintf(logFile, "[DROPDOWN]   item: '%s'\n", lbl.c_str());
+                }
+                fflush(logFile);
+            }
             if (!dropdownLabels.empty()) {
                 // Calculate dropdown dimensions
                 int dropdownFontSize = fontSize;
@@ -1470,6 +1482,12 @@ void Interpreter::processInputEvents() {
         if (mouseType == 1) {
             if (logFile) {
                 fprintf(logFile, "[CLICK] inMenuBar=%d inDropdown=%d\n", inMenuBar ? 1 : 0, inDropdown ? 1 : 0);
+                if (dropdownState_.valid) {
+                    fprintf(logFile, "[CLICK] dropdown bounds: x=%d-%d y=%d-%d (click at %d,%d)\n",
+                            dropdownState_.x, dropdownState_.x + dropdownState_.width,
+                            dropdownState_.y, dropdownState_.y + dropdownState_.height,
+                            x, y);
+                }
                 fflush(logFile);
             }
 
@@ -1770,6 +1788,59 @@ void Interpreter::invokeMenuItemAction(Oop menuItemMorph) {
 void Interpreter::syncDisplayToSurface() {
     if (!pharo::gDisplaySurface) return;
 
+    // Process input events
+    processInputEvents();
+
+    // Execute pending menu action if any
+    // Note: This is a simplified execution that may not work for all action types
+    if (pendingMenuAction_.pending) {
+        static FILE* actionLog = fopen("/tmp/iospharo-sync-action.log", "a");
+        if (actionLog) {
+            fprintf(actionLog, "[SYNC] Executing pending menu action\n");
+            fflush(actionLog);
+        }
+        std::cerr << "[SYNC-ACTION] Executing pending menu action\n";
+        std::cerr.flush();
+
+        // Get action details
+        Oop actionSel = pendingMenuAction_.selector;
+        Oop actionRcvr = pendingMenuAction_.receiver;
+        Oop actionArg = pendingMenuAction_.argument;
+        int actionArgCount = pendingMenuAction_.argCount;
+
+        // Clear pending
+        pendingMenuAction_.pending = false;
+        pendingMenuAction_.selector = Oop::nil();
+        pendingMenuAction_.receiver = Oop::nil();
+        pendingMenuAction_.argument = Oop::nil();
+        pendingMenuAction_.argCount = 0;
+
+        // Log what we're about to execute
+        std::string selStr = "<unknown>";
+        if (actionSel.isObject()) {
+            ObjectHeader* selHdr = actionSel.asObjectPtr();
+            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+            }
+        }
+        std::cerr << "[SYNC-ACTION] About to send #" << selStr << " with " << actionArgCount << " args\n";
+        std::cerr.flush();
+        if (actionLog) {
+            fprintf(actionLog, "[SYNC] About to send #%s with %d args\n", selStr.c_str(), actionArgCount);
+            fflush(actionLog);
+        }
+
+        // Set up stack for message send - this runs in the context of the heartbeat thread
+        // which may not have a proper Smalltalk stack. We need to defer to the main interpreter.
+        // For now, just flag that an action needs execution and let the interpret loop handle it.
+        pendingMenuAction_.pending = true;
+        pendingMenuAction_.selector = actionSel;
+        pendingMenuAction_.receiver = actionRcvr;
+        pendingMenuAction_.argument = actionArg;
+        pendingMenuAction_.argCount = actionArgCount;
+        pendingMenuAction_.executeFromSync = true;  // Flag for interpret loop to pick up
+    }
+
     // For now, always use direct morph rendering instead of Display Form
     // This works around BitBlt not updating the Form properly
     renderWorldMorphs();
@@ -1866,6 +1937,7 @@ void Interpreter::syncDisplayToSurface() {
 // ===== MAIN LOOP =====
 
 void Interpreter::interpret() {
+    int loopCount = 0;
     while (running_) {
         // Process any pending external semaphore signals
         if (hasPendingSignals()) {
@@ -1874,6 +1946,57 @@ void Interpreter::interpret() {
 
         // Check timer and signal delay semaphore if time has elapsed
         checkTimerSemaphore();
+
+        // Periodically process input events (in case semaphore signaling isn't working)
+        if (++loopCount % 100 == 0) {
+            processInputEvents();
+        }
+
+        // Execute pending menu action from sync thread
+        if (pendingMenuAction_.executeFromSync && pendingMenuAction_.pending) {
+            static FILE* actionLog = fopen("/tmp/iospharo-interpret-action.log", "a");
+            if (actionLog) {
+                fprintf(actionLog, "[INTERPRET] Executing pending menu action from sync\n");
+                fflush(actionLog);
+            }
+            std::cerr << "[INTERPRET-ACTION] Executing pending menu action from sync\n";
+            std::cerr.flush();
+
+            Oop actionSel = pendingMenuAction_.selector;
+            Oop actionRcvr = pendingMenuAction_.receiver;
+            Oop actionArg = pendingMenuAction_.argument;
+            int actionArgCount = pendingMenuAction_.argCount;
+
+            pendingMenuAction_.pending = false;
+            pendingMenuAction_.executeFromSync = false;
+            pendingMenuAction_.selector = Oop::nil();
+            pendingMenuAction_.receiver = Oop::nil();
+            pendingMenuAction_.argument = Oop::nil();
+            pendingMenuAction_.argCount = 0;
+
+            // Set up stack for message send
+            push(actionRcvr);
+            if (actionArgCount > 0 && !actionArg.isNil()) {
+                push(actionArg);
+            }
+
+            // Log what we're sending
+            if (actionSel.isObject()) {
+                ObjectHeader* selHdr = actionSel.asObjectPtr();
+                if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                    std::string selStr((char*)selHdr->bytes(), selHdr->byteSize());
+                    std::cerr << "[INTERPRET-ACTION] Sending #" << selStr << " with " << actionArgCount << " args\n";
+                    std::cerr.flush();
+                    if (actionLog) {
+                        fprintf(actionLog, "[INTERPRET] Sending #%s with %d args\n", selStr.c_str(), actionArgCount);
+                        fflush(actionLog);
+                    }
+                }
+            }
+
+            // Send the message
+            sendSelector(actionSel, actionArgCount);
+        }
 
         step();
     }
@@ -2019,22 +2142,34 @@ void Interpreter::processPendingSignals() {
     if (index <= 0) return;
 
     static int callCount = 0;
-    if (++callCount <= 5 || callCount % 1000 == 0) {
+    bool trace = (++callCount <= 5 || callCount % 1000 == 0);
+    if (trace) {
         std::cerr << "[SIGNAL] processPendingSignals index=" << index << " callCount=" << callCount << "\n";
     }
 
     // Get the external semaphore table from special objects
     Oop semTable = memory_.specialObject(SpecialObjectIndex::ExternalSemaphoreTable);
-    if (semTable.isNil() || !semTable.isObject()) return;
+    if (semTable.isNil() || !semTable.isObject()) {
+        if (trace) std::cerr << "[SIGNAL] ExternalSemaphoreTable is nil/not object\n";
+        return;
+    }
 
     // Index is 1-based, convert to 0-based array index
     size_t tableIndex = static_cast<size_t>(index - 1);
     size_t tableSize = memory_.slotCountOf(semTable);
-    if (tableIndex >= tableSize) return;
+    if (trace) std::cerr << "[SIGNAL] tableIndex=" << tableIndex << " tableSize=" << tableSize << "\n";
+    if (tableIndex >= tableSize) {
+        if (trace) std::cerr << "[SIGNAL] tableIndex >= tableSize, returning\n";
+        return;
+    }
 
     // Get the semaphore at this index
     Oop semaphore = memory_.fetchPointer(tableIndex, semTable);
-    if (semaphore.isNil() || !semaphore.isObject()) return;
+    if (semaphore.isNil() || !semaphore.isObject()) {
+        if (trace) std::cerr << "[SIGNAL] semaphore is nil/not object\n";
+        return;
+    }
+    if (trace) std::cerr << "[SIGNAL] Signaling semaphore at index " << tableIndex << "\n";
 
     // Signal the semaphore (same logic as primitiveSignal)
     Oop nilObj = memory_.nil();
@@ -2853,6 +2988,63 @@ void Interpreter::returnValue(Oop value) {
 
         // No runnable processes - enter idle mode
         // This is a good time to update the display since a doOneCycle just completed
+        static int idleLoopHits = 0;
+        idleLoopHits++;
+        if (idleLoopHits <= 5 || idleLoopHits % 1000 == 0) {
+            std::cerr << "[IDLE-LOOP] Hit #" << idleLoopHits << " pendingAction=" << pendingMenuAction_.pending << "\n";
+            std::cerr.flush();
+        }
+
+        // Process input events (important for menu handling)
+        processInputEvents();
+
+        // Execute pending menu action if any
+        if (pendingMenuAction_.pending) {
+            static FILE* actionLog = fopen("/tmp/iospharo-idle-action.log", "a");
+            if (actionLog) {
+                fprintf(actionLog, "[IDLE] Executing pending menu action\n");
+                fflush(actionLog);
+            }
+            std::cerr << "[IDLE-ACTION] Executing pending menu action\n";
+            std::cerr.flush();
+
+            // Get action details
+            Oop actionSel = pendingMenuAction_.selector;
+            Oop actionRcvr = pendingMenuAction_.receiver;
+            Oop actionArg = pendingMenuAction_.argument;
+            int actionArgCount = pendingMenuAction_.argCount;
+
+            // Clear pending
+            pendingMenuAction_.pending = false;
+            pendingMenuAction_.selector = Oop::nil();
+            pendingMenuAction_.receiver = Oop::nil();
+            pendingMenuAction_.argument = Oop::nil();
+            pendingMenuAction_.argCount = 0;
+
+            // Set up stack for message send
+            push(actionRcvr);
+            if (actionArgCount > 0 && !actionArg.isNil()) {
+                push(actionArg);
+            }
+
+            // Log what we're about to execute
+            if (actionSel.isObject()) {
+                ObjectHeader* selHdr = actionSel.asObjectPtr();
+                if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                    std::string selStr((char*)selHdr->bytes(), selHdr->byteSize());
+                    std::cerr << "[IDLE-ACTION] Sending #" << selStr << " with " << actionArgCount << " args\n";
+                    std::cerr.flush();
+                    if (actionLog) {
+                        fprintf(actionLog, "[IDLE] Sending #%s with %d args\n", selStr.c_str(), actionArgCount);
+                        fflush(actionLog);
+                    }
+                }
+            }
+
+            // Send the message
+            sendSelector(actionSel, actionArgCount);
+            return;  // Let execution continue with the action
+        }
 
         // Render World's morphs directly - bypass NullWorldRenderer
         renderWorldMorphs();
@@ -3481,6 +3673,12 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
             // ===== INTERCEPT WorldState >> doOneCycleFor: =====
             // Render World's morphs directly instead of using NullWorldRenderer
+            static int doOneCycleCheckCount = 0;
+            doOneCycleCheckCount++;
+            if (doOneCycleCheckCount <= 5 || doOneCycleCheckCount % 10000 == 0) {
+                std::cerr << "[INTERCEPT] Checking selStr='" << selStr << "' argCount=" << argCount << " check#" << doOneCycleCheckCount << "\n";
+                std::cerr.flush();
+            }
             if (selStr == "doOneCycleFor:" && argCount == 1) {
                 Oop rcvrClass = memory_.classOf(rcvr);
                 if (rcvrClass.isObject()) {

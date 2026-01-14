@@ -357,6 +357,7 @@ private:
         Oop argument = Oop::nil();  // Optional argument for value: or cull:
         int argCount = 0;           // 0 for value, 1 for value:
         bool pending = false;
+        bool executeFromSync = false;  // Flag to execute from interpret loop
     };
     PendingMenuAction pendingMenuAction_;
     int menuActionTraceCount_ = 0;  // Number of sends to trace after menu action
