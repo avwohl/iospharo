@@ -1423,6 +1423,27 @@ void Interpreter::processInputEvents() {
                 fflush(logFile);
             }
 
+            // Mouse up (type 2) - select menu item if dragging in dropdown
+            if (mouseType == 2 && dropdownState_.valid) {
+                if (x >= dropdownState_.x && x < dropdownState_.x + dropdownState_.width &&
+                    y >= dropdownState_.y && y < dropdownState_.y + dropdownState_.height) {
+                    // Calculate which item was released on
+                    int relativeY = y - dropdownState_.y - (menuBarScale_ == 2 ? 16 : 8);
+                    int itemIndex = relativeY / dropdownState_.lineHeight;
+                    if (itemIndex >= 0 && itemIndex < static_cast<int>(dropdownState_.itemMorphs.size())) {
+                        if (logFile) {
+                            fprintf(logFile, "[DROPDOWN RELEASE] Invoking action for item %d\n", itemIndex);
+                            fflush(logFile);
+                        }
+                        invokeMenuItemAction(dropdownState_.itemMorphs[itemIndex]);
+                    }
+                }
+                // Close dropdown on any mouse up
+                dropdownState_.valid = false;
+                selectedMenuIndex_ = -1;
+                continue;
+            }
+
             if (mouseType == 1) {  // Mouse down
                 if (logFile) {
                     fprintf(logFile, "[CLICK] at x=%d y=%d (scaled), menuBar y=%d-%d\n",
