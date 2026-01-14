@@ -1392,12 +1392,13 @@ void Interpreter::renderWorldMorphs() {
 
 void Interpreter::processInputEvents() {
     // Process pending events from the event queue
+    // Events we don't handle (non-menu events) are passed through to Pharo
     static FILE* logFile = fopen("/tmp/iospharo-events.log", "a");
     static int callCount = 0;
     callCount++;
 
-    // Log every 100th call to show we're being called
-    if (logFile && callCount % 100 == 0) {
+    // Log every 10th call to show we're being called
+    if (logFile && callCount % 10 == 0) {
         fprintf(logFile, "[PROCESS] processInputEvents called %d times\n", callCount);
         fflush(logFile);
     }
@@ -1410,143 +1411,148 @@ void Interpreter::processInputEvents() {
                     event.type, event.arg1, event.arg2, event.arg3, event.arg4, event.arg5);
             fflush(logFile);
         }
-        if (event.type == static_cast<int>(pharo::EventType::Mouse)) {
-            int mouseType = event.arg5;  // 0=move, 1=down, 2=up (stored in arg5!)
-            // Event coordinates are in points (logical pixels)
-            // Scale to physical pixels for Retina displays
-            int x = event.arg1 * menuBarScale_;
-            int y = event.arg2 * menuBarScale_;
 
+        // Non-mouse events pass through to Pharo
+        if (event.type != static_cast<int>(pharo::EventType::Mouse)) {
+            passThroughEvents_.push_back(event);
+            continue;
+        }
+
+        int mouseType = event.arg5;  // 0=move, 1=down, 2=up (stored in arg5!)
+        // Event coordinates are in points (logical pixels)
+        // Scale to physical pixels for Retina displays
+        int x = event.arg1 * menuBarScale_;
+        int y = event.arg2 * menuBarScale_;
+
+        if (logFile) {
+            fprintf(logFile, "[MOUSE] type=%d at x=%d y=%d (raw: %d,%d) scale=%d menuBarY=%d-%d\n",
+                    mouseType, x, y, event.arg1, event.arg2, menuBarScale_, menuBarTop_, menuBarBottom_);
+            fflush(logFile);
+        }
+
+        // Check if this is a menu-related area (menubar or dropdown)
+        bool inMenuBar = (y >= menuBarTop_ && y < menuBarBottom_ && !menuItemBounds_.empty());
+        bool inDropdown = (dropdownState_.valid &&
+                          x >= dropdownState_.x && x < dropdownState_.x + dropdownState_.width &&
+                          y >= dropdownState_.y && y < dropdownState_.y + dropdownState_.height);
+
+        // Mouse up (type 2) - handle only if in menu areas
+        if (mouseType == 2) {
+            if (inDropdown) {
+                // Released inside dropdown - select item
+                int relativeY = y - dropdownState_.y - (menuBarScale_ == 2 ? 16 : 8);
+                int itemIndex = relativeY / dropdownState_.lineHeight;
+                if (itemIndex >= 0 && itemIndex < static_cast<int>(dropdownState_.itemMorphs.size())) {
+                    if (logFile) {
+                        fprintf(logFile, "[DROPDOWN RELEASE] Invoking action for item %d\n", itemIndex);
+                        fflush(logFile);
+                    }
+                    invokeMenuItemAction(dropdownState_.itemMorphs[itemIndex]);
+                }
+                dropdownState_.valid = false;
+                selectedMenuIndex_ = -1;
+                continue;  // Consumed by menu
+            } else if (inMenuBar && dropdownState_.valid) {
+                // Released in menubar while dropdown open - keep dropdown open
+                continue;  // Consumed by menu
+            } else if (dropdownState_.valid) {
+                // Released outside both menubar and dropdown - close menu
+                dropdownState_.valid = false;
+                selectedMenuIndex_ = -1;
+                // Fall through to pass event to Pharo
+            }
+            // Not in menu area, pass through to Pharo
+            passThroughEvents_.push_back(event);
+            continue;
+        }
+
+        // Mouse down (type 1) - handle only if in menu areas
+        if (mouseType == 1) {
             if (logFile) {
-                fprintf(logFile, "[MOUSE] type=%d at x=%d y=%d (raw: %d,%d) scale=%d\n",
-                        mouseType, x, y, event.arg1, event.arg2, menuBarScale_);
+                fprintf(logFile, "[CLICK] inMenuBar=%d inDropdown=%d\n", inMenuBar ? 1 : 0, inDropdown ? 1 : 0);
                 fflush(logFile);
             }
 
-            // Mouse up (type 2) - select menu item if dragging in dropdown
-            if (mouseType == 2 && dropdownState_.valid) {
-                if (x >= dropdownState_.x && x < dropdownState_.x + dropdownState_.width &&
-                    y >= dropdownState_.y && y < dropdownState_.y + dropdownState_.height) {
-                    // Calculate which item was released on
-                    int relativeY = y - dropdownState_.y - (menuBarScale_ == 2 ? 16 : 8);
-                    int itemIndex = relativeY / dropdownState_.lineHeight;
-                    if (itemIndex >= 0 && itemIndex < static_cast<int>(dropdownState_.itemMorphs.size())) {
-                        if (logFile) {
-                            fprintf(logFile, "[DROPDOWN RELEASE] Invoking action for item %d\n", itemIndex);
-                            fflush(logFile);
-                        }
-                        invokeMenuItemAction(dropdownState_.itemMorphs[itemIndex]);
-                    }
+            if (inDropdown) {
+                // Clicked in dropdown - select item
+                int relativeY = y - dropdownState_.y - (menuBarScale_ == 2 ? 16 : 8);
+                int itemIndex = relativeY / dropdownState_.lineHeight;
+                if (logFile) {
+                    fprintf(logFile, "[DROPDOWN CLICK] at y=%d, relY=%d, itemIndex=%d\n",
+                            y, relativeY, itemIndex);
+                    fflush(logFile);
                 }
-                // Close dropdown on any mouse up
+                if (itemIndex >= 0 && itemIndex < static_cast<int>(dropdownState_.itemMorphs.size())) {
+                    if (logFile) {
+                        fprintf(logFile, "[DROPDOWN CLICK] Invoking action for item %d\n", itemIndex);
+                        fflush(logFile);
+                    }
+                    invokeMenuItemAction(dropdownState_.itemMorphs[itemIndex]);
+                }
                 dropdownState_.valid = false;
                 selectedMenuIndex_ = -1;
-                continue;
-            }
+                continue;  // Consumed by menu
+            } else if (inMenuBar) {
+                // Clicked in menu bar
+                // Debounce: ignore duplicate clicks within 100ms
+                auto now = std::chrono::steady_clock::now();
+                int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now.time_since_epoch()).count();
 
-            if (mouseType == 1) {  // Mouse down
+                if (nowMs - lastMenuClickTime_ < 200 &&
+                    std::abs(x - lastMenuClickX_) < 20 &&
+                    std::abs(y - lastMenuClickY_) < 20) {
+                    if (logFile) {
+                        fprintf(logFile, "[CLICK] Ignored duplicate click (debounce)\n");
+                        fflush(logFile);
+                    }
+                    continue;  // Skip duplicate, consumed by debounce
+                }
+                lastMenuClickTime_ = nowMs;
+                lastMenuClickX_ = x;
+                lastMenuClickY_ = y;
+
+                // Find which menu item was clicked
+                int clickedIndex = -1;
+                for (size_t i = 0; i < menuItemBounds_.size(); i++) {
+                    if (x >= menuItemBounds_[i].first && x < menuItemBounds_[i].second) {
+                        clickedIndex = static_cast<int>(i);
+                        break;
+                    }
+                }
+
                 if (logFile) {
-                    fprintf(logFile, "[CLICK] at x=%d y=%d (scaled), menuBar y=%d-%d\n",
-                            x, y, menuBarTop_, menuBarBottom_);
+                    fprintf(logFile, "[CLICK] Menu item index: %d (of %zu items)\n",
+                            clickedIndex, menuItemBounds_.size());
                     fflush(logFile);
                 }
 
-                // Check if clicking in dropdown menu area
-                // Log dropdown click check
-                if (logFile) {
-                    fprintf(logFile, "[DROPDOWN CHECK] valid=%d x=%d y=%d bounds=(%d,%d,%d,%d)\n",
-                            dropdownState_.valid ? 1 : 0, x, y,
-                            dropdownState_.x, dropdownState_.y,
-                            dropdownState_.x + dropdownState_.width,
-                            dropdownState_.y + dropdownState_.height);
-                    fflush(logFile);
-                }
-                if (dropdownState_.valid &&
-                    x >= dropdownState_.x && x < dropdownState_.x + dropdownState_.width &&
-                    y >= dropdownState_.y && y < dropdownState_.y + dropdownState_.height) {
-                    // Calculate which item was clicked (account for padding)
-                    int relativeY = y - dropdownState_.y - (menuBarScale_ == 2 ? 16 : 8);  // Subtract padding
-                    int itemIndex = relativeY / dropdownState_.lineHeight;
-                    if (logFile) {
-                        fprintf(logFile, "[DROPDOWN CLICK] at y=%d, relY=%d, lineHeight=%d, itemIndex=%d (of %zu)\n",
-                                y, relativeY, dropdownState_.lineHeight, itemIndex,
-                                dropdownState_.itemMorphs.size());
-                        fflush(logFile);
-                    }
-                    if (itemIndex >= 0 && itemIndex < static_cast<int>(dropdownState_.itemMorphs.size())) {
-                        if (logFile) {
-                            fprintf(logFile, "[DROPDOWN CLICK] Invoking action for item %d\n", itemIndex);
-                            fflush(logFile);
-                        }
-                        invokeMenuItemAction(dropdownState_.itemMorphs[itemIndex]);
-                    }
-                    dropdownState_.valid = false;  // Close dropdown
-                    selectedMenuIndex_ = -1;
-                }
-                // Check if clicking in menu bar
-                else if (y >= menuBarTop_ && y < menuBarBottom_ && !menuItemBounds_.empty()) {
-                    // Debounce: ignore duplicate clicks within 100ms
-                    auto now = std::chrono::steady_clock::now();
-                    int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        now.time_since_epoch()).count();
-
-                    int64_t timeSinceLastClick = nowMs - lastMenuClickTime_;
-                    // Check if this is a duplicate click at the same location
-                    bool isSameLocation = (std::abs(x - lastMenuClickX_) < 20 &&
-                                           std::abs(y - lastMenuClickY_) < 20);
-                    if (logFile) {
-                        fprintf(logFile, "[DEBOUNCE] Time: %lld ms, same location: %d\n",
-                                timeSinceLastClick, isSameLocation ? 1 : 0);
-                        fflush(logFile);
-                    }
-
-                    if (timeSinceLastClick < 200 && isSameLocation) {
-                        if (logFile) {
-                            fprintf(logFile, "[CLICK] Ignored duplicate click (debounce)\n");
-                            fflush(logFile);
-                        }
-                        continue;  // Skip duplicate click
-                    }
-                    lastMenuClickTime_ = nowMs;
-                    lastMenuClickX_ = x;
-                    lastMenuClickY_ = y;
-
-                    // Find which menu item was clicked
-                    int clickedIndex = -1;
-                    for (size_t i = 0; i < menuItemBounds_.size(); i++) {
-                        if (x >= menuItemBounds_[i].first && x < menuItemBounds_[i].second) {
-                            clickedIndex = static_cast<int>(i);
-                            break;
-                        }
-                    }
-
-                    if (logFile) {
-                        fprintf(logFile, "[CLICK] Menu item index: %d (of %zu items)\n",
-                                clickedIndex, menuItemBounds_.size());
-                        fflush(logFile);
-                    }
-
-                    if (clickedIndex >= 0) {
-                        // Toggle menu: if same menu clicked again, close it
-                        if (selectedMenuIndex_ == clickedIndex) {
-                            selectedMenuIndex_ = -1;
-                            dropdownState_.valid = false;
-                        } else {
-                            selectedMenuIndex_ = clickedIndex;
-                            // TODO: Open dropdown for this menu
-                        }
-                    } else {
-                        // Clicked in menu bar but not on an item
+                if (clickedIndex >= 0) {
+                    if (selectedMenuIndex_ == clickedIndex) {
                         selectedMenuIndex_ = -1;
                         dropdownState_.valid = false;
+                    } else {
+                        selectedMenuIndex_ = clickedIndex;
                     }
                 } else {
-                    // Clicked outside menu bar - close any open menu
                     selectedMenuIndex_ = -1;
                     dropdownState_.valid = false;
                 }
+                continue;  // Consumed by menu bar
+            } else {
+                // Clicked outside menu areas - close menu if open and pass through
+                if (dropdownState_.valid || selectedMenuIndex_ >= 0) {
+                    selectedMenuIndex_ = -1;
+                    dropdownState_.valid = false;
+                }
+                // Pass through to Pharo
+                passThroughEvents_.push_back(event);
+                continue;
             }
         }
+
+        // Mouse move (type 0) - always pass through to Pharo
+        passThroughEvents_.push_back(event);
     }
 }
 
@@ -2001,12 +2007,21 @@ void Interpreter::stopHeartbeat() {
 void Interpreter::signalExternalSemaphore(int index) {
     // Store the index to be processed in the interpret loop
     // This is thread-safe due to atomic
+    static int callCount = 0;
+    if (++callCount <= 5 || callCount % 1000 == 0) {
+        std::cerr << "[SIGNAL] signalExternalSemaphore(" << index << ") callCount=" << callCount << "\n";
+    }
     pendingSignalIndex_.store(index, std::memory_order_release);
 }
 
 void Interpreter::processPendingSignals() {
     int index = pendingSignalIndex_.exchange(0, std::memory_order_acquire);
     if (index <= 0) return;
+
+    static int callCount = 0;
+    if (++callCount <= 5 || callCount % 1000 == 0) {
+        std::cerr << "[SIGNAL] processPendingSignals index=" << index << " callCount=" << callCount << "\n";
+    }
 
     // Get the external semaphore table from special objects
     Oop semTable = memory_.specialObject(SpecialObjectIndex::ExternalSemaphoreTable);

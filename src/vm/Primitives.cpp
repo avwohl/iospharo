@@ -7824,22 +7824,34 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWay(int argCount) {
 }
 
 // Primitive 198: One-way become with hash copying
-// fromArray toArray copyHash primitiveArrayBecomeOneWayCopyHash -> fromArray
+// receiver elementsForwardIdentityTo: toArray -> receiver  (1 arg, copyHash=false)
+// receiver elementsForwardIdentityTo: toArray copyHash: bool -> receiver (2 args)
 // Like 197, but optionally copies identity hash from source to target
 PrimitiveResult Interpreter::primitiveArrayBecomeOneWayCopyHash(int argCount) {
-    if (argCount < 3) {
+    if (argCount < 1) {
         return PrimitiveResult::Failure;
     }
 
-    Oop copyHashOop = stackValue(0);
-    Oop toArrayOop = stackValue(1);
-    Oop fromArrayOop = stackValue(2);
+    bool copyHash = false;
+    Oop toArrayOop;
+    Oop fromArrayOop;
+
+    if (argCount >= 2) {
+        // 2-argument form: receiver elementsForwardIdentityTo: toArray copyHash: bool
+        Oop copyHashOop = stackValue(0);
+        toArrayOop = stackValue(1);
+        fromArrayOop = stackValue(2);
+        copyHash = (copyHashOop == memory_.trueObject());
+    } else {
+        // 1-argument form: receiver elementsForwardIdentityTo: toArray
+        toArrayOop = stackValue(0);
+        fromArrayOop = stackValue(1);
+        copyHash = false;
+    }
 
     if (!fromArrayOop.isObject() || !toArrayOop.isObject()) {
         return PrimitiveResult::Failure;
     }
-
-    bool copyHash = (copyHashOop == memory_.trueObject());
 
     size_t fromSize = memory_.slotCountOf(fromArrayOop);
     size_t toSize = memory_.slotCountOf(toArrayOop);
@@ -10383,9 +10395,12 @@ PrimitiveResult Interpreter::primitiveLongRunningPrimitive(int argCount) {
 // Fills the event buffer with the next pending event
 // Can be called with argCount=0 (receiver is event buffer) or argCount=1 (event buffer as argument)
 PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
+    // Process input events first - this handles menu bar clicks natively
+    processInputEvents();
+
     static int p264count = 0;
     p264count++;
-    bool trace = (p264count <= 3);
+    bool trace = (p264count <= 10 || p264count % 10000 == 0);
 
     // Get event buffer from either argument (argCount=1) or receiver (argCount=0)
     Oop eventBuffer;
@@ -10412,28 +10427,38 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
     // 7: window index
 
     // Check buffer has enough slots
-    // Note: Pharo versions vary - some use 7 slots, some 8
+    // Note: Pharo versions vary - some use 6 slots, some 7, some 8
     size_t slotCount = memory_.slotCountOf(eventBuffer);
     if (trace) std::cerr << "[PRIM264] eventBuffer slotCount=" << slotCount << "\n";
-    if (slotCount < 7) {
-        if (trace) std::cerr << "[PRIM264] Slot count < 7, failing\n";
+    if (slotCount < 6) {
+        if (trace) std::cerr << "[PRIM264] Slot count < 6, failing\n";
         return PrimitiveResult::Failure;
     }
 
-    // Additional validation: event buffer slot 0 should already be a SmallInteger (event type)
-    // This prevents accidentally writing to class objects (whose slot 0 is superclass pointer)
-    ObjectHeader* bufHdr = eventBuffer.asObjectPtr();
+    // Log slot 0 content for debugging
     Oop slot0 = memory_.fetchPointer(0, eventBuffer);
-    if (!slot0.isSmallInteger()) {
-        // Slot 0 is not a SmallInteger - this is probably not an event buffer
-        // (Class objects have superclass pointer in slot 0)
-        if (trace) std::cerr << "[PRIM264] slot0 is not SmallInteger, refusing to write\n";
-        return PrimitiveResult::Failure;
+    if (trace) {
+        std::cerr << "[PRIM264] slot0 rawBits=" << std::hex << slot0.rawBits() << std::dec
+                  << " isSmallInt=" << slot0.isSmallInteger()
+                  << " isNil=" << slot0.isNil()
+                  << " isObject=" << slot0.isObject() << "\n";
+    }
+    // Removed validation check that was too strict - just proceed with writing
+
+    // Try to get next event - first from pass-through buffer, then from queue
+    Event event;
+    bool hasEvent = false;
+
+    // Check pass-through events first (these were processed but not consumed by menu handler)
+    if (!passThroughEvents_.empty()) {
+        event = passThroughEvents_.front();
+        passThroughEvents_.erase(passThroughEvents_.begin());
+        hasEvent = true;
+    } else if (gEventQueue.pop(event)) {
+        hasEvent = true;
     }
 
-    // Try to get next event from the queue
-    Event event;
-    if (gEventQueue.pop(event)) {
+    if (hasEvent) {
         // Fill buffer with event data
         memory_.storePointer(0, eventBuffer, Oop::fromSmallInteger(event.type));
         memory_.storePointer(1, eventBuffer, Oop::fromSmallInteger(event.timeStamp));

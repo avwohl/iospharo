@@ -51,6 +51,7 @@
 #define PHARO_INTERPRETER_HPP
 
 #include "ObjectMemory.hpp"
+#include "../platform/EventQueue.hpp"
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -371,6 +372,9 @@ private:
         bool valid = false;
     };
     DirtyRect dirtyMenuDropdown_;  // Track dropdown area changes
+
+    // Pass-through events (events not handled by processInputEvents, passed to Pharo)
+    std::vector<pharo::Event> passThroughEvents_;
 
     // External semaphore signaling (for I/O events)
     // Simple approach: store one pending signal index, process in interpret loop
