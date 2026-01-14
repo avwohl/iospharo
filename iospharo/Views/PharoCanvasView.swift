@@ -254,12 +254,9 @@ class PharoCanvasViewController: UIViewController {
 
     @objc func handleSingleTap(_ gesture: UITapGestureRecognizer) {
         guard let bridge = bridge else { return }
-        let pointInView = gesture.location(in: view)
-        let pointInMTK = gesture.location(in: mtkView)
-        let pointInWindow = gesture.location(in: nil)
-        NSLog("[TAP] inView=(\(pointInView.x), \(pointInView.y)) inMTK=(\(pointInMTK.x), \(pointInMTK.y)) inWindow=(\(pointInWindow.x), \(pointInWindow.y))")
-        bridge.sendTouchDown(at: pointInMTK, buttons: IOS_RED_BUTTON)
-        bridge.sendTouchUp(at: pointInMTK)
+        let point = gesture.location(in: mtkView)  // Get location relative to MTKView
+        bridge.sendTouchDown(at: point, buttons: IOS_RED_BUTTON)
+        bridge.sendTouchUp(at: point)
     }
 
     @objc func handlePan(_ gesture: UIPanGestureRecognizer) {

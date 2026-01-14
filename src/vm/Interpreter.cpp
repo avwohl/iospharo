@@ -2988,12 +2988,6 @@ void Interpreter::returnValue(Oop value) {
 
         // No runnable processes - enter idle mode
         // This is a good time to update the display since a doOneCycle just completed
-        static int idleLoopHits = 0;
-        idleLoopHits++;
-        if (idleLoopHits <= 5 || idleLoopHits % 1000 == 0) {
-            std::cerr << "[IDLE-LOOP] Hit #" << idleLoopHits << " pendingAction=" << pendingMenuAction_.pending << "\n";
-            std::cerr.flush();
-        }
 
         // Process input events (important for menu handling)
         processInputEvents();
@@ -3673,12 +3667,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
             // ===== INTERCEPT WorldState >> doOneCycleFor: =====
             // Render World's morphs directly instead of using NullWorldRenderer
-            static int doOneCycleCheckCount = 0;
-            doOneCycleCheckCount++;
-            if (doOneCycleCheckCount <= 5 || doOneCycleCheckCount % 10000 == 0) {
-                std::cerr << "[INTERCEPT] Checking selStr='" << selStr << "' argCount=" << argCount << " check#" << doOneCycleCheckCount << "\n";
-                std::cerr.flush();
-            }
             if (selStr == "doOneCycleFor:" && argCount == 1) {
                 Oop rcvrClass = memory_.classOf(rcvr);
                 if (rcvrClass.isObject()) {
