@@ -481,7 +481,7 @@ private:
     // ===== FRAME MANAGEMENT =====
 
     /// Create a new stack frame
-    void pushFrame(Oop method, int argCount);
+    bool pushFrame(Oop method, int argCount);  // Returns false if recursion detected
 
     /// Pop the current stack frame
     void popFrame();

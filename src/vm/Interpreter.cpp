@@ -2772,12 +2772,7 @@ void Interpreter::pushSpecial(int which) {
 }
 
 void Interpreter::returnValue(Oop value) {
-    static FILE* frameLog = fopen("/tmp/iospharo-frame.log", "a");
-
-    if (frameLog) {
-        fprintf(frameLog, "[RETURN_VALUE] frameDepth=%d\n", frameDepth_);
-        fflush(frameLog);
-    }
+    // Removed verbose logging - was flooding logs
 
     // If no frames to pop, check if we have a sender context to return to
     if (frameDepth_ == 0) {
@@ -4385,7 +4380,10 @@ size_t Interpreter::cacheHash(Oop selector, Oop classOop) const {
 
 void Interpreter::activateMethod(Oop method, int argCount) {
     // Save current state
-    pushFrame(method, argCount);
+    if (!pushFrame(method, argCount)) {
+        // pushFrame detected recursion and already handled it
+        return;
+    }
 
     // Set up new method
     method_ = method;
@@ -4568,7 +4566,10 @@ void Interpreter::activateBlock(Oop block, int argCount) {
         return;
     }
 
-    pushFrame(methodToExecute, argCount);
+    if (!pushFrame(methodToExecute, argCount)) {
+        // pushFrame detected recursion and already handled it
+        return;
+    }
 
     method_ = methodToExecute;
     // For FullBlockClosure, homeMethod should be from the compiledBlock's slot 2 or outerContext
@@ -4645,7 +4646,7 @@ void Interpreter::activateBlock(Oop block, int argCount) {
 
 // ===== FRAME MANAGEMENT =====
 
-void Interpreter::pushFrame(Oop method, int argCount) {
+bool Interpreter::pushFrame(Oop method, int argCount) {
     static FILE* frameLog = fopen("/tmp/iospharo-frame.log", "a");
 
     // Get method name/selector for recursion detection
@@ -4673,8 +4674,10 @@ void Interpreter::pushFrame(Oop method, int argCount) {
     // If a method is banned, return nil immediately for all calls to it
     if (!methodName.empty() && methodName == bannedMethod && bannedCallsRemaining > 0) {
         bannedCallsRemaining--;
+        // Clean up stack: pop args + receiver, push nil as return value
+        popN(argCount + 1);
         push(memory_.nil());
-        return;
+        return false;
     }
 
     if (!methodName.empty() && methodName == lastMethodName) {
@@ -4686,21 +4689,38 @@ void Interpreter::pushFrame(Oop method, int argCount) {
             // Ban this method for the next 1000 calls to break the recursion completely
             bannedMethod = methodName;
             bannedCallsRemaining = 1000;
-            // Push nil as return value and skip the method call entirely
+            // Clean up stack: pop args + receiver, push nil as return value
+            popN(argCount + 1);
             push(memory_.nil());
             sameMethodCount = 0;
             lastMethodName = "";
-            return;
+            return false;
         }
     } else {
         lastMethodName = methodName;
         sameMethodCount = 1;
     }
 
+    // Stagnation detection - if we stay at high depth too long, break out
+    static int highDepthCycles = 0;
+    if (frameDepth_ > 40) {
+        highDepthCycles++;
+        if (highDepthCycles > 100000) {
+            std::cerr << "[STAGNATION] Stuck at high depth " << frameDepth_
+                      << " for " << highDepthCycles << " cycles - breaking out\n";
+            popN(argCount + 1);
+            push(memory_.nil());
+            highDepthCycles = 0;
+            return false;
+        }
+    } else {
+        highDepthCycles = 0;  // Reset when we return to low depth
+    }
+
     // Save current execution state before switching to new method
     if (frameDepth_ >= MaxFrameDepth) {
         running_ = false;
-        return;
+        return false;
     }
 
     SavedFrame& frame = savedFrames_[frameDepth_++];
@@ -4733,29 +4753,19 @@ void Interpreter::pushFrame(Oop method, int argCount) {
     for (int i = 0; i < numTemps; ++i) {
         push(memory_.nil());
     }
+
+    return true;  // Successfully created frame
 }
 
 void Interpreter::popFrame() {
-    static FILE* frameLog = fopen("/tmp/iospharo-frame.log", "a");
-
     // Restore previous execution state
     if (frameDepth_ == 0) {
-        if (frameLog) {
-            fprintf(frameLog, "[POP_FRAME] frameDepth==0, setting running_=false\n");
-            fflush(frameLog);
-        }
         running_ = false;
         return;
     }
 
     --frameDepth_;
     SavedFrame& frame = savedFrames_[frameDepth_];
-
-    if (frameLog) {
-        fprintf(frameLog, "[POP_FRAME] popping to depth=%d savedIP=%p\n",
-                frameDepth_, (void*)frame.savedIP);
-        fflush(frameLog);
-    }
 
     // Reset stack to frame pointer (discards temps and locals)
     stackPointer_ = framePointer_;
@@ -4771,10 +4781,6 @@ void Interpreter::popFrame() {
 
     // If this was the last frame, we're done
     if (frameDepth_ == 0 && frame.savedIP == nullptr) {
-        if (frameLog) {
-            fprintf(frameLog, "[POP_FRAME] last frame with null savedIP, setting running_=false\n");
-            fflush(frameLog);
-        }
         running_ = false;
     }
 }
@@ -7467,12 +7473,13 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[188] = &Interpreter::primitiveExecuteMethodArgsArray;
     primitiveTable_[189] = &Interpreter::primitiveExecuteMethod;
 
-    // Unwind/exception primitives (195-199) - per Cog VM spec
+    // Unwind/exception primitives (195-196)
     primitiveTable_[195] = &Interpreter::primitiveFindNextUnwindContext;
     primitiveTable_[196] = &Interpreter::primitiveTerminateTo;
-    primitiveTable_[197] = &Interpreter::primitiveFindHandlerContext;  // was incorrectly arrayBecomeOneWay
-    primitiveTable_[198] = &Interpreter::primitiveFailure;                // marker, was arrayBecomeOneWayCopyHash
-    primitiveTable_[199] = &Interpreter::primitiveFailure;                // marker for exception handler
+    // Become primitives (197-198) - essential for object identity operations
+    primitiveTable_[197] = &Interpreter::primitiveArrayBecomeOneWay;
+    primitiveTable_[198] = &Interpreter::primitiveArrayBecomeOneWayCopyHash;
+    primitiveTable_[199] = &Interpreter::primitiveFailure;                // primitiveFlushExternalPrimitives - not needed
 
     // Closure primitives (200-209) - per Cog VM spec
     primitiveTable_[200] = &Interpreter::primitiveClosureCopyWithCopiedValues;
