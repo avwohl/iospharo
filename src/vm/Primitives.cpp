@@ -1849,12 +1849,34 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
     quitCallCount++;
 
     if (quitCallCount == 1) {
-        std::cerr << "[VM] primitiveQuit: IGNORING quit for embedded VM\n";
+        std::cerr << "[VM] primitiveQuit: IGNORING quit for embedded VM - restarting execution\n";
+
+        // Instead of just ignoring and continuing with broken state,
+        // reset and start fresh from the scheduler
+        // Pop args and receiver from stack
+        popN(argCount + 1);
+
+        // Find another runnable process (like World's main UI process)
+        if (tryReschedule()) {
+            std::cerr << "[VM] primitiveQuit: Found another process to run\n";
+            return PrimitiveResult::Success;  // Will continue with new process
+        }
+
+        // If no process, try bootstrap
+        if (bootstrapStartup()) {
+            std::cerr << "[VM] primitiveQuit: Bootstrap startup succeeded\n";
+            return PrimitiveResult::Success;
+        }
+
+        std::cerr << "[VM] primitiveQuit: No other process or startup method found\n";
     } else if (quitCallCount <= 3) {
         std::cerr << "[VM] primitiveQuit: Ignoring quit #" << quitCallCount << "\n";
     }
 
-    // Return success - Smalltalk code expects this
+    // Pop the args but don't continue with broken execution
+    if (argCount > 0) {
+        popN(argCount);
+    }
     return PrimitiveResult::Success;
 }
 

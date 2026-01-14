@@ -1788,6 +1788,13 @@ void Interpreter::invokeMenuItemAction(Oop menuItemMorph) {
 void Interpreter::syncDisplayToSurface() {
     if (!pharo::gDisplaySurface) return;
 
+    static int syncEntryCount = 0;
+    syncEntryCount++;
+    if (syncEntryCount <= 5 || syncEntryCount % 100 == 0) {
+        std::cerr << "[SYNC] entry #" << syncEntryCount << "\n";
+        std::cerr.flush();
+    }
+
     // Process input events
     processInputEvents();
 
@@ -2092,6 +2099,12 @@ void Interpreter::startHeartbeat() {
 
             // Every ~33ms (30fps), sync Display Form to platform surface AND push a timer event
             if (tickCount % 33 == 0) {
+                static int syncCallCount = 0;
+                syncCallCount++;
+                if (syncCallCount <= 5 || syncCallCount % 100 == 0) {
+                    std::cerr << "[HEARTBEAT] sync #" << syncCallCount << "\n";
+                    std::cerr.flush();
+                }
                 syncDisplayToSurface();
 
                 // Push a timer/redraw event to wake up the UI process
@@ -2205,6 +2218,10 @@ void Interpreter::processPendingSignals() {
 }
 
 bool Interpreter::step() {
+    static int stepCount = 0;
+    static int idleCount = 0;
+    stepCount++;
+
     if (!running_) {
         return false;
     }
@@ -2216,6 +2233,10 @@ bool Interpreter::step() {
 
     // Check if we've run past the end of bytecodes
     if (instructionPointer_ >= bytecodeEnd_) {
+        idleCount++;
+        if (idleCount <= 5 || idleCount % 10000 == 0) {
+            std::cerr << "[STEP] IP past end (idle #" << idleCount << " step #" << stepCount << ") - returning to caller\n";
+        }
         returnValue(receiver_);
         return running_;
     }
@@ -2226,6 +2247,13 @@ bool Interpreter::step() {
     // Resetting here would break extension byte chains.
 
     uint8_t bytecode = fetchByte();
+
+    // Log first few bytecodes and then periodically
+    if (stepCount <= 10 || stepCount % 100000 == 0) {
+        std::cerr << "[STEP] #" << stepCount << " bytecode=0x" << std::hex << (int)bytecode << std::dec
+                  << " IP=0x" << std::hex << (uintptr_t)instructionPointer_ << std::dec << "\n";
+    }
+
     dispatchBytecode(bytecode);
 
     return running_;
@@ -5562,6 +5590,24 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     // Get the actual receiver that failed (from stack, under args)
     Oop failedReceiver = stackValue(argCount);
 
+    // Debug: log what receiver is actually on the stack
+    std::string stackRcvrClass = "<unknown>";
+    if (failedReceiver.isObject() && failedReceiver.rawBits() > 0x10000) {
+        Oop rcvrCls = memory_.classOf(failedReceiver);
+        if (rcvrCls.isObject()) {
+            Oop nameOop = memory_.fetchPointer(6, rcvrCls);
+            if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                    stackRcvrClass = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                }
+            }
+        }
+    }
+    std::cerr << "[DNU] Stack receiver (under args): 0x" << std::hex << failedReceiver.rawBits()
+              << std::dec << " class=" << stackRcvrClass << "\n";
+    std::cerr << "[DNU] Compare with receiver_: 0x" << std::hex << receiver_.rawBits() << std::dec << "\n";
+
     // Create a Message object
     Oop messageClass = memory_.specialObject(SpecialObjectIndex::ClassMessage);
     Oop message = memory_.allocateSlots(
@@ -5582,11 +5628,28 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
     // Pop receiver (will be repushed for send) - save it!
     Oop originalReceiver = pop();
-    // std::cerr << "[DNU] Original receiver from stack: 0x" << std::hex << originalReceiver.rawBits() << std::dec; // DEBUG
+
+    // Debug: log what receiver we actually popped
+    std::string poppedRcvrClass = "<unknown>";
+    if (originalReceiver.isObject() && originalReceiver.rawBits() > 0x10000) {
+        Oop rcvrCls = memory_.classOf(originalReceiver);
+        if (rcvrCls.isObject()) {
+            Oop nameOop = memory_.fetchPointer(6, rcvrCls);
+            if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                    poppedRcvrClass = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                }
+            }
+        }
+    }
+    std::cerr << "[DNU] Original receiver popped: 0x" << std::hex << originalReceiver.rawBits()
+              << std::dec << " class=" << poppedRcvrClass << "\n";
 
     // Send doesNotUnderstand: message to the ORIGINAL receiver
     push(originalReceiver);
     push(message);
+    std::cerr << "[DNU] About to call sendSelector for DNU\n";
     sendSelector(selectors_.doesNotUnderstand, 1);
 
     // Decrement after setting up the DNU send - the depth was meant to track
