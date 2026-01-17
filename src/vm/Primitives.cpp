@@ -1654,31 +1654,23 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
 
 PrimitiveResult Interpreter::primitiveQuit(int argCount) {
     // Smalltalk quitPrimitive / Smalltalk exit: exitCode
-    // For embedded iOS VM: don't actually quit, try to reschedule instead
 
-    static int quitCallCount = 0;
-    quitCallCount++;
-
-    if (quitCallCount == 1) {
-        // Pop args and receiver from stack
-        popN(argCount + 1);
-
-        // Find another runnable process (like World's main UI process)
-        if (tryReschedule()) {
-            return PrimitiveResult::Success;
-        }
-
-        // If no process, try bootstrap
-        if (bootstrapStartup()) {
-            return PrimitiveResult::Success;
-        }
-    }
-
-    // Pop the args but don't continue with broken execution
+    // Get exit code if provided
+    int exitCode = 0;
     if (argCount > 0) {
-        popN(argCount);
+        Oop arg = stackTop();
+        if (arg.isSmallInteger()) {
+            exitCode = static_cast<int>(arg.asSmallInteger());
+        }
     }
-    return PrimitiveResult::Success;
+
+    std::cerr << "[VM] primitiveQuit called with exit code " << exitCode << "\n";
+
+    // Stop interpreter and exit process
+    running_ = false;
+    std::exit(exitCode);
+
+    return PrimitiveResult::Success;  // Never reached
 }
 
 PrimitiveResult Interpreter::primitiveExitToDebugger(int argCount) {
