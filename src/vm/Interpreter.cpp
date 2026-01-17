@@ -3567,13 +3567,17 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                                         push(actionArg);
                                     }
                                     if (actionLog) {
-                                        fprintf(actionLog, "[EXEC] Calling sendSelector now, enabling trace for 200 sends\n");
+                                        fprintf(actionLog, "[EXEC] Calling sendSelector now\n");
+                                        fprintf(actionLog, "[EXEC] receiver rawBits=0x%llx\n", (unsigned long long)actionRcvr.rawBits());
                                         fflush(actionLog);
                                     }
-                                    menuActionTraceCount_ = 200;  // Trace next 200 message sends
                                     sendSelector(actionSel, actionArgCount);
                                     if (actionLog) {
-                                        fprintf(actionLog, "[EXEC] sendSelector returned\n");
+                                        fprintf(actionLog, "[EXEC] sendSelector returned, method_=0x%llx\n",
+                                                (unsigned long long)method_.rawBits());
+                                        fprintf(actionLog, "[EXEC] IP offset=%td, framePointer offset=%td\n",
+                                                instructionPointer_ - reinterpret_cast<uint8_t*>(method_.asObjectPtr()),
+                                                framePointer_ - stackBase_);
                                         fflush(actionLog);
                                     }
                                     return;

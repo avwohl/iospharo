@@ -54,44 +54,24 @@ class PharoMTKView: MTKView {
         }
     }
 
-    // MARK: - Touch Handling (works on iOS and Mac Catalyst)
+    // MARK: - Touch Handling (iOS only - Mac Catalyst uses gesture recognizers)
 
+    #if !targetEnvironment(macCatalyst)
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = touches.first, let bridge = bridge else { return }
         let point = touch.location(in: self)
-
-        // Determine button based on touch type
-        var buttons = IOS_RED_BUTTON
-        #if targetEnvironment(macCatalyst)
-        if let event = event {
-            // Check for right-click (control+click or two-finger tap)
-            if event.modifierFlags.contains(.control) {
-                buttons = IOS_BLUE_BUTTON
-            }
-        }
-        #endif
-
-        bridge.sendTouchDown(at: point, buttons: buttons)
+        bridge.sendTouchDown(at: point, buttons: IOS_RED_BUTTON)
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = touches.first, let bridge = bridge else { return }
         let point = touch.location(in: self)
-
-        var buttons = IOS_RED_BUTTON
-        #if targetEnvironment(macCatalyst)
-        if let event = event, event.modifierFlags.contains(.control) {
-            buttons = IOS_BLUE_BUTTON
-        }
-        #endif
-
-        bridge.sendTouchMoved(to: point, buttons: buttons)
+        bridge.sendTouchMoved(to: point, buttons: IOS_RED_BUTTON)
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = touches.first, let bridge = bridge else { return }
         let point = touch.location(in: self)
-        print("[TOUCH] ended at \(point)")
         bridge.sendTouchUp(at: point)
     }
 
@@ -100,6 +80,7 @@ class PharoMTKView: MTKView {
         let point = touch.location(in: self)
         bridge.sendTouchUp(at: point)
     }
+    #endif
 
     #if targetEnvironment(macCatalyst)
     // MARK: - Mac Catalyst Mouse Button Handling
