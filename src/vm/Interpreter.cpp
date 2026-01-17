@@ -3749,6 +3749,17 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
         return o.isNil() || o.rawBits() == nilObj.rawBits() || o.rawBits() < 0x10000;
     };
 
+    // Debug: trace #owner lookups to understand why they fail
+    bool traceOwner = (selStr == "owner");
+    static int ownerTraceCount = 0;
+    if (traceOwner) {
+        ownerTraceCount++;
+        if (ownerTraceCount <= 5) {
+            std::cerr << "[OWNER-TRACE] Starting lookup #" << ownerTraceCount
+                      << " selector=0x" << std::hex << selector.rawBits() << std::dec << "\n";
+        }
+    }
+
     while (!isNilOrEnd(currentClass) && currentClass.isObject() && depth < 100) {
         Oop methodDict = methodDictOf(currentClass);
 
@@ -3756,6 +3767,27 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
             std::cerr << "[LOOKUP] #" << selStr << " depth=" << depth
                       << " class=" << getClassName(currentClass)
                       << " methodDict=" << (methodDict.isObject() ? "valid" : "nil/invalid") << "\n";
+        }
+
+        // Detailed trace for #owner lookup in Morph
+        if (traceOwner && ownerTraceCount <= 3 && getClassName(currentClass) == "Morph") {
+            std::cerr << "[OWNER-TRACE] In Morph methodDict=0x" << std::hex << methodDict.rawBits() << std::dec << "\n";
+            if (methodDict.isObject()) {
+                ObjectHeader* mdHdr = methodDict.asObjectPtr();
+                std::cerr << "[OWNER-TRACE]   mdSlots=" << mdHdr->slotCount()
+                          << " mdFormat=" << static_cast<int>(mdHdr->format()) << "\n";
+                // List first 10 selectors
+                for (size_t i = 2; i < std::min(mdHdr->slotCount(), (size_t)12); i++) {
+                    Oop key = memory_.fetchPointer(i, methodDict);
+                    if (key.isObject() && key.rawBits() > 0x10000) {
+                        ObjectHeader* keyHdr = key.asObjectPtr();
+                        if (keyHdr->isBytesObject() && keyHdr->byteSize() < 30) {
+                            std::cerr << "[OWNER-TRACE]   key[" << i << "]=\""
+                                      << std::string((char*)keyHdr->bytes(), keyHdr->byteSize()) << "\"\n";
+                        }
+                    }
+                }
+            }
         }
 
         if (!isNilOrEnd(methodDict) && methodDict.isObject()) {
