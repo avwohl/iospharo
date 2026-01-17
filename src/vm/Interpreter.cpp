@@ -1466,6 +1466,11 @@ void Interpreter::processInputEvents() {
                 // Fall through to pass event to Pharo
             }
             // Not in menu area, pass through to Pharo
+            if (logFile) {
+                fprintf(logFile, "[PASSTHROUGH] mouse up buttons=%d at %d,%d -> queued (total=%zu)\n",
+                        event.arg3, event.arg1, event.arg2, passThroughEvents_.size() + 1);
+                fflush(logFile);
+            }
             passThroughEvents_.push_back(event);
             continue;
         }
@@ -1556,6 +1561,11 @@ void Interpreter::processInputEvents() {
                     dropdownState_.valid = false;
                 }
                 // Pass through to Pharo
+                if (logFile) {
+                    fprintf(logFile, "[PASSTHROUGH] mouse down buttons=%d at %d,%d -> queued (total=%zu)\n",
+                            event.arg3, event.arg1, event.arg2, passThroughEvents_.size() + 1);
+                    fflush(logFile);
+                }
                 passThroughEvents_.push_back(event);
                 continue;
             }
@@ -7146,8 +7156,39 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
         return PrimitiveResult::Failure;
     }
 
-    // Quick primitives (256-519): return constants or instance variables
-    // These are handled inline rather than via the primitive table
+    // Check primitive table bounds first
+    if (primitiveIndex < 0 || primitiveIndex >= static_cast<int>(primitiveTable_.size())) {
+        return PrimitiveResult::Failure;
+    }
+
+    // IMPORTANT: Check primitive table FIRST before falling back to quick primitives
+    // This allows real primitives (like 264-269 for events) to be registered in the
+    // 256-519 range without being hijacked by quick primitive handling.
+    PrimitiveFunc prim = primitiveTable_[primitiveIndex];
+
+    // Debug: Log calls to primitive 264-269 range
+    if (primitiveIndex >= 264 && primitiveIndex <= 269) {
+        static FILE* primDebug = fopen("/tmp/prim_264_range.log", "a");
+        if (primDebug) {
+            fprintf(primDebug, "[PRIM] Called primitive %d, prim=%p\n",
+                    primitiveIndex, (void*)(prim ? 1 : 0));
+            fflush(primDebug);
+        }
+    }
+
+    if (prim) {
+        // Real primitive function exists - call it
+        PrimitiveResult result = (this->*prim)(argCount);
+        if (result == PrimitiveResult::Success) {
+            lastPrimitiveIndex_ = primitiveIndex;
+        }
+        return result;
+    }
+
+    // No primitive function - check if this is a quick primitive (256-519)
+    // Quick primitives return constants or instance variables for accessor methods
+    // NOTE: Quick primitives are normally handled by bytecode, but some methods
+    // may have `<primitive: 256>` etc in their pragma for backwards compatibility
     if (primitiveIndex >= 256 && primitiveIndex <= 519) {
         Oop receiver = stackTop();
 
@@ -7196,23 +7237,8 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
         }
     }
 
-    if (primitiveIndex < 0 || primitiveIndex >= static_cast<int>(primitiveTable_.size())) {
-        return PrimitiveResult::Failure;
-    }
-
-    PrimitiveFunc prim = primitiveTable_[primitiveIndex];
-    if (!prim) {
-        return PrimitiveResult::Failure;
-    }
-
-    PrimitiveResult result = (this->*prim)(argCount);
-
-    // Track successful primitive execution for stepDetailed()
-    if (result == PrimitiveResult::Success) {
-        lastPrimitiveIndex_ = primitiveIndex;
-    }
-
-    return result;
+    // No primitive function and not a quick primitive
+    return PrimitiveResult::Failure;
 }
 
 Oop Interpreter::activeContext() const {

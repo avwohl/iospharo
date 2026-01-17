@@ -10107,20 +10107,74 @@ PrimitiveResult Interpreter::primitiveLongRunningPrimitive(int argCount) {
 // Fills the event buffer with the next pending event
 // Can be called with argCount=0 (receiver is event buffer) or argCount=1 (event buffer as argument)
 PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
+    // Debug: Log entry to this function
+    static FILE* entryLog = fopen("/tmp/prim_getnext_entry.log", "a");
+    static int entryCount = 0;
+    entryCount++;
+    if (entryLog && entryCount <= 50) {
+        fprintf(entryLog, "[GETNEXT] Entry #%d argCount=%d\n", entryCount, argCount);
+        fflush(entryLog);
+    }
+
     // Process input events first - this handles menu bar clicks natively
     processInputEvents();
 
-    // Get event buffer from either argument (argCount=1) or receiver (argCount=0)
+    // Get event buffer from argument (argCount=1) or receiver's first inst var (argCount=0)
+    // With argCount=0, Pharo's InputEventSensor>>primGetNextEvent passes
+    // the eventBuffer as the FIRST instance variable of the receiver (not the receiver itself)
     Oop eventBuffer;
-    if (argCount == 0) {
-        eventBuffer = receiver_;
-    } else if (argCount == 1) {
+    if (argCount == 1) {
+        // eventBuffer passed as explicit argument
         eventBuffer = stackTop();
+    } else if (argCount == 0) {
+        // Try to get eventBuffer from receiver's first instance variable
+        // This is how Pharo's InputEventSensor stores its event buffer
+        if (!receiver_.isObject()) {
+            return PrimitiveResult::Failure;
+        }
+        ObjectHeader* rcvrHdr = receiver_.asObjectPtr();
+        if (rcvrHdr->slotCount() < 1 && static_cast<int>(rcvrHdr->format()) == 0) {
+            // For format 0 objects, we can't read slots - maybe it's stored differently
+            // Try reading the stackTop as the event buffer argument instead
+            // (some VMs pass it implicitly on the stack)
+            eventBuffer = stackTop();
+        } else if (rcvrHdr->slotCount() >= 1) {
+            eventBuffer = memory_.fetchPointer(0, receiver_);
+        } else {
+            // Fallback: use receiver as buffer (old behavior)
+            eventBuffer = receiver_;
+        }
     } else {
         return PrimitiveResult::Failure;
     }
 
+    // Debug: Log buffer validation
+    static FILE* bufLog = fopen("/tmp/prim_buffer_check.log", "a");
+    static int bufCount = 0;
+    bufCount++;
+
+    // Debug: Log what eventBuffer is
+    if (bufLog && bufCount <= 20) {
+        fprintf(bufLog, "[BUF] #%d eventBuffer raw=0x%llx isObj=%d isImm=%d isNil=%d argCount=%d\n",
+                bufCount, (unsigned long long)eventBuffer.rawBits(),
+                eventBuffer.isObject() ? 1 : 0,
+                eventBuffer.isImmediate() ? 1 : 0,
+                eventBuffer.isNil() ? 1 : 0,
+                argCount);
+        if (eventBuffer.isObject()) {
+            ObjectHeader* hdr = eventBuffer.asObjectPtr();
+            fprintf(bufLog, "[BUF] #%d obj classIdx=%d format=%d slotCount=%zu\n",
+                    bufCount, hdr->classIndex(), hdr->format(), hdr->slotCount());
+        }
+        fflush(bufLog);
+    }
+
     if (eventBuffer.isImmediate()) {
+        if (bufLog && bufCount <= 20) {
+            fprintf(bufLog, "[BUF] #%d FAIL: eventBuffer is immediate (raw=0x%llx)\n",
+                    bufCount, (unsigned long long)eventBuffer.rawBits());
+            fflush(bufLog);
+        }
         return PrimitiveResult::Failure;
     }
 
@@ -10131,36 +10185,80 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
     // 7: window index
 
     // Check buffer has enough slots
-    // Note: Pharo versions vary - some use 6 slots, some 7, some 8
+    // Note: Pharo versions vary - some use 4 slots (minimal), 6 slots, or 8 slots
+    // We need at least 4 slots for basic event data (type, timestamp, x, y)
     size_t slotCount = memory_.slotCountOf(eventBuffer);
-    if (slotCount < 6) {
+    if (slotCount < 4) {
+        if (bufLog && bufCount <= 20) {
+            fprintf(bufLog, "[BUF] #%d FAIL: slotCount=%zu < 4\n", bufCount, slotCount);
+            fflush(bufLog);
+        }
         return PrimitiveResult::Failure;
+    }
+
+    if (bufLog && bufCount <= 100) {  // Log more calls
+        fprintf(bufLog, "[BUF] #%d OK: slotCount=%zu, passthrough=%zu\n",
+                bufCount, slotCount, passThroughEvents_.size());
+        fflush(bufLog);
     }
 
     // Try to get next event - first from pass-through buffer, then from queue
     Event event;
     bool hasEvent = false;
 
+    // Debug: track calls
+    static FILE* prim264Log = fopen("/tmp/prim264_debug.log", "a");
+    static int callCount = 0;
+    callCount++;
+
+    // Log every 100th call to verify we're being called
+    if (prim264Log && callCount % 100 == 1) {
+        fprintf(prim264Log, "[PRIM264] Call #%d, passthrough=%zu, queueEmpty=%d\n",
+                callCount, passThroughEvents_.size(), gEventQueue.isEmpty() ? 1 : 0);
+        fflush(prim264Log);
+    }
+
     // Check pass-through events first (these were processed but not consumed by menu handler)
     if (!passThroughEvents_.empty()) {
         event = passThroughEvents_.front();
         passThroughEvents_.erase(passThroughEvents_.begin());
         hasEvent = true;
+        if (prim264Log && event.type == 1) {
+            fprintf(prim264Log, "[PRIM264] #%d Got mouse event from passthrough: type=%d x=%d y=%d buttons=%d\n",
+                    callCount, event.arg5, event.arg1, event.arg2, event.arg3);
+            fflush(prim264Log);
+        }
     } else if (gEventQueue.pop(event)) {
         hasEvent = true;
+        if (prim264Log && event.type == 1) {
+            fprintf(prim264Log, "[PRIM264] #%d Got mouse event from queue: type=%d x=%d y=%d buttons=%d\n",
+                    callCount, event.arg5, event.arg1, event.arg2, event.arg3);
+            fflush(prim264Log);
+        }
     }
 
     if (hasEvent) {
-        // Fill buffer with event data
+        // Fill buffer with event data - only write slots that exist
         memory_.storePointer(0, eventBuffer, Oop::fromSmallInteger(event.type));
-        memory_.storePointer(1, eventBuffer, Oop::fromSmallInteger(event.timeStamp));
-        memory_.storePointer(2, eventBuffer, Oop::fromSmallInteger(event.arg1));
-        memory_.storePointer(3, eventBuffer, Oop::fromSmallInteger(event.arg2));
-        memory_.storePointer(4, eventBuffer, Oop::fromSmallInteger(event.arg3));
-        memory_.storePointer(5, eventBuffer, Oop::fromSmallInteger(event.arg4));
-        memory_.storePointer(6, eventBuffer, Oop::fromSmallInteger(event.arg5));
-        if (slotCount >= 8) {
+        if (slotCount > 1) memory_.storePointer(1, eventBuffer, Oop::fromSmallInteger(event.timeStamp));
+        if (slotCount > 2) memory_.storePointer(2, eventBuffer, Oop::fromSmallInteger(event.arg1));
+        if (slotCount > 3) memory_.storePointer(3, eventBuffer, Oop::fromSmallInteger(event.arg2));
+        if (slotCount > 4) memory_.storePointer(4, eventBuffer, Oop::fromSmallInteger(event.arg3));
+        if (slotCount > 5) memory_.storePointer(5, eventBuffer, Oop::fromSmallInteger(event.arg4));
+        if (slotCount > 6) memory_.storePointer(6, eventBuffer, Oop::fromSmallInteger(event.arg5));
+        if (slotCount > 7) {
             memory_.storePointer(7, eventBuffer, Oop::fromSmallInteger(event.windowIndex));
+        }
+
+        // Log mouse events returned to Pharo
+        if (event.type == 1) {
+            static FILE* mouseLog = fopen("/tmp/pharo_mouse_events.log", "a");
+            if (mouseLog) {
+                const char* subtype = event.arg5 == 0 ? "move" : (event.arg5 == 1 ? "down" : "up");
+                fprintf(mouseLog, "[TO-PHARO] Mouse %s at (%d,%d) buttons=%d mods=%d\n",
+                        subtype, event.arg1, event.arg2, event.arg3, event.arg4);
+                fflush(mouseLog);
+            }
         }
     } else {
         // No event available
@@ -10171,6 +10269,16 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
         pop();  // pop eventBuffer argument, leave receiver
     }
     // Leave receiver on stack for argCount=0 case
+
+    // Debug: Log completion
+    static FILE* compLog = fopen("/tmp/prim_completion.log", "a");
+    static int compCount = 0;
+    compCount++;
+    if (compLog && compCount <= 50) {
+        fprintf(compLog, "[COMPLETE] #%d hasEvent=%d\n", compCount, hasEvent ? 1 : 0);
+        fflush(compLog);
+    }
+
     return PrimitiveResult::Success;
 }
 

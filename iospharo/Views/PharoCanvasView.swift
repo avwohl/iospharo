@@ -293,6 +293,7 @@ class PharoCanvasViewController: UIViewController {
                 action: #selector(handleRightClick(_:))
             )
             rightClickGesture.buttonMaskRequired = .secondary
+            rightClickGesture.cancelsTouchesInView = false  // Allow touches to pass through
             targetView.addGestureRecognizer(rightClickGesture)
             NSLog("[VC] Mac Catalyst: added right-click gesture recognizer")
         }
@@ -305,6 +306,7 @@ class PharoCanvasViewController: UIViewController {
         scrollGesture.minimumNumberOfTouches = 2
         scrollGesture.maximumNumberOfTouches = 2
         scrollGesture.allowedScrollTypesMask = .continuous
+        scrollGesture.cancelsTouchesInView = false  // Allow touches to pass through
         targetView.addGestureRecognizer(scrollGesture)
         NSLog("[VC] Mac Catalyst: using direct touch handling + scroll gesture")
 
