@@ -4824,9 +4824,28 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     }
     // Log DNU for menu action debugging
     std::string rcvrClassName = "";
+    bool isClass = false;
     if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
         Oop rcvrClass = memory_.classOf(receiver_);
         if (rcvrClass.isObject()) {
+            // Check if the receiver itself is a class (has a metaclass as its class)
+            ObjectHeader* rcvrClassHdr = rcvrClass.asObjectPtr();
+            // In Pharo, metaclasses have a specific format and inherit from Metaclass
+            // Classes have format 1 (fixed), while instances have various formats
+            ObjectHeader* rcvrHdr = receiver_.asObjectPtr();
+            // A class has format 1 (fixed) and slot 1 is methodDict
+            if (rcvrHdr->format() == ObjectFormat::FixedSize &&
+                rcvrHdr->slotCount() >= 10) {
+                // Could be a class - check if slot 1 looks like a methodDict
+                Oop maybeMethodDict = memory_.fetchPointer(1, receiver_);
+                if (maybeMethodDict.isObject() && maybeMethodDict.rawBits() > 0x10000) {
+                    ObjectHeader* mdHdr = maybeMethodDict.asObjectPtr();
+                    if (mdHdr->slotCount() >= 2) {
+                        isClass = true;
+                    }
+                }
+            }
+
             Oop nameOop = memory_.fetchPointer(6, rcvrClass);
             if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
                 ObjectHeader* nameHdr = nameOop.asObjectPtr();
@@ -4845,7 +4864,9 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     }
     if (!skipLog) {
         std::cerr << "[DNU] Selector '#" << origStr << "' not found on " << rcvrClassName
-                  << " (args=" << argCount << ") len=" << origStr.length() << "\n";
+                  << (isClass ? " [CLASS]" : " [instance]")
+                  << " (args=" << argCount << ") rcvr=0x" << std::hex << receiver_.rawBits()
+                  << std::dec << "\n";
     }
     // Debug: Check why fallbacks aren't matching
     if (origStr.length() == 5) {
@@ -6076,6 +6097,12 @@ bool Interpreter::tryReschedule() {
 // ===== STARTUP SUPPORT =====
 
 bool Interpreter::bootstrapStartup() {
+    static int bootstrapCallCount = 0;
+    bootstrapCallCount++;
+    if (bootstrapCallCount <= 5) {
+        std::cerr << "[STARTUP] bootstrapStartup called (call #" << bootstrapCallCount << ")\n";
+    }
+
     // In Spur, nil is an actual object at heap start, not 0
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
     // DEBUG_LOG("[DEBUG] nil object = 0x" << std::hex << nilObj.rawBits() << std::dec;
@@ -6129,17 +6156,22 @@ bool Interpreter::bootstrapStartup() {
                     //   slot 1 = suspendedContext
                     //   slot 2 = priority
                     Oop context = memory_.fetchPointer(1, firstProcess);  // suspendedContext is at slot 1
+                    std::cerr << "[STARTUP] Process at priority " << (i + 1)
+                              << ": suspendedContext=0x" << std::hex << context.rawBits() << std::dec << "\n";
                     if (context.rawBits() != nilObj.rawBits() && context.isObject()) {
                         ObjectHeader* ctxHeader = context.asObjectPtr();
-                        // DEBUG_LOG("[DEBUG] suspendedContext: cls=" << ctxHeader->classIndex()
-                                  // << " slots=" << ctxHeader->slotCount() << " fmt=" << (int)ctxHeader->format();
+                        std::cerr << "[STARTUP] suspendedContext: cls=" << ctxHeader->classIndex()
+                                  << " slots=" << ctxHeader->slotCount()
+                                  << " fmt=" << (int)ctxHeader->format() << "\n";
 
                         // Only try to execute if it looks like a Context (not a Process)
                         // Context format is usually 3 (indexable with fixed), Process format is 1
                         if (ctxHeader->format() == ObjectFormat::IndexableWithFixed) {
+                            std::cerr << "[STARTUP] Found valid context, resuming execution!\n";
                             return executeFromContext(context);
                         } else {
-                            // DEBUG_LOG("[DEBUG] suspendedContext doesn't look like a Context (format=" << (int)ctxHeader->format() << ")";
+                            std::cerr << "[STARTUP] suspendedContext doesn't look like a Context (format="
+                                      << (int)ctxHeader->format() << ")\n";
                         }
                     }
                 }
@@ -6147,31 +6179,41 @@ bool Interpreter::bootstrapStartup() {
         }
     }
 
-    // DEBUG: "[DEBUG] No runnable process found in scheduler queues"
+    std::cerr << "[STARTUP] No runnable process found in scheduler queues\n";
 
     // Approach 2: Try to resume from where the image was saved
     // The saved active process might have a context embedded deeper
-    Oop activeProcess = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
-    if (activeProcess.isObject()) {
-        activeProcess = memory_.fetchPointer(1, activeProcess);  // Get scheduler
-        if (activeProcess.isObject()) {
-            activeProcess = memory_.fetchPointer(1, activeProcess);  // Get activeProcess
+    std::cerr << "[STARTUP] Approach 2: Checking active process...\n";
+    Oop schedulerAssoc2 = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
+    if (schedulerAssoc2.isObject()) {
+        Oop scheduler = memory_.fetchPointer(1, schedulerAssoc2);  // Get scheduler
+        if (scheduler.isObject()) {
+            Oop activeProcess = memory_.fetchPointer(1, scheduler);  // Get activeProcess
             if (activeProcess.isObject()) {
-                // DEBUG_LOG("[DEBUG] Active process: 0x" << std::hex << activeProcess.rawBits() << std::dec;
                 ObjectHeader* procHeader = activeProcess.asObjectPtr();
-                // DEBUG_LOG("[DEBUG] Active process has " << procHeader->slotCount() << " slots";
+                std::cerr << "[STARTUP] Active process: 0x" << std::hex << activeProcess.rawBits()
+                          << std::dec << " slots=" << procHeader->slotCount()
+                          << " cls=" << procHeader->classIndex() << "\n";
 
-                // Check all slots for a valid context
-                for (size_t i = 0; i < std::min(procHeader->slotCount(), (size_t)10); i++) {
-                    Oop slot = procHeader->slotAt(i);
-                    // DEBUG_LOG("[DEBUG]   slot[" << i << "] = 0x" << std::hex << slot.rawBits() << std::dec;
-                    // if (slot.isNil()) std::cerr << " (nil)";
-                    // else if (slot.isSmallInteger()) std::cerr << " (SmallInt: " << slot.asSmallInteger() << ")";
-                    // else if (slot.isObject()) {
-                    //     ObjectHeader* h = slot.asObjectPtr();
-                    //     std::cerr << " (obj: " << h->slotCount() << " slots, cls=" << h->classIndex() << ")";
-                    // }
-                    // std::cerr; // DEBUG
+                // Check suspendedContext (slot 1) of active process
+                if (procHeader->slotCount() > 1) {
+                    Oop suspendedCtx = procHeader->slotAt(1);
+                    std::cerr << "[STARTUP] Active process suspendedContext: 0x"
+                              << std::hex << suspendedCtx.rawBits() << std::dec;
+                    if (suspendedCtx.isNil()) {
+                        std::cerr << " (nil)\n";
+                    } else if (suspendedCtx.isObject()) {
+                        ObjectHeader* ctxHdr = suspendedCtx.asObjectPtr();
+                        std::cerr << " cls=" << ctxHdr->classIndex()
+                                  << " fmt=" << (int)ctxHdr->format() << "\n";
+                        // Try to resume from this context if it looks valid
+                        if (ctxHdr->format() == ObjectFormat::IndexableWithFixed) {
+                            std::cerr << "[STARTUP] Resuming from active process context!\n";
+                            return executeFromContext(suspendedCtx);
+                        }
+                    } else {
+                        std::cerr << " (not object)\n";
+                    }
                 }
             }
         }
