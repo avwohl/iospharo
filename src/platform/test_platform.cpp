@@ -141,8 +141,30 @@ int main(int argc, char* argv[]) {
     // Test clicking on Pharo menu and selecting Quit
     // Menu bar is at top, "Pharo" menu is typically at x=50
 
-    // First, let's click somewhere neutral to make sure events work
-    std::cout << "  [5a] Test click at center..." << std::endl;
+    // First, test RIGHT-CLICK to trigger world menu
+    std::cout << "  [5a] RIGHT-CLICK at center (button=1) to trigger world menu..." << std::endl;
+    vm_postMouseEvent(0, width/2, height/2, 0, 0);  // move
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    vm_postMouseEvent(1, width/2, height/2, 1, 0);  // button down (blue=1 = right-click)
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    vm_postMouseEvent(2, width/2, height/2, 0, 0);  // button up
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));  // Wait for world menu
+
+    int updatesAfterRightClick = displayUpdateCount.load();
+    std::cout << "  Updates after right-click: " << updatesAfterRightClick << std::endl;
+    std::cout << "  (World menu should have appeared if it works)" << std::endl;
+
+    // Then, left-click somewhere to dismiss the world menu (if it opened)
+    std::cout << "  [5b] LEFT-CLICK at corner to dismiss world menu..." << std::endl;
+    vm_postMouseEvent(0, 10, 10, 0, 0);  // move
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    vm_postMouseEvent(1, 10, 10, 4, 0);  // button down (red=4 = left-click)
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    vm_postMouseEvent(2, 10, 10, 0, 0);  // button up
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    // Now test left-click at center
+    std::cout << "  [5c] LEFT-CLICK at center..." << std::endl;
     vm_postMouseEvent(0, width/2, height/2, 0, 0);  // move
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     vm_postMouseEvent(1, width/2, height/2, 4, 0);  // button down (red=4)
@@ -155,7 +177,7 @@ int main(int argc, char* argv[]) {
 
     // Now click on Pharo menu (leftmost menu in the menu bar)
     // Menu bar is at y=28-72 (from log), Pharo menu around x=30-80
-    std::cout << "  [5b] Click on Pharo menu at (50, 50) to open dropdown..." << std::endl;
+    std::cout << "  [5d] Click on Pharo menu at (50, 50) to open dropdown..." << std::endl;
     vm_postMouseEvent(0, 50, 50, 0, 0);  // move to Pharo menu (inside menubar y=28-72)
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     vm_postMouseEvent(1, 50, 50, 4, 0);  // button down
@@ -174,7 +196,7 @@ int main(int argc, char* argv[]) {
     // Height = 268-72 = 196 pixels for 8 items = ~24.5 pixels/item
     // Quit at item 7 starts at y = 72 + 7*24.5 = 72 + 171.5 = ~244
     // Try y=252 to click on the last item
-    std::cout << "  [5c] Click on last menu item (Quit?) at (50, 252)..." << std::endl;
+    std::cout << "  [5e] Click on last menu item (Quit?) at (50, 252)..." << std::endl;
     vm_postMouseEvent(0, 50, 252, 0, 0);  // move to last item
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     vm_postMouseEvent(1, 50, 252, 4, 0);  // button down
