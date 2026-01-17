@@ -96,30 +96,33 @@ class MetalRenderer: NSObject, MTKViewDelegate {
 
         // Log texture updates and sample pixel data
         updateTextureCount += 1
-        // Log more frequently to see changes after user interaction
-        if updateTextureCount <= 5 || updateTextureCount % 100 == 0 {
-            // Sample menu bar area to understand the layout
-            // Menu bar in Pharo is typically 28 points tall
-            // In 2048x1536 (2x Retina), that would be y=0-56 pixels
-            // OR if coordinates aren't scaled, y=0-28
+        // Log EVERY frame to catch menu changes
+        if updateTextureCount <= 5 || updateTextureCount % 10 == 0 {
+            // Sample where dropdown menu would appear (below menu bar)
+            // Menu bar ends around y=75, dropdown would be y=75-300
 
-            // Pixel at (50, 25) - should be on menu bar if not scaled
-            let p1 = 25 * width + 50
+            // Pixel at (50, 50) - on menu bar
+            let p1 = 50 * width + 50
             let pixel1 = p1 < size ? bits[p1] : 0
 
-            // Pixel at (50, 50) - below menu bar if not scaled, on menu bar if scaled
-            let p2 = 50 * width + 50
+            // Pixel at (50, 100) - where dropdown should appear
+            let p2 = 100 * width + 50
             let pixel2 = p2 < size ? bits[p2] : 0
 
-            // Pixel at (50, 75) - definitely below menu bar
-            let p3 = 75 * width + 50
+            // Pixel at (50, 150) - inside dropdown area
+            let p3 = 150 * width + 50
             let pixel3 = p3 < size ? bits[p3] : 0
 
+            // Pixel at (50, 200) - inside dropdown area
+            let p4 = 200 * width + 50
+            let pixel4 = p4 < size ? bits[p4] : 0
+
             // Log pixel values
-            NSLog("[METAL] updateTexture #\(updateTextureCount): \(width)x\(height) " +
-                  "(50,25)=\(String(format:"0x%08X", pixel1)) " +
-                  "(50,50)=\(String(format:"0x%08X", pixel2)) " +
-                  "(50,75)=\(String(format:"0x%08X", pixel3))")
+            NSLog("[METAL] #\(updateTextureCount): " +
+                  "bar(50,50)=\(String(format:"%08X", pixel1)) " +
+                  "drop(50,100)=\(String(format:"%08X", pixel2)) " +
+                  "drop(50,150)=\(String(format:"%08X", pixel3)) " +
+                  "drop(50,200)=\(String(format:"%08X", pixel4))")
         }
 
         // Recreate texture if size changed
