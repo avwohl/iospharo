@@ -191,6 +191,7 @@ public:
     void initializeDisplayForm();  // Create and set up display Form
     void renderWorldMorphs();      // Direct rendering of World's morphs
     void processInputEvents();     // Process pending input events
+    void handleWorldClick(int x, int y, int buttons);  // Handle click outside menu bar
     void syncDisplayToSurface();   // Copy Display Form to platform surface
     void invokeMenuItemAction(Oop menuItemMorph);  // Invoke action from menu item click
     void ensureDisplayForm(int width, int height, int depth);  // Create Form and bind to Display global

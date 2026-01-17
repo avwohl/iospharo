@@ -1397,6 +1397,16 @@ void Interpreter::renderWorldMorphs() {
         fflush(logFile);
     }
 
+    // Debug test - write to doOneCycle_debug.log from renderWorldMorphs
+    static FILE* testLog = nullptr;
+    if (!testLog) {
+        testLog = fopen("/tmp/doOneCycle_debug.log", "w");
+    }
+    if (testLog) {
+        fprintf(testLog, "[RENDER-END #%d] renderWorldMorphs completed\n", renderCallCount);
+        fflush(testLog);
+    }
+
     pharo::gDisplaySurface->update();
 }
 
@@ -1555,18 +1565,21 @@ void Interpreter::processInputEvents() {
                 }
                 continue;  // Consumed by menu bar
             } else {
-                // Clicked outside menu areas - close menu if open and pass through
+                // Clicked outside menu areas - close menu if open
                 if (dropdownState_.valid || selectedMenuIndex_ >= 0) {
                     selectedMenuIndex_ = -1;
                     dropdownState_.valid = false;
                 }
-                // Pass through to Pharo
+                // Handle World background click directly
+                // Instead of passing to Pharo (which never processes it),
+                // try to handle it ourselves
                 if (logFile) {
-                    fprintf(logFile, "[PASSTHROUGH] mouse down buttons=%d at %d,%d -> queued (total=%zu)\n",
-                            event.arg3, event.arg1, event.arg2, passThroughEvents_.size() + 1);
+                    fprintf(logFile, "[WORLD-CLICK] mouse down buttons=%d at %d,%d\n",
+                            event.arg3, event.arg1, event.arg2);
                     fflush(logFile);
                 }
-                passThroughEvents_.push_back(event);
+                // Queue the event but also try to handle World clicks
+                handleWorldClick(event.arg1, event.arg2, event.arg3);
                 continue;
             }
         }
@@ -1574,6 +1587,150 @@ void Interpreter::processInputEvents() {
         // Mouse move (type 0) - always pass through to Pharo
         passThroughEvents_.push_back(event);
     }
+}
+
+void Interpreter::handleWorldClick(int x, int y, int buttons) {
+    // Handle a click outside the menu bar
+    // For now, log it and try to find what morph is at this position
+    static FILE* clickLog = nullptr;
+    if (!clickLog) {
+        clickLog = fopen("/tmp/world_click.log", "w");
+    }
+
+    if (clickLog) {
+        fprintf(clickLog, "[CLICK] at x=%d y=%d buttons=%d\n", x, y, buttons);
+        fflush(clickLog);
+    }
+
+    // Find World global
+    Oop world = memory_.findGlobal("World");
+    if (world.isNil() || !world.isObject()) {
+        if (clickLog) {
+            fprintf(clickLog, "[CLICK] World not found\n");
+            fflush(clickLog);
+        }
+        return;
+    }
+
+    // Get World's submorphs to find what's at this position
+    ObjectHeader* worldHdr = world.asObjectPtr();
+    size_t worldSlots = worldHdr->slotCount();
+    if (worldSlots < 3) return;
+
+    Oop submorphs = memory_.fetchPointer(2, world);  // slot 2 is submorphs
+    if (submorphs.isNil() || !submorphs.isObject()) return;
+
+    ObjectHeader* subHdr = submorphs.asObjectPtr();
+    size_t morphCount = subHdr->slotCount();
+
+    if (clickLog) {
+        fprintf(clickLog, "[CLICK] World has %zu submorphs\n", morphCount);
+        fflush(clickLog);
+    }
+
+    // Helper to extract Rectangle bounds
+    auto extractRect = [this](Oop rectObj, int& x1, int& y1, int& x2, int& y2) -> bool {
+        if (rectObj.isNil() || !rectObj.isObject()) return false;
+        ObjectHeader* rectHdr = rectObj.asObjectPtr();
+        if (rectHdr->slotCount() < 2) return false;
+
+        Oop origin = memory_.fetchPointer(0, rectObj);
+        Oop corner = memory_.fetchPointer(1, rectObj);
+
+        if (origin.isNil() || !origin.isObject() || corner.isNil() || !corner.isObject())
+            return false;
+
+        ObjectHeader* originHdr = origin.asObjectPtr();
+        ObjectHeader* cornerHdr = corner.asObjectPtr();
+
+        if (originHdr->slotCount() < 2 || cornerHdr->slotCount() < 2)
+            return false;
+
+        auto extractCoord = [](Oop oop) -> int {
+            if (oop.isSmallInteger()) return static_cast<int>(oop.asSmallInteger());
+            if (oop.isSmallFloat()) return static_cast<int>(oop.asSmallFloat());
+            return 0;
+        };
+
+        Oop ox = memory_.fetchPointer(0, origin);
+        Oop oy = memory_.fetchPointer(1, origin);
+        Oop cx = memory_.fetchPointer(0, corner);
+        Oop cy = memory_.fetchPointer(1, corner);
+
+        x1 = extractCoord(ox);
+        y1 = extractCoord(oy);
+        x2 = extractCoord(cx);
+        y2 = extractCoord(cy);
+
+        return (x2 > x1 && y2 > y1);
+    };
+
+    // Traverse submorphs in reverse order (top to bottom in z-order)
+    // to find the first morph that contains the click point
+    for (int i = static_cast<int>(morphCount) - 1; i >= 0; i--) {
+        Oop submorph = memory_.fetchPointer(i, submorphs);
+        if (submorph.isNil() || !submorph.isObject()) continue;
+
+        // Get morph's bounds from slot 0
+        Oop bounds = memory_.fetchPointer(0, submorph);
+        int mx1, my1, mx2, my2;
+        if (!extractRect(bounds, mx1, my1, mx2, my2)) continue;
+
+        // Check if click is inside this morph (skip menubar and taskbar)
+        Oop morphClass = memory_.classOf(submorph);
+        std::string className = "Unknown";
+        if (morphClass.isObject()) {
+            Oop cName = memory_.fetchPointer(6, morphClass);
+            if (cName.isObject()) {
+                ObjectHeader* cNameHdr = cName.asObjectPtr();
+                if (cNameHdr->isBytesObject() && cNameHdr->byteSize() < 50) {
+                    className = std::string((char*)cNameHdr->bytes(), cNameHdr->byteSize());
+                }
+            }
+        }
+
+        // Skip MenubarMorph and TaskbarMorph - they're handled separately
+        if (className == "MenubarMorph" || className == "TaskbarMorph") continue;
+
+        // Check if point is inside bounds
+        if (x >= mx1 && x < mx2 && y >= my1 && y < my2) {
+            if (clickLog) {
+                fprintf(clickLog, "[CLICK] Found morph at %d,%d: %s bounds=[%d,%d,%d,%d]\n",
+                        x, y, className.c_str(), mx1, my1, mx2, my2);
+                fflush(clickLog);
+            }
+
+            // Found a morph! For windows, try to bring to front
+            if (className.find("Window") != std::string::npos ||
+                className.find("SpWindow") != std::string::npos) {
+                // Try to activate this window by sending it comeToFront
+                Oop comeToFrontSel = findSelector("comeToFront");
+                if (!comeToFrontSel.isNil()) {
+                    pendingMenuAction_.selector = comeToFrontSel;
+                    pendingMenuAction_.receiver = submorph;
+                    pendingMenuAction_.argument = Oop::nil();
+                    pendingMenuAction_.argCount = 0;
+                    pendingMenuAction_.pending = true;
+
+                    if (clickLog) {
+                        fprintf(clickLog, "[CLICK] Queued comeToFront for %s\n", className.c_str());
+                        fflush(clickLog);
+                    }
+                }
+            }
+            return;  // Found and handled
+        }
+    }
+
+    // Click was on World background (no submorphs contained the point)
+    if (clickLog) {
+        fprintf(clickLog, "[CLICK] No submorph at %d,%d - World background click\n", x, y);
+        fflush(clickLog);
+    }
+
+    // For World background click, we could show the World menu
+    // This requires finding the right selector (e.g., worldMenu or yellowButtonActivity)
+    // For now, just log it
 }
 
 void Interpreter::invokeMenuItemAction(Oop menuItemMorph) {
@@ -3604,6 +3761,18 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                                 // Render World's morphs directly to the display surface
                                 renderWorldMorphs();
 
+                                // Debug - verify we reach here (use different filename to avoid conflicts)
+                                static FILE* cycleLog = nullptr;
+                                static int cycleCount = 0;
+                                if (!cycleLog) {
+                                    cycleLog = fopen("/tmp/intercept_cycle.log", "w");
+                                }
+                                if (cycleLog && cycleCount < 100) {
+                                    fprintf(cycleLog, "[CYCLE] #%d pendingMenuAction=%d\n",
+                                            ++cycleCount, pendingMenuAction_.pending ? 1 : 0);
+                                    fflush(cycleLog);
+                                }
+
                                 // Execute pending menu action if any
                                 if (pendingMenuAction_.pending) {
                                     Oop actionSel = pendingMenuAction_.selector;
@@ -3627,6 +3796,43 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
                                     sendSelector(actionSel, actionArgCount);
                                     return;
+                                }
+
+                                // Trigger event polling by sending processEvents to ActiveHand
+                                // This is what doOneCycle would normally do
+                                static FILE* debugLog = nullptr;
+                                static int debugCount = 0;
+                                if (!debugLog) {
+                                    debugLog = fopen("/tmp/activehand_debug.log", "w");
+                                }
+
+                                Oop activeHand = memory_.findGlobal("ActiveHand");
+                                if (debugLog && debugCount < 100) {
+                                    fprintf(debugLog, "[DEBUG] #%d ActiveHand lookup: isNil=%d isObject=%d bits=0x%llx\n",
+                                            ++debugCount, activeHand.isNil(), activeHand.isObject(), activeHand.rawBits());
+                                    fflush(debugLog);
+                                }
+                                if (!activeHand.isNil() && activeHand.isObject()) {
+                                    // Found ActiveHand, send processEvents
+                                    Oop processEventsSel = findSelector("processEvents");
+                                    if (debugLog && debugCount < 100) {
+                                        fprintf(debugLog, "[DEBUG] processEvents selector: isNil=%d bits=0x%llx\n",
+                                                processEventsSel.isNil(), processEventsSel.rawBits());
+                                        fflush(debugLog);
+                                    }
+                                    if (!processEventsSel.isNil()) {
+                                        if (debugLog && debugCount < 100) {
+                                            fprintf(debugLog, "[DEBUG] Sending processEvents to ActiveHand!\n");
+                                            fflush(debugLog);
+                                        }
+                                        // Pop doOneCycleFor:'s args and receiver
+                                        popN(argCount + 1);
+
+                                        // Set up processEvents call
+                                        push(activeHand);
+                                        sendSelector(processEventsSel, 0);
+                                        return;
+                                    }
                                 }
 
                                 // Return receiver (WorldState) to continue
