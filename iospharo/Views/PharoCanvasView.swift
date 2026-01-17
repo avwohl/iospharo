@@ -65,6 +65,8 @@ class PharoMTKView: MTKView {
     #if targetEnvironment(macCatalyst)
     // Track current button for Mac Catalyst (determined from UIEvent.buttonMask)
     private var currentButton: Int = IOS_RED_BUTTON
+    // Track if we received a touchesBegan - right-clicks skip touchesBegan
+    private var hadTouchesBegan: Bool = false
     #endif
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -72,6 +74,16 @@ class PharoMTKView: MTKView {
         let point = touch.location(in: self)
 
         #if targetEnvironment(macCatalyst)
+        // Mark that we received a touchesBegan (right-clicks skip this)
+        hadTouchesBegan = true
+
+        // Debug: log all event info for right-click debugging
+        if #available(macCatalyst 13.4, *) {
+            let mask = event?.buttonMask ?? []
+            let mods = event?.modifierFlags ?? []
+            NSLog("[TOUCH] touchesBegan: buttonMask=\(mask.rawValue) modifiers=\(mods.rawValue) touchType=\(touch.type.rawValue)")
+        }
+
         // On Mac Catalyst, check UIEvent.buttonMask to determine which button
         let buttons = buttonMaskToPharo(event)
         currentButton = buttons
@@ -103,6 +115,29 @@ class PharoMTKView: MTKView {
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = touches.first, let bridge = bridge else { return }
         let point = touch.location(in: self)
+
+        #if targetEnvironment(macCatalyst)
+        // Debug: log event info
+        if #available(macCatalyst 13.4, *) {
+            let mask = event?.buttonMask ?? []
+            NSLog("[TOUCH] touchesEnded: buttonMask=\(mask.rawValue) hadBegan=\(hadTouchesBegan) at \(point)")
+        }
+
+        // IMPORTANT: Right-clicks in Mac Catalyst skip touchesBegan entirely!
+        // They only trigger touchesEnded. Detect this and handle as right-click.
+        if !hadTouchesBegan {
+            NSLog("[TOUCH] Detected right-click (touchesEnded without touchesBegan) at \(point)")
+            // Send move + down + up for right-click (blue button)
+            bridge.sendMouseMoved(to: point, modifiers: 0)
+            bridge.sendTouchDown(at: point, buttons: IOS_BLUE_BUTTON)
+            bridge.sendTouchUp(at: point)
+            return
+        }
+
+        // Reset tracking for next click
+        hadTouchesBegan = false
+        #endif
+
         bridge.sendTouchUp(at: point)
     }
 
@@ -113,17 +148,29 @@ class PharoMTKView: MTKView {
     }
 
     #if targetEnvironment(macCatalyst)
-    /// Convert UIEvent button mask to Pharo button code
+    /// Convert UIEvent button mask and modifiers to Pharo button code
     private func buttonMaskToPharo(_ event: UIEvent?) -> Int {
         // Pharo button codes: red(left)=4, yellow(middle)=2, blue(right)=1
         guard let event = event else { return IOS_RED_BUTTON }
 
         if #available(macCatalyst 13.4, *) {
             let mask = event.buttonMask
+
+            // Check for secondary (right) button
             if mask.contains(.secondary) {
                 return IOS_BLUE_BUTTON  // Right click -> blue button (context menu)
-            } else if mask.rawValue & 0x4 != 0 {  // Middle button (mask value 4)
+            }
+
+            // Check for middle button
+            if mask.rawValue & 0x4 != 0 {
                 return IOS_YELLOW_BUTTON  // Middle click -> yellow button
+            }
+
+            // Check for control-click (Mac convention for right-click)
+            let modifiers = event.modifierFlags
+            if modifiers.contains(.control) {
+                NSLog("[EVENT] Control-click detected, treating as right-click")
+                return IOS_BLUE_BUTTON  // Control-click -> right click
             }
         }
         return IOS_RED_BUTTON  // Default to left click
@@ -213,8 +260,21 @@ class PharoCanvasViewController: UIViewController {
         let targetView = mtkView as UIView
 
         #if targetEnvironment(macCatalyst)
-        // Mac Catalyst: Use direct touch handling (touchesBegan/Moved/Ended)
-        // Only add scroll gesture for trackpad scrolling
+        // Mac Catalyst: Use direct touch handling for left clicks (touchesBegan/Moved/Ended)
+        // But right-clicks need a gesture recognizer with buttonMaskRequired
+
+        // Right-click gesture (secondary button) for world menu
+        if #available(macCatalyst 13.4, *) {
+            let rightClickGesture = UITapGestureRecognizer(
+                target: self,
+                action: #selector(handleRightClick(_:))
+            )
+            rightClickGesture.buttonMaskRequired = .secondary
+            targetView.addGestureRecognizer(rightClickGesture)
+            NSLog("[VC] Mac Catalyst: added right-click gesture recognizer")
+        }
+
+        // Scroll gesture for trackpad scrolling
         let scrollGesture = UIPanGestureRecognizer(
             target: self,
             action: #selector(handleScroll(_:))
@@ -289,7 +349,7 @@ class PharoCanvasViewController: UIViewController {
         NSLog("[VC] Setup %d gesture recognizers on view", targetView.gestureRecognizers?.count ?? 0)
     }
 
-    // MARK: - Mac Catalyst Scroll Handler
+    // MARK: - Mac Catalyst Handlers
 
     #if targetEnvironment(macCatalyst)
     @objc func handleScroll(_ gesture: UIPanGestureRecognizer) {
@@ -309,6 +369,21 @@ class PharoCanvasViewController: UIViewController {
         default:
             break
         }
+    }
+
+    /// Handle right-click (secondary button) for world menu
+    @objc func handleRightClick(_ gesture: UITapGestureRecognizer) {
+        guard let bridge = bridge else {
+            NSLog("[RIGHT-CLICK] No bridge!")
+            return
+        }
+        let point = gesture.location(in: mtkView)
+        NSLog("[RIGHT-CLICK] at \(point)")
+
+        // Send move to position hand, then blue button (right-click) down/up
+        bridge.sendMouseMoved(to: point, modifiers: 0)
+        bridge.sendTouchDown(at: point, buttons: IOS_BLUE_BUTTON)
+        bridge.sendTouchUp(at: point)
     }
     #endif
 
