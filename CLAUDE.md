@@ -35,3 +35,35 @@ The bytecode ranges 0xE0-0xFF are completely different between the two sets.
 - Use `./build/test_load_image <image-path>` for quick VM testing
 - Build with `cmake --build build` from the project root
 - Full build cycle: `cmake --build build-app && ./build-xcframework.sh && xcodebuild -project iospharo.xcodeproj -scheme iospharo -configuration Debug -destination 'platform=macOS,variant=Mac Catalyst' build`
+
+## Primitive Table Reference
+The **one true source** for the primitive table is in VMMaker:
+`~/src/pharo-vm/smalltalksrc/VMMaker/StackInterpreter.class.st`
+in `initializePrimitiveTable` (lines ~1000-1400)
+
+This Smalltalk source has structured data: `(number primitiveName)` with category comments.
+VMMaker generates `cointerp.c` from this, so `src/ios/cointerp-cpp.c:2094-2756` is a usable reference.
+
+**CRITICAL**: The clean C++ VM (`src/vm/Interpreter.cpp`) primitive table MUST match. When adding or fixing primitives:
+1. Check VMMaker's StackInterpreter.class.st or cointerp-cpp.c for correct mappings
+2. Many slots are null/unused (primitiveFail) - don't invent primitives that don't exist
+3. Primitives 256-519 are external primitive indices (plugins), not VM primitives
+
+**TODO**: Modify VMMaker to emit a JSON/CSV validation file that scripts can check against.
+
+## Agent Usage Guidelines
+To avoid context pollution from large files (Interpreter.cpp: 8K lines, Primitives.cpp: 14K lines):
+
+### Delegate to Agents
+- **Primitive table audits**: "Compare primitiveTable_ entries N-M against cointerp-cpp.c and list discrepancies"
+- **Cross-file verification**: "Find all places primitive X is referenced and check consistency"
+- **Large grep/search tasks**: When searching across 20K+ lines of code
+- **Reference extraction**: "Parse cointerp-cpp.c primitive table into a structured list"
+
+### Keep in Main Context
+- Small, focused edits to specific functions
+- Reading individual primitive implementations
+- Debugging specific runtime failures
+
+### Why This Matters
+With 577 manual primitive table entries, even 1% error rate = 5-6 wrong primitives. The repeated "fix 40+ incorrect mappings" commits show this is a real problem. Agents can do systematic verification without context limits causing drift.
