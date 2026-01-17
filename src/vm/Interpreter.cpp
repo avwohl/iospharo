@@ -7097,36 +7097,15 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
     }
 
     if (primitiveIndex < 0 || primitiveIndex >= static_cast<int>(primitiveTable_.size())) {
-        failCount++;
-        if (failCount <= 10) {
-            std::cerr << "[PRIM] Index out of range: " << primitiveIndex << " (args=" << argCount << ")\n";
-        }
         return PrimitiveResult::Failure;
     }
 
     PrimitiveFunc prim = primitiveTable_[primitiveIndex];
     if (!prim) {
-        failCount++;
-        if (failCount <= 10) {
-            std::cerr << "[PRIM] Unimplemented primitive: " << primitiveIndex << " (args=" << argCount << ")\n";
-        }
         return PrimitiveResult::Failure;
     }
 
-    // Primitive call tracing
-    static int primCallCount = 0;
-    primCallCount++;
-
     PrimitiveResult result = (this->*prim)(argCount);
-
-    // Trace failures to see which primitives are problematic
-    static int failureCount = 0;
-    if (result == PrimitiveResult::Failure) {
-        failureCount++;
-        if (failureCount <= 20) {
-            std::cerr << "[PRIM] Primitive " << primitiveIndex << " FAILED (args=" << argCount << ")\n";
-        }
-    }
 
     // Track successful primitive execution for stepDetailed()
     if (result == PrimitiveResult::Success) {

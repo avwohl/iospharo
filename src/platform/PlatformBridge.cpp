@@ -166,16 +166,11 @@ static void* gPendingCallbackContext = nullptr;
 // Event callback to signal the input semaphore
 static void eventCallback(void* context) {
     (void)context;  // Unused
-    static int callCount = 0;
-    callCount++;
     if (gInterpreter) {
         int semIndex = pharo::gEventQueue.getInputSemaphoreIndex();
         // If Pharo hasn't set a semaphore index, use 1 as fallback (common for input semaphore)
         if (semIndex <= 0) {
             semIndex = 1;
-        }
-        if (callCount <= 5 || callCount % 1000 == 0) {
-            std::cerr << "[CALLBACK] eventCallback semIndex=" << semIndex << " call=" << callCount << "\n";
         }
         gInterpreter->signalExternalSemaphore(semIndex);
     }
@@ -184,9 +179,7 @@ static void eventCallback(void* context) {
 extern "C" {
 
 bool vm_initialize(size_t heapSize) {
-    std::cerr << "[PB] vm_initialize: heapSize=" << heapSize << "\n";
     if (gMemory) {
-        std::cerr << "[PB] vm_initialize: already initialized\n";
         return true;
     }
 
@@ -196,33 +189,25 @@ bool vm_initialize(size_t heapSize) {
     config.newSpaceSize = 32 * 1024 * 1024;
     config.permSpaceSize = 8 * 1024 * 1024;
 
-    bool result = gMemory->initialize(config);
-    std::cerr << "[PB] vm_initialize: " << (result ? "success" : "failed") << "\n";
-    return result;
+    return gMemory->initialize(config);
 }
 
 bool vm_loadImage(const char* imagePath) {
     if (!gMemory) {
-        std::cerr << "[PB] vm_loadImage: gMemory is null\n";
         return false;
     }
 
-    std::cerr << "[PB] vm_loadImage: Loading " << imagePath << "\n";
     pharo::ImageLoader loader;
     pharo::LoadResult result = loader.load(imagePath, *gMemory);
 
     if (!result.success) {
-        std::cerr << "[PB] vm_loadImage: Image load failed\n";
         return false;
     }
-    std::cerr << "[PB] vm_loadImage: Image loaded successfully\n";
 
     gInterpreter = new pharo::Interpreter(*gMemory);
     if (!gInterpreter->initialize()) {
-        std::cerr << "[PB] vm_loadImage: Interpreter init failed\n";
         return false;
     }
-    std::cerr << "[PB] vm_loadImage: Interpreter initialized\n";
 
     // Apply display size if already set (vm_setDisplaySize may be called before vm_loadImage)
     if (gDisplay) {
@@ -232,7 +217,6 @@ bool vm_loadImage(const char* imagePath) {
         // Ensure Display Form exists and is bound to 'Display' global
         // This is critical for Morphic rendering
         if (gInterpreter->displayForm().isNil()) {
-            std::cerr << "[PB] vm_loadImage: Creating Display Form...\n";
             gInterpreter->ensureDisplayForm(gDisplay->width(), gDisplay->height(), gDisplay->depth());
         }
     }
@@ -246,20 +230,14 @@ bool vm_loadImage(const char* imagePath) {
 void vm_run(void) {
     if (!gInterpreter || gRunning) return;
 
-    std::cerr << "[PB] vm_run: starting thread\n";
-
     // Start the heartbeat thread (handles timers, like official VM)
     gInterpreter->startHeartbeat();
 
     gRunning = true;
     gVMThread = std::thread([]() {
-        std::cerr << "[PB] Thread started, isRunning=" << gInterpreter->isRunning() << "\n";
-
         // Post a window resize event to trigger Pharo layout
         // This tells Pharo the display size so it can lay out morphs properly
         if (gDisplay) {
-            std::cerr << "[PB] Posting initial window resize event: "
-                      << gDisplay->width() << "x" << gDisplay->height() << "\n";
             vm_postWindowEvent(gDisplay->width(), gDisplay->height());
 
             // Show a test pattern to verify display pipeline works
@@ -267,7 +245,6 @@ void vm_run(void) {
             int w = gDisplay->width();
             int h = gDisplay->height();
             uint32_t* pixels = gDisplay->pixels();
-            std::cerr << "[PB] Drawing startup test pattern " << w << "x" << h << "\n";
             for (int y = 0; y < h; y++) {
                 for (int x = 0; x < w; x++) {
                     // Purple gradient to distinguish from Pharo content
@@ -278,13 +255,11 @@ void vm_run(void) {
                 }
             }
             gDisplay->update();
-            std::cerr << "[PB] Test pattern drawn and update() called\n";
         }
 
         // Call interpret() which includes periodic event processing and semaphore handling
         gInterpreter->interpret();
         gRunning = false;
-        std::cerr << "[PB] Thread finished\n";
     });
 }
 
@@ -314,7 +289,6 @@ void vm_setDisplaySize(int width, int height, int depth) {
 
         // Apply pending callback if one was registered before display existed
         if (gPendingCallback) {
-            std::cerr << "[PB] Applying pending display callback\n";
             gDisplay->setCallback(gPendingCallback, gPendingCallbackContext);
         }
     }
