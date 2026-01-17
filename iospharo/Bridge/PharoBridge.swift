@@ -142,6 +142,10 @@ class PharoBridge: ObservableObject {
         DispatchQueue.main.async {
             self.isRunning = false
             self.isInitialized = false
+
+            // Exit the app when VM quits
+            NSLog("[BRIDGE] VM stopped, exiting app")
+            exit(0)
         }
     }
 
