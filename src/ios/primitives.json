@@ -1,0 +1,3972 @@
+{
+  "generated": "2026-01-17T03:46:12.774451",
+  "source": "VMMaker StackInterpreter initializePrimitiveTable",
+  "primitives": [
+    {
+      "num": 0,
+      "name": "0",
+      "category": "Integer Primitives (0-19)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 1,
+      "name": "primitiveAdd",
+      "category": "Integer Primitives (0-19)",
+      "status": "implemented"
+    },
+    {
+      "num": 2,
+      "name": "primitiveSubtract",
+      "category": "Integer Primitives (0-19)",
+      "status": "implemented"
+    },
+    {
+      "num": 3,
+      "name": "primitiveLessThan",
+      "category": "Integer Primitives (0-19)",
+      "status": "implemented"
+    },
+    {
+      "num": 4,
+      "name": "primitiveGreaterThan",
+      "category": "Integer Primitives (0-19)",
+      "status": "implemented"
+    },
+    {
+      "num": 5,
+      "name": "primitiveLessOrEqual",
+      "category": "Integer Primitives (0-19)",
+      "status": "implemented"
+    },
+    {
+      "num": 6,
+      "name": "primitiveGreaterOrEqual",
+      "category": "Integer Primitives (0-19)",
+      "status": "implemented"
+    },
+    {
+      "num": 7,
+      "name": "primitiveEqual",
+      "category": "Integer Primitives (0-19)",
+      "status": "implemented"
+    },
+    {
+      "num": 8,
+      "name": "primitiveNotEqual",
+      "category": "Integer Primitives (0-19)",
+      "status": "implemented"
+    },
+    {
+      "num": 9,
+      "name": "primitiveMultiply",
+      "category": "Integer Primitives (0-19)",
+      "status": "implemented"
+    },
+    {
+      "num": 10,
+      "name": "primitiveDivide",
+      "category": "Integer Primitives (0-19)",
+      "status": "implemented"
+    },
+    {
+      "num": 11,
+      "name": "primitiveMod",
+      "category": "Integer Primitives (0-19)",
+      "status": "implemented"
+    },
+    {
+      "num": 12,
+      "name": "primitiveDiv",
+      "category": "Integer Primitives (0-19)",
+      "status": "implemented"
+    },
+    {
+      "num": 13,
+      "name": "primitiveQuo",
+      "category": "Integer Primitives (0-19)",
+      "status": "implemented"
+    },
+    {
+      "num": 14,
+      "name": "primitiveBitAnd",
+      "category": "Integer Primitives (0-19)",
+      "status": "implemented"
+    },
+    {
+      "num": 15,
+      "name": "primitiveBitOr",
+      "category": "Integer Primitives (0-19)",
+      "status": "implemented"
+    },
+    {
+      "num": 16,
+      "name": "primitiveBitXor",
+      "category": "Integer Primitives (0-19)",
+      "status": "implemented"
+    },
+    {
+      "num": 17,
+      "name": "primitiveBitShift",
+      "category": "Integer Primitives (0-19)",
+      "status": "implemented"
+    },
+    {
+      "num": 18,
+      "name": "primitiveMakePoint",
+      "category": "Integer Primitives (0-19)",
+      "status": "implemented"
+    },
+    {
+      "num": 19,
+      "name": "primitiveFail",
+      "category": "Integer Primitives (0-19)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 20,
+      "name": "primitiveRemLargeIntegers",
+      "category": "LargeInteger Primitives (20-37)",
+      "status": "implemented"
+    },
+    {
+      "num": 21,
+      "name": "primitiveAddLargeIntegers",
+      "category": "LargeInteger Primitives (20-37)",
+      "status": "implemented"
+    },
+    {
+      "num": 22,
+      "name": "primitiveSubtractLargeIntegers",
+      "category": "LargeInteger Primitives (20-37)",
+      "status": "implemented"
+    },
+    {
+      "num": 23,
+      "name": "primitiveLessThanLargeIntegers",
+      "category": "LargeInteger Primitives (20-37)",
+      "status": "implemented"
+    },
+    {
+      "num": 24,
+      "name": "primitiveGreaterThanLargeIntegers",
+      "category": "LargeInteger Primitives (20-37)",
+      "status": "implemented"
+    },
+    {
+      "num": 25,
+      "name": "primitiveLessOrEqualLargeIntegers",
+      "category": "LargeInteger Primitives (20-37)",
+      "status": "implemented"
+    },
+    {
+      "num": 26,
+      "name": "primitiveGreaterOrEqualLargeIntegers",
+      "category": "LargeInteger Primitives (20-37)",
+      "status": "implemented"
+    },
+    {
+      "num": 27,
+      "name": "primitiveEqualLargeIntegers",
+      "category": "LargeInteger Primitives (20-37)",
+      "status": "implemented"
+    },
+    {
+      "num": 28,
+      "name": "primitiveNotEqualLargeIntegers",
+      "category": "LargeInteger Primitives (20-37)",
+      "status": "implemented"
+    },
+    {
+      "num": 29,
+      "name": "primitiveMultiplyLargeIntegers",
+      "category": "LargeInteger Primitives (20-37)",
+      "status": "implemented"
+    },
+    {
+      "num": 30,
+      "name": "primitiveDivideLargeIntegers",
+      "category": "LargeInteger Primitives (20-37)",
+      "status": "implemented"
+    },
+    {
+      "num": 31,
+      "name": "primitiveModLargeIntegers",
+      "category": "LargeInteger Primitives (20-37)",
+      "status": "implemented"
+    },
+    {
+      "num": 32,
+      "name": "primitiveDivLargeIntegers",
+      "category": "LargeInteger Primitives (20-37)",
+      "status": "implemented"
+    },
+    {
+      "num": 33,
+      "name": "primitiveQuoLargeIntegers",
+      "category": "LargeInteger Primitives (20-37)",
+      "status": "implemented"
+    },
+    {
+      "num": 34,
+      "name": "primitiveBitAndLargeIntegers",
+      "category": "LargeInteger Primitives (20-37)",
+      "status": "implemented"
+    },
+    {
+      "num": 35,
+      "name": "primitiveBitOrLargeIntegers",
+      "category": "LargeInteger Primitives (20-37)",
+      "status": "implemented"
+    },
+    {
+      "num": 36,
+      "name": "primitiveBitXorLargeIntegers",
+      "category": "LargeInteger Primitives (20-37)",
+      "status": "implemented"
+    },
+    {
+      "num": 37,
+      "name": "primitiveBitShiftLargeIntegers",
+      "category": "LargeInteger Primitives (20-37)",
+      "status": "implemented"
+    },
+    {
+      "num": 38,
+      "name": "primitiveFloatAt",
+      "category": "Float Primitives (38-59)",
+      "status": "implemented"
+    },
+    {
+      "num": 39,
+      "name": "primitiveFloatAtPut",
+      "category": "Float Primitives (38-59)",
+      "status": "implemented"
+    },
+    {
+      "num": 40,
+      "name": "primitiveAsFloat",
+      "category": "Float Primitives (38-59)",
+      "status": "implemented"
+    },
+    {
+      "num": 41,
+      "name": "primitiveFloatAdd",
+      "category": "Float Primitives (38-59)",
+      "status": "implemented"
+    },
+    {
+      "num": 42,
+      "name": "primitiveFloatSubtract",
+      "category": "Float Primitives (38-59)",
+      "status": "implemented"
+    },
+    {
+      "num": 43,
+      "name": "primitiveFloatLessThan",
+      "category": "Float Primitives (38-59)",
+      "status": "implemented"
+    },
+    {
+      "num": 44,
+      "name": "primitiveFloatGreaterThan",
+      "category": "Float Primitives (38-59)",
+      "status": "implemented"
+    },
+    {
+      "num": 45,
+      "name": "primitiveFloatLessOrEqual",
+      "category": "Float Primitives (38-59)",
+      "status": "implemented"
+    },
+    {
+      "num": 46,
+      "name": "primitiveFloatGreaterOrEqual",
+      "category": "Float Primitives (38-59)",
+      "status": "implemented"
+    },
+    {
+      "num": 47,
+      "name": "primitiveFloatEqual",
+      "category": "Float Primitives (38-59)",
+      "status": "implemented"
+    },
+    {
+      "num": 48,
+      "name": "primitiveFloatNotEqual",
+      "category": "Float Primitives (38-59)",
+      "status": "implemented"
+    },
+    {
+      "num": 49,
+      "name": "primitiveFloatMultiply",
+      "category": "Float Primitives (38-59)",
+      "status": "implemented"
+    },
+    {
+      "num": 50,
+      "name": "primitiveFloatDivide",
+      "category": "Float Primitives (38-59)",
+      "status": "implemented"
+    },
+    {
+      "num": 51,
+      "name": "primitiveTruncated",
+      "category": "Float Primitives (38-59)",
+      "status": "implemented"
+    },
+    {
+      "num": 52,
+      "name": "primitiveFractionalPart",
+      "category": "Float Primitives (38-59)",
+      "status": "implemented"
+    },
+    {
+      "num": 53,
+      "name": "primitiveExponent",
+      "category": "Float Primitives (38-59)",
+      "status": "implemented"
+    },
+    {
+      "num": 54,
+      "name": "primitiveTimesTwoPower",
+      "category": "Float Primitives (38-59)",
+      "status": "implemented"
+    },
+    {
+      "num": 55,
+      "name": "primitiveSquareRoot",
+      "category": "Float Primitives (38-59)",
+      "status": "implemented"
+    },
+    {
+      "num": 56,
+      "name": "primitiveSine",
+      "category": "Float Primitives (38-59)",
+      "status": "implemented"
+    },
+    {
+      "num": 57,
+      "name": "primitiveArctan",
+      "category": "Float Primitives (38-59)",
+      "status": "implemented"
+    },
+    {
+      "num": 58,
+      "name": "primitiveLogN",
+      "category": "Float Primitives (38-59)",
+      "status": "implemented"
+    },
+    {
+      "num": 59,
+      "name": "primitiveExp",
+      "category": "Float Primitives (38-59)",
+      "status": "implemented"
+    },
+    {
+      "num": 60,
+      "name": "primitiveAt",
+      "category": "Subscript Primitives (60-67)",
+      "status": "implemented"
+    },
+    {
+      "num": 61,
+      "name": "primitiveAtPut",
+      "category": "Subscript Primitives (60-67)",
+      "status": "implemented"
+    },
+    {
+      "num": 62,
+      "name": "primitiveSize",
+      "category": "Subscript Primitives (60-67)",
+      "status": "implemented"
+    },
+    {
+      "num": 63,
+      "name": "primitiveStringAt",
+      "category": "Subscript Primitives (60-67)",
+      "status": "implemented"
+    },
+    {
+      "num": 64,
+      "name": "primitiveStringAtPut",
+      "category": "Subscript Primitives (60-67)",
+      "status": "implemented"
+    },
+    {
+      "num": 65,
+      "name": "primitiveFail",
+      "category": "Subscript Primitives (60-67)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 66,
+      "name": "primitiveFail",
+      "category": "Subscript Primitives (60-67)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 67,
+      "name": "primitiveFail",
+      "category": "Subscript Primitives (60-67)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 68,
+      "name": "primitiveObjectAt",
+      "category": "StorageManagement Primitives (68-79)",
+      "status": "implemented"
+    },
+    {
+      "num": 69,
+      "name": "primitiveObjectAtPut",
+      "category": "StorageManagement Primitives (68-79)",
+      "status": "implemented"
+    },
+    {
+      "num": 70,
+      "name": "primitiveNew",
+      "category": "StorageManagement Primitives (68-79)",
+      "status": "implemented"
+    },
+    {
+      "num": 71,
+      "name": "primitiveNewWithArg",
+      "category": "StorageManagement Primitives (68-79)",
+      "status": "implemented"
+    },
+    {
+      "num": 72,
+      "name": "primitiveArrayBecomeOneWay",
+      "category": "StorageManagement Primitives (68-79)",
+      "status": "implemented"
+    },
+    {
+      "num": 73,
+      "name": "primitiveInstVarAt",
+      "category": "StorageManagement Primitives (68-79)",
+      "status": "implemented"
+    },
+    {
+      "num": 74,
+      "name": "primitiveInstVarAtPut",
+      "category": "StorageManagement Primitives (68-79)",
+      "status": "implemented"
+    },
+    {
+      "num": 75,
+      "name": "primitiveIdentityHash",
+      "category": "StorageManagement Primitives (68-79)",
+      "status": "implemented"
+    },
+    {
+      "num": 76,
+      "name": "primitiveStoreStackp",
+      "category": "StorageManagement Primitives (68-79)",
+      "status": "implemented"
+    },
+    {
+      "num": 77,
+      "name": "primitiveSomeInstance",
+      "category": "StorageManagement Primitives (68-79)",
+      "status": "implemented"
+    },
+    {
+      "num": 78,
+      "name": "primitiveNextInstance",
+      "category": "StorageManagement Primitives (68-79)",
+      "status": "implemented"
+    },
+    {
+      "num": 79,
+      "name": "primitiveNewMethod",
+      "category": "StorageManagement Primitives (68-79)",
+      "status": "implemented"
+    },
+    {
+      "num": 80,
+      "name": "primitiveFail",
+      "category": "Control Primitives (80-89)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 81,
+      "name": "primitiveFail",
+      "category": "Control Primitives (80-89)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 82,
+      "name": "primitiveFail",
+      "category": "Control Primitives (80-89)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 83,
+      "name": "primitivePerform",
+      "category": "Control Primitives (80-89)",
+      "status": "implemented"
+    },
+    {
+      "num": 84,
+      "name": "primitivePerformWithArgs",
+      "category": "Control Primitives (80-89)",
+      "status": "implemented"
+    },
+    {
+      "num": 85,
+      "name": "primitiveSignal",
+      "category": "Control Primitives (80-89)",
+      "status": "implemented"
+    },
+    {
+      "num": 86,
+      "name": "primitiveWait",
+      "category": "Control Primitives (80-89)",
+      "status": "implemented"
+    },
+    {
+      "num": 87,
+      "name": "primitiveResume",
+      "category": "Control Primitives (80-89)",
+      "status": "implemented"
+    },
+    {
+      "num": 88,
+      "name": "primitiveSuspend",
+      "category": "Control Primitives (80-89)",
+      "status": "implemented"
+    },
+    {
+      "num": 89,
+      "name": "primitiveFlushCache",
+      "category": "Control Primitives (80-89)",
+      "status": "implemented"
+    },
+    {
+      "num": 90,
+      "name": "primitiveMoveToPermSpace",
+      "category": "PermSpace Primitives (90-93)",
+      "status": "implemented"
+    },
+    {
+      "num": 91,
+      "name": "primitiveMoveToPermSpaceInBulk",
+      "category": "PermSpace Primitives (90-93)",
+      "status": "implemented"
+    },
+    {
+      "num": 92,
+      "name": "primitiveIsInPermSpace",
+      "category": "PermSpace Primitives (90-93)",
+      "status": "implemented"
+    },
+    {
+      "num": 93,
+      "name": "primitiveMoveToPermSpaceAllOldObjects",
+      "category": "PermSpace Primitives (90-93)",
+      "status": "implemented"
+    },
+    {
+      "num": 94,
+      "name": "primitiveFail",
+      "category": "Input/Output Primitives (94-109)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 95,
+      "name": "primitiveFail",
+      "category": "Input/Output Primitives (94-109)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 96,
+      "name": "primitiveFail",
+      "category": "Input/Output Primitives (94-109)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 97,
+      "name": "primitiveSnapshot",
+      "category": "Input/Output Primitives (94-109)",
+      "status": "implemented"
+    },
+    {
+      "num": 98,
+      "name": "primitiveFail",
+      "category": "Input/Output Primitives (94-109)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 99,
+      "name": "primitiveFail",
+      "category": "Input/Output Primitives (94-109)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 100,
+      "name": "primitivePerformInSuperclass",
+      "category": "Input/Output Primitives (94-109)",
+      "status": "implemented"
+    },
+    {
+      "num": 101,
+      "name": "primitiveFail",
+      "category": "Input/Output Primitives (94-109)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 102,
+      "name": "primitiveFail",
+      "category": "Input/Output Primitives (94-109)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 103,
+      "name": "primitiveFail",
+      "category": "Input/Output Primitives (94-109)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 104,
+      "name": "primitiveFail",
+      "category": "Input/Output Primitives (94-109)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 105,
+      "name": "primitiveStringReplace",
+      "category": "Input/Output Primitives (94-109)",
+      "status": "implemented"
+    },
+    {
+      "num": 106,
+      "name": "primitiveFail",
+      "category": "Input/Output Primitives (94-109)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 107,
+      "name": "primitiveFail",
+      "category": "Input/Output Primitives (94-109)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 108,
+      "name": "primitiveFail",
+      "category": "Input/Output Primitives (94-109)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 109,
+      "name": "primitiveFail",
+      "category": "Input/Output Primitives (94-109)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 110,
+      "name": "primitiveIdentical",
+      "category": "System Primitives (110-119)",
+      "status": "implemented"
+    },
+    {
+      "num": 111,
+      "name": "primitiveClass",
+      "category": "System Primitives (110-119)",
+      "status": "implemented"
+    },
+    {
+      "num": 112,
+      "name": "primitiveBytesLeft",
+      "category": "System Primitives (110-119)",
+      "status": "implemented"
+    },
+    {
+      "num": 113,
+      "name": "primitiveQuit",
+      "category": "System Primitives (110-119)",
+      "status": "implemented"
+    },
+    {
+      "num": 114,
+      "name": "primitiveFail",
+      "category": "System Primitives (110-119)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 115,
+      "name": "primitiveChangeClass",
+      "category": "System Primitives (110-119)",
+      "status": "implemented"
+    },
+    {
+      "num": 116,
+      "name": "primitiveFlushCacheByMethod",
+      "category": "System Primitives (110-119)",
+      "status": "implemented"
+    },
+    {
+      "num": 117,
+      "name": "primitiveExternalCall",
+      "category": "System Primitives (110-119)",
+      "status": "implemented"
+    },
+    {
+      "num": 118,
+      "name": "primitiveDoPrimitiveWithArgs",
+      "category": "System Primitives (110-119)",
+      "status": "implemented"
+    },
+    {
+      "num": 119,
+      "name": "primitiveFlushCacheBySelector",
+      "category": "System Primitives (110-119)",
+      "status": "implemented"
+    },
+    {
+      "num": 120,
+      "name": "primitiveCalloutToFFI",
+      "category": "Miscellaneous Primitives (120-127)",
+      "status": "implemented"
+    },
+    {
+      "num": 121,
+      "name": "primitiveImageName",
+      "category": "Miscellaneous Primitives (120-127)",
+      "status": "implemented"
+    },
+    {
+      "num": 122,
+      "name": "primitiveFail",
+      "category": "Miscellaneous Primitives (120-127)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 123,
+      "name": "primitiveFail",
+      "category": "Miscellaneous Primitives (120-127)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 124,
+      "name": "primitiveLowSpaceSemaphore",
+      "category": "Miscellaneous Primitives (120-127)",
+      "status": "implemented"
+    },
+    {
+      "num": 125,
+      "name": "primitiveSignalAtBytesLeft",
+      "category": "Miscellaneous Primitives (120-127)",
+      "status": "implemented"
+    },
+    {
+      "num": 126,
+      "name": "primitiveFail",
+      "category": "Miscellaneous Primitives (120-127)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 127,
+      "name": "primitiveFail",
+      "category": "Miscellaneous Primitives (120-127)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 128,
+      "name": "primitiveArrayBecome",
+      "category": "Squeak Miscellaneous Primitives (128-149)",
+      "status": "implemented"
+    },
+    {
+      "num": 129,
+      "name": "primitiveSpecialObjectsOop",
+      "category": "Squeak Miscellaneous Primitives (128-149)",
+      "status": "implemented"
+    },
+    {
+      "num": 130,
+      "name": "primitiveFullGC",
+      "category": "Squeak Miscellaneous Primitives (128-149)",
+      "status": "implemented"
+    },
+    {
+      "num": 131,
+      "name": "primitiveIncrementalGC",
+      "category": "Squeak Miscellaneous Primitives (128-149)",
+      "status": "implemented"
+    },
+    {
+      "num": 132,
+      "name": "primitiveObjectPointsTo",
+      "category": "Squeak Miscellaneous Primitives (128-149)",
+      "status": "implemented"
+    },
+    {
+      "num": 133,
+      "name": "primitiveFail",
+      "category": "Squeak Miscellaneous Primitives (128-149)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 134,
+      "name": "primitiveFail",
+      "category": "Squeak Miscellaneous Primitives (128-149)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 135,
+      "name": "primitiveMillisecondClock",
+      "category": "Squeak Miscellaneous Primitives (128-149)",
+      "status": "implemented"
+    },
+    {
+      "num": 136,
+      "name": "primitiveSignalAtMilliseconds",
+      "category": "Squeak Miscellaneous Primitives (128-149)",
+      "status": "implemented"
+    },
+    {
+      "num": 137,
+      "name": "primitiveSecondsClock",
+      "category": "Squeak Miscellaneous Primitives (128-149)",
+      "status": "implemented"
+    },
+    {
+      "num": 138,
+      "name": "primitiveSomeObject",
+      "category": "Squeak Miscellaneous Primitives (128-149)",
+      "status": "implemented"
+    },
+    {
+      "num": 139,
+      "name": "primitiveNextObject",
+      "category": "Squeak Miscellaneous Primitives (128-149)",
+      "status": "implemented"
+    },
+    {
+      "num": 140,
+      "name": "primitiveFail",
+      "category": "Squeak Miscellaneous Primitives (128-149)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 141,
+      "name": "primitiveFail",
+      "category": "Squeak Miscellaneous Primitives (128-149)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 142,
+      "name": "primitiveVMPath",
+      "category": "Squeak Miscellaneous Primitives (128-149)",
+      "status": "implemented"
+    },
+    {
+      "num": 143,
+      "name": "primitiveShortAt",
+      "category": "Squeak Miscellaneous Primitives (128-149)",
+      "status": "implemented"
+    },
+    {
+      "num": 144,
+      "name": "primitiveShortAtPut",
+      "category": "Squeak Miscellaneous Primitives (128-149)",
+      "status": "implemented"
+    },
+    {
+      "num": 145,
+      "name": "primitiveConstantFill",
+      "category": "Squeak Miscellaneous Primitives (128-149)",
+      "status": "implemented"
+    },
+    {
+      "num": 146,
+      "name": "primitiveFail",
+      "category": "Squeak Miscellaneous Primitives (128-149)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 147,
+      "name": "primitiveFail",
+      "category": "Squeak Miscellaneous Primitives (128-149)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 148,
+      "name": "primitiveClone",
+      "category": "Squeak Miscellaneous Primitives (128-149)",
+      "status": "implemented"
+    },
+    {
+      "num": 149,
+      "name": "primitiveGetAttribute",
+      "category": "Squeak Miscellaneous Primitives (128-149)",
+      "status": "implemented"
+    },
+    {
+      "num": 150,
+      "name": "primitiveFail",
+      "category": "File Primitives - Now Named (150-169)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 151,
+      "name": "primitiveFail",
+      "category": "File Primitives - Now Named (150-169)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 152,
+      "name": "primitiveFail",
+      "category": "File Primitives - Now Named (150-169)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 153,
+      "name": "primitiveFail",
+      "category": "File Primitives - Now Named (150-169)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 154,
+      "name": "primitiveFail",
+      "category": "File Primitives - Now Named (150-169)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 155,
+      "name": "primitiveFail",
+      "category": "File Primitives - Now Named (150-169)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 156,
+      "name": "primitiveCompareBytes",
+      "category": "File Primitives - Now Named (150-169)",
+      "status": "implemented"
+    },
+    {
+      "num": 157,
+      "name": "primitiveFail",
+      "category": "File Primitives - Now Named (150-169)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 158,
+      "name": "primitiveStringCompareWith",
+      "category": "File Primitives - Now Named (150-169)",
+      "status": "implemented"
+    },
+    {
+      "num": 159,
+      "name": "primitiveHashMultiply",
+      "category": "File Primitives - Now Named (150-169)",
+      "status": "implemented"
+    },
+    {
+      "num": 160,
+      "name": "primitiveAdoptInstance",
+      "category": "File Primitives - Now Named (150-169)",
+      "status": "implemented"
+    },
+    {
+      "num": 161,
+      "name": "primitiveSetOrHasIdentityHash",
+      "category": "File Primitives - Now Named (150-169)",
+      "status": "implemented"
+    },
+    {
+      "num": 162,
+      "name": "primitiveFail",
+      "category": "File Primitives - Now Named (150-169)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 163,
+      "name": "primitiveGetImmutability",
+      "category": "File Primitives - Now Named (150-169)",
+      "status": "implemented"
+    },
+    {
+      "num": 164,
+      "name": "primitiveSetImmutability",
+      "category": "File Primitives - Now Named (150-169)",
+      "status": "implemented"
+    },
+    {
+      "num": 165,
+      "name": "primitiveIntegerAt",
+      "category": "File Primitives - Now Named (150-169)",
+      "status": "implemented"
+    },
+    {
+      "num": 166,
+      "name": "primitiveIntegerAtPut",
+      "category": "File Primitives - Now Named (150-169)",
+      "status": "implemented"
+    },
+    {
+      "num": 167,
+      "name": "primitiveYield",
+      "category": "File Primitives - Now Named (150-169)",
+      "status": "implemented"
+    },
+    {
+      "num": 168,
+      "name": "primitiveCopyObject",
+      "category": "File Primitives - Now Named (150-169)",
+      "status": "implemented"
+    },
+    {
+      "num": 169,
+      "name": "primitiveNotIdentical",
+      "category": "File Primitives - Now Named (150-169)",
+      "status": "implemented"
+    },
+    {
+      "num": 170,
+      "name": "primitiveAsCharacter",
+      "category": "SpurMemoryManager Primitives (170-184)",
+      "status": "implemented"
+    },
+    {
+      "num": 171,
+      "name": "primitiveImmediateAsInteger",
+      "category": "SpurMemoryManager Primitives (170-184)",
+      "status": "implemented"
+    },
+    {
+      "num": 172,
+      "name": "primitiveFetchNextMourner",
+      "category": "SpurMemoryManager Primitives (170-184)",
+      "status": "implemented"
+    },
+    {
+      "num": 173,
+      "name": "primitiveSlotAt",
+      "category": "SpurMemoryManager Primitives (170-184)",
+      "status": "implemented"
+    },
+    {
+      "num": 174,
+      "name": "primitiveSlotAtPut",
+      "category": "SpurMemoryManager Primitives (170-184)",
+      "status": "implemented"
+    },
+    {
+      "num": 175,
+      "name": "primitiveBehaviorHash",
+      "category": "SpurMemoryManager Primitives (170-184)",
+      "status": "implemented"
+    },
+    {
+      "num": 176,
+      "name": "primitiveMaxIdentityHash",
+      "category": "SpurMemoryManager Primitives (170-184)",
+      "status": "implemented"
+    },
+    {
+      "num": 177,
+      "name": "primitiveAllInstances",
+      "category": "SpurMemoryManager Primitives (170-184)",
+      "status": "implemented"
+    },
+    {
+      "num": 178,
+      "name": "primitiveAllObjects",
+      "category": "SpurMemoryManager Primitives (170-184)",
+      "status": "implemented"
+    },
+    {
+      "num": 179,
+      "name": "primitiveFail",
+      "category": "SpurMemoryManager Primitives (170-184)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 180,
+      "name": "primitiveGrowMemoryByAtLeast",
+      "category": "SpurMemoryManager Primitives (170-184)",
+      "status": "implemented"
+    },
+    {
+      "num": 181,
+      "name": "primitiveSizeInBytesOfInstance",
+      "category": "SpurMemoryManager Primitives (170-184)",
+      "status": "implemented"
+    },
+    {
+      "num": 182,
+      "name": "primitiveSizeInBytes",
+      "category": "SpurMemoryManager Primitives (170-184)",
+      "status": "implemented"
+    },
+    {
+      "num": 183,
+      "name": "primitiveIsPinned",
+      "category": "SpurMemoryManager Primitives (170-184)",
+      "status": "implemented"
+    },
+    {
+      "num": 184,
+      "name": "primitivePin",
+      "category": "SpurMemoryManager Primitives (170-184)",
+      "status": "implemented"
+    },
+    {
+      "num": 185,
+      "name": "primitiveExitCriticalSection",
+      "category": "CriticalSection Primitives (185-187)",
+      "status": "implemented"
+    },
+    {
+      "num": 186,
+      "name": "primitiveEnterCriticalSection",
+      "category": "CriticalSection Primitives (185-187)",
+      "status": "implemented"
+    },
+    {
+      "num": 187,
+      "name": "primitiveTestAndSetOwnershipOfCriticalSection",
+      "category": "CriticalSection Primitives (185-187)",
+      "status": "implemented"
+    },
+    {
+      "num": 188,
+      "name": "primitiveExecuteMethodArgsArray",
+      "category": "ExecuteMethod Primitives (188-189)",
+      "status": "implemented"
+    },
+    {
+      "num": 189,
+      "name": "primitiveExecuteMethod",
+      "category": "ExecuteMethod Primitives (188-189)",
+      "status": "implemented"
+    },
+    {
+      "num": 190,
+      "name": "primitiveFail",
+      "category": "Reserved (190-194)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 191,
+      "name": "primitiveFail",
+      "category": "Reserved (190-194)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 192,
+      "name": "primitiveFail",
+      "category": "Reserved (190-194)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 193,
+      "name": "primitiveFail",
+      "category": "Reserved (190-194)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 194,
+      "name": "primitiveFail",
+      "category": "Reserved (190-194)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 195,
+      "name": "primitiveFindNextUnwindContext",
+      "category": "Unwind Primitives (195-199)",
+      "status": "implemented"
+    },
+    {
+      "num": 196,
+      "name": "primitiveTerminateTo",
+      "category": "Unwind Primitives (195-199)",
+      "status": "implemented"
+    },
+    {
+      "num": 197,
+      "name": "primitiveFindHandlerContext",
+      "category": "Unwind Primitives (195-199)",
+      "status": "implemented"
+    },
+    {
+      "num": 198,
+      "name": "primitiveFail",
+      "category": "Unwind Primitives (195-199)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 199,
+      "name": "primitiveFail",
+      "category": "Unwind Primitives (195-199)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 200,
+      "name": "primitiveFail",
+      "category": "Closure Primitives (200-212)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 201,
+      "name": "primitiveFail",
+      "category": "Closure Primitives (200-212)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 202,
+      "name": "primitiveFail",
+      "category": "Closure Primitives (200-212)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 203,
+      "name": "primitiveFail",
+      "category": "Closure Primitives (200-212)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 204,
+      "name": "primitiveFail",
+      "category": "Closure Primitives (200-212)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 205,
+      "name": "primitiveFail",
+      "category": "Closure Primitives (200-212)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 206,
+      "name": "primitiveFail",
+      "category": "Closure Primitives (200-212)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 207,
+      "name": "primitiveFullClosureValue",
+      "category": "Closure Primitives (200-212)",
+      "status": "implemented"
+    },
+    {
+      "num": 208,
+      "name": "primitiveFullClosureValueWithArgs",
+      "category": "Closure Primitives (200-212)",
+      "status": "implemented"
+    },
+    {
+      "num": 209,
+      "name": "primitiveFullClosureValueNoContextSwitch",
+      "category": "Closure Primitives (200-212)",
+      "status": "implemented"
+    },
+    {
+      "num": 210,
+      "name": "primitiveContextAt",
+      "category": "Closure Primitives (200-212)",
+      "status": "implemented"
+    },
+    {
+      "num": 211,
+      "name": "primitiveContextAtPut",
+      "category": "Closure Primitives (200-212)",
+      "status": "implemented"
+    },
+    {
+      "num": 212,
+      "name": "primitiveContextSize",
+      "category": "Closure Primitives (200-212)",
+      "status": "implemented"
+    },
+    {
+      "num": 213,
+      "name": "primitiveContextXray",
+      "category": "Context/Method Introspection (213-219)",
+      "status": "implemented"
+    },
+    {
+      "num": 214,
+      "name": "primitiveVoidVMState",
+      "category": "Context/Method Introspection (213-219)",
+      "status": "implemented"
+    },
+    {
+      "num": 215,
+      "name": "primitiveVoidVMStateForMethod",
+      "category": "Context/Method Introspection (213-219)",
+      "status": "implemented"
+    },
+    {
+      "num": 216,
+      "name": "primitiveMethodXray",
+      "category": "Context/Method Introspection (213-219)",
+      "status": "implemented"
+    },
+    {
+      "num": 217,
+      "name": "primitiveMethodProfilingData",
+      "category": "Context/Method Introspection (213-219)",
+      "status": "implemented"
+    },
+    {
+      "num": 218,
+      "name": "primitiveDoNamedPrimitiveWithArgs",
+      "category": "Context/Method Introspection (213-219)",
+      "status": "implemented"
+    },
+    {
+      "num": 219,
+      "name": "primitiveFail",
+      "category": "Context/Method Introspection (213-219)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 220,
+      "name": "primitiveFail",
+      "category": "Reserved for Cog (220-229)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 221,
+      "name": "primitiveFail",
+      "category": "Reserved for Cog (220-229)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 222,
+      "name": "primitiveFail",
+      "category": "Reserved for Cog (220-229)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 223,
+      "name": "primitiveFail",
+      "category": "Reserved for Cog (220-229)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 224,
+      "name": "primitiveFail",
+      "category": "Reserved for Cog (220-229)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 225,
+      "name": "primitiveFail",
+      "category": "Reserved for Cog (220-229)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 226,
+      "name": "primitiveFail",
+      "category": "Reserved for Cog (220-229)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 227,
+      "name": "primitiveFail",
+      "category": "Reserved for Cog (220-229)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 228,
+      "name": "primitiveFail",
+      "category": "Reserved for Cog (220-229)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 229,
+      "name": "primitiveFail",
+      "category": "Reserved for Cog (220-229)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 230,
+      "name": "primitiveRelinquishProcessor",
+      "category": "Process/Time Primitives (230-246)",
+      "status": "implemented"
+    },
+    {
+      "num": 231,
+      "name": "primitiveFormat",
+      "category": "Process/Time Primitives (230-246)",
+      "status": "implemented"
+    },
+    {
+      "num": 232,
+      "name": "primitiveFail",
+      "category": "Process/Time Primitives (230-246)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 233,
+      "name": "primitiveFail",
+      "category": "Process/Time Primitives (230-246)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 234,
+      "name": "primitiveFail",
+      "category": "Process/Time Primitives (230-246)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 235,
+      "name": "primitiveFail",
+      "category": "Process/Time Primitives (230-246)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 236,
+      "name": "primitiveFail",
+      "category": "Process/Time Primitives (230-246)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 237,
+      "name": "primitiveFail",
+      "category": "Process/Time Primitives (230-246)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 238,
+      "name": "primitiveFail",
+      "category": "Process/Time Primitives (230-246)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 239,
+      "name": "primitiveFail",
+      "category": "Process/Time Primitives (230-246)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 240,
+      "name": "primitiveUTCMicrosecondClock",
+      "category": "Process/Time Primitives (230-246)",
+      "status": "implemented"
+    },
+    {
+      "num": 241,
+      "name": "primitiveLocalMicrosecondClock",
+      "category": "Process/Time Primitives (230-246)",
+      "status": "implemented"
+    },
+    {
+      "num": 242,
+      "name": "primitiveSignalAtUTCMicroseconds",
+      "category": "Process/Time Primitives (230-246)",
+      "status": "implemented"
+    },
+    {
+      "num": 243,
+      "name": "primitiveUpdateTimezone",
+      "category": "Process/Time Primitives (230-246)",
+      "status": "implemented"
+    },
+    {
+      "num": 244,
+      "name": "primitiveUtcAndTimezoneOffset",
+      "category": "Process/Time Primitives (230-246)",
+      "status": "implemented"
+    },
+    {
+      "num": 245,
+      "name": "primitiveCoarseUTCMicrosecondClock",
+      "category": "Process/Time Primitives (230-246)",
+      "status": "implemented"
+    },
+    {
+      "num": 246,
+      "name": "primitiveCoarseLocalMicrosecondClock",
+      "category": "Process/Time Primitives (230-246)",
+      "status": "implemented"
+    },
+    {
+      "num": 247,
+      "name": "primitiveFail",
+      "category": "Become Primitives (247-249)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 248,
+      "name": "primitiveArrayBecomeOneWayNoCopyHash",
+      "category": "Become Primitives (247-249)",
+      "status": "implemented"
+    },
+    {
+      "num": 249,
+      "name": "primitiveArrayBecomeOneWayCopyHash",
+      "category": "Become Primitives (247-249)",
+      "status": "implemented"
+    },
+    {
+      "num": 250,
+      "name": "primitiveClearVMProfile",
+      "category": "VM Profiling Primitives (250-255)",
+      "status": "implemented"
+    },
+    {
+      "num": 251,
+      "name": "primitiveControlVMProfiling",
+      "category": "VM Profiling Primitives (250-255)",
+      "status": "implemented"
+    },
+    {
+      "num": 252,
+      "name": "primitiveVMProfileSamplesInto",
+      "category": "VM Profiling Primitives (250-255)",
+      "status": "implemented"
+    },
+    {
+      "num": 253,
+      "name": "primitiveCollectCogCodeConstituents",
+      "category": "VM Profiling Primitives (250-255)",
+      "status": "implemented"
+    },
+    {
+      "num": 254,
+      "name": "primitiveVMParameter",
+      "category": "VM Profiling Primitives (250-255)",
+      "status": "implemented"
+    },
+    {
+      "num": 255,
+      "name": "primitiveFail",
+      "category": "VM Profiling Primitives (250-255)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 256,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 257,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 258,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 259,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 260,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 261,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 262,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 263,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 264,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 265,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 266,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 267,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 268,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 269,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 270,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 271,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 272,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 273,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 274,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 275,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 276,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 277,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 278,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 279,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 280,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 281,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 282,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 283,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 284,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 285,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 286,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 287,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 288,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 289,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 290,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 291,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 292,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 293,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 294,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 295,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 296,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 297,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 298,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 299,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 300,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 301,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 302,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 303,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 304,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 305,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 306,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 307,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 308,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 309,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 310,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 311,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 312,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 313,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 314,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 315,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 316,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 317,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 318,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 319,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 320,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 321,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 322,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 323,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 324,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 325,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 326,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 327,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 328,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 329,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 330,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 331,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 332,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 333,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 334,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 335,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 336,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 337,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 338,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 339,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 340,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 341,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 342,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 343,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 344,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 345,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 346,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 347,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 348,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 349,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 350,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 351,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 352,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 353,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 354,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 355,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 356,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 357,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 358,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 359,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 360,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 361,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 362,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 363,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 364,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 365,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 366,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 367,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 368,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 369,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 370,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 371,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 372,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 373,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 374,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 375,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 376,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 377,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 378,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 379,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 380,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 381,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 382,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 383,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 384,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 385,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 386,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 387,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 388,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 389,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 390,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 391,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 392,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 393,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 394,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 395,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 396,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 397,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 398,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 399,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 400,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 401,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 402,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 403,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 404,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 405,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 406,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 407,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 408,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 409,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 410,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 411,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 412,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 413,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 414,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 415,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 416,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 417,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 418,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 419,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 420,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 421,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 422,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 423,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 424,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 425,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 426,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 427,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 428,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 429,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 430,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 431,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 432,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 433,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 434,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 435,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 436,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 437,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 438,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 439,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 440,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 441,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 442,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 443,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 444,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 445,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 446,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 447,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 448,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 449,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 450,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 451,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 452,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 453,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 454,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 455,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 456,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 457,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 458,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 459,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 460,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 461,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 462,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 463,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 464,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 465,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 466,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 467,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 468,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 469,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 470,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 471,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 472,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 473,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 474,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 475,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 476,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 477,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 478,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 479,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 480,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 481,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 482,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 483,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 484,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 485,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 486,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 487,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 488,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 489,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 490,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 491,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 492,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 493,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 494,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 495,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 496,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 497,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 498,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 499,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 500,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 501,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 502,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 503,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 504,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 505,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 506,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 507,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 508,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 509,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 510,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 511,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 512,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 513,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 514,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 515,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 516,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 517,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 518,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 519,
+      "name": "nil",
+      "category": "Quick Primitives (256-519) - Push constants and inst vars",
+      "status": "unimplemented"
+    },
+    {
+      "num": 520,
+      "name": "primitiveFail",
+      "category": "Reserved (520-540)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 521,
+      "name": "primitiveFail",
+      "category": "Reserved (520-540)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 522,
+      "name": "primitiveFail",
+      "category": "Reserved (520-540)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 523,
+      "name": "primitiveFail",
+      "category": "Reserved (520-540)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 524,
+      "name": "primitiveFail",
+      "category": "Reserved (520-540)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 525,
+      "name": "primitiveFail",
+      "category": "Reserved (520-540)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 526,
+      "name": "primitiveFail",
+      "category": "Reserved (520-540)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 527,
+      "name": "primitiveFail",
+      "category": "Reserved (520-540)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 528,
+      "name": "primitiveFail",
+      "category": "Reserved (520-540)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 529,
+      "name": "primitiveFail",
+      "category": "Reserved (520-540)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 530,
+      "name": "primitiveFail",
+      "category": "Reserved (520-540)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 531,
+      "name": "primitiveFail",
+      "category": "Reserved (520-540)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 532,
+      "name": "primitiveFail",
+      "category": "Reserved (520-540)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 533,
+      "name": "primitiveFail",
+      "category": "Reserved (520-540)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 534,
+      "name": "primitiveFail",
+      "category": "Reserved (520-540)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 535,
+      "name": "primitiveFail",
+      "category": "Reserved (520-540)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 536,
+      "name": "primitiveFail",
+      "category": "Reserved (520-540)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 537,
+      "name": "primitiveFail",
+      "category": "Reserved (520-540)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 538,
+      "name": "primitiveFail",
+      "category": "Reserved (520-540)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 539,
+      "name": "primitiveFail",
+      "category": "Reserved (520-540)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 540,
+      "name": "primitiveFail",
+      "category": "Reserved (520-540)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 541,
+      "name": "primitiveSmallFloatAdd",
+      "category": "SmallFloat Primitives (541-559)",
+      "status": "implemented"
+    },
+    {
+      "num": 542,
+      "name": "primitiveSmallFloatSubtract",
+      "category": "SmallFloat Primitives (541-559)",
+      "status": "implemented"
+    },
+    {
+      "num": 543,
+      "name": "primitiveSmallFloatLessThan",
+      "category": "SmallFloat Primitives (541-559)",
+      "status": "implemented"
+    },
+    {
+      "num": 544,
+      "name": "primitiveSmallFloatGreaterThan",
+      "category": "SmallFloat Primitives (541-559)",
+      "status": "implemented"
+    },
+    {
+      "num": 545,
+      "name": "primitiveSmallFloatLessOrEqual",
+      "category": "SmallFloat Primitives (541-559)",
+      "status": "implemented"
+    },
+    {
+      "num": 546,
+      "name": "primitiveSmallFloatGreaterOrEqual",
+      "category": "SmallFloat Primitives (541-559)",
+      "status": "implemented"
+    },
+    {
+      "num": 547,
+      "name": "primitiveSmallFloatEqual",
+      "category": "SmallFloat Primitives (541-559)",
+      "status": "implemented"
+    },
+    {
+      "num": 548,
+      "name": "primitiveSmallFloatNotEqual",
+      "category": "SmallFloat Primitives (541-559)",
+      "status": "implemented"
+    },
+    {
+      "num": 549,
+      "name": "primitiveSmallFloatMultiply",
+      "category": "SmallFloat Primitives (541-559)",
+      "status": "implemented"
+    },
+    {
+      "num": 550,
+      "name": "primitiveSmallFloatDivide",
+      "category": "SmallFloat Primitives (541-559)",
+      "status": "implemented"
+    },
+    {
+      "num": 551,
+      "name": "primitiveSmallFloatTruncated",
+      "category": "SmallFloat Primitives (541-559)",
+      "status": "implemented"
+    },
+    {
+      "num": 552,
+      "name": "primitiveSmallFloatFractionalPart",
+      "category": "SmallFloat Primitives (541-559)",
+      "status": "implemented"
+    },
+    {
+      "num": 553,
+      "name": "primitiveSmallFloatExponent",
+      "category": "SmallFloat Primitives (541-559)",
+      "status": "implemented"
+    },
+    {
+      "num": 554,
+      "name": "primitiveSmallFloatTimesTwoPower",
+      "category": "SmallFloat Primitives (541-559)",
+      "status": "implemented"
+    },
+    {
+      "num": 555,
+      "name": "primitiveSmallFloatSquareRoot",
+      "category": "SmallFloat Primitives (541-559)",
+      "status": "implemented"
+    },
+    {
+      "num": 556,
+      "name": "primitiveSmallFloatSine",
+      "category": "SmallFloat Primitives (541-559)",
+      "status": "implemented"
+    },
+    {
+      "num": 557,
+      "name": "primitiveSmallFloatArctan",
+      "category": "SmallFloat Primitives (541-559)",
+      "status": "implemented"
+    },
+    {
+      "num": 558,
+      "name": "primitiveSmallFloatLogN",
+      "category": "SmallFloat Primitives (541-559)",
+      "status": "implemented"
+    },
+    {
+      "num": 559,
+      "name": "primitiveSmallFloatExp",
+      "category": "SmallFloat Primitives (541-559)",
+      "status": "implemented"
+    },
+    {
+      "num": 560,
+      "name": "primitiveFail",
+      "category": "Reserved (560-569)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 561,
+      "name": "primitiveFail",
+      "category": "Reserved (560-569)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 562,
+      "name": "primitiveFail",
+      "category": "Reserved (560-569)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 563,
+      "name": "primitiveFail",
+      "category": "Reserved (560-569)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 564,
+      "name": "primitiveFail",
+      "category": "Reserved (560-569)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 565,
+      "name": "primitiveFail",
+      "category": "Reserved (560-569)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 566,
+      "name": "primitiveFail",
+      "category": "Reserved (560-569)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 567,
+      "name": "primitiveFail",
+      "category": "Reserved (560-569)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 568,
+      "name": "primitiveFail",
+      "category": "Reserved (560-569)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 569,
+      "name": "primitiveFail",
+      "category": "Reserved (560-569)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 570,
+      "name": "primitiveFlushExternalPrimitives",
+      "category": "External Primitive Support (570-573)",
+      "status": "implemented"
+    },
+    {
+      "num": 571,
+      "name": "primitiveUnloadModule",
+      "category": "External Primitive Support (570-573)",
+      "status": "implemented"
+    },
+    {
+      "num": 572,
+      "name": "primitiveListBuiltinModule",
+      "category": "External Primitive Support (570-573)",
+      "status": "implemented"
+    },
+    {
+      "num": 573,
+      "name": "primitiveListExternalModule",
+      "category": "External Primitive Support (570-573)",
+      "status": "implemented"
+    },
+    {
+      "num": 574,
+      "name": "primitiveFloat64ArrayAdd",
+      "category": "SIMD Primitives (574)",
+      "status": "implemented"
+    },
+    {
+      "num": 575,
+      "name": "primitiveFail",
+      "category": "Reserved (575-595)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 576,
+      "name": "primitiveFail",
+      "category": "Reserved (575-595)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 577,
+      "name": "primitiveFail",
+      "category": "Reserved (575-595)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 578,
+      "name": "primitiveFail",
+      "category": "Reserved (575-595)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 579,
+      "name": "primitiveFail",
+      "category": "Reserved (575-595)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 580,
+      "name": "primitiveFail",
+      "category": "Reserved (575-595)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 581,
+      "name": "primitiveFail",
+      "category": "Reserved (575-595)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 582,
+      "name": "primitiveFail",
+      "category": "Reserved (575-595)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 583,
+      "name": "primitiveFail",
+      "category": "Reserved (575-595)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 584,
+      "name": "primitiveFail",
+      "category": "Reserved (575-595)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 585,
+      "name": "primitiveFail",
+      "category": "Reserved (575-595)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 586,
+      "name": "primitiveFail",
+      "category": "Reserved (575-595)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 587,
+      "name": "primitiveFail",
+      "category": "Reserved (575-595)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 588,
+      "name": "primitiveFail",
+      "category": "Reserved (575-595)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 589,
+      "name": "primitiveFail",
+      "category": "Reserved (575-595)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 590,
+      "name": "primitiveFail",
+      "category": "Reserved (575-595)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 591,
+      "name": "primitiveFail",
+      "category": "Reserved (575-595)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 592,
+      "name": "primitiveFail",
+      "category": "Reserved (575-595)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 593,
+      "name": "primitiveFail",
+      "category": "Reserved (575-595)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 594,
+      "name": "primitiveFail",
+      "category": "Reserved (575-595)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 595,
+      "name": "primitiveFail",
+      "category": "Reserved (575-595)",
+      "status": "unimplemented"
+    },
+    {
+      "num": 596,
+      "name": "primitiveNewOldSpace",
+      "category": "OldSpace Allocation (596-597)",
+      "status": "implemented"
+    },
+    {
+      "num": 597,
+      "name": "primitiveNewWithArgOldSpace",
+      "category": "OldSpace Allocation (596-597)",
+      "status": "implemented"
+    },
+    {
+      "num": 598,
+      "name": "primitiveNewPinned",
+      "category": "Pinned Allocation (598-599)",
+      "status": "implemented"
+    },
+    {
+      "num": 599,
+      "name": "primitiveNewWithArgPinned",
+      "category": "Pinned Allocation (598-599)",
+      "status": "implemented"
+    },
+    {
+      "num": 600,
+      "name": "primitiveLoadBoolean8FromBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 601,
+      "name": "primitiveLoadUInt8FromBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 602,
+      "name": "primitiveLoadInt8FromBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 603,
+      "name": "primitiveLoadUInt16FromBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 604,
+      "name": "primitiveLoadInt16FromBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 605,
+      "name": "primitiveLoadUInt32FromBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 606,
+      "name": "primitiveLoadInt32FromBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 607,
+      "name": "primitiveLoadUInt64FromBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 608,
+      "name": "primitiveLoadInt64FromBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 609,
+      "name": "primitiveLoadPointerFromBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 610,
+      "name": "primitiveLoadChar8FromBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 611,
+      "name": "primitiveLoadChar16FromBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 612,
+      "name": "primitiveLoadChar32FromBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 613,
+      "name": "primitiveLoadFloat32FromBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 614,
+      "name": "primitiveLoadFloat64FromBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 615,
+      "name": "primitiveStoreBoolean8IntoBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 616,
+      "name": "primitiveStoreUInt8IntoBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 617,
+      "name": "primitiveStoreInt8IntoBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 618,
+      "name": "primitiveStoreUInt16IntoBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 619,
+      "name": "primitiveStoreInt16IntoBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 620,
+      "name": "primitiveStoreUInt32IntoBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 621,
+      "name": "primitiveStoreInt32IntoBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 622,
+      "name": "primitiveStoreUInt64IntoBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 623,
+      "name": "primitiveStoreInt64IntoBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 624,
+      "name": "primitiveStorePointerIntoBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 625,
+      "name": "primitiveStoreChar8IntoBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 626,
+      "name": "primitiveStoreChar16IntoBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 627,
+      "name": "primitiveStoreChar32IntoBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 628,
+      "name": "primitiveStoreFloat32IntoBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 629,
+      "name": "primitiveStoreFloat64IntoBytes",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 630,
+      "name": "primitiveLoadBoolean8FromExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 631,
+      "name": "primitiveLoadUInt8FromExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 632,
+      "name": "primitiveLoadInt8FromExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 633,
+      "name": "primitiveLoadUInt16FromExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 634,
+      "name": "primitiveLoadInt16FromExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 635,
+      "name": "primitiveLoadUInt32FromExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 636,
+      "name": "primitiveLoadInt32FromExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 637,
+      "name": "primitiveLoadUInt64FromExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 638,
+      "name": "primitiveLoadInt64FromExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 639,
+      "name": "primitiveLoadPointerFromExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 640,
+      "name": "primitiveLoadChar8FromExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 641,
+      "name": "primitiveLoadChar16FromExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 642,
+      "name": "primitiveLoadChar32FromExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 643,
+      "name": "primitiveLoadFloat32FromExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 644,
+      "name": "primitiveLoadFloat64FromExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 645,
+      "name": "primitiveStoreBoolean8IntoExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 646,
+      "name": "primitiveStoreUInt8IntoExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 647,
+      "name": "primitiveStoreInt8IntoExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 648,
+      "name": "primitiveStoreUInt16IntoExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 649,
+      "name": "primitiveStoreInt16IntoExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 650,
+      "name": "primitiveStoreUInt32IntoExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 651,
+      "name": "primitiveStoreInt32IntoExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 652,
+      "name": "primitiveStoreUInt64IntoExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 653,
+      "name": "primitiveStoreInt64IntoExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 654,
+      "name": "primitiveStorePointerIntoExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 655,
+      "name": "primitiveStoreChar8IntoExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 656,
+      "name": "primitiveStoreChar16IntoExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 657,
+      "name": "primitiveStoreChar32IntoExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 658,
+      "name": "primitiveStoreFloat32IntoExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 659,
+      "name": "primitiveStoreFloat64IntoExternalAddress",
+      "category": "FFI Byte Access (600-659)",
+      "status": "implemented"
+    },
+    {
+      "num": 660,
+      "name": "primitiveFail",
+      "category": "End",
+      "status": "unimplemented"
+    }
+  ]
+}
