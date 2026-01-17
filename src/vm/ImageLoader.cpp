@@ -535,162 +535,84 @@ bool ImageLoader::setupSpecialObjects(ObjectMemory& memory, LoadResult& result) 
 // ===== CLASS TABLE =====
 
 bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
-    // In Spur 64-bit, the class table is stored as follows:
+    // In Pharo 12 Spur 64-bit, the class table is stored as follows:
     //
-    // The first object in old space (at offset 0x0) is the "hiddenRoots" object.
-    // hiddenRoots is an Array with:
-    //   - slot 0: classTableFirstPage - an Array of class table pages
-    //   - slot 1+: other roots (symbols, etc.)
+    // Layout at start of old space:
+    //   offset 0x0:   nil object (format 0, 0 slots, 16 bytes)
+    //   offset 0x10:  false object (format 0, 0 slots, 16 bytes)
+    //   offset 0x20:  true object (format 0, 0 slots, 16 bytes)
+    //   offset 0x30:  hiddenRoots (format 9, 64 slots with nil, 520 bytes)
+    //   offset 0x238: classTablePages array (format 2, holds page pointers)
+    //
+    // NOTE: In Pharo 12, hiddenRoots slots are all nil. The class table
+    // pages array is stored RIGHT AFTER hiddenRoots, not pointed to by slot 0.
     //
     // Each class table page is an Array of up to 1024 class object pointers.
-    // Class index N is found at: classTableFirstPage[N / 1024][N % 1024]
-    //
-    // Page indices:
-    //   - Page 0: class indices 0-1023
-    //   - Page 1: class indices 1024-2047
-    //   - Page 2: class indices 2048-3071
-    //   - Page 3: class indices 3072-4095 (includes index 3075)
-    //   - Page 4: class indices 4096-5119 (includes index 4735)
+    // Class index N is found at: classTablePages[N / 1024][N % 1024]
 
     uint8_t* heapStart = memory.oldSpaceStart();
     Oop nilObj = memory.specialObject(SpecialObjectIndex::NilObject);
     constexpr size_t PageSize = 1024;
     size_t totalClasses = 0;
 
-    std::cerr << "[CLASS-TABLE] Building class table from hiddenRoots structure..." << std::endl;
+    // In Pharo 12, hiddenRoots is at offset 0x30 with 64 slots (all nil)
+    // hiddenRoots size = 8 (header) + 64*8 (slots) = 520 bytes
+    // So class table pages array starts at 0x30 + 520 = 0x238
+    constexpr size_t hiddenRootsOffset = 0x30;
+    constexpr size_t hiddenRootsSize = 8 + 64 * 8;  // header + slots
+    constexpr size_t classTablePagesOffset = hiddenRootsOffset + hiddenRootsSize;  // 0x238
 
-    // Debug: show first 256 bytes of old space
-    std::cerr << "[CLASS-TABLE] First 256 bytes of old space:" << std::endl;
-    for (int row = 0; row < 16; row++) {
-        std::cerr << "[CLASS-TABLE]   0x" << std::hex << std::setw(3) << std::setfill('0') << (row * 16) << ": ";
-        for (int col = 0; col < 16; col++) {
-            std::cerr << std::setw(2) << std::setfill('0') << (int)heapStart[row * 16 + col] << " ";
+    // The structure at 0x238 has two 8-byte headers, then the page pointers start at 0x248
+    // Skip the two headers and read page pointers directly
+    constexpr size_t pagePointersOffset = classTablePagesOffset + 16;  // 0x248
+
+    // Read page pointers (they are old-space addresses that need relocation)
+    uint64_t* pagePointers = reinterpret_cast<uint64_t*>(heapStart + pagePointersOffset);
+
+    // Count how many non-zero page pointers we have
+    size_t numPages = 0;
+    for (size_t i = 0; i < 100; i++) {  // Max 100 pages
+        uint64_t ptr = pagePointers[i];
+        if (ptr == 0 || (ptr & 7) != 0) {  // Zero or not aligned = end of pages
+            break;
         }
-        std::cerr << std::dec << std::endl;
+        numPages++;
     }
 
-    // Spur layout at start of old space:
-    //   offset 0x0:  nil object (format 0, 0 slots)
-    //   offset 0x10: false object (format 0, 0 slots)
-    //   offset 0x20: true object (format 0, 0 slots)
-    //   offset 0x30: hiddenRoots array (format 9 = Indexable64)
-    // Try the correct offset first (0x30), then fall back to 0x0 and 0x8
+    // Iterate through each page
+    for (size_t pageNum = 0; pageNum < numPages; pageNum++) {
+        uint64_t pageAddr = pagePointers[pageNum];
 
-    ObjectHeader* hiddenRootsHdr = reinterpret_cast<ObjectHeader*>(heapStart + 0x30);
-    uint64_t hiddenRootsRaw = hiddenRootsHdr->rawHeader();
-    size_t hiddenRootsSlots = hiddenRootsHdr->slotCount();
-
-    std::cerr << "[CLASS-TABLE] Trying offset 0x30: slots=" << hiddenRootsSlots
-              << " format=" << static_cast<int>(hiddenRootsHdr->format()) << std::endl;
-
-    // Debug: show raw bytes at hiddenRoots location
-    std::cerr << "[CLASS-TABLE] Raw bytes at 0x30 (first 128):" << std::endl;
-    uint8_t* rawBytes = heapStart + 0x30;
-    for (int row = 0; row < 8; row++) {
-        std::cerr << "[CLASS-TABLE]   0x" << std::hex << std::setw(2) << std::setfill('0') << (row * 16) << ": ";
-        for (int col = 0; col < 16; col++) {
-            std::cerr << std::setw(2) << std::setfill('0') << (int)rawBytes[row * 16 + col] << " ";
-        }
-        std::cerr << std::dec << std::endl;
-    }
-
-    if (hiddenRootsSlots == 0 || hiddenRootsHdr->format() != ObjectFormat::Indexable64) {
-        // Try offset 0x0
-        hiddenRootsHdr = reinterpret_cast<ObjectHeader*>(heapStart);
-        hiddenRootsRaw = hiddenRootsHdr->rawHeader();
-        hiddenRootsSlots = hiddenRootsHdr->slotCount();
-        std::cerr << "[CLASS-TABLE] Trying offset 0x0: slots=" << hiddenRootsSlots
-                  << " format=" << static_cast<int>(hiddenRootsHdr->format()) << std::endl;
-    }
-
-    if (hiddenRootsSlots == 0) {
-        // Maybe hiddenRoots is not at offset 0, try offset 0x8
-        hiddenRootsHdr = reinterpret_cast<ObjectHeader*>(heapStart + 0x8);
-        hiddenRootsRaw = hiddenRootsHdr->rawHeader();
-        hiddenRootsSlots = hiddenRootsHdr->slotCount();
-        std::cerr << "[CLASS-TABLE] Trying offset 0x8: slots=" << hiddenRootsSlots
-                  << " format=" << static_cast<int>(hiddenRootsHdr->format()) << std::endl;
-    }
-
-    // Slot 0 of hiddenRoots should be the classTableFirstPage array
-    if (hiddenRootsSlots < 1) {
-        goto fallback_scan;
-    }
-
-    {
-        // Debug: show first few slots of hiddenRoots
-        std::cerr << "[CLASS-TABLE] hiddenRoots slots (first 10):" << std::endl;
-        for (size_t i = 0; i < std::min(hiddenRootsSlots, (size_t)10); i++) {
-            Oop slot = hiddenRootsHdr->slotAt(i);
-            std::cerr << "[CLASS-TABLE]   slot[" << i << "] = 0x" << std::hex << slot.rawBits() << std::dec;
-            if (slot.isNil()) {
-                std::cerr << " (nil)";
-            } else if (slot.isSmallInteger()) {
-                std::cerr << " (SmallInt: " << slot.asSmallInteger() << ")";
-            } else if (slot.isObject()) {
-                ObjectHeader* slotHdr = slot.asObjectPtr();
-                std::cerr << " (obj: fmt=" << static_cast<int>(slotHdr->format())
-                          << " slots=" << slotHdr->slotCount()
-                          << " cls=" << slotHdr->classIndex() << ")";
-            }
-            std::cerr << std::endl;
+        // Validate the pointer is within our heap
+        if (pageAddr < newBase_ || pageAddr >= newBase_ + loadedSize_) {
+            continue;
         }
 
-        Oop classTableFirstPageOop = hiddenRootsHdr->slotAt(0);
+        // Get the page array header
+        ObjectHeader* pageHdr = reinterpret_cast<ObjectHeader*>(pageAddr);
+        size_t pageSlots = pageHdr->slotCount();
 
-        if (classTableFirstPageOop.isNil() || !classTableFirstPageOop.isObject()) {
-            std::cerr << "[CLASS-TABLE] classTableFirstPage is nil/invalid (0x" << std::hex
-                      << classTableFirstPageOop.rawBits() << std::dec << "), going to fallback" << std::endl;
-            goto fallback_scan;
-        }
+        // Each slot in the page is a class object pointer
+        for (size_t i = 0; i < pageSlots && i < PageSize; i++) {
+            Oop classOop = pageHdr->slotAt(i);
 
-        ObjectHeader* classTableFirstPageHdr = classTableFirstPageOop.asObjectPtr();
-        size_t numPages = classTableFirstPageHdr->slotCount();
-
-        std::cerr << "[CLASS-TABLE] Found " << numPages << " class table pages" << std::endl;
-
-        // Iterate through each page (increased limit to 50 to ensure we get all classes)
-        for (size_t pageNum = 0; pageNum < numPages && pageNum < 50; pageNum++) {
-            Oop pageOop = classTableFirstPageHdr->slotAt(pageNum);
-
-            if (pageOop.isNil() || !pageOop.isObject()) {
+            // Skip nil entries
+            if (classOop.rawBits() == 0 || classOop.isNil()) {
                 continue;
             }
 
-            ObjectHeader* pageHdr = pageOop.asObjectPtr();
-            size_t pageSlots = pageHdr->slotCount();
-            size_t pageClasses = 0;
-
-            // Each slot in the page is a class object pointer
-            for (size_t i = 0; i < pageSlots; i++) {
-                Oop classOop = pageHdr->slotAt(i);
-
-                if (classOop.isNil() || classOop.rawBits() == nilObj.rawBits()) {
-                    continue;
-                }
-
-                if (classOop.isObject()) {
-                    uint32_t classIndex = static_cast<uint32_t>(pageNum * PageSize + i);
-                    memory.setClassAtIndex(classIndex, classOop);
-                    totalClasses++;
-                    pageClasses++;
-
-                    // Debug: log class indices 7185 and 7190 specifically
-                    if (classIndex == 7185 || classIndex == 7190) {
-                        std::cerr << "[CLASS-TABLE] Registered class " << classIndex
-                                  << " from page " << pageNum << " slot " << i << std::endl;
-                    }
-                }
+            // Skip non-object entries (SmallIntegers shouldn't be in class table)
+            if (!classOop.isObject()) {
+                continue;
             }
 
-            // Log first 10 pages and page 7 (where 7185 should be)
-            if (pageNum < 10 || pageNum == 7) {
-                std::cerr << "[CLASS-TABLE] Page " << pageNum << ": " << pageClasses
-                          << " classes (slots=" << pageSlots << ")" << std::endl;
-            }
+            uint32_t classIndex = static_cast<uint32_t>(pageNum * PageSize + i);
+            memory.setClassAtIndex(classIndex, classOop);
+            totalClasses++;
         }
+    }
 
-        std::cerr << "[CLASS-TABLE] Total classes loaded: " << totalClasses << std::endl;
+    if (totalClasses > 0) {
         return true;
     }
 
@@ -902,14 +824,12 @@ direct_scan:
         uint32_t identHash = hdr->identityHash();
 
         // Very inclusive class detection:
-        // - Format 0, 1, or 5 (fixed size pointer objects, or ephemeron-like)
+        // - Format 0-5 (all pointer object types)
         // - At least 6 slots (metaclasses have ~6 slots, regular classes have 12+)
         // - identityHash > 0 and < 100000 (valid class index range)
         // - classIndex (metaclass) > 0 (non-nil class)
-        bool looksLikeClass = (fmt == ObjectFormat::ZeroSized ||
-                               fmt == ObjectFormat::FixedSize ||
-                               static_cast<int>(fmt) == 5);
-        looksLikeClass = looksLikeClass && (slots >= 6 && slots <= 30);  // Changed from 8 to 6 to include metaclasses
+        bool looksLikeClass = (fmt <= ObjectFormat::WeakWithFixed);  // Format 0-5
+        looksLikeClass = looksLikeClass && (slots >= 6);  // No upper limit
         looksLikeClass = looksLikeClass && (identHash > 0 && identHash < 100000);
         looksLikeClass = looksLikeClass && (metaclassIdx > 0);
 
