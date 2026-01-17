@@ -10096,25 +10096,17 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
     // Process input events first - this handles menu bar clicks natively
     processInputEvents();
 
-    static int p264count = 0;
-    p264count++;
-    bool trace = (p264count <= 10 || p264count % 10000 == 0);
-
     // Get event buffer from either argument (argCount=1) or receiver (argCount=0)
     Oop eventBuffer;
     if (argCount == 0) {
         eventBuffer = receiver_;
-        if (trace) std::cerr << "[PRIM264] Using receiver as eventBuffer: 0x" << std::hex << eventBuffer.rawBits() << std::dec << "\n";
     } else if (argCount == 1) {
         eventBuffer = stackTop();
-        if (trace) std::cerr << "[PRIM264] Using stackTop as eventBuffer: 0x" << std::hex << eventBuffer.rawBits() << std::dec << "\n";
     } else {
-        if (trace) std::cerr << "[PRIM264] Bad argCount: " << argCount << "\n";
         return PrimitiveResult::Failure;
     }
 
     if (eventBuffer.isImmediate()) {
-        if (trace) std::cerr << "[PRIM264] eventBuffer is immediate, failing\n";
         return PrimitiveResult::Failure;
     }
 
@@ -10127,21 +10119,9 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
     // Check buffer has enough slots
     // Note: Pharo versions vary - some use 6 slots, some 7, some 8
     size_t slotCount = memory_.slotCountOf(eventBuffer);
-    if (trace) std::cerr << "[PRIM264] eventBuffer slotCount=" << slotCount << "\n";
     if (slotCount < 6) {
-        if (trace) std::cerr << "[PRIM264] Slot count < 6, failing\n";
         return PrimitiveResult::Failure;
     }
-
-    // Log slot 0 content for debugging
-    Oop slot0 = memory_.fetchPointer(0, eventBuffer);
-    if (trace) {
-        std::cerr << "[PRIM264] slot0 rawBits=" << std::hex << slot0.rawBits() << std::dec
-                  << " isSmallInt=" << slot0.isSmallInteger()
-                  << " isNil=" << slot0.isNil()
-                  << " isObject=" << slot0.isObject() << "\n";
-    }
-    // Removed validation check that was too strict - just proceed with writing
 
     // Try to get next event - first from pass-through buffer, then from queue
     Event event;
@@ -10370,12 +10350,6 @@ enum FormFields {
 // aBitBlt primitiveCopyBits -> aBitBlt
 // The core BitBlt operation that copies pixels from source to destination
 PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
-    static int bitBltCallCount = 0;
-    bitBltCallCount++;
-    // Always log first 20 BitBlt calls to verify primitive 96 is working
-    if (bitBltCallCount <= 20) {
-        std::cerr << "[BITBLT] *** primitiveCopyBits CALLED *** #" << bitBltCallCount << " argCount=" << argCount << "\n";
-    }
     if (argCount != 0) return PrimitiveResult::Failure;
 
     Oop bitBlt = stackTop();

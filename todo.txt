@@ -1,0 +1,11 @@
+In the last two day long sessions we worked on getting menu bar display and work.
+It still does not work.  We worked on 24 previous projects.   So far
+this project taken more time with less progress by far.
+In every session we have found primatives that are bound to the wrong number.
+Yet we have done many reviews of the list of primatives to check each one
+is bound correctly.
+I wounder if there isn't something about the number of primatives that isn't pushing
+useful info out of your context.  Or some other aspect of dealing with an AI that has made
+this the least productive endevor.  Take a look at this project and git log with an eye twords
+what has gone wrong systematicly.  And any things you should hand off to agents to avoid dealing with directly.  Booting smalltalk is supposed to be simple.  A limited number of needed primatives.  The rest is written in smalltalk.  More primatives can be implemented or fall back to smalltalk.  How can a system that is designed to be easy to port have gone so far
+wrong?
