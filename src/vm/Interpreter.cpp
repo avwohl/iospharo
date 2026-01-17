@@ -2029,9 +2029,24 @@ void Interpreter::processPendingSignals() {
     static FILE* sigLog = fopen("/tmp/signal_process.log", "a");
     static int sigCount = 0;
     sigCount++;
-    if (sigLog && sigCount <= 50) {
+    if (sigLog && sigCount <= 100) {
         fprintf(sigLog, "[SIGNAL] #%d Processing semaphore index %d\n", sigCount, index);
         fflush(sigLog);
+    }
+
+    // Debug: Dump semaphore table info on first call
+    if (sigCount == 1 && sigLog) {
+        Oop semTableCheck = memory_.specialObject(SpecialObjectIndex::ExternalSemaphoreTable);
+        if (!semTableCheck.isNil() && semTableCheck.isObject()) {
+            size_t tblSize = memory_.slotCountOf(semTableCheck);
+            fprintf(sigLog, "[SIGNAL] ExternalSemaphoreTable has %zu slots\n", tblSize);
+            for (size_t i = 0; i < std::min(tblSize, (size_t)10); i++) {
+                Oop slot = memory_.fetchPointer(i, semTableCheck);
+                fprintf(sigLog, "[SIGNAL]   slot[%zu] = 0x%llx (isNil=%d isObj=%d)\n",
+                        i, (unsigned long long)slot.rawBits(), slot.isNil() ? 1 : 0, slot.isObject() ? 1 : 0);
+            }
+            fflush(sigLog);
+        }
     }
 
     // Get the external semaphore table from special objects
@@ -2060,6 +2075,18 @@ void Interpreter::processPendingSignals() {
     // Signal the semaphore (same logic as primitiveSignal)
     Oop nilObj = memory_.nil();
     Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, semaphore);
+
+    // Debug: Log semaphore state
+    if (sigLog && sigCount <= 100) {
+        Oop lastLink = memory_.fetchPointer(LinkedListLastLinkIndex, semaphore);
+        Oop excessOopDbg = memory_.fetchPointer(SemaphoreExcessSignalsIndex, semaphore);
+        int64_t excessDbg = excessOopDbg.isSmallInteger() ? excessOopDbg.asSmallInteger() : -999;
+        fprintf(sigLog, "[SIGNAL] #%d Semaphore 0x%llx: firstLink=0x%llx(nil=%d) lastLink=0x%llx excess=%lld\n",
+                sigCount, (unsigned long long)semaphore.rawBits(),
+                (unsigned long long)firstLink.rawBits(), firstLink.isNil() ? 1 : 0,
+                (unsigned long long)lastLink.rawBits(), excessDbg);
+        fflush(sigLog);
+    }
 
     if (firstLink.isNil() || firstLink.rawBits() == nilObj.rawBits()) {
         // No processes waiting - increment excessSignals
@@ -7167,6 +7194,33 @@ void Interpreter::initializePrimitives() {
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {
     static int failCount = 0;
+    static int primCallCount = 0;
+    static int primCounts[1000] = {0};  // Track calls per primitive
+    primCallCount++;
+
+    // Log all primitive calls for debugging
+    static FILE* allPrimLog = nullptr;
+    if (!allPrimLog) {
+        allPrimLog = fopen("/tmp/prim_all_calls.log", "w");
+    }
+
+    if (primitiveIndex >= 0 && primitiveIndex < 1000) {
+        primCounts[primitiveIndex]++;
+    }
+
+    // Log first 100 primitive calls, then periodically
+    if (allPrimLog && (primCallCount <= 100 || (primCallCount % 1000 == 0))) {
+        fprintf(allPrimLog, "[PRIM] #%d primitive=%d argCount=%d\n",
+                primCallCount, primitiveIndex, argCount);
+        fflush(allPrimLog);
+    }
+
+    // Specifically log primitives we're interested in
+    if (primitiveIndex == 86 || primitiveIndex == 179 || primitiveIndex == 267 || primitiveIndex == 264) {
+        fprintf(allPrimLog, "[PRIM-KEY] primitive=%d (86=wait, 179=relinquish, 264/267=getNextEvent)\n",
+                primitiveIndex);
+        fflush(allPrimLog);
+    }
 
     // Named primitives have high numbers (typically >= 32768)
     // They are looked up by name from method literals - not yet implemented

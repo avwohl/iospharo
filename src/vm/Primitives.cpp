@@ -1604,6 +1604,14 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
     // Wait on a semaphore. If excessSignals > 0, decrement and return.
     // Otherwise suspend current process on the semaphore's wait list.
 
+    static int waitCallCount = 0;
+    static FILE* waitLog = nullptr;
+    waitCallCount++;
+
+    if (!waitLog) {
+        waitLog = fopen("/tmp/prim_wait.log", "w");
+    }
+
     if (stackPointer_ < stackBase_ + argCount + 1) {
         return PrimitiveResult::Failure;
     }
@@ -1626,6 +1634,11 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
         int64_t excess = excessOop.asSmallInteger();
         if (excess > 0) {
             // Semaphore is signaled - decrement and return immediately
+            if (waitLog && waitCallCount <= 100) {
+                fprintf(waitLog, "[WAIT] #%d sem=%p excess=%lld -> decrement and return\n",
+                        waitCallCount, (void*)semaphore.rawBits(), (long long)excess);
+                fflush(waitLog);
+            }
             memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
                                 Oop::fromSmallInteger(excess - 1));
             return PrimitiveResult::Success;
@@ -1633,6 +1646,11 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
     }
 
     // No signal available - must wait
+    if (waitLog && waitCallCount <= 100) {
+        fprintf(waitLog, "[WAIT] #%d sem=%p -> blocking process\n",
+                waitCallCount, (void*)semaphore.rawBits());
+        fflush(waitLog);
+    }
     Oop activeProcess = getActiveProcess();
     addLastLinkToList(activeProcess, semaphore);
 
@@ -7747,6 +7765,18 @@ PrimitiveResult Interpreter::primitiveSetGCSemaphore(int argCount) {
 // milliseconds primitiveRelinquishProcessor -> self
 // Allows other processes to run, sleeping for the specified time
 PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
+    static int relinquishCount = 0;
+    static FILE* relinquishLog = nullptr;
+    relinquishCount++;
+
+    if (!relinquishLog) {
+        relinquishLog = fopen("/tmp/prim_relinquish.log", "w");
+    }
+    if (relinquishLog && relinquishCount <= 50) {
+        fprintf(relinquishLog, "[RELINQUISH] #%d argCount=%d\n", relinquishCount, argCount);
+        fflush(relinquishLog);
+    }
+
     if (argCount < 1) {
         return PrimitiveResult::Failure;
     }
@@ -7759,23 +7789,53 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
 
     int64_t milliseconds = millisecondsOop.asSmallInteger();
 
+    if (relinquishLog && relinquishCount <= 50) {
+        fprintf(relinquishLog, "[RELINQUISH] #%d ms=%lld\n", relinquishCount, (long long)milliseconds);
+        fflush(relinquishLog);
+    }
+
     // In a cooperative VM, relinquishing the processor means:
     // 1. Check for pending events/signals
     // 2. Optionally sleep for the requested time
     // 3. Allow process scheduler to run other processes
 
-    if (milliseconds > 0) {
-        // Sleep for the requested duration
-        // Use platform sleep - on POSIX systems this is usleep or nanosleep
+    // IMPORTANT: Cap the sleep time to avoid blocking the event loop for too long.
+    // Pharo sometimes passes very large values (e.g., 50000ms during startup) which
+    // would completely block event processing.
+    //
+    // For interactive responsiveness, cap the TOTAL delay to a small value.
+    // The original delay request is typically a "yield" - Pharo is saying "I have
+    // nothing to do, let other things run". We honor this by:
+    // 1. Processing any pending events/signals
+    // 2. Sleeping for a SHORT time to allow the system to breathe
+    // 3. Returning to let Pharo decide what to do next
+
+    const int64_t MAX_TOTAL_SLEEP_MS = 10;  // Never sleep more than 10ms total
+    int64_t sleepMs = std::min(milliseconds, MAX_TOTAL_SLEEP_MS);
+
+    // Process any pending events first
+    processInputEvents();
+    processPendingSignals();
+
+    // Short sleep if requested
+    if (sleepMs > 0) {
         #ifdef _WIN32
-        Sleep(static_cast<DWORD>(milliseconds));
+        Sleep(static_cast<DWORD>(sleepMs));
         #else
-        usleep(static_cast<useconds_t>(milliseconds * 1000));
+        usleep(static_cast<useconds_t>(sleepMs * 1000));
         #endif
     }
 
-    // In a single-process VM, there's nothing else to schedule
-    // Just return after the sleep
+    // Process events again after sleep
+    processInputEvents();
+    processPendingSignals();
+
+    // Debug: Log large delay requests
+    if (relinquishLog && milliseconds > 100) {
+        fprintf(relinquishLog, "[RELINQUISH] Capped %lldms -> %lldms\n",
+                (long long)milliseconds, (long long)sleepMs);
+        fflush(relinquishLog);
+    }
 
     pop();  // pop milliseconds, leave receiver
     return PrimitiveResult::Success;
