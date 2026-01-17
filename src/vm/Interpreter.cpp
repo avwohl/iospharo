@@ -3516,7 +3516,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                                 renderWorldMorphs();
 
                                 // Execute pending menu action if any
-                                static FILE* actionLog = fopen("/tmp/iospharo-action-exec.log", "a");
                                 if (pendingMenuAction_.pending) {
                                     Oop actionSel = pendingMenuAction_.selector;
                                     Oop actionRcvr = pendingMenuAction_.receiver;
@@ -3528,36 +3527,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                                     pendingMenuAction_.argument = Oop::nil();
                                     pendingMenuAction_.argCount = 0;
 
-                                    // Log the action being executed
-                                    std::string selStr = "<unknown>";
-                                    if (actionSel.isObject() && actionSel.rawBits() > 0x10000) {
-                                        ObjectHeader* selHdr = actionSel.asObjectPtr();
-                                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                                            selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                                        }
-                                    }
-                                    std::string rcvrClass = "<unknown>";
-                                    if (actionRcvr.isObject() && actionRcvr.rawBits() > 0x10000) {
-                                        Oop cls = memory_.classOf(actionRcvr);
-                                        if (cls.isObject()) {
-                                            Oop nameOop = memory_.fetchPointer(6, cls);
-                                            if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
-                                                ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                                                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
-                                                    rcvrClass = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                                                }
-                                            }
-                                        }
-                                    }
-                                    if (actionLog) {
-                                        fprintf(actionLog, "[EXEC] About to execute #%s on %s with %d args\n",
-                                                selStr.c_str(), rcvrClass.c_str(), actionArgCount);
-                                        fflush(actionLog);
-                                    }
-                                    std::cerr << "[MENU-ACTION] Executing #" << selStr << " on " << rcvrClass
-                                              << " with " << actionArgCount << " args\n";
-                                    std::cerr.flush();
-
                                     // Pop doOneCycleFor:'s args and receiver
                                     popN(argCount + 1);
 
@@ -3566,20 +3535,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                                     if (actionArgCount > 0 && !actionArg.isNil()) {
                                         push(actionArg);
                                     }
-                                    if (actionLog) {
-                                        fprintf(actionLog, "[EXEC] Calling sendSelector now\n");
-                                        fprintf(actionLog, "[EXEC] receiver rawBits=0x%llx\n", (unsigned long long)actionRcvr.rawBits());
-                                        fflush(actionLog);
-                                    }
                                     sendSelector(actionSel, actionArgCount);
-                                    if (actionLog) {
-                                        fprintf(actionLog, "[EXEC] sendSelector returned, method_=0x%llx\n",
-                                                (unsigned long long)method_.rawBits());
-                                        fprintf(actionLog, "[EXEC] IP offset=%td, framePointer offset=%td\n",
-                                                instructionPointer_ - reinterpret_cast<uint8_t*>(method_.asObjectPtr()),
-                                                framePointer_ - stackBase_);
-                                        fflush(actionLog);
-                                    }
                                     return;
                                 }
 
