@@ -564,6 +564,8 @@ private:
     PrimitiveResult primitiveBasicAt(int argCount);
     PrimitiveResult primitiveBasicAtPut(int argCount);
     PrimitiveResult primitiveBasicSize(int argCount);
+    PrimitiveResult primitiveObjectAt(int argCount);       // 68 - CompiledMethod literal access
+    PrimitiveResult primitiveObjectAtPut(int argCount);    // 69 - CompiledMethod literal access
 
     // Object creation
     PrimitiveResult primitiveNew(int argCount);

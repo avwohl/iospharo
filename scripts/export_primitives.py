@@ -73,8 +73,7 @@ def parse_primitive_table_spec(st_file: Path) -> list:
 # Primitives not yet implemented in C++ - map to nullptr
 UNIMPLEMENTED_PRIMITIVES = {
     'primitiveLargeIntegerRem',  # 20 - not commonly used
-    'primitiveObjectAt',  # 68 - raw slot access
-    'primitiveObjectAtPut',  # 69 - raw slot access
+    # primitiveObjectAt (68) and primitiveObjectAtPut (69) - now implemented
     'primitiveStoreStackp',  # 76 - stack manipulation
     'primitiveMoveToPermSpace',  # 90 - perm space
     'primitiveMoveToPermSpaceInBulk',  # 91

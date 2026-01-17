@@ -744,6 +744,100 @@ PrimitiveResult Interpreter::primitiveInstVarAtPut(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// Primitive 68: primitiveObjectAt
+// Access a literal in a CompiledMethod by 1-based index.
+// receiver index primitiveObjectAt -> literal
+// Index 1 returns slot 0 (the header), index 2 returns slot 1 (first literal), etc.
+PrimitiveResult Interpreter::primitiveObjectAt(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger() || !rcvr.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* header = rcvr.asObjectPtr();
+
+    // This primitive is defined for CompiledMethods only
+    if (!header->isCompiledMethod()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t index = indexOop.asSmallInteger();
+    if (index < 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get literal count from method header (slot 0)
+    // Method header format: bits 1-15 encode numLiterals
+    uint64_t methodHeader = header->slots()[0].rawBits();
+    size_t numLiterals = (methodHeader >> 1) & 0x7FFF;
+
+    // LiteralStart is 1 (header at slot 0, literals start at slot 1)
+    // Valid indices are 1 to (numLiterals + 1)
+    // Index 1 = header (slot 0), index 2 = literal 0 (slot 1), etc.
+    size_t maxIndex = numLiterals + 1;  // +1 for header
+
+    if (static_cast<size_t>(index) > maxIndex) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Fetch slot at (index - 1)
+    Oop result = header->slotAt(static_cast<size_t>(index - 1));
+    popN(2);
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 69: primitiveObjectAtPut
+// Store a literal in a CompiledMethod by 1-based index.
+// receiver index value primitiveObjectAtPut -> value
+PrimitiveResult Interpreter::primitiveObjectAtPut(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop value = stackValue(0);
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger() || !rcvr.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* header = rcvr.asObjectPtr();
+
+    // This primitive is defined for CompiledMethods only
+    if (!header->isCompiledMethod()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Check immutability
+    if (header->isImmutable()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t index = indexOop.asSmallInteger();
+    if (index < 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get literal count from method header
+    uint64_t methodHeader = header->slots()[0].rawBits();
+    size_t numLiterals = (methodHeader >> 1) & 0x7FFF;
+    size_t maxIndex = numLiterals + 1;
+
+    if (static_cast<size_t>(index) > maxIndex) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Store value at (index - 1)
+    header->slotAtPut(static_cast<size_t>(index - 1), value);
+    popN(3);
+    push(value);
+    return PrimitiveResult::Success;
+}
+
 PrimitiveResult Interpreter::primitiveBasicAt(int argCount) {
     return primitiveAt(argCount);  // Same behavior
 }

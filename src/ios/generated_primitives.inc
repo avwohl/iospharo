@@ -1,6 +1,6 @@
 // Generated primitive table - DO NOT EDIT
 // Source: VMMaker StackInterpreter initializePrimitiveTable
-// Generated: 2026-01-17T03:53:37.803011
+// Generated: 2026-01-17T04:05:33.465048
 
 // Include this file in Interpreter::initializePrimitives()
 // Usage: #include "../ios/generated_primitives.inc"
@@ -73,8 +73,8 @@ primitiveTable_[64] = &Interpreter::primitiveStringAtPut;  // Subscript Primitiv
 primitiveTable_[65] = nullptr;  // Subscript Primitives (60-67)
 primitiveTable_[66] = nullptr;  // Subscript Primitives (60-67)
 primitiveTable_[67] = nullptr;  // Subscript Primitives (60-67)
-primitiveTable_[68] = nullptr;  // StorageManagement Primitives (68-79)
-primitiveTable_[69] = nullptr;  // StorageManagement Primitives (68-79)
+primitiveTable_[68] = &Interpreter::primitiveObjectAt;  // StorageManagement Primitives (68-79)
+primitiveTable_[69] = &Interpreter::primitiveObjectAtPut;  // StorageManagement Primitives (68-79)
 primitiveTable_[70] = &Interpreter::primitiveNew;  // StorageManagement Primitives (68-79)
 primitiveTable_[71] = &Interpreter::primitiveNewWithArg;  // StorageManagement Primitives (68-79)
 primitiveTable_[72] = &Interpreter::primitiveArrayBecomeOneWay;  // StorageManagement Primitives (68-79)
@@ -668,4 +668,4 @@ primitiveTable_[659] = nullptr;  // FFI Byte Access (600-659)
 primitiveTable_[660] = nullptr;  // End
 
 // Total: 661 entries
-// Implemented: 152
+// Implemented: 154
