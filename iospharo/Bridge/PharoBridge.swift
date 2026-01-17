@@ -216,6 +216,13 @@ class PharoBridge: ObservableObject {
                           0, 0)
     }
 
+    /// Send mouse moved event (no buttons pressed) - Mac Catalyst hover
+    func sendMouseMoved(to point: CGPoint, modifiers: Int = 0) {
+        vm_postMouseEvent(0, // type: move
+                          Int32(point.x), Int32(point.y),
+                          0, Int32(modifiers))  // buttons = 0 for hover
+    }
+
     // MARK: - Keyboard Events
     // Key event types for vm_postKeyEvent: 0=down, 1=up, 2=stroke
 
