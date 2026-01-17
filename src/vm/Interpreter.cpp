@@ -7492,23 +7492,23 @@ void Interpreter::initializePrimitives_OLD() {
     primitiveTable_[20] = &Interpreter::primitiveDigitAtPut;
 
     // Large integer primitives (21-31)
-    primitiveTable_[21] = &Interpreter::primitiveLargeIntegerAdd;
-    primitiveTable_[22] = &Interpreter::primitiveLargeIntegerSubtract;
-    primitiveTable_[23] = &Interpreter::primitiveLargeIntegerLessThan;
-    primitiveTable_[24] = &Interpreter::primitiveLargeIntegerGreaterThan;
-    primitiveTable_[25] = &Interpreter::primitiveLargeIntegerLessOrEqual;
-    primitiveTable_[26] = &Interpreter::primitiveLargeIntegerGreaterOrEqual;
-    primitiveTable_[27] = &Interpreter::primitiveLargeIntegerEqual;
-    primitiveTable_[28] = &Interpreter::primitiveLargeIntegerNotEqual;
-    primitiveTable_[29] = &Interpreter::primitiveLargeIntegerMultiply;
-    primitiveTable_[30] = &Interpreter::primitiveLargeIntegerDivide;
-    primitiveTable_[31] = &Interpreter::primitiveLargeIntegerMod;
-    primitiveTable_[32] = &Interpreter::primitiveLargeIntegerDiv;
-    primitiveTable_[33] = &Interpreter::primitiveLargeIntegerQuo;
-    primitiveTable_[34] = &Interpreter::primitiveLargeIntegerBitAnd;
-    primitiveTable_[35] = &Interpreter::primitiveLargeIntegerBitOr;
-    primitiveTable_[36] = &Interpreter::primitiveLargeIntegerBitXor;
-    primitiveTable_[37] = &Interpreter::primitiveLargeIntegerBitShift;
+    primitiveTable_[21] = &Interpreter::primitiveAddLargeIntegers;
+    primitiveTable_[22] = &Interpreter::primitiveSubtractLargeIntegers;
+    primitiveTable_[23] = &Interpreter::primitiveLessThanLargeIntegers;
+    primitiveTable_[24] = &Interpreter::primitiveGreaterThanLargeIntegers;
+    primitiveTable_[25] = &Interpreter::primitiveLessOrEqualLargeIntegers;
+    primitiveTable_[26] = &Interpreter::primitiveGreaterOrEqualLargeIntegers;
+    primitiveTable_[27] = &Interpreter::primitiveEqualLargeIntegers;
+    primitiveTable_[28] = &Interpreter::primitiveNotEqualLargeIntegers;
+    primitiveTable_[29] = &Interpreter::primitiveMultiplyLargeIntegers;
+    primitiveTable_[30] = &Interpreter::primitiveDivideLargeIntegers;
+    primitiveTable_[31] = &Interpreter::primitiveModLargeIntegers;
+    primitiveTable_[32] = &Interpreter::primitiveDivLargeIntegers;
+    primitiveTable_[33] = &Interpreter::primitiveQuoLargeIntegers;
+    primitiveTable_[34] = &Interpreter::primitiveBitAndLargeIntegers;
+    primitiveTable_[35] = &Interpreter::primitiveBitOrLargeIntegers;
+    primitiveTable_[36] = &Interpreter::primitiveBitXorLargeIntegers;
+    primitiveTable_[37] = &Interpreter::primitiveBitShiftLargeIntegers;
 
     // Float primitives (40-59) - correct Pharo numbering
     primitiveTable_[40] = &Interpreter::primitiveAsFloat;
@@ -7522,15 +7522,15 @@ void Interpreter::initializePrimitives_OLD() {
     primitiveTable_[48] = &Interpreter::primitiveFloatNotEqual;
     primitiveTable_[49] = &Interpreter::primitiveFloatMultiply;
     primitiveTable_[50] = &Interpreter::primitiveFloatDivide;
-    primitiveTable_[51] = &Interpreter::primitiveFloatTruncated;
+    primitiveTable_[51] = &Interpreter::primitiveTruncated;
     primitiveTable_[52] = &Interpreter::primitiveFractionalPart;
     primitiveTable_[53] = &Interpreter::primitiveExponent;
     primitiveTable_[54] = &Interpreter::primitiveTimesTwoPower;
-    primitiveTable_[55] = &Interpreter::primitiveFloatSquareRoot;
-    primitiveTable_[56] = &Interpreter::primitiveFloatSin;
-    primitiveTable_[57] = &Interpreter::primitiveFloatArctan;
-    primitiveTable_[58] = &Interpreter::primitiveFloatLn;
-    primitiveTable_[59] = &Interpreter::primitiveFloatExp;
+    primitiveTable_[55] = &Interpreter::primitiveSquareRoot;
+    primitiveTable_[56] = &Interpreter::primitiveSine;
+    primitiveTable_[57] = &Interpreter::primitiveArctan;
+    primitiveTable_[58] = &Interpreter::primitiveLogN;
+    primitiveTable_[59] = &Interpreter::primitiveExp;
 
     // Array/Object access primitives (60-68)
     primitiveTable_[60] = &Interpreter::primitiveAt;
@@ -7685,12 +7685,12 @@ void Interpreter::initializePrimitives_OLD() {
     primitiveTable_[155] = &Interpreter::primitiveFailure;
     primitiveTable_[156] = &Interpreter::primitiveFailure;
     primitiveTable_[157] = &Interpreter::primitiveFailure;
-    primitiveTable_[158] = &Interpreter::primitiveCompareWith;         // was incorrectly compareStringNoCase
+    primitiveTable_[158] = &Interpreter::primitiveStringCompareWith;         // was incorrectly compareStringNoCase
     primitiveTable_[159] = &Interpreter::primitiveHashMultiply;
     primitiveTable_[160] = &Interpreter::primitiveAdoptInstance;
 
     // Identity/immutability primitives (161-169)
-    primitiveTable_[161] = &Interpreter::primitiveSetIdentityHash;     // was incorrectly fileStdioHandles
+    primitiveTable_[161] = &Interpreter::primitiveSetOrHasIdentityHash;     // was incorrectly fileStdioHandles
     primitiveTable_[162] = &Interpreter::primitiveFailure;
     primitiveTable_[163] = &Interpreter::primitiveGetImmutability;     // was incorrectly fileFlush
     primitiveTable_[164] = &Interpreter::primitiveSetImmutability;     // was incorrectly fileTruncate
@@ -7710,7 +7710,7 @@ void Interpreter::initializePrimitives_OLD() {
     primitiveTable_[177] = &Interpreter::primitiveAllInstances;
     primitiveTable_[178] = &Interpreter::primitiveAllObjects;
     primitiveTable_[179] = &Interpreter::primitiveFailure;                // was incorrectly relinquishProcessor
-    primitiveTable_[180] = &Interpreter::primitiveGrowMemoryByAtLeast;
+    primitiveTable_[180] = &Interpreter::primitiveGrowMemoryByAtLeastByAtLeast;
     primitiveTable_[181] = &Interpreter::primitiveSizeInBytesOfInstance;
     primitiveTable_[182] = &Interpreter::primitiveSizeInBytes;
     primitiveTable_[183] = &Interpreter::primitiveIsPinned;
@@ -7774,14 +7774,14 @@ void Interpreter::initializePrimitives_OLD() {
     // Object/memory primitives (217-221)
     primitiveTable_[217] = &Interpreter::primitiveVMFunctionality;
     primitiveTable_[218] = &Interpreter::primitiveIdentityHash32;
-    primitiveTable_[219] = &Interpreter::primitiveGrowMemoryByAtLeast;
+    primitiveTable_[219] = &Interpreter::primitiveGrowMemoryByAtLeastByAtLeast;
     primitiveTable_[220] = &Interpreter::primitiveImageFormatVersion;
     primitiveTable_[221] = &Interpreter::primitiveClosureValueWithArgs;
 
     // Misc primitives (222-230)
     primitiveTable_[222] = &Interpreter::primitiveClosureValueNoContextSwitch2;
     primitiveTable_[223] = &Interpreter::primitiveClosureValueWithArgsNoContextSwitch;
-    primitiveTable_[224] = &Interpreter::primitiveSetIdentityHash;
+    primitiveTable_[224] = &Interpreter::primitiveSetOrHasIdentityHash;
     primitiveTable_[225] = &Interpreter::primitiveLoadInstVar;
     primitiveTable_[226] = &Interpreter::primitiveStringCompare;
     primitiveTable_[227] = &Interpreter::primitiveStringReplace;

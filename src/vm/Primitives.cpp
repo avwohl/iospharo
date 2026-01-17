@@ -73,13 +73,10 @@ PrimitiveResult Interpreter::primitiveDoPrimitiveWithArgs(int argCount) {
     return PrimitiveResult::Failure;  // complex primitive - let Smalltalk handle
 }
 
-// Note: primitiveScanCharacters, primitiveStringReplace, primitiveSetIdentityHash,
+// Note: primitiveScanCharacters, primitiveStringReplace, primitiveSetOrHasIdentityHash,
 // primitiveImmediateAsInteger are defined later in this file with full implementations
 
-PrimitiveResult Interpreter::primitiveCompareWith(int argCount) {
-    (void)argCount;
-    return PrimitiveResult::Failure;  // string comparison - let Smalltalk handle
-}
+// primitiveStringCompareWith - implemented below at primitive 158
 
 PrimitiveResult Interpreter::primitiveFetchNextMourner(int argCount) {
     (void)argCount;
@@ -3098,7 +3095,7 @@ PrimitiveResult Interpreter::primitiveFloatNotEqual(int argCount) {
     return PrimitiveResult::Success;
 }
 
-PrimitiveResult Interpreter::primitiveFloatTruncated(int argCount) {
+PrimitiveResult Interpreter::primitiveTruncated(int argCount) {
     Oop rcvr = stackTop();
 
     double value;
@@ -3195,7 +3192,7 @@ PrimitiveResult Interpreter::primitiveTimesTwoPower(int argCount) {
     return PrimitiveResult::Success;
 }
 
-PrimitiveResult Interpreter::primitiveFloatSquareRoot(int argCount) {
+PrimitiveResult Interpreter::primitiveSquareRoot(int argCount) {
     Oop rcvr = stackTop();
 
     double value;
@@ -3216,7 +3213,7 @@ PrimitiveResult Interpreter::primitiveFloatSquareRoot(int argCount) {
     return PrimitiveResult::Success;
 }
 
-PrimitiveResult Interpreter::primitiveFloatSin(int argCount) {
+PrimitiveResult Interpreter::primitiveSine(int argCount) {
     Oop rcvr = stackTop();
 
     double value;
@@ -3233,7 +3230,7 @@ PrimitiveResult Interpreter::primitiveFloatSin(int argCount) {
     return PrimitiveResult::Success;
 }
 
-PrimitiveResult Interpreter::primitiveFloatArctan(int argCount) {
+PrimitiveResult Interpreter::primitiveArctan(int argCount) {
     Oop rcvr = stackTop();
 
     double value;
@@ -3250,7 +3247,7 @@ PrimitiveResult Interpreter::primitiveFloatArctan(int argCount) {
     return PrimitiveResult::Success;
 }
 
-PrimitiveResult Interpreter::primitiveFloatExp(int argCount) {
+PrimitiveResult Interpreter::primitiveExp(int argCount) {
     Oop rcvr = stackTop();
 
     double value;
@@ -3267,7 +3264,7 @@ PrimitiveResult Interpreter::primitiveFloatExp(int argCount) {
     return PrimitiveResult::Success;
 }
 
-PrimitiveResult Interpreter::primitiveFloatLn(int argCount) {
+PrimitiveResult Interpreter::primitiveLogN(int argCount) {
     Oop rcvr = stackTop();
 
     double value;
@@ -3533,7 +3530,7 @@ static bool extractInteger(ObjectMemory& memory, Oop oop, std::vector<uint8_t>& 
     return false;
 }
 
-PrimitiveResult Interpreter::primitiveLargeIntegerAdd(int argCount) {
+PrimitiveResult Interpreter::primitiveAddLargeIntegers(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -3577,7 +3574,7 @@ PrimitiveResult Interpreter::primitiveLargeIntegerAdd(int argCount) {
     return PrimitiveResult::Success;
 }
 
-PrimitiveResult Interpreter::primitiveLargeIntegerSubtract(int argCount) {
+PrimitiveResult Interpreter::primitiveSubtractLargeIntegers(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -3624,7 +3621,7 @@ PrimitiveResult Interpreter::primitiveLargeIntegerSubtract(int argCount) {
     return PrimitiveResult::Success;
 }
 
-PrimitiveResult Interpreter::primitiveLargeIntegerMultiply(int argCount) {
+PrimitiveResult Interpreter::primitiveMultiplyLargeIntegers(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -3652,7 +3649,7 @@ PrimitiveResult Interpreter::primitiveLargeIntegerMultiply(int argCount) {
     return PrimitiveResult::Success;
 }
 
-PrimitiveResult Interpreter::primitiveLargeIntegerDivide(int argCount) {
+PrimitiveResult Interpreter::primitiveDivideLargeIntegers(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -3692,7 +3689,7 @@ PrimitiveResult Interpreter::primitiveLargeIntegerDivide(int argCount) {
     return PrimitiveResult::Success;
 }
 
-PrimitiveResult Interpreter::primitiveLargeIntegerMod(int argCount) {
+PrimitiveResult Interpreter::primitiveModLargeIntegers(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -3755,7 +3752,7 @@ static int compareIntegers(ObjectMemory& memory, Oop a, Oop b) {
     return magCmp;
 }
 
-PrimitiveResult Interpreter::primitiveLargeIntegerLessThan(int argCount) {
+PrimitiveResult Interpreter::primitiveLessThanLargeIntegers(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -3772,7 +3769,7 @@ PrimitiveResult Interpreter::primitiveLargeIntegerLessThan(int argCount) {
     return PrimitiveResult::Success;
 }
 
-PrimitiveResult Interpreter::primitiveLargeIntegerGreaterThan(int argCount) {
+PrimitiveResult Interpreter::primitiveGreaterThanLargeIntegers(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -3789,7 +3786,7 @@ PrimitiveResult Interpreter::primitiveLargeIntegerGreaterThan(int argCount) {
     return PrimitiveResult::Success;
 }
 
-PrimitiveResult Interpreter::primitiveLargeIntegerLessOrEqual(int argCount) {
+PrimitiveResult Interpreter::primitiveLessOrEqualLargeIntegers(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -3806,7 +3803,7 @@ PrimitiveResult Interpreter::primitiveLargeIntegerLessOrEqual(int argCount) {
     return PrimitiveResult::Success;
 }
 
-PrimitiveResult Interpreter::primitiveLargeIntegerGreaterOrEqual(int argCount) {
+PrimitiveResult Interpreter::primitiveGreaterOrEqualLargeIntegers(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -3823,7 +3820,7 @@ PrimitiveResult Interpreter::primitiveLargeIntegerGreaterOrEqual(int argCount) {
     return PrimitiveResult::Success;
 }
 
-PrimitiveResult Interpreter::primitiveLargeIntegerEqual(int argCount) {
+PrimitiveResult Interpreter::primitiveEqualLargeIntegers(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -3840,7 +3837,7 @@ PrimitiveResult Interpreter::primitiveLargeIntegerEqual(int argCount) {
     return PrimitiveResult::Success;
 }
 
-PrimitiveResult Interpreter::primitiveLargeIntegerNotEqual(int argCount) {
+PrimitiveResult Interpreter::primitiveNotEqualLargeIntegers(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -3858,7 +3855,7 @@ PrimitiveResult Interpreter::primitiveLargeIntegerNotEqual(int argCount) {
 }
 
 // Primitive 32: Integer division (truncates toward negative infinity)
-PrimitiveResult Interpreter::primitiveLargeIntegerDiv(int argCount) {
+PrimitiveResult Interpreter::primitiveDivLargeIntegers(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -3915,7 +3912,7 @@ PrimitiveResult Interpreter::primitiveLargeIntegerDiv(int argCount) {
 }
 
 // Primitive 33: Integer quotient (truncates toward zero)
-PrimitiveResult Interpreter::primitiveLargeIntegerQuo(int argCount) {
+PrimitiveResult Interpreter::primitiveQuoLargeIntegers(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -3991,7 +3988,7 @@ static std::vector<uint8_t> bitwiseXor(const std::vector<uint8_t>& a, const std:
 }
 
 // Primitive 34: Bitwise AND
-PrimitiveResult Interpreter::primitiveLargeIntegerBitAnd(int argCount) {
+PrimitiveResult Interpreter::primitiveBitAndLargeIntegers(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -4025,7 +4022,7 @@ PrimitiveResult Interpreter::primitiveLargeIntegerBitAnd(int argCount) {
 }
 
 // Primitive 35: Bitwise OR
-PrimitiveResult Interpreter::primitiveLargeIntegerBitOr(int argCount) {
+PrimitiveResult Interpreter::primitiveBitOrLargeIntegers(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -4057,7 +4054,7 @@ PrimitiveResult Interpreter::primitiveLargeIntegerBitOr(int argCount) {
 }
 
 // Primitive 36: Bitwise XOR
-PrimitiveResult Interpreter::primitiveLargeIntegerBitXor(int argCount) {
+PrimitiveResult Interpreter::primitiveBitXorLargeIntegers(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -4089,7 +4086,7 @@ PrimitiveResult Interpreter::primitiveLargeIntegerBitXor(int argCount) {
 }
 
 // Primitive 37: Bit shift (positive = left, negative = right)
-PrimitiveResult Interpreter::primitiveLargeIntegerBitShift(int argCount) {
+PrimitiveResult Interpreter::primitiveBitShiftLargeIntegers(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -5486,7 +5483,7 @@ PrimitiveResult Interpreter::primitiveMaxIdentityHash(int argCount) {
 }
 
 // Primitive 180: Grow memory by at least the specified amount
-PrimitiveResult Interpreter::primitiveGrowMemory(int argCount) {
+PrimitiveResult Interpreter::primitiveGrowMemoryByAtLeast(int argCount) {
     Oop amountOop = stackTop();
 
     if (!amountOop.isSmallInteger()) {
@@ -8674,8 +8671,8 @@ PrimitiveResult Interpreter::primitiveIdentityHash32(int argCount) {
 }
 
 // Primitive 219: Grow memory by at least N bytes
-// bytesToGrow primitiveGrowMemoryByAtLeast -> actualBytesGrown or 0
-PrimitiveResult Interpreter::primitiveGrowMemoryByAtLeast(int argCount) {
+// bytesToGrow primitiveGrowMemoryByAtLeastByAtLeast -> actualBytesGrown or 0
+PrimitiveResult Interpreter::primitiveGrowMemoryByAtLeastByAtLeast(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
     Oop bytesArg = stackTop();
@@ -10036,9 +10033,9 @@ PrimitiveResult Interpreter::primitiveClosureValueWithArgsNoContextSwitch(int ar
 }
 
 // Primitive 224: Set identity hash
-// anObject hash primitiveSetIdentityHash -> anObject
+// anObject hash primitiveSetOrHasIdentityHash -> anObject
 // Sets the identity hash of an object
-PrimitiveResult Interpreter::primitiveSetIdentityHash(int argCount) {
+PrimitiveResult Interpreter::primitiveSetOrHasIdentityHash(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
     Oop hashOop = stackTop();

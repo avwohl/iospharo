@@ -154,60 +154,14 @@ UNIMPLEMENTED_PRIMITIVES = {
     'primitiveSmallFloatArctan', 'primitiveSmallFloatLogN', 'primitiveSmallFloatExp',  # VMMaker uses "LogN" not "Ln"
 }
 
-# Mapping from VMMaker names to C++ names where they differ
-VMMAKER_TO_CPP_NAMES = {
-    # LargeInteger primitives - VMMaker uses "OpLargeIntegers", C++ uses "LargeIntegerOp"
-    'primitiveRemLargeIntegers': 'primitiveLargeIntegerRem',
-    'primitiveAddLargeIntegers': 'primitiveLargeIntegerAdd',
-    'primitiveSubtractLargeIntegers': 'primitiveLargeIntegerSubtract',
-    'primitiveLessThanLargeIntegers': 'primitiveLargeIntegerLessThan',
-    'primitiveGreaterThanLargeIntegers': 'primitiveLargeIntegerGreaterThan',
-    'primitiveLessOrEqualLargeIntegers': 'primitiveLargeIntegerLessOrEqual',
-    'primitiveGreaterOrEqualLargeIntegers': 'primitiveLargeIntegerGreaterOrEqual',
-    'primitiveEqualLargeIntegers': 'primitiveLargeIntegerEqual',
-    'primitiveNotEqualLargeIntegers': 'primitiveLargeIntegerNotEqual',
-    'primitiveMultiplyLargeIntegers': 'primitiveLargeIntegerMultiply',
-    'primitiveDivideLargeIntegers': 'primitiveLargeIntegerDivide',
-    'primitiveModLargeIntegers': 'primitiveLargeIntegerMod',
-    'primitiveDivLargeIntegers': 'primitiveLargeIntegerDiv',
-    'primitiveQuoLargeIntegers': 'primitiveLargeIntegerQuo',
-    'primitiveBitAndLargeIntegers': 'primitiveLargeIntegerBitAnd',
-    'primitiveBitOrLargeIntegers': 'primitiveLargeIntegerBitOr',
-    'primitiveBitXorLargeIntegers': 'primitiveLargeIntegerBitXor',
-    'primitiveBitShiftLargeIntegers': 'primitiveLargeIntegerBitShift',
-
-    # Float primitives - some name differences
-    'primitiveTruncated': 'primitiveFloatTruncated',
-    'primitiveSquareRoot': 'primitiveFloatSquareRoot',
-    'primitiveSine': 'primitiveFloatSin',
-    'primitiveArctan': 'primitiveFloatArctan',
-    'primitiveLogN': 'primitiveFloatLn',
-    'primitiveExp': 'primitiveFloatExp',
-
-    # SmallFloat primitives
-    'primitiveSmallFloatTruncated': 'primitiveSmallFloatTruncated',
-    'primitiveSmallFloatSquareRoot': 'primitiveSmallFloatSquareRoot',
-    'primitiveSmallFloatSine': 'primitiveSmallFloatSin',
-    'primitiveSmallFloatArctan': 'primitiveSmallFloatArctan',
-    'primitiveSmallFloatLogN': 'primitiveSmallFloatLn',
-    'primitiveSmallFloatExp': 'primitiveSmallFloatExp',
-
-    # Other renames
-    'primitiveGrowMemoryByAtLeast': 'primitiveGrowMemory',
-    'primitiveSetOrHasIdentityHash': 'primitiveSetIdentityHash',
-    'primitiveStringCompareWith': 'primitiveCompareWith',
-    'primitiveVoidVMStateForMethod': 'primitiveVoidVMState',
-    'primitiveMethodXray': 'primitiveMethodXray',
-}
+# C++ now uses VMMaker names directly - no mapping needed!
 
 def vmmaker_to_cpp_name(vmmaker_name: str) -> str | None:
-    """Convert VMMaker primitive name to C++ method name.
+    """Return the VMMaker primitive name for C++ use.
     Returns None if the primitive is not yet implemented."""
-    # Check if unimplemented
     if vmmaker_name in UNIMPLEMENTED_PRIMITIVES:
         return None
-    # Check for name mapping
-    return VMMAKER_TO_CPP_NAMES.get(vmmaker_name, vmmaker_name)
+    return vmmaker_name
 
 def export_json(entries: list, output_path: Path):
     """Export entries as JSON."""

@@ -524,7 +524,7 @@ private:
     PrimitiveResult primitiveSetInterruptKey(int argCount);
     PrimitiveResult primitiveClone(int argCount);
     PrimitiveResult primitiveDoPrimitiveWithArgs(int argCount);
-    PrimitiveResult primitiveCompareWith(int argCount);
+    PrimitiveResult primitiveStringCompareWith(int argCount);
     PrimitiveResult primitiveFetchNextMourner(int argCount);
     PrimitiveResult primitiveExitCriticalSection(int argCount);
     PrimitiveResult primitiveEnterCriticalSection(int argCount);
@@ -681,7 +681,7 @@ private:
     // Object/memory primitives (217-221)
     PrimitiveResult primitiveVMFunctionality(int argCount);        // 217
     PrimitiveResult primitiveIdentityHash32(int argCount);         // 218
-    PrimitiveResult primitiveGrowMemoryByAtLeast(int argCount);    // 219
+    PrimitiveResult primitiveGrowMemoryByAtLeastByAtLeast(int argCount);    // 219
     PrimitiveResult primitiveImageFormatVersion(int argCount);     // 220
     PrimitiveResult primitiveClosureValueWithArgs(int argCount);   // 221
 
@@ -800,7 +800,7 @@ private:
     // Misc primitives (222-230)
     PrimitiveResult primitiveClosureValueNoContextSwitch2(int argCount); // 222
     PrimitiveResult primitiveClosureValueWithArgsNoContextSwitch(int argCount); // 223
-    PrimitiveResult primitiveSetIdentityHash(int argCount);        // 224
+    PrimitiveResult primitiveSetOrHasIdentityHash(int argCount);        // 224
     PrimitiveResult primitiveLoadInstVar(int argCount);            // 225
     PrimitiveResult primitiveStringCompare(int argCount);          // 226
     PrimitiveResult primitiveStringReplace(int argCount);          // 227
@@ -813,7 +813,7 @@ private:
     PrimitiveResult primitiveSetDisplayMode(int argCount);         // 233
     PrimitiveResult primitiveTestDisplayDepth(int argCount);       // 91 (also 91)
     PrimitiveResult primitiveBitmapDecompress(int argCount);       // 234
-    PrimitiveResult primitiveStringCompareWith(int argCount);      // 235
+    // primitiveStringCompareWith is declared above (158)
     PrimitiveResult primitiveSampledSoundConvert(int argCount);    // 236
     PrimitiveResult primitiveSerialPortOp(int argCount);           // 237
     PrimitiveResult primitivePluginCallback(int argCount);         // 238
@@ -1120,37 +1120,37 @@ private:
     PrimitiveResult primitiveFloatNotEqual(int argCount);     // 48
     PrimitiveResult primitiveFloatMultiply(int argCount);     // 49
     PrimitiveResult primitiveFloatDivide(int argCount);       // 50
-    PrimitiveResult primitiveFloatTruncated(int argCount);    // 51
+    PrimitiveResult primitiveTruncated(int argCount);    // 51
     PrimitiveResult primitiveFractionalPart(int argCount);    // 52
     PrimitiveResult primitiveExponent(int argCount);          // 53
     PrimitiveResult primitiveTimesTwoPower(int argCount);     // 54
-    PrimitiveResult primitiveFloatSquareRoot(int argCount);   // 55
-    PrimitiveResult primitiveFloatSin(int argCount);          // 56
-    PrimitiveResult primitiveFloatArctan(int argCount);       // 57
-    PrimitiveResult primitiveFloatLn(int argCount);           // 58
-    PrimitiveResult primitiveFloatExp(int argCount);          // 59
+    PrimitiveResult primitiveSquareRoot(int argCount);   // 55
+    PrimitiveResult primitiveSine(int argCount);          // 56
+    PrimitiveResult primitiveArctan(int argCount);       // 57
+    PrimitiveResult primitiveLogN(int argCount);           // 58
+    PrimitiveResult primitiveExp(int argCount);          // 59
 
     // Point creation
     PrimitiveResult primitiveMakePoint(int argCount);
 
     // Large integers (21-37)
-    PrimitiveResult primitiveLargeIntegerAdd(int argCount);       // 21
-    PrimitiveResult primitiveLargeIntegerSubtract(int argCount);  // 22
-    PrimitiveResult primitiveLargeIntegerLessThan(int argCount);  // 23
-    PrimitiveResult primitiveLargeIntegerGreaterThan(int argCount); // 24
-    PrimitiveResult primitiveLargeIntegerLessOrEqual(int argCount); // 25
-    PrimitiveResult primitiveLargeIntegerGreaterOrEqual(int argCount); // 26
-    PrimitiveResult primitiveLargeIntegerEqual(int argCount);     // 27
-    PrimitiveResult primitiveLargeIntegerNotEqual(int argCount);  // 28
-    PrimitiveResult primitiveLargeIntegerMultiply(int argCount);  // 29
-    PrimitiveResult primitiveLargeIntegerDivide(int argCount);    // 30
-    PrimitiveResult primitiveLargeIntegerMod(int argCount);       // 31
-    PrimitiveResult primitiveLargeIntegerDiv(int argCount);       // 32
-    PrimitiveResult primitiveLargeIntegerQuo(int argCount);       // 33
-    PrimitiveResult primitiveLargeIntegerBitAnd(int argCount);    // 34
-    PrimitiveResult primitiveLargeIntegerBitOr(int argCount);     // 35
-    PrimitiveResult primitiveLargeIntegerBitXor(int argCount);    // 36
-    PrimitiveResult primitiveLargeIntegerBitShift(int argCount);  // 37
+    PrimitiveResult primitiveAddLargeIntegers(int argCount);       // 21
+    PrimitiveResult primitiveSubtractLargeIntegers(int argCount);  // 22
+    PrimitiveResult primitiveLessThanLargeIntegers(int argCount);  // 23
+    PrimitiveResult primitiveGreaterThanLargeIntegers(int argCount); // 24
+    PrimitiveResult primitiveLessOrEqualLargeIntegers(int argCount); // 25
+    PrimitiveResult primitiveGreaterOrEqualLargeIntegers(int argCount); // 26
+    PrimitiveResult primitiveEqualLargeIntegers(int argCount);     // 27
+    PrimitiveResult primitiveNotEqualLargeIntegers(int argCount);  // 28
+    PrimitiveResult primitiveMultiplyLargeIntegers(int argCount);  // 29
+    PrimitiveResult primitiveDivideLargeIntegers(int argCount);    // 30
+    PrimitiveResult primitiveModLargeIntegers(int argCount);       // 31
+    PrimitiveResult primitiveDivLargeIntegers(int argCount);       // 32
+    PrimitiveResult primitiveQuoLargeIntegers(int argCount);       // 33
+    PrimitiveResult primitiveBitAndLargeIntegers(int argCount);    // 34
+    PrimitiveResult primitiveBitOrLargeIntegers(int argCount);     // 35
+    PrimitiveResult primitiveBitXorLargeIntegers(int argCount);    // 36
+    PrimitiveResult primitiveBitShiftLargeIntegers(int argCount);  // 37
 
     // GC primitives
     PrimitiveResult primitiveFullGC(int argCount);
@@ -1234,7 +1234,7 @@ private:
 
     // Memory management primitives
     PrimitiveResult primitiveMaxIdentityHash(int argCount);  // 176
-    PrimitiveResult primitiveGrowMemory(int argCount);       // 180
+    PrimitiveResult primitiveGrowMemoryByAtLeast(int argCount);       // 180
     PrimitiveResult primitiveSignalAtBytesLeft(int argCount); // 125
 
     // Interrupt semaphore primitive
