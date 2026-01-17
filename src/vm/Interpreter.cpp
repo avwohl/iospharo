@@ -3928,8 +3928,8 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
         return o.isNil() || o.rawBits() == nilObj.rawBits() || o.rawBits() < 0x10000;
     };
 
-    // Limit search to reasonable size (1024 to cover Object's method dict)
-    size_t maxSearch = std::min(size, (size_t)1024);
+    // Search all key slots - don't limit (Morph has 2048+ methods)
+    size_t maxSearch = size;
     int nonNilCount = 0;
 
     // Debug: show first few inline key slots in method dict (slots 2+)
