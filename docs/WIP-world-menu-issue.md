@@ -122,8 +122,39 @@ This suggests that during our manual startup, the subscriber list got corrupted:
 - Instead of storing `anInstanceOfSubscriber`, it stores `MorphicRenderLoop` (the class)
 - When events fire, the class receives instance messages and fails
 
-## Next Steps
-1. Try resuming from the saved process context like OpenSmalltalk does
-2. Investigate what `ioInitThreads()` and `setupTimers()` do
-3. Add missing subsystem initialization
-4. Debug why MorphicRenderLoop ends up in subscriber lists
+## Update: January 17, 2026
+
+### New Findings
+
+After adding debugging, we discovered:
+
+1. **Process resume IS working correctly**
+   - `bootstrapStartup()` is NOT being called during normal operation
+   - The VM resumes from the saved context as expected
+   - No `[STARTUP]` logs appear during normal execution
+
+2. **Menu interactions work in test_platform**
+   - Left-click menu interactions work correctly
+   - The Quit menu item triggers `primitiveQuit`
+   - No DNU errors during menu clicks
+
+3. **The DNU errors may be image-specific or intermittent**
+   - With fresh Pharo 12 and 13 images, no DNU errors observed
+   - The original DNU logs may have been from a corrupted image state
+
+### What Still Needs Testing
+- Right-click (world menu) specifically
+- The Mac Catalyst app with interactive use
+- Different image states (freshly saved vs long-running)
+
+### Updated Hypothesis
+The original DNU errors may have been caused by:
+1. A corrupted image state that got saved
+2. Image-specific configuration (subscriber lists with wrong objects)
+3. An edge case in our event handling that's not triggered by test_platform
+
+### Next Steps
+1. Test right-click (button=1) to trigger world menu
+2. Interactive test of Mac Catalyst app with fresh image
+3. Check if the DNU errors are reproducible with specific images
+4. If DNU errors reappear, trace the specific object that receives the wrong message
