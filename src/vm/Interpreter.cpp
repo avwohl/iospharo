@@ -1575,48 +1575,13 @@ void Interpreter::processInputEvents() {
 }
 
 void Interpreter::invokeMenuItemAction(Oop menuItemMorph) {
-    std::cerr << "[INVOKE] invokeMenuItemAction called, menuItemMorph.rawBits()=" << menuItemMorph.rawBits() << "\n";
-    static FILE* logFile = fopen("/tmp/iospharo-menu-action.log", "a");
-    if (logFile) {
-        fprintf(logFile, "[INVOKE] Function called with rawBits=%llu\n", (unsigned long long)menuItemMorph.rawBits());
-        fflush(logFile);
-    }
-
     // Extract action from menu item and queue it for execution
     if (menuItemMorph.isNil() || !menuItemMorph.isObject()) {
-        if (logFile) {
-            fprintf(logFile, "[INVOKE] menuItemMorph is nil or not object\n");
-            fflush(logFile);
-        }
         return;
-    }
-
-    // Get the class name of the menu item
-    std::string menuItemClass = "Unknown";
-    Oop itemClass = memory_.classOf(menuItemMorph);
-    if (itemClass.isObject()) {
-        ObjectHeader* clsHdr = itemClass.asObjectPtr();
-        if (clsHdr->slotCount() > 6) {
-            Oop className = memory_.fetchPointer(6, itemClass);
-            if (className.isObject()) {
-                ObjectHeader* nameHdr = className.asObjectPtr();
-                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
-                    menuItemClass = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                }
-            }
-        }
-    }
-    if (logFile) {
-        fprintf(logFile, "[INVOKE] Menu item class: %s\n", menuItemClass.c_str());
-        fflush(logFile);
     }
 
     ObjectHeader* morphHdr = menuItemMorph.asObjectPtr();
     size_t slotCount = morphHdr->slotCount();
-    if (logFile) {
-        fprintf(logFile, "[INVOKE] Slot count: %zu\n", slotCount);
-        fflush(logFile);
-    }
 
     Oop selector = Oop::nil();
     Oop target = Oop::nil();
@@ -1643,19 +1608,6 @@ void Interpreter::invokeMenuItemAction(Oop menuItemMorph) {
                 }
             }
 
-            if (logFile) {
-                fprintf(logFile, "[INVOKE] Slot %zu: class=%s\n", i, slotClassName.c_str());
-                // If it's a symbol, print its value
-                if (slotClassName == "ByteSymbol" || slotClassName == "Symbol") {
-                    ObjectHeader* symHdr = slot.asObjectPtr();
-                    if (symHdr->isBytesObject() && symHdr->byteSize() < 100) {
-                        std::string symVal((char*)symHdr->bytes(), symHdr->byteSize());
-                        fprintf(logFile, "[INVOKE]   Symbol value: '%s'\n", symVal.c_str());
-                    }
-                }
-                fflush(logFile);
-            }
-
             // Check if it's a Symbol (potential selector)
             if (slotClassName == "ByteSymbol" || slotClassName == "Symbol") {
                 if (selector.isNil()) selector = slot;
@@ -1667,27 +1619,20 @@ void Interpreter::invokeMenuItemAction(Oop menuItemMorph) {
             // Potential target - but skip known non-target types
             else if (target.isNil()) {
                 // Skip display/rendering related objects that are not action targets
-                // ByteString at slot 8 is the menu item label, not the target
-                // UndefinedObject is nil - never a valid target
                 bool isSkipType = (slotClassName.find("Morph") != std::string::npos ||
                     slotClassName.find("Font") != std::string::npos ||
                     slotClassName.find("Color") != std::string::npos ||
                     slotClassName.find("Form") != std::string::npos ||
                     slotClassName.find("Extension") != std::string::npos ||
-                    slotClassName.find("String") != std::string::npos ||  // ByteString is label
-                    slotClassName == "UndefinedObject" ||  // nil is never a valid target
+                    slotClassName.find("String") != std::string::npos ||
+                    slotClassName == "UndefinedObject" ||
                     slotClassName == "True" ||
                     slotClassName == "False" ||
                     slotClassName == "Array");
 
                 // "Unknown" at slot 14 is often the actual target (class lookup failed)
-                // Accept it if we're at the typical action slot position
                 if (!isSkipType || (slotClassName == "Unknown" && i >= 14)) {
                     target = slot;
-                    if (logFile) {
-                        fprintf(logFile, "[INVOKE]   -> Setting as potential target (slot %zu)\n", i);
-                        fflush(logFile);
-                    }
                 }
             }
         }
@@ -1700,11 +1645,6 @@ void Interpreter::invokeMenuItemAction(Oop menuItemMorph) {
         int blockNumArgs = 0;
         if (numArgsObj.isSmallInteger()) {
             blockNumArgs = static_cast<int>(numArgsObj.asSmallInteger());
-        }
-
-        if (logFile) {
-            fprintf(logFile, "[INVOKE] Block numArgs=%d\n", blockNumArgs);
-            fflush(logFile);
         }
 
         // Find appropriate selector from special selectors
@@ -1741,14 +1681,6 @@ void Interpreter::invokeMenuItemAction(Oop menuItemMorph) {
             pendingMenuAction_.argCount = (blockNumArgs > 0) ? 1 : 0;
             pendingMenuAction_.argument = (blockNumArgs > 0) ? menuItemMorph : Oop::nil();
             pendingMenuAction_.pending = true;
-            if (logFile) {
-                fprintf(logFile, "[INVOKE] Queued block action with #%s (argCount=%d)\n",
-                        selectorName, pendingMenuAction_.argCount);
-                fflush(logFile);
-            }
-        } else if (logFile) {
-            fprintf(logFile, "[INVOKE] Could not find #%s selector for block\n", selectorName);
-            fflush(logFile);
         }
     } else if (!selector.isNil() && !target.isNil()) {
         pendingMenuAction_.selector = selector;
@@ -1756,28 +1688,12 @@ void Interpreter::invokeMenuItemAction(Oop menuItemMorph) {
         pendingMenuAction_.argument = Oop::nil();
         pendingMenuAction_.argCount = 0;
         pendingMenuAction_.pending = true;
-        if (logFile) {
-            fprintf(logFile, "[INVOKE] Queued selector+target action\n");
-            fflush(logFile);
-        }
     } else if (!selector.isNil()) {
         pendingMenuAction_.selector = selector;
         pendingMenuAction_.receiver = menuItemMorph;
         pendingMenuAction_.argument = Oop::nil();
         pendingMenuAction_.argCount = 0;
         pendingMenuAction_.pending = true;
-        if (logFile) {
-            fprintf(logFile, "[INVOKE] Queued selector-only action\n");
-            fflush(logFile);
-        }
-    } else {
-        if (logFile) {
-            fprintf(logFile, "[INVOKE] No action found - selector=%s, target=%s, block=%s\n",
-                    selector.isNil() ? "nil" : "set",
-                    target.isNil() ? "nil" : "set",
-                    actionBlock.isNil() ? "nil" : "set");
-            fflush(logFile);
-        }
     }
 }
 
@@ -1788,27 +1704,11 @@ void Interpreter::invokeMenuItemAction(Oop menuItemMorph) {
 void Interpreter::syncDisplayToSurface() {
     if (!pharo::gDisplaySurface) return;
 
-    static int syncEntryCount = 0;
-    syncEntryCount++;
-    if (syncEntryCount <= 5 || syncEntryCount % 100 == 0) {
-        std::cerr << "[SYNC] entry #" << syncEntryCount << "\n";
-        std::cerr.flush();
-    }
-
     // Process input events
     processInputEvents();
 
     // Execute pending menu action if any
-    // Note: This is a simplified execution that may not work for all action types
     if (pendingMenuAction_.pending) {
-        static FILE* actionLog = fopen("/tmp/iospharo-sync-action.log", "a");
-        if (actionLog) {
-            fprintf(actionLog, "[SYNC] Executing pending menu action\n");
-            fflush(actionLog);
-        }
-        std::cerr << "[SYNC-ACTION] Executing pending menu action\n";
-        std::cerr.flush();
-
         // Get action details
         Oop actionSel = pendingMenuAction_.selector;
         Oop actionRcvr = pendingMenuAction_.receiver;
@@ -1821,21 +1721,6 @@ void Interpreter::syncDisplayToSurface() {
         pendingMenuAction_.receiver = Oop::nil();
         pendingMenuAction_.argument = Oop::nil();
         pendingMenuAction_.argCount = 0;
-
-        // Log what we're about to execute
-        std::string selStr = "<unknown>";
-        if (actionSel.isObject()) {
-            ObjectHeader* selHdr = actionSel.asObjectPtr();
-            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-            }
-        }
-        std::cerr << "[SYNC-ACTION] About to send #" << selStr << " with " << actionArgCount << " args\n";
-        std::cerr.flush();
-        if (actionLog) {
-            fprintf(actionLog, "[SYNC] About to send #%s with %d args\n", selStr.c_str(), actionArgCount);
-            fflush(actionLog);
-        }
 
         // Set up stack for message send - this runs in the context of the heartbeat thread
         // which may not have a proper Smalltalk stack. We need to defer to the main interpreter.
@@ -1961,14 +1846,6 @@ void Interpreter::interpret() {
 
         // Execute pending menu action from sync thread
         if (pendingMenuAction_.executeFromSync && pendingMenuAction_.pending) {
-            static FILE* actionLog = fopen("/tmp/iospharo-interpret-action.log", "a");
-            if (actionLog) {
-                fprintf(actionLog, "[INTERPRET] Executing pending menu action from sync\n");
-                fflush(actionLog);
-            }
-            std::cerr << "[INTERPRET-ACTION] Executing pending menu action from sync\n";
-            std::cerr.flush();
-
             Oop actionSel = pendingMenuAction_.selector;
             Oop actionRcvr = pendingMenuAction_.receiver;
             Oop actionArg = pendingMenuAction_.argument;
@@ -1985,20 +1862,6 @@ void Interpreter::interpret() {
             push(actionRcvr);
             if (actionArgCount > 0 && !actionArg.isNil()) {
                 push(actionArg);
-            }
-
-            // Log what we're sending
-            if (actionSel.isObject()) {
-                ObjectHeader* selHdr = actionSel.asObjectPtr();
-                if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                    std::string selStr((char*)selHdr->bytes(), selHdr->byteSize());
-                    std::cerr << "[INTERPRET-ACTION] Sending #" << selStr << " with " << actionArgCount << " args\n";
-                    std::cerr.flush();
-                    if (actionLog) {
-                        fprintf(actionLog, "[INTERPRET] Sending #%s with %d args\n", selStr.c_str(), actionArgCount);
-                        fflush(actionLog);
-                    }
-                }
             }
 
             // Send the message
@@ -2099,12 +1962,6 @@ void Interpreter::startHeartbeat() {
 
             // Every ~33ms (30fps), sync Display Form to platform surface AND push a timer event
             if (tickCount % 33 == 0) {
-                static int syncCallCount = 0;
-                syncCallCount++;
-                if (syncCallCount <= 5 || syncCallCount % 100 == 0) {
-                    std::cerr << "[HEARTBEAT] sync #" << syncCallCount << "\n";
-                    std::cerr.flush();
-                }
                 syncDisplayToSurface();
 
                 // Push a timer/redraw event to wake up the UI process
@@ -2143,10 +2000,6 @@ void Interpreter::stopHeartbeat() {
 void Interpreter::signalExternalSemaphore(int index) {
     // Store the index to be processed in the interpret loop
     // This is thread-safe due to atomic
-    static int callCount = 0;
-    if (++callCount <= 5 || callCount % 1000 == 0) {
-        std::cerr << "[SIGNAL] signalExternalSemaphore(" << index << ") callCount=" << callCount << "\n";
-    }
     pendingSignalIndex_.store(index, std::memory_order_release);
 }
 
@@ -2154,35 +2007,24 @@ void Interpreter::processPendingSignals() {
     int index = pendingSignalIndex_.exchange(0, std::memory_order_acquire);
     if (index <= 0) return;
 
-    static int callCount = 0;
-    bool trace = (++callCount <= 5 || callCount % 1000 == 0);
-    if (trace) {
-        std::cerr << "[SIGNAL] processPendingSignals index=" << index << " callCount=" << callCount << "\n";
-    }
-
     // Get the external semaphore table from special objects
     Oop semTable = memory_.specialObject(SpecialObjectIndex::ExternalSemaphoreTable);
     if (semTable.isNil() || !semTable.isObject()) {
-        if (trace) std::cerr << "[SIGNAL] ExternalSemaphoreTable is nil/not object\n";
         return;
     }
 
     // Index is 1-based, convert to 0-based array index
     size_t tableIndex = static_cast<size_t>(index - 1);
     size_t tableSize = memory_.slotCountOf(semTable);
-    if (trace) std::cerr << "[SIGNAL] tableIndex=" << tableIndex << " tableSize=" << tableSize << "\n";
     if (tableIndex >= tableSize) {
-        if (trace) std::cerr << "[SIGNAL] tableIndex >= tableSize, returning\n";
         return;
     }
 
     // Get the semaphore at this index
     Oop semaphore = memory_.fetchPointer(tableIndex, semTable);
     if (semaphore.isNil() || !semaphore.isObject()) {
-        if (trace) std::cerr << "[SIGNAL] semaphore is nil/not object\n";
         return;
     }
-    if (trace) std::cerr << "[SIGNAL] Signaling semaphore at index " << tableIndex << "\n";
 
     // Signal the semaphore (same logic as primitiveSignal)
     Oop nilObj = memory_.nil();
@@ -3007,14 +2849,6 @@ void Interpreter::returnValue(Oop value) {
 
         // Execute pending menu action if any
         if (pendingMenuAction_.pending) {
-            static FILE* actionLog = fopen("/tmp/iospharo-idle-action.log", "a");
-            if (actionLog) {
-                fprintf(actionLog, "[IDLE] Executing pending menu action\n");
-                fflush(actionLog);
-            }
-            std::cerr << "[IDLE-ACTION] Executing pending menu action\n";
-            std::cerr.flush();
-
             // Get action details
             Oop actionSel = pendingMenuAction_.selector;
             Oop actionRcvr = pendingMenuAction_.receiver;
@@ -3032,20 +2866,6 @@ void Interpreter::returnValue(Oop value) {
             push(actionRcvr);
             if (actionArgCount > 0 && !actionArg.isNil()) {
                 push(actionArg);
-            }
-
-            // Log what we're about to execute
-            if (actionSel.isObject()) {
-                ObjectHeader* selHdr = actionSel.asObjectPtr();
-                if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                    std::string selStr((char*)selHdr->bytes(), selHdr->byteSize());
-                    std::cerr << "[IDLE-ACTION] Sending #" << selStr << " with " << actionArgCount << " args\n";
-                    std::cerr.flush();
-                    if (actionLog) {
-                        fprintf(actionLog, "[IDLE] Sending #%s with %d args\n", selStr.c_str(), actionArgCount);
-                        fflush(actionLog);
-                    }
-                }
             }
 
             // Send the message
@@ -3886,39 +3706,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     // Cache the method
     cacheMethod(selector, rcvrClass, method);
 
-    // Debug: trace method lookup for specific selectors
-    if (sendCount >= 33 && sendCount <= 50) {
-        // Get selector name for trace
-        std::string selName = "<unknown>";
-        if (selector.isObject() && selector.rawBits() > 0x10000) {
-            ObjectHeader* selHdr = selector.asObjectPtr();
-            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                selName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-            }
-        }
-        int primIdx = primitiveIndexOf(method);
-        // Special logging for copyBits to verify BitBlt is being looked up
-        if (selName == "copyBits" || selName == "copyBitsFrom:to:at:" || selName.find("copyBits") != std::string::npos) {
-            std::cerr << "[BITBLT_LOOKUP] *** FOUND copyBits selector! *** primIdx=" << primIdx << "\n";
-        }
-        std::cerr << "[LOOKUP_DEBUG] selector #" << sendCount << " '" << selName << "'"
-                  << " method=0x" << std::hex << method.rawBits() << std::dec
-                  << " primIdx=" << primIdx;
-        if (method.isObject()) {
-            ObjectHeader* mh = method.asObjectPtr();
-            std::cerr << " methodClassIdx=" << mh->classIndex();
-            // Show first few bytecodes
-            Oop hdr = memory_.fetchPointer(0, method);
-            if (hdr.isSmallInteger()) {
-                int64_t hb = hdr.asSmallInteger();
-                int numLit = hb & 0x7FFF;
-                uint8_t* bc = mh->bytes() + (1 + numLit) * 8;
-                std::cerr << " bytecodes=[" << (int)bc[0] << "," << (int)bc[1] << "," << (int)bc[2] << "]";
-            }
-        }
-        std::cerr << "\n";
-    }
-
     // Check for primitive
     int primIndex = primitiveIndexOf(method);
     if (primIndex > 0) {
@@ -3926,20 +3713,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         primitiveFailed_ = false;
         PrimitiveResult result = executePrimitive(primIndex, argCount);
         if (result == PrimitiveResult::Success) {
-            // Debug: trace primitive success
-            static int primSuccessCount = 0;
-            primSuccessCount++;
-            if (primSuccessCount <= 20 && sendCount <= 60) {
-                std::cerr << "[PRIM_OK] selector #" << sendCount << " prim=" << primIndex
-                          << " stackTop=0x" << std::hex << stackTop().rawBits() << std::dec;
-                if (stackTop().isSmallInteger()) {
-                    std::cerr << " (SmallInt=" << stackTop().asSmallInteger() << ")";
-                } else if (stackTop().isObject()) {
-                    ObjectHeader* h = stackTop().asObjectPtr();
-                    std::cerr << " (classIdx=" << h->classIndex() << ")";
-                }
-                std::cerr << "\n";
-            }
             return;
         }
         // Primitive failed - fall through to method activation
@@ -3960,81 +3733,12 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
         return o.isNil() || o.rawBits() == nilObj.rawBits() || o.rawBits() < 0x10000;
     };
 
-    // Debug: check if this is a lookup for 'yourself'
-    std::string selectorName;
-    if (selector.isObject() && selector.rawBits() > 0x10000) {
-        ObjectHeader* selHdr = selector.asObjectPtr();
-        if (selHdr->isBytesObject() && selHdr->byteSize() <= 50) {
-            selectorName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-        }
-    }
-    bool traceYourself = (selectorName == "yourself" || selectorName == "doesNotUnderstand:");
-    if (traceYourself) {
-        std::cerr << "[YOURSELF_TRACE] Starting lookup for '" << selectorName << "' in class=0x"
-                  << std::hex << classOop.rawBits() << std::dec;
-        if (classOop.isObject()) {
-            ObjectHeader* hdr = classOop.asObjectPtr();
-            std::cerr << " classIdx=" << hdr->classIndex() << " slots=" << hdr->slotCount();
-        }
-        std::cerr << "\n";
-    }
-
     while (!isNilOrEnd(currentClass) && currentClass.isObject() && depth < 100) {
-        ObjectHeader* clsHdr = currentClass.asObjectPtr();
         Oop methodDict = methodDictOf(currentClass);
 
-        // Get class name from slot 6 (name field in Behavior)
-        std::string className = "<unknown>";
-        if (clsHdr->slotCount() > 6) {
-            Oop nameOop = memory_.fetchPointer(6, currentClass);
-            if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
-                ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                if (nameHdr->isBytesObject() && nameHdr->byteSize() <= 50) {
-                    className = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                }
-            }
-        }
-
-        static int lookupDebugCount = 0;
-        // Enable tracing when we detect invalid pointer (happens early in method lookup for #rounded)
-        bool shouldTrace = (lookupDebugCount < 30) && (!memory_.isValidPointer(methodDict) || !memory_.isValidPointer(currentClass));
-        if (traceYourself) {
-            Oop superclass = superclassOf(currentClass);
-            std::cerr << "[YOURSELF_TRACE] depth=" << depth << " class=" << className
-                      << " classOop=0x" << std::hex << currentClass.rawBits()
-                      << " slot0=0x" << memory_.fetchPointer(0, currentClass).rawBits()
-                      << " slot1=0x" << memory_.fetchPointer(1, currentClass).rawBits()
-                      << " slot2=0x" << memory_.fetchPointer(2, currentClass).rawBits()
-                      << std::dec
-                      << " superclass=0x" << std::hex << superclass.rawBits()
-                      << " isNilOrEnd=" << isNilOrEnd(superclass) << std::dec << "\n";
-        }
-        if (shouldTrace || lookupDebugCount < 5) {
-            lookupDebugCount++;
-            std::cerr << "[LOOKUP] depth=" << depth << " class=" << className << " (0x" << std::hex << currentClass.rawBits()
-                      << std::dec << " clsIdx=" << clsHdr->classIndex() << " slots=" << clsHdr->slotCount()
-                      << ") md=0x" << std::hex << methodDict.rawBits()
-                      << " valid=" << memory_.isValidPointer(methodDict) << std::dec;
-            // Check if class or methodDict pointer looks unrelocated (in old base range)
-            if (!memory_.isValidPointer(currentClass)) {
-                std::cerr << " *** CLASS INVALID ***";
-            }
-            if (!memory_.isValidPointer(methodDict)) {
-                std::cerr << " *** MD INVALID ***";
-            }
-            std::cerr << std::endl;
-        }
         if (!isNilOrEnd(methodDict) && methodDict.isObject()) {
             Oop method = lookupInMethodDict(methodDict, selector);
             if (!isNilOrEnd(method) && method.isObject()) {
-                // Trace where methods are found for key selectors
-                static int foundCount = 0;
-                if (foundCount < 50 && (selectorName == "flatCollect:" || selectorName == "isEmpty" ||
-                    selectorName == "size" || selectorName == "yourself" || selectorName == "species")) {
-                    foundCount++;
-                    std::cerr << "[FOUND] '" << selectorName << "' at depth=" << depth
-                              << " class=" << className << "\n";
-                }
                 return method;
             }
         }
@@ -4042,7 +3746,6 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
         depth++;
     }
 
-    // DEBUG: "[LOOKUP] Method not found after " << depth << " levels"
     return Oop::nil();  // Not found
 }
 
@@ -4724,9 +4427,6 @@ void Interpreter::activateMethod(Oop method, int argCount) {
 }
 
 void Interpreter::activateBlock(Oop block, int argCount) {
-    static int activateCount = 0;
-    activateCount++;
-
     // BlockClosure/FullBlockClosure layout:
     // 0: outerContext
     // 1: startPC (SmallInteger) for old BlockClosure, OR
@@ -4735,24 +4435,6 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     // 3+: copied values
 
     Oop slot1 = memory_.fetchPointer(1, block);
-
-    // Debug: show stack before activation (first few times)
-    if (activateCount <= 5) {
-        std::cerr << "[BLOCK] activateBlock #" << activateCount << " argCount=" << argCount << "\n";
-        std::cerr << "[BLOCK]   block=0x" << std::hex << block.rawBits() << std::dec << "\n";
-        std::cerr << "[BLOCK]   slot1=0x" << std::hex << slot1.rawBits() << std::dec
-                  << " isSmallInt=" << slot1.isSmallInteger()
-                  << " isObject=" << slot1.isObject() << "\n";
-        for (int i = 0; i <= argCount; i++) {
-            Oop val = stackValue(i);
-            std::cerr << "[BLOCK]   stack[" << i << "]=0x" << std::hex << val.rawBits() << std::dec;
-            if (val.isSmallInteger()) {
-                std::cerr << " (SmallInt=" << val.asSmallInteger() << ")";
-            }
-            std::cerr << "\n";
-        }
-    }
-
     Oop outerContext = memory_.fetchPointer(0, block);
     Oop methodToExecute;
     uint8_t* startAddress = nullptr;
@@ -4765,38 +4447,17 @@ void Interpreter::activateBlock(Oop block, int argCount) {
         methodToExecute = outerMethod;
         ObjectHeader* methodObj = outerMethod.asObjectPtr();
         startAddress = methodObj->bytes() + startPC;
-
-        if (activateCount <= 5) {
-            std::cerr << "[BLOCK]   Old-style BlockClosure: startPC=" << startPC << "\n";
-        }
     } else if (slot1.isObject()) {
         // FullBlockClosure: slot 1 is compiledBlock (the actual method to execute)
         Oop compiledBlock = slot1;
         methodToExecute = compiledBlock;
         ObjectHeader* blockObj = compiledBlock.asObjectPtr();
-        // CompiledBlock bytecodes start after the header
-        // In Pharo's CompiledBlock, the header info tells us where bytecodes start
-        // For CompiledBlock, bytecodes typically start after fixed slots
         Oop header = memory_.fetchPointer(0, compiledBlock);
         int64_t headerBits = header.asSmallInteger();
-        // CompiledCode header format (after SmallInteger decode):
-        // bits 0-15: numLiterals, bits 16-23: numTemps, bits 24-27: numArgs
         int numLiterals = headerBits & 0xFFFF;
-        // Bytecodes start after header slot and literal slots
-        // Header is slot 0, literals are slots 1 to numLiterals
-        // Each slot is 8 bytes, so bytecodes start at (1 + numLiterals) * 8
         size_t bytecodeOffset = (1 + numLiterals) * 8;
         startAddress = blockObj->bytes() + bytecodeOffset;
-
-        if (activateCount <= 5) {
-            std::cerr << "[BLOCK]   FullBlockClosure: compiledBlock=0x" << std::hex << compiledBlock.rawBits() << std::dec
-                      << " numLiterals=" << numLiterals
-                      << " bytecodeOffset=" << bytecodeOffset << "\n";
-        }
     } else {
-        if (activateCount <= 5) {
-            std::cerr << "[BLOCK]   ERROR: slot1 is neither SmallInteger nor Object\n";
-        }
         primitiveFail();
         return;
     }
@@ -4830,7 +4491,7 @@ void Interpreter::activateBlock(Oop block, int argCount) {
         receiver_ = memory_.nil();
     }
 
-    // CRITICAL: Copy the copied values from the closure into the temp area
+    // Copy the copied values from the closure into the temp area
     // BlockClosure/FullBlockClosure layout:
     // 0: outerContext
     // 1: startPC/compiledBlock
@@ -4839,24 +4500,9 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     size_t blockSlots = memory_.slotCountOf(block);
     int numCopied = static_cast<int>(blockSlots) - 3;  // Fixed slots are 0,1,2
 
-    if (numCopied > 0 && activateCount <= 5) {
-        std::cerr << "[BLOCK]   Copying " << numCopied << " values from closure to temps\n";
-    }
-
     for (int i = 0; i < numCopied; i++) {
         Oop copiedValue = memory_.fetchPointer(3 + i, block);
-        // Copied values go after the arguments in the temp area
         setTemporary(argCount + i, copiedValue);
-        if (activateCount <= 5) {
-            std::cerr << "[BLOCK]     temp(" << (argCount + i) << ") = 0x" << std::hex << copiedValue.rawBits() << std::dec;
-            if (copiedValue.isSmallInteger()) {
-                std::cerr << " (SmallInt=" << copiedValue.asSmallInteger() << ")";
-            } else if (copiedValue.isObject()) {
-                ObjectHeader* cHdr = copiedValue.asObjectPtr();
-                std::cerr << " (classIdx=" << cHdr->classIndex() << " slots=" << memory_.slotCountOf(copiedValue) << ")";
-            }
-            std::cerr << "\n";
-        }
     }
 
     instructionPointer_ = startAddress;
@@ -4864,19 +4510,6 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     // Set bytecode end based on method size
     ObjectHeader* methodHdr = methodToExecute.asObjectPtr();
     bytecodeEnd_ = methodHdr->bytes() + methodHdr->byteSize();
-
-    // Debug: show frame state after activation
-    if (activateCount <= 5) {
-        std::cerr << "[BLOCK]   after activation: framePointer_=" << (void*)framePointer_
-                  << " stackPointer_=" << (void*)stackPointer_ << "\n";
-        std::cerr << "[BLOCK]   method_=0x" << std::hex << method_.rawBits()
-                  << " IP=" << (void*)instructionPointer_ << std::dec << "\n";
-        std::cerr << "[BLOCK]   temp(0)=0x" << std::hex << temporary(0).rawBits() << std::dec;
-        if (temporary(0).isSmallInteger()) {
-            std::cerr << " (SmallInt=" << temporary(0).asSmallInteger() << ")";
-        }
-        std::cerr << "\n";
-    }
 }
 
 // ===== FRAME MANAGEMENT =====
@@ -5050,32 +4683,10 @@ Oop Interpreter::literal(size_t index) const {
         }
     } else {
         // Method header isn't a SmallInteger - bad method
-        static int badHdrCount = 0;
-        badHdrCount++;
-        if (badHdrCount <= 5) {
-            std::cerr << "[LITERAL] Bad method header: method=0x" << std::hex << literalMethod.rawBits()
-                      << " header=0x" << methodHeader.rawBits() << std::dec << "\n";
-        }
         return memory_.specialObject(SpecialObjectIndex::NilObject);
     }
 
-    Oop result = memory_.fetchPointer(index + 1, literalMethod);
-
-    // Check if result is a CompiledBlock (wrong literal type for selectors)
-    if (result.isObject()) {
-        ObjectHeader* hdr = result.asObjectPtr();
-        if (hdr->classIndex() == 3117) {  // CompiledBlock
-            static int blockLitCount = 0;
-            blockLitCount++;
-            if (blockLitCount <= 5) {
-                std::cerr << "[LITERAL] CompiledBlock at index=" << index
-                          << " literalMethod=0x" << std::hex << literalMethod.rawBits()
-                          << " result=0x" << result.rawBits() << std::dec << "\n";
-            }
-        }
-    }
-
-    return result;
+    return memory_.fetchPointer(index + 1, literalMethod);
 }
 
 Oop Interpreter::temporary(int index) const {
@@ -6340,24 +5951,15 @@ void Interpreter::transferTo(Oop newProcess) {
 }
 
 bool Interpreter::tryReschedule() {
-    static int reschedCount = 0;
-    reschedCount++;
-    bool trace = (reschedCount <= 5);
-
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
-    if (trace) {
-        std::cerr << "[SCHED] nilObj=0x" << std::hex << nilObj.rawBits() << std::dec << "\n";
-    }
     Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
 
     if (!schedulerAssoc.isObject() || schedulerAssoc.rawBits() == nilObj.rawBits()) {
-        if (trace) std::cerr << "[SCHED] tryReschedule: no schedulerAssoc\n";
         return false;
     }
 
     Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
     if (!scheduler.isObject()) {
-        if (trace) std::cerr << "[SCHED] tryReschedule: invalid scheduler\n";
         return false;
     }
 
@@ -6366,30 +5968,13 @@ bool Interpreter::tryReschedule() {
     Oop queues = memory_.fetchPointer(0, scheduler);
 
     if (!queues.isObject()) {
-        if (trace) std::cerr << "[SCHED] tryReschedule: no process queues\n";
         return false;
     }
 
     ObjectHeader* queuesHeader = queues.asObjectPtr();
     size_t numQueues = queuesHeader->slotCount();
 
-    if (trace) {
-        std::cerr << "[SCHED] tryReschedule: scanning " << numQueues << " priority queues\n";
-        std::cerr << "[SCHED]   activeProcess=0x" << std::hex << activeProcess.rawBits() << std::dec << "\n";
-        // Dump all non-empty queues to understand process state
-        for (size_t i = 0; i < numQueues; i++) {
-            Oop queue = queuesHeader->slotAt(i);
-            if (queue.isObject() && queue.rawBits() != nilObj.rawBits()) {
-                Oop first = memory_.fetchPointer(0, queue);
-                if (first.isObject() && first.rawBits() != nilObj.rawBits()) {
-                    std::cerr << "[SCHED]   queue[" << (i+1) << "] has processes\n";
-                }
-            }
-        }
-    }
-
     // Search from highest to lowest priority
-    int processesFound = 0;
     for (int i = static_cast<int>(numQueues) - 1; i >= 0; i--) {
         Oop queue = queuesHeader->slotAt(i);
         if (!queue.isObject() || queue.rawBits() == nilObj.rawBits()) continue;
@@ -6398,32 +5983,21 @@ bool Interpreter::tryReschedule() {
         Oop process = memory_.fetchPointer(0, queue);
         if (!process.isObject() || process.rawBits() == nilObj.rawBits()) continue;
 
-        processesFound++;
-        if (trace && processesFound <= 3) {
-            std::cerr << "[SCHED]   priority " << (i+1) << ": process=0x" << std::hex << process.rawBits() << std::dec << std::flush;
-        }
-
         // Skip if this is the same process that just finished
         if (process.rawBits() == activeProcess.rawBits()) {
-            if (trace) std::cerr << " (SAME AS ACTIVE, skip)\n" << std::flush;
             continue;
         }
 
         // Process: slot 0 = nextLink, slot 1 = suspendedContext, slot 2 = priority
         Oop context = memory_.fetchPointer(1, process);
-        if (trace) std::cerr << " ctx=0x" << std::hex << context.rawBits() << std::dec << std::flush;
         if (!context.isObject() || context.rawBits() == nilObj.rawBits()) {
-            if (trace) std::cerr << " (no suspendedContext)\n" << std::flush;
             continue;
         }
 
         ObjectHeader* ctxHeader = context.asObjectPtr();
         if (ctxHeader->format() != ObjectFormat::IndexableWithFixed) {
-            if (trace) std::cerr << " (bad context format=" << (int)ctxHeader->format() << ")\n";
             continue;
         }
-
-        if (trace) std::cerr << " -> FOUND runnable!\n";
 
         // Update the active process in scheduler
         memory_.storePointer(1, scheduler, process);
@@ -6434,12 +6008,10 @@ bool Interpreter::tryReschedule() {
 
         // Execute from the new process's context
         if (executeFromContext(context)) {
-            if (trace) std::cerr << "[SCHED] Rescheduled successfully\n";
             return true;
         }
     }
 
-    if (trace) std::cerr << "[SCHED] tryReschedule: no runnable process found (scanned " << processesFound << " processes)\n";
     return false;
 }
 

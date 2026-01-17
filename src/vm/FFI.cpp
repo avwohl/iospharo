@@ -21,18 +21,6 @@ static std::unordered_map<std::string, void*> sFunctionCache;
 
 bool initializeFFI() {
     if (sInitialized) return true;
-
-    std::cerr << "[FFI] Initializing FFI system (libffi)\n";
-
-    // On iOS/macOS with static linking, SDL2 functions are directly available
-    // We don't need dlopen - the symbols are in the executable
-    void* initFunc = dlsym(RTLD_DEFAULT, "SDL_Init");
-    if (!initFunc) {
-        std::cerr << "[FFI] Warning: SDL2 not found in executable (may be loaded later)\n";
-    } else {
-        std::cerr << "[FFI] SDL2 functions available\n";
-    }
-
     sInitialized = true;
     return true;
 }
@@ -63,9 +51,6 @@ void* lookupFunction(const std::string& moduleName, const std::string& funcName)
     void* func = dlsym(RTLD_DEFAULT, funcName.c_str());
     if (func) {
         sFunctionCache[funcName] = func;
-        std::cerr << "[FFI] Found function: " << funcName << " at " << func << "\n";
-    } else {
-        std::cerr << "[FFI] Function not found: " << funcName << "\n";
     }
 
     return func;

@@ -505,58 +505,31 @@ PrimitiveResult Interpreter::primitiveNotEqual(int argCount) {
 // ===== OBJECT ACCESS PRIMITIVES (60-75) =====
 
 PrimitiveResult Interpreter::primitiveAt(int argCount) {
-    static int atFailCount = 0;
     Oop index = stackValue(0);
     Oop rcvr = stackValue(1);
 
     // Special case: if index is nil, return nil to avoid infinite recursion
     // during error handling. This happens when error handling code walks the
     // stack and calls objectAt: with uninitialized/nil slots.
-    // In Spur, nil is a real heap object, so we check both:
-    // 1. index == memory_.nil() (the singleton nil object)
-    // 2. index is an object of class UndefinedObject (classIdx 3075)
     bool isNilIndex = (index == memory_.nil());
     if (!isNilIndex && index.isObject()) {
         ObjectHeader* idxHdr = index.asObjectPtr();
-        // UndefinedObject has classIdx around 3075 in Pharo images
-        // Also check format=0 (ZeroSized) and slots=0 as extra verification
+        // UndefinedObject has format=0 (ZeroSized) and slots=0
         if (idxHdr->format() == ObjectFormat::ZeroSized && idxHdr->slotCount() == 0) {
-            // Very likely to be nil
             isNilIndex = true;
         }
     }
     if (isNilIndex) {
-        static int nilIndexCount = 0;
-        if (nilIndexCount++ < 3) {
-            std::cerr << "[PRIM60] at: index is nil (0x" << std::hex << index.rawBits()
-                      << "), returning nil to avoid recursion\n" << std::dec;
-        }
         primitiveSuccess(memory_.nil());
         return PrimitiveResult::Success;
     }
 
     if (!index.isSmallInteger() || !rcvr.isObject()) {
-        if (atFailCount++ < 5) {
-            std::cerr << "[PRIM60] at: FAIL #" << atFailCount << " - index isSmallInt=" << index.isSmallInteger()
-                      << " rcvr isObject=" << rcvr.isObject()
-                      << " index=0x" << std::hex << index.rawBits() << std::dec;
-            // Show what the index object is if it's an object
-            if (index.isObject()) {
-                ObjectHeader* idxHdr = index.asObjectPtr();
-                std::cerr << " rawHdr=0x" << std::hex << idxHdr->rawHeader() << std::dec;
-                std::cerr << " (classIdx=" << idxHdr->classIndex() << " format=" << (int)idxHdr->format()
-                          << " slots=" << idxHdr->slotCount() << ")";
-            }
-            std::cerr << "\n";
-        }
         return PrimitiveResult::Failure;
     }
 
     int64_t idx = index.asSmallInteger();
     if (idx < 1) {
-        if (atFailCount++ < 5) {
-            std::cerr << "[PRIM60] at: FAIL - idx=" << idx << " (< 1)\n";
-        }
         return PrimitiveResult::Failure;  // 1-based indexing
     }
 
@@ -565,9 +538,6 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
 
     if (header->isBytesObject()) {
         if (arrayIndex >= header->byteSize()) {
-            if (atFailCount++ < 5) {
-                std::cerr << "[PRIM60] at: FAIL - bytes index " << arrayIndex << " >= size " << header->byteSize() << "\n";
-            }
             return PrimitiveResult::Failure;
         }
         uint8_t byte = header->byteAt(arrayIndex);
@@ -575,9 +545,6 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
         return PrimitiveResult::Success;
     } else if (header->isPointersObject()) {
         if (arrayIndex >= header->slotCount()) {
-            if (atFailCount++ < 5) {
-                std::cerr << "[PRIM60] at: FAIL - slot index " << arrayIndex << " >= slotCount " << header->slotCount() << "\n";
-            }
             return PrimitiveResult::Failure;
         }
         primitiveSuccess(header->slotAt(arrayIndex));
@@ -585,35 +552,13 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
     } else if (header->isCompiledMethod()) {
         // CompiledMethods are hybrid objects with both literals (pointers) and bytecodes
         // objectAt: accesses the literal frame (slots)
-        // Index 1 = header, Index 2+ = literals
         if (arrayIndex >= header->slotCount()) {
-            if (atFailCount++ < 5) {
-                std::cerr << "[PRIM60] at: FAIL - CompiledMethod slot index " << arrayIndex << " >= slotCount " << header->slotCount() << "\n";
-            }
             return PrimitiveResult::Failure;
         }
-        Oop result = header->slotAt(arrayIndex);
-        // Debug: trace CompiledMethod header access
-        static int cmHeaderAccess = 0;
-        if (arrayIndex == 0 && cmHeaderAccess++ < 20) {
-            std::cerr << "[PRIM60] CM header access: slotAt(0)=0x" << std::hex << result.rawBits()
-                      << " isSmallInt=" << result.isSmallInteger();
-            if (result.isSmallInteger()) {
-                std::cerr << " value=" << std::dec << result.asSmallInteger();
-            } else if (result.isObject()) {
-                ObjectHeader* resHdr = result.asObjectPtr();
-                std::cerr << std::dec << " isObject classIdx=" << resHdr->classIndex()
-                          << " fmt=" << (int)resHdr->format();
-            }
-            std::cerr << "\n";
-        }
-        primitiveSuccess(result);
+        primitiveSuccess(header->slotAt(arrayIndex));
         return PrimitiveResult::Success;
     }
 
-    if (atFailCount++ < 5) {
-        std::cerr << "[PRIM60] at: FAIL - not bytes or pointers or method, format=" << (int)header->format() << "\n";
-    }
     return PrimitiveResult::Failure;
 }
 
@@ -1227,42 +1172,16 @@ PrimitiveResult Interpreter::primitivePerformWithArgs(int argCount) {
 // ===== BLOCK PRIMITIVES =====
 
 PrimitiveResult Interpreter::primitiveBlockValue(int argCount) {
-    static int valueCallCount = 0;
-    valueCallCount++;
-
     Oop block = stackValue(argCount);
-
-    // Debug: show block value calls
-    if (valueCallCount <= 10) {
-        std::cerr << "[PRIM_VALUE] primitiveBlockValue #" << valueCallCount
-                  << " argCount=" << argCount
-                  << " block=0x" << std::hex << block.rawBits() << std::dec << "\n";
-        // Show block's numArgs
-        if (block.isObject()) {
-            Oop numArgsObj = memory_.fetchPointer(2, block);
-            std::cerr << "[PRIM_VALUE]   block numArgs slot=0x" << std::hex << numArgsObj.rawBits() << std::dec;
-            if (numArgsObj.isSmallInteger()) {
-                std::cerr << " (=" << numArgsObj.asSmallInteger() << ")";
-            }
-            std::cerr << "\n";
-        }
-    }
 
     // Verify arg count matches block's numArgs
     Oop numArgsObj = memory_.fetchPointer(2, block);
     if (!numArgsObj.isSmallInteger()) {
-        if (valueCallCount <= 10) {
-            std::cerr << "[PRIM_VALUE]   FAIL: numArgsObj not SmallInteger\n";
-        }
         return PrimitiveResult::Failure;
     }
 
     int blockArgCount = static_cast<int>(numArgsObj.asSmallInteger());
     if (blockArgCount != argCount) {
-        if (valueCallCount <= 10) {
-            std::cerr << "[PRIM_VALUE]   FAIL: argCount mismatch (block wants "
-                      << blockArgCount << ", got " << argCount << ")\n";
-        }
         return PrimitiveResult::Failure;
     }
 
@@ -1374,18 +1293,7 @@ PrimitiveResult Interpreter::primitiveBlockCopy(int argCount) {
 // Primitive 81: value (BlockClosure>>value with 0 args)
 // This is essentially the same as primitiveBlockValue but specifically for 0 args
 PrimitiveResult Interpreter::primitiveValue(int argCount) {
-    static int prim81Count = 0;
-    prim81Count++;
-
-    // For primitive 81, the receiver is the block, and argCount should be 0
-    // But the primitive dispatch may pass the actual arg count
     Oop block = stackValue(argCount);
-
-    if (prim81Count <= 10) {
-        std::cerr << "[PRIM81] primitiveValue #" << prim81Count
-                  << " argCount=" << argCount
-                  << " block=0x" << std::hex << block.rawBits() << std::dec << "\n";
-    }
 
     if (!block.isObject()) {
         return PrimitiveResult::Failure;
@@ -1399,10 +1307,6 @@ PrimitiveResult Interpreter::primitiveValue(int argCount) {
 
     int blockArgCount = static_cast<int>(numArgsObj.asSmallInteger());
     if (blockArgCount != argCount) {
-        if (prim81Count <= 10) {
-            std::cerr << "[PRIM81]   FAIL: argCount mismatch (block wants "
-                      << blockArgCount << ", got " << argCount << ")\n";
-        }
         return PrimitiveResult::Failure;
     }
 
@@ -1487,15 +1391,7 @@ PrimitiveResult Interpreter::primitiveClosureCopyWithCopiedValues(int argCount) 
 // Primitive 207: Full closure value (for closures with many arguments)
 // This handles FullBlockClosures which may have more complex activation
 PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
-    static int prim207Count = 0;
-    prim207Count++;
-
     Oop closure = stackValue(static_cast<size_t>(argCount));
-
-    if (prim207Count <= 10) {
-        std::cerr << "[PRIM207] primitiveFullClosureValue #" << prim207Count
-                  << " argCount=" << argCount << "\n";
-    }
 
     if (!closure.isObject()) {
         return PrimitiveResult::Failure;
@@ -1509,9 +1405,6 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
 
     int closureNumArgs = static_cast<int>(numArgsOop.asSmallInteger());
     if (closureNumArgs != argCount) {
-        if (prim207Count <= 10) {
-            std::cerr << "[PRIM207]   FAIL: wants " << closureNumArgs << " got " << argCount << "\n";
-        }
         return PrimitiveResult::Failure;
     }
 
@@ -1524,13 +1417,6 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
 // Evaluates a closure but ensures unwind actions are executed
 // Used for ensure: blocks
 PrimitiveResult Interpreter::primitiveClosureValueUnwind(int argCount) {
-    static int prim208Count = 0;
-    prim208Count++;
-    if (prim208Count <= 10) {
-        std::cerr << "[PRIM208] primitiveClosureValueUnwind #" << prim208Count
-                  << " argCount=" << argCount << "\n";
-    }
-
     Oop closure = stackValue(static_cast<size_t>(argCount));
 
     if (!closure.isObject()) {
@@ -1559,13 +1445,6 @@ PrimitiveResult Interpreter::primitiveClosureValueUnwind(int argCount) {
 // Same as primitiveFullClosureValue but won't check for interrupts/process switches
 // Used for critical sections where process switching must be avoided
 PrimitiveResult Interpreter::primitiveFullClosureValueNoContextSwitch(int argCount) {
-    static int prim209Count = 0;
-    prim209Count++;
-    if (prim209Count <= 10) {
-        std::cerr << "[PRIM209] primitiveFullClosureValueNoContextSwitch #" << prim209Count
-                  << " argCount=" << argCount << "\n";
-    }
-
     Oop closure = stackValue(static_cast<size_t>(argCount));
 
     if (!closure.isObject()) {
@@ -1721,134 +1600,53 @@ PrimitiveResult Interpreter::primitiveSignal(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveWait(int argCount) {
-    std::cerr << "[VM] primitiveWait ENTRY: argCount=" << argCount << "\n";
-    std::cerr.flush();
-
-    // Primitive 86: Semaphore>>wait, Semaphore>>wait:, Semaphore>>wait:timeout:
+    // Primitive 86: Semaphore>>wait
     // Wait on a semaphore. If excessSignals > 0, decrement and return.
     // Otherwise suspend current process on the semaphore's wait list.
-    //
-    // When argCount > 0 (e.g., wait:timeout:), the receiver is under the args
-
-    // Safety check for stack bounds
-    std::cerr << "[VM] primitiveWait: stackPointer_=" << (void*)stackPointer_
-              << " stackBase_=" << (void*)stackBase_ << "\n";
-    std::cerr.flush();
 
     if (stackPointer_ < stackBase_ + argCount + 1) {
-        std::cerr << "[VM] primitiveWait: Stack underflow (argCount=" << argCount << ")\n";
         return PrimitiveResult::Failure;
     }
-
-    std::cerr << "[VM] primitiveWait: About to call stackValue(" << argCount << ")\n";
-    std::cerr.flush();
 
     Oop semaphore = stackValue(argCount);  // Receiver is under args
 
-    std::cerr << "[VM] primitiveWait: semaphore raw=0x" << std::hex << semaphore.rawBits() << std::dec << "\n";
-    std::cerr.flush();
-
     if (!semaphore.isObject()) {
-        std::cerr << "[VM] primitiveWait: Receiver is not an object\n";
         return PrimitiveResult::Failure;
     }
 
-    std::cerr << "[VM] primitiveWait: About to access ObjectHeader\n";
-    std::cerr.flush();
-
-    // Validate semaphore has enough slots for a Semaphore
     ObjectHeader* semHdr = semaphore.asObjectPtr();
-
-    std::cerr << "[VM] primitiveWait: semHdr=" << (void*)semHdr << "\n";
-    std::cerr.flush();
-
     if (!semHdr || semHdr->slotCount() < 3) {
-        std::cerr << "[VM] primitiveWait: Receiver doesn't look like a Semaphore (slots="
-                  << (semHdr ? semHdr->slotCount() : 0) << ")\n";
         return PrimitiveResult::Failure;
     }
-
-    std::cerr << "[VM] primitiveWait: Validated receiver OK\n";
-    std::cerr.flush();
-
-    std::cerr << "[VM] primitiveWait: About to fetchPointer (SemaphoreExcessSignalsIndex="
-              << SemaphoreExcessSignalsIndex << ")\n";
-    std::cerr.flush();
 
     // Check excessSignals (slot 2 of Semaphore)
     Oop excessOop = memory_.fetchPointer(SemaphoreExcessSignalsIndex, semaphore);
 
-    std::cerr << "[VM] primitiveWait: excessOop=0x" << std::hex << excessOop.rawBits() << std::dec << "\n";
-    std::cerr.flush();
-
     if (excessOop.isSmallInteger()) {
         int64_t excess = excessOop.asSmallInteger();
-        std::cerr << "[VM] primitiveWait: excess=" << excess << "\n";
-        std::cerr.flush();
         if (excess > 0) {
             // Semaphore is signaled - decrement and return immediately
             memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
                                 Oop::fromSmallInteger(excess - 1));
-            std::cerr << "[VM] primitiveWait: Decremented, returning SUCCESS\n";
-            std::cerr.flush();
-            // Return the semaphore (receiver stays on stack)
             return PrimitiveResult::Success;
         }
     }
 
-    std::cerr << "[VM] primitiveWait: No signal, must wait. Getting active process...\n";
-    std::cerr.flush();
-
     // No signal available - must wait
-    // Add current process to semaphore's wait list
     Oop activeProcess = getActiveProcess();
-
-    std::cerr << "[VM] primitiveWait: activeProcess=0x" << std::hex << activeProcess.rawBits() << std::dec << "\n";
-    std::cerr.flush();
-
-    std::cerr << "[VM] primitiveWait: Adding to wait list...\n";
-    std::cerr.flush();
-
     addLastLinkToList(activeProcess, semaphore);
-
-    std::cerr << "[VM] primitiveWait: Added to wait list. Finding next process...\n";
-    std::cerr.flush();
 
     // Find next runnable process and switch to it
     Oop nextProcess = wakeHighestPriority();
 
-    std::cerr << "[VM] primitiveWait: wakeHighestPriority returned 0x" << std::hex << nextProcess.rawBits() << std::dec << "\n";
-    std::cerr.flush();
     Oop nilObj = memory_.nil();
     if (nextProcess.isNil() || nextProcess.rawBits() == nilObj.rawBits()) {
-        // No other process to switch to - we're the only process.
-        // For embedded VMs during startup, this can happen before other
-        // processes are created. Instead of failing, we'll just return
-        // success and let the Smalltalk code handle the situation
-        // (typically it will spin-wait or handle timeout).
+        // No other process to switch to - remove ourselves and return
         removeFirstLinkOfList(semaphore);
-
-        static int waitNoProcessCount = 0;
-        waitNoProcessCount++;
-        if (waitNoProcessCount <= 3) {
-            std::cerr << "[VM] primitiveWait: No other process to switch to (call #"
-                      << waitNoProcessCount << "), returning success to avoid cascade\n";
-        }
-
-        // Return success - Smalltalk code should handle the case where
-        // wait returns but semaphore wasn't actually signaled
         return PrimitiveResult::Success;
     }
 
-    std::cerr << "[VM] primitiveWait: About to call transferTo()\n";
-    std::cerr.flush();
-
     transferTo(nextProcess);
-
-    std::cerr << "[VM] primitiveWait: transferTo returned\n";
-    std::cerr.flush();
-
-    // When we return here (after being signaled), the result is the semaphore
     return PrimitiveResult::Success;
 }
 
@@ -1856,112 +1654,24 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
 
 PrimitiveResult Interpreter::primitiveQuit(int argCount) {
     // Smalltalk quitPrimitive / Smalltalk exit: exitCode
-    int exitCode = 0;
+    // For embedded iOS VM: don't actually quit, try to reschedule instead
 
-    if (argCount >= 1) {
-        Oop arg = stackValue(0);
-        if (arg.isSmallInteger()) {
-            exitCode = static_cast<int>(arg.asSmallInteger());
-        }
-    }
-
-    std::cerr << "\n[VM] primitiveQuit called with exitCode=" << exitCode << "\n";
-
-    // Trace the calling context to understand why quit was called
-    std::cerr << "[VM] Current method: 0x" << std::hex << method_.rawBits() << std::dec << "\n";
-    std::cerr << "[VM] Current receiver: 0x" << std::hex << receiver_.rawBits() << std::dec << "\n";
-
-    // Try to get receiver's class name
-    if (receiver_.isObject()) {
-        ObjectHeader* rcvr = receiver_.asObjectPtr();
-        int classIdx = rcvr->classIndex();
-        std::cerr << "[VM] Receiver classIndex=" << classIdx << "\n";
-
-        // Get class name from class table
-        Oop classObj = memory_.classAtIndex(classIdx);
-        if (classObj.isObject()) {
-            ObjectHeader* clsHdr = classObj.asObjectPtr();
-            // Class name is in slot 6 of the class object
-            if (clsHdr->slotCount() > 6) {
-                Oop nameOop = memory_.fetchPointer(6, classObj);
-                if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
-                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                    if (nameHdr->isBytesObject() && nameHdr->byteSize() <= 100) {
-                        std::string className((char*)nameHdr->bytes(), nameHdr->byteSize());
-                        std::cerr << "[VM] Receiver class: " << className << "\n";
-                    }
-                }
-            }
-        }
-
-        // Also try to get method selector from the method's literals
-        if (method_.isObject()) {
-            ObjectHeader* mthHdr = method_.asObjectPtr();
-            Oop methodHeader = memory_.fetchPointer(0, method_);
-            if (methodHeader.isSmallInteger()) {
-                int64_t headerBits = methodHeader.asSmallInteger();
-                size_t numLiterals = headerBits & 0x7FFF;  // bits 0-14
-                // Selector is typically in the last literal (or penultimate)
-                if (numLiterals > 0 && numLiterals <= mthHdr->slotCount()) {
-                    // Try last literal (selector often at end)
-                    Oop possibleSelector = memory_.fetchPointer(numLiterals, method_);
-                    if (possibleSelector.isObject() && possibleSelector.rawBits() > 0x10000) {
-                        ObjectHeader* selHdr = possibleSelector.asObjectPtr();
-                        if (selHdr->isBytesObject() && selHdr->byteSize() <= 100) {
-                            std::string selectorName((char*)selHdr->bytes(), selHdr->byteSize());
-                            std::cerr << "[VM] Method selector (maybe): " << selectorName << "\n";
-                        }
-                    }
-                }
-            }
-        }
-
-        // Dump receiver's first few slots
-        size_t slotCount = rcvr->slotCount();
-        std::cerr << "[VM] Receiver has " << slotCount << " slots:\n";
-        for (size_t i = 0; i < slotCount && i < 6; i++) {
-            Oop slot = rcvr->slotAt(i);
-            std::cerr << "[VM]   slot[" << i << "] = 0x" << std::hex << slot.rawBits() << std::dec;
-            if (slot.isSmallInteger()) {
-                std::cerr << " (SmallInt: " << slot.asSmallInteger() << ")";
-            } else if (slot.isNil()) {
-                std::cerr << " (nil)";
-            } else if (slot == memory_.trueObject()) {
-                std::cerr << " (true)";
-            } else if (slot == memory_.falseObject()) {
-                std::cerr << " (false)";
-            }
-            std::cerr << "\n";
-        }
-    }
-
-    // For embedded iOS VM: don't actually quit, just return and continue
     static int quitCallCount = 0;
     quitCallCount++;
 
     if (quitCallCount == 1) {
-        std::cerr << "[VM] primitiveQuit: IGNORING quit for embedded VM - restarting execution\n";
-
-        // Instead of just ignoring and continuing with broken state,
-        // reset and start fresh from the scheduler
         // Pop args and receiver from stack
         popN(argCount + 1);
 
         // Find another runnable process (like World's main UI process)
         if (tryReschedule()) {
-            std::cerr << "[VM] primitiveQuit: Found another process to run\n";
-            return PrimitiveResult::Success;  // Will continue with new process
+            return PrimitiveResult::Success;
         }
 
         // If no process, try bootstrap
         if (bootstrapStartup()) {
-            std::cerr << "[VM] primitiveQuit: Bootstrap startup succeeded\n";
             return PrimitiveResult::Success;
         }
-
-        std::cerr << "[VM] primitiveQuit: No other process or startup method found\n";
-    } else if (quitCallCount <= 3) {
-        std::cerr << "[VM] primitiveQuit: Ignoring quit #" << quitCallCount << "\n";
     }
 
     // Pop the args but don't continue with broken execution
@@ -1973,8 +1683,6 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
 
 PrimitiveResult Interpreter::primitiveExitToDebugger(int argCount) {
     // Primitive 114: Enter debugger / halt VM
-    // Used by Smalltalk Halt and Error handling
-    std::cerr << "[VM] primitiveExitToDebugger called - halting" << std::endl;
 
     // On debug builds, trigger a breakpoint
 #if defined(__APPLE__) && defined(__arm64__)
@@ -2286,12 +1994,6 @@ PrimitiveResult Interpreter::primitiveKeyboardNext(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveBeDisplay(int argCount) {
-    static bool firstCall = true;
-    if (firstCall) {
-        std::cerr << "[VM] primitiveBeDisplay called\n";
-        firstCall = false;
-    }
-
     if (argCount != 0) return PrimitiveResult::Failure;
 
     // Get the receiver (a Form object)
@@ -2324,22 +2026,10 @@ PrimitiveResult Interpreter::primitiveBeDisplay(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveForceDisplayUpdate(int argCount) {
-    static int callCount = 0;
-    callCount++;
-    // Log first 20 calls with detailed info
-    bool shouldLog = (callCount <= 20);
-
-    if (shouldLog) {
-        std::cerr << "[VM] primitiveForceDisplayUpdate #" << callCount
-                  << " displayForm_=" << (displayForm_.isNil() ? "nil" : "set")
-                  << " gDisplaySurface=" << (pharo::gDisplaySurface ? "set" : "nil") << "\n";
-    }
-
     if (argCount != 0) return PrimitiveResult::Failure;
 
     // If no display surface, nothing to do
     if (!pharo::gDisplaySurface) {
-        if (shouldLog) std::cerr << "[VM] primitiveForceDisplayUpdate: no display surface\n";
         return PrimitiveResult::Success;
     }
 
@@ -2348,22 +2038,6 @@ PrimitiveResult Interpreter::primitiveForceDisplayUpdate(int argCount) {
         Oop display = memory_.findGlobal("Display");
         if (!display.isNil() && display.isObject()) {
             displayForm_ = display;
-            std::cerr << "[VM] primitiveForceDisplayUpdate: Found Display global!\n";
-
-            // Extract dimensions from the Form
-            // Form slots: 0=bits, 1=width, 2=height, 3=depth
-            Oop widthOop = memory_.fetchPointer(1, display);
-            Oop heightOop = memory_.fetchPointer(2, display);
-            Oop depthOop = memory_.fetchPointer(3, display);
-            if (widthOop.isSmallInteger() && heightOop.isSmallInteger()) {
-                int formWidth = widthOop.asSmallInteger();
-                int formHeight = heightOop.asSmallInteger();
-                int formDepth = depthOop.isSmallInteger() ? depthOop.asSmallInteger() : 32;
-                std::cerr << "[VM] Display Form size: " << formWidth << "x" << formHeight
-                          << " depth=" << formDepth << "\n";
-            }
-        } else {
-            if (shouldLog) std::cerr << "[VM] primitiveForceDisplayUpdate: Display global not found\n";
         }
     }
 
@@ -2392,11 +2066,6 @@ PrimitiveResult Interpreter::primitiveForceDisplayUpdate(int argCount) {
             // Copy pixels (handle size mismatch)
             int copyWidth = std::min(srcWidth, dstWidth);
             int copyHeight = std::min(srcHeight, dstHeight);
-
-            if (shouldLog) {
-                std::cerr << "[VM] primitiveForceDisplayUpdate: copying " << copyWidth << "x" << copyHeight
-                          << " pixels from Form (depth=" << srcDepth << ") to surface\n";
-            }
 
             // Handle pixel format conversion
             // Pharo Forms are ARGB (or BGRA depending on endianness)
@@ -2434,15 +2103,12 @@ PrimitiveResult Interpreter::primitiveForceDisplayUpdate(int argCount) {
             // Notify platform of update
             pharo::gDisplaySurface->update();
             return PrimitiveResult::Success;
-        } else {
-            if (shouldLog) std::cerr << "[VM] primitiveForceDisplayUpdate: Form bits are nil\n";
         }
     }
 
     // No Form set - show a test pattern to verify display pipeline works
     static bool patternShown = false;
     if (!patternShown) {
-        std::cerr << "[VM] primitiveForceDisplayUpdate: No Form, showing test pattern\n";
         patternShown = true;
 
         // Fill with a gradient pattern
@@ -2557,33 +2223,23 @@ PrimitiveResult Interpreter::primitiveVMPath(int argCount) {
 // Primitive 106: Get the screen size as a Point
 // Returns Point with x = width, y = height
 PrimitiveResult Interpreter::primitiveScreenSize(int argCount) {
-    static int callCount = 0;
-    callCount++;
-    // Log first 20 calls to catch OSiOSDriver.isSupported check
-    if (callCount <= 20) {
-        std::cerr << "[VM] primitiveScreenSize #" << callCount << " size=" << screenWidth_ << "x" << screenHeight_ << "\n";
-    }
-
     // Create a Point object with screen dimensions
     // Point is stored as: x @ y where x and y are SmallIntegers
 
     // Get the Point class
     Oop pointClass = memory_.specialObject(SpecialObjectIndex::ClassPoint);
     if (pointClass.isNil()) {
-        std::cerr << "[VM] primitiveScreenSize FAILED: Point class is nil\n";
         return PrimitiveResult::Failure;
     }
 
     uint32_t classIndex = memory_.indexOfClass(pointClass);
     if (classIndex == 0) {
-        std::cerr << "[VM] primitiveScreenSize FAILED: Point classIndex is 0\n";
         return PrimitiveResult::Failure;
     }
 
     // Allocate a Point with 2 slots (x, y)
     Oop point = memory_.allocateSlots(classIndex, 2, ObjectFormat::FixedSize);
     if (point.isNil()) {
-        std::cerr << "[VM] primitiveScreenSize FAILED: Could not allocate Point\n";
         return PrimitiveResult::Failure;
     }
 
@@ -2593,9 +2249,6 @@ PrimitiveResult Interpreter::primitiveScreenSize(int argCount) {
 
     pop();  // Pop receiver
     push(point);
-    if (callCount <= 20) {
-        std::cerr << "[VM] primitiveScreenSize SUCCESS: returned Point\n";
-    }
     return PrimitiveResult::Success;
 }
 
@@ -2766,11 +2419,6 @@ PrimitiveResult Interpreter::primitiveSignalAtMilliseconds(int argCount) {
     // Store the timer info
     timerSemaphore_ = semaphore;
     nextWakeupTime_ = targetMs;
-
-    static int logCount = 0;
-    if (logCount++ < 5) {
-        std::cerr << "[VM] primitiveSignalAtMilliseconds: set wakeup at " << targetMs << " ms\n";
-    }
 
     primitiveSuccess(semaphore);  // Return receiver
     return PrimitiveResult::Success;
@@ -7696,24 +7344,13 @@ PrimitiveResult Interpreter::primitiveSetFullScreen(int argCount) {
 // Primitive 153: Set the input semaphore
 // semaphore primitiveInputSemaphore -> self
 PrimitiveResult Interpreter::primitiveInputSemaphore(int argCount) {
-    std::cerr << "[VM] primitiveInputSemaphore(153) called with argCount=" << argCount << "\n";
     if (argCount < 1) {
         return PrimitiveResult::Failure;
     }
 
-    Oop semaphoreOop = stackTop();
-    std::cerr << "[VM] primitiveInputSemaphore: semaphore=0x" << std::hex << semaphoreOop.rawBits() << std::dec << "\n";
-
     // Store the input semaphore for later signaling
-    // The semaphore index is typically computed by the image
-    // For now, we need to find the semaphore's index in the external semaphore table
-    // Actually, this primitive takes a semaphore object, not an index
-    // We should register it with the event queue
-    if (semaphoreOop.isObject()) {
-        // Store the semaphore for the event system
-        // For now, just acknowledge it
-        std::cerr << "[VM] primitiveInputSemaphore: Semaphore object received (need to register)\n";
-    }
+    // The semaphore object is on the stack - we could register it with the event system
+    // For now, just acknowledge it
 
     pop();  // pop semaphore, leave receiver
     return PrimitiveResult::Success;
@@ -8230,7 +7867,6 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
     if (!ffiInitialized) {
         ffiInitialized = ffi::initializeFFI();
         if (!ffiInitialized) {
-            std::cerr << "[FFI] Failed to initialize FFI system\n";
             return PrimitiveResult::Failure;
         }
     }
@@ -8246,11 +7882,6 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
     // The spec is typically an array like #( returnType funcName ( argTypes... ) )
     // For now, we'll try to extract function name from the method pragmas
 
-    // Log first few calls for debugging
-    if (callCount <= 10) {
-        std::cerr << "[FFI] primitiveCalloutToFFI #" << callCount << " argCount=" << argCount << "\n";
-    }
-
     // Get receiver - for SDL2 calls this is usually the SDL2 class or an external object
     Oop receiver = stackValue(argCount);
 
@@ -8259,13 +7890,8 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
     ObjectHeader* methodHdr = method.asObjectPtr();
     size_t numLiterals = methodHdr->slotCount();
 
-    if (callCount <= 10) {
-        std::cerr << "[FFI] Method header: numLiterals=" << numLiterals << "\n";
-    }
-
     // Safety check for unreasonable literal count
     if (numLiterals > 1000) {
-        std::cerr << "[FFI] Unreasonable literal count " << numLiterals << ", failing\n";
         return PrimitiveResult::Failure;
     }
 
@@ -8275,37 +7901,14 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
 
     // Scan literals for an array that looks like an FFI spec
     for (size_t i = 0; i < numLiterals && funcName.empty(); i++) {
-        if (callCount <= 5) {
-            std::cerr << "[FFI] Checking literal " << i << "/" << numLiterals << std::flush;
-        }
         Oop lit = memory_.fetchPointer(i, method);
-        if (callCount <= 5) {
-            std::cerr << " raw=" << std::hex << lit.rawBits() << std::dec
-                      << " isObj=" << lit.isObject() << "\n" << std::flush;
-        }
         if (lit.isObject()) {
             // Validate pointer is in heap before dereferencing
             if (!memory_.isValidPointer(lit)) {
-                if (callCount <= 5) {
-                    std::cerr << "[FFI] Literal " << i << " is invalid pointer, skipping\n" << std::flush;
-                }
                 continue;
             }
             ObjectHeader* litHdr = lit.asObjectPtr();
             uint32_t format = static_cast<uint32_t>(litHdr->format());
-            uint32_t classIdx = litHdr->classIndex();
-
-            // Debug: show what each valid literal contains
-            if (callCount <= 3) {
-                std::cerr << "[FFI]   Literal " << i << ": format=" << format
-                          << " classIdx=" << classIdx << " slots=" << litHdr->slotCount();
-                // If it's a byte object, show content
-                if (format >= 16 && format <= 23) {
-                    size_t len = std::min(litHdr->byteSize(), size_t(30));
-                    std::cerr << " bytes=\"" << std::string((char*)litHdr->bytes(), len) << "\"";
-                }
-                std::cerr << "\n";
-            }
 
             // Check if it's an Array (format 2 = indexable pointers)
             if (format == 2) {
@@ -8339,11 +7942,6 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
                                         returnTypeName = std::string(retBytes, retLen);
                                     }
                                 }
-
-                                if (callCount <= 10) {
-                                    std::cerr << "[FFI] Found SDL function: " << funcName
-                                              << " returns: " << returnTypeName << "\n";
-                                }
                             }
                         }
                     }
@@ -8367,10 +7965,6 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
                     // Let these fail so Pharo uses fallback code paths
                     if (str == "primNextPendingCallback" || str == "nextPendingCallback" ||
                         str == "primNumberOfCallbacks" || str == "numberOfCallbacks") {
-                        if (callCount <= 10) {
-                            std::cerr << "[FFI] " << str << " -> failing (no callback infrastructure)\n";
-                        }
-                        // Let it fail - Pharo's fallback code will handle it
                         return PrimitiveResult::Failure;
                     }
                 }
@@ -8379,16 +7973,12 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
     }
 
     if (funcName.empty()) {
-        if (callCount <= 10) {
-            std::cerr << "[FFI] Could not find function name in method literals\n";
-        }
         return PrimitiveResult::Failure;
     }
 
     // Look up the function
     void* funcPtr = ffi::lookupFunction("SDL2", funcName);
     if (!funcPtr) {
-        std::cerr << "[FFI] Function not found: " << funcName << "\n";
         return PrimitiveResult::Failure;
     }
 
@@ -8441,7 +8031,6 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
     ffi::FFIResult result = ffi::callFunction(funcPtr, argTypes, argValues, returnType);
 
     if (!result.success) {
-        std::cerr << "[FFI] Call failed: " << result.error << "\n";
         return PrimitiveResult::Failure;
     }
 
@@ -8494,10 +8083,6 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
 
     // Use primitiveSuccess which handles stack correctly
     primitiveSuccess(resultOop);
-
-    if (callCount <= 10) {
-        std::cerr << "[FFI] " << funcName << " returned successfully\n";
-    }
 
     return PrimitiveResult::Success;
 }

@@ -533,7 +533,6 @@ bool ObjectMemory::setGlobal(const std::string& name, Oop value) {
     // Get SmalltalkDictionary from special objects
     Oop smalltalkDict = specialObject(SpecialObjectIndex::SmalltalkDictionary);
     if (smalltalkDict.isNil() || !smalltalkDict.isObject()) {
-        std::cerr << "[setGlobal] SmalltalkDictionary is nil\n";
         return false;
     }
 
@@ -556,7 +555,6 @@ bool ObjectMemory::setGlobal(const std::string& name, Oop value) {
 
     Oop arraySlot = fetchPointer(1, sysDict);
     if (!arraySlot.isObject() || arraySlot.isNil()) {
-        std::cerr << "[setGlobal] array slot is nil\n";
         return false;
     }
 
@@ -594,51 +592,27 @@ bool ObjectMemory::setGlobal(const std::string& name, Oop value) {
         if (symbolEquals(key, name.c_str())) {
             // Found existing binding - update its value (slot 1)
             storePointer(1, item, value);
-            std::cerr << "[setGlobal] Updated existing '" << name << "' binding\n";
             return true;
         }
     }
 
-    // Not found - need to create new binding
-    // This is more complex as we'd need to create an Association and add to dictionary
-    // For now, just report failure for non-existing globals
-    std::cerr << "[setGlobal] '" << name << "' not found - creating new binding not yet implemented\n";
-
-    // Try to find an empty slot and create an Association
-    // Association has 2 slots: key (Symbol) and value
-    // We need to find/create the symbol first
-
-    // Find Symbol class to create the key
+    // Not found - create new binding
+    // Find Symbol and Association classes
     Oop symbolClass = findGlobal("Symbol");
-    if (symbolClass.isNil()) {
-        std::cerr << "[setGlobal] Cannot find Symbol class\n";
-        return false;
-    }
-
-    // Find Association class
     Oop assocClass = findGlobal("Association");
-    if (assocClass.isNil()) {
-        std::cerr << "[setGlobal] Cannot find Association class\n";
+    if (symbolClass.isNil() || assocClass.isNil()) {
         return false;
     }
 
     uint32_t assocClassIdx = indexOfClass(assocClass);
-    if (assocClassIdx == 0) {
-        std::cerr << "[setGlobal] Association class not in class table\n";
-        return false;
-    }
-
-    // Create symbol for the name
     uint32_t symbolClassIdx = indexOfClass(symbolClass);
-    if (symbolClassIdx == 0) {
-        std::cerr << "[setGlobal] Symbol class not in class table\n";
+    if (assocClassIdx == 0 || symbolClassIdx == 0) {
         return false;
     }
 
     // Allocate symbol (byte object)
     Oop symbolObj = allocateBytes(symbolClassIdx, name.size());
     if (symbolObj.isNil()) {
-        std::cerr << "[setGlobal] Failed to allocate symbol\n";
         return false;
     }
 
@@ -649,7 +623,6 @@ bool ObjectMemory::setGlobal(const std::string& name, Oop value) {
     // Allocate Association (2 pointer slots)
     Oop assocObj = allocateSlots(assocClassIdx, 2);
     if (assocObj.isNil()) {
-        std::cerr << "[setGlobal] Failed to allocate association\n";
         return false;
     }
 
@@ -658,23 +631,16 @@ bool ObjectMemory::setGlobal(const std::string& name, Oop value) {
     storePointer(1, assocObj, value);
 
     // Find empty slot in dictionary array and add the association
-    // Note: Empty slots may contain the nil object, not raw 0
     Oop nilObj = specialObject(SpecialObjectIndex::NilObject);
-    int emptySlotCount = 0;
 
     for (size_t i = 0; i < arraySize; ++i) {
         Oop item = arrayHeader->slotAt(i);
-        // Check for both raw 0 and the nil object
         if (item.rawBits() == 0 || item.rawBits() == nilObj.rawBits()) {
-            emptySlotCount++;
-            // Found empty slot - store the association
             storePointer(i, arraySlot, assocObj);
-            std::cerr << "[setGlobal] Created new '" << name << "' binding at slot " << i << "\n";
             return true;
         }
     }
 
-    std::cerr << "[setGlobal] No empty slot found in dictionary (checked " << arraySize << " slots, " << emptySlotCount << " empty)\n";
     return false;
 }
 
@@ -746,13 +712,6 @@ Oop ObjectMemory::fetchPointer(size_t index, Oop obj) const {
 
     // Validate pointer before dereferencing
     if (!isValidPointer(obj)) {
-        static int fetchCorruptCount = 0;
-        fetchCorruptCount++;
-        if (fetchCorruptCount <= 10) {
-            std::cerr << "[FETCH] INVALID obj pointer: 0x" << std::hex << obj.rawBits()
-                      << std::dec << " index=" << index << "\n";
-            std::cerr.flush();
-        }
         return Oop::nil();
     }
 
@@ -760,41 +719,7 @@ Oop ObjectMemory::fetchPointer(size_t index, Oop obj) const {
 
     if (index >= header->slotCount()) return Oop::nil();
 
-    Oop result = header->slotAt(index);
-
-    // Warn if result looks like ASCII data (potential corruption)
-    // ASCII characters typically have bytes in range 0x20-0x7E
-    if (result.isObject() && result.rawBits() != 0) {
-        uint64_t bits = result.rawBits();
-        int asciiCount = 0;
-        for (int i = 0; i < 8; i++) {
-            uint8_t byte = (bits >> (i * 8)) & 0xFF;
-            if (byte >= 0x20 && byte < 0x7F) asciiCount++;
-        }
-        // If 6+ bytes look like ASCII, this might be corrupted string data
-        if (asciiCount >= 6 && !isValidPointer(result)) {
-            static int asciiCorruptCount = 0;
-            asciiCorruptCount++;
-            if (asciiCorruptCount <= 10) {
-                char ascii[9];
-                for (int i = 0; i < 8; i++) {
-                    uint8_t byte = (bits >> (i * 8)) & 0xFF;
-                    ascii[i] = (byte >= 0x20 && byte < 0x7F) ? (char)byte : '.';
-                }
-                ascii[8] = '\0';
-                std::cerr << "[FETCH] WARNING: slot " << index << " of obj 0x"
-                          << std::hex << obj.rawBits() << " contains ASCII-like data: \""
-                          << ascii << "\" (0x" << bits << std::dec << ")\n";
-                // Show object header info
-                std::cerr << "  obj classIdx=" << header->classIndex()
-                          << " format=" << (int)header->format()
-                          << " slots=" << header->slotCount() << "\n";
-                std::cerr.flush();
-            }
-        }
-    }
-
-    return result;
+    return header->slotAt(index);
 }
 
 void ObjectMemory::storePointer(size_t index, Oop obj, Oop value) {
