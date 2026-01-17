@@ -10,6 +10,21 @@ namespace pharo {
 EventQueue gEventQueue;
 
 void EventQueue::push(const Event& event) {
+    // Log mouse events for debugging
+    // Mouse event: type=1, arg1=x, arg2=y, arg3=buttons, arg4=modifiers, arg5=subtype(0=move,1=down,2=up)
+    if (event.type == static_cast<int>(EventType::Mouse)) {
+        const char* typeStr = "?";
+        switch (event.arg5) {  // arg5 is the mouse event subtype
+            case 0: typeStr = "move"; break;
+            case 1: typeStr = "down"; break;
+            case 2: typeStr = "up"; break;
+        }
+        std::cerr << "[EVENT] Mouse " << typeStr
+                  << " at (" << event.arg1 << "," << event.arg2 << ")"
+                  << " buttons=" << event.arg3
+                  << " mods=" << event.arg4 << "\n";
+    }
+
     EventCallback callbackToInvoke = nullptr;
     void* context = nullptr;
 

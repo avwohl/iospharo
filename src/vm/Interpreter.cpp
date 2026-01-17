@@ -3719,6 +3719,30 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
     Oop currentClass = classOop;
     int depth = 0;
 
+    // Debug: trace lookups for 'world' selector
+    std::string selStr;
+    bool traceWorld = false;
+    if (selector.isObject() && selector.rawBits() > 0x10000) {
+        ObjectHeader* selHdr = selector.asObjectPtr();
+        if (selHdr->isBytesObject() && selHdr->byteSize() <= 50) {
+            selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+            traceWorld = (selStr == "world" || selStr == "owner");
+        }
+    }
+
+    // Helper to get class name
+    auto getClassName = [this](Oop cls) -> std::string {
+        if (!cls.isObject() || cls.rawBits() < 0x10000) return "?";
+        Oop nameOop = memory_.fetchPointer(6, cls);  // Slot 6 = name
+        if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+            ObjectHeader* nameHdr = nameOop.asObjectPtr();
+            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                return std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+            }
+        }
+        return "?";
+    };
+
     // Get nil object for proper comparison
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
     auto isNilOrEnd = [nilObj](Oop o) -> bool {
@@ -3728,6 +3752,12 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
     while (!isNilOrEnd(currentClass) && currentClass.isObject() && depth < 100) {
         Oop methodDict = methodDictOf(currentClass);
 
+        if (traceWorld) {
+            std::cerr << "[LOOKUP] #" << selStr << " depth=" << depth
+                      << " class=" << getClassName(currentClass)
+                      << " methodDict=" << (methodDict.isObject() ? "valid" : "nil/invalid") << "\n";
+        }
+
         if (!isNilOrEnd(methodDict) && methodDict.isObject()) {
             Oop method = lookupInMethodDict(methodDict, selector);
             if (!isNilOrEnd(method) && method.isObject()) {
@@ -3736,6 +3766,10 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
         }
         currentClass = superclassOf(currentClass);
         depth++;
+    }
+
+    if (traceWorld) {
+        std::cerr << "[LOOKUP] #" << selStr << " NOT FOUND after " << depth << " classes\n";
     }
 
     return Oop::nil();  // Not found
