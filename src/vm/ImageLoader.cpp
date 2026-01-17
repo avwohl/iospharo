@@ -6,6 +6,7 @@
 #include <cstring>
 #include <algorithm>
 #include <iostream>
+#include <iomanip>
 #include <map>
 #include <set>
 
@@ -403,7 +404,8 @@ bool ImageLoader::relocatePointers(ObjectMemory& memory, LoadResult& result) {
 
         // Only pointer objects have pointer fields to relocate
         // Formats 0-5 are pointer objects, 24-31 are compiled methods (mixed)
-        bool hasPointers = (format <= 5);
+        // Format 9 (Indexable64) - hiddenRoots uses this and contains pointers!
+        bool hasPointers = (format <= 5) || (format == 9);
         bool isCompiledMethod = (format >= 24 && format <= 31);
 
         if (hasPointers) {
@@ -555,18 +557,59 @@ bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
     constexpr size_t PageSize = 1024;
     size_t totalClasses = 0;
 
-    // std::cerr << "[DEBUG] Building class table from hiddenRoots structure..." << std::endl;
+    std::cerr << "[CLASS-TABLE] Building class table from hiddenRoots structure..." << std::endl;
 
-    // The hiddenRoots object is at the very start of old space (offset 0)
-    ObjectHeader* hiddenRootsHdr = reinterpret_cast<ObjectHeader*>(heapStart);
+    // Debug: show first 256 bytes of old space
+    std::cerr << "[CLASS-TABLE] First 256 bytes of old space:" << std::endl;
+    for (int row = 0; row < 16; row++) {
+        std::cerr << "[CLASS-TABLE]   0x" << std::hex << std::setw(3) << std::setfill('0') << (row * 16) << ": ";
+        for (int col = 0; col < 16; col++) {
+            std::cerr << std::setw(2) << std::setfill('0') << (int)heapStart[row * 16 + col] << " ";
+        }
+        std::cerr << std::dec << std::endl;
+    }
+
+    // Spur layout at start of old space:
+    //   offset 0x0:  nil object (format 0, 0 slots)
+    //   offset 0x10: false object (format 0, 0 slots)
+    //   offset 0x20: true object (format 0, 0 slots)
+    //   offset 0x30: hiddenRoots array (format 9 = Indexable64)
+    // Try the correct offset first (0x30), then fall back to 0x0 and 0x8
+
+    ObjectHeader* hiddenRootsHdr = reinterpret_cast<ObjectHeader*>(heapStart + 0x30);
     uint64_t hiddenRootsRaw = hiddenRootsHdr->rawHeader();
-
     size_t hiddenRootsSlots = hiddenRootsHdr->slotCount();
+
+    std::cerr << "[CLASS-TABLE] Trying offset 0x30: slots=" << hiddenRootsSlots
+              << " format=" << static_cast<int>(hiddenRootsHdr->format()) << std::endl;
+
+    // Debug: show raw bytes at hiddenRoots location
+    std::cerr << "[CLASS-TABLE] Raw bytes at 0x30 (first 128):" << std::endl;
+    uint8_t* rawBytes = heapStart + 0x30;
+    for (int row = 0; row < 8; row++) {
+        std::cerr << "[CLASS-TABLE]   0x" << std::hex << std::setw(2) << std::setfill('0') << (row * 16) << ": ";
+        for (int col = 0; col < 16; col++) {
+            std::cerr << std::setw(2) << std::setfill('0') << (int)rawBytes[row * 16 + col] << " ";
+        }
+        std::cerr << std::dec << std::endl;
+    }
+
+    if (hiddenRootsSlots == 0 || hiddenRootsHdr->format() != ObjectFormat::Indexable64) {
+        // Try offset 0x0
+        hiddenRootsHdr = reinterpret_cast<ObjectHeader*>(heapStart);
+        hiddenRootsRaw = hiddenRootsHdr->rawHeader();
+        hiddenRootsSlots = hiddenRootsHdr->slotCount();
+        std::cerr << "[CLASS-TABLE] Trying offset 0x0: slots=" << hiddenRootsSlots
+                  << " format=" << static_cast<int>(hiddenRootsHdr->format()) << std::endl;
+    }
+
     if (hiddenRootsSlots == 0) {
         // Maybe hiddenRoots is not at offset 0, try offset 0x8
         hiddenRootsHdr = reinterpret_cast<ObjectHeader*>(heapStart + 0x8);
         hiddenRootsRaw = hiddenRootsHdr->rawHeader();
         hiddenRootsSlots = hiddenRootsHdr->slotCount();
+        std::cerr << "[CLASS-TABLE] Trying offset 0x8: slots=" << hiddenRootsSlots
+                  << " format=" << static_cast<int>(hiddenRootsHdr->format()) << std::endl;
     }
 
     // Slot 0 of hiddenRoots should be the classTableFirstPage array
@@ -575,17 +618,39 @@ bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
     }
 
     {
+        // Debug: show first few slots of hiddenRoots
+        std::cerr << "[CLASS-TABLE] hiddenRoots slots (first 10):" << std::endl;
+        for (size_t i = 0; i < std::min(hiddenRootsSlots, (size_t)10); i++) {
+            Oop slot = hiddenRootsHdr->slotAt(i);
+            std::cerr << "[CLASS-TABLE]   slot[" << i << "] = 0x" << std::hex << slot.rawBits() << std::dec;
+            if (slot.isNil()) {
+                std::cerr << " (nil)";
+            } else if (slot.isSmallInteger()) {
+                std::cerr << " (SmallInt: " << slot.asSmallInteger() << ")";
+            } else if (slot.isObject()) {
+                ObjectHeader* slotHdr = slot.asObjectPtr();
+                std::cerr << " (obj: fmt=" << static_cast<int>(slotHdr->format())
+                          << " slots=" << slotHdr->slotCount()
+                          << " cls=" << slotHdr->classIndex() << ")";
+            }
+            std::cerr << std::endl;
+        }
+
         Oop classTableFirstPageOop = hiddenRootsHdr->slotAt(0);
 
         if (classTableFirstPageOop.isNil() || !classTableFirstPageOop.isObject()) {
+            std::cerr << "[CLASS-TABLE] classTableFirstPage is nil/invalid (0x" << std::hex
+                      << classTableFirstPageOop.rawBits() << std::dec << "), going to fallback" << std::endl;
             goto fallback_scan;
         }
 
         ObjectHeader* classTableFirstPageHdr = classTableFirstPageOop.asObjectPtr();
         size_t numPages = classTableFirstPageHdr->slotCount();
 
-        // Iterate through each page
-        for (size_t pageNum = 0; pageNum < numPages && pageNum < 20; pageNum++) {
+        std::cerr << "[CLASS-TABLE] Found " << numPages << " class table pages" << std::endl;
+
+        // Iterate through each page (increased limit to 50 to ensure we get all classes)
+        for (size_t pageNum = 0; pageNum < numPages && pageNum < 50; pageNum++) {
             Oop pageOop = classTableFirstPageHdr->slotAt(pageNum);
 
             if (pageOop.isNil() || !pageOop.isObject()) {
@@ -594,6 +659,7 @@ bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
 
             ObjectHeader* pageHdr = pageOop.asObjectPtr();
             size_t pageSlots = pageHdr->slotCount();
+            size_t pageClasses = 0;
 
             // Each slot in the page is a class object pointer
             for (size_t i = 0; i < pageSlots; i++) {
@@ -607,10 +673,24 @@ bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
                     uint32_t classIndex = static_cast<uint32_t>(pageNum * PageSize + i);
                     memory.setClassAtIndex(classIndex, classOop);
                     totalClasses++;
+                    pageClasses++;
+
+                    // Debug: log class indices 7185 and 7190 specifically
+                    if (classIndex == 7185 || classIndex == 7190) {
+                        std::cerr << "[CLASS-TABLE] Registered class " << classIndex
+                                  << " from page " << pageNum << " slot " << i << std::endl;
+                    }
                 }
+            }
+
+            // Log first 10 pages and page 7 (where 7185 should be)
+            if (pageNum < 10 || pageNum == 7) {
+                std::cerr << "[CLASS-TABLE] Page " << pageNum << ": " << pageClasses
+                          << " classes (slots=" << pageSlots << ")" << std::endl;
             }
         }
 
+        std::cerr << "[CLASS-TABLE] Total classes loaded: " << totalClasses << std::endl;
         return true;
     }
 
