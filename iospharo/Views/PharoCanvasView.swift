@@ -28,6 +28,12 @@ class PharoMTKView: MTKView {
         isUserInteractionEnabled = true
         isMultipleTouchEnabled = true
 
+        // Debug: log to file that view was created
+        if let file = fopen("/tmp/mtkview_setup.log", "a") {
+            fputs("[MTKVIEW] setupView called, isUserInteractionEnabled=\(isUserInteractionEnabled)\n", file)
+            fclose(file)
+        }
+
         // Note: Removed UIPointerInteraction as it might be consuming click events
         // #if targetEnvironment(macCatalyst)
         // let pointerInteraction = UIPointerInteraction(delegate: self)
@@ -45,10 +51,13 @@ class PharoMTKView: MTKView {
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         let result = super.hitTest(point, with: event)
         hitTestCount += 1
-        // Log every 500th hit test or when result isn't self
-        if hitTestCount % 500 == 1 || result != self {
-            let resultDesc = result == nil ? "nil" : (result == self ? "self" : String(describing: type(of: result!)))
-            NSLog("[HIT] #\(hitTestCount) hitTest at \(point) -> \(resultDesc)")
+        // Log to file
+        if hitTestCount <= 100 || hitTestCount % 500 == 1 {
+            if let file = fopen("/tmp/mtkview_hittest.log", "a") {
+                let resultDesc = result == nil ? "nil" : (result === self ? "self" : String(describing: type(of: result!)))
+                fputs("[HIT] #\(hitTestCount) hitTest at \(point) -> \(resultDesc)\n", file)
+                fclose(file)
+            }
         }
         return result
     }
@@ -84,9 +93,31 @@ class PharoMTKView: MTKView {
     private var hadTouchesBegan: Bool = false
     #endif
 
+    // Debug: log to file
+    private static var touchLogFile: UnsafeMutablePointer<FILE>? = {
+        fopen("/tmp/swift_touch.log", "w")
+    }()
+
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let touch = touches.first, let bridge = bridge else { return }
+        // Debug: check if bridge is nil - log to file
+        let bridgeStatus = bridge != nil ? "set" : "nil"
+        if let file = Self.touchLogFile {
+            let msg = "[TOUCH-DEBUG] touchesBegan called, bridge=\(bridgeStatus)\n"
+            fputs(msg, file)
+            fflush(file)
+        }
+        guard let touch = touches.first, let bridge = bridge else {
+            if let file = Self.touchLogFile {
+                fputs("[TOUCH-DEBUG] Early return: bridge is nil\n", file)
+                fflush(file)
+            }
+            return
+        }
         let point = touch.location(in: self)
+        if let file = Self.touchLogFile {
+            fputs("[TOUCH-DEBUG] Processing touch at \(point)\n", file)
+            fflush(file)
+        }
 
         #if targetEnvironment(macCatalyst)
         // Mark that we received a touchesBegan (right-clicks skip this)
