@@ -7444,12 +7444,30 @@ void Interpreter::primitiveFail() {
 }
 
 void Interpreter::initializePrimitives() {
-    // Clear all entries
+    // Clear all entries first
     for (auto& entry : primitiveTable_) {
         entry = nullptr;
     }
 
-    // Register primitives
+    // Load primitive table from VMMaker-generated source
+    // This ensures the table matches what the Pharo image expects
+    #include "../ios/generated_primitives.inc"
+
+    // NOTE: The generated file maps VMMaker primitive names to C++ method names.
+    // If a primitive method doesn't exist, it will cause a compile error here,
+    // which is intentional - it means we need to implement that primitive.
+    //
+    // The old hand-written table had many errors (wrong primitive numbers).
+    // Using the generated table ensures correctness.
+}
+
+// Keep the old hand-written table below for reference during migration.
+// Delete this once all primitives are verified to work.
+#if 0
+void Interpreter::initializePrimitives_OLD() {
+    for (auto& entry : primitiveTable_) {
+        entry = nullptr;
+    }
     primitiveTable_[1] = &Interpreter::primitiveAdd;
     primitiveTable_[2] = &Interpreter::primitiveSubtract;
     primitiveTable_[3] = &Interpreter::primitiveLessThan;
@@ -8182,6 +8200,7 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[512] = &Interpreter::primitiveGetVMVersion;
     primitiveTable_[513] = &Interpreter::primitiveGetSystemLocale;
 }
+#endif // old hand-written table
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {
     static int failCount = 0;

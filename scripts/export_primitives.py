@@ -70,6 +70,145 @@ def parse_primitive_table_spec(st_file: Path) -> list:
 
     return entries
 
+# Primitives not yet implemented in C++ - map to nullptr
+UNIMPLEMENTED_PRIMITIVES = {
+    'primitiveLargeIntegerRem',  # 20 - not commonly used
+    'primitiveObjectAt',  # 68 - raw slot access
+    'primitiveObjectAtPut',  # 69 - raw slot access
+    'primitiveStoreStackp',  # 76 - stack manipulation
+    'primitiveMoveToPermSpace',  # 90 - perm space
+    'primitiveMoveToPermSpaceInBulk',  # 91
+    'primitiveIsInPermSpace',  # 92
+    'primitiveMoveToPermSpaceAllOldObjects',  # 93
+    'primitiveFullClosureValueWithArgs',  # 208
+    'primitiveFullClosureValueNoContextSwitch',  # 209
+    'primitiveContextXray',  # 213
+    'primitiveVoidVMState',  # 214
+    'primitiveMethodXray',  # 216
+    'primitiveMethodProfilingData',  # 217
+    'primitiveDoNamedPrimitiveWithArgs',  # 218
+    'primitiveFormat',  # 231
+    'primitiveSignalAtUTCMicroseconds',  # 242
+    'primitiveUpdateTimezone',  # 243
+    'primitiveUtcAndTimezoneOffset',  # 244
+    'primitiveCoarseUTCMicrosecondClock',  # 245
+    'primitiveCoarseLocalMicrosecondClock',  # 246
+    'primitiveClearVMProfile',  # 250
+    'primitiveControlVMProfiling',  # 251
+    'primitiveVMProfileSamplesInto',  # 252
+    'primitiveCollectCogCodeConstituents',  # 253
+    'primitiveFlushExternalPrimitives',  # 570
+    'primitiveUnloadModule',  # 571
+    'primitiveListBuiltinModule',  # 572
+    'primitiveListExternalModule',  # 573
+    'primitiveFloat64ArrayAdd',  # 574
+    'primitiveNewOldSpace',  # 596
+    'primitiveNewWithArgOldSpace',  # 597
+    'primitiveNewPinned',  # 598
+    'primitiveNewWithArgPinned',  # 599
+    # All FFI byte access primitives (600-659) - need FFI support
+    'primitiveLoadBoolean8FromBytes', 'primitiveLoadUInt8FromBytes',
+    'primitiveLoadInt8FromBytes', 'primitiveLoadUInt16FromBytes',
+    'primitiveLoadInt16FromBytes', 'primitiveLoadUInt32FromBytes',
+    'primitiveLoadInt32FromBytes', 'primitiveLoadUInt64FromBytes',
+    'primitiveLoadInt64FromBytes', 'primitiveLoadPointerFromBytes',
+    'primitiveLoadChar8FromBytes', 'primitiveLoadChar16FromBytes',
+    'primitiveLoadChar32FromBytes', 'primitiveLoadFloat32FromBytes',
+    'primitiveLoadFloat64FromBytes', 'primitiveStoreBoolean8IntoBytes',
+    'primitiveStoreUInt8IntoBytes', 'primitiveStoreInt8IntoBytes',
+    'primitiveStoreUInt16IntoBytes', 'primitiveStoreInt16IntoBytes',
+    'primitiveStoreUInt32IntoBytes', 'primitiveStoreInt32IntoBytes',
+    'primitiveStoreUInt64IntoBytes', 'primitiveStoreInt64IntoBytes',
+    'primitiveStorePointerIntoBytes', 'primitiveStoreChar8IntoBytes',
+    'primitiveStoreChar16IntoBytes', 'primitiveStoreChar32IntoBytes',
+    'primitiveStoreFloat32IntoBytes', 'primitiveStoreFloat64IntoBytes',
+    'primitiveLoadBoolean8FromExternalAddress', 'primitiveLoadUInt8FromExternalAddress',
+    'primitiveLoadInt8FromExternalAddress', 'primitiveLoadUInt16FromExternalAddress',
+    'primitiveLoadInt16FromExternalAddress', 'primitiveLoadUInt32FromExternalAddress',
+    'primitiveLoadInt32FromExternalAddress', 'primitiveLoadUInt64FromExternalAddress',
+    'primitiveLoadInt64FromExternalAddress', 'primitiveLoadPointerFromExternalAddress',
+    'primitiveLoadChar8FromExternalAddress', 'primitiveLoadChar16FromExternalAddress',
+    'primitiveLoadChar32FromExternalAddress', 'primitiveLoadFloat32FromExternalAddress',
+    'primitiveLoadFloat64FromExternalAddress', 'primitiveStoreBoolean8IntoExternalAddress',
+    'primitiveStoreUInt8IntoExternalAddress', 'primitiveStoreInt8IntoExternalAddress',
+    'primitiveStoreUInt16IntoExternalAddress', 'primitiveStoreInt16IntoExternalAddress',
+    'primitiveStoreUInt32IntoExternalAddress', 'primitiveStoreInt32IntoExternalAddress',
+    'primitiveStoreUInt64IntoExternalAddress', 'primitiveStoreInt64IntoExternalAddress',
+    'primitiveStorePointerIntoExternalAddress', 'primitiveStoreChar8IntoExternalAddress',
+    'primitiveStoreChar16IntoExternalAddress', 'primitiveStoreChar32IntoExternalAddress',
+    'primitiveStoreFloat32IntoExternalAddress', 'primitiveStoreFloat64IntoExternalAddress',
+    # More unimplemented (use VMMaker names, not C++ names!)
+    'primitiveRemLargeIntegers',  # 20 - VMMaker name
+    'primitiveVoidVMStateForMethod',  # 215 - VMMaker name (maps to primitiveVoidVMState)
+    'primitiveArrayBecomeOneWayNoCopyHash',  # 248
+    'primitiveArrayBecomeOneWayCopyHash',  # 249
+    # SmallFloat primitives - all unimplemented (use VMMaker names)
+    'primitiveSmallFloatAdd', 'primitiveSmallFloatSubtract',
+    'primitiveSmallFloatLessThan', 'primitiveSmallFloatGreaterThan',
+    'primitiveSmallFloatLessOrEqual', 'primitiveSmallFloatGreaterOrEqual',
+    'primitiveSmallFloatEqual', 'primitiveSmallFloatNotEqual',
+    'primitiveSmallFloatMultiply', 'primitiveSmallFloatDivide',
+    'primitiveSmallFloatTruncated', 'primitiveSmallFloatFractionalPart',
+    'primitiveSmallFloatExponent', 'primitiveSmallFloatTimesTwoPower',
+    'primitiveSmallFloatSquareRoot', 'primitiveSmallFloatSine',  # VMMaker uses "Sine" not "Sin"
+    'primitiveSmallFloatArctan', 'primitiveSmallFloatLogN', 'primitiveSmallFloatExp',  # VMMaker uses "LogN" not "Ln"
+}
+
+# Mapping from VMMaker names to C++ names where they differ
+VMMAKER_TO_CPP_NAMES = {
+    # LargeInteger primitives - VMMaker uses "OpLargeIntegers", C++ uses "LargeIntegerOp"
+    'primitiveRemLargeIntegers': 'primitiveLargeIntegerRem',
+    'primitiveAddLargeIntegers': 'primitiveLargeIntegerAdd',
+    'primitiveSubtractLargeIntegers': 'primitiveLargeIntegerSubtract',
+    'primitiveLessThanLargeIntegers': 'primitiveLargeIntegerLessThan',
+    'primitiveGreaterThanLargeIntegers': 'primitiveLargeIntegerGreaterThan',
+    'primitiveLessOrEqualLargeIntegers': 'primitiveLargeIntegerLessOrEqual',
+    'primitiveGreaterOrEqualLargeIntegers': 'primitiveLargeIntegerGreaterOrEqual',
+    'primitiveEqualLargeIntegers': 'primitiveLargeIntegerEqual',
+    'primitiveNotEqualLargeIntegers': 'primitiveLargeIntegerNotEqual',
+    'primitiveMultiplyLargeIntegers': 'primitiveLargeIntegerMultiply',
+    'primitiveDivideLargeIntegers': 'primitiveLargeIntegerDivide',
+    'primitiveModLargeIntegers': 'primitiveLargeIntegerMod',
+    'primitiveDivLargeIntegers': 'primitiveLargeIntegerDiv',
+    'primitiveQuoLargeIntegers': 'primitiveLargeIntegerQuo',
+    'primitiveBitAndLargeIntegers': 'primitiveLargeIntegerBitAnd',
+    'primitiveBitOrLargeIntegers': 'primitiveLargeIntegerBitOr',
+    'primitiveBitXorLargeIntegers': 'primitiveLargeIntegerBitXor',
+    'primitiveBitShiftLargeIntegers': 'primitiveLargeIntegerBitShift',
+
+    # Float primitives - some name differences
+    'primitiveTruncated': 'primitiveFloatTruncated',
+    'primitiveSquareRoot': 'primitiveFloatSquareRoot',
+    'primitiveSine': 'primitiveFloatSin',
+    'primitiveArctan': 'primitiveFloatArctan',
+    'primitiveLogN': 'primitiveFloatLn',
+    'primitiveExp': 'primitiveFloatExp',
+
+    # SmallFloat primitives
+    'primitiveSmallFloatTruncated': 'primitiveSmallFloatTruncated',
+    'primitiveSmallFloatSquareRoot': 'primitiveSmallFloatSquareRoot',
+    'primitiveSmallFloatSine': 'primitiveSmallFloatSin',
+    'primitiveSmallFloatArctan': 'primitiveSmallFloatArctan',
+    'primitiveSmallFloatLogN': 'primitiveSmallFloatLn',
+    'primitiveSmallFloatExp': 'primitiveSmallFloatExp',
+
+    # Other renames
+    'primitiveGrowMemoryByAtLeast': 'primitiveGrowMemory',
+    'primitiveSetOrHasIdentityHash': 'primitiveSetIdentityHash',
+    'primitiveStringCompareWith': 'primitiveCompareWith',
+    'primitiveVoidVMStateForMethod': 'primitiveVoidVMState',
+    'primitiveMethodXray': 'primitiveMethodXray',
+}
+
+def vmmaker_to_cpp_name(vmmaker_name: str) -> str | None:
+    """Convert VMMaker primitive name to C++ method name.
+    Returns None if the primitive is not yet implemented."""
+    # Check if unimplemented
+    if vmmaker_name in UNIMPLEMENTED_PRIMITIVES:
+        return None
+    # Check for name mapping
+    return VMMAKER_TO_CPP_NAMES.get(vmmaker_name, vmmaker_name)
+
 def export_json(entries: list, output_path: Path):
     """Export entries as JSON."""
     data = {
@@ -87,8 +226,8 @@ def export_cpp(entries: list, output_path: Path):
         '// Source: VMMaker StackInterpreter initializePrimitiveTable',
         f'// Generated: {datetime.now().isoformat()}',
         '',
-        '// Include this file in Interpreter::initializePrimitiveTable()',
-        '// Usage: #include "generated_primitives.inc"',
+        '// Include this file in Interpreter::initializePrimitives()',
+        '// Usage: #include "../ios/generated_primitives.inc"',
         '',
     ]
 
@@ -102,8 +241,13 @@ def export_cpp(entries: list, output_path: Path):
         if status in ('unimplemented', 'quickPrimitive'):
             cpp_name = 'nullptr'
         else:
-            cpp_name = f'&Interpreter::{name}'
-            implemented_count += 1
+            # Map VMMaker name to C++ name
+            cpp_method = vmmaker_to_cpp_name(name)
+            if cpp_method is None:
+                cpp_name = 'nullptr'  # Not yet implemented in C++
+            else:
+                cpp_name = f'&Interpreter::{cpp_method}'
+                implemented_count += 1
 
         lines.append(f'primitiveTable_[{num}] = {cpp_name};  // {category}')
 
