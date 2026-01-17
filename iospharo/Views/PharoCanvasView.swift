@@ -79,6 +79,11 @@ class PharoMTKView: MTKView {
         let buttons = IOS_RED_BUTTON
         #endif
 
+        // IMPORTANT: Send a MOVE event first to position the hand cursor
+        // This matches what test_platform does - the hand must be at the click
+        // position BEFORE the down event, or Morphic won't find the target correctly
+        bridge.sendMouseMoved(to: point, modifiers: 0)
+
         bridge.sendTouchDown(at: point, buttons: buttons)
     }
 
@@ -316,6 +321,8 @@ class PharoCanvasViewController: UIViewController {
         }
         let point = gesture.location(in: mtkView)  // Get location relative to MTKView
         NSLog("[TAP] Single tap at \(point)")
+        // Send move first to position hand cursor, then down/up
+        bridge.sendMouseMoved(to: point, modifiers: 0)
         bridge.sendTouchDown(at: point, buttons: IOS_RED_BUTTON)
         bridge.sendTouchUp(at: point)
     }
@@ -327,6 +334,7 @@ class PharoCanvasViewController: UIViewController {
         switch gesture.state {
         case .began:
             NSLog("[PAN] began at \(point)")
+            bridge.sendMouseMoved(to: point, modifiers: 0)  // Position hand first
             bridge.sendTouchDown(at: point, buttons: IOS_RED_BUTTON)
         case .changed:
             bridge.sendTouchMoved(to: point, buttons: IOS_RED_BUTTON)
@@ -343,6 +351,8 @@ class PharoCanvasViewController: UIViewController {
         let point = gesture.location(in: mtkView)
         NSLog("[DOUBLE TAP] at \(point)")
 
+        // Position hand first
+        bridge.sendMouseMoved(to: point, modifiers: 0)
         bridge.sendTouchDown(at: point, buttons: IOS_RED_BUTTON)
         bridge.sendTouchUp(at: point)
         bridge.sendTouchDown(at: point, buttons: IOS_RED_BUTTON)
@@ -356,6 +366,7 @@ class PharoCanvasViewController: UIViewController {
         switch gesture.state {
         case .began:
             NSLog("[LONG PRESS] began at \(point)")
+            bridge.sendMouseMoved(to: point, modifiers: 0)  // Position hand first
             bridge.sendTouchDown(at: point, buttons: IOS_BLUE_BUTTON)
             bridge.hapticFeedback(style: .medium)
         case .changed:
@@ -372,6 +383,8 @@ class PharoCanvasViewController: UIViewController {
         let point = gesture.location(in: mtkView)
         NSLog("[TWO FINGER TAP] at \(point)")
 
+        // Position hand first
+        bridge.sendMouseMoved(to: point, modifiers: 0)
         bridge.sendTouchDown(at: point, buttons: IOS_YELLOW_BUTTON)
         bridge.sendTouchUp(at: point)
         bridge.hapticFeedback(style: .light)
