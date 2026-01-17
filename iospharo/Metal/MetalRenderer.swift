@@ -82,14 +82,44 @@ class MetalRenderer: NSObject, MTKViewDelegate {
 
     /// Update the display texture from VM framebuffer
     /// WIP: Resize tearing not fully fixed yet
+    private var updateTextureCount = 0
+
     func updateDisplayTexture() {
         guard let bridge = bridge else { return }
 
         // Get display info atomically
-        let (pixels, width, height, _) = bridge.getDisplayBufferInfo()
+        let (pixels, width, height, size) = bridge.getDisplayBufferInfo()
 
         guard let bits = pixels, width > 0, height > 0 else {
             return
+        }
+
+        // Log texture updates and sample pixel data
+        updateTextureCount += 1
+        // Log more frequently to see changes after user interaction
+        if updateTextureCount <= 5 || updateTextureCount % 100 == 0 {
+            // Sample menu bar area to understand the layout
+            // Menu bar in Pharo is typically 28 points tall
+            // In 2048x1536 (2x Retina), that would be y=0-56 pixels
+            // OR if coordinates aren't scaled, y=0-28
+
+            // Pixel at (50, 25) - should be on menu bar if not scaled
+            let p1 = 25 * width + 50
+            let pixel1 = p1 < size ? bits[p1] : 0
+
+            // Pixel at (50, 50) - below menu bar if not scaled, on menu bar if scaled
+            let p2 = 50 * width + 50
+            let pixel2 = p2 < size ? bits[p2] : 0
+
+            // Pixel at (50, 75) - definitely below menu bar
+            let p3 = 75 * width + 50
+            let pixel3 = p3 < size ? bits[p3] : 0
+
+            // Log pixel values
+            NSLog("[METAL] updateTexture #\(updateTextureCount): \(width)x\(height) " +
+                  "(50,25)=\(String(format:"0x%08X", pixel1)) " +
+                  "(50,50)=\(String(format:"0x%08X", pixel2)) " +
+                  "(50,75)=\(String(format:"0x%08X", pixel3))")
         }
 
         // Recreate texture if size changed

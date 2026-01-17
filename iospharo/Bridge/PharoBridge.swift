@@ -51,7 +51,16 @@ class PharoBridge: ObservableObject {
         ios_registerDisplayUpdateCallback(callback)
     }
 
+    // Track update count for logging
+    private var updateCount = 0
+
     private func handleDisplayUpdate(x: Int, y: Int, width: Int, height: Int) {
+        updateCount += 1
+        // Log first 10 updates, then every 100th
+        if updateCount <= 10 || updateCount % 100 == 0 {
+            NSLog("[DISPLAY] Update #\(updateCount): rect=(\(x),\(y),\(width),\(height))")
+        }
+
         // Update dimensions if changed
         let newWidth = Int(ios_getDisplayWidth())
         let newHeight = Int(ios_getDisplayHeight())
