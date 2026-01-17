@@ -1406,14 +1406,6 @@ void Interpreter::processInputEvents() {
     // Process pending events from the event queue
     // Events we don't handle (non-menu events) are passed through to Pharo
     static FILE* logFile = fopen("/tmp/iospharo-events.log", "a");
-    static int callCount = 0;
-    callCount++;
-
-    // Log every 10th call to show we're being called
-    if (logFile && callCount % 10 == 0) {
-        fprintf(logFile, "[PROCESS] processInputEvents called %d times\n", callCount);
-        fflush(logFile);
-    }
 
     pharo::Event event;
     while (pharo::gEventQueue.pop(event)) {
