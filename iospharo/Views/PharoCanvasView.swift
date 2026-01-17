@@ -41,9 +41,24 @@ class PharoMTKView: MTKView {
     }
 
     // Debug: track if view is receiving hit tests
+    private var hitTestCount = 0
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         let result = super.hitTest(point, with: event)
-        NSLog("[HIT] hitTest at \(point) -> \(result == self ? "self" : String(describing: result))")
+        hitTestCount += 1
+        // Log every 500th hit test or when result isn't self
+        if hitTestCount % 500 == 1 || result != self {
+            let resultDesc = result == nil ? "nil" : (result == self ? "self" : String(describing: type(of: result!)))
+            NSLog("[HIT] #\(hitTestCount) hitTest at \(point) -> \(resultDesc)")
+        }
+        return result
+    }
+
+    // Debug: track point events
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        let result = super.point(inside: point, with: event)
+        if result {
+            NSLog("[POINT] point(inside: \(point)) -> \(result)")
+        }
         return result
     }
 
@@ -252,8 +267,16 @@ class PharoCanvasViewController: UIViewController {
         NSLog("[VC] mtkView.frame: \(mtkView.frame)")
         NSLog("[VC] mtkView.isUserInteractionEnabled: \(mtkView.isUserInteractionEnabled)")
         NSLog("[VC] bridge: \(String(describing: bridge))")
+        NSLog("[VC] mtkView.bounds: \(mtkView.bounds)")
+        NSLog("[VC] mtkView.window: \(String(describing: mtkView.window))")
+        NSLog("[VC] view.window: \(String(describing: view.window))")
 
-        // Heartbeat timer removed - was too verbose for normal use
+        // Log gesture recognizers
+        if let gestures = mtkView.gestureRecognizers {
+            for (i, g) in gestures.enumerated() {
+                NSLog("[VC] mtkView gesture[\(i)]: \(type(of: g)) enabled=\(g.isEnabled)")
+            }
+        }
     }
 
     private func setupGestureRecognizers() {
@@ -373,12 +396,13 @@ class PharoCanvasViewController: UIViewController {
 
     /// Handle right-click (secondary button) for world menu
     @objc func handleRightClick(_ gesture: UITapGestureRecognizer) {
+        NSLog("[RIGHT-CLICK] gesture state=\(gesture.state.rawValue)")
         guard let bridge = bridge else {
             NSLog("[RIGHT-CLICK] No bridge!")
             return
         }
         let point = gesture.location(in: mtkView)
-        NSLog("[RIGHT-CLICK] at \(point)")
+        NSLog("[RIGHT-CLICK] at \(point) state=\(gesture.state.rawValue)")
 
         // Send move to position hand, then blue button (right-click) down/up
         bridge.sendMouseMoved(to: point, modifiers: 0)
