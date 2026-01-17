@@ -358,8 +358,32 @@ class PharoCanvasViewController: UIViewController {
         let targetView = mtkView as UIView
 
         #if targetEnvironment(macCatalyst)
-        // Mac Catalyst: Use direct touch handling for left clicks (touchesBegan/Moved/Ended)
-        // But right-clicks need a gesture recognizer with buttonMaskRequired
+        // Mac Catalyst: SwiftUI doesn't deliver touch events to embedded UIKit views
+        // We must use gesture recognizers for ALL mouse interactions
+
+        // Hover gesture to track mouse position for cursor updates
+        let hoverGesture = UIHoverGestureRecognizer(
+            target: self,
+            action: #selector(handleHover(_:))
+        )
+        targetView.addGestureRecognizer(hoverGesture)
+
+        // Left-click tap gesture
+        let leftClickGesture = UITapGestureRecognizer(
+            target: self,
+            action: #selector(handleLeftClick(_:))
+        )
+        leftClickGesture.numberOfTapsRequired = 1
+        targetView.addGestureRecognizer(leftClickGesture)
+
+        // Pan gesture for click-and-drag (primary button)
+        let dragGesture = UIPanGestureRecognizer(
+            target: self,
+            action: #selector(handleDrag(_:))
+        )
+        dragGesture.minimumNumberOfTouches = 1
+        dragGesture.maximumNumberOfTouches = 1
+        targetView.addGestureRecognizer(dragGesture)
 
         // Right-click gesture (secondary button) for world menu
         if #available(macCatalyst 13.4, *) {
@@ -368,9 +392,7 @@ class PharoCanvasViewController: UIViewController {
                 action: #selector(handleRightClick(_:))
             )
             rightClickGesture.buttonMaskRequired = .secondary
-            rightClickGesture.cancelsTouchesInView = false  // Allow touches to pass through
             targetView.addGestureRecognizer(rightClickGesture)
-            NSLog("[VC] Mac Catalyst: added right-click gesture recognizer")
         }
 
         // Scroll gesture for trackpad scrolling
@@ -381,9 +403,8 @@ class PharoCanvasViewController: UIViewController {
         scrollGesture.minimumNumberOfTouches = 2
         scrollGesture.maximumNumberOfTouches = 2
         scrollGesture.allowedScrollTypesMask = .continuous
-        scrollGesture.cancelsTouchesInView = false  // Allow touches to pass through
         targetView.addGestureRecognizer(scrollGesture)
-        NSLog("[VC] Mac Catalyst: using direct touch handling + scroll gesture")
+        NSLog("[VC] Mac Catalyst: using gesture recognizers for all mouse input")
 
         #else
         // iOS: Use gesture recognizers for touch input
@@ -452,6 +473,74 @@ class PharoCanvasViewController: UIViewController {
     // MARK: - Mac Catalyst Handlers
 
     #if targetEnvironment(macCatalyst)
+    /// Track mouse position for hover updates
+    @objc func handleHover(_ gesture: UIHoverGestureRecognizer) {
+        guard let bridge = bridge else { return }
+        let point = gesture.location(in: mtkView)
+
+        switch gesture.state {
+        case .began, .changed:
+            // Log to file for debugging
+            if let file = fopen("/tmp/mac_hover.log", "a") {
+                fputs("[HOVER] at \(point) state=\(gesture.state.rawValue)\n", file)
+                fclose(file)
+            }
+            // Send mouse move to update cursor position
+            bridge.sendMouseMoved(to: point, modifiers: 0)
+        case .ended:
+            break
+        default:
+            break
+        }
+    }
+
+    /// Handle left-click (primary button)
+    @objc func handleLeftClick(_ gesture: UITapGestureRecognizer) {
+        guard let bridge = bridge else {
+            NSLog("[LEFT-CLICK] No bridge!")
+            return
+        }
+        let point = gesture.location(in: mtkView)
+
+        // Log to file for debugging
+        if let file = fopen("/tmp/mac_click.log", "a") {
+            fputs("[LEFT-CLICK] at \(point) state=\(gesture.state.rawValue)\n", file)
+            fclose(file)
+        }
+        NSLog("[LEFT-CLICK] at \(point)")
+
+        // Send move to position hand, then red button (left-click) down/up
+        bridge.sendMouseMoved(to: point, modifiers: 0)
+        bridge.sendTouchDown(at: point, buttons: IOS_RED_BUTTON)
+        bridge.sendTouchUp(at: point)
+    }
+
+    /// Handle click-and-drag (primary button held)
+    @objc func handleDrag(_ gesture: UIPanGestureRecognizer) {
+        guard let bridge = bridge else { return }
+        let point = gesture.location(in: mtkView)
+
+        switch gesture.state {
+        case .began:
+            if let file = fopen("/tmp/mac_drag.log", "a") {
+                fputs("[DRAG] began at \(point)\n", file)
+                fclose(file)
+            }
+            bridge.sendMouseMoved(to: point, modifiers: 0)
+            bridge.sendTouchDown(at: point, buttons: IOS_RED_BUTTON)
+        case .changed:
+            bridge.sendTouchMoved(to: point, buttons: IOS_RED_BUTTON)
+        case .ended, .cancelled:
+            if let file = fopen("/tmp/mac_drag.log", "a") {
+                fputs("[DRAG] ended at \(point)\n", file)
+                fclose(file)
+            }
+            bridge.sendTouchUp(at: point)
+        default:
+            break
+        }
+    }
+
     @objc func handleScroll(_ gesture: UIPanGestureRecognizer) {
         guard let bridge = bridge else { return }
         let point = gesture.location(in: mtkView)

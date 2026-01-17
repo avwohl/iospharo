@@ -7,6 +7,51 @@
 
 import SwiftUI
 
+// MARK: - Mac Catalyst Mouse Event Overlay
+
+#if targetEnvironment(macCatalyst)
+/// Transparent overlay that captures mouse events on Mac Catalyst
+/// and forwards them to the Pharo VM bridge.
+///
+/// This is necessary because SwiftUI doesn't forward mouse events to
+/// embedded UIKit views (UIViewControllerRepresentable) on Mac Catalyst.
+struct MouseEventOverlay: View {
+    @ObservedObject var bridge: PharoBridge
+    @State private var isDragging = false
+
+    var body: some View {
+        // Invisible but hittable overlay
+        Color.white.opacity(0.001)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        let location = value.location
+
+                        if !isDragging {
+                            // First event - mouse down
+                            isDragging = true
+                            bridge.sendMouseMoved(to: location, modifiers: 0)
+                            bridge.sendTouchDown(at: location, buttons: Int(IOS_RED_BUTTON))
+                        } else {
+                            // Subsequent events - mouse drag
+                            bridge.sendTouchMoved(to: location, buttons: Int(IOS_RED_BUTTON))
+                        }
+                    }
+                    .onEnded { value in
+                        let location = value.location
+                        isDragging = false
+                        bridge.sendTouchUp(at: location)
+                    }
+            )
+            // Note: Right-click handling is done via UIKit gesture recognizer
+            // in PharoCanvasViewController.setupGestureRecognizers()
+    }
+}
+#endif
+
+// MARK: - Content View
+
 struct ContentView: View {
 
     @EnvironmentObject var bridge: PharoBridge
@@ -23,8 +68,15 @@ struct ContentView: View {
 
             // Main content based on state
             if bridge.isRunning {
-                // Pharo is running - show canvas
+                // Pharo is running - show canvas with gesture overlay
                 pharoCanvas
+
+                #if targetEnvironment(macCatalyst)
+                // Transparent overlay to capture mouse events on Mac Catalyst
+                // UIKit events don't reach embedded views, so we handle at SwiftUI level
+                MouseEventOverlay(bridge: bridge)
+                    .edgesIgnoringSafeArea(.all)
+                #endif
             } else if imageManager.isDownloading {
                 // Downloading image
                 downloadingView
@@ -57,10 +109,17 @@ struct ContentView: View {
     // MARK: - Views
 
     private var pharoCanvas: some View {
-        // Pharo display - MTKView handles events directly
-        // Note: Touch events should pass through to UIKit's MTKView directly
+        // Canvas view for Metal rendering
+        // On Mac Catalyst, gesture handling is done via overlay (in body)
+        // On iOS, the UIKit view handles touches directly
+        #if targetEnvironment(macCatalyst)
         PharoCanvasView(bridge: bridge)
             .edgesIgnoringSafeArea(.all)
+            .allowsHitTesting(false)  // Let overlay handle events
+        #else
+        PharoCanvasView(bridge: bridge)
+            .edgesIgnoringSafeArea(.all)
+        #endif
     }
 
     private var downloadingView: some View {
