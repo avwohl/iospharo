@@ -80,7 +80,6 @@ UNIMPLEMENTED_PRIMITIVES = {
     'primitiveIsInPermSpace',  # 92
     'primitiveMoveToPermSpaceAllOldObjects',  # 93
     'primitiveFullClosureValueWithArgs',  # 208
-    'primitiveFullClosureValueNoContextSwitch',  # 209
     'primitiveContextXray',  # 213
     'primitiveVoidVMState',  # 214
     'primitiveMethodXray',  # 216

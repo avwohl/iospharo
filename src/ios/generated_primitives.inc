@@ -1,6 +1,6 @@
 // Generated primitive table - DO NOT EDIT
 // Source: VMMaker StackInterpreter initializePrimitiveTable
-// Generated: 2026-01-17T04:05:33.465048
+// Generated: 2026-01-17T04:15:46.847278
 
 // Include this file in Interpreter::initializePrimitives()
 // Usage: #include "../ios/generated_primitives.inc"
@@ -214,7 +214,7 @@ primitiveTable_[205] = nullptr;  // Closure Primitives (200-212)
 primitiveTable_[206] = nullptr;  // Closure Primitives (200-212)
 primitiveTable_[207] = &Interpreter::primitiveFullClosureValue;  // Closure Primitives (200-212)
 primitiveTable_[208] = nullptr;  // Closure Primitives (200-212)
-primitiveTable_[209] = nullptr;  // Closure Primitives (200-212)
+primitiveTable_[209] = &Interpreter::primitiveFullClosureValueNoContextSwitch;  // Closure Primitives (200-212)
 primitiveTable_[210] = &Interpreter::primitiveContextAt;  // Closure Primitives (200-212)
 primitiveTable_[211] = &Interpreter::primitiveContextAtPut;  // Closure Primitives (200-212)
 primitiveTable_[212] = &Interpreter::primitiveContextSize;  // Closure Primitives (200-212)
@@ -668,4 +668,4 @@ primitiveTable_[659] = nullptr;  // FFI Byte Access (600-659)
 primitiveTable_[660] = nullptr;  // End
 
 // Total: 661 entries
-// Implemented: 154
+// Implemented: 155

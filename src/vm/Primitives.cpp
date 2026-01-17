@@ -1555,14 +1555,14 @@ PrimitiveResult Interpreter::primitiveClosureValueUnwind(int argCount) {
     return PrimitiveResult::Success;
 }
 
-// Primitive 209: Closure value without unwind (optimization)
-// Evaluates a closure skipping unwind protection checks
-// Used when we know no unwind is needed
-PrimitiveResult Interpreter::primitiveClosureValueNoUnwind(int argCount) {
+// Primitive 209: Full closure value without context switch
+// Same as primitiveFullClosureValue but won't check for interrupts/process switches
+// Used for critical sections where process switching must be avoided
+PrimitiveResult Interpreter::primitiveFullClosureValueNoContextSwitch(int argCount) {
     static int prim209Count = 0;
     prim209Count++;
     if (prim209Count <= 10) {
-        std::cerr << "[PRIM209] primitiveClosureValueNoUnwind #" << prim209Count
+        std::cerr << "[PRIM209] primitiveFullClosureValueNoContextSwitch #" << prim209Count
                   << " argCount=" << argCount << "\n";
     }
 
