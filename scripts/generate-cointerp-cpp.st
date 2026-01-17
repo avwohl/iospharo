@@ -31,4 +31,11 @@ vmmaker
 Transcript show: 'Generation complete'; cr.
 Transcript show: 'Output directory: ', outputPath; cr.
 
+"Also export primitive table metadata"
+Transcript show: 'Exporting primitive table metadata...'; cr.
+'/Users/wohl/src/iospharo/scripts/PrimitiveTableExporter.st' asFileReference fileIn.
+PrimitiveTableExporter exportTo: outputPath, '/primitives.json'.
+PrimitiveTableExporter exportCppTo: outputPath, '/generated_primitives.inc'.
+Transcript show: 'Primitive table export complete'; cr.
+
 Smalltalk exit: 0.

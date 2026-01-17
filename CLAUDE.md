@@ -49,7 +49,13 @@ VMMaker generates `cointerp.c` from this, so `src/ios/cointerp-cpp.c:2094-2756` 
 2. Many slots are null/unused (primitiveFail) - don't invent primitives that don't exist
 3. Primitives 256-519 are external primitive indices (plugins), not VM primitives
 
-**TODO**: Modify VMMaker to emit a JSON/CSV validation file that scripts can check against.
+**Generation**: Run VMMaker to regenerate `src/ios/primitives.json` and `generated_primitives.inc`:
+```smalltalk
+'scripts/PrimitiveTableExporter.st' asFileReference fileIn.
+PrimitiveTableExporter exportTo: 'src/ios/primitives.json'.
+PrimitiveTableExporter exportCppTo: 'src/ios/generated_primitives.inc'.
+```
+The `generated_primitives.inc` can be `#include`d directly in Interpreter.cpp to replace hand-written table entries.
 
 ## Agent Usage Guidelines
 To avoid context pollution from large files (Interpreter.cpp: 8K lines, Primitives.cpp: 14K lines):
