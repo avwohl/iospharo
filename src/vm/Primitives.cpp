@@ -1654,6 +1654,10 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
 
 PrimitiveResult Interpreter::primitiveQuit(int argCount) {
     // Smalltalk quitPrimitive / Smalltalk exit: exitCode
+    // First call during startup tries to reschedule; subsequent calls actually quit
+
+    static int quitCallCount = 0;
+    quitCallCount++;
 
     // Get exit code if provided
     int exitCode = 0;
@@ -1664,9 +1668,27 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
         }
     }
 
-    std::cerr << "[VM] primitiveQuit called with exit code " << exitCode << "\n";
+    std::cerr << "[VM] primitiveQuit called (call #" << quitCallCount << ") exit code " << exitCode << "\n";
 
-    // Stop interpreter and exit process
+    if (quitCallCount == 1) {
+        // First quit - during startup. Try to reschedule to UI process.
+        popN(argCount + 1);
+
+        if (tryReschedule()) {
+            return PrimitiveResult::Success;
+        }
+
+        if (bootstrapStartup()) {
+            return PrimitiveResult::Success;
+        }
+
+        // Couldn't reschedule - don't exit, just return
+        std::cerr << "[VM] First quit: reschedule failed, continuing anyway\n";
+        return PrimitiveResult::Success;
+    }
+
+    // Second+ quit - user explicitly asked to quit
+    std::cerr << "[VM] Second quit: exiting\n";
     running_ = false;
     std::exit(exitCode);
 

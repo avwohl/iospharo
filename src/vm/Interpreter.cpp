@@ -1695,6 +1695,22 @@ void Interpreter::invokeMenuItemAction(Oop menuItemMorph) {
         pendingMenuAction_.argCount = 0;
         pendingMenuAction_.pending = true;
     }
+
+    // Log what action was queued
+    static FILE* logFile = fopen("/tmp/iospharo-events.log", "a");
+    if (logFile && pendingMenuAction_.pending) {
+        std::string selStr = "block";
+        if (!actionBlock.isNil()) {
+            selStr = "#value";
+        } else if (selector.isObject()) {
+            ObjectHeader* selHdr = selector.asObjectPtr();
+            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                selStr = "#" + std::string((char*)selHdr->bytes(), selHdr->byteSize());
+            }
+        }
+        fprintf(logFile, "[ACTION] Queued action: %s\n", selStr.c_str());
+        fflush(logFile);
+    }
 }
 
 // ===== DISPLAY SYNCHRONIZATION =====
