@@ -170,9 +170,12 @@ class MetalRenderer: NSObject, MTKViewDelegate {
     // MARK: - MTKViewDelegate
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
-        // Notify bridge of size change
-        let width = Int(size.width)
-        let height = Int(size.height)
+        // IMPORTANT: Use view bounds (in points) not drawable size (in pixels)
+        // Touch events come in point coordinates, so Pharo must also use point coordinates
+        // Otherwise menus appear at wrong positions (e.g., world menu at half-coordinates)
+        let width = Int(view.bounds.size.width)
+        let height = Int(view.bounds.size.height)
+        NSLog("[METAL] drawableSizeWillChange: drawable=\(Int(size.width))x\(Int(size.height)), using bounds=\(width)x\(height)")
         bridge?.setDisplaySize(width: width, height: height)
     }
 
