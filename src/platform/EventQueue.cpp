@@ -37,6 +37,16 @@ void EventQueue::push(const Event& event) {
     }
 
     // Signal that an event is available (outside lock)
+    // Debug: Log callback invocation
+    static FILE* pushLog = fopen("/tmp/event_push.log", "a");
+    static int pushCount = 0;
+    pushCount++;
+    if (pushLog && pushCount <= 50) {
+        fprintf(pushLog, "[PUSH] #%d type=%d callback=%p\n",
+                pushCount, event.type, (void*)callbackToInvoke);
+        fflush(pushLog);
+    }
+
     if (callbackToInvoke) {
         callbackToInvoke(context);
     }

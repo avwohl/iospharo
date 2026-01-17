@@ -7358,13 +7358,33 @@ PrimitiveResult Interpreter::primitiveSetFullScreen(int argCount) {
 // Primitive 153: Set the input semaphore
 // semaphore primitiveInputSemaphore -> self
 PrimitiveResult Interpreter::primitiveInputSemaphore(int argCount) {
+    // Debug: Log calls
+    static FILE* sem153Log = fopen("/tmp/prim153_input_sem.log", "a");
+    static int callCount153 = 0;
+    callCount153++;
+    if (sem153Log && callCount153 <= 20) {
+        fprintf(sem153Log, "[PRIM153] Call #%d argCount=%d\n", callCount153, argCount);
+        fflush(sem153Log);
+    }
+
     if (argCount < 1) {
         return PrimitiveResult::Failure;
     }
 
-    // Store the input semaphore for later signaling
-    // The semaphore object is on the stack - we could register it with the event system
-    // For now, just acknowledge it
+    // Get the semaphore argument - this is the semaphore index
+    Oop semArg = stackTop();
+    if (semArg.isSmallInteger()) {
+        int64_t semIndex = semArg.asSmallInteger();
+        gEventQueue.setInputSemaphoreIndex(static_cast<int>(semIndex));
+        if (sem153Log && callCount153 <= 20) {
+            fprintf(sem153Log, "[PRIM153] Set input semaphore index to %lld\n", semIndex);
+            fflush(sem153Log);
+        }
+    } else if (sem153Log && callCount153 <= 20) {
+        fprintf(sem153Log, "[PRIM153] Arg is not SmallInteger, raw=0x%llx\n",
+                (unsigned long long)semArg.rawBits());
+        fflush(sem153Log);
+    }
 
     pop();  // pop semaphore, leave receiver
     return PrimitiveResult::Success;
@@ -10287,6 +10307,15 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
 // Sets the semaphore to signal when input is available
 // NOTE: In some images, this is a unary message where the receiver is the semaphore index
 PrimitiveResult Interpreter::primitiveInputSemaphore2(int argCount) {
+    // Debug: Log calls to this primitive
+    static FILE* semLog = fopen("/tmp/prim_input_sem.log", "a");
+    static int semCallCount = 0;
+    semCallCount++;
+    if (semLog && semCallCount <= 20) {
+        fprintf(semLog, "[INPUT-SEM] Call #%d argCount=%d\n", semCallCount, argCount);
+        fflush(semLog);
+    }
+
     Oop semIndexOop;
     if (argCount == 0) {
         semIndexOop = stackTop();  // receiver
@@ -10318,6 +10347,12 @@ PrimitiveResult Interpreter::primitiveInputSemaphore2(int argCount) {
 
     int64_t semIndex = semIndexOop.asSmallInteger();
     gEventQueue.setInputSemaphoreIndex(static_cast<int>(semIndex));
+
+    // Debug: Log the semaphore index being set
+    if (semLog && semCallCount <= 20) {
+        fprintf(semLog, "[INPUT-SEM] Set semaphore index to %lld\n", semIndex);
+        fflush(semLog);
+    }
 
     if (argCount == 1) {
         pop();  // pop argument, leave receiver

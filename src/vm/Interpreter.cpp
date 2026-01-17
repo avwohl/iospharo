@@ -2025,6 +2025,15 @@ void Interpreter::processPendingSignals() {
     int index = pendingSignalIndex_.exchange(0, std::memory_order_acquire);
     if (index <= 0) return;
 
+    // Debug: Log signal processing
+    static FILE* sigLog = fopen("/tmp/signal_process.log", "a");
+    static int sigCount = 0;
+    sigCount++;
+    if (sigLog && sigCount <= 50) {
+        fprintf(sigLog, "[SIGNAL] #%d Processing semaphore index %d\n", sigCount, index);
+        fflush(sigLog);
+    }
+
     // Get the external semaphore table from special objects
     Oop semTable = memory_.specialObject(SpecialObjectIndex::ExternalSemaphoreTable);
     if (semTable.isNil() || !semTable.isObject()) {
@@ -2041,6 +2050,10 @@ void Interpreter::processPendingSignals() {
     // Get the semaphore at this index
     Oop semaphore = memory_.fetchPointer(tableIndex, semTable);
     if (semaphore.isNil() || !semaphore.isObject()) {
+        if (sigLog && sigCount <= 50) {
+            fprintf(sigLog, "[SIGNAL] #%d Semaphore at index %zu is nil/invalid\n", sigCount, tableIndex);
+            fflush(sigLog);
+        }
         return;
     }
 
@@ -2054,9 +2067,17 @@ void Interpreter::processPendingSignals() {
         int64_t excess = excessOop.isSmallInteger() ? excessOop.asSmallInteger() : 0;
         memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
                             Oop::fromSmallInteger(excess + 1));
+        if (sigLog && sigCount <= 50) {
+            fprintf(sigLog, "[SIGNAL] #%d No waiting process, excessSignals now %lld\n", sigCount, excess + 1);
+            fflush(sigLog);
+        }
     } else {
         // Wake the first waiting process
         Oop process = removeFirstLinkOfList(semaphore);
+        if (sigLog && sigCount <= 50) {
+            fprintf(sigLog, "[SIGNAL] #%d Waking process 0x%llx\n", sigCount, (unsigned long long)process.rawBits());
+            fflush(sigLog);
+        }
 
         // Get process priority and check if we should preempt
         Oop processPriorityOop = memory_.fetchPointer(ProcessPriorityIndex, process);

@@ -166,11 +166,26 @@ static void* gPendingCallbackContext = nullptr;
 // Event callback to signal the input semaphore
 static void eventCallback(void* context) {
     (void)context;  // Unused
+
+    // Debug: Log callback invocations
+    static FILE* callbackLog = fopen("/tmp/event_callback.log", "a");
+    static int callbackCount = 0;
+    callbackCount++;
+    if (callbackLog && callbackCount <= 50) {
+        fprintf(callbackLog, "[CALLBACK] #%d gInterpreter=%p\n",
+                callbackCount, (void*)gInterpreter);
+        fflush(callbackLog);
+    }
+
     if (gInterpreter) {
         int semIndex = pharo::gEventQueue.getInputSemaphoreIndex();
         // If Pharo hasn't set a semaphore index, use 1 as fallback (common for input semaphore)
         if (semIndex <= 0) {
             semIndex = 1;
+        }
+        if (callbackLog && callbackCount <= 50) {
+            fprintf(callbackLog, "[CALLBACK] #%d Signaling semaphore %d\n", callbackCount, semIndex);
+            fflush(callbackLog);
         }
         gInterpreter->signalExternalSemaphore(semIndex);
     }
