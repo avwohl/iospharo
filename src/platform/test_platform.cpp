@@ -138,21 +138,55 @@ int main(int argc, char* argv[]) {
     // ===== PHASE 5: Send test events =====
     std::cout << "\n[5] Sending test input events..." << std::endl;
 
-    // Mouse move to center
-    vm_postMouseEvent(0, width/2, height/2, 0, 0);
-    std::cout << "  Sent mouse move to center" << std::endl;
+    // Test clicking on Pharo menu and selecting Quit
+    // Menu bar is at top, "Pharo" menu is typically at x=50
 
-    // Mouse click
-    vm_postMouseEvent(1, width/2, height/2, 4, 0);  // button down
+    // First, let's click somewhere neutral to make sure events work
+    std::cout << "  [5a] Test click at center..." << std::endl;
+    vm_postMouseEvent(0, width/2, height/2, 0, 0);  // move
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    vm_postMouseEvent(1, width/2, height/2, 4, 0);  // button down (red=4)
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     vm_postMouseEvent(2, width/2, height/2, 0, 0);  // button up
-    std::cout << "  Sent mouse click at center" << std::endl;
-
-    // Wait for response
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-    int updatesAfterClick = displayUpdateCount.load();
-    std::cout << "  Updates after click: " << updatesAfterClick << std::endl;
+    int updatesAfterCenterClick = displayUpdateCount.load();
+    std::cout << "  Updates after center click: " << updatesAfterCenterClick << std::endl;
+
+    // Now click on Pharo menu (leftmost menu in the menu bar)
+    // Menu bar is at y=28-72 (from log), Pharo menu around x=30-80
+    std::cout << "  [5b] Click on Pharo menu at (50, 50) to open dropdown..." << std::endl;
+    vm_postMouseEvent(0, 50, 50, 0, 0);  // move to Pharo menu (inside menubar y=28-72)
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    vm_postMouseEvent(1, 50, 50, 4, 0);  // button down
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    vm_postMouseEvent(2, 50, 50, 0, 0);  // button up
+
+    // Wait for menu to open and render
+    std::cout << "  Waiting for menu to open..." << std::endl;
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    int updatesAfterMenuClick = displayUpdateCount.load();
+    std::cout << "  Updates after menu click: " << updatesAfterMenuClick << std::endl;
+
+    // Dropdown bounds were x=8-209, y=72-268 (from log)
+    // Menu has 8 items. Quit is typically last (item 7)
+    // Height = 268-72 = 196 pixels for 8 items = ~24.5 pixels/item
+    // Quit at item 7 starts at y = 72 + 7*24.5 = 72 + 171.5 = ~244
+    // Try y=252 to click on the last item
+    std::cout << "  [5c] Click on last menu item (Quit?) at (50, 252)..." << std::endl;
+    vm_postMouseEvent(0, 50, 252, 0, 0);  // move to last item
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    vm_postMouseEvent(1, 50, 252, 4, 0);  // button down
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    vm_postMouseEvent(2, 50, 252, 0, 0);  // button up
+
+    std::cout << "  Waiting for Quit action..." << std::endl;
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+
+    int updatesAfterQuit = displayUpdateCount.load();
+    std::cout << "  Updates after Quit click: " << updatesAfterQuit << std::endl;
+    std::cout << "  VM still running: " << (vm_isRunning() ? "YES" : "NO") << std::endl;
 
     // ===== PHASE 6: Stop and analyze =====
     std::cout << "\n[6] Stopping VM..." << std::endl;

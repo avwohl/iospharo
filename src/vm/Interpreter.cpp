@@ -3485,6 +3485,29 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 }
             }
 
+            // ===== INTERCEPT snapshot:andQuit: to directly quit =====
+            // When user selects Quit from menu, bypass complex session management
+            // and directly exit the VM.
+            if (selStr == "snapshot:andQuit:" && argCount == 2) {
+                Oop saveArg = stackValue(1);  // First argument: save?
+                Oop quitArg = stackValue(0);  // Second argument: quit?
+
+                // Check if quit is requested
+                bool shouldQuit = quitArg.rawBits() == memory_.trueObject().rawBits();
+                bool shouldSave = saveArg.rawBits() == memory_.trueObject().rawBits();
+
+                if (shouldQuit && !shouldSave) {
+                    // User wants to quit without saving - stop VM loop gracefully
+                    std::cerr << "[VM] Intercepted snapshot:andQuit: - stopping VM\n";
+                    running_ = false;
+                    // Pop args and receiver, push nil to satisfy return
+                    popN(argCount + 1);
+                    push(memory_.nil());
+                    return;
+                }
+                // Otherwise let it proceed (for save operations)
+            }
+
             // ===== INTERCEPT Set/IdentitySet >> error: for "no free space" =====
             // This error happens when a Set fills up. Ignore it to let rendering continue.
             if (selStr == "error:" && argCount >= 1) {
@@ -3543,6 +3566,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                                     if (actionArgCount > 0 && !actionArg.isNil()) {
                                         push(actionArg);
                                     }
+
                                     sendSelector(actionSel, actionArgCount);
                                     return;
                                 }

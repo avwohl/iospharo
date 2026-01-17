@@ -12,7 +12,6 @@ EventQueue gEventQueue;
 void EventQueue::push(const Event& event) {
     EventCallback callbackToInvoke = nullptr;
     void* context = nullptr;
-    size_t queueSize = 0;
 
     {
         std::lock_guard<std::mutex> lock(mutex_);
