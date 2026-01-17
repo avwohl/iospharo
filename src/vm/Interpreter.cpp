@@ -7474,6 +7474,56 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
         return PrimitiveResult::Failure;
     }
 
+    // Quick primitives (256-519): return constants or instance variables
+    // These are handled inline rather than via the primitive table
+    if (primitiveIndex >= 256 && primitiveIndex <= 519) {
+        Oop receiver = stackTop();
+
+        if (primitiveIndex >= 264) {
+            // Return instance variable at index (primitiveIndex - 264)
+            if (!receiver.isObject()) {
+                return PrimitiveResult::Failure;
+            }
+            size_t instVarIndex = static_cast<size_t>(primitiveIndex - 264);
+            size_t slotCount = memory_.slotCountOf(receiver);
+            if (instVarIndex >= slotCount) {
+                return PrimitiveResult::Failure;
+            }
+            Oop value = memory_.fetchPointer(instVarIndex, receiver);
+            *(stackPointer_ - 1) = value;  // Replace stack top
+            return PrimitiveResult::Success;
+        }
+
+        // Return constants
+        switch (primitiveIndex) {
+            case 256:  // return self - no change needed
+                return PrimitiveResult::Success;
+            case 257:  // return true
+                *(stackPointer_ - 1) = memory_.trueObject();
+                return PrimitiveResult::Success;
+            case 258:  // return false
+                *(stackPointer_ - 1) = memory_.falseObject();
+                return PrimitiveResult::Success;
+            case 259:  // return nil
+                *(stackPointer_ - 1) = memory_.nil();
+                return PrimitiveResult::Success;
+            case 260:  // return -1
+                *(stackPointer_ - 1) = Oop::fromSmallInteger(-1);
+                return PrimitiveResult::Success;
+            case 261:  // return 0
+                *(stackPointer_ - 1) = Oop::fromSmallInteger(0);
+                return PrimitiveResult::Success;
+            case 262:  // return 1
+                *(stackPointer_ - 1) = Oop::fromSmallInteger(1);
+                return PrimitiveResult::Success;
+            case 263:  // return 2
+                *(stackPointer_ - 1) = Oop::fromSmallInteger(2);
+                return PrimitiveResult::Success;
+            default:
+                return PrimitiveResult::Failure;
+        }
+    }
+
     if (primitiveIndex < 0 || primitiveIndex >= static_cast<int>(primitiveTable_.size())) {
         failCount++;
         if (failCount <= 10) {
