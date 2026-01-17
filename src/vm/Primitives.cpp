@@ -10469,10 +10469,18 @@ PrimitiveResult Interpreter::primitiveEventProcessingControl(int argCount) {
 // args primitiveSampledSound -> result
 // Handles sampled sound playback
 PrimitiveResult Interpreter::primitiveSampledSound(int argCount) {
-    // Sound primitives require platform-specific audio support
-    // For now, fail to Smalltalk fallback which can handle
-    // sound through alternative means or report unavailable
-    return PrimitiveResult::Failure;
+    // Sound primitives are not supported on iOS/headless
+    // Return success with nil/0 to indicate no sound is playing
+    // This prevents Pharo from retrying in a tight loop
+
+    // Pop arguments, leave receiver
+    for (int i = 0; i < argCount; i++) {
+        pop();
+    }
+    // Replace receiver with nil or 0 as appropriate
+    // Most sound queries expect a SmallInteger result
+    stackTop() = Oop::fromSmallInteger(0);
+    return PrimitiveResult::Success;
 }
 
 // Primitive 268: Mixed sound operations

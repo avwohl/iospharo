@@ -373,6 +373,21 @@ void vm_setDisplayUpdateCallback(DisplayUpdateFunc callback, void* context) {
 }
 
 void vm_postMouseEvent(int type, int x, int y, int buttons, int modifiers) {
+    // Debug: Log all mouse events to file
+    static FILE* mouseLog = nullptr;
+    static int mouseEventCount = 0;
+    mouseEventCount++;
+
+    if (!mouseLog) {
+        mouseLog = fopen("/tmp/vm_mouse_events.log", "w");
+    }
+    if (mouseLog && mouseEventCount <= 200) {
+        const char* typeStr = (type == 0) ? "move" : (type == 1) ? "down" : "up";
+        fprintf(mouseLog, "[VM_MOUSE] #%d %s at (%d,%d) buttons=%d mods=%d\n",
+                mouseEventCount, typeStr, x, y, buttons, modifiers);
+        fflush(mouseLog);
+    }
+
     pharo::Event event;
     event.type = static_cast<int>(pharo::EventType::Mouse);
     event.timeStamp = static_cast<int>(

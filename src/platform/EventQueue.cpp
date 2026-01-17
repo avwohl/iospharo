@@ -10,19 +10,18 @@ namespace pharo {
 EventQueue gEventQueue;
 
 void EventQueue::push(const Event& event) {
-    // Log mouse events for debugging
-    // Mouse event: type=1, arg1=x, arg2=y, arg3=buttons, arg4=modifiers, arg5=subtype(0=move,1=down,2=up)
-    if (event.type == static_cast<int>(EventType::Mouse)) {
-        const char* typeStr = "?";
-        switch (event.arg5) {  // arg5 is the mouse event subtype
-            case 0: typeStr = "move"; break;
-            case 1: typeStr = "down"; break;
-            case 2: typeStr = "up"; break;
-        }
-        std::cerr << "[EVENT] Mouse " << typeStr
-                  << " at (" << event.arg1 << "," << event.arg2 << ")"
-                  << " buttons=" << event.arg3
-                  << " mods=" << event.arg4 << "\n";
+    // Debug: Log ALL events to dedicated file
+    static FILE* allEventsLog = nullptr;
+    static int allEventsCount = 0;
+    allEventsCount++;
+
+    if (!allEventsLog) {
+        allEventsLog = fopen("/tmp/queue_all_events.log", "w");
+    }
+    if (allEventsLog && allEventsCount <= 500) {
+        fprintf(allEventsLog, "[QUEUE-PUSH] #%d type=%d args=(%d,%d,%d,%d,%d)\n",
+                allEventsCount, event.type, event.arg1, event.arg2, event.arg3, event.arg4, event.arg5);
+        fflush(allEventsLog);
     }
 
     EventCallback callbackToInvoke = nullptr;
@@ -57,6 +56,21 @@ bool EventQueue::pop(Event& event) {
     if (events_.empty()) return false;
     event = events_.front();
     events_.pop();
+
+    // Debug: Log all popped events
+    static FILE* popLog = nullptr;
+    static int popCount = 0;
+    popCount++;
+
+    if (!popLog) {
+        popLog = fopen("/tmp/queue_pop_events.log", "w");
+    }
+    if (popLog && popCount <= 500) {
+        fprintf(popLog, "[QUEUE-POP] #%d type=%d args=(%d,%d,%d,%d,%d)\n",
+                popCount, event.type, event.arg1, event.arg2, event.arg3, event.arg4, event.arg5);
+        fflush(popLog);
+    }
+
     return true;
 }
 
