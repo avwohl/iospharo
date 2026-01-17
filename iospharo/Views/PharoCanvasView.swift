@@ -252,14 +252,39 @@ class PharoMTKView: MTKView {
 
 // MARK: - View Controller for proper event handling
 
+/// Custom UIView that logs hitTest calls
+class DebugContainerView: UIView {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let result = super.hitTest(point, with: event)
+        if let file = fopen("/tmp/container_hittest.log", "a") {
+            let resultDesc = result == nil ? "nil" : String(describing: type(of: result!))
+            fputs("[CONTAINER HIT] point=\(point) -> \(resultDesc)\n", file)
+            fclose(file)
+        }
+        return result
+    }
+}
+
 /// UIViewController that hosts the PharoMTKView for proper event handling
 class PharoCanvasViewController: UIViewController {
     var mtkView: PharoMTKView!
     var renderer: MetalRenderer?
     weak var bridge: PharoBridge?
 
+    override func loadView() {
+        // Use our custom container view instead of default UIView
+        view = DebugContainerView()
+        view.backgroundColor = .clear
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
+
+        // Debug: log to file
+        if let file = fopen("/tmp/vc_lifecycle.log", "a") {
+            fputs("[VC] viewDidLoad called, bridge=\(bridge != nil ? "set" : "nil")\n", file)
+            fclose(file)
+        }
 
         // Create and configure MTKView
         mtkView = PharoMTKView()
@@ -268,6 +293,11 @@ class PharoCanvasViewController: UIViewController {
         mtkView.isPaused = false
         mtkView.enableSetNeedsDisplay = false
         mtkView.preferredFramesPerSecond = 60
+
+        if let file = fopen("/tmp/vc_lifecycle.log", "a") {
+            fputs("[VC] mtkView created, bridge on mtkView=\(mtkView.bridge != nil ? "set" : "nil")\n", file)
+            fclose(file)
+        }
 
         view.addSubview(mtkView)
 
@@ -293,6 +323,20 @@ class PharoCanvasViewController: UIViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         mtkView.becomeFirstResponder()
+
+        // Debug: log to file
+        if let file = fopen("/tmp/vc_lifecycle.log", "a") {
+            fputs("[VC] viewDidAppear called\n", file)
+            fputs("[VC] mtkView.isFirstResponder=\(mtkView.isFirstResponder)\n", file)
+            fputs("[VC] view.frame=\(view.frame)\n", file)
+            fputs("[VC] mtkView.frame=\(mtkView.frame)\n", file)
+            fputs("[VC] mtkView.isUserInteractionEnabled=\(mtkView.isUserInteractionEnabled)\n", file)
+            fputs("[VC] mtkView.bridge=\(mtkView.bridge != nil ? "set" : "nil")\n", file)
+            fputs("[VC] mtkView.window=\(mtkView.window != nil ? "yes" : "nil")\n", file)
+            fputs("[VC] view.isUserInteractionEnabled=\(view.isUserInteractionEnabled)\n", file)
+            fclose(file)
+        }
+
         NSLog("[VC] viewDidAppear, mtkView isFirstResponder: \(mtkView.isFirstResponder)")
         NSLog("[VC] view.frame: \(view.frame)")
         NSLog("[VC] mtkView.frame: \(mtkView.frame)")

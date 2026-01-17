@@ -58,6 +58,7 @@ struct ContentView: View {
 
     private var pharoCanvas: some View {
         // Pharo display - MTKView handles events directly
+        // Note: Touch events should pass through to UIKit's MTKView directly
         PharoCanvasView(bridge: bridge)
             .edgesIgnoringSafeArea(.all)
     }
