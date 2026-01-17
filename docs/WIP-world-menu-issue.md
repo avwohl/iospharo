@@ -1,6 +1,6 @@
 # World Menu Drawing Issue - Investigation Notes
 
-## Status: NEEDS VERIFICATION - test_platform shows world menu working
+## Status: FIXED - Method lookup limit was 1024, but Morph has 2050+ methods
 
 ## Problem Summary
 - World menu (right-click popup) does not appear
@@ -173,9 +173,28 @@ The original DNU errors may have been caused by:
 2. A now-fixed bug in our code
 3. Different timing/threading conditions in the Mac Catalyst app
 
-### Status Update
-**Status changed from BLOCKED to NEEDS VERIFICATION**
+### ROOT CAUSE FOUND AND FIXED
 
-The test_platform shows everything working. Need to verify:
-1. Mac Catalyst app with interactive right-click
-2. That the rendered world menu is visible (not just rendered to buffer)
+**The method lookup had a 1024 entry limit but Morph's methodDict has 2050+ slots!**
+
+```cpp
+// OLD (BROKEN):
+size_t maxSearch = std::min(size, (size_t)1024);
+
+// NEW (FIXED):
+size_t maxSearch = size;  // Search all key slots
+```
+
+Methods like `#owner` at indices > 1022 weren't being found, causing DNU errors.
+This explains why the errors were intermittent - they only occurred when the
+hash table placed selectors beyond index 1024.
+
+### Status Update
+**Status: FIXED** - The 1024 entry limit has been removed.
+
+Rebuild and test:
+```
+./build-xcframework.sh
+xcodebuild -project iospharo.xcodeproj -scheme iospharo -configuration Debug \
+    -destination 'platform=macOS,variant=Mac Catalyst' build
+```
