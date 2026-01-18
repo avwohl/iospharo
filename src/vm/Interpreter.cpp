@@ -1952,9 +1952,6 @@ void Interpreter::handleWorldClick(int x, int y, int buttons) {
                             className.c_str(), moved ? 1 : 0);
                     fflush(clickLog);
                 }
-
-                // Draw visible click indicator on windows too
-                drawClickIndicator(x, y, buttons);
             }
             return;  // Found and handled
         }
@@ -1962,12 +1959,138 @@ void Interpreter::handleWorldClick(int x, int y, int buttons) {
 
     // Click was on World background (no submorphs contained the point)
     if (clickLog) {
-        fprintf(clickLog, "[CLICK] No submorph at %d,%d - World background click\n", x, y);
+        fprintf(clickLog, "[CLICK] No submorph at %d,%d - World background click buttons=%d\n", x, y, buttons);
         fflush(clickLog);
     }
 
-    // Draw a visible click indicator for world background clicks
-    drawClickIndicator(x, y, buttons);
+    // Right-click (yellow button = 4) on World background should show World menu
+    if (buttons & 4) {
+        showWorldMenu(x, y);
+    }
+}
+
+void Interpreter::showWorldMenu(int x, int y) {
+    // Show the World menu at the given position
+    // This is triggered by right-click (yellow button) on the World background
+    static FILE* menuLog = fopen("/tmp/world_menu.log", "a");
+
+    if (menuLog) {
+        fprintf(menuLog, "[WORLD-MENU] Attempting to show at %d,%d\n", x, y);
+        fflush(menuLog);
+    }
+
+    // Find World global
+    Oop world = memory_.findGlobal("World");
+    if (world.isNil() || !world.isObject()) {
+        if (menuLog) fprintf(menuLog, "[WORLD-MENU] World not found\n");
+        return;
+    }
+
+    // The World menu in Pharo is typically accessed via:
+    // World -> worldState -> worldMenu
+    // Or we can look for an existing MenuMorph in World's submorphs
+
+    ObjectHeader* worldHdr = world.asObjectPtr();
+    if (worldHdr->slotCount() < 10) return;
+
+    // Get submorphs (slot 2) to look for existing menu
+    Oop submorphs = memory_.fetchPointer(2, world);
+    if (submorphs.isNil() || !submorphs.isObject()) return;
+
+    ObjectHeader* subHdr = submorphs.asObjectPtr();
+    size_t morphCount = subHdr->slotCount();
+
+    // Look for a MenuMorph in submorphs
+    for (size_t i = 0; i < morphCount; i++) {
+        Oop morph = memory_.fetchPointer(i, submorphs);
+        if (morph.isNil() || !morph.isObject()) continue;
+
+        Oop morphClass = memory_.classOf(morph);
+        if (!morphClass.isObject()) continue;
+
+        Oop cName = memory_.fetchPointer(6, morphClass);
+        if (!cName.isObject()) continue;
+
+        ObjectHeader* cNameHdr = cName.asObjectPtr();
+        if (!cNameHdr->isBytesObject()) continue;
+
+        std::string className((char*)cNameHdr->bytes(), cNameHdr->byteSize());
+
+        if (className.find("Menu") != std::string::npos) {
+            if (menuLog) {
+                fprintf(menuLog, "[WORLD-MENU] Found %s, repositioning to %d,%d\n",
+                        className.c_str(), x, y);
+                fflush(menuLog);
+            }
+
+            // Reposition the menu to click location
+            // Menu bounds are at slot 0 (Rectangle with origin and corner)
+            Oop bounds = memory_.fetchPointer(0, morph);
+            if (bounds.isObject()) {
+                ObjectHeader* boundsHdr = bounds.asObjectPtr();
+                if (boundsHdr->slotCount() >= 2) {
+                    Oop origin = memory_.fetchPointer(0, bounds);
+                    if (origin.isObject()) {
+                        ObjectHeader* originHdr = origin.asObjectPtr();
+                        if (originHdr->slotCount() >= 2) {
+                            // Set origin x and y
+                            memory_.storePointer(0, origin, Oop::fromSmallInteger(x));
+                            memory_.storePointer(1, origin, Oop::fromSmallInteger(y));
+
+                            // Also update corner based on menu size
+                            Oop corner = memory_.fetchPointer(1, bounds);
+                            if (corner.isObject()) {
+                                ObjectHeader* cornerHdr = corner.asObjectPtr();
+                                if (cornerHdr->slotCount() >= 2) {
+                                    Oop oldCx = memory_.fetchPointer(0, corner);
+                                    Oop oldCy = memory_.fetchPointer(1, corner);
+                                    Oop oldOx = memory_.fetchPointer(0, origin);
+                                    Oop oldOy = memory_.fetchPointer(1, origin);
+
+                                    // Estimate menu size (use 200x300 if can't calculate)
+                                    int menuWidth = 200, menuHeight = 300;
+                                    if (oldCx.isSmallInteger() && oldOx.isSmallInteger()) {
+                                        menuWidth = static_cast<int>(oldCx.asSmallInteger() - oldOx.asSmallInteger());
+                                        if (menuWidth < 50) menuWidth = 200;
+                                    }
+                                    if (oldCy.isSmallInteger() && oldOy.isSmallInteger()) {
+                                        menuHeight = static_cast<int>(oldCy.asSmallInteger() - oldOy.asSmallInteger());
+                                        if (menuHeight < 50) menuHeight = 300;
+                                    }
+
+                                    memory_.storePointer(0, corner, Oop::fromSmallInteger(x + menuWidth));
+                                    memory_.storePointer(1, corner, Oop::fromSmallInteger(y + menuHeight));
+                                }
+                            }
+
+                            if (menuLog) {
+                                fprintf(menuLog, "[WORLD-MENU] Repositioned menu to %d,%d\n", x, y);
+                                fflush(menuLog);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Move menu to front (end of submorphs array)
+            for (size_t j = i; j < morphCount - 1; j++) {
+                Oop next = memory_.fetchPointer(j + 1, submorphs);
+                memory_.storePointer(j, submorphs, next);
+            }
+            memory_.storePointer(morphCount - 1, submorphs, morph);
+
+            if (menuLog) {
+                fprintf(menuLog, "[WORLD-MENU] Moved menu to front\n");
+                fflush(menuLog);
+            }
+            return;
+        }
+    }
+
+    if (menuLog) {
+        fprintf(menuLog, "[WORLD-MENU] No existing menu found in World submorphs\n");
+        fflush(menuLog);
+    }
 }
 
 void Interpreter::drawClickIndicator(int x, int y, int buttons) {
