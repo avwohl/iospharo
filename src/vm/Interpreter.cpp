@@ -1790,6 +1790,7 @@ void Interpreter::handleWorldClick(int x, int y, int buttons) {
                     pendingMenuAction_.argument = Oop::nil();
                     pendingMenuAction_.argCount = 0;
                     pendingMenuAction_.pending = true;
+                    pendingMenuAction_.executeFromSync = true;  // Process in interpret loop
 
                     if (clickLog) {
                         fprintf(clickLog, "[CLICK] Queued comeToFront for %s\n", className.c_str());
@@ -1816,6 +1817,7 @@ void Interpreter::handleWorldClick(int x, int y, int buttons) {
                         pendingMenuAction_.argument = Oop::nil();
                         pendingMenuAction_.argCount = 0;
                         pendingMenuAction_.pending = true;
+                        pendingMenuAction_.executeFromSync = true;
                         if (clickLog) {
                             fprintf(clickLog, "[CLICK] Queued activate for %s\n", className.c_str());
                             fflush(clickLog);
@@ -1826,6 +1828,7 @@ void Interpreter::handleWorldClick(int x, int y, int buttons) {
                         pendingMenuAction_.argument = Oop::nil();
                         pendingMenuAction_.argCount = 0;
                         pendingMenuAction_.pending = true;
+                        pendingMenuAction_.executeFromSync = true;
                         if (clickLog) {
                             fprintf(clickLog, "[CLICK] Queued flash for %s\n", className.c_str());
                             fflush(clickLog);
@@ -2142,6 +2145,19 @@ void Interpreter::interpret() {
             Oop actionArg = pendingMenuAction_.argument;
             int actionArgCount = pendingMenuAction_.argCount;
 
+            // Debug: Log action execution
+            static FILE* actionLog = nullptr;
+            if (!actionLog) {
+                actionLog = fopen("/tmp/action_exec.log", "w");
+            }
+            if (actionLog) {
+                fprintf(actionLog, "[ACTION] Executing pending action: rcvr=0x%llx sel=0x%llx argCount=%d\n",
+                        (unsigned long long)actionRcvr.rawBits(),
+                        (unsigned long long)actionSel.rawBits(),
+                        actionArgCount);
+                fflush(actionLog);
+            }
+
             pendingMenuAction_.pending = false;
             pendingMenuAction_.executeFromSync = false;
             pendingMenuAction_.selector = Oop::nil();
@@ -2157,6 +2173,11 @@ void Interpreter::interpret() {
 
             // Send the message
             sendSelector(actionSel, actionArgCount);
+
+            if (actionLog) {
+                fprintf(actionLog, "[ACTION] Message sent\n");
+                fflush(actionLog);
+            }
         }
 
         step();
