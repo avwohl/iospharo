@@ -72,6 +72,173 @@ enum NSEventMonitorSwift {
     static let leftMouseDragged = 6
     static let rightMouseDragged = 7
 
+    static func checkAppActivation() {
+        // Try to access NSApplication's isActive property
+        guard let nsAppClass = NSClassFromString("NSApplication"),
+              let sharedApp = (nsAppClass as AnyObject).perform(NSSelectorFromString("sharedApplication"))?.takeUnretainedValue() else {
+            return
+        }
+
+        // Check isActive
+        let isActiveSel = NSSelectorFromString("isActive")
+        let isActive = sharedApp.perform(isActiveSel) != nil
+
+        // Check currentEvent
+        let currentEventSel = NSSelectorFromString("currentEvent")
+        let currentEvent = sharedApp.perform(currentEventSel)?.takeUnretainedValue()
+
+        // Try to get mouse location via Core Graphics
+        var mouseLocationStr = "unavailable"
+        // CGEvent doesn't require special permissions for just getting location
+        if let event = CGEvent(source: nil) {
+            let location = event.location
+            mouseLocationStr = "(x=\(Int(location.x)), y=\(Int(location.y)))"
+        }
+
+        if let file = fopen("/tmp/app_activation.log", "a") {
+            fputs("[APP-ACTIVATION] isActive=\(isActive) mouseLocation=\(mouseLocationStr) currentEvent=\(String(describing: currentEvent))\n", file)
+            fclose(file)
+        }
+    }
+
+    static func startActivationMonitor() {
+        // Check activation status every second (for debugging)
+        Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+            checkAppActivation()
+        }
+    }
+
+    // State for mouse polling
+    private static var lastPolledPosition = CGPoint.zero
+    private static var wasLeftButtonDown = false
+    private static var wasRightButtonDown = false
+    private static var wasMiddleButtonDown = false
+    private static var pollCount = 0
+    private static var pollLogFile: UnsafeMutablePointer<FILE>? = nil
+
+    static func startMousePolling() {
+        pollLogFile = fopen("/tmp/mouse_polling.log", "w")
+        if let file = pollLogFile {
+            fputs("[POLL] Starting mouse polling via CGEvent\n", file)
+            fflush(file)
+        }
+
+        // Poll mouse state 60 times per second
+        Timer.scheduledTimer(withTimeInterval: 1.0/60.0, repeats: true) { _ in
+            pollMouseState()
+        }
+    }
+
+    private static func pollMouseState() {
+        pollCount += 1
+
+        // Get current mouse position using CGEvent
+        guard let event = CGEvent(source: nil) else { return }
+        let screenPosition = event.location
+
+        // Get window info to convert screen coordinates to window coordinates
+        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let window = scene.windows.first else { return }
+
+        // NSEvent/CGEvent coordinates are screen coordinates with origin at bottom-left
+        // Need to convert to window coordinates (top-left origin)
+        // First get the window's screen position
+        let windowFrame = window.frame
+        let screenHeight = window.screen.bounds.height
+
+        // Convert from screen bottom-left to screen top-left
+        let screenYTopLeft = screenHeight - screenPosition.y
+
+        // Convert from screen to window coordinates
+        // Window frame in screen coordinates (with top-left origin)
+        let windowX = screenPosition.x - windowFrame.origin.x
+        let windowY = screenYTopLeft - windowFrame.origin.y
+
+        let windowPosition = CGPoint(x: windowX, y: windowY)
+
+        // Check if mouse is inside window
+        let isInsideWindow = windowX >= 0 && windowX < windowFrame.width &&
+                            windowY >= 0 && windowY < windowFrame.height
+
+        // Get button states using CGEventSource
+        let leftDown = CGEventSource.buttonState(.hidSystemState, button: .left)
+        let rightDown = CGEventSource.buttonState(.hidSystemState, button: .right)
+        let middleDown = CGEventSource.buttonState(.hidSystemState, button: .center)
+
+        // Only process if mouse is inside window
+        if isInsideWindow {
+            // Log occasionally
+            if pollLogFile != nil && (pollCount <= 100 || pollCount % 60 == 0) {
+                fputs("[POLL] #\(pollCount) pos=\(Int(windowPosition.x)),\(Int(windowPosition.y)) L=\(leftDown) R=\(rightDown)\n", pollLogFile!)
+                fflush(pollLogFile!)
+            }
+
+            // Detect state changes and send events
+            if windowPosition != lastPolledPosition {
+                // Mouse moved
+                DispatchQueue.main.async {
+                    MouseEventHandler.shared.lastPosition = windowPosition
+                    if leftDown {
+                        PharoBridge.shared.sendTouchMoved(to: windowPosition, buttons: IOS_RED_BUTTON)
+                    } else if rightDown {
+                        PharoBridge.shared.sendTouchMoved(to: windowPosition, buttons: IOS_BLUE_BUTTON)
+                    } else {
+                        PharoBridge.shared.sendMouseMoved(to: windowPosition, modifiers: 0)
+                    }
+                }
+                lastPolledPosition = windowPosition
+            }
+
+            // Detect button press/release
+            if leftDown && !wasLeftButtonDown {
+                // Left button just pressed
+                if let file = pollLogFile {
+                    fputs("[POLL] LEFT BUTTON DOWN at \(Int(windowPosition.x)),\(Int(windowPosition.y))\n", file)
+                    fflush(file)
+                }
+                DispatchQueue.main.async {
+                    PharoBridge.shared.sendMouseMoved(to: windowPosition, modifiers: 0)
+                    PharoBridge.shared.sendTouchDown(at: windowPosition, buttons: IOS_RED_BUTTON)
+                }
+            } else if !leftDown && wasLeftButtonDown {
+                // Left button just released
+                if let file = pollLogFile {
+                    fputs("[POLL] LEFT BUTTON UP at \(Int(windowPosition.x)),\(Int(windowPosition.y))\n", file)
+                    fflush(file)
+                }
+                DispatchQueue.main.async {
+                    PharoBridge.shared.sendTouchUp(at: windowPosition)
+                }
+            }
+
+            if rightDown && !wasRightButtonDown {
+                // Right button just pressed
+                if let file = pollLogFile {
+                    fputs("[POLL] RIGHT BUTTON DOWN at \(Int(windowPosition.x)),\(Int(windowPosition.y))\n", file)
+                    fflush(file)
+                }
+                DispatchQueue.main.async {
+                    PharoBridge.shared.sendMouseMoved(to: windowPosition, modifiers: 0)
+                    PharoBridge.shared.sendTouchDown(at: windowPosition, buttons: IOS_BLUE_BUTTON)
+                }
+            } else if !rightDown && wasRightButtonDown {
+                // Right button just released
+                if let file = pollLogFile {
+                    fputs("[POLL] RIGHT BUTTON UP at \(Int(windowPosition.x)),\(Int(windowPosition.y))\n", file)
+                    fflush(file)
+                }
+                DispatchQueue.main.async {
+                    PharoBridge.shared.sendTouchUp(at: windowPosition)
+                }
+            }
+        }
+
+        // Update previous states
+        wasLeftButtonDown = leftDown
+        wasRightButtonDown = rightDown
+        wasMiddleButtonDown = middleDown
+    }
+
     static func installMonitor() {
         // Install the Objective-C event monitor with our callback
         NSEventMonitorHelper.installMouseMonitor { (eventType: Int32, x: Double, y: Double, buttonNumber: Int32) in
@@ -135,8 +302,12 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         // Swizzle UIApplication.sendEvent to intercept all events (backup)
         ApplicationSwizzler.swizzleSendEvent()
         setupMouseHandling()
-        // Install NSEvent monitor using Objective-C helper
+        // Install NSEvent monitor using Objective-C helper (may not work in Mac Catalyst)
         NSEventMonitorSwift.installMonitor()
+        // Start CGEvent-based mouse polling (workaround for Mac Catalyst)
+        NSEventMonitorSwift.startMousePolling()
+        // Start activation monitoring (for debugging)
+        NSEventMonitorSwift.startActivationMonitor()
         #endif
         return true
     }
