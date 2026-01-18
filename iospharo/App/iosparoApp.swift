@@ -61,13 +61,82 @@ class EventCapturingWindow: UIWindow {
 }
 #endif
 
+/// Swift wrapper for NSEvent monitoring on Mac Catalyst
+enum NSEventMonitorSwift {
+    // NSEvent types we care about
+    static let leftMouseDown = 1
+    static let leftMouseUp = 2
+    static let rightMouseDown = 3
+    static let rightMouseUp = 4
+    static let mouseMoved = 5
+    static let leftMouseDragged = 6
+    static let rightMouseDragged = 7
+
+    static func installMonitor() {
+        // Install the Objective-C event monitor with our callback
+        NSEventMonitorHelper.installMouseMonitor { (eventType: Int32, x: Double, y: Double, buttonNumber: Int32) in
+            // Get window height for coordinate conversion (NSEvent uses bottom-left origin)
+            var windowHeight: CGFloat = 768
+            if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+               let window = scene.windows.first {
+                windowHeight = window.frame.height
+            }
+
+            // Convert from NSEvent coordinates (bottom-left origin) to UIKit (top-left origin)
+            let uiKitY = windowHeight - CGFloat(y)
+            let point = CGPoint(x: CGFloat(x), y: uiKitY)
+
+            if let file = fopen("/tmp/nsevent_swift.log", "a") {
+                fputs("[NSEVENT-SWIFT] type=\(eventType) point=\(point) btn=\(buttonNumber)\n", file)
+                fclose(file)
+            }
+
+            // Forward to Pharo VM based on event type
+            DispatchQueue.main.async {
+                switch Int(eventType) {
+                case leftMouseDown:
+                    MouseEventHandler.shared.lastPosition = point
+                    PharoBridge.shared.sendMouseMoved(to: point, modifiers: 0)
+                    PharoBridge.shared.sendTouchDown(at: point, buttons: IOS_RED_BUTTON)
+
+                case leftMouseUp:
+                    PharoBridge.shared.sendTouchUp(at: point)
+
+                case rightMouseDown:
+                    MouseEventHandler.shared.lastPosition = point
+                    PharoBridge.shared.sendMouseMoved(to: point, modifiers: 0)
+                    PharoBridge.shared.sendTouchDown(at: point, buttons: IOS_BLUE_BUTTON)
+
+                case rightMouseUp:
+                    PharoBridge.shared.sendTouchUp(at: point)
+
+                case mouseMoved:
+                    MouseEventHandler.shared.lastPosition = point
+                    PharoBridge.shared.sendMouseMoved(to: point, modifiers: 0)
+
+                case leftMouseDragged:
+                    PharoBridge.shared.sendTouchMoved(to: point, buttons: IOS_RED_BUTTON)
+
+                case rightMouseDragged:
+                    PharoBridge.shared.sendTouchMoved(to: point, buttons: IOS_BLUE_BUTTON)
+
+                default:
+                    break
+                }
+            }
+        }
+    }
+}
+
 /// App delegate to handle lifecycle events
 class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
         #if targetEnvironment(macCatalyst)
-        // Swizzle UIApplication.sendEvent to intercept all events
+        // Swizzle UIApplication.sendEvent to intercept all events (backup)
         ApplicationSwizzler.swizzleSendEvent()
         setupMouseHandling()
+        // Install NSEvent monitor using Objective-C helper
+        NSEventMonitorSwift.installMonitor()
         #endif
         return true
     }

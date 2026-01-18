@@ -10,6 +10,11 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+/* NSEvent monitoring helper for Mac Catalyst */
+#if TARGET_OS_MACCATALYST
+#import "../App/NSEventMonitor.h"
+#endif
+
 /* VM Parameters structure (simplified for Swift) */
 typedef struct VMParameterVector_ {
     uint32_t count;

@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		4E4B3BEE2F0859030064396B /* ZIPFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = A90001 /* ZIPFoundation */; };
 		A10001 /* iosparoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20001 /* iosparoApp.swift */; };
+		A10010 /* NSEventMonitor.m in Sources */ = {isa = PBXBuildFile; fileRef = A20010 /* NSEventMonitor.m */; };
 		A10002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20002 /* ContentView.swift */; };
 		A10003 /* PharoBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20003 /* PharoBridge.swift */; };
 		A10004 /* MetalRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20004 /* MetalRenderer.swift */; };
@@ -24,6 +25,8 @@
 
 /* Begin PBXFileReference section */
 		A20001 /* iosparoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iosparoApp.swift; sourceTree = "<group>"; };
+		A20010 /* NSEventMonitor.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = NSEventMonitor.m; sourceTree = "<group>"; };
+		A20011 /* NSEventMonitor.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = NSEventMonitor.h; sourceTree = "<group>"; };
 		A20002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		A20003 /* PharoBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PharoBridge.swift; sourceTree = "<group>"; };
 		A20004 /* MetalRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetalRenderer.swift; sourceTree = "<group>"; };
@@ -84,6 +87,8 @@
 			children = (
 				A20001 /* iosparoApp.swift */,
 				A20002 /* ContentView.swift */,
+				A20010 /* NSEventMonitor.m */,
+				A20011 /* NSEventMonitor.h */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -257,6 +262,7 @@
 				A10005 /* Shaders.metal in Sources */,
 				A10006 /* PharoCanvasView.swift in Sources */,
 				A10007 /* ImageManager.swift in Sources */,
+				A10010 /* NSEventMonitor.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
