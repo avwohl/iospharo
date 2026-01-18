@@ -39,19 +39,17 @@ class EventCapturingWindow: UIWindow {
                         fflush(file)
                     }
 
-                    // Forward to Pharo VM on main actor
-                    Task { @MainActor in
-                        switch phase {
-                        case .began:
-                            PharoBridge.shared.sendMouseMoved(to: location, modifiers: 0)
-                            PharoBridge.shared.sendTouchDown(at: location, buttons: Int(IOS_RED_BUTTON))
-                        case .moved:
-                            PharoBridge.shared.sendTouchMoved(to: location, buttons: Int(IOS_RED_BUTTON))
-                        case .ended, .cancelled:
-                            PharoBridge.shared.sendTouchUp(at: location)
-                        default:
-                            break
-                        }
+                    // Forward to Pharo VM synchronously (we're already on main thread)
+                    switch phase {
+                    case .began:
+                        PharoBridge.shared.sendMouseMoved(to: location, modifiers: 0)
+                        PharoBridge.shared.sendTouchDown(at: location, buttons: Int(IOS_RED_BUTTON))
+                    case .moved:
+                        PharoBridge.shared.sendTouchMoved(to: location, buttons: Int(IOS_RED_BUTTON))
+                    case .ended, .cancelled:
+                        PharoBridge.shared.sendTouchUp(at: location)
+                    default:
+                        break
                     }
                 }
             }
@@ -103,48 +101,96 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 
         // Check if a mouse is already connected
         if let mouse = GCMouse.current {
+            if let file = fopen("/tmp/gcmouse_setup.log", "w") {
+                fputs("[GCMOUSE-SETUP] Mouse already connected: \(mouse)\n", file)
+                fclose(file)
+            }
             configureMouseInput(mouse)
+        } else {
+            if let file = fopen("/tmp/gcmouse_setup.log", "w") {
+                fputs("[GCMOUSE-SETUP] No mouse connected at startup - waiting for GCMouseDidConnect\n", file)
+                fclose(file)
+            }
         }
         NSLog("[APP] GCMouse event handling set up")
     }
 
     @objc private func mouseDidConnect(_ notification: Notification) {
+        if let file = fopen("/tmp/gcmouse_setup.log", "a") {
+            fputs("[GCMOUSE-SETUP] mouseDidConnect notification received\n", file)
+            fclose(file)
+        }
         if let mouse = notification.object as? GCMouse {
+            if let file = fopen("/tmp/gcmouse_setup.log", "a") {
+                fputs("[GCMOUSE-SETUP] Configuring mouse: \(mouse)\n", file)
+                fclose(file)
+            }
             configureMouseInput(mouse)
             NSLog("[APP] Mouse connected: \(mouse)")
         }
     }
 
     private func configureMouseInput(_ mouse: GCMouse) {
-        guard let input = mouse.mouseInput else { return }
-
-        // Left button
-        input.leftButton.pressedChangedHandler = { button, value, pressed in
-            if let file = fopen("/tmp/gcmouse.log", "a") {
-                fputs("[GCMOUSE] leftButton pressed=\(pressed) value=\(value)\n", file)
+        if let file = fopen("/tmp/gcmouse_setup.log", "a") {
+            fputs("[GCMOUSE-SETUP] configureMouseInput called for: \(mouse)\n", file)
+            fclose(file)
+        }
+        guard let input = mouse.mouseInput else {
+            if let file = fopen("/tmp/gcmouse_setup.log", "a") {
+                fputs("[GCMOUSE-SETUP] ERROR: mouseInput is nil!\n", file)
                 fclose(file)
             }
-            // Note: We don't have position here - GCMouse doesn't track position
-            // Position tracking requires UIHoverGestureRecognizer
+            return
+        }
+        if let file = fopen("/tmp/gcmouse_setup.log", "a") {
+            fputs("[GCMOUSE-SETUP] Got mouseInput, setting up handlers\n", file)
+            fclose(file)
         }
 
-        // Right button
-        input.rightButton?.pressedChangedHandler = { button, value, pressed in
+        // Left button - use last known position from hover tracking
+        input.leftButton.pressedChangedHandler = { [weak self] button, value, pressed in
+            let pos = MouseEventHandler.shared.lastPosition
             if let file = fopen("/tmp/gcmouse.log", "a") {
-                fputs("[GCMOUSE] rightButton pressed=\(pressed) value=\(value)\n", file)
+                fputs("[GCMOUSE] leftButton pressed=\(pressed) at \(pos)\n", file)
                 fclose(file)
+            }
+
+            // Forward to Pharo VM
+            DispatchQueue.main.async {
+                if pressed {
+                    PharoBridge.shared.sendMouseMoved(to: pos, modifiers: 0)
+                    PharoBridge.shared.sendTouchDown(at: pos, buttons: Int(IOS_RED_BUTTON))
+                } else {
+                    PharoBridge.shared.sendTouchUp(at: pos)
+                }
             }
         }
 
-        // Mouse movement
+        // Right button (blue button in Pharo = menu)
+        input.rightButton?.pressedChangedHandler = { [weak self] button, value, pressed in
+            let pos = MouseEventHandler.shared.lastPosition
+            if let file = fopen("/tmp/gcmouse.log", "a") {
+                fputs("[GCMOUSE] rightButton pressed=\(pressed) at \(pos)\n", file)
+                fclose(file)
+            }
+
+            // Forward to Pharo VM (blue button = 1)
+            DispatchQueue.main.async {
+                if pressed {
+                    PharoBridge.shared.sendMouseMoved(to: pos, modifiers: 0)
+                    PharoBridge.shared.sendTouchDown(at: pos, buttons: 1)  // Blue button
+                } else {
+                    PharoBridge.shared.sendTouchUp(at: pos)
+                }
+            }
+        }
+
+        // Mouse movement - we don't use this since hover gesture tracks position
         input.mouseMovedHandler = { mouse, deltaX, deltaY in
-            if let file = fopen("/tmp/gcmouse.log", "a") {
-                fputs("[GCMOUSE] moved delta=(\(deltaX), \(deltaY))\n", file)
-                fclose(file)
-            }
+            // Position tracked via UIHoverGestureRecognizer instead
         }
 
-        NSLog("[APP] Mouse input handlers configured")
+        NSLog("[APP] Mouse input handlers configured with click forwarding")
     }
     #endif
 }
@@ -226,19 +272,17 @@ extension UIApplication {
                         fflush(file)
                     }
 
-                    // Forward to Pharo VM on main actor
-                    Task { @MainActor in
-                        switch phase {
-                        case .began:
-                            PharoBridge.shared.sendMouseMoved(to: location, modifiers: 0)
-                            PharoBridge.shared.sendTouchDown(at: location, buttons: Int(IOS_RED_BUTTON))
-                        case .moved:
-                            PharoBridge.shared.sendTouchMoved(to: location, buttons: Int(IOS_RED_BUTTON))
-                        case .ended, .cancelled:
-                            PharoBridge.shared.sendTouchUp(at: location)
-                        default:
-                            break
-                        }
+                    // Forward to Pharo VM synchronously (we're already on main thread)
+                    switch phase {
+                    case .began:
+                        PharoBridge.shared.sendMouseMoved(to: location, modifiers: 0)
+                        PharoBridge.shared.sendTouchDown(at: location, buttons: Int(IOS_RED_BUTTON))
+                    case .moved:
+                        PharoBridge.shared.sendTouchMoved(to: location, buttons: Int(IOS_RED_BUTTON))
+                    case .ended, .cancelled:
+                        PharoBridge.shared.sendTouchUp(at: location)
+                    default:
+                        break
                     }
                 }
             }
@@ -354,7 +398,8 @@ struct iosparoApp: App {
 class MouseEventHandler: NSObject {
     static let shared = MouseEventHandler()
 
-    private var lastPosition: CGPoint = .zero
+    // Last known mouse position from hover tracking - used by GCMouse click handlers
+    var lastPosition: CGPoint = .zero
     private var isDragging = false
 
     @objc func handleWindowHover(_ gesture: UIHoverGestureRecognizer) {
