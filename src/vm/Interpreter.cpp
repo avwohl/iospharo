@@ -1576,12 +1576,14 @@ void Interpreter::processInputEvents() {
                     selectedMenuIndex_ = -1;
                     dropdownState_.valid = false;
                 }
-                // Click outside menu areas - pass through to Pharo
+                // Click outside menu areas - handle directly via handleWorldClick
                 if (logFile) {
-                    fprintf(logFile, "[PASSTHROUGH] mouse down buttons=%d at %d,%d -> queued\n",
+                    fprintf(logFile, "[WORLD-CLICK] mouse down buttons=%d at %d,%d\n",
                             event.arg3, event.arg1, event.arg2);
                     fflush(logFile);
                 }
+                handleWorldClick(x, y, event.arg3);
+                // Also queue for primitive 264 in case InputEventSensor ever starts
                 passThroughEvents_.push_back(event);
                 continue;
             }
