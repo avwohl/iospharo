@@ -10376,16 +10376,13 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
     Event event;
     bool hasEvent = false;
 
-    // Debug: track calls
-    static FILE* prim264Log = fopen("/tmp/prim264_debug.log", "a");
+    // Debug: track calls - always log to stderr for first 50 calls
     static int callCount = 0;
     callCount++;
 
-    // Log every 100th call to verify we're being called
-    if (prim264Log && callCount % 100 == 1) {
-        fprintf(prim264Log, "[PRIM264] Call #%d, passthrough=%zu, queueEmpty=%d\n",
+    if (callCount <= 50) {
+        fprintf(stderr, "[PRIM264] #%d passthrough=%zu queueEmpty=%d\n",
                 callCount, passThroughEvents_.size(), gEventQueue.isEmpty() ? 1 : 0);
-        fflush(prim264Log);
     }
 
     // Check pass-through events first (these were processed but not consumed by menu handler)
@@ -10393,17 +10390,15 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
         event = passThroughEvents_.front();
         passThroughEvents_.erase(passThroughEvents_.begin());
         hasEvent = true;
-        if (prim264Log && event.type == 1) {
-            fprintf(prim264Log, "[PRIM264] #%d Got mouse event from passthrough: type=%d x=%d y=%d buttons=%d\n",
-                    callCount, event.arg5, event.arg1, event.arg2, event.arg3);
-            fflush(prim264Log);
+        if (callCount <= 50 || event.arg5 == 1) {  // Always log mouse down
+            fprintf(stderr, "[PRIM264] #%d Got event: eventType=%d subtype=%d x=%d y=%d buttons=%d\n",
+                    callCount, event.type, event.arg5, event.arg1, event.arg2, event.arg3);
         }
     } else if (gEventQueue.pop(event)) {
         hasEvent = true;
-        if (prim264Log && event.type == 1) {
-            fprintf(prim264Log, "[PRIM264] #%d Got mouse event from queue: type=%d x=%d y=%d buttons=%d\n",
-                    callCount, event.arg5, event.arg1, event.arg2, event.arg3);
-            fflush(prim264Log);
+        if (callCount <= 50 || event.arg5 == 1) {
+            fprintf(stderr, "[PRIM264] #%d Got event from queue: eventType=%d subtype=%d x=%d y=%d buttons=%d\n",
+                    callCount, event.type, event.arg5, event.arg1, event.arg2, event.arg3);
         }
     }
 
@@ -10424,7 +10419,7 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
         if (event.type == 1) {
             static FILE* mouseLog = fopen("/tmp/pharo_mouse_events.log", "a");
             if (mouseLog) {
-                const char* subtype = event.arg5 == 0 ? "move" : (event.arg5 == 1 ? "down" : "up");
+                const char* subtype = (event.arg5 == 1) ? "down" : (event.arg5 == 2) ? "up" : "move";
                 fprintf(mouseLog, "[TO-PHARO] Mouse %s at (%d,%d) buttons=%d mods=%d\n",
                         subtype, event.arg1, event.arg2, event.arg3, event.arg4);
                 fflush(mouseLog);

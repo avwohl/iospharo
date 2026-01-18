@@ -1650,17 +1650,9 @@ void Interpreter::dispatchEventsToMorphic() {
         }
     }
 
-    // Fallback: for mouseDown events, use handleWorldClick
-    for (auto it = passThroughEvents_.begin(); it != passThroughEvents_.end(); ) {
-        pharo::Event& event = *it;
-        if (event.type == static_cast<int>(pharo::EventType::Mouse) && event.arg5 == 1) {
-            // mouseDown - use existing handleWorldClick
-            handleWorldClick(event.arg1 * menuBarScale_, event.arg2 * menuBarScale_, event.arg3);
-            it = passThroughEvents_.erase(it);
-        } else {
-            ++it;
-        }
-    }
+    // Note: Mouse down events are already handled by processInputEvents via handleWorldClick.
+    // Do NOT erase events here - they need to stay in passThroughEvents_ for primitive 264
+    // to return them to Pharo's InputEventSensor.
 }
 
 void Interpreter::handleWorldClick(int x, int y, int buttons) {
