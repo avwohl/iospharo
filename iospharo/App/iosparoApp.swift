@@ -134,36 +134,61 @@ enum NSEventMonitorSwift {
 
         // Get current mouse position using CGEvent
         guard let event = CGEvent(source: nil) else { return }
-        let screenPosition = event.location
+        let screenPosition = event.location  // CGEvent uses bottom-left origin
 
-        // Get window info to convert screen coordinates to window coordinates
+        // Get window info
         guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
               let window = scene.windows.first else { return }
 
-        // NSEvent/CGEvent coordinates are screen coordinates with origin at bottom-left
-        // Need to convert to window coordinates (top-left origin)
-        // First get the window's screen position
-        let windowFrame = window.frame
-        let screenHeight = window.screen.bounds.height
+        // Get actual window position on screen by accessing NSWindow through Objective-C runtime
+        var windowScreenFrame = CGRect.zero
+        var screenHeight: CGFloat = 1080
 
-        // Convert from screen bottom-left to screen top-left
-        let screenYTopLeft = screenHeight - screenPosition.y
+        // Try to get NSWindow frame which has actual screen coordinates
+        if let nsWindow = (window.value(forKey: "hostWindow") as AnyObject?) as? NSObject,
+           nsWindow.responds(to: NSSelectorFromString("frame")) {
+            if let frameValue = nsWindow.value(forKey: "frame") as? NSValue {
+                windowScreenFrame = frameValue.cgRectValue
+            }
+            // Also get screen height from NSScreen
+            if let nsScreen = nsWindow.value(forKey: "screen") as AnyObject?,
+               let screenFrame = (nsScreen as? NSObject)?.value(forKey: "frame") as? NSValue {
+                screenHeight = screenFrame.cgRectValue.height
+            }
+        }
 
-        // Convert from screen to window coordinates
-        // Window frame in screen coordinates (with top-left origin)
-        let windowX = screenPosition.x - windowFrame.origin.x
-        let windowY = screenYTopLeft - windowFrame.origin.y
+        // If we couldn't get NSWindow frame, fall back to estimation
+        if windowScreenFrame == .zero {
+            // Estimate: assume window is somewhere on screen with a title bar
+            windowScreenFrame = CGRect(x: 0, y: 0, width: window.frame.width, height: window.frame.height)
+            screenHeight = window.screen.bounds.height
+        }
 
-        let windowPosition = CGPoint(x: windowX, y: windowY)
+        // CGEvent Y is from bottom, NSWindow frame Y is also from bottom
+        // Convert CGEvent position to window-local coordinates
+        // windowScreenFrame.origin is bottom-left of window content area
+        let windowX = screenPosition.x - windowScreenFrame.origin.x
+        let windowY = screenPosition.y - windowScreenFrame.origin.y  // Both bottom-left origin
 
-        // Check if mouse is inside window
-        let isInsideWindow = windowX >= 0 && windowX < windowFrame.width &&
-                            windowY >= 0 && windowY < windowFrame.height
+        // Now convert to top-left origin for UIKit/Pharo
+        let windowYTopLeft = windowScreenFrame.height - windowY
+
+        let windowPosition = CGPoint(x: windowX, y: windowYTopLeft)
+
+        // Check if mouse is inside window (use windowY before top-left conversion for bounds check)
+        let isInsideWindow = windowX >= 0 && windowX < windowScreenFrame.width &&
+                            windowY >= 0 && windowY < windowScreenFrame.height
 
         // Get button states using CGEventSource
         let leftDown = CGEventSource.buttonState(.hidSystemState, button: .left)
         let rightDown = CGEventSource.buttonState(.hidSystemState, button: .right)
         let middleDown = CGEventSource.buttonState(.hidSystemState, button: .center)
+
+        // Debug: always log first 50 polls to see coordinate conversion
+        if pollLogFile != nil && pollCount <= 50 {
+            fputs("[POLL-DEBUG] #\(pollCount) screen=(\(Int(screenPosition.x)),\(Int(screenPosition.y))) nsWinFrame=(\(Int(windowScreenFrame.origin.x)),\(Int(windowScreenFrame.origin.y)),\(Int(windowScreenFrame.width)),\(Int(windowScreenFrame.height))) localPos=(\(Int(windowX)),\(Int(windowY))) uiPos=(\(Int(windowPosition.x)),\(Int(windowPosition.y))) inside=\(isInsideWindow) L=\(leftDown)\n", pollLogFile!)
+            fflush(pollLogFile!)
+        }
 
         // Only process if mouse is inside window
         if isInsideWindow {

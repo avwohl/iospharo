@@ -1894,10 +1894,41 @@ void Interpreter::handleWorldClick(int x, int y, int buttons) {
                 fflush(clickLog);
             }
 
-            // Found a morph! For windows, bring to front via direct slot manipulation
+            // Found a morph! For windows, bring to front and flash color for visibility
             // (Message sends like comeToFront cause DNU cascades, so we bypass them)
             if (className.find("Window") != std::string::npos ||
                 className.find("SpWindow") != std::string::npos) {
+                // Change the window's color briefly to show click worked
+                // Morph color is typically at slot 4
+                ObjectHeader* morphHdr = submorph.asObjectPtr();
+                if (morphHdr->slotCount() > 4) {
+                    Oop colorSlot = memory_.fetchPointer(4, submorph);
+                    if (colorSlot.isObject()) {
+                        ObjectHeader* colorHdr = colorSlot.asObjectPtr();
+                        // Color has 4 slots: privateAlpha, privateBlue, privateGreen, privateRed (or similar)
+                        if (colorHdr->slotCount() >= 1) {
+                            // Toggle between click states by checking current color
+                            static bool clickToggle = false;
+                            clickToggle = !clickToggle;
+
+                            if (clickLog) {
+                                fprintf(clickLog, "[CLICK] Toggling window color, toggle=%d\n", clickToggle);
+                                fflush(clickLog);
+                            }
+
+                            // Try modifying the first slot (often alpha or a packed value)
+                            // This should create a visible change
+                            Oop currentVal = memory_.fetchPointer(0, colorSlot);
+                            if (currentVal.isSmallInteger()) {
+                                int64_t val = currentVal.asSmallInteger();
+                                // Flip a bit to change appearance
+                                val ^= 0x80;  // Toggle high bit
+                                memory_.storePointer(0, colorSlot, Oop::fromSmallInteger(val));
+                            }
+                        }
+                    }
+                }
+
                 // Direct comeToFront: move window to end of submorphs array (front in z-order)
                 // Array is at World slot 2 (submorphs)
                 bool moved = false;

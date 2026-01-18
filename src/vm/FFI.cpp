@@ -193,10 +193,23 @@ int stub_SDL_SetRenderDrawColor(void* renderer, uint8_t r, uint8_t g, uint8_t b,
 }
 
 // Event stubs - critical for InputEventSensor
-// We return 0 (no events) since we handle events through primitive 264
+// Forward events from our queue to SDL event structure
 int stub_SDL_PollEvent(void* event) {
-    // Return 0 = no event available
-    // The real events are handled by our primitiveGetNextEvent
+    // Debug: Log calls to this stub
+    static FILE* sdlLog = nullptr;
+    static int sdlCallCount = 0;
+    sdlCallCount++;
+
+    if (!sdlLog) {
+        sdlLog = fopen("/tmp/sdl_pollevent.log", "w");
+    }
+    if (sdlLog && sdlCallCount <= 100) {
+        fprintf(sdlLog, "[SDL_PollEvent] Call #%d event=%p\n", sdlCallCount, event);
+        fflush(sdlLog);
+    }
+
+    // Return 0 = no event available for now
+    // Events are handled through primitive 264 and direct hand manipulation
     return 0;
 }
 
