@@ -128,40 +128,8 @@ struct ContentView: View {
             }
             #endif
         }
-        #if targetEnvironment(macCatalyst)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            // Simple test tap
-            if let file = fopen("/tmp/overlay_debug.log", "a") {
-                fputs("[ZSTACK-TAP] Simple tap detected!\n", file)
-                fclose(file)
-            }
-        }
-        .gesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { value in
-                    if let file = fopen("/tmp/overlay_debug.log", "a") {
-                        fputs("[ZSTACK-DRAG] at \(value.location) active=\(dragActive)\n", file)
-                        fclose(file)
-                    }
-                    if !dragActive {
-                        dragActive = true
-                        bridge.sendMouseMoved(to: value.location, modifiers: 0)
-                        bridge.sendTouchDown(at: value.location, buttons: Int(IOS_RED_BUTTON))
-                    } else {
-                        bridge.sendTouchMoved(to: value.location, buttons: Int(IOS_RED_BUTTON))
-                    }
-                }
-                .onEnded { value in
-                    dragActive = false
-                    if let file = fopen("/tmp/overlay_debug.log", "a") {
-                        fputs("[ZSTACK-DRAG] ended at \(value.location)\n", file)
-                        fclose(file)
-                    }
-                    bridge.sendTouchUp(at: value.location)
-                }
-        )
-        #endif
+        // Note: On Mac Catalyst, SwiftUI gestures intercept but don't fire properly.
+        // We rely on the auto-test for now until we implement proper NSEvent monitoring.
         .onAppear {
             imageManager.checkForExistingImage()
 

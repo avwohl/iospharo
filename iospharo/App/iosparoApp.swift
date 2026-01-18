@@ -303,21 +303,30 @@ struct iosparoApp: App {
             )
             window.addGestureRecognizer(hoverGesture)
 
-            // Add tap gesture for clicks
-            let tapGesture = UITapGestureRecognizer(
+            // Use UILongPressGestureRecognizer with 0 duration - works better on Mac Catalyst
+            let pressGesture = UILongPressGestureRecognizer(
                 target: MouseEventHandler.shared,
-                action: #selector(MouseEventHandler.handleWindowTap(_:))
+                action: #selector(MouseEventHandler.handleWindowPress(_:))
             )
-            window.addGestureRecognizer(tapGesture)
+            pressGesture.minimumPressDuration = 0  // Fires immediately on press
+            pressGesture.allowableMovement = 10000 // Allow movement during press
+            window.addGestureRecognizer(pressGesture)
 
-            // Add pan gesture for drags
-            let panGesture = UIPanGestureRecognizer(
-                target: MouseEventHandler.shared,
-                action: #selector(MouseEventHandler.handleWindowPan(_:))
-            )
-            panGesture.minimumNumberOfTouches = 1
-            panGesture.maximumNumberOfTouches = 1
-            window.addGestureRecognizer(panGesture)
+            // Also try adding directly to the hosting view
+            if let hostingView = window.subviews.first?.subviews.first?.subviews.first {
+                let hostingPress = UILongPressGestureRecognizer(
+                    target: MouseEventHandler.shared,
+                    action: #selector(MouseEventHandler.handleWindowPress(_:))
+                )
+                hostingPress.minimumPressDuration = 0
+                hostingPress.allowableMovement = 10000
+                hostingView.addGestureRecognizer(hostingPress)
+
+                if let file = fopen("/tmp/window_setup.log", "a") {
+                    fputs("[WINDOW] Added press gesture to hosting view: \(hostingView)\n", file)
+                    fclose(file)
+                }
+            }
 
             if let file = fopen("/tmp/window_setup.log", "a") {
                 fputs("[WINDOW] Added gesture recognizers to window (not root view)\n", file)
@@ -365,28 +374,14 @@ class MouseEventHandler: NSObject {
         }
     }
 
-    @objc func handleWindowTap(_ gesture: UITapGestureRecognizer) {
-        let point = gesture.location(in: gesture.view)
-
-        if let file = fopen("/tmp/window_events.log", "a") {
-            fputs("[WINDOW-TAP] at \(point) state=\(gesture.state.rawValue)\n", file)
-            fclose(file)
-        }
-
-        // Send move + click to VM
-        PharoBridge.shared.sendMouseMoved(to: point, modifiers: 0)
-        PharoBridge.shared.sendTouchDown(at: point, buttons: Int(IOS_RED_BUTTON))
-        PharoBridge.shared.sendTouchUp(at: point)
-    }
-
-    @objc func handleWindowPan(_ gesture: UIPanGestureRecognizer) {
+    @objc func handleWindowPress(_ gesture: UILongPressGestureRecognizer) {
         let point = gesture.location(in: gesture.view)
 
         switch gesture.state {
         case .began:
             isDragging = true
             if let file = fopen("/tmp/window_events.log", "a") {
-                fputs("[WINDOW-PAN] began at \(point)\n", file)
+                fputs("[WINDOW-PRESS] began at \(point)\n", file)
                 fclose(file)
             }
             PharoBridge.shared.sendMouseMoved(to: point, modifiers: 0)
@@ -394,7 +389,7 @@ class MouseEventHandler: NSObject {
 
         case .changed:
             if let file = fopen("/tmp/window_events.log", "a") {
-                fputs("[WINDOW-PAN] moved to \(point)\n", file)
+                fputs("[WINDOW-PRESS] moved to \(point)\n", file)
                 fclose(file)
             }
             PharoBridge.shared.sendTouchMoved(to: point, buttons: Int(IOS_RED_BUTTON))
@@ -402,7 +397,7 @@ class MouseEventHandler: NSObject {
         case .ended, .cancelled:
             isDragging = false
             if let file = fopen("/tmp/window_events.log", "a") {
-                fputs("[WINDOW-PAN] ended at \(point)\n", file)
+                fputs("[WINDOW-PRESS] ended at \(point)\n", file)
                 fclose(file)
             }
             PharoBridge.shared.sendTouchUp(at: point)
