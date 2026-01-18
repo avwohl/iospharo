@@ -84,6 +84,13 @@ struct ContentView: View {
         }
         #if targetEnvironment(macCatalyst)
         .contentShape(Rectangle())
+        .onTapGesture {
+            // Simple test tap
+            if let file = fopen("/tmp/overlay_debug.log", "a") {
+                fputs("[ZSTACK-TAP] Simple tap detected!\n", file)
+                fclose(file)
+            }
+        }
         .gesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { value in
@@ -129,9 +136,9 @@ struct ContentView: View {
         // On Mac Catalyst, gesture handling is done via overlay (in body)
         // On iOS, the UIKit view handles touches directly
         #if targetEnvironment(macCatalyst)
+        // Mac Catalyst: Let UIKit gesture recognizers in PharoCanvasView handle events
         PharoCanvasView(bridge: bridge)
             .edgesIgnoringSafeArea(.all)
-            .allowsHitTesting(false)  // Let overlay handle events
         #else
         PharoCanvasView(bridge: bridge)
             .edgesIgnoringSafeArea(.all)

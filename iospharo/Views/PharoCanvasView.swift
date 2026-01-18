@@ -357,6 +357,17 @@ class PharoCanvasViewController: UIViewController {
     private func setupGestureRecognizers() {
         let targetView = mtkView as UIView
 
+        // Debug: log to file
+        if let file = fopen("/tmp/gesture_setup.log", "a") {
+            #if targetEnvironment(macCatalyst)
+            fputs("[GESTURE] setupGestureRecognizers called (Mac Catalyst path)\n", file)
+            #else
+            fputs("[GESTURE] setupGestureRecognizers called (iOS path)\n", file)
+            #endif
+            fputs("[GESTURE] targetView=\(targetView), isUserInteractionEnabled=\(targetView.isUserInteractionEnabled)\n", file)
+            fclose(file)
+        }
+
         #if targetEnvironment(macCatalyst)
         // Mac Catalyst: SwiftUI doesn't deliver touch events to embedded UIKit views
         // We must use gesture recognizers for ALL mouse interactions
@@ -496,6 +507,12 @@ class PharoCanvasViewController: UIViewController {
 
     /// Handle left-click (primary button)
     @objc func handleLeftClick(_ gesture: UITapGestureRecognizer) {
+        // Log entry to file (before any guard)
+        if let file = fopen("/tmp/mac_click.log", "a") {
+            fputs("[LEFT-CLICK] ENTERED handler, state=\(gesture.state.rawValue)\n", file)
+            fclose(file)
+        }
+
         guard let bridge = bridge else {
             NSLog("[LEFT-CLICK] No bridge!")
             return
