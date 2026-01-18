@@ -399,7 +399,9 @@ void vm_postMouseEvent(int type, int x, int y, int buttons, int modifiers) {
     event.arg2 = y;
     event.arg3 = buttons;
     event.arg4 = modifiers;
-    event.arg5 = type;  // 0=move, 1=down, 2=up
+    // Pharo event format: 1=mouseDown, 2=mouseUp, 3=mouseMove
+    // Swift sends: 0=move, 1=down, 2=up - convert move from 0 to 3
+    event.arg5 = (type == 0) ? 3 : type;
 
     // Debug: verify event type before push
     if (mouseLog && mouseEventCount <= 200) {

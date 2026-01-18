@@ -1438,7 +1438,7 @@ void Interpreter::processInputEvents() {
             continue;
         }
 
-        int mouseType = event.arg5;  // 0=move, 1=down, 2=up (stored in arg5!)
+        int mouseType = event.arg5;  // Pharo format: 1=down, 2=up, 3=move (stored in arg5!)
         // Event coordinates are in points (logical pixels)
         // Scale to physical pixels for Retina displays
         int x = event.arg1 * menuBarScale_;
@@ -1594,6 +1594,75 @@ void Interpreter::processInputEvents() {
     }
 }
 
+void Interpreter::dispatchEventsToMorphic() {
+    // Dispatch events from passThroughEvents_ to Morphic
+    // For now, use a simple approach: call InputEventSensor >> processEvents
+    // which will poll primitive 264 to get the events we queued
+    if (passThroughEvents_.empty()) return;
+
+    static FILE* dispatchLog = nullptr;
+    if (!dispatchLog) {
+        dispatchLog = fopen("/tmp/event_dispatch.log", "w");
+    }
+
+    // Log events being dispatched
+    static int dispatchCount = 0;
+    for (auto& event : passThroughEvents_) {
+        if (event.type == static_cast<int>(pharo::EventType::Mouse)) {
+            dispatchCount++;
+            if (dispatchLog && dispatchCount <= 100) {
+                const char* subtypeStr = event.arg5 == 1 ? "down" : (event.arg5 == 2 ? "up" : "move");
+                fprintf(dispatchLog, "[DISPATCH #%d] Mouse %s at %d,%d buttons=%d\n",
+                        dispatchCount, subtypeStr, event.arg1, event.arg2, event.arg3);
+                fflush(dispatchLog);
+            }
+        }
+    }
+
+    // Try to call InputEventSensor >> default >> processEvents
+    // This will trigger Pharo to poll primitive 264
+    Oop sensorClass = memory_.findGlobal("InputEventSensor");
+    if (!sensorClass.isNil() && sensorClass.isObject()) {
+        // First get the default sensor via "InputEventSensor default"
+        Oop defaultSel = findSelector("default");
+        if (!defaultSel.isNil()) {
+            // Queue the call: InputEventSensor processEvents
+            // (sending to class, not instance - class side method)
+            Oop processEventsSel = findSelector("processEvents");
+            if (!processEventsSel.isNil()) {
+                // Try to get the default sensor instance
+                // In Pharo, Sensor is typically a global pointing to InputEventSensor default
+                Oop sensor = memory_.findGlobal("Sensor");
+                if (!sensor.isNil() && sensor.isObject()) {
+                    pendingMenuAction_.selector = processEventsSel;
+                    pendingMenuAction_.receiver = sensor;
+                    pendingMenuAction_.argument = Oop::nil();
+                    pendingMenuAction_.argCount = 0;
+                    pendingMenuAction_.pending = true;
+
+                    if (dispatchLog && dispatchCount <= 100) {
+                        fprintf(dispatchLog, "[DISPATCH] Queued Sensor processEvents\n");
+                        fflush(dispatchLog);
+                    }
+                    return;  // Let the action be processed, events stay in queue for primitive 264
+                }
+            }
+        }
+    }
+
+    // Fallback: for mouseDown events, use handleWorldClick
+    for (auto it = passThroughEvents_.begin(); it != passThroughEvents_.end(); ) {
+        pharo::Event& event = *it;
+        if (event.type == static_cast<int>(pharo::EventType::Mouse) && event.arg5 == 1) {
+            // mouseDown - use existing handleWorldClick
+            handleWorldClick(event.arg1 * menuBarScale_, event.arg2 * menuBarScale_, event.arg3);
+            it = passThroughEvents_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 void Interpreter::handleWorldClick(int x, int y, int buttons) {
     // Handle a click outside the menu bar
     // For now, log it and try to find what morph is at this position
@@ -1710,6 +1779,11 @@ void Interpreter::handleWorldClick(int x, int y, int buttons) {
                 className.find("SpWindow") != std::string::npos) {
                 // Try to activate this window by sending it comeToFront
                 Oop comeToFrontSel = findSelector("comeToFront");
+                if (clickLog) {
+                    fprintf(clickLog, "[CLICK] comeToFront selector lookup: isNil=%d\n",
+                            comeToFrontSel.isNil() ? 1 : 0);
+                    fflush(clickLog);
+                }
                 if (!comeToFrontSel.isNil()) {
                     pendingMenuAction_.selector = comeToFrontSel;
                     pendingMenuAction_.receiver = submorph;
@@ -1720,6 +1794,42 @@ void Interpreter::handleWorldClick(int x, int y, int buttons) {
                     if (clickLog) {
                         fprintf(clickLog, "[CLICK] Queued comeToFront for %s\n", className.c_str());
                         fflush(clickLog);
+                    }
+                } else {
+                    // Try yourself (which always exists) - at least this will confirm selector lookup works
+                    Oop yourselfSel = findSelector("yourself");
+                    Oop classSel = findSelector("class");
+                    if (clickLog) {
+                        fprintf(clickLog, "[CLICK] yourself selector lookup: isNil=%d\n",
+                                yourselfSel.isNil() ? 1 : 0);
+                        fprintf(clickLog, "[CLICK] class selector lookup: isNil=%d\n",
+                                classSel.isNil() ? 1 : 0);
+                        fflush(clickLog);
+                    }
+
+                    // Fallback - try activate or flash to show some response
+                    Oop activateSel = findSelector("activate");
+                    Oop flashSel = findSelector("flash");
+                    if (!activateSel.isNil()) {
+                        pendingMenuAction_.selector = activateSel;
+                        pendingMenuAction_.receiver = submorph;
+                        pendingMenuAction_.argument = Oop::nil();
+                        pendingMenuAction_.argCount = 0;
+                        pendingMenuAction_.pending = true;
+                        if (clickLog) {
+                            fprintf(clickLog, "[CLICK] Queued activate for %s\n", className.c_str());
+                            fflush(clickLog);
+                        }
+                    } else if (!flashSel.isNil()) {
+                        pendingMenuAction_.selector = flashSel;
+                        pendingMenuAction_.receiver = submorph;
+                        pendingMenuAction_.argument = Oop::nil();
+                        pendingMenuAction_.argCount = 0;
+                        pendingMenuAction_.pending = true;
+                        if (clickLog) {
+                            fprintf(clickLog, "[CLICK] Queued flash for %s\n", className.c_str());
+                            fflush(clickLog);
+                        }
                     }
                 }
             }
@@ -2019,9 +2129,10 @@ void Interpreter::interpret() {
         // Check timer and signal delay semaphore if time has elapsed
         checkTimerSemaphore();
 
-        // Periodically process input events (in case semaphore signaling isn't working)
+        // Periodically process input events and dispatch to Morphic
         if (++loopCount % 100 == 0) {
             processInputEvents();
+            dispatchEventsToMorphic();
         }
 
         // Execute pending menu action from sync thread
@@ -3074,6 +3185,9 @@ void Interpreter::returnValue(Oop value) {
 
         // Process input events (important for menu handling)
         processInputEvents();
+
+        // Dispatch queued events to Morphic's active hand
+        dispatchEventsToMorphic();
 
         // Execute pending menu action if any
         if (pendingMenuAction_.pending) {
@@ -6747,6 +6861,11 @@ Oop Interpreter::findSelector(const char* name) {
     // DEBUG: "[DEBUG] findSelector: Looking for '" << name << "'"
 
     // Search through several well-known classes to find the selector
+    // Also search Morphic classes for UI selectors like comeToFront, activate
+    Oop morphClass = memory_.findGlobal("Morph");
+    Oop systemWindowClass = memory_.findGlobal("SystemWindow");
+    Oop spWindowClass = memory_.findGlobal("SpWindow");
+
     Oop classesToSearch[] = {
         memory_.specialObject(SpecialObjectIndex::ClassArray),
         memory_.specialObject(SpecialObjectIndex::ClassByteString),
@@ -6754,6 +6873,9 @@ Oop Interpreter::findSelector(const char* name) {
         memory_.specialObject(SpecialObjectIndex::ClassMethodContext),
         memory_.specialObject(SpecialObjectIndex::ClassBlockClosure),
         memory_.specialObject(SpecialObjectIndex::ClassProcess),
+        morphClass,
+        systemWindowClass,
+        spWindowClass,
         Oop::nil()
     };
 

@@ -14,7 +14,7 @@ To install manually in Pharo:
 "
 
 Object subclass: #iOSWorldRenderer
-    instanceVariableNames: 'world display damagedRects deferred'
+    instanceVariableNames: 'world display damagedRects deferred eventBuffer'
     classVariableNames: ''
     package: 'iOS-VM'!
 
@@ -50,6 +50,7 @@ initialize
     super initialize.
     damagedRects := OrderedCollection new.
     deferred := false.
+    eventBuffer := Array new: 8.
     self initializeDisplay!
 
 initializeDisplay
@@ -121,8 +122,89 @@ fullRepaint
 !iOSWorldRenderer methodsFor: 'events'!
 
 processEvents
-    "Process pending input events from the VM"
-    "Events are handled via EventSensor which reads from VM event queue"! !
+    "Process pending input events from the VM by polling primitive 264"
+    | eventType |
+    eventBuffer ifNil: [ eventBuffer := Array new: 8 ].
+
+    "Poll until no more events"
+    [ self primGetNextEvent: eventBuffer.
+      eventType := eventBuffer at: 1.
+      eventType > 0 ] whileTrue: [
+        self dispatchEvent: eventBuffer copy ]!
+
+primGetNextEvent: anArray
+    "Primitive 264 - get next event from VM event queue"
+    <primitive: 264>
+    "On failure, set type to 0 (no event)"
+    anArray at: 1 put: 0!
+
+dispatchEvent: anEventArray
+    "Convert raw event array to MorphicEvent and dispatch to active hand"
+    | eventType hand event |
+    eventType := anEventArray at: 1.
+    world ifNil: [ ^ self ].
+    hand := world activeHand.
+    hand ifNil: [ ^ self ].
+
+    "Event types: 1=mouse, 2=keyboard, 3=special (drag, resize, etc.)"
+    eventType = 1 ifTrue: [
+        event := self createMouseEvent: anEventArray.
+        event ifNotNil: [ hand handleEvent: event ] ].
+    eventType = 2 ifTrue: [
+        event := self createKeyboardEvent: anEventArray.
+        event ifNotNil: [ hand handleEvent: event ] ]!
+
+createMouseEvent: anEventArray
+    "Create a MouseEvent from raw event array.
+     Array format: #(type timeStamp x y buttons modifiers subtype window)
+     Subtype: 1=mouseDown, 2=mouseUp, 3=mouseMove"
+    | x y buttons modifiers subtype |
+    x := (anEventArray at: 3) ifNil: [ 0 ].
+    y := (anEventArray at: 4) ifNil: [ 0 ].
+    buttons := (anEventArray at: 5) ifNil: [ 0 ].
+    modifiers := (anEventArray at: 6) ifNil: [ 0 ].
+    subtype := (anEventArray at: 7) ifNil: [ 3 ].  "default to mouseMove"
+
+    "Determine event class based on subtype"
+    subtype = 1 ifTrue: [
+        ^ MouseButtonPressEvent new
+            setType: #mouseDown;
+            position: x @ y;
+            buttons: buttons;
+            hand: world activeHand;
+            yourself ].
+    subtype = 2 ifTrue: [
+        ^ MouseButtonReleaseEvent new
+            setType: #mouseUp;
+            position: x @ y;
+            buttons: buttons;
+            hand: world activeHand;
+            yourself ].
+    subtype = 3 ifTrue: [
+        ^ MouseMoveEvent new
+            setType: #mouseMove;
+            position: x @ y;
+            buttons: buttons;
+            hand: world activeHand;
+            yourself ].
+    ^ nil!
+
+createKeyboardEvent: anEventArray
+    "Create a KeyboardEvent from raw event array.
+     Array format: #(type timeStamp charCode scanCode modifiers subtype reserved window)"
+    | charCode scanCode modifiers subtype |
+    charCode := (anEventArray at: 3) ifNil: [ 0 ].
+    scanCode := (anEventArray at: 4) ifNil: [ 0 ].
+    modifiers := (anEventArray at: 5) ifNil: [ 0 ].
+    subtype := (anEventArray at: 6) ifNil: [ 0 ].  "0=keyDown, 1=keyUp, 2=keyChar"
+
+    "Return keystroke event"
+    ^ KeyboardEvent new
+        setType: (subtype = 1 ifTrue: [ #keyUp ] ifFalse: [ #keyDown ]);
+        keyValue: charCode;
+        scanCode: scanCode;
+        hand: world activeHand;
+        yourself! !
 
 !iOSWorldRenderer methodsFor: 'activation'!
 
