@@ -1426,7 +1426,12 @@ void Interpreter::processInputEvents() {
             fflush(logFile);
         }
 
-        // Non-mouse events pass through to Pharo
+        // Skip WindowMetrics events - these are internal to C++ rendering
+        if (event.type == static_cast<int>(pharo::EventType::WindowMetrics)) {
+            continue;
+        }
+
+        // Non-mouse events (keyboard, scroll, etc.) pass through to Pharo
         if (event.type != static_cast<int>(pharo::EventType::Mouse)) {
             passThroughEvents_.push_back(event);
             continue;

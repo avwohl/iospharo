@@ -17,49 +17,29 @@ import SwiftUI
 /// embedded UIKit views (UIViewControllerRepresentable) on Mac Catalyst.
 struct MouseEventOverlay: View {
     @ObservedObject var bridge: PharoBridge
-    @State private var isDragging = false
     @State private var clickCount = 0
+    @State private var isDragging = false
 
     var body: some View {
-        // Invisible but hittable overlay
-        Color.white.opacity(0.001)
-            .contentShape(Rectangle())
-            .onAppear {
-                if let file = fopen("/tmp/overlay_debug.log", "a") {
-                    fputs("[OVERLAY] MouseEventOverlay appeared\n", file)
-                    fclose(file)
+        GeometryReader { geometry in
+            // Debug: visible overlay
+            Rectangle()
+                .fill(Color.red.opacity(0.15))
+                .onAppear {
+                    if let file = fopen("/tmp/overlay_debug.log", "a") {
+                        fputs("[OVERLAY] MouseEventOverlay appeared, size=\(geometry.size)\n", file)
+                        fclose(file)
+                    }
                 }
-            }
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        let location = value.location
-
-                        if !isDragging {
-                            // First event - mouse down
-                            isDragging = true
-                            clickCount += 1
-                            if let file = fopen("/tmp/overlay_debug.log", "a") {
-                                fputs("[OVERLAY] Click #\(clickCount) DOWN at \(location)\n", file)
-                                fclose(file)
-                            }
-                            bridge.sendMouseMoved(to: location, modifiers: 0)
-                            bridge.sendTouchDown(at: location, buttons: Int(IOS_RED_BUTTON))
-                        } else {
-                            // Subsequent events - mouse drag
-                            bridge.sendTouchMoved(to: location, buttons: Int(IOS_RED_BUTTON))
-                        }
+                .onTapGesture {
+                    // Simple tap test without location
+                    clickCount += 1
+                    if let file = fopen("/tmp/overlay_debug.log", "a") {
+                        fputs("[OVERLAY] Simple tap #\(clickCount)\n", file)
+                        fclose(file)
                     }
-                    .onEnded { value in
-                        let location = value.location
-                        isDragging = false
-                        if let file = fopen("/tmp/overlay_debug.log", "a") {
-                            fputs("[OVERLAY] Click UP at \(location)\n", file)
-                            fclose(file)
-                        }
-                        bridge.sendTouchUp(at: location)
-                    }
-            )
+                }
+        }
     }
 }
 #endif
@@ -73,6 +53,7 @@ struct ContentView: View {
 
     @State private var showingSettings = false
     @State private var showingKeyboard = false
+    @State private var dragActive = false
 
     var body: some View {
         ZStack {
@@ -85,12 +66,6 @@ struct ContentView: View {
                 // Pharo is running - show canvas with gesture overlay
                 pharoCanvas
 
-                #if targetEnvironment(macCatalyst)
-                // Transparent overlay to capture mouse events on Mac Catalyst
-                // UIKit events don't reach embedded views, so we handle at SwiftUI level
-                MouseEventOverlay(bridge: bridge)
-                    .edgesIgnoringSafeArea(.all)
-                #endif
             } else if imageManager.isDownloading {
                 // Downloading image
                 downloadingView
@@ -107,6 +82,33 @@ struct ContentView: View {
                 errorOverlay(message: error)
             }
         }
+        #if targetEnvironment(macCatalyst)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    if let file = fopen("/tmp/overlay_debug.log", "a") {
+                        fputs("[ZSTACK-DRAG] at \(value.location) active=\(dragActive)\n", file)
+                        fclose(file)
+                    }
+                    if !dragActive {
+                        dragActive = true
+                        bridge.sendMouseMoved(to: value.location, modifiers: 0)
+                        bridge.sendTouchDown(at: value.location, buttons: Int(IOS_RED_BUTTON))
+                    } else {
+                        bridge.sendTouchMoved(to: value.location, buttons: Int(IOS_RED_BUTTON))
+                    }
+                }
+                .onEnded { value in
+                    dragActive = false
+                    if let file = fopen("/tmp/overlay_debug.log", "a") {
+                        fputs("[ZSTACK-DRAG] ended at \(value.location)\n", file)
+                        fclose(file)
+                    }
+                    bridge.sendTouchUp(at: value.location)
+                }
+        )
+        #endif
         .onAppear {
             imageManager.checkForExistingImage()
 
