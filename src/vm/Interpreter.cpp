@@ -3746,88 +3746,37 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             }
 
             // ===== INTERCEPT relinquishProcessorForMicroseconds: =====
-            // This is called during idle loop. Use it to process pending menu actions.
-            // Since we're in bytecode execution context, message sends are safe here.
+            // This is called during idle loop. Could use it to process pending menu actions,
+            // but direct message sends cause DNU cascades that crash the app.
+            // For now, just clear pending actions without executing them.
             if (selStr == "relinquishProcessorForMicroseconds:" && argCount == 1) {
-                // Process pending menu action if any
                 if (pendingMenuAction_.pending) {
-                    Oop actionSel = pendingMenuAction_.selector;
-                    Oop actionRcvr = pendingMenuAction_.receiver;
-                    Oop actionArg = pendingMenuAction_.argument;
-                    int actionArgCount = pendingMenuAction_.argCount;
+                    // Log that we're skipping the action
+                    static FILE* skipLog = nullptr;
+                    static int skipCount = 0;
+                    if (!skipLog) {
+                        skipLog = fopen("/tmp/action_skip.log", "w");
+                    }
+                    if (skipLog && skipCount < 20) {
+                        std::string selName = "<unknown>";
+                        if (pendingMenuAction_.selector.isObject()) {
+                            ObjectHeader* selHdr = pendingMenuAction_.selector.asObjectPtr();
+                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                selName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                            }
+                        }
+                        fprintf(skipLog, "[SKIP #%d] Skipping action #%s (causes DNU cascade)\n",
+                                ++skipCount, selName.c_str());
+                        fflush(skipLog);
+                    }
+                    // Clear the pending action without executing
                     pendingMenuAction_.pending = false;
                     pendingMenuAction_.selector = Oop::nil();
                     pendingMenuAction_.receiver = Oop::nil();
                     pendingMenuAction_.argument = Oop::nil();
                     pendingMenuAction_.argCount = 0;
-
-                    // Debug logging
-                    static FILE* actionLog = nullptr;
-                    if (!actionLog) {
-                        actionLog = fopen("/tmp/action_dispatch.log", "w");
-                    }
-                    std::string selName = "<unknown>";
-                    if (actionSel.isObject()) {
-                        ObjectHeader* selHdr = actionSel.asObjectPtr();
-                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                            selName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                        }
-                    }
-                    std::string rcvrClass = "<unknown>";
-                    if (actionRcvr.isObject()) {
-                        Oop cls = memory_.classOf(actionRcvr);
-                        if (cls.isObject()) {
-                            Oop nameOop = memory_.fetchPointer(6, cls);
-                            if (nameOop.isObject()) {
-                                ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
-                                    rcvrClass = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                                }
-                            }
-                        }
-                    }
-                    if (actionLog) {
-                        fprintf(actionLog, "[ACTION] Dispatching #%s to %s (rcvr=0x%llx)\n",
-                                selName.c_str(), rcvrClass.c_str(),
-                                (unsigned long long)actionRcvr.rawBits());
-                        fprintf(actionLog, "[ACTION] Stack before: sp=%p fp=%p\n",
-                                (void*)stackPointer_, (void*)framePointer_);
-                        fflush(actionLog);
-                    }
-
-                    // Pop relinquishProcessorForMicroseconds:'s arg and receiver
-                    popN(argCount + 1);
-                    if (actionLog) {
-                        fprintf(actionLog, "[ACTION] After popN: sp=%p fp=%p\n",
-                                (void*)stackPointer_, (void*)framePointer_);
-                        fflush(actionLog);
-                    }
-
-                    // Set up the action call
-                    push(actionRcvr);
-                    if (actionArgCount > 0 && !actionArg.isNil()) {
-                        push(actionArg);
-                    }
-                    if (actionLog) {
-                        fprintf(actionLog, "[ACTION] After push: sp=%p fp=%p, calling sendSelector\n",
-                                (void*)stackPointer_, (void*)framePointer_);
-                        fflush(actionLog);
-                    }
-
-                    sendSelector(actionSel, actionArgCount);
-                    if (actionLog) {
-                        fprintf(actionLog, "[ACTION] After sendSelector: sp=%p fp=%p\n",
-                                (void*)stackPointer_, (void*)framePointer_);
-                        fprintf(actionLog, "[ACTION] Returning to interpret loop...\n");
-                        fflush(actionLog);
-                    }
-                    // After sendSelector activates a new context, control returns to
-                    // the interpret loop. We've replaced relinquishProcessorForMicroseconds:
-                    // with our action, so when comeToFront returns, its return value
-                    // will be pushed instead of relinquish's.
-                    return;
                 }
-                // If no pending action, let relinquish proceed normally
+                // Let relinquish proceed normally
             }
 
             // Check for termination-related selectors
