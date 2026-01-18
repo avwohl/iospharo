@@ -73,16 +73,138 @@ bool Interpreter::initialize() {
         return false;
     }
 
-    // Debug: dump ProcessScheduler slots
-    // DEBUG: "[DEBUG] ProcessScheduler slots:"
-    if (processScheduler.isObject()) {
-        ObjectHeader* psHeader = processScheduler.asObjectPtr();
-        size_t slots = psHeader->slotCount();
-        // std::cerr << "  ProcessScheduler has " << slots << " slots, classIndex=" << psHeader->classIndex(); // DEBUG
-        for (size_t i = 0; i < slots && i < 5; i++) {
-            Oop slot = psHeader->slotAt(i);
-            // std::cerr << "  [" << i << "]: 0x" << std::hex << slot.rawBits() << std::dec; // DEBUG
+    // Dump all processes in the scheduler to understand what's running
+    static FILE* procLog = fopen("/tmp/process_dump.log", "w");
+    if (procLog) {
+        fprintf(procLog, "[INIT] Dumping all processes in scheduler\n");
+        Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
+
+        // Get quiescentProcessLists (array of LinkedLists, one per priority)
+        Oop queues = memory_.fetchPointer(0, processScheduler);
+        if (queues.isObject()) {
+            ObjectHeader* queuesHdr = queues.asObjectPtr();
+            size_t numPriorities = queuesHdr->slotCount();
+            fprintf(procLog, "[INIT] Found %zu priority levels\n", numPriorities);
+
+            for (size_t pri = 0; pri < numPriorities; pri++) {
+                Oop queue = queuesHdr->slotAt(pri);
+                if (queue.rawBits() == nilObj.rawBits() || !queue.isObject()) continue;
+
+                // LinkedList: slot 0 = firstLink, slot 1 = lastLink
+                Oop proc = memory_.fetchPointer(0, queue);
+                while (proc.isObject() && proc.rawBits() != nilObj.rawBits()) {
+                    // Get process name if it has one (slot 3 is name in modern Pharo)
+                    ObjectHeader* procHdr = proc.asObjectPtr();
+                    std::string procName = "<unnamed>";
+                    if (procHdr->slotCount() > 3) {
+                        Oop nameOop = memory_.fetchPointer(3, proc);
+                        if (nameOop.isObject() && nameOop.rawBits() != nilObj.rawBits()) {
+                            ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                                procName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                            }
+                        }
+                    }
+
+                    // Get suspended context to find what method it's in
+                    std::string methodInfo = "<no context>";
+                    if (procHdr->slotCount() > 1) {
+                        Oop ctx = memory_.fetchPointer(1, proc);  // suspendedContext
+                        if (ctx.isObject() && ctx.rawBits() != nilObj.rawBits()) {
+                            ObjectHeader* ctxHdr = ctx.asObjectPtr();
+                            if (ctxHdr->slotCount() > 3) {
+                                Oop method = memory_.fetchPointer(3, ctx);  // method
+                                if (method.isObject()) {
+                                    // Extract numLiterals from method header (slot 0)
+                                    Oop headerOop = memory_.fetchPointer(0, method);
+                                    if (headerOop.isSmallInteger()) {
+                                        int64_t headerBits = headerOop.asSmallInteger();
+                                        int numLits = headerBits & 0x7FFF;  // bits 0-14
+                                        if (numLits > 0) {
+                                            // Last literal (at index numLits) often contains selector
+                                            Oop assoc = memory_.fetchPointer(numLits, method);
+                                            if (assoc.isObject()) {
+                                                ObjectHeader* assocHdr = assoc.asObjectPtr();
+                                                // Could be an Association with key = selector, or AdditionalMethodState
+                                                if (assocHdr->slotCount() > 0) {
+                                                    Oop selector = memory_.fetchPointer(0, assoc);
+                                                    if (selector.isObject()) {
+                                                        ObjectHeader* selHdr = selector.asObjectPtr();
+                                                        if (selHdr->isBytesObject() && selHdr->byteSize() < 100) {
+                                                            methodInfo = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    fprintf(procLog, "[INIT] Priority %zu: Process '%s' in #%s (0x%llx)\n",
+                            pri + 1, procName.c_str(), methodInfo.c_str(), (unsigned long long)proc.rawBits());
+
+                    // Follow nextLink to next process in this queue
+                    proc = memory_.fetchPointer(0, proc);
+                }
+            }
         }
+
+        // Also dump the active process
+        Oop active = memory_.fetchPointer(1, processScheduler);
+        if (active.isObject()) {
+            ObjectHeader* activeHdr = active.asObjectPtr();
+            std::string activeName = "<unnamed>";
+            if (activeHdr->slotCount() > 3) {
+                Oop nameOop = memory_.fetchPointer(3, active);
+                if (nameOop.isObject() && nameOop.rawBits() != nilObj.rawBits()) {
+                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                        activeName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                    }
+                }
+            }
+
+            // Get method for active process context
+            std::string activeMethod = "<no context>";
+            if (activeHdr->slotCount() > 1) {
+                Oop ctx = memory_.fetchPointer(1, active);
+                if (ctx.isObject() && ctx.rawBits() != nilObj.rawBits()) {
+                    ObjectHeader* ctxHdr = ctx.asObjectPtr();
+                    if (ctxHdr->slotCount() > 3) {
+                        Oop method = memory_.fetchPointer(3, ctx);
+                        if (method.isObject()) {
+                            // Extract numLiterals from method header (slot 0)
+                            Oop headerOop = memory_.fetchPointer(0, method);
+                            if (headerOop.isSmallInteger()) {
+                                int64_t headerBits = headerOop.asSmallInteger();
+                                int numLits = headerBits & 0x7FFF;  // bits 0-14
+                                if (numLits > 0) {
+                                    // Last literal (at index numLits) often contains selector
+                                    Oop assoc = memory_.fetchPointer(numLits, method);
+                                    if (assoc.isObject()) {
+                                        ObjectHeader* assocHdr = assoc.asObjectPtr();
+                                        if (assocHdr->slotCount() > 0) {
+                                            Oop selector = memory_.fetchPointer(0, assoc);
+                                            if (selector.isObject()) {
+                                                ObjectHeader* selHdr = selector.asObjectPtr();
+                                                if (selHdr->isBytesObject() && selHdr->byteSize() < 100) {
+                                                    activeMethod = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            fprintf(procLog, "[INIT] Active process: '%s' in #%s (0x%llx)\n",
+                    activeName.c_str(), activeMethod.c_str(), (unsigned long long)active.rawBits());
+        }
+        fflush(procLog);
     }
 
     // Get the active process
