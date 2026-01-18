@@ -1790,7 +1790,8 @@ void Interpreter::handleWorldClick(int x, int y, int buttons) {
                     pendingMenuAction_.argument = Oop::nil();
                     pendingMenuAction_.argCount = 0;
                     pendingMenuAction_.pending = true;
-                    pendingMenuAction_.executeFromSync = true;  // Process in interpret loop
+                    // Don't set executeFromSync - let doOneCycleFor: handle it
+                    // (that's a safe context for message sends)
 
                     if (clickLog) {
                         fprintf(clickLog, "[CLICK] Queued comeToFront for %s\n", className.c_str());
@@ -1817,7 +1818,6 @@ void Interpreter::handleWorldClick(int x, int y, int buttons) {
                         pendingMenuAction_.argument = Oop::nil();
                         pendingMenuAction_.argCount = 0;
                         pendingMenuAction_.pending = true;
-                        pendingMenuAction_.executeFromSync = true;
                         if (clickLog) {
                             fprintf(clickLog, "[CLICK] Queued activate for %s\n", className.c_str());
                             fflush(clickLog);
@@ -1828,7 +1828,6 @@ void Interpreter::handleWorldClick(int x, int y, int buttons) {
                         pendingMenuAction_.argument = Oop::nil();
                         pendingMenuAction_.argCount = 0;
                         pendingMenuAction_.pending = true;
-                        pendingMenuAction_.executeFromSync = true;
                         if (clickLog) {
                             fprintf(clickLog, "[CLICK] Queued flash for %s\n", className.c_str());
                             fflush(clickLog);
@@ -2000,31 +1999,8 @@ void Interpreter::syncDisplayToSurface() {
     // Process input events
     processInputEvents();
 
-    // Execute pending menu action if any
-    if (pendingMenuAction_.pending) {
-        // Get action details
-        Oop actionSel = pendingMenuAction_.selector;
-        Oop actionRcvr = pendingMenuAction_.receiver;
-        Oop actionArg = pendingMenuAction_.argument;
-        int actionArgCount = pendingMenuAction_.argCount;
-
-        // Clear pending
-        pendingMenuAction_.pending = false;
-        pendingMenuAction_.selector = Oop::nil();
-        pendingMenuAction_.receiver = Oop::nil();
-        pendingMenuAction_.argument = Oop::nil();
-        pendingMenuAction_.argCount = 0;
-
-        // Set up stack for message send - this runs in the context of the heartbeat thread
-        // which may not have a proper Smalltalk stack. We need to defer to the main interpreter.
-        // For now, just flag that an action needs execution and let the interpret loop handle it.
-        pendingMenuAction_.pending = true;
-        pendingMenuAction_.selector = actionSel;
-        pendingMenuAction_.receiver = actionRcvr;
-        pendingMenuAction_.argument = actionArg;
-        pendingMenuAction_.argCount = actionArgCount;
-        pendingMenuAction_.executeFromSync = true;  // Flag for interpret loop to pick up
-    }
+    // Note: pending menu actions are processed by doOneCycleFor: interception,
+    // not here. That's a safe context for message sends.
 
     // For now, always use direct morph rendering instead of Display Form
     // This works around BitBlt not updating the Form properly
@@ -2138,70 +2114,9 @@ void Interpreter::interpret() {
             dispatchEventsToMorphic();
         }
 
-        // Execute pending menu action from sync thread
-        if (pendingMenuAction_.executeFromSync && pendingMenuAction_.pending) {
-            Oop actionSel = pendingMenuAction_.selector;
-            Oop actionRcvr = pendingMenuAction_.receiver;
-            Oop actionArg = pendingMenuAction_.argument;
-            int actionArgCount = pendingMenuAction_.argCount;
-
-            // Debug: Log action execution
-            static FILE* actionLog = nullptr;
-            if (!actionLog) {
-                actionLog = fopen("/tmp/action_exec.log", "w");
-            }
-            if (actionLog) {
-                fprintf(actionLog, "[ACTION] Pending action detected: rcvr=0x%llx sel=0x%llx argCount=%d\n",
-                        (unsigned long long)actionRcvr.rawBits(),
-                        (unsigned long long)actionSel.rawBits(),
-                        actionArgCount);
-                fflush(actionLog);
-            }
-
-            pendingMenuAction_.pending = false;
-            pendingMenuAction_.executeFromSync = false;
-            pendingMenuAction_.selector = Oop::nil();
-            pendingMenuAction_.receiver = Oop::nil();
-            pendingMenuAction_.argument = Oop::nil();
-            pendingMenuAction_.argCount = 0;
-
-            // DISABLED: Direct message sends from interpret loop crash the app.
-            // The problem is that sendSelector activates a new method context, but we're
-            // calling from the main loop, not from bytecode execution. Stack corruption occurs.
-            // See WIP-input-handling.md for investigation details.
-            //
-            // Possible solutions:
-            // 1. Proper OSWindow integration (OSiOSDriver delivers events via callbacks)
-            // 2. Start event polling process in Pharo
-            // 3. Direct Hand manipulation in memory
-            // 4. Safe message injection at checkForInterrupts
-            if (actionLog) {
-                // Log what we would have sent
-                std::string selName = "<unknown>";
-                if (actionSel.isObject()) {
-                    ObjectHeader* selHdr = actionSel.asObjectPtr();
-                    if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                        selName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                    }
-                }
-                std::string rcvrClass = "<unknown>";
-                if (actionRcvr.isObject()) {
-                    Oop cls = memory_.classOf(actionRcvr);
-                    if (cls.isObject()) {
-                        Oop nameOop = memory_.fetchPointer(6, cls);
-                        if (nameOop.isObject()) {
-                            ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
-                                rcvrClass = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                            }
-                        }
-                    }
-                }
-                fprintf(actionLog, "[ACTION] DISABLED: Would send #%s to %s (crashes - see WIP doc)\n",
-                        selName.c_str(), rcvrClass.c_str());
-                fflush(actionLog);
-            }
-        }
+        // Note: Pending menu actions are handled by doOneCycleFor: interception,
+        // which provides a safe context for message sends.
+        // Direct message sends from this loop would crash (stack corruption).
 
         step();
     }
@@ -3677,6 +3592,32 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
         }
     }
+
+    // Debug: track world-related sends to understand the event loop
+    static FILE* selectorLog = nullptr;
+    static int selectorLogCount = 0;
+    if (!selectorLog) {
+        selectorLog = fopen("/tmp/selector_debug.log", "w");
+    }
+    if (selectorLog && selectorLogCount < 200) {
+        // Log selectors that might be part of the world loop
+        if (selStr.find("cycle") != std::string::npos ||
+            selStr.find("Cycle") != std::string::npos ||
+            selStr.find("World") != std::string::npos ||
+            selStr.find("world") != std::string::npos ||
+            selStr.find("event") != std::string::npos ||
+            selStr.find("Event") != std::string::npos ||
+            selStr.find("process") != std::string::npos ||
+            selStr.find("Process") != std::string::npos ||
+            selStr.find("step") != std::string::npos ||
+            selStr.find("defer") != std::string::npos ||
+            selStr.find("loop") != std::string::npos) {
+            fprintf(selectorLog, "[SEND #%d] #%s argCount=%d\n",
+                    ++selectorLogCount, selStr.c_str(), argCount);
+            fflush(selectorLog);
+        }
+    }
+
     if (!selStr.empty() && selStr == lastSelStr) {
         sameSelCount++;
         if (sameSelCount > 50) {
@@ -3778,6 +3719,117 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         ObjectHeader* selHdr = selector.asObjectPtr();
         if (selHdr->isBytesObject() && selHdr->byteSize() > 0 && selHdr->byteSize() < 50) {
             std::string selStr((char*)selHdr->bytes(), selHdr->byteSize());
+            // ===== INTERCEPT comeToFront =====
+            // Log when comeToFront is being called
+            if (selStr == "comeToFront" && argCount == 0) {
+                static FILE* ctfLog = nullptr;
+                if (!ctfLog) {
+                    ctfLog = fopen("/tmp/cometofront_debug.log", "w");
+                }
+                if (ctfLog) {
+                    std::string rcvrClassName = "<unknown>";
+                    Oop rcvrCls = memory_.classOf(rcvr);
+                    if (rcvrCls.isObject()) {
+                        Oop nameOop = memory_.fetchPointer(6, rcvrCls);
+                        if (nameOop.isObject()) {
+                            ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                                rcvrClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                            }
+                        }
+                    }
+                    fprintf(ctfLog, "[CTF] comeToFront called on %s (rcvr=0x%llx)\n",
+                            rcvrClassName.c_str(), (unsigned long long)rcvr.rawBits());
+                    fflush(ctfLog);
+                }
+                // Let it proceed normally for now
+            }
+
+            // ===== INTERCEPT relinquishProcessorForMicroseconds: =====
+            // This is called during idle loop. Use it to process pending menu actions.
+            // Since we're in bytecode execution context, message sends are safe here.
+            if (selStr == "relinquishProcessorForMicroseconds:" && argCount == 1) {
+                // Process pending menu action if any
+                if (pendingMenuAction_.pending) {
+                    Oop actionSel = pendingMenuAction_.selector;
+                    Oop actionRcvr = pendingMenuAction_.receiver;
+                    Oop actionArg = pendingMenuAction_.argument;
+                    int actionArgCount = pendingMenuAction_.argCount;
+                    pendingMenuAction_.pending = false;
+                    pendingMenuAction_.selector = Oop::nil();
+                    pendingMenuAction_.receiver = Oop::nil();
+                    pendingMenuAction_.argument = Oop::nil();
+                    pendingMenuAction_.argCount = 0;
+
+                    // Debug logging
+                    static FILE* actionLog = nullptr;
+                    if (!actionLog) {
+                        actionLog = fopen("/tmp/action_dispatch.log", "w");
+                    }
+                    std::string selName = "<unknown>";
+                    if (actionSel.isObject()) {
+                        ObjectHeader* selHdr = actionSel.asObjectPtr();
+                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                            selName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                        }
+                    }
+                    std::string rcvrClass = "<unknown>";
+                    if (actionRcvr.isObject()) {
+                        Oop cls = memory_.classOf(actionRcvr);
+                        if (cls.isObject()) {
+                            Oop nameOop = memory_.fetchPointer(6, cls);
+                            if (nameOop.isObject()) {
+                                ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                                    rcvrClass = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                }
+                            }
+                        }
+                    }
+                    if (actionLog) {
+                        fprintf(actionLog, "[ACTION] Dispatching #%s to %s (rcvr=0x%llx)\n",
+                                selName.c_str(), rcvrClass.c_str(),
+                                (unsigned long long)actionRcvr.rawBits());
+                        fprintf(actionLog, "[ACTION] Stack before: sp=%p fp=%p\n",
+                                (void*)stackPointer_, (void*)framePointer_);
+                        fflush(actionLog);
+                    }
+
+                    // Pop relinquishProcessorForMicroseconds:'s arg and receiver
+                    popN(argCount + 1);
+                    if (actionLog) {
+                        fprintf(actionLog, "[ACTION] After popN: sp=%p fp=%p\n",
+                                (void*)stackPointer_, (void*)framePointer_);
+                        fflush(actionLog);
+                    }
+
+                    // Set up the action call
+                    push(actionRcvr);
+                    if (actionArgCount > 0 && !actionArg.isNil()) {
+                        push(actionArg);
+                    }
+                    if (actionLog) {
+                        fprintf(actionLog, "[ACTION] After push: sp=%p fp=%p, calling sendSelector\n",
+                                (void*)stackPointer_, (void*)framePointer_);
+                        fflush(actionLog);
+                    }
+
+                    sendSelector(actionSel, actionArgCount);
+                    if (actionLog) {
+                        fprintf(actionLog, "[ACTION] After sendSelector: sp=%p fp=%p\n",
+                                (void*)stackPointer_, (void*)framePointer_);
+                        fprintf(actionLog, "[ACTION] Returning to interpret loop...\n");
+                        fflush(actionLog);
+                    }
+                    // After sendSelector activates a new context, control returns to
+                    // the interpret loop. We've replaced relinquishProcessorForMicroseconds:
+                    // with our action, so when comeToFront returns, its return value
+                    // will be pushed instead of relinquish's.
+                    return;
+                }
+                // If no pending action, let relinquish proceed normally
+            }
+
             // Check for termination-related selectors
             if (selStr == "terminateRealActive" || selStr == "terminateActive" ||
                 selStr == "doTerminationFromYourself") {
@@ -5228,11 +5280,34 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
     dnuDepth++;
 
+    // Log DNU to file
+    static FILE* dnuTraceLog = nullptr;
+    static int dnuTraceCount = 0;
+    if (!dnuTraceLog) {
+        dnuTraceLog = fopen("/tmp/dnu_trace.log", "w");
+    }
+    if (dnuTraceLog && dnuTraceCount < 100) {
+        std::string selStr = "<unknown>";
+        if (selector.isObject() && selector.rawBits() > 0x10000) {
+            ObjectHeader* selHdr = selector.asObjectPtr();
+            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+            }
+        }
+        fprintf(dnuTraceLog, "[DNU #%d depth=%d] selector=#%s argCount=%d\n",
+                ++dnuTraceCount, dnuDepth, selStr.c_str(), argCount);
+        fflush(dnuTraceLog);
+    }
+
     if (dnuDepth > MAX_DNU_DEPTH) {
         std::cerr << "[DNU] MAX_DNU_DEPTH exceeded! Stopping VM.\n";
         std::cerr << "[DNU] Last selector attempted: " << (selector.isObject() && selector.rawBits() > 0x10000 ?
             std::string((char*)selector.asObjectPtr()->bytes(),
                         std::min((size_t)50, selector.asObjectPtr()->byteSize())) : "unknown") << "\n";
+        if (dnuTraceLog) {
+            fprintf(dnuTraceLog, "[DNU] MAX_DNU_DEPTH exceeded! Stopping VM.\n");
+            fflush(dnuTraceLog);
+        }
         running_ = false;
         dnuDepth = 0;
         return;
@@ -5683,8 +5758,18 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     }
 
     // Safeguard: if we're already handling DNU, prevent infinite recursion
+    // Instead of stopping the VM, just return nil gracefully
     if (selector.rawBits() == selectors_.doesNotUnderstand.rawBits()) {
-        running_ = false;
+        static FILE* dnuLog = nullptr;
+        static int dnuStopCount = 0;
+        if (!dnuLog) dnuLog = fopen("/tmp/dnu_stop.log", "w");
+        if (dnuLog && dnuStopCount < 20) {
+            fprintf(dnuLog, "[DNU-GRACEFUL #%d] DNU called with DNU selector - returning nil\n", ++dnuStopCount);
+            fflush(dnuLog);
+        }
+        // Pop args and receiver, return nil
+        popN(argCount + 1);
+        push(memory_.nil());
         dnuDepth = 0;
         return;
     }
