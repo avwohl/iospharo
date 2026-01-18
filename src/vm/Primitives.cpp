@@ -7957,12 +7957,19 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
     static int callCount = 0;
     callCount++;
 
+    // Log FFI calls to see what's being requested
+    if (callCount <= 100) {
+        fprintf(stderr, "[FFI] primitiveCalloutToFFI called #%d (argCount=%d)\n", callCount, argCount);
+    }
+
     // Initialize FFI on first call
     if (!ffiInitialized) {
         ffiInitialized = ffi::initializeFFI();
         if (!ffiInitialized) {
+            fprintf(stderr, "[FFI] initializeFFI FAILED\n");
             return PrimitiveResult::Failure;
         }
+        fprintf(stderr, "[FFI] initializeFFI succeeded\n");
     }
 
     // The FFI call specification comes from the method's literals
@@ -8067,14 +8074,21 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
     }
 
     if (funcName.empty()) {
+        if (callCount <= 50) {
+            fprintf(stderr, "[FFI] No function name found in method literals\n");
+        }
         return PrimitiveResult::Failure;
     }
+
+    fprintf(stderr, "[FFI] Looking up function: %s\n", funcName.c_str());
 
     // Look up the function
     void* funcPtr = ffi::lookupFunction("SDL2", funcName);
     if (!funcPtr) {
+        fprintf(stderr, "[FFI] Function not found: %s\n", funcName.c_str());
         return PrimitiveResult::Failure;
     }
+    fprintf(stderr, "[FFI] Found function %s at %p\n", funcName.c_str(), funcPtr);
 
     // Marshal arguments from stack
     std::vector<ffi::FFIType> argTypes;

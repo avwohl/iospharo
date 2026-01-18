@@ -283,6 +283,113 @@ uint64_t stub_SDL_GetPerformanceFrequency() {
     return 1000000000ULL;  // nanoseconds
 }
 
+// Additional commonly needed SDL2 functions
+uint32_t stub_SDL_WasInit(uint32_t flags) {
+    fprintf(stderr, "[SDL2-STUB] SDL_WasInit(0x%x) -> 0x%x\n", flags, sSDL2Initialized ? flags : 0);
+    return sSDL2Initialized ? flags : 0;
+}
+
+int stub_SDL_VideoInit(const char* driver) {
+    fprintf(stderr, "[SDL2-STUB] SDL_VideoInit('%s') -> 0\n", driver ? driver : "(null)");
+    return 0;
+}
+
+void stub_SDL_VideoQuit() {
+    fprintf(stderr, "[SDL2-STUB] SDL_VideoQuit()\n");
+}
+
+int stub_SDL_InitSubSystem(uint32_t flags) {
+    fprintf(stderr, "[SDL2-STUB] SDL_InitSubSystem(0x%x) -> 0\n", flags);
+    return 0;
+}
+
+void stub_SDL_QuitSubSystem(uint32_t flags) {
+    fprintf(stderr, "[SDL2-STUB] SDL_QuitSubSystem(0x%x)\n", flags);
+}
+
+int stub_SDL_SetHint(const char* name, const char* value) {
+    fprintf(stderr, "[SDL2-STUB] SDL_SetHint('%s', '%s') -> 1\n",
+            name ? name : "(null)", value ? value : "(null)");
+    return 1;
+}
+
+int stub_SDL_GL_SetAttribute(int attr, int value) {
+    fprintf(stderr, "[SDL2-STUB] SDL_GL_SetAttribute(%d, %d) -> 0\n", attr, value);
+    return 0;
+}
+
+void* stub_SDL_GL_CreateContext(void* window) {
+    fprintf(stderr, "[SDL2-STUB] SDL_GL_CreateContext(%p) -> %p\n", window, sFakeRendererHandle);
+    return sFakeRendererHandle;
+}
+
+void stub_SDL_GL_DeleteContext(void* context) {
+    fprintf(stderr, "[SDL2-STUB] SDL_GL_DeleteContext(%p)\n", context);
+}
+
+int stub_SDL_GL_MakeCurrent(void* window, void* context) {
+    return 0;
+}
+
+void stub_SDL_GL_SwapWindow(void* window) {
+    // No-op
+}
+
+// Real SDL function names as aliases to stubs
+// These are what dlsym will find when Pharo's FFI looks for SDL2 functions
+// Using weak symbols so we don't conflict if real SDL2 is ever linked
+
+__attribute__((weak)) int SDL_Init(uint32_t flags) { return stub_SDL_Init(flags); }
+__attribute__((weak)) void SDL_Quit() { stub_SDL_Quit(); }
+__attribute__((weak)) void SDL_GetVersion(void* ver) { stub_SDL_GetVersion(ver); }
+__attribute__((weak)) const char* SDL_GetError() { return stub_SDL_GetError(); }
+__attribute__((weak)) void* SDL_CreateWindow(const char* t, int x, int y, int w, int h, uint32_t f) { return stub_SDL_CreateWindow(t, x, y, w, h, f); }
+__attribute__((weak)) void SDL_DestroyWindow(void* w) { stub_SDL_DestroyWindow(w); }
+__attribute__((weak)) void SDL_GetWindowSize(void* w, int* x, int* y) { stub_SDL_GetWindowSize(w, x, y); }
+__attribute__((weak)) void SDL_SetWindowSize(void* w, int x, int y) { stub_SDL_SetWindowSize(w, x, y); }
+__attribute__((weak)) void SDL_SetWindowTitle(void* w, const char* t) { stub_SDL_SetWindowTitle(w, t); }
+__attribute__((weak)) void SDL_ShowWindow(void* w) { stub_SDL_ShowWindow(w); }
+__attribute__((weak)) void SDL_HideWindow(void* w) { stub_SDL_HideWindow(w); }
+__attribute__((weak)) void SDL_RaiseWindow(void* w) { stub_SDL_RaiseWindow(w); }
+__attribute__((weak)) uint32_t SDL_GetWindowID(void* w) { return stub_SDL_GetWindowID(w); }
+__attribute__((weak)) void* SDL_GetWindowFromID(uint32_t id) { return stub_SDL_GetWindowFromID(id); }
+__attribute__((weak)) int SDL_SetWindowFullscreen(void* w, uint32_t f) { return stub_SDL_SetWindowFullscreen(w, f); }
+__attribute__((weak)) void SDL_GetWindowPosition(void* w, int* x, int* y) { stub_SDL_GetWindowPosition(w, x, y); }
+__attribute__((weak)) void SDL_SetWindowPosition(void* w, int x, int y) { stub_SDL_SetWindowPosition(w, x, y); }
+__attribute__((weak)) void* SDL_CreateRenderer(void* w, int i, uint32_t f) { return stub_SDL_CreateRenderer(w, i, f); }
+__attribute__((weak)) void SDL_DestroyRenderer(void* r) { stub_SDL_DestroyRenderer(r); }
+__attribute__((weak)) int SDL_RenderClear(void* r) { return stub_SDL_RenderClear(r); }
+__attribute__((weak)) void SDL_RenderPresent(void* r) { stub_SDL_RenderPresent(r); }
+__attribute__((weak)) int SDL_SetRenderDrawColor(void* r, uint8_t rr, uint8_t g, uint8_t b, uint8_t a) { return stub_SDL_SetRenderDrawColor(r, rr, g, b, a); }
+__attribute__((weak)) int SDL_PollEvent(void* e) { return stub_SDL_PollEvent(e); }
+__attribute__((weak)) int SDL_WaitEvent(void* e) { return stub_SDL_WaitEvent(e); }
+__attribute__((weak)) int SDL_PushEvent(void* e) { return stub_SDL_PushEvent(e); }
+__attribute__((weak)) char* SDL_GetClipboardText() { return stub_SDL_GetClipboardText(); }
+__attribute__((weak)) int SDL_SetClipboardText(const char* t) { return stub_SDL_SetClipboardText(t); }
+__attribute__((weak)) int SDL_HasClipboardText() { return stub_SDL_HasClipboardText(); }
+__attribute__((weak)) void* SDL_CreateSystemCursor(int id) { return stub_SDL_CreateSystemCursor(id); }
+__attribute__((weak)) void SDL_SetCursor(void* c) { stub_SDL_SetCursor(c); }
+__attribute__((weak)) void SDL_FreeCursor(void* c) { stub_SDL_FreeCursor(c); }
+__attribute__((weak)) int SDL_ShowCursor(int t) { return stub_SDL_ShowCursor(t); }
+__attribute__((weak)) uint32_t SDL_GetMouseState(int* x, int* y) { return stub_SDL_GetMouseState(x, y); }
+__attribute__((weak)) uint32_t SDL_GetGlobalMouseState(int* x, int* y) { return stub_SDL_GetGlobalMouseState(x, y); }
+__attribute__((weak)) int SDL_GetNumVideoDisplays() { return stub_SDL_GetNumVideoDisplays(); }
+__attribute__((weak)) int SDL_GetDisplayBounds(int d, void* r) { return stub_SDL_GetDisplayBounds(d, r); }
+__attribute__((weak)) uint32_t SDL_GetTicks() { return stub_SDL_GetTicks(); }
+__attribute__((weak)) uint64_t SDL_GetPerformanceCounter() { return stub_SDL_GetPerformanceCounter(); }
+__attribute__((weak)) uint64_t SDL_GetPerformanceFrequency() { return stub_SDL_GetPerformanceFrequency(); }
+__attribute__((weak)) uint32_t SDL_WasInit(uint32_t f) { return stub_SDL_WasInit(f); }
+__attribute__((weak)) int SDL_VideoInit(const char* d) { return stub_SDL_VideoInit(d); }
+__attribute__((weak)) void SDL_VideoQuit() { stub_SDL_VideoQuit(); }
+__attribute__((weak)) int SDL_InitSubSystem(uint32_t f) { return stub_SDL_InitSubSystem(f); }
+__attribute__((weak)) void SDL_QuitSubSystem(uint32_t f) { stub_SDL_QuitSubSystem(f); }
+__attribute__((weak)) int SDL_SetHint(const char* n, const char* v) { return stub_SDL_SetHint(n, v); }
+__attribute__((weak)) int SDL_GL_SetAttribute(int a, int v) { return stub_SDL_GL_SetAttribute(a, v); }
+__attribute__((weak)) void* SDL_GL_CreateContext(void* w) { return stub_SDL_GL_CreateContext(w); }
+__attribute__((weak)) void SDL_GL_DeleteContext(void* c) { stub_SDL_GL_DeleteContext(c); }
+__attribute__((weak)) int SDL_GL_MakeCurrent(void* w, void* c) { return stub_SDL_GL_MakeCurrent(w, c); }
+__attribute__((weak)) void SDL_GL_SwapWindow(void* w) { stub_SDL_GL_SwapWindow(w); }
+
 } // extern "C"
 
 void registerSDL2Stubs() {
