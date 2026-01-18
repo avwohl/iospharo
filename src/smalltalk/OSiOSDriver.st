@@ -8,9 +8,11 @@ OSWindowDriver subclass: #OSiOSDriver
 !OSiOSDriver class methodsFor: 'testing'!
 
 isSuitable
+    "Answer true if this driver should be used on this platform"
     ^ self isSupported!
 
 isSupported
+    "Answer true if the iOS VM primitives are available"
     | result |
     [result := self primScreenSize]
         on: Error
@@ -21,11 +23,13 @@ driverName
     ^ 'iOS'!
 
 priority
+    "Higher priority than null driver"
     ^ 5! !
 
 !OSiOSDriver class methodsFor: 'primitives'!
 
 primScreenSize
+    "Return the screen size as a Point"
     <primitive: 106>
     self primitiveFailed! !
 
@@ -37,175 +41,197 @@ eventLoopProcess
 windowMap
     ^ WindowMap ifNil: [WindowMap := WeakValueDictionary new]! !
 
+!OSiOSDriver class methodsFor: 'installation'!
+
+install
+    "Install this driver as the current OSWindow driver"
+    | driver |
+    self isSupported ifTrue: [
+        driver := self new.
+        OSWindowDriver current: driver.
+        driver ensureEventLoop.
+        Transcript show: 'OSiOSDriver installed and event loop started'; cr]
+    ifFalse: [
+        Transcript show: 'OSiOSDriver not supported'; cr]!
+
+autoStart
+    "Start event loop if this driver is current"
+    | current |
+    [current := OSWindowDriver current.
+     (current isKindOf: self) ifTrue: [
+        current ensureEventLoop.
+        Transcript show: 'OSiOSDriver: Auto-started event loop'; cr]]
+    on: Error do: [:e |
+        Transcript show: 'OSiOSDriver autoStart error: ', e messageText; cr]! !
+
+!OSiOSDriver class methodsFor: 'system startup'!
+
+startUp: resuming
+    "Called during session startup via SessionManager"
+    resuming ifTrue: [self autoStart]!
+
+initialize
+    "Register for session startup notifications"
+    SessionManager default registerSystemClassNamed: self name! !
+
 !OSiOSDriver methodsFor: 'initialization'!
 
 initialize
     super initialize.
     session := Smalltalk session.
     eventBuffer := Array new: 8.
+    1 to: 8 do: [:i | eventBuffer at: i put: 0].
     WindowMap ifNil: [WindowMap := WeakValueDictionary new]! !
 
 !OSiOSDriver methodsFor: 'window creation'!
 
 createWindowWithAttributes: attributes osWindow: osWindow
+    "Create a backend window for the given OSWindow"
     | backendWindow |
     backendWindow := OSiOSBackendWindow new
         osWindow: osWindow;
         attributes: attributes;
         yourself.
-    "Register the window"
+    "Register in window map (iOS only has one window)"
     WindowMap at: 1 put: backendWindow.
     ^ backendWindow! !
 
 !OSiOSDriver methodsFor: 'system startup'!
 
 startUp: resuming
-    Transcript show: 'OSiOSDriver>>startUp: ', resuming printString; cr.
-    resuming
-        ifTrue: [
-            session := Smalltalk session.
-            self forceNewEventLoop]
-        ifFalse: [self ensureEventLoop].
-    Transcript show: 'OSiOSDriver event loop started'; cr!
+    resuming ifTrue: [
+        session := Smalltalk session.
+        self forceNewEventLoop]
+    ifFalse: [self ensureEventLoop]!
 
 shutDown: quitting
-    Transcript show: 'OSiOSDriver>>shutDown: ', quitting printString; cr.
     quitting ifTrue: [WindowMap := nil].
     self shutdownEventLoop! !
 
 !OSiOSDriver methodsFor: 'events-processing'!
 
 ensureEventLoop
-    "Make sure an event loop is running.
-    If there is already an event loop, do nothing"
-    EventLoopProcess ifNotNil: [^ self].
+    "Make sure an event loop is running"
+    EventLoopProcess ifNotNil: [
+        EventLoopProcess isTerminated ifFalse: [^ self]].
     self setupEventLoop!
 
 forceNewEventLoop
-    "Force the (re)creation of an event loop.
-    If one was available, shut it down first."
+    "Force creation of a new event loop"
     self shutdownEventLoop.
     self setupEventLoop!
 
 setupEventLoop
-    "Create a new event loop process"
-    EventLoopProcess ifNotNil: [self error: 'Cannot launch new event loop'].
-    Transcript show: 'OSiOSDriver: Setting up event loop'; cr.
-    EventLoopProcess := [self eventLoop]
+    "Create and start the event loop process"
+    EventLoopProcess := [
+        [self eventLoop] on: Error do: [:e |
+            Transcript show: 'OSiOSDriver event loop error: ', e messageText; cr]]
         forkAt: Processor lowIOPriority.
     EventLoopProcess name: 'iOS Event loop'!
 
 shutdownEventLoop
-    "Kills the current event loop if any"
+    "Stop the event loop if running"
     EventLoopProcess ifNil: [^ self].
-    Transcript show: 'OSiOSDriver: Shutting down event loop'; cr.
-    EventLoopProcess terminate.
+    [EventLoopProcess terminate] on: Error do: [:e | ].
     EventLoopProcess := nil!
 
 eventLoop
-    "The main event loop - polls primitive 264 and converts events"
-    | eventType |
-    Transcript show: 'OSiOSDriver: Event loop starting'; cr.
-    [session == Smalltalk session] whileTrue: [
-        "Poll for events using primitive 264"
+    "Main event loop - polls primitive 264 for events"
+    | currentSession eventType |
+    currentSession := Smalltalk session.
+
+    [currentSession == Smalltalk session] whileTrue: [
+        "Poll for events"
         [self primGetNextEvent: eventBuffer.
          eventType := eventBuffer at: 1.
          eventType ~= 0] whileTrue: [
-            self processEvent: eventBuffer copy].
-        "Small delay to avoid spinning"
-        (Delay forMilliseconds: 5) wait].
-    Transcript show: 'OSiOSDriver: Event loop exiting (session changed)'; cr!
+            [self processEvent: eventBuffer copy]
+                on: Error do: [:e |
+                    Transcript show: 'Event processing error: ', e messageText; cr]].
+        "Small delay to avoid busy-waiting"
+        (Delay forMilliseconds: 5) wait]!
 
 primGetNextEvent: anEventBuffer
-    "Get next event from VM event queue"
+    "Get next event from VM event queue.
+    Buffer format: [type, timestamp, arg1, arg2, arg3, arg4, arg5, windowIndex]"
     <primitive: 264>
-    "If primitive fails, return no-event"
+    "Primitive failed - return no event"
     anEventBuffer at: 1 put: 0!
 
 processEvent: anEventBuffer
-    "Process a raw event buffer and dispatch to appropriate handler"
+    "Dispatch event based on type"
     | eventType |
     eventType := anEventBuffer at: 1.
 
-    "Debug: Log events"
-    Transcript show: 'OSiOSDriver: Event type ', eventType printString, ' at ',
-        ((anEventBuffer at: 3) @ (anEventBuffer at: 4)) printString; cr.
-
     eventType = 1 ifTrue: [^ self processMouseEvent: anEventBuffer].
     eventType = 2 ifTrue: [^ self processKeyboardEvent: anEventBuffer].
-    eventType = 7 ifTrue: [^ self processMouseWheelEvent: anEventBuffer].
-    "eventType 0 = no event, ignore"!
+    eventType = 7 ifTrue: [^ self processMouseWheelEvent: anEventBuffer]!
 
 processMouseEvent: anEventBuffer
-    "Convert VM mouse event to OSWindow event and dispatch
-    Buffer format: [type, timestamp, x, y, buttons, modifiers, subtype, windowIndex]"
+    "Convert VM mouse event to OSWindow event and dispatch.
+    Buffer: [type=1, timestamp, x, y, buttons, modifiers, subtype, windowIndex]
+    Subtype: 1=down, 2=up, other=move"
     | window x y buttons modifiers subtype osEvent |
 
     x := anEventBuffer at: 3.
     y := anEventBuffer at: 4.
     buttons := anEventBuffer at: 5.
     modifiers := anEventBuffer at: 6.
-    subtype := anEventBuffer at: 7.  "1=down, 2=up, other=move"
+    subtype := anEventBuffer at: 7.
 
-    "Get the window (for now, assume single window at index 1)"
     window := WindowMap at: 1 ifAbsent: [^ self].
 
-    "Create appropriate OSWindow event"
     subtype = 1 ifTrue: [
-        "Mouse down"
         osEvent := OSMouseButtonPressEvent new
             position: x @ y;
             button: (self buttonFromBits: buttons);
             yourself.
-        self applyModifiers: modifiers toEvent: osEvent].
+        self applyModifiers: modifiers toEvent: osEvent.
+        ^ self dispatchEvent: osEvent toWindow: window].
 
     subtype = 2 ifTrue: [
-        "Mouse up"
         osEvent := OSMouseButtonReleaseEvent new
             position: x @ y;
             button: (self buttonFromBits: buttons);
             yourself.
-        self applyModifiers: modifiers toEvent: osEvent].
+        self applyModifiers: modifiers toEvent: osEvent.
+        ^ self dispatchEvent: osEvent toWindow: window].
 
-    (subtype ~= 1 and: [subtype ~= 2]) ifTrue: [
-        "Mouse move"
-        osEvent := OSMouseMoveEvent new
-            position: x @ y;
-            yourself.
-        self applyModifiers: modifiers toEvent: osEvent].
-
-    osEvent ifNotNil: [
-        self dispatchEvent: osEvent toWindow: window]!
+    "Mouse move"
+    osEvent := OSMouseMoveEvent new
+        position: x @ y;
+        yourself.
+    self applyModifiers: modifiers toEvent: osEvent.
+    self dispatchEvent: osEvent toWindow: window!
 
 processKeyboardEvent: anEventBuffer
-    "Convert VM keyboard event to OSWindow event"
-    "Buffer format: [type, timestamp, charCode, pressCode, modifiers, keyCode, reserved, windowIndex]"
-    | window charCode pressCode keyCode osEvent |
+    "Convert VM keyboard event to OSWindow event.
+    Buffer: [type=2, timestamp, charCode, pressCode, modifiers, keyCode, reserved, windowIndex]
+    PressCode: 0=char, 1=down, 2=up"
+    | window pressCode keyCode osEvent |
 
-    charCode := anEventBuffer at: 3.
     pressCode := anEventBuffer at: 4.
     keyCode := anEventBuffer at: 6.
 
     window := WindowMap at: 1 ifAbsent: [^ self].
 
-    "pressCode: 0=char, 1=down, 2=up"
     pressCode = 1 ifTrue: [
         osEvent := OSKeyDownEvent new
             symbol: keyCode;
             scanCode: keyCode;
-            yourself].
+            yourself.
+        ^ self dispatchEvent: osEvent toWindow: window].
+
     pressCode = 2 ifTrue: [
         osEvent := OSKeyUpEvent new
             symbol: keyCode;
             scanCode: keyCode;
-            yourself].
-
-    osEvent ifNotNil: [
-        self dispatchEvent: osEvent toWindow: window]!
+            yourself.
+        ^ self dispatchEvent: osEvent toWindow: window]!
 
 processMouseWheelEvent: anEventBuffer
-    "Convert VM mouse wheel event to OSWindow event
-    Buffer format: [type, timestamp, x, y, deltaX, deltaY, modifiers, windowIndex]"
+    "Convert VM mouse wheel event to OSWindow event.
+    Buffer: [type=7, timestamp, x, y, deltaX, deltaY, modifiers, windowIndex]"
     | window x y deltaX deltaY osEvent |
 
     x := anEventBuffer at: 3.
@@ -224,17 +250,17 @@ processMouseWheelEvent: anEventBuffer
     self dispatchEvent: osEvent toWindow: window!
 
 buttonFromBits: buttonBits
-    "Convert VM button bitmask to OSWindow button number
+    "Convert VM button bitmask to OSWindow button number.
     VM: red=1, blue=2, yellow=4 (bitmask)
     OSWindow: 1=left, 2=right, 3=middle"
-    (buttonBits bitAnd: 1) ~= 0 ifTrue: [^ 1].  "Red/left"
-    (buttonBits bitAnd: 2) ~= 0 ifTrue: [^ 2].  "Blue/right"
-    (buttonBits bitAnd: 4) ~= 0 ifTrue: [^ 3].  "Yellow/middle"
-    ^ 1  "Default to left button"!
+    (buttonBits bitAnd: 1) ~= 0 ifTrue: [^ 1].
+    (buttonBits bitAnd: 2) ~= 0 ifTrue: [^ 2].
+    (buttonBits bitAnd: 4) ~= 0 ifTrue: [^ 3].
+    ^ 1!
 
 applyModifiers: modifierBits toEvent: osEvent
-    "Apply modifier bits to an OSWindow event
-    Modifier bits: shift=1, ctrl=2, alt/option=4, cmd=8"
+    "Apply modifier bits to an OSWindow event.
+    Bits: shift=1, ctrl=2, alt=4, cmd=8"
     | mods |
     mods := osEvent modifiers.
     (modifierBits bitAnd: 1) ~= 0 ifTrue: [mods leftShift: true].
@@ -247,53 +273,18 @@ dispatchEvent: osEvent toWindow: window
     | osWindow |
     osWindow := window osWindow.
     osWindow ifNil: [^ self].
-    osWindow eventHandler ifNil: [^ self].
-
-    "Deliver event through OSWindow's event handler"
-    osWindow eventHandler handleEvent: osEvent! !
+    osWindow eventHandler ifNotNil: [:handler |
+        handler handleEvent: osEvent]! !
 
 !OSiOSDriver methodsFor: 'testing'!
 
 isNullDriver
     ^ false! !
 
-!OSiOSDriver class methodsFor: 'installation'!
-
-install
-    | driver |
-    self isSupported ifTrue: [
-        driver := self new.
-        OSWindowDriver current: driver.
-        "Start the event loop immediately since we don't use OSWorldRenderer"
-        driver ensureEventLoop.
-        Transcript show: 'OSiOSDriver installed and event loop started'; cr]
-    ifFalse: [
-        Transcript show: 'OSiOSDriver not supported'; cr]!
-
-autoStart
-    "Try to start event loop during image startup.
-    Called from class-side startUp:"
-    | current |
-    current := OSWindowDriver current.
-    (current isKindOf: OSiOSDriver) ifTrue: [
-        current ensureEventLoop.
-        Transcript show: 'OSiOSDriver: Auto-started event loop'; cr]! !
-
-!OSiOSDriver class methodsFor: 'system startup'!
-
-startUp: resuming
-    "Called during session startup via SessionManager"
-    Transcript show: 'OSiOSDriver class>>startUp: ', resuming printString; cr.
-    self autoStart!
-
-initialize
-    "Register for session startup notifications"
-    SessionManager default registerSystemClassNamed: self name! !
-
 "==== OSiOSBackendWindow ===="
 
 OSBackendWindow subclass: #OSiOSBackendWindow
-    instanceVariableNames: 'attributes extent title'
+    instanceVariableNames: 'osWindow attributes extent title'
     classVariableNames: ''
     package: 'OSWindow-iOS'!
 
@@ -310,10 +301,16 @@ initialize
     extent := self class primScreenSize.
     title := 'Pharo'!
 
+osWindow: anOSWindow
+    osWindow := anOSWindow!
+
 attributes: anObject
     attributes := anObject! !
 
 !OSiOSBackendWindow methodsFor: 'accessing'!
+
+osWindow
+    ^ osWindow!
 
 bounds
     ^ 0@0 extent: extent!
@@ -332,7 +329,7 @@ position
     ^ 0@0!
 
 position: aPoint
-    !
+    "iOS windows are always fullscreen"!
 
 title
     ^ title!
@@ -349,10 +346,10 @@ platformSpecificHandle
 !OSiOSBackendWindow methodsFor: 'visibility'!
 
 show
-    !
+    "iOS window is always visible"!
 
 hide
-    ! !
+    "Cannot hide iOS window"! !
 
 !OSiOSBackendWindow methodsFor: 'renderer'!
 
@@ -370,21 +367,22 @@ isTextInputActive
     ^ false!
 
 startTextInput
-    !
+    "TODO: Show iOS keyboard"!
 
 startTextInputAtRectangle: aRectangle
-    !
+    "TODO: Show iOS keyboard"!
 
 stopTextInput
-    ! !
+    "TODO: Hide iOS keyboard"! !
 
 !OSiOSBackendWindow methodsFor: 'clipboard'!
 
 clipboardText
+    "TODO: Get from iOS clipboard"
     ^ ''!
 
 clipboardText: aString
-    ! !
+    "TODO: Set iOS clipboard"! !
 
 "==== OSiOSFormRenderer ===="
 
