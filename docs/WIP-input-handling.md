@@ -2,39 +2,72 @@
 
 ## Status: In Progress (2026-01-18)
 
-**Current Problem:** Events reach the VM but clicking on Pharo world causes crash.
+**Current Problem:** World loop isn't running, so Morphic event handling doesn't happen.
 
-### Investigation Summary
+### Key Discovery: World Loop Not Running
 
-1. **Events reach the VM correctly** - Mouse events flow from Swift → PlatformBridge → EventQueue → passThroughEvents_
+The Pharo world loop (`doOneCycleFor:`) is **never called**. Only the idle process runs:
+- `idleProcess` sends `relinquishProcessorForMicroseconds:` repeatedly
+- No world loop means no event processing, no step methods, no Hand updates
 
-2. **Primitive 264 not being called** - Pharo 10's OSWindow architecture doesn't poll primitive 264 like the old InputEventSensor did. Instead, it expects the OSWindowDriver to push events.
+This explains why clicks don't work - there's no event processing happening at all.
 
-3. **Semaphore has no waiting process** - When we signal the input event semaphore, there's no process waiting on it. The excess signals accumulate.
+### Updated Investigation Summary
 
-4. **Direct message sends crash** - Attempting to call sendSelector() from the interpret loop to dispatch events (like `comeToFront` on clicked window) crashes the app. The crash happens because:
-   - `sendSelector` activates a new method context
-   - But we're calling it from the main interpret loop, not from bytecode execution
-   - The stack/context state isn't properly set up for returning
+1. **Events reach the VM correctly** - Mouse events flow from Swift → PlatformBridge → EventQueue → processInputEvents()
 
-### Crash Log Analysis
+2. **World loop not running** - `doOneCycleFor:` is never sent. Selector tracking shows only `relinquishProcessorForMicroseconds:` being called.
+
+3. **Action dispatch via idle loop** - We can intercept `relinquishProcessorForMicroseconds:` to dispatch pending actions (safe bytecode execution context).
+
+4. **comeToFront causes DNU cascade** - When we send `comeToFront` to SpWindow:
+   - Something internally calls `copyFrom:to:` on an object that doesn't understand it
+   - That object also doesn't implement `doesNotUnderstand:`
+   - DNU loop is detected, returning nil
+   - But nil propagates and causes issues downstream
+
+### Log Evidence
 ```
-[ACTION] SENDING: #comeToFront to SpWindow, stack before: sp=0x77743f030 fp=0x77743f020
-[ACTION] SENT: stack after: sp=0x77743f058 fp=0x77743f030
-[ACTION] SENDING: #comeToFront to SpWindow, stack before: sp=0x77743f068 fp=0x77743f030
-[ACTION] SENT: stack after: sp=0x77743f090 fp=0x77743f068
+# selector_debug.log - only idle loop runs
+[SEND #1] #idleProcess argCount=0
+[SEND #2] #relinquishProcessorForMicroseconds: argCount=1
+... (repeats)
+
+# dnu_trace.log - DNU cascade from comeToFront
+[DNU #1 depth=1] selector=#copyFrom:to: argCount=2
+[DNU #2 depth=2] selector=#doesNotUnderstand: argCount=1
+
+# dnu_stop.log - graceful termination
+[DNU-GRACEFUL #1] DNU called with DNU selector - returning nil
 ```
-Stack keeps growing without returns - new contexts are created but never properly return.
 
-### Possible Solutions
+### Changes Made
 
-1. **Proper OSWindow integration** - Make OSiOSDriver deliver events to OSWindow via the proper callback mechanism, not via primitive 264.
+1. **Removed executeFromSync flag** - Was causing race condition where main loop cleared pending actions before processing
 
-2. **Start event polling process** - Create a Pharo process that waits on the event semaphore and polls primitive 264.
+2. **Added idle loop interception** - Dispatch pending actions during `relinquishProcessorForMicroseconds:` (safe context)
 
-3. **Direct Hand manipulation** - Write mouse position/buttons directly to Morphic Hand's memory slots.
+3. **Made DNU-with-DNU graceful** - Return nil instead of stopping VM (prevents hard crash, but nil causes issues)
 
-4. **Safe message injection** - Find a safe point in the interpreter (like checkForInterrupts) to inject message sends properly.
+### Root Cause Analysis
+
+The problem is architectural: we're trying to work around a non-running event loop by sending direct messages. This doesn't work because:
+1. Some Pharo methods assume they're running in a proper Morphic context
+2. Objects may not have proper error handling for edge cases
+3. The call chain expects results that we can't provide
+
+### Possible Solutions (Updated)
+
+1. **Start the world loop** - Figure out why Morphic's world loop isn't starting and fix that. This is the proper solution but requires understanding Pharo 10's startup sequence.
+
+2. **Direct Hand manipulation** - Instead of sending messages, directly write:
+   - Mouse position to HandMorph's position slot
+   - Button state to HandMorph's buttons slot
+   - This bypasses message sending entirely
+
+3. **Proper OSWindow integration** - Implement OSiOSDriver properly so it delivers events via the correct callback mechanism. Requires understanding OSWindow architecture.
+
+4. **Skip complex actions** - For now, just skip comeToFront and similar complex messages. Focus on getting simpler interactions working first.
 
 ---
 ## Original Pipeline (2026-01-08)
