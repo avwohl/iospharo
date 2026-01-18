@@ -320,10 +320,6 @@ class PharoCanvasViewController: UIViewController {
         NSLog("[VC] PharoCanvasViewController viewDidLoad complete")
     }
 
-    #if targetEnvironment(macCatalyst)
-    var eventMonitor: Any?
-    #endif
-
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         mtkView.becomeFirstResponder()
@@ -366,43 +362,10 @@ class PharoCanvasViewController: UIViewController {
 
     #if targetEnvironment(macCatalyst)
     private func setupNSEventMonitor() {
-        // Import AppKit dynamically for NSEvent
-        guard let NSEventClass = NSClassFromString("NSEvent") else {
-            if let file = fopen("/tmp/nsevent_monitor.log", "a") {
-                fputs("[NSEVENT] Failed to get NSEvent class\n", file)
-                fclose(file)
-            }
-            return
-        }
-
-        // Log setup
+        // NSEvent monitoring requires calling class method on NSEvent, which is tricky from Swift
+        // For now, just log that we're relying on GCMouse and gesture recognizers
         if let file = fopen("/tmp/nsevent_monitor.log", "a") {
-            fputs("[NSEVENT] Setting up global event monitor\n", file)
-            fclose(file)
-        }
-
-        // Use local monitor to catch events in our window
-        let eventMask: UInt64 = (1 << 1) | (1 << 2) | (1 << 25) | (1 << 22) | (1 << 6)  // leftDown, leftUp, otherDown, scrollWheel, mouseMoved
-
-        eventMonitor = perform(NSSelectorFromString("addLocalMonitorForEventsMatchingMask:handler:"),
-                               with: eventMask,
-                               with: { [weak self] (event: Any) -> Any? in
-            self?.handleNSEvent(event)
-            return event
-        })
-
-        // If the above doesn't work, try a simpler approach using NotificationCenter
-        // For now, just log that we tried
-        if let file = fopen("/tmp/nsevent_monitor.log", "a") {
-            fputs("[NSEVENT] Monitor setup attempted, eventMonitor=\(String(describing: eventMonitor))\n", file)
-            fclose(file)
-        }
-    }
-
-    private func handleNSEvent(_ event: Any) {
-        // Log the event
-        if let file = fopen("/tmp/nsevent_monitor.log", "a") {
-            fputs("[NSEVENT] Received event: \(type(of: event))\n", file)
+            fputs("[NSEVENT] Using GCMouse and UIKit gesture recognizers for Mac Catalyst\n", file)
             fclose(file)
         }
     }
