@@ -9,6 +9,7 @@
 #include "../platform/DisplaySurface.hpp"
 #include "../platform/EventQueue.hpp"
 #include <cstring>
+#include <cmath>
 #include <iostream>
 #include <iomanip>
 #include <thread>
@@ -1951,6 +1952,9 @@ void Interpreter::handleWorldClick(int x, int y, int buttons) {
                             className.c_str(), moved ? 1 : 0);
                     fflush(clickLog);
                 }
+
+                // Draw visible click indicator on windows too
+                drawClickIndicator(x, y, buttons);
             }
             return;  // Found and handled
         }
@@ -1962,9 +1966,63 @@ void Interpreter::handleWorldClick(int x, int y, int buttons) {
         fflush(clickLog);
     }
 
-    // For World background click, we could show the World menu
-    // This requires finding the right selector (e.g., worldMenu or yellowButtonActivity)
-    // For now, just log it
+    // Draw a visible click indicator for world background clicks
+    drawClickIndicator(x, y, buttons);
+}
+
+void Interpreter::drawClickIndicator(int x, int y, int buttons) {
+    // Draw a visible circle at click location directly on the display
+    // This provides immediate visual feedback that the click was registered
+    if (!pharo::gDisplaySurface) return;
+
+    uint32_t* pixels = pharo::gDisplaySurface->pixels();
+    int surfWidth = pharo::gDisplaySurface->width();
+    int surfHeight = pharo::gDisplaySurface->height();
+    int pitchPixels = static_cast<int>(pharo::gDisplaySurface->pitch() / 4);
+
+    // Color based on button: red=left, blue=right, yellow=middle
+    uint32_t color;
+    if (buttons & 4) {
+        color = 0xFFFFFF00;  // Yellow for middle/yellow button
+    } else if (buttons & 2) {
+        color = 0xFF0000FF;  // Blue for right/blue button
+    } else {
+        color = 0xFFFF0000;  // Red for left/red button
+    }
+
+    // Draw a filled circle with radius 20
+    int radius = 20;
+    for (int dy = -radius; dy <= radius; dy++) {
+        for (int dx = -radius; dx <= radius; dx++) {
+            if (dx*dx + dy*dy <= radius*radius) {
+                int px = x + dx;
+                int py = y + dy;
+                if (px >= 0 && px < surfWidth && py >= 0 && py < surfHeight) {
+                    pixels[py * pitchPixels + px] = color;
+                }
+            }
+        }
+    }
+
+    // Draw a white outline
+    for (int angle = 0; angle < 360; angle++) {
+        double rad = angle * 3.14159 / 180.0;
+        int px = x + static_cast<int>(radius * std::cos(rad));
+        int py = y + static_cast<int>(radius * std::sin(rad));
+        if (px >= 0 && px < surfWidth && py >= 0 && py < surfHeight) {
+            pixels[py * pitchPixels + px] = 0xFFFFFFFF;
+        }
+    }
+
+    // Mark display as dirty to trigger redraw
+    pharo::gDisplaySurface->invalidateRect(0, 0, surfWidth, surfHeight);
+
+    static FILE* clickLog = fopen("/tmp/click_indicator.log", "a");
+    if (clickLog) {
+        fprintf(clickLog, "[INDICATOR] Drew circle at %d,%d color=0x%08X buttons=%d\n",
+                x, y, color, buttons);
+        fflush(clickLog);
+    }
 }
 
 void Interpreter::invokeMenuItemAction(Oop menuItemMorph) {
