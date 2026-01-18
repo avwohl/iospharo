@@ -19,8 +19,9 @@ void EventQueue::push(const Event& event) {
         allEventsLog = fopen("/tmp/queue_all_events.log", "w");
     }
     if (allEventsLog && allEventsCount <= 500) {
-        fprintf(allEventsLog, "[QUEUE-PUSH] #%d type=%d args=(%d,%d,%d,%d,%d)\n",
-                allEventsCount, event.type, event.arg1, event.arg2, event.arg3, event.arg4, event.arg5);
+        fprintf(allEventsLog, "[QUEUE-PUSH] #%d type=%d args=(%d,%d,%d,%d,%d) queue=%p\n",
+                allEventsCount, event.type, event.arg1, event.arg2, event.arg3, event.arg4, event.arg5,
+                (void*)this);
         fflush(allEventsLog);
     }
 

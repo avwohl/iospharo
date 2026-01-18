@@ -400,6 +400,13 @@ void vm_postMouseEvent(int type, int x, int y, int buttons, int modifiers) {
     event.arg3 = buttons;
     event.arg4 = modifiers;
     event.arg5 = type;  // 0=move, 1=down, 2=up
+
+    // Debug: verify event type before push
+    if (mouseLog && mouseEventCount <= 200) {
+        fprintf(mouseLog, "[VM_MOUSE] #%d PUSHING event.type=%d to queue at %p\n",
+                mouseEventCount, event.type, (void*)&pharo::gEventQueue);
+        fflush(mouseLog);
+    }
     pharo::gEventQueue.push(event);
 }
 
