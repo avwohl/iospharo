@@ -43,9 +43,10 @@ class ImageManager: ObservableObject {
 
     // MARK: - Public Methods
 
-    /// Check for existing image in Documents or Bundle
+    /// Check for existing image and prepare a fresh working copy
+    /// We always start from a pristine image to avoid corrupted state
     func checkForExistingImage() {
-        // First check Documents directory
+        // First check Documents directory for downloaded images
         var imageFiles = findImageFiles()
 
         // If no image in Documents, check app bundle for development
@@ -58,14 +59,65 @@ class ImageManager: ObservableObject {
         }
 
         if let firstImage = imageFiles.first {
-            imagePath = firstImage.path
-            imageName = firstImage.lastPathComponent
-            hasImage = true
+            // Always create a fresh working copy to start clean
+            if let workingCopy = prepareFreshWorkingCopy(from: firstImage) {
+                imagePath = workingCopy.path
+                imageName = workingCopy.lastPathComponent
+                hasImage = true
+                NSLog("[ImageManager] Using fresh working copy: %@", workingCopy.path)
+            } else {
+                // Fallback to original if copy fails
+                imagePath = firstImage.path
+                imageName = firstImage.lastPathComponent
+                hasImage = true
+                NSLog("[ImageManager] Warning: Using original image (copy failed): %@", firstImage.path)
+            }
         } else {
             hasImage = false
             imagePath = nil
             imageName = nil
         }
+    }
+
+    /// Create a fresh working copy of the image, deleting any previous working copy
+    private func prepareFreshWorkingCopy(from originalImage: URL) -> URL? {
+        let workingDir = documentsDirectory.appendingPathComponent("WorkingImage")
+        let workingImage = workingDir.appendingPathComponent("Pharo-Working.image")
+        let workingChanges = workingDir.appendingPathComponent("Pharo-Working.changes")
+
+        // Clean up any existing working copy
+        try? fileManager.removeItem(at: workingDir)
+
+        // Create working directory
+        do {
+            try fileManager.createDirectory(at: workingDir, withIntermediateDirectories: true)
+        } catch {
+            NSLog("[ImageManager] Failed to create working directory: %@", error.localizedDescription)
+            return nil
+        }
+
+        // Copy the image file
+        do {
+            try fileManager.copyItem(at: originalImage, to: workingImage)
+        } catch {
+            NSLog("[ImageManager] Failed to copy image: %@", error.localizedDescription)
+            return nil
+        }
+
+        // Copy the changes file if it exists
+        let originalChanges = originalImage.deletingPathExtension().appendingPathExtension("changes")
+        if fileManager.fileExists(atPath: originalChanges.path) {
+            try? fileManager.copyItem(at: originalChanges, to: workingChanges)
+        }
+
+        // Copy sources file if it exists
+        let originalSources = originalImage.deletingLastPathComponent().appendingPathComponent("Pharo12.0-SNAPSHOT.sources")
+        let workingSources = workingDir.appendingPathComponent("Pharo12.0-SNAPSHOT.sources")
+        if fileManager.fileExists(atPath: originalSources.path) {
+            try? fileManager.copyItem(at: originalSources, to: workingSources)
+        }
+
+        return workingImage
     }
 
     /// Download the default (latest) Pharo image
