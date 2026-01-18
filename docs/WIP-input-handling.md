@@ -4,13 +4,36 @@
 
 **Current Problem:** World loop isn't running, so Morphic event handling doesn't happen.
 
-### Key Discovery: World Loop Not Running
+### Working Workarounds (2026-01-18)
+
+**Direct slot manipulation bypasses the broken event system:**
+
+1. **Hand position updates** - We directly write mouse position to HandMorph's bounds slot:
+   - Find hand via World → slot[9] (WorldState) → slot[1] (hands array) → first element
+   - Update bounds origin Point to mouse coordinates
+   - This makes the cursor follow the mouse without Morphic's event processing
+
+2. **Window-to-front** - Clicking windows moves them to front via direct array manipulation:
+   - Find clicked window in World's submorphs array (slot[2])
+   - Shift subsequent elements down, put clicked window at end
+   - End of array = front in z-order, drawn last
+
+3. **Menu bar** - Handled entirely in C++ (native rendering), doesn't need Pharo event system
+
+**Key insight:** Message sends from C++ to Pharo cause DNU cascades because the normal
+Morphic context isn't active. Direct slot manipulation (write to object memory) works
+because it bypasses message dispatch entirely.
+
+### Root Problem: World Loop Not Running
 
 The Pharo world loop (`doOneCycleFor:`) is **never called**. Only the idle process runs:
 - `idleProcess` sends `relinquishProcessorForMicroseconds:` repeatedly
-- No world loop means no event processing, no step methods, no Hand updates
+- No world loop means no event processing, no step methods, no proper Hand updates
 
-This explains why clicks don't work - there's no event processing happening at all.
+InputEventSensor process never wakes up:
+- Events are pushed to queue and semaphore is signaled
+- But no process is waiting on the semaphore (excessSignals increments instead)
+- Primitive 264 (getNextEvent) is never called
 
 ### Updated Investigation Summary
 
@@ -18,7 +41,7 @@ This explains why clicks don't work - there's no event processing happening at a
 
 2. **World loop not running** - `doOneCycleFor:` is never sent. Selector tracking shows only `relinquishProcessorForMicroseconds:` being called.
 
-3. **Action dispatch via idle loop** - We can intercept `relinquishProcessorForMicroseconds:` to dispatch pending actions (safe bytecode execution context).
+3. **Action dispatch via idle loop** - We can intercept `relinquishProcessorForMicroseconds:` to dispatch pending actions (safe bytecode execution context), BUT direct message sends crash.
 
 4. **comeToFront causes DNU cascade** - When we send `comeToFront` to SpWindow:
    - Something internally calls `copyFrom:to:` on an object that doesn't understand it
@@ -48,6 +71,16 @@ This explains why clicks don't work - there's no event processing happening at a
 2. **Added idle loop interception** - Dispatch pending actions during `relinquishProcessorForMicroseconds:` (safe context)
 
 3. **Made DNU-with-DNU graceful** - Return nil instead of stopping VM (prevents hard crash, but nil causes issues)
+
+4. **Direct HandMorph position updates** - updateActiveHandPosition() in Interpreter.cpp:
+   - WorldState is at World slot 9 (not 6!)
+   - hands array is at WorldState slot 1
+   - Directly updates Hand's bounds origin/corner Points
+
+5. **Direct window-to-front** - handleWorldClick() in Interpreter.cpp:
+   - Instead of sending `comeToFront`, directly manipulates submorphs array
+   - Finds window in array, shifts following elements, puts window at end
+   - Avoids DNU cascade entirely
 
 ### Root Cause Analysis
 
