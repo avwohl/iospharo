@@ -1570,16 +1570,13 @@ void Interpreter::processInputEvents() {
                     selectedMenuIndex_ = -1;
                     dropdownState_.valid = false;
                 }
-                // Handle World background click directly
-                // Instead of passing to Pharo (which never processes it),
-                // try to handle it ourselves
+                // Click outside menu areas - pass through to Pharo
                 if (logFile) {
-                    fprintf(logFile, "[WORLD-CLICK] mouse down buttons=%d at %d,%d\n",
+                    fprintf(logFile, "[PASSTHROUGH] mouse down buttons=%d at %d,%d -> queued\n",
                             event.arg3, event.arg1, event.arg2);
                     fflush(logFile);
                 }
-                // Queue the event but also try to handle World clicks
-                handleWorldClick(event.arg1, event.arg2, event.arg3);
+                passThroughEvents_.push_back(event);
                 continue;
             }
         }

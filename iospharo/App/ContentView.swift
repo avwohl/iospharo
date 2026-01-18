@@ -18,11 +18,18 @@ import SwiftUI
 struct MouseEventOverlay: View {
     @ObservedObject var bridge: PharoBridge
     @State private var isDragging = false
+    @State private var clickCount = 0
 
     var body: some View {
         // Invisible but hittable overlay
         Color.white.opacity(0.001)
             .contentShape(Rectangle())
+            .onAppear {
+                if let file = fopen("/tmp/overlay_debug.log", "a") {
+                    fputs("[OVERLAY] MouseEventOverlay appeared\n", file)
+                    fclose(file)
+                }
+            }
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
@@ -31,6 +38,11 @@ struct MouseEventOverlay: View {
                         if !isDragging {
                             // First event - mouse down
                             isDragging = true
+                            clickCount += 1
+                            if let file = fopen("/tmp/overlay_debug.log", "a") {
+                                fputs("[OVERLAY] Click #\(clickCount) DOWN at \(location)\n", file)
+                                fclose(file)
+                            }
                             bridge.sendMouseMoved(to: location, modifiers: 0)
                             bridge.sendTouchDown(at: location, buttons: Int(IOS_RED_BUTTON))
                         } else {
@@ -41,11 +53,13 @@ struct MouseEventOverlay: View {
                     .onEnded { value in
                         let location = value.location
                         isDragging = false
+                        if let file = fopen("/tmp/overlay_debug.log", "a") {
+                            fputs("[OVERLAY] Click UP at \(location)\n", file)
+                            fclose(file)
+                        }
                         bridge.sendTouchUp(at: location)
                     }
             )
-            // Note: Right-click handling is done via UIKit gesture recognizer
-            // in PharoCanvasViewController.setupGestureRecognizers()
     }
 }
 #endif
