@@ -7500,16 +7500,15 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
 
     // Debug: Log calls to primitive 264-269 range
     if (primitiveIndex >= 264 && primitiveIndex <= 269) {
-        static FILE* primDebug = fopen("/tmp/prim_264_range.log", "a");
-        if (primDebug) {
-            fprintf(primDebug, "[PRIM] Called primitive %d, prim=%s\n",
-                    primitiveIndex, prim ? "REGISTERED" : "NULL");
-            fflush(primDebug);
-        }
+        fprintf(stderr, "[EXECPRIM] prim %d, func=%s\n",
+                primitiveIndex, prim ? "REGISTERED" : "NULL");
     }
 
     if (prim) {
         // Real primitive function exists - call it
+        if (primitiveIndex == 264) {
+            fprintf(stderr, "[EXECPRIM] About to call primitiveGetNextEvent, argCount=%d\n", argCount);
+        }
         PrimitiveResult result = (this->*prim)(argCount);
         if (result == PrimitiveResult::Success) {
             lastPrimitiveIndex_ = primitiveIndex;

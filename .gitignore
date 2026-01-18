@@ -73,3 +73,4 @@ test-cpp-generation/
 *.dSYM/
 src/vm/build/
 src/vm/test_load_image
+build-maccatalyst/

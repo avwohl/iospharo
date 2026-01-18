@@ -10264,13 +10264,12 @@ PrimitiveResult Interpreter::primitiveLongRunningPrimitive(int argCount) {
 // Fills the event buffer with the next pending event
 // Can be called with argCount=0 (receiver is event buffer) or argCount=1 (event buffer as argument)
 PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
-    // Debug: Log entry to this function
-    static FILE* entryLog = fopen("/tmp/prim_getnext_entry.log", "a");
+    // Debug: Simple stderr output
     static int entryCount = 0;
     entryCount++;
-    if (entryLog && entryCount <= 50) {
-        fprintf(entryLog, "[GETNEXT] Entry #%d argCount=%d\n", entryCount, argCount);
-        fflush(entryLog);
+    if (entryCount <= 20) {
+        fprintf(stderr, "[GETNEXT] #%d argCount=%d stackTop=0x%llx\n",
+                entryCount, argCount, (unsigned long long)stackTop().rawBits());
     }
 
     // Process input events first - this handles menu bar clicks natively
