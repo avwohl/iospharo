@@ -196,6 +196,7 @@ public:
     void processInputEvents();     // Process pending input events
     void dispatchEventsToMorphic(); // Dispatch queued events to Morphic's active hand
     void handleWorldClick(int x, int y, int buttons);  // Handle click outside menu bar
+    void updateActiveHandPosition(); // Directly update ActiveHand's position/buttons
     void syncDisplayToSurface();   // Copy Display Form to platform surface
     void invokeMenuItemAction(Oop menuItemMorph);  // Invoke action from menu item click
     void ensureDisplayForm(int width, int height, int depth);  // Create Form and bind to Display global

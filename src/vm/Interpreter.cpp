@@ -1444,6 +1444,12 @@ void Interpreter::processInputEvents() {
         int x = event.arg1 * menuBarScale_;
         int y = event.arg2 * menuBarScale_;
 
+        // Update tracked mouse state for direct Hand manipulation
+        lastMouseX_ = x;
+        lastMouseY_ = y;
+        lastMouseButtons_ = event.arg3;
+        lastMouseEventType_ = mouseType;
+
         if (logFile) {
             fprintf(logFile, "[MOUSE] type=%d at x=%d y=%d (raw: %d,%d) scale=%d menuBarY=%d-%d\n",
                     mouseType, x, y, event.arg1, event.arg2, menuBarScale_, menuBarTop_, menuBarBottom_);
@@ -1766,65 +1772,31 @@ void Interpreter::handleWorldClick(int x, int y, int buttons) {
                 fflush(clickLog);
             }
 
-            // Found a morph! For windows, try to bring to front
+            // Found a morph! For windows, bring to front via direct slot manipulation
+            // (Message sends like comeToFront cause DNU cascades, so we bypass them)
             if (className.find("Window") != std::string::npos ||
                 className.find("SpWindow") != std::string::npos) {
-                // Try to activate this window by sending it comeToFront
-                Oop comeToFrontSel = findSelector("comeToFront");
-                if (clickLog) {
-                    fprintf(clickLog, "[CLICK] comeToFront selector lookup: isNil=%d\n",
-                            comeToFrontSel.isNil() ? 1 : 0);
-                    fflush(clickLog);
+                // Direct comeToFront: move window to end of submorphs array (front in z-order)
+                // Array is at World slot 2 (submorphs)
+                bool moved = false;
+                for (size_t j = 0; j < morphCount - 1; j++) {
+                    Oop m = memory_.fetchPointer(j, submorphs);
+                    if (m.rawBits() == submorph.rawBits()) {
+                        // Found it - shift all following elements down
+                        for (size_t k = j; k < morphCount - 1; k++) {
+                            Oop next = memory_.fetchPointer(k + 1, submorphs);
+                            memory_.storePointer(k, submorphs, next);
+                        }
+                        // Put the window at the end
+                        memory_.storePointer(morphCount - 1, submorphs, submorph);
+                        moved = true;
+                        break;
+                    }
                 }
-                if (!comeToFrontSel.isNil()) {
-                    pendingMenuAction_.selector = comeToFrontSel;
-                    pendingMenuAction_.receiver = submorph;
-                    pendingMenuAction_.argument = Oop::nil();
-                    pendingMenuAction_.argCount = 0;
-                    pendingMenuAction_.pending = true;
-                    // Don't set executeFromSync - let doOneCycleFor: handle it
-                    // (that's a safe context for message sends)
-
-                    if (clickLog) {
-                        fprintf(clickLog, "[CLICK] Queued comeToFront for %s\n", className.c_str());
-                        fflush(clickLog);
-                    }
-                } else {
-                    // Try yourself (which always exists) - at least this will confirm selector lookup works
-                    Oop yourselfSel = findSelector("yourself");
-                    Oop classSel = findSelector("class");
-                    if (clickLog) {
-                        fprintf(clickLog, "[CLICK] yourself selector lookup: isNil=%d\n",
-                                yourselfSel.isNil() ? 1 : 0);
-                        fprintf(clickLog, "[CLICK] class selector lookup: isNil=%d\n",
-                                classSel.isNil() ? 1 : 0);
-                        fflush(clickLog);
-                    }
-
-                    // Fallback - try activate or flash to show some response
-                    Oop activateSel = findSelector("activate");
-                    Oop flashSel = findSelector("flash");
-                    if (!activateSel.isNil()) {
-                        pendingMenuAction_.selector = activateSel;
-                        pendingMenuAction_.receiver = submorph;
-                        pendingMenuAction_.argument = Oop::nil();
-                        pendingMenuAction_.argCount = 0;
-                        pendingMenuAction_.pending = true;
-                        if (clickLog) {
-                            fprintf(clickLog, "[CLICK] Queued activate for %s\n", className.c_str());
-                            fflush(clickLog);
-                        }
-                    } else if (!flashSel.isNil()) {
-                        pendingMenuAction_.selector = flashSel;
-                        pendingMenuAction_.receiver = submorph;
-                        pendingMenuAction_.argument = Oop::nil();
-                        pendingMenuAction_.argCount = 0;
-                        pendingMenuAction_.pending = true;
-                        if (clickLog) {
-                            fprintf(clickLog, "[CLICK] Queued flash for %s\n", className.c_str());
-                            fflush(clickLog);
-                        }
-                    }
+                if (clickLog) {
+                    fprintf(clickLog, "[CLICK] Direct comeToFront for %s: moved=%d\n",
+                            className.c_str(), moved ? 1 : 0);
+                    fflush(clickLog);
                 }
             }
             return;  // Found and handled
@@ -1981,6 +1953,231 @@ void Interpreter::invokeMenuItemAction(Oop menuItemMorph) {
     }
 }
 
+// ===== DIRECT HAND MANIPULATION =====
+// Since InputEventSensor's process isn't running, update ActiveHand directly
+
+void Interpreter::updateActiveHandPosition() {
+    static FILE* handLog = nullptr;
+    static int handLogCount = 0;
+    if (!handLog) {
+        handLog = fopen("/tmp/activehand_update.log", "w");
+        if (handLog) {
+            fprintf(handLog, "[HAND] Log file opened\n");
+            fflush(handLog);
+        } else {
+            fprintf(stderr, "[HAND] Failed to open log file!\n");
+        }
+    }
+
+    // Always log to stderr for debugging
+    static int stderrCount = 0;
+    if (stderrCount++ < 5) {
+        fprintf(stderr, "[HAND] updateActiveHandPosition called #%d\n", stderrCount);
+    }
+
+    // Find the hand through World >> activeHand (World's slot 6 is activeHand)
+    // WorldMorph inherits from PasteUpMorph which has:
+    //   slots 0-5: Morph slots (bounds, owner, submorphs, fullBounds, color, extension)
+    //   slot 6: worldState (WorldState)
+    // The hand is typically stored in World>>hands (Array of HandMorph)
+    // or accessed via worldState>>hands or just the first element of World's hands
+    Oop world = memory_.findGlobal("World");
+    if (world.isNil() || !world.isObject()) {
+        if (handLog && handLogCount < 10) {
+            fprintf(handLog, "[HAND] #%d World not found\n", ++handLogCount);
+            fflush(handLog);
+        }
+        return;
+    }
+
+    // In Pharo, World keeps hands in an Array. Let's find it.
+    // WorldMorph (PasteUpMorph subclass) has:
+    //   slot 6: worldState
+    // WorldState has:
+    //   slot 0: world (back reference)
+    //   slot 1: hands (Array of HandMorph)
+    // Or sometimes the hand is directly in slot 6 or 7 of World.
+
+    ObjectHeader* worldHdr = world.asObjectPtr();
+    size_t worldSlots = worldHdr->slotCount();
+    if (handLog && handLogCount == 0) {
+        fprintf(handLog, "[HAND] World has %zu slots\n", worldSlots);
+        fflush(handLog);
+    }
+
+    // Try to find hands array - scan for an Array containing HandMorph
+    Oop activeHand = Oop::nil();
+
+    // WorldMorph slot 6 should be worldState in Pharo 10+
+    // Let's dump all World slots to find the hand
+    if (handLog && handLogCount < 3) {
+        fprintf(handLog, "[HAND] Dumping World slots (first %zu):\n", std::min(worldSlots, (size_t)15));
+        for (size_t i = 0; i < std::min(worldSlots, (size_t)15); i++) {
+            Oop slot = memory_.fetchPointer(i, world);
+            const char* slotType = "unknown";
+            size_t slotSlots = 0;
+            if (slot.isNil()) {
+                slotType = "nil";
+            } else if (slot.isSmallInteger()) {
+                slotType = "SmallInt";
+            } else if (slot.isObject()) {
+                ObjectHeader* hdr = slot.asObjectPtr();
+                slotSlots = hdr->slotCount();
+                // Try to get class name
+                Oop cls = memory_.classOf(slot);
+                if (cls.isObject()) {
+                    ObjectHeader* clsHdr = cls.asObjectPtr();
+                    if (clsHdr->slotCount() > 6) {
+                        Oop clsName = memory_.fetchPointer(6, cls);
+                        if (clsName.isObject()) {
+                            ObjectHeader* nameHdr = clsName.asObjectPtr();
+                            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                                static char nameBuf[51];
+                                size_t len = std::min(nameHdr->byteSize(), (size_t)50);
+                                memcpy(nameBuf, nameHdr->bytes(), len);
+                                nameBuf[len] = 0;
+                                slotType = nameBuf;
+                            }
+                        }
+                    }
+                }
+            }
+            fprintf(handLog, "[HAND]   slot[%zu] = 0x%llx (%s, slots=%zu)\n",
+                    i, (unsigned long long)slot.rawBits(), slotType, slotSlots);
+        }
+        fflush(handLog);
+    }
+
+    // Try to find hands - scan for Array containing something that looks like a Hand
+    // WorldMorph inherits from PasteUpMorph. Slot layout from dump:
+    // 0: bounds (Rectangle)
+    // 1: owner (nil)
+    // 2: submorphs (Array)
+    // 3: fullBounds (nil)
+    // 4: color
+    // 5: extension (MorphExtension)
+    // 6: ?
+    // 7: color
+    // 8: ?
+    // 9: worldState (WorldState)
+    // 10: ?
+    if (worldSlots > 9) {
+        Oop worldState = memory_.fetchPointer(9, world);
+        if (!worldState.isNil() && worldState.isObject()) {
+            ObjectHeader* wsHdr = worldState.asObjectPtr();
+
+            if (handLog && handLogCount < 3) {
+                fprintf(handLog, "[HAND] WorldState has %zu slots\n", wsHdr->slotCount());
+                for (size_t i = 0; i < std::min(wsHdr->slotCount(), (size_t)10); i++) {
+                    Oop slot = memory_.fetchPointer(i, worldState);
+                    fprintf(handLog, "[HAND]   ws slot[%zu] = 0x%llx (isNil=%d isObj=%d)\n",
+                            i, (unsigned long long)slot.rawBits(),
+                            slot.isNil() ? 1 : 0, slot.isObject() ? 1 : 0);
+                }
+                fflush(handLog);
+            }
+
+            // WorldState slot 1 is hands array
+            if (wsHdr->slotCount() > 1) {
+                Oop hands = memory_.fetchPointer(1, worldState);
+                if (!hands.isNil() && hands.isObject()) {
+                    ObjectHeader* handsHdr = hands.asObjectPtr();
+                    if (handLog && handLogCount < 3) {
+                        fprintf(handLog, "[HAND] hands array has %zu slots\n", handsHdr->slotCount());
+                        fflush(handLog);
+                    }
+                    if (handsHdr->slotCount() > 0) {
+                        activeHand = memory_.fetchPointer(0, hands);
+                        if (handLog && handLogCount < 5) {
+                            fprintf(handLog, "[HAND] Found hand via worldState: 0x%llx\n",
+                                    (unsigned long long)activeHand.rawBits());
+                            fflush(handLog);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (activeHand.isNil() || !activeHand.isObject()) {
+        if (handLog && handLogCount < 10) {
+            fprintf(handLog, "[HAND] #%d Hand not found via worldState\n", ++handLogCount);
+            fflush(handLog);
+        }
+        return;
+    }
+
+    // HandMorph inherits from Morph. Morph slot layout:
+    // 0: bounds (Rectangle)
+    // 1: owner
+    // 2: submorphs
+    // 3: fullBounds
+    // 4: color
+    // 5: extension (MorphExtension or nil)
+    // HandMorph additional slots (after Morph's 6 slots):
+    // 6: temporaryCursor
+    // 7: temporaryCursorOffset
+    // 8: mouseOverHandler
+    // 9: lastMouseEvent
+    // 10: targetOffset
+    // 11: damageRecorder
+    // 12: eventListeners
+    // etc.
+    //
+    // Actually, let's update the bounds to move the hand position.
+    // Bounds is a Rectangle with instVars: origin corner
+    // We want to set origin to our mouse position.
+
+    ObjectHeader* handHdr = activeHand.asObjectPtr();
+    size_t handSlots = handHdr->slotCount();
+    if (handSlots < 1) return;
+
+    // Get current bounds
+    Oop bounds = memory_.fetchPointer(0, activeHand);
+    if (bounds.isNil() || !bounds.isObject()) {
+        if (handLog && handLogCount < 10) {
+            fprintf(handLog, "[HAND] #%d bounds is nil\n", ++handLogCount);
+            fflush(handLog);
+        }
+        return;
+    }
+
+    // Rectangle has 2 slots: origin (Point), corner (Point)
+    Oop origin = memory_.fetchPointer(0, bounds);
+    if (origin.isNil() || !origin.isObject()) {
+        if (handLog && handLogCount < 10) {
+            fprintf(handLog, "[HAND] #%d origin is nil\n", ++handLogCount);
+            fflush(handLog);
+        }
+        return;
+    }
+
+    // Point has 2 slots: x, y (SmallIntegers or Floats)
+    // Update the origin Point with our tracked mouse position
+    memory_.storePointer(0, origin, Oop::fromSmallInteger(lastMouseX_));
+    memory_.storePointer(1, origin, Oop::fromSmallInteger(lastMouseY_));
+
+    // Also update the corner to maintain a 1x1 bounds (hand cursor is a point)
+    Oop corner = memory_.fetchPointer(1, bounds);
+    if (!corner.isNil() && corner.isObject()) {
+        memory_.storePointer(0, corner, Oop::fromSmallInteger(lastMouseX_ + 1));
+        memory_.storePointer(1, corner, Oop::fromSmallInteger(lastMouseY_ + 1));
+    }
+
+    // Debug: log when position changes (not just every frame)
+    static int lastLoggedX = -1, lastLoggedY = -1, lastLoggedButtons = -1;
+    if (handLog && (lastMouseX_ != lastLoggedX || lastMouseY_ != lastLoggedY ||
+                    lastMouseButtons_ != lastLoggedButtons)) {
+        handLogCount++;
+        fprintf(handLog, "[HAND] #%d Position CHANGED to (%d, %d) buttons=%d type=%d\n",
+                handLogCount, lastMouseX_, lastMouseY_, lastMouseButtons_, lastMouseEventType_);
+        fflush(handLog);
+        lastLoggedX = lastMouseX_;
+        lastLoggedY = lastMouseY_;
+        lastLoggedButtons = lastMouseButtons_;
+    }
+}
+
 // ===== DISPLAY SYNCHRONIZATION =====
 // Until BitBlt primitives are fully working, bypass Display Form and
 // render World morphs directly.
@@ -1990,6 +2187,9 @@ void Interpreter::syncDisplayToSurface() {
 
     // Process input events
     processInputEvents();
+
+    // Update ActiveHand position directly (bypasses Pharo's event system which isn't running)
+    updateActiveHandPosition();
 
     // Note: pending menu actions are processed by doOneCycleFor: interception,
     // not here. That's a safe context for message sends.
