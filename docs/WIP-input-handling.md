@@ -1,8 +1,45 @@
 # WIP: Input Handling from Swift to VM
 
-## Status: Complete (2026-01-08)
+## Status: In Progress (2026-01-18)
 
-Input handling pipeline from Swift gestures to Pharo VM is now working.
+**Current Problem:** Events reach the VM but clicking on Pharo world causes crash.
+
+### Investigation Summary
+
+1. **Events reach the VM correctly** - Mouse events flow from Swift → PlatformBridge → EventQueue → passThroughEvents_
+
+2. **Primitive 264 not being called** - Pharo 10's OSWindow architecture doesn't poll primitive 264 like the old InputEventSensor did. Instead, it expects the OSWindowDriver to push events.
+
+3. **Semaphore has no waiting process** - When we signal the input event semaphore, there's no process waiting on it. The excess signals accumulate.
+
+4. **Direct message sends crash** - Attempting to call sendSelector() from the interpret loop to dispatch events (like `comeToFront` on clicked window) crashes the app. The crash happens because:
+   - `sendSelector` activates a new method context
+   - But we're calling it from the main interpret loop, not from bytecode execution
+   - The stack/context state isn't properly set up for returning
+
+### Crash Log Analysis
+```
+[ACTION] SENDING: #comeToFront to SpWindow, stack before: sp=0x77743f030 fp=0x77743f020
+[ACTION] SENT: stack after: sp=0x77743f058 fp=0x77743f030
+[ACTION] SENDING: #comeToFront to SpWindow, stack before: sp=0x77743f068 fp=0x77743f030
+[ACTION] SENT: stack after: sp=0x77743f090 fp=0x77743f068
+```
+Stack keeps growing without returns - new contexts are created but never properly return.
+
+### Possible Solutions
+
+1. **Proper OSWindow integration** - Make OSiOSDriver deliver events to OSWindow via the proper callback mechanism, not via primitive 264.
+
+2. **Start event polling process** - Create a Pharo process that waits on the event semaphore and polls primitive 264.
+
+3. **Direct Hand manipulation** - Write mouse position/buttons directly to Morphic Hand's memory slots.
+
+4. **Safe message injection** - Find a safe point in the interpreter (like checkForInterrupts) to inject message sends properly.
+
+---
+## Original Pipeline (2026-01-08)
+
+Input handling pipeline from Swift gestures to Pharo VM was implemented as follows:
 
 ## What Was Done
 

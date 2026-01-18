@@ -2151,7 +2151,7 @@ void Interpreter::interpret() {
                 actionLog = fopen("/tmp/action_exec.log", "w");
             }
             if (actionLog) {
-                fprintf(actionLog, "[ACTION] Executing pending action: rcvr=0x%llx sel=0x%llx argCount=%d\n",
+                fprintf(actionLog, "[ACTION] Pending action detected: rcvr=0x%llx sel=0x%llx argCount=%d\n",
                         (unsigned long long)actionRcvr.rawBits(),
                         (unsigned long long)actionSel.rawBits(),
                         actionArgCount);
@@ -2165,17 +2165,40 @@ void Interpreter::interpret() {
             pendingMenuAction_.argument = Oop::nil();
             pendingMenuAction_.argCount = 0;
 
-            // Set up stack for message send
-            push(actionRcvr);
-            if (actionArgCount > 0 && !actionArg.isNil()) {
-                push(actionArg);
-            }
-
-            // Send the message
-            sendSelector(actionSel, actionArgCount);
-
+            // DISABLED: Direct message sends from interpret loop crash the app.
+            // The problem is that sendSelector activates a new method context, but we're
+            // calling from the main loop, not from bytecode execution. Stack corruption occurs.
+            // See WIP-input-handling.md for investigation details.
+            //
+            // Possible solutions:
+            // 1. Proper OSWindow integration (OSiOSDriver delivers events via callbacks)
+            // 2. Start event polling process in Pharo
+            // 3. Direct Hand manipulation in memory
+            // 4. Safe message injection at checkForInterrupts
             if (actionLog) {
-                fprintf(actionLog, "[ACTION] Message sent\n");
+                // Log what we would have sent
+                std::string selName = "<unknown>";
+                if (actionSel.isObject()) {
+                    ObjectHeader* selHdr = actionSel.asObjectPtr();
+                    if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                        selName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                    }
+                }
+                std::string rcvrClass = "<unknown>";
+                if (actionRcvr.isObject()) {
+                    Oop cls = memory_.classOf(actionRcvr);
+                    if (cls.isObject()) {
+                        Oop nameOop = memory_.fetchPointer(6, cls);
+                        if (nameOop.isObject()) {
+                            ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                                rcvrClass = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+                fprintf(actionLog, "[ACTION] DISABLED: Would send #%s to %s (crashes - see WIP doc)\n",
+                        selName.c_str(), rcvrClass.c_str());
                 fflush(actionLog);
             }
         }
