@@ -8203,14 +8203,91 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
     // <primitive: 'primitiveName' module: 'ModuleName'>
     // The VM looks up the module, finds the primitive, and calls it
 
-    // This is the general mechanism for plugin primitives
-    // Without plugin support, fail to trigger Smalltalk fallback
+    // Get current method to find the external primitive spec
+    Oop method = method_;
+    if (!method.isObject()) {
+        return PrimitiveResult::Failure;
+    }
 
-    // A full implementation would:
-    // 1. Get module name and primitive name from method literal frame
-    // 2. Load the module if not already loaded
-    // 3. Look up the primitive function
-    // 4. Call it with the current stack/context
+    // The primitive spec is typically in the method's literal frame
+    // In Spur, the format is usually:
+    // - Literal at index 0 or 1 contains an Array: #(moduleName primitiveName flags)
+    // Or an ExternalLibraryFunction object
+
+    ObjectHeader* methodHdr = method.asObjectPtr();
+    size_t numLiterals = methodHdr->slotCount();
+
+    // Debug logging
+    static FILE* extLog = fopen("/tmp/external_prim.log", "a");
+    static int extCallCount = 0;
+    extCallCount++;
+
+    if (extLog && extCallCount <= 50) {
+        fprintf(extLog, "[EXT] #%d argCount=%d numLiterals=%zu\n",
+                extCallCount, argCount, numLiterals);
+        fflush(extLog);
+    }
+
+    // Search literals for the primitive spec (usually an Array with module/name)
+    for (size_t i = 0; i < numLiterals && i < 10; i++) {
+        Oop literal = memory_.fetchPointer(i, method);
+        if (!literal.isObject()) continue;
+
+        ObjectHeader* litHdr = literal.asObjectPtr();
+
+        // Check if it's an Array (format 2 = indexable pointers)
+        if (litHdr->format() == ObjectFormat::Indexable && litHdr->slotCount() >= 2) {
+            // Could be #(moduleName primitiveName ...)
+            Oop moduleOop = memory_.fetchPointer(0, literal);
+            Oop nameOop = memory_.fetchPointer(1, literal);
+
+            // Extract strings
+            std::string moduleName, primName;
+
+            if (moduleOop.isObject()) {
+                ObjectHeader* modHdr = moduleOop.asObjectPtr();
+                if (modHdr->isBytesObject() && modHdr->byteSize() < 100) {
+                    moduleName = std::string((char*)modHdr->bytes(), modHdr->byteSize());
+                }
+            }
+
+            if (nameOop.isObject()) {
+                ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                    primName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                }
+            }
+
+            if (!moduleName.empty() && !primName.empty()) {
+                std::string key = moduleName + ":" + primName;
+
+                if (extLog && extCallCount <= 50) {
+                    fprintf(extLog, "[EXT] #%d Looking up '%s'\n", extCallCount, key.c_str());
+                    fflush(extLog);
+                }
+
+                auto it = namedPrimitives_.find(key);
+                if (it != namedPrimitives_.end()) {
+                    if (extLog && extCallCount <= 50) {
+                        fprintf(extLog, "[EXT] #%d Found! Calling...\n", extCallCount);
+                        fflush(extLog);
+                    }
+                    return (this->*(it->second))(argCount);
+                }
+
+                // Try without module prefix (for compatibility)
+                auto it2 = namedPrimitives_.find(":" + primName);
+                if (it2 != namedPrimitives_.end()) {
+                    return (this->*(it2->second))(argCount);
+                }
+            }
+        }
+    }
+
+    if (extLog && extCallCount <= 50) {
+        fprintf(extLog, "[EXT] #%d No named primitive found, failing\n", extCallCount);
+        fflush(extLog);
+    }
 
     return PrimitiveResult::Failure;
 }

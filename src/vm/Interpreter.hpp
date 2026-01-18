@@ -58,6 +58,9 @@
 #include <cstdio>
 #include <functional>
 #include <map>
+#include <memory>
+#include <string>
+#include <unordered_map>
 #include <thread>
 
 namespace pharo {
@@ -401,7 +404,10 @@ private:
 
     std::array<MethodCacheEntry, MethodCacheSize> methodCache_;
     WellKnownSelectors selectors_;
-    std::array<PrimitiveFunc, 600> primitiveTable_;
+    std::array<PrimitiveFunc, 700> primitiveTable_;  // Must be >= 661 for generated_primitives.inc
+
+    // Named primitive registry - maps "moduleName:primitiveName" to function
+    std::map<std::string, PrimitiveFunc> namedPrimitives_;
 
     /// Clear the method cache (used when methods are modified)
     void flushMethodCache() {
@@ -505,6 +511,12 @@ private:
 
     /// Initialize the primitive table
     void initializePrimitives();
+
+    /// Initialize named primitives (module:name -> function mapping)
+    void initializeNamedPrimitives();
+
+    /// Register a named primitive
+    void registerNamedPrimitive(const std::string& module, const std::string& name, PrimitiveFunc func);
 
     /// Execute a primitive
     PrimitiveResult executePrimitive(int primitiveIndex, int argCount);

@@ -6296,10 +6296,12 @@ void Interpreter::transferTo(Oop newProcess) {
 }
 
 bool Interpreter::tryReschedule() {
+    std::cerr << "[RESCHEDULE] tryReschedule called\n";
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
     Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
 
     if (!schedulerAssoc.isObject() || schedulerAssoc.rawBits() == nilObj.rawBits()) {
+        std::cerr << "[RESCHEDULE] No valid scheduler association\n";
         return false;
     }
 
@@ -6384,7 +6386,7 @@ bool Interpreter::bootstrapStartup() {
             if (queues.isObject()) {
                 ObjectHeader* queuesHeader = queues.asObjectPtr();
                 size_t numQueues = queuesHeader->slotCount();
-                // DEBUG: "[DEBUG] Found " << numQueues << " priority queues"
+                std::cerr << "[STARTUP] Found " << numQueues << " priority queues\n";
 
                 // Search from highest to lowest priority for a runnable process
                 for (int i = static_cast<int>(numQueues) - 1; i >= 0; i--) {
@@ -6392,11 +6394,14 @@ bool Interpreter::bootstrapStartup() {
                     if (queue.rawBits() == nilObj.rawBits() || !queue.isObject()) continue;
 
                     ObjectHeader* queueHeader = queue.asObjectPtr();
-                    // DEBUG_LOG("[DEBUG] Queue at priority " << (i + 1) << ": cls=" << queueHeader->classIndex()
-                              // << " slots=" << queueHeader->slotCount();
+                    std::cerr << "[STARTUP] Queue at priority " << (i + 1) << ": cls=" << queueHeader->classIndex()
+                              << " slots=" << queueHeader->slotCount() << "\n";
 
                     // LinkedList layout: slot 0 = firstLink, slot 1 = lastLink
                     Oop firstProcess = memory_.fetchPointer(0, queue);
+                    std::cerr << "[STARTUP] firstProcess: 0x" << std::hex << firstProcess.rawBits()
+                              << std::dec << " isNil=" << (firstProcess.rawBits() == nilObj.rawBits())
+                              << " isObj=" << firstProcess.isObject() << "\n";
                     if (firstProcess.rawBits() == nilObj.rawBits() || !firstProcess.isObject()) continue;
 
                     ObjectHeader* procHeader = firstProcess.asObjectPtr();
@@ -7391,14 +7396,52 @@ void Interpreter::initializePrimitives() {
     // This ensures the table matches what the Pharo image expects
     #include "../ios/generated_primitives.inc"
 
+    // Debug: Verify event primitives are registered
+    static FILE* primInitLog = fopen("/tmp/prim_init.log", "w");
+    if (primInitLog) {
+        fprintf(primInitLog, "[PRIM_INIT] primitiveTable_[264]=%s\n",
+                primitiveTable_[264] ? "REGISTERED" : "NULL");
+        fprintf(primInitLog, "[PRIM_INIT] primitiveTable_[265]=%s\n",
+                primitiveTable_[265] ? "REGISTERED" : "NULL");
+        fprintf(primInitLog, "[PRIM_INIT] primitiveTable_[267]=%s\n",
+                primitiveTable_[267] ? "REGISTERED" : "NULL");
+        fflush(primInitLog);
+        fclose(primInitLog);
+    }
+
     // NOTE: The generated file maps VMMaker primitive names to C++ method names.
     // If a primitive method doesn't exist, it will cause a compile error here,
     // which is intentional - it means we need to implement that primitive.
     //
     // The old hand-written table had many errors (wrong primitive numbers).
     // Using the generated table ensures correctness.
+
+    // Also initialize named primitives for module-based lookup
+    initializeNamedPrimitives();
 }
 
+void Interpreter::registerNamedPrimitive(const std::string& module, const std::string& name, PrimitiveFunc func) {
+    std::string key = module + ":" + name;
+    namedPrimitives_[key] = func;
+}
+
+void Interpreter::initializeNamedPrimitives() {
+    // Register iOS-specific primitives by name
+    // These can be called via <primitive: 'name' module: 'iOSPlugin'>
+
+    // Event primitives
+    registerNamedPrimitive("iOSPlugin", "primitiveGetNextEvent", &Interpreter::primitiveGetNextEvent);
+    registerNamedPrimitive("iOSPlugin", "primitiveInputSemaphore", &Interpreter::primitiveInputSemaphore2);
+
+    // Display primitives
+    registerNamedPrimitive("iOSPlugin", "primitiveShowDisplayRect", &Interpreter::primitiveShowDisplayRect);
+    registerNamedPrimitive("iOSPlugin", "primitiveScreenSize", &Interpreter::primitiveScreenSize);
+    registerNamedPrimitive("iOSPlugin", "primitiveScreenDepth", &Interpreter::primitiveScreenDepth);
+
+    // Also register under SqueakPlugin/SurfacePlugin for compatibility
+    registerNamedPrimitive("SqueakPlugin", "primitiveGetNextEvent", &Interpreter::primitiveGetNextEvent);
+    registerNamedPrimitive("SurfacePlugin", "primitiveShowDisplayRect", &Interpreter::primitiveShowDisplayRect);
+}
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {
     static int failCount = 0;
@@ -7423,10 +7466,16 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
         fflush(allPrimLog);
     }
 
-    // Specifically log primitives we're interested in
-    if (primitiveIndex == 86 || primitiveIndex == 179 || primitiveIndex == 267 || primitiveIndex == 264) {
-        fprintf(allPrimLog, "[PRIM-KEY] primitive=%d (86=wait, 179=relinquish, 264/267=getNextEvent)\n",
-                primitiveIndex);
+    // Specifically log primitives we're interested in (event-related)
+    if (primitiveIndex >= 264 && primitiveIndex <= 269) {
+        fprintf(allPrimLog, "[PRIM-EVENT] #%d primitive=%d (264=getNext, 265=inputSem, 267=sound)\n",
+                primCallCount, primitiveIndex);
+        fflush(allPrimLog);
+    }
+    // Also log wait/relinquish/signal
+    if (primitiveIndex == 86 || primitiveIndex == 179 || primitiveIndex == 85) {
+        fprintf(allPrimLog, "[PRIM-SCHED] #%d primitive=%d (85=signal, 86=wait, 179=relinquish)\n",
+                primCallCount, primitiveIndex);
         fflush(allPrimLog);
     }
 
@@ -7453,8 +7502,8 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
     if (primitiveIndex >= 264 && primitiveIndex <= 269) {
         static FILE* primDebug = fopen("/tmp/prim_264_range.log", "a");
         if (primDebug) {
-            fprintf(primDebug, "[PRIM] Called primitive %d, prim=%p\n",
-                    primitiveIndex, (void*)(prim ? 1 : 0));
+            fprintf(primDebug, "[PRIM] Called primitive %d, prim=%s\n",
+                    primitiveIndex, prim ? "REGISTERED" : "NULL");
             fflush(primDebug);
         }
     }
