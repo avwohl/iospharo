@@ -128,8 +128,13 @@ struct ContentView: View {
             }
             #endif
         }
-        // Note: On Mac Catalyst, SwiftUI gestures intercept but don't fire properly.
-        // We rely on the auto-test for now until we implement proper NSEvent monitoring.
+        // Note: SwiftUI gesture is needed for event routing even if it doesn't fire
+        #if targetEnvironment(macCatalyst)
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            // This enables the hover gesture chain
+        }
+        #endif
         .onAppear {
             imageManager.checkForExistingImage()
 
