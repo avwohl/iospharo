@@ -140,9 +140,22 @@ class PharoMTKView: MTKView {
         // IMPORTANT: Send a MOVE event first to position the hand cursor
         // This matches what test_platform does - the hand must be at the click
         // position BEFORE the down event, or Morphic won't find the target correctly
+        if let file = Self.touchLogFile {
+            fputs("[TOUCH-DEBUG] Sending move to \(point)\n", file)
+            fflush(file)
+        }
         bridge.sendMouseMoved(to: point, modifiers: 0)
 
+        if let file = Self.touchLogFile {
+            fputs("[TOUCH-DEBUG] Sending touchDown at \(point) buttons=\(buttons)\n", file)
+            fflush(file)
+        }
         bridge.sendTouchDown(at: point, buttons: buttons)
+
+        if let file = Self.touchLogFile {
+            fputs("[TOUCH-DEBUG] touchDown sent successfully\n", file)
+            fflush(file)
+        }
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
