@@ -356,8 +356,13 @@ struct iosparoApp: App {
             pressGesture.allowableMovement = 10000 // Allow movement during press
             window.addGestureRecognizer(pressGesture)
 
-            // Also try adding directly to the hosting view
+            // Add UIPointerInteraction to the hosting view for position tracking
             if let hostingView = window.subviews.first?.subviews.first?.subviews.first {
+                // Add pointer interaction for position tracking
+                let pointerInteraction = UIPointerInteraction(delegate: JsonBasedPointerDelegate.shared)
+                hostingView.addInteraction(pointerInteraction)
+
+                // Also add press gesture
                 let hostingPress = UILongPressGestureRecognizer(
                     target: MouseEventHandler.shared,
                     action: #selector(MouseEventHandler.handleWindowPress(_:))
@@ -367,7 +372,7 @@ struct iosparoApp: App {
                 hostingView.addGestureRecognizer(hostingPress)
 
                 if let file = fopen("/tmp/window_setup.log", "a") {
-                    fputs("[WINDOW] Added press gesture to hosting view: \(hostingView)\n", file)
+                    fputs("[WINDOW] Added UIPointerInteraction to hosting view: \(hostingView)\n", file)
                     fclose(file)
                 }
             }
@@ -449,6 +454,55 @@ class MouseEventHandler: NSObject {
 
         default:
             break
+        }
+    }
+}
+
+/// UIPointerInteractionDelegate to track pointer position on Mac Catalyst
+class JsonBasedPointerDelegate: NSObject, UIPointerInteractionDelegate {
+    static let shared = JsonBasedPointerDelegate()
+
+    private var regionRequestCount = 0
+
+    func pointerInteraction(_ interaction: UIPointerInteraction, regionFor request: UIPointerRegionRequest, defaultRegion: UIPointerRegion) -> UIPointerRegion? {
+        let point = request.location
+        regionRequestCount += 1
+
+        // Log position tracking
+        if regionRequestCount <= 500 || regionRequestCount % 100 == 0 {
+            if let file = fopen("/tmp/pointer_interaction.log", "a") {
+                fputs("[POINTER] #\(regionRequestCount) regionFor at \(point)\n", file)
+                fclose(file)
+            }
+        }
+
+        // Update last known position
+        DispatchQueue.main.async {
+            MouseEventHandler.shared.lastPosition = point
+            // Send mouse move to VM
+            PharoBridge.shared.sendMouseMoved(to: point, modifiers: 0)
+        }
+
+        // Return the full view as the active region
+        return defaultRegion
+    }
+
+    func pointerInteraction(_ interaction: UIPointerInteraction, styleFor region: UIPointerRegion) -> UIPointerStyle? {
+        // Use default pointer style (arrow cursor)
+        return nil
+    }
+
+    func pointerInteraction(_ interaction: UIPointerInteraction, willEnter region: UIPointerRegion, animator: any UIPointerInteractionAnimating) {
+        if let file = fopen("/tmp/pointer_interaction.log", "a") {
+            fputs("[POINTER] willEnter region\n", file)
+            fclose(file)
+        }
+    }
+
+    func pointerInteraction(_ interaction: UIPointerInteraction, willExit region: UIPointerRegion, animator: any UIPointerInteractionAnimating) {
+        if let file = fopen("/tmp/pointer_interaction.log", "a") {
+            fputs("[POINTER] willExit region\n", file)
+            fclose(file)
         }
     }
 }
