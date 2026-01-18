@@ -2,7 +2,23 @@
 
 ## Status: In Progress (2026-01-18)
 
-**Current Problem:** World loop isn't running, so Morphic event handling doesn't happen.
+**Current Problem:** Pharo's event system isn't initialized because OSiOSDriver's Smalltalk code isn't loaded into the image.
+
+### Key Finding: OSiOSDriver Needs Image Integration (2026-01-18)
+
+The investigation revealed:
+
+1. **OSiOSDriver.st exists** but needs to be filed into the Pharo image
+2. **Normal Pharo drivers (OSSDL2Driver)** create an event loop process that polls events
+3. **Our VM infrastructure is complete** - events flow through, primitive 264 works
+4. **Missing link**: No Smalltalk process calls primitive 264 to consume events
+
+**Options going forward:**
+- **A**: Load OSiOSDriver.st into the working image (simplest, but creates custom image)
+- **B**: Auto-fileIn during VM startup (complex, requires Smalltalk compiler support)
+- **C**: Continue with C++ direct handling workarounds (current approach)
+
+Currently using **Option C** - direct C++ handling works for basic interactions.
 
 ### Working Workarounds (2026-01-18)
 
