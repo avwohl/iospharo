@@ -61,6 +61,12 @@ void shutdownFFI();
 bool isModuleLoaded(const std::string& moduleName);
 void* lookupFunction(const std::string& moduleName, const std::string& funcName);
 
+// Register a stub function (for iOS SDL2 replacement)
+void registerFunction(const std::string& funcName, void* funcPtr);
+
+// Register all SDL2 stub functions for iOS
+void registerSDL2Stubs();
+
 // Parse FFI type from Pharo type name
 FFIType parseType(const std::string& typeName);
 

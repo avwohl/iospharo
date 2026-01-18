@@ -7,11 +7,15 @@
 #include "FFI.hpp"
 #include <iostream>
 #include <cstring>
+#include <chrono>
 #include <dlfcn.h>
 #include <ffi.h>
 
 namespace pharo {
 namespace ffi {
+
+// Forward declarations
+void registerSDL2Stubs();
 
 // Module handles
 static bool sInitialized = false;
@@ -22,6 +26,11 @@ static std::unordered_map<std::string, void*> sFunctionCache;
 bool initializeFFI() {
     if (sInitialized) return true;
     sInitialized = true;
+
+    // Register SDL2 stub functions for iOS
+    // This makes OSWindow think SDL2 is available
+    registerSDL2Stubs();
+
     return true;
 }
 
@@ -34,7 +43,13 @@ bool isModuleLoaded(const std::string& moduleName) {
     // We support SDL2 and general dlsym lookup
     if (moduleName == "SDL2" || moduleName == "libSDL2" ||
         moduleName.find("SDL2") != std::string::npos) {
-        return dlsym(RTLD_DEFAULT, "SDL_Init") != nullptr;
+        // Check both real SDL2 and our stubs
+        if (dlsym(RTLD_DEFAULT, "SDL_Init") != nullptr) {
+            return true;
+        }
+        // Check if our stubs are registered
+        auto it = sFunctionCache.find("SDL_Init");
+        return it != sFunctionCache.end();
     }
     // For other modules, check if any function from that module is available
     return true;  // Assume available, will fail on lookup if not
@@ -54,6 +69,283 @@ void* lookupFunction(const std::string& moduleName, const std::string& funcName)
     }
 
     return func;
+}
+
+void registerFunction(const std::string& funcName, void* funcPtr) {
+    sFunctionCache[funcName] = funcPtr;
+}
+
+// SDL2 stub functions for iOS
+// These make OSWindow think SDL2 is available
+
+static bool sSDL2Initialized = false;
+static void* sFakeWindowHandle = reinterpret_cast<void*>(0xDEADBEEF);
+static void* sFakeRendererHandle = reinterpret_cast<void*>(0xCAFEBABE);
+
+extern "C" {
+
+// SDL_Init returns 0 on success
+int stub_SDL_Init(uint32_t flags) {
+    fprintf(stderr, "[SDL2-STUB] SDL_Init(0x%x) -> 0 (success)\n", flags);
+    sSDL2Initialized = true;
+    return 0;
+}
+
+void stub_SDL_Quit() {
+    fprintf(stderr, "[SDL2-STUB] SDL_Quit()\n");
+    sSDL2Initialized = false;
+}
+
+// Returns version info - version 2.0.20
+void stub_SDL_GetVersion(void* ver) {
+    fprintf(stderr, "[SDL2-STUB] SDL_GetVersion()\n");
+    if (ver) {
+        uint8_t* v = static_cast<uint8_t*>(ver);
+        v[0] = 2;   // major
+        v[1] = 0;   // minor
+        v[2] = 20;  // patch
+    }
+}
+
+const char* stub_SDL_GetError() {
+    return "No error";
+}
+
+void* stub_SDL_CreateWindow(const char* title, int x, int y, int w, int h, uint32_t flags) {
+    fprintf(stderr, "[SDL2-STUB] SDL_CreateWindow('%s', %d, %d, %dx%d, 0x%x) -> %p\n",
+            title ? title : "(null)", x, y, w, h, flags, sFakeWindowHandle);
+    return sFakeWindowHandle;
+}
+
+void stub_SDL_DestroyWindow(void* window) {
+    fprintf(stderr, "[SDL2-STUB] SDL_DestroyWindow(%p)\n", window);
+}
+
+void stub_SDL_GetWindowSize(void* window, int* w, int* h) {
+    // Return a reasonable default size
+    if (w) *w = 1024;
+    if (h) *h = 768;
+    fprintf(stderr, "[SDL2-STUB] SDL_GetWindowSize(%p) -> %dx%d\n", window, 1024, 768);
+}
+
+void stub_SDL_SetWindowSize(void* window, int w, int h) {
+    fprintf(stderr, "[SDL2-STUB] SDL_SetWindowSize(%p, %dx%d)\n", window, w, h);
+}
+
+void stub_SDL_SetWindowTitle(void* window, const char* title) {
+    fprintf(stderr, "[SDL2-STUB] SDL_SetWindowTitle(%p, '%s')\n", window, title ? title : "(null)");
+}
+
+void stub_SDL_ShowWindow(void* window) {
+    fprintf(stderr, "[SDL2-STUB] SDL_ShowWindow(%p)\n", window);
+}
+
+void stub_SDL_HideWindow(void* window) {
+    fprintf(stderr, "[SDL2-STUB] SDL_HideWindow(%p)\n", window);
+}
+
+void stub_SDL_RaiseWindow(void* window) {
+    fprintf(stderr, "[SDL2-STUB] SDL_RaiseWindow(%p)\n", window);
+}
+
+uint32_t stub_SDL_GetWindowID(void* window) {
+    return 1;  // Window ID 1
+}
+
+void* stub_SDL_GetWindowFromID(uint32_t id) {
+    return sFakeWindowHandle;
+}
+
+int stub_SDL_SetWindowFullscreen(void* window, uint32_t flags) {
+    fprintf(stderr, "[SDL2-STUB] SDL_SetWindowFullscreen(%p, 0x%x)\n", window, flags);
+    return 0;
+}
+
+void stub_SDL_GetWindowPosition(void* window, int* x, int* y) {
+    if (x) *x = 0;
+    if (y) *y = 0;
+}
+
+void stub_SDL_SetWindowPosition(void* window, int x, int y) {
+    fprintf(stderr, "[SDL2-STUB] SDL_SetWindowPosition(%p, %d, %d)\n", window, x, y);
+}
+
+// Renderer stubs
+void* stub_SDL_CreateRenderer(void* window, int index, uint32_t flags) {
+    fprintf(stderr, "[SDL2-STUB] SDL_CreateRenderer(%p) -> %p\n", window, sFakeRendererHandle);
+    return sFakeRendererHandle;
+}
+
+void stub_SDL_DestroyRenderer(void* renderer) {
+    fprintf(stderr, "[SDL2-STUB] SDL_DestroyRenderer(%p)\n", renderer);
+}
+
+int stub_SDL_RenderClear(void* renderer) {
+    return 0;
+}
+
+void stub_SDL_RenderPresent(void* renderer) {
+    // No-op
+}
+
+int stub_SDL_SetRenderDrawColor(void* renderer, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+    return 0;
+}
+
+// Event stubs - critical for InputEventSensor
+// We return 0 (no events) since we handle events through primitive 264
+int stub_SDL_PollEvent(void* event) {
+    // Return 0 = no event available
+    // The real events are handled by our primitiveGetNextEvent
+    return 0;
+}
+
+int stub_SDL_WaitEvent(void* event) {
+    // Return 0 = no event available
+    return 0;
+}
+
+int stub_SDL_PushEvent(void* event) {
+    return 1;  // Success
+}
+
+// Clipboard stubs
+char* stub_SDL_GetClipboardText() {
+    return strdup("");
+}
+
+int stub_SDL_SetClipboardText(const char* text) {
+    return 0;
+}
+
+int stub_SDL_HasClipboardText() {
+    return 0;
+}
+
+// Cursor stubs
+void* stub_SDL_CreateSystemCursor(int id) {
+    return reinterpret_cast<void*>(0x12345678);
+}
+
+void stub_SDL_SetCursor(void* cursor) {
+}
+
+void stub_SDL_FreeCursor(void* cursor) {
+}
+
+int stub_SDL_ShowCursor(int toggle) {
+    return toggle;
+}
+
+// Mouse stubs
+uint32_t stub_SDL_GetMouseState(int* x, int* y) {
+    if (x) *x = 0;
+    if (y) *y = 0;
+    return 0;
+}
+
+uint32_t stub_SDL_GetGlobalMouseState(int* x, int* y) {
+    if (x) *x = 0;
+    if (y) *y = 0;
+    return 0;
+}
+
+// Video subsystem stubs
+int stub_SDL_GetNumVideoDisplays() {
+    return 1;
+}
+
+int stub_SDL_GetDisplayBounds(int displayIndex, void* rect) {
+    if (rect) {
+        int* r = static_cast<int*>(rect);
+        r[0] = 0;     // x
+        r[1] = 0;     // y
+        r[2] = 1024;  // w
+        r[3] = 768;   // h
+    }
+    return 0;
+}
+
+// Timer stubs
+uint32_t stub_SDL_GetTicks() {
+    static auto start = std::chrono::steady_clock::now();
+    auto now = std::chrono::steady_clock::now();
+    return static_cast<uint32_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count()
+    );
+}
+
+uint64_t stub_SDL_GetPerformanceCounter() {
+    return std::chrono::steady_clock::now().time_since_epoch().count();
+}
+
+uint64_t stub_SDL_GetPerformanceFrequency() {
+    return 1000000000ULL;  // nanoseconds
+}
+
+} // extern "C"
+
+void registerSDL2Stubs() {
+    fprintf(stderr, "[SDL2-STUB] Registering SDL2 stub functions\n");
+
+    // Core initialization
+    registerFunction("SDL_Init", reinterpret_cast<void*>(stub_SDL_Init));
+    registerFunction("SDL_Quit", reinterpret_cast<void*>(stub_SDL_Quit));
+    registerFunction("SDL_GetVersion", reinterpret_cast<void*>(stub_SDL_GetVersion));
+    registerFunction("SDL_GetError", reinterpret_cast<void*>(stub_SDL_GetError));
+
+    // Window management
+    registerFunction("SDL_CreateWindow", reinterpret_cast<void*>(stub_SDL_CreateWindow));
+    registerFunction("SDL_DestroyWindow", reinterpret_cast<void*>(stub_SDL_DestroyWindow));
+    registerFunction("SDL_GetWindowSize", reinterpret_cast<void*>(stub_SDL_GetWindowSize));
+    registerFunction("SDL_SetWindowSize", reinterpret_cast<void*>(stub_SDL_SetWindowSize));
+    registerFunction("SDL_SetWindowTitle", reinterpret_cast<void*>(stub_SDL_SetWindowTitle));
+    registerFunction("SDL_ShowWindow", reinterpret_cast<void*>(stub_SDL_ShowWindow));
+    registerFunction("SDL_HideWindow", reinterpret_cast<void*>(stub_SDL_HideWindow));
+    registerFunction("SDL_RaiseWindow", reinterpret_cast<void*>(stub_SDL_RaiseWindow));
+    registerFunction("SDL_GetWindowID", reinterpret_cast<void*>(stub_SDL_GetWindowID));
+    registerFunction("SDL_GetWindowFromID", reinterpret_cast<void*>(stub_SDL_GetWindowFromID));
+    registerFunction("SDL_SetWindowFullscreen", reinterpret_cast<void*>(stub_SDL_SetWindowFullscreen));
+    registerFunction("SDL_GetWindowPosition", reinterpret_cast<void*>(stub_SDL_GetWindowPosition));
+    registerFunction("SDL_SetWindowPosition", reinterpret_cast<void*>(stub_SDL_SetWindowPosition));
+
+    // Renderer
+    registerFunction("SDL_CreateRenderer", reinterpret_cast<void*>(stub_SDL_CreateRenderer));
+    registerFunction("SDL_DestroyRenderer", reinterpret_cast<void*>(stub_SDL_DestroyRenderer));
+    registerFunction("SDL_RenderClear", reinterpret_cast<void*>(stub_SDL_RenderClear));
+    registerFunction("SDL_RenderPresent", reinterpret_cast<void*>(stub_SDL_RenderPresent));
+    registerFunction("SDL_SetRenderDrawColor", reinterpret_cast<void*>(stub_SDL_SetRenderDrawColor));
+
+    // Events
+    registerFunction("SDL_PollEvent", reinterpret_cast<void*>(stub_SDL_PollEvent));
+    registerFunction("SDL_WaitEvent", reinterpret_cast<void*>(stub_SDL_WaitEvent));
+    registerFunction("SDL_PushEvent", reinterpret_cast<void*>(stub_SDL_PushEvent));
+
+    // Clipboard
+    registerFunction("SDL_GetClipboardText", reinterpret_cast<void*>(stub_SDL_GetClipboardText));
+    registerFunction("SDL_SetClipboardText", reinterpret_cast<void*>(stub_SDL_SetClipboardText));
+    registerFunction("SDL_HasClipboardText", reinterpret_cast<void*>(stub_SDL_HasClipboardText));
+
+    // Cursor
+    registerFunction("SDL_CreateSystemCursor", reinterpret_cast<void*>(stub_SDL_CreateSystemCursor));
+    registerFunction("SDL_SetCursor", reinterpret_cast<void*>(stub_SDL_SetCursor));
+    registerFunction("SDL_FreeCursor", reinterpret_cast<void*>(stub_SDL_FreeCursor));
+    registerFunction("SDL_ShowCursor", reinterpret_cast<void*>(stub_SDL_ShowCursor));
+
+    // Mouse
+    registerFunction("SDL_GetMouseState", reinterpret_cast<void*>(stub_SDL_GetMouseState));
+    registerFunction("SDL_GetGlobalMouseState", reinterpret_cast<void*>(stub_SDL_GetGlobalMouseState));
+
+    // Video
+    registerFunction("SDL_GetNumVideoDisplays", reinterpret_cast<void*>(stub_SDL_GetNumVideoDisplays));
+    registerFunction("SDL_GetDisplayBounds", reinterpret_cast<void*>(stub_SDL_GetDisplayBounds));
+
+    // Timer
+    registerFunction("SDL_GetTicks", reinterpret_cast<void*>(stub_SDL_GetTicks));
+    registerFunction("SDL_GetPerformanceCounter", reinterpret_cast<void*>(stub_SDL_GetPerformanceCounter));
+    registerFunction("SDL_GetPerformanceFrequency", reinterpret_cast<void*>(stub_SDL_GetPerformanceFrequency));
+
+    fprintf(stderr, "[SDL2-STUB] Registered %zu stub functions\n", sFunctionCache.size());
 }
 
 FFIType parseType(const std::string& typeName) {

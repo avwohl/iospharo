@@ -5,6 +5,7 @@
  */
 
 #include "Interpreter.hpp"
+#include "FFI.hpp"
 #include "../platform/DisplaySurface.hpp"
 #include "../platform/EventQueue.hpp"
 #include <cstring>
@@ -7418,6 +7419,10 @@ void Interpreter::initializePrimitives() {
 
     // Also initialize named primitives for module-based lookup
     initializeNamedPrimitives();
+
+    // Initialize FFI early to register SDL2 stubs before image tries to use them
+    // This makes OSWindow think SDL2 is available, so it starts InputEventSensor
+    ffi::initializeFFI();
 }
 
 void Interpreter::registerNamedPrimitive(const std::string& module, const std::string& name, PrimitiveFunc func) {
