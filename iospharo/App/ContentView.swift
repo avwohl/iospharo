@@ -81,6 +81,52 @@ struct ContentView: View {
             if let error = bridge.errorMessage ?? imageManager.errorMessage {
                 errorOverlay(message: error)
             }
+
+            #if targetEnvironment(macCatalyst)
+            // Debug: Test button to verify SwiftUI events work
+            VStack {
+                Spacer()
+                HStack {
+                    Button("TEST CLICK") {
+                        if let file = fopen("/tmp/swiftui_button.log", "a") {
+                            fputs("[BUTTON] Test button was clicked!\n", file)
+                            fclose(file)
+                        }
+                        NSLog("[BUTTON] Test button was clicked!")
+                    }
+                    .padding()
+                    .background(Color.red)
+                    .foregroundColor(.white)
+                    .cornerRadius(8)
+
+                    Button("AUTO CLICK TEST") {
+                        // Programmatically send events to VM to test if the pipeline works
+                        if let file = fopen("/tmp/auto_test.log", "a") {
+                            fputs("[AUTO] Starting auto click test...\n", file)
+                            fclose(file)
+                        }
+
+                        // Send a series of mouse events directly through the bridge
+                        let testPoint = CGPoint(x: 512, y: 384)
+                        bridge.sendMouseMoved(to: testPoint, modifiers: 0)
+                        bridge.sendTouchDown(at: testPoint, buttons: Int(IOS_RED_BUTTON))
+                        bridge.sendTouchUp(at: testPoint)
+
+                        if let file = fopen("/tmp/auto_test.log", "a") {
+                            fputs("[AUTO] Sent mouse events to VM at \(testPoint)\n", file)
+                            fclose(file)
+                        }
+                    }
+                    .padding()
+                    .background(Color.green)
+                    .foregroundColor(.white)
+                    .cornerRadius(8)
+
+                    Spacer()
+                }
+                .padding()
+            }
+            #endif
         }
         #if targetEnvironment(macCatalyst)
         .contentShape(Rectangle())
@@ -126,6 +172,45 @@ struct ContentView: View {
                     startPharo()
                 }
             }
+
+            #if targetEnvironment(macCatalyst)
+            // Auto-test: After 5 seconds, automatically send test events to verify the pipeline
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+                if let file = fopen("/tmp/auto_test.log", "a") {
+                    fputs("[AUTO] 5-second timer fired, sending test events...\n", file)
+                    fputs("[AUTO] bridge.isRunning = \(bridge.isRunning)\n", file)
+                    fclose(file)
+                }
+
+                if bridge.isRunning {
+                    // Send a series of test events to the VM
+                    let testPoint = CGPoint(x: 512, y: 384)
+
+                    if let file = fopen("/tmp/auto_test.log", "a") {
+                        fputs("[AUTO] Sending move to \(testPoint)\n", file)
+                        fclose(file)
+                    }
+                    bridge.sendMouseMoved(to: testPoint, modifiers: 0)
+
+                    if let file = fopen("/tmp/auto_test.log", "a") {
+                        fputs("[AUTO] Sending touch down at \(testPoint)\n", file)
+                        fclose(file)
+                    }
+                    bridge.sendTouchDown(at: testPoint, buttons: Int(IOS_RED_BUTTON))
+
+                    if let file = fopen("/tmp/auto_test.log", "a") {
+                        fputs("[AUTO] Sending touch up at \(testPoint)\n", file)
+                        fclose(file)
+                    }
+                    bridge.sendTouchUp(at: testPoint)
+
+                    if let file = fopen("/tmp/auto_test.log", "a") {
+                        fputs("[AUTO] Test complete! Check /tmp/vm_mouse_events.log for VM-side events\n", file)
+                        fclose(file)
+                    }
+                }
+            }
+            #endif
         }
     }
 
