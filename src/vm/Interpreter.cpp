@@ -1531,6 +1531,70 @@ void Interpreter::renderWorldMorphs() {
         fflush(testLog);
     }
 
+    // Redraw world menu if visible (placeholder menu from right-click)
+    if (hasVisibleMenu_) {
+        int mx = pendingMenuBounds_.x;
+        int my = pendingMenuBounds_.y;
+        int mw = pendingMenuBounds_.width;
+        int mh = pendingMenuBounds_.height;
+        int surfWidth = pharo::gDisplaySurface->width();
+        int surfHeight = pharo::gDisplaySurface->height();
+        int pitchPixels = static_cast<int>(pharo::gDisplaySurface->pitch() / 4);
+
+        // Draw white background
+        for (int dy = 0; dy < mh && my + dy < surfHeight; dy++) {
+            for (int dx = 0; dx < mw && mx + dx < surfWidth; dx++) {
+                int px = mx + dx;
+                int py = my + dy;
+                if (px >= 0 && py >= 0) {
+                    pixels[py * pitchPixels + px] = 0xFFFFFFFF;  // White
+                }
+            }
+        }
+
+        // Draw gray border (2 pixels)
+        uint32_t borderColor = 0xFF808080;
+        for (int dx = 0; dx < mw; dx++) {
+            for (int t = 0; t < 2; t++) {
+                int px = mx + dx;
+                int py1 = my + t;
+                int py2 = my + mh - 1 - t;
+                if (px >= 0 && px < surfWidth) {
+                    if (py1 >= 0 && py1 < surfHeight) pixels[py1 * pitchPixels + px] = borderColor;
+                    if (py2 >= 0 && py2 < surfHeight) pixels[py2 * pitchPixels + px] = borderColor;
+                }
+            }
+        }
+        for (int dy = 0; dy < mh; dy++) {
+            for (int t = 0; t < 2; t++) {
+                int px1 = mx + t;
+                int px2 = mx + mw - 1 - t;
+                int py = my + dy;
+                if (py >= 0 && py < surfHeight) {
+                    if (px1 >= 0 && px1 < surfWidth) pixels[py * pitchPixels + px1] = borderColor;
+                    if (px2 >= 0 && px2 < surfWidth) pixels[py * pitchPixels + px2] = borderColor;
+                }
+            }
+        }
+
+        // Draw menu item lines (dashes to simulate text)
+        uint32_t textColor = 0xFF000000;
+        int itemHeight = 30;
+        int textY = my + 10;
+        for (int i = 0; i < 5 && textY + 20 < my + mh; i++) {
+            int lineY = textY + 10;
+            for (int dx = 10; dx < mw - 10; dx++) {
+                int px = mx + dx;
+                if (px >= 0 && px < surfWidth && lineY >= 0 && lineY < surfHeight) {
+                    if ((dx % 8) < 5) {
+                        pixels[lineY * pitchPixels + px] = textColor;
+                    }
+                }
+            }
+            textY += itemHeight;
+        }
+    }
+
     pharo::gDisplaySurface->update();
 }
 
@@ -1787,14 +1851,53 @@ void Interpreter::dispatchEventsToMorphic() {
 void Interpreter::handleWorldClick(int x, int y, int buttons) {
     // Handle a click outside the menu bar
     // For now, log it and try to find what morph is at this position
+
+    // Debug: use the events log file which is known to work
+    static FILE* eventsLogForDebug = fopen("/tmp/iospharo-events.log", "a");
+    if (eventsLogForDebug) {
+        fprintf(eventsLogForDebug, "[handleWorldClick] ENTRY x=%d y=%d buttons=%d\n", x, y, buttons);
+        fflush(eventsLogForDebug);
+    }
+
     static FILE* clickLog = nullptr;
     if (!clickLog) {
         clickLog = fopen("/tmp/world_click.log", "w");
+        if (!clickLog && eventsLogForDebug) {
+            fprintf(eventsLogForDebug, "[handleWorldClick] ERROR: Failed to open world_click.log\n");
+            fflush(eventsLogForDebug);
+        }
     }
 
     if (clickLog) {
         fprintf(clickLog, "[CLICK] at x=%d y=%d buttons=%d\n", x, y, buttons);
         fflush(clickLog);
+    }
+
+    // If a world menu is visible, check if click is inside it or dismiss it
+    if (hasVisibleMenu_) {
+        int mx = pendingMenuBounds_.x;
+        int my = pendingMenuBounds_.y;
+        int mw = pendingMenuBounds_.width;
+        int mh = pendingMenuBounds_.height;
+
+        if (x >= mx && x < mx + mw && y >= my && y < my + mh) {
+            // Click inside menu - could handle menu item selection here
+            if (clickLog) {
+                fprintf(clickLog, "[CLICK] Inside visible menu at %d,%d\n", x, y);
+                fflush(clickLog);
+            }
+            // For now, just dismiss the menu
+            hasVisibleMenu_ = false;
+            return;
+        } else {
+            // Click outside menu - dismiss it
+            if (clickLog) {
+                fprintf(clickLog, "[CLICK] Outside visible menu - dismissing\n");
+                fflush(clickLog);
+            }
+            hasVisibleMenu_ = false;
+            // Continue processing this click
+        }
     }
 
     // Find World global
@@ -1978,6 +2081,14 @@ void Interpreter::handleWorldClick(int x, int y, int buttons) {
 void Interpreter::showWorldMenu(int x, int y) {
     // Show the World menu at the given position
     // This is triggered by right-click (yellow button) on the World background
+
+    // Debug: use the events log file which is known to work
+    static FILE* eventsLogForDebug = fopen("/tmp/iospharo-events.log", "a");
+    if (eventsLogForDebug) {
+        fprintf(eventsLogForDebug, "[showWorldMenu] ENTRY x=%d y=%d\n", x, y);
+        fflush(eventsLogForDebug);
+    }
+
     static FILE* menuLog = fopen("/tmp/world_menu.log", "a");
 
     if (menuLog) {
@@ -2095,6 +2206,99 @@ void Interpreter::showWorldMenu(int x, int y) {
 
     if (menuLog) {
         fprintf(menuLog, "[WORLD-MENU] No existing menu found in World submorphs\n");
+        fflush(menuLog);
+    }
+
+    // No existing menu - draw a placeholder menu directly on the display
+    // This provides visible feedback that right-click was detected
+    if (!pharo::gDisplaySurface) return;
+
+    uint32_t* pixels = pharo::gDisplaySurface->pixels();
+    int surfWidth = pharo::gDisplaySurface->width();
+    int surfHeight = pharo::gDisplaySurface->height();
+    int pitchPixels = static_cast<int>(pharo::gDisplaySurface->pitch() / 4);
+
+    // Draw a mock menu: white background with gray border
+    int menuWidth = 200;
+    int menuHeight = 180;
+
+    // Keep menu on screen
+    if (x + menuWidth > surfWidth) x = surfWidth - menuWidth;
+    if (y + menuHeight > surfHeight) y = surfHeight - menuHeight;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+
+    // Draw white background
+    for (int dy = 0; dy < menuHeight; dy++) {
+        for (int dx = 0; dx < menuWidth; dx++) {
+            int px = x + dx;
+            int py = y + dy;
+            if (px >= 0 && px < surfWidth && py >= 0 && py < surfHeight) {
+                pixels[py * pitchPixels + px] = 0xFFFFFFFF;  // White
+            }
+        }
+    }
+
+    // Draw gray border (2 pixels wide)
+    uint32_t borderColor = 0xFF808080;  // Gray
+    for (int dx = 0; dx < menuWidth; dx++) {
+        for (int t = 0; t < 2; t++) {
+            int px = x + dx;
+            int py1 = y + t;
+            int py2 = y + menuHeight - 1 - t;
+            if (px >= 0 && px < surfWidth) {
+                if (py1 >= 0 && py1 < surfHeight) pixels[py1 * pitchPixels + px] = borderColor;
+                if (py2 >= 0 && py2 < surfHeight) pixels[py2 * pitchPixels + px] = borderColor;
+            }
+        }
+    }
+    for (int dy = 0; dy < menuHeight; dy++) {
+        for (int t = 0; t < 2; t++) {
+            int px1 = x + t;
+            int px2 = x + menuWidth - 1 - t;
+            int py = y + dy;
+            if (py >= 0 && py < surfHeight) {
+                if (px1 >= 0 && px1 < surfWidth) pixels[py * pitchPixels + px1] = borderColor;
+                if (px2 >= 0 && px2 < surfWidth) pixels[py * pitchPixels + px2] = borderColor;
+            }
+        }
+    }
+
+    // Draw some fake menu items as dark text lines
+    uint32_t textColor = 0xFF000000;  // Black
+    const char* items[] = {"World", "Workspace", "Browser", "Inspect", "Save"};
+    int itemCount = 5;
+    int itemHeight = 30;
+    int textY = y + 10;
+
+    for (int i = 0; i < itemCount && textY + 20 < y + menuHeight; i++) {
+        // Draw a simple horizontal line to represent menu item
+        int lineY = textY + 10;
+        for (int dx = 10; dx < menuWidth - 10; dx++) {
+            int px = x + dx;
+            if (px >= 0 && px < surfWidth && lineY >= 0 && lineY < surfHeight) {
+                // Draw dashes to simulate text
+                if ((dx % 8) < 5) {
+                    pixels[lineY * pitchPixels + px] = textColor;
+                }
+            }
+        }
+        textY += itemHeight;
+    }
+
+    // Mark display as dirty
+    pharo::gDisplaySurface->invalidateRect(x, y, menuWidth, menuHeight);
+
+    // Store menu position for click detection
+    pendingMenuBounds_.x = x;
+    pendingMenuBounds_.y = y;
+    pendingMenuBounds_.width = menuWidth;
+    pendingMenuBounds_.height = menuHeight;
+    hasVisibleMenu_ = true;
+
+    if (menuLog) {
+        fprintf(menuLog, "[WORLD-MENU] Drew placeholder menu at %d,%d size %dx%d\n",
+                x, y, menuWidth, menuHeight);
         fflush(menuLog);
     }
 }

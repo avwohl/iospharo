@@ -358,6 +358,13 @@ private:
     };
     DropdownState dropdownState_;
 
+    // World menu state (for right-click context menu)
+    struct WorldMenuBounds {
+        int x = 0, y = 0, width = 0, height = 0;
+    };
+    WorldMenuBounds pendingMenuBounds_;
+    bool hasVisibleMenu_ = false;
+
     // Pending menu action (queued for safe execution)
     struct PendingMenuAction {
         Oop selector = Oop::nil();
