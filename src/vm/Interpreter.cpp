@@ -1820,18 +1820,12 @@ void Interpreter::processInputEvents() {
                     fflush(logFile);
                 }
 
-                // Yellow button (buttons=2) = right-click = world menu
-                // Since Pharo's event processing isn't working, trigger the menu directly
-                if (event.arg3 == 2) {
-                    if (logFile) {
-                        fprintf(logFile, "[WORLD-MENU] Triggering world menu at %d,%d\n", x, y);
-                        fflush(logFile);
-                    }
-                    showWorldMenu(x, y);
-                    continue;  // Don't pass through - we handled it
+                // Pass ALL button clicks through to Pharo for normal Morphic handling
+                // Yellow button (buttons=2) = right-click should trigger world menu via HandMorph
+                if (logFile && event.arg3 == 2) {
+                    fprintf(logFile, "[PASSTHROUGH] Right-click (buttons=2) at %d,%d -> Pharo\n", x, y);
+                    fflush(logFile);
                 }
-
-                // Other buttons - pass through to Pharo
                 passThroughEvents_.push_back(event);
                 continue;
             }
@@ -2411,29 +2405,20 @@ void Interpreter::showWorldMenu(int x, int y) {
 
                     if (!codeString.isNil()) {
                         if (menuLog) {
-                            fprintf(menuLog, "[WORLD-MENU] Executing evaluation: '%s'\n", code.c_str());
+                            fprintf(menuLog, "[WORLD-MENU] Queueing evaluation: '%s'\n", code.c_str());
                             fprintf(menuLog, "[WORLD-MENU] compilerClass=%p, evaluateSel=%p, codeString=%p\n",
                                     (void*)compilerClass.rawBits(), (void*)evaluateSel.rawBits(), (void*)codeString.rawBits());
                             fflush(menuLog);
                         }
 
-                        // Execute immediately instead of queueing
-                        // Push receiver and argument onto stack
-                        push(compilerClass);
-                        push(codeString);
-
-                        if (menuLog) {
-                            fprintf(menuLog, "[WORLD-MENU] About to sendSelector for evaluate:\n");
-                            fflush(menuLog);
-                        }
-
-                        // Send the message - this will execute OpalCompiler evaluate: with our code
-                        sendSelector(evaluateSel, 1);
-
-                        if (menuLog) {
-                            fprintf(menuLog, "[WORLD-MENU] sendSelector returned\n");
-                            fflush(menuLog);
-                        }
+                        // Queue for dispatch from primitive 264 (getNextEvent)
+                        // Direct sendSelector from here corrupts the stack
+                        pendingMenuAction_.selector = evaluateSel;
+                        pendingMenuAction_.receiver = compilerClass;
+                        pendingMenuAction_.argument = codeString;
+                        pendingMenuAction_.argCount = 1;
+                        pendingMenuAction_.pending = true;
+                        pendingMenuAction_.isChained = false;
 
                         // Enable tracing for the next 200 sends after this action
                         menuActionTraceCount_ = 200;
