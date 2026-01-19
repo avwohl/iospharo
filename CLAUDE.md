@@ -1,5 +1,37 @@
 # Claude Code Instructions
 
+---
+## ⛔️ STOP: NO WORKAROUNDS - FIX ROOT CAUSES ⛔️
+---
+
+**DO NOT add workarounds, hacks, or band-aids to bypass problems.**
+
+When something doesn't work:
+1. **STOP** and understand WHY it doesn't work
+2. **Find the root cause** - trace the problem to its source
+3. **Fix the actual bug** - not the symptom
+
+### Examples of BAD workarounds we've added:
+- C++ `showWorldMenu()` call because InputEventSensor isn't running → **FIX**: Figure out why InputEventSensor isn't starting
+- SwiftUI contextMenu overlay because clicks don't reach UIKit → **FIX**: Understand Mac Catalyst event routing properly
+- Direct slot manipulation because primitives fail → **FIX**: Implement the primitives correctly
+
+### Why this matters:
+- Workarounds **hide bugs** that will bite us later
+- Workarounds **add complexity** that makes debugging harder
+- Workarounds **diverge from standard Pharo** behavior
+- The image should work like it does on any other VM
+
+### Before adding ANY workaround, ask:
+1. What is the ACTUAL problem?
+2. Where in the code path does it fail?
+3. What would the REAL fix be?
+4. Is the workaround just avoiding understanding the problem?
+
+**If you find yourself writing code that "works around" something, STOP and investigate the root cause instead.**
+
+---
+
 ## Git Workflow
 - **Commit frequently**: Commit at least every 15 minutes to avoid losing work from mishandled stash/checkout operations. Do this silently without stopping to ask or show the user.
 - Always run `git status` before and after commits to verify state
