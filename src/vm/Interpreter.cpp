@@ -25,6 +25,9 @@
 
 namespace pharo {
 
+// Global flag to trace sends after primitive 264 completes
+int g_traceSendsAfterPrim264 = 0;
+
 // ===== CONSTRUCTION =====
 
 Interpreter::Interpreter(ObjectMemory& memory)
@@ -3001,6 +3004,23 @@ void Interpreter::syncDisplayToSurface() {
 // ===== MAIN LOOP =====
 
 void Interpreter::interpret() {
+    // Debug: Log special object addresses once at start
+    static bool loggedSpecialObjects = false;
+    if (!loggedSpecialObjects) {
+        loggedSpecialObjects = true;
+        FILE* soLog = fopen("/tmp/special_objects.log", "w");
+        if (soLog) {
+            Oop trueObj = memory_.trueObject();
+            Oop falseObj = memory_.falseObject();
+            Oop nilObj = memory_.nil();
+            fprintf(soLog, "true:  0x%llx\n", (unsigned long long)trueObj.rawBits());
+            fprintf(soLog, "false: 0x%llx\n", (unsigned long long)falseObj.rawBits());
+            fprintf(soLog, "nil:   0x%llx\n", (unsigned long long)nilObj.rawBits());
+            fflush(soLog);
+            fclose(soLog);
+        }
+    }
+
     int loopCount = 0;
     while (running_) {
         // Process any pending external semaphore signals
@@ -4612,11 +4632,53 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         ObjectHeader* selHdr = selector.asObjectPtr();
         if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
             selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-            // Log first few sends for debugging (disabled for cleaner output)
-            // if (++totalSends <= 200) {
-            //     std::cerr << "[SEND #" << totalSends << "] " << selStr << " args=" << argCount << "\n";
-            // }
+            // Log first 2000 sends to see full startup
             totalSends++;
+            if (totalSends <= 2000) {
+                static FILE* sendLog = nullptr;
+                if (!sendLog) sendLog = fopen("/tmp/all_sends.log", "w");
+                if (sendLog) {
+                    fprintf(sendLog, "[SEND #%d] #%s args=%d\n", totalSends, selStr.c_str(), argCount);
+                    fflush(sendLog);
+                }
+            }
+
+            // Trace sends after primitive 264 (only non-internal selectors)
+            // Defined at top of this file
+extern int g_traceSendsAfterPrim264;
+            if (g_traceSendsAfterPrim264 > 0) {
+                // Skip internal method lookup selectors
+                bool isInternalLookup = (selStr == "==" || selStr == "superclass" ||
+                                          selStr == "class" || selStr == "methodDict" ||
+                                          selStr == "includesKey:" || selStr == "basicAt:");
+                if (!isInternalLookup) {
+                    g_traceSendsAfterPrim264--;
+                    static FILE* postPrimLog = nullptr;
+                    if (!postPrimLog) postPrimLog = fopen("/tmp/post_prim264.log", "w");
+                    if (postPrimLog) {
+                        Oop rcvr = stackValue(static_cast<size_t>(argCount));
+                        std::string rcvrClass = "<unknown>";
+                        if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                            Oop cls = memory_.classOf(rcvr);
+                            if (cls.isObject()) {
+                                Oop nameOop = memory_.fetchPointer(6, cls);
+                                if (nameOop.isObject()) {
+                                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                                        rcvrClass = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                    }
+                                }
+                            }
+                        } else if (rcvr.isSmallInteger()) {
+                            rcvrClass = "SmallInteger(" + std::to_string(rcvr.asSmallInteger()) + ")";
+                        }
+                        fprintf(postPrimLog, "[POST264] #%s to %s (args=%d)\n",
+                                selStr.c_str(), rcvrClass.c_str(), argCount);
+                        fflush(postPrimLog);
+                    }
+                }
+            }
+
             // Also log specific sends related to method execution
             if (selStr == "withArgs:executeMethod:" || selStr == "evaluateDoIt:" ||
                 selStr == "receiver" || selStr == "primitiveFailed") {
@@ -5321,14 +5383,54 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     MethodCacheEntry* cached = probeCache(selector, rcvrClass);
     if (cached && cached->method != Oop::nil()) {
         // Cache hit
+
         if (cached->primitiveIndex > 0) {
-            // Try primitive first - IMPORTANT: set argCount_ before calling primitive
-            // because primitiveSuccess uses argCount_ to pop the correct number of items
-            argCount_ = argCount;
-            primitiveFailed_ = false;
-            PrimitiveResult result = executePrimitive(cached->primitiveIndex, argCount);
-            if (result == PrimitiveResult::Success) {
-                return;  // Primitive handled it
+            // Check for quick primitives (256-519) - these are handled specially
+            // and should NOT go through the regular primitive table
+            int primIdx = cached->primitiveIndex;
+            if (primIdx >= 256 && primIdx <= 519) {
+                // Quick primitive - handle directly here
+                if (primIdx >= 264) {
+                    // Return instance variable at (primIdx - 264)
+                    if (rcvr.isObject()) {
+                        size_t instVarIndex = static_cast<size_t>(primIdx - 264);
+                        size_t slotCount = memory_.slotCountOf(rcvr);
+                        if (instVarIndex < slotCount) {
+                            Oop value = memory_.fetchPointer(instVarIndex, rcvr);
+                            // Pop receiver, push result
+                            pop();
+                            push(value);
+                            return;
+                        }
+                    }
+                    // Quick primitive failed - fall through to method activation
+                } else {
+                    // Quick constant primitives (256-263)
+                    Oop result;
+                    switch (primIdx) {
+                        case 256: result = rcvr; break;  // return self
+                        case 257: result = memory_.trueObject(); break;
+                        case 258: result = memory_.falseObject(); break;
+                        case 259: result = memory_.nil(); break;
+                        case 260: result = Oop::fromSmallInteger(-1); break;
+                        case 261: result = Oop::fromSmallInteger(0); break;
+                        case 262: result = Oop::fromSmallInteger(1); break;
+                        case 263: result = Oop::fromSmallInteger(2); break;
+                        default: goto tryRegularPrimitive;
+                    }
+                    pop();
+                    push(result);
+                    return;
+                }
+            } else {
+tryRegularPrimitive:
+                // Regular primitive (not quick) - try via primitive table
+                argCount_ = argCount;
+                primitiveFailed_ = false;
+                PrimitiveResult result = executePrimitive(primIdx, argCount);
+                if (result == PrimitiveResult::Success) {
+                    return;  // Primitive handled it
+                }
             }
         }
         activateMethod(cached->method, argCount);
@@ -5368,13 +5470,52 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     // Check for primitive
     int primIndex = primitiveIndexOf(method);
     if (primIndex > 0) {
-        argCount_ = argCount;
-        primitiveFailed_ = false;
-        PrimitiveResult result = executePrimitive(primIndex, argCount);
-        if (result == PrimitiveResult::Success) {
-            return;
+        // Check for quick primitives (256-519) - handle directly, don't use primitive table
+        if (primIndex >= 256 && primIndex <= 519) {
+            if (primIndex >= 264) {
+                // Return instance variable at (primIndex - 264)
+                if (rcvr.isObject()) {
+                    size_t instVarIndex = static_cast<size_t>(primIndex - 264);
+                    size_t slotCount = memory_.slotCountOf(rcvr);
+                    if (instVarIndex < slotCount) {
+                        Oop value = memory_.fetchPointer(instVarIndex, rcvr);
+                        pop();
+                        push(value);
+                        return;
+                    }
+                }
+                // Quick primitive failed - fall through to method activation
+            } else {
+                // Quick constant primitives (256-263)
+                Oop result;
+                bool handled = true;
+                switch (primIndex) {
+                    case 256: result = rcvr; break;
+                    case 257: result = memory_.trueObject(); break;
+                    case 258: result = memory_.falseObject(); break;
+                    case 259: result = memory_.nil(); break;
+                    case 260: result = Oop::fromSmallInteger(-1); break;
+                    case 261: result = Oop::fromSmallInteger(0); break;
+                    case 262: result = Oop::fromSmallInteger(1); break;
+                    case 263: result = Oop::fromSmallInteger(2); break;
+                    default: handled = false;
+                }
+                if (handled) {
+                    pop();
+                    push(result);
+                    return;
+                }
+            }
+        } else {
+            // Regular primitive - try via primitive table
+            argCount_ = argCount;
+            primitiveFailed_ = false;
+            PrimitiveResult result = executePrimitive(primIndex, argCount);
+            if (result == PrimitiveResult::Success) {
+                return;
+            }
+            // Primitive failed - fall through to method activation
         }
-        // Primitive failed - fall through to method activation
     }
 
     activateMethod(method, argCount);
@@ -6311,6 +6452,19 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // Get receiver from stack (now in the frame)
     receiver_ = argument(0);  // First "argument" slot is actually receiver
 
+    // Debug: Log receiver being set for superclass methods
+    static FILE* rcvrLog = nullptr;
+    static int rcvrLogCount = 0;
+    if (!rcvrLog) rcvrLog = fopen("/tmp/receiver_set.log", "w");
+    if (rcvrLog && rcvrLogCount < 200) {
+        rcvrLogCount++;
+        fprintf(rcvrLog, "[RCVR #%d] depth=%zu receiver=0x%llx FP=%p arg(0)=%p\n",
+                rcvrLogCount, frameDepth_,
+                (unsigned long long)receiver_.rawBits(),
+                (void*)framePointer_, (void*)(framePointer_));
+        fflush(rcvrLog);
+    }
+
     // Set instruction pointer to start of bytecodes
     ObjectHeader* methodObj = method_.asObjectPtr();
 
@@ -6576,6 +6730,28 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     // New frame pointer is at current position minus args (receiver is first "arg")
     Oop* newFP = stackPointer_ - argCount - 1;  // -1 for receiver position
 
+    // Debug: Log frame pointer setup
+    static FILE* fpLog = nullptr;
+    static int fpLogCount = 0;
+    if (!fpLog) fpLog = fopen("/tmp/frame_setup.log", "w");
+    if (fpLog && fpLogCount < 200) {
+        fpLogCount++;
+        Oop receiverAtFP = *newFP;
+        fprintf(fpLog, "[FP #%d] depth=%zu argCount=%d SP=%p newFP=%p rcvrAtFP=0x%llx\n",
+                fpLogCount, frameDepth_, argCount, (void*)stackPointer_, (void*)newFP,
+                (unsigned long long)receiverAtFP.rawBits());
+        // Also show stack contents
+        if (argCount >= 0 && argCount <= 3) {
+            fprintf(fpLog, "  Stack: ");
+            for (int i = argCount; i >= -1; i--) {
+                Oop val = *(stackPointer_ - argCount - 1 + i);
+                fprintf(fpLog, "[%d]=0x%llx ", i, (unsigned long long)val.rawBits());
+            }
+            fprintf(fpLog, "\n");
+        }
+        fflush(fpLog);
+    }
+
     framePointer_ = newFP;
 
     // Initialize temporaries to nil
@@ -6655,11 +6831,38 @@ Oop Interpreter::temporary(int index) const {
     // and indices argCount+ are local temps/copied values.
     // Frame layout: [receiver, arg0, arg1, ..., temp0, temp1, ...]
     // So all are accessed at framePointer_[1 + index]
-    return *(framePointer_ + 1 + index);
+    Oop result = *(framePointer_ + 1 + index);
+
+    // Log temp reads for debugging infinite loop
+    static FILE* tempLog = nullptr;
+    static int tempReadCount = 0;
+    if (!tempLog) tempLog = fopen("/tmp/temp_access.log", "w");
+    if (tempLog && tempReadCount < 100) {
+        tempReadCount++;
+        fprintf(tempLog, "[TEMP_READ #%d] index=%d value=0x%llx frameDepth=%zu\n",
+                tempReadCount, index, (unsigned long long)result.rawBits(), frameDepth_);
+        fflush(tempLog);
+    }
+
+    return result;
 }
 
 void Interpreter::setTemporary(int index, Oop value) {
     // Same layout as temporary() - see comment above
+
+    // Log temp writes for debugging infinite loop
+    static FILE* tempLog = nullptr;
+    static int tempWriteCount = 0;
+    if (!tempLog) tempLog = fopen("/tmp/temp_write.log", "w");
+    if (tempLog && tempWriteCount < 100) {
+        tempWriteCount++;
+        Oop oldValue = *(framePointer_ + 1 + index);
+        fprintf(tempLog, "[TEMP_WRITE #%d] index=%d old=0x%llx new=0x%llx frameDepth=%zu\n",
+                tempWriteCount, index, (unsigned long long)oldValue.rawBits(),
+                (unsigned long long)value.rawBits(), frameDepth_);
+        fflush(tempLog);
+    }
+
     *(framePointer_ + 1 + index) = value;
 }
 
@@ -6679,7 +6882,21 @@ Oop Interpreter::receiverInstVar(size_t index) const {
             return memory_.nil();
         }
     }
-    return memory_.fetchPointer(index, receiver_);
+    Oop result = memory_.fetchPointer(index, receiver_);
+
+    // Log slot 0 (superclass) accesses to debug infinite inheritsFrom loop
+    static FILE* instVarLog = nullptr;
+    static int instVarCount = 0;
+    if (!instVarLog) instVarLog = fopen("/tmp/instvar_access.log", "w");
+    if (instVarLog && index == 0 && instVarCount < 100) {
+        instVarCount++;
+        fprintf(instVarLog, "[INSTVAR #%d] slot0 receiver=0x%llx result=0x%llx\n",
+                instVarCount, (unsigned long long)receiver_.rawBits(),
+                (unsigned long long)result.rawBits());
+        fflush(instVarLog);
+    }
+
+    return result;
 }
 
 void Interpreter::setReceiverInstVar(size_t index, Oop value) {
@@ -9380,6 +9597,20 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
                 return PrimitiveResult::Failure;
             }
             Oop value = memory_.fetchPointer(instVarIndex, receiver);
+
+            // Debug: log quick primitive 264 (superclass accessor) calls
+            static FILE* quickLog = nullptr;
+            static int quickCount = 0;
+            if (!quickLog) quickLog = fopen("/tmp/quick_prim264.log", "w");
+            if (quickLog && instVarIndex == 0 && quickCount < 100) {
+                quickCount++;
+                fprintf(quickLog, "[QUICK #%d] prim=%d slot=%zu rcvr=0x%llx value=0x%llx slotCount=%zu\n",
+                        quickCount, primitiveIndex, instVarIndex,
+                        (unsigned long long)receiver.rawBits(),
+                        (unsigned long long)value.rawBits(), slotCount);
+                fflush(quickLog);
+            }
+
             *(stackPointer_ - 1) = value;  // Replace stack top
             return PrimitiveResult::Success;
         }
