@@ -4488,7 +4488,8 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 std::cerr << "[SEND #" << totalSends << "] " << selStr << " args=" << argCount << "\n";
             }
             // Also log specific sends related to method execution
-            if (selStr == "withArgs:executeMethod:" || selStr == "evaluateDoIt:") {
+            if (selStr == "withArgs:executeMethod:" || selStr == "evaluateDoIt:" ||
+                selStr == "receiver" || selStr == "primitiveFailed") {
                 std::cerr << "[EXEC-TRACE] " << selStr << " at send #" << totalSends << "\n";
             }
         }
@@ -5066,13 +5067,18 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
     }
 
-    // Check for invalid receiver (could be from out-of-bounds literal access)
-    Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
-    if (rcvr.rawBits() == 0 || rcvr.rawBits() == nilObj.rawBits()) {
-        popN(argCount + 1);  // Pop args and receiver
+    // Check for completely invalid receiver (raw 0, not the actual nil object)
+    // Note: The actual nil object (UndefinedObject) CAN receive messages!
+    // Only reject raw 0 which indicates corrupted state
+    if (rcvr.rawBits() == 0) {
+        std::cerr << "[CORRUPT] Send #" << selStr << " to raw 0 - corrupted state\n";
+        Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
+        popN(argCount + 1);
         push(nilObj);
         return;
     }
+
+    Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
 
     // Determine receiver's class
     Oop rcvrClass = memory_.classOf(rcvr);
