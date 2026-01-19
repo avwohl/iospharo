@@ -96,12 +96,27 @@ static id (^_handlerBlock)(id) = nil;  // Keep strong reference to handler
         fflush(_logFile);
     }
 
-    // Get the selector for addLocalMonitorForEventsMatchingMask:handler:
-    SEL addMonitorSelector = NSSelectorFromString(@"addLocalMonitorForEventsMatchingMask:handler:");
+    // Try GLOBAL monitor first (local doesn't work on Mac Catalyst)
+    // Note: Global monitors receive events not destined for our app, so we need to filter by window
+    SEL addMonitorSelector = NSSelectorFromString(@"addGlobalMonitorForEventsMatchingMask:handler:");
+
+    if (![NSEventClass respondsToSelector:addMonitorSelector]) {
+        // Fall back to local monitor
+        addMonitorSelector = NSSelectorFromString(@"addLocalMonitorForEventsMatchingMask:handler:");
+        if (_logFile) {
+            fprintf(_logFile, "[NSEVENT-OBJC] Global monitor not available, trying local...\n");
+            fflush(_logFile);
+        }
+    } else {
+        if (_logFile) {
+            fprintf(_logFile, "[NSEVENT-OBJC] Using GLOBAL monitor (local doesn't work on Mac Catalyst)\n");
+            fflush(_logFile);
+        }
+    }
 
     if (![NSEventClass respondsToSelector:addMonitorSelector]) {
         if (_logFile) {
-            fprintf(_logFile, "[NSEVENT-OBJC] ERROR: NSEvent doesn't respond to addLocalMonitorForEventsMatchingMask:handler:\n");
+            fprintf(_logFile, "[NSEVENT-OBJC] ERROR: NSEvent doesn't respond to monitor selector\n");
             fclose(_logFile);
             _logFile = NULL;
         }
@@ -116,6 +131,10 @@ static id (^_handlerBlock)(id) = nil;  // Keep strong reference to handler
     // Create the handler block and keep a strong reference to it
     _handlerBlock = ^id(id event) {
         _eventCount++;
+
+        // EARLY LOG: verify handler is called at all
+        fprintf(_logFile, "[NSEVENT-HANDLER] CALLED #%d event=%p\n", _eventCount, (__bridge void *)event);
+        fflush(_logFile);
 
         // Get event type using performSelector
         SEL typeSel = NSSelectorFromString(@"type");

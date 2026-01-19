@@ -115,6 +115,103 @@ enum NSEventMonitorSwift {
     private static var wasMiddleButtonDown = false
     private static var pollCount = 0
     private static var pollLogFile: UnsafeMutablePointer<FILE>? = nil
+    private static var eventTap: CFMachPort? = nil
+    private static var tapLogFile: UnsafeMutablePointer<FILE>? = nil
+
+    /// Start CGEventTap to capture mouse button events (more reliable than buttonState polling)
+    static func startEventTap() {
+        tapLogFile = fopen("/tmp/cgeventtap.log", "w")
+        if let file = tapLogFile {
+            fputs("[TAP] Setting up CGEventTap for mouse button events\n", file)
+            fflush(file)
+        }
+
+        // Event mask for mouse button events
+        let eventMask: CGEventMask = (1 << CGEventType.leftMouseDown.rawValue) |
+                                      (1 << CGEventType.leftMouseUp.rawValue) |
+                                      (1 << CGEventType.rightMouseDown.rawValue) |
+                                      (1 << CGEventType.rightMouseUp.rawValue) |
+                                      (1 << CGEventType.otherMouseDown.rawValue) |
+                                      (1 << CGEventType.otherMouseUp.rawValue)
+
+        // Create event tap
+        guard let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .listenOnly,  // Just listen, don't modify events
+            eventsOfInterest: eventMask,
+            callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
+                // Get hover-tracked position for correct window-local coordinates
+                let hoverPos = MouseEventHandler.shared.lastPosition
+
+                if let file = NSEventMonitorSwift.tapLogFile {
+                    let loc = event.location
+                    fputs("[TAP] Event type=\(type.rawValue) screenPos=(\(Int(loc.x)),\(Int(loc.y))) hoverPos=(\(Int(hoverPos.x)),\(Int(hoverPos.y)))\n", file)
+                    fflush(file)
+                }
+
+                // Forward button events to Pharo using hover-tracked coordinates
+                DispatchQueue.main.async {
+                    let point = MouseEventHandler.shared.lastPosition
+
+                    switch type {
+                    case .leftMouseDown:
+                        if let f = NSEventMonitorSwift.tapLogFile {
+                            fputs("[TAP] LEFT DOWN -> Pharo at (\(Int(point.x)),\(Int(point.y)))\n", f)
+                            fflush(f)
+                        }
+                        PharoBridge.shared.sendMouseMoved(to: point, modifiers: 0)
+                        PharoBridge.shared.sendTouchDown(at: point, buttons: IOS_RED_BUTTON)
+
+                    case .leftMouseUp:
+                        PharoBridge.shared.sendTouchUp(at: point)
+
+                    case .rightMouseDown:
+                        if let f = NSEventMonitorSwift.tapLogFile {
+                            fputs("[TAP] RIGHT DOWN -> Pharo at (\(Int(point.x)),\(Int(point.y)))\n", f)
+                            fflush(f)
+                        }
+                        PharoBridge.shared.sendMouseMoved(to: point, modifiers: 0)
+                        PharoBridge.shared.sendTouchDown(at: point, buttons: IOS_YELLOW_BUTTON)
+
+                    case .rightMouseUp:
+                        PharoBridge.shared.sendTouchUp(at: point)
+
+                    case .otherMouseDown:
+                        PharoBridge.shared.sendMouseMoved(to: point, modifiers: 0)
+                        PharoBridge.shared.sendTouchDown(at: point, buttons: IOS_BLUE_BUTTON)
+
+                    case .otherMouseUp:
+                        PharoBridge.shared.sendTouchUp(at: point)
+
+                    default:
+                        break
+                    }
+                }
+
+                return Unmanaged.passUnretained(event)  // Let the event continue
+            },
+            userInfo: nil
+        ) else {
+            if let file = tapLogFile {
+                fputs("[TAP] ERROR: Failed to create event tap - accessibility permissions may be needed\n", file)
+                fflush(file)
+            }
+            return
+        }
+
+        eventTap = tap
+
+        // Add to run loop
+        let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+
+        if let file = tapLogFile {
+            fputs("[TAP] Event tap created and enabled successfully\n", file)
+            fflush(file)
+        }
+    }
 
     static func startMousePolling() {
         pollLogFile = fopen("/tmp/mouse_polling.log", "w")
@@ -123,7 +220,10 @@ enum NSEventMonitorSwift {
             fflush(file)
         }
 
-        // Poll mouse state 60 times per second
+        // Start event tap for button detection (more reliable than buttonState polling)
+        startEventTap()
+
+        // Poll mouse state 60 times per second (for position tracking only now)
         Timer.scheduledTimer(withTimeInterval: 1.0/60.0, repeats: true) { _ in
             pollMouseState()
         }
@@ -179,14 +279,13 @@ enum NSEventMonitorSwift {
         let isInsideWindow = windowX >= 0 && windowX < windowScreenFrame.width &&
                             windowY >= 0 && windowY < windowScreenFrame.height
 
-        // Get button states using CGEventSource
-        let leftDown = CGEventSource.buttonState(.hidSystemState, button: .left)
-        let rightDown = CGEventSource.buttonState(.hidSystemState, button: .right)
-        let middleDown = CGEventSource.buttonState(.hidSystemState, button: .center)
+        // NOTE: CGEventSource.buttonState() doesn't work reliably on Mac Catalyst
+        // Button detection is now handled by CGEventTap in startEventTap()
+        // This polling is only for position tracking
 
         // Debug: always log first 50 polls to see coordinate conversion
         if pollLogFile != nil && pollCount <= 50 {
-            fputs("[POLL-DEBUG] #\(pollCount) screen=(\(Int(screenPosition.x)),\(Int(screenPosition.y))) nsWinFrame=(\(Int(windowScreenFrame.origin.x)),\(Int(windowScreenFrame.origin.y)),\(Int(windowScreenFrame.width)),\(Int(windowScreenFrame.height))) localPos=(\(Int(windowX)),\(Int(windowY))) uiPos=(\(Int(windowPosition.x)),\(Int(windowPosition.y))) inside=\(isInsideWindow) L=\(leftDown)\n", pollLogFile!)
+            fputs("[POLL-DEBUG] #\(pollCount) screen=(\(Int(screenPosition.x)),\(Int(screenPosition.y))) nsWinFrame=(\(Int(windowScreenFrame.origin.x)),\(Int(windowScreenFrame.origin.y)),\(Int(windowScreenFrame.width)),\(Int(windowScreenFrame.height))) localPos=(\(Int(windowX)),\(Int(windowY))) uiPos=(\(Int(windowPosition.x)),\(Int(windowPosition.y))) inside=\(isInsideWindow)\n", pollLogFile!)
             fflush(pollLogFile!)
         }
 
@@ -194,108 +293,46 @@ enum NSEventMonitorSwift {
         if isInsideWindow {
             // Log occasionally
             if pollLogFile != nil && (pollCount <= 100 || pollCount % 60 == 0) {
-                fputs("[POLL] #\(pollCount) pos=\(Int(windowPosition.x)),\(Int(windowPosition.y)) L=\(leftDown) R=\(rightDown)\n", pollLogFile!)
+                fputs("[POLL] #\(pollCount) pos=\(Int(windowPosition.x)),\(Int(windowPosition.y))\n", pollLogFile!)
                 fflush(pollLogFile!)
             }
 
-            // Detect state changes and send events
+            // Update hover-tracked position (used by CGEventTap for button events)
             if windowPosition != lastPolledPosition {
-                // Mouse moved
+                // Mouse moved - update position only (button events are handled by CGEventTap)
                 DispatchQueue.main.async {
                     MouseEventHandler.shared.lastPosition = windowPosition
-                    if leftDown {
-                        PharoBridge.shared.sendTouchMoved(to: windowPosition, buttons: IOS_RED_BUTTON)
-                    } else if rightDown {
-                        PharoBridge.shared.sendTouchMoved(to: windowPosition, buttons: IOS_BLUE_BUTTON)
-                    } else {
-                        PharoBridge.shared.sendMouseMoved(to: windowPosition, modifiers: 0)
-                    }
+                    PharoBridge.shared.sendMouseMoved(to: windowPosition, modifiers: 0)
                 }
                 lastPolledPosition = windowPosition
             }
-
-            // Detect button press/release
-            // IMPORTANT: Use lastPosition from hover tracking, NOT windowPosition from CGEvent conversion!
-            // CGEvent conversion fails because we can't get the real NSWindow screen frame in Mac Catalyst.
-            // Hover tracking gives us correct window-local coordinates via UIKit gesture recognizers.
-            if leftDown && !wasLeftButtonDown {
-                // Left button just pressed
-                DispatchQueue.main.async {
-                    let pos = MouseEventHandler.shared.lastPosition
-                    if let file = pollLogFile {
-                        fputs("[POLL] LEFT BUTTON DOWN at \(Int(pos.x)),\(Int(pos.y)) (hover-tracked)\n", file)
-                        fflush(file)
-                    }
-                    PharoBridge.shared.sendMouseMoved(to: pos, modifiers: 0)
-                    PharoBridge.shared.sendTouchDown(at: pos, buttons: IOS_RED_BUTTON)
-                }
-            } else if !leftDown && wasLeftButtonDown {
-                // Left button just released
-                DispatchQueue.main.async {
-                    let pos = MouseEventHandler.shared.lastPosition
-                    if let file = pollLogFile {
-                        fputs("[POLL] LEFT BUTTON UP at \(Int(pos.x)),\(Int(pos.y)) (hover-tracked)\n", file)
-                        fflush(file)
-                    }
-                    PharoBridge.shared.sendTouchUp(at: pos)
-                }
-            }
-
-            if rightDown && !wasRightButtonDown {
-                // Right button just pressed
-                DispatchQueue.main.async {
-                    let pos = MouseEventHandler.shared.lastPosition
-                    if let file = pollLogFile {
-                        fputs("[POLL] RIGHT BUTTON DOWN at \(Int(pos.x)),\(Int(pos.y)) (hover-tracked)\n", file)
-                        fflush(file)
-                    }
-                    PharoBridge.shared.sendMouseMoved(to: pos, modifiers: 0)
-                    // Use YELLOW (2) for right-click to trigger world menu
-                    PharoBridge.shared.sendTouchDown(at: pos, buttons: IOS_YELLOW_BUTTON)
-                }
-            } else if !rightDown && wasRightButtonDown {
-                // Right button just released
-                DispatchQueue.main.async {
-                    let pos = MouseEventHandler.shared.lastPosition
-                    if let file = pollLogFile {
-                        fputs("[POLL] RIGHT BUTTON UP at \(Int(pos.x)),\(Int(pos.y)) (hover-tracked)\n", file)
-                        fflush(file)
-                    }
-                    PharoBridge.shared.sendTouchUp(at: pos)
-                }
-            }
         }
-
-        // Update previous states
-        wasLeftButtonDown = leftDown
-        wasRightButtonDown = rightDown
-        wasMiddleButtonDown = middleDown
+        // NOTE: Button state tracking removed - CGEventTap handles button detection now
     }
 
     static func installMonitor() {
         // Install the Objective-C event monitor with our callback
+        // IMPORTANT: NSEvent's locationInWindow coordinates are unreliable on Mac Catalyst.
+        // We use NSEvent ONLY to detect WHEN buttons are pressed, not WHERE.
+        // For coordinates, we use the hover-tracked position from UIKit gesture recognizers.
         NSEventMonitorHelper.installMouseMonitor { (eventType: Int32, x: Double, y: Double, buttonNumber: Int32) in
-            // Get window height for coordinate conversion (NSEvent uses bottom-left origin)
-            var windowHeight: CGFloat = 768
-            if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-               let window = scene.windows.first {
-                windowHeight = window.frame.height
-            }
-
-            // Convert from NSEvent coordinates (bottom-left origin) to UIKit (top-left origin)
-            let uiKitY = windowHeight - CGFloat(y)
-            let point = CGPoint(x: CGFloat(x), y: uiKitY)
 
             if let file = fopen("/tmp/nsevent_swift.log", "a") {
-                fputs("[NSEVENT-SWIFT] type=\(eventType) point=\(point) btn=\(buttonNumber)\n", file)
+                fputs("[NSEVENT-SWIFT] type=\(eventType) nsEventXY=(\(Int(x)),\(Int(y))) btn=\(buttonNumber)\n", file)
                 fclose(file)
             }
 
-            // Forward to Pharo VM based on event type
+            // Forward button events to Pharo VM using hover-tracked coordinates
             DispatchQueue.main.async {
+                // Get the correct position from hover tracking (UIKit coordinates, already correct)
+                let point = MouseEventHandler.shared.lastPosition
+
                 switch Int(eventType) {
                 case leftMouseDown:
-                    MouseEventHandler.shared.lastPosition = point
+                    if let file = fopen("/tmp/nsevent_swift.log", "a") {
+                        fputs("[NSEVENT-SWIFT] LEFT DOWN at hover-tracked pos=(\(Int(point.x)),\(Int(point.y)))\n", file)
+                        fclose(file)
+                    }
                     PharoBridge.shared.sendMouseMoved(to: point, modifiers: 0)
                     PharoBridge.shared.sendTouchDown(at: point, buttons: IOS_RED_BUTTON)
 
@@ -303,22 +340,25 @@ enum NSEventMonitorSwift {
                     PharoBridge.shared.sendTouchUp(at: point)
 
                 case rightMouseDown:
-                    MouseEventHandler.shared.lastPosition = point
+                    if let file = fopen("/tmp/nsevent_swift.log", "a") {
+                        fputs("[NSEVENT-SWIFT] RIGHT DOWN at hover-tracked pos=(\(Int(point.x)),\(Int(point.y)))\n", file)
+                        fclose(file)
+                    }
                     PharoBridge.shared.sendMouseMoved(to: point, modifiers: 0)
                     PharoBridge.shared.sendTouchDown(at: point, buttons: IOS_YELLOW_BUTTON)  // Yellow = world menu
 
                 case rightMouseUp:
                     PharoBridge.shared.sendTouchUp(at: point)
 
-                case mouseMoved:
-                    MouseEventHandler.shared.lastPosition = point
-                    PharoBridge.shared.sendMouseMoved(to: point, modifiers: 0)
-
                 case leftMouseDragged:
                     PharoBridge.shared.sendTouchMoved(to: point, buttons: IOS_RED_BUTTON)
 
                 case rightMouseDragged:
                     PharoBridge.shared.sendTouchMoved(to: point, buttons: IOS_YELLOW_BUTTON)
+
+                case mouseMoved:
+                    // Ignore mouseMoved from NSEvent - UIKit gesture recognizers handle hover tracking
+                    break
 
                 default:
                     break
@@ -335,11 +375,9 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         // Swizzle UIApplication.sendEvent to intercept all events (backup)
         ApplicationSwizzler.swizzleSendEvent()
         setupMouseHandling()
-        // NSEvent monitor DISABLED - it receives screen coordinates but doesn't convert to window-local,
-        // causing events with wrong x/y offsets that trigger menu bar clicks from bottom-screen clicks.
-        // CGEvent polling handles mouse events correctly with proper coordinate conversion.
-        // NSEventMonitorSwift.installMonitor()
-        // Start CGEvent-based mouse polling (workaround for Mac Catalyst)
+        // NSEvent monitor for button detection (uses hover-tracked coordinates, not NSEvent's)
+        NSEventMonitorSwift.installMonitor()
+        // CGEvent polling for hover tracking (button detection moved to NSEvent monitor)
         NSEventMonitorSwift.startMousePolling()
         // Start activation monitoring (for debugging)
         NSEventMonitorSwift.startActivationMonitor()

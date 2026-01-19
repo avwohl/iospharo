@@ -37,18 +37,34 @@ class PharoMTKView: MTKView {
         #if targetEnvironment(macCatalyst)
         // Add gesture recognizers for Mac Catalyst where touches don't naturally arrive
         let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
+        tapGesture.cancelsTouchesInView = false
+        tapGesture.delaysTouchesBegan = false
+        tapGesture.delaysTouchesEnded = false
         addGestureRecognizer(tapGesture)
 
         let rightClickGesture = UITapGestureRecognizer(target: self, action: #selector(handleRightClick(_:)))
         rightClickGesture.buttonMaskRequired = .secondary
+        rightClickGesture.cancelsTouchesInView = false
         addGestureRecognizer(rightClickGesture)
 
+        // Debug: add early logging to gesture state
+        tapGesture.addTarget(self, action: #selector(tapGestureStateChanged(_:)))
+
         if let file = fopen("/tmp/mtkview_setup.log", "a") {
-            fputs("[MTKVIEW] Added tap and right-click gesture recognizers\n", file)
+            fputs("[MTKVIEW] Added tap and right-click gesture recognizers with cancelsTouchesInView=false\n", file)
             fclose(file)
         }
         #endif
     }
+
+    #if targetEnvironment(macCatalyst)
+    @objc private func tapGestureStateChanged(_ gesture: UITapGestureRecognizer) {
+        if let file = fopen("/tmp/mtkview_tap_state.log", "a") {
+            fputs("[TAP-STATE] state=\(gesture.state.rawValue) loc=\(gesture.location(in: self))\n", file)
+            fclose(file)
+        }
+    }
+    #endif
 
     #if targetEnvironment(macCatalyst)
     @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
