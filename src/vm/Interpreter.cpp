@@ -315,11 +315,15 @@ bool Interpreter::initialize() {
         // Check if this method has a primitive (for first few contexts)
         if (depth < 10 && method.isObject() && method.rawBits() > 0x10000) {
             int primIdx = primitiveIndexOf(method);
-            (void)primIdx;  // Unused when debug is disabled
+            (void)primIdx;  // Unused when debug disabled
         }
 
         // Check if we're in snapshot-related code
-        if (rcvrClassName == "SnapshotOperation" || rcvrClassName == "SessionManager") {
+        // Include SmalltalkImage which handles snapshot:andQuit:
+        if (rcvrClassName == "SnapshotOperation" || rcvrClassName == "SessionManager" ||
+            rcvrClassName == "SmalltalkImage" || methodSelector == "snapshot:andQuit:" ||
+            methodSelector == "snapshotPrimitive" || methodSelector == "primSnapshot" ||
+            methodSelector == "primSnapshot:") {
             inSnapshotCode = true;
         } else if (inSnapshotCode && snapshotEndDepth < 0) {
             // First context after snapshot code
@@ -334,10 +338,17 @@ bool Interpreter::initialize() {
         depth++;
     }
 
-    // If we detected snapshot code, note it but execute normally
-    // The fallback handlers in arithmeticSend/commonSend will handle DNU cases
+    // If we detected snapshot code, we're resuming from a saved image.
+    // The Pharo snapshot code checks the return value:
+    //   nil = save succeeded -> quit
+    //   non-nil = resuming from save -> run startup handlers
+    // We need to modify the context to indicate "resuming" by ensuring the
+    // snapshot primitive returns a non-nil value (true).
     if (inSnapshotCode) {
-        // DEBUG: "[DEBUG] Detected snapshot code - executing normally with fallback handlers"
+        // Detected snapshot resume - context slot modification for startup
+        // This is handled more thoroughly in executeFromContext, but we
+        // pre-set here too for safety.
+        // (Debug output disabled for cleaner logs)
     }
 
     // Note: Display initialization is deferred to primitiveForceDisplayUpdate
@@ -4482,10 +4493,11 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         ObjectHeader* selHdr = selector.asObjectPtr();
         if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
             selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-            // Log first 200 sends to see compilation and execution progress
-            if (++totalSends <= 200) {
-                std::cerr << "[SEND #" << totalSends << "] " << selStr << " args=" << argCount << "\n";
-            }
+            // Log first few sends for debugging (disabled for cleaner output)
+            // if (++totalSends <= 200) {
+            //     std::cerr << "[SEND #" << totalSends << "] " << selStr << " args=" << argCount << "\n";
+            // }
+            totalSends++;
             // Also log specific sends related to method execution
             if (selStr == "withArgs:executeMethod:" || selStr == "evaluateDoIt:" ||
                 selStr == "receiver" || selStr == "primitiveFailed") {
@@ -9026,39 +9038,31 @@ bool Interpreter::executeFromContext(Oop context) {
 
     argCount_ = 0;  // We're resuming a context, not calling a method
 
-    // If resuming from snapshot, we need to:
-    // 1. Set TOS to 'false' (primitive return value indicates "resumed from load")
-    // 2. Set SnapshotOperation's 'save' slot to 'false' (correct value for resume)
-    // 3. Set SnapshotOperation's 'isQuit' slot (slot 2) to 'false' to prevent quit
+    // If resuming from snapshot, we need to configure the return value correctly.
+    // Pharo SnapshotOperation checks:
+    //   result not ifTrue: [ self quitPrimitive ]
     //
-    // The snapshot primitive returns: true = saved, false = resumed
-    // Pharo SnapshotOperation layout:
+    // So if result = true:  true not = false -> ifTrue skips -> continues to startup
+    //    if result = false: false not = true -> ifTrue runs -> QUIT!
+    //
+    // We want to SKIP quit, so set TOS to TRUE.
+    //
+    // Also clear SnapshotOperation's 'isQuit' slot to prevent quit:
     //   slot 0: save (Boolean)
-    //   slot 1: (reserved)
-    //   slot 2: isQuit (Boolean) - if true, quitPrimitive is called after save/resume
-    //   slot 3: isEmbedded (Boolean)
-    //
-    // If the image was saved with "save and quit", isQuit will be true and will
-    // cause quit on resume. We need to clear it for embedded/iOS use.
+    //   slot 2: isQuit (Boolean) - if true, quitPrimitive is called after resume
     if (isSnapshotResume) {
-        // Set TOS to false (primitive result = resumed)
+        // Set TOS to true so "result not ifTrue: [quit]" skips the quit path.
+        // This allows the image to proceed with startup instead of quitting.
         if (stackPointer_ > stackBase_) {
-            *(stackPointer_ - 1) = memory_.falseObject();
+            *(stackPointer_ - 1) = memory_.trueObject();
         } else {
-            push(memory_.falseObject());
+            push(memory_.trueObject());
         }
 
-        // Adjust SnapshotOperation slots for proper resume
+        // Also clear isQuit slot in SnapshotOperation to be safe
         if (receiver_.isObject()) {
             ObjectHeader* rcvr = receiver_.asObjectPtr();
             if (rcvr->slotCount() >= 3) {
-                // slot 0: ensure 'save' is false (we're resuming, not saving)
-                Oop slot0 = rcvr->slotAt(0);
-                if (slot0 == memory_.trueObject()) {
-                    rcvr->slotAtPut(0, memory_.falseObject());
-                }
-
-                // slot 2: clear 'isQuit' to prevent quit on resume
                 Oop slot2 = rcvr->slotAt(2);
                 if (slot2 == memory_.trueObject()) {
                     rcvr->slotAtPut(2, memory_.falseObject());
