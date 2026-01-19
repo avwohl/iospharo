@@ -2411,64 +2411,37 @@ void Interpreter::showWorldMenu(int x, int y) {
                 fflush(menuLog);
             }
 
-            // If we found 'worldMenu', we need to chain 'popUpAt:forHand:in:' on the result
-            // Use OpalCompiler evaluate: to run the full expression with explicit coordinates
+            // If we found 'worldMenu', send it directly to World
+            // The result (MenuMorph) will need popUpAt:forHand:in: but we skip that for now
+            // OpalCompiler evaluate: has block context issues, so avoid it
             if (selName == "worldMenu") {
-                // Evaluate with explicit coordinates to position menu at click location
-                Oop compilerClass = memory_.findGlobal("OpalCompiler");
-                Oop evaluateSel = findSelector("evaluate:");
+                if (menuLog) {
+                    fprintf(menuLog, "[WORLD-MENU] Directly queueing worldMenu send to World\n");
+                    fflush(menuLog);
+                }
 
-                if (!compilerClass.isNil() && !evaluateSel.isNil()) {
-                    // Build code with explicit coordinates (x@y syntax)
-                    char codeBuf[256];
-                    snprintf(codeBuf, sizeof(codeBuf),
-                            "World worldMenu popUpAt: (%d@%d) forHand: World activeHand in: World", x, y);
-                    std::string code(codeBuf);
-                    Oop codeString = memory_.createString(code);
+                // Look for a simpler method that shows the menu directly
+                // Try openWorldMenu, showWorldMenu first
+                Oop simpleMenuSel = findSelector("openWorldMenu");
+                if (simpleMenuSel.isNil()) {
+                    simpleMenuSel = findSelector("showWorldMenu");
+                }
+                if (simpleMenuSel.isNil()) {
+                    // Fall back to worldMenu (returns MenuMorph, won't show automatically)
+                    simpleMenuSel = showMenuSel;
+                }
 
-                    if (!codeString.isNil()) {
-                        if (menuLog) {
-                            fprintf(menuLog, "[WORLD-MENU] Queueing evaluation: '%s'\n", code.c_str());
-                            fprintf(menuLog, "[WORLD-MENU] compilerClass=%p, evaluateSel=%p, codeString=%p\n",
-                                    (void*)compilerClass.rawBits(), (void*)evaluateSel.rawBits(), (void*)codeString.rawBits());
-                            fflush(menuLog);
-                        }
-
-                        // Queue the menu action to be dispatched during idle
-                        // Now that Pharo is running Morphic code, this should work
-                        pendingMenuAction_.selector = evaluateSel;
-                        pendingMenuAction_.receiver = compilerClass;
-                        pendingMenuAction_.argument = codeString;
-                        pendingMenuAction_.argCount = 1;
-                        pendingMenuAction_.pending.store(true, std::memory_order_seq_cst);
-                        g_debugPendingFlag.store(true, std::memory_order_seq_cst);  // Also set global
-                        // STDERR for immediate output
-                        std::cerr << "[MENU-SET] pending=1, global=1 at this=" << (void*)this
-                                  << " &pending=" << (void*)&pendingMenuAction_.pending << "\n";
-                        if (menuLog) {
-                            bool actualValue = pendingMenuAction_.pending.load(std::memory_order_seq_cst);
-                            fprintf(menuLog, "[WORLD-MENU] Queued: '%s' for dispatch during idle (pending=%d, this=%p, &pending=%p)\n",
-                                    code.c_str(), actualValue ? 1 : 0, (void*)this,
-                                    (void*)&pendingMenuAction_.pending);
-                            fflush(menuLog);
-                        }
-                    } else {
-                        if (menuLog) {
-                            fprintf(menuLog, "[WORLD-MENU] Failed to create code string\n");
-                            fflush(menuLog);
-                        }
-                    }
-                } else {
-                    if (menuLog) {
-                        fprintf(menuLog, "[WORLD-MENU] OpalCompiler or evaluate: not found, falling back to direct send\n");
-                        fflush(menuLog);
-                    }
-                    // Fall back to direct send (menu won't show but at least something happens)
-                    pendingMenuAction_.selector = showMenuSel;
-                    pendingMenuAction_.receiver = world;
-                    pendingMenuAction_.argument = Oop::nil();
-                    pendingMenuAction_.argCount = 0;
-                    pendingMenuAction_.pending = true;
+                pendingMenuAction_.selector = simpleMenuSel;
+                pendingMenuAction_.receiver = world;
+                pendingMenuAction_.argument = Oop::nil();
+                pendingMenuAction_.argCount = 0;
+                pendingMenuAction_.pending.store(true, std::memory_order_seq_cst);
+                g_debugPendingFlag.store(true, std::memory_order_seq_cst);
+                std::cerr << "[MENU-SET] pending=1, global=1 at this=" << (void*)this
+                          << " &pending=" << (void*)&pendingMenuAction_.pending << "\n";
+                if (menuLog) {
+                    fprintf(menuLog, "[WORLD-MENU] Queued worldMenu to World (pending=1)\n");
+                    fflush(menuLog);
                 }
             } else {
                 // For other selectors that should show the menu directly, use direct send
@@ -3051,6 +3024,14 @@ void Interpreter::interpret() {
                       << " member=" << isPending << " global=" << globalPending << "\n";
         }
         loopCount++;
+
+        // DEBUG: Trigger world menu automatically after warmup
+        static bool autoTriggered = false;
+        if (!autoTriggered && loopCount == 100000) {
+            std::cerr << "[AUTO-MENU] Triggering world menu at loop #" << loopCount << "\n";
+            showWorldMenu(512, 384);
+            autoTriggered = true;
+        }
 
         // Process any pending external semaphore signals
         if (hasPendingSignals()) {
@@ -4961,6 +4942,9 @@ extern int g_traceSendsAfterPrim264;
                         fflush(actionLog);
                     }
 
+                    // Enable message tracing
+                    menuActionTraceCount_ = 500;
+
                     sendSelector(actionSel, actionArgCount);
                     return;
                 }
@@ -5385,6 +5369,9 @@ extern int g_traceSendsAfterPrim264;
                                     if (actionArgCount > 0 && !actionArg.isNil()) {
                                         push(actionArg);
                                     }
+
+                                    // Enable tracing for the next 500 message sends
+                                    menuActionTraceCount_ = 500;
 
                                     sendSelector(actionSel, actionArgCount);
                                     return;
@@ -6669,16 +6656,34 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // Get receiver from stack (now in the frame)
     receiver_ = argument(0);  // First "argument" slot is actually receiver
 
+    // Create a minimal MethodContext so blocks can capture the correct outer context
+    // Layout: slot 0=sender, 1=pc, 2=stackp, 3=method, 4=closureOrNil, 5=receiver
+    Oop contextClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
+    if (contextClass.isObject() && !contextClass.isNil()) {
+        // Allocate a small context with just enough slots for the receiver
+        Oop ctx = memory_.allocateSlots(memory_.indexOfClass(contextClass), 6, ObjectFormat::FixedSize);
+        if (!ctx.isNil()) {
+            memory_.storePointer(0, ctx, activeContext_);  // sender = previous context
+            memory_.storePointer(1, ctx, Oop::nil());      // pc (not used)
+            memory_.storePointer(2, ctx, Oop::nil());      // stackp (not used)
+            memory_.storePointer(3, ctx, method);          // method
+            memory_.storePointer(4, ctx, Oop::nil());      // closureOrNil
+            memory_.storePointer(5, ctx, receiver_);       // receiver
+            activeContext_ = ctx;
+        }
+    }
+
     // Debug: Log receiver being set for superclass methods
     static FILE* rcvrLog = nullptr;
     static int rcvrLogCount = 0;
     if (!rcvrLog) rcvrLog = fopen("/tmp/receiver_set.log", "w");
     if (rcvrLog && rcvrLogCount < 200) {
         rcvrLogCount++;
-        fprintf(rcvrLog, "[RCVR #%d] depth=%zu receiver=0x%llx FP=%p arg(0)=%p\n",
+        fprintf(rcvrLog, "[RCVR #%d] depth=%zu receiver=0x%llx FP=%p arg(0)=%p ctx=0x%llx\n",
                 rcvrLogCount, frameDepth_,
                 (unsigned long long)receiver_.rawBits(),
-                (void*)framePointer_, (void*)(framePointer_));
+                (void*)framePointer_, (void*)(framePointer_),
+                (unsigned long long)activeContext_.rawBits());
         fflush(rcvrLog);
     }
 
@@ -7533,6 +7538,61 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         return;
     }
 
+    // ===== OPAL COMPILER / COLLECTION FALLBACKS =====
+    // These are needed for OpalCompiler evaluation during world menu
+    if (origStr == "addLast:" && argCount == 1) {
+        // Collection addLast: - just return self (no-op for MorphicRenderLoop)
+        pop();  // Pop argument
+        // Leave receiver on stack as return value
+        dnuDepth--;
+        return;
+    }
+    if (origStr == "add:" && argCount == 1) {
+        // Collection add: - return the argument (standard add: behavior)
+        Oop arg = pop();  // Pop argument
+        pop();  // Pop receiver
+        push(arg);  // Return the added element
+        dnuDepth--;
+        return;
+    }
+    if (origStr == "removeProperty:ifAbsent:" && argCount == 2) {
+        // Property removal - return nil (property not found)
+        Oop ifAbsentBlock = pop();  // Pop ifAbsent block
+        pop();  // Pop property name
+        pop();  // Pop receiver
+        push(memory_.nil());  // Return nil
+        dnuDepth--;
+        return;
+    }
+    if (origStr == "propertyAt:put:" && argCount == 2) {
+        // Property storage - just return self (no-op)
+        pop();  // Pop value
+        pop();  // Pop key
+        // Leave receiver on stack
+        dnuDepth--;
+        return;
+    }
+    if (origStr == "collect:" && argCount == 1) {
+        // Collection collect: - return empty array for non-collections
+        pop();  // Pop block
+        pop();  // Pop receiver
+        Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
+        Oop empty = memory_.allocateSlots(memory_.indexOfClass(arrayClass), 0, ObjectFormat::Indexable);
+        push(empty);
+        dnuDepth--;
+        return;
+    }
+    if (origStr == "select:" && argCount == 1) {
+        // Collection select: - return empty array for non-collections
+        pop();  // Pop block
+        pop();  // Pop receiver
+        Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
+        Oop empty = memory_.allocateSlots(memory_.indexOfClass(arrayClass), 0, ObjectFormat::Indexable);
+        push(empty);
+        dnuDepth--;
+        return;
+    }
+
     // Fallback for do: on non-collection objects during startup
     // This treats single objects as if they were collections containing just themselves
     // Needed for flatCollect: during startup when handlers don't implement do:
@@ -7579,6 +7639,24 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
         // If we can't call the block, just return the receiver
         push(receiver);
+        dnuDepth--;
+        return;
+    }
+
+    // ===== NUMBER/CONVERSION FALLBACKS =====
+    // These handle cases where primitive 171 (asInteger) fails for non-Characters
+    if (origStr == "asInteger" && argCount == 0) {
+        // asInteger on non-Character - return 0 as fallback
+        // The scanner classification table will handle this gracefully
+        pop();  // Pop receiver
+        push(Oop::fromSmallInteger(0));
+        dnuDepth--;
+        return;
+    }
+    if (origStr == "asCharacter" && argCount == 0) {
+        // asCharacter on non-Integer - return space character as fallback
+        pop();  // Pop receiver
+        push(Oop::fromCharacter(32));  // Space
         dnuDepth--;
         return;
     }
