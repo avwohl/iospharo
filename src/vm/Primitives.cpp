@@ -99,8 +99,86 @@ PrimitiveResult Interpreter::primitiveTestAndSetOwnershipOfCriticalSection(int a
 }
 
 PrimitiveResult Interpreter::primitiveExecuteMethodArgsArray(int argCount) {
-    (void)argCount;
-    return PrimitiveResult::Failure;  // method execution - let Smalltalk handle
+    // Primitive 188: receiver withArgs: argsArray executeMethod: aMethod
+    // Stack: receiver, argsArray, method (top)
+    // argCount = 2 (argsArray and method)
+
+    static FILE* p188Log = fopen("/tmp/prim188.log", "w");
+    if (p188Log) {
+        fprintf(p188Log, "[PRIM188] Called with argCount=%d\n", argCount);
+        fflush(p188Log);
+    }
+
+    if (argCount < 2) {
+        if (p188Log) { fprintf(p188Log, "[PRIM188] FAIL: argCount < 2\n"); fflush(p188Log); }
+        return PrimitiveResult::Failure;
+    }
+
+    // Get method from stack top
+    Oop method = stackValue(0);
+    // Get args array
+    Oop argsArray = stackValue(1);
+    // Get receiver (at position argCount from top)
+    // Note: receiver stays on stack, we don't need to manipulate it
+    (void)stackValue(static_cast<size_t>(argCount));  // receiver - used implicitly
+
+    // Validate method is a CompiledMethod
+    if (!method.isObject()) {
+        if (p188Log) { fprintf(p188Log, "[PRIM188] FAIL: method not object\n"); fflush(p188Log); }
+        return PrimitiveResult::Failure;
+    }
+    ObjectHeader* methodHdr = method.asObjectPtr();
+    if (!methodHdr->isCompiledMethod()) {
+        if (p188Log) { fprintf(p188Log, "[PRIM188] FAIL: method not CompiledMethod (format=%d)\n",
+                               static_cast<int>(methodHdr->format())); fflush(p188Log); }
+        return PrimitiveResult::Failure;
+    }
+
+    // Validate argsArray is an Array (format == 2, Indexable)
+    if (!argsArray.isObject()) {
+        if (p188Log) { fprintf(p188Log, "[PRIM188] FAIL: argsArray not object\n"); fflush(p188Log); }
+        return PrimitiveResult::Failure;
+    }
+    ObjectHeader* argsHdr = argsArray.asObjectPtr();
+    if (argsHdr->format() != ObjectFormat::Indexable) {
+        if (p188Log) { fprintf(p188Log, "[PRIM188] FAIL: argsArray not Indexable (format=%d)\n",
+                               static_cast<int>(argsHdr->format())); fflush(p188Log); }
+        return PrimitiveResult::Failure;
+    }
+
+    // Get argument count from method header
+    // Method header is slot 0, numArgs is in bits 24-27
+    Oop methodHeader = memory_.fetchPointer(0, method);
+    if (!methodHeader.isSmallInteger()) {
+        if (p188Log) { fprintf(p188Log, "[PRIM188] FAIL: methodHeader not SmallInteger\n"); fflush(p188Log); }
+        return PrimitiveResult::Failure;
+    }
+    int64_t headerBits = methodHeader.asSmallInteger();
+    int methodNumArgs = (headerBits >> 24) & 0x0F;
+
+    // Verify array size matches expected argument count
+    size_t arraySize = memory_.slotCountOf(argsArray);
+    if (static_cast<size_t>(methodNumArgs) != arraySize) {
+        if (p188Log) { fprintf(p188Log, "[PRIM188] FAIL: arg count mismatch (method=%d, array=%zu)\n",
+                               methodNumArgs, arraySize); fflush(p188Log); }
+        return PrimitiveResult::Failure;
+    }
+
+    if (p188Log) { fprintf(p188Log, "[PRIM188] SUCCESS: activating method with %d args\n", methodNumArgs); fflush(p188Log); }
+
+    // Pop the current arguments (method and argsArray) but leave receiver
+    popN(static_cast<size_t>(argCount));
+
+    // Push arguments from the array onto the stack
+    for (int i = 0; i < methodNumArgs; i++) {
+        Oop arg = memory_.fetchPointer(static_cast<size_t>(i), argsArray);
+        push(arg);
+    }
+
+    // Activate the method with the new arguments
+    activateMethod(method, methodNumArgs);
+
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveExecuteMethod(int argCount) {

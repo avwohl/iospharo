@@ -4483,9 +4483,13 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         ObjectHeader* selHdr = selector.asObjectPtr();
         if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
             selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-            // Reduced send logging - only first 20 and specific selectors
-            if (++totalSends <= 20) {
+            // Log first 200 sends to see compilation and execution progress
+            if (++totalSends <= 200) {
                 std::cerr << "[SEND #" << totalSends << "] " << selStr << " args=" << argCount << "\n";
+            }
+            // Also log specific sends related to method execution
+            if (selStr == "withArgs:executeMethod:" || selStr == "evaluateDoIt:") {
+                std::cerr << "[EXEC-TRACE] " << selStr << " at send #" << totalSends << "\n";
             }
         }
     }
@@ -4517,7 +4521,9 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
     if (!selStr.empty() && selStr == lastSelStr) {
         sameSelCount++;
-        if (sameSelCount > 50) {
+        // Only break on infinite recursion, NOT on expected idle loop selectors
+        // relinquishProcessorForMicroseconds: is called repeatedly during idle - that's normal
+        if (sameSelCount > 50 && selStr != "relinquishProcessorForMicroseconds:") {
             // Same selector called 50+ times in a row - likely infinite recursion
             std::cerr << "[RECURSION] Breaking infinite loop: #" << selStr
                       << " called " << sameSelCount << " times\n";
