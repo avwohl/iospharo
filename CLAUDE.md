@@ -30,6 +30,15 @@ When something doesn't work:
 
 **If you find yourself writing code that "works around" something, STOP and investigate the root cause instead.**
 
+### Current Priority: Fix Morphic Processes
+The image's Morphic event loop and InputEventSensor aren't running. This is THE problem to fix:
+- Primitive 264 (getNextEvent) is registered but never called
+- Only primitive 230 (relinquishProcessor) runs in a loop
+- The scheduler works but only the idle process is active
+- Event sensor process never starts
+
+**FIX THIS. Don't wander off to other issues. Don't add workarounds.**
+
 ---
 
 ## Git Workflow
