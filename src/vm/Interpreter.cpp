@@ -1829,6 +1829,10 @@ void Interpreter::dispatchEventsToMorphic() {
     // which will poll primitive 264 to get the events we queued
     if (passThroughEvents_.empty()) return;
 
+    // IMPORTANT: Don't overwrite a pending action (like showWorldMenu's OpalCompiler evaluate:)
+    // The world menu and other actions take priority over Sensor processEvents
+    if (pendingMenuAction_.pending) return;
+
     static FILE* dispatchLog = nullptr;
     if (!dispatchLog) {
         dispatchLog = fopen("/tmp/event_dispatch.log", "w");
@@ -2125,10 +2129,14 @@ void Interpreter::handleWorldClick(int x, int y, int buttons) {
         fflush(clickLog);
     }
 
-    // World menu (right-click) is disabled for now.
-    // It requires proper Pharo event dispatch which isn't fully working yet.
-    // The top menu bar is the primary way to access functionality.
-    // TODO: Re-enable when event dispatch to Pharo is working
+    // Yellow button (right-click, buttons & 4) shows world menu
+    if (buttons & 4) {
+        if (clickLog) {
+            fprintf(clickLog, "[CLICK] Right-click on World background - showing world menu\n");
+            fflush(clickLog);
+        }
+        showWorldMenu(x, y);
+    }
 }
 
 void Interpreter::showWorldMenu(int x, int y) {
@@ -2358,20 +2366,23 @@ void Interpreter::showWorldMenu(int x, int y) {
                 fflush(menuLog);
             }
 
-            // If we found 'worldMenu', we need to chain 'openCenteredInWorld' on the result
+            // If we found 'worldMenu', we need to chain 'popUpInWorld' on the result
             // Use OpalCompiler evaluate: to run the full expression
             if (selName == "worldMenu") {
-                // Evaluate "World worldMenu openCenteredInWorld" to both create and show the menu
+                // Evaluate "World worldMenu popUpInWorld" to both create and show the menu
+                // popUpInWorld is the standard Pharo method for popup menus
                 Oop compilerClass = memory_.findGlobal("OpalCompiler");
                 Oop evaluateSel = findSelector("evaluate:");
 
                 if (!compilerClass.isNil() && !evaluateSel.isNil()) {
-                    std::string code = "World worldMenu openCenteredInWorld";
+                    std::string code = "World worldMenu popUpInWorld";
                     Oop codeString = memory_.createString(code);
 
                     if (!codeString.isNil()) {
                         if (menuLog) {
                             fprintf(menuLog, "[WORLD-MENU] Queueing evaluation: '%s'\n", code.c_str());
+                            fprintf(menuLog, "[WORLD-MENU] compilerClass=%p, evaluateSel=%p, codeString=%p\n",
+                                    (void*)compilerClass.rawBits(), (void*)evaluateSel.rawBits(), (void*)codeString.rawBits());
                             fflush(menuLog);
                         }
 
@@ -4737,7 +4748,15 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                     }
 
                     if (actionLog) {
-                        fprintf(actionLog, "[ACTION #%d] Sending message now\n", actionCount);
+                        fprintf(actionLog, "[ACTION #%d] Sending message now to receiver %p with %d args\n",
+                                actionCount, (void*)actionRcvr.rawBits(), actionArgCount);
+                        if (actionArgCount > 0 && !actionArg.isNil() && actionArg.isObject()) {
+                            ObjectHeader* argHdr = actionArg.asObjectPtr();
+                            if (argHdr->isBytesObject() && argHdr->byteSize() < 100) {
+                                std::string argStr((char*)argHdr->bytes(), argHdr->byteSize());
+                                fprintf(actionLog, "[ACTION #%d] Argument string: '%s'\n", actionCount, argStr.c_str());
+                            }
+                        }
                         fflush(actionLog);
                     }
 
