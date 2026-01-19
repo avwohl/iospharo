@@ -14,6 +14,7 @@
 #include <iomanip>
 #include <thread>
 #include <chrono>
+#include <set>
 
 #if __APPLE__
 #include <CoreGraphics/CoreGraphics.h>
@@ -2415,28 +2416,19 @@ void Interpreter::showWorldMenu(int x, int y) {
                             fflush(menuLog);
                         }
 
-                        // Queue for dispatch from relinquishProcessorForMicroseconds: interception
-                        // Direct sendSelector from here corrupts the stack
-                        pendingMenuAction_.selector = evaluateSel;
-                        pendingMenuAction_.receiver = compilerClass;
-                        pendingMenuAction_.argument = codeString;
-                        pendingMenuAction_.argCount = 1;
-                        pendingMenuAction_.pending = true;
-                        pendingMenuAction_.isChained = false;
-
-                        // Also log to idle_trace.log for correlation
-                        static FILE* idleTraceLog2 = nullptr;
-                        if (!idleTraceLog2) {
-                            idleTraceLog2 = fopen("/tmp/idle_trace.log", "a");
+                        // DISABLED: Queueing doesn't work because Pharo is stuck in method lookup
+                        // and never reaches a safe dispatch point.
+                        // TODO: Fix Pharo's method lookup loop issue first.
+                        //
+                        // The event IS being passed through to Pharo via passThroughEvents_.
+                        // If/when Morphic starts processing events, it should handle the right-click.
+                        if (menuLog) {
+                            fprintf(menuLog, "[WORLD-MENU] Would queue: '%s' (DISABLED - Pharo not running app code)\n", code.c_str());
+                            fflush(menuLog);
                         }
-                        if (idleTraceLog2) {
-                            fprintf(idleTraceLog2, "[QUEUED] World menu action queued: pendingMenuAction_.pending=%d\n",
-                                    pendingMenuAction_.pending ? 1 : 0);
-                            fflush(idleTraceLog2);
-                        }
-
-                        // Enable tracing for the next 200 sends after this action
-                        menuActionTraceCount_ = 200;
+                        // pendingMenuAction_ queueing disabled
+                        // pendingMenuAction_.selector = evaluateSel;
+                        // etc...
                     } else {
                         if (menuLog) {
                             fprintf(menuLog, "[WORLD-MENU] Failed to create code string\n");
@@ -4511,9 +4503,11 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 }
 
 void Interpreter::sendSelector(Oop selector, int argCount) {
-    // Check for pending menu action - but only dispatch on SAFE selectors
-    // We can't intercept arbitrary sends because callers expect specific return types
-    if (pendingMenuAction_.pending) {
+    // DISABLED: Pending action dispatch causes issues
+    // The Pharo application seems to be stuck in method lookup loops
+    // and never reaches selectors where we could safely dispatch.
+    // TODO: Investigate why Pharo isn't running normal application code.
+    if (false && pendingMenuAction_.pending) {  // Disabled
         // Get the selector name to check if it's safe to intercept
         std::string origSelStr;
         if (selector.isObject() && selector.rawBits() > 0x10000) {
@@ -4539,12 +4533,24 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                                 origSelStr == "handleMouseOver:" ||
                                 origSelStr == "processEvent:" ||
                                 origSelStr == "processMouse:" ||
-                                origSelStr == "primGetNextEvent");
+                                origSelStr == "primGetNextEvent" ||
+                                // InputEventSensor event fetch methods
+                                origSelStr == "fetchMoreEvents" ||
+                                origSelStr == "nextEvent" ||
+                                origSelStr == "eventAt:" ||
+                                // Process control
+                                origSelStr == "yield" ||
+                                origSelStr == "wait" ||
+                                origSelStr == "resume");
 
         // Log when we have a pending action but can't dispatch (for debugging)
+        // Increase limit to catch more unique selectors
         static FILE* waitLog = nullptr;
         static int waitCount = 0;
-        if (!safeToIntercept && waitCount < 50) {
+        static std::set<std::string> seenSelectors;
+        bool isNewSelector = seenSelectors.find(origSelStr) == seenSelectors.end();
+        if (!safeToIntercept && isNewSelector && waitCount < 200) {
+            seenSelectors.insert(origSelStr);
             if (!waitLog) waitLog = fopen("/tmp/action_wait.log", "w");
             if (waitLog) {
                 waitCount++;
