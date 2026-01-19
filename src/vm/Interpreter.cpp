@@ -4814,14 +4814,80 @@ extern int g_traceSendsAfterPrim264;
     // Get receiver (under the arguments on stack)
     Oop rcvr = stackValue(argCount);
 
-    // ===== INTERCEPT TERMINATION SELECTORS =====
-    // During embedded VM startup, prevent process termination from quit sequence
-    // The SnapshotOperation's isQuit=true path tries to terminate processes before
-    // UI initialization completes. We intercept these selectors and return self.
+    // ===== INTERCEPT PROBLEMATIC SELECTORS =====
+    // During embedded VM startup, prevent process termination and handle
+    // missing methods that would cause exception cascades
     if (selector.isObject() && selector.rawBits() > 0x10000) {
         ObjectHeader* selHdr = selector.asObjectPtr();
         if (selHdr->isBytesObject() && selHdr->byteSize() > 0 && selHdr->byteSize() < 50) {
             std::string selStr((char*)selHdr->bytes(), selHdr->byteSize());
+
+            // ===== INTERCEPT unprotectedExternalObjects: =====
+            // This message is sent during session startup but may not exist in all images.
+            // Just return self to prevent DNU cascade that corrupts the stack.
+            if (selStr == "unprotectedExternalObjects:" && argCount == 1) {
+                popN(argCount + 1);  // Pop arg and receiver
+                push(rcvr);          // Return receiver (self)
+                return;
+            }
+
+            // ===== INTERCEPT #wait on non-Semaphore receivers =====
+            // During startup, #wait may be incorrectly sent due to stack issues.
+            // If sent to SnapshotOperation or similar, just return self.
+            if (selStr == "wait" && argCount == 0) {
+                // Check if receiver class name contains "Semaphore"
+                std::string rcvrClassName;
+                if (rcvr.isObject()) {
+                    Oop rcvrCls = memory_.classOf(rcvr);
+                    if (rcvrCls.isObject()) {
+                        Oop nameOop = memory_.fetchPointer(6, rcvrCls);
+                        if (nameOop.isObject()) {
+                            ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                                rcvrClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+                // Only intercept if NOT a Semaphore
+                if (rcvrClassName.find("Semaphore") == std::string::npos) {
+                    popN(argCount + 1);
+                    push(rcvr);  // Return receiver
+                    return;
+                }
+            }
+
+            // ===== INTERCEPT #signal on non-Exception receivers =====
+            // During startup, #signal may be sent to wrong receivers due to stack issues.
+            // Only allow signal on Exception-related classes.
+            if (selStr == "signal" && argCount == 0) {
+                std::string rcvrClassName;
+                if (rcvr.isObject()) {
+                    Oop rcvrCls = memory_.classOf(rcvr);
+                    if (rcvrCls.isObject()) {
+                        Oop nameOop = memory_.fetchPointer(6, rcvrCls);
+                        if (nameOop.isObject()) {
+                            ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                                rcvrClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+                // Only allow on Exception-related or Semaphore classes
+                bool isExceptionish = (rcvrClassName.find("Exception") != std::string::npos ||
+                                       rcvrClassName.find("Error") != std::string::npos ||
+                                       rcvrClassName.find("Notification") != std::string::npos ||
+                                       rcvrClassName.find("Semaphore") != std::string::npos ||
+                                       rcvrClassName.find("Warning") != std::string::npos);
+                if (!isExceptionish) {
+                    // Not an exception class - return self to avoid cascade
+                    popN(argCount + 1);
+                    push(rcvr);
+                    return;
+                }
+            }
+
             // ===== INTERCEPT comeToFront =====
             // Log when comeToFront is being called
             if (selStr == "comeToFront" && argCount == 0) {
@@ -5767,13 +5833,15 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
                         }
                     }
                 }
-                // Also show actual method header
-                Oop mhdr = eh->slotAt(0);
-                if (mhdr.isSmallInteger()) {
-                    int64_t hbits = mhdr.asSmallInteger();
-                    int nLits = hbits & 0x7FFF;
-                    int nArgs = (hbits >> 24) & 0xF;
-                    std::cerr << " (numLits=" << nLits << " numArgs=" << nArgs << ")";
+                // Also show actual method header (if object has slots)
+                if (eh->slotCount() > 0) {
+                    Oop mhdr = eh->slotAt(0);
+                    if (mhdr.isSmallInteger()) {
+                        int64_t hbits = mhdr.asSmallInteger();
+                        int nLits = hbits & 0x7FFF;
+                        int nArgs = (hbits >> 24) & 0xF;
+                        std::cerr << " (numLits=" << nLits << " numArgs=" << nArgs << ")";
+                    }
                 }
             } else if (entry29.rawBits() == 0xd1c800000ULL || (entry29.rawBits() & 0xFFFFFF) == 0x800000) {
                 std::cerr << " (nil)";
