@@ -4831,6 +4831,15 @@ extern int g_traceSendsAfterPrim264;
                 return;
             }
 
+            // ===== INTERCEPT doInterCycleWait =====
+            // MorphicRenderLoop sends this during idle, may not exist in all images.
+            // Return self to continue render loop.
+            if (selStr == "doInterCycleWait" && argCount == 0) {
+                popN(1);  // Pop receiver
+                push(rcvr);  // Return self
+                return;
+            }
+
             // ===== INTERCEPT #wait on non-Semaphore receivers =====
             // During startup, #wait may be incorrectly sent due to stack issues.
             // If sent to SnapshotOperation or similar, just return self.
