@@ -7929,6 +7929,54 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
         fflush(relinquishLog);
     }
 
+    // Try to yield to higher priority ready processes
+    // This is the key part that makes process switching work!
+    Oop activeProcess = getActiveProcess();
+    Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
+    int activePriority = activePriorityOop.isSmallInteger() ?
+                         static_cast<int>(activePriorityOop.asSmallInteger()) : 10;
+
+    // Check scheduler for higher priority ready processes
+    Oop nilObj = memory_.nil();
+    Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
+    if (schedulerAssoc.isObject() && schedulerAssoc.rawBits() != nilObj.rawBits()) {
+        Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
+        if (scheduler.isObject()) {
+            Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
+            if (schedLists.isObject()) {
+                ObjectHeader* queuesHdr = schedLists.asObjectPtr();
+                size_t numQueues = queuesHdr->slotCount();
+
+                // Search from highest priority down to current priority
+                for (int pri = static_cast<int>(numQueues) - 1; pri >= activePriority; pri--) {
+                    Oop queue = queuesHdr->slotAt(pri);
+                    if (!queue.isObject() || queue.rawBits() == nilObj.rawBits()) continue;
+
+                    Oop firstProcess = memory_.fetchPointer(LinkedListFirstLinkIndex, queue);
+                    if (firstProcess.isObject() && firstProcess.rawBits() != nilObj.rawBits() &&
+                        firstProcess.rawBits() != activeProcess.rawBits()) {
+                        // Found a higher/equal priority process - yield to it
+                        if (relinquishLog && relinquishCount <= 50) {
+                            fprintf(relinquishLog, "[RELINQUISH] #%d Yielding to process at priority %d\n",
+                                    relinquishCount, pri + 1);
+                            fflush(relinquishLog);
+                        }
+
+                        // Remove the process from queue
+                        Oop nextProcess = removeFirstLinkOfList(queue);
+                        if (nextProcess.isObject() && nextProcess.rawBits() != nilObj.rawBits()) {
+                            // Put current process back in its queue
+                            putToSleep(activeProcess);
+                            // Switch to the new process
+                            transferTo(nextProcess);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     pop();  // pop milliseconds, leave receiver
     return PrimitiveResult::Success;
 }

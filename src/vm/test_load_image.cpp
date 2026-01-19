@@ -8,6 +8,7 @@
 #include "ImageLoader.hpp"
 #include "Interpreter.hpp"
 #include "../platform/DisplaySurface.hpp"
+#include "../platform/EventQueue.hpp"
 #include <iostream>
 #include <iomanip>
 #include <chrono>
@@ -16,6 +17,19 @@
 #include <unordered_map>
 
 using namespace pharo;
+
+// Global interpreter pointer for event callback
+static Interpreter* gTestInterpreter = nullptr;
+
+// Event callback to signal input semaphore when events arrive
+static void testEventCallback(void* context) {
+    (void)context;
+    if (gTestInterpreter) {
+        int semIndex = gEventQueue.getInputSemaphoreIndex();
+        if (semIndex <= 0) semIndex = 1;  // Default to semaphore 1 if not set
+        gTestInterpreter->signalExternalSemaphore(semIndex);
+    }
+}
 
 // Test display surface for verifying Morphic rendering
 class TestDisplaySurface : public DisplaySurface {
@@ -396,6 +410,12 @@ int main(int argc, char* argv[]) {
     // Try to initialize interpreter
     std::cout << "\n=== Interpreter Initialization ===" << std::endl;
     Interpreter interpreter(memory);
+
+    // Set up event callback BEFORE initialization
+    gTestInterpreter = &interpreter;
+    gEventQueue.setEventCallback(testEventCallback, nullptr);
+    std::cout << "Event callback registered" << std::endl;
+
     if (interpreter.initialize()) {
         std::cout << "Interpreter initialized successfully!" << std::endl;
         std::cout << "Active method: 0x" << std::hex

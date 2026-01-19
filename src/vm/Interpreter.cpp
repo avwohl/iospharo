@@ -3190,6 +3190,10 @@ void Interpreter::processPendingSignals() {
         Oop lastLink = memory_.fetchPointer(LinkedListLastLinkIndex, semaphore);
         Oop excessOopDbg = memory_.fetchPointer(SemaphoreExcessSignalsIndex, semaphore);
         int64_t excessDbg = excessOopDbg.isSmallInteger() ? excessOopDbg.asSmallInteger() : -999;
+        fprintf(sigLog, "[SIGNAL] #%d nilObj=0x%llx firstLink=0x%llx match=%d\n",
+                sigCount, (unsigned long long)nilObj.rawBits(),
+                (unsigned long long)firstLink.rawBits(),
+                firstLink.rawBits() == nilObj.rawBits() ? 1 : 0);
         fprintf(sigLog, "[SIGNAL] #%d Semaphore 0x%llx: firstLink=0x%llx(nil=%d) lastLink=0x%llx excess=%lld\n",
                 sigCount, (unsigned long long)semaphore.rawBits(),
                 (unsigned long long)firstLink.rawBits(), firstLink.isNil() ? 1 : 0,
@@ -8863,9 +8867,20 @@ bool Interpreter::executeFromContext(Oop context) {
     // Track if this is our first snapshot resume (for logging)
     static bool firstSnapshotResume = true;
 
+    // Log snapshot resume detection
+    static FILE* snapLog = fopen("/tmp/snapshot_resume.log", "w");
+    if (snapLog && firstSnapshotResume) {
+        fprintf(snapLog, "[SNAP] Checking for snapshot resume, primIdx=%d\n", primIdx);
+        fflush(snapLog);
+    }
+
     // Check for snapshot primitive (131) by primitive number
     if (primIdx == 131) {
         isSnapshotResume = true;
+        if (snapLog) {
+            fprintf(snapLog, "[SNAP] Detected by primitive 131\n");
+            fflush(snapLog);
+        }
     }
 
     // Also check by method selector name (for methods that call primitives differently)
@@ -8880,9 +8895,17 @@ bool Interpreter::executeFromContext(Oop context) {
                     ObjectHeader* nameHdr = nameOop.asObjectPtr();
                     if (nameHdr->isBytesObject() && nameHdr->byteSize() <= 100) {
                         std::string className((char*)nameHdr->bytes(), nameHdr->byteSize());
+                        if (snapLog && firstSnapshotResume) {
+                            fprintf(snapLog, "[SNAP] Receiver class name: '%s'\n", className.c_str());
+                            fflush(snapLog);
+                        }
                         if (className == "SnapshotOperation") {
                             // We're resuming in SnapshotOperation - set return to false
                             isSnapshotResume = true;
+                            if (snapLog) {
+                                fprintf(snapLog, "[SNAP] Detected SnapshotOperation class!\n");
+                                fflush(snapLog);
+                            }
                         }
                     }
                 }
@@ -8893,6 +8916,14 @@ bool Interpreter::executeFromContext(Oop context) {
     // Mark that we've detected snapshot resume (used to suppress further logging)
     if (isSnapshotResume) {
         firstSnapshotResume = false;
+        if (snapLog) {
+            fprintf(snapLog, "[SNAP] Will set TOS to false for resume\n");
+            fflush(snapLog);
+        }
+    } else if (firstSnapshotResume && snapLog) {
+        fprintf(snapLog, "[SNAP] Not a snapshot resume\n");
+        fflush(snapLog);
+        firstSnapshotResume = false;  // Only log once
     }
 
     Oop methodHeader = memory_.fetchPointer(0, method_);
