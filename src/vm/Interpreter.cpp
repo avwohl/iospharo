@@ -4477,11 +4477,16 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     // Compare by string content since same symbol may have different Oops
     static std::string lastSelStr;
     static int sameSelCount = 0;
+    static int totalSends = 0;
     std::string selStr;
     if (selector.isObject() && selector.rawBits() > 0x10000) {
         ObjectHeader* selHdr = selector.asObjectPtr();
         if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
             selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+            // Log first few sends to see what selectors are being called
+            if (++totalSends <= 20 || selStr.find("relinquish") != std::string::npos) {
+                std::cerr << "[SEND #" << totalSends << "] " << selStr << " args=" << argCount << "\n";
+            }
         }
     }
 
@@ -4643,8 +4648,54 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             if (selStr == "relinquishProcessorForMicroseconds:" && argCount == 1) {
                 // After a few idle cycles, try to auto-load the driver
                 static int idleCycles = 0;
-                if (++idleCycles == 100) {  // After 100 idle cycles (~1 second)
+                ++idleCycles;
+                if (idleCycles == 1) {
+                    std::cerr << "[IDLE] First relinquish call\n";
+                }
+                if (idleCycles == 10) {  // After 10 idle cycles
+                    std::cerr << "[IDLE] Calling autoLoadDriver at cycle " << idleCycles << "\n";
                     autoLoadDriver();
+                }
+
+                // Check if we're waiting for a chained result from previous cycle
+                if (pendingChainReceiver_.isObject() && !pendingChainReceiver_.isNil()) {
+                    static FILE* actionLog = fopen("/tmp/action_dispatch.log", "a");
+                    static int actionCount = 0;
+
+                    // We have a pending chain - use saved receiver for second call
+                    Oop chainRcvr = pendingChainReceiver_;
+                    Oop chainSel = pendingMenuAction_.chainSelector;
+                    Oop chainArg = pendingMenuAction_.chainArgument;
+                    int chainArgCount = pendingMenuAction_.chainArgCount;
+
+                    std::string selName = "<unknown>";
+                    if (chainSel.isObject()) {
+                        ObjectHeader* selHdr = chainSel.asObjectPtr();
+                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                            selName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                        }
+                    }
+
+                    if (actionLog) {
+                        fprintf(actionLog, "[CHAIN #%d] Executing second stage '%s'\n",
+                                ++actionCount, selName.c_str());
+                        fflush(actionLog);
+                    }
+
+                    // Clear chain state
+                    pendingChainReceiver_ = Oop::nil();
+                    pendingMenuAction_.chainSelector = Oop::nil();
+                    pendingMenuAction_.chainArgument = Oop::nil();
+                    pendingMenuAction_.chainArgCount = 0;
+                    pendingMenuAction_.isChained = false;
+
+                    popN(argCount + 1);
+                    push(chainRcvr);
+                    if (chainArgCount > 0 && !chainArg.isNil()) {
+                        push(chainArg);
+                    }
+                    sendSelector(chainSel, chainArgCount);
+                    return;
                 }
 
                 if (pendingMenuAction_.pending) {
@@ -4663,9 +4714,11 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                         }
                     }
 
+                    bool isChained = pendingMenuAction_.isChained;
                     if (actionLog) {
-                        fprintf(actionLog, "[ACTION #%d] Trying to dispatch '%s'\n",
-                                ++actionCount, selName.c_str());
+                        fprintf(actionLog, "[ACTION #%d] Trying to dispatch '%s'%s\n",
+                                ++actionCount, selName.c_str(),
+                                isChained ? " (chained)" : "");
                         fflush(actionLog);
                     }
 
@@ -4695,6 +4748,12 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                     }
 
                     sendSelector(actionSel, actionArgCount);
+
+                    // If this was a chained call, we need to capture the result
+                    // The result will be on the stack after the method returns
+                    // For now, we'll check on the next idle cycle
+                    // (This is a simplification - proper chaining would need to intercept returns)
+
                     return;
                 }
                 // Let relinquish proceed normally
@@ -6164,8 +6223,23 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                 selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
             }
         }
-        fprintf(dnuTraceLog, "[DNU #%d depth=%d] selector=#%s argCount=%d\n",
-                ++dnuTraceCount, dnuDepth, selStr.c_str(), argCount);
+
+        // Get receiver's class name for better debugging
+        Oop rcvr = stackValue(argCount);
+        std::string rcvrClassName = "<unknown>";
+        Oop rcvrCls = memory_.classOf(rcvr);
+        if (rcvrCls.isObject()) {
+            Oop nameOop = memory_.fetchPointer(6, rcvrCls);  // classNameIndex
+            if (nameOop.isObject()) {
+                ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                    rcvrClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                }
+            }
+        }
+
+        fprintf(dnuTraceLog, "[DNU #%d depth=%d] %s >> #%s argCount=%d\n",
+                ++dnuTraceCount, dnuDepth, rcvrClassName.c_str(), selStr.c_str(), argCount);
         fflush(dnuTraceLog);
     }
 
@@ -7490,79 +7564,43 @@ bool Interpreter::autoLoadDriver() {
 
     std::cerr << "[STARTUP] Attempting to auto-load OSiOSDriver...\n";
 
-    // The Smalltalk code to execute:
-    // 'src/smalltalk/OSiOSDriver.st' asFileReference fileIn. OSiOSDriver install.
-    // But we need to use an absolute path or find the file relative to the image
-
-    // For now, let's try a simpler approach: just try to start an event loop
-    // by finding OpalCompiler and evaluating code
-
-    // Find OpalCompiler class
-    Oop compilerClass = memory_.findGlobal("OpalCompiler");
-    if (compilerClass.isNil()) {
-        std::cerr << "[STARTUP] OpalCompiler not found, trying Compiler...\n";
-        compilerClass = memory_.findGlobal("Compiler");
-    }
-    if (compilerClass.isNil()) {
-        std::cerr << "[STARTUP] No compiler class found, cannot auto-load driver\n";
-        return false;
-    }
-
-    std::cerr << "[STARTUP] Found compiler class\n";
-
-    // Create a string with the code to evaluate
-    // For now, let's try a simple test: create a process that just yields
-    std::string code = R"(
-        | eventLoop |
-        eventLoop := [
-            [true] whileTrue: [
-                | eventBuffer |
-                eventBuffer := Array new: 8.
-                InputEventSensor default primGetNextEvent: eventBuffer.
-                (eventBuffer at: 1) ~= 0 ifTrue: [
-                    InputEventSensor default handleEvent: eventBuffer
-                ].
-                Processor yield.
-                (Delay forMilliseconds: 10) wait
-            ]
-        ] forkAt: Processor lowIOPriority named: 'iOS Event Loop'.
-        Transcript show: 'iOS Event Loop started'; cr
-    )";
-
-    // Create the String object
-    Oop codeString = memory_.createString(code);
-    if (codeString.isNil()) {
-        std::cerr << "[STARTUP] Failed to create code string\n";
-        return false;
-    }
-
-    std::cerr << "[STARTUP] Created code string, looking for evaluate: selector...\n";
-
-    // Find the evaluate: selector
+    // Try OpalCompiler class >> evaluate: directly
     Oop evaluateSel = findSelector("evaluate:");
     if (evaluateSel.isNil()) {
         std::cerr << "[STARTUP] evaluate: selector not found\n";
         return false;
     }
 
-    std::cerr << "[STARTUP] Found evaluate: selector, trying to create compiler instance...\n";
+    Oop compilerClass = memory_.findGlobal("OpalCompiler");
+    if (compilerClass.isNil()) {
+        std::cerr << "[STARTUP] OpalCompiler not found\n";
+        return false;
+    }
 
-    // We need to send "new" to the class to get an instance, then "evaluate:" to the instance
-    // For now, try using the class-side "evaluate:" which might exist
-    // Actually, in Pharo you can do: OpalCompiler evaluate: 'code' directly on the class
-    // Let's see if that works, otherwise we'll need to instantiate
+    // Simple test - just fork a simple loop
+    std::string code = "[ 1 to: 100 do: [:i | Processor yield ] ] fork";
+    Oop codeString = memory_.createString(code);
+    if (codeString.isNil()) {
+        std::cerr << "[STARTUP] Failed to create code string\n";
+        return false;
+    }
 
-    // Try class-side evaluate: first
-    // If that fails, we could try finding "new" selector and creating instance
+    // Log the string object details for debugging
+    if (codeString.isObject()) {
+        ObjectHeader* strHdr = codeString.asObjectPtr();
+        std::cerr << "[STARTUP] Created ByteString with classIndex=" << strHdr->classIndex()
+                  << ", byteSize=" << strHdr->byteSize() << "\n";
+    }
 
-    // Queue this for execution during idle loop
+    std::cerr << "[STARTUP] Queueing OpalCompiler evaluate: '" << code << "'\n";
+
     pendingMenuAction_.selector = evaluateSel;
     pendingMenuAction_.receiver = compilerClass;
     pendingMenuAction_.argument = codeString;
     pendingMenuAction_.argCount = 1;
     pendingMenuAction_.pending = true;
+    pendingMenuAction_.isChained = false;
 
-    std::cerr << "[STARTUP] Auto-load driver queued for execution\n";
     return true;
 }
 

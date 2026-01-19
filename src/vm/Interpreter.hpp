@@ -373,8 +373,15 @@ private:
         int argCount = 0;           // 0 for value, 1 for value:
         bool pending = false;
         bool executeFromSync = false;  // Flag to execute from interpret loop
+
+        // For chained calls (e.g., OpalCompiler new >> evaluate:)
+        Oop chainSelector = Oop::nil();    // Second selector to send to result
+        Oop chainArgument = Oop::nil();    // Argument for second send
+        int chainArgCount = 0;
+        bool isChained = false;            // True if this is a chained call
     };
     PendingMenuAction pendingMenuAction_;
+    Oop pendingChainReceiver_ = Oop::nil();  // Captured result for chained calls
     int menuActionTraceCount_ = 0;  // Number of sends to trace after menu action
 
     // Debug: visual click indicator

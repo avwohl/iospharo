@@ -177,17 +177,17 @@ Oop ObjectMemory::createString(const std::string& str) {
         return Oop::nil();
     }
 
-    // Get class index
+    // Get class index for ByteString instances
+    // The class's identity hash IS the class index for its instances in Spur
     ObjectHeader* classHdr = stringClass.asObjectPtr();
-    uint32_t classIndex = classHdr->classIndex();  // This gives metaclass index
-    // For instances, we need the class's own hash/identity which is stored differently
-    // Actually, we need to find the class index used for ByteString instances
+    uint32_t classIndex = classHdr->identityHash();
 
-    // Use the well-known class index from special objects
-    // ByteString class index should be looked up from the class table
-    // For now, let's get it from an existing string in the system
+    // If the class doesn't have an identity hash, fall back to classIndex (wrong but might work)
+    if (classIndex == 0) {
+        classIndex = classHdr->classIndex();
+    }
 
-    // Simple approach: allocate using the known format
+    // Allocate the string
     Oop strObj = allocateBytes(classIndex, str.size());
     if (strObj.isNil()) {
         return Oop::nil();
