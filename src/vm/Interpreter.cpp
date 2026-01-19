@@ -1990,6 +1990,14 @@ void Interpreter::handleWorldClick(int x, int y, int buttons) {
         // Skip MenubarMorph and TaskbarMorph - they're handled separately
         if (className == "MenubarMorph" || className == "TaskbarMorph") continue;
 
+        // Log all morphs checked (for debugging)
+        if (clickLog) {
+            fprintf(clickLog, "[CLICK] Checking %s bounds=[%d,%d,%d,%d] point=%d,%d inside=%d\n",
+                    className.c_str(), mx1, my1, mx2, my2, x, y,
+                    (x >= mx1 && x < mx2 && y >= my1 && y < my2) ? 1 : 0);
+            fflush(clickLog);
+        }
+
         // Check if point is inside bounds
         if (x >= mx1 && x < mx2 && y >= my1 && y < my2) {
             if (clickLog) {
@@ -2133,6 +2141,10 @@ void Interpreter::showWorldMenu(int x, int y) {
 
         std::string className((char*)cNameHdr->bytes(), cNameHdr->byteSize());
 
+        // Skip MenubarMorph and TaskbarMorph - they're not popup menus
+        if (className == "MenubarMorph" || className == "TaskbarMorph") continue;
+
+        // Look for actual popup/context menus (MenuMorph, PopupMenu, etc.)
         if (className.find("Menu") != std::string::npos) {
             if (menuLog) {
                 fprintf(menuLog, "[WORLD-MENU] Found %s, repositioning to %d,%d\n",
