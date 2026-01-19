@@ -2411,18 +2411,29 @@ void Interpreter::showWorldMenu(int x, int y) {
 
                     if (!codeString.isNil()) {
                         if (menuLog) {
-                            fprintf(menuLog, "[WORLD-MENU] Queueing evaluation: '%s'\n", code.c_str());
+                            fprintf(menuLog, "[WORLD-MENU] Executing evaluation: '%s'\n", code.c_str());
                             fprintf(menuLog, "[WORLD-MENU] compilerClass=%p, evaluateSel=%p, codeString=%p\n",
                                     (void*)compilerClass.rawBits(), (void*)evaluateSel.rawBits(), (void*)codeString.rawBits());
                             fflush(menuLog);
                         }
 
-                        pendingMenuAction_.selector = evaluateSel;
-                        pendingMenuAction_.receiver = compilerClass;
-                        pendingMenuAction_.argument = codeString;
-                        pendingMenuAction_.argCount = 1;
-                        pendingMenuAction_.pending = true;
-                        pendingMenuAction_.isChained = false;
+                        // Execute immediately instead of queueing
+                        // Push receiver and argument onto stack
+                        push(compilerClass);
+                        push(codeString);
+
+                        if (menuLog) {
+                            fprintf(menuLog, "[WORLD-MENU] About to sendSelector for evaluate:\n");
+                            fflush(menuLog);
+                        }
+
+                        // Send the message - this will execute OpalCompiler evaluate: with our code
+                        sendSelector(evaluateSel, 1);
+
+                        if (menuLog) {
+                            fprintf(menuLog, "[WORLD-MENU] sendSelector returned\n");
+                            fflush(menuLog);
+                        }
 
                         // Enable tracing for the next 200 sends after this action
                         menuActionTraceCount_ = 200;

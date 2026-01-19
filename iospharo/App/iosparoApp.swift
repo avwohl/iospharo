@@ -214,49 +214,54 @@ enum NSEventMonitorSwift {
                 lastPolledPosition = windowPosition
             }
 
-            // Detect button press/release (re-enabled - GCMouse handlers don't work reliably in Mac Catalyst)
-            // NSEvent monitor is disabled because it has wrong coordinate conversion.
-            // CGEvent polling is the ONLY reliable button event source on Mac Catalyst.
+            // Detect button press/release
+            // IMPORTANT: Use lastPosition from hover tracking, NOT windowPosition from CGEvent conversion!
+            // CGEvent conversion fails because we can't get the real NSWindow screen frame in Mac Catalyst.
+            // Hover tracking gives us correct window-local coordinates via UIKit gesture recognizers.
             if leftDown && !wasLeftButtonDown {
                 // Left button just pressed
-                if let file = pollLogFile {
-                    fputs("[POLL] LEFT BUTTON DOWN at \(Int(windowPosition.x)),\(Int(windowPosition.y))\n", file)
-                    fflush(file)
-                }
                 DispatchQueue.main.async {
-                    PharoBridge.shared.sendMouseMoved(to: windowPosition, modifiers: 0)
-                    PharoBridge.shared.sendTouchDown(at: windowPosition, buttons: IOS_RED_BUTTON)
+                    let pos = MouseEventHandler.shared.lastPosition
+                    if let file = pollLogFile {
+                        fputs("[POLL] LEFT BUTTON DOWN at \(Int(pos.x)),\(Int(pos.y)) (hover-tracked)\n", file)
+                        fflush(file)
+                    }
+                    PharoBridge.shared.sendMouseMoved(to: pos, modifiers: 0)
+                    PharoBridge.shared.sendTouchDown(at: pos, buttons: IOS_RED_BUTTON)
                 }
             } else if !leftDown && wasLeftButtonDown {
                 // Left button just released
-                if let file = pollLogFile {
-                    fputs("[POLL] LEFT BUTTON UP at \(Int(windowPosition.x)),\(Int(windowPosition.y))\n", file)
-                    fflush(file)
-                }
                 DispatchQueue.main.async {
-                    PharoBridge.shared.sendTouchUp(at: windowPosition)
+                    let pos = MouseEventHandler.shared.lastPosition
+                    if let file = pollLogFile {
+                        fputs("[POLL] LEFT BUTTON UP at \(Int(pos.x)),\(Int(pos.y)) (hover-tracked)\n", file)
+                        fflush(file)
+                    }
+                    PharoBridge.shared.sendTouchUp(at: pos)
                 }
             }
 
             if rightDown && !wasRightButtonDown {
                 // Right button just pressed
-                if let file = pollLogFile {
-                    fputs("[POLL] RIGHT BUTTON DOWN at \(Int(windowPosition.x)),\(Int(windowPosition.y))\n", file)
-                    fflush(file)
-                }
                 DispatchQueue.main.async {
-                    PharoBridge.shared.sendMouseMoved(to: windowPosition, modifiers: 0)
+                    let pos = MouseEventHandler.shared.lastPosition
+                    if let file = pollLogFile {
+                        fputs("[POLL] RIGHT BUTTON DOWN at \(Int(pos.x)),\(Int(pos.y)) (hover-tracked)\n", file)
+                        fflush(file)
+                    }
+                    PharoBridge.shared.sendMouseMoved(to: pos, modifiers: 0)
                     // Use YELLOW (2) for right-click to trigger world menu
-                    PharoBridge.shared.sendTouchDown(at: windowPosition, buttons: IOS_YELLOW_BUTTON)
+                    PharoBridge.shared.sendTouchDown(at: pos, buttons: IOS_YELLOW_BUTTON)
                 }
             } else if !rightDown && wasRightButtonDown {
                 // Right button just released
-                if let file = pollLogFile {
-                    fputs("[POLL] RIGHT BUTTON UP at \(Int(windowPosition.x)),\(Int(windowPosition.y))\n", file)
-                    fflush(file)
-                }
                 DispatchQueue.main.async {
-                    PharoBridge.shared.sendTouchUp(at: windowPosition)
+                    let pos = MouseEventHandler.shared.lastPosition
+                    if let file = pollLogFile {
+                        fputs("[POLL] RIGHT BUTTON UP at \(Int(pos.x)),\(Int(pos.y)) (hover-tracked)\n", file)
+                        fflush(file)
+                    }
+                    PharoBridge.shared.sendTouchUp(at: pos)
                 }
             }
         }
