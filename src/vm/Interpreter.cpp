@@ -1771,12 +1771,25 @@ void Interpreter::processInputEvents() {
 
                 if (clickedIndex >= 0) {
                     if (selectedMenuIndex_ == clickedIndex) {
+                        if (logFile) {
+                            fprintf(logFile, "[MENU] Toggling OFF menu %d (was same)\n", clickedIndex);
+                            fflush(logFile);
+                        }
                         selectedMenuIndex_ = -1;
                         dropdownState_.valid = false;
                     } else {
+                        if (logFile) {
+                            fprintf(logFile, "[MENU] Setting selectedMenuIndex_ = %d (was %d)\n",
+                                    clickedIndex, selectedMenuIndex_);
+                            fflush(logFile);
+                        }
                         selectedMenuIndex_ = clickedIndex;
                     }
                 } else {
+                    if (logFile) {
+                        fprintf(logFile, "[MENU] clickedIndex < 0, clearing selection\n");
+                        fflush(logFile);
+                    }
                     selectedMenuIndex_ = -1;
                     dropdownState_.valid = false;
                 }
@@ -2420,21 +2433,68 @@ void Interpreter::showWorldMenu(int x, int y) {
         }
 
         if (!showMenuSel.isNil()) {
+            ObjectHeader* selHdr = showMenuSel.asObjectPtr();
+            std::string selName = selHdr->isBytesObject() ?
+                std::string((char*)selHdr->bytes(), selHdr->byteSize()) : "?";
+
             if (menuLog) {
-                ObjectHeader* selHdr = showMenuSel.asObjectPtr();
-                std::string selName = selHdr->isBytesObject() ?
-                    std::string((char*)selHdr->bytes(), selHdr->byteSize()) : "?";
-                fprintf(menuLog, "[WORLD-MENU] Found selector: %s, queueing message to World\n",
-                        selName.c_str());
+                fprintf(menuLog, "[WORLD-MENU] Found selector: %s\n", selName.c_str());
                 fflush(menuLog);
             }
 
-            // Queue the message to be sent during the idle loop
-            pendingMenuAction_.selector = showMenuSel;
-            pendingMenuAction_.receiver = world;
-            pendingMenuAction_.argument = Oop::nil();
-            pendingMenuAction_.argCount = 0;
-            pendingMenuAction_.pending = true;
+            // If we found 'worldMenu', we need to chain 'openCenteredInWorld' on the result
+            // Use OpalCompiler evaluate: to run the full expression
+            if (selName == "worldMenu") {
+                // Evaluate "World worldMenu openCenteredInWorld" to both create and show the menu
+                Oop compilerClass = memory_.findGlobal("OpalCompiler");
+                Oop evaluateSel = findSelector("evaluate:");
+
+                if (!compilerClass.isNil() && !evaluateSel.isNil()) {
+                    std::string code = "World worldMenu openCenteredInWorld";
+                    Oop codeString = memory_.createString(code);
+
+                    if (!codeString.isNil()) {
+                        if (menuLog) {
+                            fprintf(menuLog, "[WORLD-MENU] Queueing evaluation: '%s'\n", code.c_str());
+                            fflush(menuLog);
+                        }
+
+                        pendingMenuAction_.selector = evaluateSel;
+                        pendingMenuAction_.receiver = compilerClass;
+                        pendingMenuAction_.argument = codeString;
+                        pendingMenuAction_.argCount = 1;
+                        pendingMenuAction_.pending = true;
+                        pendingMenuAction_.isChained = false;
+                    } else {
+                        if (menuLog) {
+                            fprintf(menuLog, "[WORLD-MENU] Failed to create code string\n");
+                            fflush(menuLog);
+                        }
+                    }
+                } else {
+                    if (menuLog) {
+                        fprintf(menuLog, "[WORLD-MENU] OpalCompiler or evaluate: not found, falling back to direct send\n");
+                        fflush(menuLog);
+                    }
+                    // Fall back to direct send (menu won't show but at least something happens)
+                    pendingMenuAction_.selector = showMenuSel;
+                    pendingMenuAction_.receiver = world;
+                    pendingMenuAction_.argument = Oop::nil();
+                    pendingMenuAction_.argCount = 0;
+                    pendingMenuAction_.pending = true;
+                }
+            } else {
+                // For other selectors that should show the menu directly, use direct send
+                if (menuLog) {
+                    fprintf(menuLog, "[WORLD-MENU] Queueing direct send of '%s' to World\n", selName.c_str());
+                    fflush(menuLog);
+                }
+                pendingMenuAction_.selector = showMenuSel;
+                pendingMenuAction_.receiver = world;
+                pendingMenuAction_.argument = Oop::nil();
+                pendingMenuAction_.argCount = 0;
+                pendingMenuAction_.pending = true;
+            }
         } else {
             if (menuLog) {
                 fprintf(menuLog, "[WORLD-MENU] No suitable world menu selector found\n");
