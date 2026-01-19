@@ -1811,6 +1811,11 @@ void Interpreter::processInputEvents() {
                     fflush(logFile);
                 }
                 passThroughEvents_.push_back(event);
+                if (logFile) {
+                    fprintf(logFile, "[PASSTHROUGH] After push, passThroughEvents_.size()=%zu\n",
+                            passThroughEvents_.size());
+                    fflush(logFile);
+                }
                 continue;
             }
         }

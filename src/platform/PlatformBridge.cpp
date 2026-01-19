@@ -381,7 +381,8 @@ void vm_postMouseEvent(int type, int x, int y, int buttons, int modifiers) {
     if (!mouseLog) {
         mouseLog = fopen("/tmp/vm_mouse_events.log", "w");
     }
-    if (mouseLog && mouseEventCount <= 200) {
+    // Always log button presses (down/up), limit moves to first 200
+    if (mouseLog && (mouseEventCount <= 200 || type != 0)) {
         const char* typeStr = (type == 0) ? "move" : (type == 1) ? "down" : "up";
         fprintf(mouseLog, "[VM_MOUSE] #%d %s at (%d,%d) buttons=%d mods=%d\n",
                 mouseEventCount, typeStr, x, y, buttons, modifiers);

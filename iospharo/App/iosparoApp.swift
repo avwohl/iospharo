@@ -441,9 +441,17 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 
             // Forward to Pharo VM (yellow button = 2 = world menu)
             DispatchQueue.main.async {
+                if let file = fopen("/tmp/gcmouse.log", "a") {
+                    fputs("[GCMOUSE] DISPATCH executing pressed=\(pressed) pos=\(pos)\n", file)
+                    fclose(file)
+                }
                 if pressed {
                     PharoBridge.shared.sendMouseMoved(to: pos, modifiers: 0)
                     PharoBridge.shared.sendTouchDown(at: pos, buttons: 2)  // Yellow button = world menu
+                    if let file = fopen("/tmp/gcmouse.log", "a") {
+                        fputs("[GCMOUSE] sendTouchDown called with buttons=2\n", file)
+                        fclose(file)
+                    }
                 } else {
                     PharoBridge.shared.sendTouchUp(at: pos)
                 }

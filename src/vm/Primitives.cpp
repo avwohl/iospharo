@@ -10520,9 +10520,12 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
     static int callCount = 0;
     callCount++;
 
-    if (callCount <= 50) {
-        fprintf(stderr, "[PRIM264] #%d passthrough=%zu queueEmpty=%d\n",
+    // Always log when passthrough has events or when buttons=2 (world menu)
+    static FILE* prim264Log = fopen("/tmp/prim264_trace.log", "a");
+    if (prim264Log && (callCount <= 50 || !passThroughEvents_.empty())) {
+        fprintf(prim264Log, "[PRIM264] #%d passthrough=%zu queueEmpty=%d\n",
                 callCount, passThroughEvents_.size(), gEventQueue.isEmpty() ? 1 : 0);
+        fflush(prim264Log);
     }
 
     // Check pass-through events first (these were processed but not consumed by menu handler)
@@ -10530,15 +10533,18 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
         event = passThroughEvents_.front();
         passThroughEvents_.erase(passThroughEvents_.begin());
         hasEvent = true;
-        if (callCount <= 50 || event.arg5 == 1) {  // Always log mouse down
-            fprintf(stderr, "[PRIM264] #%d Got event: eventType=%d subtype=%d x=%d y=%d buttons=%d\n",
+        // Always log mouse events with buttons (especially buttons=2 for world menu)
+        if (prim264Log && (callCount <= 50 || event.arg3 != 0)) {
+            fprintf(prim264Log, "[PRIM264] #%d Got event: eventType=%d subtype=%d x=%d y=%d buttons=%d\n",
                     callCount, event.type, event.arg5, event.arg1, event.arg2, event.arg3);
+            fflush(prim264Log);
         }
     } else if (gEventQueue.pop(event)) {
         hasEvent = true;
-        if (callCount <= 50 || event.arg5 == 1) {
-            fprintf(stderr, "[PRIM264] #%d Got event from queue: eventType=%d subtype=%d x=%d y=%d buttons=%d\n",
+        if (prim264Log && (callCount <= 50 || event.arg3 != 0)) {
+            fprintf(prim264Log, "[PRIM264] #%d Got event from queue: eventType=%d subtype=%d x=%d y=%d buttons=%d\n",
                     callCount, event.type, event.arg5, event.arg1, event.arg2, event.arg3);
+            fflush(prim264Log);
         }
     }
 

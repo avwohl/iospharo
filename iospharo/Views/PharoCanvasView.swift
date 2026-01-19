@@ -186,9 +186,9 @@ class PharoMTKView: MTKView {
         // They only trigger touchesEnded. Detect this and handle as right-click.
         if !hadTouchesBegan {
             NSLog("[TOUCH] Detected right-click (touchesEnded without touchesBegan) at \(point)")
-            // Send move + down + up for right-click (blue button)
+            // Send move + down + up for right-click (yellow button = world menu)
             bridge.sendMouseMoved(to: point, modifiers: 0)
-            bridge.sendTouchDown(at: point, buttons: IOS_BLUE_BUTTON)
+            bridge.sendTouchDown(at: point, buttons: IOS_YELLOW_BUTTON)
             bridge.sendTouchUp(at: point)
             return
         }
@@ -617,9 +617,9 @@ class PharoCanvasViewController: UIViewController {
         let point = gesture.location(in: mtkView)
         NSLog("[RIGHT-CLICK] at \(point) state=\(gesture.state.rawValue)")
 
-        // Send move to position hand, then blue button (right-click) down/up
+        // Send move to position hand, then yellow button (right-click = world menu)
         bridge.sendMouseMoved(to: point, modifiers: 0)
-        bridge.sendTouchDown(at: point, buttons: IOS_BLUE_BUTTON)
+        bridge.sendTouchDown(at: point, buttons: IOS_YELLOW_BUTTON)
         bridge.sendTouchUp(at: point)
     }
     #endif
