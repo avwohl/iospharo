@@ -1604,6 +1604,13 @@ void Interpreter::processInputEvents() {
     // Process pending events from the event queue
     // Events we don't handle (non-menu events) are passed through to Pharo
     static FILE* logFile = fopen("/tmp/iospharo-events.log", "a");
+    static int callCount = 0;
+
+    // Debug: log every 1000 calls to confirm this function is being reached
+    if (++callCount % 1000 == 1 && logFile) {
+        fprintf(logFile, "[PROCESS-INPUT] call #%d, queue size before pop unknown\n", callCount);
+        fflush(logFile);
+    }
 
     pharo::Event event;
     while (pharo::gEventQueue.pop(event)) {
@@ -2074,6 +2081,15 @@ void Interpreter::handleWorldClick(int x, int y, int buttons) {
                             className.c_str(), moved ? 1 : 0);
                     fflush(clickLog);
                 }
+                // For right-click (yellow button = 4), also show World menu even on windows
+                // This provides feedback while the Pharo event system isn't working
+                if (buttons & 4) {
+                    if (clickLog) {
+                        fprintf(clickLog, "[CLICK] Right-click on window - showing World menu\n");
+                        fflush(clickLog);
+                    }
+                    showWorldMenu(x, y);
+                }
                 return;  // Window click handled
             }
             // Non-window morph clicked (e.g., ImageMorph) - treat as background click
@@ -2115,11 +2131,30 @@ void Interpreter::showWorldMenu(int x, int y) {
         fflush(menuLog);
     }
 
+    if (eventsLogForDebug) {
+        fprintf(eventsLogForDebug, "[showWorldMenu] About to call findGlobal(World)\n");
+        fflush(eventsLogForDebug);
+    }
+
     // Find World global
     Oop world = memory_.findGlobal("World");
+
+    if (eventsLogForDebug) {
+        fprintf(eventsLogForDebug, "[showWorldMenu] findGlobal returned, world.isNil=%d\n", world.isNil() ? 1 : 0);
+        fflush(eventsLogForDebug);
+    }
+
     if (world.isNil() || !world.isObject()) {
         if (menuLog) fprintf(menuLog, "[WORLD-MENU] World not found\n");
+        if (eventsLogForDebug) {
+            fprintf(eventsLogForDebug, "[showWorldMenu] World not found, returning\n");
+            fflush(eventsLogForDebug);
+        }
         return;
+    }
+    if (eventsLogForDebug) {
+        fprintf(eventsLogForDebug, "[showWorldMenu] World found, continuing\n");
+        fflush(eventsLogForDebug);
     }
 
     // The World menu in Pharo is typically accessed via:
@@ -2127,11 +2162,27 @@ void Interpreter::showWorldMenu(int x, int y) {
     // Or we can look for an existing MenuMorph in World's submorphs
 
     ObjectHeader* worldHdr = world.asObjectPtr();
-    if (worldHdr->slotCount() < 10) return;
+    if (worldHdr->slotCount() < 10) {
+        if (eventsLogForDebug) {
+            fprintf(eventsLogForDebug, "[showWorldMenu] World slotCount < 10, returning\n");
+            fflush(eventsLogForDebug);
+        }
+        return;
+    }
 
     // Get submorphs (slot 2) to look for existing menu
     Oop submorphs = memory_.fetchPointer(2, world);
-    if (submorphs.isNil() || !submorphs.isObject()) return;
+    if (submorphs.isNil() || !submorphs.isObject()) {
+        if (eventsLogForDebug) {
+            fprintf(eventsLogForDebug, "[showWorldMenu] submorphs nil or not object, returning\n");
+            fflush(eventsLogForDebug);
+        }
+        return;
+    }
+    if (eventsLogForDebug) {
+        fprintf(eventsLogForDebug, "[showWorldMenu] submorphs found, scanning for menus\n");
+        fflush(eventsLogForDebug);
+    }
 
     ObjectHeader* subHdr = submorphs.asObjectPtr();
     size_t morphCount = subHdr->slotCount();
@@ -2335,16 +2386,37 @@ void Interpreter::showWorldMenu(int x, int y) {
         // - invokeWorldMenu: (takes event)
         // - worldMenu (returns the menu)
 
-        // First try: showWorldMainInlineMenu (Pharo 10+ Spec2)
-        Oop showMenuSel = findSelector("showWorldMainInlineMenu");
-        if (showMenuSel.isNil()) {
-            showMenuSel = findSelector("doShowWorldMenu");
-        }
-        if (showMenuSel.isNil()) {
-            showMenuSel = findSelector("worldMenu");
-        }
-        if (showMenuSel.isNil()) {
-            showMenuSel = findSelector("openMenu");
+        // Try various selectors for showing the world menu
+        // Different Pharo versions use different methods
+        // Prefer methods that actually OPEN/SHOW the menu over ones that just return it
+        const char* menuSelectors[] = {
+            "openWorldMenu",            // Method that opens the menu (if exists)
+            "showWorldMainInlineMenu",  // Pharo 10+ Spec2
+            "doShowWorldMenu",          // Some versions
+            "popUpWorldMenu",           // Popup variant
+            "showWorldMenu",            // Direct show
+            "invokeWorldMenu",          // WorldMorph method
+            "openMenu",                 // Generic
+            "buildWorldMenu",           // Builder method (returns menu)
+            "worldMenu",                // Returns the menu (last resort)
+            nullptr
+        };
+
+        Oop showMenuSel = Oop::nil();
+        for (int i = 0; menuSelectors[i] != nullptr; i++) {
+            showMenuSel = findSelector(menuSelectors[i]);
+            if (!showMenuSel.isNil()) {
+                if (menuLog) {
+                    fprintf(menuLog, "[WORLD-MENU] Trying selector '%s' - FOUND!\n", menuSelectors[i]);
+                    fflush(menuLog);
+                }
+                break;
+            } else {
+                if (menuLog) {
+                    fprintf(menuLog, "[WORLD-MENU] Trying selector '%s' - not found\n", menuSelectors[i]);
+                    fflush(menuLog);
+                }
+            }
         }
 
         if (!showMenuSel.isNil()) {
@@ -3961,6 +4033,21 @@ void Interpreter::returnValue(Oop value) {
             Oop actionArg = pendingMenuAction_.argument;
             int actionArgCount = pendingMenuAction_.argCount;
 
+            // Log the dispatch
+            static FILE* dispatchLog = fopen("/tmp/world_menu.log", "a");
+            if (dispatchLog) {
+                std::string selName = "?";
+                if (actionSel.isObject()) {
+                    ObjectHeader* selHdr = actionSel.asObjectPtr();
+                    if (selHdr->isBytesObject()) {
+                        selName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                    }
+                }
+                fprintf(dispatchLog, "[WORLD-MENU] DISPATCHING selector '%s' to receiver 0x%llx argCount=%d\n",
+                        selName.c_str(), (unsigned long long)actionRcvr.rawBits(), actionArgCount);
+                fflush(dispatchLog);
+            }
+
             // Clear pending
             pendingMenuAction_.pending = false;
             pendingMenuAction_.selector = Oop::nil();
@@ -4551,35 +4638,58 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             }
 
             // ===== INTERCEPT relinquishProcessorForMicroseconds: =====
-            // This is called during idle loop. Could use it to process pending menu actions,
-            // but direct message sends cause DNU cascades that crash the app.
-            // For now, just clear pending actions without executing them.
+            // This is called during idle loop. Try to execute pending menu actions here.
+            // Some actions may cause DNU cascades, but let's try worldMenu and see what happens.
             if (selStr == "relinquishProcessorForMicroseconds:" && argCount == 1) {
                 if (pendingMenuAction_.pending) {
-                    // Log that we're skipping the action
-                    static FILE* skipLog = nullptr;
-                    static int skipCount = 0;
-                    if (!skipLog) {
-                        skipLog = fopen("/tmp/action_skip.log", "w");
+                    // Log and try to execute the action
+                    static FILE* actionLog = nullptr;
+                    static int actionCount = 0;
+                    if (!actionLog) {
+                        actionLog = fopen("/tmp/action_dispatch.log", "w");
                     }
-                    if (skipLog && skipCount < 20) {
-                        std::string selName = "<unknown>";
-                        if (pendingMenuAction_.selector.isObject()) {
-                            ObjectHeader* selHdr = pendingMenuAction_.selector.asObjectPtr();
-                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                                selName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                            }
+
+                    std::string selName = "<unknown>";
+                    if (pendingMenuAction_.selector.isObject()) {
+                        ObjectHeader* selHdr = pendingMenuAction_.selector.asObjectPtr();
+                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                            selName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
                         }
-                        fprintf(skipLog, "[SKIP #%d] Skipping action #%s (causes DNU cascade)\n",
-                                ++skipCount, selName.c_str());
-                        fflush(skipLog);
                     }
-                    // Clear the pending action without executing
+
+                    if (actionLog) {
+                        fprintf(actionLog, "[ACTION #%d] Trying to dispatch '%s'\n",
+                                ++actionCount, selName.c_str());
+                        fflush(actionLog);
+                    }
+
+                    Oop actionSel = pendingMenuAction_.selector;
+                    Oop actionRcvr = pendingMenuAction_.receiver;
+                    Oop actionArg = pendingMenuAction_.argument;
+                    int actionArgCount = pendingMenuAction_.argCount;
+
                     pendingMenuAction_.pending = false;
                     pendingMenuAction_.selector = Oop::nil();
                     pendingMenuAction_.receiver = Oop::nil();
                     pendingMenuAction_.argument = Oop::nil();
                     pendingMenuAction_.argCount = 0;
+
+                    // Pop relinquishProcessorForMicroseconds:'s args and receiver
+                    popN(argCount + 1);
+
+                    // Set up the action call
+                    push(actionRcvr);
+                    if (actionArgCount > 0 && !actionArg.isNil()) {
+                        push(actionArg);
+                    }
+
+                    if (actionLog) {
+                        fprintf(actionLog, "[ACTION #%d] Sending message now\n", actionCount);
+                        fflush(actionLog);
+                    }
+
+                    sendSelector(actionSel, actionArgCount);
+                    return;
                 }
                 // Let relinquish proceed normally
             }
@@ -7748,6 +7858,9 @@ Oop Interpreter::findSelector(const char* name) {
     Oop morphClass = memory_.findGlobal("Morph");
     Oop systemWindowClass = memory_.findGlobal("SystemWindow");
     Oop spWindowClass = memory_.findGlobal("SpWindow");
+    Oop worldMorphClass = memory_.findGlobal("WorldMorph");
+    Oop worldStateClass = memory_.findGlobal("WorldState");
+    Oop menuMorphClass = memory_.findGlobal("MenuMorph");
 
     Oop classesToSearch[] = {
         memory_.specialObject(SpecialObjectIndex::ClassArray),
@@ -7759,6 +7872,9 @@ Oop Interpreter::findSelector(const char* name) {
         morphClass,
         systemWindowClass,
         spWindowClass,
+        worldMorphClass,
+        worldStateClass,
+        menuMorphClass,
         Oop::nil()
     };
 
