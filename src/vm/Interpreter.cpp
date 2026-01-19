@@ -1820,8 +1820,12 @@ void Interpreter::processInputEvents() {
                     fflush(logFile);
                 }
 
-                // Pass ALL button clicks through to Pharo for normal Morphic handling
-                // Yellow button (buttons=2) = right-click should trigger world menu via HandMorph
+                // Handle world click directly for immediate feedback
+                // This triggers the world menu for right-clicks (buttons=2)
+                // while the Pharo event system may not be fully responsive
+                handleWorldClick(x, y, event.arg3);
+
+                // Also pass through to Pharo for normal Morphic handling
                 if (logFile && event.arg3 == 2) {
                     fprintf(logFile, "[PASSTHROUGH] Right-click (buttons=2) at %d,%d -> Pharo\n", x, y);
                     fflush(logFile);
@@ -2116,11 +2120,11 @@ void Interpreter::handleWorldClick(int x, int y, int buttons) {
                             className.c_str(), moved ? 1 : 0);
                     fflush(clickLog);
                 }
-                // For right-click (yellow button = 4), also show World menu even on windows
+                // For right-click (yellow button = 2), also show World menu even on windows
                 // This provides feedback while the Pharo event system isn't working
-                if (buttons & 4) {
+                if (buttons & 2) {
                     if (clickLog) {
-                        fprintf(clickLog, "[CLICK] Right-click on window - showing World menu\n");
+                        fprintf(clickLog, "[CLICK] Right-click (yellow button) on window - showing World menu\n");
                         fflush(clickLog);
                     }
                     showWorldMenu(x, y);
@@ -2146,9 +2150,9 @@ void Interpreter::handleWorldClick(int x, int y, int buttons) {
     // Try the C++ world menu trigger first, but the event is also passed through
     // to Pharo's normal event handling (via passThroughEvents_) which may also
     // display the world menu if our C++ approach fails.
-    if (buttons & 4) {
+    if (buttons & 2) {
         if (clickLog) {
-            fprintf(clickLog, "[CLICK] Right-click on World background - triggering world menu\n");
+            fprintf(clickLog, "[CLICK] Right-click (yellow button) on World background - triggering world menu\n");
             fflush(clickLog);
         }
         showWorldMenu(x, y);
@@ -2411,7 +2415,7 @@ void Interpreter::showWorldMenu(int x, int y) {
                             fflush(menuLog);
                         }
 
-                        // Queue for dispatch from primitive 264 (getNextEvent)
+                        // Queue for dispatch from relinquishProcessorForMicroseconds: interception
                         // Direct sendSelector from here corrupts the stack
                         pendingMenuAction_.selector = evaluateSel;
                         pendingMenuAction_.receiver = compilerClass;
@@ -2419,6 +2423,17 @@ void Interpreter::showWorldMenu(int x, int y) {
                         pendingMenuAction_.argCount = 1;
                         pendingMenuAction_.pending = true;
                         pendingMenuAction_.isChained = false;
+
+                        // Also log to idle_trace.log for correlation
+                        static FILE* idleTraceLog2 = nullptr;
+                        if (!idleTraceLog2) {
+                            idleTraceLog2 = fopen("/tmp/idle_trace.log", "a");
+                        }
+                        if (idleTraceLog2) {
+                            fprintf(idleTraceLog2, "[QUEUED] World menu action queued: pendingMenuAction_.pending=%d\n",
+                                    pendingMenuAction_.pending ? 1 : 0);
+                            fflush(idleTraceLog2);
+                        }
 
                         // Enable tracing for the next 200 sends after this action
                         menuActionTraceCount_ = 200;
@@ -2471,14 +2486,16 @@ void Interpreter::drawClickIndicator(int x, int y, int buttons) {
     int surfHeight = pharo::gDisplaySurface->height();
     int pitchPixels = static_cast<int>(pharo::gDisplaySurface->pitch() / 4);
 
-    // Color based on button: red=left, blue=right, yellow=middle
+    // Color based on button: red=4 (left), yellow=2 (right), blue=1 (middle)
     uint32_t color;
     if (buttons & 4) {
-        color = 0xFFFFFF00;  // Yellow for middle/yellow button
+        color = 0xFFFF0000;  // Red for left button (bit 2)
     } else if (buttons & 2) {
-        color = 0xFF0000FF;  // Blue for right/blue button
+        color = 0xFFFFFF00;  // Yellow for right button (bit 1)
+    } else if (buttons & 1) {
+        color = 0xFF0000FF;  // Blue for middle button (bit 0)
     } else {
-        color = 0xFFFF0000;  // Red for left/red button
+        color = 0xFFFFFFFF;  // White for no buttons
     }
 
     // Draw a filled circle with radius 20
@@ -4494,6 +4511,91 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 }
 
 void Interpreter::sendSelector(Oop selector, int argCount) {
+    // Check for pending menu action - but only dispatch on SAFE selectors
+    // We can't intercept arbitrary sends because callers expect specific return types
+    if (pendingMenuAction_.pending) {
+        // Get the selector name to check if it's safe to intercept
+        std::string origSelStr;
+        if (selector.isObject() && selector.rawBits() > 0x10000) {
+            ObjectHeader* selHdr = selector.asObjectPtr();
+            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                origSelStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+            }
+        }
+
+        // Only intercept selectors where we can safely replace the result
+        // These are typically void-ish methods that don't return meaningful values
+        bool safeToIntercept = (origSelStr == "processEvents" ||
+                                origSelStr == "doOneCycle" ||
+                                origSelStr == "doOneCycleFor:" ||
+                                origSelStr == "step" ||
+                                origSelStr == "displayWorld" ||
+                                origSelStr == "interCyclePause:" ||
+                                origSelStr == "runStepMethods" ||
+                                origSelStr == "processDeferredActions" ||
+                                // Additional common cycle/event selectors
+                                origSelStr == "handleEvent:" ||
+                                origSelStr == "handleListenEvent:" ||
+                                origSelStr == "handleMouseOver:" ||
+                                origSelStr == "processEvent:" ||
+                                origSelStr == "processMouse:" ||
+                                origSelStr == "primGetNextEvent");
+
+        // Log when we have a pending action but can't dispatch (for debugging)
+        static FILE* waitLog = nullptr;
+        static int waitCount = 0;
+        if (!safeToIntercept && waitCount < 50) {
+            if (!waitLog) waitLog = fopen("/tmp/action_wait.log", "w");
+            if (waitLog) {
+                waitCount++;
+                fprintf(waitLog, "[WAIT #%d] Can't dispatch on #%s, waiting...\n", waitCount, origSelStr.c_str());
+                fflush(waitLog);
+            }
+        }
+
+        if (safeToIntercept) {
+            // Log the dispatch
+            static FILE* dispatchLog = nullptr;
+            if (!dispatchLog) dispatchLog = fopen("/tmp/action_dispatch.log", "w");
+            if (dispatchLog) {
+                fprintf(dispatchLog, "[DISPATCH] Intercepting #%s to dispatch pending action\n", origSelStr.c_str());
+                fflush(dispatchLog);
+            }
+
+            // Get action details before clearing
+            Oop actionSel = pendingMenuAction_.selector;
+            Oop actionRcvr = pendingMenuAction_.receiver;
+            Oop actionArg = pendingMenuAction_.argument;
+            int actionArgCount = pendingMenuAction_.argCount;
+
+            // Clear pending immediately to prevent re-entry
+            pendingMenuAction_.pending = false;
+            pendingMenuAction_.selector = Oop::nil();
+            pendingMenuAction_.receiver = Oop::nil();
+            pendingMenuAction_.argument = Oop::nil();
+            pendingMenuAction_.argCount = 0;
+
+            // Pop the original send's args + receiver
+            popN(argCount + 1);
+
+            // Push the action's receiver and arg
+            push(actionRcvr);
+            if (actionArgCount > 0 && !actionArg.isNil()) {
+                push(actionArg);
+            }
+
+            if (dispatchLog) {
+                fprintf(dispatchLog, "[DISPATCH] Now sending action with %d args\n", actionArgCount);
+                fflush(dispatchLog);
+            }
+
+            // Replace selector and argCount for the action
+            selector = actionSel;
+            argCount = actionArgCount;
+            // Fall through to normal send processing with the action's selector
+        }
+    }
+
     // Recursion detection - break infinite recursion patterns
     // Compare by string content since same symbol may have different Oops
     static std::string lastSelStr;
@@ -4685,6 +4787,25 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 // After a few idle cycles, try to auto-load the driver
                 static int idleCycles = 0;
                 ++idleCycles;
+
+                // Log to trace pendingMenuAction state during idle
+                static FILE* idleTraceLog = nullptr;
+                if (!idleTraceLog) {
+                    idleTraceLog = fopen("/tmp/idle_trace.log", "w");
+                }
+                if (idleTraceLog && (idleCycles <= 20 || pendingMenuAction_.pending)) {
+                    fprintf(idleTraceLog, "[IDLE #%d] relinquishProcessor called, pendingMenuAction_.pending=%d\n",
+                            idleCycles, pendingMenuAction_.pending ? 1 : 0);
+                    if (pendingMenuAction_.pending && pendingMenuAction_.selector.isObject()) {
+                        ObjectHeader* selHdr = pendingMenuAction_.selector.asObjectPtr();
+                        if (selHdr->isBytesObject() && selHdr->byteSize() < 100) {
+                            std::string pendingSelName((char*)selHdr->bytes(), selHdr->byteSize());
+                            fprintf(idleTraceLog, "[IDLE #%d] Pending selector: '%s'\n", idleCycles, pendingSelName.c_str());
+                        }
+                    }
+                    fflush(idleTraceLog);
+                }
+
                 if (idleCycles == 1) {
                     std::cerr << "[IDLE] First relinquish call\n";
                 }
