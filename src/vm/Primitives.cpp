@@ -5050,12 +5050,39 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
     int64_t index = indexOop.asSmallInteger();
 
     // VM attributes (simplified set)
-    // Negative indices are command line args, positive are VM info
+    // Indices 0-2 are VM/image paths
+    // Index 3+ are command line arguments (Smalltalk argumentAt: i uses index 2+i)
+    //
+    // We fake --interactive at index 3 so OSWorldRenderer gets selected
+    // instead of NullWorldRenderer. This enables the standard Pharo GUI.
     switch (index) {
-        case 0:  // VM path (not available, fail)
-            return PrimitiveResult::Failure;
-        case 1:  // Image path (not available, fail)
-            return PrimitiveResult::Failure;
+        case 0:  // VM path
+            {
+                Oop str = memory_.createString("iospharo");
+                pop();
+                push(str);
+                return PrimitiveResult::Success;
+            }
+        case 1:  // Image path (document path)
+            pop();
+            push(Oop::nil());
+            return PrimitiveResult::Success;
+        case 2:  // Image path (second form)
+            pop();
+            push(Oop::nil());
+            return PrimitiveResult::Success;
+        case 3:  // First command line argument - fake --interactive!
+            {
+                // This triggers OSWorldRenderer.isApplicableFor: to return true
+                Oop str = memory_.createString("--interactive");
+                pop();
+                push(str);
+                return PrimitiveResult::Success;
+            }
+        case 4:  // No more arguments
+            pop();
+            push(Oop::nil());
+            return PrimitiveResult::Success;
         case 1001:  // VM version string - return nil for now
             pop();
             push(Oop::nil());
