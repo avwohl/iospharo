@@ -1802,9 +1802,24 @@ void Interpreter::processInputEvents() {
                 }
                 continue;  // Consumed by menu bar
             } else {
-                // Clicked outside menu areas - pass through to Pharo
-                // Let the Pharo image handle all world clicks (including right-click world menu)
-                // The image's InputEventSensor/HandMorph/WorldMorph will process these normally
+                // Clicked outside menu areas
+                int buttons = event.arg3;
+
+                // Yellow button (right-click) = world menu
+                // Handle directly because InputEventSensor isn't running to process events
+                if (buttons == 2) {  // Yellow button = world menu
+                    if (logFile) {
+                        fprintf(logFile, "[WORLD-CLICK] Yellow button at %d,%d - showing world menu\n",
+                                x, y);
+                        fflush(logFile);
+                    }
+                    showWorldMenu(x, y);
+                    continue;
+                }
+
+                // Other clicks - pass through to Pharo
+                // Note: InputEventSensor isn't running, so these won't be processed
+                // but we queue them anyway in case it starts
                 if (logFile) {
                     fprintf(logFile, "[PASSTHROUGH] mouse down buttons=%d at %d,%d -> to Pharo\n",
                             event.arg3, event.arg1, event.arg2);
