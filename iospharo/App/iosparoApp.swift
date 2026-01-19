@@ -214,7 +214,9 @@ enum NSEventMonitorSwift {
                 lastPolledPosition = windowPosition
             }
 
-            // Detect button press/release
+            // Detect button press/release (re-enabled - GCMouse handlers don't work reliably in Mac Catalyst)
+            // NSEvent monitor is disabled because it has wrong coordinate conversion.
+            // CGEvent polling is the ONLY reliable button event source on Mac Catalyst.
             if leftDown && !wasLeftButtonDown {
                 // Left button just pressed
                 if let file = pollLogFile {
@@ -244,7 +246,8 @@ enum NSEventMonitorSwift {
                 }
                 DispatchQueue.main.async {
                     PharoBridge.shared.sendMouseMoved(to: windowPosition, modifiers: 0)
-                    PharoBridge.shared.sendTouchDown(at: windowPosition, buttons: IOS_BLUE_BUTTON)
+                    // Use YELLOW (2) for right-click to trigger world menu
+                    PharoBridge.shared.sendTouchDown(at: windowPosition, buttons: IOS_YELLOW_BUTTON)
                 }
             } else if !rightDown && wasRightButtonDown {
                 // Right button just released
@@ -327,8 +330,10 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         // Swizzle UIApplication.sendEvent to intercept all events (backup)
         ApplicationSwizzler.swizzleSendEvent()
         setupMouseHandling()
-        // Install NSEvent monitor using Objective-C helper (may not work in Mac Catalyst)
-        NSEventMonitorSwift.installMonitor()
+        // NSEvent monitor DISABLED - it receives screen coordinates but doesn't convert to window-local,
+        // causing events with wrong x/y offsets that trigger menu bar clicks from bottom-screen clicks.
+        // CGEvent polling handles mouse events correctly with proper coordinate conversion.
+        // NSEventMonitorSwift.installMonitor()
         // Start CGEvent-based mouse polling (workaround for Mac Catalyst)
         NSEventMonitorSwift.startMousePolling()
         // Start activation monitoring (for debugging)
