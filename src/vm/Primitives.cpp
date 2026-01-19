@@ -5677,29 +5677,16 @@ PrimitiveResult Interpreter::primitiveMarkUnwindMethod(int argCount) {
     return PrimitiveResult::Success;
 }
 
-// Primitive 188: Find a handler context for an exception
-// Walks the sender chain looking for a context that handles the given exception
+// Primitive 197: Find handler/signaling context
+// Searches up the sender chain for the next context marked as a handler
+// The reference implementation searches for methods with primitive 199 (mark handler)
 PrimitiveResult Interpreter::primitiveFindHandlerContext(int argCount) {
-    // Arguments: exception class to handle
-    // Receiver: context to start searching from
-
-    Oop exceptionClass = stackValue(0);
-    Oop startContext = stackValue(1);
-
-    if (!startContext.isObject()) {
-        return PrimitiveResult::Failure;
-    }
-
-    // Walk the sender chain looking for handler contexts
-    // In Smalltalk, handler contexts are identified by:
-    // 1. Being an activation of on:do: or similar
-    // 2. Having the exception class match
-
-    // For now, return nil to indicate no handler found
-    // The Smalltalk code will fall back to its own implementation
-    popN(2);
-    push(Oop::nil());
-    return PrimitiveResult::Success;
+    (void)argCount;
+    // This primitive requires walking the context chain and checking for
+    // contexts that were marked as handlers (via primitive 199).
+    // For now, return failure to let the Smalltalk fallback code execute.
+    // The Smalltalk implementation will walk the sender chain itself.
+    return PrimitiveResult::Failure;
 }
 
 // Primitive 189: Find the next unwind context up to a limit
