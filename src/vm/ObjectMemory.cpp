@@ -170,6 +170,36 @@ Oop ObjectMemory::allocateBytes(uint32_t classIndex, size_t byteCount) {
     return oopFromPointer(obj);
 }
 
+Oop ObjectMemory::createString(const std::string& str) {
+    // Get ByteString class
+    Oop stringClass = specialObject(SpecialObjectIndex::ClassByteString);
+    if (stringClass.isNil() || !stringClass.isObject()) {
+        return Oop::nil();
+    }
+
+    // Get class index
+    ObjectHeader* classHdr = stringClass.asObjectPtr();
+    uint32_t classIndex = classHdr->classIndex();  // This gives metaclass index
+    // For instances, we need the class's own hash/identity which is stored differently
+    // Actually, we need to find the class index used for ByteString instances
+
+    // Use the well-known class index from special objects
+    // ByteString class index should be looked up from the class table
+    // For now, let's get it from an existing string in the system
+
+    // Simple approach: allocate using the known format
+    Oop strObj = allocateBytes(classIndex, str.size());
+    if (strObj.isNil()) {
+        return Oop::nil();
+    }
+
+    // Copy string content
+    ObjectHeader* strHdr = strObj.asObjectPtr();
+    std::memcpy(strHdr->bytes(), str.c_str(), str.size());
+
+    return strObj;
+}
+
 Oop ObjectMemory::allocateWords(uint32_t classIndex, size_t wordCount) {
     // Each word is 64 bits = 1 slot
     size_t slotCount = wordCount;

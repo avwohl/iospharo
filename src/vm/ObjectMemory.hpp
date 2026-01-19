@@ -123,6 +123,9 @@ public:
     /// Returns nil if allocation fails.
     Oop allocateBytes(uint32_t classIndex, size_t byteCount);
 
+    /// Create a ByteString from a C++ string
+    Oop createString(const std::string& str);
+
     /// Allocate a word object (64-bit indexable).
     /// Returns nil if allocation fails.
     Oop allocateWords(uint32_t classIndex, size_t wordCount);

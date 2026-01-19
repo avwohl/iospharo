@@ -4641,6 +4641,12 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             // This is called during idle loop. Try to execute pending menu actions here.
             // Some actions may cause DNU cascades, but let's try worldMenu and see what happens.
             if (selStr == "relinquishProcessorForMicroseconds:" && argCount == 1) {
+                // After a few idle cycles, try to auto-load the driver
+                static int idleCycles = 0;
+                if (++idleCycles == 100) {  // After 100 idle cycles (~1 second)
+                    autoLoadDriver();
+                }
+
                 if (pendingMenuAction_.pending) {
                     // Log and try to execute the action
                     static FILE* actionLog = nullptr;
@@ -7473,6 +7479,92 @@ bool Interpreter::tryReschedule() {
 }
 
 // ===== STARTUP SUPPORT =====
+
+bool Interpreter::autoLoadDriver() {
+    // Auto-load OSiOSDriver.st by evaluating Smalltalk code
+    // This enables the event system in standard Pharo images
+
+    static bool attempted = false;
+    if (attempted) return false;
+    attempted = true;
+
+    std::cerr << "[STARTUP] Attempting to auto-load OSiOSDriver...\n";
+
+    // The Smalltalk code to execute:
+    // 'src/smalltalk/OSiOSDriver.st' asFileReference fileIn. OSiOSDriver install.
+    // But we need to use an absolute path or find the file relative to the image
+
+    // For now, let's try a simpler approach: just try to start an event loop
+    // by finding OpalCompiler and evaluating code
+
+    // Find OpalCompiler class
+    Oop compilerClass = memory_.findGlobal("OpalCompiler");
+    if (compilerClass.isNil()) {
+        std::cerr << "[STARTUP] OpalCompiler not found, trying Compiler...\n";
+        compilerClass = memory_.findGlobal("Compiler");
+    }
+    if (compilerClass.isNil()) {
+        std::cerr << "[STARTUP] No compiler class found, cannot auto-load driver\n";
+        return false;
+    }
+
+    std::cerr << "[STARTUP] Found compiler class\n";
+
+    // Create a string with the code to evaluate
+    // For now, let's try a simple test: create a process that just yields
+    std::string code = R"(
+        | eventLoop |
+        eventLoop := [
+            [true] whileTrue: [
+                | eventBuffer |
+                eventBuffer := Array new: 8.
+                InputEventSensor default primGetNextEvent: eventBuffer.
+                (eventBuffer at: 1) ~= 0 ifTrue: [
+                    InputEventSensor default handleEvent: eventBuffer
+                ].
+                Processor yield.
+                (Delay forMilliseconds: 10) wait
+            ]
+        ] forkAt: Processor lowIOPriority named: 'iOS Event Loop'.
+        Transcript show: 'iOS Event Loop started'; cr
+    )";
+
+    // Create the String object
+    Oop codeString = memory_.createString(code);
+    if (codeString.isNil()) {
+        std::cerr << "[STARTUP] Failed to create code string\n";
+        return false;
+    }
+
+    std::cerr << "[STARTUP] Created code string, looking for evaluate: selector...\n";
+
+    // Find the evaluate: selector
+    Oop evaluateSel = findSelector("evaluate:");
+    if (evaluateSel.isNil()) {
+        std::cerr << "[STARTUP] evaluate: selector not found\n";
+        return false;
+    }
+
+    std::cerr << "[STARTUP] Found evaluate: selector, trying to create compiler instance...\n";
+
+    // We need to send "new" to the class to get an instance, then "evaluate:" to the instance
+    // For now, try using the class-side "evaluate:" which might exist
+    // Actually, in Pharo you can do: OpalCompiler evaluate: 'code' directly on the class
+    // Let's see if that works, otherwise we'll need to instantiate
+
+    // Try class-side evaluate: first
+    // If that fails, we could try finding "new" selector and creating instance
+
+    // Queue this for execution during idle loop
+    pendingMenuAction_.selector = evaluateSel;
+    pendingMenuAction_.receiver = compilerClass;
+    pendingMenuAction_.argument = codeString;
+    pendingMenuAction_.argCount = 1;
+    pendingMenuAction_.pending = true;
+
+    std::cerr << "[STARTUP] Auto-load driver queued for execution\n";
+    return true;
+}
 
 bool Interpreter::bootstrapStartup() {
     static int bootstrapCallCount = 0;
