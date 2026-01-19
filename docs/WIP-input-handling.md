@@ -36,6 +36,15 @@ Currently using **Option C** - direct C++ handling works for basic interactions.
 
 3. **Menu bar** - Handled entirely in C++ (native rendering), doesn't need Pharo event system
 
+4. **World menu (right-click)** - Shows a placeholder menu on right-click:
+   - Right-click on window or background triggers showWorldMenu()
+   - Draws a white placeholder box (200x180) with fake menu items
+   - Finds `worldMenu` selector and queues dispatch via pendingMenuAction_
+   - Action is dispatched in relinquishProcessorForMicroseconds interception
+   - But the real WorldMenu construction hits DNUs (menuSpec, do:, etc.) because
+     Morphic's menu building infrastructure expects a running event loop
+   - Placeholder provides visible feedback that right-click is detected
+
 **Key insight:** Message sends from C++ to Pharo cause DNU cascades because the normal
 Morphic context isn't active. Direct slot manipulation (write to object memory) works
 because it bypasses message dispatch entirely.
