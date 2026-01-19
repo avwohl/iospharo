@@ -2125,10 +2125,10 @@ void Interpreter::handleWorldClick(int x, int y, int buttons) {
         fflush(clickLog);
     }
 
-    // Right-click (yellow button = 4) on World background should show World menu
-    if (buttons & 4) {
-        showWorldMenu(x, y);
-    }
+    // World menu (right-click) is disabled for now.
+    // It requires proper Pharo event dispatch which isn't fully working yet.
+    // The top menu bar is the primary way to access functionality.
+    // TODO: Re-enable when event dispatch to Pharo is working
 }
 
 void Interpreter::showWorldMenu(int x, int y) {
