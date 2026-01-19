@@ -55,6 +55,11 @@ class PharoNSView: NSView {
 
     override var acceptsFirstResponder: Bool { true }
 
+    // Prevent system context menu from intercepting right-clicks
+    override func menu(for event: NSEvent) -> NSMenu? {
+        return nil  // Let rightMouseDown handle right-clicks
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         guard let context = NSGraphicsContext.current?.cgContext,
               let vmController = vmController,

@@ -1802,17 +1802,14 @@ void Interpreter::processInputEvents() {
                 }
                 continue;  // Consumed by menu bar
             } else {
-                // Clicked outside menu areas
-                // Don't close menu on mouse DOWN - wait for mouse UP to avoid
-                // premature closing from queued events. This matches standard menu behavior.
-                // Click outside menu areas - handle directly via handleWorldClick
+                // Clicked outside menu areas - pass through to Pharo
+                // Let the Pharo image handle all world clicks (including right-click world menu)
+                // The image's InputEventSensor/HandMorph/WorldMorph will process these normally
                 if (logFile) {
-                    fprintf(logFile, "[WORLD-CLICK] mouse down buttons=%d at %d,%d (menu stays open)\n",
+                    fprintf(logFile, "[PASSTHROUGH] mouse down buttons=%d at %d,%d -> to Pharo\n",
                             event.arg3, event.arg1, event.arg2);
                     fflush(logFile);
                 }
-                handleWorldClick(x, y, event.arg3);
-                // Also queue for primitive 264 in case InputEventSensor ever starts
                 passThroughEvents_.push_back(event);
                 continue;
             }
