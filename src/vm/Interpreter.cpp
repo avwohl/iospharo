@@ -28,6 +28,9 @@ namespace pharo {
 // Global flag to trace sends after primitive 264 completes
 int g_traceSendsAfterPrim264 = 0;
 
+// DEBUG: Global atomic to test cross-thread visibility
+std::atomic<bool> g_debugPendingFlag{false};
+
 // ===== CONSTRUCTION =====
 
 Interpreter::Interpreter(ObjectMemory& memory)
@@ -1852,7 +1855,19 @@ void Interpreter::dispatchEventsToMorphic() {
 
     // IMPORTANT: Don't overwrite a pending action (like showWorldMenu's OpalCompiler evaluate:)
     // The world menu and other actions take priority over Sensor processEvents
-    if (pendingMenuAction_.pending) return;
+    // Use atomic load to properly see writes from heartbeat thread
+    bool isPending = pendingMenuAction_.pending.load(std::memory_order_seq_cst);
+    bool globalPending = g_debugPendingFlag.load(std::memory_order_seq_cst);
+    if (isPending || globalPending) {
+        // Log that we preserved the pending action
+        static int preserveCount = 0;
+        if (preserveCount < 5) {
+            preserveCount++;
+            std::cerr << "[DISPATCH-PRESERVE] member=" << isPending
+                      << " global=" << globalPending << "\n";
+        }
+        return;
+    }
 
     static FILE* dispatchLog = nullptr;
     if (!dispatchLog) {
@@ -2426,6 +2441,10 @@ void Interpreter::showWorldMenu(int x, int y) {
                         pendingMenuAction_.argument = codeString;
                         pendingMenuAction_.argCount = 1;
                         pendingMenuAction_.pending.store(true, std::memory_order_seq_cst);
+                        g_debugPendingFlag.store(true, std::memory_order_seq_cst);  // Also set global
+                        // STDERR for immediate output
+                        std::cerr << "[MENU-SET] pending=1, global=1 at this=" << (void*)this
+                                  << " &pending=" << (void*)&pendingMenuAction_.pending << "\n";
                         if (menuLog) {
                             bool actualValue = pendingMenuAction_.pending.load(std::memory_order_seq_cst);
                             fprintf(menuLog, "[WORLD-MENU] Queued: '%s' for dispatch during idle (pending=%d, this=%p, &pending=%p)\n",
@@ -3024,6 +3043,15 @@ void Interpreter::interpret() {
 
     int loopCount = 0;
     while (running_) {
+        // Debug: log main loop iterations
+        if (loopCount % 50000 == 0) {
+            bool isPending = pendingMenuAction_.pending.load(std::memory_order_seq_cst);
+            bool globalPending = g_debugPendingFlag.load(std::memory_order_seq_cst);
+            std::cerr << "[MAIN-LOOP] #" << loopCount
+                      << " member=" << isPending << " global=" << globalPending << "\n";
+        }
+        loopCount++;
+
         // Process any pending external semaphore signals
         if (hasPendingSignals()) {
             processPendingSignals();
@@ -3033,22 +3061,20 @@ void Interpreter::interpret() {
         checkTimerSemaphore();
 
         // Periodically process input events and dispatch to Morphic
-        if (++loopCount % 100 == 0) {
-            bool wasPending = pendingMenuAction_.pending;
-            processInputEvents();
-            dispatchEventsToMorphic();
-            // Log if pending changed
-            if (pendingMenuAction_.pending != wasPending) {
-                static FILE* pendingLog = nullptr;
-                static int pendingCount = 0;
-                if (!pendingLog) pendingLog = fopen("/tmp/pending_trace.log", "w");
-                if (pendingLog && pendingCount < 100) {
-                    pendingCount++;
-                    fprintf(pendingLog, "[PENDING #%d] Changed from %d to %d at loop %d\n",
-                            pendingCount, wasPending ? 1 : 0, pendingMenuAction_.pending ? 1 : 0, loopCount);
-                    fflush(pendingLog);
+        if (loopCount % 100 == 0) {
+            bool memberPending = pendingMenuAction_.pending.load(std::memory_order_seq_cst);
+            bool globalPending = g_debugPendingFlag.load(std::memory_order_seq_cst);
+            // Log if global flag is true - this is our main thread seeing the heartbeat's write
+            if (globalPending) {
+                static int sawCount = 0;
+                if (sawCount < 10) {
+                    sawCount++;
+                    std::cerr << "[MAIN-SEE] Saw global=1 at loop #" << loopCount
+                              << " member=" << memberPending << "\n";
                 }
             }
+            processInputEvents();
+            dispatchEventsToMorphic();
         }
 
         // Note: Pending menu actions are handled by doOneCycleFor: interception,
@@ -4854,6 +4880,19 @@ extern int g_traceSendsAfterPrim264;
                 ++doInterCycleWaitCount;
                 // Use explicit atomic load with sequential consistency to see writes from other threads
                 bool isPending = pendingMenuAction_.pending.load(std::memory_order_seq_cst);
+                bool globalPending = g_debugPendingFlag.load(std::memory_order_seq_cst);
+                // Log periodic counts to see if calls continue after menu set
+                if (doInterCycleWaitCount % 1000 == 0) {
+                    std::cerr << "[IDLE-COUNT] #" << doInterCycleWaitCount
+                              << " member=" << isPending << " global=" << globalPending << "\n";
+                }
+                // STDERR output when pending=1 is finally seen
+                if (isPending || globalPending) {
+                    std::cerr << "[IDLE-CHECK] SAW member=" << isPending
+                              << " global=" << globalPending
+                              << " at #" << doInterCycleWaitCount
+                              << " this=" << (void*)this << "\n";
+                }
                 // Log only first 200 to reduce noise, plus any pending=1
                 static FILE* idleLog = nullptr;
                 if (!idleLog) {
@@ -5305,25 +5344,34 @@ extern int g_traceSendsAfterPrim264;
                                 // Render World's morphs directly to the display surface
                                 renderWorldMorphs();
 
-                                // Debug - verify we reach here (use different filename to avoid conflicts)
-                                static FILE* cycleLog = nullptr;
+                                // Debug - verify we reach here
                                 static int cycleCount = 0;
-                                if (!cycleLog) {
-                                    cycleLog = fopen("/tmp/intercept_cycle.log", "w");
-                                }
-                                if (cycleLog && cycleCount < 100) {
-                                    fprintf(cycleLog, "[CYCLE] #%d pendingMenuAction=%d\n",
-                                            ++cycleCount, pendingMenuAction_.pending ? 1 : 0);
-                                    fflush(cycleLog);
+                                ++cycleCount;
+                                bool memberPending = pendingMenuAction_.pending.load(std::memory_order_seq_cst);
+                                bool globalPending = g_debugPendingFlag.load(std::memory_order_seq_cst);
+                                // Log when global flag is set (indicating world menu was queued)
+                                if (globalPending) {
+                                    static int sawGlobal = 0;
+                                    if (sawGlobal < 10) {
+                                        sawGlobal++;
+                                        std::cerr << "[CYCLE-PENDING] doOneCycleFor: #" << cycleCount
+                                                  << " member=" << memberPending
+                                                  << " global=" << globalPending << "\n";
+                                    }
                                 }
 
                                 // Execute pending menu action if any
-                                if (pendingMenuAction_.pending) {
+                                // Check both member AND global to ensure we see the flag
+                                if (memberPending || globalPending) {
+                                    std::cerr << "[CYCLE-DISPATCH] Dispatching at #" << cycleCount
+                                              << " member=" << memberPending
+                                              << " global=" << globalPending << "\n";
                                     Oop actionSel = pendingMenuAction_.selector;
                                     Oop actionRcvr = pendingMenuAction_.receiver;
                                     Oop actionArg = pendingMenuAction_.argument;
                                     int actionArgCount = pendingMenuAction_.argCount;
-                                    pendingMenuAction_.pending = false;
+                                    pendingMenuAction_.pending.store(false, std::memory_order_seq_cst);
+                                    g_debugPendingFlag.store(false, std::memory_order_seq_cst);  // Clear global too
                                     pendingMenuAction_.selector = Oop::nil();
                                     pendingMenuAction_.receiver = Oop::nil();
                                     pendingMenuAction_.argument = Oop::nil();
