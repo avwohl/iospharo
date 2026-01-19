@@ -4483,8 +4483,8 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         ObjectHeader* selHdr = selector.asObjectPtr();
         if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
             selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-            // Log first few sends to see what selectors are being called
-            if (++totalSends <= 20 || selStr.find("relinquish") != std::string::npos) {
+            // Reduced send logging - only first 20 and specific selectors
+            if (++totalSends <= 20) {
                 std::cerr << "[SEND #" << totalSends << "] " << selStr << " args=" << argCount << "\n";
             }
         }
@@ -7577,8 +7577,10 @@ bool Interpreter::autoLoadDriver() {
         return false;
     }
 
-    // Simple test - just fork a simple loop
-    std::string code = "[ 1 to: 100 do: [:i | Processor yield ] ] fork";
+    // Load OSiOSDriver.st - this sets up the event loop for iOS
+    // Note: OpalCompiler successfully compiles code but evaluateDoIt: doesn't
+    // seem to execute it. This needs further investigation.
+    std::string code = "'/Users/wohl/src/iospharo/src/smalltalk/OSiOSDriver.st' asFileReference fileIn. OSiOSDriver install";
     Oop codeString = memory_.createString(code);
     if (codeString.isNil()) {
         std::cerr << "[STARTUP] Failed to create code string\n";
