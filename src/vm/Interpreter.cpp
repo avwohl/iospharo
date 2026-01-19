@@ -2425,9 +2425,12 @@ void Interpreter::showWorldMenu(int x, int y) {
                         pendingMenuAction_.receiver = compilerClass;
                         pendingMenuAction_.argument = codeString;
                         pendingMenuAction_.argCount = 1;
-                        pendingMenuAction_.pending = true;
+                        pendingMenuAction_.pending.store(true, std::memory_order_seq_cst);
                         if (menuLog) {
-                            fprintf(menuLog, "[WORLD-MENU] Queued: '%s' for dispatch during idle\n", code.c_str());
+                            bool actualValue = pendingMenuAction_.pending.load(std::memory_order_seq_cst);
+                            fprintf(menuLog, "[WORLD-MENU] Queued: '%s' for dispatch during idle (pending=%d, this=%p, &pending=%p)\n",
+                                    code.c_str(), actualValue ? 1 : 0, (void*)this,
+                                    (void*)&pendingMenuAction_.pending);
                             fflush(menuLog);
                         }
                     } else {
@@ -3031,8 +3034,21 @@ void Interpreter::interpret() {
 
         // Periodically process input events and dispatch to Morphic
         if (++loopCount % 100 == 0) {
+            bool wasPending = pendingMenuAction_.pending;
             processInputEvents();
             dispatchEventsToMorphic();
+            // Log if pending changed
+            if (pendingMenuAction_.pending != wasPending) {
+                static FILE* pendingLog = nullptr;
+                static int pendingCount = 0;
+                if (!pendingLog) pendingLog = fopen("/tmp/pending_trace.log", "w");
+                if (pendingLog && pendingCount < 100) {
+                    pendingCount++;
+                    fprintf(pendingLog, "[PENDING #%d] Changed from %d to %d at loop %d\n",
+                            pendingCount, wasPending ? 1 : 0, pendingMenuAction_.pending ? 1 : 0, loopCount);
+                    fflush(pendingLog);
+                }
+            }
         }
 
         // Note: Pending menu actions are handled by doOneCycleFor: interception,
@@ -4833,8 +4849,25 @@ extern int g_traceSendsAfterPrim264;
             // MorphicRenderLoop sends this during idle, may not exist in all images.
             // This is where we dispatch pending menu actions.
             if (selStr == "doInterCycleWait" && argCount == 0) {
+                // Log every time we enter this handler (limit to first 100)
+                static int doInterCycleWaitCount = 0;
+                ++doInterCycleWaitCount;
+                // Use explicit atomic load with sequential consistency to see writes from other threads
+                bool isPending = pendingMenuAction_.pending.load(std::memory_order_seq_cst);
+                // Log only first 200 to reduce noise, plus any pending=1
+                static FILE* idleLog = nullptr;
+                if (!idleLog) {
+                    idleLog = fopen("/tmp/idle_dispatch.log", "w");
+                }
+                if (idleLog && (doInterCycleWaitCount <= 200 || isPending)) {
+                    fprintf(idleLog, "[IDLE #%d] pending=%d, this=%p, &pending=%p\n",
+                            doInterCycleWaitCount, isPending ? 1 : 0, (void*)this,
+                            (void*)&pendingMenuAction_.pending);
+                    fflush(idleLog);
+                }
+
                 // Check for pending menu action
-                if (pendingMenuAction_.pending) {
+                if (isPending) {
                     static FILE* actionLog = nullptr;
                     static int actionCount = 0;
                     if (!actionLog) {

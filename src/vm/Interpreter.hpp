@@ -366,12 +366,13 @@ private:
     bool hasVisibleMenu_ = false;
 
     // Pending menu action (queued for safe execution)
+    // Note: pending is atomic because it's set from heartbeat thread and read from main thread
     struct PendingMenuAction {
         Oop selector = Oop::nil();
         Oop receiver = Oop::nil();
         Oop argument = Oop::nil();  // Optional argument for value: or cull:
         int argCount = 0;           // 0 for value, 1 for value:
-        bool pending = false;
+        std::atomic<bool> pending{false};  // Atomic for thread safety
         bool executeFromSync = false;  // Flag to execute from interpret loop
 
         // For chained calls (e.g., OpalCompiler new >> evaluate:)
