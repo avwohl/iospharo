@@ -2324,6 +2324,52 @@ void Interpreter::showWorldMenu(int x, int y) {
                 x, y, menuWidth, menuHeight);
         fflush(menuLog);
     }
+
+    // Try to trigger the real World menu by sending a message to World
+    // In Pharo 10+, WorldMorph has various menu methods
+    // (reuse the 'world' variable from earlier in this function)
+    if (!world.isNil() && world.isObject()) {
+        // Try to find selectors for showing the world menu
+        // Different Pharo versions use different methods:
+        // - doShowWorldMenu (some versions)
+        // - invokeWorldMenu: (takes event)
+        // - worldMenu (returns the menu)
+
+        // First try: showWorldMainInlineMenu (Pharo 10+ Spec2)
+        Oop showMenuSel = findSelector("showWorldMainInlineMenu");
+        if (showMenuSel.isNil()) {
+            showMenuSel = findSelector("doShowWorldMenu");
+        }
+        if (showMenuSel.isNil()) {
+            showMenuSel = findSelector("worldMenu");
+        }
+        if (showMenuSel.isNil()) {
+            showMenuSel = findSelector("openMenu");
+        }
+
+        if (!showMenuSel.isNil()) {
+            if (menuLog) {
+                ObjectHeader* selHdr = showMenuSel.asObjectPtr();
+                std::string selName = selHdr->isBytesObject() ?
+                    std::string((char*)selHdr->bytes(), selHdr->byteSize()) : "?";
+                fprintf(menuLog, "[WORLD-MENU] Found selector: %s, queueing message to World\n",
+                        selName.c_str());
+                fflush(menuLog);
+            }
+
+            // Queue the message to be sent during the idle loop
+            pendingMenuAction_.selector = showMenuSel;
+            pendingMenuAction_.receiver = world;
+            pendingMenuAction_.argument = Oop::nil();
+            pendingMenuAction_.argCount = 0;
+            pendingMenuAction_.pending = true;
+        } else {
+            if (menuLog) {
+                fprintf(menuLog, "[WORLD-MENU] No suitable world menu selector found\n");
+                fflush(menuLog);
+            }
+        }
+    }
 }
 
 void Interpreter::drawClickIndicator(int x, int y, int buttons) {
