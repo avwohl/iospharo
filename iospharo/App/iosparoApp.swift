@@ -431,7 +431,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             }
         }
 
-        // Right button (blue button in Pharo = menu)
+        // Right button (yellow button in Pharo = world menu)
         input.rightButton?.pressedChangedHandler = { [weak self] button, value, pressed in
             let pos = MouseEventHandler.shared.lastPosition
             if let file = fopen("/tmp/gcmouse.log", "a") {
@@ -439,11 +439,11 @@ class AppDelegate: NSObject, UIApplicationDelegate {
                 fclose(file)
             }
 
-            // Forward to Pharo VM (blue button = 1)
+            // Forward to Pharo VM (yellow button = 2 = world menu)
             DispatchQueue.main.async {
                 if pressed {
                     PharoBridge.shared.sendMouseMoved(to: pos, modifiers: 0)
-                    PharoBridge.shared.sendTouchDown(at: pos, buttons: 1)  // Blue button
+                    PharoBridge.shared.sendTouchDown(at: pos, buttons: 2)  // Yellow button = world menu
                 } else {
                     PharoBridge.shared.sendTouchUp(at: pos)
                 }
