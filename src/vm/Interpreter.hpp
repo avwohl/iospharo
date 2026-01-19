@@ -310,6 +310,8 @@ private:
     // Execution control
     bool running_;
     bool primitiveFailed_;
+    bool inDispatchedAction_ = false;  // True when executing a dispatched menu action
+    int dispatchedActionFrameDepth_ = 0;  // Frame depth when dispatch started
     int lastPrimitiveIndex_ = 0;  // For stepDetailed() tracking
 
     // System paths
@@ -1336,8 +1338,9 @@ private:
     PrimitiveResult primitiveIsWords(int argCount);              // 15 (part of)
     PrimitiveResult primitiveIsPointers(int argCount);           // 15 (part of)
 
-    // String hash primitive
-    PrimitiveResult primitiveStringHash(int argCount);           // 146
+    // String hash primitives
+    PrimitiveResult primitiveStringHash(int argCount);           // not in standard table
+    PrimitiveResult primitiveStringHashInitialHash(int argCount); // 146 - stringHash:initialHash:
 
     // Class name primitive
     PrimitiveResult primitiveClassName(int argCount);            // 514

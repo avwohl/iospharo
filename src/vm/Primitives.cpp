@@ -6435,6 +6435,107 @@ PrimitiveResult Interpreter::primitiveStringHash(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// Primitive 146: String class >> stringHash:initialHash:
+// Computes hash of a string with an initial hash value
+// Arguments: receiver (String class), aString, initialHash
+PrimitiveResult Interpreter::primitiveStringHashInitialHash(int argCount) {
+    static FILE* prim146Log = nullptr;
+    static int callCount = 0;
+    if (!prim146Log) prim146Log = fopen("/tmp/prim146.log", "w");
+
+    callCount++;
+    if (prim146Log && callCount <= 20) {
+        fprintf(prim146Log, "[PRIM146 #%d] called with argCount=%d\n", callCount, argCount);
+        fflush(prim146Log);
+    }
+
+    if (argCount != 2) {
+        if (prim146Log && callCount <= 20) {
+            fprintf(prim146Log, "[PRIM146 #%d] FAIL: argCount != 2\n", callCount);
+            fflush(prim146Log);
+        }
+        return PrimitiveResult::Failure;
+    }
+
+    // Stack: receiver (class), aString, initialHash
+    Oop initialHashOop = stackValue(0);  // top
+    Oop stringOop = stackValue(1);
+
+    if (prim146Log && callCount <= 20) {
+        fprintf(prim146Log, "[PRIM146 #%d] initialHash=0x%llx isSmallInt=%d, string=0x%llx isObj=%d\n",
+                callCount,
+                (unsigned long long)initialHashOop.rawBits(), initialHashOop.isSmallInteger() ? 1 : 0,
+                (unsigned long long)stringOop.rawBits(), stringOop.isObject() ? 1 : 0);
+        fflush(prim146Log);
+    }
+
+    // Initial hash must be a SmallInteger
+    if (!initialHashOop.isSmallInteger()) {
+        if (prim146Log && callCount <= 20) {
+            fprintf(prim146Log, "[PRIM146 #%d] FAIL: initialHash not SmallInteger\n", callCount);
+            fflush(prim146Log);
+        }
+        return PrimitiveResult::Failure;
+    }
+    int64_t speciesHash = initialHashOop.asSmallInteger();
+
+    // String must be a byte object
+    if (!stringOop.isObject()) {
+        if (prim146Log && callCount <= 20) {
+            fprintf(prim146Log, "[PRIM146 #%d] FAIL: string not object\n", callCount);
+            fflush(prim146Log);
+        }
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* header = stringOop.asObjectPtr();
+    ObjectFormat fmt = header->format();
+
+    if (prim146Log && callCount <= 20) {
+        fprintf(prim146Log, "[PRIM146 #%d] string format=%d (need 16-23)\n", callCount, (int)fmt);
+        fflush(prim146Log);
+    }
+
+    // Must be a byte object (format 16-23)
+    if (fmt < ObjectFormat::Indexable8 || fmt > ObjectFormat::Indexable8_7) {
+        if (prim146Log && callCount <= 20) {
+            fprintf(prim146Log, "[PRIM146 #%d] FAIL: not byte object (format=%d)\n", callCount, (int)fmt);
+            fflush(prim146Log);
+        }
+        return PrimitiveResult::Failure;
+    }
+
+    size_t stringSize = memory_.byteSizeOf(stringOop);
+    uint8_t* bytes = reinterpret_cast<uint8_t*>(header + 1);
+
+    // Compute hash using Pharo's algorithm:
+    // hash := speciesHash bitAnd: 16rFFFFFFF.
+    // 1 to: stringSize do: [:pos |
+    //     hash := hash + (aString basicAt: pos).
+    //     low := hash bitAnd: 16383.
+    //     hash := (16384 * low) + (hash - low) bitShift: -14.
+    // ].
+    // ^ hash bitAnd: 16r0FFFFFFF
+
+    uint32_t hash = static_cast<uint32_t>(speciesHash & 0x0FFFFFFF);
+    for (size_t i = 0; i < stringSize; ++i) {
+        hash = hash + bytes[i];
+        uint32_t low = hash & 16383;
+        hash = (16384 * low) + ((hash - low) >> 14);
+    }
+    hash = hash & 0x0FFFFFFF;
+
+    if (prim146Log && callCount <= 20) {
+        fprintf(prim146Log, "[PRIM146 #%d] SUCCESS: hash=%u\n", callCount, hash);
+        fflush(prim146Log);
+    }
+
+    // Pop arguments and receiver (3 items), push result
+    popN(3);
+    push(Oop::fromSmallInteger(static_cast<int64_t>(hash)));
+    return PrimitiveResult::Success;
+}
+
 // ===== CLASS NAME PRIMITIVE =====
 
 // Primitive 514: Get the name of a class (as a Symbol or String)

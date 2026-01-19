@@ -3385,6 +3385,46 @@ ExecuteResult Interpreter::stepDetailed() {
 // ===== BYTECODE DISPATCH =====
 
 void Interpreter::dispatchBytecode(uint8_t bytecode) {
+    // Track bytecode execution during dispatch (separate counters per dispatch)
+    static FILE* bcLog = nullptr;
+    static int bcCount = 0;
+    static int dispatchNum = 0;
+    static bool wasInDispatch = false;
+
+    if (inDispatchedAction_) {
+        if (!wasInDispatch) {
+            // New dispatch started - reset counter and increment dispatch number
+            bcCount = 0;
+            dispatchNum++;
+            wasInDispatch = true;
+            if (!bcLog) bcLog = fopen("/tmp/bytecode_count.log", "a");
+            if (bcLog) {
+                fprintf(bcLog, "[DISPATCH #%d START] dispatchFrameDepth=%d\n",
+                        dispatchNum, dispatchedActionFrameDepth_);
+                fflush(bcLog);
+            }
+        }
+        bcCount++;
+        // Log at key milestones
+        if (bcCount == 1 || bcCount == 100 || bcCount == 500 || bcCount == 1000 ||
+            bcCount == 5000 || bcCount == 10000 || bcCount % 50000 == 0) {
+            if (bcLog) {
+                fprintf(bcLog, "[DISPATCH #%d BC #%d] bc=0x%02x fd=%d\n",
+                        dispatchNum, bcCount, bytecode, frameDepth_);
+                fflush(bcLog);
+            }
+        }
+    } else {
+        if (wasInDispatch) {
+            // Dispatch ended
+            if (bcLog) {
+                fprintf(bcLog, "[DISPATCH #%d END] Total bytecodes: %d\n", dispatchNum, bcCount);
+                fflush(bcLog);
+            }
+            wasInDispatch = false;
+        }
+    }
+
     // Sista V1 bytecode dispatch (used by Pharo 10+, format 68021 with modern compiler)
     // Key differences from V3PlusClosures:
     // - 0x10-0x1F: push literal var (not temp)
@@ -4132,6 +4172,10 @@ void Interpreter::returnValue(Oop value) {
                 push(actionArg);
             }
 
+            // Track that we're in a dispatched action (for context creation)
+            inDispatchedAction_ = true;
+            dispatchedActionFrameDepth_ = frameDepth_;
+
             // Send the message
             sendSelector(actionSel, actionArgCount);
             return;  // Let execution continue with the action
@@ -4304,7 +4348,19 @@ void Interpreter::arithmeticSend(int which) {
     static const int argCounts[] = {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
     int argCount = argCounts[which];
 
-    // std::cerr << "[ARITH-DEBUG] Entry: which=" << which << " SP=" << (stackPointer_ - stackBase_); // DEBUG
+    // Log arithmetic operations during dispatch
+    static FILE* arithLog = nullptr;
+    static int arithCount = 0;
+    if (inDispatchedAction_ && !arithLog) {
+        arithLog = fopen("/tmp/arithmetic.log", "w");
+    }
+    if (inDispatchedAction_ && arithLog && arithCount < 200) {
+        arithCount++;
+        static const char* opNames[] = {"+", "-", "<", ">", "<=", ">=", "=", "~=",
+                                         "*", "/", "\\\\", "@", "bitShift:", "//", "bitAnd:", "bitOr:"};
+        fprintf(arithLog, "[ARITH #%d] which=%d (%s)\n", arithCount, which, opNames[which]);
+        fflush(arithLog);
+    }
 
     // Get receiver and check for nil early to prevent crashes
     Oop arg = stackValue(0);
@@ -4795,9 +4851,16 @@ extern int g_traceSendsAfterPrim264;
             } else if (rcvr.isSmallInteger()) {
                 rcvrClassName = "SmallInteger";
             }
-            fprintf(menuTrace, "[TRACE %d] Send #%s to %s (args=%d)\n",
-                    200 - menuActionTraceCount_, selName.c_str(), rcvrClassName.c_str(), argCount);
+            fprintf(menuTrace, "[TRACE %d] Send #%s to %s (args=%d) frameDepth=%d inDispatch=%d\n",
+                    5000 - menuActionTraceCount_, selName.c_str(), rcvrClassName.c_str(), argCount,
+                    frameDepth_, inDispatchedAction_ ? 1 : 0);
             fflush(menuTrace);
+
+            // Log when trace count is running low
+            if (menuActionTraceCount_ == 4800 || menuActionTraceCount_ == 4500 ||
+                menuActionTraceCount_ == 4000 || menuActionTraceCount_ == 3000) {
+                std::cerr << "[TRACE-COUNT] menuActionTraceCount_=" << menuActionTraceCount_ << "\n";
+            }
         }
     }
 
@@ -4943,7 +5006,11 @@ extern int g_traceSendsAfterPrim264;
                     }
 
                     // Enable message tracing
-                    menuActionTraceCount_ = 500;
+                    menuActionTraceCount_ = 5000;
+
+                    // Track that we're in a dispatched action (for context creation)
+                    inDispatchedAction_ = true;
+                    dispatchedActionFrameDepth_ = frameDepth_;
 
                     sendSelector(actionSel, actionArgCount);
                     return;
@@ -6656,20 +6723,23 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // Get receiver from stack (now in the frame)
     receiver_ = argument(0);  // First "argument" slot is actually receiver
 
-    // Create a minimal MethodContext so blocks can capture the correct outer context
-    // Layout: slot 0=sender, 1=pc, 2=stackp, 3=method, 4=closureOrNil, 5=receiver
-    Oop contextClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
-    if (contextClass.isObject() && !contextClass.isNil()) {
-        // Allocate a small context with just enough slots for the receiver
-        Oop ctx = memory_.allocateSlots(memory_.indexOfClass(contextClass), 6, ObjectFormat::FixedSize);
-        if (!ctx.isNil()) {
-            memory_.storePointer(0, ctx, activeContext_);  // sender = previous context
-            memory_.storePointer(1, ctx, Oop::nil());      // pc (not used)
-            memory_.storePointer(2, ctx, Oop::nil());      // stackp (not used)
-            memory_.storePointer(3, ctx, method);          // method
-            memory_.storePointer(4, ctx, Oop::nil());      // closureOrNil
-            memory_.storePointer(5, ctx, receiver_);       // receiver
-            activeContext_ = ctx;
+    // Only create minimal MethodContext when executing dispatched actions (tracked by flag)
+    // Creating context for every method is too expensive.
+    // For dispatched actions, blocks need correct outer context with receiver.
+    if (inDispatchedAction_) {
+        Oop contextClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
+        if (contextClass.isObject() && !contextClass.isNil()) {
+            // Allocate a small context with just enough slots for the receiver
+            Oop ctx = memory_.allocateSlots(memory_.indexOfClass(contextClass), 6, ObjectFormat::FixedSize);
+            if (!ctx.isNil()) {
+                memory_.storePointer(0, ctx, activeContext_);  // sender = previous context
+                memory_.storePointer(1, ctx, Oop::nil());      // pc (not used)
+                memory_.storePointer(2, ctx, Oop::nil());      // stackp (not used)
+                memory_.storePointer(3, ctx, method);          // method
+                memory_.storePointer(4, ctx, Oop::nil());      // closureOrNil
+                memory_.storePointer(5, ctx, receiver_);       // receiver
+                activeContext_ = ctx;
+            }
         }
     }
 
@@ -6993,6 +7063,17 @@ void Interpreter::popFrame() {
 
     --frameDepth_;
     SavedFrame& frame = savedFrames_[frameDepth_];
+
+    // Clear dispatched action flag when returning to dispatch level
+    if (inDispatchedAction_ && frameDepth_ <= dispatchedActionFrameDepth_) {
+        inDispatchedAction_ = false;
+        static FILE* dispatchCompleteLog = fopen("/tmp/dispatch_complete.log", "a");
+        if (dispatchCompleteLog) {
+            fprintf(dispatchCompleteLog, "[DISPATCH-COMPLETE] Cleared flag at frameDepth=%d (dispatch was at %d)\n",
+                    frameDepth_, dispatchedActionFrameDepth_);
+            fflush(dispatchCompleteLog);
+        }
+    }
 
     // Reset stack to frame pointer (discards temps and locals)
     stackPointer_ = framePointer_;
@@ -7657,6 +7738,22 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         // asCharacter on non-Integer - return space character as fallback
         pop();  // Pop receiver
         push(Oop::fromCharacter(32));  // Space
+        dnuDepth--;
+        return;
+    }
+    if (origStr == "bitShift:" && argCount == 1) {
+        // bitShift: sent to non-integer (e.g., CompiledMethod during hash calc) - return 0
+        pop();  // Pop argument
+        pop();  // Pop receiver
+        push(Oop::fromSmallInteger(0));
+        dnuDepth--;
+        return;
+    }
+    if ((origStr == "bitAnd:" || origStr == "bitOr:" || origStr == "bitXor:") && argCount == 1) {
+        // Bit operations on non-integer - return 0
+        pop();  // Pop argument
+        pop();  // Pop receiver
+        push(Oop::fromSmallInteger(0));
         dnuDepth--;
         return;
     }
@@ -8553,6 +8650,12 @@ void Interpreter::transferTo(Oop newProcess) {
 }
 
 bool Interpreter::tryReschedule() {
+    static FILE* reschedLog = nullptr;
+    if (!reschedLog) reschedLog = fopen("/tmp/reschedule.log", "a");
+    if (reschedLog) {
+        fprintf(reschedLog, "[RESCHEDULE] called, inDispatchedAction=%d\n", inDispatchedAction_ ? 1 : 0);
+        fflush(reschedLog);
+    }
     std::cerr << "[RESCHEDULE] tryReschedule called\n";
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
     Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
@@ -8605,6 +8708,23 @@ bool Interpreter::tryReschedule() {
 
         // Update the active process in scheduler
         memory_.storePointer(1, scheduler, process);
+
+        // Log process switch during dispatch
+        if (reschedLog) {
+            fprintf(reschedLog, "[RESCHEDULE] SWITCHING process! inDispatch=%d fd=%d newFd=0\n",
+                    inDispatchedAction_ ? 1 : 0, frameDepth_);
+            fflush(reschedLog);
+        }
+
+        // If we're in a dispatched action and switching processes, we lose the dispatch context
+        // Clear the flag so we don't incorrectly track bytecodes in the new process
+        if (inDispatchedAction_) {
+            if (reschedLog) {
+                fprintf(reschedLog, "[RESCHEDULE] Clearing inDispatchedAction_ due to process switch\n");
+                fflush(reschedLog);
+            }
+            inDispatchedAction_ = false;
+        }
 
         // Reset stack for new process
         stackPointer_ = stackBase_;
