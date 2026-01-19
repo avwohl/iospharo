@@ -1697,6 +1697,17 @@ void Interpreter::processInputEvents() {
                 fflush(logFile);
             }
 
+            // Dismiss world menu on any click that's not inside the world menu
+            if (hasVisibleMenu_) {
+                int mx = pendingMenuBounds_.x;
+                int my = pendingMenuBounds_.y;
+                int mw = pendingMenuBounds_.width;
+                int mh = pendingMenuBounds_.height;
+                if (!(x >= mx && x < mx + mw && y >= my && y < my + mh)) {
+                    hasVisibleMenu_ = false;  // Dismiss world menu
+                }
+            }
+
             if (inDropdown) {
                 // Clicked in dropdown - select item
                 int relativeY = y - dropdownState_.y - (menuBarScale_ == 2 ? 16 : 8);
