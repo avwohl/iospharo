@@ -62,26 +62,35 @@ struct ContentView: View {
                     .foregroundColor(.white)
                     .cornerRadius(8)
 
-                    Button("AUTO CLICK TEST") {
-                        // Programmatically send events to VM to test if the pipeline works
+                    Button("LEFT CLICK") {
+                        // Programmatically send left-click events to VM
+                        let testPoint = CGPoint(x: 512, y: 384)
                         if let file = fopen("/tmp/auto_test.log", "a") {
-                            fputs("[AUTO] Starting auto click test...\n", file)
+                            fputs("[AUTO] LEFT CLICK at \(testPoint)\n", file)
                             fclose(file)
                         }
-
-                        // Send a series of mouse events directly through the bridge
-                        let testPoint = CGPoint(x: 512, y: 384)
                         bridge.sendMouseMoved(to: testPoint, modifiers: 0)
                         bridge.sendTouchDown(at: testPoint, buttons: Int(IOS_RED_BUTTON))
                         bridge.sendTouchUp(at: testPoint)
-
-                        if let file = fopen("/tmp/auto_test.log", "a") {
-                            fputs("[AUTO] Sent mouse events to VM at \(testPoint)\n", file)
-                            fclose(file)
-                        }
                     }
                     .padding()
                     .background(Color.green)
+                    .foregroundColor(.white)
+                    .cornerRadius(8)
+
+                    Button("RIGHT CLICK") {
+                        // Programmatically send right-click (yellow button) for world menu
+                        let testPoint = CGPoint(x: 512, y: 384)
+                        if let file = fopen("/tmp/auto_test.log", "a") {
+                            fputs("[AUTO] RIGHT CLICK (buttons=2) at \(testPoint)\n", file)
+                            fclose(file)
+                        }
+                        bridge.sendMouseMoved(to: testPoint, modifiers: 0)
+                        bridge.sendTouchDown(at: testPoint, buttons: Int(IOS_YELLOW_BUTTON))
+                        bridge.sendTouchUp(at: testPoint)
+                    }
+                    .padding()
+                    .background(Color.orange)
                     .foregroundColor(.white)
                     .cornerRadius(8)
 
@@ -110,40 +119,30 @@ struct ContentView: View {
             }
 
             #if targetEnvironment(macCatalyst)
-            // Auto-test: After 5 seconds, automatically send test events to verify the pipeline
+            // Auto-test: After 5 seconds, send a left-click, then at 6s send a right-click
             DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
-                if let file = fopen("/tmp/auto_test.log", "a") {
-                    fputs("[AUTO] 5-second timer fired, sending test events...\n", file)
-                    fputs("[AUTO] bridge.isRunning = \(bridge.isRunning)\n", file)
-                    fclose(file)
-                }
-
                 if bridge.isRunning {
-                    // Send a series of test events to the VM
                     let testPoint = CGPoint(x: 512, y: 384)
-
                     if let file = fopen("/tmp/auto_test.log", "a") {
-                        fputs("[AUTO] Sending move to \(testPoint)\n", file)
+                        fputs("[AUTO] 5s: LEFT CLICK at \(testPoint)\n", file)
                         fclose(file)
                     }
                     bridge.sendMouseMoved(to: testPoint, modifiers: 0)
-
-                    if let file = fopen("/tmp/auto_test.log", "a") {
-                        fputs("[AUTO] Sending touch down at \(testPoint)\n", file)
-                        fclose(file)
-                    }
                     bridge.sendTouchDown(at: testPoint, buttons: Int(IOS_RED_BUTTON))
-
-                    if let file = fopen("/tmp/auto_test.log", "a") {
-                        fputs("[AUTO] Sending touch up at \(testPoint)\n", file)
-                        fclose(file)
-                    }
                     bridge.sendTouchUp(at: testPoint)
-
+                }
+            }
+            // Test RIGHT CLICK at 6 seconds - this should trigger world menu
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) {
+                if bridge.isRunning {
+                    let testPoint = CGPoint(x: 512, y: 384)
                     if let file = fopen("/tmp/auto_test.log", "a") {
-                        fputs("[AUTO] Test complete! Check /tmp/vm_mouse_events.log for VM-side events\n", file)
+                        fputs("[AUTO] 6s: RIGHT CLICK (buttons=2) at \(testPoint) - should show world menu!\n", file)
                         fclose(file)
                     }
+                    bridge.sendMouseMoved(to: testPoint, modifiers: 0)
+                    bridge.sendTouchDown(at: testPoint, buttons: Int(IOS_YELLOW_BUTTON))
+                    bridge.sendTouchUp(at: testPoint)
                 }
             }
             #endif
@@ -154,10 +153,41 @@ struct ContentView: View {
 
     private var pharoCanvas: some View {
         // Canvas view for Metal rendering
-        // GCMouse handles right-click events via pressedChangedHandler,
-        // so we just need the canvas view on all platforms.
+        // On Mac Catalyst, SwiftUI gestures capture clicks that UIKit misses
+        #if targetEnvironment(macCatalyst)
         PharoCanvasView(bridge: bridge)
             .edgesIgnoringSafeArea(.all)
+            .contentShape(Rectangle())  // Make entire area tappable
+            .onTapGesture {
+                // SwiftUI tap gesture for Mac Catalyst left-click
+                // Use the hover-tracked position for the click location
+                let pos = MouseEventHandler.shared.lastPosition
+                if let file = fopen("/tmp/swiftui_tap.log", "a") {
+                    fputs("[SWIFTUI-TAP] Left-click at hover pos (\(Int(pos.x)),\(Int(pos.y)))\n", file)
+                    fclose(file)
+                }
+                bridge.sendMouseMoved(to: pos, modifiers: 0)
+                bridge.sendTouchDown(at: pos, buttons: Int(IOS_RED_BUTTON))
+                bridge.sendTouchUp(at: pos)
+            }
+            .contextMenu {
+                // Context menu triggers on right-click - use this to detect right-clicks
+                // The context menu itself is dismissed immediately via the action
+                Button("World Menu") {
+                    let pos = MouseEventHandler.shared.lastPosition
+                    if let file = fopen("/tmp/swiftui_tap.log", "a") {
+                        fputs("[SWIFTUI-TAP] Right-click (context menu) at hover pos (\(Int(pos.x)),\(Int(pos.y)))\n", file)
+                        fclose(file)
+                    }
+                    bridge.sendMouseMoved(to: pos, modifiers: 0)
+                    bridge.sendTouchDown(at: pos, buttons: Int(IOS_YELLOW_BUTTON))
+                    bridge.sendTouchUp(at: pos)
+                }
+            }
+        #else
+        PharoCanvasView(bridge: bridge)
+            .edgesIgnoringSafeArea(.all)
+        #endif
     }
 
     private var downloadingView: some View {
