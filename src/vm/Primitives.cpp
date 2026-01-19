@@ -21,8 +21,12 @@
 #include <sys/utsname.h>
 #include <unistd.h>
 #include <vector>
+#include <set>
 
 namespace pharo {
+
+// External variable from Interpreter.cpp for tracing sends after prim 264
+extern int g_traceSendsAfterPrim264;
 
 // ===== PRIMITIVE FAILURE STUB =====
 // This is used for primitives that should always fail (fall back to Smalltalk)
@@ -978,6 +982,25 @@ PrimitiveResult Interpreter::primitiveIdentical(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
     bool result = (rcvr == arg);
+
+    // Debug: Log == comparisons to understand event loop
+    static FILE* eqLog = nullptr;
+    static int eqCount = 0;
+    if (!eqLog) eqLog = fopen("/tmp/prim_equal.log", "w");
+    if (eqLog && eqCount < 200) {
+        eqCount++;
+        fprintf(eqLog, "[== #%d] rcvr=0x%llx arg=0x%llx result=%d rcvrIsInt=%d argIsInt=%d\n",
+                eqCount, (unsigned long long)rcvr.rawBits(), (unsigned long long)arg.rawBits(),
+                result ? 1 : 0, rcvr.isSmallInteger() ? 1 : 0, arg.isSmallInteger() ? 1 : 0);
+        if (rcvr.isSmallInteger()) {
+            fprintf(eqLog, "    rcvr int value: %lld\n", rcvr.asSmallInteger());
+        }
+        if (arg.isSmallInteger()) {
+            fprintf(eqLog, "    arg int value: %lld\n", arg.asSmallInteger());
+        }
+        fflush(eqLog);
+    }
+
     primitiveSuccess(result ? memory_.trueObject() : memory_.falseObject());
     return PrimitiveResult::Success;
 }
@@ -10418,12 +10441,17 @@ PrimitiveResult Interpreter::primitiveLongRunningPrimitive(int argCount) {
 // Fills the event buffer with the next pending event
 // Can be called with argCount=0 (receiver is event buffer) or argCount=1 (event buffer as argument)
 PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
+    // CRITICAL: For primitives, receiver_ is NOT automatically set!
+    // We must get the receiver from the stack. The receiver is under the arguments.
+    Oop actualReceiver = stackValue(static_cast<size_t>(argCount));
+
     // Debug: Simple stderr output
     static int entryCount = 0;
     entryCount++;
     if (entryCount <= 20) {
-        fprintf(stderr, "[GETNEXT] #%d argCount=%d stackTop=0x%llx\n",
-                entryCount, argCount, (unsigned long long)stackTop().rawBits());
+        fprintf(stderr, "[GETNEXT] #%d argCount=%d stackTop=0x%llx actualReceiver=0x%llx\n",
+                entryCount, argCount, (unsigned long long)stackTop().rawBits(),
+                (unsigned long long)actualReceiver.rawBits());
     }
 
     // Process input events first - this handles menu bar clicks natively
@@ -10437,44 +10465,148 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
         // eventBuffer passed as explicit argument
         eventBuffer = stackTop();
     } else if (argCount == 0) {
-        // Try to get eventBuffer from receiver's first instance variable
-        // This is how Pharo's InputEventSensor stores its event buffer
-        if (!receiver_.isObject()) {
+        // Try to find eventBuffer in receiver's instance variables
+        // In Pharo's InputEventSensor, eventBuffer is NOT at slot 0 due to inheritance
+        // We need to find the slot that contains a WordArray/Array with format 2-4
+        if (!actualReceiver.isObject()) {
             return PrimitiveResult::Failure;
         }
-        ObjectHeader* rcvrHdr = receiver_.asObjectPtr();
-        if (rcvrHdr->slotCount() < 1 && static_cast<int>(rcvrHdr->format()) == 0) {
-            // For format 0 objects, we can't read slots - maybe it's stored differently
-            // Try reading the stackTop as the event buffer argument instead
-            // (some VMs pass it implicitly on the stack)
-            eventBuffer = stackTop();
-        } else if (rcvrHdr->slotCount() >= 1) {
-            eventBuffer = memory_.fetchPointer(0, receiver_);
-        } else {
-            // Fallback: use receiver as buffer (old behavior)
-            eventBuffer = receiver_;
+        ObjectHeader* rcvrHdr = actualReceiver.asObjectPtr();
+
+        // Debug: Log all slots to find the event buffer
+        static FILE* slotLog = nullptr;
+        static int slotLogCount = 0;
+        if (!slotLog) slotLog = fopen("/tmp/slot_scan.log", "w");
+        if (slotLog && slotLogCount < 5) {
+            slotLogCount++;
+            fprintf(slotLog, "[SCAN #%d] Receiver has %zu slots:\n", slotLogCount, rcvrHdr->slotCount());
+            for (size_t i = 0; i < rcvrHdr->slotCount() && i < 15; i++) {
+                Oop slot = memory_.fetchPointer(i, actualReceiver);
+                if (slot.isObject() && !slot.isImmediate()) {
+                    ObjectHeader* slotHdr = slot.asObjectPtr();
+                    Oop slotClass = memory_.classOf(slot);
+                    std::string className = "<unknown>";
+                    if (slotClass.isObject()) {
+                        Oop nameOop = memory_.fetchPointer(6, slotClass);
+                        if (nameOop.isObject()) {
+                            ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                                className = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                            }
+                        }
+                    }
+                    fprintf(slotLog, "  slot[%zu]: raw=0x%llx format=%d slotCount=%zu class='%s'\n",
+                            i, (unsigned long long)slot.rawBits(), slotHdr->format(),
+                            slotHdr->slotCount(), className.c_str());
+                } else if (slot.isSmallInteger()) {
+                    fprintf(slotLog, "  slot[%zu]: SmallInteger %lld\n", i, slot.asSmallInteger());
+                } else if (slot.isNil()) {
+                    fprintf(slotLog, "  slot[%zu]: nil\n", i);
+                } else {
+                    fprintf(slotLog, "  slot[%zu]: raw=0x%llx (immediate or special)\n",
+                            i, (unsigned long long)slot.rawBits());
+                }
+            }
+            fflush(slotLog);
+        }
+
+        // Search for the event buffer: look for an Array or WordArray (format 2-4)
+        eventBuffer = Oop::nil();
+        for (size_t i = 0; i < rcvrHdr->slotCount() && i < 15; i++) {
+            Oop slot = memory_.fetchPointer(i, actualReceiver);
+            if (slot.isObject() && !slot.isImmediate() && !slot.isNil()) {
+                ObjectHeader* slotHdr = slot.asObjectPtr();
+                int fmt = static_cast<int>(slotHdr->format());
+                // Format 2-4 are indexable (arrays)
+                // Format 2: indexable with no inst vars (Array, WordArray, etc.)
+                // Format 3: indexable with inst vars
+                // Format 4-5: weak indexable
+                // Also check for format 10-11 (32-bit indexable) for WordArray
+                if ((fmt >= 2 && fmt <= 5) || (fmt >= 10 && fmt <= 11)) {
+                    size_t slotCount = slotHdr->slotCount();
+                    // Event buffer should have at least 4 elements (type, timestamp, x, y)
+                    if (slotCount >= 4 && slotCount <= 16) {
+                        eventBuffer = slot;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // If we couldn't find an array, fall back to old behavior (slot 0)
+        if (eventBuffer.isNil() && rcvrHdr->slotCount() >= 1) {
+            eventBuffer = memory_.fetchPointer(0, actualReceiver);
         }
     } else {
         return PrimitiveResult::Failure;
     }
 
     // Debug: Log buffer validation
-    static FILE* bufLog = fopen("/tmp/prim_buffer_check.log", "a");
+    static FILE* bufLog = fopen("/tmp/prim_buffer_check.log", "w");
     static int bufCount = 0;
     bufCount++;
 
-    // Debug: Log what eventBuffer is
+    // Debug: Log what eventBuffer is AND what receiver is
     if (bufLog && bufCount <= 20) {
-        fprintf(bufLog, "[BUF] #%d eventBuffer raw=0x%llx isObj=%d isImm=%d isNil=%d argCount=%d\n",
+        // First log receiver details
+        if (actualReceiver.isObject()) {
+            ObjectHeader* rcvrHdr = actualReceiver.asObjectPtr();
+            // Try to get class name of receiver - check if receiver IS a class
+            Oop rcvrClass = memory_.classOf(actualReceiver);
+            std::string rcvrClassName = "<unknown>";
+            std::string isMetaclass = "no";
+            if (rcvrClass.isObject()) {
+                // Get class name
+                Oop nameOop = memory_.fetchPointer(6, rcvrClass);  // class name at slot 6
+                if (nameOop.isObject()) {
+                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                        rcvrClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                    }
+                }
+                // Check if receiver is a class (its class would be a Metaclass)
+                if (rcvrClassName.find("class") != std::string::npos ||
+                    rcvrClassName == "Metaclass" || rcvrClassName == "Class") {
+                    isMetaclass = "yes";
+                    // For classes, try to get the class's own name from slot 6
+                    Oop selfName = memory_.fetchPointer(6, actualReceiver);
+                    if (selfName.isObject()) {
+                        ObjectHeader* selfNameHdr = selfName.asObjectPtr();
+                        if (selfNameHdr->isBytesObject() && selfNameHdr->byteSize() < 100) {
+                            rcvrClassName = std::string((char*)selfNameHdr->bytes(), selfNameHdr->byteSize()) + " (class obj)";
+                        }
+                    }
+                }
+            }
+            fprintf(bufLog, "[BUF] #%d RECEIVER raw=0x%llx classIdx=%d className='%s' isClass=%s slotCount=%zu\n",
+                    bufCount, (unsigned long long)actualReceiver.rawBits(),
+                    rcvrHdr->classIndex(), rcvrClassName.c_str(), isMetaclass.c_str(), rcvrHdr->slotCount());
+        }
+
+        // Then log eventBuffer details
+        fprintf(bufLog, "[BUF] #%d eventBuffer raw=0x%llx isObj=%d isImm=%d isNil=%d argCount=%d sameAsReceiver=%d\n",
                 bufCount, (unsigned long long)eventBuffer.rawBits(),
                 eventBuffer.isObject() ? 1 : 0,
                 eventBuffer.isImmediate() ? 1 : 0,
                 eventBuffer.isNil() ? 1 : 0,
-                argCount);
+                argCount,
+                (eventBuffer.rawBits() == actualReceiver.rawBits()) ? 1 : 0);
         if (eventBuffer.isObject()) {
             ObjectHeader* hdr = eventBuffer.asObjectPtr();
-            fprintf(bufLog, "[BUF] #%d obj classIdx=%d format=%d slotCount=%zu\n",
-                    bufCount, hdr->classIndex(), hdr->format(), hdr->slotCount());
+            // Get eventBuffer class name
+            Oop bufClass = memory_.classOf(eventBuffer);
+            std::string bufClassName = "<unknown>";
+            if (bufClass.isObject()) {
+                Oop nameOop = memory_.fetchPointer(6, bufClass);
+                if (nameOop.isObject()) {
+                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                        bufClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                    }
+                }
+            }
+            fprintf(bufLog, "[BUF] #%d obj classIdx=%d format=%d slotCount=%zu className='%s'\n",
+                    bufCount, hdr->classIndex(), hdr->format(), hdr->slotCount(), bufClassName.c_str());
         }
         fflush(bufLog);
     }
@@ -10573,19 +10705,86 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
         memory_.storePointer(0, eventBuffer, Oop::fromSmallInteger(0));
     }
 
+    // Debug: Verify what we stored in slot 0
+    static FILE* slot0Log = nullptr;
+    static int slot0Count = 0;
+    if (!slot0Log) slot0Log = fopen("/tmp/prim264_slot0.log", "w");
+    if (slot0Log && slot0Count < 100) {
+        Oop storedType = memory_.fetchPointer(0, eventBuffer);
+        slot0Count++;
+        fprintf(slot0Log, "[SLOT0 #%d] stored=%lld isSmallInt=%d hasEvent=%d eventBuffer=0x%llx\n",
+                slot0Count, storedType.asSmallInteger(), storedType.isSmallInteger() ? 1 : 0,
+                hasEvent ? 1 : 0, (unsigned long long)eventBuffer.rawBits());
+        fflush(slot0Log);
+    }
+
     if (argCount == 1) {
         pop();  // pop eventBuffer argument, leave receiver
     }
-    // Leave receiver on stack for argCount=0 case
+    // For argCount=0: Pharo primitives return self (leave receiver on stack)
+    // The primitive fills the receiver's eventBuffer instance variable.
+    // Pharo code will then access the eventBuffer through the receiver.
+    // We do NOT modify the stack for argCount=0 - receiver stays as return value.
 
-    // Debug: Log completion
-    static FILE* compLog = fopen("/tmp/prim_completion.log", "a");
+    // Debug: Log completion and what's on stack
+    static FILE* compLog = fopen("/tmp/prim_completion.log", "w");
     static int compCount = 0;
     compCount++;
     if (compLog && compCount <= 50) {
-        fprintf(compLog, "[COMPLETE] #%d hasEvent=%d\n", compCount, hasEvent ? 1 : 0);
+        Oop tos = stackTop();
+        fprintf(compLog, "[COMPLETE] #%d hasEvent=%d stackTop=0x%llx receiver=0x%llx\n",
+                compCount, hasEvent ? 1 : 0,
+                (unsigned long long)tos.rawBits(),
+                (unsigned long long)receiver_.rawBits());
         fflush(compLog);
     }
+
+    // Debug: Check class hierarchy of receiver for circularity
+    static FILE* hierLog = nullptr;
+    static int hierCount = 0;
+    if (!hierLog) hierLog = fopen("/tmp/class_hierarchy.log", "w");
+    if (hierLog && hierCount < 3) {
+        hierCount++;
+        fprintf(hierLog, "[HIER #%d] Receiver class hierarchy:\n", hierCount);
+
+        Oop currentClass = memory_.classOf(actualReceiver);
+        std::set<uint64_t> seenClasses;
+        int depth = 0;
+        while (currentClass.isObject() && !currentClass.isNil() && depth < 50) {
+            uint64_t clsBits = currentClass.rawBits();
+            if (seenClasses.count(clsBits)) {
+                fprintf(hierLog, "  [CIRCULAR at depth %d! class=0x%llx]\n",
+                        depth, (unsigned long long)clsBits);
+                break;
+            }
+            seenClasses.insert(clsBits);
+
+            // Get class name
+            std::string className = "<unknown>";
+            ObjectHeader* clsHdr = currentClass.asObjectPtr();
+            Oop nameOop = memory_.fetchPointer(6, currentClass);
+            if (nameOop.isObject()) {
+                ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                    className = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                }
+            }
+            fprintf(hierLog, "  [%d] 0x%llx classIdx=%d '%s'\n",
+                    depth, (unsigned long long)clsBits, clsHdr->classIndex(), className.c_str());
+
+            // Get superclass (slot 0 of class)
+            currentClass = memory_.fetchPointer(0, currentClass);
+            depth++;
+        }
+        if (currentClass.isNil() || !currentClass.isObject()) {
+            fprintf(hierLog, "  [END] nil/non-object at depth %d\n", depth);
+        }
+        fflush(hierLog);
+    }
+
+    // Flag to enable detailed send tracing after prim 264
+    // Variable defined in Interpreter.cpp
+    g_traceSendsAfterPrim264 = 50;  // Trace next 50 user sends (internal lookup filtered)
 
     return PrimitiveResult::Success;
 }

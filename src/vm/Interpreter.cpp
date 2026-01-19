@@ -2419,19 +2419,17 @@ void Interpreter::showWorldMenu(int x, int y) {
                             fflush(menuLog);
                         }
 
-                        // DISABLED: Queueing doesn't work because Pharo is stuck in method lookup
-                        // and never reaches a safe dispatch point.
-                        // TODO: Fix Pharo's method lookup loop issue first.
-                        //
-                        // The event IS being passed through to Pharo via passThroughEvents_.
-                        // If/when Morphic starts processing events, it should handle the right-click.
+                        // Queue the menu action to be dispatched during idle
+                        // Now that Pharo is running Morphic code, this should work
+                        pendingMenuAction_.selector = evaluateSel;
+                        pendingMenuAction_.receiver = compilerClass;
+                        pendingMenuAction_.argument = codeString;
+                        pendingMenuAction_.argCount = 1;
+                        pendingMenuAction_.pending = true;
                         if (menuLog) {
-                            fprintf(menuLog, "[WORLD-MENU] Would queue: '%s' (DISABLED - Pharo not running app code)\n", code.c_str());
+                            fprintf(menuLog, "[WORLD-MENU] Queued: '%s' for dispatch during idle\n", code.c_str());
                             fflush(menuLog);
                         }
-                        // pendingMenuAction_ queueing disabled
-                        // pendingMenuAction_.selector = evaluateSel;
-                        // etc...
                     } else {
                         if (menuLog) {
                             fprintf(menuLog, "[WORLD-MENU] Failed to create code string\n");
@@ -4833,8 +4831,69 @@ extern int g_traceSendsAfterPrim264;
 
             // ===== INTERCEPT doInterCycleWait =====
             // MorphicRenderLoop sends this during idle, may not exist in all images.
-            // Return self to continue render loop.
+            // This is where we dispatch pending menu actions.
             if (selStr == "doInterCycleWait" && argCount == 0) {
+                // Check for pending menu action
+                if (pendingMenuAction_.pending) {
+                    static FILE* actionLog = nullptr;
+                    static int actionCount = 0;
+                    if (!actionLog) {
+                        actionLog = fopen("/tmp/action_dispatch.log", "w");
+                    }
+
+                    std::string selName = "<unknown>";
+                    if (pendingMenuAction_.selector.isObject()) {
+                        ObjectHeader* selHdr = pendingMenuAction_.selector.asObjectPtr();
+                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                            selName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                        }
+                    }
+
+                    if (actionLog) {
+                        fprintf(actionLog, "[ACTION #%d] Dispatching '%s' during doInterCycleWait\n",
+                                ++actionCount, selName.c_str());
+                        fflush(actionLog);
+                    }
+
+                    Oop actionSel = pendingMenuAction_.selector;
+                    Oop actionRcvr = pendingMenuAction_.receiver;
+                    Oop actionArg = pendingMenuAction_.argument;
+                    int actionArgCount = pendingMenuAction_.argCount;
+
+                    // Clear pending action BEFORE dispatch to avoid re-entry
+                    pendingMenuAction_.pending = false;
+                    pendingMenuAction_.selector = Oop::nil();
+                    pendingMenuAction_.receiver = Oop::nil();
+                    pendingMenuAction_.argument = Oop::nil();
+                    pendingMenuAction_.argCount = 0;
+
+                    // Pop doInterCycleWait's receiver
+                    popN(1);
+
+                    // Set up the action call
+                    push(actionRcvr);
+                    if (actionArgCount > 0 && !actionArg.isNil()) {
+                        push(actionArg);
+                    }
+
+                    if (actionLog) {
+                        fprintf(actionLog, "[ACTION #%d] Sending '%s' to receiver %p with %d args\n",
+                                actionCount, selName.c_str(), (void*)actionRcvr.rawBits(), actionArgCount);
+                        if (actionArgCount > 0 && !actionArg.isNil() && actionArg.isObject()) {
+                            ObjectHeader* argHdr = actionArg.asObjectPtr();
+                            if (argHdr->isBytesObject() && argHdr->byteSize() < 200) {
+                                std::string argStr((char*)argHdr->bytes(), argHdr->byteSize());
+                                fprintf(actionLog, "[ACTION #%d] Argument: '%s'\n", actionCount, argStr.c_str());
+                            }
+                        }
+                        fflush(actionLog);
+                    }
+
+                    sendSelector(actionSel, actionArgCount);
+                    return;
+                }
+
+                // No pending action - just return self
                 popN(1);  // Pop receiver
                 push(rcvr);  // Return self
                 return;
