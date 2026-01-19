@@ -1813,13 +1813,25 @@ void Interpreter::processInputEvents() {
                 }
                 continue;  // Consumed by menu bar
             } else {
-                // Clicked outside menu areas - pass ALL button events to Pharo
-                // The image's Morphic handles world menu via yellow button (buttons=2)
+                // Clicked outside menu areas
                 if (logFile) {
-                    fprintf(logFile, "[PASSTHROUGH] mouse down buttons=%d at %d,%d -> to Pharo\n",
+                    fprintf(logFile, "[CLICK] outside menu areas buttons=%d at %d,%d\n",
                             event.arg3, event.arg1, event.arg2);
                     fflush(logFile);
                 }
+
+                // Yellow button (buttons=2) = right-click = world menu
+                // Since Pharo's event processing isn't working, trigger the menu directly
+                if (event.arg3 == 2) {
+                    if (logFile) {
+                        fprintf(logFile, "[WORLD-MENU] Triggering world menu at %d,%d\n", x, y);
+                        fflush(logFile);
+                    }
+                    showWorldMenu(x, y);
+                    continue;  // Don't pass through - we handled it
+                }
+
+                // Other buttons - pass through to Pharo
                 passThroughEvents_.push_back(event);
                 continue;
             }
@@ -2382,16 +2394,19 @@ void Interpreter::showWorldMenu(int x, int y) {
                 fflush(menuLog);
             }
 
-            // If we found 'worldMenu', we need to chain 'popUpInWorld' on the result
-            // Use OpalCompiler evaluate: to run the full expression
+            // If we found 'worldMenu', we need to chain 'popUpAt:forHand:in:' on the result
+            // Use OpalCompiler evaluate: to run the full expression with explicit coordinates
             if (selName == "worldMenu") {
-                // Evaluate "World worldMenu popUpInWorld" to both create and show the menu
-                // popUpInWorld is the standard Pharo method for popup menus
+                // Evaluate with explicit coordinates to position menu at click location
                 Oop compilerClass = memory_.findGlobal("OpalCompiler");
                 Oop evaluateSel = findSelector("evaluate:");
 
                 if (!compilerClass.isNil() && !evaluateSel.isNil()) {
-                    std::string code = "World worldMenu popUpInWorld";
+                    // Build code with explicit coordinates (x@y syntax)
+                    char codeBuf[256];
+                    snprintf(codeBuf, sizeof(codeBuf),
+                            "World worldMenu popUpAt: (%d@%d) forHand: World activeHand in: World", x, y);
+                    std::string code(codeBuf);
                     Oop codeString = memory_.createString(code);
 
                     if (!codeString.isNil()) {

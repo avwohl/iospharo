@@ -10528,7 +10528,9 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
         fflush(prim264Log);
     }
 
-    // Check pass-through events first (these were processed but not consumed by menu handler)
+    // IMPORTANT: Only read from passThroughEvents_, which is populated by processInputEvents().
+    // processInputEvents() filters menu-related events and passes non-menu events through.
+    // We do NOT read directly from gEventQueue here - that would bypass menu handling.
     if (!passThroughEvents_.empty()) {
         event = passThroughEvents_.front();
         passThroughEvents_.erase(passThroughEvents_.begin());
@@ -10539,14 +10541,9 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
                     callCount, event.type, event.arg5, event.arg1, event.arg2, event.arg3);
             fflush(prim264Log);
         }
-    } else if (gEventQueue.pop(event)) {
-        hasEvent = true;
-        if (prim264Log && (callCount <= 50 || event.arg3 != 0)) {
-            fprintf(prim264Log, "[PRIM264] #%d Got event from queue: eventType=%d subtype=%d x=%d y=%d buttons=%d\n",
-                    callCount, event.type, event.arg5, event.arg1, event.arg2, event.arg3);
-            fflush(prim264Log);
-        }
     }
+    // Note: We intentionally do NOT fall back to gEventQueue.pop() here.
+    // All events must go through processInputEvents() first for menu handling.
 
     if (hasEvent) {
         // Fill buffer with event data - only write slots that exist
