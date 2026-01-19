@@ -1952,8 +1952,14 @@ void Interpreter::handleWorldClick(int x, int y, int buttons) {
                             className.c_str(), moved ? 1 : 0);
                     fflush(clickLog);
                 }
+                return;  // Window click handled
             }
-            return;  // Found and handled
+            // Non-window morph clicked (e.g., ImageMorph) - treat as background click
+            if (clickLog) {
+                fprintf(clickLog, "[CLICK] Non-window morph %s at %d,%d - treating as background\n",
+                        className.c_str(), x, y);
+                fflush(clickLog);
+            }
         }
     }
 
