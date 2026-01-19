@@ -34,12 +34,45 @@ class PharoMTKView: MTKView {
             fclose(file)
         }
 
-        // Note: Removed UIPointerInteraction as it might be consuming click events
-        // #if targetEnvironment(macCatalyst)
-        // let pointerInteraction = UIPointerInteraction(delegate: self)
-        // addInteraction(pointerInteraction)
-        // #endif
+        #if targetEnvironment(macCatalyst)
+        // Add gesture recognizers for Mac Catalyst where touches don't naturally arrive
+        let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
+        addGestureRecognizer(tapGesture)
+
+        let rightClickGesture = UITapGestureRecognizer(target: self, action: #selector(handleRightClick(_:)))
+        rightClickGesture.buttonMaskRequired = .secondary
+        addGestureRecognizer(rightClickGesture)
+
+        if let file = fopen("/tmp/mtkview_setup.log", "a") {
+            fputs("[MTKVIEW] Added tap and right-click gesture recognizers\n", file)
+            fclose(file)
+        }
+        #endif
     }
+
+    #if targetEnvironment(macCatalyst)
+    @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
+        let location = gesture.location(in: self)
+        if let file = fopen("/tmp/mtkview_gesture.log", "a") {
+            fputs("[MTKVIEW] TAP at \(location)\n", file)
+            fclose(file)
+        }
+        bridge?.sendMouseMoved(to: location, modifiers: 0)
+        bridge?.sendTouchDown(at: location, buttons: Int(IOS_RED_BUTTON))
+        bridge?.sendTouchUp(at: location)
+    }
+
+    @objc private func handleRightClick(_ gesture: UITapGestureRecognizer) {
+        let location = gesture.location(in: self)
+        if let file = fopen("/tmp/mtkview_gesture.log", "a") {
+            fputs("[MTKVIEW] RIGHT-CLICK at \(location)\n", file)
+            fclose(file)
+        }
+        bridge?.sendMouseMoved(to: location, modifiers: 0)
+        bridge?.sendTouchDown(at: location, buttons: Int(IOS_YELLOW_BUTTON))
+        bridge?.sendTouchUp(at: location)
+    }
+    #endif
 
     // Make view able to become first responder to receive touch events
     override var canBecomeFirstResponder: Bool {

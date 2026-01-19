@@ -297,7 +297,7 @@ enum NSEventMonitorSwift {
                 case rightMouseDown:
                     MouseEventHandler.shared.lastPosition = point
                     PharoBridge.shared.sendMouseMoved(to: point, modifiers: 0)
-                    PharoBridge.shared.sendTouchDown(at: point, buttons: IOS_BLUE_BUTTON)
+                    PharoBridge.shared.sendTouchDown(at: point, buttons: IOS_YELLOW_BUTTON)  // Yellow = world menu
 
                 case rightMouseUp:
                     PharoBridge.shared.sendTouchUp(at: point)
@@ -310,7 +310,7 @@ enum NSEventMonitorSwift {
                     PharoBridge.shared.sendTouchMoved(to: point, buttons: IOS_RED_BUTTON)
 
                 case rightMouseDragged:
-                    PharoBridge.shared.sendTouchMoved(to: point, buttons: IOS_BLUE_BUTTON)
+                    PharoBridge.shared.sendTouchMoved(to: point, buttons: IOS_YELLOW_BUTTON)
 
                 default:
                     break

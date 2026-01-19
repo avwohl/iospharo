@@ -10,33 +10,49 @@ import SwiftUI
 // MARK: - Mac Catalyst Mouse Event Overlay
 
 #if targetEnvironment(macCatalyst)
-/// Transparent overlay that captures mouse events on Mac Catalyst
+/// Transparent SwiftUI overlay that captures mouse events on Mac Catalyst
 /// and forwards them to the Pharo VM bridge.
 ///
-/// This is necessary because SwiftUI doesn't forward mouse events to
-/// embedded UIKit views (UIViewControllerRepresentable) on Mac Catalyst.
+/// Uses SwiftUI contextMenu for right-click since that's what works on Mac Catalyst.
 struct MouseEventOverlay: View {
     @ObservedObject var bridge: PharoBridge
     @State private var clickCount = 0
-    @State private var isDragging = false
+    @State private var lastPosition: CGPoint = CGPoint(x: 512, y: 384)
 
     var body: some View {
         GeometryReader { geometry in
-            // Debug: visible overlay
-            Rectangle()
-                .fill(Color.red.opacity(0.15))
+            // Transparent overlay
+            Color.clear
+                .contentShape(Rectangle())
                 .onAppear {
                     if let file = fopen("/tmp/overlay_debug.log", "a") {
-                        fputs("[OVERLAY] MouseEventOverlay appeared, size=\(geometry.size)\n", file)
+                        fputs("[OVERLAY] SwiftUI MouseEventOverlay appeared, size=\(geometry.size)\n", file)
                         fclose(file)
                     }
                 }
-                .onTapGesture {
-                    // Simple tap test without location
-                    clickCount += 1
-                    if let file = fopen("/tmp/overlay_debug.log", "a") {
-                        fputs("[OVERLAY] Simple tap #\(clickCount)\n", file)
-                        fclose(file)
+                // Right-click via contextMenu - this actually works on Mac Catalyst!
+                .contextMenu {
+                    Button("World Menu (at cursor)") {
+                        // Get current mouse position from polling
+                        let pos = MouseEventHandler.shared.lastPosition
+                        if let file = fopen("/tmp/overlay_debug.log", "a") {
+                            fputs("[OVERLAY] contextMenu 'World Menu' selected at \(pos)\n", file)
+                            fclose(file)
+                        }
+                        bridge.sendMouseMoved(to: pos, modifiers: 0)
+                        bridge.sendTouchDown(at: pos, buttons: Int(IOS_YELLOW_BUTTON))
+                        bridge.sendTouchUp(at: pos)
+                    }
+
+                    Button("Click here (left)") {
+                        let pos = MouseEventHandler.shared.lastPosition
+                        if let file = fopen("/tmp/overlay_debug.log", "a") {
+                            fputs("[OVERLAY] contextMenu 'Click here' selected at \(pos)\n", file)
+                            fclose(file)
+                        }
+                        bridge.sendMouseMoved(to: pos, modifiers: 0)
+                        bridge.sendTouchDown(at: pos, buttons: Int(IOS_RED_BUTTON))
+                        bridge.sendTouchUp(at: pos)
                     }
                 }
         }
@@ -191,12 +207,18 @@ struct ContentView: View {
 
     private var pharoCanvas: some View {
         // Canvas view for Metal rendering
-        // On Mac Catalyst, gesture handling is done via overlay (in body)
-        // On iOS, the UIKit view handles touches directly
+        // On Mac Catalyst, add transparent overlay to capture mouse events
+        // because SwiftUI doesn't forward mouse events to embedded UIKit views
         #if targetEnvironment(macCatalyst)
-        // Mac Catalyst: Let UIKit gesture recognizers in PharoCanvasView handle events
-        PharoCanvasView(bridge: bridge)
-            .edgesIgnoringSafeArea(.all)
+        // Canvas with overlay for right-click context menu
+        ZStack {
+            PharoCanvasView(bridge: bridge)
+                .edgesIgnoringSafeArea(.all)
+
+            // Transparent overlay with contextMenu for right-click
+            MouseEventOverlay(bridge: bridge)
+                .edgesIgnoringSafeArea(.all)
+        }
         #else
         PharoCanvasView(bridge: bridge)
             .edgesIgnoringSafeArea(.all)
