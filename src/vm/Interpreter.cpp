@@ -2130,12 +2130,21 @@ void Interpreter::handleWorldClick(int x, int y, int buttons) {
     }
 
     // Yellow button (right-click, buttons & 4) shows world menu
+    // Try the C++ world menu trigger first, but the event is also passed through
+    // to Pharo's normal event handling (via passThroughEvents_) which may also
+    // display the world menu if our C++ approach fails.
     if (buttons & 4) {
         if (clickLog) {
-            fprintf(clickLog, "[CLICK] Right-click on World background - showing world menu\n");
+            fprintf(clickLog, "[CLICK] Right-click on World background - triggering world menu\n");
             fflush(clickLog);
         }
         showWorldMenu(x, y);
+    }
+
+    // Log that we're returning - the event should already be queued for Pharo
+    if (clickLog) {
+        fprintf(clickLog, "[CLICK] Returning - event queued for Pharo at %d,%d buttons=%d\n", x, y, buttons);
+        fflush(clickLog);
     }
 }
 
@@ -2392,6 +2401,9 @@ void Interpreter::showWorldMenu(int x, int y) {
                         pendingMenuAction_.argCount = 1;
                         pendingMenuAction_.pending = true;
                         pendingMenuAction_.isChained = false;
+
+                        // Enable tracing for the next 200 sends after this action
+                        menuActionTraceCount_ = 200;
                     } else {
                         if (menuLog) {
                             fprintf(menuLog, "[WORLD-MENU] Failed to create code string\n");
