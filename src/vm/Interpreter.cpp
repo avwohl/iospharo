@@ -1802,35 +1802,14 @@ void Interpreter::processInputEvents() {
                 }
                 continue;  // Consumed by menu bar
             } else {
-                // Clicked outside menu areas
-                int buttons = event.arg3;
-
-                // Yellow button (right-click) = world menu
-                // Handle directly because InputEventSensor isn't running to process events
-                if (buttons == 2) {  // Yellow button = world menu
-                    if (logFile) {
-                        fprintf(logFile, "[WORLD-CLICK] Yellow button at %d,%d - showing world menu\n",
-                                x, y);
-                        fflush(logFile);
-                    }
-                    showWorldMenu(x, y);
-                    continue;
-                }
-
-                // Other clicks - pass through to Pharo
-                // Note: InputEventSensor isn't running, so these won't be processed
-                // but we queue them anyway in case it starts
+                // Clicked outside menu areas - pass ALL button events to Pharo
+                // The image's Morphic handles world menu via yellow button (buttons=2)
                 if (logFile) {
                     fprintf(logFile, "[PASSTHROUGH] mouse down buttons=%d at %d,%d -> to Pharo\n",
                             event.arg3, event.arg1, event.arg2);
                     fflush(logFile);
                 }
                 passThroughEvents_.push_back(event);
-                if (logFile) {
-                    fprintf(logFile, "[PASSTHROUGH] After push, passThroughEvents_.size()=%zu\n",
-                            passThroughEvents_.size());
-                    fflush(logFile);
-                }
                 continue;
             }
         }
