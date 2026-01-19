@@ -1603,12 +1603,19 @@ void Interpreter::renderWorldMorphs() {
 void Interpreter::processInputEvents() {
     // Process pending events from the event queue
     // Events we don't handle (non-menu events) are passed through to Pharo
-    static FILE* logFile = fopen("/tmp/iospharo-events.log", "a");
+    static FILE* logFile = nullptr;
     static int callCount = 0;
+    static bool initialized = false;
+
+    if (!initialized) {
+        initialized = true;
+        logFile = fopen("/tmp/iospharo-events.log", "a");
+        std::cerr << "[PROCESS-INPUT] First call, logFile=" << (logFile ? "OK" : "NULL") << "\n";
+    }
 
     // Debug: log every 1000 calls to confirm this function is being reached
     if (++callCount % 1000 == 1 && logFile) {
-        fprintf(logFile, "[PROCESS-INPUT] call #%d, queue size before pop unknown\n", callCount);
+        fprintf(logFile, "[PROCESS-INPUT] call #%d\n", callCount);
         fflush(logFile);
     }
 

@@ -345,8 +345,8 @@ private:
     int lastMenuClickY_ = -1000;     // Last click Y coordinate
     std::vector<std::pair<int, int>> menuItemBounds_;  // Stored menu item X bounds (start, end)
     std::vector<Oop> menuBarItemMorphs_;  // The actual menu bar item morphs for dropdown access
-    int menuBarTop_ = 0;     // Top of menu bar in pixels
-    int menuBarBottom_ = 0;  // Bottom of menu bar in pixels
+    int menuBarTop_ = 28;    // Top of menu bar in pixels (default for non-Retina)
+    int menuBarBottom_ = 72; // Bottom of menu bar in pixels (default for non-Retina)
     int menuBarScale_ = 1;   // Scale factor (2 for Retina)
 
     // Dropdown menu state for click handling
