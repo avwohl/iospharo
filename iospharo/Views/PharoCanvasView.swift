@@ -209,27 +209,27 @@ class PharoMTKView: MTKView {
     #if targetEnvironment(macCatalyst)
     /// Convert UIEvent button mask and modifiers to Pharo button code
     private func buttonMaskToPharo(_ event: UIEvent?) -> Int {
-        // Pharo button codes: red(left)=4, yellow(middle)=2, blue(right)=1
+        // Pharo button codes: red(left)=4, yellow(right/world menu)=2, blue(middle)=1
         guard let event = event else { return IOS_RED_BUTTON }
 
         if #available(macCatalyst 13.4, *) {
             let mask = event.buttonMask
 
-            // Check for secondary (right) button
+            // Check for secondary (right) button - shows world menu in Pharo
             if mask.contains(.secondary) {
-                return IOS_BLUE_BUTTON  // Right click -> blue button (context menu)
+                return IOS_YELLOW_BUTTON  // Right click -> yellow button (world menu)
             }
 
             // Check for middle button
             if mask.rawValue & 0x4 != 0 {
-                return IOS_YELLOW_BUTTON  // Middle click -> yellow button
+                return IOS_BLUE_BUTTON  // Middle click -> blue button
             }
 
             // Check for control-click (Mac convention for right-click)
             let modifiers = event.modifierFlags
             if modifiers.contains(.control) {
                 NSLog("[EVENT] Control-click detected, treating as right-click")
-                return IOS_BLUE_BUTTON  // Control-click -> right click
+                return IOS_YELLOW_BUTTON  // Control-click -> yellow (world menu)
             }
         }
         return IOS_RED_BUTTON  // Default to left click
