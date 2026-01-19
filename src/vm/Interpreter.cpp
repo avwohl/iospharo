@@ -1802,14 +1802,12 @@ void Interpreter::processInputEvents() {
                 }
                 continue;  // Consumed by menu bar
             } else {
-                // Clicked outside menu areas - close menu if open
-                if (dropdownState_.valid || selectedMenuIndex_ >= 0) {
-                    selectedMenuIndex_ = -1;
-                    dropdownState_.valid = false;
-                }
+                // Clicked outside menu areas
+                // Don't close menu on mouse DOWN - wait for mouse UP to avoid
+                // premature closing from queued events. This matches standard menu behavior.
                 // Click outside menu areas - handle directly via handleWorldClick
                 if (logFile) {
-                    fprintf(logFile, "[WORLD-CLICK] mouse down buttons=%d at %d,%d\n",
+                    fprintf(logFile, "[WORLD-CLICK] mouse down buttons=%d at %d,%d (menu stays open)\n",
                             event.arg3, event.arg1, event.arg2);
                     fflush(logFile);
                 }
