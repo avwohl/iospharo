@@ -1999,27 +1999,36 @@ void Interpreter::handleWorldMenuClick(Oop world, int x, int y) {
         fflush(menuLog);
     }
 
-    // Look up worldMenu method - try in class and superclasses
+    // Try several method names that might handle world menu display:
+    // 1. invokeWorldMenu: (most complete - handles everything)
+    // 2. yellowButtonActivity (traditional Morphic)
+    // 3. worldMenu (returns MenuMorph, needs manual opening)
+    const char* methodNames[] = {"invokeWorldMenu:", "yellowButtonActivity", "worldMenu", nullptr};
     Oop method = Oop::nil();
-    Oop currentClass = worldClass;
-    int depth = 0;
-    while (!currentClass.isNil() && currentClass.isObject() && depth < 20) {
-        method = lookupMethodByName(currentClass, "worldMenu");
-        if (!method.isNil() && method.isObject()) {
-            if (menuLog) {
-                fprintf(menuLog, "[WORLD-MENU] Found worldMenu at depth %d\n", depth);
-                fflush(menuLog);
+    const char* foundMethodName = nullptr;
+
+    for (int m = 0; methodNames[m] != nullptr && method.isNil(); m++) {
+        Oop currentClass = worldClass;
+        int depth = 0;
+        while (!currentClass.isNil() && currentClass.isObject() && depth < 20) {
+            method = lookupMethodByName(currentClass, methodNames[m]);
+            if (!method.isNil() && method.isObject()) {
+                foundMethodName = methodNames[m];
+                if (menuLog) {
+                    fprintf(menuLog, "[WORLD-MENU] Found %s at depth %d\n", methodNames[m], depth);
+                    fflush(menuLog);
+                }
+                break;
             }
-            break;
+            // Get superclass (slot 0 of class)
+            currentClass = memory_.fetchPointer(0, currentClass);
+            depth++;
         }
-        // Get superclass (slot 0 of class)
-        currentClass = memory_.fetchPointer(0, currentClass);
-        depth++;
     }
 
     if (method.isNil() || !method.isObject()) {
         if (menuLog) {
-            fprintf(menuLog, "[WORLD-MENU] ERROR: worldMenu method not found\n");
+            fprintf(menuLog, "[WORLD-MENU] ERROR: No suitable method found for world menu\n");
             fflush(menuLog);
         }
         return;
@@ -2031,6 +2040,7 @@ void Interpreter::handleWorldMenuClick(Oop world, int x, int y) {
     pendingWorldMenuY_ = y;
     pendingWorldMenuMethod_ = method;
     pendingWorldMenuReceiver_ = world;
+    pendingWorldMenuMethodName_ = foundMethodName;
 
     if (menuLog) {
         fprintf(menuLog, "[WORLD-MENU] Queued worldMenu invocation for (%d,%d)\n", x, y);
@@ -2046,34 +2056,40 @@ void Interpreter::processPendingWorldMenu() {
 
     static FILE* menuLog = fopen("/tmp/world_menu.log", "a");
     if (menuLog) {
-        fprintf(menuLog, "[WORLD-MENU] Processing pending menu at (%d,%d)\n",
-                pendingWorldMenuX_, pendingWorldMenuY_);
+        fprintf(menuLog, "[WORLD-MENU] Processing pending menu at (%d,%d) method=%s\n",
+                pendingWorldMenuX_, pendingWorldMenuY_,
+                pendingWorldMenuMethodName_ ? pendingWorldMenuMethodName_ : "unknown");
         fflush(menuLog);
     }
 
-    // Push receiver (World) and activate the worldMenu method
-    // This will create a new context on the call stack
+    // Push receiver (World) and activate the method
     push(pendingWorldMenuReceiver_);
 
-    // Activate the method with 0 arguments
-    // activateMethod will set up the context and begin execution
-    activateMethod(pendingWorldMenuMethod_, 0);
-
-    if (menuLog) {
-        fprintf(menuLog, "[WORLD-MENU] Activated worldMenu method on World\n");
-        fflush(menuLog);
+    // Check if method needs an argument (invokeWorldMenu: takes an event)
+    int argCount = 0;
+    if (pendingWorldMenuMethodName_ && strcmp(pendingWorldMenuMethodName_, "invokeWorldMenu:") == 0) {
+        // Create a simple mouse event for invokeWorldMenu:
+        // For now, push nil as the event - Smalltalk may handle nil event gracefully
+        push(memory_.nil());
+        argCount = 1;
     }
 
-    // Note: The menu will be built by Smalltalk code execution.
-    // The result (MenuMorph) will eventually need popUpInWorld: sent to it.
-    // For now, we're just invoking worldMenu - Smalltalk code should handle
-    // the rest if it includes the popup logic.
+    // Activate the method
+    activateMethod(pendingWorldMenuMethod_, argCount);
+
+    if (menuLog) {
+        fprintf(menuLog, "[WORLD-MENU] Activated %s on World with %d args\n",
+                pendingWorldMenuMethodName_ ? pendingWorldMenuMethodName_ : "unknown",
+                argCount);
+        fflush(menuLog);
+    }
 
     // Clear the pending request
     pendingWorldMenuX_ = -1;
     pendingWorldMenuY_ = -1;
     pendingWorldMenuMethod_ = Oop::nil();
     pendingWorldMenuReceiver_ = Oop::nil();
+    pendingWorldMenuMethodName_ = nullptr;
 }
 
 // Handle click on the menu bar

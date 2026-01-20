@@ -336,6 +336,7 @@ private:
     int pendingWorldMenuY_ = -1;
     Oop pendingWorldMenuMethod_ = Oop::nil();
     Oop pendingWorldMenuReceiver_ = Oop::nil();
+    const char* pendingWorldMenuMethodName_ = nullptr;
 
     // Pending click info for Pharo
     int pendingClickX_ = 0;
