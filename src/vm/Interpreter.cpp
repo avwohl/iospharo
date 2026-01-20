@@ -3137,7 +3137,17 @@ void Interpreter::returnValue(Oop value) {
         if (activeContext_.isObject() && activeContext_.rawBits() != nilObj.rawBits()) {
             Oop sender = memory_.fetchPointer(0, activeContext_);
 
-            if (sender.isObject() && sender.rawBits() != nilObj.rawBits()) {
+            // DEFENSIVE: Check for corrupted sender (raw 0 or very low address)
+            if (sender.rawBits() == 0 || sender.rawBits() < 0x10000) {
+                // Corrupted sender - treat as end of context chain
+                static int corruptSenderCount = 0;
+                if (++corruptSenderCount <= 5) {
+                    std::cerr << "[CORRUPT-SENDER] Context 0x" << std::hex << activeContext_.rawBits()
+                              << " has invalid sender 0x" << sender.rawBits() << std::dec
+                              << " - treating as end of chain\n";
+                }
+                // Fall through to terminate current process
+            } else if (sender.isObject() && sender.rawBits() != nilObj.rawBits()) {
                 ObjectHeader* senderHdr = sender.asObjectPtr();
 
                 // Check if sender looks like a Context (has enough slots and right format)
@@ -7580,6 +7590,23 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
     // Get the actual receiver that failed (from stack, under args)
     Oop failedReceiver = stackValue(argCount);
+
+    // DIAGNOSTIC: Check if stack receiver differs from instance variable
+    if (failedReceiver.rawBits() != receiver_.rawBits()) {
+        static int mismatchCount = 0;
+        if (++mismatchCount <= 5) {
+            std::cerr << "[DNU-MISMATCH] Stack receiver 0x" << std::hex << failedReceiver.rawBits()
+                      << " != receiver_ 0x" << receiver_.rawBits() << std::dec << "\n";
+            std::cerr << "  argCount=" << argCount << " stackPointer depth=" << (stackPointer_ - stackBase_) << "\n";
+        }
+        // Use receiver_ instead if it's valid
+        if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+            ObjectHeader* hdr = receiver_.asObjectPtr();
+            if (hdr->classIndex() != 0) {
+                failedReceiver = receiver_;  // Use the valid one
+            }
+        }
+    }
 
     // FAIL FAST: If we can't resolve the receiver's class, sending doesNotUnderstand:
     // will just cause another DNU, leading to infinite recursion.
