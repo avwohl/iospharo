@@ -197,6 +197,8 @@ public:
     void dispatchMouseEventToMorph(int x, int y, int buttons, bool isMouseDown); // Direct mouse dispatch
     void handleMenuBarClick(Oop menuBar, int x, int y, int buttons); // Handle menu bar click
     void handleWorldMenuClick(Oop world, int x, int y); // Handle world menu on right-click
+    Oop lookupMethodByName(Oop classObj, const char* selectorName); // Find method by name
+    void processPendingWorldMenu(); // Execute queued world menu invocation
     void drawClickIndicator(int x, int y, int buttons); // Draw visible click feedback
     void updateActiveHandPosition(); // Directly update ActiveHand's position/buttons
     void syncDisplayToSurface();   // Copy Display Form to platform surface
@@ -328,6 +330,12 @@ private:
     int lastMouseY_ = 0;
     int lastMouseButtons_ = 0;
     int lastMouseEventType_ = 0;  // 0=move, 1=down, 2=up
+
+    // Pending world menu invocation (queued to avoid reentrant execution)
+    int pendingWorldMenuX_ = -1;
+    int pendingWorldMenuY_ = -1;
+    Oop pendingWorldMenuMethod_ = Oop::nil();
+    Oop pendingWorldMenuReceiver_ = Oop::nil();
 
     // Pending click info for Pharo
     int pendingClickX_ = 0;

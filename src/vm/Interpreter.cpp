@@ -1856,7 +1856,8 @@ void Interpreter::dispatchMouseEventToMorph(int x, int y, int buttons, bool isMo
                         handleMenuBarClick(morph, x, y, buttons);
                         return;
                     }
-                    break;
+                    // Found a morph hit - don't fall through to world background handling
+                    return;
                 }
             }
             continue;
@@ -1925,6 +1926,43 @@ void Interpreter::dispatchMouseEventToMorph(int x, int y, int buttons, bool isMo
     }
 }
 
+// Helper to look up a method in a class by selector name
+Oop Interpreter::lookupMethodByName(Oop classObj, const char* selectorName) {
+    if (!classObj.isObject()) return Oop::nil();
+
+    // Get the method dictionary (slot 1 of the class)
+    Oop methodDict = memory_.fetchPointer(1, classObj);
+    if (!methodDict.isObject()) return Oop::nil();
+
+    ObjectHeader* mdHeader = methodDict.asObjectPtr();
+    size_t mdSlots = mdHeader->slotCount();
+
+    // Find the selector in the methodDict
+    for (size_t i = 2; i < mdSlots; i++) {
+        Oop key = mdHeader->slotAt(i);
+        if (!key.isObject() || key.isNil()) continue;
+
+        ObjectHeader* keyHdr = key.asObjectPtr();
+        if (!keyHdr->isBytesObject()) continue;
+
+        size_t keyLen = keyHdr->byteSize();
+        const char* keyBytes = (const char*)keyHdr->bytes();
+
+        if (keyLen == strlen(selectorName) && memcmp(keyBytes, selectorName, keyLen) == 0) {
+            // Found the selector! Get the method from values array (slot 1)
+            Oop values = memory_.fetchPointer(1, methodDict);
+            if (values.isObject()) {
+                ObjectHeader* valHdr = values.asObjectPtr();
+                size_t valueIdx = i - 2;  // Offset by 2 (skip tally and values slots)
+                if (valueIdx < valHdr->slotCount()) {
+                    return valHdr->slotAt(valueIdx);
+                }
+            }
+        }
+    }
+    return Oop::nil();
+}
+
 // Handle right-click on World background to show world menu
 void Interpreter::handleWorldMenuClick(Oop world, int x, int y) {
     static FILE* menuLog = nullptr;
@@ -1937,26 +1975,105 @@ void Interpreter::handleWorldMenuClick(Oop world, int x, int y) {
         fflush(menuLog);
     }
 
-    // In Pharo, the world menu is typically shown by:
-    // 1. Getting World's worldMenu
-    // 2. Opening it as a popup at the mouse position
-    //
-    // For now, we'll try to find and invoke the Pharo menu method.
-    // This requires finding the selector #worldMenu and sending it to World.
+    // Get World's class for method lookup
+    Oop worldClass = memory_.classOf(world);
+    if (worldClass.isNil() || !worldClass.isObject()) {
+        if (menuLog) {
+            fprintf(menuLog, "[WORLD-MENU] ERROR: Cannot get World's class\n");
+            fflush(menuLog);
+        }
+        return;
+    }
 
-    // Try to invoke World >> worldMenu
-    // The result should be a MenuMorph that we need to open
-
-    // Actually, for Spec/Pharo, the world menu comes from WorldState >> worldMenuOn:
-    // or PasteUpMorph >> yellowButtonDown:
-    //
-    // For now, log that we detected the click. The actual menu invocation
-    // would need to call the right Smalltalk method or create the menu in C++.
-
+    // Get class name for debugging
+    std::string className = "<unknown>";
+    Oop classNameOop = memory_.fetchPointer(6, worldClass);
+    if (classNameOop.isObject()) {
+        ObjectHeader* nameHdr = classNameOop.asObjectPtr();
+        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+            className = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+        }
+    }
     if (menuLog) {
-        fprintf(menuLog, "[WORLD-MENU] World menu not yet implemented - need to invoke Smalltalk method\n");
+        fprintf(menuLog, "[WORLD-MENU] World class: %s\n", className.c_str());
         fflush(menuLog);
     }
+
+    // Look up worldMenu method - try in class and superclasses
+    Oop method = Oop::nil();
+    Oop currentClass = worldClass;
+    int depth = 0;
+    while (!currentClass.isNil() && currentClass.isObject() && depth < 20) {
+        method = lookupMethodByName(currentClass, "worldMenu");
+        if (!method.isNil() && method.isObject()) {
+            if (menuLog) {
+                fprintf(menuLog, "[WORLD-MENU] Found worldMenu at depth %d\n", depth);
+                fflush(menuLog);
+            }
+            break;
+        }
+        // Get superclass (slot 0 of class)
+        currentClass = memory_.fetchPointer(0, currentClass);
+        depth++;
+    }
+
+    if (method.isNil() || !method.isObject()) {
+        if (menuLog) {
+            fprintf(menuLog, "[WORLD-MENU] ERROR: worldMenu method not found\n");
+            fflush(menuLog);
+        }
+        return;
+    }
+
+    // Store the menu request - we'll execute it on the next interpreter cycle
+    // to avoid reentrant execution issues
+    pendingWorldMenuX_ = x;
+    pendingWorldMenuY_ = y;
+    pendingWorldMenuMethod_ = method;
+    pendingWorldMenuReceiver_ = world;
+
+    if (menuLog) {
+        fprintf(menuLog, "[WORLD-MENU] Queued worldMenu invocation for (%d,%d)\n", x, y);
+        fflush(menuLog);
+    }
+}
+
+// Process pending world menu invocation
+void Interpreter::processPendingWorldMenu() {
+    if (pendingWorldMenuX_ < 0 || pendingWorldMenuMethod_.isNil()) {
+        return;  // No pending menu request
+    }
+
+    static FILE* menuLog = fopen("/tmp/world_menu.log", "a");
+    if (menuLog) {
+        fprintf(menuLog, "[WORLD-MENU] Processing pending menu at (%d,%d)\n",
+                pendingWorldMenuX_, pendingWorldMenuY_);
+        fflush(menuLog);
+    }
+
+    // Push receiver (World) and activate the worldMenu method
+    // This will create a new context on the call stack
+    push(pendingWorldMenuReceiver_);
+
+    // Activate the method with 0 arguments
+    // activateMethod will set up the context and begin execution
+    activateMethod(pendingWorldMenuMethod_, 0);
+
+    if (menuLog) {
+        fprintf(menuLog, "[WORLD-MENU] Activated worldMenu method on World\n");
+        fflush(menuLog);
+    }
+
+    // Note: The menu will be built by Smalltalk code execution.
+    // The result (MenuMorph) will eventually need popUpInWorld: sent to it.
+    // For now, we're just invoking worldMenu - Smalltalk code should handle
+    // the rest if it includes the popup logic.
+
+    // Clear the pending request
+    pendingWorldMenuX_ = -1;
+    pendingWorldMenuY_ = -1;
+    pendingWorldMenuMethod_ = Oop::nil();
+    pendingWorldMenuReceiver_ = Oop::nil();
 }
 
 // Handle click on the menu bar
@@ -2330,6 +2447,9 @@ void Interpreter::syncDisplayToSurface() {
 
     // Process input events
     processInputEvents();
+
+    // Process any pending world menu request
+    processPendingWorldMenu();
 
     // Update ActiveHand position directly (bypasses Pharo's event system which isn't running)
     updateActiveHandPosition();
@@ -3533,6 +3653,9 @@ void Interpreter::returnValue(Oop value) {
 
         // Process input events - all events queued for Smalltalk via primitive 264
         processInputEvents();
+
+        // Process any pending world menu request
+        processPendingWorldMenu();
 
         // Render World's morphs directly
         renderWorldMorphs();
