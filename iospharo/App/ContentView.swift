@@ -155,35 +155,11 @@ struct ContentView: View {
         // Canvas view for Metal rendering
         // On Mac Catalyst, SwiftUI gestures capture clicks that UIKit misses
         #if targetEnvironment(macCatalyst)
+        // Mac Catalyst: Let UIKit handle mouse events directly
+        // Right-clicks will be handled by the underlying PharoCanvasView/MetalCanvasView
+        // which receives proper mouse events from UIKit
         PharoCanvasView(bridge: bridge)
             .edgesIgnoringSafeArea(.all)
-            .contentShape(Rectangle())  // Make entire area tappable
-            .onTapGesture {
-                // SwiftUI tap gesture for Mac Catalyst left-click
-                // Use the hover-tracked position for the click location
-                let pos = MouseEventHandler.shared.lastPosition
-                if let file = fopen("/tmp/swiftui_tap.log", "a") {
-                    fputs("[SWIFTUI-TAP] Left-click at hover pos (\(Int(pos.x)),\(Int(pos.y)))\n", file)
-                    fclose(file)
-                }
-                bridge.sendMouseMoved(to: pos, modifiers: 0)
-                bridge.sendTouchDown(at: pos, buttons: Int(IOS_RED_BUTTON))
-                bridge.sendTouchUp(at: pos)
-            }
-            .contextMenu {
-                // Context menu triggers on right-click - use this to detect right-clicks
-                // The context menu itself is dismissed immediately via the action
-                Button("World Menu") {
-                    let pos = MouseEventHandler.shared.lastPosition
-                    if let file = fopen("/tmp/swiftui_tap.log", "a") {
-                        fputs("[SWIFTUI-TAP] Right-click (context menu) at hover pos (\(Int(pos.x)),\(Int(pos.y)))\n", file)
-                        fclose(file)
-                    }
-                    bridge.sendMouseMoved(to: pos, modifiers: 0)
-                    bridge.sendTouchDown(at: pos, buttons: Int(IOS_YELLOW_BUTTON))
-                    bridge.sendTouchUp(at: pos)
-                }
-            }
         #else
         PharoCanvasView(bridge: bridge)
             .edgesIgnoringSafeArea(.all)

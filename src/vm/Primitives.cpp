@@ -8647,7 +8647,7 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
             // Extract strings
             std::string moduleName, primName;
 
-            if (moduleOop.isObject()) {
+            if (moduleOop.isObject() && memory_.isValidPointer(moduleOop)) {
                 ObjectHeader* modHdr = moduleOop.asObjectPtr();
                 if (extLog && extCallCount <= 50) {
                     fprintf(extLog, "[EXT] #%d   moduleOop: fmt=%u isBytes=%d size=%zu\n",
@@ -8666,7 +8666,7 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
                 }
             }
 
-            if (nameOop.isObject()) {
+            if (nameOop.isObject() && memory_.isValidPointer(nameOop)) {
                 ObjectHeader* nameHdr = nameOop.asObjectPtr();
                 if (extLog && extCallCount <= 50) {
                     fprintf(extLog, "[EXT] #%d   nameOop: fmt=%u isBytes=%d size=%zu clsIdx=%u\n",

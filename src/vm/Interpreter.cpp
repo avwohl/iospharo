@@ -4769,6 +4769,65 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
         return o.isNil() || o.rawBits() == nilObj.rawBits() || o.rawBits() < 0x10000;
     };
 
+    // Debug: Trace FullBlockClosure method lookups to understand DNU issues
+    bool traceBlockLookup = (selStr == "ensure:" || selStr == "value:" || selStr == "value") &&
+                             (getClassName(classOop) == "FullBlockClosure" || getClassName(classOop) == "BlockClosure");
+    static int blockLookupCount = 0;
+    if (traceBlockLookup) {
+        blockLookupCount++;
+        if (blockLookupCount <= 20) {
+            static FILE* blkLog = fopen("/tmp/block_lookup.log", "a");
+            if (blkLog) {
+                fprintf(blkLog, "\n[BLOCK-LOOKUP #%d] selector='%s' class='%s'\n",
+                        blockLookupCount, selStr.c_str(), getClassName(classOop).c_str());
+                fprintf(blkLog, "[BLOCK-LOOKUP] classOop=0x%llx classIdx=%u\n",
+                        (unsigned long long)classOop.rawBits(),
+                        classOop.isObject() ? classOop.asObjectPtr()->classIndex() : 0);
+                // Show superclass chain AND scan for ensure:/value: in each method dict
+                Oop cls = classOop;
+                for (int d = 0; d < 10 && cls.isObject() && !isNilOrEnd(cls); d++) {
+                    std::string name = getClassName(cls);
+                    Oop md = methodDictOf(cls);
+                    fprintf(blkLog, "[BLOCK-LOOKUP]   depth=%d: class='%s' methodDict=%s (0x%llx)\n",
+                            d, name.c_str(),
+                            (md.isObject() && !isNilOrEnd(md)) ? "valid" : "nil/invalid",
+                            (unsigned long long)md.rawBits());
+                    if (md.isObject() && !isNilOrEnd(md)) {
+                        ObjectHeader* mdHdr = md.asObjectPtr();
+                        size_t mdSlots = mdHdr->slotCount();
+                        fprintf(blkLog, "[BLOCK-LOOKUP]     mdSlots=%zu mdFormat=%d\n",
+                                mdSlots, (int)mdHdr->format());
+                        // Scan the method dictionary for ensure:/value:/value selectors
+                        if (name == "BlockClosure") {
+                            fprintf(blkLog, "[BLOCK-LOOKUP]     Scanning BlockClosure methodDict for '%s':\n", selStr.c_str());
+                            int found = 0;
+                            for (size_t k = 2; k < mdSlots && found == 0; k++) {
+                                Oop key = memory_.fetchPointer(k, md);
+                                if (key.isObject() && key.rawBits() > 0x10000) {
+                                    ObjectHeader* keyHdr = key.asObjectPtr();
+                                    if (keyHdr->isBytesObject() && keyHdr->byteSize() < 50) {
+                                        std::string keyStr((char*)keyHdr->bytes(), keyHdr->byteSize());
+                                        if (keyStr == selStr) {
+                                            fprintf(blkLog, "[BLOCK-LOOKUP]     FOUND '%s' at slot %zu!\n", keyStr.c_str(), k);
+                                            found = 1;
+                                        } else if (keyStr.substr(0, 6) == "ensure" || keyStr.substr(0, 5) == "value") {
+                                            fprintf(blkLog, "[BLOCK-LOOKUP]       slot[%zu]='%s'\n", k, keyStr.c_str());
+                                        }
+                                    }
+                                }
+                            }
+                            if (!found) {
+                                fprintf(blkLog, "[BLOCK-LOOKUP]     NOT FOUND '%s' in BlockClosure!\n", selStr.c_str());
+                            }
+                        }
+                    }
+                    cls = superclassOf(cls);
+                }
+                fflush(blkLog);
+            }
+        }
+    }
+
     // Debug: trace #owner lookups to understand why they fail
     bool traceOwner = (selStr == "owner");
     static int ownerTraceCount = 0;
@@ -4943,6 +5002,19 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
 
         if (selHdr->isBytesObject() && selHdr->byteSize() <= 100) {
             selectorStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+        }
+
+        // Debug: trace ensure:/value:/value lookups
+        static int ensureTraceCount = 0;
+        if ((selectorStr == "ensure:" || selectorStr == "value:" || selectorStr == "value") &&
+            ensureTraceCount++ <= 30) {
+            static FILE* ensLog = fopen("/tmp/ensure_lookup.log", "a");
+            if (ensLog) {
+                fprintf(ensLog, "\n[ENSURE-TRACE #%d] Looking for '%s' in methodDict 0x%llx (slots=%zu)\n",
+                        ensureTraceCount, selectorStr.c_str(),
+                        (unsigned long long)methodDict.rawBits(), mdSlotCount);
+                fflush(ensLog);
+            }
         }
 
         // Debug: show selector that wasn't extracted
@@ -5132,6 +5204,25 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
 
         // Fetch key from MethodDict's inline slot (not from keysArray!)
         Oop key = memory_.fetchPointer(mdSlotIndex, methodDict);
+
+        // Debug: trace specific critical slots for ensure:/value: lookups
+        // Critical: check i=109 when searching for ensure: - why is it being skipped?
+        static bool traceEnsure109 = false;
+        if (selectorStr == "ensure:" && size == 256 && !traceEnsure109 && i == 109) {
+            static FILE* ensLog = fopen("/tmp/ensure_lookup.log", "a");
+            if (ensLog) {
+                fprintf(ensLog, "[ENSURE-109] i=%zu mdSlotIndex=%zu key=0x%llx\n",
+                        i, mdSlotIndex, (unsigned long long)key.rawBits());
+                fprintf(ensLog, "[ENSURE-109] isNilOrEmpty=%d nilObj=0x%llx\n",
+                        isNilOrEmpty(key) ? 1 : 0, (unsigned long long)nilObj.rawBits());
+                fprintf(ensLog, "[ENSURE-109] key.isNil()=%d key.rawBits()==nilObj=%d key.rawBits()<0x10000=%d\n",
+                        key.isNil() ? 1 : 0,
+                        (key.rawBits() == nilObj.rawBits()) ? 1 : 0,
+                        (key.rawBits() < 0x10000) ? 1 : 0);
+                traceEnsure109 = true;
+                fflush(ensLog);
+            }
+        }
 
         if (verboseDebug && ((i - 241) % 3 == 0)) {
             // DEBUG_LOG("[MD] i=" << i << " key=0x" << std::hex << key.rawBits() << std::dec;
@@ -5616,6 +5707,22 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
 
         ObjectFormat keyFmt = keyHdr->format();
 
+        // Debug: trace ensure: search to understand why it's not finding the key
+        static bool traceEnsureRaw = false;
+        if (selectorStr == "ensure:" && size == 256 && !traceEnsureRaw && i >= 105 && i <= 115) {
+            static FILE* ensLog = fopen("/tmp/ensure_lookup.log", "a");
+            if (ensLog) {
+                fprintf(ensLog, "[ENSURE-RAW] i=%zu keyFmt=%d isBytes=%d classIdx=%u\n",
+                        i, (int)keyFmt, keyHdr->isBytesObject() ? 1 : 0, keyHdr->classIndex());
+                if (keyHdr->isBytesObject() && keyHdr->byteSize() < 50) {
+                    std::string keyStr((char*)keyHdr->bytes(), keyHdr->byteSize());
+                    fprintf(ensLog, "[ENSURE-RAW]   key='%s'\n", keyStr.c_str());
+                }
+                if (i >= 115) traceEnsureRaw = true;
+                fflush(ensLog);
+            }
+        }
+
         // Debug trace first few non-nil entries - only for ProtoObject (128 entries)
         static int entryDebugCount = 0;
         if (entryDebugCount < 60 && selectorStr == "doesNotUnderstand:" && size == 128) {
@@ -5632,8 +5739,50 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
         }
 
         // Keys should be Symbols (byte objects format 16-23)
+        // Debug: trace specific slot for ensure: lookup
+        // slot 53 -> i = 51, slot 111 -> i = 109, slot 235 -> i = 233
+        static int ensureSlotTrace = 0;
+        if ((selectorStr == "ensure:" || selectorStr == "value:" || selectorStr == "value") &&
+            ensureSlotTrace++ <= 50) {
+            static FILE* ensLog = fopen("/tmp/ensure_lookup.log", "a");
+            if (ensLog && (i == 51 || i == 109 || i == 233 || (ensureSlotTrace <= 20 && (i % 30 == 0)))) {
+                fprintf(ensLog, "[ENSURE-SLOT] i=%zu slot=%zu key=0x%llx isBytes=%d fmt=%d byteSize=%zu",
+                        i, i + 2, (unsigned long long)key.rawBits(),
+                        keyHdr->isBytesObject() ? 1 : 0,
+                        (int)keyHdr->format(),
+                        keyHdr->isBytesObject() ? keyHdr->byteSize() : 0);
+                if (keyHdr->isBytesObject() && keyHdr->byteSize() < 50) {
+                    std::string keyStr((char*)keyHdr->bytes(), keyHdr->byteSize());
+                    fprintf(ensLog, " key='%s'", keyStr.c_str());
+                }
+                fprintf(ensLog, "\n");
+                fflush(ensLog);
+            }
+        }
+
         if (keyHdr->isBytesObject()) {
             // Compare key Symbol with selector
+            // Debug: trace ensure: searches - also check what key contains 'ensure'
+            static bool traceEnsureSearchDone = false;
+            if (selectorStr == "ensure:" && size == 256 && !traceEnsureSearchDone) {
+                static FILE* ensLog = fopen("/tmp/ensure_lookup.log", "a");
+                if (ensLog) {
+                    std::string keyStr((char*)keyHdr->bytes(), keyHdr->byteSize());
+                    // Log keys around index 109 AND any key containing 'ensure'
+                    bool hasEnsure = (keyStr.find("ensure") != std::string::npos);
+                    if ((i >= 105 && i <= 115) || hasEnsure) {
+                        fprintf(ensLog, "[ENSURE-KEY] i=%zu key='%s' (len=%zu)\n",
+                                i, keyStr.c_str(), keyStr.length());
+                        if (hasEnsure) {
+                            fprintf(ensLog, "[ENSURE-KEY] Found 'ensure' in key! symbolEquals=%d\n",
+                                    memory_.symbolEquals(key, selectorStr.c_str()) ? 1 : 0);
+                        }
+                        fflush(ensLog);
+                    }
+                    if (i >= 140) traceEnsureSearchDone = true;  // Stop after reasonable amount
+                }
+            }
+
             if (!selectorStr.empty() && memory_.symbolEquals(key, selectorStr.c_str())) {
                 // Debug: trace "hands" lookup specifically
                 if (selectorStr == "hands") {
@@ -5841,6 +5990,19 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
         // DEBUG_LOG("[MD] Not found (searched " << nonNilCount << " non-nil entries)";
         // std::cerr.flush();
     }
+
+    // Debug: trace ensure:/value:/value NOT FOUND
+    static int ensureNotFoundCount = 0;
+    if ((selectorStr == "ensure:" || selectorStr == "value:" || selectorStr == "value") &&
+        ensureNotFoundCount++ <= 30) {
+        static FILE* ensLog = fopen("/tmp/ensure_lookup.log", "a");
+        if (ensLog) {
+            fprintf(ensLog, "[ENSURE-TRACE] NOT FOUND '%s' after searching %zu slots (%d non-nil)\n",
+                    selectorStr.c_str(), maxSearch, nonNilCount);
+            fflush(ensLog);
+        }
+    }
+
     return Oop::nil();
 }
 
