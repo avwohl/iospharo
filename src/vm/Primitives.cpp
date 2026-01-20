@@ -8549,10 +8549,21 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
     // Or an ExternalLibraryFunction object
 
     ObjectHeader* methodHdr = method.asObjectPtr();
-    size_t numLiterals = methodHdr->slotCount();
+
+    // BUG FIX: Must read actual numLiterals from method header, NOT slotCount()!
+    // slotCount() returns total slots including bytecode area, which would cause
+    // us to read bytecode bytes as oop values, creating "corrupted" pointers.
+    // Method header is in slot 0 as a SmallInteger. Bits 0-14 = numLiterals.
+    Oop methodHeader = memory_.fetchPointer(0, method);
+    if (!methodHeader.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+    int64_t headerBits = methodHeader.asSmallInteger();
+    size_t numLiterals = headerBits & 0x7FFF;  // bits 0-14 are numLiterals
 
     // Fast path: Check for known MiscPrimitivePlugin methods by selector in literals
-    for (size_t i = 0; i < numLiterals && i < 10; i++) {
+    // Note: literals are at slots 1..numLiterals (slot 0 is the header)
+    for (size_t i = 1; i <= numLiterals && i < 10; i++) {
         Oop literal = memory_.fetchPointer(i, method);
         if (literal.isObject() && memory_.isValidPointer(literal)) {
             ObjectHeader* litHdr = literal.asObjectPtr();
@@ -8580,7 +8591,8 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
     }
 
     // Search literals for the primitive spec (usually an Array with module/name)
-    for (size_t i = 0; i < numLiterals && i < 10; i++) {
+    // Literals are at slots 1..numLiterals (slot 0 is the method header)
+    for (size_t i = 1; i <= numLiterals && i < 10; i++) {
         Oop literal = memory_.fetchPointer(i, method);
         if (extLog && extCallCount <= 50) {
             fprintf(extLog, "[EXT] #%d literal[%zu] isObj=%d bits=0x%llx\n",
