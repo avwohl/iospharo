@@ -5738,27 +5738,34 @@ extern int g_traceSendsAfterPrim264;
                 }
             }
 
-            // ===== INTERCEPT snapshot:andQuit: to directly quit =====
-            // When user selects Quit from menu, bypass complex session management
-            // and directly exit the VM.
+            // ===== INTERCEPT snapshot:andQuit: - SAVE IS DISABLED =====
+            // Per CLAUDE.md: Save is disabled for now to ensure consistent testing from fresh state.
+            // We always start from fresh images and never save state.
             if (selStr == "snapshot:andQuit:" && argCount == 2) {
                 Oop saveArg = stackValue(1);  // First argument: save?
                 Oop quitArg = stackValue(0);  // Second argument: quit?
 
-                // Check if quit is requested
                 bool shouldQuit = quitArg.rawBits() == memory_.trueObject().rawBits();
                 bool shouldSave = saveArg.rawBits() == memory_.trueObject().rawBits();
 
-                if (shouldQuit && !shouldSave) {
-                    // User wants to quit without saving - stop VM loop gracefully
-                    std::cerr << "[VM] Intercepted snapshot:andQuit: - stopping VM\n";
+                if (shouldSave) {
+                    // SAVE IS DISABLED - ignore save request but still quit if requested
+                    std::cerr << "[VM] Save disabled - ignoring save request\n";
+                }
+
+                if (shouldQuit) {
+                    // Quit requested - stop VM loop gracefully
+                    std::cerr << "[VM] Intercepted snapshot:andQuit: - stopping VM (save disabled)\n";
                     running_ = false;
-                    // Pop args and receiver, push nil to satisfy return
                     popN(argCount + 1);
                     push(memory_.nil());
                     return;
                 }
-                // Otherwise let it proceed (for save operations)
+
+                // Neither save nor quit - just return nil (save is disabled)
+                popN(argCount + 1);
+                push(memory_.nil());
+                return;
             }
 
             // ===== INTERCEPT Set/IdentitySet >> error: for "no free space" =====

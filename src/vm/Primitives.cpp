@@ -1972,6 +1972,15 @@ static uint64_t oopToImageFormat(Oop oop, uint8_t* runtimeBase, uint64_t imageBa
 }
 
 PrimitiveResult Interpreter::primitiveSnapshot(int argCount) {
+    // SAVE IS DISABLED per CLAUDE.md
+    // "Save is disabled for now to ensure consistent testing from fresh state"
+    // Always fail to prevent any image saving
+    std::cerr << "[VM] primitiveSnapshot: Save disabled - failing primitive\n";
+    return PrimitiveResult::Failure;
+
+    // === ORIGINAL IMPLEMENTATION DISABLED ===
+    // The code below is kept for reference but never executes due to early return above
+#if 0
     // primitiveSnapshot / primitiveSnapshotEmbedded
     // Argument: optional filename (String)
     // Returns: true if save succeeded, false if resuming from load
@@ -2110,6 +2119,7 @@ PrimitiveResult Interpreter::primitiveSnapshot(int argCount) {
     // Return true to indicate successful save
     primitiveSuccess(memory_.trueObject());
     return PrimitiveResult::Success;
+#endif  // Disabled save implementation
 }
 
 // ===== I/O PRIMITIVES (stubs - iOS implementation elsewhere) =====
