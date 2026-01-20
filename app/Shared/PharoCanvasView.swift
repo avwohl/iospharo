@@ -7,6 +7,10 @@ struct PharoCanvasView: NSViewRepresentable {
     func makeNSView(context: Context) -> PharoNSView {
         let view = PharoNSView()
         view.vmController = vmController
+        // Ensure the view can receive mouse events
+        DispatchQueue.main.async {
+            view.window?.makeFirstResponder(view)
+        }
         return view
     }
 
@@ -100,7 +104,10 @@ class PharoNSView: NSView {
     // Mouse handling
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        vmController?.postMouseEvent(type: 1, x: Int(point.x), y: Int(bounds.height - point.y), buttons: 4, modifiers: modifiers(from: event))
+        let x = Int(point.x)
+        let y = Int(bounds.height - point.y)
+        print("[SWIFT] mouseDown at (\(x), \(y)) buttons=4")
+        vmController?.postMouseEvent(type: 1, x: x, y: y, buttons: 4, modifiers: modifiers(from: event))
     }
 
     override func mouseUp(with event: NSEvent) {

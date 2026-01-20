@@ -1717,6 +1717,42 @@ void Interpreter::dispatchMouseEventToMorph(int x, int y, int buttons, bool isMo
         fflush(dispatchLog);
     }
 
+    // Check for menu bar click first (rendered at top of screen, ~44 pixels high)
+    // The Smalltalk MenubarMorph has tiny bounds but we render it full-width
+    int menuBarHeight = 44;  // Match our C++ render height
+    if (y < menuBarHeight && isMouseDown && buttons != 0) {
+        Oop world = memory_.findGlobal("World");
+        if (!world.isNil() && world.isObject()) {
+            Oop submorphs = memory_.fetchPointer(2, world);
+            if (!submorphs.isNil() && submorphs.isObject()) {
+                ObjectHeader* submorphsHdr = submorphs.asObjectPtr();
+                for (size_t i = 0; i < submorphsHdr->slotCount(); ++i) {
+                    Oop morph = memory_.fetchPointer(i, submorphs);
+                    if (morph.isNil() || !morph.isObject()) continue;
+                    Oop morphClass = memory_.classOf(morph);
+                    if (morphClass.isObject()) {
+                        Oop nameOop = memory_.fetchPointer(6, morphClass);
+                        if (nameOop.isObject()) {
+                            ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                                std::string cn((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                if (cn == "MenubarMorph") {
+                                    if (dispatchLog) {
+                                        fprintf(dispatchLog, "[DISPATCH #%d] Menu bar click at y=%d\n",
+                                                dispatchCount, y);
+                                        fflush(dispatchLog);
+                                    }
+                                    handleMenuBarClick(morph, x, y, buttons);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Find the morph at position (x,y) and dispatch the event
     Oop world = memory_.findGlobal("World");
     if (world.isNil() || !world.isObject()) return;
