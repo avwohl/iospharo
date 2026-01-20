@@ -2000,9 +2000,9 @@ void Interpreter::handleWorldMenuClick(Oop world, int x, int y) {
     }
 
     // Try several method names that might handle world menu display:
-    // 1. invokeWorldMenu: (most complete - handles everything)
-    // 2. yellowButtonActivity (traditional Morphic)
-    // 3. worldMenu (returns MenuMorph, needs manual opening)
+    // 1. invokeWorldMenu: (complete handler, needs event)
+    // 2. yellowButtonActivity (traditional Morphic, no args)
+    // 3. worldMenu (returns MenuMorph, we'll open it manually)
     const char* methodNames[] = {"invokeWorldMenu:", "yellowButtonActivity", "worldMenu", nullptr};
     Oop method = Oop::nil();
     const char* foundMethodName = nullptr;
@@ -2062,14 +2062,19 @@ void Interpreter::processPendingWorldMenu() {
         fflush(menuLog);
     }
 
-    // Push receiver (World) and activate the method
+    // Push receiver (World)
     push(pendingWorldMenuReceiver_);
 
-    // Check if method needs an argument (invokeWorldMenu: takes an event)
     int argCount = 0;
+
+    // For invokeWorldMenu:, we need an event argument
+    // Creating Smalltalk objects from C++ is complex without proper GC integration
+    // For now, use nil - the real solution is to fix the InputEventSensor event loop
     if (pendingWorldMenuMethodName_ && strcmp(pendingWorldMenuMethodName_, "invokeWorldMenu:") == 0) {
-        // Create a simple mouse event for invokeWorldMenu:
-        // For now, push nil as the event - Smalltalk may handle nil event gracefully
+        if (menuLog) {
+            fprintf(menuLog, "[WORLD-MENU] invokeWorldMenu: using nil event (workaround)\n");
+            fflush(menuLog);
+        }
         push(memory_.nil());
         argCount = 1;
     }
@@ -9675,7 +9680,13 @@ bool Interpreter::bootstrapStartup() {
     static bool displayInitialized = false;
 
     startupAttempt++;
-    // DEBUG: "[DEBUG] bootstrapStartup: Attempt #" << startupAttempt
+    // Log every startup attempt to verify the code is being reached
+    fprintf(stderr, "[BOOTSTRAP] Attempt #%d\n", startupAttempt);
+    static FILE* startupLog = fopen("/tmp/bootstrap_startup.log", "w");
+    if (startupLog) {
+        fprintf(startupLog, "[BOOTSTRAP] Attempt #%d\n", startupAttempt);
+        fflush(startupLog);
+    }
 
     // Initialize the platform display ONCE with a test pattern
     // Skip Smalltalk Form creation - just write directly to platform buffer
@@ -9855,6 +9866,87 @@ bool Interpreter::bootstrapStartup() {
 
     // Third try and beyond: Keep calling World>>doOneCycle for UI loop
     if (startupAttempt >= 3 && startupAttempt <= 100) {
+        // One-time: Try to start InputEventSensor's event loop
+        static bool sensorStartAttempted = false;
+        static FILE* sensorLog = nullptr;
+        if (!sensorLog) {
+            sensorLog = fopen("/tmp/sensor_start.log", "w");
+        }
+        if (!sensorStartAttempted) {
+            sensorStartAttempted = true;
+
+            if (sensorLog) {
+                fprintf(sensorLog, "[SENSOR] Starting InputEventSensor lookup (attempt #%d)\n", startupAttempt);
+                fflush(sensorLog);
+            }
+
+            // Find the Sensor global (InputEventSensor instance)
+            Oop sensor = memory_.findGlobal("Sensor");
+            if (sensorLog) {
+                fprintf(sensorLog, "[SENSOR] Sensor global: 0x%llx isNil=%d isObj=%d\n",
+                        (unsigned long long)sensor.rawBits(), sensor.isNil() ? 1 : 0, sensor.isObject() ? 1 : 0);
+                fflush(sensorLog);
+            }
+            if (!sensor.isNil() && sensor.isObject()) {
+                Oop sensorClass = memory_.classOf(sensor);
+                if (sensorLog) {
+                    fprintf(sensorLog, "[SENSOR] Sensor class: 0x%llx isNil=%d isObj=%d\n",
+                            (unsigned long long)sensorClass.rawBits(), sensorClass.isNil() ? 1 : 0, sensorClass.isObject() ? 1 : 0);
+                    fflush(sensorLog);
+                }
+                if (!sensorClass.isNil() && sensorClass.isObject()) {
+                    // Try several possible method names for starting the event loop
+                    const char* methodNames[] = {
+                        "startUp", "startEventLoop", "installEventLoop",
+                        "startUp:", "install", "eventLoopProcess", nullptr
+                    };
+                    Oop startUpMethod = Oop::nil();
+                    const char* foundMethodName = nullptr;
+                    for (int i = 0; methodNames[i] != nullptr; i++) {
+                        startUpMethod = lookupMethodInClass(sensorClass, methodNames[i]);
+                        if (sensorLog) {
+                            fprintf(sensorLog, "[SENSOR] Trying '%s': 0x%llx isNil=%d\n",
+                                    methodNames[i], (unsigned long long)startUpMethod.rawBits(), startUpMethod.isNil() ? 1 : 0);
+                            fflush(sensorLog);
+                        }
+                        if (!startUpMethod.isNil() && startUpMethod.isObject()) {
+                            foundMethodName = methodNames[i];
+                            break;
+                        }
+                    }
+                    if (!startUpMethod.isNil() && startUpMethod.isObject()) {
+                        if (sensorLog) {
+                            fprintf(sensorLog, "[SENSOR] Found method: %s\n", foundMethodName);
+                            fflush(sensorLog);
+                        }
+                        if (sensorLog) {
+                            fprintf(sensorLog, "[SENSOR] Attempting to call Sensor>>startUp\n");
+                            fflush(sensorLog);
+                        }
+                        Oop context = memory_.createStartupContext(startUpMethod, sensor);
+                        if (!context.isNil()) {
+                            // Execute startUp in the current context
+                            // Push it onto the context stack for execution
+                            stackPointer_ = stackBase_;
+                            frameDepth_ = 0;
+                            if (executeFromContext(context)) {
+                                if (sensorLog) {
+                                    fprintf(sensorLog, "[SENSOR] Started Sensor>>startUp execution\n");
+                                    fflush(sensorLog);
+                                }
+                                return true;  // Let startUp complete before doing doOneCycle
+                            }
+                        }
+                    } else {
+                        if (sensorLog) {
+                            fprintf(sensorLog, "[SENSOR] No event loop method found in Sensor class\n");
+                            fflush(sensorLog);
+                        }
+                    }
+                }
+            }
+        }
+
         // Find World class - Note: World is a global that holds the current WorldMorph
         Oop world = memory_.findGlobal("World");
 
