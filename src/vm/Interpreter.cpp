@@ -5169,14 +5169,37 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
                         std::cerr << " method=0x" << std::hex << method.rawBits() << std::dec;
                         if (method.isObject()) {
                             ObjectHeader* mh = method.asObjectPtr();
-                            // Get method's own selector from literal 1
-                            if (mh->slotCount() > 1) {
-                                Oop mSel = mh->slotAt(1);
-                                if (mSel.isObject()) {
-                                    ObjectHeader* msh = mSel.asObjectPtr();
-                                    if (msh->isBytesObject() && msh->byteSize() < 50) {
-                                        std::cerr << " method-selector=\""
-                                                  << std::string((char*)msh->bytes(), msh->byteSize()) << "\"";
+                            // Get method's own selector - dump ALL literals to understand structure
+                            if (mh->isCompiledMethod()) {
+                                Oop mHdr = memory_.fetchPointer(0, method);
+                                if (mHdr.isSmallInteger()) {
+                                    size_t mNumLits = mHdr.asSmallInteger() & 0x7FFF;
+                                    std::cerr << " numLits=" << mNumLits;
+                                    // Dump all literals to find the selector
+                                    std::cerr << "\n[SIGNAL-LITS] Dumping all " << mNumLits << " literals:";
+                                    for (size_t lit = 1; lit <= mNumLits && lit < 10; lit++) {
+                                        Oop litObj = memory_.fetchPointer(lit, method);
+                                        std::cerr << "\n[SIGNAL-LITS]   lit[" << lit << "]=0x" << std::hex << litObj.rawBits() << std::dec;
+                                        if (litObj.isSmallInteger()) {
+                                            std::cerr << " (SmallInt=" << litObj.asSmallInteger() << ")";
+                                        } else if (litObj.isObject() && litObj.rawBits() > 0x10000) {
+                                            ObjectHeader* litHdr = litObj.asObjectPtr();
+                                            std::cerr << " cls=" << litHdr->classIndex() << " fmt=" << (int)litHdr->format();
+                                            if (litHdr->isBytesObject() && litHdr->byteSize() < 50) {
+                                                std::cerr << " \"" << std::string((char*)litHdr->bytes(), litHdr->byteSize()) << "\"";
+                                            } else if (litHdr->format() == ObjectFormat::FixedSize) {
+                                                std::cerr << " slots=" << litHdr->slotCount();
+                                                if (litHdr->slotCount() >= 1) {
+                                                    Oop innerSel = memory_.fetchPointer(0, litObj);
+                                                    if (innerSel.isObject() && innerSel.rawBits() > 0x10000) {
+                                                        ObjectHeader* innerHdr = innerSel.asObjectPtr();
+                                                        if (innerHdr->isBytesObject() && innerHdr->byteSize() < 50) {
+                                                            std::cerr << " slot0=\"" << std::string((char*)innerHdr->bytes(), innerHdr->byteSize()) << "\"";
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -5192,20 +5215,40 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
                         Oop tally = memory_.fetchPointer(0, methodDict);
                         std::cerr << " tally=" << (tally.isSmallInteger() ? tally.asSmallInteger() : -1);
                         // Check method at i and i+1 to see if there's an off-by-one
-                        // First, find where "signal" method ACTUALLY is
+                        // First, find where "signal" method ACTUALLY is (using correct selector position)
                         int signalMethodIdx = -1;
                         for (size_t j = 0; j < valuesSize && signalMethodIdx < 0; j++) {
                             Oop jMethod = memory_.fetchPointer(j, valuesArray);
                             if (jMethod.isObject()) {
                                 ObjectHeader* jmh = jMethod.asObjectPtr();
-                                if (jmh->slotCount() > 1) {
-                                    Oop jmSel = jmh->slotAt(1);
-                                    if (jmSel.isObject()) {
-                                        ObjectHeader* jmsh = jmSel.asObjectPtr();
-                                        if (jmsh->isBytesObject() && jmsh->byteSize() == 6) {
-                                            std::string jmStr((char*)jmsh->bytes(), 6);
-                                            if (jmStr == "signal") {
-                                                signalMethodIdx = j;
+                                if (jmh->isCompiledMethod()) {
+                                    // Get numLiterals from header
+                                    Oop jHdr = memory_.fetchPointer(0, jMethod);
+                                    if (jHdr.isSmallInteger()) {
+                                        size_t jNumLits = jHdr.asSmallInteger() & 0x7FFF;
+                                        if (jNumLits >= 2) {
+                                            // Selector at penultimate literal: slot[numLits-1]
+                                            Oop jmSel = memory_.fetchPointer(jNumLits - 1, jMethod);
+                                            if (jmSel.isObject()) {
+                                                ObjectHeader* jmsh = jmSel.asObjectPtr();
+                                                if (jmsh->isBytesObject() && jmsh->byteSize() == 6) {
+                                                    std::string jmStr((char*)jmsh->bytes(), 6);
+                                                    if (jmStr == "signal") {
+                                                        signalMethodIdx = j;
+                                                    }
+                                                } else if (jmsh->format() == ObjectFormat::FixedSize && jmsh->slotCount() >= 1) {
+                                                    // AdditionalMethodState - selector at slot 0
+                                                    Oop innerSel = memory_.fetchPointer(0, jmSel);
+                                                    if (innerSel.isObject()) {
+                                                        ObjectHeader* innerHdr = innerSel.asObjectPtr();
+                                                        if (innerHdr->isBytesObject() && innerHdr->byteSize() == 6) {
+                                                            std::string jmStr((char*)innerHdr->bytes(), 6);
+                                                            if (jmStr == "signal") {
+                                                                signalMethodIdx = j;
+                                                            }
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -5327,6 +5370,215 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
             // Return corresponding method from valuesArray
             if (i < valuesSize) {
                 Oop method = memory_.fetchPointer(i, valuesArray);
+
+                // FIX: Validate that the method's selector matches what we're looking for
+                // This catches cases where the values array is misaligned with keys
+                if (method.isObject() && method.rawBits() > 0x10000) {
+                    ObjectHeader* methHdr = method.asObjectPtr();
+                    if (methHdr->isCompiledMethod()) {
+                        // Get numLiterals from method header (slot 0)
+                        Oop methodHeader = memory_.fetchPointer(0, method);
+                        if (!methodHeader.isSmallInteger()) continue;
+                        int64_t headerBits = methodHeader.asSmallInteger();
+                        size_t numLits = headerBits & 0x7FFF;
+
+                        // Extract selector from method - try multiple positions
+                        // In Pharo, selector can be at:
+                        // - Penultimate literal (numLits-1) if it's a Symbol
+                        // - Inside MethodProperties at penultimate literal (slot 0)
+                        // - At literal 1 for some method formats
+                        if (numLits < 1) continue;
+
+                        Oop actualSel = Oop::nil();
+
+                        // Try penultimate literal first (standard Pharo location)
+                        if (numLits >= 2) {
+                            Oop penult = memory_.fetchPointer(numLits - 1, method);
+                            if (penult.isObject() && penult.rawBits() > 0x10000) {
+                                ObjectHeader* penultHdr = penult.asObjectPtr();
+                                if (penultHdr->isBytesObject()) {
+                                    actualSel = penult;  // Direct Symbol
+                                } else if (penultHdr->format() == ObjectFormat::FixedSize && penultHdr->slotCount() >= 1) {
+                                    // MethodProperties/AdditionalMethodState - selector at slot 0
+                                    Oop inner = memory_.fetchPointer(0, penult);
+                                    if (inner.isObject() && inner.rawBits() > 0x10000) {
+                                        ObjectHeader* innerHdr = inner.asObjectPtr();
+                                        if (innerHdr->isBytesObject()) {
+                                            actualSel = inner;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // If penultimate isn't a selector, try literal 1 (common for primitives)
+                        if (actualSel.isNil() && numLits >= 1) {
+                            Oop lit1 = memory_.fetchPointer(1, method);
+                            if (lit1.isObject() && lit1.rawBits() > 0x10000) {
+                                ObjectHeader* lit1Hdr = lit1.asObjectPtr();
+                                if (lit1Hdr->isBytesObject()) {
+                                    actualSel = lit1;
+                                }
+                            }
+                        }
+
+                        if (actualSel.isObject() && actualSel.rawBits() > 0x10000) {
+                            ObjectHeader* actualSelHdr = actualSel.asObjectPtr();
+                            if (actualSelHdr->isBytesObject()) {
+                                std::string methodSelStr((char*)actualSelHdr->bytes(), actualSelHdr->byteSize());
+                                if (!selectorStr.empty() && methodSelStr != selectorStr) {
+                                    // Method selector doesn't match - search entire values array
+                                    static int mismatchCount = 0;
+                                    bool shouldDebugMismatch = (mismatchCount < 2);
+                                    if (mismatchCount++ < 5) {
+                                        std::cerr << "[MD-MISMATCH] key=" << selectorStr
+                                                  << " but method sel=" << methodSelStr
+                                                  << " at i=" << i << " valuesSize=" << valuesSize
+                                                  << " - searching values array\n";
+                                    }
+
+                                    // Debug: show what's at the mismatch index and search for target
+                                    if (shouldDebugMismatch && selectorStr == "doesNotUnderstand:") {
+                                        std::cerr << "[MD-DUMP] Entry at index " << i << ":\n";
+                                        Oop dbgM = memory_.fetchPointer(i, valuesArray);
+                                        std::cerr << "[MD-DUMP]   [" << i << "] 0x" << std::hex << dbgM.rawBits() << std::dec;
+                                        if (dbgM.isObject() && dbgM.rawBits() > 0x10000) {
+                                            ObjectHeader* dbgHdr = dbgM.asObjectPtr();
+                                            std::cerr << " cls=" << dbgHdr->classIndex() << " fmt=" << (int)dbgHdr->format()
+                                                      << " slots=" << dbgHdr->slotCount();
+                                            // Show slot 1 raw
+                                            if (dbgHdr->slotCount() > 1) {
+                                                Oop slot1 = memory_.fetchPointer(1, dbgM);
+                                                std::cerr << " slot1=0x" << std::hex << slot1.rawBits() << std::dec;
+                                            }
+                                        }
+                                        std::cerr << "\n";
+
+                                        // Count methods with 'doesNotUnderstand:' in values array
+                                        std::cerr << "[MD-DUMP] Scanning all " << valuesSize << " entries for 'doesNotUnderstand:'...\n";
+                                        int dnuCount = 0;
+                                        for (size_t dbg = 0; dbg < valuesSize; dbg++) {
+                                            Oop m = memory_.fetchPointer(dbg, valuesArray);
+                                            if (!m.isObject() || m.rawBits() < 0x10000) continue;
+                                            ObjectHeader* mh = m.asObjectPtr();
+                                            if (!mh->isCompiledMethod()) continue;
+
+                                            // Get numLiterals from method header
+                                            Oop mHdr = memory_.fetchPointer(0, m);
+                                            if (!mHdr.isSmallInteger()) continue;
+                                            size_t mNumLits = mHdr.asSmallInteger() & 0x7FFF;
+                                            if (mNumLits < 1) continue;
+
+                                            // Try to extract selector - check multiple positions
+                                            std::string selStr;
+
+                                            // Try penultimate literal first
+                                            if (mNumLits >= 2) {
+                                                Oop sel = memory_.fetchPointer(mNumLits - 1, m);
+                                                if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                                    ObjectHeader* selHdr = sel.asObjectPtr();
+                                                    if (selHdr->isBytesObject()) {
+                                                        selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                                                    } else if (selHdr->format() == ObjectFormat::FixedSize && selHdr->slotCount() >= 1) {
+                                                        Oop inner = memory_.fetchPointer(0, sel);
+                                                        if (inner.isObject() && inner.rawBits() > 0x10000) {
+                                                            ObjectHeader* innerHdr = inner.asObjectPtr();
+                                                            if (innerHdr->isBytesObject()) {
+                                                                selStr = std::string((char*)innerHdr->bytes(), innerHdr->byteSize());
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            // Try literal 1 if penultimate wasn't a selector
+                                            if (selStr.empty()) {
+                                                Oop lit1 = memory_.fetchPointer(1, m);
+                                                if (lit1.isObject() && lit1.rawBits() > 0x10000) {
+                                                    ObjectHeader* lit1Hdr = lit1.asObjectPtr();
+                                                    if (lit1Hdr->isBytesObject()) {
+                                                        selStr = std::string((char*)lit1Hdr->bytes(), lit1Hdr->byteSize());
+                                                    }
+                                                }
+                                            }
+
+                                            if (selStr == "doesNotUnderstand:") {
+                                                dnuCount++;
+                                                std::cerr << "[MD-DUMP] FOUND 'doesNotUnderstand:' at index " << dbg << "\n";
+                                            }
+                                        }
+                                        std::cerr << "[MD-DUMP] Total 'doesNotUnderstand:' methods found: " << dnuCount << "\n";
+                                    }
+
+                                    // Fallback: linear search through values array for matching selector
+                                    for (size_t j = 0; j < valuesSize; j++) {
+                                        Oop candidateMethod = memory_.fetchPointer(j, valuesArray);
+                                        if (!candidateMethod.isObject() || candidateMethod.rawBits() < 0x10000) continue;
+
+                                        ObjectHeader* candHdr = candidateMethod.asObjectPtr();
+                                        if (!candHdr->isCompiledMethod()) continue;
+
+                                        // Get numLiterals from method header
+                                        Oop candHeader = memory_.fetchPointer(0, candidateMethod);
+                                        if (!candHeader.isSmallInteger()) continue;
+                                        size_t candNumLits = candHeader.asSmallInteger() & 0x7FFF;
+                                        if (candNumLits < 1) continue;
+
+                                        // Try to extract selector - check multiple positions
+                                        Oop candActualSel = Oop::nil();
+
+                                        // Try penultimate literal first
+                                        if (candNumLits >= 2) {
+                                            Oop penult = memory_.fetchPointer(candNumLits - 1, candidateMethod);
+                                            if (penult.isObject() && penult.rawBits() > 0x10000) {
+                                                ObjectHeader* penultHdr = penult.asObjectPtr();
+                                                if (penultHdr->isBytesObject()) {
+                                                    candActualSel = penult;
+                                                } else if (penultHdr->format() == ObjectFormat::FixedSize && penultHdr->slotCount() >= 1) {
+                                                    Oop inner = memory_.fetchPointer(0, penult);
+                                                    if (inner.isObject() && inner.rawBits() > 0x10000) {
+                                                        ObjectHeader* innerHdr = inner.asObjectPtr();
+                                                        if (innerHdr->isBytesObject()) {
+                                                            candActualSel = inner;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        // Try literal 1 if penultimate wasn't a selector
+                                        if (candActualSel.isNil()) {
+                                            Oop lit1 = memory_.fetchPointer(1, candidateMethod);
+                                            if (lit1.isObject() && lit1.rawBits() > 0x10000) {
+                                                ObjectHeader* lit1Hdr = lit1.asObjectPtr();
+                                                if (lit1Hdr->isBytesObject()) {
+                                                    candActualSel = lit1;
+                                                }
+                                            }
+                                        }
+
+                                        if (candActualSel.isObject() && candActualSel.rawBits() > 0x10000) {
+                                            ObjectHeader* candSelHdr = candActualSel.asObjectPtr();
+                                            if (candSelHdr->isBytesObject()) {
+                                                std::string candSelStr((char*)candSelHdr->bytes(), candSelHdr->byteSize());
+                                                if (candSelStr == selectorStr) {
+                                                    if (mismatchCount <= 5) {
+                                                        std::cerr << "[MD-FOUND] Found '" << selectorStr
+                                                                  << "' at valuesArray[" << j << "] (expected at " << i << ")\n";
+                                                    }
+                                                    return candidateMethod;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    // If fallback search failed, continue with normal search
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Validate method before returning - skip invalid/unrelocated pointers
                 if (method.isObject() && !memory_.isValidPointer(method)) {
                     static int invalidMethodCount = 0;
