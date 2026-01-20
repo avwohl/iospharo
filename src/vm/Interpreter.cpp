@@ -5028,6 +5028,252 @@ extern int g_traceSendsAfterPrim264;
         if (selHdr->isBytesObject() && selHdr->byteSize() > 0 && selHdr->byteSize() < 50) {
             std::string selStr((char*)selHdr->bytes(), selHdr->byteSize());
 
+            // ===== LOG toolNamed: to debug symbol identity issues =====
+            if (selStr == "toolNamed:" && argCount == 1) {
+                Oop toolArg = stackValue(0);  // The tool name symbol
+                static FILE* toolLog = fopen("/tmp/tool_lookup.log", "a");
+                if (toolLog) {
+                    std::string argStr = "<unknown>";
+                    unsigned long long argBits = toolArg.rawBits();
+                    if (toolArg.isObject()) {
+                        ObjectHeader* argHdr = toolArg.asObjectPtr();
+                        if (argHdr->isBytesObject() && argHdr->byteSize() < 50) {
+                            argStr = std::string((char*)argHdr->bytes(), argHdr->byteSize());
+                        }
+                    }
+                    fprintf(toolLog, "[TOOL-LOOKUP] toolNamed: #%s (oop=0x%llx)\n", argStr.c_str(), argBits);
+
+                    // Dump full dictionary structure
+                    if (rcvr.isObject()) {
+                        Oop toolsDict = memory_.fetchPointer(0, rcvr);
+                        fprintf(toolLog, "[TOOL-LOOKUP] tools dict oop=0x%llx\n", toolsDict.rawBits());
+                        if (!toolsDict.isNil() && toolsDict.isObject()) {
+                            ObjectHeader* dictHdr = toolsDict.asObjectPtr();
+                            fprintf(toolLog, "[TOOL-LOOKUP] dict slots=%zu classIdx=%d\n",
+                                    dictHdr->slotCount(), dictHdr->classIndex());
+
+                            // IdentityDictionary layout: slot0=tally, slot1=array
+                            if (dictHdr->slotCount() > 1) {
+                                Oop tally = memory_.fetchPointer(0, toolsDict);
+                                Oop arraySlot = memory_.fetchPointer(1, toolsDict);
+                                fprintf(toolLog, "[TOOL-LOOKUP] tally=0x%llx array=0x%llx\n",
+                                        tally.rawBits(), arraySlot.rawBits());
+
+                                if (!arraySlot.isNil() && arraySlot.isObject()) {
+                                    ObjectHeader* arrayHdr = arraySlot.asObjectPtr();
+                                    fprintf(toolLog, "[TOOL-LOOKUP] array slots=%zu\n", arrayHdr->slotCount());
+
+                                    // Compute expected hash position for the key
+                                    // Identity hash is based on object address
+                                    size_t arraySize = arrayHdr->slotCount();
+                                    size_t hash = (argBits >> 3) % arraySize;  // Simple identity hash approximation
+                                    fprintf(toolLog, "[TOOL-LOOKUP] expected hash position ~%zu (arraySize=%zu)\n", hash, arraySize);
+
+                                    // Check all positions
+                                    for (size_t i = 0; i < arrayHdr->slotCount(); i++) {
+                                        Oop entry = arrayHdr->slotAt(i);
+                                        if (!entry.isNil() && entry.isObject()) {
+                                            ObjectHeader* entryHdr = entry.asObjectPtr();
+                                            std::string keyStr = "?";
+                                            if (entryHdr->slotCount() >= 2) {
+                                                Oop key = memory_.fetchPointer(0, entry);
+                                                Oop value = memory_.fetchPointer(1, entry);
+                                                if (key.isObject()) {
+                                                    ObjectHeader* keyHdr = key.asObjectPtr();
+                                                    if (keyHdr->isBytesObject() && keyHdr->byteSize() < 50) {
+                                                        keyStr = std::string((char*)keyHdr->bytes(), keyHdr->byteSize());
+                                                    }
+                                                }
+                                                if (keyStr == argStr) {
+                                                    fprintf(toolLog, "[TOOL-LOOKUP] MATCH at pos %zu: key=0x%llx value=0x%llx (key==arg: %d)\n",
+                                                            i, key.rawBits(), value.rawBits(), key.rawBits() == argBits ? 1 : 0);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    fflush(toolLog);
+                }
+            }
+
+            // ===== LOG error: messages to capture error strings =====
+            if (selStr == "error:" && argCount == 1) {
+                Oop errorArg = stackValue(0);  // The error message argument
+                std::string errorMsg = "<unknown>";
+                if (errorArg.isObject()) {
+                    ObjectHeader* argHdr = errorArg.asObjectPtr();
+                    if (argHdr->isBytesObject() && argHdr->byteSize() < 500) {
+                        errorMsg = std::string((char*)argHdr->bytes(), argHdr->byteSize());
+                    }
+                }
+                // Get receiver class name
+                std::string rcvrClassName = "<unknown>";
+                if (rcvr.isObject()) {
+                    Oop rcvrCls = memory_.classOf(rcvr);
+                    if (rcvrCls.isObject()) {
+                        ObjectHeader* clsHdr = rcvrCls.asObjectPtr();
+                        if (clsHdr->slotCount() > 6) {
+                            Oop clsName = memory_.fetchPointer(6, rcvrCls);
+                            if (clsName.isObject()) {
+                                ObjectHeader* nameHdr = clsName.asObjectPtr();
+                                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                                    rcvrClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                }
+                            }
+                        }
+                    }
+                }
+                static FILE* errorLog = fopen("/tmp/error_messages.log", "a");
+                if (errorLog) {
+                    fprintf(errorLog, "[ERROR] %s >> error: '%s'\n", rcvrClassName.c_str(), errorMsg.c_str());
+                    fflush(errorLog);
+                }
+
+                // INTERCEPT: If the error is "No tool named: browser", investigate what tools exist
+                if (rcvrClassName == "PharoCommonTools" && errorMsg.find("No tool named") != std::string::npos) {
+                    static FILE* browserLog = fopen("/tmp/browser_fallback.log", "a");
+
+                    // Dump the contents of PharoCommonTools >> tools dictionary
+                    if (browserLog && rcvr.isObject()) {
+                        ObjectHeader* toolsHdr = rcvr.asObjectPtr();
+                        fprintf(browserLog, "[TOOLS] PharoCommonTools receiver=0x%llx has %zu slots\n",
+                                (unsigned long long)rcvr.rawBits(), toolsHdr->slotCount());
+
+                        // Slot 0 is the tools IdentityDictionary
+                        Oop toolsDict = memory_.fetchPointer(0, rcvr);
+                        if (!toolsDict.isNil() && toolsDict.isObject()) {
+                            ObjectHeader* dictHdr = toolsDict.asObjectPtr();
+                            fprintf(browserLog, "[TOOLS] Tools dictionary has %zu slots\n", dictHdr->slotCount());
+
+                            // IdentityDictionary has 'array' at slot 1 containing associations
+                            if (dictHdr->slotCount() > 1) {
+                                Oop arraySlot = memory_.fetchPointer(1, toolsDict);
+                                if (!arraySlot.isNil() && arraySlot.isObject()) {
+                                    ObjectHeader* arrayHdr = arraySlot.asObjectPtr();
+                                    fprintf(browserLog, "[TOOLS] Dictionary array has %zu slots\n", arrayHdr->slotCount());
+
+                                    int foundCount = 0;
+                                    for (size_t i = 0; i < arrayHdr->slotCount() && foundCount < 20; i++) {
+                                        Oop assoc = arrayHdr->slotAt(i);
+                                        if (!assoc.isNil() && assoc.isObject()) {
+                                            // This should be an Association with key and value
+                                            ObjectHeader* assocHdr = assoc.asObjectPtr();
+                                            if (assocHdr->slotCount() >= 2) {
+                                                Oop key = memory_.fetchPointer(0, assoc);
+                                                Oop value = memory_.fetchPointer(1, assoc);
+
+                                                std::string keyStr = "?";
+                                                if (key.isObject()) {
+                                                    ObjectHeader* keyHdr = key.asObjectPtr();
+                                                    if (keyHdr->isBytesObject() && keyHdr->byteSize() < 50) {
+                                                        keyStr = std::string((char*)keyHdr->bytes(), keyHdr->byteSize());
+                                                    }
+                                                }
+
+                                                std::string valueStr;
+                                                char valueBuf[64];
+                                                if (value.isNil()) {
+                                                    valueStr = "nil";
+                                                } else if (!value.isObject()) {
+                                                    snprintf(valueBuf, sizeof(valueBuf), "imm=0x%llx", (unsigned long long)value.rawBits());
+                                                    valueStr = valueBuf;
+                                                } else {
+                                                    // It's an object - try to get its class name
+                                                    Oop valueCls = memory_.classOf(value);
+                                                    if (valueCls.isObject()) {
+                                                        ObjectHeader* vcHdr = valueCls.asObjectPtr();
+                                                        if (vcHdr->slotCount() > 6) {
+                                                            Oop vcName = memory_.fetchPointer(6, valueCls);
+                                                            if (vcName.isObject()) {
+                                                                ObjectHeader* vcnHdr = vcName.asObjectPtr();
+                                                                if (vcnHdr->isBytesObject() && vcnHdr->byteSize() < 50) {
+                                                                    valueStr = std::string((char*)vcnHdr->bytes(), vcnHdr->byteSize());
+                                                                } else {
+                                                                    snprintf(valueBuf, sizeof(valueBuf), "obj=0x%llx (cls name bad)", (unsigned long long)value.rawBits());
+                                                                    valueStr = valueBuf;
+                                                                }
+                                                            } else {
+                                                                snprintf(valueBuf, sizeof(valueBuf), "obj=0x%llx (cls name nil)", (unsigned long long)value.rawBits());
+                                                                valueStr = valueBuf;
+                                                            }
+                                                        } else {
+                                                            snprintf(valueBuf, sizeof(valueBuf), "obj=0x%llx (cls slots=%zu)", (unsigned long long)value.rawBits(), vcHdr->slotCount());
+                                                            valueStr = valueBuf;
+                                                        }
+                                                    } else {
+                                                        snprintf(valueBuf, sizeof(valueBuf), "obj=0x%llx (cls bad)", (unsigned long long)value.rawBits());
+                                                        valueStr = valueBuf;
+                                                    }
+                                                }
+
+                                                fprintf(browserLog, "[TOOLS]   #%s -> %s\n", keyStr.c_str(), valueStr.c_str());
+                                                foundCount++;
+                                            }
+                                        }
+                                    }
+                                    if (foundCount == 0) {
+                                        fprintf(browserLog, "[TOOLS]   (dictionary appears empty)\n");
+                                    }
+                                }
+                            }
+                        }
+                        fflush(browserLog);
+                    }
+
+                    // Look for Calypso browser (ClyFullBrowserMorph registers as #browser), then others
+                    const char* browserClasses[] = {"ClyFullBrowserMorph", "ClyFullBrowser", "StSystemBrowser", "SystemBrowser", nullptr};
+                    if (browserLog) {
+                        fprintf(browserLog, "[BROWSER] Searching for browser classes...\n");
+                        fflush(browserLog);
+                    }
+                    for (int i = 0; browserClasses[i] != nullptr; i++) {
+                        Oop browserClass = memory_.findGlobal(browserClasses[i]);
+                        if (browserLog) {
+                            fprintf(browserLog, "[BROWSER]   %s: %s\n", browserClasses[i],
+                                    browserClass.isNil() ? "not found" : "FOUND");
+                            fflush(browserLog);
+                        }
+                        if (!browserClass.isNil()) {
+                            if (browserLog) {
+                                fprintf(browserLog, "[BROWSER] Opening %s...\n", browserClasses[i]);
+                                fflush(browserLog);
+                            }
+
+                            // Pop the error: argument and receiver from stack
+                            popN(argCount + 1);
+
+                            // Send 'open' to the browser class
+                            push(browserClass);
+                            Oop openSel = findSelector("open");
+                            if (openSel.isNil()) {
+                                // Try to find open in class methods
+                                // For now, just push nil result
+                                if (browserLog) {
+                                    fprintf(browserLog, "[BROWSER] 'open' selector not found in SpecialSelectors\n");
+                                    fflush(browserLog);
+                                }
+                                pop();
+                                push(Oop::nil());
+                            } else {
+                                sendSelector(openSel, 0);
+                                if (browserLog) {
+                                    fprintf(browserLog, "[BROWSER] Sent 'open' to %s\n", browserClasses[i]);
+                                    fflush(browserLog);
+                                }
+                            }
+                            return;  // Skip the normal error handling
+                        }
+                    }
+                    if (browserLog) {
+                        fprintf(browserLog, "[BROWSER] No browser class found\n");
+                        fflush(browserLog);
+                    }
+                }
+            }
+
             // ===== INTERCEPT confirmation dialogs during dispatched actions =====
             // When we're executing a menu action (like quitSession), confirmation dialogs
             // would block. Auto-answer "true" (yes/confirm) to let the action proceed.
@@ -5065,6 +5311,11 @@ extern int g_traceSendsAfterPrim264;
                 // Log every time we enter this handler (limit to first 100)
                 static int doInterCycleWaitCount = 0;
                 ++doInterCycleWaitCount;
+
+                // NOTE: Manual deferred startup was removed - sendSelector doesn't work for
+                // chained message sends. The key fix is that we removed the DNU bypass for
+                // executeDeferredStartupActions:, runStartup:, startUp: so the normal
+                // Smalltalk startup sequence can run.
                 // Use explicit atomic load with sequential consistency to see writes from other threads
                 bool isPending = pendingMenuAction_.pending.load(std::memory_order_seq_cst);
                 bool globalPending = g_debugPendingFlag.load(std::memory_order_seq_cst);
@@ -7582,12 +7833,8 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         dnuDepth--;
         return;
     }
-    if (origStr == "executeDeferredStartupActions:" || origStr == "runStartup:" || origStr == "startUp:") {
-        // Pop argument and return receiver (do nothing)
-        popN(argCount);
-        dnuDepth--;
-        return;
-    }
+    // NOTE: Previously bypassed executeDeferredStartupActions:, runStartup:, startUp:
+    // This was preventing tool registration. Let these run normally now.
     // Fallback for process termination during quit - don't terminate on embedded VM
     if (origStr == "terminateRealActive" || origStr == "terminateActive" || origStr == "doTerminationFromYourself") {
         // Don't terminate - just return receiver and continue
@@ -9358,12 +9605,16 @@ Oop Interpreter::findSelector(const char* name) {
 
     // Search through several well-known classes to find the selector
     // Also search Morphic classes for UI selectors like comeToFront, activate
+    // And startup-related classes for deferred startup actions
     Oop morphClass = memory_.findGlobal("Morph");
     Oop systemWindowClass = memory_.findGlobal("SystemWindow");
     Oop spWindowClass = memory_.findGlobal("SpWindow");
     Oop worldMorphClass = memory_.findGlobal("WorldMorph");
     Oop worldStateClass = memory_.findGlobal("WorldState");
     Oop menuMorphClass = memory_.findGlobal("MenuMorph");
+    Oop sessionManagerClass = memory_.findGlobal("SessionManager");
+    Oop workingSessionClass = memory_.findGlobal("WorkingSession");
+    Oop pharoCommonToolsClass = memory_.findGlobal("PharoCommonTools");
 
     Oop classesToSearch[] = {
         memory_.specialObject(SpecialObjectIndex::ClassArray),
@@ -9378,6 +9629,9 @@ Oop Interpreter::findSelector(const char* name) {
         worldMorphClass,
         worldStateClass,
         menuMorphClass,
+        sessionManagerClass,
+        workingSessionClass,
+        pharoCommonToolsClass,
         Oop::nil()
     };
 
@@ -9547,11 +9801,12 @@ Oop Interpreter::findSelector(const char* name) {
         }
     }
 
-    // Search through common classes
+    // Search through common classes (both instance and class side)
     for (int ci = 0; !classesToSearch[ci].isNil(); ci++) {
         Oop classObj = classesToSearch[ci];
         if (!classObj.isObject()) continue;
 
+        // Search instance methods (in the class itself)
         Oop currentClass = classObj;
         int depth = 0;
 
@@ -9577,6 +9832,41 @@ Oop Interpreter::findSelector(const char* name) {
             }
 
             // Move to superclass
+            currentClass = memory_.fetchPointer(0, currentClass);
+            depth++;
+        }
+
+        // Also search class methods (in the metaclass)
+        // The metaclass is the class of the class object
+        Oop metaclass = memory_.classOf(classObj);
+        if (metaclass.isNil() || !metaclass.isObject()) {
+            // Try direct class index lookup
+            ObjectHeader* classHdr = classObj.asObjectPtr();
+            metaclass = memory_.classAtIndex(classHdr->classIndex());
+        }
+
+        currentClass = metaclass;
+        depth = 0;
+        while (currentClass.isObject() && !currentClass.isNil() && depth < 20) {
+            ObjectHeader* classHdr = currentClass.asObjectPtr();
+            if (classHdr->slotCount() < 2) break;
+
+            Oop methodDict = memory_.fetchPointer(1, currentClass);
+            if (methodDict.isObject()) {
+                ObjectHeader* mdHeader = methodDict.asObjectPtr();
+                size_t mdSlots = mdHeader->slotCount();
+
+                for (size_t i = 2; i < mdSlots; i++) {
+                    Oop key = mdHeader->slotAt(i);
+                    if (key.isObject() && !key.isNil()) {
+                        if (memory_.symbolEquals(key, name)) {
+                            return key;
+                        }
+                    }
+                }
+            }
+
+            // Move to superclass (of metaclass)
             currentClass = memory_.fetchPointer(0, currentClass);
             depth++;
         }
