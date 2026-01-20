@@ -2865,22 +2865,11 @@ PrimitiveResult Interpreter::primitiveFloatMultiply(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveFloatDivide(int argCount) {
-    static int callCount = 0;
-    callCount++;
-    if (callCount <= 10 || inDispatchedAction_) {
-        fprintf(stderr, "[PRIM50-ENTRY #%d] primitiveFloatDivide called, inDispatch=%d\n",
-                callCount, inDispatchedAction_);
-    }
-
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
     double a, b;
     if (!extractFloat(memory_, rcvr, a) || !extractFloat(memory_, arg, b)) {
-        if (callCount <= 10 || inDispatchedAction_) {
-            fprintf(stderr, "[PRIM50] extractFloat failed for rcvr=0x%llx arg=0x%llx\n",
-                    (unsigned long long)rcvr.rawBits(), (unsigned long long)arg.rawBits());
-        }
         return PrimitiveResult::Failure;
     }
 
@@ -2889,13 +2878,6 @@ PrimitiveResult Interpreter::primitiveFloatDivide(int argCount) {
     }
 
     double result = a / b;
-
-    // Debug: Log divisions during dispatch that might produce HSV index issues
-    // The HSV algorithm does hue/60.0, result should be in [0,6)
-    if (inDispatchedAction_ && b >= 59.0 && b <= 61.0) {
-        fprintf(stderr, "[DIV-60-DEBUG] %.15f / %.15f = %.15f\n", a, b, result);
-    }
-
     Oop resultOop = makeFloat(memory_, result);
     if (resultOop.isNil()) return PrimitiveResult::Failure;
 
@@ -2998,12 +2980,6 @@ PrimitiveResult Interpreter::primitiveTruncated(int argCount) {
 
     // Truncate toward zero
     double truncated = std::trunc(value);
-
-    // Debug: Log values that could cause Color HSV issues (index should be 0-5)
-    if (inDispatchedAction_ && value >= 5.0 && value < 10.0) {
-        fprintf(stderr, "[TRUNC-DEBUG] value=%.15f truncated=%.15f int=%lld\n",
-                value, truncated, static_cast<long long>(truncated));
-    }
 
     // Try to create SmallInteger from truncated value
     int64_t intValue = static_cast<int64_t>(truncated);
