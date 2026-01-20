@@ -4977,6 +4977,145 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
     // Index mapping: key at mdSlot[i] -> method at valuesArray[i-2]
     if (!methodDict.isObject()) return Oop::nil();
 
+    // Critical debug: Dump first keys when called with specific methodDict for ensure:
+    // This helps us understand if the same methodDict gives different results on each call
+    static uint64_t lastEnsureMD = 0;
+    ObjectHeader* mdHdrCheck = methodDict.asObjectPtr();
+    if (mdHdrCheck->slotCount() == 258) {  // BlockClosure has 258 slots
+        // Extract selector string to check if looking for ensure:
+        std::string selectorCheck;
+        if (selector.isObject() && selector.rawBits() > 0x10000) {
+            ObjectHeader* selCheckHdr = selector.asObjectPtr();
+            if (selCheckHdr->isBytesObject() && selCheckHdr->byteSize() < 50) {
+                selectorCheck = std::string((char*)selCheckHdr->bytes(), selCheckHdr->byteSize());
+            }
+        }
+        if (selectorCheck == "ensure:" && methodDict.rawBits() != lastEnsureMD) {
+            lastEnsureMD = methodDict.rawBits();
+            static FILE* ensLog = fopen("/tmp/ensure_lookup.log", "a");
+            if (ensLog) {
+                fprintf(ensLog, "\n[DUMP-MD] methodDict=0x%llx for 'ensure:' - dumping slot 111:\n",
+                        (unsigned long long)methodDict.rawBits());
+                // Directly fetch slot 111 (where ensure: should be)
+                Oop slot111 = memory_.fetchPointer(111, methodDict);
+                fprintf(ensLog, "[DUMP-MD] slot[111]=0x%llx", (unsigned long long)slot111.rawBits());
+                if (slot111.isObject() && slot111.rawBits() > 0x10000) {
+                    ObjectHeader* s111Hdr = slot111.asObjectPtr();
+                    fprintf(ensLog, " format=%d isBytes=%d clsIdx=%u",
+                            (int)s111Hdr->format(), s111Hdr->isBytesObject() ? 1 : 0, s111Hdr->classIndex());
+                    if (s111Hdr->isBytesObject() && s111Hdr->byteSize() < 50) {
+                        std::string s111Str((char*)s111Hdr->bytes(), s111Hdr->byteSize());
+                        fprintf(ensLog, " = '%s'", s111Str.c_str());
+                    }
+                }
+                fprintf(ensLog, "\n");
+                // Also dump slots 108-115 to see neighborhood
+                fprintf(ensLog, "[DUMP-MD] Slots 108-115:\n");
+                for (int s = 108; s <= 115; s++) {
+                    Oop slotVal = memory_.fetchPointer(s, methodDict);
+                    fprintf(ensLog, "  slot[%d]=0x%llx", s, (unsigned long long)slotVal.rawBits());
+                    if (slotVal.rawBits() == memory_.nil().rawBits()) {
+                        fprintf(ensLog, " (nil)");
+                    } else if (slotVal.isObject() && slotVal.rawBits() > 0x10000) {
+                        ObjectHeader* slotHdr = slotVal.asObjectPtr();
+                        if (slotHdr->isBytesObject() && slotHdr->byteSize() < 50) {
+                            std::string slotStr((char*)slotHdr->bytes(), slotHdr->byteSize());
+                            fprintf(ensLog, " = '%s'", slotStr.c_str());
+                        }
+                    }
+                    fprintf(ensLog, "\n");
+                }
+                // Also dump the VALUES ARRAY at positions 107-113 to check alignment
+                Oop valuesArrayDbg = memory_.fetchPointer(1, methodDict);
+                if (valuesArrayDbg.isObject() && valuesArrayDbg.rawBits() > 0x10000) {
+                    ObjectHeader* vaHdr = valuesArrayDbg.asObjectPtr();
+                    fprintf(ensLog, "[DUMP-VALUES] valuesArray=0x%llx slotCount=%zu\n",
+                            (unsigned long long)valuesArrayDbg.rawBits(), vaHdr->slotCount());
+                    fprintf(ensLog, "[DUMP-VALUES] Methods at values[107-113] (should map to keys at slots 109-115):\n");
+                    for (int v = 107; v <= 113; v++) {
+                        if (v >= (int)vaHdr->slotCount()) break;
+                        Oop method = memory_.fetchPointer(v, valuesArrayDbg);
+                        fprintf(ensLog, "  values[%d]=0x%llx", v, (unsigned long long)method.rawBits());
+                        if (method.rawBits() == memory_.nil().rawBits()) {
+                            fprintf(ensLog, " (nil)");
+                        } else if (method.isObject() && method.rawBits() > 0x10000) {
+                            ObjectHeader* mHdr = method.asObjectPtr();
+                            fprintf(ensLog, " fmt=%d cls=%u slots=%zu",
+                                    (int)mHdr->format(), mHdr->classIndex(), mHdr->slotCount());
+                            if (mHdr->isCompiledMethod()) {
+                                // Extract method selector
+                                Oop hdr = memory_.fetchPointer(0, method);
+                                if (hdr.isSmallInteger()) {
+                                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                                    fprintf(ensLog, " numLits=%zu", numLits);
+                                    // For values[109], dump ALL literals
+                                    if (v == 109) {
+                                        fprintf(ensLog, "\n    [v109-LITERALS]");
+                                        for (size_t lit = 0; lit <= numLits && lit < 20; lit++) {
+                                            Oop litVal = memory_.fetchPointer(lit, method);
+                                            fprintf(ensLog, " [%zu]=0x%llx", lit, (unsigned long long)litVal.rawBits());
+                                            if (litVal.isObject() && litVal.rawBits() > 0x10000) {
+                                                ObjectHeader* lH = litVal.asObjectPtr();
+                                                if (lH->isBytesObject() && lH->byteSize() < 50) {
+                                                    std::string s((char*)lH->bytes(), lH->byteSize());
+                                                    fprintf(ensLog, "='%s'", s.c_str());
+                                                } else {
+                                                    fprintf(ensLog, "(fmt=%d slots=%zu)", (int)lH->format(), lH->slotCount());
+                                                }
+                                            } else if (litVal.isSmallInteger()) {
+                                                fprintf(ensLog, "=%lld", litVal.asSmallInteger());
+                                            }
+                                        }
+                                    }
+                                    if (numLits >= 2) {
+                                        Oop penult = memory_.fetchPointer(numLits - 1, method);
+                                        if (penult.isObject() && penult.rawBits() > 0x10000) {
+                                            ObjectHeader* pH = penult.asObjectPtr();
+                                            if (pH->isBytesObject() && pH->byteSize() < 50) {
+                                                std::string selStr((char*)pH->bytes(), pH->byteSize());
+                                                fprintf(ensLog, " method='%s'", selStr.c_str());
+                                            } else if (pH->format() == ObjectFormat::FixedSize && pH->slotCount() >= 1) {
+                                                Oop inner = memory_.fetchPointer(0, penult);
+                                                if (inner.isObject() && inner.rawBits() > 0x10000) {
+                                                    ObjectHeader* iH = inner.asObjectPtr();
+                                                    if (iH->isBytesObject() && iH->byteSize() < 50) {
+                                                        std::string selStr((char*)iH->bytes(), iH->byteSize());
+                                                        fprintf(ensLog, " method='%s' (via AMS)", selStr.c_str());
+                                                    }
+                                                }
+                                            } else {
+                                                fprintf(ensLog, " penult=(fmt=%d slots=%zu)", (int)pH->format(), pH->slotCount());
+                                                // Dump all slots of penult for v=109
+                                                if (v == 109 && pH->slotCount() < 10) {
+                                                    fprintf(ensLog, " penult-slots:");
+                                                    for (size_t ps = 0; ps < pH->slotCount(); ps++) {
+                                                        Oop pslot = memory_.fetchPointer(ps, penult);
+                                                        fprintf(ensLog, " [%zu]=0x%llx", ps, (unsigned long long)pslot.rawBits());
+                                                        if (pslot.isObject() && pslot.rawBits() > 0x10000) {
+                                                            ObjectHeader* psH = pslot.asObjectPtr();
+                                                            if (psH->isBytesObject() && psH->byteSize() < 50) {
+                                                                std::string s((char*)psH->bytes(), psH->byteSize());
+                                                                fprintf(ensLog, "='%s'", s.c_str());
+                                                            } else {
+                                                                fprintf(ensLog, "(fmt=%d)", (int)psH->format());
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        fprintf(ensLog, "\n");
+                    }
+                }
+                fflush(ensLog);
+            }
+        }
+    }
+
     ObjectHeader* mdHeader = methodDict.asObjectPtr();
     size_t mdSlotCount = mdHeader->slotCount();
     if (mdSlotCount < 3) return Oop::nil();  // Need at least tally, values, and 1 key slot
@@ -5219,6 +5358,21 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
                         key.isNil() ? 1 : 0,
                         (key.rawBits() == nilObj.rawBits()) ? 1 : 0,
                         (key.rawBits() < 0x10000) ? 1 : 0);
+                // Check exact match condition
+                fprintf(ensLog, "[ENSURE-109] EXACT MATCH: key==selector=%d key==actualSelector=%d\n",
+                        (key.rawBits() == selector.rawBits()) ? 1 : 0,
+                        (key.rawBits() == actualSelector.rawBits()) ? 1 : 0);
+                fprintf(ensLog, "[ENSURE-109] selector=0x%llx actualSelector=0x%llx\n",
+                        (unsigned long long)selector.rawBits(),
+                        (unsigned long long)actualSelector.rawBits());
+                // Show key content
+                if (key.isObject() && key.rawBits() > 0x10000) {
+                    ObjectHeader* kh = key.asObjectPtr();
+                    if (kh->isBytesObject() && kh->byteSize() < 50) {
+                        std::string keyStr((char*)kh->bytes(), kh->byteSize());
+                        fprintf(ensLog, "[ENSURE-109] key content='%s'\n", keyStr.c_str());
+                    }
+                }
                 traceEnsure109 = true;
                 fflush(ensLog);
             }
@@ -5489,13 +5643,29 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
                                 ObjectHeader* penultHdr = penult.asObjectPtr();
                                 if (penultHdr->isBytesObject()) {
                                     actualSel = penult;  // Direct Symbol
-                                } else if (penultHdr->format() == ObjectFormat::FixedSize && penultHdr->slotCount() >= 1) {
-                                    // MethodProperties/AdditionalMethodState - selector at slot 0
-                                    Oop inner = memory_.fetchPointer(0, penult);
-                                    if (inner.isObject() && inner.rawBits() > 0x10000) {
-                                        ObjectHeader* innerHdr = inner.asObjectPtr();
-                                        if (innerHdr->isBytesObject()) {
-                                            actualSel = inner;
+                                } else if (penultHdr->slotCount() >= 1) {
+                                    // MethodProperties/AdditionalMethodState - try slots for selector
+                                    // In modern Pharo, AdditionalMethodState has:
+                                    //   slot 0: method (back-pointer to CompiledMethod)
+                                    //   slot 1: selector (Symbol)
+                                    // Try slot 1 first (modern Pharo structure)
+                                    if (penultHdr->slotCount() >= 2) {
+                                        Oop slot1 = memory_.fetchPointer(1, penult);
+                                        if (slot1.isObject() && slot1.rawBits() > 0x10000) {
+                                            ObjectHeader* slot1Hdr = slot1.asObjectPtr();
+                                            if (slot1Hdr->isBytesObject()) {
+                                                actualSel = slot1;
+                                            }
+                                        }
+                                    }
+                                    // Fallback: try slot 0 (older structure or different wrapper)
+                                    if (actualSel.isNil()) {
+                                        Oop inner = memory_.fetchPointer(0, penult);
+                                        if (inner.isObject() && inner.rawBits() > 0x10000) {
+                                            ObjectHeader* innerHdr = inner.asObjectPtr();
+                                            if (innerHdr->isBytesObject()) {
+                                                actualSel = inner;
+                                            }
                                         }
                                     }
                                 }
