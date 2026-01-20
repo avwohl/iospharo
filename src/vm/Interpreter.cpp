@@ -2180,14 +2180,14 @@ void Interpreter::handleWorldClick(int x, int y, int buttons) {
                             className.c_str(), moved ? 1 : 0);
                     fflush(clickLog);
                 }
-                // For right-click (yellow button = 2), also show World menu even on windows
-                // This provides feedback while the Pharo event system isn't working
+                // For right-click (yellow button = 2) - let Pharo handle natively
+                // Disabled C++ world menu trigger
                 if (buttons & 2) {
                     if (clickLog) {
-                        fprintf(clickLog, "[CLICK] Right-click (yellow button) on window - showing World menu\n");
+                        fprintf(clickLog, "[CLICK] Right-click (yellow button) on window - letting Pharo handle\n");
                         fflush(clickLog);
                     }
-                    showWorldMenu(x, y);
+                    // showWorldMenu(x, y);  // Disabled - let Pharo handle
                 }
                 return;  // Window click handled
             }
@@ -2206,16 +2206,15 @@ void Interpreter::handleWorldClick(int x, int y, int buttons) {
         fflush(clickLog);
     }
 
-    // Yellow button (right-click, buttons & 4) shows world menu
-    // Try the C++ world menu trigger first, but the event is also passed through
-    // to Pharo's normal event handling (via passThroughEvents_) which may also
-    // display the world menu if our C++ approach fails.
+    // Yellow button (right-click, buttons & 2) - let Pharo handle the world menu natively
+    // The event is passed through to Pharo via passThroughEvents_ in processInputEvents.
+    // Disabled C++ world menu trigger - it was interfering with Pharo's native handling.
     if (buttons & 2) {
         if (clickLog) {
-            fprintf(clickLog, "[CLICK] Right-click (yellow button) on World background - triggering world menu\n");
+            fprintf(clickLog, "[CLICK] Right-click (yellow button) on World background - letting Pharo handle\n");
             fflush(clickLog);
         }
-        showWorldMenu(x, y);
+        // showWorldMenu(x, y);  // Disabled - let Pharo handle natively
     }
 
     // Log that we're returning - the event should already be queued for Pharo
@@ -3066,13 +3065,13 @@ void Interpreter::interpret() {
         }
         loopCount++;
 
-        // DEBUG: Trigger world menu automatically after warmup
-        static bool autoTriggered = false;
-        if (!autoTriggered && loopCount == 100000) {
-            std::cerr << "[AUTO-MENU] Triggering world menu at loop #" << loopCount << "\n";
-            showWorldMenu(512, 384);
-            autoTriggered = true;
-        }
+        // DEBUG: Auto world menu trigger disabled - let Pharo handle natively
+        // static bool autoTriggered = false;
+        // if (!autoTriggered && loopCount == 100000) {
+        //     std::cerr << "[AUTO-MENU] Triggering world menu at loop #" << loopCount << "\n";
+        //     showWorldMenu(512, 384);
+        //     autoTriggered = true;
+        // }
 
         // Process any pending external semaphore signals
         if (hasPendingSignals()) {
