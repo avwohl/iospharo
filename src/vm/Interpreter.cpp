@@ -6674,6 +6674,19 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         dnuDepth--;
         return;
     }
+    // Fallback for message:/receiver:/reachedDefaultHandler on nil/false
+    // - happens when DNU handler fails to create Message object properly
+    if ((origStr == "message:" || origStr == "receiver:" || origStr == "reachedDefaultHandler") &&
+        (rcvrClassName == "UndefinedObject" || rcvrClassName == "False" || rcvrClassName == "True" || rcvrClassName.empty())) {
+        static int messageOnNilCount = 0;
+        if (messageOnNilCount++ < 5) {
+            std::cerr << "[DNU] Fallback for " << origStr << " on " << rcvrClassName << " - returning nil\n";
+        }
+        popN(argCount + 1);
+        push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
     // Startup-specific fallbacks to avoid disrupting normal startup sequence
     if (origStr == "logSnapshot:andQuit:" || origStr == "logSnapshot:" || origStr == "logSnapshotAndQuit") {
         // Just pop args and return receiver (do nothing for logging)
