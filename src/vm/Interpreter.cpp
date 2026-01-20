@@ -2372,6 +2372,14 @@ bool Interpreter::step() {
         processPendingSignals();
     }
 
+    // Periodic preemption check - every 10000 bytecodes, check if we should
+    // yield to a higher-priority or same-priority runnable process
+    static uint64_t bytecodeCount = 0;
+    bytecodeCount++;
+    if (bytecodeCount % 10000 == 0) {
+        checkForPreemption();
+    }
+
     // Check if we've run past the end of bytecodes
     if (instructionPointer_ >= bytecodeEnd_) {
         returnValue(receiver_);
@@ -8286,10 +8294,22 @@ void Interpreter::putToSleep(Oop process) {
 }
 
 void Interpreter::transferTo(Oop newProcess) {
+    static FILE* xferLog = nullptr;
+    static int xferCount = 0;
+    if (!xferLog) xferLog = fopen("/tmp/process_switch.log", "w");
+    xferCount++;
+
     Oop oldProcess = getActiveProcess();
 
     if (oldProcess.rawBits() == newProcess.rawBits()) {
         return;  // Already running this process
+    }
+
+    if (xferLog && xferCount <= 100) {
+        fprintf(xferLog, "[XFER #%d] old=0x%llx new=0x%llx\n",
+                xferCount, (unsigned long long)oldProcess.rawBits(),
+                (unsigned long long)newProcess.rawBits());
+        fflush(xferLog);
     }
 
     // Validate newProcess
@@ -8322,6 +8342,12 @@ void Interpreter::transferTo(Oop newProcess) {
 }
 
 bool Interpreter::tryReschedule() {
+    // Debug: dump scheduler queues periodically
+    static FILE* schedLog = nullptr;
+    static int schedDump = 0;
+    if (!schedLog) schedLog = fopen("/tmp/scheduler_dump.log", "w");
+    schedDump++;
+
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
     Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
 
@@ -8338,6 +8364,33 @@ bool Interpreter::tryReschedule() {
     // ProcessScheduler: slot 0 = quiescentProcessLists, slot 1 = activeProcess
     Oop activeProcess = memory_.fetchPointer(1, scheduler);
     Oop queues = memory_.fetchPointer(0, scheduler);
+
+    if (schedLog && schedDump == 1) {
+        // Get active process priority
+        Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
+        int activePriority = activePriorityOop.isSmallInteger() ?
+                             static_cast<int>(activePriorityOop.asSmallInteger()) : 0;
+        fprintf(schedLog, "[SCHED] activeProcess=0x%llx priority=%d queues=0x%llx\n",
+                (unsigned long long)activeProcess.rawBits(),
+                activePriority,
+                (unsigned long long)queues.rawBits());
+        if (queues.isObject()) {
+            ObjectHeader* qH = queues.asObjectPtr();
+            fprintf(schedLog, "[SCHED] queues has %zu slots\n", qH->slotCount());
+            // Show queues around the active priority and low priorities
+            for (size_t qi = 0; qi < qH->slotCount(); qi++) {
+                Oop q = qH->slotAt(qi);
+                if (q.isObject() && q.rawBits() != nilObj.rawBits()) {
+                    Oop first = memory_.fetchPointer(0, q);
+                    if (first.rawBits() != nilObj.rawBits()) {  // Only show non-empty queues
+                        fprintf(schedLog, "[SCHED] queue[%zu] firstLink=0x%llx\n",
+                                qi, (unsigned long long)first.rawBits());
+                    }
+                }
+            }
+        }
+        fflush(schedLog);
+    }
 
     if (!queues.isObject()) {
         return false;
@@ -8385,6 +8438,77 @@ bool Interpreter::tryReschedule() {
     }
 
     return false;
+}
+
+void Interpreter::checkForPreemption() {
+    // Periodic preemption check - allow other runnable processes to run
+    // This simulates the timer-based preemption of CogVM
+    static FILE* preemptLog = nullptr;
+    static int preemptCount = 0;
+    if (!preemptLog) preemptLog = fopen("/tmp/preempt_check.log", "w");
+    preemptCount++;
+
+    Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
+    Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
+
+    if (!schedulerAssoc.isObject() || schedulerAssoc.rawBits() == nilObj.rawBits()) {
+        return;
+    }
+
+    Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
+    if (!scheduler.isObject()) {
+        return;
+    }
+
+    // ProcessScheduler: slot 0 = quiescentProcessLists, slot 1 = activeProcess
+    Oop activeProcess = memory_.fetchPointer(1, scheduler);
+    Oop queues = memory_.fetchPointer(0, scheduler);
+
+    if (!queues.isObject()) {
+        return;
+    }
+
+    // Get active process priority
+    Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
+    int activePriority = activePriorityOop.isSmallInteger() ?
+                         static_cast<int>(activePriorityOop.asSmallInteger()) : 0;
+
+    ObjectHeader* queuesHeader = queues.asObjectPtr();
+    size_t numQueues = queuesHeader->slotCount();
+
+    // Check for runnable processes at higher or EQUAL priority
+    for (size_t i = static_cast<size_t>(activePriority); i < numQueues; i++) {
+        Oop queue = queuesHeader->slotAt(i);
+        if (!queue.isObject() || queue.rawBits() == nilObj.rawBits()) continue;
+
+        Oop firstProcess = memory_.fetchPointer(0, queue);
+        if (!firstProcess.isObject() || firstProcess.rawBits() == nilObj.rawBits()) continue;
+
+        // Skip if it's the current process
+        if (firstProcess.rawBits() == activeProcess.rawBits()) continue;
+
+        // Found a runnable process - preempt!
+        if (preemptLog && preemptCount <= 50) {
+            fprintf(preemptLog, "[PREEMPT #%d] Switching from priority %d to process at priority %zu\n",
+                    preemptCount, activePriority, i);
+            fflush(preemptLog);
+        }
+
+        // Remove process from ready queue
+        Oop nextLink = memory_.fetchPointer(ProcessNextLinkIndex, firstProcess);
+        memory_.storePointer(0, queue, nextLink);  // firstLink = nextLink
+        if (nextLink.isNil() || nextLink.rawBits() == nilObj.rawBits()) {
+            memory_.storePointer(1, queue, nilObj);  // lastLink = nil
+        }
+        memory_.storePointer(ProcessNextLinkIndex, firstProcess, nilObj);  // Clear nextLink
+
+        // Put current process back on ready queue
+        putToSleep(activeProcess);
+
+        // Switch to new process
+        transferTo(firstProcess);
+        return;
+    }
 }
 
 // ===== STARTUP SUPPORT =====

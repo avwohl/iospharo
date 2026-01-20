@@ -1351,6 +1351,9 @@ private:
     /// Returns true if a process was found and execution continues.
     bool tryReschedule();
 
+    /// Periodic preemption check - allow other processes to run
+    void checkForPreemption();
+
     /// Mark the current process as terminated (clear suspendedContext)
     void terminateCurrentProcess();
 
