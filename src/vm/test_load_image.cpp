@@ -31,6 +31,56 @@ static void testEventCallback(void* context) {
     }
 }
 
+// Inject a mouse click event (down then up)
+// button: 4=left (red), 2=right (yellow), 1=middle (blue)
+static void injectMouseClick(int x, int y, int button, int modifiers = 0) {
+    auto now = std::chrono::steady_clock::now();
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+
+    // Mouse down event
+    // Pharo event format: arg1=x, arg2=y, arg3=buttons, arg4=modifiers, arg5=subtype
+    // Subtype: 1=mouse down, 2=mouse up, 3=mouse move
+    Event downEvent;
+    downEvent.type = static_cast<int>(EventType::Mouse);
+    downEvent.timeStamp = static_cast<int>(ms & 0x7FFFFFFF);
+    downEvent.arg1 = x;  // x position
+    downEvent.arg2 = y;  // y position
+    downEvent.arg3 = button;  // buttons pressed
+    downEvent.arg4 = modifiers;  // modifiers
+    downEvent.arg5 = 1;  // CRITICAL: subtype 1 = mouse down
+    downEvent.windowIndex = 1;
+    gEventQueue.push(downEvent);
+
+    std::cout << "[TEST] Injected mouse DOWN at (" << x << "," << y
+              << ") button=" << button << " subtype=" << downEvent.arg5 << std::endl;
+
+    // Mouse up event (a few ms later)
+    Event upEvent = downEvent;
+    upEvent.timeStamp += 50;  // 50ms later
+    upEvent.arg3 = 0;  // no buttons pressed
+    upEvent.arg5 = 2;  // CRITICAL: subtype 2 = mouse up
+    gEventQueue.push(upEvent);
+
+    std::cout << "[TEST] Injected mouse UP at (" << x << "," << y
+              << ") subtype=" << upEvent.arg5 << std::endl;
+}
+
+// Inject a mouse move event
+static void injectMouseMove(int x, int y, int modifiers = 0) {
+    auto now = std::chrono::steady_clock::now();
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+
+    Event moveEvent;
+    moveEvent.type = static_cast<int>(EventType::Mouse);
+    moveEvent.timeStamp = static_cast<int>(ms & 0x7FFFFFFF);
+    moveEvent.arg1 = x;
+    moveEvent.arg2 = y;
+    moveEvent.arg3 = 0;  // no buttons
+    moveEvent.arg4 = modifiers;
+    moveEvent.windowIndex = 1;
+    gEventQueue.push(moveEvent);
+}
+
 // Test display surface for verifying Morphic rendering
 class TestDisplaySurface : public DisplaySurface {
 private:
@@ -476,27 +526,59 @@ int main(int argc, char* argv[]) {
 
         // Run bytecode steps for testing
         std::cout << "\n=== Execution Test ===" << std::endl;
-        int totalSteps = 500000;  // Run more steps to allow Morphic to render
+        int totalSteps = 2000000;  // Run more steps to allow Morphic to render
         std::cout << "Running up to " << totalSteps << " bytecode steps..." << std::endl;
         int activeSteps = 0;
         int idleSteps = 0;
+        bool clickInjected = false;
+        int clickResponseSteps = 0;
 
         for (int i = 0; i < totalSteps; i++) {
             bool result = interpreter.step();
             if (result) {
                 activeSteps++;
                 idleSteps = 0;  // Reset consecutive idle count
+
+                // After 100k active steps, inject a right-click to trigger world menu
+                if (!clickInjected && activeSteps == 100000) {
+                    std::cout << "\n=== Injecting Right-Click (World Menu) ===" << std::endl;
+                    // Clear the DNU trace file first
+                    FILE* dnu = fopen("/tmp/dnu_trace.log", "w");
+                    if (dnu) {
+                        fprintf(dnu, "=== DNU Trace for Right-Click Test ===\n");
+                        fclose(dnu);
+                    }
+                    // Right-click (yellow button = 2) in the center of the world
+                    injectMouseClick(512, 384, 2);
+                    clickInjected = true;
+                    clickResponseSteps = 0;
+                }
+
+                // Count steps after click injection
+                if (clickInjected) {
+                    clickResponseSteps++;
+                    // After processing click for a while, print status
+                    if (clickResponseSteps == 100000) {
+                        std::cout << "\n=== Click Response Complete (100k steps) ===" << std::endl;
+                    }
+                    // After 200k steps of click processing, inject a left click
+                    if (clickResponseSteps == 200000) {
+                        std::cout << "\n=== Injecting Left-Click ===" << std::endl;
+                        injectMouseClick(512, 384, 4);  // Left click (red button = 4)
+                    }
+                }
             } else {
                 idleSteps++;
                 // If we get too many consecutive idle steps, stop
-                if (idleSteps > 100) {
-                    std::cout << "Interpreter stopped (100 consecutive idle steps) at step " << i << std::endl;
+                if (idleSteps > 1000) {
+                    std::cout << "Interpreter stopped (1000 consecutive idle steps) at step " << i << std::endl;
                     break;
                 }
             }
         }
         std::cout << "\n=== Execution Summary ===" << std::endl;
         std::cout << "Active bytecode steps: " << activeSteps << std::endl;
+        std::cout << "Steps after click: " << clickResponseSteps << std::endl;
 
         // Stop the heartbeat thread
         std::cout << "Stopping heartbeat thread..." << std::endl;
