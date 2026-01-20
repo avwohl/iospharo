@@ -548,8 +548,10 @@ int main(int argc, char* argv[]) {
                         fprintf(dnu, "=== DNU Trace for Right-Click Test ===\n");
                         fclose(dnu);
                     }
-                    // Right-click (yellow button = 2) in the center of the world
-                    injectMouseClick(512, 384, 2);
+                    // Right-click (yellow button = 2) on World BACKGROUND
+                    // The Welcome window is at bounds [138,57,838,607], so click outside it
+                    // Click at (50, 300) which is to the LEFT of the window
+                    injectMouseClick(50, 300, 2);
                     clickInjected = true;
                     clickResponseSteps = 0;
                 }

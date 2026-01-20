@@ -2213,15 +2213,14 @@ void Interpreter::handleWorldClick(int x, int y, int buttons) {
         fflush(clickLog);
     }
 
-    // Yellow button (right-click, buttons & 2) - let Pharo handle the world menu natively
-    // The event is passed through to Pharo via passThroughEvents_ in processInputEvents.
-    // Disabled C++ world menu trigger - it was interfering with Pharo's native handling.
+    // Yellow button (right-click, buttons & 2) - trigger world menu directly
+    // Since Pharo's event loop isn't running, we need to trigger the menu from C++
     if (buttons & 2) {
         if (clickLog) {
-            fprintf(clickLog, "[CLICK] Right-click (yellow button) on World background - letting Pharo handle\n");
+            fprintf(clickLog, "[CLICK] Right-click (yellow button) on World background - triggering showWorldMenu\n");
             fflush(clickLog);
         }
-        // showWorldMenu(x, y);  // Disabled - let Pharo handle natively
+        showWorldMenu(x, y);  // Re-enabled - Pharo can't handle it natively because event loop isn't running
     }
 
     // Log that we're returning - the event should already be queued for Pharo
