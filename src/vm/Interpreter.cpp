@@ -3385,6 +3385,37 @@ ExecuteResult Interpreter::stepDetailed() {
 // ===== BYTECODE DISPATCH =====
 
 void Interpreter::dispatchBytecode(uint8_t bytecode) {
+    // Track ALL bytecode execution (not just dispatch)
+    static int totalBcCount = 0;
+    static FILE* allBcLog = nullptr;
+    static bool wasInDispatchLastTime = false;
+    totalBcCount++;
+
+    // Log transitions and milestones
+    bool shouldLog = (totalBcCount == 1 || totalBcCount % 100000 == 0);
+
+    // Also log when dispatch state changes
+    if (inDispatchedAction_ != wasInDispatchLastTime) {
+        shouldLog = true;
+    }
+
+    // Log EVERY bytecode during early dispatch (first 600 bytecodes after dispatch starts)
+    // Dispatch starts around totalBcCount 100008, so log from 100000 to 100600
+    if (inDispatchedAction_ && totalBcCount >= 100000 && totalBcCount <= 100600) {
+        shouldLog = true;
+    }
+
+    if (shouldLog) {
+        if (!allBcLog) allBcLog = fopen("/tmp/all_bytecodes.log", "a");
+        if (allBcLog) {
+            fprintf(allBcLog, "[ALL BC #%d] bc=0x%02x fd=%d inDispatch=%d%s\n",
+                    totalBcCount, bytecode, frameDepth_, inDispatchedAction_ ? 1 : 0,
+                    (inDispatchedAction_ != wasInDispatchLastTime) ? " <-- CHANGED" : "");
+            fflush(allBcLog);
+        }
+    }
+    wasInDispatchLastTime = inDispatchedAction_;
+
     // Track bytecode execution during dispatch (separate counters per dispatch)
     static FILE* bcLog = nullptr;
     static int bcCount = 0;
@@ -4176,6 +4207,12 @@ void Interpreter::returnValue(Oop value) {
             inDispatchedAction_ = true;
             dispatchedActionFrameDepth_ = frameDepth_;
 
+            static FILE* flagLog = fopen("/tmp/dispatch_flag.log", "a");
+            if (flagLog) {
+                fprintf(flagLog, "[FLAG] SET true (idle dispatch) fd=%d\n", frameDepth_);
+                fflush(flagLog);
+            }
+
             // Send the message
             sendSelector(actionSel, actionArgCount);
             return;  // Let execution continue with the action
@@ -4720,6 +4757,29 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 }
             }
 
+            // Log sends during dispatch to see what's happening in menu execution
+            if (inDispatchedAction_) {
+                static FILE* dispatchSendLog = nullptr;
+                static int dispatchSendCount = 0;
+                if (!dispatchSendLog) dispatchSendLog = fopen("/tmp/dispatch_sends.log", "w");
+                if (dispatchSendLog) {
+                    dispatchSendCount++;
+                    Oop rcvr = stackValue(static_cast<size_t>(argCount));
+                    uint32_t clsIdx = 0;
+                    if (rcvr.isSmallInteger()) {
+                        clsIdx = 99999;  // marker for SmallInteger
+                    } else if (rcvr.isObject()) {
+                        ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+                        if (rcvrHdr) {
+                            clsIdx = rcvrHdr->classIndex();
+                        }
+                    }
+                    fprintf(dispatchSendLog, "[DISPATCH-SEND #%d] #%s args=%d clsIdx=%u fd=%d\n",
+                            dispatchSendCount, selStr.c_str(), argCount, clsIdx, frameDepth_);
+                    fflush(dispatchSendLog);
+                }
+            }
+
             // Trace sends after primitive 264 (only non-internal selectors)
             // Defined at top of this file
 extern int g_traceSendsAfterPrim264;
@@ -5011,6 +5071,12 @@ extern int g_traceSendsAfterPrim264;
                     // Track that we're in a dispatched action (for context creation)
                     inDispatchedAction_ = true;
                     dispatchedActionFrameDepth_ = frameDepth_;
+
+                    static FILE* flagLog = fopen("/tmp/dispatch_flag.log", "a");
+                    if (flagLog) {
+                        fprintf(flagLog, "[FLAG] SET true (doInterCycleWait intercept) fd=%d\n", frameDepth_);
+                        fflush(flagLog);
+                    }
 
                     sendSelector(actionSel, actionArgCount);
                     return;
@@ -7072,6 +7138,12 @@ void Interpreter::popFrame() {
             fprintf(dispatchCompleteLog, "[DISPATCH-COMPLETE] Cleared flag at frameDepth=%d (dispatch was at %d)\n",
                     frameDepth_, dispatchedActionFrameDepth_);
             fflush(dispatchCompleteLog);
+        }
+        static FILE* flagLog = fopen("/tmp/dispatch_flag.log", "a");
+        if (flagLog) {
+            fprintf(flagLog, "[FLAG] SET false (popFrame) fd=%d dispatchFd=%d\n",
+                    frameDepth_, dispatchedActionFrameDepth_);
+            fflush(flagLog);
         }
     }
 
@@ -9919,6 +9991,9 @@ void Interpreter::initializeNamedPrimitives() {
     // Also register under SqueakPlugin/SurfacePlugin for compatibility
     registerNamedPrimitive("SqueakPlugin", "primitiveGetNextEvent", &Interpreter::primitiveGetNextEvent);
     registerNamedPrimitive("SurfacePlugin", "primitiveShowDisplayRect", &Interpreter::primitiveShowDisplayRect);
+
+    // MiscPrimitivePlugin - string hashing
+    registerNamedPrimitive("MiscPrimitivePlugin", "primitiveStringHash", &Interpreter::primitiveStringHashInitialHash);
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {
@@ -9954,6 +10029,18 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
     if (primitiveIndex == 86 || primitiveIndex == 179 || primitiveIndex == 85) {
         fprintf(allPrimLog, "[PRIM-SCHED] #%d primitive=%d (85=signal, 86=wait, 179=relinquish)\n",
                 primCallCount, primitiveIndex);
+        fflush(allPrimLog);
+    }
+    // Log external call primitive (117) and primitives during dispatch
+    if (primitiveIndex == 117 || primitiveIndex == 146 || primitiveIndex == 147) {
+        fprintf(allPrimLog, "[PRIM-EXT] #%d primitive=%d (117=externalCall, 146/147=misc)\n",
+                primCallCount, primitiveIndex);
+        fflush(allPrimLog);
+    }
+    // Log ALL primitives during dispatch
+    if (inDispatchedAction_ && allPrimLog) {
+        fprintf(allPrimLog, "[PRIM-DISPATCH] #%d primitive=%d argCount=%d fd=%d\n",
+                primCallCount, primitiveIndex, argCount, frameDepth_);
         fflush(allPrimLog);
     }
 

@@ -6536,6 +6536,52 @@ PrimitiveResult Interpreter::primitiveStringHashInitialHash(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// MiscPrimitivePlugin: indexOfAscii:inString:startingAt:
+// Arguments: receiver (class), asciiValue, aString, startIndex
+PrimitiveResult Interpreter::primitiveIndexOfAscii(int argCount) {
+    if (argCount != 3) return PrimitiveResult::Failure;
+
+    // Stack: receiver (class), asciiValue, aString, startIndex
+    Oop startOop = stackValue(0);
+    Oop stringOop = stackValue(1);
+    Oop asciiOop = stackValue(2);
+
+    if (!startOop.isSmallInteger()) return PrimitiveResult::Failure;
+    if (!asciiOop.isSmallInteger()) return PrimitiveResult::Failure;
+    if (!stringOop.isObject()) return PrimitiveResult::Failure;
+
+    int64_t start = startOop.asSmallInteger() - 1;  // Convert to 0-based
+    int64_t asciiValue = asciiOop.asSmallInteger();
+
+    if (start < 0 || asciiValue < 0 || asciiValue > 255) return PrimitiveResult::Failure;
+
+    ObjectHeader* header = stringOop.asObjectPtr();
+    ObjectFormat fmt = header->format();
+
+    // Must be a byte object (format 16-23)
+    if (fmt < ObjectFormat::Indexable8 || fmt > ObjectFormat::Indexable8_7) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t stringSize = memory_.byteSizeOf(stringOop);
+    uint8_t* bytes = reinterpret_cast<uint8_t*>(header + 1);
+    uint8_t target = static_cast<uint8_t>(asciiValue);
+
+    // Search for the character
+    for (size_t i = static_cast<size_t>(start); i < stringSize; i++) {
+        if (bytes[i] == target) {
+            popN(4);  // Pop receiver and 3 args
+            push(Oop::fromSmallInteger(static_cast<int64_t>(i + 1)));  // 1-based result
+            return PrimitiveResult::Success;
+        }
+    }
+
+    // Not found - return 0
+    popN(4);
+    push(Oop::fromSmallInteger(0));
+    return PrimitiveResult::Success;
+}
+
 // ===== CLASS NAME PRIMITIVE =====
 
 // Primitive 514: Get the name of a class (as a Symbol or String)
@@ -8495,6 +8541,23 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
     ObjectHeader* methodHdr = method.asObjectPtr();
     size_t numLiterals = methodHdr->slotCount();
 
+    // Fast path: Check for known MiscPrimitivePlugin methods by selector in literals
+    for (size_t i = 0; i < numLiterals && i < 10; i++) {
+        Oop literal = memory_.fetchPointer(i, method);
+        if (literal.isObject() && literal.rawBits() > 0x10000) {
+            ObjectHeader* litHdr = literal.asObjectPtr();
+            if (litHdr->isBytesObject() && litHdr->byteSize() < 50) {
+                std::string str((char*)litHdr->bytes(), litHdr->byteSize());
+                if (str == "stringHash:initialHash:") {
+                    return primitiveStringHashInitialHash(argCount);
+                }
+                if (str == "indexOfAscii:inString:startingAt:") {
+                    return primitiveIndexOfAscii(argCount);
+                }
+            }
+        }
+    }
+
     // Debug logging
     static FILE* extLog = fopen("/tmp/external_prim.log", "a");
     static int extCallCount = 0;
@@ -8509,30 +8572,150 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
     // Search literals for the primitive spec (usually an Array with module/name)
     for (size_t i = 0; i < numLiterals && i < 10; i++) {
         Oop literal = memory_.fetchPointer(i, method);
+        if (extLog && extCallCount <= 50) {
+            fprintf(extLog, "[EXT] #%d literal[%zu] isObj=%d bits=0x%llx\n",
+                    extCallCount, i, literal.isObject() ? 1 : 0,
+                    (unsigned long long)literal.rawBits());
+            fflush(extLog);
+        }
         if (!literal.isObject()) continue;
 
         ObjectHeader* litHdr = literal.asObjectPtr();
+        uint32_t fmt = static_cast<uint32_t>(litHdr->format());
+        size_t slots = litHdr->slotCount();
 
-        // Check if it's an Array (format 2 = indexable pointers)
-        if (litHdr->format() == ObjectFormat::Indexable && litHdr->slotCount() >= 2) {
-            // Could be #(moduleName primitiveName ...)
+        if (extLog && extCallCount <= 50) {
+            fprintf(extLog, "[EXT] #%d   format=%u slots=%zu clsIdx=%u\n",
+                    extCallCount, fmt, slots, litHdr->classIndex());
+            // If it's a string/symbol, log its contents
+            if (litHdr->isBytesObject() && litHdr->byteSize() < 100) {
+                std::string str((char*)litHdr->bytes(), litHdr->byteSize());
+                fprintf(extLog, "[EXT] #%d   literal string='%s'\n", extCallCount, str.c_str());
+            }
+            fflush(extLog);
+        }
+
+        // Check if it's an Array (format 2 = indexable pointers) or ExternalLibraryFunction (format 1)
+        // Also check Fixed format objects that might contain module/name references
+        if ((litHdr->format() == ObjectFormat::Indexable || litHdr->format() == ObjectFormat::FixedSize)
+            && litHdr->slotCount() >= 2) {
+            // Could be #(moduleName primitiveName ...) or ExternalLibraryFunction
             Oop moduleOop = memory_.fetchPointer(0, literal);
             Oop nameOop = memory_.fetchPointer(1, literal);
+
+            if (extLog && extCallCount <= 50) {
+                fprintf(extLog, "[EXT] #%d   slot[0]=0x%llx slot[1]=0x%llx\n",
+                        extCallCount,
+                        (unsigned long long)moduleOop.rawBits(),
+                        (unsigned long long)nameOop.rawBits());
+                fflush(extLog);
+            }
 
             // Extract strings
             std::string moduleName, primName;
 
             if (moduleOop.isObject()) {
                 ObjectHeader* modHdr = moduleOop.asObjectPtr();
+                if (extLog && extCallCount <= 50) {
+                    fprintf(extLog, "[EXT] #%d   moduleOop: fmt=%u isBytes=%d size=%zu\n",
+                            extCallCount,
+                            static_cast<uint32_t>(modHdr->format()),
+                            modHdr->isBytesObject() ? 1 : 0,
+                            modHdr->isBytesObject() ? modHdr->byteSize() : modHdr->slotCount());
+                    fflush(extLog);
+                }
                 if (modHdr->isBytesObject() && modHdr->byteSize() < 100) {
                     moduleName = std::string((char*)modHdr->bytes(), modHdr->byteSize());
+                    if (extLog && extCallCount <= 50) {
+                        fprintf(extLog, "[EXT] #%d   moduleName='%s'\n", extCallCount, moduleName.c_str());
+                        fflush(extLog);
+                    }
                 }
             }
 
             if (nameOop.isObject()) {
                 ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                if (extLog && extCallCount <= 50) {
+                    fprintf(extLog, "[EXT] #%d   nameOop: fmt=%u isBytes=%d size=%zu clsIdx=%u\n",
+                            extCallCount,
+                            static_cast<uint32_t>(nameHdr->format()),
+                            nameHdr->isBytesObject() ? 1 : 0,
+                            nameHdr->isBytesObject() ? nameHdr->byteSize() : nameHdr->slotCount(),
+                            nameHdr->classIndex());
+                    fflush(extLog);
+                }
                 if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
                     primName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                    if (extLog && extCallCount <= 50) {
+                        fprintf(extLog, "[EXT] #%d   primName='%s'\n", extCallCount, primName.c_str());
+                        fflush(extLog);
+                    }
+                }
+                // If nameOop is a FixedSize object, check its slots for module/name
+                if (nameHdr->format() == ObjectFormat::FixedSize && nameHdr->slotCount() >= 2) {
+                    // This could be ExternalLibraryFunction - check slots
+                    if (extLog && extCallCount <= 50) {
+                        fprintf(extLog, "[EXT] #%d   Checking nameOop slots (count=%zu):\n",
+                                extCallCount, nameHdr->slotCount());
+                        fflush(extLog);
+                    }
+                    for (size_t j = 0; j < nameHdr->slotCount() && j < 8; j++) {
+                        Oop innerOop = memory_.fetchPointer(j, nameOop);
+                        if (extLog && extCallCount <= 50) {
+                            fprintf(extLog, "[EXT] #%d     slot[%zu]=0x%llx isObj=%d\n",
+                                    extCallCount, j, (unsigned long long)innerOop.rawBits(),
+                                    innerOop.isObject() ? 1 : 0);
+                            fflush(extLog);
+                        }
+                        if (innerOop.isObject() && innerOop.rawBits() > 0x10000) {
+                            ObjectHeader* innerHdr = innerOop.asObjectPtr();
+                            if (extLog && extCallCount <= 50) {
+                                fprintf(extLog, "[EXT] #%d       slot[%zu] fmt=%u clsIdx=%u\n",
+                                        extCallCount, j,
+                                        static_cast<uint32_t>(innerHdr->format()),
+                                        innerHdr->classIndex());
+                                fflush(extLog);
+                            }
+                            if (innerHdr->isBytesObject() && innerHdr->byteSize() < 100) {
+                                std::string str((char*)innerHdr->bytes(), innerHdr->byteSize());
+                                if (extLog && extCallCount <= 50) {
+                                    fprintf(extLog, "[EXT] #%d         ='%s'\n", extCallCount, str.c_str());
+                                    fflush(extLog);
+                                }
+                                // If this is slot 3 or 5, it might be module or function name
+                                if (j == 3) {
+                                    moduleName = str;
+                                } else if (j == 0 || j == 1) {
+                                    primName = str;
+                                }
+                            } else if ((innerHdr->format() == ObjectFormat::FixedSize ||
+                                       innerHdr->format() == ObjectFormat::Indexable) && innerHdr->slotCount() >= 1) {
+                                // Check one more level for the function name
+                                for (size_t k = 0; k < innerHdr->slotCount() && k < 6; k++) {
+                                    Oop deepOop = memory_.fetchPointer(k, innerOop);
+                                    if (deepOop.isObject() && deepOop.rawBits() > 0x10000) {
+                                        ObjectHeader* deepHdr = deepOop.asObjectPtr();
+                                        if (deepHdr->isBytesObject() && deepHdr->byteSize() < 100) {
+                                            std::string str((char*)deepHdr->bytes(), deepHdr->byteSize());
+                                            if (extLog && extCallCount <= 50) {
+                                                fprintf(extLog, "[EXT] #%d           slot[%zu].slot[%zu]='%s' clsIdx=%u\n",
+                                                        extCallCount, j, k, str.c_str(), deepHdr->classIndex());
+                                                fflush(extLog);
+                                            }
+                                            // Extract module and primitive names
+                                            if (str == "MiscPrimitivePlugin" || str == "primitiveStringHash") {
+                                                if (str.find("Plugin") != std::string::npos) {
+                                                    moduleName = str;
+                                                } else {
+                                                    primName = str;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 

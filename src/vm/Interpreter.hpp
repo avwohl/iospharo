@@ -1341,6 +1341,7 @@ private:
     // String hash primitives
     PrimitiveResult primitiveStringHash(int argCount);           // not in standard table
     PrimitiveResult primitiveStringHashInitialHash(int argCount); // 146 - stringHash:initialHash:
+    PrimitiveResult primitiveIndexOfAscii(int argCount);         // MiscPrimitivePlugin - indexOfAscii:inString:startingAt:
 
     // Class name primitive
     PrimitiveResult primitiveClassName(int argCount);            // 514
