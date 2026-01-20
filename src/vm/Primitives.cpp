@@ -677,7 +677,7 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
                     fprintf(atLog, "  context receiver=SmallInteger(%lld)\n", ctxRcvr.asSmallInteger());
                 }
             }
-            // Print method info
+            // Print method info and bytecodes
             fprintf(atLog, "  method_=0x%llx ", method_.rawBits());
             if (method_.isObject()) {
                 Oop methodHeader = memory_.fetchPointer(0, method_);
@@ -685,7 +685,7 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
                     int64_t hdrVal = methodHeader.asSmallInteger();
                     int numLits = hdrVal & 0x7FFF;
                     fprintf(atLog, "numLits=%d\n", numLits);
-                    // Dump all literals
+                    // Dump all literals and explore outer method if it's a block
                     for (int li = 1; li <= numLits && li < 10; li++) {
                         Oop lit = memory_.fetchPointer(li, method_);
                         fprintf(atLog, "    lit[%d]=0x%llx ", li, lit.rawBits());
@@ -695,6 +695,7 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
                             fprintf(atLog, "nil");
                         } else if (lit.isObject()) {
                             Oop litCls = memory_.classOf(lit);
+                            std::string litClsName = "?";
                             if (litCls.isObject()) {
                                 ObjectHeader* lcH = litCls.asObjectPtr();
                                 if (lcH->slotCount() > 6) {
@@ -702,8 +703,8 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
                                     if (lcn.isObject()) {
                                         ObjectHeader* lcnH = lcn.asObjectPtr();
                                         if (lcnH->isBytesObject() && lcnH->byteSize() < 100) {
-                                            fprintf(atLog, "%s",
-                                                    std::string((char*)lcnH->bytes(), lcnH->byteSize()).c_str());
+                                            litClsName = std::string((char*)lcnH->bytes(), lcnH->byteSize());
+                                            fprintf(atLog, "%s", litClsName.c_str());
                                         }
                                     }
                                 }
@@ -713,9 +714,70 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
                                 fprintf(atLog, " '%s'",
                                         std::string((char*)litH->bytes(), litH->byteSize()).c_str());
                             }
+                            // If it's a CompiledMethod (outer method), show its selector
+                            if (litClsName == "CompiledMethod") {
+                                Oop outerHeader = memory_.fetchPointer(0, lit);
+                                if (outerHeader.isSmallInteger()) {
+                                    int outerNumLits = outerHeader.asSmallInteger() & 0x7FFF;
+                                    fprintf(atLog, " [outerMethod numLits=%d", outerNumLits);
+                                    if (outerNumLits >= 2 && outerNumLits < 100) {
+                                        Oop outerSel = memory_.fetchPointer(outerNumLits - 1, lit);
+                                        if (outerSel.isObject()) {
+                                            ObjectHeader* osH = outerSel.asObjectPtr();
+                                            if (osH->isBytesObject() && osH->byteSize() < 100) {
+                                                fprintf(atLog, " sel='%s'",
+                                                        std::string((char*)osH->bytes(), osH->byteSize()).c_str());
+                                            }
+                                        }
+                                    }
+                                    fprintf(atLog, "]");
+                                }
+                            }
                         }
                         fprintf(atLog, "\n");
                     }
+                    // Dump bytecodes
+                    ObjectHeader* mH = method_.asObjectPtr();
+                    size_t bcStart = (1 + numLits) * 8;
+                    size_t totalBytes = mH->byteSize();
+                    fprintf(atLog, "  bytecodes (start=%zu total=%zu): ", bcStart, totalBytes);
+                    uint8_t* bytes = mH->bytes();
+                    for (size_t bi = bcStart; bi < totalBytes && bi < bcStart + 30; bi++) {
+                        fprintf(atLog, "%02x ", bytes[bi]);
+                    }
+                    fprintf(atLog, "\n");
+                    // Show where IP is
+                    if (instructionPointer_ >= bytes && instructionPointer_ < bytes + totalBytes) {
+                        fprintf(atLog, "  IP offset from bcStart: %ld\n",
+                                (long)(instructionPointer_ - bytes - bcStart));
+                    }
+                }
+            }
+            // Also check sender context's method
+            if (activeContext_.isObject()) {
+                Oop sender = memory_.fetchPointer(0, activeContext_);  // SenderIndex = 0
+                if (sender.isObject() && !sender.isNil()) {
+                    Oop senderMethod = memory_.fetchPointer(3, sender);  // MethodIndex = 3
+                    fprintf(atLog, "  sender's method=0x%llx", senderMethod.rawBits());
+                    if (senderMethod.isObject()) {
+                        Oop senderMH = memory_.fetchPointer(0, senderMethod);
+                        if (senderMH.isSmallInteger()) {
+                            int senderNumLits = senderMH.asSmallInteger() & 0x7FFF;
+                            fprintf(atLog, " numLits=%d", senderNumLits);
+                            // Get selector
+                            if (senderNumLits >= 2 && senderNumLits < 100) {
+                                Oop selOop = memory_.fetchPointer(senderNumLits - 1, senderMethod);
+                                if (selOop.isObject()) {
+                                    ObjectHeader* selH = selOop.asObjectPtr();
+                                    if (selH->isBytesObject() && selH->byteSize() < 100) {
+                                        fprintf(atLog, " sel='%s'",
+                                                std::string((char*)selH->bytes(), selH->byteSize()).c_str());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    fprintf(atLog, "\n");
                 }
             }
             fflush(atLog);
