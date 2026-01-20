@@ -8589,6 +8589,7 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
             fflush(extLog);
         }
         if (!literal.isObject()) continue;
+        if (!memory_.isValidPointer(literal)) continue;  // Validate before dereference
 
         ObjectHeader* litHdr = literal.asObjectPtr();
         uint32_t fmt = static_cast<uint32_t>(litHdr->format());
