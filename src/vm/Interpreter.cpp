@@ -3988,8 +3988,180 @@ extern int g_traceSendsAfterPrim264;
                         errorMsg = std::string((char*)argHdr->bytes(), argHdr->byteSize());
                     }
                 }
-                // Get receiver class name
+
+                // Trace the call stack for ALL errors
+                static FILE* indexErrLog = fopen("/tmp/index_error_trace.log", "a");
+                if (indexErrLog) {
+                    fprintf(indexErrLog, "\n=== ERROR: '%s' ===\n", errorMsg.c_str());
+                    fprintf(indexErrLog, "  error: receiver=0x%llx isSmallInt=%d value=%lld\n",
+                            rcvr.rawBits(), rcvr.isSmallInteger() ? 1 : 0,
+                            rcvr.isSmallInteger() ? rcvr.asSmallInteger() : -999);
+                    fprintf(indexErrLog, "  activeContext_=0x%llx method_=0x%llx\n",
+                            activeContext_.rawBits(), method_.rawBits());
+                    // Show the method's selector for activeContext_
+                    if (method_.isObject()) {
+                        Oop mhdr = memory_.fetchPointer(0, method_);
+                        if (mhdr.isSmallInteger()) {
+                            int64_t hv = mhdr.asSmallInteger();
+                            int nLits = hv & 0x7FFF;
+                            if (nLits >= 2 && nLits < 100) {
+                                Oop sel = memory_.fetchPointer(nLits - 1, method_);
+                                if (sel.isObject()) {
+                                    ObjectHeader* selH = sel.asObjectPtr();
+                                    if (selH->isBytesObject() && selH->byteSize() < 100) {
+                                        fprintf(indexErrLog, "  current method sel='%s'\n",
+                                                std::string((char*)selH->bytes(), selH->byteSize()).c_str());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Walk the context chain to show call stack
+                    Oop ctx = activeContext_;
+                    for (int depth = 0; depth < 100 && !ctx.isNil() && ctx.isObject(); depth++) {
+                        // Get context class name
+                        std::string ctxClsName = "<unknown>";
+                        Oop ctxCls = memory_.classOf(ctx);
+                        if (ctxCls.isObject()) {
+                            ObjectHeader* ctxClsHdr = ctxCls.asObjectPtr();
+                            if (ctxClsHdr->slotCount() > 6) {
+                                Oop cn = memory_.fetchPointer(6, ctxCls);
+                                if (cn.isObject()) {
+                                    ObjectHeader* cnH = cn.asObjectPtr();
+                                    if (cnH->isBytesObject() && cnH->byteSize() < 100) {
+                                        ctxClsName = std::string((char*)cnH->bytes(), cnH->byteSize());
+                                    }
+                                }
+                            }
+                        }
+
+                        // Get method receiver class (slot 5 in context = receiver)
+                        std::string methRcvrClsName = "<unknown>";
+                        Oop methRcvr = memory_.fetchPointer(5, ctx);  // ReceiverIndex = 5
+                        if (methRcvr.isObject()) {
+                            Oop mrCls = memory_.classOf(methRcvr);
+                            if (mrCls.isObject()) {
+                                ObjectHeader* mrClsHdr = mrCls.asObjectPtr();
+                                if (mrClsHdr->slotCount() > 6) {
+                                    Oop mrcn = memory_.fetchPointer(6, mrCls);
+                                    if (mrcn.isObject()) {
+                                        ObjectHeader* mrcnH = mrcn.asObjectPtr();
+                                        if (mrcnH->isBytesObject() && mrcnH->byteSize() < 100) {
+                                            methRcvrClsName = std::string((char*)mrcnH->bytes(), mrcnH->byteSize());
+                                            // If it's a stream, dump its slots to see collection
+                                            if (methRcvrClsName.find("Stream") != std::string::npos && depth < 3) {
+                                                ObjectHeader* rcvrHdr = methRcvr.asObjectPtr();
+                                                fprintf(indexErrLog, "    Stream slots(%zu):", rcvrHdr->slotCount());
+                                                for (size_t s = 0; s < std::min((size_t)5, rcvrHdr->slotCount()); s++) {
+                                                    Oop slot = rcvrHdr->slotAt(s);
+                                                    if (slot.isSmallInteger()) {
+                                                        fprintf(indexErrLog, " [%zu]=SmallInt(%lld)", s, slot.asSmallInteger());
+                                                    } else if (slot.isNil()) {
+                                                        fprintf(indexErrLog, " [%zu]=nil", s);
+                                                    } else if (slot.isObject()) {
+                                                        Oop slotCls = memory_.classOf(slot);
+                                                        std::string slotClsName = "?";
+                                                        if (slotCls.isObject()) {
+                                                            ObjectHeader* scH = slotCls.asObjectPtr();
+                                                            if (scH->slotCount() > 6) {
+                                                                Oop scn = memory_.fetchPointer(6, slotCls);
+                                                                if (scn.isObject()) {
+                                                                    ObjectHeader* scnH = scn.asObjectPtr();
+                                                                    if (scnH->isBytesObject() && scnH->byteSize() < 50) {
+                                                                        slotClsName = std::string((char*)scnH->bytes(), scnH->byteSize());
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        fprintf(indexErrLog, " [%zu]=%s", s, slotClsName.c_str());
+                                                    } else {
+                                                        fprintf(indexErrLog, " [%zu]=0x%llx", s, slot.rawBits());
+                                                    }
+                                                }
+                                                fprintf(indexErrLog, "\n");
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else if (methRcvr.isSmallInteger()) {
+                            methRcvrClsName = "SmallInteger";
+                        } else if (methRcvr.isCharacter()) {
+                            methRcvrClsName = "Character";
+                        } else if (methRcvr.isNil()) {
+                            methRcvrClsName = "nil";
+                        }
+
+                        Oop method = memory_.fetchPointer(3, ctx);  // MethodIndex = 3
+                        std::string selStr = "?";
+                        std::string mClsName = "<unknown>";
+                        if (method.isObject()) {
+                            // Get method's class name
+                            Oop mCls = memory_.classOf(method);
+                            if (mCls.isObject()) {
+                                ObjectHeader* mcH = mCls.asObjectPtr();
+                                if (mcH->slotCount() > 6) {
+                                    Oop mcn = memory_.fetchPointer(6, mCls);
+                                    if (mcn.isObject()) {
+                                        ObjectHeader* mcnH = mcn.asObjectPtr();
+                                        if (mcnH->isBytesObject() && mcnH->byteSize() < 100) {
+                                            mClsName = std::string((char*)mcnH->bytes(), mcnH->byteSize());
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Method header is at SLOT 0 (not the object header!)
+                            Oop methodHeaderOop = memory_.fetchPointer(0, method);
+                            int numLits = 0;
+                            if (methodHeaderOop.isSmallInteger()) {
+                                int64_t headerValue = methodHeaderOop.asSmallInteger();
+                                numLits = headerValue & 0x7FFF;  // bits 0-14
+                            }
+                            fprintf(indexErrLog, "  [%d] rcvr=%s sel='", depth, methRcvrClsName.c_str());
+                            if (numLits >= 2 && numLits < 100) {  // Sanity check numLits
+                                // Penultimate literal is at slot (numLits - 1), has selector or AdditionalMethodState
+                                Oop penult = memory_.fetchPointer(numLits - 1, method);
+                                if (penult.isObject()) {
+                                    ObjectHeader* pH = penult.asObjectPtr();
+                                    if (pH->isBytesObject() && pH->byteSize() < 100) {
+                                        selStr = std::string((char*)pH->bytes(), pH->byteSize());
+                                    } else if (pH->slotCount() >= 1) {
+                                        // AdditionalMethodState - selector at slot 0
+                                        Oop sel = pH->slotAt(0);
+                                        if (sel.isObject()) {
+                                            ObjectHeader* sH = sel.asObjectPtr();
+                                            if (sH->isBytesObject() && sH->byteSize() < 100) {
+                                                selStr = std::string((char*)sH->bytes(), sH->byteSize());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            fprintf(indexErrLog, "%s'\n", selStr.c_str());
+                        } else {
+                            fprintf(indexErrLog, "  [%d] rcvr=%s method=IMMEDIATE\n", depth, methRcvrClsName.c_str());
+                        }
+                        fprintf(indexErrLog, "    sender=0x%llx\n", memory_.fetchPointer(0, ctx).rawBits());
+                        fflush(indexErrLog);
+                        Oop sender = memory_.fetchPointer(0, ctx);  // SenderIndex = 0
+                        // Check for circular sender chain
+                        if (sender.rawBits() == ctx.rawBits()) {
+                            fprintf(indexErrLog, "  BUG: Context is its own sender!\n");
+                            break;
+                        }
+                        ctx = sender;
+                    }
+                    fflush(indexErrLog);
+                }
+                // Get receiver class name - debug why it's unknown
                 std::string rcvrClassName = "<unknown>";
+                if (indexErrLog) {
+                    fprintf(indexErrLog, "  Receiver: raw=0x%llx isObject=%d isSmallInt=%d isChar=%d isNil=%d\n",
+                            rcvr.rawBits(), rcvr.isObject() ? 1 : 0,
+                            rcvr.isSmallInteger() ? 1 : 0, rcvr.isCharacter() ? 1 : 0, rcvr.isNil() ? 1 : 0);
+                    fflush(indexErrLog);
+                }
                 if (rcvr.isObject()) {
                     Oop rcvrCls = memory_.classOf(rcvr);
                     if (rcvrCls.isObject()) {
@@ -4010,6 +4182,14 @@ extern int g_traceSendsAfterPrim264;
                     fprintf(errorLog, "[ERROR] %s >> error: '%s'\n", rcvrClassName.c_str(), errorMsg.c_str());
                     fflush(errorLog);
                 }
+
+                // HARD FAIL on all errors - no workarounds
+                fprintf(stderr, "\n=== HARD FAIL ===\n");
+                fprintf(stderr, "Smalltalk error: %s >> error: '%s'\n", rcvrClassName.c_str(), errorMsg.c_str());
+                fprintf(stderr, "See /tmp/error_messages.log for history\n");
+                fprintf(stderr, "See /tmp/index_error_trace.log for stack trace\n");
+                fflush(stderr);
+                std::abort();
 
                 // INTERCEPT: If the error is "No tool named: browser", investigate what tools exist
                 if (rcvrClassName == "PharoCommonTools" && errorMsg.find("No tool named") != std::string::npos) {

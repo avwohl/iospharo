@@ -607,6 +607,119 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
     }
 
     if (!index.isSmallInteger() || !rcvr.isObject()) {
+        // Log when at: is called on non-object (causes Smalltalk error)
+        static FILE* atLog = fopen("/tmp/at_fail.log", "a");
+        static int atFailCount = 0;
+        if (atLog && !rcvr.isObject() && atFailCount < 5) {
+            atFailCount++;
+            fprintf(atLog, "[AT-FAIL #%d] rcvr=0x%llx isSmallInt=%d value=%lld index=",
+                    atFailCount, rcvr.rawBits(), rcvr.isSmallInteger() ? 1 : 0,
+                    rcvr.isSmallInteger() ? rcvr.asSmallInteger() : -999);
+            if (index.isSmallInteger()) {
+                fprintf(atLog, "%lld\n", index.asSmallInteger());
+            } else {
+                fprintf(atLog, "non-int 0x%llx\n", index.rawBits());
+            }
+            // Show current method selector
+            if (method_.isObject()) {
+                Oop mhdr = memory_.fetchPointer(0, method_);
+                if (mhdr.isSmallInteger()) {
+                    int64_t hv = mhdr.asSmallInteger();
+                    int nLits = hv & 0x7FFF;
+                    if (nLits >= 2 && nLits < 100) {
+                        Oop sel = memory_.fetchPointer(nLits - 1, method_);
+                        if (sel.isObject()) {
+                            ObjectHeader* selH = sel.asObjectPtr();
+                            if (selH->isBytesObject() && selH->byteSize() < 100) {
+                                fprintf(atLog, "  in method '%s'\n",
+                                        std::string((char*)selH->bytes(), selH->byteSize()).c_str());
+                            }
+                        }
+                    }
+                }
+            }
+            // Show context receiver class and Array contents
+            if (activeContext_.isObject()) {
+                Oop ctxRcvr = memory_.fetchPointer(5, activeContext_);  // ReceiverIndex = 5
+                std::string rcvrClassName = "?";
+                if (ctxRcvr.isObject()) {
+                    Oop crCls = memory_.classOf(ctxRcvr);
+                    if (crCls.isObject()) {
+                        ObjectHeader* crcH = crCls.asObjectPtr();
+                        if (crcH->slotCount() > 6) {
+                            Oop crcn = memory_.fetchPointer(6, crCls);
+                            if (crcn.isObject()) {
+                                ObjectHeader* crcnH = crcn.asObjectPtr();
+                                if (crcnH->isBytesObject() && crcnH->byteSize() < 100) {
+                                    rcvrClassName = std::string((char*)crcnH->bytes(), crcnH->byteSize());
+                                    fprintf(atLog, "  context receiver class='%s'\n", rcvrClassName.c_str());
+                                }
+                            }
+                        }
+                    }
+                    // If it's an Array, dump first few elements
+                    if (rcvrClassName == "Array") {
+                        ObjectHeader* arrH = ctxRcvr.asObjectPtr();
+                        fprintf(atLog, "  Array(%zu): ", arrH->slotCount());
+                        for (size_t i = 0; i < std::min((size_t)10, arrH->slotCount()); i++) {
+                            Oop el = arrH->slotAt(i);
+                            if (el.isSmallInteger()) {
+                                fprintf(atLog, "%lld ", el.asSmallInteger());
+                            } else if (el.isNil()) {
+                                fprintf(atLog, "nil ");
+                            } else {
+                                fprintf(atLog, "obj ");
+                            }
+                        }
+                        fprintf(atLog, "\n");
+                    }
+                } else if (ctxRcvr.isSmallInteger()) {
+                    fprintf(atLog, "  context receiver=SmallInteger(%lld)\n", ctxRcvr.asSmallInteger());
+                }
+            }
+            // Print method info
+            fprintf(atLog, "  method_=0x%llx ", method_.rawBits());
+            if (method_.isObject()) {
+                Oop methodHeader = memory_.fetchPointer(0, method_);
+                if (methodHeader.isSmallInteger()) {
+                    int64_t hdrVal = methodHeader.asSmallInteger();
+                    int numLits = hdrVal & 0x7FFF;
+                    fprintf(atLog, "numLits=%d\n", numLits);
+                    // Dump all literals
+                    for (int li = 1; li <= numLits && li < 10; li++) {
+                        Oop lit = memory_.fetchPointer(li, method_);
+                        fprintf(atLog, "    lit[%d]=0x%llx ", li, lit.rawBits());
+                        if (lit.isSmallInteger()) {
+                            fprintf(atLog, "SmallInt(%lld)", lit.asSmallInteger());
+                        } else if (lit.isNil()) {
+                            fprintf(atLog, "nil");
+                        } else if (lit.isObject()) {
+                            Oop litCls = memory_.classOf(lit);
+                            if (litCls.isObject()) {
+                                ObjectHeader* lcH = litCls.asObjectPtr();
+                                if (lcH->slotCount() > 6) {
+                                    Oop lcn = memory_.fetchPointer(6, litCls);
+                                    if (lcn.isObject()) {
+                                        ObjectHeader* lcnH = lcn.asObjectPtr();
+                                        if (lcnH->isBytesObject() && lcnH->byteSize() < 100) {
+                                            fprintf(atLog, "%s",
+                                                    std::string((char*)lcnH->bytes(), lcnH->byteSize()).c_str());
+                                        }
+                                    }
+                                }
+                            }
+                            ObjectHeader* litH = lit.asObjectPtr();
+                            if (litH->isBytesObject() && litH->byteSize() < 100) {
+                                fprintf(atLog, " '%s'",
+                                        std::string((char*)litH->bytes(), litH->byteSize()).c_str());
+                            }
+                        }
+                        fprintf(atLog, "\n");
+                    }
+                }
+            }
+            fflush(atLog);
+        }
         return PrimitiveResult::Failure;
     }
 
