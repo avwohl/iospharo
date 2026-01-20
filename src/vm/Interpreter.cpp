@@ -4107,7 +4107,7 @@ extern int g_traceSendsAfterPrim264;
                                     fflush(browserLog);
                                 }
                                 pop();
-                                push(Oop::nil());
+                                push(memory_.nil());
                             } else {
                                 sendSelector(openSel, 0);
                                 if (browserLog) {
@@ -4477,7 +4477,21 @@ extern int g_traceSendsAfterPrim264;
     // Note: The actual nil object (UndefinedObject) CAN receive messages!
     // Only reject raw 0 which indicates corrupted state
     if (rcvr.rawBits() == 0) {
-        std::cerr << "[CORRUPT] Send #" << selStr << " to raw 0 - corrupted state\n";
+        static int corruptCount = 0;
+        if (++corruptCount <= 5) {
+            std::cerr << "[CORRUPT] Send #" << selStr << " to raw 0 - corrupted state\n";
+            // Show calling context
+            std::cerr << "  Stack depth=" << (stackPointer_ - stackBase_)
+                      << " frameDepth=" << frameDepth_ << "\n";
+            std::cerr << "  receiver_=0x" << std::hex << receiver_.rawBits() << std::dec << "\n";
+            // Check what's on the stack
+            for (int i = 0; i < 5 && stackPointer_ - i > stackBase_; i++) {
+                Oop val = *(stackPointer_ - i);
+                std::cerr << "  stack[-" << i << "]=0x" << std::hex << val.rawBits() << std::dec << "\n";
+            }
+        } else if (corruptCount == 6) {
+            std::cerr << "[CORRUPT] (suppressing further messages...)\n";
+        }
         Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
         popN(argCount + 1);
         push(nilObj);
@@ -6769,6 +6783,44 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
     dnuDepth++;
 
+    // DEBUG: Capture initial stack state to detect corruption
+    static FILE* stackDebug = nullptr;
+    static int stackDebugCount = 0;
+    if (!stackDebug) stackDebug = fopen("/tmp/stack_corruption.log", "w");
+
+    Oop initialStackRcvr = stackValue(argCount);
+    uint64_t initialRcvrBits = initialStackRcvr.rawBits();
+
+    // Log stack state at entry
+    if (stackDebug && stackDebugCount < 50) {
+        stackDebugCount++;
+        std::string selStr = "<unknown>";
+        if (selector.isObject() && selector.rawBits() > 0x10000) {
+            ObjectHeader* selHdr = selector.asObjectPtr();
+            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+            }
+        }
+        fprintf(stackDebug, "\n[DNU-ENTRY #%d] selector=#%s argCount=%d\n",
+                stackDebugCount, selStr.c_str(), argCount);
+        fprintf(stackDebug, "  stackValue(%d)=0x%llx receiver_=0x%llx\n",
+                argCount, (unsigned long long)initialRcvrBits, (unsigned long long)receiver_.rawBits());
+        fprintf(stackDebug, "  stackPointer_=%p stackBase_=%p depth=%ld\n",
+                (void*)stackPointer_, (void*)stackBase_, (long)(stackPointer_ - stackBase_));
+        // Dump stack around receiver position
+        fprintf(stackDebug, "  Stack around receiver position:\n");
+        for (int i = -2; i <= argCount + 2; i++) {
+            if (stackPointer_ - i >= stackBase_ && stackPointer_ - i < stackPointer_ + 100) {
+                Oop val = *(stackPointer_ - i);
+                fprintf(stackDebug, "    [SP-%d]=0x%llx", i, (unsigned long long)val.rawBits());
+                if (i == argCount) fprintf(stackDebug, " <-- receiver");
+                if (i >= 0 && i < argCount) fprintf(stackDebug, " <-- arg%d", i);
+                fprintf(stackDebug, "\n");
+            }
+        }
+        fflush(stackDebug);
+    }
+
     // Log DNU to file
     static FILE* dnuTraceLog = nullptr;
     static int dnuTraceCount = 0;
@@ -7288,7 +7340,11 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         }
         // Return empty array
         Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
-        Oop empty = memory_.allocateSlots(memory_.indexOfClass(arrayClass), 0, ObjectFormat::Indexable);
+        uint32_t arrayClassIdx = memory_.indexOfClass(arrayClass);
+        if (arrayClassIdx == 0) {
+            arrayClassIdx = memory_.registerClass(arrayClass);
+        }
+        Oop empty = memory_.allocateSlots(arrayClassIdx, 0, ObjectFormat::Indexable);
         push(empty);
         dnuDepth--;
         return;
@@ -7349,7 +7405,11 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         pop();  // Pop block
         pop();  // Pop receiver
         Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
-        Oop empty = memory_.allocateSlots(memory_.indexOfClass(arrayClass), 0, ObjectFormat::Indexable);
+        uint32_t arrayClassIdx = memory_.indexOfClass(arrayClass);
+        if (arrayClassIdx == 0) {
+            arrayClassIdx = memory_.registerClass(arrayClass);
+        }
+        Oop empty = memory_.allocateSlots(arrayClassIdx, 0, ObjectFormat::Indexable);
         push(empty);
         dnuDepth--;
         return;
@@ -7359,7 +7419,11 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         pop();  // Pop block
         pop();  // Pop receiver
         Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
-        Oop empty = memory_.allocateSlots(memory_.indexOfClass(arrayClass), 0, ObjectFormat::Indexable);
+        uint32_t arrayClassIdx = memory_.indexOfClass(arrayClass);
+        if (arrayClassIdx == 0) {
+            arrayClassIdx = memory_.registerClass(arrayClass);
+        }
+        Oop empty = memory_.allocateSlots(arrayClassIdx, 0, ObjectFormat::Indexable);
         push(empty);
         dnuDepth--;
         return;
@@ -7591,6 +7655,25 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     // Get the actual receiver that failed (from stack, under args)
     Oop failedReceiver = stackValue(argCount);
 
+    // DEBUG: Check if stack changed since entry
+    if (stackDebug && failedReceiver.rawBits() != initialRcvrBits) {
+        fprintf(stackDebug, "[STACK-CHANGED] Initial=0x%llx Now=0x%llx (before fail-fast)\n",
+                (unsigned long long)initialRcvrBits, (unsigned long long)failedReceiver.rawBits());
+        fprintf(stackDebug, "  Current stackPointer_=%p depth=%ld\n",
+                (void*)stackPointer_, (long)(stackPointer_ - stackBase_));
+        // Dump current stack
+        fprintf(stackDebug, "  Current stack:\n");
+        for (int i = -2; i <= argCount + 2; i++) {
+            if (stackPointer_ - i >= stackBase_ && stackPointer_ - i < stackPointer_ + 100) {
+                Oop val = *(stackPointer_ - i);
+                fprintf(stackDebug, "    [SP-%d]=0x%llx", i, (unsigned long long)val.rawBits());
+                if (i == argCount) fprintf(stackDebug, " <-- receiver");
+                fprintf(stackDebug, "\n");
+            }
+        }
+        fflush(stackDebug);
+    }
+
     // DIAGNOSTIC: Check if stack receiver differs from instance variable
     if (failedReceiver.rawBits() != receiver_.rawBits()) {
         static int mismatchCount = 0;
@@ -7696,16 +7779,23 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
     // Create a Message object
     Oop messageClass = memory_.specialObject(SpecialObjectIndex::ClassMessage);
-    Oop message = memory_.allocateSlots(
-        memory_.indexOfClass(messageClass), 2, ObjectFormat::FixedSize);
+    uint32_t messageClassIdx = memory_.indexOfClass(messageClass);
+    if (messageClassIdx == 0) {
+        // Message class not in table, register it
+        messageClassIdx = memory_.registerClass(messageClass);
+    }
+    Oop message = memory_.allocateSlots(messageClassIdx, 2, ObjectFormat::FixedSize);
 
     // Message layout: selector, arguments
     memory_.storePointer(0, message, selector);
 
     // Create arguments array
     Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
-    Oop args = memory_.allocateSlots(
-        memory_.indexOfClass(arrayClass), argCount, ObjectFormat::Indexable);
+    uint32_t arrayClassIdx = memory_.indexOfClass(arrayClass);
+    if (arrayClassIdx == 0) {
+        arrayClassIdx = memory_.registerClass(arrayClass);
+    }
+    Oop args = memory_.allocateSlots(arrayClassIdx, argCount, ObjectFormat::Indexable);
 
     for (int i = argCount - 1; i >= 0; --i) {
         memory_.storePointer(i, args, pop());

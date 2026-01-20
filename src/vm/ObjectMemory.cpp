@@ -79,6 +79,15 @@ bool ObjectMemory::initialize(const MemoryConfig& config) {
 
 Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
                                  ObjectFormat format) {
+    // DEBUG: Catch allocations with classIndex=0
+    if (classIndex == 0) {
+        static int zeroClassCount = 0;
+        if (++zeroClassCount <= 10) {
+            std::cerr << "[ALLOC-WARNING] allocateSlots called with classIndex=0! slots="
+                      << slotCount << " format=" << static_cast<int>(format) << "\n";
+        }
+    }
+
     // Calculate size: header + slots
     size_t headerSize = sizeof(ObjectHeader);
     bool hasOverflow = slotCount >= 255;
@@ -101,7 +110,7 @@ Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
         if (!obj) {
             // Still can't allocate, fall back to old space
             obj = allocateRaw(totalSize, Space::Old);
-            if (!obj) return Oop::nil();
+            if (!obj) return nilObject_;
         }
     }
 
@@ -114,10 +123,18 @@ Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
 
     initializeHeader(obj, classIndex, slotCount, format);
 
-    // Zero all slots
+    // Initialize slots to nil
     Oop* slots = obj->slots();
+    // DEFENSIVE: If nilObject_ is not yet set (during image load), use Oop::nil() (raw 0)
+    // This is okay because these objects will be overwritten during image loading
+    Oop nilValue = (nilObject_.rawBits() != 0) ? nilObject_ : Oop::nil();
+    static bool warnedNilNotSet = false;
+    if (nilObject_.rawBits() == 0 && slotCount > 0 && !warnedNilNotSet) {
+        std::cerr << "[ALLOC-WARNING] nilObject_ not set during allocation, using raw 0\n";
+        warnedNilNotSet = true;
+    }
     for (size_t i = 0; i < slotCount; ++i) {
-        slots[i] = nilObject_;
+        slots[i] = nilValue;
     }
 
     bytesAllocated_ += totalSize;
@@ -150,7 +167,7 @@ Oop ObjectMemory::allocateBytes(uint32_t classIndex, size_t byteCount) {
         obj = allocateInEden(totalSize);
         if (!obj) {
             obj = allocateRaw(totalSize, Space::Old);
-            if (!obj) return Oop::nil();
+            if (!obj) return nilObject_;
         }
     }
 
@@ -174,7 +191,7 @@ Oop ObjectMemory::createString(const std::string& str) {
     // Get ByteString class
     Oop stringClass = specialObject(SpecialObjectIndex::ClassByteString);
     if (stringClass.isNil() || !stringClass.isObject()) {
-        return Oop::nil();
+        return nilObject_;
     }
 
     // Get class index for ByteString instances
@@ -190,7 +207,7 @@ Oop ObjectMemory::createString(const std::string& str) {
     // Allocate the string
     Oop strObj = allocateBytes(classIndex, str.size());
     if (strObj.isNil()) {
-        return Oop::nil();
+        return nilObject_;
     }
 
     // Copy string content
@@ -219,7 +236,7 @@ Oop ObjectMemory::allocateWords(uint32_t classIndex, size_t wordCount) {
         obj = allocateInEden(totalSize);
         if (!obj) {
             obj = allocateRaw(totalSize, Space::Old);
-            if (!obj) return Oop::nil();
+            if (!obj) return nilObject_;
         }
     }
 
@@ -250,7 +267,7 @@ Oop ObjectMemory::shallowCopy(Oop original) {
         copy = allocateInEden(size);
         if (!copy) {
             copy = allocateRaw(size, Space::Old);
-            if (!copy) return Oop::nil();
+            if (!copy) return nilObject_;
         }
     }
 
@@ -281,7 +298,7 @@ Oop ObjectMemory::classOf(Oop obj) const {
         return specialObject(SpecialObjectIndex::ClassFloat);
     }
     if (!obj.isObject()) {
-        return Oop::nil();
+        return nilObject_;  // Return proper nil, not raw 0
     }
 
     // Validate pointer before dereferencing to catch corruption
@@ -307,7 +324,7 @@ Oop ObjectMemory::classOf(Oop obj) const {
             std::cerr << " ASCII(BE)=\"" << ascii << "\"\n";
             std::cerr.flush();
         }
-        return Oop::nil();  // Return nil instead of crashing
+        return nilObject_;  // Return proper nil instead of raw 0
     }
 
     ObjectHeader* header = obj.asObjectPtr();
@@ -370,13 +387,13 @@ uint32_t ObjectMemory::indexOfClass(Oop classOop) const {
 
 Oop ObjectMemory::specialObject(SpecialObjectIndex index) const {
     if (specialObjectsArray_.isNil() || !specialObjectsArray_.isObject()) {
-        return Oop::nil();
+        return nilObject_;
     }
 
     ObjectHeader* array = specialObjectsArray_.asObjectPtr();
     size_t idx = static_cast<size_t>(index);
     if (idx >= array->slotCount()) {
-        return Oop::nil();
+        return nilObject_;
     }
 
     return array->slotAt(idx);
@@ -422,7 +439,7 @@ Oop ObjectMemory::findGlobal(const std::string& name) const {
     Oop smalltalkDict = specialObject(SpecialObjectIndex::SmalltalkDictionary);
     if (smalltalkDict.isNil() || !smalltalkDict.isObject()) {
         // std::cerr << "[DEBUG] findGlobal: SmalltalkDictionary is nil" << std::endl;
-        return Oop::nil();
+        return nilObject_;
     }
 
     // Navigate to the actual SystemDictionary (may be wrapped in Environment)
@@ -447,7 +464,7 @@ Oop ObjectMemory::findGlobal(const std::string& name) const {
 
     if (!arraySlot.isObject() || arraySlot.isNil()) {
         // std::cerr << "[DEBUG] findGlobal: array slot is nil" << std::endl;
-        return Oop::nil();
+        return nilObject_;
     }
 
     ObjectHeader* arrayHeader = arraySlot.asObjectPtr();
@@ -556,7 +573,7 @@ Oop ObjectMemory::findGlobal(const std::string& name) const {
         return smalltalkDict;
     }
 
-    return Oop::nil();
+    return nilObject_;
 }
 
 bool ObjectMemory::setGlobal(const std::string& name, Oop value) {
@@ -678,13 +695,13 @@ Oop ObjectMemory::createStartupContext(Oop method, Oop receiver) {
     // Get MethodContext class
     Oop contextClass = specialObject(SpecialObjectIndex::ClassMethodContext);
     if (contextClass.isNil()) {
-        return Oop::nil();
+        return nilObject_;
     }
 
     // Get method header to determine temp count
     Oop methodHeader = fetchPointer(0, method);
     if (!methodHeader.isSmallInteger()) {
-        return Oop::nil();
+        return nilObject_;
     }
 
     int64_t headerBits = methodHeader.asSmallInteger();
@@ -712,7 +729,7 @@ Oop ObjectMemory::createStartupContext(Oop method, Oop receiver) {
 
     Oop context = allocateSlots(classIndex, contextSize, ObjectFormat::Indexable);
     if (context.isNil()) {
-        return Oop::nil();
+        return nilObject_;
     }
 
     // Calculate initial PC (after header + literals)
@@ -738,16 +755,18 @@ Oop ObjectMemory::createStartupContext(Oop method, Oop receiver) {
 // ===== OBJECT ACCESS =====
 
 Oop ObjectMemory::fetchPointer(size_t index, Oop obj) const {
-    if (!obj.isObject()) return Oop::nil();
+    // Return proper nil object instead of raw 0 for error cases
+    // This prevents corruption when the result is used as a message receiver
+    if (!obj.isObject()) return nilObject_;
 
     // Validate pointer before dereferencing
     if (!isValidPointer(obj)) {
-        return Oop::nil();
+        return nilObject_;
     }
 
     ObjectHeader* header = obj.asObjectPtr();
 
-    if (index >= header->slotCount()) return Oop::nil();
+    if (index >= header->slotCount()) return nilObject_;
 
     return header->slotAt(index);
 }
@@ -1184,7 +1203,7 @@ Space ObjectMemory::spaceForPointer(void* ptr) const {
 }
 
 Oop ObjectMemory::oopFromPointer(ObjectHeader* ptr) const {
-    if (!ptr) return Oop::nil();
+    if (!ptr) return nilObject_;
     Space space = spaceForPointer(ptr);
     return Oop::fromObject(ptr, space);
 }
@@ -1205,7 +1224,7 @@ Oop ObjectMemory::promoteObject(Oop obj) {
 
     ObjectHeader* dst = allocateRaw(size, Space::Old);
     if (!dst) {
-        return Oop::nil();  // Out of memory
+        return nilObject_;  // Out of memory
     }
 
     std::memcpy(dst, src, size);
@@ -1292,11 +1311,11 @@ Oop ObjectMemory::firstInstanceOf(uint32_t targetClassIndex) {
     // Search eden
     if (scanRegion(edenStart_, edenFree_)) return found;
 
-    return Oop::nil();  // Not found
+    return nilObject_;  // Not found
 }
 
 Oop ObjectMemory::nextInstanceAfter(Oop afterObject, uint32_t targetClassIndex) {
-    if (!afterObject.isObject()) return Oop::nil();
+    if (!afterObject.isObject()) return nilObject_;
 
     // Get the address of the starting object
     ObjectHeader* startPtr = afterObject.asObjectPtr();
@@ -1400,7 +1419,7 @@ Oop ObjectMemory::nextInstanceAfter(Oop afterObject, uint32_t targetClassIndex) 
             break;
     }
 
-    return Oop::nil();  // Not found
+    return nilObject_;  // Not found
 }
 
 } // namespace pharo

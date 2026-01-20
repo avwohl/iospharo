@@ -4366,7 +4366,7 @@ PrimitiveResult Interpreter::primitiveYield(int argCount) {
 
         // Switch to the next process's context
         Oop newContext = memory_.fetchPointer(ProcessSuspendedContextIndex, nextProcess);
-        memory_.storePointer(ProcessSuspendedContextIndex, nextProcess, Oop::nil());
+        memory_.storePointer(ProcessSuspendedContextIndex, nextProcess, memory_.nil());
 
         if (!newContext.isNil() && newContext.isObject()) {
             executeFromContext(newContext);
@@ -5101,11 +5101,11 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
             }
         case 1:  // Image path (document path)
             pop();
-            push(Oop::nil());
+            push(memory_.nil());
             return PrimitiveResult::Success;
         case 2:  // Image path (second form)
             pop();
-            push(Oop::nil());
+            push(memory_.nil());
             return PrimitiveResult::Success;
         case 3:  // First command line argument - fake --interactive!
             {
@@ -5117,19 +5117,19 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
             }
         case 4:  // No more arguments
             pop();
-            push(Oop::nil());
+            push(memory_.nil());
             return PrimitiveResult::Success;
         case 1001:  // VM version string - return nil for now
             pop();
-            push(Oop::nil());
+            push(memory_.nil());
             return PrimitiveResult::Success;
         case 1002:  // VM build string
             pop();
-            push(Oop::nil());
+            push(memory_.nil());
             return PrimitiveResult::Success;
         case 1003:  // Interpreter class name
             pop();
-            push(Oop::nil());
+            push(memory_.nil());
             return PrimitiveResult::Success;
         case 1004:  // VM type (1=stack, 2=cog, 3=sista)
             pop();
@@ -5283,7 +5283,7 @@ PrimitiveResult Interpreter::primitiveNewMethod(int argCount) {
 
     // Initialize literals to nil
     for (int i = 1; i <= literalCount; i++) {
-        memory_.storePointer(i, method, Oop::nil());
+        memory_.storePointer(i, method, memory_.nil());
     }
 
     popN(3);
@@ -5477,8 +5477,8 @@ PrimitiveResult Interpreter::primitiveTerminateTo(int argCount) {
     while (!current.isNil() && current.isObject()) {
         Oop sender = memory_.fetchPointer(SenderIndex, current);
 
-        // Nil out this context's sender
-        memory_.storePointer(SenderIndex, current, Oop::nil());
+        // Nil out this context's sender (use real nil object, not raw 0)
+        memory_.storePointer(SenderIndex, current, memory_.nil());
 
         // If we've reached the target, stop
         if (current.rawBits() == targetContext.rawBits()) {
@@ -5775,7 +5775,7 @@ PrimitiveResult Interpreter::primitiveFindNextUnwindContext(int argCount) {
         if (current.rawBits() == limitContext.rawBits()) {
             // Reached limit without finding unwind context
             popN(2);
-            push(Oop::nil());
+            push(memory_.nil());
             return PrimitiveResult::Success;
         }
 
@@ -5790,7 +5790,7 @@ PrimitiveResult Interpreter::primitiveFindNextUnwindContext(int argCount) {
 
     // No unwind context found
     popN(2);
-    push(Oop::nil());
+    push(memory_.nil());
     return PrimitiveResult::Success;
 }
 
@@ -6340,7 +6340,7 @@ PrimitiveResult Interpreter::primitiveQuickReturnFalse(int argCount) {
 PrimitiveResult Interpreter::primitiveQuickReturnNil(int argCount) {
     // Pop receiver, push nil
     pop();
-    push(Oop::nil());
+    push(memory_.nil());
     return PrimitiveResult::Success;
 }
 
@@ -6717,7 +6717,7 @@ PrimitiveResult Interpreter::primitiveSandboxedArgs(int argCount) {
     // On iOS, there are typically no command line arguments
     // Return nil for security/sandboxing
     pop();
-    push(Oop::nil());
+    push(memory_.nil());
     return PrimitiveResult::Success;
 }
 
@@ -6800,7 +6800,7 @@ PrimitiveResult Interpreter::primitiveExternalObjectAccess(int argCount) {
     // Return nil for any index
     popN(1);  // index
     pop();    // receiver
-    push(Oop::nil());
+    push(memory_.nil());
     return PrimitiveResult::Success;
 }
 
@@ -7030,7 +7030,7 @@ PrimitiveResult Interpreter::primitiveFileOpen(int argCount) {
     if (!file) {
         // Return nil on failure
         popN(argCount);
-        push(Oop::nil());
+        push(memory_.nil());
         return PrimitiveResult::Success;
     }
 
@@ -7326,7 +7326,7 @@ PrimitiveResult Interpreter::primitiveDirectoryLookup(int argCount) {
     if (!dir) {
         // Directory doesn't exist or can't be opened
         popN(argCount);
-        push(Oop::nil());
+        push(memory_.nil());
         return PrimitiveResult::Success;
     }
 
@@ -7348,7 +7348,7 @@ PrimitiveResult Interpreter::primitiveDirectoryLookup(int argCount) {
         // Index out of range
         closedir(dir);
         popN(argCount);
-        push(Oop::nil());
+        push(memory_.nil());
         return PrimitiveResult::Success;
     }
 
@@ -7448,7 +7448,7 @@ PrimitiveResult Interpreter::primitiveDirectoryGetMacTypeAndCreator(int argCount
     struct stat statBuf;
     if (stat(path.c_str(), &statBuf) != 0) {
         pop();
-        push(Oop::nil());
+        push(memory_.nil());
         return PrimitiveResult::Success;
     }
 
@@ -9918,7 +9918,7 @@ PrimitiveResult Interpreter::primitiveVMHeapStatistics(int argCount) {
     // Return simple statistics as array
     // For now, just return nil - would need to allocate an array
     pop();
-    push(Oop::nil());
+    push(memory_.nil());
     return PrimitiveResult::Success;
 }
 
