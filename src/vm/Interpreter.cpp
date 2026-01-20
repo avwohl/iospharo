@@ -4571,6 +4571,7 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
     bool traceWorld = false;
     bool traceHandler = false;
     bool traceSignal = false;
+    bool traceInterCycle = false;
     if (selector.isObject() && selector.rawBits() > 0x10000) {
         ObjectHeader* selHdr = selector.asObjectPtr();
         if (selHdr->isBytesObject() && selHdr->byteSize() <= 50) {
@@ -4578,10 +4579,15 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
             traceWorld = (selStr == "world" || selStr == "owner");
             traceHandler = (selStr == "findNextHandlerContext");
             traceSignal = (selStr == "signal");
+            traceInterCycle = (selStr == "doInterCycleWait" || selStr == "doInterCycleWait:");
         }
     }
     static int signalTraceCount = 0;
     bool doSignalTrace = traceSignal && (++signalTraceCount <= 1);  // Only trace first lookup
+
+    // Trace doInterCycleWait lookup
+    static int interCycleTraceCount = 0;
+    bool doInterCycleTrace = traceInterCycle && (++interCycleTraceCount <= 3);
 
     // Also trace receiver lookup to debug Deprecation issue
     bool traceReceiver = (selStr == "receiver");
@@ -4664,6 +4670,33 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
                     }
                     std::cerr << "\n";
                 }
+            }
+        }
+
+        // Trace doInterCycleWait lookup
+        if (doInterCycleTrace) {
+            static FILE* icLog = fopen("/tmp/intercycle_lookup.log", "a");
+            if (icLog) {
+                fprintf(icLog, "[INTERCYCLE] depth=%d class=%s selector='%s'\n",
+                        depth, getClassName(currentClass).c_str(), selStr.c_str());
+                if (methodDict.isObject()) {
+                    ObjectHeader* mdHdr = methodDict.asObjectPtr();
+                    fprintf(icLog, "[INTERCYCLE]   methodDict: slots=%zu format=%d classIdx=%u\n",
+                            mdHdr->slotCount(), (int)mdHdr->format(), mdHdr->classIndex());
+                    // List all selectors in this methodDict
+                    fprintf(icLog, "[INTERCYCLE]   selectors in methodDict:\n");
+                    for (size_t i = 2; i < std::min(mdHdr->slotCount(), (size_t)50); i++) {
+                        Oop key = memory_.fetchPointer(i, methodDict);
+                        if (key.isObject() && key.rawBits() > 0x10000) {
+                            ObjectHeader* keyHdr = key.asObjectPtr();
+                            if (keyHdr->isBytesObject() && keyHdr->byteSize() < 50) {
+                                std::string keyStr((char*)keyHdr->bytes(), keyHdr->byteSize());
+                                fprintf(icLog, "[INTERCYCLE]     slot[%zu]='%s'\n", i, keyStr.c_str());
+                            }
+                        }
+                    }
+                }
+                fflush(icLog);
             }
         }
 
@@ -6065,10 +6098,15 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     }
     // Limit verbose DNU logging for known fallbacks
     static int assureExtCount = 0;
+    static int interCycleCount = 0;
     bool skipLog = false;
     if (origStr == "assureExtension") {
         assureExtCount++;
         if (assureExtCount > 5) skipLog = true;
+    }
+    if (origStr == "doInterCycleWait") {
+        interCycleCount++;
+        if (interCycleCount > 3) skipLog = true;  // Only log first 3
     }
     if (!skipLog) {
         std::cerr << "[DNU] Selector '#" << origStr << "' not found on " << rcvrClassName
@@ -6123,6 +6161,14 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     if (origStr == "slotScope" && argCount == 0) {
         pop();  // Pop receiver
         push(memory_.nil());  // Return nil to end scope chain
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for MorphicRenderLoop#doInterCycleWait - method may not exist in modern Pharo
+    // The waiting is handled by C++ side (sleep in idle loop), so just return self
+    if (origStr == "doInterCycleWait" && argCount == 0) {
+        // Leave receiver on stack (return self)
         dnuDepth--;
         return;
     }
