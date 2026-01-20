@@ -3562,7 +3562,59 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
             } else if (bytecode <= 0x4F) {
                 // 0x4C-0x4F: Push specials
                 switch (bytecode) {
-                    case 0x4C: push(receiver_); break;              // push self
+                    case 0x4C: {
+                        // Trace push self during menu action tracing
+                        if (menuActionTraceCount_ > 0 && menuActionTraceCount_ < 4950) {
+                            static FILE* menuTrace = fopen("/tmp/iospharo-menu-trace.log", "a");
+                            if (menuTrace) {
+                                std::string rcvrClassName = "Unknown";
+                                if (receiver_.isObject() && !receiver_.isNil()) {
+                                    Oop rcvrClass = memory_.classOf(receiver_);
+                                    if (rcvrClass.isObject()) {
+                                        ObjectHeader* cHdr = rcvrClass.asObjectPtr();
+                                        if (cHdr->slotCount() > 6) {
+                                            Oop name = cHdr->slotAt(6);
+                                            if (name.isObject()) {
+                                                ObjectHeader* nHdr = name.asObjectPtr();
+                                                size_t len = nHdr->byteSize();
+                                                if (len < 100) {
+                                                    rcvrClassName = std::string(reinterpret_cast<char*>(nHdr->bytes()), len);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                // Check if this is inside a block by looking at method class
+                                std::string methodType = "Method";
+                                if (method_.isObject()) {
+                                    Oop methodClass = memory_.classOf(method_);
+                                    if (methodClass.isObject()) {
+                                        ObjectHeader* mcHdr = methodClass.asObjectPtr();
+                                        if (mcHdr->slotCount() > 6) {
+                                            Oop name = mcHdr->slotAt(6);
+                                            if (name.isObject()) {
+                                                ObjectHeader* nHdr = name.asObjectPtr();
+                                                size_t len = nHdr->byteSize();
+                                                if (len < 100) {
+                                                    methodType = std::string(reinterpret_cast<char*>(nHdr->bytes()), len);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                if (rcvrClassName.find("MorphicRenderLoop") != std::string::npos ||
+                                    rcvrClassName.find("OrderedCollection") != std::string::npos) {
+                                    fprintf(menuTrace, "[PUSH-SELF] receiver_=0x%llx (%s) methodType=%s frameDepth=%d\n",
+                                            static_cast<unsigned long long>(receiver_.rawBits()),
+                                            rcvrClassName.c_str(), methodType.c_str(),
+                                            frameDepth_);
+                                    fflush(menuTrace);
+                                }
+                            }
+                        }
+                        push(receiver_);
+                        break;
+                    }
                     case 0x4D: push(memory_.trueObject()); break;   // push true
                     case 0x4E: push(memory_.falseObject()); break;  // push false
                     case 0x4F: push(memory_.nil()); break;          // push nil
@@ -7260,6 +7312,61 @@ void Interpreter::activateBlock(Oop block, int argCount) {
 
     Oop slot1 = memory_.fetchPointer(1, block);
     Oop outerContext = memory_.fetchPointer(0, block);
+
+    // Trace block activation when menu tracing is active
+    if (menuActionTraceCount_ > 0) {
+        static FILE* menuTrace = fopen("/tmp/iospharo-menu-trace.log", "a");
+        if (menuTrace) {
+            std::string blockClassName = "Unknown";
+            if (block.isObject()) {
+                ObjectHeader* bHdr = block.asObjectPtr();
+                Oop bClass = memory_.classOf(block);
+                if (bClass.isObject()) {
+                    ObjectHeader* cHdr = bClass.asObjectPtr();
+                    if (cHdr->slotCount() > 6) {
+                        Oop name = cHdr->slotAt(6);
+                        if (name.isObject()) {
+                            ObjectHeader* nHdr = name.asObjectPtr();
+                            size_t len = nHdr->byteSize();
+                            if (len < 100) {
+                                blockClassName = std::string(reinterpret_cast<char*>(nHdr->bytes()), len);
+                            }
+                        }
+                    }
+                }
+            }
+
+            std::string outerRcvrClassName = "nil";
+            Oop outerRcvr = memory_.nil();
+            if (outerContext.isObject() && !outerContext.isNil()) {
+                outerRcvr = memory_.fetchPointer(5, outerContext);
+                if (outerRcvr.isObject() && !outerRcvr.isNil()) {
+                    Oop rcvrClass = memory_.classOf(outerRcvr);
+                    if (rcvrClass.isObject()) {
+                        ObjectHeader* cHdr = rcvrClass.asObjectPtr();
+                        if (cHdr->slotCount() > 6) {
+                            Oop name = cHdr->slotAt(6);
+                            if (name.isObject()) {
+                                ObjectHeader* nHdr = name.asObjectPtr();
+                                size_t len = nHdr->byteSize();
+                                if (len < 100) {
+                                    outerRcvrClassName = std::string(reinterpret_cast<char*>(nHdr->bytes()), len);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            fprintf(menuTrace, "[BLOCK-ACTIVATE] %s argCount=%d outerContext=0x%llx outerRcvr=0x%llx (%s) frameDepth=%d\n",
+                    blockClassName.c_str(), argCount,
+                    static_cast<unsigned long long>(outerContext.rawBits()),
+                    static_cast<unsigned long long>(outerRcvr.rawBits()),
+                    outerRcvrClassName.c_str(),
+                    frameDepth_);
+            fflush(menuTrace);
+        }
+    }
     Oop methodToExecute;
     uint8_t* startAddress = nullptr;
 
@@ -8666,6 +8773,42 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied) {
 
     size_t slots = 3 + numCopied;  // outerContext, compiledBlock, numArgs, copied...
     Oop block = memory_.allocateSlots(classIdx, slots, ObjectFormat::Indexable);
+
+    // Trace block creation during menu action tracing
+    if (menuActionTraceCount_ > 0) {
+        static FILE* menuTrace = fopen("/tmp/iospharo-menu-trace.log", "a");
+        if (menuTrace) {
+            std::string ctxRcvrClassName = "nil";
+            Oop ctxRcvr = memory_.nil();
+            // activeContext_ is just an index into callStack_, not a real context object
+            // The receiver is stored in receiver_ for the current frame
+            // But for block creation, we need to capture the CURRENT receiver
+            ctxRcvr = receiver_;
+            if (ctxRcvr.isObject() && !ctxRcvr.isNil()) {
+                Oop rcvrClass = memory_.classOf(ctxRcvr);
+                if (rcvrClass.isObject()) {
+                    ObjectHeader* cHdr = rcvrClass.asObjectPtr();
+                    if (cHdr->slotCount() > 6) {
+                        Oop name = cHdr->slotAt(6);
+                        if (name.isObject()) {
+                            ObjectHeader* nHdr = name.asObjectPtr();
+                            size_t len = nHdr->byteSize();
+                            if (len < 100) {
+                                ctxRcvrClassName = std::string(reinterpret_cast<char*>(nHdr->bytes()), len);
+                            }
+                        }
+                    }
+                }
+            }
+            fprintf(menuTrace, "[BLOCK-CREATE] FullBlockClosure numCopied=%d activeContext_=0x%llx receiver_=0x%llx (%s) frameDepth=%d\n",
+                    numCopied,
+                    static_cast<unsigned long long>(activeContext_.rawBits()),
+                    static_cast<unsigned long long>(ctxRcvr.rawBits()),
+                    ctxRcvrClassName.c_str(),
+                    frameDepth_);
+            fflush(menuTrace);
+        }
+    }
 
     // Set fields
     memory_.storePointer(0, block, activeContext_);  // outerContext
