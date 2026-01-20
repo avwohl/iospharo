@@ -3436,9 +3436,8 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 int numCopied = flags & 0x3F;
                 bool receiverOnStack = (flags >> 7) & 1;
                 bool ignoreOuterContext = (flags >> 6) & 1;
-                (void)receiverOnStack;
-                (void)ignoreOuterContext;
-                createFullBlockWithLiteral(fullLitIndex, numCopied);
+                (void)ignoreOuterContext;  // We always use activeContext_ for now
+                createFullBlockWithLiteral(fullLitIndex, numCopied, receiverOnStack);
                 break;
             }
             case 0xFA: // 250: Push Closure
@@ -3552,7 +3551,67 @@ uint16_t Interpreter::fetchTwoBytes() {
 }
 
 void Interpreter::pushReceiverVariable(int index) {
-    push(receiverInstVar(index));
+    // Trace ALL instance variable reads to debug SessionManager default
+    static FILE* civLog = nullptr;
+    static int civCount = 0;
+    if (!civLog) civLog = fopen("/tmp/class_instvar_access.log", "w");
+
+    // Also log when we read nil from any object at index > 10 (likely class instvar)
+    Oop result = memory_.fetchPointer(index, receiver_);
+    Oop nilObj = memory_.nil();
+
+    if (civLog && civCount < 200) {
+        bool shouldLog = false;
+        std::string rcvrName = "<unknown>";
+
+        // Check if receiver is a class object
+        if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+            ObjectHeader* rcvrHdr = receiver_.asObjectPtr();
+
+            // Get class name for classes, or instance class name for others
+            if (rcvrHdr->slotCount() >= 7) {
+                Oop nameOop = memory_.fetchPointer(6, receiver_);
+                if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                        rcvrName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                        shouldLog = true;
+                    }
+                }
+            }
+
+            // Also get instance class name if above didn't work
+            if (rcvrName == "<unknown>") {
+                Oop cls = memory_.classOf(receiver_);
+                if (cls.isObject()) {
+                    Oop clsName = memory_.fetchPointer(6, cls);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            rcvrName = "[" + std::string((char*)cnHdr->bytes(), cnHdr->byteSize()) + " instance]";
+                        }
+                    }
+                }
+            }
+
+            // Log if: reading from class object at high index OR reading nil from any index > 10
+            // OR if name contains "Session"
+            bool isHighIndex = (index >= 11);
+            bool isNilResult = (result.rawBits() == nilObj.rawBits());
+            bool isSessionRelated = (rcvrName.find("Session") != std::string::npos);
+
+            if (isSessionRelated || (isHighIndex && shouldLog) || civCount < 30) {
+                civCount++;
+                fprintf(civLog, "[INSTVAR #%d] %s slot[%d] = 0x%llx%s (receiver=0x%llx)\n",
+                        civCount, rcvrName.c_str(), index,
+                        (unsigned long long)result.rawBits(),
+                        isNilResult ? " [NIL!]" : "",
+                        (unsigned long long)receiver_.rawBits());
+                fflush(civLog);
+            }
+        }
+    }
+    push(result);
 }
 
 void Interpreter::pushTemporary(int index) {
@@ -4095,6 +4154,97 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 }
 
 void Interpreter::sendSelector(Oop selector, int argCount) {
+    // TRACE: Log all sends to see what's happening
+    static FILE* allSendLog = nullptr;
+    static int allSendCount = 0;
+    if (!allSendLog) allSendLog = fopen("/tmp/all_sends.log", "w");
+    if (allSendLog && allSendCount < 500) {
+        allSendCount++;
+        std::string selStr = "<unknown>";
+        if (selector.isObject() && selector.rawBits() > 0x10000) {
+            ObjectHeader* selHdr = selector.asObjectPtr();
+            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+            }
+        }
+        Oop rcvr = stackValue(static_cast<size_t>(argCount));
+        std::string rcvrName = "<unknown>";
+        if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+            ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+            if (rcvrHdr->slotCount() >= 7) {
+                Oop nameOop = memory_.fetchPointer(6, rcvr);
+                if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                        rcvrName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                    }
+                }
+            }
+            if (rcvrName == "<unknown>") {
+                Oop cls = memory_.classOf(rcvr);
+                if (cls.isObject()) {
+                    Oop clsName = memory_.fetchPointer(6, cls);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            rcvrName = "[" + std::string((char*)cnHdr->bytes(), cnHdr->byteSize()) + "]";
+                        }
+                    }
+                }
+            }
+        } else if (rcvr.isSmallInteger()) {
+            rcvrName = "[SmallInteger " + std::to_string(rcvr.asSmallInteger()) + "]";
+        }
+        fprintf(allSendLog, "[SEND #%d] %s >> #%s (args=%d)\n",
+                allSendCount, rcvrName.c_str(), selStr.c_str(), argCount);
+        fflush(allSendLog);
+    }
+
+    // TRACE: Log when 'default' is sent to understand the call chain
+    static FILE* defaultSendLog = nullptr;
+    static int defaultSendCount = 0;
+    if (!defaultSendLog) defaultSendLog = fopen("/tmp/default_send.log", "w");
+    if (selector.isObject() && selector.rawBits() > 0x10000) {
+        ObjectHeader* selHdr = selector.asObjectPtr();
+        if (selHdr->isBytesObject() && selHdr->byteSize() == 7) {
+            std::string s((char*)selHdr->bytes(), 7);
+            if (s == "default" && defaultSendCount < 20) {
+                defaultSendCount++;
+                Oop rcvr = stackValue(static_cast<size_t>(argCount));
+                std::string rcvrName = "<unknown>";
+                if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                    // Try to get class name if rcvr is a class
+                    ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+                    if (rcvrHdr->slotCount() >= 7) {
+                        Oop nameOop = memory_.fetchPointer(6, rcvr);
+                        if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                            ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                                rcvrName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                            }
+                        }
+                    }
+                    // If not a class, get instance class name
+                    if (rcvrName == "<unknown>") {
+                        Oop cls = memory_.classOf(rcvr);
+                        if (cls.isObject()) {
+                            Oop clsName = memory_.fetchPointer(6, cls);
+                            if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                                ObjectHeader* cnHdr = clsName.asObjectPtr();
+                                if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                                    rcvrName = "[" + std::string((char*)cnHdr->bytes(), cnHdr->byteSize()) + " instance]";
+                                }
+                            }
+                        }
+                    }
+                }
+                fprintf(defaultSendLog, "[DEFAULT-SEND #%d] #default sent to %s (0x%llx) argCount=%d\n",
+                        defaultSendCount, rcvrName.c_str(), (unsigned long long)rcvr.rawBits(), argCount);
+                fflush(defaultSendLog);
+            }
+        }
+    }
+
     // DISABLED: Pending action dispatch causes issues
     // Workaround dispatch code removed - Smalltalk handles all event dispatch
 
@@ -4218,16 +4368,9 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         ObjectHeader* selHdr = selector.asObjectPtr();
         if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
             selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-            // Log first 2000 sends to see full startup
-            totalSends++;
-            if (totalSends <= 2000) {
-                static FILE* sendLog = nullptr;
-                if (!sendLog) sendLog = fopen("/tmp/all_sends.log", "w");
-                if (sendLog) {
-                    fprintf(sendLog, "[SEND #%d] #%s args=%d\n", totalSends, selStr.c_str(), argCount);
-                    fflush(sendLog);
-                }
-            }
+            // DISABLED: Duplicate logging - using the one at sendSelector start instead
+            // totalSends++;
+            // if (totalSends <= 2000) { ... }
 
             // Trace sends after primitive 264 (only non-internal selectors)
             // Defined at top of this file
@@ -5197,6 +5340,51 @@ extern int g_traceSendsAfterPrim264;
     }
 
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
+
+    // TRACE: When sending to nil, log the calling context
+    if (rcvr.rawBits() == nilObj.rawBits() && selector.isObject()) {
+        static FILE* nilSendLog = nullptr;
+        static int nilSendCount = 0;
+        if (!nilSendLog) nilSendLog = fopen("/tmp/nil_send_trace.log", "w");
+        if (nilSendLog && nilSendCount < 30) {
+            ObjectHeader* selHdr = selector.asObjectPtr();
+            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                std::string selStr((char*)selHdr->bytes(), selHdr->byteSize());
+                // Log sends to nil with calling method info
+                nilSendCount++;
+                fprintf(nilSendLog, "\n[NIL-SEND #%d] #%s sent to nil\n", nilSendCount, selStr.c_str());
+                // Get calling method selector
+                std::string callerSel = "<unknown>";
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    ObjectHeader* mHdr = method_.asObjectPtr();
+                    Oop hdr = memory_.fetchPointer(0, method_);
+                    if (hdr.isSmallInteger()) {
+                        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                        if (numLits >= 2) {
+                            Oop penult = memory_.fetchPointer(numLits - 1, method_);
+                            if (penult.isObject() && penult.rawBits() > 0x10000) {
+                                ObjectHeader* penHdr = penult.asObjectPtr();
+                                if (penHdr->isBytesObject() && penHdr->byteSize() < 50) {
+                                    callerSel = std::string((char*)penHdr->bytes(), penHdr->byteSize());
+                                }
+                            }
+                        }
+                    }
+                }
+                fprintf(nilSendLog, "  Called from method: #%s\n", callerSel.c_str());
+                fprintf(nilSendLog, "  receiver_=0x%llx frameDepth=%zu\n",
+                        (unsigned long long)receiver_.rawBits(), frameDepth_);
+                // Show stack around the call
+                fprintf(nilSendLog, "  Stack (top 5): ");
+                for (int i = 0; i < 5 && stackPointer_ - i > stackBase_; i++) {
+                    Oop val = *(stackPointer_ - i);
+                    fprintf(nilSendLog, "0x%llx ", (unsigned long long)val.rawBits());
+                }
+                fprintf(nilSendLog, "\n");
+                fflush(nilSendLog);
+            }
+        }
+    }
 
     // Determine receiver's class
     Oop rcvrClass = memory_.classOf(rcvr);
@@ -7010,6 +7198,74 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // Get receiver from stack (now in the frame)
     receiver_ = argument(0);  // First "argument" slot is actually receiver
 
+    // Trace method activation to debug SessionManager default
+    static FILE* actLog = nullptr;
+    static int actCount = 0;
+    if (!actLog) actLog = fopen("/tmp/method_activation.log", "w");
+    if (actLog && actCount < 200) {
+        // Get method selector for logging
+        std::string selStr = "<unknown>";
+        if (method.isObject()) {
+            ObjectHeader* mHdr = method.asObjectPtr();
+            if (mHdr->slotCount() > 1) {
+                Oop selector = memory_.fetchPointer(1, method);
+                if (selector.isObject() && selector.rawBits() > 0x10000) {
+                    ObjectHeader* selHdr = selector.asObjectPtr();
+                    if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                        selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                    }
+                }
+            }
+        }
+        // Check if receiver is SessionManager
+        std::string rcvrName = "<unknown>";
+        if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+            ObjectHeader* rcvrHdr = receiver_.asObjectPtr();
+            if (rcvrHdr->slotCount() >= 7) {
+                Oop nameOop = memory_.fetchPointer(6, receiver_);
+                if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                        rcvrName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                    }
+                }
+            }
+            // Also get class name for non-class receivers
+            if (rcvrName == "<unknown>") {
+                Oop cls = memory_.classOf(receiver_);
+                if (cls.isObject()) {
+                    Oop clsName = memory_.fetchPointer(6, cls);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            rcvrName = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                        }
+                    }
+                }
+            }
+        }
+        // Log class method activations - focus on 'default' and Session-related
+        bool shouldLog = (selStr == "default" || selStr == "current" || selStr == "currentSession" ||
+                          rcvrName == "SessionManager" || rcvrName.find("Session") != std::string::npos ||
+                          actCount < 20);  // Also log first 20 for context
+        if (shouldLog) {
+            actCount++;
+            fprintf(actLog, "[ACT #%d] #%s receiver=%s (0x%llx) argCount=%d\n",
+                    actCount, selStr.c_str(), rcvrName.c_str(),
+                    (unsigned long long)receiver_.rawBits(), argCount);
+            // Also log first few slots of receiver if it looks like a class
+            if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+                ObjectHeader* rh = receiver_.asObjectPtr();
+                if (rh->slotCount() >= 12) {
+                    Oop slot11 = memory_.fetchPointer(11, receiver_);
+                    fprintf(actLog, "  slot[11]=0x%llx (likely class instvar)\n",
+                            (unsigned long long)slot11.rawBits());
+                }
+            }
+            fflush(actLog);
+        }
+    }
+
     // FIX: Create a context for this method activation so blocks can capture correct receiver
     // Without this, activeContext_ stays stale and blocks get wrong 'self'
     Oop newContext = memory_.createStartupContext(method, receiver_);
@@ -7167,6 +7423,39 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     if (slot1.isObject()) {
         // FullBlockClosure: receiver is at slot 3
         receiver_ = memory_.fetchPointer(3, block);
+        // TRACE: Log block activation to debug nil receiver
+        static FILE* blockActLog = nullptr;
+        static int blockActCount = 0;
+        if (!blockActLog) blockActLog = fopen("/tmp/block_activation.log", "w");
+        if (blockActLog && blockActCount < 100) {
+            blockActCount++;
+            size_t blockSlots = memory_.slotCountOf(block);
+            Oop nilObj = memory_.nil();
+            std::string rcvrClassName = "<unknown>";
+            if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+                Oop cls = memory_.classOf(receiver_);
+                if (cls.isObject()) {
+                    Oop clsName = memory_.fetchPointer(6, cls);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            rcvrClassName = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                        }
+                    }
+                }
+            } else if (receiver_.rawBits() == nilObj.rawBits()) {
+                rcvrClassName = "nil";
+            }
+            fprintf(blockActLog, "[BLOCK #%d] FullBlockClosure activated: receiver from slot3 = %s (0x%llx) blockSlots=%zu\n",
+                    blockActCount, rcvrClassName.c_str(), (unsigned long long)receiver_.rawBits(), blockSlots);
+            // Also log outerContext info
+            if (outerContext.isObject() && !outerContext.isNil()) {
+                Oop ctxRcvr = memory_.fetchPointer(5, outerContext);
+                fprintf(blockActLog, "  outerContext slot5 (receiver) = 0x%llx\n",
+                        (unsigned long long)ctxRcvr.rawBits());
+            }
+            fflush(blockActLog);
+        }
     } else if (outerContext.isObject() && !outerContext.isNil()) {
         // Old-style BlockClosure: receiver from outer context
         receiver_ = memory_.fetchPointer(5, outerContext);
@@ -8819,7 +9108,7 @@ void Interpreter::createFullBlock() {
     createBlock();  // Simplified - treat same for now
 }
 
-void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied) {
+void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool receiverOnStack) {
     // Sista V1 0xF9: Push FullBlockClosure
     // The closure's code is in a CompiledBlock literal at litIndex
     Oop compiledBlock = literal(litIndex);
@@ -8878,7 +9167,13 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied) {
         cachedFullBlockClosureIdx = classIdx;
     }
 
-    size_t slots = 3 + numCopied;  // outerContext, compiledBlock, numArgs, copied...
+    // FullBlockClosure layout:
+    // slot 0: outerContext
+    // slot 1: compiledBlock
+    // slot 2: numArgs
+    // slot 3: receiver
+    // slot 4+: copied values
+    size_t slots = 4 + numCopied;  // 4 fixed slots + copied values
     Oop block = memory_.allocateSlots(classIdx, slots, ObjectFormat::Indexable);
 
     // Use activeContext_ as the outer context
@@ -8943,9 +9238,19 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied) {
     }
     memory_.storePointer(2, block, Oop::fromSmallInteger(numArgs));
 
-    // Copy values from stack
+    // Store receiver at slot 3
+    // If receiverOnStack, pop it from stack; otherwise use current receiver_
+    Oop blockReceiver;
+    if (receiverOnStack) {
+        blockReceiver = pop();
+    } else {
+        blockReceiver = receiver_;
+    }
+    memory_.storePointer(3, block, blockReceiver);
+
+    // Copy values from stack - these go into slot 4+ (after the 4 fixed slots)
     for (int i = numCopied - 1; i >= 0; --i) {
-        memory_.storePointer(3 + i, block, pop());
+        memory_.storePointer(4 + i, block, pop());
     }
 
     push(block);
@@ -9829,11 +10134,50 @@ bool Interpreter::bootstrapStartup() {
 
         // Debug logging
         static FILE* startupDebugLog = fopen("/tmp/startup_debug.log", "w");
+        Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
         if (startupDebugLog) {
+            fprintf(startupDebugLog, "[STARTUP-1] nil object: 0x%llx\n", (unsigned long long)nilObj.rawBits());
             fprintf(startupDebugLog, "[STARTUP-1] Smalltalk global: 0x%llx isNil=%d isObj=%d\n",
                     (unsigned long long)smalltalk.rawBits(), smalltalk.isNil() ? 1 : 0, smalltalk.isObject() ? 1 : 0);
             fprintf(startupDebugLog, "[STARTUP-1] SmalltalkImage class: 0x%llx isNil=%d isObj=%d\n",
                     (unsigned long long)smalltalkImageClass.rawBits(), smalltalkImageClass.isNil() ? 1 : 0, smalltalkImageClass.isObject() ? 1 : 0);
+
+            // Check SessionManager - why is it nil in our VM but not in others?
+            Oop sessionMgrClass = memory_.findGlobal("SessionManager");
+            fprintf(startupDebugLog, "[STARTUP-1] SessionManager class: 0x%llx isNil=%d isObj=%d\n",
+                    (unsigned long long)sessionMgrClass.rawBits(), sessionMgrClass.isNil() ? 1 : 0, sessionMgrClass.isObject() ? 1 : 0);
+
+            // SessionManager class has a 'default' class variable that holds the singleton
+            // In Pharo, class instance variables are stored after the class's own slots
+            // The metaclass (SessionManager class) has the 'default' inst var
+            if (sessionMgrClass.isObject()) {
+                ObjectHeader* smHdr = sessionMgrClass.asObjectPtr();
+                fprintf(startupDebugLog, "[STARTUP-1] SessionManager classIdx=%u slots=%zu\n",
+                        smHdr->classIndex(), smHdr->slotCount());
+
+                // Get the metaclass (class of SessionManager)
+                Oop metaclass = memory_.classOf(sessionMgrClass);
+                fprintf(startupDebugLog, "[STARTUP-1] SessionManager's metaclass: 0x%llx\n",
+                        (unsigned long long)metaclass.rawBits());
+
+                // The 'default' class instance variable is stored in the class object itself
+                // Class layout: superclass, methodDict, format, layout, instanceVariables, organization,
+                //               subclasses, name, environment, classVars, pool, <class inst vars start here>
+                // Class inst vars are after slot 11 in modern Pharo
+                fprintf(startupDebugLog, "[STARTUP-1] SessionManager slots (looking for 'default'):\n");
+                for (size_t i = 0; i < std::min(smHdr->slotCount(), (size_t)15); i++) {
+                    Oop slot = memory_.fetchPointer(i, sessionMgrClass);
+                    const char* slotName = "";
+                    if (i == 0) slotName = " (superclass)";
+                    else if (i == 1) slotName = " (methodDict)";
+                    else if (i == 6) slotName = " (name)";
+                    else if (i >= 12) slotName = " <-- class inst var?";
+                    fprintf(startupDebugLog, "[STARTUP-1]   slot[%zu] = 0x%llx%s%s\n",
+                            i, (unsigned long long)slot.rawBits(),
+                            slot.rawBits() == nilObj.rawBits() ? " (NIL)" : "",
+                            slotName);
+                }
+            }
             fflush(startupDebugLog);
         }
 
