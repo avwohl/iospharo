@@ -240,6 +240,17 @@ class ImageManager: ObservableObject {
     private func extractWithZIPFoundation(from zipURL: URL, to destination: URL) throws {
         // Use ZIPFoundation for extraction on iOS
         try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
+
+        // Remove existing image-related files to avoid "file exists" errors
+        let contents = try? fileManager.contentsOfDirectory(at: destination, includingPropertiesForKeys: nil)
+        for file in contents ?? [] {
+            let ext = file.pathExtension.lowercased()
+            if ext == "image" || ext == "changes" || ext == "sources" {
+                try? fileManager.removeItem(at: file)
+                NSLog("[ImageManager] Removed existing file: %@", file.lastPathComponent)
+            }
+        }
+
         try fileManager.unzipItem(at: zipURL, to: destination)
     }
 

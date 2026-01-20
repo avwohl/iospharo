@@ -45,60 +45,6 @@ struct ContentView: View {
                 errorOverlay(message: error)
             }
 
-            #if targetEnvironment(macCatalyst)
-            // Debug: Test button to verify SwiftUI events work
-            VStack {
-                Spacer()
-                HStack {
-                    Button("TEST CLICK") {
-                        if let file = fopen("/tmp/swiftui_button.log", "a") {
-                            fputs("[BUTTON] Test button was clicked!\n", file)
-                            fclose(file)
-                        }
-                        NSLog("[BUTTON] Test button was clicked!")
-                    }
-                    .padding()
-                    .background(Color.red)
-                    .foregroundColor(.white)
-                    .cornerRadius(8)
-
-                    Button("LEFT CLICK") {
-                        // Programmatically send left-click events to VM
-                        let testPoint = CGPoint(x: 512, y: 384)
-                        if let file = fopen("/tmp/auto_test.log", "a") {
-                            fputs("[AUTO] LEFT CLICK at \(testPoint)\n", file)
-                            fclose(file)
-                        }
-                        bridge.sendMouseMoved(to: testPoint, modifiers: 0)
-                        bridge.sendTouchDown(at: testPoint, buttons: Int(IOS_RED_BUTTON))
-                        bridge.sendTouchUp(at: testPoint)
-                    }
-                    .padding()
-                    .background(Color.green)
-                    .foregroundColor(.white)
-                    .cornerRadius(8)
-
-                    Button("RIGHT CLICK") {
-                        // Programmatically send right-click (yellow button) for world menu
-                        let testPoint = CGPoint(x: 512, y: 384)
-                        if let file = fopen("/tmp/auto_test.log", "a") {
-                            fputs("[AUTO] RIGHT CLICK (buttons=2) at \(testPoint)\n", file)
-                            fclose(file)
-                        }
-                        bridge.sendMouseMoved(to: testPoint, modifiers: 0)
-                        bridge.sendTouchDown(at: testPoint, buttons: Int(IOS_YELLOW_BUTTON))
-                        bridge.sendTouchUp(at: testPoint)
-                    }
-                    .padding()
-                    .background(Color.orange)
-                    .foregroundColor(.white)
-                    .cornerRadius(8)
-
-                    Spacer()
-                }
-                .padding()
-            }
-            #endif
         }
         // Note: SwiftUI gesture is needed for event routing even if it doesn't fire
         #if targetEnvironment(macCatalyst)
