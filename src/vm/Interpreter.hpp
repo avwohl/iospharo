@@ -194,6 +194,8 @@ public:
     void initializeDisplayForm();  // Create and set up display Form
     void renderWorldMorphs();      // Direct rendering of World's morphs
     void processInputEvents();     // Process pending input events
+    void dispatchMouseEventToMorph(int x, int y, int buttons, bool isMouseDown); // Direct mouse dispatch
+    void handleMenuBarClick(Oop menuBar, int x, int y, int buttons); // Handle menu bar click
     void drawClickIndicator(int x, int y, int buttons); // Draw visible click feedback
     void updateActiveHandPosition(); // Directly update ActiveHand's position/buttons
     void syncDisplayToSurface();   // Copy Display Form to platform surface

@@ -1683,11 +1683,274 @@ void Interpreter::processInputEvents() {
 
         // All events go to Pharo - let Morphic handle everything
         passThroughEvents_.push_back(event);
+
+        // DIRECT DISPATCH: Since InputEventSensor isn't running, manually dispatch mouse events
+        // This is a workaround until the full event loop is working
+        if (event.type == static_cast<int>(pharo::EventType::Mouse)) {
+            int eventType = event.arg5;  // 1=down, 2=up, 3=move
+            int x = event.arg1;
+            int y = event.arg2;
+            int buttons = event.arg3;
+
+            // Only handle mouse down for now (clicks)
+            if (eventType == 1 && buttons != 0) {
+                dispatchMouseEventToMorph(x, y, buttons, true);  // true = mouse down
+            } else if (eventType == 2) {
+                dispatchMouseEventToMorph(x, y, buttons, false);  // false = mouse up
+            }
+        }
     }
 }
 
-// handleWorldClick and showWorldMenu REMOVED - events pass through to Smalltalk via primitive 264
-// Pharo's Morphic handles all click dispatch natively
+// Direct dispatch of mouse events to morphs (bypasses InputEventSensor)
+void Interpreter::dispatchMouseEventToMorph(int x, int y, int buttons, bool isMouseDown) {
+    static FILE* dispatchLog = nullptr;
+    static int dispatchCount = 0;
+    if (!dispatchLog) {
+        dispatchLog = fopen("/tmp/morph_dispatch.log", "w");
+    }
+
+    dispatchCount++;
+    if (dispatchLog && dispatchCount <= 50) {
+        fprintf(dispatchLog, "[DISPATCH #%d] %s at (%d,%d) buttons=%d\n",
+                dispatchCount, isMouseDown ? "DOWN" : "UP", x, y, buttons);
+        fflush(dispatchLog);
+    }
+
+    // Find the morph at position (x,y) and dispatch the event
+    Oop world = memory_.findGlobal("World");
+    if (world.isNil() || !world.isObject()) return;
+
+    // Get submorphs of World (slot 2)
+    Oop submorphs = memory_.fetchPointer(2, world);
+    if (submorphs.isNil() || !submorphs.isObject()) return;
+
+    ObjectHeader* submorphsHdr = submorphs.asObjectPtr();
+    size_t numSubmorphs = submorphsHdr->slotCount();
+
+    // Walk submorphs in reverse order (front-to-back in display order)
+    for (size_t i = numSubmorphs; i > 0; --i) {
+        Oop morph = memory_.fetchPointer(i - 1, submorphs);
+        if (morph.isNil() || !morph.isObject()) continue;
+
+        // Get morph class name for debugging
+        std::string morphClassName = "Unknown";
+        Oop morphClass = memory_.classOf(morph);
+        if (morphClass.isObject()) {
+            Oop nameOop = memory_.fetchPointer(6, morphClass);
+            if (nameOop.isObject()) {
+                ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                    morphClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                }
+            }
+        }
+
+        // Check if point (x,y) is within this morph's bounds
+        Oop bounds = memory_.fetchPointer(0, morph);  // bounds at slot 0
+        if (bounds.isNil() || !bounds.isObject()) {
+            if (dispatchLog && dispatchCount <= 10) {
+                fprintf(dispatchLog, "[DISPATCH #%d]   morph[%zu] %s: bounds nil\n",
+                        dispatchCount, i-1, morphClassName.c_str());
+                fflush(dispatchLog);
+            }
+            continue;
+        }
+
+        // Rectangle slots: 0=origin, 1=corner
+        Oop origin = memory_.fetchPointer(0, bounds);
+        Oop corner = memory_.fetchPointer(1, bounds);
+        if (origin.isNil() || corner.isNil()) continue;
+
+        // Point slots: 0=x, 1=y
+        Oop originX = memory_.fetchPointer(0, origin);
+        Oop originY = memory_.fetchPointer(1, origin);
+        Oop cornerX = memory_.fetchPointer(0, corner);
+        Oop cornerY = memory_.fetchPointer(1, corner);
+
+        if (!originX.isSmallInteger() || !originY.isSmallInteger() ||
+            !cornerX.isSmallInteger() || !cornerY.isSmallInteger()) {
+            if (dispatchLog && dispatchCount <= 10) {
+                fprintf(dispatchLog, "[DISPATCH #%d]   morph[%zu] %s: non-integer bounds\n",
+                        dispatchCount, i-1, morphClassName.c_str());
+                fprintf(dispatchLog, "      originX: raw=0x%llx isSmall=%d isFloat=%d\n",
+                        (unsigned long long)originX.rawBits(), originX.isSmallInteger(),
+                        originX.isSmallFloat());
+                fprintf(dispatchLog, "      originY: raw=0x%llx isSmall=%d isFloat=%d\n",
+                        (unsigned long long)originY.rawBits(), originY.isSmallInteger(),
+                        originY.isSmallFloat());
+                fflush(dispatchLog);
+            }
+            // Try SmallFloat if not SmallInteger
+            double ox = 0, oy = 0, cx = 0, cy = 0;
+            bool gotBounds = false;
+            if (originX.isSmallFloat() && originY.isSmallFloat() &&
+                cornerX.isSmallFloat() && cornerY.isSmallFloat()) {
+                ox = originX.asSmallFloat();
+                oy = originY.asSmallFloat();
+                cx = cornerX.asSmallFloat();
+                cy = cornerY.asSmallFloat();
+                gotBounds = true;
+            } else if (originX.isSmallInteger() && originY.isSmallInteger() &&
+                       cornerX.isSmallInteger() && cornerY.isSmallInteger()) {
+                ox = static_cast<double>(originX.asSmallInteger());
+                oy = static_cast<double>(originY.asSmallInteger());
+                cx = static_cast<double>(cornerX.asSmallInteger());
+                cy = static_cast<double>(cornerY.asSmallInteger());
+                gotBounds = true;
+            }
+            if (gotBounds) {
+                int left = static_cast<int>(ox);
+                int top = static_cast<int>(oy);
+                int right = static_cast<int>(cx);
+                int bottom = static_cast<int>(cy);
+                if (dispatchLog && dispatchCount <= 10) {
+                    fprintf(dispatchLog, "      Converted: bounds=(%d,%d)-(%d,%d)\n",
+                            left, top, right, bottom);
+                    fflush(dispatchLog);
+                }
+                // Check if click is within bounds
+                if (x >= left && x < right && y >= top && y < bottom) {
+                    if (dispatchLog) {
+                        fprintf(dispatchLog, "[DISPATCH #%d] HIT (float bounds): %s\n",
+                                dispatchCount, morphClassName.c_str());
+                        fflush(dispatchLog);
+                    }
+                    if (morphClassName == "MenubarMorph" && isMouseDown) {
+                        handleMenuBarClick(morph, x, y, buttons);
+                        return;
+                    }
+                    break;
+                }
+            }
+            continue;
+        }
+
+        int left = static_cast<int>(originX.asSmallInteger());
+        int top = static_cast<int>(originY.asSmallInteger());
+        int right = static_cast<int>(cornerX.asSmallInteger());
+        int bottom = static_cast<int>(cornerY.asSmallInteger());
+
+        // Log bounds for debugging
+        if (dispatchLog && dispatchCount <= 10) {
+            bool hit = (x >= left && x < right && y >= top && y < bottom);
+            fprintf(dispatchLog, "[DISPATCH #%d]   morph[%zu] %s: bounds=(%d,%d)-(%d,%d) %s\n",
+                    dispatchCount, i-1, morphClassName.c_str(), left, top, right, bottom,
+                    hit ? "HIT!" : "miss");
+            fflush(dispatchLog);
+        }
+
+        // Check if click is within bounds
+        if (x >= left && x < right && y >= top && y < bottom) {
+            // Found the topmost morph containing the click
+            Oop morphClass = memory_.classOf(morph);
+            std::string className = "Unknown";
+            if (morphClass.isObject()) {
+                Oop nameOop = memory_.fetchPointer(6, morphClass);
+                if (nameOop.isObject()) {
+                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                        className = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                    }
+                }
+            }
+
+            if (dispatchLog) {
+                fprintf(dispatchLog, "[DISPATCH #%d] Hit morph: %s bounds=(%d,%d)-(%d,%d)\n",
+                        dispatchCount, className.c_str(), left, top, right, bottom);
+                fflush(dispatchLog);
+            }
+
+            // For menu bar, handle specially
+            if (className == "MenubarMorph" && isMouseDown) {
+                handleMenuBarClick(morph, x, y, buttons);
+                return;
+            }
+
+            // For other morphs, try to dispatch a click event
+            // TODO: Implement proper event dispatch for non-menubar morphs
+            break;
+        }
+    }
+}
+
+// Handle click on the menu bar
+void Interpreter::handleMenuBarClick(Oop menuBar, int x, int y, int buttons) {
+    static FILE* menuLog = nullptr;
+    if (!menuLog) {
+        menuLog = fopen("/tmp/menubar_click.log", "w");
+    }
+
+    // MenubarMorph has menu items as submorphs
+    // Each menu item is a ToggleMenuItemMorph at a specific position
+    Oop submorphs = memory_.fetchPointer(2, menuBar);  // submorphs at slot 2
+    if (submorphs.isNil() || !submorphs.isObject()) {
+        if (menuLog) {
+            fprintf(menuLog, "[MENUBAR] No submorphs\n");
+            fflush(menuLog);
+        }
+        return;
+    }
+
+    ObjectHeader* submorphsHdr = submorphs.asObjectPtr();
+    size_t numItems = submorphsHdr->slotCount();
+
+    if (menuLog) {
+        fprintf(menuLog, "[MENUBAR] Click at (%d,%d), %zu items\n", x, y, numItems);
+        fflush(menuLog);
+    }
+
+    // Find which menu item was clicked
+    for (size_t i = 0; i < numItems; ++i) {
+        Oop item = memory_.fetchPointer(i, submorphs);
+        if (item.isNil() || !item.isObject()) continue;
+
+        Oop bounds = memory_.fetchPointer(0, item);  // bounds at slot 0
+        if (bounds.isNil() || !bounds.isObject()) continue;
+
+        Oop origin = memory_.fetchPointer(0, bounds);
+        Oop corner = memory_.fetchPointer(1, bounds);
+        if (origin.isNil() || corner.isNil()) continue;
+
+        Oop originX = memory_.fetchPointer(0, origin);
+        Oop originY = memory_.fetchPointer(1, origin);
+        Oop cornerX = memory_.fetchPointer(0, corner);
+        Oop cornerY = memory_.fetchPointer(1, corner);
+
+        if (!originX.isSmallInteger() || !originY.isSmallInteger() ||
+            !cornerX.isSmallInteger() || !cornerY.isSmallInteger()) continue;
+
+        int left = static_cast<int>(originX.asSmallInteger());
+        int top = static_cast<int>(originY.asSmallInteger());
+        int right = static_cast<int>(cornerX.asSmallInteger());
+        int bottom = static_cast<int>(cornerY.asSmallInteger());
+
+        if (x >= left && x < right && y >= top && y < bottom) {
+            // Found the clicked menu item
+            if (menuLog) {
+                fprintf(menuLog, "[MENUBAR] Clicked item %zu at (%d,%d)-(%d,%d)\n",
+                        i, left, top, right, bottom);
+                fflush(menuLog);
+            }
+
+            // Update the selectedMenuIndex_ (used by renderMenuBar for highlighting)
+            selectedMenuIndex_ = static_cast<int>(i);
+
+            // Try to invoke the menu item's action
+            // ToggleMenuItemMorph has a contents (String) at some slot
+            // For now, just log which item was clicked
+            // The actual menu action would need to be dispatched through Smalltalk
+
+            // Signal that the menu state changed so rendering picks it up
+            return;
+        }
+    }
+
+    if (menuLog) {
+        fprintf(menuLog, "[MENUBAR] No item hit\n");
+        fflush(menuLog);
+    }
+}
 
 void Interpreter::drawClickIndicator(int x, int y, int buttons) {
     // Draw a visible circle at click location directly on the display
@@ -4578,7 +4841,7 @@ extern int g_traceSendsAfterPrim264;
             // doOneCycle intercept for pending action dispatch REMOVED - Smalltalk handles all event dispatch
 
             // ===== INTERCEPT WorldState >> doOneCycleFor: =====
-            // Render World's morphs directly instead of using NullWorldRenderer
+            // Process events and render, but LET SMALLTALK CONTINUE to handle event dispatch
             if (selStr == "doOneCycleFor:" && argCount == 1) {
                 static int cycleInterceptCount = 0;
                 cycleInterceptCount++;
@@ -4599,11 +4862,9 @@ extern int g_traceSendsAfterPrim264;
                                 // Render World's morphs directly to the display surface
                                 renderWorldMorphs();
 
-                                // Let Smalltalk continue - pending action dispatch removed
-                                // Return receiver (WorldState) to continue normal execution
-                                popN(argCount + 1);
-                                push(rcvr);
-                                return;
+                                // DON'T return early - let Smalltalk's doOneCycleFor: run
+                                // so that event processing and other cycle work happens normally.
+                                // The method will proceed to be looked up and executed.
                             }
                         }
                     }
