@@ -1679,6 +1679,26 @@ void Interpreter::processInputEvents() {
             lastMouseY_ = event.arg2 * menuBarScale_;
             lastMouseButtons_ = event.arg3;
             lastMouseEventType_ = event.arg5;
+
+            // Direct click handling since Smalltalk event polling isn't active
+            // (primitive 264 not being called - no process waiting on input semaphore)
+            // Mouse down (type 1) with buttons pressed - dispatch clicks directly
+            if (event.arg5 == 1 && event.arg3 != 0) {
+                int x = event.arg1 * menuBarScale_;
+                int y = event.arg2 * menuBarScale_;
+                int buttons = event.arg3;
+
+                // Draw visual feedback for the click
+                drawClickIndicator(x, y, buttons);
+
+                if (logFile) {
+                    fprintf(logFile, "[DIRECT-CLICK] at %d,%d buttons=%d\n", x, y, buttons);
+                    fflush(logFile);
+                }
+
+                // Handle click based on position and button
+                handleDirectClick(x, y, buttons);
+            }
         }
 
         // All events go to Pharo - let Morphic handle everything
@@ -1686,8 +1706,136 @@ void Interpreter::processInputEvents() {
     }
 }
 
-// handleWorldClick and showWorldMenu REMOVED - events pass through to Smalltalk via primitive 264
-// Pharo's Morphic handles all click dispatch natively
+// Direct click handler for when Smalltalk event polling isn't working
+void Interpreter::handleDirectClick(int x, int y, int buttons) {
+    static FILE* clickLog = fopen("/tmp/direct_click.log", "a");
+
+    if (clickLog) {
+        fprintf(clickLog, "[DIRECT-CLICK] x=%d y=%d buttons=%d\n", x, y, buttons);
+        fflush(clickLog);
+    }
+
+    // Find what morph is at this position by scanning World's submorphs
+    Oop world = memory_.findGlobal("World");
+    if (world.isNil() || !world.isObject()) {
+        if (clickLog) fprintf(clickLog, "[DIRECT-CLICK] World not found\n");
+        return;
+    }
+
+    ObjectHeader* worldHdr = world.asObjectPtr();
+    if (worldHdr->slotCount() < 3) return;
+
+    // Check if click is in menu bar area (y < 72)
+    if (y < menuBarBottom_) {
+        if (clickLog) {
+            fprintf(clickLog, "[DIRECT-CLICK] In menu bar area, y=%d < %d\n", y, menuBarBottom_);
+            fflush(clickLog);
+        }
+        // Menu bar clicks handled elsewhere
+        return;
+    }
+
+    // Get World's submorphs (slot 2)
+    Oop submorphs = memory_.fetchPointer(2, world);
+    if (submorphs.isNil() || !submorphs.isObject()) return;
+
+    ObjectHeader* subHdr = submorphs.asObjectPtr();
+    size_t morphCount = subHdr->slotCount();
+
+    // Helper to check if point is inside morph bounds
+    auto pointInMorph = [this](Oop morph, int px, int py) -> bool {
+        if (morph.isNil() || !morph.isObject()) return false;
+        Oop bounds = memory_.fetchPointer(0, morph);  // slot 0 is bounds
+        if (bounds.isNil() || !bounds.isObject()) return false;
+
+        ObjectHeader* boundsHdr = bounds.asObjectPtr();
+        if (boundsHdr->slotCount() < 2) return false;
+
+        Oop origin = memory_.fetchPointer(0, bounds);
+        Oop corner = memory_.fetchPointer(1, bounds);
+        if (origin.isNil() || !origin.isObject() || corner.isNil() || !corner.isObject())
+            return false;
+
+        auto getCoord = [](Oop oop) -> int {
+            if (oop.isSmallInteger()) return static_cast<int>(oop.asSmallInteger());
+            if (oop.isSmallFloat()) return static_cast<int>(oop.asSmallFloat());
+            return 0;
+        };
+
+        int x1 = getCoord(memory_.fetchPointer(0, origin));
+        int y1 = getCoord(memory_.fetchPointer(1, origin));
+        int x2 = getCoord(memory_.fetchPointer(0, corner));
+        int y2 = getCoord(memory_.fetchPointer(1, corner));
+
+        return px >= x1 && px < x2 && py >= y1 && py < y2;
+    };
+
+    // Find topmost morph at click position (reverse order = top to bottom in z-order)
+    Oop targetMorph = Oop::nil();
+    std::string targetClass = "";
+
+    for (int i = static_cast<int>(morphCount) - 1; i >= 0; i--) {
+        Oop morph = memory_.fetchPointer(i, submorphs);
+        if (pointInMorph(morph, x, y)) {
+            // Get class name for logging
+            Oop cls = memory_.classOf(morph);
+            if (cls.isObject()) {
+                Oop name = memory_.fetchPointer(6, cls);
+                if (name.isObject()) {
+                    ObjectHeader* nameHdr = name.asObjectPtr();
+                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                        targetClass = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                    }
+                }
+            }
+            // Skip menubar and taskbar
+            if (targetClass == "MenubarMorph" || targetClass == "TaskbarMorph") continue;
+            targetMorph = morph;
+            break;
+        }
+    }
+
+    if (clickLog) {
+        fprintf(clickLog, "[DIRECT-CLICK] Target: %s at %d,%d buttons=%d\n",
+                targetClass.empty() ? "World" : targetClass.c_str(), x, y, buttons);
+        fflush(clickLog);
+    }
+
+    // Right click (buttons=2) on World background = show world menu
+    if ((buttons & 2) && (targetMorph.isNil() || targetClass.empty())) {
+        if (clickLog) {
+            fprintf(clickLog, "[DIRECT-CLICK] Right-click on World - should show menu (not implemented)\n");
+            fflush(clickLog);
+        }
+        // TODO: Implement world menu display
+        return;
+    }
+
+    // Left click (buttons=4) on a window - bring to front
+    if ((buttons & 4) && !targetMorph.isNil()) {
+        if (targetClass.find("Window") != std::string::npos ||
+            targetClass.find("SpWindow") != std::string::npos) {
+            if (clickLog) {
+                fprintf(clickLog, "[DIRECT-CLICK] Left-click on %s - bringing to front\n", targetClass.c_str());
+                fflush(clickLog);
+            }
+
+            // Move window to end of submorphs array (front in z-order)
+            for (size_t j = 0; j < morphCount - 1; j++) {
+                Oop m = memory_.fetchPointer(j, submorphs);
+                if (m.rawBits() == targetMorph.rawBits()) {
+                    // Shift elements and move window to end
+                    for (size_t k = j; k < morphCount - 1; k++) {
+                        Oop next = memory_.fetchPointer(k + 1, submorphs);
+                        memory_.storePointer(k, submorphs, next);
+                    }
+                    memory_.storePointer(morphCount - 1, submorphs, targetMorph);
+                    break;
+                }
+            }
+        }
+    }
+}
 
 void Interpreter::drawClickIndicator(int x, int y, int buttons) {
     // Draw a visible circle at click location directly on the display

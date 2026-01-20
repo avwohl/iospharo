@@ -195,6 +195,7 @@ public:
     void renderWorldMorphs();      // Direct rendering of World's morphs
     void processInputEvents();     // Process pending input events
     void drawClickIndicator(int x, int y, int buttons); // Draw visible click feedback
+    void handleDirectClick(int x, int y, int buttons);  // Direct click dispatch (C++ workaround)
     void updateActiveHandPosition(); // Directly update ActiveHand's position/buttons
     void syncDisplayToSurface();   // Copy Display Form to platform surface
     void ensureDisplayForm(int width, int height, int depth);  // Create Form and bind to Display global
