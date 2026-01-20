@@ -5457,6 +5457,7 @@ extern int g_traceSendsAfterPrim264;
                     }
 
                     // Enable message tracing
+                    std::cerr << "[TRACE-START] Setting menuActionTraceCount_=5000 from doInterCycleWait dispatch\n";
                     menuActionTraceCount_ = 5000;
 
                     // Track that we're in a dispatched action (for context creation)
@@ -5906,7 +5907,12 @@ extern int g_traceSendsAfterPrim264;
                                     }
 
                                     // Enable tracing for the next 500 message sends
+                                    std::cerr << "[TRACE-START] Setting menuActionTraceCount_=500 from doOneCycleFor dispatch\n";
                                     menuActionTraceCount_ = 500;
+
+                                    // Track that we're in a dispatched action (for proper context creation)
+                                    inDispatchedAction_ = true;
+                                    dispatchedActionFrameDepth_ = frameDepth_;
 
                                     sendSelector(actionSel, actionArgCount);
                                     return;
@@ -8810,8 +8816,23 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied) {
         }
     }
 
+    // Ensure activeContext_ has the correct receiver before using it as outerContext
+    // If activeContext_ exists and has a different receiver, update it in place
+    // This avoids expensive context allocation while fixing the receiver issue
+    Oop outerCtx = activeContext_;
+
+    if (outerCtx.isObject() && !outerCtx.isNil()) {
+        // Check if activeContext_'s receiver matches current receiver_
+        Oop ctxReceiver = memory_.fetchPointer(5, outerCtx);
+        if (ctxReceiver.rawBits() != receiver_.rawBits()) {
+            // Update the receiver in the existing context (in place)
+            // This is safe because we own this context and it hasn't been returned to Smalltalk yet
+            memory_.storePointer(5, outerCtx, receiver_);
+        }
+    }
+
     // Set fields
-    memory_.storePointer(0, block, activeContext_);  // outerContext
+    memory_.storePointer(0, block, outerCtx);  // outerContext
     memory_.storePointer(1, block, compiledBlock);   // compiledBlock (instead of startPC)
 
     // Get numArgs from the CompiledBlock's header (first slot)
@@ -10036,6 +10057,19 @@ bool Interpreter::executeFromContext(Oop context) {
     // The context object stores the Smalltalk stack state, which we'll restore below
     stackPointer_ = stackBase_;
     frameDepth_ = 0;
+
+    // Reset dispatch tracking - we're switching to a different process/context
+    // so any previous dispatch state is no longer relevant
+    if (inDispatchedAction_) {
+        static FILE* switchLog = fopen("/tmp/context_switch.log", "a");
+        if (switchLog) {
+            fprintf(switchLog, "[CONTEXT-SWITCH] Clearing inDispatchedAction_ (was at frameDepth=%d)\n",
+                    dispatchedActionFrameDepth_);
+            fflush(switchLog);
+        }
+        inDispatchedAction_ = false;
+        dispatchedActionFrameDepth_ = -1;
+    }
 
     // Execution context tracing (limited)
     static int execCtxCount = 0;
