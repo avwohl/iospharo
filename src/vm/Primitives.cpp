@@ -8309,7 +8309,15 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
     // Try to find function name from method literals
     // In Pharo FFI, the ffiCall: pragma contains the spec
     ObjectHeader* methodHdr = method.asObjectPtr();
-    size_t numLiterals = methodHdr->slotCount();
+
+    // BUG FIX: Read actual numLiterals from method header, NOT slotCount()!
+    // Method header is in slot 0 as SmallInteger. Bits 0-14 = numLiterals.
+    Oop methodHeader = memory_.fetchPointer(0, method);
+    if (!methodHeader.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+    int64_t headerBits = methodHeader.asSmallInteger();
+    size_t numLiterals = headerBits & 0x7FFF;  // bits 0-14 are numLiterals
 
     // Safety check for unreasonable literal count
     if (numLiterals > 1000) {
@@ -8321,7 +8329,8 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
     std::string returnTypeName = "int";
 
     // Scan literals for an array that looks like an FFI spec
-    for (size_t i = 0; i < numLiterals && funcName.empty(); i++) {
+    // Literals are at slots 1..numLiterals (slot 0 is the method header)
+    for (size_t i = 1; i <= numLiterals && funcName.empty(); i++) {
         Oop lit = memory_.fetchPointer(i, method);
         if (lit.isObject()) {
             // Validate pointer is in heap before dereferencing
@@ -8374,7 +8383,8 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
     // Check if we found a function name from literals - if not, try extracting selector
     if (funcName.empty()) {
         // Try to find a Symbol that might be the function name
-        for (size_t i = 0; i < numLiterals && funcName.empty(); i++) {
+        // Literals are at slots 1..numLiterals (slot 0 is the method header)
+        for (size_t i = 1; i <= numLiterals && funcName.empty(); i++) {
             Oop lit = memory_.fetchPointer(i, method);
             if (lit.isObject() && memory_.isValidPointer(lit)) {
                 ObjectHeader* litHdr = lit.asObjectPtr();
