@@ -539,8 +539,9 @@ int main(int argc, char* argv[]) {
                 activeSteps++;
                 idleSteps = 0;  // Reset consecutive idle count
 
-                // After 100k active steps, inject a right-click to trigger world menu
-                if (!clickInjected && activeSteps == 100000) {
+                // After 5k active steps, inject a right-click to trigger world menu
+                // (Injecting earlier so the render loop is still active)
+                if (!clickInjected && activeSteps == 5000) {
                     std::cout << "\n=== Injecting Right-Click (World Menu) ===" << std::endl;
                     // Clear the DNU trace file first
                     FILE* dnu = fopen("/tmp/dnu_trace.log", "w");

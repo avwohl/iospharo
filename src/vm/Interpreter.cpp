@@ -5847,9 +5847,76 @@ extern int g_traceSendsAfterPrim264;
                 }
             }
 
+            // ===== INTERCEPT doOneCycle (handles both WorldMorph and WorldState) =====
+            // Check for pending action during UI cycle
+            if (selStr == "doOneCycle" && argCount == 0) {
+                static int doOneCycleCount = 0;
+                doOneCycleCount++;
+                bool memberPending = pendingMenuAction_.pending.load(std::memory_order_seq_cst);
+                bool globalPending = g_debugPendingFlag.load(std::memory_order_seq_cst);
+
+                // Get receiver class name for debugging
+                std::string rcvrClassName = "Unknown";
+                if (rcvr.isObject()) {
+                    Oop rcvrClass = memory_.classOf(rcvr);
+                    if (rcvrClass.isObject()) {
+                        Oop className = memory_.fetchPointer(6, rcvrClass);
+                        if (className.isObject()) {
+                            ObjectHeader* nameHdr = className.asObjectPtr();
+                            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                                rcvrClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+
+                if (doOneCycleCount <= 10 || memberPending || globalPending) {
+                    std::cerr << "[CYCLE-INTERCEPT] doOneCycle #" << doOneCycleCount
+                              << " rcvr=" << rcvrClassName
+                              << " pending=" << (memberPending || globalPending) << "\n";
+                }
+                if (memberPending || globalPending) {
+                    // Dispatch the pending action!
+                    std::cerr << "[CYCLE-DISPATCH] Dispatching from doOneCycle!\n";
+                    Oop actionSel = pendingMenuAction_.selector;
+                    Oop actionRcvr = pendingMenuAction_.receiver;
+                    Oop actionArg = pendingMenuAction_.argument;
+                    int actionArgCount = pendingMenuAction_.argCount;
+                    pendingMenuAction_.pending.store(false, std::memory_order_seq_cst);
+                    g_debugPendingFlag.store(false, std::memory_order_seq_cst);
+                    pendingMenuAction_.selector = Oop::nil();
+                    pendingMenuAction_.receiver = Oop::nil();
+                    pendingMenuAction_.argument = Oop::nil();
+                    pendingMenuAction_.argCount = 0;
+
+                    // Pop doOneCycle's receiver
+                    popN(1);
+
+                    // Set up the action call
+                    push(actionRcvr);
+                    if (actionArgCount > 0 && !actionArg.isNil()) {
+                        push(actionArg);
+                    }
+
+                    // Enable tracing
+                    std::cerr << "[TRACE-START] Setting menuActionTraceCount_=500 from doOneCycle dispatch\n";
+                    menuActionTraceCount_ = 500;
+                    inDispatchedAction_ = true;
+                    dispatchedActionFrameDepth_ = frameDepth_;
+
+                    sendSelector(actionSel, actionArgCount);
+                    return;
+                }
+            }
+
             // ===== INTERCEPT WorldState >> doOneCycleFor: =====
             // Render World's morphs directly instead of using NullWorldRenderer
             if (selStr == "doOneCycleFor:" && argCount == 1) {
+                static int cycleInterceptCount = 0;
+                cycleInterceptCount++;
+                if (cycleInterceptCount <= 5) {
+                    std::cerr << "[CYCLE-INTERCEPT] doOneCycleFor: called #" << cycleInterceptCount << "\n";
+                }
                 Oop rcvrClass = memory_.classOf(rcvr);
                 if (rcvrClass.isObject()) {
                     Oop className = memory_.fetchPointer(6, rcvrClass);
@@ -7424,6 +7491,9 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     // Receiver from outer context (slot 5 is receiver in context layout)
     if (outerContext.isObject() && !outerContext.isNil()) {
         receiver_ = memory_.fetchPointer(5, outerContext);
+        // Update activeContext_ so blocks created inside this block
+        // capture the correct outer context chain
+        activeContext_ = outerContext;
     } else {
         receiver_ = memory_.nil();
     }
@@ -8816,23 +8886,11 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied) {
         }
     }
 
-    // Ensure activeContext_ has the correct receiver before using it as outerContext
-    // If activeContext_ exists and has a different receiver, update it in place
-    // This avoids expensive context allocation while fixing the receiver issue
-    Oop outerCtx = activeContext_;
-
-    if (outerCtx.isObject() && !outerCtx.isNil()) {
-        // Check if activeContext_'s receiver matches current receiver_
-        Oop ctxReceiver = memory_.fetchPointer(5, outerCtx);
-        if (ctxReceiver.rawBits() != receiver_.rawBits()) {
-            // Update the receiver in the existing context (in place)
-            // This is safe because we own this context and it hasn't been returned to Smalltalk yet
-            memory_.storePointer(5, outerCtx, receiver_);
-        }
-    }
-
+    // Use activeContext_ as the outer context
+    // Note: activateBlock now updates activeContext_ when entering blocks,
+    // so blocks created inside other blocks will capture the correct context chain
     // Set fields
-    memory_.storePointer(0, block, outerCtx);  // outerContext
+    memory_.storePointer(0, block, activeContext_);  // outerContext
     memory_.storePointer(1, block, compiledBlock);   // compiledBlock (instead of startPC)
 
     // Get numArgs from the CompiledBlock's header (first slot)
