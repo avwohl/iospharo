@@ -2865,11 +2865,22 @@ PrimitiveResult Interpreter::primitiveFloatMultiply(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveFloatDivide(int argCount) {
+    static int callCount = 0;
+    callCount++;
+    if (callCount <= 10 || inDispatchedAction_) {
+        fprintf(stderr, "[PRIM50-ENTRY #%d] primitiveFloatDivide called, inDispatch=%d\n",
+                callCount, inDispatchedAction_);
+    }
+
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
     double a, b;
     if (!extractFloat(memory_, rcvr, a) || !extractFloat(memory_, arg, b)) {
+        if (callCount <= 10 || inDispatchedAction_) {
+            fprintf(stderr, "[PRIM50] extractFloat failed for rcvr=0x%llx arg=0x%llx\n",
+                    (unsigned long long)rcvr.rawBits(), (unsigned long long)arg.rawBits());
+        }
         return PrimitiveResult::Failure;
     }
 

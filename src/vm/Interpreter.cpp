@@ -4512,6 +4512,12 @@ void Interpreter::arithmeticSend(int which) {
     }
 
     if (selector.isNil()) {
+        // Debug: Log when nil selector is hit (like divide being disabled)
+        static int nilSelCount = 0;
+        nilSelCount++;
+        if (nilSelCount <= 20) {
+            fprintf(stderr, "[ARITH-NIL #%d] which=%d (0=+, 1=-, 8=*, 9=/)\n", nilSelCount, which);
+        }
         // Fallback: return receiver for unsupported operations
         pop();  // Pop argument, leave receiver
         return;
@@ -5817,6 +5823,21 @@ tryRegularPrimitive:
 
     // Check for primitive
     int primIndex = primitiveIndexOf(method);
+
+    // Debug: Log when / selector is looked up
+    static int divLookupCount = 0;
+    if (selStr == "/" || selStr == "*") {
+        divLookupCount++;
+        if (divLookupCount <= 20) {
+            uint32_t rcvrClsIdx = rcvr.isSmallInteger() ? 99999 :
+                                  (rcvr.isSmallFloat() ? 99998 :
+                                   (rcvr.isObject() ? rcvr.asObjectPtr()->classIndex() : 0));
+            fprintf(stderr, "[DIV-LOOKUP #%d] '%s' on clsIdx=%u primIndex=%d method=0x%llx\n",
+                    divLookupCount, selStr.c_str(), rcvrClsIdx, primIndex,
+                    (unsigned long long)method.rawBits());
+        }
+    }
+
     if (primIndex > 0) {
         // Check for quick primitives (256-519) - handle directly, don't use primitive table
         if (primIndex >= 256 && primIndex <= 519) {
@@ -8205,6 +8226,15 @@ int Interpreter::primitiveIndexOf(Oop method) const {
     if (bytecodes[0] == 248) {
         // callPrimitive: 248 lowByte highByte
         int primIndex = bytecodes[1] | (bytecodes[2] << 8);
+        // Log Float primitive lookups (40-59)
+        static int floatPrimLookupCount = 0;
+        if (primIndex >= 40 && primIndex <= 59) {
+            floatPrimLookupCount++;
+            if (floatPrimLookupCount <= 20) {
+                fprintf(stderr, "[PRIM-LOOKUP #%d] Found Float primitive %d in method\n",
+                        floatPrimLookupCount, primIndex);
+            }
+        }
         return primIndex;
     }
 
@@ -8486,9 +8516,29 @@ void Interpreter::initializeSelectors() {
     selectors_.notEqual = findSelectorInClass(smallIntClass, "~=");
     // DEBUG: "[DEBUG] initializeSelectors: Looking for *"
     selectors_.multiply = findSelectorInClass(smallIntClass, "*");
-    // Skip "/" - causes hang for unknown reason
-    selectors_.divide = Oop::nil();
-    // DEBUG_LOG("[DEBUG] initializeSelectors: Skipped / (causes hang)";
+    // Enable "/" - was previously disabled due to hang issue
+    selectors_.divide = findSelectorInClass(smallIntClass, "/");
+    // Debug: Log if divide selector was found
+    if (selectors_.divide.isNil() || selectors_.divide.rawBits() == 0) {
+        fprintf(stderr, "[INIT-SEL] WARNING: '/' selector not found in SmallInteger!\n");
+        // SmallInteger might not have / - let's try to find it via special selectors array
+        Oop specialSelectors = memory_.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
+        if (specialSelectors.isObject() && specialSelectors.rawBits() > 0x10000) {
+            ObjectHeader* ssHdr = specialSelectors.asObjectPtr();
+            // Index 9 is for / (which=9, slot=9*2=18)
+            if (ssHdr->slotCount() > 18) {
+                Oop divSel = ssHdr->slotAt(18);
+                if (divSel.isObject() && divSel.rawBits() > 0x10000) {
+                    selectors_.divide = divSel;
+                    fprintf(stderr, "[INIT-SEL] Found '/' from special selectors array: 0x%llx\n",
+                            (unsigned long long)divSel.rawBits());
+                }
+            }
+        }
+    } else {
+        fprintf(stderr, "[INIT-SEL] '/' selector found: 0x%llx\n",
+                (unsigned long long)selectors_.divide.rawBits());
+    }
     // DEBUG: "[DEBUG] initializeSelectors: Done with SmallInteger selectors"
 
     // Skip these for now to avoid potential hangs
@@ -10080,6 +10130,16 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
     if (primitiveIndex >= 264 && primitiveIndex <= 269) {
         fprintf(stderr, "[EXECPRIM] prim %d, func=%s\n",
                 primitiveIndex, prim ? "REGISTERED" : "NULL");
+    }
+
+    // Debug: Log Float primitive calls (40-59)
+    static int floatPrimCount = 0;
+    if (primitiveIndex >= 40 && primitiveIndex <= 59) {
+        floatPrimCount++;
+        if (floatPrimCount <= 50) {
+            fprintf(stderr, "[FLOAT-PRIM #%d] primitiveIndex=%d func=%s\n",
+                    floatPrimCount, primitiveIndex, prim ? "REGISTERED" : "NULL");
+        }
     }
 
     if (prim) {
