@@ -6666,14 +6666,28 @@ void Interpreter::activateBlock(Oop block, int argCount) {
 
     argCount_ = argCount;
 
-    // Receiver from outer context (slot 5 is receiver in context layout)
-    if (outerContext.isObject() && !outerContext.isNil()) {
+    // For FullBlockClosure, the receiver is stored directly in the closure
+    // at slot 3 (after outerContext, compiledBlock, numArgs).
+    // FullBlockClosure layout:
+    //   0: outerContext
+    //   1: compiledBlock
+    //   2: numArgs
+    //   3: receiver  <-- added by FullBlockClosure subclass
+    //   4+: copied values
+    if (slot1.isObject()) {
+        // FullBlockClosure: receiver is at slot 3
+        receiver_ = memory_.fetchPointer(3, block);
+    } else if (outerContext.isObject() && !outerContext.isNil()) {
+        // Old-style BlockClosure: receiver from outer context
         receiver_ = memory_.fetchPointer(5, outerContext);
-        // Update activeContext_ so blocks created inside this block
-        // capture the correct outer context chain
-        activeContext_ = outerContext;
     } else {
         receiver_ = memory_.nil();
+    }
+
+    // Update activeContext_ so blocks created inside this block
+    // capture the correct outer context chain
+    if (outerContext.isObject() && !outerContext.isNil()) {
+        activeContext_ = outerContext;
     }
 
     // Copy the copied values from the closure into the temp area

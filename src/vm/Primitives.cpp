@@ -612,14 +612,33 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
         static int atFailCount = 0;
         if (atLog && !rcvr.isObject() && atFailCount < 5) {
             atFailCount++;
-            fprintf(atLog, "[AT-FAIL #%d] rcvr=0x%llx isSmallInt=%d value=%lld index=",
+            fprintf(atLog, "[AT-FAIL #%d] rcvr=0x%llx isSmallInt=%d value=%lld receiver_=0x%llx index=",
                     atFailCount, rcvr.rawBits(), rcvr.isSmallInteger() ? 1 : 0,
-                    rcvr.isSmallInteger() ? rcvr.asSmallInteger() : -999);
+                    rcvr.isSmallInteger() ? rcvr.asSmallInteger() : -999,
+                    receiver_.rawBits());
             if (index.isSmallInteger()) {
                 fprintf(atLog, "%lld\n", index.asSmallInteger());
             } else {
                 fprintf(atLog, "non-int 0x%llx\n", index.rawBits());
             }
+            // Show receiver_ class
+            std::string rcvrClsName = "?";
+            if (receiver_.isObject()) {
+                Oop rcvrCls = memory_.classOf(receiver_);
+                if (rcvrCls.isObject()) {
+                    ObjectHeader* rcH = rcvrCls.asObjectPtr();
+                    if (rcH->slotCount() > 6) {
+                        Oop rcn = memory_.fetchPointer(6, rcvrCls);
+                        if (rcn.isObject()) {
+                            ObjectHeader* rcnH = rcn.asObjectPtr();
+                            if (rcnH->isBytesObject() && rcnH->byteSize() < 100) {
+                                rcvrClsName = std::string((char*)rcnH->bytes(), rcnH->byteSize());
+                            }
+                        }
+                    }
+                }
+            }
+            fprintf(atLog, "  receiver_ class='%s'\n", rcvrClsName.c_str());
             // Show current method selector
             if (method_.isObject()) {
                 Oop mhdr = memory_.fetchPointer(0, method_);
@@ -657,21 +676,66 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
                             }
                         }
                     }
-                    // If it's an Array, dump first few elements
-                    if (rcvrClassName == "Array") {
-                        ObjectHeader* arrH = ctxRcvr.asObjectPtr();
-                        fprintf(atLog, "  Array(%zu): ", arrH->slotCount());
-                        for (size_t i = 0; i < std::min((size_t)10, arrH->slotCount()); i++) {
-                            Oop el = arrH->slotAt(i);
-                            if (el.isSmallInteger()) {
-                                fprintf(atLog, "%lld ", el.asSmallInteger());
-                            } else if (el.isNil()) {
-                                fprintf(atLog, "nil ");
-                            } else {
-                                fprintf(atLog, "obj ");
+                    // Dump receiver's contents
+                    ObjectHeader* rcvrH = ctxRcvr.asObjectPtr();
+                    fprintf(atLog, "  receiver slots(%zu) classIdx=%u format=%d: ",
+                            rcvrH->slotCount(), rcvrH->classIndex(), (int)rcvrH->format());
+                    for (size_t i = 0; i < std::min((size_t)10, rcvrH->slotCount()); i++) {
+                        Oop el = rcvrH->slotAt(i);
+                        if (el.isSmallInteger()) {
+                            fprintf(atLog, "%lld ", el.asSmallInteger());
+                        } else if (el.isNil()) {
+                            fprintf(atLog, "nil ");
+                        } else {
+                            fprintf(atLog, "obj ");
+                        }
+                    }
+                    fprintf(atLog, "\n");
+
+                    // Walk the context chain to find receivers
+                    fprintf(atLog, "  Context chain (checking receivers at each level):\n");
+                    Oop ctx = activeContext_;
+                    for (int d = 0; d < 5 && ctx.isObject() && !ctx.isNil(); d++) {
+                        Oop ctxRcvr2 = memory_.fetchPointer(5, ctx);  // Receiver = slot 5
+                        Oop ctxMethod = memory_.fetchPointer(3, ctx);  // Method = slot 3
+                        std::string ctxRcvrCls = "?";
+                        if (ctxRcvr2.isObject()) {
+                            Oop cr2cls = memory_.classOf(ctxRcvr2);
+                            if (cr2cls.isObject()) {
+                                ObjectHeader* cr2H = cr2cls.asObjectPtr();
+                                if (cr2H->slotCount() > 6) {
+                                    Oop cr2n = memory_.fetchPointer(6, cr2cls);
+                                    if (cr2n.isObject()) {
+                                        ObjectHeader* cr2nH = cr2n.asObjectPtr();
+                                        if (cr2nH->isBytesObject() && cr2nH->byteSize() < 100) {
+                                            ctxRcvrCls = std::string((char*)cr2nH->bytes(), cr2nH->byteSize());
+                                        }
+                                    }
+                                }
+                            }
+                        } else if (ctxRcvr2.isSmallInteger()) {
+                            ctxRcvrCls = "SmallInteger";
+                        }
+                        // Get method selector
+                        std::string selName = "?";
+                        if (ctxMethod.isObject()) {
+                            Oop mh = memory_.fetchPointer(0, ctxMethod);
+                            if (mh.isSmallInteger()) {
+                                int nL = mh.asSmallInteger() & 0x7FFF;
+                                if (nL >= 2 && nL < 100) {
+                                    Oop sel = memory_.fetchPointer(nL - 1, ctxMethod);
+                                    if (sel.isObject()) {
+                                        ObjectHeader* sH = sel.asObjectPtr();
+                                        if (sH->isBytesObject() && sH->byteSize() < 100) {
+                                            selName = std::string((char*)sH->bytes(), sH->byteSize());
+                                        }
+                                    }
+                                }
                             }
                         }
-                        fprintf(atLog, "\n");
+                        fprintf(atLog, "    [%d] rcvr=%s method=%s ctx=0x%llx\n",
+                                d, ctxRcvrCls.c_str(), selName.c_str(), ctx.rawBits());
+                        ctx = memory_.fetchPointer(0, ctx);  // Sender = slot 0
                     }
                 } else if (ctxRcvr.isSmallInteger()) {
                     fprintf(atLog, "  context receiver=SmallInteger(%lld)\n", ctxRcvr.asSmallInteger());
