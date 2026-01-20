@@ -28,8 +28,7 @@ namespace pharo {
 // Global flag to trace sends after primitive 264 completes
 int g_traceSendsAfterPrim264 = 0;
 
-// DEBUG: Global atomic to test cross-thread visibility
-std::atomic<bool> g_debugPendingFlag{false};
+// REMOVED: g_debugPendingFlag (was for workaround code)
 
 // ===== CONSTRUCTION =====
 
@@ -1643,8 +1642,8 @@ void Interpreter::renderWorldMorphs() {
 // ===== INPUT EVENT PROCESSING =====
 
 void Interpreter::processInputEvents() {
-    // Process pending events from the event queue
-    // Events we don't handle (non-menu events) are passed through to Pharo
+    // Simple passthrough: queue all events for Smalltalk to handle via primitive 264.
+    // No C++ workarounds - Pharo's Morphic handles all event dispatch natively.
     static FILE* logFile = nullptr;
     static int callCount = 0;
     static bool initialized = false;
@@ -1652,10 +1651,9 @@ void Interpreter::processInputEvents() {
     if (!initialized) {
         initialized = true;
         logFile = fopen("/tmp/iospharo-events.log", "a");
-        std::cerr << "[PROCESS-INPUT] First call, logFile=" << (logFile ? "OK" : "NULL") << "\n";
     }
 
-    // Debug: log every 1000 calls to confirm this function is being reached
+    // Log periodically
     if (++callCount % 1000 == 1 && logFile) {
         fprintf(logFile, "[PROCESS-INPUT] call #%d\n", callCount);
         fflush(logFile);
@@ -1663,852 +1661,33 @@ void Interpreter::processInputEvents() {
 
     pharo::Event event;
     while (pharo::gEventQueue.pop(event)) {
-        // Log all events
-        if (logFile) {
-            fprintf(logFile, "[EVENT] type=%d args=%d,%d,%d,%d,%d\n",
-                    event.type, event.arg1, event.arg2, event.arg3, event.arg4, event.arg5);
-            fflush(logFile);
-        }
-
-        // Skip WindowMetrics events - these are internal to C++ rendering
+        // Skip WindowMetrics events - internal to C++ rendering
         if (event.type == static_cast<int>(pharo::EventType::WindowMetrics)) {
             continue;
         }
 
-        // Non-mouse events (keyboard, scroll, etc.) pass through to Pharo
-        if (event.type != static_cast<int>(pharo::EventType::Mouse)) {
-            passThroughEvents_.push_back(event);
-            continue;
-        }
-
-        int mouseType = event.arg5;  // Pharo format: 1=down, 2=up, 3=move (stored in arg5!)
-        // Event coordinates are in points (logical pixels)
-        // Scale to physical pixels for Retina displays
-        int x = event.arg1 * menuBarScale_;
-        int y = event.arg2 * menuBarScale_;
-
-        // Update tracked mouse state for direct Hand manipulation
-        lastMouseX_ = x;
-        lastMouseY_ = y;
-        lastMouseButtons_ = event.arg3;
-        lastMouseEventType_ = mouseType;
-
-        if (logFile) {
-            fprintf(logFile, "[MOUSE] type=%d at x=%d y=%d (raw: %d,%d) scale=%d menuBarY=%d-%d\n",
-                    mouseType, x, y, event.arg1, event.arg2, menuBarScale_, menuBarTop_, menuBarBottom_);
+        // Log mouse events for debugging
+        if (logFile && event.type == static_cast<int>(pharo::EventType::Mouse)) {
+            fprintf(logFile, "[EVENT] Mouse type=%d at %d,%d buttons=%d\n",
+                    event.arg5, event.arg1, event.arg2, event.arg3);
             fflush(logFile);
         }
 
-        // Check if this is a menu-related area (menubar or dropdown)
-        bool inMenuBar = (y >= menuBarTop_ && y < menuBarBottom_ && !menuItemBounds_.empty());
-        bool inDropdown = (dropdownState_.valid &&
-                          x >= dropdownState_.x && x < dropdownState_.x + dropdownState_.width &&
-                          y >= dropdownState_.y && y < dropdownState_.y + dropdownState_.height);
-
-        // Debug: log dropdown state on mouse down
-        if (mouseType == 1 && logFile) {
-            fprintf(logFile, "[DROPDOWN-CHECK] valid=%d x=%d w=%d y=%d h=%d click(%d,%d) inDropdown=%d\n",
-                    dropdownState_.valid ? 1 : 0,
-                    dropdownState_.x, dropdownState_.width,
-                    dropdownState_.y, dropdownState_.height,
-                    x, y, inDropdown ? 1 : 0);
-            fflush(logFile);
+        // Track mouse position for direct hand updates (backup if event system not working)
+        if (event.type == static_cast<int>(pharo::EventType::Mouse)) {
+            lastMouseX_ = event.arg1 * menuBarScale_;
+            lastMouseY_ = event.arg2 * menuBarScale_;
+            lastMouseButtons_ = event.arg3;
+            lastMouseEventType_ = event.arg5;
         }
 
-        // Mouse up (type 2) - handle only if in menu areas
-        if (mouseType == 2) {
-            if (inDropdown) {
-                // Released inside dropdown - select item
-                int relativeY = y - dropdownState_.y - (menuBarScale_ == 2 ? 16 : 8);
-                int itemIndex = relativeY / dropdownState_.lineHeight;
-                if (itemIndex >= 0 && itemIndex < static_cast<int>(dropdownState_.itemMorphs.size())) {
-                    if (logFile) {
-                        fprintf(logFile, "[DROPDOWN RELEASE] Invoking action for item %d\n", itemIndex);
-                        fflush(logFile);
-                    }
-                    invokeMenuItemAction(dropdownState_.itemMorphs[itemIndex]);
-                }
-                dropdownState_.valid = false;
-                selectedMenuIndex_ = -1;
-                continue;  // Consumed by menu
-            } else if (inMenuBar && dropdownState_.valid) {
-                // Released in menubar while dropdown open - keep dropdown open
-                continue;  // Consumed by menu
-            } else if (dropdownState_.valid) {
-                // Released outside both menubar and dropdown - close menu
-                // BUT: ignore mouse-up events within 300ms of menu opening
-                // (these are stray events from previous interactions)
-                auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now().time_since_epoch()).count();
-                int64_t elapsedMs = nowMs - dropdownState_.openTimeMs;
-                if (elapsedMs < 300) {
-                    if (logFile) {
-                        fprintf(logFile, "[DROPDOWN] Ignoring early mouse-up at %d,%d (elapsed=%lldms < 300ms)\n",
-                                x, y, elapsedMs);
-                        fflush(logFile);
-                    }
-                    continue;  // Don't close, but don't pass through either
-                }
-                dropdownState_.valid = false;
-                selectedMenuIndex_ = -1;
-                // Fall through to pass event to Pharo
-            }
-            // Not in menu area, pass through to Pharo
-            if (logFile) {
-                fprintf(logFile, "[PASSTHROUGH] mouse up buttons=%d at %d,%d -> queued (total=%zu)\n",
-                        event.arg3, event.arg1, event.arg2, passThroughEvents_.size() + 1);
-                fflush(logFile);
-            }
-            passThroughEvents_.push_back(event);
-            continue;
-        }
-
-        // Mouse down (type 1) - handle only if in menu areas
-        if (mouseType == 1) {
-            if (logFile) {
-                fprintf(logFile, "[CLICK] inMenuBar=%d inDropdown=%d\n", inMenuBar ? 1 : 0, inDropdown ? 1 : 0);
-                if (dropdownState_.valid) {
-                    fprintf(logFile, "[CLICK] dropdown bounds: x=%d-%d y=%d-%d (click at %d,%d)\n",
-                            dropdownState_.x, dropdownState_.x + dropdownState_.width,
-                            dropdownState_.y, dropdownState_.y + dropdownState_.height,
-                            x, y);
-                }
-                fflush(logFile);
-            }
-
-            // Dismiss world menu on any click that's not inside the world menu
-            if (hasVisibleMenu_) {
-                int mx = pendingMenuBounds_.x;
-                int my = pendingMenuBounds_.y;
-                int mw = pendingMenuBounds_.width;
-                int mh = pendingMenuBounds_.height;
-                if (!(x >= mx && x < mx + mw && y >= my && y < my + mh)) {
-                    hasVisibleMenu_ = false;  // Dismiss world menu
-                }
-            }
-
-            if (inDropdown) {
-                // Clicked in dropdown - select item
-                int relativeY = y - dropdownState_.y - (menuBarScale_ == 2 ? 16 : 8);
-                int itemIndex = relativeY / dropdownState_.lineHeight;
-                if (logFile) {
-                    fprintf(logFile, "[DROPDOWN CLICK] at y=%d, relY=%d, itemIndex=%d\n",
-                            y, relativeY, itemIndex);
-                    fflush(logFile);
-                }
-                if (itemIndex >= 0 && itemIndex < static_cast<int>(dropdownState_.itemMorphs.size())) {
-                    if (logFile) {
-                        fprintf(logFile, "[DROPDOWN CLICK] Invoking action for item %d\n", itemIndex);
-                        fflush(logFile);
-                    }
-                    invokeMenuItemAction(dropdownState_.itemMorphs[itemIndex]);
-                }
-                dropdownState_.valid = false;
-                selectedMenuIndex_ = -1;
-                continue;  // Consumed by menu
-            } else if (inMenuBar) {
-                // Clicked in menu bar
-                // Debounce: ignore duplicate clicks within 100ms
-                auto now = std::chrono::steady_clock::now();
-                int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    now.time_since_epoch()).count();
-
-                if (nowMs - lastMenuClickTime_ < 200 &&
-                    std::abs(x - lastMenuClickX_) < 20 &&
-                    std::abs(y - lastMenuClickY_) < 20) {
-                    if (logFile) {
-                        fprintf(logFile, "[CLICK] Ignored duplicate click (debounce)\n");
-                        fflush(logFile);
-                    }
-                    continue;  // Skip duplicate, consumed by debounce
-                }
-                lastMenuClickTime_ = nowMs;
-                lastMenuClickX_ = x;
-                lastMenuClickY_ = y;
-
-                // Find which menu item was clicked
-                int clickedIndex = -1;
-                for (size_t i = 0; i < menuItemBounds_.size(); i++) {
-                    if (x >= menuItemBounds_[i].first && x < menuItemBounds_[i].second) {
-                        clickedIndex = static_cast<int>(i);
-                        break;
-                    }
-                }
-
-                if (logFile) {
-                    fprintf(logFile, "[CLICK] Menu item index: %d (of %zu items)\n",
-                            clickedIndex, menuItemBounds_.size());
-                    fflush(logFile);
-                }
-
-                if (clickedIndex >= 0) {
-                    if (selectedMenuIndex_ == clickedIndex) {
-                        // Keep menu open when clicking same item (don't toggle)
-                        // This prevents race conditions from multiple click events
-                        if (logFile) {
-                            fprintf(logFile, "[MENU] Keeping menu %d open (clicked same)\n", clickedIndex);
-                            fflush(logFile);
-                        }
-                        // Don't toggle off - just keep it open
-                    } else {
-                        if (logFile) {
-                            fprintf(logFile, "[MENU] Setting selectedMenuIndex_ = %d (was %d)\n",
-                                    clickedIndex, selectedMenuIndex_);
-                            fflush(logFile);
-                        }
-                        selectedMenuIndex_ = clickedIndex;
-                    }
-                } else {
-                    if (logFile) {
-                        fprintf(logFile, "[MENU] clickedIndex < 0, clearing selection\n");
-                        fflush(logFile);
-                    }
-                    selectedMenuIndex_ = -1;
-                    dropdownState_.valid = false;
-                }
-                continue;  // Consumed by menu bar
-            } else {
-                // Clicked outside menu areas
-                if (logFile) {
-                    fprintf(logFile, "[CLICK] outside menu areas buttons=%d at %d,%d\n",
-                            event.arg3, event.arg1, event.arg2);
-                    fflush(logFile);
-                }
-
-                // Handle world click directly for immediate feedback
-                // This triggers the world menu for right-clicks (buttons=2)
-                // while the Pharo event system may not be fully responsive
-                handleWorldClick(x, y, event.arg3);
-
-                // Also pass through to Pharo for normal Morphic handling
-                if (logFile && event.arg3 == 2) {
-                    fprintf(logFile, "[PASSTHROUGH] Right-click (buttons=2) at %d,%d -> Pharo\n", x, y);
-                    fflush(logFile);
-                }
-                passThroughEvents_.push_back(event);
-                continue;
-            }
-        }
-
-        // Mouse move (type 0) - always pass through to Pharo
+        // All events go to Pharo - let Morphic handle everything
         passThroughEvents_.push_back(event);
     }
 }
 
-void Interpreter::dispatchEventsToMorphic() {
-    // Dispatch events from passThroughEvents_ to Morphic
-    // For now, use a simple approach: call InputEventSensor >> processEvents
-    // which will poll primitive 264 to get the events we queued
-    if (passThroughEvents_.empty()) return;
-
-    // IMPORTANT: Don't overwrite a pending action (like showWorldMenu's OpalCompiler evaluate:)
-    // The world menu and other actions take priority over Sensor processEvents
-    // Use atomic load to properly see writes from heartbeat thread
-    bool isPending = pendingMenuAction_.pending.load(std::memory_order_seq_cst);
-    bool globalPending = g_debugPendingFlag.load(std::memory_order_seq_cst);
-    if (isPending || globalPending) {
-        // Log that we preserved the pending action
-        static int preserveCount = 0;
-        if (preserveCount < 5) {
-            preserveCount++;
-            std::cerr << "[DISPATCH-PRESERVE] member=" << isPending
-                      << " global=" << globalPending << "\n";
-        }
-        return;
-    }
-
-    static FILE* dispatchLog = nullptr;
-    if (!dispatchLog) {
-        dispatchLog = fopen("/tmp/event_dispatch.log", "w");
-    }
-
-    // Log events being dispatched
-    static int dispatchCount = 0;
-    for (auto& event : passThroughEvents_) {
-        if (event.type == static_cast<int>(pharo::EventType::Mouse)) {
-            dispatchCount++;
-            if (dispatchLog && dispatchCount <= 100) {
-                const char* subtypeStr = event.arg5 == 1 ? "down" : (event.arg5 == 2 ? "up" : "move");
-                fprintf(dispatchLog, "[DISPATCH #%d] Mouse %s at %d,%d buttons=%d\n",
-                        dispatchCount, subtypeStr, event.arg1, event.arg2, event.arg3);
-                fflush(dispatchLog);
-            }
-        }
-    }
-
-    // Try to call InputEventSensor >> default >> processEvents
-    // This will trigger Pharo to poll primitive 264
-    Oop sensorClass = memory_.findGlobal("InputEventSensor");
-    if (!sensorClass.isNil() && sensorClass.isObject()) {
-        // First get the default sensor via "InputEventSensor default"
-        Oop defaultSel = findSelector("default");
-        if (!defaultSel.isNil()) {
-            // Queue the call: InputEventSensor processEvents
-            // (sending to class, not instance - class side method)
-            Oop processEventsSel = findSelector("processEvents");
-            if (!processEventsSel.isNil()) {
-                // Try to get the default sensor instance
-                // In Pharo, Sensor is typically a global pointing to InputEventSensor default
-                Oop sensor = memory_.findGlobal("Sensor");
-                if (!sensor.isNil() && sensor.isObject()) {
-                    pendingMenuAction_.selector = processEventsSel;
-                    pendingMenuAction_.receiver = sensor;
-                    pendingMenuAction_.argument = Oop::nil();
-                    pendingMenuAction_.argCount = 0;
-                    pendingMenuAction_.pending = true;
-
-                    if (dispatchLog && dispatchCount <= 100) {
-                        fprintf(dispatchLog, "[DISPATCH] Queued Sensor processEvents\n");
-                        fflush(dispatchLog);
-                    }
-                    return;  // Let the action be processed, events stay in queue for primitive 264
-                }
-            }
-        }
-    }
-
-    // Note: Mouse down events are already handled by processInputEvents via handleWorldClick.
-    // Do NOT erase events here - they need to stay in passThroughEvents_ for primitive 264
-    // to return them to Pharo's InputEventSensor.
-}
-
-void Interpreter::handleWorldClick(int x, int y, int buttons) {
-    // Handle a click outside the menu bar
-    // For now, log it and try to find what morph is at this position
-
-    // Debug: use the events log file which is known to work
-    static FILE* eventsLogForDebug = fopen("/tmp/iospharo-events.log", "a");
-    if (eventsLogForDebug) {
-        fprintf(eventsLogForDebug, "[handleWorldClick] ENTRY x=%d y=%d buttons=%d\n", x, y, buttons);
-        fflush(eventsLogForDebug);
-    }
-
-    static FILE* clickLog = nullptr;
-    if (!clickLog) {
-        clickLog = fopen("/tmp/world_click.log", "w");
-        if (!clickLog && eventsLogForDebug) {
-            fprintf(eventsLogForDebug, "[handleWorldClick] ERROR: Failed to open world_click.log\n");
-            fflush(eventsLogForDebug);
-        }
-    }
-
-    if (clickLog) {
-        fprintf(clickLog, "[CLICK] at x=%d y=%d buttons=%d\n", x, y, buttons);
-        fflush(clickLog);
-    }
-
-    // If a world menu is visible, check if click is inside it or dismiss it
-    if (hasVisibleMenu_) {
-        int mx = pendingMenuBounds_.x;
-        int my = pendingMenuBounds_.y;
-        int mw = pendingMenuBounds_.width;
-        int mh = pendingMenuBounds_.height;
-
-        if (x >= mx && x < mx + mw && y >= my && y < my + mh) {
-            // Click inside menu - could handle menu item selection here
-            if (clickLog) {
-                fprintf(clickLog, "[CLICK] Inside visible menu at %d,%d\n", x, y);
-                fflush(clickLog);
-            }
-            // For now, just dismiss the menu
-            hasVisibleMenu_ = false;
-            return;
-        } else {
-            // Click outside menu - dismiss it
-            if (clickLog) {
-                fprintf(clickLog, "[CLICK] Outside visible menu - dismissing\n");
-                fflush(clickLog);
-            }
-            hasVisibleMenu_ = false;
-            // Continue processing this click
-        }
-    }
-
-    // Find World global
-    Oop world = memory_.findGlobal("World");
-    if (world.isNil() || !world.isObject()) {
-        if (clickLog) {
-            fprintf(clickLog, "[CLICK] World not found\n");
-            fflush(clickLog);
-        }
-        return;
-    }
-
-    // Get World's submorphs to find what's at this position
-    ObjectHeader* worldHdr = world.asObjectPtr();
-    size_t worldSlots = worldHdr->slotCount();
-    if (worldSlots < 3) return;
-
-    Oop submorphs = memory_.fetchPointer(2, world);  // slot 2 is submorphs
-    if (submorphs.isNil() || !submorphs.isObject()) return;
-
-    ObjectHeader* subHdr = submorphs.asObjectPtr();
-    size_t morphCount = subHdr->slotCount();
-
-    if (clickLog) {
-        fprintf(clickLog, "[CLICK] World has %zu submorphs\n", morphCount);
-        fflush(clickLog);
-    }
-
-    // Helper to extract Rectangle bounds
-    auto extractRect = [this](Oop rectObj, int& x1, int& y1, int& x2, int& y2) -> bool {
-        if (rectObj.isNil() || !rectObj.isObject()) return false;
-        ObjectHeader* rectHdr = rectObj.asObjectPtr();
-        if (rectHdr->slotCount() < 2) return false;
-
-        Oop origin = memory_.fetchPointer(0, rectObj);
-        Oop corner = memory_.fetchPointer(1, rectObj);
-
-        if (origin.isNil() || !origin.isObject() || corner.isNil() || !corner.isObject())
-            return false;
-
-        ObjectHeader* originHdr = origin.asObjectPtr();
-        ObjectHeader* cornerHdr = corner.asObjectPtr();
-
-        if (originHdr->slotCount() < 2 || cornerHdr->slotCount() < 2)
-            return false;
-
-        auto extractCoord = [](Oop oop) -> int {
-            if (oop.isSmallInteger()) return static_cast<int>(oop.asSmallInteger());
-            if (oop.isSmallFloat()) return static_cast<int>(oop.asSmallFloat());
-            return 0;
-        };
-
-        Oop ox = memory_.fetchPointer(0, origin);
-        Oop oy = memory_.fetchPointer(1, origin);
-        Oop cx = memory_.fetchPointer(0, corner);
-        Oop cy = memory_.fetchPointer(1, corner);
-
-        x1 = extractCoord(ox);
-        y1 = extractCoord(oy);
-        x2 = extractCoord(cx);
-        y2 = extractCoord(cy);
-
-        return (x2 > x1 && y2 > y1);
-    };
-
-    // Traverse submorphs in reverse order (top to bottom in z-order)
-    // to find the first morph that contains the click point
-    for (int i = static_cast<int>(morphCount) - 1; i >= 0; i--) {
-        Oop submorph = memory_.fetchPointer(i, submorphs);
-        if (submorph.isNil() || !submorph.isObject()) continue;
-
-        // Get morph's bounds from slot 0
-        Oop bounds = memory_.fetchPointer(0, submorph);
-        int mx1, my1, mx2, my2;
-        if (!extractRect(bounds, mx1, my1, mx2, my2)) continue;
-
-        // Check if click is inside this morph (skip menubar and taskbar)
-        Oop morphClass = memory_.classOf(submorph);
-        std::string className = "Unknown";
-        if (morphClass.isObject()) {
-            Oop cName = memory_.fetchPointer(6, morphClass);
-            if (cName.isObject()) {
-                ObjectHeader* cNameHdr = cName.asObjectPtr();
-                if (cNameHdr->isBytesObject() && cNameHdr->byteSize() < 50) {
-                    className = std::string((char*)cNameHdr->bytes(), cNameHdr->byteSize());
-                }
-            }
-        }
-
-        // Skip MenubarMorph and TaskbarMorph - they're handled separately
-        if (className == "MenubarMorph" || className == "TaskbarMorph") continue;
-
-        // Log all morphs checked (for debugging)
-        if (clickLog) {
-            fprintf(clickLog, "[CLICK] Checking %s bounds=[%d,%d,%d,%d] point=%d,%d inside=%d\n",
-                    className.c_str(), mx1, my1, mx2, my2, x, y,
-                    (x >= mx1 && x < mx2 && y >= my1 && y < my2) ? 1 : 0);
-            fflush(clickLog);
-        }
-
-        // Check if point is inside bounds
-        if (x >= mx1 && x < mx2 && y >= my1 && y < my2) {
-            if (clickLog) {
-                fprintf(clickLog, "[CLICK] Found morph at %d,%d: %s bounds=[%d,%d,%d,%d]\n",
-                        x, y, className.c_str(), mx1, my1, mx2, my2);
-                fflush(clickLog);
-            }
-
-            // Found a morph! For windows, bring to front and flash color for visibility
-            // (Message sends like comeToFront cause DNU cascades, so we bypass them)
-            if (className.find("Window") != std::string::npos ||
-                className.find("SpWindow") != std::string::npos) {
-                // Change the window's color briefly to show click worked
-                // Morph color is typically at slot 4
-                ObjectHeader* morphHdr = submorph.asObjectPtr();
-                if (morphHdr->slotCount() > 4) {
-                    Oop colorSlot = memory_.fetchPointer(4, submorph);
-                    if (colorSlot.isObject()) {
-                        ObjectHeader* colorHdr = colorSlot.asObjectPtr();
-                        // Color has 4 slots: privateAlpha, privateBlue, privateGreen, privateRed (or similar)
-                        if (colorHdr->slotCount() >= 1) {
-                            // Toggle between click states by checking current color
-                            static bool clickToggle = false;
-                            clickToggle = !clickToggle;
-
-                            if (clickLog) {
-                                fprintf(clickLog, "[CLICK] Toggling window color, toggle=%d\n", clickToggle);
-                                fflush(clickLog);
-                            }
-
-                            // Try modifying the first slot (often alpha or a packed value)
-                            // This should create a visible change
-                            Oop currentVal = memory_.fetchPointer(0, colorSlot);
-                            if (currentVal.isSmallInteger()) {
-                                int64_t val = currentVal.asSmallInteger();
-                                // Flip a bit to change appearance
-                                val ^= 0x80;  // Toggle high bit
-                                memory_.storePointer(0, colorSlot, Oop::fromSmallInteger(val));
-                            }
-                        }
-                    }
-                }
-
-                // Direct comeToFront: move window to end of submorphs array (front in z-order)
-                // Array is at World slot 2 (submorphs)
-                bool moved = false;
-                for (size_t j = 0; j < morphCount - 1; j++) {
-                    Oop m = memory_.fetchPointer(j, submorphs);
-                    if (m.rawBits() == submorph.rawBits()) {
-                        // Found it - shift all following elements down
-                        for (size_t k = j; k < morphCount - 1; k++) {
-                            Oop next = memory_.fetchPointer(k + 1, submorphs);
-                            memory_.storePointer(k, submorphs, next);
-                        }
-                        // Put the window at the end
-                        memory_.storePointer(morphCount - 1, submorphs, submorph);
-                        moved = true;
-                        break;
-                    }
-                }
-                if (clickLog) {
-                    fprintf(clickLog, "[CLICK] Direct comeToFront for %s: moved=%d\n",
-                            className.c_str(), moved ? 1 : 0);
-                    fflush(clickLog);
-                }
-                // For right-click (yellow button = 2) - let Pharo handle natively
-                // Disabled C++ world menu trigger
-                if (buttons & 2) {
-                    if (clickLog) {
-                        fprintf(clickLog, "[CLICK] Right-click (yellow button) on window - letting Pharo handle\n");
-                        fflush(clickLog);
-                    }
-                    // showWorldMenu(x, y);  // Disabled - let Pharo handle
-                }
-                return;  // Window click handled
-            }
-            // Non-window morph clicked (e.g., ImageMorph) - treat as background click
-            if (clickLog) {
-                fprintf(clickLog, "[CLICK] Non-window morph %s at %d,%d - treating as background\n",
-                        className.c_str(), x, y);
-                fflush(clickLog);
-            }
-        }
-    }
-
-    // Click was on World background (no submorphs contained the point)
-    if (clickLog) {
-        fprintf(clickLog, "[CLICK] No submorph at %d,%d - World background click buttons=%d\n", x, y, buttons);
-        fflush(clickLog);
-    }
-
-    // Yellow button (right-click, buttons & 2) - trigger world menu directly
-    // Since Pharo's event loop isn't running, we need to trigger the menu from C++
-    if (buttons & 2) {
-        if (clickLog) {
-            fprintf(clickLog, "[CLICK] Right-click (yellow button) on World background - triggering showWorldMenu\n");
-            fflush(clickLog);
-        }
-        showWorldMenu(x, y);  // Re-enabled - Pharo can't handle it natively because event loop isn't running
-    }
-
-    // Log that we're returning - the event should already be queued for Pharo
-    if (clickLog) {
-        fprintf(clickLog, "[CLICK] Returning - event queued for Pharo at %d,%d buttons=%d\n", x, y, buttons);
-        fflush(clickLog);
-    }
-}
-
-void Interpreter::showWorldMenu(int x, int y) {
-    // Show the World menu at the given position
-    // This is triggered by right-click (yellow button) on the World background
-
-    // Debug: use the events log file which is known to work
-    static FILE* eventsLogForDebug = fopen("/tmp/iospharo-events.log", "a");
-    if (eventsLogForDebug) {
-        fprintf(eventsLogForDebug, "[showWorldMenu] ENTRY x=%d y=%d\n", x, y);
-        fflush(eventsLogForDebug);
-    }
-
-    static FILE* menuLog = fopen("/tmp/world_menu.log", "a");
-
-    if (menuLog) {
-        fprintf(menuLog, "[WORLD-MENU] Attempting to show at %d,%d\n", x, y);
-        fflush(menuLog);
-    }
-
-    if (eventsLogForDebug) {
-        fprintf(eventsLogForDebug, "[showWorldMenu] About to call findGlobal(World)\n");
-        fflush(eventsLogForDebug);
-    }
-
-    // Find World global
-    Oop world = memory_.findGlobal("World");
-
-    if (eventsLogForDebug) {
-        fprintf(eventsLogForDebug, "[showWorldMenu] findGlobal returned, world.isNil=%d\n", world.isNil() ? 1 : 0);
-        fflush(eventsLogForDebug);
-    }
-
-    if (world.isNil() || !world.isObject()) {
-        if (menuLog) fprintf(menuLog, "[WORLD-MENU] World not found\n");
-        if (eventsLogForDebug) {
-            fprintf(eventsLogForDebug, "[showWorldMenu] World not found, returning\n");
-            fflush(eventsLogForDebug);
-        }
-        return;
-    }
-    if (eventsLogForDebug) {
-        fprintf(eventsLogForDebug, "[showWorldMenu] World found, continuing\n");
-        fflush(eventsLogForDebug);
-    }
-
-    // The World menu in Pharo is typically accessed via:
-    // World -> worldState -> worldMenu
-    // Or we can look for an existing MenuMorph in World's submorphs
-
-    ObjectHeader* worldHdr = world.asObjectPtr();
-    if (worldHdr->slotCount() < 10) {
-        if (eventsLogForDebug) {
-            fprintf(eventsLogForDebug, "[showWorldMenu] World slotCount < 10, returning\n");
-            fflush(eventsLogForDebug);
-        }
-        return;
-    }
-
-    // Get submorphs (slot 2) to look for existing menu
-    Oop submorphs = memory_.fetchPointer(2, world);
-    if (submorphs.isNil() || !submorphs.isObject()) {
-        if (eventsLogForDebug) {
-            fprintf(eventsLogForDebug, "[showWorldMenu] submorphs nil or not object, returning\n");
-            fflush(eventsLogForDebug);
-        }
-        return;
-    }
-    if (eventsLogForDebug) {
-        fprintf(eventsLogForDebug, "[showWorldMenu] submorphs found, scanning for menus\n");
-        fflush(eventsLogForDebug);
-    }
-
-    ObjectHeader* subHdr = submorphs.asObjectPtr();
-    size_t morphCount = subHdr->slotCount();
-
-    // Look for a MenuMorph in submorphs
-    for (size_t i = 0; i < morphCount; i++) {
-        Oop morph = memory_.fetchPointer(i, submorphs);
-        if (morph.isNil() || !morph.isObject()) continue;
-
-        Oop morphClass = memory_.classOf(morph);
-        if (!morphClass.isObject()) continue;
-
-        Oop cName = memory_.fetchPointer(6, morphClass);
-        if (!cName.isObject()) continue;
-
-        ObjectHeader* cNameHdr = cName.asObjectPtr();
-        if (!cNameHdr->isBytesObject()) continue;
-
-        std::string className((char*)cNameHdr->bytes(), cNameHdr->byteSize());
-
-        // Skip MenubarMorph and TaskbarMorph - they're not popup menus
-        if (className == "MenubarMorph" || className == "TaskbarMorph") continue;
-
-        // Look for actual popup/context menus (MenuMorph, PopupMenu, etc.)
-        if (className.find("Menu") != std::string::npos) {
-            if (menuLog) {
-                fprintf(menuLog, "[WORLD-MENU] Found %s, repositioning to %d,%d\n",
-                        className.c_str(), x, y);
-                fflush(menuLog);
-            }
-
-            // Reposition the menu to click location
-            // Menu bounds are at slot 0 (Rectangle with origin and corner)
-            Oop bounds = memory_.fetchPointer(0, morph);
-            if (bounds.isObject()) {
-                ObjectHeader* boundsHdr = bounds.asObjectPtr();
-                if (boundsHdr->slotCount() >= 2) {
-                    Oop origin = memory_.fetchPointer(0, bounds);
-                    if (origin.isObject()) {
-                        ObjectHeader* originHdr = origin.asObjectPtr();
-                        if (originHdr->slotCount() >= 2) {
-                            // Set origin x and y
-                            memory_.storePointer(0, origin, Oop::fromSmallInteger(x));
-                            memory_.storePointer(1, origin, Oop::fromSmallInteger(y));
-
-                            // Also update corner based on menu size
-                            Oop corner = memory_.fetchPointer(1, bounds);
-                            if (corner.isObject()) {
-                                ObjectHeader* cornerHdr = corner.asObjectPtr();
-                                if (cornerHdr->slotCount() >= 2) {
-                                    Oop oldCx = memory_.fetchPointer(0, corner);
-                                    Oop oldCy = memory_.fetchPointer(1, corner);
-                                    Oop oldOx = memory_.fetchPointer(0, origin);
-                                    Oop oldOy = memory_.fetchPointer(1, origin);
-
-                                    // Estimate menu size (use 200x300 if can't calculate)
-                                    int menuWidth = 200, menuHeight = 300;
-                                    if (oldCx.isSmallInteger() && oldOx.isSmallInteger()) {
-                                        menuWidth = static_cast<int>(oldCx.asSmallInteger() - oldOx.asSmallInteger());
-                                        if (menuWidth < 50) menuWidth = 200;
-                                    }
-                                    if (oldCy.isSmallInteger() && oldOy.isSmallInteger()) {
-                                        menuHeight = static_cast<int>(oldCy.asSmallInteger() - oldOy.asSmallInteger());
-                                        if (menuHeight < 50) menuHeight = 300;
-                                    }
-
-                                    memory_.storePointer(0, corner, Oop::fromSmallInteger(x + menuWidth));
-                                    memory_.storePointer(1, corner, Oop::fromSmallInteger(y + menuHeight));
-                                }
-                            }
-
-                            if (menuLog) {
-                                fprintf(menuLog, "[WORLD-MENU] Repositioned menu to %d,%d\n", x, y);
-                                fflush(menuLog);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Move menu to front (end of submorphs array)
-            for (size_t j = i; j < morphCount - 1; j++) {
-                Oop next = memory_.fetchPointer(j + 1, submorphs);
-                memory_.storePointer(j, submorphs, next);
-            }
-            memory_.storePointer(morphCount - 1, submorphs, morph);
-
-            if (menuLog) {
-                fprintf(menuLog, "[WORLD-MENU] Moved menu to front\n");
-                fflush(menuLog);
-            }
-            return;
-        }
-    }
-
-    if (menuLog) {
-        fprintf(menuLog, "[WORLD-MENU] No existing menu found in World submorphs\n");
-        fflush(menuLog);
-    }
-
-    // Skip placeholder drawing - just trigger the Smalltalk menu creation
-    // The placeholder was covering the real menu and confusing the user
-    hasVisibleMenu_ = false;
-
-    // Try to trigger the real World menu by sending a message to World
-    // In Pharo 10+, WorldMorph has various menu methods
-    // (reuse the 'world' variable from earlier in this function)
-    if (!world.isNil() && world.isObject()) {
-        // Try to find selectors for showing the world menu
-        // Different Pharo versions use different methods:
-        // - doShowWorldMenu (some versions)
-        // - invokeWorldMenu: (takes event)
-        // - worldMenu (returns the menu)
-
-        // Try various selectors for showing the world menu
-        // Different Pharo versions use different methods
-        // Prefer methods that actually OPEN/SHOW the menu over ones that just return it
-        const char* menuSelectors[] = {
-            "openWorldMenu",            // Method that opens the menu (if exists)
-            "showWorldMainInlineMenu",  // Pharo 10+ Spec2
-            "doShowWorldMenu",          // Some versions
-            "popUpWorldMenu",           // Popup variant
-            "showWorldMenu",            // Direct show
-            "invokeWorldMenu",          // WorldMorph method
-            "openMenu",                 // Generic
-            "buildWorldMenu",           // Builder method (returns menu)
-            "worldMenu",                // Returns the menu (last resort)
-            nullptr
-        };
-
-        Oop showMenuSel = Oop::nil();
-        for (int i = 0; menuSelectors[i] != nullptr; i++) {
-            showMenuSel = findSelector(menuSelectors[i]);
-            if (!showMenuSel.isNil()) {
-                if (menuLog) {
-                    fprintf(menuLog, "[WORLD-MENU] Trying selector '%s' - FOUND!\n", menuSelectors[i]);
-                    fflush(menuLog);
-                }
-                break;
-            } else {
-                if (menuLog) {
-                    fprintf(menuLog, "[WORLD-MENU] Trying selector '%s' - not found\n", menuSelectors[i]);
-                    fflush(menuLog);
-                }
-            }
-        }
-
-        if (!showMenuSel.isNil()) {
-            ObjectHeader* selHdr = showMenuSel.asObjectPtr();
-            std::string selName = selHdr->isBytesObject() ?
-                std::string((char*)selHdr->bytes(), selHdr->byteSize()) : "?";
-
-            if (menuLog) {
-                fprintf(menuLog, "[WORLD-MENU] Found selector: %s\n", selName.c_str());
-                fflush(menuLog);
-            }
-
-            // If we found 'worldMenu', send it directly to World
-            // The result (MenuMorph) will need popUpAt:forHand:in: but we skip that for now
-            // OpalCompiler evaluate: has block context issues, so avoid it
-            if (selName == "worldMenu") {
-                if (menuLog) {
-                    fprintf(menuLog, "[WORLD-MENU] Directly queueing worldMenu send to World\n");
-                    fflush(menuLog);
-                }
-
-                // Look for a simpler method that shows the menu directly
-                // Try openWorldMenu, showWorldMenu first
-                Oop simpleMenuSel = findSelector("openWorldMenu");
-                if (simpleMenuSel.isNil()) {
-                    simpleMenuSel = findSelector("showWorldMenu");
-                }
-                if (simpleMenuSel.isNil()) {
-                    // Fall back to worldMenu (returns MenuMorph, won't show automatically)
-                    simpleMenuSel = showMenuSel;
-                }
-
-                pendingMenuAction_.selector = simpleMenuSel;
-                pendingMenuAction_.receiver = world;
-                pendingMenuAction_.argument = Oop::nil();
-                pendingMenuAction_.argCount = 0;
-                pendingMenuAction_.pending.store(true, std::memory_order_seq_cst);
-                g_debugPendingFlag.store(true, std::memory_order_seq_cst);
-                std::cerr << "[MENU-SET] pending=1, global=1 at this=" << (void*)this
-                          << " &pending=" << (void*)&pendingMenuAction_.pending << "\n";
-                if (menuLog) {
-                    fprintf(menuLog, "[WORLD-MENU] Queued worldMenu to World (pending=1)\n");
-                    fflush(menuLog);
-                }
-            } else {
-                // For other selectors that should show the menu directly, use direct send
-                if (menuLog) {
-                    fprintf(menuLog, "[WORLD-MENU] Queueing direct send of '%s' to World\n", selName.c_str());
-                    fflush(menuLog);
-                }
-                pendingMenuAction_.selector = showMenuSel;
-                pendingMenuAction_.receiver = world;
-                pendingMenuAction_.argument = Oop::nil();
-                pendingMenuAction_.argCount = 0;
-                pendingMenuAction_.pending = true;
-            }
-        } else {
-            if (menuLog) {
-                fprintf(menuLog, "[WORLD-MENU] No suitable world menu selector found\n");
-                fflush(menuLog);
-            }
-        }
-    }
-}
+// handleWorldClick and showWorldMenu REMOVED - events pass through to Smalltalk via primitive 264
+// Pharo's Morphic handles all click dispatch natively
 
 void Interpreter::drawClickIndicator(int x, int y, int buttons) {
     // Draw a visible circle at click location directly on the display
@@ -2567,144 +1746,7 @@ void Interpreter::drawClickIndicator(int x, int y, int buttons) {
     }
 }
 
-void Interpreter::invokeMenuItemAction(Oop menuItemMorph) {
-    // Extract action from menu item and queue it for execution
-    if (menuItemMorph.isNil() || !menuItemMorph.isObject()) {
-        return;
-    }
-
-    ObjectHeader* morphHdr = menuItemMorph.asObjectPtr();
-    size_t slotCount = morphHdr->slotCount();
-
-    Oop selector = Oop::nil();
-    Oop target = Oop::nil();
-    Oop actionBlock = Oop::nil();
-
-    // Search slots for action-related objects
-    for (size_t i = 5; i < std::min(slotCount, (size_t)20); i++) {
-        Oop slot = memory_.fetchPointer(i, menuItemMorph);
-        if (slot.isNil()) continue;
-
-        if (slot.isObject()) {
-            Oop slotClass = memory_.classOf(slot);
-            std::string slotClassName = "Unknown";
-            if (slotClass.isObject()) {
-                ObjectHeader* scHdr = slotClass.asObjectPtr();
-                if (scHdr->slotCount() > 6) {
-                    Oop scName = memory_.fetchPointer(6, slotClass);
-                    if (scName.isObject()) {
-                        ObjectHeader* scnHdr = scName.asObjectPtr();
-                        if (scnHdr->isBytesObject() && scnHdr->byteSize() < 50) {
-                            slotClassName = std::string((char*)scnHdr->bytes(), scnHdr->byteSize());
-                        }
-                    }
-                }
-            }
-
-            // Check if it's a Symbol (potential selector)
-            if (slotClassName == "ByteSymbol" || slotClassName == "Symbol") {
-                if (selector.isNil()) selector = slot;
-            }
-            // Check if it's a Block (action block)
-            else if (slotClassName.find("Block") != std::string::npos) {
-                actionBlock = slot;
-            }
-            // Potential target - but skip known non-target types
-            else if (target.isNil()) {
-                // Skip display/rendering related objects that are not action targets
-                bool isSkipType = (slotClassName.find("Morph") != std::string::npos ||
-                    slotClassName.find("Font") != std::string::npos ||
-                    slotClassName.find("Color") != std::string::npos ||
-                    slotClassName.find("Form") != std::string::npos ||
-                    slotClassName.find("Extension") != std::string::npos ||
-                    slotClassName.find("String") != std::string::npos ||
-                    slotClassName == "UndefinedObject" ||
-                    slotClassName == "True" ||
-                    slotClassName == "False" ||
-                    slotClassName == "Array");
-
-                // "Unknown" at slot 14 is often the actual target (class lookup failed)
-                if (!isSkipType || (slotClassName == "Unknown" && i >= 14)) {
-                    target = slot;
-                }
-            }
-        }
-    }
-
-    // Queue the action for safe execution
-    if (!actionBlock.isNil()) {
-        // Check block's numArgs to decide between value and value:
-        Oop numArgsObj = memory_.fetchPointer(2, actionBlock);
-        int blockNumArgs = 0;
-        if (numArgsObj.isSmallInteger()) {
-            blockNumArgs = static_cast<int>(numArgsObj.asSmallInteger());
-        }
-
-        // Find appropriate selector from special selectors
-        Oop targetSel = Oop::nil();
-        const char* selectorName = (blockNumArgs == 0) ? "value" : "value:";
-        size_t selectorLen = strlen(selectorName);
-
-        Oop specialObjs = memory_.specialObjectsArray();
-        if (!specialObjs.isNil() && specialObjs.isObject()) {
-            ObjectHeader* soHdr = specialObjs.asObjectPtr();
-            if (soHdr->slotCount() > 23) {
-                Oop selArray = memory_.fetchPointer(23, specialObjs);
-                if (!selArray.isNil() && selArray.isObject()) {
-                    ObjectHeader* saHdr = selArray.asObjectPtr();
-                    for (size_t i = 0; i < saHdr->slotCount(); i++) {
-                        Oop sel = saHdr->slotAt(i);
-                        if (sel.isObject()) {
-                            ObjectHeader* selHdr = sel.asObjectPtr();
-                            if (selHdr->isBytesObject() && selHdr->byteSize() == selectorLen) {
-                                if (memcmp(selHdr->bytes(), selectorName, selectorLen) == 0) {
-                                    targetSel = sel;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        if (!targetSel.isNil()) {
-            pendingMenuAction_.selector = targetSel;
-            pendingMenuAction_.receiver = actionBlock;
-            pendingMenuAction_.argCount = (blockNumArgs > 0) ? 1 : 0;
-            pendingMenuAction_.argument = (blockNumArgs > 0) ? menuItemMorph : Oop::nil();
-            pendingMenuAction_.pending = true;
-        }
-    } else if (!selector.isNil() && !target.isNil()) {
-        pendingMenuAction_.selector = selector;
-        pendingMenuAction_.receiver = target;
-        pendingMenuAction_.argument = Oop::nil();
-        pendingMenuAction_.argCount = 0;
-        pendingMenuAction_.pending = true;
-    } else if (!selector.isNil()) {
-        pendingMenuAction_.selector = selector;
-        pendingMenuAction_.receiver = menuItemMorph;
-        pendingMenuAction_.argument = Oop::nil();
-        pendingMenuAction_.argCount = 0;
-        pendingMenuAction_.pending = true;
-    }
-
-    // Log what action was queued
-    static FILE* logFile = fopen("/tmp/iospharo-events.log", "a");
-    if (logFile && pendingMenuAction_.pending) {
-        std::string selStr = "block";
-        if (!actionBlock.isNil()) {
-            selStr = "#value";
-        } else if (selector.isObject()) {
-            ObjectHeader* selHdr = selector.asObjectPtr();
-            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                selStr = "#" + std::string((char*)selHdr->bytes(), selHdr->byteSize());
-            }
-        }
-        fprintf(logFile, "[ACTION] Queued action: %s\n", selStr.c_str());
-        fflush(logFile);
-    }
-}
+// invokeMenuItemAction REMOVED - menu item actions handled by Smalltalk
 
 // ===== DIRECT HAND MANIPULATION =====
 // Since InputEventSensor's process isn't running, update ActiveHand directly
@@ -3062,22 +2104,7 @@ void Interpreter::interpret() {
 
     int loopCount = 0;
     while (running_) {
-        // Debug: log main loop iterations
-        if (loopCount % 50000 == 0) {
-            bool isPending = pendingMenuAction_.pending.load(std::memory_order_seq_cst);
-            bool globalPending = g_debugPendingFlag.load(std::memory_order_seq_cst);
-            std::cerr << "[MAIN-LOOP] #" << loopCount
-                      << " member=" << isPending << " global=" << globalPending << "\n";
-        }
         loopCount++;
-
-        // DEBUG: Auto world menu trigger disabled - let Pharo handle natively
-        // static bool autoTriggered = false;
-        // if (!autoTriggered && loopCount == 100000) {
-        //     std::cerr << "[AUTO-MENU] Triggering world menu at loop #" << loopCount << "\n";
-        //     showWorldMenu(512, 384);
-        //     autoTriggered = true;
-        // }
 
         // Process any pending external semaphore signals
         if (hasPendingSignals()) {
@@ -3087,26 +2114,10 @@ void Interpreter::interpret() {
         // Check timer and signal delay semaphore if time has elapsed
         checkTimerSemaphore();
 
-        // Periodically process input events and dispatch to Morphic
+        // Periodically process input events (queued for Smalltalk to poll via primitive 264)
         if (loopCount % 100 == 0) {
-            bool memberPending = pendingMenuAction_.pending.load(std::memory_order_seq_cst);
-            bool globalPending = g_debugPendingFlag.load(std::memory_order_seq_cst);
-            // Log if global flag is true - this is our main thread seeing the heartbeat's write
-            if (globalPending) {
-                static int sawCount = 0;
-                if (sawCount < 10) {
-                    sawCount++;
-                    std::cerr << "[MAIN-SEE] Saw global=1 at loop #" << loopCount
-                              << " member=" << memberPending << "\n";
-                }
-            }
             processInputEvents();
-            dispatchEventsToMorphic();
         }
-
-        // Note: Pending menu actions are handled by doOneCycleFor: interception,
-        // which provides a safe context for message sends.
-        // Direct message sends from this loop would crash (stack corruption).
 
         step();
     }
@@ -3431,76 +2442,7 @@ ExecuteResult Interpreter::stepDetailed() {
 // ===== BYTECODE DISPATCH =====
 
 void Interpreter::dispatchBytecode(uint8_t bytecode) {
-    // Track ALL bytecode execution (not just dispatch)
-    static int totalBcCount = 0;
-    static FILE* allBcLog = nullptr;
-    static bool wasInDispatchLastTime = false;
-    totalBcCount++;
-
-    // Log transitions and milestones
-    bool shouldLog = (totalBcCount == 1 || totalBcCount % 100000 == 0);
-
-    // Also log when dispatch state changes
-    if (inDispatchedAction_ != wasInDispatchLastTime) {
-        shouldLog = true;
-    }
-
-    // Log EVERY bytecode during early dispatch (first 600 bytecodes after dispatch starts)
-    // Dispatch starts around totalBcCount 100008, so log from 100000 to 100600
-    if (inDispatchedAction_ && totalBcCount >= 100000 && totalBcCount <= 100600) {
-        shouldLog = true;
-    }
-
-    if (shouldLog) {
-        if (!allBcLog) allBcLog = fopen("/tmp/all_bytecodes.log", "a");
-        if (allBcLog) {
-            fprintf(allBcLog, "[ALL BC #%d] bc=0x%02x fd=%d inDispatch=%d%s\n",
-                    totalBcCount, bytecode, frameDepth_, inDispatchedAction_ ? 1 : 0,
-                    (inDispatchedAction_ != wasInDispatchLastTime) ? " <-- CHANGED" : "");
-            fflush(allBcLog);
-        }
-    }
-    wasInDispatchLastTime = inDispatchedAction_;
-
-    // Track bytecode execution during dispatch (separate counters per dispatch)
-    static FILE* bcLog = nullptr;
-    static int bcCount = 0;
-    static int dispatchNum = 0;
-    static bool wasInDispatch = false;
-
-    if (inDispatchedAction_) {
-        if (!wasInDispatch) {
-            // New dispatch started - reset counter and increment dispatch number
-            bcCount = 0;
-            dispatchNum++;
-            wasInDispatch = true;
-            if (!bcLog) bcLog = fopen("/tmp/bytecode_count.log", "a");
-            if (bcLog) {
-                fprintf(bcLog, "[DISPATCH #%d START] dispatchFrameDepth=%d\n",
-                        dispatchNum, dispatchedActionFrameDepth_);
-                fflush(bcLog);
-            }
-        }
-        bcCount++;
-        // Log at key milestones
-        if (bcCount == 1 || bcCount == 100 || bcCount == 500 || bcCount == 1000 ||
-            bcCount == 5000 || bcCount == 10000 || bcCount % 50000 == 0) {
-            if (bcLog) {
-                fprintf(bcLog, "[DISPATCH #%d BC #%d] bc=0x%02x fd=%d\n",
-                        dispatchNum, bcCount, bytecode, frameDepth_);
-                fflush(bcLog);
-            }
-        }
-    } else {
-        if (wasInDispatch) {
-            // Dispatch ended
-            if (bcLog) {
-                fprintf(bcLog, "[DISPATCH #%d END] Total bytecodes: %d\n", dispatchNum, bcCount);
-                fflush(bcLog);
-            }
-            wasInDispatch = false;
-        }
-    }
+    // Track bytecode execution (dispatch tracing removed - Smalltalk handles all logic)
 
     // Sista V1 bytecode dispatch (used by Pharo 10+, format 68021 with modern compiler)
     // Key differences from V3PlusClosures:
@@ -3562,59 +2504,9 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
             } else if (bytecode <= 0x4F) {
                 // 0x4C-0x4F: Push specials
                 switch (bytecode) {
-                    case 0x4C: {
-                        // Trace push self during menu action tracing
-                        if (menuActionTraceCount_ > 0 && menuActionTraceCount_ < 4950) {
-                            static FILE* menuTrace = fopen("/tmp/iospharo-menu-trace.log", "a");
-                            if (menuTrace) {
-                                std::string rcvrClassName = "Unknown";
-                                if (receiver_.isObject() && !receiver_.isNil()) {
-                                    Oop rcvrClass = memory_.classOf(receiver_);
-                                    if (rcvrClass.isObject()) {
-                                        ObjectHeader* cHdr = rcvrClass.asObjectPtr();
-                                        if (cHdr->slotCount() > 6) {
-                                            Oop name = cHdr->slotAt(6);
-                                            if (name.isObject()) {
-                                                ObjectHeader* nHdr = name.asObjectPtr();
-                                                size_t len = nHdr->byteSize();
-                                                if (len < 100) {
-                                                    rcvrClassName = std::string(reinterpret_cast<char*>(nHdr->bytes()), len);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                // Check if this is inside a block by looking at method class
-                                std::string methodType = "Method";
-                                if (method_.isObject()) {
-                                    Oop methodClass = memory_.classOf(method_);
-                                    if (methodClass.isObject()) {
-                                        ObjectHeader* mcHdr = methodClass.asObjectPtr();
-                                        if (mcHdr->slotCount() > 6) {
-                                            Oop name = mcHdr->slotAt(6);
-                                            if (name.isObject()) {
-                                                ObjectHeader* nHdr = name.asObjectPtr();
-                                                size_t len = nHdr->byteSize();
-                                                if (len < 100) {
-                                                    methodType = std::string(reinterpret_cast<char*>(nHdr->bytes()), len);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                if (rcvrClassName.find("MorphicRenderLoop") != std::string::npos ||
-                                    rcvrClassName.find("OrderedCollection") != std::string::npos) {
-                                    fprintf(menuTrace, "[PUSH-SELF] receiver_=0x%llx (%s) methodType=%s frameDepth=%d\n",
-                                            static_cast<unsigned long long>(receiver_.rawBits()),
-                                            rcvrClassName.c_str(), methodType.c_str(),
-                                            frameDepth_);
-                                    fflush(menuTrace);
-                                }
-                            }
-                        }
+                    case 0x4C:
                         push(receiver_);
                         break;
-                    }
                     case 0x4D: push(memory_.trueObject()); break;   // push true
                     case 0x4E: push(memory_.falseObject()); break;  // push false
                     case 0x4F: push(memory_.nil()); break;          // push nil
@@ -4259,64 +3151,10 @@ void Interpreter::returnValue(Oop value) {
         // No runnable processes - enter idle mode
         // This is a good time to update the display since a doOneCycle just completed
 
-        // Process input events (important for menu handling)
+        // Process input events - all events queued for Smalltalk via primitive 264
         processInputEvents();
 
-        // Dispatch queued events to Morphic's active hand
-        dispatchEventsToMorphic();
-
-        // Execute pending menu action if any
-        if (pendingMenuAction_.pending) {
-            // Get action details
-            Oop actionSel = pendingMenuAction_.selector;
-            Oop actionRcvr = pendingMenuAction_.receiver;
-            Oop actionArg = pendingMenuAction_.argument;
-            int actionArgCount = pendingMenuAction_.argCount;
-
-            // Log the dispatch
-            static FILE* dispatchLog = fopen("/tmp/world_menu.log", "a");
-            if (dispatchLog) {
-                std::string selName = "?";
-                if (actionSel.isObject()) {
-                    ObjectHeader* selHdr = actionSel.asObjectPtr();
-                    if (selHdr->isBytesObject()) {
-                        selName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                    }
-                }
-                fprintf(dispatchLog, "[WORLD-MENU] DISPATCHING selector '%s' to receiver 0x%llx argCount=%d\n",
-                        selName.c_str(), (unsigned long long)actionRcvr.rawBits(), actionArgCount);
-                fflush(dispatchLog);
-            }
-
-            // Clear pending
-            pendingMenuAction_.pending = false;
-            pendingMenuAction_.selector = Oop::nil();
-            pendingMenuAction_.receiver = Oop::nil();
-            pendingMenuAction_.argument = Oop::nil();
-            pendingMenuAction_.argCount = 0;
-
-            // Set up stack for message send
-            push(actionRcvr);
-            if (actionArgCount > 0 && !actionArg.isNil()) {
-                push(actionArg);
-            }
-
-            // Track that we're in a dispatched action (for context creation)
-            inDispatchedAction_ = true;
-            dispatchedActionFrameDepth_ = frameDepth_;
-
-            static FILE* flagLog = fopen("/tmp/dispatch_flag.log", "a");
-            if (flagLog) {
-                fprintf(flagLog, "[FLAG] SET true (idle dispatch) fd=%d\n", frameDepth_);
-                fflush(flagLog);
-            }
-
-            // Send the message
-            sendSelector(actionSel, actionArgCount);
-            return;  // Let execution continue with the action
-        }
-
-        // Render World's morphs directly - bypass NullWorldRenderer
+        // Render World's morphs directly
         renderWorldMorphs();
 
         // Sleep briefly to avoid busy-waiting, then try to reschedule
@@ -4482,20 +3320,6 @@ void Interpreter::arithmeticSend(int which) {
     // Arithmetic selectors: + - < > <= >= = ~= * / \\ @ bitShift: // bitAnd: bitOr:
     static const int argCounts[] = {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
     int argCount = argCounts[which];
-
-    // Log arithmetic operations during dispatch
-    static FILE* arithLog = nullptr;
-    static int arithCount = 0;
-    if (inDispatchedAction_ && !arithLog) {
-        arithLog = fopen("/tmp/arithmetic.log", "w");
-    }
-    if (inDispatchedAction_ && arithLog && arithCount < 200) {
-        arithCount++;
-        static const char* opNames[] = {"+", "-", "<", ">", "<=", ">=", "=", "~=",
-                                         "*", "/", "\\\\", "@", "bitShift:", "//", "bitAnd:", "bitOr:"};
-        fprintf(arithLog, "[ARITH #%d] which=%d (%s)\n", arithCount, which, opNames[which]);
-        fflush(arithLog);
-    }
 
     // Get receiver and check for nil early to prevent crashes
     Oop arg = stackValue(0);
@@ -4748,103 +3572,7 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 
 void Interpreter::sendSelector(Oop selector, int argCount) {
     // DISABLED: Pending action dispatch causes issues
-    // The Pharo application seems to be stuck in method lookup loops
-    // and never reaches selectors where we could safely dispatch.
-    // TODO: Investigate why Pharo isn't running normal application code.
-    if (false && pendingMenuAction_.pending) {  // Disabled
-        // Get the selector name to check if it's safe to intercept
-        std::string origSelStr;
-        if (selector.isObject() && selector.rawBits() > 0x10000) {
-            ObjectHeader* selHdr = selector.asObjectPtr();
-            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                origSelStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-            }
-        }
-
-        // Only intercept selectors where we can safely replace the result
-        // These are typically void-ish methods that don't return meaningful values
-        bool safeToIntercept = (origSelStr == "processEvents" ||
-                                origSelStr == "doOneCycle" ||
-                                origSelStr == "doOneCycleFor:" ||
-                                origSelStr == "step" ||
-                                origSelStr == "displayWorld" ||
-                                origSelStr == "interCyclePause:" ||
-                                origSelStr == "runStepMethods" ||
-                                origSelStr == "processDeferredActions" ||
-                                // Additional common cycle/event selectors
-                                origSelStr == "handleEvent:" ||
-                                origSelStr == "handleListenEvent:" ||
-                                origSelStr == "handleMouseOver:" ||
-                                origSelStr == "processEvent:" ||
-                                origSelStr == "processMouse:" ||
-                                origSelStr == "primGetNextEvent" ||
-                                // InputEventSensor event fetch methods
-                                origSelStr == "fetchMoreEvents" ||
-                                origSelStr == "nextEvent" ||
-                                origSelStr == "eventAt:" ||
-                                // Process control
-                                origSelStr == "yield" ||
-                                origSelStr == "wait" ||
-                                origSelStr == "resume");
-
-        // Log when we have a pending action but can't dispatch (for debugging)
-        // Increase limit to catch more unique selectors
-        static FILE* waitLog = nullptr;
-        static int waitCount = 0;
-        static std::set<std::string> seenSelectors;
-        bool isNewSelector = seenSelectors.find(origSelStr) == seenSelectors.end();
-        if (!safeToIntercept && isNewSelector && waitCount < 200) {
-            seenSelectors.insert(origSelStr);
-            if (!waitLog) waitLog = fopen("/tmp/action_wait.log", "w");
-            if (waitLog) {
-                waitCount++;
-                fprintf(waitLog, "[WAIT #%d] Can't dispatch on #%s, waiting...\n", waitCount, origSelStr.c_str());
-                fflush(waitLog);
-            }
-        }
-
-        if (safeToIntercept) {
-            // Log the dispatch
-            static FILE* dispatchLog = nullptr;
-            if (!dispatchLog) dispatchLog = fopen("/tmp/action_dispatch.log", "w");
-            if (dispatchLog) {
-                fprintf(dispatchLog, "[DISPATCH] Intercepting #%s to dispatch pending action\n", origSelStr.c_str());
-                fflush(dispatchLog);
-            }
-
-            // Get action details before clearing
-            Oop actionSel = pendingMenuAction_.selector;
-            Oop actionRcvr = pendingMenuAction_.receiver;
-            Oop actionArg = pendingMenuAction_.argument;
-            int actionArgCount = pendingMenuAction_.argCount;
-
-            // Clear pending immediately to prevent re-entry
-            pendingMenuAction_.pending = false;
-            pendingMenuAction_.selector = Oop::nil();
-            pendingMenuAction_.receiver = Oop::nil();
-            pendingMenuAction_.argument = Oop::nil();
-            pendingMenuAction_.argCount = 0;
-
-            // Pop the original send's args + receiver
-            popN(argCount + 1);
-
-            // Push the action's receiver and arg
-            push(actionRcvr);
-            if (actionArgCount > 0 && !actionArg.isNil()) {
-                push(actionArg);
-            }
-
-            if (dispatchLog) {
-                fprintf(dispatchLog, "[DISPATCH] Now sending action with %d args\n", actionArgCount);
-                fflush(dispatchLog);
-            }
-
-            // Replace selector and argCount for the action
-            selector = actionSel;
-            argCount = actionArgCount;
-            // Fall through to normal send processing with the action's selector
-        }
-    }
+    // Workaround dispatch code removed - Smalltalk handles all event dispatch
 
     // Recursion detection - break infinite recursion patterns
     // Compare by string content since same symbol may have different Oops
@@ -4864,38 +3592,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 if (sendLog) {
                     fprintf(sendLog, "[SEND #%d] #%s args=%d\n", totalSends, selStr.c_str(), argCount);
                     fflush(sendLog);
-                }
-            }
-
-            // Log sends during dispatch to see what's happening in menu execution
-            if (inDispatchedAction_) {
-                static FILE* dispatchSendLog = nullptr;
-                static int dispatchSendCount = 0;
-                static bool triedOpen = false;
-                if (!dispatchSendLog && !triedOpen) {
-                    triedOpen = true;
-                    dispatchSendLog = fopen("/tmp/dispatch_sends.log", "w");
-                    fprintf(stderr, "[DEBUG] Opened dispatch_sends.log: %s\n", dispatchSendLog ? "SUCCESS" : "FAILED");
-                }
-                if (dispatchSendLog) {
-                    dispatchSendCount++;
-                    Oop rcvr = stackValue(static_cast<size_t>(argCount));
-                    uint32_t clsIdx = 0;
-                    if (rcvr.isSmallInteger()) {
-                        clsIdx = 99999;  // marker for SmallInteger
-                    } else if (rcvr.isSmallFloat()) {
-                        clsIdx = 99998;  // marker for SmallFloat
-                    } else if (rcvr.isCharacter()) {
-                        clsIdx = 99997;  // marker for Character
-                    } else if (rcvr.isObject()) {
-                        ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
-                        if (rcvrHdr) {
-                            clsIdx = rcvrHdr->classIndex();
-                        }
-                    }
-                    fprintf(dispatchSendLog, "[DISPATCH-SEND #%d] #%s args=%d clsIdx=%u fd=%d\n",
-                            dispatchSendCount, selStr.c_str(), argCount, clsIdx, frameDepth_);
-                    fflush(dispatchSendLog);
                 }
             }
 
@@ -4998,50 +3694,6 @@ extern int g_traceSendsAfterPrim264;
     // Message send tracing (limited to first 50 for cleaner output)
     static int sendCount = 0;
     sendCount++;
-
-    // Menu action tracing
-    static FILE* menuTrace = nullptr;
-    if (menuActionTraceCount_ > 0) {
-        if (!menuTrace) {
-            menuTrace = fopen("/tmp/iospharo-menu-trace.log", "a");
-        }
-        if (menuTrace) {
-            menuActionTraceCount_--;
-            std::string selName = "<unknown>";
-            if (selector.isObject() && selector.rawBits() > 0x10000) {
-                ObjectHeader* selHdr = selector.asObjectPtr();
-                if (selHdr->isBytesObject() && selHdr->byteSize() < 100) {
-                    selName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                }
-            }
-            Oop rcvr = stackValue(argCount);
-            std::string rcvrClassName = "<unknown>";
-            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-                Oop cls = memory_.classOf(rcvr);
-                if (cls.isObject()) {
-                    Oop nameOop = memory_.fetchPointer(6, cls);
-                    if (nameOop.isObject()) {
-                        ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
-                            rcvrClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                        }
-                    }
-                }
-            } else if (rcvr.isSmallInteger()) {
-                rcvrClassName = "SmallInteger";
-            }
-            fprintf(menuTrace, "[TRACE %d] Send #%s to %s (args=%d) frameDepth=%d inDispatch=%d\n",
-                    5000 - menuActionTraceCount_, selName.c_str(), rcvrClassName.c_str(), argCount,
-                    frameDepth_, inDispatchedAction_ ? 1 : 0);
-            fflush(menuTrace);
-
-            // Log when trace count is running low
-            if (menuActionTraceCount_ == 4800 || menuActionTraceCount_ == 4500 ||
-                menuActionTraceCount_ == 4000 || menuActionTraceCount_ == 3000) {
-                std::cerr << "[TRACE-COUNT] menuActionTraceCount_=" << menuActionTraceCount_ << "\n";
-            }
-        }
-    }
 
     if (sendCount <= 50) {
         // Show selector name
@@ -5331,27 +3983,6 @@ extern int g_traceSendsAfterPrim264;
                 }
             }
 
-            // ===== INTERCEPT confirmation dialogs during dispatched actions =====
-            // When we're executing a menu action (like quitSession), confirmation dialogs
-            // would block. Auto-answer "true" (yes/confirm) to let the action proceed.
-            if (inDispatchedAction_) {
-                // Check for confirm: type selectors on UIManager classes
-                if (selStr.find("confirm:") == 0 ||
-                    selStr == "questionWithoutCancel:title:" ||
-                    selStr == "question:title:") {
-                    static FILE* confirmLog = fopen("/tmp/confirm_intercept.log", "a");
-                    if (confirmLog) {
-                        fprintf(confirmLog, "[CONFIRM] Auto-answering TRUE for '%s' during dispatch\n",
-                                selStr.c_str());
-                        fflush(confirmLog);
-                    }
-                    // Pop all args and receiver, return true
-                    popN(argCount + 1);
-                    push(memory_.trueObject());
-                    return;
-                }
-            }
-
             // ===== INTERCEPT unprotectedExternalObjects: =====
             // This message is sent during session startup but may not exist in all images.
             // Just return self to prevent DNU cascade that corrupts the stack.
@@ -5361,128 +3992,7 @@ extern int g_traceSendsAfterPrim264;
                 return;
             }
 
-            // ===== INTERCEPT doInterCycleWait =====
-            // MorphicRenderLoop sends this during idle, may not exist in all images.
-            // This is where we dispatch pending menu actions.
-            if (selStr == "doInterCycleWait" && argCount == 0) {
-                // Log every time we enter this handler (limit to first 100)
-                static int doInterCycleWaitCount = 0;
-                ++doInterCycleWaitCount;
-
-                // NOTE: Manual deferred startup was removed - sendSelector doesn't work for
-                // chained message sends. The key fix is that we removed the DNU bypass for
-                // executeDeferredStartupActions:, runStartup:, startUp: so the normal
-                // Smalltalk startup sequence can run.
-                // Use explicit atomic load with sequential consistency to see writes from other threads
-                bool isPending = pendingMenuAction_.pending.load(std::memory_order_seq_cst);
-                bool globalPending = g_debugPendingFlag.load(std::memory_order_seq_cst);
-                // Log periodic counts to see if calls continue after menu set
-                if (doInterCycleWaitCount % 1000 == 0) {
-                    std::cerr << "[IDLE-COUNT] #" << doInterCycleWaitCount
-                              << " member=" << isPending << " global=" << globalPending << "\n";
-                }
-                // STDERR output when pending=1 is finally seen
-                if (isPending || globalPending) {
-                    std::cerr << "[IDLE-CHECK] SAW member=" << isPending
-                              << " global=" << globalPending
-                              << " at #" << doInterCycleWaitCount
-                              << " this=" << (void*)this << "\n";
-                }
-                // Log only first 200 to reduce noise, plus any pending=1
-                static FILE* idleLog = nullptr;
-                if (!idleLog) {
-                    idleLog = fopen("/tmp/idle_dispatch.log", "w");
-                }
-                if (idleLog && (doInterCycleWaitCount <= 200 || isPending)) {
-                    fprintf(idleLog, "[IDLE #%d] pending=%d, this=%p, &pending=%p\n",
-                            doInterCycleWaitCount, isPending ? 1 : 0, (void*)this,
-                            (void*)&pendingMenuAction_.pending);
-                    fflush(idleLog);
-                }
-
-                // Check for pending menu action
-                if (isPending) {
-                    static FILE* actionLog = nullptr;
-                    static int actionCount = 0;
-                    if (!actionLog) {
-                        actionLog = fopen("/tmp/action_dispatch.log", "w");
-                    }
-
-                    std::string selName = "<unknown>";
-                    if (pendingMenuAction_.selector.isObject()) {
-                        ObjectHeader* selHdr = pendingMenuAction_.selector.asObjectPtr();
-                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                            selName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                        }
-                    }
-
-                    if (actionLog) {
-                        fprintf(actionLog, "[ACTION #%d] Dispatching '%s' during doInterCycleWait\n",
-                                ++actionCount, selName.c_str());
-                        fflush(actionLog);
-                    }
-
-                    Oop actionSel = pendingMenuAction_.selector;
-                    Oop actionRcvr = pendingMenuAction_.receiver;
-                    Oop actionArg = pendingMenuAction_.argument;
-                    int actionArgCount = pendingMenuAction_.argCount;
-
-                    // Clear pending action BEFORE dispatch to avoid re-entry
-                    pendingMenuAction_.pending = false;
-                    pendingMenuAction_.selector = Oop::nil();
-                    pendingMenuAction_.receiver = Oop::nil();
-                    pendingMenuAction_.argument = Oop::nil();
-                    pendingMenuAction_.argCount = 0;
-
-                    // Pop doInterCycleWait's receiver
-                    popN(1);
-
-                    // Set up the action call
-                    push(actionRcvr);
-                    if (actionArgCount > 0 && !actionArg.isNil()) {
-                        push(actionArg);
-                    }
-
-                    if (actionLog) {
-                        fprintf(actionLog, "[ACTION #%d] Sending '%s' to receiver %p with %d args\n",
-                                actionCount, selName.c_str(), (void*)actionRcvr.rawBits(), actionArgCount);
-                        if (actionArgCount > 0 && !actionArg.isNil() && actionArg.isObject()) {
-                            ObjectHeader* argHdr = actionArg.asObjectPtr();
-                            if (argHdr->isBytesObject() && argHdr->byteSize() < 200) {
-                                std::string argStr((char*)argHdr->bytes(), argHdr->byteSize());
-                                fprintf(actionLog, "[ACTION #%d] Argument: '%s'\n", actionCount, argStr.c_str());
-                            }
-                        }
-                        fflush(actionLog);
-                    }
-
-                    // Enable message tracing
-                    std::cerr << "[TRACE-START] Setting menuActionTraceCount_=5000 from doInterCycleWait dispatch\n";
-                    menuActionTraceCount_ = 5000;
-
-                    // Track that we're in a dispatched action (for context creation)
-                    inDispatchedAction_ = true;
-                    dispatchedActionFrameDepth_ = frameDepth_;
-
-                    static FILE* flagLog = fopen("/tmp/dispatch_flag.log", "a");
-                    if (flagLog) {
-                        fprintf(flagLog, "[FLAG] SET true (doInterCycleWait intercept) fd=%d\n", frameDepth_);
-                        fflush(flagLog);
-                    }
-
-                    fprintf(stderr, "[DEBUG] About to call sendSelector for action, inDispatch=%d fd=%d\n",
-                            inDispatchedAction_ ? 1 : 0, frameDepth_);
-                    sendSelector(actionSel, actionArgCount);
-                    fprintf(stderr, "[DEBUG] Returned from sendSelector, inDispatch=%d fd=%d\n",
-                            inDispatchedAction_ ? 1 : 0, frameDepth_);
-                    return;
-                }
-
-                // No pending action - just return self
-                popN(1);  // Pop receiver
-                push(rcvr);  // Return self
-                return;
-            }
+            // doInterCycleWait intercept REMOVED - Smalltalk handles all event dispatch
 
             // ===== INTERCEPT #wait on non-Semaphore receivers =====
             // During startup, #wait may be incorrectly sent due to stack issues.
@@ -5568,145 +4078,13 @@ extern int g_traceSendsAfterPrim264;
             }
 
             // ===== INTERCEPT relinquishProcessorForMicroseconds: =====
-            // This is called during idle loop. Try to execute pending menu actions here.
-            // Some actions may cause DNU cascades, but let's try worldMenu and see what happens.
+            // This is called during idle loop. Use it to auto-load the display driver.
             if (selStr == "relinquishProcessorForMicroseconds:" && argCount == 1) {
-                // After a few idle cycles, try to auto-load the driver
                 static int idleCycles = 0;
                 ++idleCycles;
 
-                // Log to trace pendingMenuAction state during idle
-                static FILE* idleTraceLog = nullptr;
-                if (!idleTraceLog) {
-                    idleTraceLog = fopen("/tmp/idle_trace.log", "w");
-                }
-                if (idleTraceLog && (idleCycles <= 20 || pendingMenuAction_.pending)) {
-                    fprintf(idleTraceLog, "[IDLE #%d] relinquishProcessor called, pendingMenuAction_.pending=%d\n",
-                            idleCycles, pendingMenuAction_.pending ? 1 : 0);
-                    if (pendingMenuAction_.pending && pendingMenuAction_.selector.isObject()) {
-                        ObjectHeader* selHdr = pendingMenuAction_.selector.asObjectPtr();
-                        if (selHdr->isBytesObject() && selHdr->byteSize() < 100) {
-                            std::string pendingSelName((char*)selHdr->bytes(), selHdr->byteSize());
-                            fprintf(idleTraceLog, "[IDLE #%d] Pending selector: '%s'\n", idleCycles, pendingSelName.c_str());
-                        }
-                    }
-                    fflush(idleTraceLog);
-                }
-
-                if (idleCycles == 1) {
-                    std::cerr << "[IDLE] First relinquish call\n";
-                }
-                if (idleCycles == 10) {  // After 10 idle cycles
-                    std::cerr << "[IDLE] Calling autoLoadDriver at cycle " << idleCycles << "\n";
+                if (idleCycles == 10) {  // After 10 idle cycles, auto-load driver
                     autoLoadDriver();
-                }
-
-                // Check if we're waiting for a chained result from previous cycle
-                if (pendingChainReceiver_.isObject() && !pendingChainReceiver_.isNil()) {
-                    static FILE* actionLog = fopen("/tmp/action_dispatch.log", "a");
-                    static int actionCount = 0;
-
-                    // We have a pending chain - use saved receiver for second call
-                    Oop chainRcvr = pendingChainReceiver_;
-                    Oop chainSel = pendingMenuAction_.chainSelector;
-                    Oop chainArg = pendingMenuAction_.chainArgument;
-                    int chainArgCount = pendingMenuAction_.chainArgCount;
-
-                    std::string selName = "<unknown>";
-                    if (chainSel.isObject()) {
-                        ObjectHeader* selHdr = chainSel.asObjectPtr();
-                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                            selName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                        }
-                    }
-
-                    if (actionLog) {
-                        fprintf(actionLog, "[CHAIN #%d] Executing second stage '%s'\n",
-                                ++actionCount, selName.c_str());
-                        fflush(actionLog);
-                    }
-
-                    // Clear chain state
-                    pendingChainReceiver_ = Oop::nil();
-                    pendingMenuAction_.chainSelector = Oop::nil();
-                    pendingMenuAction_.chainArgument = Oop::nil();
-                    pendingMenuAction_.chainArgCount = 0;
-                    pendingMenuAction_.isChained = false;
-
-                    popN(argCount + 1);
-                    push(chainRcvr);
-                    if (chainArgCount > 0 && !chainArg.isNil()) {
-                        push(chainArg);
-                    }
-                    sendSelector(chainSel, chainArgCount);
-                    return;
-                }
-
-                if (pendingMenuAction_.pending) {
-                    // Log and try to execute the action
-                    static FILE* actionLog = nullptr;
-                    static int actionCount = 0;
-                    if (!actionLog) {
-                        actionLog = fopen("/tmp/action_dispatch.log", "w");
-                    }
-
-                    std::string selName = "<unknown>";
-                    if (pendingMenuAction_.selector.isObject()) {
-                        ObjectHeader* selHdr = pendingMenuAction_.selector.asObjectPtr();
-                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                            selName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                        }
-                    }
-
-                    bool isChained = pendingMenuAction_.isChained;
-                    if (actionLog) {
-                        fprintf(actionLog, "[ACTION #%d] Trying to dispatch '%s'%s\n",
-                                ++actionCount, selName.c_str(),
-                                isChained ? " (chained)" : "");
-                        fflush(actionLog);
-                    }
-
-                    Oop actionSel = pendingMenuAction_.selector;
-                    Oop actionRcvr = pendingMenuAction_.receiver;
-                    Oop actionArg = pendingMenuAction_.argument;
-                    int actionArgCount = pendingMenuAction_.argCount;
-
-                    pendingMenuAction_.pending = false;
-                    pendingMenuAction_.selector = Oop::nil();
-                    pendingMenuAction_.receiver = Oop::nil();
-                    pendingMenuAction_.argument = Oop::nil();
-                    pendingMenuAction_.argCount = 0;
-
-                    // Pop relinquishProcessorForMicroseconds:'s args and receiver
-                    popN(argCount + 1);
-
-                    // Set up the action call
-                    push(actionRcvr);
-                    if (actionArgCount > 0 && !actionArg.isNil()) {
-                        push(actionArg);
-                    }
-
-                    if (actionLog) {
-                        fprintf(actionLog, "[ACTION #%d] Sending message now to receiver %p with %d args\n",
-                                actionCount, (void*)actionRcvr.rawBits(), actionArgCount);
-                        if (actionArgCount > 0 && !actionArg.isNil() && actionArg.isObject()) {
-                            ObjectHeader* argHdr = actionArg.asObjectPtr();
-                            if (argHdr->isBytesObject() && argHdr->byteSize() < 100) {
-                                std::string argStr((char*)argHdr->bytes(), argHdr->byteSize());
-                                fprintf(actionLog, "[ACTION #%d] Argument string: '%s'\n", actionCount, argStr.c_str());
-                            }
-                        }
-                        fflush(actionLog);
-                    }
-
-                    sendSelector(actionSel, actionArgCount);
-
-                    // If this was a chained call, we need to capture the result
-                    // The result will be on the stack after the method returns
-                    // For now, we'll check on the next idle cycle
-                    // (This is a simplification - proper chaining would need to intercept returns)
-
-                    return;
                 }
                 // Let relinquish proceed normally
             }
@@ -5847,67 +4225,7 @@ extern int g_traceSendsAfterPrim264;
                 }
             }
 
-            // ===== INTERCEPT doOneCycle (handles both WorldMorph and WorldState) =====
-            // Check for pending action during UI cycle
-            if (selStr == "doOneCycle" && argCount == 0) {
-                static int doOneCycleCount = 0;
-                doOneCycleCount++;
-                bool memberPending = pendingMenuAction_.pending.load(std::memory_order_seq_cst);
-                bool globalPending = g_debugPendingFlag.load(std::memory_order_seq_cst);
-
-                // Get receiver class name for debugging
-                std::string rcvrClassName = "Unknown";
-                if (rcvr.isObject()) {
-                    Oop rcvrClass = memory_.classOf(rcvr);
-                    if (rcvrClass.isObject()) {
-                        Oop className = memory_.fetchPointer(6, rcvrClass);
-                        if (className.isObject()) {
-                            ObjectHeader* nameHdr = className.asObjectPtr();
-                            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
-                                rcvrClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                            }
-                        }
-                    }
-                }
-
-                if (doOneCycleCount <= 10 || memberPending || globalPending) {
-                    std::cerr << "[CYCLE-INTERCEPT] doOneCycle #" << doOneCycleCount
-                              << " rcvr=" << rcvrClassName
-                              << " pending=" << (memberPending || globalPending) << "\n";
-                }
-                if (memberPending || globalPending) {
-                    // Dispatch the pending action!
-                    std::cerr << "[CYCLE-DISPATCH] Dispatching from doOneCycle!\n";
-                    Oop actionSel = pendingMenuAction_.selector;
-                    Oop actionRcvr = pendingMenuAction_.receiver;
-                    Oop actionArg = pendingMenuAction_.argument;
-                    int actionArgCount = pendingMenuAction_.argCount;
-                    pendingMenuAction_.pending.store(false, std::memory_order_seq_cst);
-                    g_debugPendingFlag.store(false, std::memory_order_seq_cst);
-                    pendingMenuAction_.selector = Oop::nil();
-                    pendingMenuAction_.receiver = Oop::nil();
-                    pendingMenuAction_.argument = Oop::nil();
-                    pendingMenuAction_.argCount = 0;
-
-                    // Pop doOneCycle's receiver
-                    popN(1);
-
-                    // Set up the action call
-                    push(actionRcvr);
-                    if (actionArgCount > 0 && !actionArg.isNil()) {
-                        push(actionArg);
-                    }
-
-                    // Enable tracing
-                    std::cerr << "[TRACE-START] Setting menuActionTraceCount_=500 from doOneCycle dispatch\n";
-                    menuActionTraceCount_ = 500;
-                    inDispatchedAction_ = true;
-                    dispatchedActionFrameDepth_ = frameDepth_;
-
-                    sendSelector(actionSel, actionArgCount);
-                    return;
-                }
-            }
+            // doOneCycle intercept for pending action dispatch REMOVED - Smalltalk handles all event dispatch
 
             // ===== INTERCEPT WorldState >> doOneCycleFor: =====
             // Render World's morphs directly instead of using NullWorldRenderer
@@ -5925,104 +4243,14 @@ extern int g_traceSendsAfterPrim264;
                         if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
                             std::string rcvrClassName((char*)nameHdr->bytes(), nameHdr->byteSize());
                             if (rcvrClassName == "WorldState") {
-                                // Process any pending input events
+                                // Process any pending input events (queue for Smalltalk)
                                 processInputEvents();
 
                                 // Render World's morphs directly to the display surface
                                 renderWorldMorphs();
 
-                                // Debug - verify we reach here
-                                static int cycleCount = 0;
-                                ++cycleCount;
-                                bool memberPending = pendingMenuAction_.pending.load(std::memory_order_seq_cst);
-                                bool globalPending = g_debugPendingFlag.load(std::memory_order_seq_cst);
-                                // Log when global flag is set (indicating world menu was queued)
-                                if (globalPending) {
-                                    static int sawGlobal = 0;
-                                    if (sawGlobal < 10) {
-                                        sawGlobal++;
-                                        std::cerr << "[CYCLE-PENDING] doOneCycleFor: #" << cycleCount
-                                                  << " member=" << memberPending
-                                                  << " global=" << globalPending << "\n";
-                                    }
-                                }
-
-                                // Execute pending menu action if any
-                                // Check both member AND global to ensure we see the flag
-                                if (memberPending || globalPending) {
-                                    std::cerr << "[CYCLE-DISPATCH] Dispatching at #" << cycleCount
-                                              << " member=" << memberPending
-                                              << " global=" << globalPending << "\n";
-                                    Oop actionSel = pendingMenuAction_.selector;
-                                    Oop actionRcvr = pendingMenuAction_.receiver;
-                                    Oop actionArg = pendingMenuAction_.argument;
-                                    int actionArgCount = pendingMenuAction_.argCount;
-                                    pendingMenuAction_.pending.store(false, std::memory_order_seq_cst);
-                                    g_debugPendingFlag.store(false, std::memory_order_seq_cst);  // Clear global too
-                                    pendingMenuAction_.selector = Oop::nil();
-                                    pendingMenuAction_.receiver = Oop::nil();
-                                    pendingMenuAction_.argument = Oop::nil();
-                                    pendingMenuAction_.argCount = 0;
-
-                                    // Pop doOneCycleFor:'s args and receiver
-                                    popN(argCount + 1);
-
-                                    // Set up the action call
-                                    push(actionRcvr);
-                                    if (actionArgCount > 0 && !actionArg.isNil()) {
-                                        push(actionArg);
-                                    }
-
-                                    // Enable tracing for the next 500 message sends
-                                    std::cerr << "[TRACE-START] Setting menuActionTraceCount_=500 from doOneCycleFor dispatch\n";
-                                    menuActionTraceCount_ = 500;
-
-                                    // Track that we're in a dispatched action (for proper context creation)
-                                    inDispatchedAction_ = true;
-                                    dispatchedActionFrameDepth_ = frameDepth_;
-
-                                    sendSelector(actionSel, actionArgCount);
-                                    return;
-                                }
-
-                                // Trigger event polling by sending processEvents to ActiveHand
-                                // This is what doOneCycle would normally do
-                                static FILE* debugLog = nullptr;
-                                static int debugCount = 0;
-                                if (!debugLog) {
-                                    debugLog = fopen("/tmp/activehand_debug.log", "w");
-                                }
-
-                                Oop activeHand = memory_.findGlobal("ActiveHand");
-                                if (debugLog && debugCount < 100) {
-                                    fprintf(debugLog, "[DEBUG] #%d ActiveHand lookup: isNil=%d isObject=%d bits=0x%llx\n",
-                                            ++debugCount, activeHand.isNil(), activeHand.isObject(), activeHand.rawBits());
-                                    fflush(debugLog);
-                                }
-                                if (!activeHand.isNil() && activeHand.isObject()) {
-                                    // Found ActiveHand, send processEvents
-                                    Oop processEventsSel = findSelector("processEvents");
-                                    if (debugLog && debugCount < 100) {
-                                        fprintf(debugLog, "[DEBUG] processEvents selector: isNil=%d bits=0x%llx\n",
-                                                processEventsSel.isNil(), processEventsSel.rawBits());
-                                        fflush(debugLog);
-                                    }
-                                    if (!processEventsSel.isNil()) {
-                                        if (debugLog && debugCount < 100) {
-                                            fprintf(debugLog, "[DEBUG] Sending processEvents to ActiveHand!\n");
-                                            fflush(debugLog);
-                                        }
-                                        // Pop doOneCycleFor:'s args and receiver
-                                        popN(argCount + 1);
-
-                                        // Set up processEvents call
-                                        push(activeHand);
-                                        sendSelector(processEventsSel, 0);
-                                        return;
-                                    }
-                                }
-
-                                // Return receiver (WorldState) to continue
+                                // Let Smalltalk continue - pending action dispatch removed
+                                // Return receiver (WorldState) to continue normal execution
                                 popN(argCount + 1);
                                 push(rcvr);
                                 return;
@@ -7265,25 +5493,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // Get receiver from stack (now in the frame)
     receiver_ = argument(0);  // First "argument" slot is actually receiver
 
-    // Only create minimal MethodContext when executing dispatched actions (tracked by flag)
-    // Creating context for every method is too expensive.
-    // For dispatched actions, blocks need correct outer context with receiver.
-    if (inDispatchedAction_) {
-        Oop contextClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
-        if (contextClass.isObject() && !contextClass.isNil()) {
-            // Allocate a small context with just enough slots for the receiver
-            Oop ctx = memory_.allocateSlots(memory_.indexOfClass(contextClass), 6, ObjectFormat::FixedSize);
-            if (!ctx.isNil()) {
-                memory_.storePointer(0, ctx, activeContext_);  // sender = previous context
-                memory_.storePointer(1, ctx, Oop::nil());      // pc (not used)
-                memory_.storePointer(2, ctx, Oop::nil());      // stackp (not used)
-                memory_.storePointer(3, ctx, method);          // method
-                memory_.storePointer(4, ctx, Oop::nil());      // closureOrNil
-                memory_.storePointer(5, ctx, receiver_);       // receiver
-                activeContext_ = ctx;
-            }
-        }
-    }
+    // Dispatched action context creation REMOVED - Smalltalk handles all event dispatch
 
     // Debug: Log receiver being set for superclass methods
     static FILE* rcvrLog = nullptr;
@@ -7386,60 +5596,6 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     Oop slot1 = memory_.fetchPointer(1, block);
     Oop outerContext = memory_.fetchPointer(0, block);
 
-    // Trace block activation when menu tracing is active
-    if (menuActionTraceCount_ > 0) {
-        static FILE* menuTrace = fopen("/tmp/iospharo-menu-trace.log", "a");
-        if (menuTrace) {
-            std::string blockClassName = "Unknown";
-            if (block.isObject()) {
-                ObjectHeader* bHdr = block.asObjectPtr();
-                Oop bClass = memory_.classOf(block);
-                if (bClass.isObject()) {
-                    ObjectHeader* cHdr = bClass.asObjectPtr();
-                    if (cHdr->slotCount() > 6) {
-                        Oop name = cHdr->slotAt(6);
-                        if (name.isObject()) {
-                            ObjectHeader* nHdr = name.asObjectPtr();
-                            size_t len = nHdr->byteSize();
-                            if (len < 100) {
-                                blockClassName = std::string(reinterpret_cast<char*>(nHdr->bytes()), len);
-                            }
-                        }
-                    }
-                }
-            }
-
-            std::string outerRcvrClassName = "nil";
-            Oop outerRcvr = memory_.nil();
-            if (outerContext.isObject() && !outerContext.isNil()) {
-                outerRcvr = memory_.fetchPointer(5, outerContext);
-                if (outerRcvr.isObject() && !outerRcvr.isNil()) {
-                    Oop rcvrClass = memory_.classOf(outerRcvr);
-                    if (rcvrClass.isObject()) {
-                        ObjectHeader* cHdr = rcvrClass.asObjectPtr();
-                        if (cHdr->slotCount() > 6) {
-                            Oop name = cHdr->slotAt(6);
-                            if (name.isObject()) {
-                                ObjectHeader* nHdr = name.asObjectPtr();
-                                size_t len = nHdr->byteSize();
-                                if (len < 100) {
-                                    outerRcvrClassName = std::string(reinterpret_cast<char*>(nHdr->bytes()), len);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            fprintf(menuTrace, "[BLOCK-ACTIVATE] %s argCount=%d outerContext=0x%llx outerRcvr=0x%llx (%s) frameDepth=%d\n",
-                    blockClassName.c_str(), argCount,
-                    static_cast<unsigned long long>(outerContext.rawBits()),
-                    static_cast<unsigned long long>(outerRcvr.rawBits()),
-                    outerRcvrClassName.c_str(),
-                    frameDepth_);
-            fflush(menuTrace);
-        }
-    }
     Oop methodToExecute;
     uint8_t* startAddress = nullptr;
 
@@ -7663,23 +5819,6 @@ void Interpreter::popFrame() {
 
     --frameDepth_;
     SavedFrame& frame = savedFrames_[frameDepth_];
-
-    // Clear dispatched action flag when returning to dispatch level
-    if (inDispatchedAction_ && frameDepth_ <= dispatchedActionFrameDepth_) {
-        inDispatchedAction_ = false;
-        static FILE* dispatchCompleteLog = fopen("/tmp/dispatch_complete.log", "a");
-        if (dispatchCompleteLog) {
-            fprintf(dispatchCompleteLog, "[DISPATCH-COMPLETE] Cleared flag at frameDepth=%d (dispatch was at %d)\n",
-                    frameDepth_, dispatchedActionFrameDepth_);
-            fflush(dispatchCompleteLog);
-        }
-        static FILE* flagLog = fopen("/tmp/dispatch_flag.log", "a");
-        if (flagLog) {
-            fprintf(flagLog, "[FLAG] SET false (popFrame) fd=%d dispatchFd=%d\n",
-                    frameDepth_, dispatchedActionFrameDepth_);
-            fflush(flagLog);
-        }
-    }
 
     // Reset stack to frame pointer (discards temps and locals)
     stackPointer_ = framePointer_;
@@ -8850,42 +6989,6 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied) {
     size_t slots = 3 + numCopied;  // outerContext, compiledBlock, numArgs, copied...
     Oop block = memory_.allocateSlots(classIdx, slots, ObjectFormat::Indexable);
 
-    // Trace block creation during menu action tracing
-    if (menuActionTraceCount_ > 0) {
-        static FILE* menuTrace = fopen("/tmp/iospharo-menu-trace.log", "a");
-        if (menuTrace) {
-            std::string ctxRcvrClassName = "nil";
-            Oop ctxRcvr = memory_.nil();
-            // activeContext_ is just an index into callStack_, not a real context object
-            // The receiver is stored in receiver_ for the current frame
-            // But for block creation, we need to capture the CURRENT receiver
-            ctxRcvr = receiver_;
-            if (ctxRcvr.isObject() && !ctxRcvr.isNil()) {
-                Oop rcvrClass = memory_.classOf(ctxRcvr);
-                if (rcvrClass.isObject()) {
-                    ObjectHeader* cHdr = rcvrClass.asObjectPtr();
-                    if (cHdr->slotCount() > 6) {
-                        Oop name = cHdr->slotAt(6);
-                        if (name.isObject()) {
-                            ObjectHeader* nHdr = name.asObjectPtr();
-                            size_t len = nHdr->byteSize();
-                            if (len < 100) {
-                                ctxRcvrClassName = std::string(reinterpret_cast<char*>(nHdr->bytes()), len);
-                            }
-                        }
-                    }
-                }
-            }
-            fprintf(menuTrace, "[BLOCK-CREATE] FullBlockClosure numCopied=%d activeContext_=0x%llx receiver_=0x%llx (%s) frameDepth=%d\n",
-                    numCopied,
-                    static_cast<unsigned long long>(activeContext_.rawBits()),
-                    static_cast<unsigned long long>(ctxRcvr.rawBits()),
-                    ctxRcvrClassName.c_str(),
-                    frameDepth_);
-            fflush(menuTrace);
-        }
-    }
-
     // Use activeContext_ as the outer context
     // Note: activateBlock now updates activeContext_ when entering blocks,
     // so blocks created inside other blocks will capture the correct context chain
@@ -9303,13 +7406,6 @@ void Interpreter::transferTo(Oop newProcess) {
 }
 
 bool Interpreter::tryReschedule() {
-    static FILE* reschedLog = nullptr;
-    if (!reschedLog) reschedLog = fopen("/tmp/reschedule.log", "a");
-    if (reschedLog) {
-        fprintf(reschedLog, "[RESCHEDULE] called, inDispatchedAction=%d\n", inDispatchedAction_ ? 1 : 0);
-        fflush(reschedLog);
-    }
-    std::cerr << "[RESCHEDULE] tryReschedule called\n";
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
     Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
 
@@ -9362,23 +7458,6 @@ bool Interpreter::tryReschedule() {
         // Update the active process in scheduler
         memory_.storePointer(1, scheduler, process);
 
-        // Log process switch during dispatch
-        if (reschedLog) {
-            fprintf(reschedLog, "[RESCHEDULE] SWITCHING process! inDispatch=%d fd=%d newFd=0\n",
-                    inDispatchedAction_ ? 1 : 0, frameDepth_);
-            fflush(reschedLog);
-        }
-
-        // If we're in a dispatched action and switching processes, we lose the dispatch context
-        // Clear the flag so we don't incorrectly track bytecodes in the new process
-        if (inDispatchedAction_) {
-            if (reschedLog) {
-                fprintf(reschedLog, "[RESCHEDULE] Clearing inDispatchedAction_ due to process switch\n");
-                fflush(reschedLog);
-            }
-            inDispatchedAction_ = false;
-        }
-
         // Reset stack for new process
         stackPointer_ = stackBase_;
         frameDepth_ = 0;
@@ -9395,67 +7474,9 @@ bool Interpreter::tryReschedule() {
 // ===== STARTUP SUPPORT =====
 
 bool Interpreter::autoLoadDriver() {
-    // Auto-load OSiOSDriver.st by evaluating Smalltalk code
-    // This enables the event system in standard Pharo images
-    //
-    // DISABLED: OpalCompiler evaluate: triggers a deprecation loop when trying
-    // to create a ZnCharacterEncoder. The method dictionary lookup for
-    // ZnCharacterEncoder newForEncoding: fails, and the deprecation system
-    // gets into an infinite retry loop.
-    //
-    // TODO: Fix the method dictionary lookup issue for ZnCharacterEncoder
-    // or find a way to bypass the deprecation system during evaluate:.
-    //
-    // For now, OSiOSDriver must be loaded from the Pharo image side.
-    std::cerr << "[STARTUP] Auto-load disabled - OSiOSDriver must be loaded from Pharo\n";
+    // Auto-load disabled - OSiOSDriver must be loaded from Pharo image side
+    // (Pending action dispatch mechanism has been removed)
     return false;
-
-    static bool attempted = false;
-    if (attempted) return false;
-    attempted = true;
-
-    std::cerr << "[STARTUP] Attempting to auto-load OSiOSDriver...\n";
-
-    // Try OpalCompiler class >> evaluate: directly
-    Oop evaluateSel = findSelector("evaluate:");
-    if (evaluateSel.isNil()) {
-        std::cerr << "[STARTUP] evaluate: selector not found\n";
-        return false;
-    }
-
-    Oop compilerClass = memory_.findGlobal("OpalCompiler");
-    if (compilerClass.isNil()) {
-        std::cerr << "[STARTUP] OpalCompiler not found\n";
-        return false;
-    }
-
-    // Load OSiOSDriver.st - this sets up the event loop for iOS
-    // Note: OpalCompiler successfully compiles code but evaluateDoIt: doesn't
-    // seem to execute it. This needs further investigation.
-    std::string code = "'/Users/wohl/src/iospharo/src/smalltalk/OSiOSDriver.st' asFileReference fileIn. OSiOSDriver install";
-    Oop codeString = memory_.createString(code);
-    if (codeString.isNil()) {
-        std::cerr << "[STARTUP] Failed to create code string\n";
-        return false;
-    }
-
-    // Log the string object details for debugging
-    if (codeString.isObject()) {
-        ObjectHeader* strHdr = codeString.asObjectPtr();
-        std::cerr << "[STARTUP] Created ByteString with classIndex=" << strHdr->classIndex()
-                  << ", byteSize=" << strHdr->byteSize() << "\n";
-    }
-
-    std::cerr << "[STARTUP] Queueing OpalCompiler evaluate: '" << code << "'\n";
-
-    pendingMenuAction_.selector = evaluateSel;
-    pendingMenuAction_.receiver = compilerClass;
-    pendingMenuAction_.argument = codeString;
-    pendingMenuAction_.argCount = 1;
-    pendingMenuAction_.pending = true;
-    pendingMenuAction_.isChained = false;
-
-    return true;
 }
 
 bool Interpreter::bootstrapStartup() {
@@ -10116,19 +8137,6 @@ bool Interpreter::executeFromContext(Oop context) {
     stackPointer_ = stackBase_;
     frameDepth_ = 0;
 
-    // Reset dispatch tracking - we're switching to a different process/context
-    // so any previous dispatch state is no longer relevant
-    if (inDispatchedAction_) {
-        static FILE* switchLog = fopen("/tmp/context_switch.log", "a");
-        if (switchLog) {
-            fprintf(switchLog, "[CONTEXT-SWITCH] Clearing inDispatchedAction_ (was at frameDepth=%d)\n",
-                    dispatchedActionFrameDepth_);
-            fflush(switchLog);
-        }
-        inDispatchedAction_ = false;
-        dispatchedActionFrameDepth_ = -1;
-    }
-
     // Execution context tracing (limited)
     static int execCtxCount = 0;
     execCtxCount++;
@@ -10674,13 +8682,6 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
                 primCallCount, primitiveIndex);
         fflush(allPrimLog);
     }
-    // Log ALL primitives during dispatch
-    if (inDispatchedAction_ && allPrimLog) {
-        fprintf(allPrimLog, "[PRIM-DISPATCH] #%d primitive=%d argCount=%d fd=%d\n",
-                primCallCount, primitiveIndex, argCount, frameDepth_);
-        fflush(allPrimLog);
-    }
-
     // Named primitives have high numbers (typically >= 32768)
     // They are looked up by name from method literals - not yet implemented
     // For now, fail gracefully so the method body executes

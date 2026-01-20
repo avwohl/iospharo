@@ -194,13 +194,9 @@ public:
     void initializeDisplayForm();  // Create and set up display Form
     void renderWorldMorphs();      // Direct rendering of World's morphs
     void processInputEvents();     // Process pending input events
-    void dispatchEventsToMorphic(); // Dispatch queued events to Morphic's active hand
-    void handleWorldClick(int x, int y, int buttons);  // Handle click outside menu bar
-    void showWorldMenu(int x, int y);  // Show World menu at position
     void drawClickIndicator(int x, int y, int buttons); // Draw visible click feedback
     void updateActiveHandPosition(); // Directly update ActiveHand's position/buttons
     void syncDisplayToSurface();   // Copy Display Form to platform surface
-    void invokeMenuItemAction(Oop menuItemMorph);  // Invoke action from menu item click
     void ensureDisplayForm(int width, int height, int depth);  // Create Form and bind to Display global
     int screenDepth() const { return screenDepth_; }
 
@@ -310,8 +306,6 @@ private:
     // Execution control
     bool running_;
     bool primitiveFailed_;
-    bool inDispatchedAction_ = false;  // True when executing a dispatched menu action
-    int dispatchedActionFrameDepth_ = 0;  // Frame depth when dispatch started
     int lastPrimitiveIndex_ = 0;  // For stepDetailed() tracking
 
     // System paths
@@ -368,25 +362,6 @@ private:
     WorldMenuBounds pendingMenuBounds_;
     bool hasVisibleMenu_ = false;
 
-    // Pending menu action (queued for safe execution)
-    // Note: pending is atomic because it's set from heartbeat thread and read from main thread
-    struct PendingMenuAction {
-        Oop selector = Oop::nil();
-        Oop receiver = Oop::nil();
-        Oop argument = Oop::nil();  // Optional argument for value: or cull:
-        int argCount = 0;           // 0 for value, 1 for value:
-        std::atomic<bool> pending{false};  // Atomic for thread safety
-        bool executeFromSync = false;  // Flag to execute from interpret loop
-
-        // For chained calls (e.g., OpalCompiler new >> evaluate:)
-        Oop chainSelector = Oop::nil();    // Second selector to send to result
-        Oop chainArgument = Oop::nil();    // Argument for second send
-        int chainArgCount = 0;
-        bool isChained = false;            // True if this is a chained call
-    };
-    PendingMenuAction pendingMenuAction_;
-    Oop pendingChainReceiver_ = Oop::nil();  // Captured result for chained calls
-    int menuActionTraceCount_ = 0;  // Number of sends to trace after menu action
 
     // Debug: visual click indicator
     int debugClickX_ = -1;
