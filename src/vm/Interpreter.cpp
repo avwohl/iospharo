@@ -1684,8 +1684,8 @@ void Interpreter::processInputEvents() {
         // All events go to Pharo - let Morphic handle everything
         passThroughEvents_.push_back(event);
 
-        // DIRECT DISPATCH: Since InputEventSensor isn't running, manually dispatch mouse events
-        // This is a workaround until the full event loop is working
+        // DIRECT DISPATCH: InputEventSensor isn't running, so manually dispatch mouse events
+        // For world menu (right-click on background), we detect "no morph hit" case
         if (event.type == static_cast<int>(pharo::EventType::Mouse)) {
             int eventType = event.arg5;  // 1=down, 2=up, 3=move
             int x = event.arg1;
@@ -1905,8 +1905,57 @@ void Interpreter::dispatchMouseEventToMorph(int x, int y, int buttons, bool isMo
 
             // For other morphs, try to dispatch a click event
             // TODO: Implement proper event dispatch for non-menubar morphs
-            break;
+            return;  // Found a morph, don't fall through to world background
         }
+    }
+
+    // No submorph was hit - the click is on the World background
+    // Right-click (buttons=2) on World should show the world menu
+    if (isMouseDown && buttons == 2) {
+        if (dispatchLog) {
+            fprintf(dispatchLog, "[DISPATCH #%d] Right-click on World background - invoking world menu\n",
+                    dispatchCount);
+            fflush(dispatchLog);
+        }
+        handleWorldMenuClick(world, x, y);
+    } else if (dispatchLog && dispatchCount <= 10) {
+        fprintf(dispatchLog, "[DISPATCH #%d] No morph hit at (%d,%d) buttons=%d isDown=%d\n",
+                dispatchCount, x, y, buttons, isMouseDown ? 1 : 0);
+        fflush(dispatchLog);
+    }
+}
+
+// Handle right-click on World background to show world menu
+void Interpreter::handleWorldMenuClick(Oop world, int x, int y) {
+    static FILE* menuLog = nullptr;
+    if (!menuLog) {
+        menuLog = fopen("/tmp/world_menu.log", "w");
+    }
+
+    if (menuLog) {
+        fprintf(menuLog, "[WORLD-MENU] Opening at (%d,%d)\n", x, y);
+        fflush(menuLog);
+    }
+
+    // In Pharo, the world menu is typically shown by:
+    // 1. Getting World's worldMenu
+    // 2. Opening it as a popup at the mouse position
+    //
+    // For now, we'll try to find and invoke the Pharo menu method.
+    // This requires finding the selector #worldMenu and sending it to World.
+
+    // Try to invoke World >> worldMenu
+    // The result should be a MenuMorph that we need to open
+
+    // Actually, for Spec/Pharo, the world menu comes from WorldState >> worldMenuOn:
+    // or PasteUpMorph >> yellowButtonDown:
+    //
+    // For now, log that we detected the click. The actual menu invocation
+    // would need to call the right Smalltalk method or create the menu in C++.
+
+    if (menuLog) {
+        fprintf(menuLog, "[WORLD-MENU] World menu not yet implemented - need to invoke Smalltalk method\n");
+        fflush(menuLog);
     }
 }
 

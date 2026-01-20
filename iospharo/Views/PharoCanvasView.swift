@@ -7,6 +7,7 @@
 
 import SwiftUI
 import MetalKit
+import GameController
 
 // MARK: - Custom MTKView with Direct Touch Handling
 
@@ -333,6 +334,8 @@ class PharoCanvasViewController: UIViewController {
     var renderer: MetalRenderer?
     weak var bridge: PharoBridge?
 
+    // GCMouse handling is done at app level in iosparoApp.swift
+
     override func loadView() {
         // Use our custom container view instead of default UIView
         view = DebugContainerView()
@@ -386,11 +389,7 @@ class PharoCanvasViewController: UIViewController {
         super.viewDidAppear(animated)
         mtkView.becomeFirstResponder()
 
-        #if targetEnvironment(macCatalyst)
-        // On Mac Catalyst, UIKit event delivery to embedded views is unreliable
-        // Use NSEvent monitoring as a workaround to capture all mouse events
-        setupNSEventMonitor()
-        #endif
+        // GCMouse handling is done at app level in iosparoApp.swift
 
         // Debug: log to file
         if let file = fopen("/tmp/vc_lifecycle.log", "a") {
@@ -423,14 +422,8 @@ class PharoCanvasViewController: UIViewController {
     }
 
     #if targetEnvironment(macCatalyst)
-    private func setupNSEventMonitor() {
-        // NSEvent monitoring requires calling class method on NSEvent, which is tricky from Swift
-        // For now, just log that we're relying on GCMouse and gesture recognizers
-        if let file = fopen("/tmp/nsevent_monitor.log", "a") {
-            fputs("[NSEVENT] Using GCMouse and UIKit gesture recognizers for Mac Catalyst\n", file)
-            fclose(file)
-        }
-    }
+    // GCMouse handling is done at the app level in iosparoApp.swift
+    // No additional setup needed here - the app-level handlers forward events to the bridge
     #endif
 
     private func setupGestureRecognizers() {
