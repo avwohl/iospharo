@@ -6790,6 +6790,50 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
         fprintf(dnuTraceLog, "[DNU #%d depth=%d] %s >> #%s argCount=%d\n",
                 ++dnuTraceCount, dnuDepth, rcvrClassName.c_str(), selStr.c_str(), argCount);
+
+        // For SmallInteger/UndefinedObject >> #do:, trace the calling method
+        if ((rcvrClassName == "SmallInteger" || rcvrClassName == "UndefinedObject") && selStr == "do:") {
+            // Get the current method's selector from its penultimate literal
+            std::string callingMethod = "<unknown>";
+            std::string callingClass = "<unknown>";
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                ObjectHeader* methHdr = method_.asObjectPtr();
+                Oop header = memory_.fetchPointer(0, method_);
+                if (header.isSmallInteger()) {
+                    size_t numLits = header.asSmallInteger() & 0x7FFF;
+                    if (numLits >= 2) {
+                        // Penultimate literal has selector
+                        Oop penult = memory_.fetchPointer(numLits - 1, method_);
+                        if (penult.isObject() && penult.rawBits() > 0x10000) {
+                            ObjectHeader* penultHdr = penult.asObjectPtr();
+                            if (penultHdr->isBytesObject() && penultHdr->byteSize() < 100) {
+                                callingMethod = std::string((char*)penultHdr->bytes(), penultHdr->byteSize());
+                            }
+                        }
+                        // Last literal has class association
+                        Oop lastLit = memory_.fetchPointer(numLits, method_);
+                        if (lastLit.isObject() && lastLit.rawBits() > 0x10000) {
+                            ObjectHeader* llHdr = lastLit.asObjectPtr();
+                            if (llHdr->slotCount() >= 1) {
+                                Oop classRef = memory_.fetchPointer(0, lastLit);
+                                if (classRef.isObject()) {
+                                    Oop className = memory_.fetchPointer(6, classRef);
+                                    if (className.isObject()) {
+                                        ObjectHeader* cnHdr = className.asObjectPtr();
+                                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 100) {
+                                            callingClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            fprintf(dnuTraceLog, "  CALLED FROM: %s >> #%s (receiver value: %lld)\n",
+                    callingClass.c_str(), callingMethod.c_str(),
+                    rcvr.isSmallInteger() ? rcvr.asSmallInteger() : -999);
+        }
         fflush(dnuTraceLog);
     }
 
@@ -7317,11 +7361,26 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     if (origStr == "do:" && argCount == 1) {
         static int doFallbackCount = 0;
         doFallbackCount++;
+
+        Oop block = pop();  // Pop the block argument
+        Oop receiver = pop();  // Pop the receiver (the "non-collection")
+
+        // For SmallInteger/nil receivers, this is a bug in the caller (nextPutAll: receiving a number)
+        // Just skip the iteration entirely - don't call the block
+        if (receiver.isSmallInteger() || receiver.isNil()) {
+            if (doFallbackCount <= 10) {
+                std::cerr << "[DNU] do: on " << (receiver.isSmallInteger() ? "SmallInteger" : "nil")
+                          << " (value=" << (receiver.isSmallInteger() ? receiver.asSmallInteger() : 0)
+                          << ") - skipping (caller bug)\n";
+            }
+            push(receiver);  // Return receiver (empty iteration)
+            dnuDepth--;
+            return;
+        }
+
         if (doFallbackCount <= 5) {
             std::cerr << "[DNU] Fallback for do: - treating receiver as single-element collection\n";
         }
-        Oop block = pop();  // Pop the block argument
-        Oop receiver = pop();  // Pop the receiver (the "non-collection")
 
         // If block is a valid block, call it with the receiver as argument
         if (block.isObject()) {
@@ -7531,21 +7590,37 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         canResolveClass = true;  // SmallInteger always has a class
         failedRcvrClassName = "SmallInteger";
     } else if (failedReceiver.isObject() && failedReceiver.rawBits() > 0x10000) {
-        Oop failedRcvrClass = memory_.classOf(failedReceiver);
-        if (failedRcvrClass.isObject() && failedRcvrClass.rawBits() > 0x10000) {
-            // Try to get the class name
-            Oop nameOop = memory_.fetchPointer(6, failedRcvrClass);  // classNameIndex
-            if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
-                ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
-                    failedRcvrClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                    canResolveClass = true;
+        ObjectHeader* rcvrHdr = failedReceiver.asObjectPtr();
+        uint32_t rcvrClassIdx = rcvrHdr->classIndex();
+
+        // Class index 0 is reserved/invalid - this is a corrupted object
+        if (rcvrClassIdx == 0) {
+            canResolveClass = false;
+            failedRcvrClassName = "<classIndex=0 CORRUPTED>";
+        } else {
+            Oop failedRcvrClass = memory_.classOf(failedReceiver);
+            if (failedRcvrClass.isObject() && failedRcvrClass.rawBits() > 0x10000) {
+                // Check that the class itself has a valid structure (classes have >6 slots)
+                ObjectHeader* clsHdr = failedRcvrClass.asObjectPtr();
+                if (clsHdr->slotCount() >= 7) {
+                    // Try to get the class name
+                    Oop nameOop = memory_.fetchPointer(6, failedRcvrClass);  // classNameIndex
+                    if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                        ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                            failedRcvrClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                            canResolveClass = true;
+                        }
+                    }
+                    // Even if we can't get the name, if we have a valid class object, we can try DNU
+                    if (!canResolveClass && failedRcvrClass.rawBits() != memory_.nil().rawBits()) {
+                        canResolveClass = true;
+                        failedRcvrClassName = "<class-object>";
+                    }
+                } else {
+                    // Class has too few slots - likely corrupted or not a real class
+                    failedRcvrClassName = "<invalid-class-structure>";
                 }
-            }
-            // Even if we can't get the name, if we have a valid class object, we can try DNU
-            if (!canResolveClass && failedRcvrClass.rawBits() != memory_.nil().rawBits()) {
-                canResolveClass = true;
-                failedRcvrClassName = "<class-object>";
             }
         }
     }
@@ -7554,6 +7629,32 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         std::cerr << "\n[FATAL ERROR] Cannot resolve class of receiver in DNU handler!\n";
         std::cerr << "  Selector: #" << origStr << "\n";
         std::cerr << "  Receiver: 0x" << std::hex << failedReceiver.rawBits() << std::dec << "\n";
+
+        // Diagnose WHY the class can't be resolved
+        if (failedReceiver.isObject() && failedReceiver.rawBits() > 0x10000) {
+            ObjectHeader* rcvrHdr = failedReceiver.asObjectPtr();
+            uint32_t classIdx = rcvrHdr->classIndex();
+            std::cerr << "  Receiver classIndex: " << classIdx << "\n";
+            std::cerr << "  Receiver format: " << static_cast<int>(rcvrHdr->format()) << "\n";
+            std::cerr << "  Receiver slotCount: " << rcvrHdr->slotCount() << "\n";
+
+            Oop classOop = memory_.classOf(failedReceiver);
+            std::cerr << "  classOf() returned: 0x" << std::hex << classOop.rawBits() << std::dec;
+            if (classOop.isNil()) {
+                std::cerr << " (nil)\n";
+            } else if (classOop.isObject() && classOop.rawBits() > 0x10000) {
+                ObjectHeader* clsHdr = classOop.asObjectPtr();
+                std::cerr << " (classIdx=" << clsHdr->classIndex() << " slots=" << clsHdr->slotCount() << ")\n";
+                // Try to get name from slot 6
+                if (clsHdr->slotCount() > 6) {
+                    Oop nameOop = memory_.fetchPointer(6, classOop);
+                    std::cerr << "  Class name slot[6]: 0x" << std::hex << nameOop.rawBits() << std::dec << "\n";
+                }
+            } else {
+                std::cerr << " (not an object)\n";
+            }
+        }
+
         std::cerr << "  This would cause infinite DNU recursion. Stopping VM.\n";
         std::cerr << "  (This is a bug - the receiver should have a valid class)\n\n";
         if (dnuTraceLog) {
