@@ -4761,7 +4761,12 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             if (inDispatchedAction_) {
                 static FILE* dispatchSendLog = nullptr;
                 static int dispatchSendCount = 0;
-                if (!dispatchSendLog) dispatchSendLog = fopen("/tmp/dispatch_sends.log", "w");
+                static bool triedOpen = false;
+                if (!dispatchSendLog && !triedOpen) {
+                    triedOpen = true;
+                    dispatchSendLog = fopen("/tmp/dispatch_sends.log", "w");
+                    fprintf(stderr, "[DEBUG] Opened dispatch_sends.log: %s\n", dispatchSendLog ? "SUCCESS" : "FAILED");
+                }
                 if (dispatchSendLog) {
                     dispatchSendCount++;
                     Oop rcvr = stackValue(static_cast<size_t>(argCount));
@@ -5082,7 +5087,11 @@ extern int g_traceSendsAfterPrim264;
                         fflush(flagLog);
                     }
 
+                    fprintf(stderr, "[DEBUG] About to call sendSelector for action, inDispatch=%d fd=%d\n",
+                            inDispatchedAction_ ? 1 : 0, frameDepth_);
                     sendSelector(actionSel, actionArgCount);
+                    fprintf(stderr, "[DEBUG] Returned from sendSelector, inDispatch=%d fd=%d\n",
+                            inDispatchedAction_ ? 1 : 0, frameDepth_);
                     return;
                 }
 
