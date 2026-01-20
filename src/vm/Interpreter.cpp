@@ -4768,6 +4768,10 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                     uint32_t clsIdx = 0;
                     if (rcvr.isSmallInteger()) {
                         clsIdx = 99999;  // marker for SmallInteger
+                    } else if (rcvr.isSmallFloat()) {
+                        clsIdx = 99998;  // marker for SmallFloat
+                    } else if (rcvr.isCharacter()) {
+                        clsIdx = 99997;  // marker for Character
                     } else if (rcvr.isObject()) {
                         ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
                         if (rcvrHdr) {
