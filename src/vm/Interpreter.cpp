@@ -1379,10 +1379,12 @@ void Interpreter::renderWorldMorphs() {
                 dropdownState_.lineHeight = lineHeight;
                 dropdownState_.itemMorphs = dropdownItemMorphs;
                 dropdownState_.valid = true;
+                dropdownState_.openTimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count();
                 if (logFile) {
-                    fprintf(logFile, "[DROPDOWN-SET] x=%d y=%d w=%d h=%d items=%zu VALID=TRUE\n",
+                    fprintf(logFile, "[DROPDOWN-SET] x=%d y=%d w=%d h=%d items=%zu VALID=TRUE openTime=%lld\n",
                             dropdownX, dropdownY, dropdownWidth, dropdownHeight,
-                            dropdownItemMorphs.size());
+                            dropdownItemMorphs.size(), dropdownState_.openTimeMs);
                     fflush(logFile);
                 }
             } else {
@@ -1727,6 +1729,19 @@ void Interpreter::processInputEvents() {
                 continue;  // Consumed by menu
             } else if (dropdownState_.valid) {
                 // Released outside both menubar and dropdown - close menu
+                // BUT: ignore mouse-up events within 300ms of menu opening
+                // (these are stray events from previous interactions)
+                auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count();
+                int64_t elapsedMs = nowMs - dropdownState_.openTimeMs;
+                if (elapsedMs < 300) {
+                    if (logFile) {
+                        fprintf(logFile, "[DROPDOWN] Ignoring early mouse-up at %d,%d (elapsed=%lldms < 300ms)\n",
+                                x, y, elapsedMs);
+                        fflush(logFile);
+                    }
+                    continue;  // Don't close, but don't pass through either
+                }
                 dropdownState_.valid = false;
                 selectedMenuIndex_ = -1;
                 // Fall through to pass event to Pharo

@@ -357,6 +357,7 @@ private:
         int lineHeight = 0;
         std::vector<Oop> itemMorphs;  // The actual menu item morphs for action invocation
         bool valid = false;
+        int64_t openTimeMs = 0;  // When dropdown became valid (for debouncing)
     };
     DropdownState dropdownState_;
 
