@@ -4478,6 +4478,18 @@ void Interpreter::arithmeticSend(int which) {
         }
     }
 
+    // For bit operations (\\, @, bitShift:, //, bitAnd:, bitOr:), provide fallback for non-integers
+    // These ops are 10-15 and only make sense on SmallIntegers
+    if (which >= 10 && which <= 15) {
+        if (!rcvr.isSmallInteger()) {
+            // std::cerr << "[ARITH] Bit operation fallback for " << rcvrClassName << " which=" << which;
+            popN(2);  // Pop receiver and argument
+            // Return 0 for bit operations on non-integers
+            push(Oop::fromSmallInteger(0));
+            return;
+        }
+    }
+
     // Try to get cached well-known selector
     Oop selector;
     switch (which) {
