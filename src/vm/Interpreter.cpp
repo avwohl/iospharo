@@ -1379,10 +1379,25 @@ void Interpreter::renderWorldMorphs() {
                 dropdownState_.lineHeight = lineHeight;
                 dropdownState_.itemMorphs = dropdownItemMorphs;
                 dropdownState_.valid = true;
+                if (logFile) {
+                    fprintf(logFile, "[DROPDOWN-SET] x=%d y=%d w=%d h=%d items=%zu VALID=TRUE\n",
+                            dropdownX, dropdownY, dropdownWidth, dropdownHeight,
+                            dropdownItemMorphs.size());
+                    fflush(logFile);
+                }
             } else {
+                if (logFile) {
+                    fprintf(logFile, "[DROPDOWN-CLEAR] dropdownLabels empty, setting valid=false\n");
+                    fflush(logFile);
+                }
                 dropdownState_.valid = false;
             }
         } else {
+            if (logFile) {
+                fprintf(logFile, "[DROPDOWN-CLEAR] selectedMenuIndex_=%d menuBarItemMorphs_.size()=%zu, setting valid=false\n",
+                        selectedMenuIndex_, menuBarItemMorphs_.size());
+                fflush(logFile);
+            }
             dropdownState_.valid = false;
         }
 
@@ -1681,6 +1696,16 @@ void Interpreter::processInputEvents() {
                           x >= dropdownState_.x && x < dropdownState_.x + dropdownState_.width &&
                           y >= dropdownState_.y && y < dropdownState_.y + dropdownState_.height);
 
+        // Debug: log dropdown state on mouse down
+        if (mouseType == 1 && logFile) {
+            fprintf(logFile, "[DROPDOWN-CHECK] valid=%d x=%d w=%d y=%d h=%d click(%d,%d) inDropdown=%d\n",
+                    dropdownState_.valid ? 1 : 0,
+                    dropdownState_.x, dropdownState_.width,
+                    dropdownState_.y, dropdownState_.height,
+                    x, y, inDropdown ? 1 : 0);
+            fflush(logFile);
+        }
+
         // Mouse up (type 2) - handle only if in menu areas
         if (mouseType == 2) {
             if (inDropdown) {
@@ -1796,12 +1821,13 @@ void Interpreter::processInputEvents() {
 
                 if (clickedIndex >= 0) {
                     if (selectedMenuIndex_ == clickedIndex) {
+                        // Keep menu open when clicking same item (don't toggle)
+                        // This prevents race conditions from multiple click events
                         if (logFile) {
-                            fprintf(logFile, "[MENU] Toggling OFF menu %d (was same)\n", clickedIndex);
+                            fprintf(logFile, "[MENU] Keeping menu %d open (clicked same)\n", clickedIndex);
                             fflush(logFile);
                         }
-                        selectedMenuIndex_ = -1;
-                        dropdownState_.valid = false;
+                        // Don't toggle off - just keep it open
                     } else {
                         if (logFile) {
                             fprintf(logFile, "[MENU] Setting selectedMenuIndex_ = %d (was %d)\n",
@@ -4986,6 +5012,27 @@ extern int g_traceSendsAfterPrim264;
         ObjectHeader* selHdr = selector.asObjectPtr();
         if (selHdr->isBytesObject() && selHdr->byteSize() > 0 && selHdr->byteSize() < 50) {
             std::string selStr((char*)selHdr->bytes(), selHdr->byteSize());
+
+            // ===== INTERCEPT confirmation dialogs during dispatched actions =====
+            // When we're executing a menu action (like quitSession), confirmation dialogs
+            // would block. Auto-answer "true" (yes/confirm) to let the action proceed.
+            if (inDispatchedAction_) {
+                // Check for confirm: type selectors on UIManager classes
+                if (selStr.find("confirm:") == 0 ||
+                    selStr == "questionWithoutCancel:title:" ||
+                    selStr == "question:title:") {
+                    static FILE* confirmLog = fopen("/tmp/confirm_intercept.log", "a");
+                    if (confirmLog) {
+                        fprintf(confirmLog, "[CONFIRM] Auto-answering TRUE for '%s' during dispatch\n",
+                                selStr.c_str());
+                        fflush(confirmLog);
+                    }
+                    // Pop all args and receiver, return true
+                    popN(argCount + 1);
+                    push(memory_.trueObject());
+                    return;
+                }
+            }
 
             // ===== INTERCEPT unprotectedExternalObjects: =====
             // This message is sent during session startup but may not exist in all images.
