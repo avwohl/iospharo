@@ -2380,6 +2380,20 @@ bool Interpreter::step() {
         checkForPreemption();
     }
 
+    // Stack depth safeguard - prevent runaway stack growth
+    if (frameDepth_ > 500) {
+        static int overflowCount = 0;
+        overflowCount++;
+        if (overflowCount <= 5) {
+            std::cerr << "[STACK-OVERFLOW] frameDepth=" << frameDepth_
+                      << " - unwinding to recover\n";
+        }
+        // Unwind stack to a reasonable depth
+        while (frameDepth_ > 50 && running_) {
+            returnValue(memory_.nil());
+        }
+    }
+
     // Check if we've run past the end of bytecodes
     if (instructionPointer_ >= bytecodeEnd_) {
         returnValue(receiver_);
@@ -7508,6 +7522,50 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     // Get the actual receiver that failed (from stack, under args)
     Oop failedReceiver = stackValue(argCount);
 
+    // FAIL FAST: If we can't resolve the receiver's class, sending doesNotUnderstand:
+    // will just cause another DNU, leading to infinite recursion.
+    // Instead, stop the VM and report the error.
+    bool canResolveClass = false;
+    std::string failedRcvrClassName = "<unknown>";
+    if (failedReceiver.isSmallInteger()) {
+        canResolveClass = true;  // SmallInteger always has a class
+        failedRcvrClassName = "SmallInteger";
+    } else if (failedReceiver.isObject() && failedReceiver.rawBits() > 0x10000) {
+        Oop failedRcvrClass = memory_.classOf(failedReceiver);
+        if (failedRcvrClass.isObject() && failedRcvrClass.rawBits() > 0x10000) {
+            // Try to get the class name
+            Oop nameOop = memory_.fetchPointer(6, failedRcvrClass);  // classNameIndex
+            if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                    failedRcvrClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                    canResolveClass = true;
+                }
+            }
+            // Even if we can't get the name, if we have a valid class object, we can try DNU
+            if (!canResolveClass && failedRcvrClass.rawBits() != memory_.nil().rawBits()) {
+                canResolveClass = true;
+                failedRcvrClassName = "<class-object>";
+            }
+        }
+    }
+
+    if (!canResolveClass) {
+        std::cerr << "\n[FATAL ERROR] Cannot resolve class of receiver in DNU handler!\n";
+        std::cerr << "  Selector: #" << origStr << "\n";
+        std::cerr << "  Receiver: 0x" << std::hex << failedReceiver.rawBits() << std::dec << "\n";
+        std::cerr << "  This would cause infinite DNU recursion. Stopping VM.\n";
+        std::cerr << "  (This is a bug - the receiver should have a valid class)\n\n";
+        if (dnuTraceLog) {
+            fprintf(dnuTraceLog, "[FATAL] Cannot resolve class for DNU - selector=%s receiver=0x%lx\n",
+                    origStr.c_str(), (unsigned long)failedReceiver.rawBits());
+            fflush(dnuTraceLog);
+        }
+        running_ = false;
+        dnuDepth = 0;
+        return;
+    }
+
     // Create a Message object
     Oop messageClass = memory_.specialObject(SpecialObjectIndex::ClassMessage);
     Oop message = memory_.allocateSlots(
@@ -8476,7 +8534,25 @@ void Interpreter::checkForPreemption() {
     ObjectHeader* queuesHeader = queues.asObjectPtr();
     size_t numQueues = queuesHeader->slotCount();
 
-    // Check for runnable processes at higher or EQUAL priority
+    // Log periodically
+    if (preemptLog && (preemptCount % 1000 == 1)) {
+        fprintf(preemptLog, "[PREEMPT #%d] activePriority=%d checking queues...\n",
+                preemptCount, activePriority);
+        // Show what's in the queues
+        for (size_t qi = 0; qi < numQueues; qi++) {
+            Oop q = queuesHeader->slotAt(qi);
+            if (q.isObject() && q.rawBits() != nilObj.rawBits()) {
+                Oop first = memory_.fetchPointer(0, q);
+                if (first.rawBits() != nilObj.rawBits()) {
+                    fprintf(preemptLog, "[PREEMPT]   queue[%zu] has process 0x%llx\n",
+                            qi, (unsigned long long)first.rawBits());
+                }
+            }
+        }
+        fflush(preemptLog);
+    }
+
+    // Check for runnable processes at higher or SAME priority (round-robin)
     for (size_t i = static_cast<size_t>(activePriority); i < numQueues; i++) {
         Oop queue = queuesHeader->slotAt(i);
         if (!queue.isObject() || queue.rawBits() == nilObj.rawBits()) continue;
@@ -8488,7 +8564,7 @@ void Interpreter::checkForPreemption() {
         if (firstProcess.rawBits() == activeProcess.rawBits()) continue;
 
         // Found a runnable process - preempt!
-        if (preemptLog && preemptCount <= 50) {
+        if (preemptLog && preemptCount <= 100) {
             fprintf(preemptLog, "[PREEMPT #%d] Switching from priority %d to process at priority %zu\n",
                     preemptCount, activePriority, i);
             fflush(preemptLog);
