@@ -7953,21 +7953,22 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         } else {
             Oop failedRcvrClass = memory_.classOf(failedReceiver);
             if (failedRcvrClass.isObject() && failedRcvrClass.rawBits() > 0x10000) {
-                // Check that the class itself has a valid structure (classes have >6 slots)
                 ObjectHeader* clsHdr = failedRcvrClass.asObjectPtr();
-                if (clsHdr->slotCount() >= 7) {
-                    // Try to get the class name
-                    Oop nameOop = memory_.fetchPointer(6, failedRcvrClass);  // classNameIndex
-                    if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
-                        ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
-                            failedRcvrClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                            canResolveClass = true;
+                // Any non-nil class object is valid for method lookup
+                // Some classes (metaclasses) may have fewer than 7 slots
+                if (clsHdr->slotCount() >= 6) {
+                    canResolveClass = true;
+                    // Try to get the class name from slot 6 if it exists
+                    if (clsHdr->slotCount() >= 7) {
+                        Oop nameOop = memory_.fetchPointer(6, failedRcvrClass);  // classNameIndex
+                        if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                            ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                                failedRcvrClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                            }
                         }
                     }
-                    // Even if we can't get the name, if we have a valid class object, we can try DNU
-                    if (!canResolveClass && failedRcvrClass.rawBits() != memory_.nil().rawBits()) {
-                        canResolveClass = true;
+                    if (failedRcvrClassName == "<unknown>") {
                         failedRcvrClassName = "<class-object>";
                     }
                 } else {
