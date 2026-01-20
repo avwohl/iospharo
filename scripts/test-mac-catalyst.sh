@@ -153,12 +153,30 @@ test_mouse_events() {
 
     sleep 0.5
 
-    # Check if touch events were logged
-    if grep -q "\[TOUCH\] touchesBegan" "$LOG_FILE"; then
-        echo -e "${GREEN}PASS: Touch events are being captured${NC}"
+    # Mouse events can arrive via multiple paths:
+    # 1. GCMouse handlers (physical mouse) -> /tmp/gcmouse.log
+    # 2. UIKit touch events -> [TOUCH] touchesBegan in main log
+    # 3. UIApplication.sendEvent swizzle -> /tmp/iospharo-events.log
+    #
+    # cliclick sends events via accessibility API which triggers path 3
+
+    # Check if events reached the VM (logged in iospharo-events.log)
+    if [ -f /tmp/iospharo-events.log ] && grep -q "click(500,400)" /tmp/iospharo-events.log; then
+        echo -e "${GREEN}PASS: Mouse click at (500,400) received by VM${NC}"
+        return 0
+    # Alternative: check for GCMouse events
+    elif [ -f /tmp/gcmouse.log ] && grep -q "\[GCMOUSE\] leftButton pressed=true" /tmp/gcmouse.log; then
+        echo -e "${GREEN}PASS: Mouse events captured via GCMouse${NC}"
+        return 0
+    # Alternative: check for touch events
+    elif grep -q "\[TOUCH\] touchesBegan" "$LOG_FILE"; then
+        echo -e "${GREEN}PASS: Touch events captured via touchesBegan${NC}"
         return 0
     else
-        echo -e "${RED}FAIL: No touch events in log${NC}"
+        echo -e "${RED}FAIL: No mouse/touch events detected${NC}"
+        echo "  Checked /tmp/iospharo-events.log for click(500,400)"
+        echo "  Checked /tmp/gcmouse.log for [GCMOUSE] leftButton"
+        echo "  Checked $LOG_FILE for [TOUCH] touchesBegan"
         return 1
     fi
 }
