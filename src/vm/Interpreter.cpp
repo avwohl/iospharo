@@ -3574,6 +3574,116 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     // DISABLED: Pending action dispatch causes issues
     // Workaround dispatch code removed - Smalltalk handles all event dispatch
 
+    // Special trace: When doInterCycleWait is about to be sent, log the context
+    static int intercycleSendCount = 0;
+    if (selector.isObject() && selector.rawBits() > 0x10000) {
+        ObjectHeader* selHdr = selector.asObjectPtr();
+        if (selHdr->isBytesObject() && selHdr->byteSize() == 16) {
+            std::string s((char*)selHdr->bytes(), 16);
+            if (s == "doInterCycleWait" && intercycleSendCount < 5) {
+                intercycleSendCount++;
+                static FILE* icSendLog = nullptr;
+                if (!icSendLog) icSendLog = fopen("/tmp/intercycle_send.log", "w");
+                if (icSendLog) {
+                    // Log the receiver from stack
+                    Oop rcvr = stackValue(static_cast<size_t>(argCount));
+                    std::string rcvrClass = "<unknown>";
+                    bool rcvrIsClass = false;
+                    if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                        Oop cls = memory_.classOf(rcvr);
+                        if (cls.isObject()) {
+                            Oop nameOop = memory_.fetchPointer(6, cls);
+                            if (nameOop.isObject()) {
+                                ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                                    rcvrClass = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                }
+                            }
+                        }
+                        // Check if receiver itself is a class (by checking if it has classNameIndex slot)
+                        ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+                        if (rcvrHdr->slotCount() >= 7) {
+                            Oop maybeName = memory_.fetchPointer(6, rcvr);
+                            if (maybeName.isObject() && maybeName.rawBits() > 0x10000) {
+                                ObjectHeader* mnh = maybeName.asObjectPtr();
+                                if (mnh->isBytesObject() && mnh->byteSize() < 50) {
+                                    rcvrIsClass = true;
+                                    rcvrClass = std::string((char*)mnh->bytes(), mnh->byteSize()) + " class";
+                                }
+                            }
+                        }
+                    }
+                    // Log bytecode context
+                    fprintf(icSendLog, "[INTERCYCLE-SEND #%d] receiver=%s (0x%llx) rcvrIsClass=%d\n",
+                            intercycleSendCount, rcvrClass.c_str(), (unsigned long long)rcvr.rawBits(), rcvrIsClass);
+                    // Get the method's selector from its last literal (class association)
+                    std::string methodSelector = "<unknown>";
+                    std::string methodClass = "<unknown>";
+                    if (method_.isObject() && method_.rawBits() > 0x10000) {
+                        Oop methodHeader = memory_.fetchPointer(0, method_);
+                        if (methodHeader.isSmallInteger()) {
+                            size_t numLiterals = methodHeader.asSmallInteger() & 0x7FFF;
+                            // Second literal (index 1) often has selector or nil
+                            if (numLiterals >= 1) {
+                                Oop lit1 = memory_.fetchPointer(1, method_);
+                                if (lit1.isObject() && lit1.rawBits() > 0x10000) {
+                                    ObjectHeader* lit1Hdr = lit1.asObjectPtr();
+                                    if (lit1Hdr->isBytesObject() && lit1Hdr->byteSize() < 100) {
+                                        methodSelector = std::string((char*)lit1Hdr->bytes(), lit1Hdr->byteSize());
+                                    }
+                                }
+                            }
+                            // Last literal often has class association
+                            if (numLiterals >= 2) {
+                                Oop lastLit = memory_.fetchPointer(numLiterals, method_);
+                                if (lastLit.isObject() && lastLit.rawBits() > 0x10000) {
+                                    ObjectHeader* llHdr = lastLit.asObjectPtr();
+                                    if (llHdr->slotCount() >= 1) {
+                                        Oop classRef = memory_.fetchPointer(0, lastLit);
+                                        if (classRef.isObject()) {
+                                            Oop className = memory_.fetchPointer(6, classRef);
+                                            if (className.isObject()) {
+                                                ObjectHeader* cnHdr = className.asObjectPtr();
+                                                if (cnHdr->isBytesObject() && cnHdr->byteSize() < 100) {
+                                                    methodClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    fprintf(icSendLog, "  EXECUTING METHOD: %s >> #%s\n", methodClass.c_str(), methodSelector.c_str());
+                    fprintf(icSendLog, "  IP=%p method_=0x%llx\n", (void*)instructionPointer_,
+                            (unsigned long long)method_.rawBits());
+                    // Show the bytecode that triggered this send
+                    if (method_.isObject() && instructionPointer_ != nullptr) {
+                        ObjectHeader* methHdr = method_.asObjectPtr();
+                        uint8_t* methodBytes = methHdr->bytes();
+                        size_t byteSize = methHdr->byteSize();
+                        // Calculate byte offset within method
+                        if (instructionPointer_ >= methodBytes && instructionPointer_ < methodBytes + byteSize) {
+                            size_t bcOffset = instructionPointer_ - methodBytes;
+                            fprintf(icSendLog, "  bytecode offset in method: %zu\n", bcOffset);
+                            // Show bytes around current IP
+                            fprintf(icSendLog, "  bytes around IP: ");
+                            for (int off = -3; off <= 3; off++) {
+                                size_t idx = bcOffset + off;
+                                if (idx < byteSize) {
+                                    fprintf(icSendLog, "%s0x%02x ", off == 0 ? "[" : "", methodBytes[idx]);
+                                    if (off == 0) fprintf(icSendLog, "] ");
+                                }
+                            }
+                            fprintf(icSendLog, "\n");
+                        }
+                    }
+                    fflush(icSendLog);
+                }
+            }
+        }
+    }
+
     // Recursion detection - break infinite recursion patterns
     // Compare by string content since same symbol may have different Oops
     static std::string lastSelStr;
@@ -4585,9 +4695,55 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
     static int signalTraceCount = 0;
     bool doSignalTrace = traceSignal && (++signalTraceCount <= 1);  // Only trace first lookup
 
-    // Trace doInterCycleWait lookup
+    // Trace doInterCycleWait lookup - who's sending this?
     static int interCycleTraceCount = 0;
     bool doInterCycleTrace = traceInterCycle && (++interCycleTraceCount <= 3);
+    if (traceInterCycle && interCycleTraceCount <= 3) {
+        static FILE* senderLog = fopen("/tmp/intercycle_sender.log", "a");
+        if (senderLog) {
+            fprintf(senderLog, "\n[INTERCYCLE-SENDER #%d] selector='%s'\n", interCycleTraceCount, selStr.c_str());
+            // Show calling method from current context
+            if (method_.isObject()) {
+                ObjectHeader* methHdr = method_.asObjectPtr();
+                fprintf(senderLog, "[INTERCYCLE-SENDER]   caller method: 0x%llx slots=%zu\n",
+                        (unsigned long long)method_.rawBits(), methHdr->slotCount());
+                if (methHdr->slotCount() > 1) {
+                    Oop selLit = methHdr->slotAt(1);
+                    fprintf(senderLog, "[INTERCYCLE-SENDER]   method lit[1]: 0x%llx\n",
+                            (unsigned long long)selLit.rawBits());
+                    if (selLit.isObject()) {
+                        ObjectHeader* slh = selLit.asObjectPtr();
+                        if (slh->isBytesObject() && slh->byteSize() < 50) {
+                            std::string callerSel((char*)slh->bytes(), slh->byteSize());
+                            fprintf(senderLog, "[INTERCYCLE-SENDER]   caller method selector: '%s'\n", callerSel.c_str());
+                        } else if (slh->format() == ObjectFormat::FixedSize && slh->slotCount() >= 1) {
+                            Oop realSel = slh->slotAt(0);
+                            if (realSel.isObject()) {
+                                ObjectHeader* rsh = realSel.asObjectPtr();
+                                if (rsh->isBytesObject() && rsh->byteSize() < 50) {
+                                    std::string callerSel((char*)rsh->bytes(), rsh->byteSize());
+                                    fprintf(senderLog, "[INTERCYCLE-SENDER]   caller method selector (AMS): '%s'\n", callerSel.c_str());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Show receiver class (classOop is passed to lookupMethod)
+            std::string rcvrClass = "<unknown>";
+            if (classOop.isObject()) {
+                Oop nameOop = memory_.fetchPointer(6, classOop);
+                if (nameOop.isObject()) {
+                    ObjectHeader* nh = nameOop.asObjectPtr();
+                    if (nh->isBytesObject() && nh->byteSize() < 50) {
+                        rcvrClass = std::string((char*)nh->bytes(), nh->byteSize());
+                    }
+                }
+            }
+            fprintf(senderLog, "[INTERCYCLE-SENDER]   receiver class (from lookup): '%s'\n", rcvrClass.c_str());
+            fflush(senderLog);
+        }
+    }
 
     // Also trace receiver lookup to debug Deprecation issue
     bool traceReceiver = (selStr == "receiver");
@@ -5526,20 +5682,15 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // Get receiver from stack (now in the frame)
     receiver_ = argument(0);  // First "argument" slot is actually receiver
 
-    // Dispatched action context creation REMOVED - Smalltalk handles all event dispatch
-
-    // Debug: Log receiver being set for superclass methods
-    static FILE* rcvrLog = nullptr;
-    static int rcvrLogCount = 0;
-    if (!rcvrLog) rcvrLog = fopen("/tmp/receiver_set.log", "w");
-    if (rcvrLog && rcvrLogCount < 200) {
-        rcvrLogCount++;
-        fprintf(rcvrLog, "[RCVR #%d] depth=%zu receiver=0x%llx FP=%p arg(0)=%p ctx=0x%llx\n",
-                rcvrLogCount, frameDepth_,
-                (unsigned long long)receiver_.rawBits(),
-                (void*)framePointer_, (void*)(framePointer_),
-                (unsigned long long)activeContext_.rawBits());
-        fflush(rcvrLog);
+    // FIX: Create a context for this method activation so blocks can capture correct receiver
+    // Without this, activeContext_ stays stale and blocks get wrong 'self'
+    Oop newContext = memory_.createStartupContext(method, receiver_);
+    if (!newContext.isNil()) {
+        // Link to previous context
+        if (activeContext_.isObject() && !activeContext_.isNil()) {
+            memory_.storePointer(0, newContext, activeContext_);  // sender
+        }
+        activeContext_ = newContext;
     }
 
     // Set instruction pointer to start of bytecodes
@@ -6168,6 +6319,86 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     // Fallback for MorphicRenderLoop#doInterCycleWait - method may not exist in modern Pharo
     // The waiting is handled by C++ side (sleep in idle loop), so just return self
     if (origStr == "doInterCycleWait" && argCount == 0) {
+        // Trace the sender context to understand who is calling this
+        static FILE* senderLog = nullptr;
+        static int senderLogCount = 0;
+        if (!senderLog) senderLog = fopen("/tmp/intercycle_sender.log", "w");
+        if (senderLog && senderLogCount < 20) {
+            senderLogCount++;
+            // Get current method selector from active context
+            std::string methodName = "<unknown>";
+            std::string methodClass = "<unknown>";
+            if (activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
+                // Get the method from context
+                Oop method = memory_.fetchPointer(3, activeContext_);  // MethodIndex
+                if (method.isObject() && method.rawBits() > 0x10000) {
+                    // Get numLiterals from method header (slot 0)
+                    Oop methodHeader = memory_.fetchPointer(0, method);
+                    size_t numLiterals = 0;
+                    if (methodHeader.isSmallInteger()) {
+                        int64_t headerValue = methodHeader.asSmallInteger();
+                        numLiterals = headerValue & 0x7FFF;
+                    }
+                    if (numLiterals >= 2) {
+                        Oop lastLit = memory_.fetchPointer(numLiterals, method);  // Association in last literal
+                        // Could be class association or pragma
+                        if (lastLit.isObject() && lastLit.rawBits() > 0x10000) {
+                            ObjectHeader* litHdr = lastLit.asObjectPtr();
+                            if (litHdr->slotCount() >= 1) {
+                                Oop methodClassOop = memory_.fetchPointer(0, lastLit);  // key of assoc (class)
+                                if (methodClassOop.isObject()) {
+                                    Oop classNameOop = memory_.fetchPointer(6, methodClassOop);
+                                    if (classNameOop.isObject()) {
+                                        ObjectHeader* cnh = classNameOop.asObjectPtr();
+                                        if (cnh->isBytesObject() && cnh->byteSize() < 50) {
+                                            methodClass = std::string((char*)cnh->bytes(), cnh->byteSize());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Get selector from literal 1 (second literal)
+                    if (numLiterals >= 1) {
+                        Oop selLit = memory_.fetchPointer(1, method);
+                        if (selLit.isObject() && selLit.rawBits() > 0x10000) {
+                            ObjectHeader* selHdr = selLit.asObjectPtr();
+                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                methodName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+                // Get sender context
+                Oop sender = memory_.fetchPointer(0, activeContext_);  // SenderIndex
+                std::string senderMethod = "<no sender>";
+                if (sender.isObject() && sender.rawBits() > 0x10000 && !sender.isNil()) {
+                    Oop senderMeth = memory_.fetchPointer(3, sender);
+                    if (senderMeth.isObject() && senderMeth.rawBits() > 0x10000) {
+                        Oop smHeader = memory_.fetchPointer(0, senderMeth);
+                        size_t snl = 0;
+                        if (smHeader.isSmallInteger()) {
+                            snl = smHeader.asSmallInteger() & 0x7FFF;
+                        }
+                        if (snl >= 1) {
+                            Oop ssel = memory_.fetchPointer(1, senderMeth);
+                            if (ssel.isObject() && ssel.rawBits() > 0x10000) {
+                                ObjectHeader* sselHdr = ssel.asObjectPtr();
+                                if (sselHdr->isBytesObject() && sselHdr->byteSize() < 50) {
+                                    senderMethod = std::string((char*)sselHdr->bytes(), sselHdr->byteSize());
+                                }
+                            }
+                        }
+                    }
+                }
+                // Also check receiver from stack vs receiver_ instance var
+                Oop stackRcvr = stackValue(0);  // argCount is 0, so receiver is at top
+                fprintf(senderLog, "[INTERCYCLE-SENDER #%d] activeMethod=%s>>%s, sender=%s\n  receiver_=0x%llx stackRcvr=0x%llx\n",
+                        senderLogCount, methodClass.c_str(), methodName.c_str(), senderMethod.c_str(),
+                        (unsigned long long)receiver_.rawBits(), (unsigned long long)stackRcvr.rawBits());
+            }
+            fflush(senderLog);
+        }
         // Leave receiver on stack (return self)
         dnuDepth--;
         return;
@@ -7038,6 +7269,48 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied) {
     // Use activeContext_ as the outer context
     // Note: activateBlock now updates activeContext_ when entering blocks,
     // so blocks created inside other blocks will capture the correct context chain
+
+    // TRACE: What is activeContext_ when we create a block?
+    static FILE* blockCreateLog = nullptr;
+    static int blockCreateCount = 0;
+    if (!blockCreateLog) blockCreateLog = fopen("/tmp/block_create.log", "w");
+    if (blockCreateLog && blockCreateCount < 50) {
+        blockCreateCount++;
+        std::string ctxRcvrClass = "<unknown>";
+        if (activeContext_.isObject() && !activeContext_.isNil()) {
+            Oop ctxRcvr = memory_.fetchPointer(5, activeContext_);
+            if (ctxRcvr.isObject() && ctxRcvr.rawBits() > 0x10000) {
+                Oop cls = memory_.classOf(ctxRcvr);
+                if (cls.isObject()) {
+                    Oop nameOop = memory_.fetchPointer(6, cls);
+                    if (nameOop.isObject()) {
+                        ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                            ctxRcvrClass = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                        }
+                    }
+                }
+            }
+        }
+        std::string currRcvrClass = "<unknown>";
+        if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+            Oop cls = memory_.classOf(receiver_);
+            if (cls.isObject()) {
+                Oop nameOop = memory_.fetchPointer(6, cls);
+                if (nameOop.isObject()) {
+                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                        currRcvrClass = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                    }
+                }
+            }
+        }
+        fprintf(blockCreateLog, "[BLOCK-CREATE #%d] activeContext_=0x%llx (rcvr=%s) current receiver_=%s\n",
+                blockCreateCount, (unsigned long long)activeContext_.rawBits(),
+                ctxRcvrClass.c_str(), currRcvrClass.c_str());
+        fflush(blockCreateLog);
+    }
+
     // Set fields
     memory_.storePointer(0, block, activeContext_);  // outerContext
     memory_.storePointer(1, block, compiledBlock);   // compiledBlock (instead of startPC)
