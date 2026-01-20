@@ -2604,11 +2604,14 @@ PrimitiveResult Interpreter::primitiveStringAt(int argCount) {
             return PrimitiveResult::Failure;
         }
         // Read 4 bytes as little-endian 32-bit value
+        // Note: Use raw bytes() instead of byteAt() since byteAt() asserts isBytesObject()
+        // which is false for Indexable32 format
         size_t byteOffset = arrayIndex * 4;
-        uint32_t codePoint = header->byteAt(byteOffset) |
-                            (header->byteAt(byteOffset + 1) << 8) |
-                            (header->byteAt(byteOffset + 2) << 16) |
-                            (header->byteAt(byteOffset + 3) << 24);
+        const uint8_t* data = header->bytes();
+        uint32_t codePoint = data[byteOffset] |
+                            (data[byteOffset + 1] << 8) |
+                            (data[byteOffset + 2] << 16) |
+                            (data[byteOffset + 3] << 24);
         primitiveSuccess(Oop::fromCharacter(codePoint));
         return PrimitiveResult::Success;
     }

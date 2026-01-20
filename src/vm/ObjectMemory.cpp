@@ -768,6 +768,7 @@ void ObjectMemory::storePointer(size_t index, Oop obj, Oop value) {
 uint8_t ObjectMemory::fetchByte(size_t index, Oop obj) const {
     if (!obj.isObject()) return 0;
     ObjectHeader* header = obj.asObjectPtr();
+    if (!header->isBytesObject()) return 0;  // Must be bytes object for byteAt
     if (index >= header->byteSize()) return 0;
     return header->byteAt(index);
 }
@@ -775,6 +776,7 @@ uint8_t ObjectMemory::fetchByte(size_t index, Oop obj) const {
 void ObjectMemory::storeByte(size_t index, Oop obj, uint8_t value) {
     if (!obj.isObject()) return;
     ObjectHeader* header = obj.asObjectPtr();
+    if (!header->isBytesObject()) return;  // Must be bytes object for byteAtPut
     if (index >= header->byteSize()) return;
     header->byteAtPut(index, value);
 }
