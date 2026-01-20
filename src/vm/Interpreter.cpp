@@ -1414,6 +1414,13 @@ void Interpreter::renderWorldMorphs() {
         // Check for special morphs that need custom rendering
         std::string className = getMorphClassName(morph);
 
+        // Log all morphs in first render to find "World Menu" button
+        if (logFile && renderCallCount == 1 && depth <= 6) {
+            std::string indent(depth * 2, ' ');
+            fprintf(logFile, "[MORPH-TREE] %s[%d] %s\n", indent.c_str(), index, className.c_str());
+            fflush(logFile);
+        }
+
         // Handle MenubarMorph specially - draw with text
         if (className == "MenubarMorph") {
             renderMenuBar(morph, 44);  // 44 pixel height (88 on Retina)
