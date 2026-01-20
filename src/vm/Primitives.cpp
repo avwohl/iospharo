@@ -8554,7 +8554,7 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
     // Fast path: Check for known MiscPrimitivePlugin methods by selector in literals
     for (size_t i = 0; i < numLiterals && i < 10; i++) {
         Oop literal = memory_.fetchPointer(i, method);
-        if (literal.isObject() && literal.rawBits() > 0x10000) {
+        if (literal.isObject() && memory_.isValidPointer(literal)) {
             ObjectHeader* litHdr = literal.asObjectPtr();
             if (litHdr->isBytesObject() && litHdr->byteSize() < 50) {
                 std::string str((char*)litHdr->bytes(), litHdr->byteSize());
@@ -8677,7 +8677,7 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
                                     innerOop.isObject() ? 1 : 0);
                             fflush(extLog);
                         }
-                        if (innerOop.isObject() && innerOop.rawBits() > 0x10000) {
+                        if (innerOop.isObject() && memory_.isValidPointer(innerOop)) {
                             ObjectHeader* innerHdr = innerOop.asObjectPtr();
                             if (extLog && extCallCount <= 50) {
                                 fprintf(extLog, "[EXT] #%d       slot[%zu] fmt=%u clsIdx=%u\n",
@@ -8703,7 +8703,7 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
                                 // Check one more level for the function name
                                 for (size_t k = 0; k < innerHdr->slotCount() && k < 6; k++) {
                                     Oop deepOop = memory_.fetchPointer(k, innerOop);
-                                    if (deepOop.isObject() && deepOop.rawBits() > 0x10000) {
+                                    if (deepOop.isObject() && memory_.isValidPointer(deepOop)) {
                                         ObjectHeader* deepHdr = deepOop.asObjectPtr();
                                         if (deepHdr->isBytesObject() && deepHdr->byteSize() < 100) {
                                             std::string str((char*)deepHdr->bytes(), deepHdr->byteSize());
