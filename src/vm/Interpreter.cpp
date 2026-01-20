@@ -3815,12 +3815,40 @@ extern int g_traceSendsAfterPrim264;
 
     if (!selStr.empty() && selStr == lastSelStr) {
         sameSelCount++;
-        // Only break on infinite recursion, NOT on expected idle loop selectors
+        // Only break on infinite recursion, NOT on expected high-frequency selectors
         // relinquishProcessorForMicroseconds: is called repeatedly during idle - that's normal
-        if (sameSelCount > 50 && selStr != "relinquishProcessorForMicroseconds:") {
+        // privSender: is called repeatedly during context chain manipulation - that's normal
+        if (sameSelCount > 50 && selStr != "relinquishProcessorForMicroseconds:"
+                               && selStr != "privSender:") {
             // Same selector called 50+ times in a row - likely infinite recursion
-            std::cerr << "[RECURSION] Breaking infinite loop: #" << selStr
-                      << " called " << sameSelCount << " times\n";
+            static int recursionBreakCount = 0;
+            if (++recursionBreakCount <= 3) {
+                std::cerr << "[RECURSION] Breaking infinite loop: #" << selStr
+                          << " called " << sameSelCount << " times\n";
+                // Show receiver info
+                Oop rcvr = stackValue(argCount);
+                std::cerr << "  Receiver: 0x" << std::hex << rcvr.rawBits() << std::dec;
+                if (rcvr.isSmallInteger()) {
+                    std::cerr << " (SmallInteger " << rcvr.asSmallInteger() << ")";
+                } else if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                    Oop cls = memory_.classOf(rcvr);
+                    if (cls.isObject() && cls.rawBits() > 0x10000) {
+                        ObjectHeader* clsHdr = cls.asObjectPtr();
+                        if (clsHdr->slotCount() > 6) {
+                            Oop nameOop = memory_.fetchPointer(6, cls);
+                            if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                                ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                                    std::string name((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                    std::cerr << " (" << name << ")";
+                                }
+                            }
+                        }
+                    }
+                }
+                std::cerr << "\n";
+                std::cerr << "  frameDepth=" << frameDepth_ << " stackDepth=" << (stackPointer_ - stackBase_) << "\n";
+            }
             // Pop args and receiver, return nil
             popN(argCount + 1);
             push(memory_.nil());
@@ -6527,8 +6555,13 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
 
     if (!methodName.empty() && methodName == lastMethodName) {
         sameMethodCount++;
-        if (sameMethodCount > 10) {
-            // Same method name pushed 10+ times - likely infinite recursion
+        // Exception for methods that are legitimately called many times in sequence
+        // privSender: is called when walking context chains during exception handling
+        bool isLegitHighFreq = (methodName == "privSender:");
+        int threshold = isLegitHighFreq ? 500 : 10;  // Allow more for context chain ops
+
+        if (sameMethodCount > threshold) {
+            // Same method name pushed too many times - likely infinite recursion
             std::cerr << "[RECURSION] Breaking infinite recursion: method " << methodName
                       << " pushed " << sameMethodCount << " times at depth " << frameDepth_ << "\n";
             // Ban this method for the next 1000 calls to break the recursion completely
@@ -7209,8 +7242,24 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         return;
     }
     if (origStr == "privSender:" && argCount == 1) {
-        // Private sender setter - just return receiver
-        pop();  // Pop argument
+        // Private sender setter - actually set the sender slot
+        // This is used during exception handling and process switching
+        Oop newSender = pop();  // Pop argument (the new sender)
+        Oop context = stackValue(0);  // Peek at receiver (Context)
+
+        static int privSenderDnuCount = 0;
+        if (++privSenderDnuCount <= 3) {
+            std::cerr << "[DNU-privSender:] Context=0x" << std::hex << context.rawBits()
+                      << " newSender=0x" << newSender.rawBits() << std::dec << "\n";
+        }
+
+        // Set the sender slot (slot 0) of the context
+        if (context.isObject() && context.rawBits() > 0x10000) {
+            ObjectHeader* hdr = context.asObjectPtr();
+            if (!hdr->isImmutable() && hdr->slotCount() > 0) {
+                hdr->slotAtPut(0, newSender);  // Sender is at slot 0
+            }
+        }
         // Leave receiver on stack
         dnuDepth--;
         return;
