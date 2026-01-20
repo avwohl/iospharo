@@ -9823,13 +9823,41 @@ bool Interpreter::bootstrapStartup() {
 
     // First try: SmalltalkImage >> recordStartupStamp
     if (startupAttempt == 1) {
-        Oop smalltalkImage = memory_.findGlobal("SmalltalkImage");
-        if (smalltalkImage.isObject()) {
-            // Look up method directly from SmalltalkImage's methodDict
-            Oop method = lookupMethodInClass(smalltalkImage, "recordStartupStamp");
+        // SmalltalkImage is the class; we need to find "Smalltalk" which is the instance
+        Oop smalltalk = memory_.findGlobal("Smalltalk");
+        Oop smalltalkImageClass = memory_.findGlobal("SmalltalkImage");
+
+        // Debug logging
+        static FILE* startupDebugLog = fopen("/tmp/startup_debug.log", "w");
+        if (startupDebugLog) {
+            fprintf(startupDebugLog, "[STARTUP-1] Smalltalk global: 0x%llx isNil=%d isObj=%d\n",
+                    (unsigned long long)smalltalk.rawBits(), smalltalk.isNil() ? 1 : 0, smalltalk.isObject() ? 1 : 0);
+            fprintf(startupDebugLog, "[STARTUP-1] SmalltalkImage class: 0x%llx isNil=%d isObj=%d\n",
+                    (unsigned long long)smalltalkImageClass.rawBits(), smalltalkImageClass.isNil() ? 1 : 0, smalltalkImageClass.isObject() ? 1 : 0);
+            fflush(startupDebugLog);
+        }
+
+        // Use Smalltalk instance if available, otherwise try to get instance from class
+        Oop receiver = smalltalk;
+        Oop classForLookup = smalltalkImageClass;
+
+        if (receiver.isNil() && smalltalkImageClass.isObject()) {
+            // Try to call "current" on SmalltalkImage class to get the instance
+            // But for now, just use the class as receiver and look up class-side method
+            receiver = smalltalkImageClass;
+        }
+
+        if (!receiver.isNil() && receiver.isObject() && classForLookup.isObject()) {
+            // recordStartupStamp is an instance method, look it up in the instance's class
+            Oop method = lookupMethodInClass(classForLookup, "recordStartupStamp");
+            if (startupDebugLog) {
+                fprintf(startupDebugLog, "[STARTUP-1] recordStartupStamp method: 0x%llx isNil=%d\n",
+                        (unsigned long long)method.rawBits(), method.isNil() ? 1 : 0);
+                fflush(startupDebugLog);
+            }
             if (!method.isNil() && method.isObject()) {
-                // Create a receiver - use nil as receiver since recordStartupStamp may not need self
-                Oop context = memory_.createStartupContext(method, memory_.nil());
+                // Use the actual instance as receiver
+                Oop context = memory_.createStartupContext(method, receiver);
                 if (!context.isNil()) {
                     stackPointer_ = stackBase_;
                     frameDepth_ = 0;
@@ -9843,13 +9871,21 @@ bool Interpreter::bootstrapStartup() {
 
     // Second try: restartMethods
     if (startupAttempt == 2) {
-        // DEBUG: "[DEBUG] Attempt 2: Trying restartMethods..."
+        // Find Smalltalk instance and SmalltalkImage class
+        Oop smalltalk = memory_.findGlobal("Smalltalk");
+        Oop smalltalkImageClass = memory_.findGlobal("SmalltalkImage");
 
-        Oop smalltalkImage = memory_.findGlobal("SmalltalkImage");
-        if (smalltalkImage.isObject()) {
-            Oop method = lookupMethodInClass(smalltalkImage, "restartMethods");
+        static FILE* startupDebugLog = fopen("/tmp/startup_debug.log", "a");
+        if (startupDebugLog) {
+            fprintf(startupDebugLog, "[STARTUP-2] Looking for restartMethods\n");
+            fflush(startupDebugLog);
+        }
+
+        Oop receiver = smalltalk.isObject() ? smalltalk : smalltalkImageClass;
+        if (smalltalkImageClass.isObject()) {
+            Oop method = lookupMethodInClass(smalltalkImageClass, "restartMethods");
             if (!method.isNil() && method.isObject()) {
-                Oop context = memory_.createStartupContext(method, memory_.nil());
+                Oop context = memory_.createStartupContext(method, receiver);
                 if (!context.isNil()) {
                     stackPointer_ = stackBase_;
                     frameDepth_ = 0;
