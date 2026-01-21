@@ -228,6 +228,14 @@ PrimitiveResult Interpreter::primitiveAdd(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveSubtract(int argCount) {
+    static int subCallCount = 0;
+    static FILE* subLog = nullptr;
+    subCallCount++;
+
+    if (!subLog && subCallCount == 1) {
+        subLog = fopen("/tmp/prim_sub.log", "w");
+    }
+
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -235,6 +243,14 @@ PrimitiveResult Interpreter::primitiveSubtract(int argCount) {
         int64_t a = rcvr.asSmallInteger();
         int64_t b = arg.asSmallInteger();
         int64_t result = a - b;
+
+        // Log around zero crossing
+        if (subLog && (a >= -5 && a <= 10) && subCallCount <= 500) {
+            fprintf(subLog, "[SUB #%d] %lld - %lld = %lld (canBe=%d)\n",
+                    subCallCount, (long long)a, (long long)b, (long long)result,
+                    Oop::canBeSmallInteger(result));
+            fflush(subLog);
+        }
 
         if (Oop::canBeSmallInteger(result)) {
             primitiveSuccess(Oop::fromSmallInteger(result));
@@ -559,12 +575,32 @@ PrimitiveResult Interpreter::primitiveGreaterOrEqual(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveEqual(int argCount) {
+    static int equalCallCount = 0;
+    static FILE* equalLog = nullptr;
+    equalCallCount++;
+
+    if (!equalLog && equalCallCount == 1) {
+        equalLog = fopen("/tmp/prim_equal.log", "w");
+    }
+
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
     if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
-        bool result = rcvr.asSmallInteger() == arg.asSmallInteger();
-        primitiveSuccess(result ? memory_.trueObject() : memory_.falseObject());
+        int64_t rcvrVal = rcvr.asSmallInteger();
+        int64_t argVal = arg.asSmallInteger();
+        bool result = rcvrVal == argVal;
+        Oop resultObj = result ? memory_.trueObject() : memory_.falseObject();
+
+        // Log when 0 = 0 or 0 = negative number (looking for stuck loop)
+        if (equalLog && rcvrVal == 0 && (argVal <= 0 || equalCallCount <= 100)) {
+            fprintf(equalLog, "[EQUAL #%d] %lld = %lld -> %s (0x%llx)\n",
+                    equalCallCount, (long long)rcvrVal, (long long)argVal,
+                    result ? "true" : "false", (unsigned long long)resultObj.rawBits());
+            fflush(equalLog);
+        }
+
+        primitiveSuccess(resultObj);
         return PrimitiveResult::Success;
     }
 
@@ -8697,18 +8733,38 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
                 ObjectHeader* queuesHdr = schedLists.asObjectPtr();
                 size_t numQueues = queuesHdr->slotCount();
 
+                if (relinquishLog && relinquishCount <= 20) {
+                    fprintf(relinquishLog, "[RELINQUISH] #%d activeProcess=0x%llx activePriority=%d numQueues=%zu\n",
+                            relinquishCount, (unsigned long long)activeProcess.rawBits(), activePriority, numQueues);
+                    // Dump all non-empty queues
+                    for (size_t i = 0; i < numQueues; i++) {
+                        Oop q = memory_.fetchPointer(i, schedLists);
+                        if (q.isObject()) {
+                            Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, q);
+                            if (first.isObject() && first.rawBits() != nilObj.rawBits()) {
+                                fprintf(relinquishLog, "  Queue[%zu] (priority %zu): first=0x%llx\n",
+                                        i, i + 1, (unsigned long long)first.rawBits());
+                            }
+                        }
+                    }
+                    fflush(relinquishLog);
+                }
+
                 // Search from highest priority down to current priority
-                for (int pri = static_cast<int>(numQueues) - 1; pri >= activePriority; pri--) {
-                    Oop queue = queuesHdr->slotAt(pri);
+                // NOTE: Priority is 1-based, but array indices are 0-based
+                // Priority N is at index N-1
+                for (int pri = static_cast<int>(numQueues); pri > activePriority; pri--) {
+                    int index = pri - 1;  // Convert 1-based priority to 0-based index
+                    Oop queue = memory_.fetchPointer(index, schedLists);
                     if (!queue.isObject() || queue.rawBits() == nilObj.rawBits()) continue;
 
                     Oop firstProcess = memory_.fetchPointer(LinkedListFirstLinkIndex, queue);
                     if (firstProcess.isObject() && firstProcess.rawBits() != nilObj.rawBits() &&
                         firstProcess.rawBits() != activeProcess.rawBits()) {
-                        // Found a higher/equal priority process - yield to it
+                        // Found a higher priority process - yield to it
                         if (relinquishLog && relinquishCount <= 50) {
-                            fprintf(relinquishLog, "[RELINQUISH] #%d Yielding to process at priority %d\n",
-                                    relinquishCount, pri + 1);
+                            fprintf(relinquishLog, "[RELINQUISH] #%d Yielding to process 0x%llx at priority %d\n",
+                                    relinquishCount, (unsigned long long)firstProcess.rawBits(), pri);
                             fflush(relinquishLog);
                         }
 

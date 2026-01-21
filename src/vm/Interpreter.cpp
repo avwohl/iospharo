@@ -10987,6 +10987,14 @@ bool Interpreter::removeProcessFromList(Oop process, Oop list) {
 }
 
 Oop Interpreter::wakeHighestPriority() {
+    static int wakeCallCount = 0;
+    static FILE* wakeLog = nullptr;
+    wakeCallCount++;
+
+    if (!wakeLog) {
+        wakeLog = fopen("/tmp/wake_priority.log", "w");
+    }
+
     Oop nilObj = memory_.nil();
     Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
     Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
@@ -10995,6 +11003,19 @@ Oop Interpreter::wakeHighestPriority() {
     ObjectHeader* listsHeader = schedLists.asObjectPtr();
     size_t numPriorities = listsHeader->slotCount();
 
+    if (wakeLog && wakeCallCount <= 50) {
+        fprintf(wakeLog, "[WAKE #%d] Scanning %zu priority levels\n", wakeCallCount, numPriorities);
+        // Dump all ready queues
+        for (int p = static_cast<int>(numPriorities) - 1; p >= 0; p--) {
+            Oop processList = memory_.fetchPointer(p, schedLists);
+            Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, processList);
+            if (!first.isNil() && first.rawBits() != nilObj.rawBits()) {
+                fprintf(wakeLog, "  Priority %d: first=0x%llx\n", p + 1, (unsigned long long)first.rawBits());
+            }
+        }
+        fflush(wakeLog);
+    }
+
     // Search from highest to lowest priority
     for (int p = static_cast<int>(numPriorities) - 1; p >= 0; p--) {
         Oop processList = memory_.fetchPointer(p, schedLists);
@@ -11002,15 +11023,33 @@ Oop Interpreter::wakeHighestPriority() {
 
         if (!first.isNil() && first.rawBits() != nilObj.rawBits()) {
             // Found a runnable process - remove and return it
-            return removeFirstLinkOfList(processList);
+            Oop result = removeFirstLinkOfList(processList);
+            if (wakeLog && wakeCallCount <= 50) {
+                fprintf(wakeLog, "[WAKE #%d] -> Selected process 0x%llx at priority %d\n",
+                        wakeCallCount, (unsigned long long)result.rawBits(), p + 1);
+                fflush(wakeLog);
+            }
+            return result;
         }
     }
 
     // No runnable process found - this should not happen in a working system
+    if (wakeLog && wakeCallCount <= 50) {
+        fprintf(wakeLog, "[WAKE #%d] -> No runnable process found!\n", wakeCallCount);
+        fflush(wakeLog);
+    }
     return nilObj;
 }
 
 void Interpreter::putToSleep(Oop process) {
+    static int sleepCallCount = 0;
+    static FILE* sleepLog = nullptr;
+    sleepCallCount++;
+
+    if (!sleepLog) {
+        sleepLog = fopen("/tmp/put_sleep.log", "w");
+    }
+
     Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
     Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
     Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
@@ -11021,6 +11060,12 @@ void Interpreter::putToSleep(Oop process) {
 
     // Get the appropriate priority list (0-indexed in array)
     Oop processList = memory_.fetchPointer(priority - 1, schedLists);
+
+    if (sleepLog && sleepCallCount <= 50) {
+        fprintf(sleepLog, "[SLEEP #%d] Adding process 0x%llx to priority %d queue\n",
+                sleepCallCount, (unsigned long long)process.rawBits(), priority);
+        fflush(sleepLog);
+    }
 
     addLastLinkToList(process, processList);
 }
