@@ -579,12 +579,60 @@ PrimitiveResult Interpreter::primitiveEqual(int argCount) {
     static FILE* equalLog = nullptr;
     equalCallCount++;
 
-    if (!equalLog && equalCallCount == 1) {
-        equalLog = fopen("/tmp/prim_equal.log", "w");
+    if (!equalLog) {
+        equalLog = fopen("/tmp/prim_smallint_equal.log", "w");
     }
 
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
+
+    // Log first 10 calls and also any 0 = something (with method context)
+    bool isZeroRcvr = rcvr.isSmallInteger() && rcvr.asSmallInteger() == 0;
+    if (equalLog && (equalCallCount <= 10 || (isZeroRcvr && equalCallCount <= 200))) {
+        int64_t rcvrVal = rcvr.isSmallInteger() ? rcvr.asSmallInteger() : -9999;
+        int64_t argVal = arg.isSmallInteger() ? arg.asSmallInteger() : -9999;
+
+        // Get current method selector for context
+        std::string methodSel = "<unknown>";
+        if (method_.isObject() && method_.rawBits() > 0x10000) {
+            Oop hdr = memory_.fetchPointer(0, method_);
+            if (hdr.isSmallInteger()) {
+                size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                if (numLits >= 2) {
+                    Oop penult = memory_.fetchPointer(numLits - 1, method_);
+                    if (penult.isObject() && penult.rawBits() > 0x10000) {
+                        ObjectHeader* penHdr = penult.asObjectPtr();
+                        if (penHdr->isBytesObject() && penHdr->byteSize() < 50) {
+                            methodSel = std::string((char*)penHdr->bytes(), penHdr->byteSize());
+                        }
+                    }
+                }
+            }
+        }
+
+        // For 0 = 100 or 0 = 199, also show temps and receiver
+        bool isLoopCheck = (rcvrVal == 0 && (argVal == 100 || argVal == 199 || argVal > 50));
+        if (isLoopCheck) {
+            fprintf(equalLog, "[EQUAL #%d] %lld = %lld in #%s\n",
+                    equalCallCount, (long long)rcvrVal, (long long)argVal, methodSel.c_str());
+            // Show temps 0-3
+            fprintf(equalLog, "  temps: ");
+            for (int t = 0; t < 4; t++) {
+                Oop temp = *(framePointer_ + 1 + t);
+                if (temp.isSmallInteger()) {
+                    fprintf(equalLog, "[%d]=%lld ", t, (long long)temp.asSmallInteger());
+                } else {
+                    fprintf(equalLog, "[%d]=0x%llx ", t, (unsigned long long)temp.rawBits());
+                }
+            }
+            fprintf(equalLog, "\n");
+            fflush(equalLog);
+        } else {
+            fprintf(equalLog, "[EQUAL #%d] %lld = %lld\n",
+                    equalCallCount, (long long)rcvrVal, (long long)argVal);
+            fflush(equalLog);
+        }
+    }
 
     if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
         int64_t rcvrVal = rcvr.asSmallInteger();
@@ -592,11 +640,19 @@ PrimitiveResult Interpreter::primitiveEqual(int argCount) {
         bool result = rcvrVal == argVal;
         Oop resultObj = result ? memory_.trueObject() : memory_.falseObject();
 
-        // Log when 0 = 0 or 0 = negative number (looking for stuck loop)
-        if (equalLog && rcvrVal == 0 && (argVal <= 0 || equalCallCount <= 100)) {
-            fprintf(equalLog, "[EQUAL #%d] %lld = %lld -> %s (0x%llx)\n",
-                    equalCallCount, (long long)rcvrVal, (long long)argVal,
-                    result ? "true" : "false", (unsigned long long)resultObj.rawBits());
+        // Log when 0 = 0 to trace the stuck loop (wait for later calls)
+        if (equalLog && rcvrVal == 0 && argVal == 0 && equalCallCount >= 200 && equalCallCount <= 210) {
+            fprintf(equalLog, "[EQUAL #%d] SmallInt 0 = 0 -> true\n", equalCallCount);
+            fprintf(equalLog, "  trueObj=0x%llx\n",
+                    (unsigned long long)memory_.trueObject().rawBits());
+            fprintf(equalLog, "  Returning result=0x%llx\n",
+                    (unsigned long long)resultObj.rawBits());
+            // Log next 5 bytecodes after this primitive returns
+            fprintf(equalLog, "  Next 5 bytes at IP: ");
+            for (int i = 0; i < 5; i++) {
+                fprintf(equalLog, "%02x ", instructionPointer_[i]);
+            }
+            fprintf(equalLog, "\n");
             fflush(equalLog);
         }
 
@@ -1387,21 +1443,16 @@ PrimitiveResult Interpreter::primitiveIdentical(int argCount) {
     bool result = (rcvr == arg);
 
     // Debug: Log == comparisons to understand event loop
-    static FILE* eqLog = nullptr;
-    static int eqCount = 0;
-    if (!eqLog) eqLog = fopen("/tmp/prim_equal.log", "w");
-    if (eqLog && eqCount < 200) {
-        eqCount++;
-        fprintf(eqLog, "[== #%d] rcvr=0x%llx arg=0x%llx result=%d rcvrIsInt=%d argIsInt=%d\n",
-                eqCount, (unsigned long long)rcvr.rawBits(), (unsigned long long)arg.rawBits(),
-                result ? 1 : 0, rcvr.isSmallInteger() ? 1 : 0, arg.isSmallInteger() ? 1 : 0);
-        if (rcvr.isSmallInteger()) {
-            fprintf(eqLog, "    rcvr int value: %lld\n", rcvr.asSmallInteger());
-        }
-        if (arg.isSmallInteger()) {
-            fprintf(eqLog, "    arg int value: %lld\n", arg.asSmallInteger());
-        }
-        fflush(eqLog);
+    // (Using separate file from primitiveEqual)
+    static FILE* idLog = nullptr;
+    static int idCount = 0;
+    if (!idLog) idLog = fopen("/tmp/prim_identical.log", "w");
+    if (idLog && idCount < 50) {
+        idCount++;
+        fprintf(idLog, "[== #%d] rcvr=0x%llx arg=0x%llx result=%d\n",
+                idCount, (unsigned long long)rcvr.rawBits(), (unsigned long long)arg.rawBits(),
+                result ? 1 : 0);
+        fflush(idLog);
     }
 
     primitiveSuccess(result ? memory_.trueObject() : memory_.falseObject());
