@@ -1,55 +1,28 @@
 # WIP: Input Handling from Swift to VM
 
-## Status: In Progress (2026-01-18)
+## Status: In Progress (2026-01-21)
 
-**Current Problem:** Pharo's event system isn't initialized because OSiOSDriver's Smalltalk code isn't loaded into the image.
+**Current Problem:** InputEventSensor's process isn't starting during image startup.
 
-### Key Finding: OSiOSDriver Needs Image Integration (2026-01-18)
+### All C++ Workarounds Removed (2026-01-21)
 
-The investigation revealed:
+Per CLAUDE.md policy: NO WORKAROUNDS. All C++ event dispatch code has been removed:
 
-1. **OSiOSDriver.st exists** but needs to be filed into the Pharo image
-2. **Normal Pharo drivers (OSSDL2Driver)** create an event loop process that polls events
-3. **Our VM infrastructure is complete** - events flow through, primitive 264 works
-4. **Missing link**: No Smalltalk process calls primitive 264 to consume events
+- `dispatchMouseEventToMorph` - C++ hit testing that bypassed InputEventSensor
+- `handleMenuBarClick` - C++ menu bar click handling
+- `handleWorldMenuClick` - C++ world menu invocation
+- `executeMenuItemAction` - C++ menu action execution
+- `processPendingMenuAction` - C++ pending action processing
+- `processPendingWorldMenu` - C++ world menu processing
+- `drawClickIndicator` - C++ visual click feedback
+- `lookupMethodByName` - helper for C++ method lookup
+- `updateActiveHandPosition` - direct Hand bounds manipulation
+- Direct window-to-front array manipulation
 
-**Options going forward:**
-- **A**: Load OSiOSDriver.st into the working image (simplest, but creates custom image)
-- **B**: Auto-fileIn during VM startup (complex, requires Smalltalk compiler support)
-- **C**: Continue with C++ direct handling workarounds (current approach)
+**Events MUST be handled by Smalltalk's InputEventSensor and Morphic.**
+If events aren't working, fix InputEventSensor startup - don't add C++ workarounds.
 
-Currently using **Option C** - direct C++ handling works for basic interactions.
-
-### Working Workarounds (2026-01-18)
-
-**Direct slot manipulation bypasses the broken event system:**
-
-1. **Hand position updates** - We directly write mouse position to HandMorph's bounds slot:
-   - Find hand via World → slot[9] (WorldState) → slot[1] (hands array) → first element
-   - Update bounds origin Point to mouse coordinates
-   - This makes the cursor follow the mouse without Morphic's event processing
-
-2. **Window-to-front** - Clicking windows moves them to front via direct array manipulation:
-   - Find clicked window in World's submorphs array (slot[2])
-   - Shift subsequent elements down, put clicked window at end
-   - End of array = front in z-order, drawn last
-
-3. **Menu bar** - Handled entirely in C++ (native rendering), doesn't need Pharo event system
-
-4. **World menu (right-click)** - Shows a placeholder menu on right-click:
-   - Right-click on window or background triggers showWorldMenu()
-   - Draws a white placeholder box (200x180) with fake menu items
-   - Finds `worldMenu` selector and queues dispatch via pendingMenuAction_
-   - Action is dispatched in relinquishProcessorForMicroseconds interception
-   - But the real WorldMenu construction hits DNUs (menuSpec, do:, etc.) because
-     Morphic's menu building infrastructure expects a running event loop
-   - Placeholder provides visible feedback that right-click is detected
-
-**Key insight:** Message sends from C++ to Pharo cause DNU cascades because the normal
-Morphic context isn't active. Direct slot manipulation (write to object memory) works
-because it bypasses message dispatch entirely.
-
-### Root Problem: World Loop Not Running
+### Root Cause: InputEventSensor Process Not Running
 
 The Pharo world loop (`doOneCycleFor:`) is **never called**. Only the idle process runs:
 - `idleProcess` sends `relinquishProcessorForMicroseconds:` repeatedly
@@ -60,51 +33,36 @@ InputEventSensor process never wakes up:
 - But no process is waiting on the semaphore (excessSignals increments instead)
 - Primitive 264 (getNextEvent) is never called
 
-### Updated Investigation Summary
+### Investigation Summary
 
 1. **Events reach the VM correctly** - Mouse events flow from Swift → PlatformBridge → EventQueue → processInputEvents()
 
-2. **World loop not running** - `doOneCycleFor:` is never sent. Selector tracking shows only `relinquishProcessorForMicroseconds:` being called.
+2. **World loop runs but InputEventSensor doesn't start** - `doOneCycleFor:` runs, but the event processing process is missing
 
-3. **Action dispatch via idle loop** - We can intercept `relinquishProcessorForMicroseconds:` to dispatch pending actions (safe bytecode execution context), BUT direct message sends crash.
+3. **Only 3 processes active** - Delay scheduler (priority 80), idle process (priority 10), and transient processes
 
-4. **comeToFront causes DNU cascade** - When we send `comeToFront` to SpWindow:
-   - Something internally calls `copyFrom:to:` on an object that doesn't understand it
-   - That object also doesn't implement `doesNotUnderstand:`
-   - DNU loop is detected, returning nil
-   - But nil propagates and causes issues downstream
+4. **Input semaphore accumulates signals** - excessSignals grows to 99+ with no consumer
 
 ### Log Evidence
 ```
-# selector_debug.log - only idle loop runs
-[SEND #1] #idleProcess argCount=0
-[SEND #2] #relinquishProcessorForMicroseconds: argCount=1
-... (repeats)
+# process_switch.log - only 3 processes
+[XFER #1] old=0x41032b890 new=0x40fc442e8
+  newProc will resume in method: #suspendAtTimingPriority
 
-# dnu_trace.log - DNU cascade from comeToFront
-[DNU #1 depth=1] selector=#copyFrom:to: argCount=2
-[DNU #2 depth=2] selector=#doesNotUnderstand: argCount=1
-
-# dnu_stop.log - graceful termination
-[DNU-GRACEFUL #1] DNU called with DNU selector - returning nil
+# selector_debug.log - world loop runs but no event processing
+[SEND #1] #doOneCycle argCount=0
+[SEND #12] #processEvents argCount=0  <-- called but no events consumed
+[SEND #19] #idleProcess argCount=0
+[SEND #20] #relinquishProcessorForMicroseconds: argCount=1
 ```
 
-### Changes Made
+### Next Steps to Fix InputEventSensor
 
-1. **Removed executeFromSync flag** - Was causing race condition where main loop cleared pending actions before processing
-
-2. **Added idle loop interception** - Dispatch pending actions during `relinquishProcessorForMicroseconds:` (safe context)
-
-3. **Made DNU-with-DNU graceful** - Return nil instead of stopping VM (prevents hard crash, but nil causes issues)
-
-4. **Direct HandMorph position updates** - updateActiveHandPosition() in Interpreter.cpp:
-   - WorldState is at World slot 9 (not 6!)
-   - hands array is at WorldState slot 1
-   - Directly updates Hand's bounds origin/corner Points
-
-5. **Direct window-to-front** - handleWorldClick() in Interpreter.cpp:
-   - Instead of sending `comeToFront`, directly manipulates submorphs array
-   - Finds window in array, shifts following elements, puts window at end
+1. **Investigate SessionManager>>startUp:** - Does it complete? Does it initialize UI properly?
+2. **Check MorphicCoreUIManager initialization** - This creates the world loop
+3. **Verify EventSensor>>startUp:** - This should fork the event polling process
+4. **Check InputEventSensor class>>installEventSensorFramework** - Event infrastructure setup
+5. **Look at OSWindow/OSiOSDriver integration** - May need proper driver initialization
    - Avoids DNU cascade entirely
 
 ### Root Cause Analysis
@@ -119,14 +77,6 @@ The problem is architectural: we're trying to work around a non-running event lo
 1. **Start the world loop** - Figure out why Morphic's world loop isn't starting and fix that. This is the proper solution but requires understanding Pharo 10's startup sequence.
 
 2. **Direct Hand manipulation** - Instead of sending messages, directly write:
-   - Mouse position to HandMorph's position slot
-   - Button state to HandMorph's buttons slot
-   - This bypasses message sending entirely
-
-3. **Proper OSWindow integration** - Implement OSiOSDriver properly so it delivers events via the correct callback mechanism. Requires understanding OSWindow architecture.
-
-4. **Skip complex actions** - For now, just skip comeToFront and similar complex messages. Focus on getting simpler interactions working first.
-
 ---
 ## Original Pipeline (2026-01-08)
 
