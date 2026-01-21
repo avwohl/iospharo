@@ -3460,12 +3460,75 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 uint8_t vectorIndex = fetchByte();
                 // Get temp vector from current context temps
                 Oop tempVector = temporary(vectorIndex);
+                Oop value;
                 if (tempVector.isObject()) {
-                    Oop value = memory_.fetchPointer(tempIndex, tempVector);
-                    push(value);
+                    value = memory_.fetchPointer(tempIndex, tempVector);
                 } else {
-                    push(memory_.nil());
+                    value = memory_.nil();
                 }
+
+                // Trace remote temp access - this is likely the source of nil receivers
+                static FILE* rtLog = nullptr;
+                static int rtCount = 0;
+                if (!rtLog) rtLog = fopen("/tmp/remote_temp.log", "w");
+                if (rtLog && rtCount < 50) {
+                    // Check if value is nil - those are the interesting cases
+                    bool isNil = (value.rawBits() == memory_.nil().rawBits());
+                    if (isNil || rtCount < 20) {
+                        rtCount++;
+                        std::string vecClassName = "<not-object>";
+                        if (tempVector.isObject() && tempVector.rawBits() > 0x10000) {
+                            Oop cls = memory_.classOf(tempVector);
+                            if (cls.isObject()) {
+                                Oop clsName = memory_.fetchPointer(6, cls);
+                                if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                                    ObjectHeader* cnHdr = clsName.asObjectPtr();
+                                    if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                                        vecClassName = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                        std::string methodSel = "<unknown>";
+                        if (method_.isObject() && method_.rawBits() > 0x10000) {
+                            ObjectHeader* mHdr = method_.asObjectPtr();
+                            if (mHdr->isCompiledMethod()) {
+                                Oop hdr = memory_.fetchPointer(0, method_);
+                                if (hdr.isSmallInteger()) {
+                                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                                    if (numLits >= 2) {
+                                        Oop selLit = memory_.fetchPointer(numLits - 1, method_);
+                                        if (selLit.isObject() && selLit.rawBits() > 0x10000) {
+                                            ObjectHeader* slHdr = selLit.asObjectPtr();
+                                            if (slHdr->isBytesObject() && slHdr->byteSize() < 50) {
+                                                methodSel = std::string((char*)slHdr->bytes(), slHdr->byteSize());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        fprintf(rtLog, "[REMOTE-TEMP #%d] tempVector[%d] at temp[%d] = 0x%llx%s\n",
+                                rtCount, tempIndex, vectorIndex,
+                                (unsigned long long)value.rawBits(),
+                                isNil ? " [NIL!]" : "");
+                        fprintf(rtLog, "  method=#%s tempVector=0x%llx (%s)\n",
+                                methodSel.c_str(),
+                                (unsigned long long)tempVector.rawBits(), vecClassName.c_str());
+                        // Show all values in the temp vector
+                        if (tempVector.isObject() && tempVector.rawBits() > 0x10000) {
+                            ObjectHeader* tvHdr = tempVector.asObjectPtr();
+                            fprintf(rtLog, "  tempVector slots=%zu contents:\n", tvHdr->slotCount());
+                            for (size_t i = 0; i < std::min(tvHdr->slotCount(), (size_t)10); i++) {
+                                Oop v = memory_.fetchPointer(i, tempVector);
+                                fprintf(rtLog, "    [%zu] = 0x%llx\n", i, (unsigned long long)v.rawBits());
+                            }
+                        }
+                        fflush(rtLog);
+                    }
+                }
+
+                push(value);
                 break;
             }
             case 0xFC: // 252: Store Temp At kkkkkkkk In Temp Vector At jjjjjjjj (no pop)
@@ -3474,6 +3537,42 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 uint8_t vectorIndex = fetchByte();
                 Oop value = stackTop();
                 Oop tempVector = temporary(vectorIndex);
+
+                // Trace stores to temp vectors
+                static FILE* rtsLog = nullptr;
+                static int rtsCount = 0;
+                if (!rtsLog) rtsLog = fopen("/tmp/remote_temp_store.log", "w");
+                if (rtsLog && rtsCount < 50) {
+                    rtsCount++;
+                    std::string methodSel = "<unknown>";
+                    if (method_.isObject() && method_.rawBits() > 0x10000) {
+                        ObjectHeader* mHdr = method_.asObjectPtr();
+                        if (mHdr->isCompiledMethod()) {
+                            Oop hdr = memory_.fetchPointer(0, method_);
+                            if (hdr.isSmallInteger()) {
+                                size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                                if (numLits >= 2) {
+                                    Oop selLit = memory_.fetchPointer(numLits - 1, method_);
+                                    if (selLit.isObject() && selLit.rawBits() > 0x10000) {
+                                        ObjectHeader* slHdr = selLit.asObjectPtr();
+                                        if (slHdr->isBytesObject() && slHdr->byteSize() < 50) {
+                                            methodSel = std::string((char*)slHdr->bytes(), slHdr->byteSize());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    fprintf(rtsLog, "[STORE-REMOTE #%d] tempVector[%d] at temp[%d] := 0x%llx\n",
+                            rtsCount, tempIndex, vectorIndex,
+                            (unsigned long long)value.rawBits());
+                    fprintf(rtsLog, "  method=#%s tempVector=0x%llx isObj=%d\n",
+                            methodSel.c_str(),
+                            (unsigned long long)tempVector.rawBits(),
+                            tempVector.isObject() ? 1 : 0);
+                    fflush(rtsLog);
+                }
+
                 if (tempVector.isObject()) {
                     memory_.storePointer(tempIndex, tempVector, value);
                 }
@@ -3485,6 +3584,42 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 uint8_t vectorIndex = fetchByte();
                 Oop value = pop();
                 Oop tempVector = temporary(vectorIndex);
+
+                // Trace stores to temp vectors
+                static FILE* rtsLog2 = nullptr;
+                static int rtsCount2 = 0;
+                if (!rtsLog2) rtsLog2 = fopen("/tmp/remote_temp_store.log", "a");
+                if (rtsLog2 && rtsCount2 < 50) {
+                    rtsCount2++;
+                    std::string methodSel = "<unknown>";
+                    if (method_.isObject() && method_.rawBits() > 0x10000) {
+                        ObjectHeader* mHdr = method_.asObjectPtr();
+                        if (mHdr->isCompiledMethod()) {
+                            Oop hdr = memory_.fetchPointer(0, method_);
+                            if (hdr.isSmallInteger()) {
+                                size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                                if (numLits >= 2) {
+                                    Oop selLit = memory_.fetchPointer(numLits - 1, method_);
+                                    if (selLit.isObject() && selLit.rawBits() > 0x10000) {
+                                        ObjectHeader* slHdr = selLit.asObjectPtr();
+                                        if (slHdr->isBytesObject() && slHdr->byteSize() < 50) {
+                                            methodSel = std::string((char*)slHdr->bytes(), slHdr->byteSize());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    fprintf(rtsLog2, "[POP-STORE-REMOTE #%d] tempVector[%d] at temp[%d] := 0x%llx\n",
+                            rtsCount2, tempIndex, vectorIndex,
+                            (unsigned long long)value.rawBits());
+                    fprintf(rtsLog2, "  method=#%s tempVector=0x%llx isObj=%d\n",
+                            methodSel.c_str(),
+                            (unsigned long long)tempVector.rawBits(),
+                            tempVector.isObject() ? 1 : 0);
+                    fflush(rtsLog2);
+                }
+
                 if (tempVector.isObject()) {
                     memory_.storePointer(tempIndex, tempVector, value);
                 }
@@ -3555,6 +3690,63 @@ void Interpreter::pushReceiverVariable(int index) {
     static FILE* civLog = nullptr;
     static int civCount = 0;
     if (!civLog) civLog = fopen("/tmp/class_instvar_access.log", "w");
+
+    // Check if receiver is SessionManager - trace bytecodes
+    if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+        Oop cls = memory_.classOf(receiver_);
+        if (cls.isObject()) {
+            Oop clsName = memory_.fetchPointer(6, cls);
+            if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                ObjectHeader* cnHdr = clsName.asObjectPtr();
+                if (cnHdr->isBytesObject() && cnHdr->byteSize() == 14) {
+                    std::string n((char*)cnHdr->bytes(), 14);
+                    if (n == "SessionManager") {
+                        static FILE* smLog = nullptr;
+                        static int smCount = 0;
+                        if (!smLog) smLog = fopen("/tmp/session_manager_access.log", "w");
+                        if (smLog && smCount < 20) {
+                            smCount++;
+                            // Show current method
+                            std::string methodSel = "<unknown>";
+                            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                                ObjectHeader* mHdr = method_.asObjectPtr();
+                                if (mHdr->isCompiledMethod()) {
+                                    Oop hdr = memory_.fetchPointer(0, method_);
+                                    if (hdr.isSmallInteger()) {
+                                        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                                        if (numLits >= 2) {
+                                            Oop selLit = memory_.fetchPointer(numLits - 1, method_);
+                                            if (selLit.isObject() && selLit.rawBits() > 0x10000) {
+                                                ObjectHeader* slHdr = selLit.asObjectPtr();
+                                                if (slHdr->isBytesObject() && slHdr->byteSize() < 50) {
+                                                    methodSel = std::string((char*)slHdr->bytes(), slHdr->byteSize());
+                                                } else if (slHdr->format() == ObjectFormat::FixedSize && slHdr->slotCount() >= 1) {
+                                                    Oop inner = memory_.fetchPointer(0, selLit);
+                                                    if (inner.isObject() && inner.rawBits() > 0x10000) {
+                                                        ObjectHeader* iHdr = inner.asObjectPtr();
+                                                        if (iHdr->isBytesObject() && iHdr->byteSize() < 50) {
+                                                            methodSel = std::string((char*)iHdr->bytes(), iHdr->byteSize());
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Oop val = memory_.fetchPointer(index, receiver_);
+                            fprintf(smLog, "[SM-READ #%d] SessionManager >> %s reads slot[%d] = 0x%llx (ip=%zu method=0x%llx)\n",
+                                    smCount, methodSel.c_str(), index,
+                                    (unsigned long long)val.rawBits(),
+                                    instructionPointer_ - method_.asObjectPtr()->bytes(),
+                                    (unsigned long long)method_.rawBits());
+                            fflush(smLog);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // Also log when we read nil from any object at index > 10 (likely class instvar)
     Oop result = memory_.fetchPointer(index, receiver_);
@@ -3658,6 +3850,42 @@ void Interpreter::storeReceiverVariable(int index) {
 
 void Interpreter::storeTemporary(int index) {
     Oop value = pop();
+
+    // Trace stores in snapshot:andQuit:
+    static FILE* snapStoreLog = nullptr;
+    static int snapStoreCount = 0;
+    if (!snapStoreLog) snapStoreLog = fopen("/tmp/snap_stores.log", "w");
+    if (snapStoreLog && snapStoreCount < 100) {
+        std::string methodSel = "<unknown>";
+        if (method_.isObject() && method_.rawBits() > 0x10000) {
+            ObjectHeader* mHdr = method_.asObjectPtr();
+            if (mHdr->isCompiledMethod()) {
+                Oop hdr = memory_.fetchPointer(0, method_);
+                if (hdr.isSmallInteger()) {
+                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                    if (numLits >= 2) {
+                        Oop selLit = memory_.fetchPointer(numLits - 1, method_);
+                        if (selLit.isObject() && selLit.rawBits() > 0x10000) {
+                            ObjectHeader* slHdr = selLit.asObjectPtr();
+                            if (slHdr->isBytesObject() && slHdr->byteSize() < 50) {
+                                methodSel = std::string((char*)slHdr->bytes(), slHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (methodSel.find("snapshot") != std::string::npos ||
+            methodSel.find("Session") != std::string::npos ||
+            snapStoreCount < 30) {
+            snapStoreCount++;
+            fprintf(snapStoreLog, "[TEMP-STORE #%d] temp[%d] := 0x%llx in #%s\n",
+                    snapStoreCount, index,
+                    (unsigned long long)value.rawBits(), methodSel.c_str());
+            fflush(snapStoreLog);
+        }
+    }
+
     setTemporary(index, value);
 }
 
@@ -4197,6 +4425,128 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
         fprintf(allSendLog, "[SEND #%d] %s >> #%s (args=%d)\n",
                 allSendCount, rcvrName.c_str(), selStr.c_str(), argCount);
+
+        // Detailed trace for hasError/isImageStarting/currentSession
+        bool isNilRcvr = (rcvrName == "[UndefinedObject]" || rcvrName == "<unknown>");
+        if ((selStr == "hasError" || selStr == "isImageStarting") && isNilRcvr) {
+            static FILE* heLog = nullptr;
+            if (!heLog) heLog = fopen("/tmp/hasError_trace.log", "w");
+            if (heLog) {
+                fprintf(heLog, "[HE-TRACE] %s sent to 0x%llx (nil?)\n", selStr.c_str(), (unsigned long long)rcvr.rawBits());
+                // Show frame info
+                fprintf(heLog, "[HE-TRACE]   frameDepth=%zu framePointer=0x%llx\n",
+                        frameDepth_, (unsigned long long)(uintptr_t)framePointer_);
+                // Show temps 0-5
+                for (int t = 0; t < 6; t++) {
+                    Oop temp = *(framePointer_ + 1 + t);
+                    fprintf(heLog, "[HE-TRACE]   temp[%d] = 0x%llx\n", t, (unsigned long long)temp.rawBits());
+                }
+                // Show receiver_ (the method's receiver)
+                fprintf(heLog, "[HE-TRACE]   receiver_ = 0x%llx\n", (unsigned long long)receiver_.rawBits());
+                // Show what was just pushed (the top of stack before args)
+                fprintf(heLog, "[HE-TRACE]   stack top = 0x%llx\n", (unsigned long long)rcvr.rawBits());
+                // Show the last few bytecodes executed (use ip)
+                if (method_.isObject()) {
+                    ObjectHeader* mHdr = method_.asObjectPtr();
+                    size_t ip = instructionPointer_ - mHdr->bytes();
+                    fprintf(heLog, "[HE-TRACE]   method=0x%llx ip=%zu\n",
+                            (unsigned long long)method_.rawBits(), ip);
+                    // Show bytecodes around current ip
+                    Oop hdr = memory_.fetchPointer(0, method_);
+                    if (hdr.isSmallInteger()) {
+                        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                        size_t bcStart = (1 + numLits) * 8;
+                        fprintf(heLog, "[HE-TRACE]   bytecodes at ip-10 to ip: ");
+                        for (int i = -10; i <= 0; i++) {
+                            if ((int)ip + i >= (int)bcStart) {
+                                uint8_t bc = mHdr->bytes()[(int)ip + i];
+                                fprintf(heLog, "%02x ", bc);
+                            }
+                        }
+                        fprintf(heLog, "\n");
+                        // Check if this is a block method (compiledBlock from FullBlockClosure)
+                        // A block method has outerCode in the penultimate literal
+                        if (numLits >= 2) {
+                            Oop outerCode = memory_.fetchPointer(numLits - 2, method_);
+                            bool isBlockMethod = outerCode.isObject() && outerCode.rawBits() > 0x10000 &&
+                                                 outerCode.asObjectPtr()->isCompiledMethod();
+                            fprintf(heLog, "[HE-TRACE]   isBlockMethod=%s\n", isBlockMethod ? "YES" : "no");
+                        }
+                    }
+                }
+                // Also trace the closure if receiver_ is a FullBlockClosure (we might be in a block)
+                // Check activeContext for clues about block execution
+                if (activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
+                    ObjectHeader* ctxHdr = activeContext_.asObjectPtr();
+                    fprintf(heLog, "[HE-TRACE]   activeContext slots=%zu\n", ctxHdr->slotCount());
+                    // Show closureOrNil at slot 4
+                    if (ctxHdr->slotCount() > 4) {
+                        Oop closureOrNil = memory_.fetchPointer(4, activeContext_);
+                        fprintf(heLog, "[HE-TRACE]   closureOrNil (slot4)=0x%llx\n",
+                                (unsigned long long)closureOrNil.rawBits());
+                        if (closureOrNil.isObject() && closureOrNil.rawBits() > 0x10000) {
+                            ObjectHeader* clHdr = closureOrNil.asObjectPtr();
+                            fprintf(heLog, "[HE-TRACE]   closure slots=%zu\n", clHdr->slotCount());
+                            // For FullBlockClosure, slot 3 is receiver
+                            if (clHdr->slotCount() > 3) {
+                                Oop blockReceiver = memory_.fetchPointer(3, closureOrNil);
+                                fprintf(heLog, "[HE-TRACE]   blockReceiver (slot3)=0x%llx\n",
+                                        (unsigned long long)blockReceiver.rawBits());
+                            }
+                        }
+                    }
+                }
+                fflush(heLog);
+            }
+        }
+        if (selStr == "hasError" || selStr == "isImageStarting" || selStr == "currentSession") {
+            // Show current method
+            std::string methodSel = "<unknown>";
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                ObjectHeader* mHdr = method_.asObjectPtr();
+                if (mHdr->isCompiledMethod()) {
+                    Oop hdr = memory_.fetchPointer(0, method_);
+                    if (hdr.isSmallInteger()) {
+                        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                        if (numLits >= 2) {
+                            Oop selLit = memory_.fetchPointer(numLits - 1, method_);
+                            if (selLit.isObject() && selLit.rawBits() > 0x10000) {
+                                ObjectHeader* slHdr = selLit.asObjectPtr();
+                                if (slHdr->isBytesObject() && slHdr->byteSize() < 50) {
+                                    methodSel = std::string((char*)slHdr->bytes(), slHdr->byteSize());
+                                } else if (slHdr->format() == ObjectFormat::FixedSize && slHdr->slotCount() >= 1) {
+                                    Oop inner = memory_.fetchPointer(0, selLit);
+                                    if (inner.isObject() && inner.rawBits() > 0x10000) {
+                                        ObjectHeader* iHdr = inner.asObjectPtr();
+                                        if (iHdr->isBytesObject() && iHdr->byteSize() < 50) {
+                                            methodSel = std::string((char*)iHdr->bytes(), iHdr->byteSize());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            std::string rcvrClassName = "<unknown>";
+            if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+                Oop cls = memory_.classOf(receiver_);
+                if (cls.isObject()) {
+                    Oop clsName = memory_.fetchPointer(6, cls);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            rcvrClassName = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                        }
+                    }
+                }
+            }
+            fprintf(allSendLog, "  [DETAIL] called from %s >> #%s, receiver_=0x%llx (%s)\n",
+                    rcvrClassName.c_str(), methodSel.c_str(),
+                    (unsigned long long)receiver_.rawBits(), rcvrClassName.c_str());
+            fprintf(allSendLog, "  [DETAIL] actual send target rcvr=0x%llx\n",
+                    (unsigned long long)rcvr.rawBits());
+        }
         fflush(allSendLog);
     }
 
@@ -5614,6 +5964,7 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
     bool traceHandler = false;
     bool traceSignal = false;
     bool traceInterCycle = false;
+    bool traceSession = false;  // For hasError, isImageStarting on SessionManager
     if (selector.isObject() && selector.rawBits() > 0x10000) {
         ObjectHeader* selHdr = selector.asObjectPtr();
         if (selHdr->isBytesObject() && selHdr->byteSize() <= 50) {
@@ -5622,6 +5973,31 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
             traceHandler = (selStr == "findNextHandlerContext");
             traceSignal = (selStr == "signal");
             traceInterCycle = (selStr == "doInterCycleWait" || selStr == "doInterCycleWait:");
+            traceSession = (selStr == "hasError" || selStr == "isImageStarting");
+        }
+    }
+
+    // TRACE: Debug why hasError/isImageStarting aren't found on SessionManager
+    static FILE* sessionLookupLog = nullptr;
+    static int sessionLookupCount = 0;
+    if (traceSession && sessionLookupCount < 5) {
+        if (!sessionLookupLog) sessionLookupLog = fopen("/tmp/session_lookup.log", "w");
+        if (sessionLookupLog) {
+            sessionLookupCount++;
+            std::string className = "<unknown>";
+            if (classOop.isObject()) {
+                Oop nameOop = memory_.fetchPointer(6, classOop);
+                if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                        className = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                    }
+                }
+            }
+            fprintf(sessionLookupLog, "\n[SESSION-LOOKUP #%d] Looking for #%s in %s (class=0x%llx)\n",
+                    sessionLookupCount, selStr.c_str(), className.c_str(),
+                    (unsigned long long)classOop.rawBits());
+            fflush(sessionLookupLog);
         }
     }
     static int signalTraceCount = 0;
@@ -5847,6 +6223,54 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
             }
         }
 
+        // Detailed trace for session method lookup
+        if (traceSession && sessionLookupCount <= 5 && sessionLookupLog) {
+            std::string clsName = getClassName(currentClass);
+            fprintf(sessionLookupLog, "[SESSION-LOOKUP] depth=%d class=%s methodDict=0x%llx\n",
+                    depth, clsName.c_str(), (unsigned long long)methodDict.rawBits());
+            if (methodDict.isObject()) {
+                ObjectHeader* mdHdr = methodDict.asObjectPtr();
+                fprintf(sessionLookupLog, "[SESSION-LOOKUP]   mdSlots=%zu mdFormat=%d\n",
+                        mdHdr->slotCount(), (int)mdHdr->format());
+                // List ALL selectors in this methodDict for SessionManager
+                if (clsName == "SessionManager") {
+                    fprintf(sessionLookupLog, "[SESSION-LOOKUP]   ALL selectors in SessionManager methodDict:\n");
+                    for (size_t i = 2; i < mdHdr->slotCount(); i++) {
+                        Oop key = memory_.fetchPointer(i, methodDict);
+                        if (key.isObject() && key.rawBits() > 0x10000) {
+                            ObjectHeader* keyHdr = key.asObjectPtr();
+                            if (keyHdr->isBytesObject() && keyHdr->byteSize() < 100) {
+                                std::string keyStr((char*)keyHdr->bytes(), keyHdr->byteSize());
+                                fprintf(sessionLookupLog, "[SESSION-LOOKUP]     slot[%zu]='%s'\n", i, keyStr.c_str());
+                            } else {
+                                fprintf(sessionLookupLog, "[SESSION-LOOKUP]     slot[%zu]=<not-bytes> format=%d cls=%u\n",
+                                        i, (int)keyHdr->format(), keyHdr->classIndex());
+                            }
+                        } else if (!key.isNil()) {
+                            fprintf(sessionLookupLog, "[SESSION-LOOKUP]     slot[%zu]=<not-object> raw=0x%llx\n",
+                                    i, (unsigned long long)key.rawBits());
+                        }
+                    }
+                } else {
+                    // For other classes, just show first 10 selectors
+                    fprintf(sessionLookupLog, "[SESSION-LOOKUP]   first 10 selectors:\n");
+                    for (size_t i = 2; i < std::min(mdHdr->slotCount(), (size_t)12); i++) {
+                        Oop key = memory_.fetchPointer(i, methodDict);
+                        if (key.isObject() && key.rawBits() > 0x10000) {
+                            ObjectHeader* keyHdr = key.asObjectPtr();
+                            if (keyHdr->isBytesObject() && keyHdr->byteSize() < 100) {
+                                std::string keyStr((char*)keyHdr->bytes(), keyHdr->byteSize());
+                                fprintf(sessionLookupLog, "[SESSION-LOOKUP]     slot[%zu]='%s'\n", i, keyStr.c_str());
+                            }
+                        }
+                    }
+                }
+            } else {
+                fprintf(sessionLookupLog, "[SESSION-LOOKUP]   methodDict is NOT object!\n");
+            }
+            fflush(sessionLookupLog);
+        }
+
         // Detailed trace for #owner lookup in Morph
         if (traceOwner && ownerTraceCount <= 3 && getClassName(currentClass) == "Morph") {
             std::cerr << "[OWNER-TRACE] In Morph methodDict=0x" << std::hex << methodDict.rawBits() << std::dec << "\n";
@@ -5884,6 +6308,11 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
                                   << std::hex << method.rawBits() << std::dec
                                   << " at depth=" << depth << " class=" << getClassName(currentClass) << "\n";
                     }
+                    if (traceSession && sessionLookupLog) {
+                        fprintf(sessionLookupLog, "[SESSION-LOOKUP] FOUND method at depth=%d class=%s\n",
+                                depth, getClassName(currentClass).c_str());
+                        fflush(sessionLookupLog);
+                    }
                     return method;
                 }
             }
@@ -5894,6 +6323,10 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
 
     if (traceWorld) {
         std::cerr << "[LOOKUP] #" << selStr << " NOT FOUND after " << depth << " classes\n";
+    }
+    if (traceSession && sessionLookupLog) {
+        fprintf(sessionLookupLog, "[SESSION-LOOKUP] NOT FOUND after %d classes\n", depth);
+        fflush(sessionLookupLog);
     }
 
     return Oop::nil();  // Not found
@@ -7777,6 +8210,50 @@ void Interpreter::setReceiverInstVar(size_t index, Oop value) {
             return;
         }
     }
+
+    // Trace stores to SessionManager
+    static FILE* storeLog = nullptr;
+    static int storeCount = 0;
+    if (!storeLog) storeLog = fopen("/tmp/instvar_store.log", "w");
+    if (storeLog && storeCount < 100) {
+        std::string rcvrName = "<unknown>";
+        if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+            Oop cls = memory_.classOf(receiver_);
+            if (cls.isObject()) {
+                Oop clsName = memory_.fetchPointer(6, cls);
+                if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                    ObjectHeader* cnHdr = clsName.asObjectPtr();
+                    if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                        rcvrName = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                    }
+                }
+            }
+        }
+        if (rcvrName.find("Session") != std::string::npos || storeCount < 30) {
+            storeCount++;
+            std::string valueName = "<unknown>";
+            if (value.isObject() && value.rawBits() > 0x10000) {
+                Oop vCls = memory_.classOf(value);
+                if (vCls.isObject()) {
+                    Oop vClsName = memory_.fetchPointer(6, vCls);
+                    if (vClsName.isObject() && vClsName.rawBits() > 0x10000) {
+                        ObjectHeader* vCnHdr = vClsName.asObjectPtr();
+                        if (vCnHdr->isBytesObject() && vCnHdr->byteSize() < 50) {
+                            valueName = std::string((char*)vCnHdr->bytes(), vCnHdr->byteSize());
+                        }
+                    }
+                }
+            } else if (value.isSmallInteger()) {
+                valueName = "SmallInteger(" + std::to_string(value.asSmallInteger()) + ")";
+            }
+            fprintf(storeLog, "[STORE #%d] %s slot[%zu] := 0x%llx (%s) (receiver=0x%llx)\n",
+                    storeCount, rcvrName.c_str(), index,
+                    (unsigned long long)value.rawBits(), valueName.c_str(),
+                    (unsigned long long)receiver_.rawBits());
+            fflush(storeLog);
+        }
+    }
+
     memory_.storePointer(index, receiver_, value);
 }
 
