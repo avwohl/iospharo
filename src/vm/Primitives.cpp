@@ -8963,10 +8963,18 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
                 if (format >= 16 && format <= 23 && litHdr->byteSize() > 3) {
                     std::string str((char*)litHdr->bytes(), litHdr->byteSize());
                     // Check for known internal FFI functions that we don't support
-                    // Let these fail so Pharo uses fallback code paths
-                    if (str == "primNextPendingCallback" || str == "nextPendingCallback" ||
-                        str == "primNumberOfCallbacks" || str == "numberOfCallbacks") {
-                        return PrimitiveResult::Failure;
+                    // Return appropriate values instead of failing (which raises exceptions)
+                    if (str == "primNextPendingCallback" || str == "nextPendingCallback") {
+                        // Return nil - no pending callbacks (we don't support FFI callbacks)
+                        popN(static_cast<size_t>(argCount + 1));  // Pop args and receiver
+                        push(Oop::nil());
+                        return PrimitiveResult::Success;
+                    }
+                    if (str == "primNumberOfCallbacks" || str == "numberOfCallbacks") {
+                        // Return 0 - no pending callbacks
+                        popN(static_cast<size_t>(argCount + 1));  // Pop args and receiver
+                        push(Oop::fromSmallInteger(0));
+                        return PrimitiveResult::Success;
                     }
                 }
             }
@@ -9198,6 +9206,33 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
             fflush(extLog);
         }
 
+        // Check for ThreadedFFI callback primitives directly in string literals
+        // This is needed because the TFCallbackInvocation methods have the selector
+        // as a string literal, but the spec array has a class object, not a string
+        if (litHdr->isBytesObject() && litHdr->byteSize() < 100) {
+            std::string str((char*)litHdr->bytes(), litHdr->byteSize());
+            if (str == "primNextPendingCallback" || str == "nextPendingCallback") {
+                // Return nil - no pending callbacks (we don't support FFI callbacks)
+                popN(static_cast<size_t>(argCount + 1));  // Pop args and receiver
+                push(Oop::nil());
+                if (extLog) {
+                    fprintf(extLog, "[EXT] #%d Returning nil for callback primitive '%s'\n", extCallCount, str.c_str());
+                    fflush(extLog);
+                }
+                return PrimitiveResult::Success;
+            }
+            if (str == "primNumberOfCallbacks" || str == "numberOfCallbacks") {
+                // Return 0 - no pending callbacks
+                popN(static_cast<size_t>(argCount + 1));  // Pop args and receiver
+                push(Oop::fromSmallInteger(0));
+                if (extLog) {
+                    fprintf(extLog, "[EXT] #%d Returning 0 for callback count primitive '%s'\n", extCallCount, str.c_str());
+                    fflush(extLog);
+                }
+                return PrimitiveResult::Success;
+            }
+        }
+
         // Check if it's an Array (format 2 = indexable pointers) or ExternalLibraryFunction (format 1)
         // Also check Fixed format objects that might contain module/name references
         if ((litHdr->format() == ObjectFormat::Indexable || litHdr->format() == ObjectFormat::FixedSize)
@@ -9328,6 +9363,29 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
                 if (extLog && extCallCount <= 50) {
                     fprintf(extLog, "[EXT] #%d Looking up '%s'\n", extCallCount, key.c_str());
                     fflush(extLog);
+                }
+
+                // Handle ThreadedFFI callback primitives - return nil/0 instead of failing
+                // This prevents exception handling from consuming startup cycles
+                if (primName == "primNextPendingCallback" || primName == "nextPendingCallback") {
+                    // Return nil - no pending callbacks (we don't support FFI callbacks)
+                    popN(static_cast<size_t>(argCount + 1));  // Pop args and receiver
+                    push(Oop::nil());
+                    if (extLog && extCallCount <= 50) {
+                        fprintf(extLog, "[EXT] #%d Returning nil for %s\n", extCallCount, primName.c_str());
+                        fflush(extLog);
+                    }
+                    return PrimitiveResult::Success;
+                }
+                if (primName == "primNumberOfCallbacks" || primName == "numberOfCallbacks") {
+                    // Return 0 - no pending callbacks
+                    popN(static_cast<size_t>(argCount + 1));  // Pop args and receiver
+                    push(Oop::fromSmallInteger(0));
+                    if (extLog && extCallCount <= 50) {
+                        fprintf(extLog, "[EXT] #%d Returning 0 for %s\n", extCallCount, primName.c_str());
+                        fflush(extLog);
+                    }
+                    return PrimitiveResult::Success;
                 }
 
                 auto it = namedPrimitives_.find(key);
