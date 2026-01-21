@@ -1704,6 +1704,11 @@ void Interpreter::processInputEvents() {
 
 // Direct dispatch of mouse events to morphs (bypasses InputEventSensor)
 void Interpreter::dispatchMouseEventToMorph(int x, int y, int buttons, bool isMouseDown) {
+    // Draw visual click indicator for mouse down events
+    if (isMouseDown && buttons != 0) {
+        drawClickIndicator(x, y, buttons);
+    }
+
     static FILE* dispatchLog = nullptr;
     static int dispatchCount = 0;
     if (!dispatchLog) {
@@ -2140,13 +2145,28 @@ void Interpreter::handleMenuBarClick(Oop menuBar, int x, int y, int buttons) {
         Oop cornerX = memory_.fetchPointer(0, corner);
         Oop cornerY = memory_.fetchPointer(1, corner);
 
-        if (!originX.isSmallInteger() || !originY.isSmallInteger() ||
-            !cornerX.isSmallInteger() || !cornerY.isSmallInteger()) continue;
-
-        int left = static_cast<int>(originX.asSmallInteger());
-        int top = static_cast<int>(originY.asSmallInteger());
-        int right = static_cast<int>(cornerX.asSmallInteger());
-        int bottom = static_cast<int>(cornerY.asSmallInteger());
+        // Extract bounds - handle both SmallInteger and SmallFloat
+        int left, top, right, bottom;
+        if (originX.isSmallInteger() && originY.isSmallInteger() &&
+            cornerX.isSmallInteger() && cornerY.isSmallInteger()) {
+            left = static_cast<int>(originX.asSmallInteger());
+            top = static_cast<int>(originY.asSmallInteger());
+            right = static_cast<int>(cornerX.asSmallInteger());
+            bottom = static_cast<int>(cornerY.asSmallInteger());
+        } else if (originX.isSmallFloat() && originY.isSmallFloat() &&
+                   cornerX.isSmallFloat() && cornerY.isSmallFloat()) {
+            left = static_cast<int>(originX.asSmallFloat());
+            top = static_cast<int>(originY.asSmallFloat());
+            right = static_cast<int>(cornerX.asSmallFloat());
+            bottom = static_cast<int>(cornerY.asSmallFloat());
+        } else {
+            // Log and skip items with mixed or unknown bound types
+            if (menuLog) {
+                fprintf(menuLog, "[MENUBAR] Item %zu has non-numeric bounds\n", i);
+                fflush(menuLog);
+            }
+            continue;
+        }
 
         if (x >= left && x < right && y >= top && y < bottom) {
             // Found the clicked menu item
