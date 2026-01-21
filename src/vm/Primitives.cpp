@@ -862,7 +862,16 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
             return PrimitiveResult::Failure;
         }
         uint8_t byte = header->byteAt(arrayIndex);
-        primitiveSuccess(Oop::fromSmallInteger(byte));
+        // ByteStrings and similar should return Characters, not SmallIntegers
+        // Check if this is a string-like class (format 16-23 are byte-indexed)
+        ObjectFormat fmt = header->format();
+        if (fmt >= ObjectFormat::Indexable8 && fmt <= ObjectFormat::Indexable8_7) {
+            // String-like byte object - return as Character
+            primitiveSuccess(Oop::fromCharacter(byte));
+        } else {
+            // Other byte objects (like ByteArray) - return as SmallInteger
+            primitiveSuccess(Oop::fromSmallInteger(byte));
+        }
         return PrimitiveResult::Success;
     } else if (header->isPointersObject()) {
         if (arrayIndex >= header->slotCount()) {
