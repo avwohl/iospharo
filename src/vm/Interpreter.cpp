@@ -4507,172 +4507,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             selStr2 = std::string((char*)selHdr2->bytes(), selHdr2->byteSize());
         }
     }
-    // Trace on:do: sends specifically to WorkingSession
-    if (selStr2 == "on:do:") {
-        Oop rcvr = stackValue(2);  // Receiver
-        std::string rcvrClass = "<unknown>";
-        if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-            Oop cls = memory_.classOf(rcvr);
-            if (cls.isObject()) {
-                Oop clsName = memory_.fetchPointer(6, cls);
-                if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                    ObjectHeader* cnHdr = clsName.asObjectPtr();
-                    if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
-                        rcvrClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
-                    }
-                }
-            }
-        }
-        static FILE* onDoLog = nullptr;
-        static int onDoCount = 0;
-        if (!onDoLog) onDoLog = fopen("/tmp/on_do_trace.log", "w");
-        if (onDoLog && onDoCount < 200) {
-            onDoCount++;
-            Oop arg1 = stackValue(1);  // First argument (exceptionType)
-            Oop arg2 = stackValue(0);  // Second argument (handler block)
-            Oop nilObj = memory_.nil();
-            // More detail for WorkingSession
-            if (rcvrClass == "WorkingSession") {
-                fprintf(onDoLog, "[ON:DO: #%d] *** WORKINGSESSION *** on: 0x%llx (isNil=%d) do: 0x%llx\n",
-                        onDoCount,
-                        (unsigned long long)arg1.rawBits(), arg1.rawBits() == nilObj.rawBits() ? 1 : 0,
-                        (unsigned long long)arg2.rawBits());
-            } else {
-                fprintf(onDoLog, "[ON:DO: #%d] %s on: 0x%llx (isNil=%d) do: 0x%llx\n",
-                        onDoCount, rcvrClass.c_str(),
-                        (unsigned long long)arg1.rawBits(), arg1.rawBits() == nilObj.rawBits() ? 1 : 0,
-                        (unsigned long long)arg2.rawBits());
-            }
-            fflush(onDoLog);
-        }
-    }
-
-    // Trace startup: sends - this is the DNU we're trying to diagnose
-    if (selStr2 == "startup:") {
-        Oop rcvr = stackValue(1);  // Receiver for 1-arg message
-        Oop arg = stackValue(0);   // Argument
-        Oop nilObj = memory_.nil();
-        static FILE* startupLog = nullptr;
-        static int startupCount = 0;
-        if (!startupLog) startupLog = fopen("/tmp/startup_trace.log", "w");
-        if (startupLog && startupCount < 50) {
-            startupCount++;
-            std::string rcvrClass = "<unknown>";
-            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-                Oop cls = memory_.classOf(rcvr);
-                if (cls.isObject()) {
-                    Oop clsName = memory_.fetchPointer(6, cls);
-                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                        ObjectHeader* cnHdr = clsName.asObjectPtr();
-                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
-                            rcvrClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
-                        }
-                    }
-                }
-            }
-            bool isNilRcvr = (rcvr.rawBits() == nilObj.rawBits());
-            fprintf(startupLog, "[STARTUP: #%d] rcvr=%s (0x%llx) isNil=%d arg=0x%llx\n",
-                    startupCount, rcvrClass.c_str(), (unsigned long long)rcvr.rawBits(),
-                    isNilRcvr ? 1 : 0, (unsigned long long)arg.rawBits());
-
-            // If receiver is nil, dump the call stack/temps to understand context
-            if (isNilRcvr) {
-                fprintf(startupLog, "  *** NIL RECEIVER! frameDepth=%zu ***\n", frameDepth_);
-                // Dump temps
-                for (int t = 0; t < 5 && framePointer_; t++) {
-                    Oop temp = *(framePointer_ + 1 + t);
-                    std::string tClass = "?";
-                    if (temp.rawBits() == nilObj.rawBits()) tClass = "nil";
-                    else if (temp.isSmallInteger()) tClass = "SmallInt";
-                    else if (temp.isObject() && temp.rawBits() > 0x10000) {
-                        Oop tc = memory_.classOf(temp);
-                        if (tc.isObject()) {
-                            Oop tcn = memory_.fetchPointer(6, tc);
-                            if (tcn.isObject()) {
-                                ObjectHeader* tcnh = tcn.asObjectPtr();
-                                if (tcnh->isBytesObject() && tcnh->byteSize() < 30) {
-                                    tClass = std::string((char*)tcnh->bytes(), tcnh->byteSize());
-                                }
-                            }
-                        }
-                    }
-                    fprintf(startupLog, "    temp[%d] = %s (0x%llx)\n", t, tClass.c_str(), (unsigned long long)temp.rawBits());
-                }
-                // Show method receiver
-                std::string mrcClass = "?";
-                if (receiver_.rawBits() == nilObj.rawBits()) mrcClass = "nil";
-                else if (receiver_.isObject()) {
-                    Oop rc = memory_.classOf(receiver_);
-                    if (rc.isObject()) {
-                        Oop rcn = memory_.fetchPointer(6, rc);
-                        if (rcn.isObject()) {
-                            ObjectHeader* rcnh = rcn.asObjectPtr();
-                            if (rcnh->isBytesObject() && rcnh->byteSize() < 30) {
-                                mrcClass = std::string((char*)rcnh->bytes(), rcnh->byteSize());
-                            }
-                        }
-                    }
-                }
-                fprintf(startupLog, "    method receiver_ = %s (0x%llx)\n", mrcClass.c_str(), (unsigned long long)receiver_.rawBits());
-            }
-            fflush(startupLog);
-        }
-    }
-
-    // Trace do: sends to see what collections are being iterated
-    if (selStr2 == "do:") {
-        Oop rcvr = stackValue(1);  // Receiver for 1-arg message
-        Oop nilObj = memory_.nil();
-        static FILE* doLog = nullptr;
-        static int doCount = 0;
-        if (!doLog) doLog = fopen("/tmp/do_trace.log", "w");
-        if (doLog && doCount < 100) {
-            doCount++;
-            std::string rcvrClass = "<unknown>";
-            size_t slotCount = 0;
-            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-                ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
-                slotCount = rcvrHdr->slotCount();
-                Oop cls = memory_.classOf(rcvr);
-                if (cls.isObject()) {
-                    Oop clsName = memory_.fetchPointer(6, cls);
-                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                        ObjectHeader* cnHdr = clsName.asObjectPtr();
-                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
-                            rcvrClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
-                        }
-                    }
-                }
-            }
-            fprintf(doLog, "[DO: #%d] %s (slots=%zu) 0x%llx\n",
-                    doCount, rcvrClass.c_str(), slotCount, (unsigned long long)rcvr.rawBits());
-            // Dump first 5 slots to see contents
-            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-                ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
-                for (size_t i = 0; i < slotCount && i < 5; i++) {
-                    Oop slot = rcvrHdr->slotAt(i);
-                    std::string sClass = "?";
-                    if (slot.rawBits() == nilObj.rawBits()) sClass = "nil";
-                    else if (slot.isSmallInteger()) sClass = "SmallInt(" + std::to_string(slot.asSmallInteger()) + ")";
-                    else if (slot.isObject() && slot.rawBits() > 0x10000) {
-                        Oop sc = memory_.classOf(slot);
-                        if (sc.isObject()) {
-                            Oop scn = memory_.fetchPointer(6, sc);
-                            if (scn.isObject()) {
-                                ObjectHeader* scnh = scn.asObjectPtr();
-                                if (scnh->isBytesObject() && scnh->byteSize() < 30) {
-                                    sClass = std::string((char*)scnh->bytes(), scnh->byteSize());
-                                }
-                            }
-                        }
-                    }
-                    fprintf(doLog, "    [%zu] = %s (0x%llx)\n", i, sClass.c_str(), (unsigned long long)slot.rawBits());
-                }
-            }
-            fflush(doLog);
-        }
-    }
-
     if (selStr2 == "ifNotNil:" || selStr2 == "ifNil:" || selStr2 == "ifNil:ifNotNil:" || selStr2 == "ifNotNil:ifNil:") {
         static FILE* ifNotNilLog = nullptr;
         static int ifNotNilCount = 0;
@@ -5468,44 +5302,13 @@ extern int g_traceSendsAfterPrim264;
                     fflush(errorLog);
                 }
 
-                // SOFT FAIL for certain recoverable errors
-                bool isFatalError = true;
-
-                // GrafPort errors can be skipped - rendering will be incomplete but won't crash
-                if (rcvrClassName == "GrafPort" &&
-                    (errorMsg.find("Must set destForm") != std::string::npos ||
-                     errorMsg.find("destForm") != std::string::npos)) {
-                    static int grafportErrors = 0;
-                    if (++grafportErrors <= 3) {
-                        fprintf(stderr, "[WARN] GrafPort error suppressed: %s\n", errorMsg.c_str());
-                    }
-                    isFatalError = false;
-                    // Pop the error message and return receiver
-                    pop();  // Pop error string
-                    // Leave receiver on stack
-                }
-
-                // Index out of range in UI components - skip and continue
-                if (errorMsg.find("index out of range") != std::string::npos &&
-                    (rcvrClassName == "AlignmentMorph" || rcvrClassName == "IconicButtonMorph" ||
-                     rcvrClassName == "MenuMorph" || rcvrClassName == "MenuItemMorph")) {
-                    static int indexErrors = 0;
-                    if (++indexErrors <= 3) {
-                        fprintf(stderr, "[WARN] Index error suppressed in %s\n", rcvrClassName.c_str());
-                    }
-                    isFatalError = false;
-                    pop();  // Pop error string
-                    // Leave receiver on stack
-                }
-
-                if (isFatalError) {
-                    fprintf(stderr, "\n=== HARD FAIL ===\n");
-                    fprintf(stderr, "Smalltalk error: %s >> error: '%s'\n", rcvrClassName.c_str(), errorMsg.c_str());
-                    fprintf(stderr, "See /tmp/error_messages.log for history\n");
-                    fprintf(stderr, "See /tmp/index_error_trace.log for stack trace\n");
-                    fflush(stderr);
-                    std::abort();
-                }
+                // HARD FAIL on all errors - no workarounds
+                fprintf(stderr, "\n=== HARD FAIL ===\n");
+                fprintf(stderr, "Smalltalk error: %s >> error: '%s'\n", rcvrClassName.c_str(), errorMsg.c_str());
+                fprintf(stderr, "See /tmp/error_messages.log for history\n");
+                fprintf(stderr, "See /tmp/index_error_trace.log for stack trace\n");
+                fflush(stderr);
+                std::abort();
 
                 // INTERCEPT: If the error is "No tool named: browser", investigate what tools exist
                 if (rcvrClassName == "PharoCommonTools" && errorMsg.find("No tool named") != std::string::npos) {
@@ -8879,20 +8682,21 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     }
 
     // Log DNU for menu action debugging
-    // IMPORTANT: Use stack receiver, not receiver_ (which is the outer method's receiver)
-    Oop stackRcvrForLog = stackValue(argCount);
     std::string rcvrClassName = "";
     bool isClass = false;
-    if (stackRcvrForLog.isObject() && stackRcvrForLog.rawBits() > 0x10000) {
-        Oop rcvrClass = memory_.classOf(stackRcvrForLog);
+    if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+        Oop rcvrClass = memory_.classOf(receiver_);
         if (rcvrClass.isObject()) {
             // Check if the receiver itself is a class (has a metaclass as its class)
-            ObjectHeader* rcvrHdr = stackRcvrForLog.asObjectPtr();
+            ObjectHeader* rcvrClassHdr = rcvrClass.asObjectPtr();
+            // In Pharo, metaclasses have a specific format and inherit from Metaclass
+            // Classes have format 1 (fixed), while instances have various formats
+            ObjectHeader* rcvrHdr = receiver_.asObjectPtr();
             // A class has format 1 (fixed) and slot 1 is methodDict
             if (rcvrHdr->format() == ObjectFormat::FixedSize &&
                 rcvrHdr->slotCount() >= 10) {
                 // Could be a class - check if slot 1 looks like a methodDict
-                Oop maybeMethodDict = memory_.fetchPointer(1, stackRcvrForLog);
+                Oop maybeMethodDict = memory_.fetchPointer(1, receiver_);
                 if (maybeMethodDict.isObject() && maybeMethodDict.rawBits() > 0x10000) {
                     ObjectHeader* mdHdr = maybeMethodDict.asObjectPtr();
                     if (mdHdr->slotCount() >= 2) {
@@ -8902,7 +8706,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
             }
 
             // If receiver is a class, get name from receiver itself, not metaclass
-            Oop nameSource = isClass ? stackRcvrForLog : rcvrClass;
+            Oop nameSource = isClass ? receiver_ : rcvrClass;
             Oop nameOop = memory_.fetchPointer(6, nameSource);
             if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
                 ObjectHeader* nameHdr = nameOop.asObjectPtr();
@@ -8911,10 +8715,6 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                 }
             }
         }
-    } else if (stackRcvrForLog.rawBits() == memory_.nil().rawBits()) {
-        rcvrClassName = "nil";
-    } else if (stackRcvrForLog.isSmallInteger()) {
-        rcvrClassName = "SmallInteger(" + std::to_string(stackRcvrForLog.asSmallInteger()) + ")";
     }
     // Limit verbose DNU logging for known fallbacks
     static int assureExtCount = 0;
@@ -8931,7 +8731,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     if (!skipLog) {
         std::cerr << "[DNU] Selector '#" << origStr << "' not found on " << rcvrClassName
                   << (isClass ? " [CLASS]" : " [instance]")
-                  << " (args=" << argCount << ") rcvr=0x" << std::hex << stackRcvrForLog.rawBits()
+                  << " (args=" << argCount << ") rcvr=0x" << std::hex << receiver_.rawBits()
                   << std::dec << "\n";
     }
     // Debug: Check why fallbacks aren't matching
@@ -9126,19 +8926,6 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         dnuDepth--;
         return;
     }
-    // Fallback for startup:/shutdown: on nil - happens when iterating over sparse arrays/dictionaries
-    // WorkingSession handlers dictionary may have nil slots that get iterated
-    if ((origStr == "startup:" || origStr == "shutdown:") && argCount == 1) {
-        Oop rcvr = stackValue(1);  // Get actual receiver from stack
-        if (rcvr.rawBits() == memory_.nil().rawBits()) {
-            // startup:/shutdown: sent to nil - skip silently (nil element in handler collection)
-            popN(2);  // Pop argument and nil receiver
-            push(memory_.nil());  // Return nil
-            dnuDepth--;
-            return;
-        }
-    }
-
     // NOTE: Previously bypassed executeDeferredStartupActions:, runStartup:, startUp:
     // This was preventing tool registration. Let these run normally now.
     // Fallback for process termination during quit - don't terminate on embedded VM
@@ -9149,159 +8936,6 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         dnuDepth--;
         return;
     }
-    // Fallback for Point accessors - Point is a 2-slot object (x, y)
-    // When Point class isn't registered, these accessors fail
-    if ((origStr == "x" || origStr == "y") && argCount == 0) {
-        Oop rcvr = stackValue(0);
-        if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-            ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
-            // Point has exactly 2 slots
-            if (rcvrHdr->slotCount() == 2) {
-                pop();  // Pop receiver
-                int slot = (origStr == "x") ? 0 : 1;
-                Oop coord = rcvrHdr->slotAt(slot);
-                push(coord);
-                dnuDepth--;
-                return;
-            }
-        }
-        // Not a 2-slot object, return 0 as fallback
-        pop();  // Pop receiver
-        push(Oop::fromSmallInteger(0));
-        dnuDepth--;
-        return;
-    }
-
-    // Fallback for Point setters - x:, y:
-    if ((origStr == "x:" || origStr == "y:") && argCount == 1) {
-        Oop val = pop();  // Pop value
-        Oop rcvr = stackValue(0);
-        if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-            ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
-            if (rcvrHdr->slotCount() == 2 && !rcvrHdr->isImmutable()) {
-                int slot = (origStr == "x:") ? 0 : 1;
-                rcvrHdr->slotAtPut(slot, val);
-            }
-        }
-        // Leave receiver on stack (return self)
-        dnuDepth--;
-        return;
-    }
-
-    // Fallback for asIntegerPoint - used in rendering
-    if (origStr == "asIntegerPoint" && argCount == 0) {
-        // Just return self - already a point (or point-like)
-        // Leave receiver on stack
-        dnuDepth--;
-        return;
-    }
-
-    // Fallback for asNonFractionalPoint - converts to integer point
-    if (origStr == "asNonFractionalPoint" && argCount == 0) {
-        Oop rcvr = stackValue(0);
-        // For SmallInteger (when used as coordinate), return a 0@0 point-like object
-        // Just return receiver as-is since we can't easily create Point here
-        if (rcvr.isSmallInteger()) {
-            // Create a simple fallback: return receiver (will cause issues but prevents cascade)
-            // Better: try to find and use the Point class
-            pop();  // Pop receiver
-            push(Oop::fromSmallInteger(0));  // Return 0 as fallback
-            dnuDepth--;
-            return;
-        }
-        // For objects, just return self
-        dnuDepth--;
-        return;
-    }
-
-    // Fallback for corner - MessageNotUnderstood edge case
-    // When error occurs in Point operations, MNU objects get Point messages
-    if ((origStr == "x" || origStr == "y") && argCount == 0 && rcvrClassName == "MessageNotUnderstood") {
-        pop();  // Pop receiver
-        push(Oop::fromSmallInteger(0));  // Return 0 as coordinate
-        dnuDepth--;
-        return;
-    }
-
-    // Fallback for corner: (Rectangle creation from Point)
-    if (origStr == "corner:" && argCount == 1) {
-        // For now, just return nil to prevent cascading errors
-        // This should ideally create a Rectangle
-        popN(2);  // Pop arg and receiver
-        push(memory_.nil());
-        dnuDepth--;
-        return;
-    }
-
-    // Fallback for extent: (Rectangle creation from Point)
-    if (origStr == "extent:" && argCount == 1) {
-        // Return nil as we can't create a proper Rectangle
-        popN(2);  // Pop arg and receiver
-        push(memory_.nil());
-        dnuDepth--;
-        return;
-    }
-
-    // Fallback for Rectangle accessors
-    if ((origStr == "origin" || origStr == "corner") && argCount == 0) {
-        Oop rcvr = stackValue(0);
-        if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-            ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
-            // Rectangle has 2 slots: origin, corner (both Points)
-            if (rcvrHdr->slotCount() == 2) {
-                pop();  // Pop receiver
-                int slot = (origStr == "origin") ? 0 : 1;
-                push(rcvrHdr->slotAt(slot));
-                dnuDepth--;
-                return;
-            }
-        }
-        // Return nil if not a Rectangle-like object
-        pop();
-        push(memory_.nil());
-        dnuDepth--;
-        return;
-    }
-
-    // Fallback for hasPositiveExtent - Rectangle validity check
-    if (origStr == "hasPositiveExtent" && argCount == 0) {
-        pop();  // Pop receiver
-        push(memory_.falseObject());  // Return false (invalid rectangle)
-        dnuDepth--;
-        return;
-    }
-
-    // Fallback for Rectangle accessors - needed when MessageNotUnderstood cascades
-    if ((origStr == "left" || origStr == "top" || origStr == "right" || origStr == "bottom") && argCount == 0) {
-        pop();  // Pop receiver
-        push(Oop::fromSmallInteger(0));  // Return 0 as coordinate
-        dnuDepth--;
-        return;
-    }
-
-    if ((origStr == "width" || origStr == "height") && argCount == 0) {
-        pop();  // Pop receiver
-        push(Oop::fromSmallInteger(0));  // Return 0 as dimension
-        dnuDepth--;
-        return;
-    }
-
-    // Fallback for boundingBox - returns a Rectangle-like object
-    if (origStr == "boundingBox" && argCount == 0) {
-        pop();  // Pop receiver
-        push(memory_.nil());  // Return nil (no valid bounding box)
-        dnuDepth--;
-        return;
-    }
-
-    // Fallback for quickMerge: - Rectangle merging
-    if (origStr == "quickMerge:" && argCount == 1) {
-        pop();  // Pop argument (other rectangle)
-        // Leave receiver on stack (return self)
-        dnuDepth--;
-        return;
-    }
-
     // Fallback for context manipulation during process termination
     if (origStr == "asContext") {
         // Return receiver as-is (already a context or convertible)
@@ -9876,117 +9510,44 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     }
 
     if (!canResolveClass) {
-        // Instead of stopping, try to handle common messages gracefully
-        static int unresolvedClassCount = 0;
-        unresolvedClassCount++;
+        std::cerr << "\n[FATAL ERROR] Cannot resolve class of receiver in DNU handler!\n";
+        std::cerr << "  Selector: #" << origStr << "\n";
+        std::cerr << "  Receiver: 0x" << std::hex << failedReceiver.rawBits() << std::dec << "\n";
 
-        // Log the first few occurrences
-        if (unresolvedClassCount <= 5) {
-            std::cerr << "\n[WARN] Cannot resolve class of receiver in DNU handler!\n";
-            std::cerr << "  Selector: #" << origStr << "\n";
-            std::cerr << "  Receiver: 0x" << std::hex << failedReceiver.rawBits() << std::dec << "\n";
+        // Diagnose WHY the class can't be resolved
+        if (failedReceiver.isObject() && failedReceiver.rawBits() > 0x10000) {
+            ObjectHeader* rcvrHdr = failedReceiver.asObjectPtr();
+            uint32_t classIdx = rcvrHdr->classIndex();
+            std::cerr << "  Receiver classIndex: " << classIdx << "\n";
+            std::cerr << "  Receiver format: " << static_cast<int>(rcvrHdr->format()) << "\n";
+            std::cerr << "  Receiver slotCount: " << rcvrHdr->slotCount() << "\n";
 
-            if (failedReceiver.isObject() && failedReceiver.rawBits() > 0x10000) {
-                ObjectHeader* rcvrHdr = failedReceiver.asObjectPtr();
-                uint32_t classIdx = rcvrHdr->classIndex();
-                std::cerr << "  Receiver classIndex: " << classIdx << "\n";
-                std::cerr << "  Receiver format: " << static_cast<int>(rcvrHdr->format()) << "\n";
-                std::cerr << "  Receiver slotCount: " << rcvrHdr->slotCount() << "\n";
+            Oop classOop = memory_.classOf(failedReceiver);
+            std::cerr << "  classOf() returned: 0x" << std::hex << classOop.rawBits() << std::dec;
+            if (classOop.isNil()) {
+                std::cerr << " (nil)\n";
+            } else if (classOop.isObject() && classOop.rawBits() > 0x10000) {
+                ObjectHeader* clsHdr = classOop.asObjectPtr();
+                std::cerr << " (classIdx=" << clsHdr->classIndex() << " slots=" << clsHdr->slotCount() << ")\n";
+                // Try to get name from slot 6
+                if (clsHdr->slotCount() > 6) {
+                    Oop nameOop = memory_.fetchPointer(6, classOop);
+                    std::cerr << "  Class name slot[6]: 0x" << std::hex << nameOop.rawBits() << std::dec << "\n";
+                }
+            } else {
+                std::cerr << " (not an object)\n";
             }
-            std::cerr << "  Returning fallback value to prevent DNU cascade.\n\n";
         }
 
+        std::cerr << "  This would cause infinite DNU recursion. Stopping VM.\n";
+        std::cerr << "  (This is a bug - the receiver should have a valid class)\n\n";
         if (dnuTraceLog) {
-            fprintf(dnuTraceLog, "[UNRESOLVED-CLASS] selector=%s receiver=0x%lx\n",
+            fprintf(dnuTraceLog, "[FATAL] Cannot resolve class for DNU - selector=%s receiver=0x%lx\n",
                     origStr.c_str(), (unsigned long)failedReceiver.rawBits());
             fflush(dnuTraceLog);
         }
-
-        // Provide fallbacks for common messages on objects with unresolved classes
-        if (origStr == "value:" && argCount == 1) {
-            // Block value: - return nil (block couldn't be evaluated)
-            popN(2);  // Pop arg and receiver
-            push(memory_.nil());
-            dnuDepth--;
-            return;
-        }
-        if (origStr == "value" && argCount == 0) {
-            // Block value - return nil
-            pop();  // Pop receiver
-            push(memory_.nil());
-            dnuDepth--;
-            return;
-        }
-        if (origStr == "at:" && argCount == 1) {
-            // Array/collection at: - return nil
-            popN(2);  // Pop index and receiver
-            push(memory_.nil());
-            dnuDepth--;
-            return;
-        }
-        if (origStr == "at:put:" && argCount == 2) {
-            // Array/collection at:put: - return the value
-            Oop val = pop();  // Pop value
-            pop();  // Pop index
-            pop();  // Pop receiver
-            push(val);  // Return value
-            dnuDepth--;
-            return;
-        }
-        if (origStr == "doesNotUnderstand:" && argCount == 1) {
-            // Can't send DNU to object with unresolved class - just return nil
-            popN(2);  // Pop message and receiver
-            push(memory_.nil());
-            dnuDepth--;
-            return;
-        }
-        if (origStr == "class" && argCount == 0) {
-            // Return nil for class query on unresolved object
-            pop();  // Pop receiver
-            push(memory_.nil());
-            dnuDepth--;
-            return;
-        }
-        if (origStr == "size" && argCount == 0) {
-            // Return 0 for size query on unresolved object
-            Oop rcvr = stackValue(0);
-            pop();  // Pop receiver
-            // If it's an object, return its slot count
-            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-                ObjectHeader* hdr = rcvr.asObjectPtr();
-                push(Oop::fromSmallInteger(static_cast<int64_t>(hdr->slotCount())));
-            } else {
-                push(Oop::fromSmallInteger(0));
-            }
-            dnuDepth--;
-            return;
-        }
-        if (origStr == "isEmpty" && argCount == 0) {
-            // Return true (empty) for unresolved collections
-            pop();  // Pop receiver
-            push(memory_.trueObject());
-            dnuDepth--;
-            return;
-        }
-        if (origStr == "do:" && argCount == 1) {
-            // Don't iterate - just pop and return receiver
-            pop();  // Pop block
-            // Leave receiver on stack
-            dnuDepth--;
-            return;
-        }
-        if ((origStr == "x" || origStr == "y") && argCount == 0) {
-            // Point accessor on unresolved class - return 0
-            pop();  // Pop receiver
-            push(Oop::fromSmallInteger(0));
-            dnuDepth--;
-            return;
-        }
-
-        // For any other message, pop args and receiver, return nil
-        popN(argCount + 1);
-        push(memory_.nil());
-        dnuDepth--;
+        running_ = false;
+        dnuDepth = 0;
         return;
     }
 
