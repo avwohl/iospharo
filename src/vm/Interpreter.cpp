@@ -3231,6 +3231,37 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                     uint32_t classIndex = memory_.indexOfClass(arrayClass);
                     Oop array = memory_.allocateSlots(classIndex, arraySize);
 
+                    // Trace temp vector creation
+                    static FILE* e7Log = nullptr;
+                    static int e7Count = 0;
+                    if (!e7Log) e7Log = fopen("/tmp/temp_vector_create.log", "w");
+                    if (e7Log && e7Count < 50) {
+                        e7Count++;
+                        std::string methodSel = "<unknown>";
+                        if (method_.isObject() && method_.rawBits() > 0x10000) {
+                            ObjectHeader* mHdr = method_.asObjectPtr();
+                            if (mHdr->isCompiledMethod()) {
+                                Oop hdr = memory_.fetchPointer(0, method_);
+                                if (hdr.isSmallInteger()) {
+                                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                                    if (numLits >= 2) {
+                                        Oop selLit = memory_.fetchPointer(numLits - 1, method_);
+                                        if (selLit.isObject() && selLit.rawBits() > 0x10000) {
+                                            ObjectHeader* slHdr = selLit.asObjectPtr();
+                                            if (slHdr->isBytesObject() && slHdr->byteSize() < 50) {
+                                                methodSel = std::string((char*)slHdr->bytes(), slHdr->byteSize());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        fprintf(e7Log, "[E7 #%d] Created Array size=%d popInto=%s in #%s\n",
+                                e7Count, arraySize, popIntoArray ? "YES" : "NO", methodSel.c_str());
+                        fprintf(e7Log, "  array=0x%llx\n", (unsigned long long)array.rawBits());
+                        fflush(e7Log);
+                    }
+
                     if (popIntoArray) {
                         // Pop arraySize elements into new array
                         for (int i = arraySize - 1; i >= 0; i--) {
