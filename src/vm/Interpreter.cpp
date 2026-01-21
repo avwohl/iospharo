@@ -8529,6 +8529,30 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                 fprintf(startupLog, "  ACTUAL receiver is NIL!\n");
             }
 
+            // Show temps in current frame
+            fprintf(startupLog, "  Temps (0-4):\n");
+            for (int t = 0; t < 5; t++) {
+                Oop tv = temporary(t);
+                std::string tvInfo = "";
+                if (tv.isSmallInteger()) {
+                    tvInfo = "SmallInt " + std::to_string(tv.asSmallInteger());
+                } else if (tv.isObject() && tv.rawBits() > 0x10000) {
+                    Oop cls = memory_.classOf(tv);
+                    if (cls.isObject()) {
+                        Oop clsName = memory_.fetchPointer(6, cls);
+                        if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                            ObjectHeader* cnHdr = clsName.asObjectPtr();
+                            if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                                tvInfo = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                            }
+                        }
+                    }
+                } else if (tv.rawBits() == memory_.nil().rawBits()) {
+                    tvInfo = "nil";
+                }
+                fprintf(startupLog, "    temp[%d] = 0x%llx %s\n", t, (unsigned long long)tv.rawBits(), tvInfo.c_str());
+            }
+
             // Dump stack around receiver and args
             fprintf(startupLog, "  Stack (top 5):\n");
             for (int i = 0; i < 5 && i < 10; i++) {
@@ -9915,6 +9939,13 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
     static int copiedCount = 0;
     if (!copiedLog) copiedLog = fopen("/tmp/copied_values.log", "w");
 
+    // Log block creation params
+    if (copiedLog && copiedCount < 200 && numCopied > 0) {
+        fprintf(copiedLog, "[BLOCK-PARAMS] numArgs=%d numCopied=%d receiverOnStack=%d\n",
+                numArgs, numCopied, receiverOnStack ? 1 : 0);
+        fflush(copiedLog);
+    }
+
     for (int i = numCopied - 1; i >= 0; --i) {
         Oop copiedValue = pop();
         memory_.storePointer(4 + i, block, copiedValue);
@@ -9946,7 +9977,7 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
                     ++copiedCount, 4 + i, (unsigned long long)copiedValue.rawBits(),
                     valInfo.c_str(), numCopied);
 
-            // If copying nil, show method context
+            // If copying nil, show method context and temps
             if (isNilValue) {
                 std::string methodSel = "<unknown>";
                 std::string rcvrClass = "<unknown>";
@@ -9981,6 +10012,20 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
                     }
                 }
                 fprintf(copiedLog, "  -> Created in %s >> #%s\n", rcvrClass.c_str(), methodSel.c_str());
+
+                // Show current temps (0-3) to understand where nil came from
+                fprintf(copiedLog, "  -> Current temps: ");
+                for (int t = 0; t < 4; t++) {
+                    Oop tv = temporary(t);
+                    if (tv.rawBits() == memory_.nil().rawBits()) {
+                        fprintf(copiedLog, "[%d]=nil ", t);
+                    } else if (tv.isSmallInteger()) {
+                        fprintf(copiedLog, "[%d]=%lld ", t, tv.asSmallInteger());
+                    } else {
+                        fprintf(copiedLog, "[%d]=0x%llx ", t, (unsigned long long)tv.rawBits());
+                    }
+                }
+                fprintf(copiedLog, "\n");
             }
             fflush(copiedLog);
         }
