@@ -1722,6 +1722,57 @@ void Interpreter::dispatchMouseEventToMorph(int x, int y, int buttons, bool isMo
         fflush(dispatchLog);
     }
 
+    // Handle dropdown menu interactions first
+    if (isMouseDown && buttons != 0 && dropdownState_.valid && selectedMenuIndex_ >= 0) {
+        // Check if click is inside the dropdown
+        bool inDropdown = (x >= dropdownState_.x && x < dropdownState_.x + dropdownState_.width &&
+                          y >= dropdownState_.y && y < dropdownState_.y + dropdownState_.height);
+
+        if (inDropdown) {
+            // Calculate which dropdown item was clicked
+            int relY = y - dropdownState_.y - 8;  // 8 = padding
+            int itemIndex = relY / dropdownState_.lineHeight;
+
+            if (dispatchLog) {
+                fprintf(dispatchLog, "[DISPATCH #%d] Dropdown click at (%d,%d) -> item %d of %zu\n",
+                        dispatchCount, x, y, itemIndex, dropdownState_.itemMorphs.size());
+                fflush(dispatchLog);
+            }
+
+            if (itemIndex >= 0 && itemIndex < static_cast<int>(dropdownState_.itemMorphs.size())) {
+                // Execute the menu item action
+                Oop itemMorph = dropdownState_.itemMorphs[itemIndex];
+                executeMenuItemAction(itemMorph);
+            }
+
+            // Close the dropdown after clicking an item
+            selectedMenuIndex_ = -1;
+            dropdownState_.valid = false;
+            return;
+        }
+
+        // Calculate menu bar bounds for comparison
+        int displayH = pharo::gDisplaySurface ? pharo::gDisplaySurface->height() : 768;
+        bool isRetina = displayH > 1000;
+        int titleBarOffset = isRetina ? 56 : 28;
+        int menuBarHeight = isRetina ? 88 : 44;
+        int menuBarBottom = titleBarOffset + menuBarHeight;
+
+        // Check if click is outside both dropdown AND menu bar -> close dropdown
+        bool inMenuBar = (y >= titleBarOffset && y < menuBarBottom);
+        if (!inMenuBar) {
+            if (dispatchLog) {
+                fprintf(dispatchLog, "[DISPATCH #%d] Click outside dropdown and menu bar - closing\n",
+                        dispatchCount);
+                fflush(dispatchLog);
+            }
+            selectedMenuIndex_ = -1;
+            dropdownState_.valid = false;
+            // Continue processing the click for world menu, etc.
+        }
+        // If click is in menu bar, continue to menu bar handling below
+    }
+
     // Check for menu bar click first (rendered at top of screen)
     // The Smalltalk MenubarMorph has tiny bounds but we render it full-width
     // Menu bar is rendered from titleBarOffset to titleBarOffset + menuBarHeight
@@ -2110,7 +2161,105 @@ void Interpreter::processPendingWorldMenu() {
     pendingWorldMenuMethodName_ = nullptr;
 }
 
-// Handle click on the menu bar
+// Process pending menu item action
+void Interpreter::processPendingMenuAction() {
+    if (pendingMenuActionMethod_.isNil() || pendingMenuActionMorph_.isNil()) {
+        return;
+    }
+
+    static FILE* actionLog = nullptr;
+    if (!actionLog) {
+        actionLog = fopen("/tmp/menu_action.log", "a");
+    }
+
+    if (actionLog) {
+        fprintf(actionLog, "[MENU-ACTION] Processing pending action\n");
+        fflush(actionLog);
+    }
+
+    // Push arguments and activate the method
+    push(pendingMenuActionMorph_);  // receiver (self)
+
+    // Check if this is a click: method (takes one arg) or doButtonAction (takes no args)
+    ObjectHeader* methodHdr = pendingMenuActionMethod_.asObjectPtr();
+    int headerBits = static_cast<int>(memory_.fetchPointer(0, pendingMenuActionMethod_).rawBits() >> 3);
+    int numArgs = (headerBits >> 24) & 0x0F;
+
+    if (numArgs == 1) {
+        // click: needs an event argument - pass nil as a workaround
+        push(memory_.nil());
+    }
+
+    activateMethod(pendingMenuActionMethod_, numArgs);
+
+    if (actionLog) {
+        fprintf(actionLog, "[MENU-ACTION] Activated method with %d args\n", numArgs);
+        fflush(actionLog);
+    }
+
+    // Clear pending action
+    pendingMenuActionMethod_ = Oop::nil();
+    pendingMenuActionMorph_ = Oop::nil();
+}
+
+// Execute a menu item's action by invoking its 'click:' or 'doButtonAction' method
+void Interpreter::executeMenuItemAction(Oop itemMorph) {
+    static FILE* actionLog = nullptr;
+    if (!actionLog) {
+        actionLog = fopen("/tmp/menu_action.log", "w");
+    }
+
+    if (itemMorph.isNil() || !itemMorph.isObject()) {
+        if (actionLog) {
+            fprintf(actionLog, "[MENU-ACTION] ERROR: itemMorph is nil or not object\n");
+            fflush(actionLog);
+        }
+        return;
+    }
+
+    // Get the item's class name
+    std::string className = "Unknown";
+    Oop itemClass = memory_.classOf(itemMorph);
+    if (itemClass.isObject()) {
+        Oop nameOop = memory_.fetchPointer(6, itemClass);
+        if (nameOop.isObject()) {
+            ObjectHeader* nameHdr = nameOop.asObjectPtr();
+            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                className = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+            }
+        }
+    }
+
+    if (actionLog) {
+        fprintf(actionLog, "[MENU-ACTION] Executing action for %s (oop=%lld)\n",
+                className.c_str(), static_cast<long long>(itemMorph.rawBits()));
+        fflush(actionLog);
+    }
+
+    // Try to find and invoke 'doButtonAction' method (used by ToggleMenuItemMorph)
+    Oop method = lookupMethodByName(itemClass, "doButtonAction");
+    if (method.isNil()) {
+        // Try 'click:' with a dummy event
+        method = lookupMethodByName(itemClass, "click:");
+    }
+
+    if (!method.isNil()) {
+        if (actionLog) {
+            fprintf(actionLog, "[MENU-ACTION] Found method, queuing activation\n");
+            fflush(actionLog);
+        }
+
+        // Queue the method for execution on next interpreter cycle
+        pendingMenuActionMorph_ = itemMorph;
+        pendingMenuActionMethod_ = method;
+    } else {
+        if (actionLog) {
+            fprintf(actionLog, "[MENU-ACTION] No suitable method found for %s\n", className.c_str());
+            fflush(actionLog);
+        }
+    }
+}
+
 void Interpreter::handleMenuBarClick(Oop menuBar, int x, int y, int buttons) {
     static FILE* menuLog = nullptr;
     if (!menuLog) {
@@ -2553,6 +2702,9 @@ void Interpreter::syncDisplayToSurface() {
 
     // Process any pending world menu request
     processPendingWorldMenu();
+
+    // Process any pending menu item action (from dropdown click)
+    processPendingMenuAction();
 
     // Update ActiveHand position directly (bypasses Pharo's event system which isn't running)
     updateActiveHandPosition();
@@ -4192,6 +4344,9 @@ void Interpreter::returnValue(Oop value) {
 
         // Process any pending world menu request
         processPendingWorldMenu();
+
+        // Process any pending menu item action (from dropdown click)
+        processPendingMenuAction();
 
         // Render World's morphs directly
         renderWorldMorphs();

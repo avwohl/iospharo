@@ -197,6 +197,8 @@ public:
     void dispatchMouseEventToMorph(int x, int y, int buttons, bool isMouseDown); // Direct mouse dispatch
     void handleMenuBarClick(Oop menuBar, int x, int y, int buttons); // Handle menu bar click
     void handleWorldMenuClick(Oop world, int x, int y); // Handle world menu on right-click
+    void executeMenuItemAction(Oop itemMorph); // Execute a dropdown menu item's action
+    void processPendingMenuAction(); // Process pending menu item action
     Oop lookupMethodByName(Oop classObj, const char* selectorName); // Find method by name
     void processPendingWorldMenu(); // Execute queued world menu invocation
     void drawClickIndicator(int x, int y, int buttons); // Draw visible click feedback
@@ -373,6 +375,10 @@ private:
     };
     WorldMenuBounds pendingMenuBounds_;
     bool hasVisibleMenu_ = false;
+
+    // Pending menu item action (from dropdown click)
+    Oop pendingMenuActionMorph_ = Oop::nil();
+    Oop pendingMenuActionMethod_ = Oop::nil();
 
 
     // Debug: visual click indicator
