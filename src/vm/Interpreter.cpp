@@ -4449,7 +4449,28 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     static FILE* allSendLog = nullptr;
     static int allSendCount = 0;
     if (!allSendLog) allSendLog = fopen("/tmp/all_sends.log", "w");
-    if (allSendLog && allSendCount < 2000) {
+    // Trace ifNotNil: sends specifically
+    std::string selStr2 = "";
+    if (selector.isObject() && selector.rawBits() > 0x10000) {
+        ObjectHeader* selHdr2 = selector.asObjectPtr();
+        if (selHdr2->isBytesObject() && selHdr2->byteSize() < 50) {
+            selStr2 = std::string((char*)selHdr2->bytes(), selHdr2->byteSize());
+        }
+    }
+    if (selStr2 == "ifNotNil:" || selStr2 == "ifNil:" || selStr2 == "ifNil:ifNotNil:" || selStr2 == "ifNotNil:ifNil:") {
+        static FILE* ifNotNilLog = nullptr;
+        static int ifNotNilCount = 0;
+        if (!ifNotNilLog) ifNotNilLog = fopen("/tmp/ifNotNil_trace.log", "w");
+        if (ifNotNilLog && ifNotNilCount < 100) {
+            ifNotNilCount++;
+            Oop rcvr = stackValue(static_cast<size_t>(argCount));
+            fprintf(ifNotNilLog, "[IFNOTNIL #%d] %s sent to rcvr=0x%llx\n",
+                    ifNotNilCount, selStr2.c_str(), (unsigned long long)rcvr.rawBits());
+            fflush(ifNotNilLog);
+        }
+    }
+
+    if (allSendLog && allSendCount < 10000) {
         allSendCount++;
         std::string selStr = "<unknown>";
         if (selector.isObject() && selector.rawBits() > 0x10000) {
@@ -7923,7 +7944,7 @@ void Interpreter::activateBlock(Oop block, int argCount) {
         static FILE* blockActLog = nullptr;
         static int blockActCount = 0;
         if (!blockActLog) blockActLog = fopen("/tmp/block_activation.log", "w");
-        if (blockActLog && blockActCount < 100) {
+        if (blockActLog && blockActCount < 500) {
             blockActCount++;
             size_t blockSlots = memory_.slotCountOf(block);
             Oop nilObj = memory_.nil();
@@ -8480,6 +8501,96 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
             origStr = std::string((char*)origHdr->bytes(), origHdr->byteSize());
         }
     }
+    // TRACE: Special debugging for startup: DNU
+    if (origStr == "startup:") {
+        static FILE* startupLog = nullptr;
+        if (!startupLog) startupLog = fopen("/tmp/startup_dnu.log", "w");
+        if (startupLog) {
+            fprintf(startupLog, "[STARTUP: DNU]\n");
+            fprintf(startupLog, "  receiver_ (stale) = 0x%llx\n", (unsigned long long)receiver_.rawBits());
+
+            // The ACTUAL receiver is at stackValue(argCount)
+            Oop actualRcvr = stackValue(static_cast<size_t>(argCount));
+            fprintf(startupLog, "  ACTUAL receiver (stack[%d]) = 0x%llx\n", argCount, (unsigned long long)actualRcvr.rawBits());
+
+            // Show class of actual receiver
+            if (actualRcvr.isObject() && actualRcvr.rawBits() > 0x10000) {
+                Oop actCls = memory_.classOf(actualRcvr);
+                if (actCls.isObject()) {
+                    Oop actClsName = memory_.fetchPointer(6, actCls);
+                    if (actClsName.isObject() && actClsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = actClsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            fprintf(startupLog, "  ACTUAL receiver class: %s\n", std::string((char*)cnHdr->bytes(), cnHdr->byteSize()).c_str());
+                        }
+                    }
+                }
+            } else if (actualRcvr.isNil() || (actualRcvr.isObject() && memory_.fetchPointer(6, memory_.classOf(actualRcvr)).rawBits() == 0)) {
+                fprintf(startupLog, "  ACTUAL receiver is NIL!\n");
+            }
+
+            // Dump stack around receiver and args
+            fprintf(startupLog, "  Stack (top 5):\n");
+            for (int i = 0; i < 5 && i < 10; i++) {
+                Oop sv = stackValue(static_cast<size_t>(i));
+                std::string svInfo = "";
+                if (sv.isSmallInteger()) {
+                    svInfo = "SmallInt " + std::to_string(sv.asSmallInteger());
+                } else if (sv.isObject() && sv.rawBits() > 0x10000) {
+                    Oop cls = memory_.classOf(sv);
+                    if (cls.isObject()) {
+                        Oop clsName = memory_.fetchPointer(6, cls);
+                        if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                            ObjectHeader* cnHdr = clsName.asObjectPtr();
+                            if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                                svInfo = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+                fprintf(startupLog, "    [%d] 0x%llx %s\n", i, (unsigned long long)sv.rawBits(), svInfo.c_str());
+            }
+
+            // Show what the receiver actually is
+            if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+                Oop rcls = memory_.classOf(receiver_);
+                if (rcls.isObject()) {
+                    Oop rclsName = memory_.fetchPointer(6, rcls);
+                    if (rclsName.isObject() && rclsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = rclsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            fprintf(startupLog, "  receiver_ class: %s\n", std::string((char*)cnHdr->bytes(), cnHdr->byteSize()).c_str());
+                        }
+                    }
+                }
+
+                // Dump slots of receiver
+                ObjectHeader* rcvrHdr = receiver_.asObjectPtr();
+                fprintf(startupLog, "  receiver_ slots (%d):\n", (int)rcvrHdr->slotCount());
+                for (size_t s = 0; s < std::min(rcvrHdr->slotCount(), (size_t)8); s++) {
+                    Oop slotVal = memory_.fetchPointer(s, receiver_);
+                    std::string slotInfo = "";
+                    if (slotVal.isSmallInteger()) {
+                        slotInfo = "SmallInt " + std::to_string(slotVal.asSmallInteger());
+                    } else if (slotVal.isObject() && slotVal.rawBits() > 0x10000) {
+                        Oop scls = memory_.classOf(slotVal);
+                        if (scls.isObject()) {
+                            Oop sclsName = memory_.fetchPointer(6, scls);
+                            if (sclsName.isObject() && sclsName.rawBits() > 0x10000) {
+                                ObjectHeader* scnHdr = sclsName.asObjectPtr();
+                                if (scnHdr->isBytesObject() && scnHdr->byteSize() < 50) {
+                                    slotInfo = std::string((char*)scnHdr->bytes(), scnHdr->byteSize());
+                                }
+                            }
+                        }
+                    }
+                    fprintf(startupLog, "    slot[%zu] = 0x%llx %s\n", s, (unsigned long long)slotVal.rawBits(), slotInfo.c_str());
+                }
+            }
+            fflush(startupLog);
+        }
+    }
+
     // Log DNU for menu action debugging
     std::string rcvrClassName = "";
     bool isClass = false;
@@ -9734,7 +9845,7 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
     static FILE* blockCreateLog = nullptr;
     static int blockCreateCount = 0;
     if (!blockCreateLog) blockCreateLog = fopen("/tmp/block_create.log", "w");
-    if (blockCreateLog && blockCreateCount < 50) {
+    if (blockCreateLog && blockCreateCount < 500) {
         blockCreateCount++;
         std::string ctxRcvrClass = "<unknown>";
         if (activeContext_.isObject() && !activeContext_.isNil()) {
@@ -9799,8 +9910,80 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
     memory_.storePointer(3, block, blockReceiver);
 
     // Copy values from stack - these go into slot 4+ (after the 4 fixed slots)
+    // TRACE: Log copied values
+    static FILE* copiedLog = nullptr;
+    static int copiedCount = 0;
+    if (!copiedLog) copiedLog = fopen("/tmp/copied_values.log", "w");
+
     for (int i = numCopied - 1; i >= 0; --i) {
-        memory_.storePointer(4 + i, block, pop());
+        Oop copiedValue = pop();
+        memory_.storePointer(4 + i, block, copiedValue);
+
+        bool isNilValue = (copiedValue.rawBits() == memory_.nil().rawBits());
+        if (copiedLog && copiedCount < 200 && (numCopied > 0 || isNilValue)) {
+            std::string valInfo = "";
+            if (copiedValue.isSmallInteger()) {
+                valInfo = "SmallInt " + std::to_string(copiedValue.asSmallInteger());
+            } else if (copiedValue.isObject() && copiedValue.rawBits() > 0x10000) {
+                Oop cls = memory_.classOf(copiedValue);
+                if (cls.isObject()) {
+                    Oop clsName = memory_.fetchPointer(6, cls);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            valInfo = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                        }
+                    }
+                }
+            } else if (isNilValue) {
+                valInfo = "nil";
+            } else if (copiedValue.rawBits() == memory_.trueObject().rawBits()) {
+                valInfo = "true";
+            } else if (copiedValue.rawBits() == memory_.falseObject().rawBits()) {
+                valInfo = "false";
+            }
+            fprintf(copiedLog, "[COPIED #%d] block slot %d = 0x%llx %s (numCopied=%d)\n",
+                    ++copiedCount, 4 + i, (unsigned long long)copiedValue.rawBits(),
+                    valInfo.c_str(), numCopied);
+
+            // If copying nil, show method context
+            if (isNilValue) {
+                std::string methodSel = "<unknown>";
+                std::string rcvrClass = "<unknown>";
+                if (method_.isObject()) {
+                    ObjectHeader* mHdr = method_.asObjectPtr();
+                    if (mHdr->isCompiledMethod()) {
+                        Oop hdr = memory_.fetchPointer(0, method_);
+                        if (hdr.isSmallInteger()) {
+                            size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                            if (numLits >= 2) {
+                                Oop selLit = memory_.fetchPointer(numLits - 1, method_);
+                                if (selLit.isObject() && selLit.rawBits() > 0x10000) {
+                                    ObjectHeader* slHdr = selLit.asObjectPtr();
+                                    if (slHdr->isBytesObject() && slHdr->byteSize() < 50) {
+                                        methodSel = std::string((char*)slHdr->bytes(), slHdr->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+                    Oop cls = memory_.classOf(receiver_);
+                    if (cls.isObject()) {
+                        Oop clsName = memory_.fetchPointer(6, cls);
+                        if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                            ObjectHeader* cnHdr = clsName.asObjectPtr();
+                            if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                                rcvrClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+                fprintf(copiedLog, "  -> Created in %s >> #%s\n", rcvrClass.c_str(), methodSel.c_str());
+            }
+            fflush(copiedLog);
+        }
     }
 
     push(block);

@@ -888,6 +888,54 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
     Oop index = stackValue(1);
     Oop rcvr = stackValue(2);
 
+    // TRACE: Log nil values being stored
+    static FILE* atPutLog = nullptr;
+    static int atPutNilCount = 0;
+    if (!atPutLog) atPutLog = fopen("/tmp/atput_nil.log", "w");
+    if (atPutLog && atPutNilCount < 50) {
+        // Check if value is nil
+        bool isNil = value.isObject() && value.rawBits() > 0x10000
+                    && value.asObjectPtr()->format() == ObjectFormat::ZeroSized
+                    && value.asObjectPtr()->slotCount() == 0;
+        if (isNil && index.isSmallInteger()) {
+            atPutNilCount++;
+            fprintf(atPutLog, "[ATPUT-NIL #%d] Storing nil at index %lld\n",
+                    atPutNilCount, index.asSmallInteger());
+            // Show receiver class
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                Oop cls = memory_.classOf(rcvr);
+                if (cls.isObject()) {
+                    Oop clsName = memory_.fetchPointer(6, cls);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            fprintf(atPutLog, "  rcvr class: %s\n",
+                                    std::string((char*)cnHdr->bytes(), cnHdr->byteSize()).c_str());
+                        }
+                    }
+                }
+            }
+            // Show current method
+            if (method_.isObject()) {
+                Oop hdr = memory_.fetchPointer(0, method_);
+                if (hdr.isSmallInteger()) {
+                    int numLits = hdr.asSmallInteger() & 0x7FFF;
+                    if (numLits >= 2) {
+                        Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                            ObjectHeader* selHdr = sel.asObjectPtr();
+                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                fprintf(atPutLog, "  in method: #%s\n",
+                                        std::string((char*)selHdr->bytes(), selHdr->byteSize()).c_str());
+                            }
+                        }
+                    }
+                }
+            }
+            fflush(atPutLog);
+        }
+    }
+
     if (!index.isSmallInteger() || !rcvr.isObject()) {
         return PrimitiveResult::Failure;
     }
@@ -1801,6 +1849,23 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
         // Show closure info and calling context
         if (hasNilArg) {
             fprintf(blockArgLog, "  closure = 0x%llx\n", (unsigned long long)closure.rawBits());
+
+            // Show receiver_ class (the class of the object whose method we're in)
+            std::string rcvrClassName = "?";
+            if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+                Oop cls = memory_.classOf(receiver_);
+                if (cls.isObject()) {
+                    Oop clsName = memory_.fetchPointer(6, cls);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            rcvrClassName = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                        }
+                    }
+                }
+            }
+            fprintf(blockArgLog, "  receiver_ class: %s\n", rcvrClassName.c_str());
+
             // Show current method selector
             if (method_.isObject()) {
                 Oop hdr = memory_.fetchPointer(0, method_);
@@ -1811,7 +1876,7 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
                         if (sel.isObject() && sel.rawBits() > 0x10000) {
                             ObjectHeader* selHdr = sel.asObjectPtr();
                             if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                                fprintf(blockArgLog, "  in method: #%s\n",
+                                fprintf(blockArgLog, "  in method: %s >> #%s\n", rcvrClassName.c_str(),
                                         std::string((char*)selHdr->bytes(), selHdr->byteSize()).c_str());
                             }
                         }
