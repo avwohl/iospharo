@@ -11618,8 +11618,8 @@ Oop Interpreter::materializeFrameStack() {
         }
         int64_t headerValue = methodHeader.asSmallInteger();
         int numLiterals = headerValue & 0x7FFF;
-        int numTemps = (headerValue >> 24) & 0x3F;
-        int numArgs = (headerValue >> 30) & 0xF;
+        int numTemps = (headerValue >> 16) & 0xFF;  // Fixed: was using wrong bit offset
+        int numArgs = (headerValue >> 24) & 0xF;
 
         // Calculate context size (6 fixed + temps + some stack)
         size_t contextSize = 6 + numTemps + 32;
@@ -11699,7 +11699,7 @@ Oop Interpreter::materializeFrameStack() {
         Oop methodHeader = memory_.fetchPointer(0, method_);
         if (methodHeader.isSmallInteger()) {
             int64_t headerValue = methodHeader.asSmallInteger();
-            int numTemps = (headerValue >> 24) & 0x3F;
+            int numTemps = (headerValue >> 16) & 0xFF;  // Fixed: was using wrong bit offset
 
             size_t contextSize = 6 + numTemps + 32;
             Oop contextClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
