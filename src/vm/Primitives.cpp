@@ -8966,8 +8966,9 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
                     // Return appropriate values instead of failing (which raises exceptions)
                     if (str == "primNextPendingCallback" || str == "nextPendingCallback") {
                         // Return nil - no pending callbacks (we don't support FFI callbacks)
+                        // IMPORTANT: Use memory_.nil() not Oop::nil() - the image's nil is at a real address
                         popN(static_cast<size_t>(argCount + 1));  // Pop args and receiver
-                        push(Oop::nil());
+                        push(memory_.nil());
                         return PrimitiveResult::Success;
                     }
                     if (str == "primNumberOfCallbacks" || str == "numberOfCallbacks") {
@@ -9213,10 +9214,12 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
             std::string str((char*)litHdr->bytes(), litHdr->byteSize());
             if (str == "primNextPendingCallback" || str == "nextPendingCallback") {
                 // Return nil - no pending callbacks (we don't support FFI callbacks)
+                // IMPORTANT: Use memory_.nil() not Oop::nil() - the image's nil is at a real address
                 popN(static_cast<size_t>(argCount + 1));  // Pop args and receiver
-                push(Oop::nil());
+                push(memory_.nil());
                 if (extLog) {
-                    fprintf(extLog, "[EXT] #%d Returning nil for callback primitive '%s'\n", extCallCount, str.c_str());
+                    fprintf(extLog, "[EXT] #%d Returning image nil (0x%llx) for callback primitive '%s'\n",
+                            extCallCount, (unsigned long long)memory_.nil().rawBits(), str.c_str());
                     fflush(extLog);
                 }
                 return PrimitiveResult::Success;
@@ -9369,10 +9372,12 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
                 // This prevents exception handling from consuming startup cycles
                 if (primName == "primNextPendingCallback" || primName == "nextPendingCallback") {
                     // Return nil - no pending callbacks (we don't support FFI callbacks)
+                    // IMPORTANT: Use memory_.nil() not Oop::nil() - the image's nil is at a real address
                     popN(static_cast<size_t>(argCount + 1));  // Pop args and receiver
-                    push(Oop::nil());
+                    push(memory_.nil());
                     if (extLog && extCallCount <= 50) {
-                        fprintf(extLog, "[EXT] #%d Returning nil for %s\n", extCallCount, primName.c_str());
+                        fprintf(extLog, "[EXT] #%d Returning image nil (0x%llx) for %s\n",
+                                extCallCount, (unsigned long long)memory_.nil().rawBits(), primName.c_str());
                         fflush(extLog);
                     }
                     return PrimitiveResult::Success;
