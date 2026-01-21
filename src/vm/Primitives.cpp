@@ -5039,10 +5039,32 @@ PrimitiveResult Interpreter::primitiveYield(int argCount) {
 
         // Switch to the next process's context
         Oop newContext = memory_.fetchPointer(ProcessSuspendedContextIndex, nextProcess);
-        memory_.storePointer(ProcessSuspendedContextIndex, nextProcess, memory_.nil());
+
+        // CRITICAL: Only clear suspendedContext if we have a valid context to execute
+        // Otherwise the process will be left with nil context and can't be resumed
+        static FILE* yieldCtxLog = nullptr;
+        static int yieldCtxCount = 0;
+        if (!yieldCtxLog) yieldCtxLog = fopen("/tmp/yield_context.log", "w");
+        yieldCtxCount++;
+        if (yieldCtxLog && yieldCtxCount <= 50) {
+            fprintf(yieldCtxLog, "[YIELD-CTX #%d] nextProcess=0x%llx context=0x%llx isNil=%d\n",
+                    yieldCtxCount, (unsigned long long)nextProcess.rawBits(),
+                    (unsigned long long)newContext.rawBits(),
+                    newContext.isNil() ? 1 : 0);
+            fflush(yieldCtxLog);
+        }
 
         if (!newContext.isNil() && newContext.isObject()) {
+            // Only clear suspendedContext AFTER we confirm we have a valid context
+            memory_.storePointer(ProcessSuspendedContextIndex, nextProcess, memory_.nil());
             executeFromContext(newContext);
+        } else {
+            // WARNING: Process has nil context, can't execute
+            if (yieldCtxLog && yieldCtxCount <= 50) {
+                fprintf(yieldCtxLog, "[YIELD-CTX #%d] SKIPPING process with nil context!\n", yieldCtxCount);
+                fflush(yieldCtxLog);
+            }
+            // Don't switch to this process, keep current process running
         }
     } else {
         // No process switch happened - track consecutive yields without switch
@@ -8722,6 +8744,41 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
     }
     if (relinquishLog && relinquishCount <= 50) {
         fprintf(relinquishLog, "[RELINQUISH] #%d argCount=%d\n", relinquishCount, argCount);
+        // Log current method context for first 10 calls
+        if (relinquishCount <= 10 && method_.isObject() && method_.rawBits() > 0x10000) {
+            std::string methodSel = "<unknown>";
+            ObjectHeader* mHdr = method_.asObjectPtr();
+            if (mHdr->isCompiledMethod()) {
+                Oop hdr = memory_.fetchPointer(0, method_);
+                if (hdr.isSmallInteger()) {
+                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                    if (numLits >= 2) {
+                        Oop selLit = memory_.fetchPointer(numLits - 1, method_);
+                        if (selLit.isObject() && selLit.rawBits() > 0x10000) {
+                            ObjectHeader* slHdr = selLit.asObjectPtr();
+                            if (slHdr->isBytesObject() && slHdr->byteSize() < 50) {
+                                methodSel = std::string((char*)slHdr->bytes(), slHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+            }
+            std::string rcvrClass = "<unknown>";
+            if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+                Oop cls = memory_.classOf(receiver_);
+                if (cls.isObject()) {
+                    Oop clsName = memory_.fetchPointer(6, cls);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            rcvrClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                        }
+                    }
+                }
+            }
+            fprintf(relinquishLog, "[RELINQUISH] #%d method=#%s receiver=%s\n",
+                    relinquishCount, methodSel.c_str(), rcvrClass.c_str());
+        }
         fflush(relinquishLog);
     }
 
@@ -8820,10 +8877,12 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
                     fflush(relinquishLog);
                 }
 
-                // Search from highest priority down to current priority
+                // Search from highest priority down to and INCLUDING current priority
                 // NOTE: Priority is 1-based, but array indices are 0-based
                 // Priority N is at index N-1
-                for (int pri = static_cast<int>(numQueues); pri > activePriority; pri--) {
+                // IMPORTANT: We must include same priority (>=, not >) for round-robin
+                // scheduling to work. Pharo's doc says "at least that of the active Process".
+                for (int pri = static_cast<int>(numQueues); pri >= activePriority; pri--) {
                     int index = pri - 1;  // Convert 1-based priority to 0-based index
                     Oop queue = memory_.fetchPointer(index, schedLists);
                     if (!queue.isObject() || queue.rawBits() == nilObj.rawBits()) continue;

@@ -727,7 +727,8 @@ Oop ObjectMemory::createStartupContext(Oop method, Oop receiver) {
         classIndex = const_cast<ObjectMemory*>(this)->registerClass(contextClass);
     }
 
-    Oop context = allocateSlots(classIndex, contextSize, ObjectFormat::Indexable);
+    // Use IndexableWithFixed for contexts (format 3) - they have fixed + indexed fields
+    Oop context = allocateSlots(classIndex, contextSize, ObjectFormat::IndexableWithFixed);
     if (context.isNil()) {
         return nilObject_;
     }

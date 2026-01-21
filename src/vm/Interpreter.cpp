@@ -3572,8 +3572,34 @@ void Interpreter::returnValue(Oop value) {
                 ObjectHeader* senderHdr = sender.asObjectPtr();
 
                 // Check if sender looks like a Context (has enough slots and right format)
-                if (senderHdr->slotCount() >= 6 &&
-                    senderHdr->format() == ObjectFormat::IndexableWithFixed) {
+                bool hasEnoughSlots = senderHdr->slotCount() >= 6;
+                bool isContextFormat = senderHdr->format() == ObjectFormat::IndexableWithFixed;
+
+                static FILE* senderCheckLog = nullptr;
+                static int senderCheckCount = 0;
+                if (!senderCheckLog) senderCheckLog = fopen("/tmp/sender_check.log", "w");
+                senderCheckCount++;
+                if (senderCheckLog && senderCheckCount <= 100) {
+                    // Get sender's class name
+                    std::string senderClsName = "?";
+                    Oop senderCls = memory_.classOf(sender);
+                    if (senderCls.isObject()) {
+                        Oop clsName = memory_.fetchPointer(6, senderCls);
+                        if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                            ObjectHeader* cnH = clsName.asObjectPtr();
+                            if (cnH->isBytesObject() && cnH->byteSize() < 50) {
+                                senderClsName = std::string((char*)cnH->bytes(), cnH->byteSize());
+                            }
+                        }
+                    }
+                    fprintf(senderCheckLog, "[SENDER #%d] sender=0x%llx class=%s slots=%zu fmt=%d (need>=6, needFmt=3) pass=%d\n",
+                            senderCheckCount, (unsigned long long)sender.rawBits(), senderClsName.c_str(),
+                            senderHdr->slotCount(), (int)senderHdr->format(),
+                            hasEnoughSlots && isContextFormat ? 1 : 0);
+                    fflush(senderCheckLog);
+                }
+
+                if (hasEnoughSlots && isContextFormat) {
                     // Reset stack for new context
                     stackPointer_ = stackBase_;
 
@@ -3583,12 +3609,56 @@ void Interpreter::returnValue(Oop value) {
                         // Push the return value onto the new context's stack
                         push(value);
                         return;
+                    } else {
+                        if (senderCheckLog && senderCheckCount <= 100) {
+                            fprintf(senderCheckLog, "[SENDER #%d] executeFromContext FAILED!\n", senderCheckCount);
+                            fflush(senderCheckLog);
+                        }
                     }
                 }
             }
         }
 
         // Mark current process as terminated by clearing its suspendedContext
+        {
+            static FILE* retTermLog = nullptr;
+            static int retTermCount = 0;
+            if (!retTermLog) retTermLog = fopen("/tmp/return_terminate.log", "w");
+            retTermCount++;
+            if (retTermLog && retTermCount <= 50) {
+                Oop ap = getActiveProcess();
+                Oop prioOop = memory_.fetchPointer(2, ap);  // priority
+                int prio = prioOop.isSmallInteger() ? static_cast<int>(prioOop.asSmallInteger()) : -1;
+                // Get method selector from activeContext
+                std::string ctxMethod = "?";
+                if (activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
+                    Oop ctxMeth = memory_.fetchPointer(3, activeContext_);
+                    if (ctxMeth.isObject() && ctxMeth.rawBits() > 0x10000) {
+                        Oop mhdr = memory_.fetchPointer(0, ctxMeth);
+                        if (mhdr.isSmallInteger()) {
+                            int64_t hv = mhdr.asSmallInteger();
+                            int nLits = hv & 0x7FFF;
+                            if (nLits >= 2 && nLits < 100) {
+                                Oop sel = memory_.fetchPointer(nLits - 1, ctxMeth);
+                                if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                    ObjectHeader* selH = sel.asObjectPtr();
+                                    if (selH->isBytesObject() && selH->byteSize() < 50) {
+                                        ctxMethod = std::string((char*)selH->bytes(), selH->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // Get sender to show the call stack
+                Oop sender = activeContext_.isObject() ? memory_.fetchPointer(0, activeContext_) : Oop::nil();
+                fprintf(retTermLog, "[RET-TERM #%d] proc=0x%llx(p%d) context=0x%llx method=#%s sender=0x%llx\n",
+                        retTermCount, (unsigned long long)ap.rawBits(), prio,
+                        (unsigned long long)activeContext_.rawBits(), ctxMethod.c_str(),
+                        (unsigned long long)sender.rawBits());
+                fflush(retTermLog);
+            }
+        }
         terminateCurrentProcess();
 
         // Try to find another runnable process
@@ -9497,10 +9567,17 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         dnuDepth--;
         return;
     }
-    if (origStr == "hasError" || origStr == "isImageStarting" || origStr == "isSessionStarting") {
-        // Return false for these status checks
+    if (origStr == "hasError") {
+        // Return false for error status check
         popN(argCount + 1);
         push(memory_.falseObject());
+        dnuDepth--;
+        return;
+    }
+    if (origStr == "isImageStarting" || origStr == "isSessionStarting") {
+        // Return TRUE - we ARE starting the image after snapshot resume
+        popN(argCount + 1);
+        push(memory_.trueObject());
         dnuDepth--;
         return;
     }
@@ -10876,7 +10953,10 @@ void Interpreter::initializeSelectors() {
 // ===== PROCESS SCHEDULING =====
 
 void Interpreter::terminateCurrentProcess() {
-    // DEBUG: "[SCHED] Terminating current process..."
+    static FILE* termLog = nullptr;
+    static int termCount = 0;
+    if (!termLog) termLog = fopen("/tmp/process_terminate.log", "w");
+    termCount++;
 
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
     Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
@@ -10899,8 +10979,17 @@ void Interpreter::terminateCurrentProcess() {
         return;
     }
 
-    // DEBUG_LOG("[SCHED] Setting suspendedContext to nil for process 0x"
-              // << std::hex << activeProcess.rawBits() << std::dec;
+    if (termLog && termCount <= 50) {
+        // Get current suspendedContext before clearing
+        Oop oldCtx = memory_.fetchPointer(1, activeProcess);
+        // Get priority
+        Oop prioOop = memory_.fetchPointer(2, activeProcess);  // ProcessPriorityIndex = 2
+        int prio = prioOop.isSmallInteger() ? static_cast<int>(prioOop.asSmallInteger()) : -1;
+        fprintf(termLog, "[TERMINATE #%d] process=0x%llx priority=%d oldSuspendedContext=0x%llx\n",
+                termCount, (unsigned long long)activeProcess.rawBits(), prio,
+                (unsigned long long)oldCtx.rawBits());
+        fflush(termLog);
+    }
 
     // Process: slot 1 = suspendedContext - set it to nil to mark as terminated
     memory_.storePointer(1, activeProcess, nilObj);
@@ -11156,8 +11245,10 @@ Oop Interpreter::materializeFrameStack() {
         Oop contextClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
         uint32_t classIndex = contextClass.isObject() ? contextClass.asObjectPtr()->classIndex() : 3104;
 
-        // Allocate context
-        Oop context = memory_.allocateSlots(classIndex, contextSize, ObjectFormat::Indexable);
+        // Allocate context - use IndexableWithFixed (format 3) for contexts
+        // Contexts have fixed fields (sender, pc, stackp, method, closure, receiver)
+        // plus indexed temps/stack area
+        Oop context = memory_.allocateSlots(classIndex, contextSize, ObjectFormat::IndexableWithFixed);
         if (context.isNil()) {
             if (matLog) {
                 fprintf(matLog, "[MATERIALIZE] Failed to allocate context!\n");
@@ -11233,7 +11324,8 @@ Oop Interpreter::materializeFrameStack() {
             Oop contextClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
             uint32_t classIndex = contextClass.isObject() ? contextClass.asObjectPtr()->classIndex() : 3104;
 
-            Oop context = memory_.allocateSlots(classIndex, contextSize, ObjectFormat::Indexable);
+            // Use IndexableWithFixed for contexts (format 3)
+            Oop context = memory_.allocateSlots(classIndex, contextSize, ObjectFormat::IndexableWithFixed);
             if (!context.isNil()) {
                 uint8_t* methodBytes = methodHdr->bytes();
                 int pc = 1;
@@ -11521,6 +11613,16 @@ bool Interpreter::tryReschedule() {
         ObjectHeader* ctxHeader = context.asObjectPtr();
         if (ctxHeader->format() != ObjectFormat::IndexableWithFixed) {
             continue;
+        }
+
+        // Log the process we're about to schedule
+        if (schedLog && schedDump <= 50) {
+            Oop prioOop = memory_.fetchPointer(2, process);
+            int prio = prioOop.isSmallInteger() ? static_cast<int>(prioOop.asSmallInteger()) : -1;
+            fprintf(schedLog, "[RESCHED #%d] Selecting process=0x%llx priority=%d context=0x%llx from queue[%d]\n",
+                    schedDump, (unsigned long long)process.rawBits(), prio,
+                    (unsigned long long)context.rawBits(), i);
+            fflush(schedLog);
         }
 
         // Update the active process in scheduler
@@ -12720,11 +12822,13 @@ bool Interpreter::executeFromContext(Oop context) {
                             fprintf(snapLog, "[SNAP] Receiver class name: '%s'\n", className.c_str());
                             fflush(snapLog);
                         }
-                        if (className == "SnapshotOperation") {
-                            // We're resuming in SnapshotOperation - set return to false
+                        if (className == "SnapshotOperation" || className == "SessionManager") {
+                            // We're resuming in snapshot-related context
+                            // SnapshotOperation is used in Pharo <= 12
+                            // SessionManager is used in Pharo 13+
                             isSnapshotResume = true;
                             if (snapLog) {
-                                fprintf(snapLog, "[SNAP] Detected SnapshotOperation class!\n");
+                                fprintf(snapLog, "[SNAP] Detected snapshot class: %s!\n", className.c_str());
                                 fflush(snapLog);
                             }
                         }
@@ -12738,7 +12842,7 @@ bool Interpreter::executeFromContext(Oop context) {
     if (isSnapshotResume) {
         firstSnapshotResume = false;
         if (snapLog) {
-            fprintf(snapLog, "[SNAP] Will set TOS to false for resume\n");
+            fprintf(snapLog, "[SNAP] Will set TOS to TRUE for resume\n");
             fflush(snapLog);
         }
     } else if (firstSnapshotResume && snapLog) {
@@ -12780,6 +12884,53 @@ bool Interpreter::executeFromContext(Oop context) {
     // In Pharo, PC is 1-based byte offset from start of method bytes (absolute, includes header+literals)
     // Initial PC = (1 + numLiterals) * 8 + 1 = bytecodeStart + 1
     Oop savedPC = memory_.fetchPointer(1, context);
+
+    // Log context restoration details
+    static FILE* ctxRestoreLog = nullptr;
+    static int ctxRestoreCount = 0;
+    if (!ctxRestoreLog) ctxRestoreLog = fopen("/tmp/context_restore.log", "w");
+    ctxRestoreCount++;
+    if (ctxRestoreLog && ctxRestoreCount <= 50) {
+        // Get active process
+        Oop activeProc = getActiveProcess();
+        Oop prioOop = memory_.fetchPointer(2, activeProc);
+        int prio = prioOop.isSmallInteger() ? static_cast<int>(prioOop.asSmallInteger()) : -1;
+
+        // Get method selector
+        std::string selName = "?";
+        if (numLiterals >= 2 && numLiterals < 100) {
+            Oop sel = memory_.fetchPointer(numLiterals - 1, method_);
+            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                ObjectHeader* selH = sel.asObjectPtr();
+                if (selH->isBytesObject() && selH->byteSize() < 50) {
+                    selName = std::string((char*)selH->bytes(), selH->byteSize());
+                }
+            }
+        }
+        // Get sender context
+        Oop sender = memory_.fetchPointer(0, context);
+        // Get receiver class name
+        std::string rcvrClsName = "?";
+        if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+            Oop rcvrCls = memory_.classOf(receiver_);
+            if (rcvrCls.isObject()) {
+                Oop clsName = memory_.fetchPointer(6, rcvrCls);
+                if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                    ObjectHeader* cnH = clsName.asObjectPtr();
+                    if (cnH->isBytesObject() && cnH->byteSize() < 50) {
+                        rcvrClsName = std::string((char*)cnH->bytes(), cnH->byteSize());
+                    }
+                }
+            }
+        }
+        fprintf(ctxRestoreLog, "[RESTORE #%d] proc=0x%llx(p%d) context=0x%llx method=#%s rcvr=%s sender=0x%llx pc=%lld bcStart=%zu\n",
+                ctxRestoreCount, (unsigned long long)activeProc.rawBits(), prio,
+                (unsigned long long)context.rawBits(), selName.c_str(), rcvrClsName.c_str(),
+                (unsigned long long)sender.rawBits(),
+                savedPC.isSmallInteger() ? savedPC.asSmallInteger() : -1,
+                bytecodeStart);
+        fflush(ctxRestoreLog);
+    }
     int64_t pcOffset = 0;
     if (savedPC.isSmallInteger()) {
         pcOffset = savedPC.asSmallInteger();
@@ -12857,6 +13008,24 @@ bool Interpreter::executeFromContext(Oop context) {
     //   slot 0: save (Boolean)
     //   slot 2: isQuit (Boolean) - if true, quitPrimitive is called after resume
     if (isSnapshotResume) {
+        static FILE* snapStackLog = nullptr;
+        if (!snapStackLog) snapStackLog = fopen("/tmp/snapshot_stack.log", "w");
+        if (snapStackLog) {
+            // Log the context's stack/temp area
+            fprintf(snapStackLog, "[SNAP-STACK] stackp=%d Context slots 6+:\n", stackp);
+            ObjectHeader* ctxHdr = context.asObjectPtr();
+            for (int i = 0; i < std::min(stackp + 2, 10); i++) {
+                Oop item = ctxHdr->slotAt(ContextFixedFields + i);
+                bool isTrueObj = (item.rawBits() == memory_.trueObject().rawBits());
+                bool isFalseObj = (item.rawBits() == memory_.falseObject().rawBits());
+                fprintf(snapStackLog, "  slot[%d]: 0x%llx %s%s\n", 6 + i,
+                        (unsigned long long)item.rawBits(),
+                        isTrueObj ? "(TRUE)" : "",
+                        isFalseObj ? "(FALSE)" : "");
+            }
+            fflush(snapStackLog);
+        }
+
         // Set TOS to true so "result not ifTrue: [quit]" skips the quit path.
         // This allows the image to proceed with startup instead of quitting.
         if (stackPointer_ > stackBase_) {
@@ -12865,7 +13034,23 @@ bool Interpreter::executeFromContext(Oop context) {
             push(memory_.trueObject());
         }
 
-        // Also clear isQuit slot in SnapshotOperation to be safe
+        // For SessionManager (Pharo 13+), the 'quit' parameter might be stored
+        // differently than SnapshotOperation. Try to find and clear it.
+        // In snapshot:andQuit:, the second argument (quit) might be at slot 7
+        // (since slot 6 = first arg/temp 'save', slot 7 = second arg 'quit')
+        ObjectHeader* ctxHdrForQuit = context.asObjectPtr();
+        if (ctxHdrForQuit->slotCount() > 7) {
+            Oop quitSlot = ctxHdrForQuit->slotAt(7);  // 'quit' parameter
+            if (quitSlot.rawBits() == memory_.trueObject().rawBits()) {
+                ctxHdrForQuit->slotAtPut(7, memory_.falseObject());
+                if (snapStackLog) {
+                    fprintf(snapStackLog, "[SNAP-STACK] Cleared quit parameter at slot 7\n");
+                    fflush(snapStackLog);
+                }
+            }
+        }
+
+        // Also clear isQuit slot in SnapshotOperation (for older Pharo) to be safe
         if (receiver_.isObject()) {
             ObjectHeader* rcvr = receiver_.asObjectPtr();
             if (rcvr->slotCount() >= 3) {
