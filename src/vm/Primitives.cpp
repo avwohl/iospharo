@@ -1014,6 +1014,40 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
         if (arrayIndex >= header->slotCount()) {
             return PrimitiveResult::Failure;
         }
+        // Trace storage of ClassSessionHandler objects
+        static FILE* storeLog = nullptr;
+        static int storeCount = 0;
+        if (!storeLog) storeLog = fopen("/tmp/atput_store.log", "w");
+        if (storeLog && storeCount < 100) {
+            if (value.isObject() && value.rawBits() > 0x10000) {
+                Oop cls = memory_.classOf(value);
+                if (cls.isObject()) {
+                    Oop clsName = memory_.fetchPointer(6, cls);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            std::string className((char*)cnHdr->bytes(), cnHdr->byteSize());
+                            if (className.find("SessionHandler") != std::string::npos) {
+                                storeCount++;
+                                fprintf(storeLog, "[STORE #%d] Storing %s at index %zu in Array 0x%llx (size %zu)\n",
+                                        storeCount, className.c_str(), arrayIndex,
+                                        (unsigned long long)rcvr.rawBits(), header->slotCount());
+                                // Verify the store
+                                header->slotAtPut(arrayIndex, value);
+                                Oop readBack = header->slotAt(arrayIndex);
+                                fprintf(storeLog, "  Stored 0x%llx, read back 0x%llx (%s)\n",
+                                        (unsigned long long)value.rawBits(),
+                                        (unsigned long long)readBack.rawBits(),
+                                        readBack.rawBits() == value.rawBits() ? "OK" : "MISMATCH!");
+                                fflush(storeLog);
+                                primitiveSuccess(value);
+                                return PrimitiveResult::Success;
+                            }
+                        }
+                    }
+                }
+            }
+        }
         header->slotAtPut(arrayIndex, value);
         primitiveSuccess(value);
         return PrimitiveResult::Success;
@@ -3126,6 +3160,70 @@ PrimitiveResult Interpreter::primitiveReplaceFromTo(int argCount) {
     int64_t startIdx = start.asSmallInteger();
     int64_t stopIdx = stop.asSmallInteger();
     int64_t repStartIdx = repStart.asSmallInteger();
+
+    // Trace ALL calls to primitive 105
+    static FILE* replLog = nullptr;
+    static int replCount = 0;
+    if (!replLog) replLog = fopen("/tmp/replace_trace.log", "w");
+    if (replLog && replCount < 100) {
+        replCount++;
+        fprintf(replLog, "[P105 #%d] replaceFrom:%lld to:%lld with:0x%llx startingAt:%lld (rcvr=0x%llx)\n",
+                replCount, startIdx, stopIdx, (unsigned long long)replacement.rawBits(),
+                repStartIdx, (unsigned long long)rcvr.rawBits());
+        fflush(replLog);
+    }
+    if (replLog && rcvr.isObject() && replacement.isObject()) {
+        ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+        ObjectHeader* replHdr = replacement.asObjectPtr();
+        if (rcvrHdr->isPointersObject() && replHdr->isPointersObject()) {
+            // Count non-nil elements in source (replacement)
+            Oop nilObj = memory_.nil();
+            int srcNonNil = 0;
+            for (size_t i = 0; i < replHdr->slotCount(); i++) {
+                if (replHdr->slotAt(i).rawBits() != nilObj.rawBits()) srcNonNil++;
+            }
+            // Log ALL replaceFrom:to:with:startingAt: calls with meaningful data
+            if (srcNonNil > 0 && stopIdx >= 10) {
+                replCount++;
+                fprintf(replLog, "[REPLACE #%d] rcvr=0x%llx (%zu slots), src=0x%llx (%zu slots, %d non-nil)\n",
+                        replCount, (unsigned long long)rcvr.rawBits(), rcvrHdr->slotCount(),
+                        (unsigned long long)replacement.rawBits(), replHdr->slotCount(), srcNonNil);
+                fprintf(replLog, "  replaceFrom:%lld to:%lld with:src startingAt:%lld\n",
+                        startIdx, stopIdx, repStartIdx);
+                // Show elements in the copy range
+                fprintf(replLog, "  src elements [%lld..%lld]: ", repStartIdx, repStartIdx + (stopIdx - startIdx));
+                for (int64_t i = repStartIdx - 1; i < repStartIdx - 1 + (stopIdx - startIdx + 1) && i < (int64_t)replHdr->slotCount() && i < repStartIdx + 5; i++) {
+                    Oop elem = replHdr->slotAt(i);
+                    if (elem.rawBits() == nilObj.rawBits()) {
+                        fprintf(replLog, "[nil] ");
+                    } else if (elem.isSmallInteger()) {
+                        fprintf(replLog, "[int %lld] ", elem.asSmallInteger());
+                    } else {
+                        // Get class name
+                        Oop elemCls = memory_.classOf(elem);
+                        if (elemCls.isObject()) {
+                            Oop clsName = memory_.fetchPointer(6, elemCls);
+                            if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                                ObjectHeader* cnHdr = clsName.asObjectPtr();
+                                if (cnHdr->isBytesObject() && cnHdr->byteSize() < 30) {
+                                    std::string cn((char*)cnHdr->bytes(), cnHdr->byteSize());
+                                    fprintf(replLog, "[%s] ", cn.c_str());
+                                } else {
+                                    fprintf(replLog, "[obj] ");
+                                }
+                            } else {
+                                fprintf(replLog, "[obj] ");
+                            }
+                        } else {
+                            fprintf(replLog, "[obj] ");
+                        }
+                    }
+                }
+                fprintf(replLog, "...\n");
+                fflush(replLog);
+            }
+        }
+    }
 
     if (startIdx < 1 || repStartIdx < 1) {
         return PrimitiveResult::Failure;
@@ -10898,7 +10996,8 @@ PrimitiveResult Interpreter::primitiveStringCompare(int argCount) {
 
 // Primitive 227: String replace (optimized bulk copy)
 // dest destStart destEnd source sourceStart primitiveStringReplace -> dest
-// Copies characters from source to dest
+// Copies elements from source to dest (works for both byte objects and pointer objects)
+// This is primitive 105, used by replaceFrom:to:with:startingAt:
 PrimitiveResult Interpreter::primitiveStringReplace(int argCount) {
     if (argCount != 4) return PrimitiveResult::Failure;
 
@@ -10932,25 +11031,73 @@ PrimitiveResult Interpreter::primitiveStringReplace(int argCount) {
     }
 
     size_t srcIdx = static_cast<size_t>(sourceStart - 1);
-    size_t dstStart = static_cast<size_t>(destStart - 1);
-    size_t dstEnd = static_cast<size_t>(destEnd);
-    size_t count = dstEnd - dstStart;
+    size_t dstStartIdx = static_cast<size_t>(destStart - 1);
+    size_t count = static_cast<size_t>(destEnd - destStart + 1);
 
-    size_t destSize = memory_.byteSizeOf(destOop);
-    size_t sourceSize = memory_.byteSizeOf(sourceOop);
+    ObjectHeader* destHdr = destOop.asObjectPtr();
+    ObjectHeader* srcHdr = sourceOop.asObjectPtr();
 
-    if (dstEnd > destSize || srcIdx + count > sourceSize) {
-        return PrimitiveResult::Failure;
+    // Handle POINTER objects (Arrays, etc.)
+    if (destHdr->isPointersObject() && srcHdr->isPointersObject()) {
+        size_t destSlots = destHdr->slotCount();
+        size_t srcSlots = srcHdr->slotCount();
+
+        // Bounds check
+        if (dstStartIdx + count > destSlots || srcIdx + count > srcSlots) {
+            return PrimitiveResult::Failure;
+        }
+
+        // Copy slots
+        for (size_t i = 0; i < count; i++) {
+            Oop value = srcHdr->slotAt(srcIdx + i);
+            destHdr->slotAtPut(dstStartIdx + i, value);
+        }
+
+        popN(4);  // Pop 4 args, leave dest
+        return PrimitiveResult::Success;
     }
 
-    // Copy bytes
-    for (size_t i = 0; i < count; i++) {
-        uint8_t byte = memory_.fetchByte(srcIdx + i, sourceOop);
-        memory_.storeByte(dstStart + i, destOop, byte);
+    // Handle BYTE objects (Strings, ByteArrays, etc.)
+    if (destHdr->isBytesObject() && srcHdr->isBytesObject()) {
+        size_t destSize = destHdr->byteSize();
+        size_t sourceSize = srcHdr->byteSize();
+
+        // Bounds check
+        if (dstStartIdx + count > destSize || srcIdx + count > sourceSize) {
+            return PrimitiveResult::Failure;
+        }
+
+        // Copy bytes
+        for (size_t i = 0; i < count; i++) {
+            uint8_t byte = srcHdr->byteAt(srcIdx + i);
+            destHdr->byteAtPut(dstStartIdx + i, byte);
+        }
+
+        popN(4);  // Pop 4 args, leave dest
+        return PrimitiveResult::Success;
     }
 
-    popN(4);  // Pop 4 args, leave dest
-    return PrimitiveResult::Success;
+    // Handle WORD objects (32-bit arrays)
+    if (destHdr->format() == ObjectFormat::Indexable32 &&
+        srcHdr->format() == ObjectFormat::Indexable32) {
+        size_t destWords = destHdr->slotCount();
+        size_t srcWords = srcHdr->slotCount();
+
+        if (dstStartIdx + count > destWords || srcIdx + count > srcWords) {
+            return PrimitiveResult::Failure;
+        }
+
+        for (size_t i = 0; i < count; i++) {
+            Oop value = destHdr->slotAt(srcIdx + i);
+            destHdr->slotAtPut(dstStartIdx + i, value);
+        }
+
+        popN(4);
+        return PrimitiveResult::Success;
+    }
+
+    // Incompatible types - fail
+    return PrimitiveResult::Failure;
 }
 
 // Primitive 228: Screen scale factor
