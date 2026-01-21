@@ -11582,6 +11582,164 @@ void Interpreter::putToSleep(Oop process) {
     addLastLinkToList(process, processList);
 }
 
+// Materialize the inline frame stack into context objects
+// Returns the topmost context (current execution point)
+Oop Interpreter::materializeFrameStack() {
+    if (frameDepth_ == 0) {
+        // No inline frames, activeContext_ is already correct
+        return activeContext_;
+    }
+
+    static FILE* matLog = nullptr;
+    if (!matLog) matLog = fopen("/tmp/materialize.log", "w");
+
+    // Build contexts from bottom to top (oldest to newest)
+    // The sender of the first frame is activeContext_
+    Oop sender = activeContext_;
+
+    for (size_t i = 0; i < frameDepth_; i++) {
+        const auto& frame = savedFrames_[i];
+
+        if (matLog) {
+            fprintf(matLog, "[MATERIALIZE] Frame %zu: method=0x%llx receiver=0x%llx\n",
+                    i, (unsigned long long)frame.savedMethod.rawBits(),
+                    (unsigned long long)frame.savedReceiver.rawBits());
+            fflush(matLog);
+        }
+
+        // Get method info
+        if (!frame.savedMethod.isObject()) {
+            continue;
+        }
+        ObjectHeader* methodHdr = frame.savedMethod.asObjectPtr();
+        Oop methodHeader = memory_.fetchPointer(0, frame.savedMethod);
+        if (!methodHeader.isSmallInteger()) {
+            continue;
+        }
+        int64_t headerValue = methodHeader.asSmallInteger();
+        int numLiterals = headerValue & 0x7FFF;
+        int numTemps = (headerValue >> 24) & 0x3F;
+        int numArgs = (headerValue >> 30) & 0xF;
+
+        // Calculate context size (6 fixed + temps + some stack)
+        size_t contextSize = 6 + numTemps + 32;
+
+        // Get Context class
+        Oop contextClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
+        uint32_t classIndex = contextClass.isObject() ? contextClass.asObjectPtr()->classIndex() : 3104;
+
+        // Allocate context
+        Oop context = memory_.allocateSlots(classIndex, contextSize, ObjectFormat::Indexable);
+        if (context.isNil()) {
+            if (matLog) {
+                fprintf(matLog, "[MATERIALIZE] Failed to allocate context!\n");
+                fflush(matLog);
+            }
+            return activeContext_;  // Fall back to old behavior
+        }
+
+        // Calculate PC (byte offset from method start)
+        uint8_t* methodBytes = methodHdr->bytes();
+        int pc = 1;  // Default to start
+        if (frame.savedIP >= methodBytes && frame.savedIP < methodBytes + methodHdr->byteSize()) {
+            pc = static_cast<int>(frame.savedIP - methodBytes) + 1;  // 1-based
+        }
+
+        // Initialize context
+        memory_.storePointer(0, context, sender);                           // sender
+        memory_.storePointer(1, context, Oop::fromSmallInteger(pc));        // pc
+        memory_.storePointer(2, context, Oop::fromSmallInteger(numTemps + 5)); // stackp
+        memory_.storePointer(3, context, frame.savedMethod);                // method
+        memory_.storePointer(4, context, memory_.nil());                    // closureOrNil
+        memory_.storePointer(5, context, frame.savedReceiver);              // receiver
+
+        // Copy temps from stack
+        // The saved FP points to the start of this frame's locals in the stack
+        if (frame.savedFP != nullptr && numTemps > 0) {
+            for (int t = 0; t < numTemps && t < 32; t++) {
+                Oop temp = *(frame.savedFP + t);
+                memory_.storePointer(6 + t, context, temp);
+            }
+        } else {
+            // Initialize temps to nil
+            for (int t = 0; t < numTemps; t++) {
+                memory_.storePointer(6 + t, context, memory_.nil());
+            }
+        }
+
+        // This context becomes the sender for the next frame
+        sender = context;
+    }
+
+    // Also create a context for the CURRENT frame (the one we're executing)
+    // This uses the current method_, receiver_, instructionPointer_, etc.
+    if (method_.isObject()) {
+        // Log what method_ actually is
+        if (matLog) {
+            std::string curMethod = "?";
+            Oop mhdr = memory_.fetchPointer(0, method_);
+            if (mhdr.isSmallInteger()) {
+                int64_t hv = mhdr.asSmallInteger();
+                int nLits = hv & 0x7FFF;
+                if (nLits >= 2 && nLits < 100) {
+                    Oop sel = memory_.fetchPointer(nLits - 1, method_);
+                    if (sel.isObject()) {
+                        ObjectHeader* selH = sel.asObjectPtr();
+                        if (selH->isBytesObject() && selH->byteSize() < 100) {
+                            curMethod = std::string((char*)selH->bytes(), selH->byteSize());
+                        }
+                    }
+                }
+            }
+            fprintf(matLog, "[MATERIALIZE] Current method_ is #%s\n", curMethod.c_str());
+            fflush(matLog);
+        }
+
+        ObjectHeader* methodHdr = method_.asObjectPtr();
+        Oop methodHeader = memory_.fetchPointer(0, method_);
+        if (methodHeader.isSmallInteger()) {
+            int64_t headerValue = methodHeader.asSmallInteger();
+            int numTemps = (headerValue >> 24) & 0x3F;
+
+            size_t contextSize = 6 + numTemps + 32;
+            Oop contextClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
+            uint32_t classIndex = contextClass.isObject() ? contextClass.asObjectPtr()->classIndex() : 3104;
+
+            Oop context = memory_.allocateSlots(classIndex, contextSize, ObjectFormat::Indexable);
+            if (!context.isNil()) {
+                uint8_t* methodBytes = methodHdr->bytes();
+                int pc = 1;
+                if (instructionPointer_ >= methodBytes && instructionPointer_ < methodBytes + methodHdr->byteSize()) {
+                    pc = static_cast<int>(instructionPointer_ - methodBytes) + 1;
+                }
+
+                memory_.storePointer(0, context, sender);                       // sender
+                memory_.storePointer(1, context, Oop::fromSmallInteger(pc));    // pc
+                memory_.storePointer(2, context, Oop::fromSmallInteger(numTemps + 5)); // stackp
+                memory_.storePointer(3, context, method_);                      // method
+                memory_.storePointer(4, context, memory_.nil());                // closureOrNil
+                memory_.storePointer(5, context, receiver_);                    // receiver
+
+                // Copy current temps from stack
+                for (int t = 0; t < numTemps && t < 32; t++) {
+                    Oop temp = stackValue(t);  // Get from current stack
+                    memory_.storePointer(6 + t, context, temp);
+                }
+
+                if (matLog) {
+                    fprintf(matLog, "[MATERIALIZE] Created %zu+1 contexts, topmost=0x%llx\n",
+                            frameDepth_, (unsigned long long)context.rawBits());
+                    fflush(matLog);
+                }
+
+                return context;
+            }
+        }
+    }
+
+    return sender;  // Return the last successfully created context
+}
+
 void Interpreter::transferTo(Oop newProcess) {
     static FILE* xferLog = nullptr;
     static int xferCount = 0;
@@ -11666,11 +11824,13 @@ void Interpreter::transferTo(Oop newProcess) {
     }
 
     // Save current execution state to old process's suspendedContext
-    if (!activeContext_.isNil() && activeContext_.isObject()) {
-        // Debug: log what context we're saving
-        if (xferLog && xferCount <= 100) {
-            std::string ctxMethod = "?";
-            Oop ctxMethod_ = memory_.fetchPointer(3, activeContext_);
+    // If we have inline frames, materialize them into context objects
+    Oop contextToSave = materializeFrameStack();
+
+    if (xferLog && xferCount <= 100) {
+        std::string ctxMethod = "?";
+        if (contextToSave.isObject() && contextToSave.rawBits() > 0x10000) {
+            Oop ctxMethod_ = memory_.fetchPointer(3, contextToSave);
             if (ctxMethod_.isObject() && ctxMethod_.rawBits() > 0x10000) {
                 Oop mhdr = memory_.fetchPointer(0, ctxMethod_);
                 if (mhdr.isSmallInteger()) {
@@ -11687,10 +11847,22 @@ void Interpreter::transferTo(Oop newProcess) {
                     }
                 }
             }
-            fprintf(xferLog, "  SAVING oldProc context: #%s (frameDepth_=%zu)\n", ctxMethod.c_str(), frameDepth_);
+        }
+        fprintf(xferLog, "  SAVING oldProc context: #%s (frameDepth_=%zu -> materialized)\n", ctxMethod.c_str(), frameDepth_);
+        fflush(xferLog);
+    }
+
+    if (!contextToSave.isNil() && contextToSave.isObject()) {
+        memory_.storePointer(ProcessSuspendedContextIndex, oldProcess, contextToSave);
+        if (xferLog && xferCount <= 100) {
+            // Verify the save
+            Oop verify = memory_.fetchPointer(ProcessSuspendedContextIndex, oldProcess);
+            fprintf(xferLog, "  VERIFIED: saved context 0x%llx, read back 0x%llx (%s)\n",
+                    (unsigned long long)contextToSave.rawBits(),
+                    (unsigned long long)verify.rawBits(),
+                    (verify.rawBits() == contextToSave.rawBits()) ? "MATCH" : "MISMATCH");
             fflush(xferLog);
         }
-        memory_.storePointer(ProcessSuspendedContextIndex, oldProcess, activeContext_);
     }
 
     // Switch to new process
@@ -11698,6 +11870,32 @@ void Interpreter::transferTo(Oop newProcess) {
 
     // Get new process's suspended context
     Oop newContext = memory_.fetchPointer(ProcessSuspendedContextIndex, newProcess);
+
+    if (xferLog && xferCount <= 100) {
+        std::string ctxMethod = "?";
+        if (newContext.isObject() && newContext.rawBits() > 0x10000) {
+            Oop method = memory_.fetchPointer(3, newContext);
+            if (method.isObject() && method.rawBits() > 0x10000) {
+                Oop mhdr = memory_.fetchPointer(0, method);
+                if (mhdr.isSmallInteger()) {
+                    int64_t hv = mhdr.asSmallInteger();
+                    int nLits = hv & 0x7FFF;
+                    if (nLits >= 2 && nLits < 100) {
+                        Oop sel = memory_.fetchPointer(nLits - 1, method);
+                        if (sel.isObject()) {
+                            ObjectHeader* selH = sel.asObjectPtr();
+                            if (selH->isBytesObject() && selH->byteSize() < 100) {
+                                ctxMethod = std::string((char*)selH->bytes(), selH->byteSize());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        fprintf(xferLog, "  RESUMING from context 0x%llx method=#%s\n",
+                (unsigned long long)newContext.rawBits(), ctxMethod.c_str());
+        fflush(xferLog);
+    }
 
     // Reset interpreter state
     stackPointer_ = stackBase_;

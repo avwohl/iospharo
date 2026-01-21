@@ -1434,6 +1434,9 @@ private:
     /// Add process to its priority queue
     void putToSleep(Oop process);
 
+    /// Materialize inline frame stack into context objects
+    Oop materializeFrameStack();
+
     /// Context switch to a different process
     void transferTo(Oop newProcess);
 };
