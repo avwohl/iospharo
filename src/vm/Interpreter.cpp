@@ -4507,6 +4507,172 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             selStr2 = std::string((char*)selHdr2->bytes(), selHdr2->byteSize());
         }
     }
+    // Trace on:do: sends specifically to WorkingSession
+    if (selStr2 == "on:do:") {
+        Oop rcvr = stackValue(2);  // Receiver
+        std::string rcvrClass = "<unknown>";
+        if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+            Oop cls = memory_.classOf(rcvr);
+            if (cls.isObject()) {
+                Oop clsName = memory_.fetchPointer(6, cls);
+                if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                    ObjectHeader* cnHdr = clsName.asObjectPtr();
+                    if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                        rcvrClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                    }
+                }
+            }
+        }
+        static FILE* onDoLog = nullptr;
+        static int onDoCount = 0;
+        if (!onDoLog) onDoLog = fopen("/tmp/on_do_trace.log", "w");
+        if (onDoLog && onDoCount < 200) {
+            onDoCount++;
+            Oop arg1 = stackValue(1);  // First argument (exceptionType)
+            Oop arg2 = stackValue(0);  // Second argument (handler block)
+            Oop nilObj = memory_.nil();
+            // More detail for WorkingSession
+            if (rcvrClass == "WorkingSession") {
+                fprintf(onDoLog, "[ON:DO: #%d] *** WORKINGSESSION *** on: 0x%llx (isNil=%d) do: 0x%llx\n",
+                        onDoCount,
+                        (unsigned long long)arg1.rawBits(), arg1.rawBits() == nilObj.rawBits() ? 1 : 0,
+                        (unsigned long long)arg2.rawBits());
+            } else {
+                fprintf(onDoLog, "[ON:DO: #%d] %s on: 0x%llx (isNil=%d) do: 0x%llx\n",
+                        onDoCount, rcvrClass.c_str(),
+                        (unsigned long long)arg1.rawBits(), arg1.rawBits() == nilObj.rawBits() ? 1 : 0,
+                        (unsigned long long)arg2.rawBits());
+            }
+            fflush(onDoLog);
+        }
+    }
+
+    // Trace startup: sends - this is the DNU we're trying to diagnose
+    if (selStr2 == "startup:") {
+        Oop rcvr = stackValue(1);  // Receiver for 1-arg message
+        Oop arg = stackValue(0);   // Argument
+        Oop nilObj = memory_.nil();
+        static FILE* startupLog = nullptr;
+        static int startupCount = 0;
+        if (!startupLog) startupLog = fopen("/tmp/startup_trace.log", "w");
+        if (startupLog && startupCount < 50) {
+            startupCount++;
+            std::string rcvrClass = "<unknown>";
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                Oop cls = memory_.classOf(rcvr);
+                if (cls.isObject()) {
+                    Oop clsName = memory_.fetchPointer(6, cls);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            rcvrClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                        }
+                    }
+                }
+            }
+            bool isNilRcvr = (rcvr.rawBits() == nilObj.rawBits());
+            fprintf(startupLog, "[STARTUP: #%d] rcvr=%s (0x%llx) isNil=%d arg=0x%llx\n",
+                    startupCount, rcvrClass.c_str(), (unsigned long long)rcvr.rawBits(),
+                    isNilRcvr ? 1 : 0, (unsigned long long)arg.rawBits());
+
+            // If receiver is nil, dump the call stack/temps to understand context
+            if (isNilRcvr) {
+                fprintf(startupLog, "  *** NIL RECEIVER! frameDepth=%zu ***\n", frameDepth_);
+                // Dump temps
+                for (int t = 0; t < 5 && framePointer_; t++) {
+                    Oop temp = *(framePointer_ + 1 + t);
+                    std::string tClass = "?";
+                    if (temp.rawBits() == nilObj.rawBits()) tClass = "nil";
+                    else if (temp.isSmallInteger()) tClass = "SmallInt";
+                    else if (temp.isObject() && temp.rawBits() > 0x10000) {
+                        Oop tc = memory_.classOf(temp);
+                        if (tc.isObject()) {
+                            Oop tcn = memory_.fetchPointer(6, tc);
+                            if (tcn.isObject()) {
+                                ObjectHeader* tcnh = tcn.asObjectPtr();
+                                if (tcnh->isBytesObject() && tcnh->byteSize() < 30) {
+                                    tClass = std::string((char*)tcnh->bytes(), tcnh->byteSize());
+                                }
+                            }
+                        }
+                    }
+                    fprintf(startupLog, "    temp[%d] = %s (0x%llx)\n", t, tClass.c_str(), (unsigned long long)temp.rawBits());
+                }
+                // Show method receiver
+                std::string mrcClass = "?";
+                if (receiver_.rawBits() == nilObj.rawBits()) mrcClass = "nil";
+                else if (receiver_.isObject()) {
+                    Oop rc = memory_.classOf(receiver_);
+                    if (rc.isObject()) {
+                        Oop rcn = memory_.fetchPointer(6, rc);
+                        if (rcn.isObject()) {
+                            ObjectHeader* rcnh = rcn.asObjectPtr();
+                            if (rcnh->isBytesObject() && rcnh->byteSize() < 30) {
+                                mrcClass = std::string((char*)rcnh->bytes(), rcnh->byteSize());
+                            }
+                        }
+                    }
+                }
+                fprintf(startupLog, "    method receiver_ = %s (0x%llx)\n", mrcClass.c_str(), (unsigned long long)receiver_.rawBits());
+            }
+            fflush(startupLog);
+        }
+    }
+
+    // Trace do: sends to see what collections are being iterated
+    if (selStr2 == "do:") {
+        Oop rcvr = stackValue(1);  // Receiver for 1-arg message
+        Oop nilObj = memory_.nil();
+        static FILE* doLog = nullptr;
+        static int doCount = 0;
+        if (!doLog) doLog = fopen("/tmp/do_trace.log", "w");
+        if (doLog && doCount < 100) {
+            doCount++;
+            std::string rcvrClass = "<unknown>";
+            size_t slotCount = 0;
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+                slotCount = rcvrHdr->slotCount();
+                Oop cls = memory_.classOf(rcvr);
+                if (cls.isObject()) {
+                    Oop clsName = memory_.fetchPointer(6, cls);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            rcvrClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                        }
+                    }
+                }
+            }
+            fprintf(doLog, "[DO: #%d] %s (slots=%zu) 0x%llx\n",
+                    doCount, rcvrClass.c_str(), slotCount, (unsigned long long)rcvr.rawBits());
+            // Dump first 5 slots to see contents
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+                for (size_t i = 0; i < slotCount && i < 5; i++) {
+                    Oop slot = rcvrHdr->slotAt(i);
+                    std::string sClass = "?";
+                    if (slot.rawBits() == nilObj.rawBits()) sClass = "nil";
+                    else if (slot.isSmallInteger()) sClass = "SmallInt(" + std::to_string(slot.asSmallInteger()) + ")";
+                    else if (slot.isObject() && slot.rawBits() > 0x10000) {
+                        Oop sc = memory_.classOf(slot);
+                        if (sc.isObject()) {
+                            Oop scn = memory_.fetchPointer(6, sc);
+                            if (scn.isObject()) {
+                                ObjectHeader* scnh = scn.asObjectPtr();
+                                if (scnh->isBytesObject() && scnh->byteSize() < 30) {
+                                    sClass = std::string((char*)scnh->bytes(), scnh->byteSize());
+                                }
+                            }
+                        }
+                    }
+                    fprintf(doLog, "    [%zu] = %s (0x%llx)\n", i, sClass.c_str(), (unsigned long long)slot.rawBits());
+                }
+            }
+            fflush(doLog);
+        }
+    }
+
     if (selStr2 == "ifNotNil:" || selStr2 == "ifNil:" || selStr2 == "ifNil:ifNotNil:" || selStr2 == "ifNotNil:ifNil:") {
         static FILE* ifNotNilLog = nullptr;
         static int ifNotNilCount = 0;
@@ -8682,21 +8848,20 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     }
 
     // Log DNU for menu action debugging
+    // IMPORTANT: Use stack receiver, not receiver_ (which is the outer method's receiver)
+    Oop stackRcvrForLog = stackValue(argCount);
     std::string rcvrClassName = "";
     bool isClass = false;
-    if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-        Oop rcvrClass = memory_.classOf(receiver_);
+    if (stackRcvrForLog.isObject() && stackRcvrForLog.rawBits() > 0x10000) {
+        Oop rcvrClass = memory_.classOf(stackRcvrForLog);
         if (rcvrClass.isObject()) {
             // Check if the receiver itself is a class (has a metaclass as its class)
-            ObjectHeader* rcvrClassHdr = rcvrClass.asObjectPtr();
-            // In Pharo, metaclasses have a specific format and inherit from Metaclass
-            // Classes have format 1 (fixed), while instances have various formats
-            ObjectHeader* rcvrHdr = receiver_.asObjectPtr();
+            ObjectHeader* rcvrHdr = stackRcvrForLog.asObjectPtr();
             // A class has format 1 (fixed) and slot 1 is methodDict
             if (rcvrHdr->format() == ObjectFormat::FixedSize &&
                 rcvrHdr->slotCount() >= 10) {
                 // Could be a class - check if slot 1 looks like a methodDict
-                Oop maybeMethodDict = memory_.fetchPointer(1, receiver_);
+                Oop maybeMethodDict = memory_.fetchPointer(1, stackRcvrForLog);
                 if (maybeMethodDict.isObject() && maybeMethodDict.rawBits() > 0x10000) {
                     ObjectHeader* mdHdr = maybeMethodDict.asObjectPtr();
                     if (mdHdr->slotCount() >= 2) {
@@ -8706,7 +8871,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
             }
 
             // If receiver is a class, get name from receiver itself, not metaclass
-            Oop nameSource = isClass ? receiver_ : rcvrClass;
+            Oop nameSource = isClass ? stackRcvrForLog : rcvrClass;
             Oop nameOop = memory_.fetchPointer(6, nameSource);
             if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
                 ObjectHeader* nameHdr = nameOop.asObjectPtr();
@@ -8715,6 +8880,10 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                 }
             }
         }
+    } else if (stackRcvrForLog.rawBits() == memory_.nil().rawBits()) {
+        rcvrClassName = "nil";
+    } else if (stackRcvrForLog.isSmallInteger()) {
+        rcvrClassName = "SmallInteger(" + std::to_string(stackRcvrForLog.asSmallInteger()) + ")";
     }
     // Limit verbose DNU logging for known fallbacks
     static int assureExtCount = 0;
@@ -8731,7 +8900,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     if (!skipLog) {
         std::cerr << "[DNU] Selector '#" << origStr << "' not found on " << rcvrClassName
                   << (isClass ? " [CLASS]" : " [instance]")
-                  << " (args=" << argCount << ") rcvr=0x" << std::hex << receiver_.rawBits()
+                  << " (args=" << argCount << ") rcvr=0x" << std::hex << stackRcvrForLog.rawBits()
                   << std::dec << "\n";
     }
     // Debug: Check why fallbacks aren't matching
@@ -8926,6 +9095,19 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         dnuDepth--;
         return;
     }
+    // Fallback for startup:/shutdown: on nil - happens when iterating over sparse arrays/dictionaries
+    // WorkingSession handlers dictionary may have nil slots that get iterated
+    if ((origStr == "startup:" || origStr == "shutdown:") && argCount == 1) {
+        Oop rcvr = stackValue(1);  // Get actual receiver from stack
+        if (rcvr.rawBits() == memory_.nil().rawBits()) {
+            // startup:/shutdown: sent to nil - skip silently (nil element in handler collection)
+            popN(2);  // Pop argument and nil receiver
+            push(memory_.nil());  // Return nil
+            dnuDepth--;
+            return;
+        }
+    }
+
     // NOTE: Previously bypassed executeDeferredStartupActions:, runStartup:, startUp:
     // This was preventing tool registration. Let these run normally now.
     // Fallback for process termination during quit - don't terminate on embedded VM
