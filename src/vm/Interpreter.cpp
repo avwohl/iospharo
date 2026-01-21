@@ -4117,6 +4117,22 @@ void Interpreter::shortJump(int offset) {
 
 void Interpreter::shortJumpIfTrue(int offset) {
     Oop value = pop();
+
+    // TRACE: Log conditional jumps for nil filtering debugging
+    static FILE* jumpTLog = nullptr;
+    static int jumpTCount = 0;
+    if (!jumpTLog) jumpTLog = fopen("/tmp/jump_true_trace.log", "w");
+    if (jumpTLog && jumpTCount < 200) {
+        jumpTCount++;
+        bool isTrueVal = isTrue(value);
+        bool isFalseVal = isFalse(value);
+        bool willJump = isTrueVal;
+        fprintf(jumpTLog, "[JUMP-IF-TRUE #%d] value=0x%llx isTrue=%d isFalse=%d willJump=%d\n",
+                jumpTCount, (unsigned long long)value.rawBits(),
+                isTrueVal ? 1 : 0, isFalseVal ? 1 : 0, willJump ? 1 : 0);
+        fflush(jumpTLog);
+    }
+
     if (isTrue(value)) {
         instructionPointer_ += offset;
     }
@@ -4127,6 +4143,22 @@ void Interpreter::shortJumpIfTrue(int offset) {
 
 void Interpreter::shortJumpIfFalse(int offset) {
     Oop value = pop();
+
+    // TRACE: Log conditional jumps for nil filtering debugging
+    static FILE* jumpLog = nullptr;
+    static int jumpCount = 0;
+    if (!jumpLog) jumpLog = fopen("/tmp/jump_trace.log", "w");
+    if (jumpLog && jumpCount < 200) {
+        jumpCount++;
+        bool isTrueVal = isTrue(value);
+        bool isFalseVal = isFalse(value);
+        bool willJump = !isTrueVal;
+        fprintf(jumpLog, "[JUMP-IF-FALSE #%d] value=0x%llx isTrue=%d isFalse=%d willJump=%d\n",
+                jumpCount, (unsigned long long)value.rawBits(),
+                isTrueVal ? 1 : 0, isFalseVal ? 1 : 0, willJump ? 1 : 0);
+        fflush(jumpLog);
+    }
+
     if (!isTrue(value)) {
         // Jump if false OR if non-boolean (treat non-booleans as false)
         instructionPointer_ += offset;
@@ -4417,7 +4449,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     static FILE* allSendLog = nullptr;
     static int allSendCount = 0;
     if (!allSendLog) allSendLog = fopen("/tmp/all_sends.log", "w");
-    if (allSendLog && allSendCount < 500) {
+    if (allSendLog && allSendCount < 2000) {
         allSendCount++;
         std::string selStr = "<unknown>";
         if (selector.isObject() && selector.rawBits() > 0x10000) {

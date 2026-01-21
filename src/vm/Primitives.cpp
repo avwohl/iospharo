@@ -1748,21 +1748,77 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // TRACE: Log block activation with args
+    // TRACE: Log block activation with args - focus on nil args
     static FILE* blockArgLog = nullptr;
     static int blockArgCount = 0;
+    static int nilArgCount = 0;
     if (!blockArgLog) blockArgLog = fopen("/tmp/block_args.log", "w");
-    if (blockArgLog && blockArgCount < 100) {
+
+    // Check if any arg is nil
+    bool hasNilArg = false;
+    for (int i = 0; i < argCount; i++) {
+        Oop arg = stackValue(static_cast<size_t>(i));
+        // Check if arg is nil (nil is typically at old space base or has specific format)
+        if (arg.isObject() && arg.asObjectPtr()->format() == ObjectFormat::ZeroSized
+            && arg.asObjectPtr()->slotCount() == 0) {
+            hasNilArg = true;
+            break;
+        }
+    }
+
+    if (blockArgLog && (blockArgCount < 100 || (hasNilArg && nilArgCount < 50))) {
         blockArgCount++;
-        fprintf(blockArgLog, "[BLOCK-ARG #%d] primitiveFullClosureValue argCount=%d\n",
-                blockArgCount, argCount);
+        if (hasNilArg) nilArgCount++;
+
+        fprintf(blockArgLog, "[BLOCK-ARG #%d] primitiveFullClosureValue argCount=%d%s\n",
+                blockArgCount, argCount, hasNilArg ? " [HAS NIL ARG!]" : "");
         for (int i = 0; i < argCount; i++) {
             Oop arg = stackValue(static_cast<size_t>(i));
-            fprintf(blockArgLog, "  arg[%d] = 0x%llx isObj=%d\n",
-                    i, (unsigned long long)arg.rawBits(), arg.isObject() ? 1 : 0);
+            std::string argInfo = "";
+            if (arg.isObject() && arg.rawBits() > 0x10000) {
+                ObjectHeader* hdr = arg.asObjectPtr();
+                if (hdr->format() == ObjectFormat::ZeroSized && hdr->slotCount() == 0) {
+                    argInfo = " [NIL]";
+                } else {
+                    Oop cls = memory_.classOf(arg);
+                    if (cls.isObject()) {
+                        Oop clsName = memory_.fetchPointer(6, cls);
+                        if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                            ObjectHeader* cnHdr = clsName.asObjectPtr();
+                            if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                                argInfo = " [" + std::string((char*)cnHdr->bytes(), cnHdr->byteSize()) + "]";
+                            }
+                        }
+                    }
+                }
+            } else if (arg.isSmallInteger()) {
+                argInfo = " [SmallInt " + std::to_string(arg.asSmallInteger()) + "]";
+            }
+            fprintf(blockArgLog, "  arg[%d] = 0x%llx%s\n",
+                    i, (unsigned long long)arg.rawBits(), argInfo.c_str());
         }
-        fprintf(blockArgLog, "  closure = 0x%llx\n",
-                (unsigned long long)closure.rawBits());
+
+        // Show closure info and calling context
+        if (hasNilArg) {
+            fprintf(blockArgLog, "  closure = 0x%llx\n", (unsigned long long)closure.rawBits());
+            // Show current method selector
+            if (method_.isObject()) {
+                Oop hdr = memory_.fetchPointer(0, method_);
+                if (hdr.isSmallInteger()) {
+                    int numLits = hdr.asSmallInteger() & 0x7FFF;
+                    if (numLits >= 2) {
+                        Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                            ObjectHeader* selHdr = sel.asObjectPtr();
+                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                fprintf(blockArgLog, "  in method: #%s\n",
+                                        std::string((char*)selHdr->bytes(), selHdr->byteSize()).c_str());
+                            }
+                        }
+                    }
+                }
+            }
+        }
         fflush(blockArgLog);
     }
 
