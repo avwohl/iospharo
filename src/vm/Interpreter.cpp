@@ -6548,7 +6548,24 @@ extern int g_traceSendsAfterPrim264;
                 // Let relinquish proceed normally
             }
 
-            // ===== Termination intercept REMOVED - let Smalltalk handle process termination =====
+            // ===== Termination intercept - prevent app exit on menu actions =====
+            // Menu actions like Quit try to terminate the process, which would exit the app.
+            // Instead, return self to allow the app to continue running.
+            if (selStr == "terminateRealActive" || selStr == "terminateActive" ||
+                selStr == "doTerminationFromYourself" || selStr == "terminate") {
+                static FILE* termLog = nullptr;
+                if (!termLog) {
+                    termLog = fopen("/tmp/terminate_intercept.log", "a");
+                }
+                if (termLog) {
+                    fprintf(termLog, "[TERMINATE] Intercepted %s - returning self to prevent exit\n",
+                            selStr.c_str());
+                    fflush(termLog);
+                }
+                popN(argCount + 1);
+                push(rcvr);  // Return self
+                return;
+            }
 
             // ===== INTERCEPT Form class >> extent:depth: =====
             // When NullWorldRenderer creates a temp Form for drawing, we return Display instead.
@@ -10010,7 +10027,22 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     }
     // NOTE: Previously bypassed executeDeferredStartupActions:, runStartup:, startUp:
     // This was preventing tool registration. Let these run normally now.
-    // Process termination intercept REMOVED - let errors propagate
+    // Termination intercept - prevent app exit
+    if (origStr == "terminateRealActive" || origStr == "terminateActive" ||
+        origStr == "doTerminationFromYourself" || origStr == "terminate") {
+        static FILE* termLog = nullptr;
+        if (!termLog) {
+            termLog = fopen("/tmp/terminate_intercept.log", "a");
+        }
+        if (termLog) {
+            fprintf(termLog, "[DNU-TERMINATE] Intercepted %s - returning self\n", origStr.c_str());
+            fflush(termLog);
+        }
+        popN(argCount + 1);
+        push(receiver_);  // Return self
+        dnuDepth--;
+        return;
+    }
     // Fallback for context manipulation during process termination
     if (origStr == "asContext") {
         // Return receiver as-is (already a context or convertible)
