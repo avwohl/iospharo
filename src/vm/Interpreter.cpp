@@ -1722,10 +1722,18 @@ void Interpreter::dispatchMouseEventToMorph(int x, int y, int buttons, bool isMo
         fflush(dispatchLog);
     }
 
-    // Check for menu bar click first (rendered at top of screen, ~44 pixels high)
+    // Check for menu bar click first (rendered at top of screen)
     // The Smalltalk MenubarMorph has tiny bounds but we render it full-width
-    int menuBarHeight = 44;  // Match our C++ render height
-    if (y < menuBarHeight && isMouseDown && buttons != 0) {
+    // Menu bar is rendered from titleBarOffset to titleBarOffset + menuBarHeight
+    // For regular displays: titleBarOffset=28, menuBarHeight=44 -> y=28-72
+    // For Retina: titleBarOffset=56, menuBarHeight=88 -> y=56-144
+    int displayH = pharo::gDisplaySurface ? pharo::gDisplaySurface->height() : 768;
+    bool isRetina = displayH > 1000;
+    int titleBarOffset = isRetina ? 56 : 28;
+    int menuBarHeight = isRetina ? 88 : 44;
+    int menuBarBottom = titleBarOffset + menuBarHeight;
+
+    if (y >= titleBarOffset && y < menuBarBottom && isMouseDown && buttons != 0) {
         Oop world = memory_.findGlobal("World");
         if (!world.isNil() && world.isObject()) {
             Oop submorphs = memory_.fetchPointer(2, world);
@@ -2109,26 +2117,72 @@ void Interpreter::handleMenuBarClick(Oop menuBar, int x, int y, int buttons) {
         menuLog = fopen("/tmp/menubar_click.log", "w");
     }
 
-    // MenubarMorph has menu items as submorphs
-    // Each menu item is a ToggleMenuItemMorph at a specific position
-    Oop submorphs = memory_.fetchPointer(2, menuBar);  // submorphs at slot 2
-    if (submorphs.isNil() || !submorphs.isObject()) {
+    // Use the C++ calculated menu item bounds from rendering
+    // menuItemBounds_ contains pairs of (left, right) x coordinates
+    // Menu bar Y range: titleBarOffset to titleBarOffset + menuBarHeight
+    int displayH = pharo::gDisplaySurface ? pharo::gDisplaySurface->height() : 768;
+    bool isRetina = displayH > 1000;
+    int titleBarOffset = isRetina ? 56 : 28;
+    int menuBarHeight = isRetina ? 88 : 44;
+    int menuBarBottom = titleBarOffset + menuBarHeight;
+
+    if (menuLog) {
+        fprintf(menuLog, "[MENUBAR] Click at (%d,%d), %zu rendered items, y in [%d,%d)=%s\n",
+                x, y, menuItemBounds_.size(), titleBarOffset, menuBarBottom,
+                (y >= titleBarOffset && y < menuBarBottom) ? "YES" : "no");
+        fflush(menuLog);
+    }
+
+    // Check if click is within menu bar Y range
+    if (y < titleBarOffset || y >= menuBarBottom) {
         if (menuLog) {
-            fprintf(menuLog, "[MENUBAR] No submorphs\n");
+            fprintf(menuLog, "[MENUBAR] Click y=%d outside [%d,%d), ignoring\n", y, titleBarOffset, menuBarBottom);
             fflush(menuLog);
         }
+        return;
+    }
+
+    // Find which menu item was clicked using rendered bounds
+    for (size_t i = 0; i < menuItemBounds_.size(); ++i) {
+        int left = menuItemBounds_[i].first;
+        int right = menuItemBounds_[i].second;
+
+        if (menuLog) {
+            fprintf(menuLog, "[MENUBAR]   Item %zu: x in [%d,%d)? %s\n",
+                    i, left, right, (x >= left && x < right) ? "HIT" : "miss");
+            fflush(menuLog);
+        }
+
+        if (x >= left && x < right) {
+            // Found the clicked menu item
+            if (menuLog) {
+                fprintf(menuLog, "[MENUBAR] Clicked item %zu (x=%d in [%d,%d))\n",
+                        i, x, left, right);
+                fflush(menuLog);
+            }
+
+            // Update the selectedMenuIndex_ (used by renderMenuBar for highlighting)
+            selectedMenuIndex_ = static_cast<int>(i);
+            return;
+        }
+    }
+
+    if (menuLog) {
+        fprintf(menuLog, "[MENUBAR] No item hit at x=%d\n", x);
+        fflush(menuLog);
+    }
+
+    // Fall back to Smalltalk bounds if rendered bounds don't match
+    // MenubarMorph has menu items as submorphs
+    Oop submorphs = memory_.fetchPointer(2, menuBar);  // submorphs at slot 2
+    if (submorphs.isNil() || !submorphs.isObject()) {
         return;
     }
 
     ObjectHeader* submorphsHdr = submorphs.asObjectPtr();
     size_t numItems = submorphsHdr->slotCount();
 
-    if (menuLog) {
-        fprintf(menuLog, "[MENUBAR] Click at (%d,%d), %zu items\n", x, y, numItems);
-        fflush(menuLog);
-    }
-
-    // Find which menu item was clicked
+    // Find which menu item was clicked using Smalltalk bounds
     for (size_t i = 0; i < numItems; ++i) {
         Oop item = memory_.fetchPointer(i, submorphs);
         if (item.isNil() || !item.isObject()) continue;
@@ -2166,6 +2220,14 @@ void Interpreter::handleMenuBarClick(Oop menuBar, int x, int y, int buttons) {
                 fflush(menuLog);
             }
             continue;
+        }
+
+        // Log all item bounds for debugging
+        if (menuLog) {
+            fprintf(menuLog, "[MENUBAR]   Item %zu bounds: (%d,%d)-(%d,%d) click=(%d,%d) hit=%s\n",
+                    i, left, top, right, bottom, x, y,
+                    (x >= left && x < right && y >= top && y < bottom) ? "YES" : "no");
+            fflush(menuLog);
         }
 
         if (x >= left && x < right && y >= top && y < bottom) {
