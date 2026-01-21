@@ -6487,62 +6487,8 @@ extern int g_traceSendsAfterPrim264;
 
             // doInterCycleWait intercept REMOVED - Smalltalk handles all event dispatch
 
-            // ===== INTERCEPT #wait on non-Semaphore receivers =====
-            // During startup, #wait may be incorrectly sent due to stack issues.
-            // If sent to SnapshotOperation or similar, just return self.
-            if (selStr == "wait" && argCount == 0) {
-                // Check if receiver class name contains "Semaphore"
-                std::string rcvrClassName;
-                if (rcvr.isObject()) {
-                    Oop rcvrCls = memory_.classOf(rcvr);
-                    if (rcvrCls.isObject()) {
-                        Oop nameOop = memory_.fetchPointer(6, rcvrCls);
-                        if (nameOop.isObject()) {
-                            ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
-                                rcvrClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                            }
-                        }
-                    }
-                }
-                // Only intercept if NOT a Semaphore
-                if (rcvrClassName.find("Semaphore") == std::string::npos) {
-                    popN(argCount + 1);
-                    push(rcvr);  // Return receiver
-                    return;
-                }
-            }
-
-            // ===== INTERCEPT #signal on non-Exception receivers =====
-            // During startup, #signal may be sent to wrong receivers due to stack issues.
-            // Only allow signal on Exception-related classes.
-            if (selStr == "signal" && argCount == 0) {
-                std::string rcvrClassName;
-                if (rcvr.isObject()) {
-                    Oop rcvrCls = memory_.classOf(rcvr);
-                    if (rcvrCls.isObject()) {
-                        Oop nameOop = memory_.fetchPointer(6, rcvrCls);
-                        if (nameOop.isObject()) {
-                            ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
-                                rcvrClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                            }
-                        }
-                    }
-                }
-                // Only allow on Exception-related or Semaphore classes
-                bool isExceptionish = (rcvrClassName.find("Exception") != std::string::npos ||
-                                       rcvrClassName.find("Error") != std::string::npos ||
-                                       rcvrClassName.find("Notification") != std::string::npos ||
-                                       rcvrClassName.find("Semaphore") != std::string::npos ||
-                                       rcvrClassName.find("Warning") != std::string::npos);
-                if (!isExceptionish) {
-                    // Not an exception class - return self to avoid cascade
-                    popN(argCount + 1);
-                    push(rcvr);
-                    return;
-                }
-            }
+            // ===== #wait and #signal intercepts REMOVED =====
+            // Let errors propagate properly instead of swallowing them
 
             // ===== INTERCEPT comeToFront =====
             // Log when comeToFront is being called
@@ -6582,29 +6528,7 @@ extern int g_traceSendsAfterPrim264;
                 // Let relinquish proceed normally
             }
 
-            // Check for termination-related selectors
-            if (selStr == "terminateRealActive" || selStr == "terminateActive" ||
-                selStr == "doTerminationFromYourself") {
-                // Actually terminate the process and switch to another
-                popN(argCount + 1);
-
-                // Mark current process as terminated
-                terminateCurrentProcess();
-
-                // Try to find another runnable process
-                if (tryReschedule()) {
-                    return;
-                }
-
-                // No other process - try bootstrap
-                if (bootstrapStartup()) {
-                    return;
-                }
-
-                // No processes to run - just return self
-                push(rcvr);
-                return;
-            }
+            // ===== Termination intercept REMOVED - let Smalltalk handle process termination =====
 
             // ===== INTERCEPT Form class >> extent:depth: =====
             // When NullWorldRenderer creates a temp Form for drawing, we return Display instead.
@@ -6697,26 +6621,7 @@ extern int g_traceSendsAfterPrim264;
                 return;
             }
 
-            // ===== INTERCEPT Set/IdentitySet >> error: for "no free space" =====
-            // This error happens when a Set fills up. Ignore it to let rendering continue.
-            if (selStr == "error:" && argCount >= 1) {
-                Oop errArg = stackValue(0);
-                if (errArg.isObject()) {
-                    ObjectHeader* errHdr = errArg.asObjectPtr();
-                    if (errHdr->isBytesObject() && errHdr->byteSize() < 100) {
-                        std::string errMsg((char*)errHdr->bytes(), errHdr->byteSize());
-                        // Check for common errors we can safely ignore
-                        bool canIgnore = (errMsg.find("no free space") != std::string::npos ||
-                                         errMsg.find("only integers") != std::string::npos);
-                        if (canIgnore) {
-                            // Pop args and return nil to signal failure without breaking type expectations
-                            popN(argCount + 1);
-                            push(memory_.nil());
-                            return;
-                        }
-                    }
-                }
-            }
+            // ===== error: intercept REMOVED - let errors propagate =====
 
             // doOneCycle intercept for pending action dispatch REMOVED - Smalltalk handles all event dispatch
 
@@ -10046,14 +9951,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     }
     // NOTE: Previously bypassed executeDeferredStartupActions:, runStartup:, startUp:
     // This was preventing tool registration. Let these run normally now.
-    // Fallback for process termination during quit - don't terminate on embedded VM
-    if (origStr == "terminateRealActive" || origStr == "terminateActive" || origStr == "doTerminationFromYourself") {
-        // Don't terminate - just return receiver and continue
-        popN(argCount + 1);
-        push(receiver_);  // Return self
-        dnuDepth--;
-        return;
-    }
+    // Process termination intercept REMOVED - let errors propagate
     // Fallback for context manipulation during process termination
     if (origStr == "asContext") {
         // Return receiver as-is (already a context or convertible)
