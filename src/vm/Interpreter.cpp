@@ -7934,16 +7934,26 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     }
 
     // Copy the copied values from the closure into the temp area
-    // BlockClosure/FullBlockClosure layout:
-    // 0: outerContext
-    // 1: startPC/compiledBlock
-    // 2: numArgs
-    // 3+: copied values (including temp vectors for remote temps)
+    // BlockClosure layout (old style):
+    //   0: outerContext
+    //   1: startPC (SmallInteger)
+    //   2: numArgs
+    //   3+: copied values
+    // FullBlockClosure layout:
+    //   0: outerContext
+    //   1: compiledBlock (Object)
+    //   2: numArgs
+    //   3: receiver  <-- EXTRA SLOT in FullBlockClosure
+    //   4+: copied values
     size_t blockSlots = memory_.slotCountOf(block);
-    int numCopied = static_cast<int>(blockSlots) - 3;  // Fixed slots are 0,1,2
+
+    // Determine if this is FullBlockClosure (slot1 is object) or BlockClosure (slot1 is SmallInteger)
+    int firstCopiedSlot = slot1.isObject() ? 4 : 3;  // FullBlockClosure has receiver at slot 3
+    int numCopied = static_cast<int>(blockSlots) - firstCopiedSlot;
+    if (numCopied < 0) numCopied = 0;
 
     for (int i = 0; i < numCopied; i++) {
-        Oop copiedValue = memory_.fetchPointer(3 + i, block);
+        Oop copiedValue = memory_.fetchPointer(firstCopiedSlot + i, block);
         setTemporary(argCount + i, copiedValue);
     }
 

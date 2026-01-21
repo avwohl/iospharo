@@ -1748,6 +1748,24 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    // TRACE: Log block activation with args
+    static FILE* blockArgLog = nullptr;
+    static int blockArgCount = 0;
+    if (!blockArgLog) blockArgLog = fopen("/tmp/block_args.log", "w");
+    if (blockArgLog && blockArgCount < 100) {
+        blockArgCount++;
+        fprintf(blockArgLog, "[BLOCK-ARG #%d] primitiveFullClosureValue argCount=%d\n",
+                blockArgCount, argCount);
+        for (int i = 0; i < argCount; i++) {
+            Oop arg = stackValue(static_cast<size_t>(i));
+            fprintf(blockArgLog, "  arg[%d] = 0x%llx isObj=%d\n",
+                    i, (unsigned long long)arg.rawBits(), arg.isObject() ? 1 : 0);
+        }
+        fprintf(blockArgLog, "  closure = 0x%llx\n",
+                (unsigned long long)closure.rawBits());
+        fflush(blockArgLog);
+    }
+
     // Activate the closure - same as regular block activation
     activateBlock(closure, argCount);
     return PrimitiveResult::Success;
