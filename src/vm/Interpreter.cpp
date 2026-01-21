@@ -2173,36 +2173,45 @@ void Interpreter::processPendingMenuAction() {
     }
 
     if (actionLog) {
-        fprintf(actionLog, "[MENU-ACTION] Processing pending action\n");
+        fprintf(actionLog, "[MENU-ACTION] Processing pending action: %s\n",
+                pendingMenuActionSelector_.c_str());
         fflush(actionLog);
     }
 
-    // Push arguments and activate the method
-    push(pendingMenuActionMorph_);  // receiver (self)
+    // Push receiver (target)
+    push(pendingMenuActionMorph_);
 
-    // Check if this is a click: method (takes one arg) or doButtonAction (takes no args)
-    ObjectHeader* methodHdr = pendingMenuActionMethod_.asObjectPtr();
-    int headerBits = static_cast<int>(memory_.fetchPointer(0, pendingMenuActionMethod_).rawBits() >> 3);
-    int numArgs = (headerBits >> 24) & 0x0F;
+    // Count and push arguments from the arguments array
+    int numArgs = 0;
+    if (!pendingMenuActionArgs_.isNil() && pendingMenuActionArgs_.isObject()) {
+        ObjectHeader* argsHdr = pendingMenuActionArgs_.asObjectPtr();
+        numArgs = static_cast<int>(argsHdr->slotCount());
+        for (int i = 0; i < numArgs; i++) {
+            push(memory_.fetchPointer(i, pendingMenuActionArgs_));
+        }
+    }
 
-    if (numArgs == 1) {
-        // click: needs an event argument - pass nil as a workaround
-        push(memory_.nil());
+    if (actionLog) {
+        fprintf(actionLog, "[MENU-ACTION] Activating method with %d args\n", numArgs);
+        fflush(actionLog);
     }
 
     activateMethod(pendingMenuActionMethod_, numArgs);
 
     if (actionLog) {
-        fprintf(actionLog, "[MENU-ACTION] Activated method with %d args\n", numArgs);
+        fprintf(actionLog, "[MENU-ACTION] Method activated successfully\n");
         fflush(actionLog);
     }
 
     // Clear pending action
     pendingMenuActionMethod_ = Oop::nil();
     pendingMenuActionMorph_ = Oop::nil();
+    pendingMenuActionArgs_ = Oop::nil();
+    pendingMenuActionSelector_.clear();
 }
 
-// Execute a menu item's action by invoking its 'click:' or 'doButtonAction' method
+// Execute a menu item's action using target/selector/arguments pattern
+// ToggleMenuItemMorph stores: target, selector, arguments as instance variables
 void Interpreter::executeMenuItemAction(Oop itemMorph) {
     static FILE* actionLog = nullptr;
     if (!actionLog) {
@@ -2236,28 +2245,93 @@ void Interpreter::executeMenuItemAction(Oop itemMorph) {
         fflush(actionLog);
     }
 
-    // Try to find and invoke 'doButtonAction' method (used by ToggleMenuItemMorph)
-    Oop method = lookupMethodByName(itemClass, "doButtonAction");
+    // ToggleMenuItemMorph instance variables (from Morphic hierarchy):
+    // Morph: bounds(0), fullBounds(1), owner(2), submorphs(3), color(4), extension(5)
+    // Then MenuItemMorph adds: isEnabled(6), subMenu(7), isSelected(8), target(9), selector(10), arguments(11), icon(12), keyText(13), ...
+    // The exact slot numbers may vary - let's try common offsets
+
+    // Try to find target and selector
+    // In SpMorphicMenuItemMorph or ToggleMenuItemMorph, these are typically around slots 9-11
+    ObjectHeader* itemHdr = itemMorph.asObjectPtr();
+    size_t numSlots = itemHdr->slotCount();
+
+    if (actionLog) {
+        fprintf(actionLog, "[MENU-ACTION] Item has %zu slots\n", numSlots);
+        fflush(actionLog);
+    }
+
+    // Look for target and selector by examining slots
+    // Target is typically an object, selector is a Symbol (bytes object)
+    Oop target = Oop::nil();
+    Oop selector = Oop::nil();
+    Oop arguments = Oop::nil();
+
+    // Scan slots looking for target/selector pattern
+    // Selector should be a Symbol (bytes object with short name)
+    for (size_t i = 6; i < numSlots && i < 20; i++) {
+        Oop slot = memory_.fetchPointer(i, itemMorph);
+        if (slot.isNil()) continue;
+        if (!slot.isObject()) continue;
+
+        ObjectHeader* slotHdr = slot.asObjectPtr();
+        if (slotHdr->isBytesObject() && slotHdr->byteSize() < 50 && slotHdr->byteSize() > 0) {
+            // This could be a selector (Symbol)
+            std::string sym((char*)slotHdr->bytes(), slotHdr->byteSize());
+            // Check if previous slot could be target
+            if (i > 0 && selector.isNil()) {
+                Oop prevSlot = memory_.fetchPointer(i - 1, itemMorph);
+                if (!prevSlot.isNil() && prevSlot.isObject()) {
+                    target = prevSlot;
+                    selector = slot;
+                    // Check for arguments in next slot
+                    if (i + 1 < numSlots) {
+                        arguments = memory_.fetchPointer(i + 1, itemMorph);
+                    }
+                    if (actionLog) {
+                        fprintf(actionLog, "[MENU-ACTION] Found target at slot %zu, selector='%s' at slot %zu\n",
+                                i - 1, sym.c_str(), i);
+                        fflush(actionLog);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    if (target.isNil() || selector.isNil()) {
+        if (actionLog) {
+            fprintf(actionLog, "[MENU-ACTION] Could not find target/selector pattern\n");
+            fflush(actionLog);
+        }
+        return;
+    }
+
+    // Get selector string
+    ObjectHeader* selHdr = selector.asObjectPtr();
+    std::string selectorStr((char*)selHdr->bytes(), selHdr->byteSize());
+
+    // Look up method on target's class
+    Oop targetClass = memory_.classOf(target);
+    Oop method = lookupMethodByName(targetClass, selectorStr.c_str());
+
     if (method.isNil()) {
-        // Try 'click:' with a dummy event
-        method = lookupMethodByName(itemClass, "click:");
-    }
-
-    if (!method.isNil()) {
         if (actionLog) {
-            fprintf(actionLog, "[MENU-ACTION] Found method, queuing activation\n");
+            fprintf(actionLog, "[MENU-ACTION] Method '%s' not found on target\n", selectorStr.c_str());
             fflush(actionLog);
         }
-
-        // Queue the method for execution on next interpreter cycle
-        pendingMenuActionMorph_ = itemMorph;
-        pendingMenuActionMethod_ = method;
-    } else {
-        if (actionLog) {
-            fprintf(actionLog, "[MENU-ACTION] No suitable method found for %s\n", className.c_str());
-            fflush(actionLog);
-        }
+        return;
     }
+
+    if (actionLog) {
+        fprintf(actionLog, "[MENU-ACTION] Found method '%s', queuing for execution\n", selectorStr.c_str());
+        fflush(actionLog);
+    }
+
+    // Store for later execution
+    pendingMenuActionMorph_ = target;  // Actually the target, not the morph
+    pendingMenuActionMethod_ = method;
+    pendingMenuActionArgs_ = arguments;
+    pendingMenuActionSelector_ = selectorStr;
 }
 
 void Interpreter::handleMenuBarClick(Oop menuBar, int x, int y, int buttons) {

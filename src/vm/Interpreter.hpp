@@ -377,8 +377,10 @@ private:
     bool hasVisibleMenu_ = false;
 
     // Pending menu item action (from dropdown click)
-    Oop pendingMenuActionMorph_ = Oop::nil();
+    Oop pendingMenuActionMorph_ = Oop::nil();  // Actually the target object
     Oop pendingMenuActionMethod_ = Oop::nil();
+    Oop pendingMenuActionArgs_ = Oop::nil();
+    std::string pendingMenuActionSelector_;
 
 
     // Debug: visual click indicator
