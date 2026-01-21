@@ -10590,6 +10590,12 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     if (failedReceiver.isSmallInteger()) {
         canResolveClass = true;  // SmallInteger always has a class
         failedRcvrClassName = "SmallInteger";
+    } else if (failedReceiver.isCharacter()) {
+        canResolveClass = true;  // Character always has a class
+        failedRcvrClassName = "Character";
+    } else if (failedReceiver.isSmallFloat()) {
+        canResolveClass = true;  // SmallFloat always has a class
+        failedRcvrClassName = "SmallFloat";
     } else if (failedReceiver.isObject() && failedReceiver.rawBits() > 0x10000) {
         ObjectHeader* rcvrHdr = failedReceiver.asObjectPtr();
         uint32_t rcvrClassIdx = rcvrHdr->classIndex();

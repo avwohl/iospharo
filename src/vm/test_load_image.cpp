@@ -232,8 +232,8 @@ void printSpecialObjects(ObjectMemory& memory) {
     }
 
     // Print first few special objects
-    std::cout << "\nFirst 10 special objects:" << std::endl;
-    for (size_t i = 0; i < 10 && i < slotCount; i++) {
+    std::cout << "\nFirst 20 special objects:" << std::endl;
+    for (size_t i = 0; i < 20 && i < slotCount; i++) {
         Oop obj = arrayHeader->slotAt(i);
         std::cout << "  [" << i << "]: 0x" << std::hex << obj.rawBits() << std::dec;
         if (obj.isSmallInteger()) {

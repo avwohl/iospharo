@@ -74,7 +74,7 @@ private:
     // Tag 4 (100) = SmallFloat (Clément Béra's blog)
     // Tag 5 (101) = SmallFloat (what the image actually uses)
     static constexpr uint64_t SmallIntegerTag = 0x1;  // 001
-    static constexpr uint64_t CharacterTag = 0x2;     // 010
+    static constexpr uint64_t CharacterTag = 0x3;     // 011 - Pharo 9+ uses tag 3 for Characters
     static constexpr uint64_t SmallFloatTag = 0x5;    // 101 - what the Pharo image uses
 
     // SmallInteger limits (61-bit signed)
