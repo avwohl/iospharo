@@ -2953,7 +2953,9 @@ ExecuteResult Interpreter::stepDetailed() {
 // ===== BYTECODE DISPATCH =====
 
 void Interpreter::dispatchBytecode(uint8_t bytecode) {
-    // Track bytecode execution (dispatch tracing removed - Smalltalk handles all logic)
+    // Record bytecode in history buffer for debugging
+    recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode;
+    recentBytecodeIdx_++;
 
     // Sista V1 bytecode dispatch (used by Pharo 10+, format 68021 with modern compiler)
     // Key differences from V3PlusClosures:
@@ -4428,6 +4430,54 @@ void Interpreter::sendArithmetic(int which) {
 
 void Interpreter::sendSpecial(int which) {
     // Sista V1: Send special message (special selectors 0-15 map to selectors 16-31)
+
+    // Trace value: (which=10) sends with nil arguments
+    if (which == 10) {  // value:
+        Oop arg = stackValue(0);
+        Oop rcvr = stackValue(1);
+        Oop nilObj = memory_.nil();
+        static FILE* valueSendLog = nullptr;
+        static int valueSendCount = 0;
+        if (!valueSendLog) valueSendLog = fopen("/tmp/value_send_trace.log", "w");
+        if (valueSendLog && valueSendCount < 200 && arg.rawBits() == nilObj.rawBits()) {
+            valueSendCount++;
+            std::string rcvrClass = "<unknown>";
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                Oop cls = memory_.classOf(rcvr);
+                if (cls.isObject()) {
+                    Oop clsName = memory_.fetchPointer(6, cls);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            rcvrClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                        }
+                    }
+                }
+            }
+            fprintf(valueSendLog, "[VALUE: #%d] arg=nil rcvr=%s (0x%llx)\n",
+                    valueSendCount, rcvrClass.c_str(), (unsigned long long)rcvr.rawBits());
+            fflush(valueSendLog);
+        }
+    }
+
+    // Trace #== (which=6) sends to understand ifNotNil: behavior
+    if (which == 6) {  // #==
+        Oop arg = stackValue(0);
+        Oop rcvr = stackValue(1);
+        Oop nilObj = memory_.nil();
+        static FILE* eqSendLog = nullptr;
+        static int eqSendCount = 0;
+        if (!eqSendLog) eqSendLog = fopen("/tmp/eq_send_trace.log", "w");
+        // Log all sends where nil is involved (for ifNotNil: pattern)
+        if (eqSendLog && eqSendCount < 500 && (rcvr.rawBits() == nilObj.rawBits() || arg.rawBits() == nilObj.rawBits())) {
+            eqSendCount++;
+            fprintf(eqSendLog, "[== SEND #%d] rcvr=0x%llx arg=0x%llx rcvrIsNil=%d argIsNil=%d\n",
+                    eqSendCount, (unsigned long long)rcvr.rawBits(), (unsigned long long)arg.rawBits(),
+                    rcvr.rawBits() == nilObj.rawBits() ? 1 : 0,
+                    arg.rawBits() == nilObj.rawBits() ? 1 : 0);
+            fflush(eqSendLog);
+        }
+    }
     // Delegates to existing commonSend implementation which handles selectors 16-31
     commonSend(which);
 }
@@ -7971,6 +8021,22 @@ void Interpreter::activateBlock(Oop block, int argCount) {
                 fprintf(blockActLog, "  outerContext slot5 (receiver) = 0x%llx\n",
                         (unsigned long long)ctxRcvr.rawBits());
             }
+            // Log copied values (slots 4+)
+            int numCopiedVals = static_cast<int>(blockSlots) - 4;
+            if (numCopiedVals > 0) {
+                fprintf(blockActLog, "  copiedValues (%d): ", numCopiedVals);
+                for (int cv = 0; cv < numCopiedVals && cv < 5; cv++) {
+                    Oop copiedVal = memory_.fetchPointer(4 + cv, block);
+                    if (copiedVal.rawBits() == nilObj.rawBits()) {
+                        fprintf(blockActLog, "[%d]=nil ", cv);
+                    } else if (copiedVal.isSmallInteger()) {
+                        fprintf(blockActLog, "[%d]=SI%lld ", cv, copiedVal.asSmallInteger());
+                    } else {
+                        fprintf(blockActLog, "[%d]=0x%llx ", cv, (unsigned long long)copiedVal.rawBits());
+                    }
+                }
+                fprintf(blockActLog, "\n");
+            }
             fflush(blockActLog);
         }
     } else if (outerContext.isObject() && !outerContext.isNil()) {
@@ -9977,8 +10043,20 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
                     ++copiedCount, 4 + i, (unsigned long long)copiedValue.rawBits(),
                     valInfo.c_str(), numCopied);
 
-            // If copying nil, show method context and temps
+            // If copying nil, show method context, temps, and recent bytecodes
             if (isNilValue) {
+                // Show recent bytecodes (stored in a ring buffer) - 20 most recent
+                fprintf(copiedLog, "  -> Recent bytecodes (before 0xF9, newest->oldest): ");
+                for (int bc = 0; bc < 20 && bc < (int)recentBytecodes_.size(); bc++) {
+                    uint8_t b = recentBytecodes_[(recentBytecodeIdx_ - 1 - bc + 256) % 256];
+                    fprintf(copiedLog, "0x%02X ", b);
+                    // Mark conditional jumps
+                    if ((b >= 0xB8 && b <= 0xBF) || (b >= 0xC0 && b <= 0xC7)) {
+                        fprintf(copiedLog, "<-COND ");
+                    }
+                }
+                fprintf(copiedLog, "\n");
+
                 std::string methodSel = "<unknown>";
                 std::string rcvrClass = "<unknown>";
                 if (method_.isObject()) {

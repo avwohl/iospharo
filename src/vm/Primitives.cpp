@@ -868,7 +868,51 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
         if (arrayIndex >= header->slotCount()) {
             return PrimitiveResult::Failure;
         }
-        primitiveSuccess(header->slotAt(arrayIndex));
+        Oop result = header->slotAt(arrayIndex);
+        // Trace at: results that return nil
+        if (result.rawBits() == memory_.nil().rawBits()) {
+            static FILE* atNilLog = nullptr;
+            static int atNilCount = 0;
+            if (!atNilLog) atNilLog = fopen("/tmp/at_nil_trace.log", "w");
+            if (atNilLog && atNilCount < 100) {
+                atNilCount++;
+                std::string rcvrClass = "<unknown>";
+                Oop cls = memory_.classOf(rcvr);
+                if (cls.isObject()) {
+                    Oop clsName = memory_.fetchPointer(6, cls);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            rcvrClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                        }
+                    }
+                }
+                // Get current method selector
+                std::string methodSel = "<unknown>";
+                if (method_.isObject()) {
+                    ObjectHeader* mHdr = method_.asObjectPtr();
+                    if (mHdr->isCompiledMethod()) {
+                        Oop hdr = memory_.fetchPointer(0, method_);
+                        if (hdr.isSmallInteger()) {
+                            size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                            if (numLits >= 2 && numLits < 100) {
+                                Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                                if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                    ObjectHeader* sHdr = sel.asObjectPtr();
+                                    if (sHdr->isBytesObject() && sHdr->byteSize() < 50) {
+                                        methodSel = std::string((char*)sHdr->bytes(), sHdr->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                fprintf(atNilLog, "[AT-NIL #%d] %s at: %lld => nil (slots=%zu) in #%s\n",
+                        atNilCount, rcvrClass.c_str(), idx, header->slotCount(), methodSel.c_str());
+                fflush(atNilLog);
+            }
+        }
+        primitiveSuccess(result);
         return PrimitiveResult::Success;
     } else if (header->isCompiledMethod()) {
         // CompiledMethods are hybrid objects with both literals (pointers) and bytecodes

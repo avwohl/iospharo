@@ -418,6 +418,10 @@ private:
     // Named primitive registry - maps "moduleName:primitiveName" to function
     std::map<std::string, PrimitiveFunc> namedPrimitives_;
 
+    // Bytecode history for debugging
+    std::array<uint8_t, 256> recentBytecodes_;
+    size_t recentBytecodeIdx_ = 0;
+
     /// Clear the method cache (used when methods are modified)
     void flushMethodCache() {
         for (auto& entry : methodCache_) {
