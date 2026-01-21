@@ -2083,6 +2083,20 @@ PrimitiveResult Interpreter::primitiveResume(int argCount) {
     // Verify process has a valid suspended context
     Oop context = memory_.fetchPointer(ProcessSuspendedContextIndex, process);
     Oop nilObj = memory_.nil();
+
+    // Debug: log what process is being resumed
+    static FILE* resumeLog = nullptr;
+    if (!resumeLog) {
+        resumeLog = fopen("/tmp/resume.log", "w");
+    }
+    if (resumeLog) {
+        fprintf(resumeLog, "[RESUME] Process 0x%llx context=0x%llx isNil=%d isObject=%d\n",
+                (unsigned long long)process.rawBits(), (unsigned long long)context.rawBits(),
+                (context.isNil() || context.rawBits() == nilObj.rawBits()) ? 1 : 0,
+                context.isObject() ? 1 : 0);
+        fflush(resumeLog);
+    }
+
     if (context.isNil() || context.rawBits() == nilObj.rawBits() || !context.isObject()) {
         return PrimitiveResult::Failure;  // Can't resume without a valid context
     }
@@ -4875,6 +4889,37 @@ PrimitiveResult Interpreter::primitiveYield(int argCount) {
 
         // Save current context
         Oop currentContext = activeContext_;
+
+        // Debug: log what we're saving
+        static FILE* yieldSaveLog = nullptr;
+        if (!yieldSaveLog) yieldSaveLog = fopen("/tmp/yield_save.log", "w");
+        if (yieldSaveLog) {
+            std::string ctxMethod = "?";
+            if (currentContext.isObject() && currentContext.rawBits() > 0x10000) {
+                Oop method = memory_.fetchPointer(3, currentContext);
+                if (method.isObject() && method.rawBits() > 0x10000) {
+                    Oop mhdr = memory_.fetchPointer(0, method);
+                    if (mhdr.isSmallInteger()) {
+                        int64_t hv = mhdr.asSmallInteger();
+                        int nLits = hv & 0x7FFF;
+                        if (nLits >= 2 && nLits < 100) {
+                            Oop sel = memory_.fetchPointer(nLits - 1, method);
+                            if (sel.isObject()) {
+                                ObjectHeader* selH = sel.asObjectPtr();
+                                if (selH->isBytesObject() && selH->byteSize() < 100) {
+                                    ctxMethod = std::string((char*)selH->bytes(), selH->byteSize());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            fprintf(yieldSaveLog, "[YIELD-SAVE #%d] Saving context 0x%llx (method=#%s) for process 0x%llx\n",
+                    yieldCount, (unsigned long long)currentContext.rawBits(), ctxMethod.c_str(),
+                    (unsigned long long)activeProcess.rawBits());
+            fflush(yieldSaveLog);
+        }
+
         memory_.storePointer(ProcessSuspendedContextIndex, activeProcess, currentContext);
 
         // Add current process to end of priority list

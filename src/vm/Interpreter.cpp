@@ -5695,6 +5695,161 @@ extern int g_traceSendsAfterPrim264;
                 std::cerr << "[SIGNAL-TRACE] signal sent to rcvr=0x" << std::hex << rcvr.rawBits()
                           << " clsIdx=" << std::dec << clsIdx << "\n";
             }
+            // Trace all sends with Scheduler in receiver class
+            static bool schedulerSendTracing = false;
+            static FILE* schedSendLog = nullptr;
+            if (!schedSendLog) schedSendLog = fopen("/tmp/scheduler_sends.log", "w");
+            if (schedSendLog) {
+                Oop rcvr = stackValue(static_cast<size_t>(argCount));
+                std::string rcvrClass = "<unknown>";
+                if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                    Oop cls = memory_.classOf(rcvr);
+                    if (cls.isObject()) {
+                        Oop nameOop = memory_.fetchPointer(6, cls);
+                        if (nameOop.isObject()) {
+                            ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                                rcvrClass = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+                // Start tracing when DelaySemaphoreScheduler receives startUp
+                if (rcvrClass.find("Scheduler") != std::string::npos && selStr == "startUp") {
+                    schedulerSendTracing = true;
+                    fprintf(schedSendLog, "=== START TRACING: %s >> %s ===\n", rcvrClass.c_str(), selStr.c_str());
+                }
+                // Stop after error
+                if (selStr == "error:" && schedulerSendTracing) {
+                    // Show the error message
+                    Oop errArg = stackValue(0);
+                    if (errArg.isObject()) {
+                        ObjectHeader* errHdr = errArg.asObjectPtr();
+                        if (errHdr->isBytesObject() && errHdr->byteSize() < 100) {
+                            std::string errMsg((char*)errHdr->bytes(), errHdr->byteSize());
+                            fprintf(schedSendLog, "=== ERROR REACHED: '%s' ===\n", errMsg.c_str());
+                        }
+                    }
+                    schedulerSendTracing = false;
+                }
+                // Also trace == comparisons with more detail
+                if (schedulerSendTracing && selStr == "==") {
+                    Oop rcvr2 = stackValue(1);
+                    Oop arg = stackValue(0);
+                    std::string rcvr2Class = "<unknown>";
+                    std::string argClass = "<unknown>";
+                    Oop nilObj = memory_.nil();
+                    if (rcvr2.rawBits() == nilObj.rawBits()) {
+                        rcvr2Class = "nil";
+                    } else if (rcvr2.isObject() && rcvr2.rawBits() > 0x10000) {
+                        Oop cls = memory_.classOf(rcvr2);
+                        if (cls.isObject()) {
+                            Oop cn = memory_.fetchPointer(6, cls);
+                            if (cn.isObject()) {
+                                ObjectHeader* cnH = cn.asObjectPtr();
+                                if (cnH->isBytesObject() && cnH->byteSize() < 100) {
+                                    rcvr2Class = std::string((char*)cnH->bytes(), cnH->byteSize());
+                                }
+                            }
+                        }
+                    }
+                    if (arg.rawBits() == nilObj.rawBits()) {
+                        argClass = "nil";
+                    } else if (arg.isObject() && arg.rawBits() > 0x10000) {
+                        Oop cls = memory_.classOf(arg);
+                        if (cls.isObject()) {
+                            Oop cn = memory_.fetchPointer(6, cls);
+                            if (cn.isObject()) {
+                                ObjectHeader* cnH = cn.asObjectPtr();
+                                if (cnH->isBytesObject() && cnH->byteSize() < 100) {
+                                    argClass = std::string((char*)cnH->bytes(), cnH->byteSize());
+                                }
+                            }
+                        }
+                    }
+                    bool equal = (rcvr2.rawBits() == arg.rawBits());
+                    fprintf(schedSendLog, "[== COMPARE] %s 0x%llx == %s 0x%llx -> %s\n",
+                            rcvr2Class.c_str(), (unsigned long long)rcvr2.rawBits(),
+                            argClass.c_str(), (unsigned long long)arg.rawBits(),
+                            equal ? "true" : "false");
+                }
+                // Log sends while tracing
+                if (schedulerSendTracing) {
+                    fprintf(schedSendLog, "[SEND] %s >> #%s (args=%d)\n", rcvrClass.c_str(), selStr.c_str(), argCount);
+                    fflush(schedSendLog);
+                }
+            }
+            // Trace "resume" sends to understand scheduler error
+            if (selStr == "resume") {
+                static FILE* resumeSendLog = nullptr;
+                static int resumeCount = 0;
+                if (!resumeSendLog) resumeSendLog = fopen("/tmp/resume_send.log", "w");
+                resumeCount++;
+                if (resumeSendLog) {
+                    Oop rcvr = stackValue(static_cast<size_t>(argCount));
+                    std::string rcvrClass = "<unknown>";
+                    if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                        Oop cls = memory_.classOf(rcvr);
+                        if (cls.isObject()) {
+                            Oop nameOop = memory_.fetchPointer(6, cls);
+                            if (nameOop.isObject()) {
+                                ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                                    rcvrClass = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                }
+                            }
+                        }
+                        // If receiver is a Process, show suspendedContext state
+                        if (rcvrClass == "Process") {
+                            Oop ctx = memory_.fetchPointer(ProcessSuspendedContextIndex, rcvr);
+                            Oop nilObj = memory_.nil();
+                            fprintf(resumeSendLog, "[RESUME-SEND #%d] Process 0x%llx suspendedContext=0x%llx (%s)\n",
+                                    resumeCount,
+                                    (unsigned long long)rcvr.rawBits(),
+                                    (unsigned long long)ctx.rawBits(),
+                                    (ctx.rawBits() == nilObj.rawBits()) ? "nil" : "valid");
+                        } else if (rcvrClass.find("Scheduler") != std::string::npos) {
+                            // For scheduler objects, dump their slots to find the process
+                            ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+                            fprintf(resumeSendLog, "[RESUME-SEND #%d] %s 0x%llx with %zu slots:\n",
+                                    resumeCount,
+                                    rcvrClass.c_str(), (unsigned long long)rcvr.rawBits(), rcvrHdr->slotCount());
+                            Oop nilObj = memory_.nil();
+                            for (size_t i = 0; i < std::min(rcvrHdr->slotCount(), (size_t)10); i++) {
+                                Oop slot = rcvrHdr->slotAt(i);
+                                std::string slotClass = "<immediate>";
+                                if (slot.rawBits() == nilObj.rawBits()) {
+                                    slotClass = "nil";
+                                } else if (slot.isSmallInteger()) {
+                                    slotClass = "SmallInt(" + std::to_string(slot.asSmallInteger()) + ")";
+                                } else if (slot.isObject() && slot.rawBits() > 0x10000) {
+                                    Oop slotCls = memory_.classOf(slot);
+                                    if (slotCls.isObject()) {
+                                        Oop scn = memory_.fetchPointer(6, slotCls);
+                                        if (scn.isObject()) {
+                                            ObjectHeader* scnH = scn.asObjectPtr();
+                                            if (scnH->isBytesObject() && scnH->byteSize() < 100) {
+                                                slotClass = std::string((char*)scnH->bytes(), scnH->byteSize());
+                                            }
+                                        }
+                                    }
+                                    // If it's a Process, show its suspendedContext
+                                    if (slotClass == "Process") {
+                                        Oop ctx = memory_.fetchPointer(ProcessSuspendedContextIndex, slot);
+                                        slotClass += (ctx.rawBits() == nilObj.rawBits()) ? "(ctx=nil)" : "(ctx=valid)";
+                                    }
+                                }
+                                fprintf(resumeSendLog, "  slot[%zu] = %s\n", i, slotClass.c_str());
+                            }
+                            fflush(resumeSendLog);
+                        } else {
+                            fprintf(resumeSendLog, "[RESUME-SEND #%d] %s 0x%llx (not Process)\n",
+                                    resumeCount, rcvrClass.c_str(), (unsigned long long)rcvr.rawBits());
+                        }
+                        fflush(resumeSendLog);
+                    }
+                }
+            }
         }
     }
 
@@ -5899,6 +6054,85 @@ extern int g_traceSendsAfterPrim264;
                     }
                 }
 
+                // Special trace for "Not suspended"
+                if (errorMsg == "Not suspended") {
+                    static FILE* notSuspLog = fopen("/tmp/not_suspended.log", "w");
+                    if (notSuspLog) {
+                        fprintf(notSuspLog, "=== 'Not suspended' ERROR ===\n");
+                        // Get the receiver
+                        Oop rcvr = stackValue(1);
+                        std::string rcvrClass = "<unknown>";
+                        if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                            Oop cls = memory_.classOf(rcvr);
+                            if (cls.isObject()) {
+                                Oop nameOop = memory_.fetchPointer(6, cls);
+                                if (nameOop.isObject()) {
+                                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                                        rcvrClass = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                        fprintf(notSuspLog, "Receiver: %s 0x%llx\n", rcvrClass.c_str(), (unsigned long long)rcvr.rawBits());
+                        // Show recent context
+                        fprintf(notSuspLog, "activeContext_=0x%llx method_=0x%llx\n",
+                                (unsigned long long)activeContext_.rawBits(),
+                                (unsigned long long)method_.rawBits());
+                        // Walk frame stack
+                        fprintf(notSuspLog, "Frame stack (depth=%zu):\n", frameDepth_);
+                        for (size_t i = 0; i < std::min(frameDepth_, (size_t)10); i++) {
+                            const auto& sf = savedFrames_[frameDepth_ - 1 - i];
+                            std::string mSel = "?";
+                            if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                                Oop mhdr = memory_.fetchPointer(0, sf.savedMethod);
+                                if (mhdr.isSmallInteger()) {
+                                    int64_t hv = mhdr.asSmallInteger();
+                                    int nLits = hv & 0x7FFF;
+                                    if (nLits >= 2 && nLits < 100) {
+                                        Oop sel = memory_.fetchPointer(nLits - 1, sf.savedMethod);
+                                        if (sel.isObject()) {
+                                            ObjectHeader* selH = sel.asObjectPtr();
+                                            if (selH->isBytesObject() && selH->byteSize() < 100) {
+                                                mSel = std::string((char*)selH->bytes(), selH->byteSize());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            fprintf(notSuspLog, "  [%zu] %s\n", i, mSel.c_str());
+                        }
+                        // Walk context chain
+                        fprintf(notSuspLog, "Context chain:\n");
+                        Oop ctx = activeContext_;
+                        for (int d = 0; d < 15 && ctx.isObject() && !ctx.isNil(); d++) {
+                            Oop method = memory_.fetchPointer(3, ctx);  // MethodIndex = 3
+                            std::string mSel = "?";
+                            if (method.isObject() && method.rawBits() > 0x10000) {
+                                Oop mhdr = memory_.fetchPointer(0, method);
+                                if (mhdr.isSmallInteger()) {
+                                    int64_t hv = mhdr.asSmallInteger();
+                                    int nLits = hv & 0x7FFF;
+                                    if (nLits >= 2 && nLits < 100) {
+                                        Oop sel = memory_.fetchPointer(nLits - 1, method);
+                                        if (sel.isObject()) {
+                                            ObjectHeader* selH = sel.asObjectPtr();
+                                            if (selH->isBytesObject() && selH->byteSize() < 100) {
+                                                mSel = std::string((char*)selH->bytes(), selH->byteSize());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            fprintf(notSuspLog, "  [%d] #%s\n", d, mSel.c_str());
+                            Oop sender = memory_.fetchPointer(0, ctx);  // SenderIndex = 0
+                            if (sender.rawBits() == ctx.rawBits()) break;  // Circular
+                            ctx = sender;
+                        }
+                        fflush(notSuspLog);
+                    }
+                }
+
                 // Trace the call stack for ALL errors
                 static FILE* indexErrLog = fopen("/tmp/index_error_trace.log", "a");
                 if (indexErrLog) {
@@ -6093,13 +6327,12 @@ extern int g_traceSendsAfterPrim264;
                     fflush(errorLog);
                 }
 
-                // HARD FAIL on all errors - no workarounds
-                fprintf(stderr, "\n=== HARD FAIL ===\n");
+                // Log error but let Smalltalk error handling work
+                fprintf(stderr, "\n=== SMALLTALK ERROR (continuing) ===\n");
                 fprintf(stderr, "Smalltalk error: %s >> error: '%s'\n", rcvrClassName.c_str(), errorMsg.c_str());
-                fprintf(stderr, "See /tmp/error_messages.log for history\n");
-                fprintf(stderr, "See /tmp/index_error_trace.log for stack trace\n");
+                fprintf(stderr, "Letting Smalltalk exception handling proceed...\n");
                 fflush(stderr);
-                std::abort();
+                // Don't abort - let error: propagate normally
 
                 // INTERCEPT: If the error is "No tool named: browser", investigate what tools exist
                 if (rcvrClassName == "PharoCommonTools" && errorMsg.find("No tool named") != std::string::npos) {
@@ -11365,6 +11598,60 @@ void Interpreter::transferTo(Oop newProcess) {
         fprintf(xferLog, "[XFER #%d] old=0x%llx new=0x%llx\n",
                 xferCount, (unsigned long long)oldProcess.rawBits(),
                 (unsigned long long)newProcess.rawBits());
+        // Get the method selector from newProcess's suspendedContext
+        Oop newContext = memory_.fetchPointer(ProcessSuspendedContextIndex, newProcess);
+        if (newContext.isObject() && newContext.rawBits() > 0x10000) {
+            Oop method = memory_.fetchPointer(3, newContext);  // MethodIndex = 3
+            if (method.isObject() && method.rawBits() > 0x10000) {
+                Oop mhdr = memory_.fetchPointer(0, method);
+                if (mhdr.isSmallInteger()) {
+                    int64_t hv = mhdr.asSmallInteger();
+                    int nLits = hv & 0x7FFF;
+                    if (nLits >= 2 && nLits < 100) {
+                        Oop sel = memory_.fetchPointer(nLits - 1, method);
+                        if (sel.isObject()) {
+                            ObjectHeader* selH = sel.asObjectPtr();
+                            if (selH->isBytesObject() && selH->byteSize() < 100) {
+                                std::string selStr((char*)selH->bytes(), selH->byteSize());
+                                fprintf(xferLog, "  newProc will resume in method: #%s\n", selStr.c_str());
+                                // If resuming in 'resume', show what that context is trying to resume
+                                if (selStr == "resume") {
+                                    // Look at the stack to see what's being resumed
+                                    // In Process>>resume, 'self' (receiver) is the process to resume
+                                    Oop rcvr = memory_.fetchPointer(5, newContext);  // ReceiverIndex = 5
+                                    if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                                        Oop rcvrCls = memory_.classOf(rcvr);
+                                        std::string rcvrClsName = "<unknown>";
+                                        if (rcvrCls.isObject()) {
+                                            Oop cn = memory_.fetchPointer(6, rcvrCls);
+                                            if (cn.isObject()) {
+                                                ObjectHeader* cnH = cn.asObjectPtr();
+                                                if (cnH->isBytesObject() && cnH->byteSize() < 100) {
+                                                    rcvrClsName = std::string((char*)cnH->bytes(), cnH->byteSize());
+                                                }
+                                            }
+                                        }
+                                        fprintf(xferLog, "  resume receiver class: %s\n", rcvrClsName.c_str());
+                                        if (rcvrClsName == "Process") {
+                                            // Check if the process has a valid suspendedContext
+                                            Oop targetCtx = memory_.fetchPointer(ProcessSuspendedContextIndex, rcvr);
+                                            Oop nilObj = memory_.nil();
+                                            fprintf(xferLog, "  target process suspendedContext: %s (0x%llx)\n",
+                                                    (targetCtx.rawBits() == nilObj.rawBits()) ? "nil" : "valid",
+                                                    (unsigned long long)targetCtx.rawBits());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            Oop nilObj = memory_.nil();
+            fprintf(xferLog, "  newProc has %s suspendedContext\n",
+                    (newContext.rawBits() == nilObj.rawBits()) ? "nil" : "invalid");
+        }
         fflush(xferLog);
     }
 
@@ -11380,6 +11667,29 @@ void Interpreter::transferTo(Oop newProcess) {
 
     // Save current execution state to old process's suspendedContext
     if (!activeContext_.isNil() && activeContext_.isObject()) {
+        // Debug: log what context we're saving
+        if (xferLog && xferCount <= 100) {
+            std::string ctxMethod = "?";
+            Oop ctxMethod_ = memory_.fetchPointer(3, activeContext_);
+            if (ctxMethod_.isObject() && ctxMethod_.rawBits() > 0x10000) {
+                Oop mhdr = memory_.fetchPointer(0, ctxMethod_);
+                if (mhdr.isSmallInteger()) {
+                    int64_t hv = mhdr.asSmallInteger();
+                    int nLits = hv & 0x7FFF;
+                    if (nLits >= 2 && nLits < 100) {
+                        Oop sel = memory_.fetchPointer(nLits - 1, ctxMethod_);
+                        if (sel.isObject()) {
+                            ObjectHeader* selH = sel.asObjectPtr();
+                            if (selH->isBytesObject() && selH->byteSize() < 100) {
+                                ctxMethod = std::string((char*)selH->bytes(), selH->byteSize());
+                            }
+                        }
+                    }
+                }
+            }
+            fprintf(xferLog, "  SAVING oldProc context: #%s (frameDepth_=%zu)\n", ctxMethod.c_str(), frameDepth_);
+            fflush(xferLog);
+        }
         memory_.storePointer(ProcessSuspendedContextIndex, oldProcess, activeContext_);
     }
 
