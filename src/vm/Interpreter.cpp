@@ -3974,7 +3974,82 @@ void Interpreter::pushSpecial(int which) {
 }
 
 void Interpreter::returnValue(Oop value) {
-    // Removed verbose logging - was flooding logs
+    // Trace returns to see where nil-filled Arrays come from
+    static FILE* retValLog = nullptr;
+    static int retValCount = 0;
+    if (!retValLog) retValLog = fopen("/tmp/return_value_trace.log", "w");
+    if (retValLog && retValCount < 200) {
+        // Check if returning an Array
+        if (value.isObject() && value.rawBits() > 0x10000) {
+            Oop cls = memory_.classOf(value);
+            if (cls.isObject()) {
+                Oop clsName = memory_.fetchPointer(6, cls);
+                if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                    ObjectHeader* nameHdr = clsName.asObjectPtr();
+                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                        std::string className((char*)nameHdr->bytes(), nameHdr->byteSize());
+                        if (className == "Array") {
+                            ObjectHeader* valHdr = value.asObjectPtr();
+                            int nilCount = 0;
+                            Oop nilObj = memory_.nil();
+                            for (size_t i = 0; i < valHdr->slotCount(); i++) {
+                                if (valHdr->slotAt(i).rawBits() == nilObj.rawBits()) nilCount++;
+                            }
+                            // Only log Arrays with mostly nil elements
+                            if (nilCount > (int)valHdr->slotCount() / 2) {
+                                retValCount++;
+                                // Get current method name
+                                std::string methodSel = "<unknown>";
+                                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                                    Oop mHdr = memory_.fetchPointer(0, method_);
+                                    if (mHdr.isSmallInteger()) {
+                                        size_t numLits = mHdr.asSmallInteger() & 0x7FFF;
+                                        if (numLits >= 2) {
+                                            Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                                            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                                ObjectHeader* selHdr = sel.asObjectPtr();
+                                                if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                                    methodSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                fprintf(retValLog, "[RETVAL #%d] Array (0x%llx, %zu slots, %d nil) returned from %s\n",
+                                        retValCount, (unsigned long long)value.rawBits(),
+                                        valHdr->slotCount(), nilCount, methodSel.c_str());
+                                // Print call stack
+                                fprintf(retValLog, "  Call stack:\n");
+                                for (size_t i = 0; i < std::min(frameDepth_, (size_t)8); i++) {
+                                    if (frameDepth_ > i) {
+                                        const auto& sf = savedFrames_[frameDepth_ - 1 - i];
+                                        std::string sfMethod = "<unknown>";
+                                        if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                                            Oop sfHdr = memory_.fetchPointer(0, sf.savedMethod);
+                                            if (sfHdr.isSmallInteger()) {
+                                                size_t sfLits = sfHdr.asSmallInteger() & 0x7FFF;
+                                                if (sfLits >= 2) {
+                                                    Oop sfSel = memory_.fetchPointer(sfLits - 1, sf.savedMethod);
+                                                    if (sfSel.isObject() && sfSel.rawBits() > 0x10000) {
+                                                        ObjectHeader* sfSelHdr = sfSel.asObjectPtr();
+                                                        if (sfSelHdr->isBytesObject() && sfSelHdr->byteSize() < 50) {
+                                                            sfMethod = std::string((char*)sfSelHdr->bytes(), sfSelHdr->byteSize());
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        fprintf(retValLog, "    [%zu] %s\n", i, sfMethod.c_str());
+                                    }
+                                }
+                                fflush(retValLog);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // If no frames to pop, check if we have a sender context to return to
     if (frameDepth_ == 0) {
@@ -4073,6 +4148,75 @@ void Interpreter::returnValue(Oop value) {
 
 void Interpreter::returnFromMethod() {
     Oop value = pop();
+
+    // Trace returns from startup-related methods
+    static FILE* retLog = nullptr;
+    static int retCount = 0;
+    if (!retLog) retLog = fopen("/tmp/method_return_trace.log", "w");
+    if (retLog && retCount < 100) {
+        // Get current method selector
+        std::string methodSel = "<unknown>";
+        if (method_.isObject() && method_.rawBits() > 0x10000) {
+            Oop hdr = memory_.fetchPointer(0, method_);
+            if (hdr.isSmallInteger()) {
+                size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                if (numLits >= 2) {
+                    Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                    if (sel.isObject() && sel.rawBits() > 0x10000) {
+                        ObjectHeader* selHdr = sel.asObjectPtr();
+                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                            methodSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                        }
+                    }
+                }
+            }
+        }
+        // Log returns from specific methods
+        bool isStartupMethod = (methodSel.find("startup") != std::string::npos ||
+                                methodSel.find("List") != std::string::npos ||
+                                methodSel.find("flatten") != std::string::npos ||
+                                methodSel.find("Collect") != std::string::npos ||
+                                methodSel.find("withAll") != std::string::npos ||
+                                methodSel.find("addAll") != std::string::npos);
+        if (isStartupMethod) {
+            retCount++;
+            std::string valueClass = "<unknown>";
+            int valueSlots = -1;
+            if (value.isObject() && value.rawBits() > 0x10000) {
+                ObjectHeader* valHdr = value.asObjectPtr();
+                valueSlots = valHdr->slotCount();
+                Oop cls = memory_.classOf(value);
+                if (cls.isObject()) {
+                    Oop clsName = memory_.fetchPointer(6, cls);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            valueClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                        }
+                    }
+                }
+            } else if (value.isSmallInteger()) {
+                valueClass = "[SmallInteger " + std::to_string(value.asSmallInteger()) + "]";
+            }
+            fprintf(retLog, "[RETURN #%d] %s returns %s (0x%llx, %d slots)\n",
+                    retCount, methodSel.c_str(), valueClass.c_str(),
+                    (unsigned long long)value.rawBits(), valueSlots);
+            // If returning an Array, check for nil elements
+            if (valueClass == "Array" && value.isObject()) {
+                ObjectHeader* valHdr = value.asObjectPtr();
+                Oop nilObj = memory_.nil();
+                int nilCount = 0;
+                for (size_t i = 0; i < valHdr->slotCount(); i++) {
+                    if (valHdr->slotAt(i).rawBits() == nilObj.rawBits()) nilCount++;
+                }
+                if (nilCount > 0) {
+                    fprintf(retLog, "  *** Array has %d nil out of %d elements\n", nilCount, valueSlots);
+                }
+            }
+            fflush(retLog);
+        }
+    }
+
     returnValue(value);
 }
 
@@ -4607,15 +4751,43 @@ void Interpreter::sendSpecial(int which) {
                     }
                 }
             }
-            fprintf(doSendLog, "[DO: #%d] collection=%s (0x%llx, %d slots)\n",
-                    doSendCount, collClass.c_str(), (unsigned long long)collection.rawBits(), collSlots);
-            // Show first few elements
-            if (collection.isObject() && collection.rawBits() > 0x10000) {
+            // Get caller method selector
+            std::string callerSel = "<unknown>";
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                Oop hdr = memory_.fetchPointer(0, method_);
+                if (hdr.isSmallInteger()) {
+                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                    if (numLits >= 2) {
+                        Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                            ObjectHeader* selHdr = sel.asObjectPtr();
+                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                callerSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+            }
+            fprintf(doSendLog, "[DO: #%d] collection=%s (0x%llx, %d slots) caller=#%s\n",
+                    doSendCount, collClass.c_str(), (unsigned long long)collection.rawBits(), collSlots, callerSel.c_str());
+            // For Arrays with nil elements, show more details
+            bool hasNil = false;
+            if (collClass == "Array" && collection.isObject()) {
                 ObjectHeader* collHdr = collection.asObjectPtr();
-                fprintf(doSendLog, "  First elements: ");
+                Oop nilObj = memory_.nil();
+                for (size_t i = 0; i < collHdr->slotCount(); i++) {
+                    if (collHdr->slotAt(i).rawBits() == nilObj.rawBits()) {
+                        hasNil = true;
+                        break;
+                    }
+                }
+            }
+            if (hasNil) {
+                ObjectHeader* collHdr = collection.asObjectPtr();
+                fprintf(doSendLog, "  *** Array with NIL elements! Elements: ");
                 Oop nilObj = memory_.nil();
                 int nilCount = 0;
-                for (size_t i = 0; i < collHdr->slotCount() && i < 10; i++) {
+                for (size_t i = 0; i < collHdr->slotCount() && i < 15; i++) {
                     Oop elem = collHdr->slotAt(i);
                     if (elem.rawBits() == nilObj.rawBits()) {
                         fprintf(doSendLog, "[nil] ");
@@ -4642,7 +4814,42 @@ void Interpreter::sendSpecial(int which) {
                         fprintf(doSendLog, "[0x%llx] ", (unsigned long long)elem.rawBits());
                     }
                 }
-                fprintf(doSendLog, " (nilCount=%d)\n", nilCount);
+                fprintf(doSendLog, " (total %d, nilCount=%d)\n", collSlots, nilCount);
+                // Show call stack
+                fprintf(doSendLog, "  Call stack:\n");
+                for (size_t d = 0; d < frameDepth_ && d < 8; d++) {
+                    SavedFrame& sf = savedFrames_[frameDepth_ - 1 - d];
+                    std::string frameSel = "<unknown>";
+                    std::string frameRcvr = "<unknown>";
+                    if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                        Oop fhdr = memory_.fetchPointer(0, sf.savedMethod);
+                        if (fhdr.isSmallInteger()) {
+                            size_t fnLits = fhdr.asSmallInteger() & 0x7FFF;
+                            if (fnLits >= 2) {
+                                Oop fsel = memory_.fetchPointer(fnLits - 1, sf.savedMethod);
+                                if (fsel.isObject()) {
+                                    ObjectHeader* fselHdr = fsel.asObjectPtr();
+                                    if (fselHdr->isBytesObject() && fselHdr->byteSize() < 50) {
+                                        frameSel = std::string((char*)fselHdr->bytes(), fselHdr->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (sf.savedReceiver.isObject()) {
+                        Oop frc = memory_.classOf(sf.savedReceiver);
+                        if (frc.isObject()) {
+                            Oop frcName = memory_.fetchPointer(6, frc);
+                            if (frcName.isObject() && frcName.rawBits() > 0x10000) {
+                                ObjectHeader* frnH = frcName.asObjectPtr();
+                                if (frnH->isBytesObject() && frnH->byteSize() < 50) {
+                                    frameRcvr = std::string((char*)frnH->bytes(), frnH->byteSize());
+                                }
+                            }
+                        }
+                    }
+                    fprintf(doSendLog, "    [%zu] %s >> #%s\n", d, frameRcvr.c_str(), frameSel.c_str());
+                }
             }
             fflush(doSendLog);
         }
@@ -4692,6 +4899,403 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         ObjectHeader* selHdr2 = selector.asObjectPtr();
         if (selHdr2->isBytesObject() && selHdr2->byteSize() < 50) {
             selStr2 = std::string((char*)selHdr2->bytes(), selHdr2->byteSize());
+        }
+    }
+    // Trace startupList and runList:do: to see what's being passed
+    // Trace Association >> value to see what's being returned
+    // NOTE: This traces BEFORE the method executes
+    if (selStr2 == "value" && argCount == 0) {
+        static FILE* assocLog = nullptr;
+        static int assocCount = 0;
+        if (!assocLog) assocLog = fopen("/tmp/assoc_value.log", "w");
+        if (assocLog && assocCount < 50) {
+            Oop rcvr = stackValue(0);
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                Oop cls = memory_.classOf(rcvr);
+                if (cls.isObject()) {
+                    Oop clsName = memory_.fetchPointer(6, cls);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            std::string className((char*)cnHdr->bytes(), cnHdr->byteSize());
+                            if (className == "Association" || className.find("Association") != std::string::npos) {
+                                assocCount++;
+                                ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+                                fprintf(assocLog, "[ASSOC-VALUE #%d] %s receiver with %zu slots\n",
+                                        assocCount, className.c_str(), rcvrHdr->slotCount());
+                                // Show key and value slots
+                                if (rcvrHdr->slotCount() >= 2) {
+                                    Oop key = rcvrHdr->slotAt(0);
+                                    Oop val = rcvrHdr->slotAt(1);
+                                    Oop nilObj = memory_.nil();
+                                    fprintf(assocLog, "  key=0x%llx (%s) val=0x%llx (%s)\n",
+                                            (unsigned long long)key.rawBits(),
+                                            key.rawBits() == nilObj.rawBits() ? "nil" : "obj",
+                                            (unsigned long long)val.rawBits(),
+                                            val.rawBits() == nilObj.rawBits() ? "nil" : "obj");
+                                }
+                                fflush(assocLog);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Trace value: on blocks during collect: operations
+    if (selStr2 == "value:" && argCount == 1) {
+        static FILE* valueLog = nullptr;
+        static int valueCount = 0;
+        if (!valueLog) valueLog = fopen("/tmp/block_value.log", "w");
+        if (valueLog && valueCount < 100) {
+            Oop rcvr = stackValue(1);  // Block
+            Oop arg = stackValue(0);   // Argument to block
+            // Check if receiver is a block
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                Oop cls = memory_.classOf(rcvr);
+                if (cls.isObject()) {
+                    Oop clsName = memory_.fetchPointer(6, cls);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            std::string className((char*)cnHdr->bytes(), cnHdr->byteSize());
+                            if (className.find("Block") != std::string::npos) {
+                                valueCount++;
+                                // Show argument type
+                                std::string argClass = "<unknown>";
+                                Oop nilObj = memory_.nil();
+                                bool argIsNil = arg.rawBits() == nilObj.rawBits();
+                                if (argIsNil) {
+                                    argClass = "nil";
+                                } else if (arg.isSmallInteger()) {
+                                    argClass = "[SmallInt " + std::to_string(arg.asSmallInteger()) + "]";
+                                } else if (arg.isObject() && arg.rawBits() > 0x10000) {
+                                    Oop argCls = memory_.classOf(arg);
+                                    if (argCls.isObject()) {
+                                        Oop argClsName = memory_.fetchPointer(6, argCls);
+                                        if (argClsName.isObject() && argClsName.rawBits() > 0x10000) {
+                                            ObjectHeader* acnHdr = argClsName.asObjectPtr();
+                                            if (acnHdr->isBytesObject() && acnHdr->byteSize() < 50) {
+                                                argClass = std::string((char*)acnHdr->bytes(), acnHdr->byteSize());
+                                            }
+                                        }
+                                    }
+                                }
+                                fprintf(valueLog, "[VALUE: #%d] %s value: %s (0x%llx)\n",
+                                        valueCount, className.c_str(), argClass.c_str(),
+                                        (unsigned long long)arg.rawBits());
+                                // Show call context
+                                if (frameDepth_ > 0) {
+                                    const auto& sf = savedFrames_[frameDepth_ - 1];
+                                    std::string callerMethod = "<unknown>";
+                                    if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                                        Oop mHdr = memory_.fetchPointer(0, sf.savedMethod);
+                                        if (mHdr.isSmallInteger()) {
+                                            size_t numLits = mHdr.asSmallInteger() & 0x7FFF;
+                                            if (numLits >= 2) {
+                                                Oop sel = memory_.fetchPointer(numLits - 1, sf.savedMethod);
+                                                if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                                    ObjectHeader* selHdr = sel.asObjectPtr();
+                                                    if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                                        callerMethod = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    fprintf(valueLog, "  caller: %s\n", callerMethod.c_str());
+                                }
+                                fflush(valueLog);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Trace addLast: to see when nil is passed
+    if (selStr2 == "addLast:" && argCount == 1) {
+        static FILE* addLastLog = nullptr;
+        static int addLastCount = 0;
+        if (!addLastLog) addLastLog = fopen("/tmp/addlast_trace.log", "w");
+        if (addLastLog && addLastCount < 100) {
+            Oop arg = stackValue(0);  // The value being added
+            Oop nilObj = memory_.nil();
+            bool argIsNil = arg.rawBits() == nilObj.rawBits();
+            addLastCount++;
+            if (argIsNil) {
+                fprintf(addLastLog, "[ADDLAST #%d] Adding NIL to collection\n", addLastCount);
+            } else {
+                // Show what type of object is being added
+                std::string argClass = "<unknown>";
+                if (arg.isSmallInteger()) {
+                    argClass = "[SmallInt " + std::to_string(arg.asSmallInteger()) + "]";
+                } else if (arg.isObject() && arg.rawBits() > 0x10000) {
+                    Oop cls = memory_.classOf(arg);
+                    if (cls.isObject()) {
+                        Oop clsName = memory_.fetchPointer(6, cls);
+                        if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                            ObjectHeader* cnHdr = clsName.asObjectPtr();
+                            if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                                argClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+                fprintf(addLastLog, "[ADDLAST #%d] Adding %s (0x%llx)\n",
+                        addLastCount, argClass.c_str(), (unsigned long long)arg.rawBits());
+            }
+            // Show call stack
+            fprintf(addLastLog, "  Call stack:\n");
+            for (size_t i = 0; i < std::min(frameDepth_, (size_t)5); i++) {
+                if (frameDepth_ > i) {
+                    const auto& sf = savedFrames_[frameDepth_ - 1 - i];
+                    std::string sfMethod = "<unknown>";
+                    if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                        Oop sfHdr = memory_.fetchPointer(0, sf.savedMethod);
+                        if (sfHdr.isSmallInteger()) {
+                            size_t sfLits = sfHdr.asSmallInteger() & 0x7FFF;
+                            if (sfLits >= 2) {
+                                Oop sfSel = memory_.fetchPointer(sfLits - 1, sf.savedMethod);
+                                if (sfSel.isObject() && sfSel.rawBits() > 0x10000) {
+                                    ObjectHeader* sfSelHdr = sfSel.asObjectPtr();
+                                    if (sfSelHdr->isBytesObject() && sfSelHdr->byteSize() < 50) {
+                                        sfMethod = std::string((char*)sfSelHdr->bytes(), sfSelHdr->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    fprintf(addLastLog, "    [%zu] %s\n", i, sfMethod.c_str());
+                }
+            }
+            fflush(addLastLog);
+        }
+    }
+    // Trace nextPutAll: to see what collection is being added
+    if (selStr2 == "nextPutAll:" && argCount == 1) {
+        static FILE* nextPutAllLog = nullptr;
+        static int nextPutAllCount = 0;
+        if (!nextPutAllLog) nextPutAllLog = fopen("/tmp/nextputall.log", "w");
+        if (nextPutAllLog && nextPutAllCount < 50) {
+            Oop arg = stackValue(0);  // Collection to add
+            Oop rcvr = stackValue(1); // Stream
+            nextPutAllCount++;
+            std::string argClass = "<unknown>";
+            int argSlots = -1;
+            Oop nilObj = memory_.nil();
+            bool argIsNil = arg.rawBits() == nilObj.rawBits();
+            if (argIsNil) {
+                argClass = "nil";
+            } else if (arg.isObject() && arg.rawBits() > 0x10000) {
+                ObjectHeader* argHdr = arg.asObjectPtr();
+                argSlots = argHdr->slotCount();
+                Oop argCls = memory_.classOf(arg);
+                if (argCls.isObject()) {
+                    Oop argClsName = memory_.fetchPointer(6, argCls);
+                    if (argClsName.isObject() && argClsName.rawBits() > 0x10000) {
+                        ObjectHeader* acnHdr = argClsName.asObjectPtr();
+                        if (acnHdr->isBytesObject() && acnHdr->byteSize() < 50) {
+                            argClass = std::string((char*)acnHdr->bytes(), acnHdr->byteSize());
+                        }
+                    }
+                }
+                // Count nil/non-nil elements
+                if (argClass == "Array" && argHdr->isPointersObject()) {
+                    int nilCount = 0, objCount = 0;
+                    for (size_t i = 0; i < argHdr->slotCount(); i++) {
+                        if (argHdr->slotAt(i).rawBits() == nilObj.rawBits()) nilCount++;
+                        else objCount++;
+                    }
+                    fprintf(nextPutAllLog, "[NEXTPUTALL #%d] %s (0x%llx, %d slots: %d nil, %d non-nil)\n",
+                            nextPutAllCount, argClass.c_str(), (unsigned long long)arg.rawBits(),
+                            argSlots, nilCount, objCount);
+                } else {
+                    fprintf(nextPutAllLog, "[NEXTPUTALL #%d] %s (0x%llx, %d slots)\n",
+                            nextPutAllCount, argClass.c_str(), (unsigned long long)arg.rawBits(), argSlots);
+                }
+            } else {
+                fprintf(nextPutAllLog, "[NEXTPUTALL #%d] %s\n", nextPutAllCount, argClass.c_str());
+            }
+            // Show call context
+            if (frameDepth_ > 0) {
+                const auto& sf = savedFrames_[frameDepth_ - 1];
+                std::string callerMethod = "<unknown>";
+                if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                    Oop mHdr = memory_.fetchPointer(0, sf.savedMethod);
+                    if (mHdr.isSmallInteger()) {
+                        size_t numLits = mHdr.asSmallInteger() & 0x7FFF;
+                        if (numLits >= 2) {
+                            Oop sel = memory_.fetchPointer(numLits - 1, sf.savedMethod);
+                            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                ObjectHeader* selHdr = sel.asObjectPtr();
+                                if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                    callerMethod = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                                }
+                            }
+                        }
+                    }
+                }
+                fprintf(nextPutAllLog, "  caller: %s\n", callerMethod.c_str());
+            }
+            fflush(nextPutAllLog);
+        }
+    }
+    // Trace nextPut: to see if elements are being stored
+    if (selStr2 == "nextPut:" && argCount == 1) {
+        static FILE* nextPutLog = nullptr;
+        static int nextPutCount = 0;
+        if (!nextPutLog) nextPutLog = fopen("/tmp/nextput_all.log", "w");
+        if (nextPutLog && nextPutCount < 100) {
+            Oop arg = stackValue(0);
+            Oop rcvr = stackValue(1);
+            nextPutCount++;
+            std::string argClass = "<unknown>";
+            Oop nilObj = memory_.nil();
+            bool argIsNil = arg.rawBits() == nilObj.rawBits();
+            if (argIsNil) {
+                argClass = "nil";
+            } else if (arg.isSmallInteger()) {
+                argClass = "[SmallInt " + std::to_string(arg.asSmallInteger()) + "]";
+            } else if (arg.isObject() && arg.rawBits() > 0x10000) {
+                Oop argCls = memory_.classOf(arg);
+                if (argCls.isObject()) {
+                    Oop argClsName = memory_.fetchPointer(6, argCls);
+                    if (argClsName.isObject() && argClsName.rawBits() > 0x10000) {
+                        ObjectHeader* acnHdr = argClsName.asObjectPtr();
+                        if (acnHdr->isBytesObject() && acnHdr->byteSize() < 50) {
+                            argClass = std::string((char*)acnHdr->bytes(), acnHdr->byteSize());
+                        }
+                    }
+                }
+            }
+            // Show stream's position slot
+            int64_t streamPos = -1;
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+                if (rcvrHdr->slotCount() >= 2) {
+                    Oop posSlot = rcvrHdr->slotAt(1);  // position is usually slot 1
+                    if (posSlot.isSmallInteger()) {
+                        streamPos = posSlot.asSmallInteger();
+                    }
+                }
+            }
+            fprintf(nextPutLog, "[NEXTPUT #%d] %s (pos=%lld)\n", nextPutCount, argClass.c_str(), streamPos);
+            fflush(nextPutLog);
+        }
+    }
+    // Trace copyFrom:to: to see what indices are used
+    if (selStr2 == "copyFrom:to:" && argCount == 2) {
+        static FILE* copyLog = nullptr;
+        static int copyCount = 0;
+        if (!copyLog) copyLog = fopen("/tmp/copyfromto.log", "w");
+        if (copyLog && copyCount < 50) {
+            Oop start = stackValue(1);
+            Oop stop = stackValue(0);
+            Oop rcvr = stackValue(2);
+            copyCount++;
+            fprintf(copyLog, "[COPY #%d] copyFrom:%lld to:%lld on ",
+                    copyCount,
+                    start.isSmallInteger() ? start.asSmallInteger() : -1,
+                    stop.isSmallInteger() ? stop.asSmallInteger() : -1);
+            // Show receiver class and size
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+                Oop cls = memory_.classOf(rcvr);
+                std::string className = "<unknown>";
+                if (cls.isObject()) {
+                    Oop clsName = memory_.fetchPointer(6, cls);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            className = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                        }
+                    }
+                }
+                fprintf(copyLog, "%s (0x%llx, %zu slots)\n", className.c_str(),
+                        (unsigned long long)rcvr.rawBits(), rcvrHdr->slotCount());
+                // Show first few elements
+                if (rcvrHdr->isPointersObject()) {
+                    Oop nilObj = memory_.nil();
+                    int nilCount = 0;
+                    int objCount = 0;
+                    for (size_t i = 0; i < rcvrHdr->slotCount(); i++) {
+                        if (rcvrHdr->slotAt(i).rawBits() == nilObj.rawBits()) nilCount++;
+                        else objCount++;
+                    }
+                    fprintf(copyLog, "  Array has %d nil, %d non-nil elements (total %zu)\n",
+                            nilCount, objCount, rcvrHdr->slotCount());
+                    // For large copies, show what's in the range being copied
+                    int64_t startIdx = start.isSmallInteger() ? start.asSmallInteger() : 1;
+                    int64_t stopIdx = stop.isSmallInteger() ? stop.asSmallInteger() : 0;
+                    if (stopIdx > 20) {
+                        fprintf(copyLog, "  Range [%lld..%lld] contents:\n", startIdx, stopIdx);
+                        int rangeNil = 0, rangeObj = 0;
+                        for (int64_t i = startIdx - 1; i < stopIdx && i < (int64_t)rcvrHdr->slotCount(); i++) {
+                            if (rcvrHdr->slotAt(i).rawBits() == nilObj.rawBits()) rangeNil++;
+                            else rangeObj++;
+                        }
+                        fprintf(copyLog, "    Range has %d nil, %d non-nil\n", rangeNil, rangeObj);
+                    }
+                }
+            } else {
+                fprintf(copyLog, "<not-object>\n");
+            }
+            fflush(copyLog);
+        }
+    }
+    if (selStr2 == "startupList" || selStr2 == "runList:do:") {
+        static FILE* startupListLog = nullptr;
+        static int startupListCount = 0;
+        if (!startupListLog) startupListLog = fopen("/tmp/startupList_trace.log", "w");
+        if (startupListLog && startupListCount < 20) {
+            startupListCount++;
+            fprintf(startupListLog, "[%s #%d]\n", selStr2.c_str(), startupListCount);
+            if (selStr2 == "runList:do:" && argCount >= 1) {
+                // Show the list argument
+                Oop listArg = stackValue(1);  // list is arg0, block is arg1, so list is at stackValue(1)
+                std::string listClass = "<unknown>";
+                int listSlots = -1;
+                if (listArg.isObject() && listArg.rawBits() > 0x10000) {
+                    ObjectHeader* listHdr = listArg.asObjectPtr();
+                    listSlots = listHdr->slotCount();
+                    Oop cls = memory_.classOf(listArg);
+                    if (cls.isObject()) {
+                        Oop clsName = memory_.fetchPointer(6, cls);
+                        if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                            ObjectHeader* cnHdr = clsName.asObjectPtr();
+                            if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                                listClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+                fprintf(startupListLog, "  list arg: %s (0x%llx, %d slots)\n",
+                        listClass.c_str(), (unsigned long long)listArg.rawBits(), listSlots);
+                // If it's an OrderedCollection, show its internal array details
+                if (listClass == "OrderedCollection" && listSlots >= 3) {
+                    ObjectHeader* listHdr = listArg.asObjectPtr();
+                    Oop internalArray = listHdr->slotAt(0);
+                    Oop firstIdx = listHdr->slotAt(1);
+                    Oop lastIdx = listHdr->slotAt(2);
+                    fprintf(startupListLog, "  OrderedCollection: array=0x%llx firstIndex=%lld lastIndex=%lld\n",
+                            (unsigned long long)internalArray.rawBits(),
+                            firstIdx.isSmallInteger() ? firstIdx.asSmallInteger() : -1,
+                            lastIdx.isSmallInteger() ? lastIdx.asSmallInteger() : -1);
+                }
+                // If it's an Array, show if it has nil elements
+                if (listClass == "Array" && listArg.isObject()) {
+                    ObjectHeader* listHdr = listArg.asObjectPtr();
+                    Oop nilObj = memory_.nil();
+                    int nilCount = 0;
+                    for (size_t i = 0; i < listHdr->slotCount(); i++) {
+                        if (listHdr->slotAt(i).rawBits() == nilObj.rawBits()) nilCount++;
+                    }
+                    fprintf(startupListLog, "  Array with %zu slots, %d nil elements\n",
+                            listHdr->slotCount(), nilCount);
+                }
+            }
+            fflush(startupListLog);
         }
     }
     if (selStr2 == "ifNotNil:" || selStr2 == "ifNil:" || selStr2 == "ifNil:ifNotNil:" || selStr2 == "ifNotNil:ifNil:") {
