@@ -3840,7 +3840,45 @@ void Interpreter::pushReceiverVariable(int index) {
 }
 
 void Interpreter::pushTemporary(int index) {
-    push(temporary(index));
+    Oop temp = temporary(index);
+    // Trace nil temp pushes to understand value: with nil args
+    static FILE* nilTempLog = nullptr;
+    static int nilTempCount = 0;
+    if (temp.rawBits() == memory_.nil().rawBits()) {
+        if (!nilTempLog) nilTempLog = fopen("/tmp/nil_temp_push.log", "w");
+        if (nilTempLog && nilTempCount < 100) {
+            nilTempCount++;
+            // Get method selector for context
+            std::string methodSel = "<unknown>";
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                ObjectHeader* mHdr = method_.asObjectPtr();
+                Oop hdr = memory_.fetchPointer(0, method_);
+                if (hdr.isSmallInteger()) {
+                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                    if (numLits >= 2) {
+                        Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                            ObjectHeader* selHdr = sel.asObjectPtr();
+                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                methodSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+            }
+            fprintf(nilTempLog, "[NIL-TEMP #%d] pushTemporary(%d) = nil in %s frameDepth=%zu\n",
+                    nilTempCount, index, methodSel.c_str(), frameDepth_);
+            // Dump first few temps
+            fprintf(nilTempLog, "  temps: ");
+            for (int t = 0; t < 5; t++) {
+                Oop tv = temporary(t);
+                fprintf(nilTempLog, "[%d]=0x%llx ", t, (unsigned long long)tv.rawBits());
+            }
+            fprintf(nilTempLog, "\n");
+            fflush(nilTempLog);
+        }
+    }
+    push(temp);
 }
 
 void Interpreter::pushLiteralConstant(int index) {
@@ -4454,8 +4492,69 @@ void Interpreter::sendSpecial(int which) {
                     }
                 }
             }
-            fprintf(valueSendLog, "[VALUE: #%d] arg=nil rcvr=%s (0x%llx)\n",
-                    valueSendCount, rcvrClass.c_str(), (unsigned long long)rcvr.rawBits());
+            fprintf(valueSendLog, "[VALUE: #%d] arg=nil rcvr=%s (0x%llx) depth=%zu\n",
+                    valueSendCount, rcvrClass.c_str(), (unsigned long long)rcvr.rawBits(), frameDepth_);
+            // Show recent bytecodes and method context
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                ObjectHeader* mHdr = method_.asObjectPtr();
+                Oop hdr = memory_.fetchPointer(0, method_);
+                if (hdr.isSmallInteger()) {
+                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                    size_t bcStart = (1 + numLits) * 8;
+                    size_t ip = instructionPointer_ - mHdr->bytes();
+                    // Get method selector
+                    std::string methodSel = "<unknown>";
+                    if (numLits >= 2) {
+                        Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                            ObjectHeader* selHdr = sel.asObjectPtr();
+                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                methodSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                            }
+                        }
+                    }
+                    fprintf(valueSendLog, "  in method: %s ip=%zu bcStart=%zu\n", methodSel.c_str(), ip, bcStart);
+                    // Show bytecodes leading up to value:
+                    fprintf(valueSendLog, "  bytecodes before value:: ");
+                    for (int i = -10; i <= 0; i++) {
+                        if ((int)ip + i >= (int)bcStart) {
+                            uint8_t bc = mHdr->bytes()[(int)ip + i];
+                            fprintf(valueSendLog, "%02x ", bc);
+                        }
+                    }
+                    fprintf(valueSendLog, "\n");
+                }
+            }
+            // Show stack around the nil
+            fprintf(valueSendLog, "  stack: ");
+            for (int i = 0; i < 5; i++) {
+                Oop sv = stackValue(i);
+                fprintf(valueSendLog, "[%d]=0x%llx ", i, (unsigned long long)sv.rawBits());
+            }
+            fprintf(valueSendLog, "\n");
+            // Dump call stack to see full context
+            fprintf(valueSendLog, "  Call stack:\n");
+            for (size_t d = 0; d < frameDepth_ && d < 10; d++) {
+                SavedFrame& sf = savedFrames_[frameDepth_ - 1 - d];
+                std::string frameSel = "<unknown>";
+                if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                    ObjectHeader* mHdr = sf.savedMethod.asObjectPtr();
+                    Oop hdr = memory_.fetchPointer(0, sf.savedMethod);
+                    if (hdr.isSmallInteger()) {
+                        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                        if (numLits >= 2) {
+                            Oop sel = memory_.fetchPointer(numLits - 1, sf.savedMethod);
+                            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                ObjectHeader* selHdr = sel.asObjectPtr();
+                                if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                    frameSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                                }
+                            }
+                        }
+                    }
+                }
+                fprintf(valueSendLog, "    [%zu] %s\n", d, frameSel.c_str());
+            }
             fflush(valueSendLog);
         }
     }
@@ -7955,6 +8054,35 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     } else {
         primitiveFail();
         return;
+    }
+
+    // DEBUG: Log stack state BEFORE pushFrame to diagnose nil arg issue
+    static FILE* blockStackLog = nullptr;
+    static int blockStackCount = 0;
+    if (!blockStackLog) blockStackLog = fopen("/tmp/block_stack_before_push.log", "w");
+    if (blockStackLog && blockStackCount < 100) {
+        blockStackCount++;
+        Oop nilObj = memory_.nil();
+        // Show what would become the args after pushFrame
+        fprintf(blockStackLog, "[BLOCK-STACK #%d] activateBlock argCount=%d SP depth=%ld\n",
+                blockStackCount, argCount, (long)(stackPointer_ - stackBase_));
+        fprintf(blockStackLog, "  Stack values that will become frame:\n");
+        for (int i = argCount; i >= 0; i--) {
+            Oop val = *(stackPointer_ - 1 - i);
+            bool isNil = (val.rawBits() == nilObj.rawBits());
+            fprintf(blockStackLog, "    [SP-%d] = 0x%llx%s <- ", i, (unsigned long long)val.rawBits(),
+                    isNil ? " [NIL]" : "");
+            if (i == argCount) fprintf(blockStackLog, "block/receiver");
+            else fprintf(blockStackLog, "arg%d", argCount - 1 - i);
+            fprintf(blockStackLog, "\n");
+        }
+        // After pushFrame: FP = SP - argCount - 1
+        // FP[0] = block, FP[1] = arg0, etc.
+        // temp(0) = FP[1] = arg0
+        fprintf(blockStackLog, "  After pushFrame, temp0 will be: 0x%llx%s\n",
+                (unsigned long long)(*(stackPointer_ - argCount)).rawBits(),
+                (*(stackPointer_ - argCount)).rawBits() == nilObj.rawBits() ? " [NIL!]" : "");
+        fflush(blockStackLog);
     }
 
     if (!pushFrame(methodToExecute, argCount)) {

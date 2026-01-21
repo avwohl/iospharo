@@ -145,6 +145,16 @@ public:
     void setClassAtIndex(uint32_t index, Oop classOop) {
         if (index < classTable_.size()) {
             classTable_[index] = classOop;
+            // Log registration of low-numbered classes (these are often core classes)
+            if (index < 100) {
+                static FILE* classRegLog = nullptr;
+                if (!classRegLog) classRegLog = fopen("/tmp/class_registration.log", "w");
+                if (classRegLog) {
+                    fprintf(classRegLog, "[CLASS-REG] index=%u classOop=0x%llx\n",
+                            index, (unsigned long long)classOop.rawBits());
+                    fflush(classRegLog);
+                }
+            }
         }
     }
 
