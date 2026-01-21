@@ -536,11 +536,30 @@ PrimitiveResult Interpreter::primitiveLessThan(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveGreaterThan(int argCount) {
+    static int gtCallCount = 0;
+    static FILE* gtLog = nullptr;
+    gtCallCount++;
+
+    if (!gtLog) {
+        gtLog = fopen("/tmp/prim_gt.log", "w");
+    }
+
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
     if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
-        bool result = rcvr.asSmallInteger() > arg.asSmallInteger();
+        int64_t rcvrVal = rcvr.asSmallInteger();
+        int64_t argVal = arg.asSmallInteger();
+        bool result = rcvrVal > argVal;
+
+        // Log all calls (first 100) and any involving 0
+        if (gtLog && (gtCallCount <= 100 || argVal == 0)) {
+            fprintf(gtLog, "[GT #%d] %lld > %lld = %s\n",
+                    gtCallCount, (long long)rcvrVal, (long long)argVal,
+                    result ? "true" : "false");
+            fflush(gtLog);
+        }
+
         primitiveSuccess(result ? memory_.trueObject() : memory_.falseObject());
         return PrimitiveResult::Success;
     }

@@ -2821,22 +2821,53 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
             }
             case 0xEE: // 238: Pop and Jump On True #iiiiiiii (+ extB * 256)
             {
+                static int eeCount = 0;
+                static FILE* jumpLog = nullptr;
+                if (!jumpLog) jumpLog = fopen("/tmp/cond_jump.log", "w");
+
                 uint8_t offsetByte = fetchByte();
                 int offset = (extB_ << 8) | offsetByte;
                 extB_ = 0;
                 Oop value = pop();
-                if (isTrue(value)) {
+                bool isT = isTrue(value);
+                bool isF = isFalse(value);
+
+                eeCount++;
+                if (jumpLog && eeCount <= 200) {
+                    fprintf(jumpLog, "[JIT #%d] value=0x%llx isTrue=%d isFalse=%d offset=%d %s\n",
+                            eeCount, (unsigned long long)value.rawBits(),
+                            isT, isF, offset, isT ? "JUMP" : "no-jump");
+                    fflush(jumpLog);
+                }
+
+                if (isT) {
                     instructionPointer_ += offset;
                 }
                 break;
             }
             case 0xEF: // 239: Pop and Jump On False #iiiiiiii (+ extB * 256)
             {
+                static int efCount = 0;
+                static FILE* jumpLog = nullptr;
+                if (!jumpLog) jumpLog = fopen("/tmp/cond_jump.log", "a");
+
                 uint8_t offsetByte = fetchByte();
                 int offset = (extB_ << 8) | offsetByte;
                 extB_ = 0;
                 Oop value = pop();
-                if (!isTrue(value)) {
+                bool isT = isTrue(value);
+                bool isF = isFalse(value);
+                bool willJump = !isT;
+
+                efCount++;
+                if (jumpLog && efCount <= 200) {
+                    fprintf(jumpLog, "[JIF #%d] value=0x%llx isTrue=%d isFalse=%d offset=%d %s\n",
+                            efCount, (unsigned long long)value.rawBits(),
+                            isT, isF, offset, willJump ? "JUMP" : "no-jump");
+                    fflush(jumpLog);
+                }
+
+                if (willJump) {
                     instructionPointer_ += offset;
                 }
                 break;
@@ -2972,7 +3003,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 static FILE* rtLog = nullptr;
                 static int rtCount = 0;
                 if (!rtLog) rtLog = fopen("/tmp/remote_temp.log", "w");
-                if (rtLog && rtCount < 50) {
+                if (rtLog && rtCount < 500) {
                     // Check if value is nil - those are the interesting cases
                     bool isNil = (value.rawBits() == memory_.nil().rawBits());
                     if (isNil || rtCount < 20) {
@@ -3043,7 +3074,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 static FILE* rtsLog = nullptr;
                 static int rtsCount = 0;
                 if (!rtsLog) rtsLog = fopen("/tmp/remote_temp_store.log", "w");
-                if (rtsLog && rtsCount < 50) {
+                if (rtsLog && rtsCount < 500) {
                     rtsCount++;
                     std::string methodSel = "<unknown>";
                     if (method_.isObject() && method_.rawBits() > 0x10000) {
@@ -3090,7 +3121,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 static FILE* rtsLog2 = nullptr;
                 static int rtsCount2 = 0;
                 if (!rtsLog2) rtsLog2 = fopen("/tmp/remote_temp_store.log", "a");
-                if (rtsLog2 && rtsCount2 < 50) {
+                if (rtsLog2 && rtsCount2 < 500) {
                     rtsCount2++;
                     std::string methodSel = "<unknown>";
                     if (method_.isObject() && method_.rawBits() > 0x10000) {
