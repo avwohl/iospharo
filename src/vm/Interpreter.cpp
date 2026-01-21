@@ -11601,9 +11601,18 @@ Oop Interpreter::materializeFrameStack() {
         const auto& frame = savedFrames_[i];
 
         if (matLog) {
-            fprintf(matLog, "[MATERIALIZE] Frame %zu: method=0x%llx receiver=0x%llx\n",
+            // Calculate PC for logging
+            int logPc = 1;
+            if (frame.savedMethod.isObject() && frame.savedMethod.rawBits() > 0x10000) {
+                ObjectHeader* mHdr = frame.savedMethod.asObjectPtr();
+                uint8_t* mBytes = mHdr->bytes();
+                if (frame.savedIP >= mBytes && frame.savedIP < mBytes + mHdr->byteSize()) {
+                    logPc = static_cast<int>(frame.savedIP - mBytes) + 1;
+                }
+            }
+            fprintf(matLog, "[MATERIALIZE] Frame %zu: method=0x%llx receiver=0x%llx pc=%d\n",
                     i, (unsigned long long)frame.savedMethod.rawBits(),
-                    (unsigned long long)frame.savedReceiver.rawBits());
+                    (unsigned long long)frame.savedReceiver.rawBits(), logPc);
             fflush(matLog);
         }
 
@@ -11729,6 +11738,13 @@ Oop Interpreter::materializeFrameStack() {
                 if (matLog) {
                     fprintf(matLog, "[MATERIALIZE] Created %zu+1 contexts, topmost=0x%llx\n",
                             frameDepth_, (unsigned long long)context.rawBits());
+                    fprintf(matLog, "  slots: sender=0x%llx pc=%lld stackp=%lld method=0x%llx closure=0x%llx rcvr=0x%llx\n",
+                            (unsigned long long)sender.rawBits(),
+                            (long long)pc,
+                            (long long)(numTemps + 5),
+                            (unsigned long long)method_.rawBits(),
+                            (unsigned long long)memory_.nil().rawBits(),
+                            (unsigned long long)receiver_.rawBits());
                     fflush(matLog);
                 }
 
