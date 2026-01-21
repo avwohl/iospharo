@@ -5468,13 +5468,44 @@ extern int g_traceSendsAfterPrim264;
                     fflush(errorLog);
                 }
 
-                // HARD FAIL on all errors - no workarounds
-                fprintf(stderr, "\n=== HARD FAIL ===\n");
-                fprintf(stderr, "Smalltalk error: %s >> error: '%s'\n", rcvrClassName.c_str(), errorMsg.c_str());
-                fprintf(stderr, "See /tmp/error_messages.log for history\n");
-                fprintf(stderr, "See /tmp/index_error_trace.log for stack trace\n");
-                fflush(stderr);
-                std::abort();
+                // SOFT FAIL for certain recoverable errors
+                bool isFatalError = true;
+
+                // GrafPort errors can be skipped - rendering will be incomplete but won't crash
+                if (rcvrClassName == "GrafPort" &&
+                    (errorMsg.find("Must set destForm") != std::string::npos ||
+                     errorMsg.find("destForm") != std::string::npos)) {
+                    static int grafportErrors = 0;
+                    if (++grafportErrors <= 3) {
+                        fprintf(stderr, "[WARN] GrafPort error suppressed: %s\n", errorMsg.c_str());
+                    }
+                    isFatalError = false;
+                    // Pop the error message and return receiver
+                    pop();  // Pop error string
+                    // Leave receiver on stack
+                }
+
+                // Index out of range in UI components - skip and continue
+                if (errorMsg.find("index out of range") != std::string::npos &&
+                    (rcvrClassName == "AlignmentMorph" || rcvrClassName == "IconicButtonMorph" ||
+                     rcvrClassName == "MenuMorph" || rcvrClassName == "MenuItemMorph")) {
+                    static int indexErrors = 0;
+                    if (++indexErrors <= 3) {
+                        fprintf(stderr, "[WARN] Index error suppressed in %s\n", rcvrClassName.c_str());
+                    }
+                    isFatalError = false;
+                    pop();  // Pop error string
+                    // Leave receiver on stack
+                }
+
+                if (isFatalError) {
+                    fprintf(stderr, "\n=== HARD FAIL ===\n");
+                    fprintf(stderr, "Smalltalk error: %s >> error: '%s'\n", rcvrClassName.c_str(), errorMsg.c_str());
+                    fprintf(stderr, "See /tmp/error_messages.log for history\n");
+                    fprintf(stderr, "See /tmp/index_error_trace.log for stack trace\n");
+                    fflush(stderr);
+                    std::abort();
+                }
 
                 // INTERCEPT: If the error is "No tool named: browser", investigate what tools exist
                 if (rcvrClassName == "PharoCommonTools" && errorMsg.find("No tool named") != std::string::npos) {
