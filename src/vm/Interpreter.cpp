@@ -1684,8 +1684,15 @@ void Interpreter::processInputEvents() {
         // All events go to Pharo - let Morphic handle everything
         passThroughEvents_.push_back(event);
 
-        // DIRECT DISPATCH: InputEventSensor isn't running, so manually dispatch mouse events
-        // For world menu (right-click on background), we detect "no morph hit" case
+        // Signal the input semaphore to wake up Smalltalk's event loop
+        int inputSemaIdx = pharo::gEventQueue.getInputSemaphoreIndex();
+        if (inputSemaIdx > 0) {
+            signalExternalSemaphore(inputSemaIdx);
+        }
+
+        // WORKAROUND: InputEventSensor isn't running (UI process not started by image)
+        // Until that's fixed, handle menu bar clicks directly in C++
+        // For world menu (right-click on background), detect "no morph hit" case
         if (event.type == static_cast<int>(pharo::EventType::Mouse)) {
             int eventType = event.arg5;  // 1=down, 2=up, 3=move
             int x = event.arg1;
