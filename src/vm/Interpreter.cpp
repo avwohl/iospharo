@@ -5023,6 +5023,73 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         fprintf(allSendLog, "[SEND #%d] %s >> #%s (args=%d)\n",
                 allSendCount, rcvrName.c_str(), selStr.c_str(), argCount);
 
+        // Trace fullCheck to understand the infinite loop
+        static bool inFullCheck = false;
+        static int fullCheckTraceCount = 0;
+        static FILE* fcLog = nullptr;
+
+        if (selStr == "fullCheck") {
+            inFullCheck = true;
+            fullCheckTraceCount = 0;
+            if (!fcLog) fcLog = fopen("/tmp/fullcheck_trace.log", "w");
+            if (fcLog) {
+                fprintf(fcLog, "\n=== fullCheck entered at send #%d ===\n", allSendCount);
+                fprintf(fcLog, "  method_=0x%llx\n", (unsigned long long)method_.rawBits());
+                // Dump active method's bytecodes
+                if (method_.isObject()) {
+                    ObjectHeader* mHdr = method_.asObjectPtr();
+                    Oop hdr = memory_.fetchPointer(0, method_);
+                    if (hdr.isSmallInteger()) {
+                        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                        size_t bcStart = (1 + numLits) * 8;
+                        size_t bcEnd = mHdr->byteSize();
+                        fprintf(fcLog, "  bytecodes (start=%zu, end=%zu): ", bcStart, bcEnd);
+                        for (size_t i = bcStart; i < bcEnd && i < bcStart + 100; i++) {
+                            fprintf(fcLog, "%02x ", mHdr->bytes()[i]);
+                        }
+                        fprintf(fcLog, "\n");
+                    }
+                }
+                fflush(fcLog);
+            }
+        }
+
+        if (inFullCheck && fcLog && fullCheckTraceCount < 300) {
+            fullCheckTraceCount++;
+
+            // Get current method name
+            std::string methodName = "<unknown>";
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                // Try to get selector from method header
+                Oop methodHdr = memory_.fetchPointer(0, method_);
+                if (methodHdr.isSmallInteger()) {
+                    size_t numLits = methodHdr.asSmallInteger() & 0x7FFF;
+                    if (numLits > 0) {
+                        // Last literal is usually the selector or association
+                        Oop lastLit = memory_.fetchPointer(numLits, method_);
+                        if (lastLit.isObject() && lastLit.rawBits() > 0x10000) {
+                            ObjectHeader* litHdr = lastLit.asObjectPtr();
+                            if (litHdr->isBytesObject() && litHdr->byteSize() < 50) {
+                                methodName = std::string((char*)litHdr->bytes(), litHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+            }
+
+            // For comparison operations, show the argument too
+            if (selStr == ">" || selStr == "<" || selStr == "<=" || selStr == ">=" || selStr == "=" ||
+                selStr == "+" || selStr == "-" || selStr == "*" || selStr == "/" || selStr == "//") {
+                Oop arg = stackValue(0);
+                int64_t argVal = arg.isSmallInteger() ? arg.asSmallInteger() : -999;
+                int64_t rcvrVal = rcvr.isSmallInteger() ? rcvr.asSmallInteger() : -999;
+                fprintf(fcLog, "  [FC #%d @%s] %lld #%s %lld\n", fullCheckTraceCount, methodName.c_str(), rcvrVal, selStr.c_str(), argVal);
+            } else {
+                fprintf(fcLog, "  [FC #%d @%s] %s >> #%s\n", fullCheckTraceCount, methodName.c_str(), rcvrName.c_str(), selStr.c_str());
+            }
+            fflush(fcLog);
+        }
+
         // Detailed trace for hasError/isImageStarting/currentSession
         bool isNilRcvr = (rcvrName == "[UndefinedObject]" || rcvrName == "<unknown>");
         if ((selStr == "hasError" || selStr == "isImageStarting") && isNilRcvr) {
