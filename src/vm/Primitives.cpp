@@ -7544,9 +7544,43 @@ PrimitiveResult Interpreter::primitivePerformInSuperclass(int argCount) {
     Oop lookupClass = stackValue(0);
     Oop argsArray = stackValue(1);
     Oop selector = stackValue(2);
-    // receiver is at stackValue(3), will remain on stack after we pop the other args
+    Oop receiver = stackValue(3);
 
     if (!argsArray.isObject() || !lookupClass.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Check for forwarded objects
+    if (receiver.isObject()) {
+        ObjectHeader* rcvrHeader = receiver.asObjectPtr();
+        if (rcvrHeader->isForwarded()) {
+            return PrimitiveResult::Failure;
+        }
+    }
+
+    // CRITICAL: Validate that lookupClass is in the receiver's superclass chain
+    // Without this check, code could invoke methods from unrelated classes
+    Oop receiverClass = memory_.classOf(receiver);
+    Oop currentClass = receiverClass;
+    bool foundInHierarchy = false;
+
+    // Walk superclass chain to verify lookupClass is an ancestor
+    // Limit iterations to prevent infinite loops from corrupted images
+    for (int i = 0; i < 1000 && currentClass.isObject(); i++) {
+        if (currentClass.rawBits() == lookupClass.rawBits()) {
+            foundInHierarchy = true;
+            break;
+        }
+        // Get superclass (slot 0 in class objects)
+        ObjectHeader* classObj = currentClass.asObjectPtr();
+        if (classObj->slotCount() < 1) {
+            break;  // Invalid class object
+        }
+        currentClass = classObj->slotAt(0);  // superclass slot
+    }
+
+    if (!foundInHierarchy) {
+        // lookupClass is not in receiver's class hierarchy - security violation
         return PrimitiveResult::Failure;
     }
 
