@@ -1395,6 +1395,75 @@ private:
     PrimitiveResult primitiveInt32ToByteArray(int argCount);     // 526
     PrimitiveResult primitivePointerAddress(int argCount);       // 527
 
+    // FFI Byte Access Primitives (600-659)
+    // Load from bytes (ByteArray, String, etc.)
+    PrimitiveResult primitiveLoadBoolean8FromBytes(int argCount);    // 600
+    PrimitiveResult primitiveLoadUInt8FromBytes(int argCount);       // 601
+    PrimitiveResult primitiveLoadInt8FromBytes(int argCount);        // 602
+    PrimitiveResult primitiveLoadUInt16FromBytes(int argCount);      // 603
+    PrimitiveResult primitiveLoadInt16FromBytes(int argCount);       // 604
+    PrimitiveResult primitiveLoadUInt32FromBytes(int argCount);      // 605
+    PrimitiveResult primitiveLoadInt32FromBytes(int argCount);       // 606
+    PrimitiveResult primitiveLoadUInt64FromBytes(int argCount);      // 607
+    PrimitiveResult primitiveLoadInt64FromBytes(int argCount);       // 608
+    PrimitiveResult primitiveLoadPointerFromBytes(int argCount);     // 609
+    PrimitiveResult primitiveLoadChar8FromBytes(int argCount);       // 610
+    PrimitiveResult primitiveLoadChar16FromBytes(int argCount);      // 611
+    PrimitiveResult primitiveLoadChar32FromBytes(int argCount);      // 612
+    PrimitiveResult primitiveLoadFloat32FromBytes(int argCount);     // 613
+    PrimitiveResult primitiveLoadFloat64FromBytes(int argCount);     // 614
+
+    // Store into bytes
+    PrimitiveResult primitiveStoreBoolean8IntoBytes(int argCount);   // 615
+    PrimitiveResult primitiveStoreUInt8IntoBytes(int argCount);      // 616
+    PrimitiveResult primitiveStoreInt8IntoBytes(int argCount);       // 617
+    PrimitiveResult primitiveStoreUInt16IntoBytes(int argCount);     // 618
+    PrimitiveResult primitiveStoreInt16IntoBytes(int argCount);      // 619
+    PrimitiveResult primitiveStoreUInt32IntoBytes(int argCount);     // 620
+    PrimitiveResult primitiveStoreInt32IntoBytes(int argCount);      // 621
+    PrimitiveResult primitiveStoreUInt64IntoBytes(int argCount);     // 622
+    PrimitiveResult primitiveStoreInt64IntoBytes(int argCount);      // 623
+    PrimitiveResult primitiveStorePointerIntoBytes(int argCount);    // 624
+    PrimitiveResult primitiveStoreChar8IntoBytes(int argCount);      // 625
+    PrimitiveResult primitiveStoreChar16IntoBytes(int argCount);     // 626
+    PrimitiveResult primitiveStoreChar32IntoBytes(int argCount);     // 627
+    PrimitiveResult primitiveStoreFloat32IntoBytes(int argCount);    // 628
+    PrimitiveResult primitiveStoreFloat64IntoBytes(int argCount);    // 629
+
+    // Load from ExternalAddress
+    PrimitiveResult primitiveLoadBoolean8FromExternalAddress(int argCount);  // 630
+    PrimitiveResult primitiveLoadUInt8FromExternalAddress(int argCount);     // 631
+    PrimitiveResult primitiveLoadInt8FromExternalAddress(int argCount);      // 632
+    PrimitiveResult primitiveLoadUInt16FromExternalAddress(int argCount);    // 633
+    PrimitiveResult primitiveLoadInt16FromExternalAddress(int argCount);     // 634
+    PrimitiveResult primitiveLoadUInt32FromExternalAddress(int argCount);    // 635
+    PrimitiveResult primitiveLoadInt32FromExternalAddress(int argCount);     // 636
+    PrimitiveResult primitiveLoadUInt64FromExternalAddress(int argCount);    // 637
+    PrimitiveResult primitiveLoadInt64FromExternalAddress(int argCount);     // 638
+    PrimitiveResult primitiveLoadPointerFromExternalAddress(int argCount);   // 639
+    PrimitiveResult primitiveLoadChar8FromExternalAddress(int argCount);     // 640
+    PrimitiveResult primitiveLoadChar16FromExternalAddress(int argCount);    // 641
+    PrimitiveResult primitiveLoadChar32FromExternalAddress(int argCount);    // 642
+    PrimitiveResult primitiveLoadFloat32FromExternalAddress(int argCount);   // 643
+    PrimitiveResult primitiveLoadFloat64FromExternalAddress(int argCount);   // 644
+
+    // Store into ExternalAddress
+    PrimitiveResult primitiveStoreBoolean8IntoExternalAddress(int argCount);  // 645
+    PrimitiveResult primitiveStoreUInt8IntoExternalAddress(int argCount);     // 646
+    PrimitiveResult primitiveStoreInt8IntoExternalAddress(int argCount);      // 647
+    PrimitiveResult primitiveStoreUInt16IntoExternalAddress(int argCount);    // 648
+    PrimitiveResult primitiveStoreInt16IntoExternalAddress(int argCount);     // 649
+    PrimitiveResult primitiveStoreUInt32IntoExternalAddress(int argCount);    // 650
+    PrimitiveResult primitiveStoreInt32IntoExternalAddress(int argCount);     // 651
+    PrimitiveResult primitiveStoreUInt64IntoExternalAddress(int argCount);    // 652
+    PrimitiveResult primitiveStoreInt64IntoExternalAddress(int argCount);     // 653
+    PrimitiveResult primitiveStorePointerIntoExternalAddress(int argCount);   // 654
+    PrimitiveResult primitiveStoreChar8IntoExternalAddress(int argCount);     // 655
+    PrimitiveResult primitiveStoreChar16IntoExternalAddress(int argCount);    // 656
+    PrimitiveResult primitiveStoreChar32IntoExternalAddress(int argCount);    // 657
+    PrimitiveResult primitiveStoreFloat32IntoExternalAddress(int argCount);   // 658
+    PrimitiveResult primitiveStoreFloat64IntoExternalAddress(int argCount);   // 659
+
     // ===== STARTUP SUPPORT =====
 
     /// Bootstrap startup when active process has nil suspendedContext.

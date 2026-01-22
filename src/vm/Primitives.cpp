@@ -17033,4 +17033,1520 @@ PrimitiveResult Interpreter::primitiveGetSystemLocale(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== FFI BYTE ACCESS PRIMITIVES (600-659) =====
+//
+// These primitives provide low-level memory access for FFI.
+// Two variants exist:
+// - FromBytes/IntoBytes: access byte objects directly (ByteArray, String, etc.)
+// - FromExternalAddress/IntoExternalAddress: dereference ExternalAddress first
+//
+// Arguments: receiver index [value]
+// - receiver: byte object (ByteArray) or ExternalAddress
+// - index: 0-based byte offset (SmallInteger)
+// - value (store only): the value to store
+
+// Helper: Get raw bytes pointer from a byte object
+// Returns nullptr on failure
+static uint8_t* getBytesPointer(ObjectMemory& memory, Oop obj, size_t& byteSize) {
+    if (!obj.isObject()) return nullptr;
+
+    // Get the object header to check format
+    ObjectHeader* header = obj.asObjectPtr();
+    if (!header) return nullptr;
+
+    // Must be a bytes object (format >= 16)
+    ObjectFormat format = header->format();
+    if (static_cast<int>(format) < 16) return nullptr;
+
+    // Get byte content pointer
+    byteSize = memory.byteSizeOf(obj);
+    return header->bytes();
+}
+
+// Helper: Get raw pointer from ExternalAddress object
+// ExternalAddress stores a pointer in its first word of data
+static uint8_t* getExternalAddressPointer(ObjectMemory& memory, Oop obj) {
+    if (!obj.isObject()) return nullptr;
+
+    ObjectHeader* header = obj.asObjectPtr();
+    if (!header) return nullptr;
+
+    // ExternalAddress is a byte object (format >= 16) containing a pointer
+    ObjectFormat format = header->format();
+    if (static_cast<int>(format) < 16) return nullptr;
+
+    size_t byteSize = memory.byteSizeOf(obj);
+    if (byteSize < sizeof(void*)) return nullptr;
+
+    // The pointer is stored in the first bytes
+    uint8_t* data = header->bytes();
+    void* ptr;
+    memcpy(&ptr, data, sizeof(void*));
+    return reinterpret_cast<uint8_t*>(ptr);
+}
+
+// ===== LOAD FROM BYTES (600-614) =====
+
+// Primitive 600: Load boolean (uint8 != 0) from bytes
+PrimitiveResult Interpreter::primitiveLoadBoolean8FromBytes(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    if (index < 0 || static_cast<size_t>(index) >= byteSize) return PrimitiveResult::Failure;
+
+    uint8_t value = bytes[index];
+    Oop result = value != 0 ? memory_.trueObject() : memory_.falseObject();
+
+    primitiveSuccess(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 601: Load uint8 from bytes
+PrimitiveResult Interpreter::primitiveLoadUInt8FromBytes(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    if (index < 0 || static_cast<size_t>(index) >= byteSize) return PrimitiveResult::Failure;
+
+    uint8_t value = bytes[index];
+    primitiveSuccess(Oop::fromSmallInteger(value));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 602: Load int8 from bytes
+PrimitiveResult Interpreter::primitiveLoadInt8FromBytes(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    if (index < 0 || static_cast<size_t>(index) >= byteSize) return PrimitiveResult::Failure;
+
+    int8_t value = static_cast<int8_t>(bytes[index]);
+    primitiveSuccess(Oop::fromSmallInteger(value));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 603: Load uint16 from bytes
+PrimitiveResult Interpreter::primitiveLoadUInt16FromBytes(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    if (index < 0 || static_cast<size_t>(index) + 1 >= byteSize || byteSize < 2) return PrimitiveResult::Failure;
+
+    uint16_t value;
+    memcpy(&value, bytes + index, sizeof(value));
+    primitiveSuccess(Oop::fromSmallInteger(value));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 604: Load int16 from bytes
+PrimitiveResult Interpreter::primitiveLoadInt16FromBytes(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    if (index < 0 || static_cast<size_t>(index) + 1 >= byteSize || byteSize < 2) return PrimitiveResult::Failure;
+
+    int16_t value;
+    memcpy(&value, bytes + index, sizeof(value));
+    primitiveSuccess(Oop::fromSmallInteger(value));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 605: Load uint32 from bytes
+PrimitiveResult Interpreter::primitiveLoadUInt32FromBytes(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    if (index < 0 || static_cast<size_t>(index) + 3 >= byteSize || byteSize < 4) return PrimitiveResult::Failure;
+
+    uint32_t value;
+    memcpy(&value, bytes + index, sizeof(value));
+    primitiveSuccess(Oop::fromSmallInteger(value));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 606: Load int32 from bytes
+PrimitiveResult Interpreter::primitiveLoadInt32FromBytes(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    if (index < 0 || static_cast<size_t>(index) + 3 >= byteSize || byteSize < 4) return PrimitiveResult::Failure;
+
+    int32_t value;
+    memcpy(&value, bytes + index, sizeof(value));
+    primitiveSuccess(Oop::fromSmallInteger(value));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 607: Load uint64 from bytes
+PrimitiveResult Interpreter::primitiveLoadUInt64FromBytes(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    if (index < 0 || static_cast<size_t>(index) + 7 >= byteSize || byteSize < 8) return PrimitiveResult::Failure;
+
+    uint64_t value;
+    memcpy(&value, bytes + index, sizeof(value));
+
+    // Return SmallInteger if it fits, otherwise need LargeInteger (not implemented)
+    if (value <= static_cast<uint64_t>(Oop::smallIntegerMax())) {
+        primitiveSuccess(Oop::fromSmallInteger(static_cast<int64_t>(value)));
+        return PrimitiveResult::Success;
+    }
+    return PrimitiveResult::Failure;  // Would need LargeInteger
+}
+
+// Primitive 608: Load int64 from bytes
+PrimitiveResult Interpreter::primitiveLoadInt64FromBytes(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    if (index < 0 || static_cast<size_t>(index) + 7 >= byteSize || byteSize < 8) return PrimitiveResult::Failure;
+
+    int64_t value;
+    memcpy(&value, bytes + index, sizeof(value));
+
+    // Return SmallInteger if it fits
+    if (value >= Oop::smallIntegerMin() && value <= Oop::smallIntegerMax()) {
+        primitiveSuccess(Oop::fromSmallInteger(value));
+        return PrimitiveResult::Success;
+    }
+    return PrimitiveResult::Failure;  // Would need LargeInteger
+}
+
+// Primitive 609: Load pointer from bytes
+// Returns a new ExternalAddress containing the pointer
+PrimitiveResult Interpreter::primitiveLoadPointerFromBytes(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    constexpr size_t ptrSize = sizeof(void*);
+    if (index < 0 || static_cast<size_t>(index) + ptrSize - 1 >= byteSize || byteSize < ptrSize) {
+        return PrimitiveResult::Failure;
+    }
+
+    void* ptr;
+    memcpy(&ptr, bytes + index, ptrSize);
+
+    // Create ExternalAddress to hold the pointer
+    Oop externalAddressClass = memory_.findGlobal("ExternalAddress");
+    if (externalAddressClass.isNil()) return PrimitiveResult::Failure;
+
+    uint32_t classIndex = memory_.indexOfClass(externalAddressClass);
+    if (classIndex == 0) return PrimitiveResult::Failure;
+
+    Oop result = memory_.allocateBytes(classIndex, ptrSize);
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    // Store the pointer in the new ExternalAddress
+    ObjectHeader* header = result.asObjectPtr();
+    memcpy(header->bytes(), &ptr, ptrSize);
+
+    primitiveSuccess(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 610: Load char8 (uint8 as Character) from bytes
+PrimitiveResult Interpreter::primitiveLoadChar8FromBytes(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    if (index < 0 || static_cast<size_t>(index) >= byteSize) return PrimitiveResult::Failure;
+
+    uint8_t value = bytes[index];
+    primitiveSuccess(Oop::fromCharacter(value));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 611: Load char16 (uint16 as Character) from bytes
+PrimitiveResult Interpreter::primitiveLoadChar16FromBytes(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    if (index < 0 || static_cast<size_t>(index) + 1 >= byteSize || byteSize < 2) return PrimitiveResult::Failure;
+
+    uint16_t value;
+    memcpy(&value, bytes + index, sizeof(value));
+    primitiveSuccess(Oop::fromCharacter(value));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 612: Load char32 (uint32 as Character) from bytes
+PrimitiveResult Interpreter::primitiveLoadChar32FromBytes(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    if (index < 0 || static_cast<size_t>(index) + 3 >= byteSize || byteSize < 4) return PrimitiveResult::Failure;
+
+    uint32_t value;
+    memcpy(&value, bytes + index, sizeof(value));
+
+    // Character immediate only supports values up to 0x3FFFFFFF (30 bits)
+    if (value > 0x3FFFFFFF) return PrimitiveResult::Failure;
+
+    primitiveSuccess(Oop::fromCharacter(value));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 613: Load float32 from bytes (returns Float)
+PrimitiveResult Interpreter::primitiveLoadFloat32FromBytes(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    if (index < 0 || static_cast<size_t>(index) + 3 >= byteSize || byteSize < 4) return PrimitiveResult::Failure;
+
+    float value;
+    memcpy(&value, bytes + index, sizeof(value));
+
+    // Create Float object (boxed 64-bit double)
+    Oop result = makeFloat(memory_,static_cast<double>(value));
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    primitiveSuccess(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 614: Load float64 from bytes
+PrimitiveResult Interpreter::primitiveLoadFloat64FromBytes(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    if (index < 0 || static_cast<size_t>(index) + 7 >= byteSize || byteSize < 8) return PrimitiveResult::Failure;
+
+    double value;
+    memcpy(&value, bytes + index, sizeof(value));
+
+    Oop result = makeFloat(memory_,value);
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    primitiveSuccess(result);
+    return PrimitiveResult::Success;
+}
+
+// ===== STORE INTO BYTES (615-629) =====
+
+// Primitive 615: Store boolean8 into bytes
+PrimitiveResult Interpreter::primitiveStoreBoolean8IntoBytes(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    if (index < 0 || static_cast<size_t>(index) >= byteSize) return PrimitiveResult::Failure;
+
+    // Convert to boolean (true -> 1, false -> 0)
+    uint8_t value;
+    if (valueOop == memory_.trueObject()) {
+        value = 1;
+    } else if (valueOop == memory_.falseObject()) {
+        value = 0;
+    } else {
+        return PrimitiveResult::Failure;
+    }
+
+    bytes[index] = value;
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 616: Store uint8 into bytes
+PrimitiveResult Interpreter::primitiveStoreUInt8IntoBytes(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger() || !valueOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    int64_t index = indexOop.asSmallInteger();
+    int64_t value = valueOop.asSmallInteger();
+
+    if (value < 0 || value > 255) return PrimitiveResult::Failure;
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    if (index < 0 || static_cast<size_t>(index) >= byteSize) return PrimitiveResult::Failure;
+
+    bytes[index] = static_cast<uint8_t>(value);
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 617: Store int8 into bytes
+PrimitiveResult Interpreter::primitiveStoreInt8IntoBytes(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger() || !valueOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    int64_t index = indexOop.asSmallInteger();
+    int64_t value = valueOop.asSmallInteger();
+
+    if (value < -128 || value > 127) return PrimitiveResult::Failure;
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    if (index < 0 || static_cast<size_t>(index) >= byteSize) return PrimitiveResult::Failure;
+
+    bytes[index] = static_cast<uint8_t>(static_cast<int8_t>(value));
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 618: Store uint16 into bytes
+PrimitiveResult Interpreter::primitiveStoreUInt16IntoBytes(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger() || !valueOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    int64_t index = indexOop.asSmallInteger();
+    int64_t value = valueOop.asSmallInteger();
+
+    if (value < 0 || value > 65535) return PrimitiveResult::Failure;
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    if (index < 0 || static_cast<size_t>(index) + 1 >= byteSize || byteSize < 2) return PrimitiveResult::Failure;
+
+    uint16_t u16value = static_cast<uint16_t>(value);
+    memcpy(bytes + index, &u16value, sizeof(u16value));
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 619: Store int16 into bytes
+PrimitiveResult Interpreter::primitiveStoreInt16IntoBytes(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger() || !valueOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    int64_t index = indexOop.asSmallInteger();
+    int64_t value = valueOop.asSmallInteger();
+
+    if (value < -32768 || value > 32767) return PrimitiveResult::Failure;
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    if (index < 0 || static_cast<size_t>(index) + 1 >= byteSize || byteSize < 2) return PrimitiveResult::Failure;
+
+    int16_t i16value = static_cast<int16_t>(value);
+    memcpy(bytes + index, &i16value, sizeof(i16value));
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 620: Store uint32 into bytes
+PrimitiveResult Interpreter::primitiveStoreUInt32IntoBytes(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger() || !valueOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    int64_t index = indexOop.asSmallInteger();
+    int64_t value = valueOop.asSmallInteger();
+
+    if (value < 0 || value > static_cast<int64_t>(UINT32_MAX)) return PrimitiveResult::Failure;
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    if (index < 0 || static_cast<size_t>(index) + 3 >= byteSize || byteSize < 4) return PrimitiveResult::Failure;
+
+    uint32_t u32value = static_cast<uint32_t>(value);
+    memcpy(bytes + index, &u32value, sizeof(u32value));
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 621: Store int32 into bytes
+PrimitiveResult Interpreter::primitiveStoreInt32IntoBytes(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger() || !valueOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    int64_t index = indexOop.asSmallInteger();
+    int64_t value = valueOop.asSmallInteger();
+
+    if (value < INT32_MIN || value > INT32_MAX) return PrimitiveResult::Failure;
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    if (index < 0 || static_cast<size_t>(index) + 3 >= byteSize || byteSize < 4) return PrimitiveResult::Failure;
+
+    int32_t i32value = static_cast<int32_t>(value);
+    memcpy(bytes + index, &i32value, sizeof(i32value));
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 622: Store uint64 into bytes
+PrimitiveResult Interpreter::primitiveStoreUInt64IntoBytes(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger() || !valueOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    int64_t index = indexOop.asSmallInteger();
+    int64_t value = valueOop.asSmallInteger();
+
+    // For now, only support positive values that fit in SmallInteger
+    if (value < 0) return PrimitiveResult::Failure;
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    if (index < 0 || static_cast<size_t>(index) + 7 >= byteSize || byteSize < 8) return PrimitiveResult::Failure;
+
+    uint64_t u64value = static_cast<uint64_t>(value);
+    memcpy(bytes + index, &u64value, sizeof(u64value));
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 623: Store int64 into bytes
+PrimitiveResult Interpreter::primitiveStoreInt64IntoBytes(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger() || !valueOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    int64_t index = indexOop.asSmallInteger();
+    int64_t value = valueOop.asSmallInteger();
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    if (index < 0 || static_cast<size_t>(index) + 7 >= byteSize || byteSize < 8) return PrimitiveResult::Failure;
+
+    memcpy(bytes + index, &value, sizeof(value));
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 624: Store pointer into bytes
+PrimitiveResult Interpreter::primitiveStorePointerIntoBytes(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    // Value must be an ExternalAddress
+    uint8_t* valueBytes = getExternalAddressPointer(memory_, valueOop);
+    if (!valueBytes) {
+        // Also accept null pointer from nil
+        if (!valueOop.isNil()) return PrimitiveResult::Failure;
+        valueBytes = nullptr;
+    }
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    constexpr size_t ptrSize = sizeof(void*);
+    if (index < 0 || static_cast<size_t>(index) + ptrSize - 1 >= byteSize || byteSize < ptrSize) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get the pointer from the ExternalAddress (or use null)
+    void* ptr = valueBytes;
+    memcpy(bytes + index, &ptr, ptrSize);
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 625: Store char8 into bytes
+PrimitiveResult Interpreter::primitiveStoreChar8IntoBytes(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    if (!valueOop.isCharacter()) return PrimitiveResult::Failure;
+
+    int64_t index = indexOop.asSmallInteger();
+    uint32_t charValue = valueOop.asCharacter();
+
+    if (charValue > 255) return PrimitiveResult::Failure;
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    if (index < 0 || static_cast<size_t>(index) >= byteSize) return PrimitiveResult::Failure;
+
+    bytes[index] = static_cast<uint8_t>(charValue);
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 626: Store char16 into bytes
+PrimitiveResult Interpreter::primitiveStoreChar16IntoBytes(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    if (!valueOop.isCharacter()) return PrimitiveResult::Failure;
+
+    int64_t index = indexOop.asSmallInteger();
+    uint32_t charValue = valueOop.asCharacter();
+
+    if (charValue > 65535) return PrimitiveResult::Failure;
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    if (index < 0 || static_cast<size_t>(index) + 1 >= byteSize || byteSize < 2) return PrimitiveResult::Failure;
+
+    uint16_t u16value = static_cast<uint16_t>(charValue);
+    memcpy(bytes + index, &u16value, sizeof(u16value));
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 627: Store char32 into bytes
+PrimitiveResult Interpreter::primitiveStoreChar32IntoBytes(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    if (!valueOop.isCharacter()) return PrimitiveResult::Failure;
+
+    int64_t index = indexOop.asSmallInteger();
+    uint32_t charValue = valueOop.asCharacter();
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    if (index < 0 || static_cast<size_t>(index) + 3 >= byteSize || byteSize < 4) return PrimitiveResult::Failure;
+
+    memcpy(bytes + index, &charValue, sizeof(charValue));
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 628: Store float32 into bytes
+PrimitiveResult Interpreter::primitiveStoreFloat32IntoBytes(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    // Get float value (from Float object or SmallFloat)
+    double dvalue;
+    if (!extractFloat(memory_, valueOop, dvalue)) return PrimitiveResult::Failure;
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    if (index < 0 || static_cast<size_t>(index) + 3 >= byteSize || byteSize < 4) return PrimitiveResult::Failure;
+
+    float fvalue = static_cast<float>(dvalue);
+    memcpy(bytes + index, &fvalue, sizeof(fvalue));
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 629: Store float64 into bytes
+PrimitiveResult Interpreter::primitiveStoreFloat64IntoBytes(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    double dvalue;
+    if (!extractFloat(memory_, valueOop, dvalue)) return PrimitiveResult::Failure;
+
+    size_t byteSize;
+    uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
+    if (!bytes) return PrimitiveResult::Failure;
+
+    if (index < 0 || static_cast<size_t>(index) + 7 >= byteSize || byteSize < 8) return PrimitiveResult::Failure;
+
+    memcpy(bytes + index, &dvalue, sizeof(dvalue));
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// ===== LOAD FROM EXTERNAL ADDRESS (630-644) =====
+// These read from memory pointed to by an ExternalAddress
+
+// Primitive 630: Load boolean8 from external address
+PrimitiveResult Interpreter::primitiveLoadBoolean8FromExternalAddress(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    uint8_t value = ptr[index];
+    Oop result = value != 0 ? memory_.trueObject() : memory_.falseObject();
+
+    primitiveSuccess(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 631: Load uint8 from external address
+PrimitiveResult Interpreter::primitiveLoadUInt8FromExternalAddress(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    uint8_t value = ptr[index];
+    primitiveSuccess(Oop::fromSmallInteger(value));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 632: Load int8 from external address
+PrimitiveResult Interpreter::primitiveLoadInt8FromExternalAddress(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    int8_t value = static_cast<int8_t>(ptr[index]);
+    primitiveSuccess(Oop::fromSmallInteger(value));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 633: Load uint16 from external address
+PrimitiveResult Interpreter::primitiveLoadUInt16FromExternalAddress(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    uint16_t value;
+    memcpy(&value, ptr + index, sizeof(value));
+    primitiveSuccess(Oop::fromSmallInteger(value));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 634: Load int16 from external address
+PrimitiveResult Interpreter::primitiveLoadInt16FromExternalAddress(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    int16_t value;
+    memcpy(&value, ptr + index, sizeof(value));
+    primitiveSuccess(Oop::fromSmallInteger(value));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 635: Load uint32 from external address
+PrimitiveResult Interpreter::primitiveLoadUInt32FromExternalAddress(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    uint32_t value;
+    memcpy(&value, ptr + index, sizeof(value));
+    primitiveSuccess(Oop::fromSmallInteger(value));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 636: Load int32 from external address
+PrimitiveResult Interpreter::primitiveLoadInt32FromExternalAddress(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    int32_t value;
+    memcpy(&value, ptr + index, sizeof(value));
+    primitiveSuccess(Oop::fromSmallInteger(value));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 637: Load uint64 from external address
+PrimitiveResult Interpreter::primitiveLoadUInt64FromExternalAddress(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    uint64_t value;
+    memcpy(&value, ptr + index, sizeof(value));
+
+    if (value <= static_cast<uint64_t>(Oop::smallIntegerMax())) {
+        primitiveSuccess(Oop::fromSmallInteger(static_cast<int64_t>(value)));
+        return PrimitiveResult::Success;
+    }
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 638: Load int64 from external address
+PrimitiveResult Interpreter::primitiveLoadInt64FromExternalAddress(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    int64_t value;
+    memcpy(&value, ptr + index, sizeof(value));
+
+    if (value >= Oop::smallIntegerMin() && value <= Oop::smallIntegerMax()) {
+        primitiveSuccess(Oop::fromSmallInteger(value));
+        return PrimitiveResult::Success;
+    }
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 639: Load pointer from external address
+PrimitiveResult Interpreter::primitiveLoadPointerFromExternalAddress(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    void* value;
+    memcpy(&value, ptr + index, sizeof(value));
+
+    // Create ExternalAddress to hold the pointer
+    Oop externalAddressClass = memory_.findGlobal("ExternalAddress");
+    if (externalAddressClass.isNil()) return PrimitiveResult::Failure;
+
+    constexpr size_t ptrSize = sizeof(void*);
+    uint32_t classIndex = memory_.indexOfClass(externalAddressClass);
+    if (classIndex == 0) return PrimitiveResult::Failure;
+
+    Oop result = memory_.allocateBytes(classIndex, ptrSize);
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    ObjectHeader* header = result.asObjectPtr();
+    memcpy(header->bytes(), &value, ptrSize);
+
+    primitiveSuccess(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 640: Load char8 from external address
+PrimitiveResult Interpreter::primitiveLoadChar8FromExternalAddress(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    uint8_t value = ptr[index];
+    primitiveSuccess(Oop::fromCharacter(value));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 641: Load char16 from external address
+PrimitiveResult Interpreter::primitiveLoadChar16FromExternalAddress(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    uint16_t value;
+    memcpy(&value, ptr + index, sizeof(value));
+    primitiveSuccess(Oop::fromCharacter(value));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 642: Load char32 from external address
+PrimitiveResult Interpreter::primitiveLoadChar32FromExternalAddress(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    uint32_t value;
+    memcpy(&value, ptr + index, sizeof(value));
+
+    if (value > 0x3FFFFFFF) return PrimitiveResult::Failure;
+
+    primitiveSuccess(Oop::fromCharacter(value));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 643: Load float32 from external address
+PrimitiveResult Interpreter::primitiveLoadFloat32FromExternalAddress(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    float value;
+    memcpy(&value, ptr + index, sizeof(value));
+
+    Oop result = makeFloat(memory_,static_cast<double>(value));
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    primitiveSuccess(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 644: Load float64 from external address
+PrimitiveResult Interpreter::primitiveLoadFloat64FromExternalAddress(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop rcvr = stackValue(1);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    double value;
+    memcpy(&value, ptr + index, sizeof(value));
+
+    Oop result = makeFloat(memory_,value);
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    primitiveSuccess(result);
+    return PrimitiveResult::Success;
+}
+
+// ===== STORE INTO EXTERNAL ADDRESS (645-659) =====
+
+// Primitive 645: Store boolean8 into external address
+PrimitiveResult Interpreter::primitiveStoreBoolean8IntoExternalAddress(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    uint8_t value;
+    if (valueOop == memory_.trueObject()) {
+        value = 1;
+    } else if (valueOop == memory_.falseObject()) {
+        value = 0;
+    } else {
+        return PrimitiveResult::Failure;
+    }
+
+    ptr[index] = value;
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 646: Store uint8 into external address
+PrimitiveResult Interpreter::primitiveStoreUInt8IntoExternalAddress(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger() || !valueOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    int64_t index = indexOop.asSmallInteger();
+    int64_t value = valueOop.asSmallInteger();
+
+    if (value < 0 || value > 255) return PrimitiveResult::Failure;
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    ptr[index] = static_cast<uint8_t>(value);
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 647: Store int8 into external address
+PrimitiveResult Interpreter::primitiveStoreInt8IntoExternalAddress(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger() || !valueOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    int64_t index = indexOop.asSmallInteger();
+    int64_t value = valueOop.asSmallInteger();
+
+    if (value < -128 || value > 127) return PrimitiveResult::Failure;
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    ptr[index] = static_cast<uint8_t>(static_cast<int8_t>(value));
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 648: Store uint16 into external address
+PrimitiveResult Interpreter::primitiveStoreUInt16IntoExternalAddress(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger() || !valueOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    int64_t index = indexOop.asSmallInteger();
+    int64_t value = valueOop.asSmallInteger();
+
+    if (value < 0 || value > 65535) return PrimitiveResult::Failure;
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    uint16_t u16value = static_cast<uint16_t>(value);
+    memcpy(ptr + index, &u16value, sizeof(u16value));
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 649: Store int16 into external address
+PrimitiveResult Interpreter::primitiveStoreInt16IntoExternalAddress(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger() || !valueOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    int64_t index = indexOop.asSmallInteger();
+    int64_t value = valueOop.asSmallInteger();
+
+    if (value < -32768 || value > 32767) return PrimitiveResult::Failure;
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    int16_t i16value = static_cast<int16_t>(value);
+    memcpy(ptr + index, &i16value, sizeof(i16value));
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 650: Store uint32 into external address
+PrimitiveResult Interpreter::primitiveStoreUInt32IntoExternalAddress(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger() || !valueOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    int64_t index = indexOop.asSmallInteger();
+    int64_t value = valueOop.asSmallInteger();
+
+    if (value < 0 || value > static_cast<int64_t>(UINT32_MAX)) return PrimitiveResult::Failure;
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    uint32_t u32value = static_cast<uint32_t>(value);
+    memcpy(ptr + index, &u32value, sizeof(u32value));
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 651: Store int32 into external address
+PrimitiveResult Interpreter::primitiveStoreInt32IntoExternalAddress(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger() || !valueOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    int64_t index = indexOop.asSmallInteger();
+    int64_t value = valueOop.asSmallInteger();
+
+    if (value < INT32_MIN || value > INT32_MAX) return PrimitiveResult::Failure;
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    int32_t i32value = static_cast<int32_t>(value);
+    memcpy(ptr + index, &i32value, sizeof(i32value));
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 652: Store uint64 into external address
+PrimitiveResult Interpreter::primitiveStoreUInt64IntoExternalAddress(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger() || !valueOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    int64_t index = indexOop.asSmallInteger();
+    int64_t value = valueOop.asSmallInteger();
+
+    if (value < 0) return PrimitiveResult::Failure;
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    uint64_t u64value = static_cast<uint64_t>(value);
+    memcpy(ptr + index, &u64value, sizeof(u64value));
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 653: Store int64 into external address
+PrimitiveResult Interpreter::primitiveStoreInt64IntoExternalAddress(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger() || !valueOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    int64_t index = indexOop.asSmallInteger();
+    int64_t value = valueOop.asSmallInteger();
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    memcpy(ptr + index, &value, sizeof(value));
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 654: Store pointer into external address
+PrimitiveResult Interpreter::primitiveStorePointerIntoExternalAddress(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    // Value must be an ExternalAddress or nil
+    void* valuePtr = nullptr;
+    if (!valueOop.isNil()) {
+        valuePtr = getExternalAddressPointer(memory_, valueOop);
+        if (!valuePtr && !valueOop.isNil()) return PrimitiveResult::Failure;
+    }
+
+    memcpy(ptr + index, &valuePtr, sizeof(valuePtr));
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 655: Store char8 into external address
+PrimitiveResult Interpreter::primitiveStoreChar8IntoExternalAddress(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    if (!valueOop.isCharacter()) return PrimitiveResult::Failure;
+
+    int64_t index = indexOop.asSmallInteger();
+    uint32_t charValue = valueOop.asCharacter();
+
+    if (charValue > 255) return PrimitiveResult::Failure;
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    ptr[index] = static_cast<uint8_t>(charValue);
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 656: Store char16 into external address
+PrimitiveResult Interpreter::primitiveStoreChar16IntoExternalAddress(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    if (!valueOop.isCharacter()) return PrimitiveResult::Failure;
+
+    int64_t index = indexOop.asSmallInteger();
+    uint32_t charValue = valueOop.asCharacter();
+
+    if (charValue > 65535) return PrimitiveResult::Failure;
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    uint16_t u16value = static_cast<uint16_t>(charValue);
+    memcpy(ptr + index, &u16value, sizeof(u16value));
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 657: Store char32 into external address
+PrimitiveResult Interpreter::primitiveStoreChar32IntoExternalAddress(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    if (!valueOop.isCharacter()) return PrimitiveResult::Failure;
+
+    int64_t index = indexOop.asSmallInteger();
+    uint32_t charValue = valueOop.asCharacter();
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    memcpy(ptr + index, &charValue, sizeof(charValue));
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 658: Store float32 into external address
+PrimitiveResult Interpreter::primitiveStoreFloat32IntoExternalAddress(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    double dvalue;
+    if (!extractFloat(memory_, valueOop, dvalue)) return PrimitiveResult::Failure;
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    float fvalue = static_cast<float>(dvalue);
+    memcpy(ptr + index, &fvalue, sizeof(fvalue));
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 659: Store float64 into external address
+PrimitiveResult Interpreter::primitiveStoreFloat64IntoExternalAddress(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t index = indexOop.asSmallInteger();
+
+    double dvalue;
+    if (!extractFloat(memory_, valueOop, dvalue)) return PrimitiveResult::Failure;
+
+    uint8_t* ptr = getExternalAddressPointer(memory_, rcvr);
+    if (!ptr) return PrimitiveResult::Failure;
+
+    memcpy(ptr + index, &dvalue, sizeof(dvalue));
+    primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
 } // namespace pharo

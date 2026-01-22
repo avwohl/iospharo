@@ -1647,9 +1647,14 @@ void Interpreter::renderWorldMorphs() {
 // ===== INPUT EVENT PROCESSING =====
 
 void Interpreter::processInputEvents() {
-    // Events are handled via SDL_PollEvent (FFI) -> OSWindow -> Morphic.
-    // This function now just logs and doesn't drain the queue.
-    // SDL_PollEvent in FFI.cpp pops events from gEventQueue.
+    // Two event paths exist:
+    // 1. InputEventSensor path: gEventQueue -> passThroughEvents_ -> primitive 264
+    // 2. OSWindow/SDL2 path: gEventQueue -> SDL_PollEvent (via FFI) -> OSWindow
+    //
+    // Since FFI primitives aren't being called, OSWindow/SDL2 path doesn't work.
+    // We drain gEventQueue into passThroughEvents_ for primitive 264.
+    // If FFI starts working, SDL_PollEvent will also consume from gEventQueue.
+
     static FILE* logFile = nullptr;
     static int callCount = 0;
     static bool initialized = false;
@@ -1661,12 +1666,43 @@ void Interpreter::processInputEvents() {
 
     // Log periodically
     if (++callCount % 1000 == 1 && logFile) {
-        fprintf(logFile, "[PROCESS-INPUT] call #%d (events handled via SDL_PollEvent)\n", callCount);
+        fprintf(logFile, "[PROCESS-INPUT] call #%d passthrough=%zu queue=%s\n",
+                callCount, passThroughEvents_.size(),
+                pharo::gEventQueue.isEmpty() ? "empty" : "has events");
         fflush(logFile);
     }
 
-    // Events flow: Swift -> gEventQueue -> SDL_PollEvent (FFI) -> OSWindow -> Morphic
-    // We don't drain the queue here anymore - SDL_PollEvent does that.
+    pharo::Event event;
+    while (pharo::gEventQueue.pop(event)) {
+        // Skip WindowMetrics events - internal to C++ rendering
+        if (event.type == static_cast<int>(pharo::EventType::WindowMetrics)) {
+            continue;
+        }
+
+        // Log mouse events for debugging
+        if (logFile && callCount <= 100 && event.type == static_cast<int>(pharo::EventType::Mouse)) {
+            fprintf(logFile, "[EVENT] Mouse type=%d at %d,%d buttons=%d\n",
+                    event.arg5, event.arg1, event.arg2, event.arg3);
+            fflush(logFile);
+        }
+
+        // Track mouse position for direct hand updates (backup if event system not working)
+        if (event.type == static_cast<int>(pharo::EventType::Mouse)) {
+            lastMouseX_ = event.arg1 * menuBarScale_;
+            lastMouseY_ = event.arg2 * menuBarScale_;
+            lastMouseButtons_ = event.arg3;
+            lastMouseEventType_ = event.arg5;
+        }
+
+        // All events go to Pharo via passThroughEvents_ (consumed by primitive 264)
+        passThroughEvents_.push_back(event);
+
+        // Signal the input semaphore to wake up Smalltalk's event loop
+        int inputSemaIdx = pharo::gEventQueue.getInputSemaphoreIndex();
+        if (inputSemaIdx > 0) {
+            signalExternalSemaphore(inputSemaIdx);
+        }
+    }
 }
 
 // NO WORKAROUNDS: The following C++ event dispatch functions were removed:
