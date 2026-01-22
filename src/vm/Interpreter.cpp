@@ -30,6 +30,11 @@ int g_traceSendsAfterPrim264 = 0;
 
 // REMOVED: g_debugPendingFlag (was for workaround code)
 
+// File-scope variables for fullCheck bytecode tracing
+static bool g_inFullCheck = false;
+static int g_fullCheckBytecodeCount = 0;
+static FILE* g_fcBytecodeLog = nullptr;
+
 // ===== CONSTRUCTION =====
 
 Interpreter::Interpreter(ObjectMemory& memory)
@@ -2424,6 +2429,63 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
     // Record bytecode in history buffer for debugging
     recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode;
     recentBytecodeIdx_++;
+
+    // Trace bytecodes when inside fullCheck
+    if (g_inFullCheck && g_fcBytecodeLog && g_fullCheckBytecodeCount < 1000) {
+        g_fullCheckBytecodeCount++;
+        // Get bytecode name for clarity
+        const char* bcName = "?";
+        if (bytecode <= 0x0F) bcName = "PushRcvrVar";
+        else if (bytecode <= 0x1F) bcName = "PushLitVar";
+        else if (bytecode <= 0x3F) bcName = "PushLitConst";
+        else if (bytecode <= 0x47) bcName = "PushTemp";
+        else if (bytecode <= 0x4B) bcName = "PushTemp8+";
+        else if (bytecode == 0x4C) bcName = "PushSelf";
+        else if (bytecode == 0x4D) bcName = "PushTrue";
+        else if (bytecode == 0x4E) bcName = "PushFalse";
+        else if (bytecode == 0x4F) bcName = "PushNil";
+        else if (bytecode == 0x50) bcName = "Push0";
+        else if (bytecode == 0x51) bcName = "Push1";
+        else if (bytecode == 0x53) bcName = "Dup";
+        else if (bytecode == 0x5C) bcName = "ReturnTop";
+        else if (bytecode >= 0x60 && bytecode <= 0x6F) bcName = "ArithSend";
+        else if (bytecode >= 0x70 && bytecode <= 0x7F) bcName = "SpecialSend";
+        else if (bytecode >= 0x80 && bytecode <= 0x8F) bcName = "Send0Args";
+        else if (bytecode >= 0x90 && bytecode <= 0x9F) bcName = "Send1Arg";
+        else if (bytecode >= 0xA0 && bytecode <= 0xAF) bcName = "Send2Args";
+        else if (bytecode >= 0xB0 && bytecode <= 0xB7) bcName = "Jump";
+        else if (bytecode >= 0xB8 && bytecode <= 0xBF) bcName = "JumpIfTrue";
+        else if (bytecode >= 0xC0 && bytecode <= 0xC7) bcName = "JumpIfFalse";
+        else if (bytecode >= 0xC8 && bytecode <= 0xCF) bcName = "PopStoreRcvrVar";
+        else if (bytecode >= 0xD0 && bytecode <= 0xD7) bcName = "PopStoreTemp";
+        else if (bytecode == 0xD8) bcName = "Pop";
+        else if (bytecode == 0xE0) bcName = "ExtendA";
+        else if (bytecode == 0xE1) bcName = "ExtendB";
+        else if (bytecode >= 0xEA && bytecode <= 0xEB) bcName = "ExtSend";
+        else if (bytecode == 0xEF) bcName = "LongJumpIfFalse";
+        else if (bytecode == 0xEE) bcName = "LongJumpIfTrue";
+
+        // Log IP offset relative to method start
+        size_t ipOffset = 0;
+        if (method_.isObject() && instructionPointer_) {
+            ObjectHeader* mHdr = method_.asObjectPtr();
+            ipOffset = (instructionPointer_ - 1) - mHdr->bytes();
+        }
+
+        fprintf(g_fcBytecodeLog, "[BC #%d IP=%zu] 0x%02X (%s)\n",
+                g_fullCheckBytecodeCount, ipOffset, bytecode, bcName);
+
+        // Log stack top for conditional jumps
+        if ((bytecode >= 0xB8 && bytecode <= 0xC7) || bytecode == 0xEE || bytecode == 0xEF) {
+            if (stackPointer_ > stackBase_) {
+                Oop top = *(stackPointer_ - 1);
+                fprintf(g_fcBytecodeLog, "    -> stack top: 0x%llx (isTrue=%d isFalse=%d)\n",
+                        (unsigned long long)top.rawBits(),
+                        isTrue(top) ? 1 : 0, isFalse(top) ? 1 : 0);
+            }
+        }
+        fflush(g_fcBytecodeLog);
+    }
 
     // Sista V1 bytecode dispatch (used by Pharo 10+, format 68021 with modern compiler)
     // Key differences from V3PlusClosures:
@@ -5024,14 +5086,15 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 allSendCount, rcvrName.c_str(), selStr.c_str(), argCount);
 
         // Trace fullCheck to understand the infinite loop
-        static bool inFullCheck = false;
         static int fullCheckTraceCount = 0;
         static FILE* fcLog = nullptr;
 
         if (selStr == "fullCheck") {
-            inFullCheck = true;
+            g_inFullCheck = true;
+            g_fullCheckBytecodeCount = 0;
             fullCheckTraceCount = 0;
             if (!fcLog) fcLog = fopen("/tmp/fullcheck_trace.log", "w");
+            if (!g_fcBytecodeLog) g_fcBytecodeLog = fopen("/tmp/fullcheck_bytecodes.log", "w");
             if (fcLog) {
                 fprintf(fcLog, "\n=== fullCheck entered at send #%d ===\n", allSendCount);
                 fprintf(fcLog, "  method_=0x%llx\n", (unsigned long long)method_.rawBits());
@@ -5043,9 +5106,15 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                         size_t numLits = hdr.asSmallInteger() & 0x7FFF;
                         size_t bcStart = (1 + numLits) * 8;
                         size_t bcEnd = mHdr->byteSize();
-                        fprintf(fcLog, "  bytecodes (start=%zu, end=%zu): ", bcStart, bcEnd);
-                        for (size_t i = bcStart; i < bcEnd && i < bcStart + 100; i++) {
+                        fprintf(fcLog, "  bytecodes (start=%zu, end=%zu):\n", bcStart, bcEnd);
+                        for (size_t i = bcStart; i < bcEnd; i++) {
+                            if ((i - bcStart) % 16 == 0) {
+                                fprintf(fcLog, "    [%3zu]: ", i);
+                            }
                             fprintf(fcLog, "%02x ", mHdr->bytes()[i]);
+                            if ((i - bcStart) % 16 == 15 || i == bcEnd - 1) {
+                                fprintf(fcLog, "\n");
+                            }
                         }
                         fprintf(fcLog, "\n");
                     }
@@ -5054,7 +5123,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             }
         }
 
-        if (inFullCheck && fcLog && fullCheckTraceCount < 300) {
+        if (g_inFullCheck && fcLog && fullCheckTraceCount < 300) {
             fullCheckTraceCount++;
 
             // Get current method name

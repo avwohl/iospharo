@@ -594,7 +594,23 @@ PrimitiveResult Interpreter::primitiveGreaterThan(int argCount) {
     Oop rcvr = stackValue(1);
 
     if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
-        bool result = rcvr.asSmallInteger() > arg.asSmallInteger();
+        int64_t rcvrVal = rcvr.asSmallInteger();
+        int64_t argVal = arg.asSmallInteger();
+        bool result = rcvrVal > argVal;
+
+        // Debug: trace > comparisons in fullCheck
+        static int gtCount = 0;
+        static FILE* gtLog = nullptr;
+        if (!gtLog) gtLog = fopen("/tmp/greater_than.log", "w");
+        if (gtLog && gtCount < 100) {
+            gtCount++;
+            fprintf(gtLog, "[GT #%d] %lld > %lld = %s (true=0x%llx false=0x%llx)\n",
+                    gtCount, rcvrVal, argVal, result ? "true" : "false",
+                    (unsigned long long)memory_.trueObject().rawBits(),
+                    (unsigned long long)memory_.falseObject().rawBits());
+            fflush(gtLog);
+        }
+
         primitiveSuccess(result ? memory_.trueObject() : memory_.falseObject());
         return PrimitiveResult::Success;
     }
