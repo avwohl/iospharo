@@ -603,6 +603,16 @@ PrimitiveResult Interpreter::primitiveGreaterThan(int argCount) {
         return PrimitiveResult::Success;
     }
 
+    // Log primitive failures
+    static int gtFailCount = 0;
+    if (gtFailCount++ < 10) {
+        std::cerr << "[GT-FAIL #" << gtFailCount << "] > failed: rcvr=0x"
+                  << std::hex << rcvr.rawBits() << " arg=0x" << arg.rawBits() << std::dec;
+        if (rcvr.isSmallInteger()) std::cerr << " rcvrVal=" << rcvr.asSmallInteger();
+        if (arg.isSmallInteger()) std::cerr << " argVal=" << arg.asSmallInteger();
+        std::cerr << "\n";
+    }
+
     return PrimitiveResult::Failure;
 }
 
