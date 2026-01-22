@@ -3612,22 +3612,25 @@ PrimitiveResult Interpreter::primitiveClipboardText(int argCount) {
 
 PrimitiveResult Interpreter::primitiveMillisecondClock(int argCount) {
     // Primitive 135: Return milliseconds since VM start
-    // Uses ioMSecs() which is a 30-bit wrapping counter
-    primitiveSuccess(Oop::fromSmallInteger(ioMSecs()));
+    // Official VM returns ioMSecs() masked to 30 bits for wrapping behavior
+    // Timer calculations depend on this 30-bit wrapping semantics
+    constexpr int64_t MillisecondClockMask = 0x1FFFFFFF;  // 30-bit mask
+    int64_t maskedMs = ioMSecs() & MillisecondClockMask;
+    primitiveSuccess(Oop::fromSmallInteger(maskedMs));
     return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveSecondsClock(int argCount) {
-    // Primitive 137: Return seconds since Smalltalk epoch (Jan 1, 1901)
-    // Unix epoch is Jan 1, 1970 = 2177452800 seconds after Smalltalk epoch
-    const int64_t unixToSmalltalkOffset = 2177452800LL;
-
+    // Primitive 137: Return seconds from OS/platform epoch
+    // The image-side code handles any epoch conversion (e.g., to Smalltalk epoch)
+    // Official VM just returns ioSecondsNow() via positive32BitIntegerFor:
     auto now = std::chrono::system_clock::now();
     auto seconds = std::chrono::duration_cast<std::chrono::seconds>(
         now.time_since_epoch()).count();
 
-    int64_t smalltalkSeconds = seconds + unixToSmalltalkOffset;
-    primitiveSuccess(Oop::fromSmallInteger(smalltalkSeconds));
+    // positive32BitIntegerFor semantics: return as unsigned 32-bit value
+    uint32_t secs32 = static_cast<uint32_t>(seconds & 0xFFFFFFFF);
+    primitiveSuccess(Oop::fromSmallInteger(static_cast<int64_t>(secs32)));
     return PrimitiveResult::Success;
 }
 
