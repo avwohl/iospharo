@@ -1548,6 +1548,12 @@ PrimitiveResult Interpreter::primitiveObjectAtPut(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    // Per official VM: don't allow storing non-SmallInteger at index 1 (method header)
+    // This protects the method header from corruption
+    if (index == 1 && !value.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
     // Get literal count from method header
     uint64_t methodHeader = header->slots()[0].rawBits();
     size_t numLiterals = (methodHeader >> 1) & 0x7FFF;
@@ -5625,6 +5631,8 @@ PrimitiveResult Interpreter::primitiveClosureNumArgs(int argCount) {
 
 // Primitive 173: Read slot at given index (1-based)
 PrimitiveResult Interpreter::primitiveSlotAt(int argCount) {
+    // Primitive 173: Low-level slot access
+    // Per official VM: handles byte/word/pointer objects differently
     Oop indexOop = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -5633,27 +5641,89 @@ PrimitiveResult Interpreter::primitiveSlotAt(int argCount) {
     }
 
     int64_t index = indexOop.asSmallInteger();
-    if (index < 1) {
+    if (index < 0) {  // Note: 0-based indexing for slotAt:
         return PrimitiveResult::Failure;
     }
 
     ObjectHeader* header = rcvr.asObjectPtr();
-    size_t slotCount = header->slotCount();
+    ObjectFormat fmt = header->format();
 
-    // 1-based index
-    size_t zeroIndex = static_cast<size_t>(index - 1);
+    // Per official VM: fail for CompiledMethods
+    if (header->isCompiledMethod()) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t zeroIndex = static_cast<size_t>(index);
+
+    // Handle byte objects
+    if (fmt >= ObjectFormat::Indexable8 && fmt <= ObjectFormat::Indexable8_7) {
+        size_t byteCount = header->byteSize();
+        if (zeroIndex >= byteCount) {
+            return PrimitiveResult::Failure;
+        }
+        uint8_t byte = header->bytes()[zeroIndex];
+        popN(2);
+        push(Oop::fromSmallInteger(byte));
+        return PrimitiveResult::Success;
+    }
+
+    // Handle 16-bit objects
+    if (fmt >= ObjectFormat::Indexable16 && fmt <= ObjectFormat::Indexable16_3) {
+        size_t slots = header->slotCount();
+        size_t count = slots * 4 - (static_cast<int>(fmt) - static_cast<int>(ObjectFormat::Indexable16));
+        if (zeroIndex >= count) {
+            return PrimitiveResult::Failure;
+        }
+        uint16_t* words = reinterpret_cast<uint16_t*>(header + 1);
+        popN(2);
+        push(Oop::fromSmallInteger(words[zeroIndex]));
+        return PrimitiveResult::Success;
+    }
+
+    // Handle 32-bit objects
+    if (fmt >= ObjectFormat::Indexable32 && fmt <= ObjectFormat::Indexable32Odd) {
+        size_t slots = header->slotCount();
+        size_t count = slots * 2 - (fmt == ObjectFormat::Indexable32Odd ? 1 : 0);
+        if (zeroIndex >= count) {
+            return PrimitiveResult::Failure;
+        }
+        uint32_t* words = reinterpret_cast<uint32_t*>(header + 1);
+        popN(2);
+        push(Oop::fromSmallInteger(words[zeroIndex]));
+        return PrimitiveResult::Success;
+    }
+
+    // Handle 64-bit word objects
+    if (fmt == ObjectFormat::Indexable64) {
+        size_t slotCount = header->slotCount();
+        if (zeroIndex >= slotCount) {
+            return PrimitiveResult::Failure;
+        }
+        uint64_t* words = reinterpret_cast<uint64_t*>(header + 1);
+        uint64_t val = words[zeroIndex];
+        // Return as SmallInteger if it fits, otherwise fail
+        if (Oop::canBeSmallInteger(static_cast<int64_t>(val))) {
+            popN(2);
+            push(Oop::fromSmallInteger(static_cast<int64_t>(val)));
+            return PrimitiveResult::Success;
+        }
+        return PrimitiveResult::Failure;
+    }
+
+    // Pointer objects
+    size_t slotCount = header->slotCount();
     if (zeroIndex >= slotCount) {
         return PrimitiveResult::Failure;
     }
 
     Oop value = memory_.fetchPointer(zeroIndex, rcvr);
-
     popN(2);
     push(value);
     return PrimitiveResult::Success;
 }
 
-// Primitive 174: Write slot at given index (1-based)
+// Primitive 174: Write slot at given index (0-based)
+// Per official VM: handles byte/word/pointer objects differently
 PrimitiveResult Interpreter::primitiveSlotAtPut(int argCount) {
     Oop value = stackValue(0);
     Oop indexOop = stackValue(1);
@@ -5664,29 +5734,115 @@ PrimitiveResult Interpreter::primitiveSlotAtPut(int argCount) {
     }
 
     int64_t index = indexOop.asSmallInteger();
-    if (index < 1) {
+    if (index < 0) {  // 0-based indexing for slotAtPut:
         return PrimitiveResult::Failure;
     }
 
     ObjectHeader* header = rcvr.asObjectPtr();
+    ObjectFormat fmt = header->format();
 
     // Check immutability
     if (header->isImmutable()) {
         return PrimitiveResult::Failure;
     }
 
-    size_t slotCount = header->slotCount();
+    // Per official VM: fail for CompiledMethods
+    if (header->isCompiledMethod()) {
+        return PrimitiveResult::Failure;
+    }
 
-    // 1-based index
-    size_t zeroIndex = static_cast<size_t>(index - 1);
+    size_t zeroIndex = static_cast<size_t>(index);
+
+    // Handle byte objects
+    if (fmt >= ObjectFormat::Indexable8 && fmt <= ObjectFormat::Indexable8_7) {
+        if (!value.isSmallInteger()) {
+            return PrimitiveResult::Failure;
+        }
+        int64_t byteVal = value.asSmallInteger();
+        if (byteVal < 0 || byteVal > 255) {
+            return PrimitiveResult::Failure;
+        }
+        size_t byteCount = header->byteSize();
+        if (zeroIndex >= byteCount) {
+            return PrimitiveResult::Failure;
+        }
+        header->bytes()[zeroIndex] = static_cast<uint8_t>(byteVal);
+        popN(3);
+        push(value);
+        return PrimitiveResult::Success;
+    }
+
+    // Handle 16-bit objects
+    if (fmt >= ObjectFormat::Indexable16 && fmt <= ObjectFormat::Indexable16_3) {
+        if (!value.isSmallInteger()) {
+            return PrimitiveResult::Failure;
+        }
+        int64_t wordVal = value.asSmallInteger();
+        if (wordVal < 0 || wordVal > 0xFFFF) {
+            return PrimitiveResult::Failure;
+        }
+        size_t slots = header->slotCount();
+        size_t count = slots * 4 - (static_cast<int>(fmt) - static_cast<int>(ObjectFormat::Indexable16));
+        if (zeroIndex >= count) {
+            return PrimitiveResult::Failure;
+        }
+        uint16_t* words = reinterpret_cast<uint16_t*>(header + 1);
+        words[zeroIndex] = static_cast<uint16_t>(wordVal);
+        popN(3);
+        push(value);
+        return PrimitiveResult::Success;
+    }
+
+    // Handle 32-bit objects
+    if (fmt >= ObjectFormat::Indexable32 && fmt <= ObjectFormat::Indexable32Odd) {
+        if (!value.isSmallInteger()) {
+            return PrimitiveResult::Failure;
+        }
+        int64_t wordVal = value.asSmallInteger();
+        if (wordVal < 0 || wordVal > 0xFFFFFFFF) {
+            return PrimitiveResult::Failure;
+        }
+        size_t slots = header->slotCount();
+        size_t count = slots * 2 - (fmt == ObjectFormat::Indexable32Odd ? 1 : 0);
+        if (zeroIndex >= count) {
+            return PrimitiveResult::Failure;
+        }
+        uint32_t* words = reinterpret_cast<uint32_t*>(header + 1);
+        words[zeroIndex] = static_cast<uint32_t>(wordVal);
+        popN(3);
+        push(value);
+        return PrimitiveResult::Success;
+    }
+
+    // Handle 64-bit word objects
+    if (fmt == ObjectFormat::Indexable64) {
+        if (!value.isSmallInteger()) {
+            return PrimitiveResult::Failure;
+        }
+        int64_t wordVal = value.asSmallInteger();
+        if (wordVal < 0) {
+            return PrimitiveResult::Failure;
+        }
+        size_t slotCount = header->slotCount();
+        if (zeroIndex >= slotCount) {
+            return PrimitiveResult::Failure;
+        }
+        uint64_t* words = reinterpret_cast<uint64_t*>(header + 1);
+        words[zeroIndex] = static_cast<uint64_t>(wordVal);
+        popN(3);
+        push(value);
+        return PrimitiveResult::Success;
+    }
+
+    // Pointer objects
+    size_t slotCount = header->slotCount();
     if (zeroIndex >= slotCount) {
         return PrimitiveResult::Failure;
     }
 
     memory_.storePointer(zeroIndex, rcvr, value);
-
     popN(3);
-    push(value);  // Return the stored value
+    push(value);
     return PrimitiveResult::Success;
 }
 
@@ -6252,9 +6408,10 @@ PrimitiveResult Interpreter::primitiveNextObject(int argCount) {
         ptr += size;
     }
 
-    // No more objects - return the original object to signal end
-    // (Standard behavior is to return the same object when iteration ends)
-    return PrimitiveResult::Failure;
+    // Per official VM: return SmallInteger 0 when no more objects
+    pop();
+    push(Oop::fromSmallInteger(0));
+    return PrimitiveResult::Success;
 }
 
 // ===== VM ATTRIBUTE PRIMITIVE =====
@@ -7689,14 +7846,13 @@ PrimitiveResult Interpreter::primitiveStringHash(int argCount) {
     size_t byteCount = memory_.byteSizeOf(obj);
     uint8_t* bytes = reinterpret_cast<uint8_t*>(header + 1);
 
-    // Simple polynomial rolling hash
-    uint32_t hash = 5381;  // DJB2 initial value
+    // Per official VM MiscPrimitivePlugin algorithm
+    // Uses same algorithm as primitiveStringHashInitialHash but with 0 as initial
+    uint32_t hash = 0;
     for (size_t i = 0; i < byteCount; ++i) {
-        hash = ((hash << 5) + hash) + bytes[i];  // hash * 33 + byte
+        hash = hash + (bytes[i] * 0x19660D);
     }
-
-    // Ensure hash fits in SmallInteger range
-    hash = hash & 0x3FFFFFFF;  // 30 bits
+    hash = hash & 0x0FFFFFFF;  // 28 bits per official VM
 
     pop();
     push(Oop::fromSmallInteger(static_cast<int64_t>(hash)));
@@ -7776,20 +7932,14 @@ PrimitiveResult Interpreter::primitiveStringHashInitialHash(int argCount) {
     size_t stringSize = memory_.byteSizeOf(stringOop);
     uint8_t* bytes = reinterpret_cast<uint8_t*>(header + 1);
 
-    // Compute hash using Pharo's algorithm:
-    // hash := speciesHash bitAnd: 16rFFFFFFF.
-    // 1 to: stringSize do: [:pos |
-    //     hash := hash + (aString basicAt: pos).
-    //     low := hash bitAnd: 16383.
-    //     hash := (16384 * low) + (hash - low) bitShift: -14.
-    // ].
+    // Per official VM MiscPrimitivePlugin:
+    // hash := initialHash.
+    // 0 to: stringSize - 1 do: [:pos |
+    //     hash := hash + ((aByteArray at: pos) * 16r19660D)].
     // ^ hash bitAnd: 16r0FFFFFFF
-
-    uint32_t hash = static_cast<uint32_t>(speciesHash & 0x0FFFFFFF);
+    uint32_t hash = static_cast<uint32_t>(speciesHash);
     for (size_t i = 0; i < stringSize; ++i) {
-        hash = hash + bytes[i];
-        uint32_t low = hash & 16383;
-        hash = (16384 * low) + ((hash - low) >> 14);
+        hash = hash + (bytes[i] * 0x19660D);
     }
     hash = hash & 0x0FFFFFFF;
 
