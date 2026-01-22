@@ -4736,6 +4736,45 @@ PrimitiveResult Interpreter::primitiveModLargeIntegers(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// Primitive 20: LargeInteger rem: - C-style remainder (sign of dividend)
+// Unlike mod (\\) which has sign of divisor, rem: has sign of dividend
+PrimitiveResult Interpreter::primitiveRemLargeIntegers(int argCount) {
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    std::vector<uint8_t> aMag, bMag;
+    bool aNeg, bNeg;
+
+    if (!extractInteger(memory_, rcvr, aMag, aNeg) ||
+        !extractInteger(memory_, arg, bMag, bNeg)) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Check for division by zero
+    if (bMag.size() == 1 && bMag[0] == 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    std::vector<uint8_t> quotient, remainder;
+    divideMagnitudes(aMag, bMag, quotient, remainder);
+
+    // Result has sign of dividend (unlike mod which has sign of divisor)
+    bool remZero = (remainder.size() == 1 && remainder[0] == 0);
+    bool resultNeg = aNeg && !remZero;  // Sign of dividend
+
+    Oop resultOop;
+    if (tryConvertToSmallInteger(remainder, resultNeg, resultOop)) {
+        primitiveSuccess(resultOop);
+        return PrimitiveResult::Success;
+    }
+
+    resultOop = makeLargeInteger(memory_, remainder, resultNeg);
+    if (resultOop.isNil()) return PrimitiveResult::Failure;
+
+    primitiveSuccess(resultOop);
+    return PrimitiveResult::Success;
+}
+
 // Helper: Compare two integers (SmallInteger or LargeInteger)
 // Returns -1, 0, or 1
 static int compareIntegers(ObjectMemory& memory, Oop a, Oop b) {

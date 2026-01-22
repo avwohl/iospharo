@@ -1192,7 +1192,8 @@ private:
     // Point creation
     PrimitiveResult primitiveMakePoint(int argCount);
 
-    // Large integers (21-37)
+    // Large integers (20-37)
+    PrimitiveResult primitiveRemLargeIntegers(int argCount);       // 20 - rem: (sign of dividend)
     PrimitiveResult primitiveAddLargeIntegers(int argCount);       // 21
     PrimitiveResult primitiveSubtractLargeIntegers(int argCount);  // 22
     PrimitiveResult primitiveLessThanLargeIntegers(int argCount);  // 23
