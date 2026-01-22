@@ -129,8 +129,28 @@ PrimitiveResult Interpreter::primitiveArrayBecome(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveIncrementalGC(int argCount) {
+    // Primitive 131: Perform an incremental garbage collection
+    // Returns the number of bytes of free space after collection
+    // Per official VM: does scavenging with tenuring, returns free space
     (void)argCount;
-    // Incremental GC - we don't have one, just succeed
+
+    // Try incremental GC if available, otherwise do nothing (leave for full GC)
+    // Note: A true incremental/generational GC would scavenge new space
+    // For now, we don't have generational GC, so just report current free space
+    memory_.incrementalGC();
+
+    // Get total free space (old space + eden + past/future survivor spaces)
+    size_t freeBytes = memory_.freeOldSpaceBytes();
+
+    // Return free space as SmallInteger
+    if (Oop::canBeSmallInteger(static_cast<int64_t>(freeBytes))) {
+        pop();
+        push(Oop::fromSmallInteger(static_cast<int64_t>(freeBytes)));
+    } else {
+        pop();
+        push(Oop::fromSmallInteger(Oop::smallIntegerMax()));
+    }
+
     return PrimitiveResult::Success;
 }
 
@@ -7347,12 +7367,24 @@ PrimitiveResult Interpreter::primitivePerformInSuperclass(int argCount) {
 
 // ===== CLOSURE VALUE VARIANT =====
 
-// Primitive 204: Evaluate a closure without switching context
+/// Primitive 204: Evaluate a closure without switching context
 // This is used for very simple blocks that shouldn't create a context
+// Per official VM: executes block without creating context frame and without
+// allowing context switches (atomic execution)
 PrimitiveResult Interpreter::primitiveClosureValueNoContextSwitch(int argCount) {
-    // For now, just delegate to normal block value
-    // A full implementation would avoid creating a context frame
-    return primitiveBlockValue(argCount);
+    // IMPORTANT: The current primitiveBlockValue implementation DOES create
+    // context frames and DOES allow context switches, which violates the
+    // semantics of this primitive.
+    //
+    // Proper implementation would:
+    // 1. Check block is simple enough (no sends, no non-local returns)
+    // 2. Execute bytecode inline without creating context
+    // 3. Disable interrupt checks during execution
+    //
+    // For now, fail to Smalltalk fallback which handles this correctly
+    // rather than give wrong semantics (context switches during "atomic" block)
+    (void)argCount;
+    return PrimitiveResult::Failure;
 }
 
 // ===== CLASS STRUCTURE PRIMITIVES =====
