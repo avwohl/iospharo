@@ -6954,6 +6954,9 @@ PrimitiveResult Interpreter::primitiveMaxIdentityHash(int argCount) {
 
 // Primitive 180: Grow memory by at least the specified amount
 PrimitiveResult Interpreter::primitiveGrowMemoryByAtLeast(int argCount) {
+    // Primitive 180: Grow memory by at least the specified amount
+    // Returns the number of bytes actually grown (or 0 if growth failed)
+    // Official VM: segSize = growOldSpaceByAtLeast(...) then returns segSize
     Oop amountOop = stackTop();
 
     if (!amountOop.isSmallInteger()) {
@@ -6965,12 +6968,13 @@ PrimitiveResult Interpreter::primitiveGrowMemoryByAtLeast(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // In a full implementation, we'd actually grow the heap
-    // For now, just return the current free space
-    size_t freeBytes = memory_.freeOldSpaceBytes();
+    // We don't currently support dynamic memory growth - heap is pre-allocated
+    // Return 0 to indicate no growth occurred (not current free space, which
+    // would mislead the image into thinking we grew the heap)
+    // TODO: Implement actual heap growth via mmap or similar
 
     pop();
-    push(Oop::fromSmallInteger(static_cast<int64_t>(freeBytes)));
+    push(Oop::fromSmallInteger(0));  // No growth occurred
     return PrimitiveResult::Success;
 }
 
