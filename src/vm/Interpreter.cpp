@@ -7663,6 +7663,56 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // Get receiver from stack (now in the frame)
     receiver_ = argument(0);  // First "argument" slot is actually receiver
 
+    // Trace fullCheck activation specifically
+    {
+        std::string methodSelector = "";
+        if (method.isObject() && method.rawBits() > 0x10000) {
+            Oop hdr = memory_.fetchPointer(0, method);
+            if (hdr.isSmallInteger()) {
+                size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                if (numLits >= 2) {
+                    Oop sel = memory_.fetchPointer(numLits - 1, method);
+                    if (sel.isObject() && sel.rawBits() > 0x10000) {
+                        ObjectHeader* sHdr = sel.asObjectPtr();
+                        if (sHdr->isBytesObject() && sHdr->byteSize() < 50) {
+                            methodSelector = std::string((char*)sHdr->bytes(), sHdr->byteSize());
+                        }
+                    }
+                }
+            }
+        }
+        if (methodSelector == "fullCheck") {
+            static FILE* fcActivateLog = nullptr;
+            static int fcActivateCount = 0;
+            if (!fcActivateLog) fcActivateLog = fopen("/tmp/fc_activate.log", "w");
+            if (fcActivateLog && fcActivateCount < 10) {
+                fcActivateCount++;
+                fprintf(fcActivateLog, "[FC-ACTIVATE #%d] fullCheck activated\n", fcActivateCount);
+                fprintf(fcActivateLog, "  receiver_ = 0x%llx\n", (unsigned long long)receiver_.rawBits());
+                if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+                    ObjectHeader* rcvrHdr = receiver_.asObjectPtr();
+                    fprintf(fcActivateLog, "  rawHdr = 0x%llx slots=%d classIdx=%d\n",
+                            (unsigned long long)rcvrHdr->rawHeader(),
+                            rcvrHdr->slotCount(), rcvrHdr->classIndex());
+                    Oop cls = memory_.classOf(receiver_);
+                    if (cls.isObject()) {
+                        Oop clsName = memory_.fetchPointer(6, cls);
+                        if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                            ObjectHeader* cnHdr = clsName.asObjectPtr();
+                            if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                                std::string cn((char*)cnHdr->bytes(), cnHdr->byteSize());
+                                fprintf(fcActivateLog, "  class = %s\n", cn.c_str());
+                            }
+                        }
+                    }
+                } else {
+                    fprintf(fcActivateLog, "  receiver is nil or SmallInteger!\n");
+                }
+                fflush(fcActivateLog);
+            }
+        }
+    }
+
     // Trace method activation to debug SessionManager default
     static FILE* actLog = nullptr;
     static int actCount = 0;
@@ -8141,15 +8191,17 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
                                 methodName == "<=" ||
                                 methodName == ">=" ||
                                 methodName == "<" ||
-                                methodName == ">");
+                                methodName == ">" ||
+                                methodName == "max:" ||
+                                methodName == "min:");
         int threshold = isLegitHighFreq ? 100000 : 50;  // Allow much more for loop ops
 
         if (sameMethodCount > threshold) {
             // Same method name pushed too many times - likely infinite recursion
             // Debug: show receiver info for conditional methods
             static int recDbg = 0;
-            if (recDbg++ < 3 && (methodName == "ifTrue:ifFalse:" || methodName == "ifTrue:" ||
-                                  methodName == "ifFalse:")) {
+            if (recDbg++ < 5 && (methodName == "ifTrue:ifFalse:" || methodName == "ifTrue:" ||
+                                  methodName == "ifFalse:" || methodName == "max:" || methodName == "min:")) {
                 Oop rcvr = stackValue(argCount);  // Receiver is under the arguments
                 std::string rcvrClass = "unknown";
                 if (rcvr.isSmallInteger()) {
@@ -8172,8 +8224,16 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
                         }
                     }
                 }
-                std::cerr << "[RECURSION] receiver=" << rcvrClass << " rawBits=0x"
-                          << std::hex << rcvr.rawBits() << std::dec << "\n";
+                std::cerr << "[RECURSION] receiver=" << rcvrClass;
+                // For max:/min:, also show the argument
+                if ((methodName == "max:" || methodName == "min:") && argCount >= 1) {
+                    Oop arg = stackValue(0);  // Argument is at top of stack
+                    std::cerr << " arg=";
+                    if (arg.isSmallInteger()) std::cerr << arg.asSmallInteger();
+                    else if (arg.isNil() || arg.rawBits() == memory_.nil().rawBits()) std::cerr << "nil";
+                    else std::cerr << "obj@0x" << std::hex << arg.rawBits() << std::dec;
+                }
+                std::cerr << "\n";
                 // Also trace caller method
                 std::string callerMethod = "<unknown>";
                 std::string callerClass = "<unknown>";
@@ -8539,19 +8599,32 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         }
         fprintf(stackDebug, "\n[DNU-ENTRY #%d] selector=#%s argCount=%d\n",
                 stackDebugCount, selStr.c_str(), argCount);
-        fprintf(stackDebug, "  stackValue(%d)=0x%llx receiver_=0x%llx\n",
-                argCount, (unsigned long long)initialRcvrBits, (unsigned long long)receiver_.rawBits());
-        fprintf(stackDebug, "  stackPointer_=%p stackBase_=%p depth=%ld\n",
-                (void*)stackPointer_, (void*)stackBase_, (long)(stackPointer_ - stackBase_));
-        // Dump stack around receiver position
-        fprintf(stackDebug, "  Stack around receiver position:\n");
-        for (int i = -2; i <= argCount + 2; i++) {
-            if (stackPointer_ - i >= stackBase_ && stackPointer_ - i < stackPointer_ + 100) {
-                Oop val = *(stackPointer_ - i);
-                fprintf(stackDebug, "    [SP-%d]=0x%llx", i, (unsigned long long)val.rawBits());
-                if (i == argCount) fprintf(stackDebug, " <-- receiver");
-                if (i >= 0 && i < argCount) fprintf(stackDebug, " <-- arg%d", i);
-                fprintf(stackDebug, "\n");
+
+        // CHECK for fullCheck receiver state at DNU entry
+        for (size_t d = 0; d < frameDepth_ && d < 12; d++) {
+            SavedFrame& sf = savedFrames_[frameDepth_ - 1 - d];
+            std::string frameSel = "<unknown>";
+            if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                Oop hdr = memory_.fetchPointer(0, sf.savedMethod);
+                if (hdr.isSmallInteger()) {
+                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                    if (numLits >= 2) {
+                        Oop sel = memory_.fetchPointer(numLits - 1, sf.savedMethod);
+                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                            ObjectHeader* selHdr = sel.asObjectPtr();
+                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                frameSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+            }
+            if (frameSel == "fullCheck" && sf.savedReceiver.isObject() && sf.savedReceiver.rawBits() > 0x10000) {
+                ObjectHeader* fcRcvrHdr = sf.savedReceiver.asObjectPtr();
+                fprintf(stackDebug, "  [ENTRY] fullCheck receiver@0x%llx rawHdr=0x%llx slots=%d classIdx=%d\n",
+                        (unsigned long long)sf.savedReceiver.rawBits(),
+                        (unsigned long long)fcRcvrHdr->rawHeader(),
+                        fcRcvrHdr->slotCount(), fcRcvrHdr->classIndex());
             }
         }
         fflush(stackDebug);
@@ -9073,15 +9146,112 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         bool returnFalse = isComparison || selectorIsNil || selStr.empty();
 
         static int adaptNilCount = 0;
-        if (adaptNilCount++ < 5) {
-            std::cerr << "[DNU] Fallback for " << origStr << " on nil with selector '" << selStr
-                      << "' (nil=" << selectorIsNil << ") - returning " << (returnFalse ? "false" : "0") << "\n";
+        if (adaptNilCount++ < 10) {
+            std::cerr << "[DNU-ADAPT #" << adaptNilCount << "] " << origStr << " selector='" << selStr << "'\n";
+            // Print detailed call stack to find fullCheck context
+            std::cerr << "  Call stack with receivers:\n";
+            for (size_t d = 0; d < frameDepth_ && d < 8; d++) {
+                SavedFrame& sf = savedFrames_[frameDepth_ - 1 - d];
+                std::string frameSel = "<unknown>";
+                std::string frameRcvrClass = "?";
+                if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                    Oop hdr = memory_.fetchPointer(0, sf.savedMethod);
+                    if (hdr.isSmallInteger()) {
+                        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                        if (numLits >= 2) {
+                            Oop sel = memory_.fetchPointer(numLits - 1, sf.savedMethod);
+                            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                ObjectHeader* selHdr = sel.asObjectPtr();
+                                if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                    frameSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                                }
+                            }
+                        }
+                    }
+                }
+                // Get receiver class from saved receiver
+                if (sf.savedReceiver.isObject() && sf.savedReceiver.rawBits() > 0x10000) {
+                    Oop rcvrCls = memory_.classOf(sf.savedReceiver);
+                    if (rcvrCls.isObject()) {
+                        Oop clsName = memory_.fetchPointer(6, rcvrCls);
+                        if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                            ObjectHeader* cnHdr = clsName.asObjectPtr();
+                            if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                                frameRcvrClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                            }
+                        }
+                    }
+                } else if (sf.savedReceiver.isSmallInteger()) {
+                    frameRcvrClass = "SmallInteger(" + std::to_string(sf.savedReceiver.asSmallInteger()) + ")";
+                } else if (sf.savedReceiver.isNil()) {
+                    frameRcvrClass = "nil";
+                }
+                std::cerr << "    [" << d << "] " << frameRcvrClass << " >> #" << frameSel << "\n";
+                // If this is fullCheck, dump the receiver's details
+                if (frameSel == "fullCheck" && sf.savedReceiver.isObject() && sf.savedReceiver.rawBits() > 0x10000) {
+                    ObjectHeader* rcvrHdr = sf.savedReceiver.asObjectPtr();
+                    std::cerr << "      fullCheck receiver@0x" << std::hex << sf.savedReceiver.rawBits() << std::dec
+                              << " slots=" << rcvrHdr->slotCount() << " classIdx=" << rcvrHdr->classIndex() << "\n";
+                    if (rcvrHdr->slotCount() >= 1) {
+                        Oop bounds = memory_.fetchPointer(0, sf.savedReceiver);
+                        std::cerr << "      bounds (slot 0) = 0x" << std::hex << bounds.rawBits() << std::dec;
+                        if (bounds.isNil()) std::cerr << " (nil!)";
+                        else if (bounds.isObject()) {
+                            Oop bCls = memory_.classOf(bounds);
+                            if (bCls.isObject()) {
+                                Oop bClsName = memory_.fetchPointer(6, bCls);
+                                if (bClsName.isObject() && bClsName.rawBits() > 0x10000) {
+                                    ObjectHeader* bcnHdr = bClsName.asObjectPtr();
+                                    if (bcnHdr->isBytesObject() && bcnHdr->byteSize() < 50) {
+                                        std::cerr << " (" << std::string((char*)bcnHdr->bytes(), bcnHdr->byteSize()) << ")";
+                                    }
+                                }
+                            }
+                        }
+                        std::cerr << "\n";
+                    }
+                }
+            }
         }
         popN(argCount + 1);
         if (returnFalse) {
             push(memory_.falseObject());  // Return false for nil comparisons or invalid selectors
         } else {
             push(Oop::fromSmallInteger(0));  // Return 0 for nil arithmetic
+        }
+        // Trace fullCheck receiver state AFTER fallback
+        static FILE* fcExitLog = nullptr;
+        static int fcExitCount = 0;
+        if (!fcExitLog) fcExitLog = fopen("/tmp/fc_exit_trace.log", "w");
+        if (fcExitLog && fcExitCount < 50) {
+            for (size_t d = 0; d < frameDepth_ && d < 12; d++) {
+                SavedFrame& sf = savedFrames_[frameDepth_ - 1 - d];
+                std::string frameSel = "<unknown>";
+                if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                    Oop hdr = memory_.fetchPointer(0, sf.savedMethod);
+                    if (hdr.isSmallInteger()) {
+                        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                        if (numLits >= 2) {
+                            Oop sel = memory_.fetchPointer(numLits - 1, sf.savedMethod);
+                            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                ObjectHeader* sHdr = sel.asObjectPtr();
+                                if (sHdr->isBytesObject() && sHdr->byteSize() < 50) {
+                                    frameSel = std::string((char*)sHdr->bytes(), sHdr->byteSize());
+                                }
+                            }
+                        }
+                    }
+                }
+                if (frameSel == "fullCheck" && sf.savedReceiver.isObject() && sf.savedReceiver.rawBits() > 0x10000) {
+                    fcExitCount++;
+                    ObjectHeader* fcRcvrHdr = sf.savedReceiver.asObjectPtr();
+                    fprintf(fcExitLog, "[EXIT #%d] fullCheck receiver@0x%llx rawHdr=0x%llx slots=%d classIdx=%d\n",
+                            fcExitCount, (unsigned long long)sf.savedReceiver.rawBits(),
+                            (unsigned long long)fcRcvrHdr->rawHeader(),
+                            fcRcvrHdr->slotCount(), fcRcvrHdr->classIndex());
+                    fflush(fcExitLog);
+                }
+            }
         }
         dnuDepth--;
         return;

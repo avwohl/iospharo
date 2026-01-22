@@ -103,6 +103,37 @@ Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
 
     // Allocate in eden for new objects
     ObjectHeader* obj = allocateInEden(totalSize);
+
+    // TRACE: Log Dictionary allocations (classIndex 3143)
+    if (classIndex == 3143) {
+        static FILE* dictAllocLog = nullptr;
+        static int dictAllocLogCount = 0;
+        if (!dictAllocLog) dictAllocLog = fopen("/tmp/dict_alloc.log", "w");
+        if (dictAllocLog && dictAllocLogCount < 20) {
+            dictAllocLogCount++;
+            fprintf(dictAllocLog, "[DICT-ALLOC #%d] slots=%zu totalSize=%zu\n",
+                    dictAllocLogCount, slotCount, totalSize);
+            fprintf(dictAllocLog, "  edenFree_ before allocation: 0x%llx\n",
+                    (unsigned long long)edenFree_);
+            fflush(dictAllocLog);
+        }
+    }
+
+    // TRACE: Log Context allocations
+    if (classIndex == 36) {  // Context class
+        static FILE* ctxAllocLog = nullptr;
+        static int ctxAllocLogCount = 0;
+        if (!ctxAllocLog) ctxAllocLog = fopen("/tmp/context_alloc.log", "w");
+        if (ctxAllocLog && ctxAllocLogCount < 20) {
+            ctxAllocLogCount++;
+            fprintf(ctxAllocLog, "[CTX-ALLOC #%d] slots=%zu totalSize=%zu\n",
+                    ctxAllocLogCount, slotCount, totalSize);
+            fprintf(ctxAllocLog, "  Eden allocation result: %p (edenFree_=%p, edenStart=%p, survivorStart=%p)\n",
+                    (void*)obj, (void*)edenFree_, (void*)edenStart_, (void*)survivorStart_);
+            fflush(ctxAllocLog);
+        }
+    }
+
     if (!obj) {
         // Eden is full, try scavenge
         scavenge();
@@ -122,6 +153,34 @@ Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
     }
 
     initializeHeader(obj, classIndex, slotCount, format);
+
+    // TRACE: Log all allocations to understand memory layout
+    {
+        static FILE* allAllocLog = nullptr;
+        static int allAllocCount = 0;
+        static bool foundPattern = false;
+        if (!allAllocLog) allAllocLog = fopen("/tmp/all_alloc.log", "w");
+        if (allAllocLog && allAllocCount < 200) {
+            allAllocCount++;
+            uint64_t allocAddr = (uint64_t)obj;
+            uint64_t allocEnd = allocAddr + 8 + slotCount * 8;
+            // Log if this allocation ends at or after 0x...1428 and before 0x...1490 (where overlap happens)
+            if ((allocAddr & 0xFFF) >= 0x1300 && (allocAddr & 0xFFF) <= 0x1500) {
+                fprintf(allAllocLog, "[ALLOC #%d] classIdx=%d slots=%zu at 0x%llx (ends 0x%llx)\n",
+                        allAllocCount, classIndex, slotCount, (unsigned long long)allocAddr, (unsigned long long)allocEnd);
+                fflush(allAllocLog);
+                foundPattern = true;
+            }
+            // Also log if the address ends at exactly ...1470 or ...1428
+            if ((allocEnd & 0xFFFF) == 0x1470 || (allocEnd & 0xFFFF) == 0x1428 ||
+                (allocAddr & 0xFFFF) == 0x1470 || (allocAddr & 0xFFFF) == 0x1428) {
+                fprintf(allAllocLog, "[ALLOC #%d] EXACT MATCH! classIdx=%d slots=%zu at 0x%llx (ends 0x%llx)\n",
+                        allAllocCount, classIndex, slotCount, (unsigned long long)allocAddr, (unsigned long long)allocEnd);
+                fflush(allAllocLog);
+                foundPattern = true;
+            }
+        }
+    }
 
     // Initialize slots to nil
     Oop* slots = obj->slots();
@@ -775,6 +834,80 @@ Oop ObjectMemory::fetchPointer(size_t index, Oop obj) const {
 void ObjectMemory::storePointer(size_t index, Oop obj, Oop value) {
     if (!obj.isObject()) return;
     ObjectHeader* header = obj.asObjectPtr();
+
+    // WATCHPOINT: Check if this write will corrupt a nearby object header
+    static uint64_t watchedAddr = 0;
+    static FILE* watchLog = nullptr;
+    if (!watchLog) watchLog = fopen("/tmp/store_watch.log", "w");
+
+    // Calculate target address for this store (header + 8 bytes for header + index * 8 for slots)
+    uint64_t targetAddr = (uint64_t)header + 8 + index * 8;
+
+    // Capture the watched address on first fullCheck activation
+    if (watchedAddr == 0 && header->classIndex() == 3143 && header->slotCount() == 2) {
+        // This looks like our Dictionary - record its address
+        watchedAddr = (uint64_t)header;
+        if (watchLog) {
+            fprintf(watchLog, "[WATCH] Watching Dictionary at 0x%llx (classIdx=3143, slots=2)\n",
+                    (unsigned long long)watchedAddr);
+            fprintf(watchLog, "  edenStart_=0x%llx edenFree_=0x%llx survivorStart_=0x%llx\n",
+                    (unsigned long long)edenStart_, (unsigned long long)edenFree_,
+                    (unsigned long long)survivorStart_);
+            fprintf(watchLog, "  oldSpaceStart_=0x%llx oldSpaceFree_=0x%llx oldSpaceEnd_=0x%llx\n",
+                    (unsigned long long)oldSpaceStart_, (unsigned long long)oldSpaceFree_,
+                    (unsigned long long)oldSpaceEnd_);
+            bool inEden = ((uint8_t*)header >= edenStart_ && (uint8_t*)header < survivorStart_);
+            bool inOld = ((uint8_t*)header >= oldSpaceStart_ && (uint8_t*)header < oldSpaceEnd_);
+            fprintf(watchLog, "  Dictionary is in: %s\n", inEden ? "EDEN" : (inOld ? "OLD SPACE" : "UNKNOWN"));
+            fflush(watchLog);
+        }
+    }
+
+    // Check if we're about to write within 16 bytes of watched header (could corrupt it)
+    if (watchedAddr != 0 && watchLog) {
+        int64_t offset = (int64_t)targetAddr - (int64_t)watchedAddr;
+        if (offset >= -8 && offset < 16) {
+            fprintf(watchLog, "[WRITE] obj=0x%llx slot[%zu] -> target=0x%llx (offset=%lld from watched)\n",
+                    (unsigned long long)obj.rawBits(), index, (unsigned long long)targetAddr, (long long)offset);
+            fprintf(watchLog, "  obj classIdx=%d slots=%zu, value=0x%llx\n",
+                    header->classIndex(), header->slotCount(), (unsigned long long)value.rawBits());
+            // Check if watched object header is still valid
+            ObjectHeader* watchedHdr = (ObjectHeader*)watchedAddr;
+            fprintf(watchLog, "  watched rawHdr=0x%llx classIdx=%d slots=%d\n",
+                    (unsigned long long)watchedHdr->rawHeader(),
+                    watchedHdr->classIndex(), watchedHdr->slotCount());
+
+            // If this is the overlapping object (different from watched), trace more
+            if (obj.rawBits() != watchedAddr) {
+                static int overlapAbortCount = 0;
+                overlapAbortCount++;
+                fprintf(watchLog, "  OVERLAP DETECTED! Writing obj (classIdx=%d) overlaps watched Dictionary\n",
+                        header->classIndex());
+                fprintf(watchLog, "  Object at 0x%llx with %zu slots spans to 0x%llx\n",
+                        (unsigned long long)header, header->slotCount(),
+                        (unsigned long long)header + 8 + header->slotCount() * 8);
+                fprintf(watchLog, "  Dictionary at 0x%llx (8 bytes header + 2 slots = 24 bytes)\n",
+                        (unsigned long long)watchedAddr);
+                // Look at the raw bytes at the overlapping object address
+                uint64_t* rawBytes = reinterpret_cast<uint64_t*>(header);
+                fprintf(watchLog, "  Raw 8 bytes at overlap addr: 0x%llx\n",
+                        (unsigned long long)*rawBytes);
+                // Check if this address is inside another known allocation
+                // Look at the previous Context-like allocation
+                fprintf(watchLog, "  Checking: is this addr inside another Context?\n");
+                // This object's address minus eden start
+                uint64_t offsetFromEden = (uint64_t)header - (uint64_t)edenStart_;
+                fprintf(watchLog, "  Offset from edenStart: 0x%llx (%llu bytes)\n",
+                        (unsigned long long)offsetFromEden, (unsigned long long)offsetFromEden);
+                fflush(watchLog);
+                if (overlapAbortCount >= 3) {
+                    abort();
+                }
+            }
+            fflush(watchLog);
+        }
+    }
+
     if (index >= header->slotCount()) return;
 
     // Check for old->young pointer (needs remembered set)

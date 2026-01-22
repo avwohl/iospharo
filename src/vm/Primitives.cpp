@@ -532,6 +532,60 @@ PrimitiveResult Interpreter::primitiveLessThan(int argCount) {
         return PrimitiveResult::Success;
     }
 
+    // Log failed comparisons to understand nil bounds issue
+    static int ltFailCount = 0;
+    if (ltFailCount++ < 3) {
+        std::cerr << "[PRIM-LT-FAIL] ";
+        if (rcvr.isSmallInteger()) std::cerr << rcvr.asSmallInteger();
+        else if (rcvr.isNil()) std::cerr << "nil";
+        else std::cerr << "obj";
+        std::cerr << " < ";
+        if (arg.isSmallInteger()) std::cerr << arg.asSmallInteger();
+        else if (arg.isNil() || arg.rawBits() == memory_.nil().rawBits()) std::cerr << "nil";
+        else std::cerr << "obj";
+        // Get current method selector and receiver details
+        std::cerr << " in #";
+        if (method_.isObject() && method_.rawBits() > 0x10000) {
+            Oop hdr = memory_.fetchPointer(0, method_);
+            if (hdr.isSmallInteger()) {
+                size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                if (numLits >= 2) {
+                    Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                    if (sel.isObject() && sel.rawBits() > 0x10000) {
+                        ObjectHeader* selHdr = sel.asObjectPtr();
+                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                            std::cerr << std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                        }
+                    }
+                }
+            }
+        }
+        // Dump the receiver's slots to understand the corrupt state
+        std::cerr << "\n  Receiver (0x" << std::hex << receiver_.rawBits() << std::dec << "):\n";
+        if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+            ObjectHeader* rcvrHdr = receiver_.asObjectPtr();
+            std::cerr << "    slots=" << rcvrHdr->slotCount() << " classIdx=" << rcvrHdr->classIndex() << "\n";
+            for (size_t s = 0; s < std::min(rcvrHdr->slotCount(), (size_t)5); s++) {
+                Oop slot = memory_.fetchPointer(s, receiver_);
+                std::cerr << "    [" << s << "] = 0x" << std::hex << slot.rawBits() << std::dec;
+                if (slot.isSmallInteger()) std::cerr << " (SmallInt " << slot.asSmallInteger() << ")";
+                else if (slot.isNil() || slot.rawBits() == memory_.nil().rawBits()) std::cerr << " (nil)";
+                else if (slot.isObject()) {
+                    Oop slotCls = memory_.classOf(slot);
+                    if (slotCls.isObject()) {
+                        Oop scn = memory_.fetchPointer(6, slotCls);
+                        if (scn.isObject() && scn.rawBits() > 0x10000) {
+                            ObjectHeader* scnH = scn.asObjectPtr();
+                            if (scnH->isBytesObject() && scnH->byteSize() < 50)
+                                std::cerr << " (" << std::string((char*)scnH->bytes(), scnH->byteSize()) << ")";
+                        }
+                    }
+                }
+                std::cerr << "\n";
+            }
+        }
+    }
+
     return PrimitiveResult::Failure;
 }
 
