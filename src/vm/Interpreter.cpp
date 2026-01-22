@@ -3791,10 +3791,37 @@ void Interpreter::returnFromMethod() {
 
 void Interpreter::returnFromBlock() {
     // Non-local return from block
+    // This is called when a block executes "^ value" - it should return from the
+    // method that CREATED the block, not just from the block itself.
     Oop value = pop();
 
-    // TODO: Find the home context and return to its sender
-    // For now, treat as regular return
+    // Get the home frame depth from the current frame
+    size_t homeFrame = 0;
+    if (frameDepth_ > 0) {
+        homeFrame = savedFrames_[frameDepth_ - 1].homeFrameDepth;
+    }
+
+    // Debug: log non-local returns
+    static FILE* nlrLog = nullptr;
+    static int nlrCount = 0;
+    if (!nlrLog) nlrLog = fopen("/tmp/nonlocal_return.log", "w");
+    if (nlrLog && nlrCount < 100) {
+        nlrCount++;
+        fprintf(nlrLog, "[NLR #%d] from frame %zu to home frame %zu\n",
+                nlrCount, frameDepth_, homeFrame);
+        fflush(nlrLog);
+    }
+
+    // If homeFrame is valid and greater than 0, unwind to it
+    if (homeFrame > 0 && homeFrame < frameDepth_) {
+        // Unwind frames from current down to homeFrame + 1
+        // (homeFrame + 1 because we want to return FROM the home method)
+        while (frameDepth_ > homeFrame + 1) {
+            popFrame();
+        }
+    }
+
+    // Now do a regular return which pops one more frame and pushes the value
     returnValue(value);
 }
 
@@ -8694,6 +8721,43 @@ void Interpreter::activateBlock(Oop block, int argCount) {
         return;
     }
 
+    // For blocks: set the home frame depth for non-local returns
+    // The home frame is where the block was created. For now, we use a heuristic:
+    // walk up to find a frame that's a method (not a block) by checking if the
+    // frame's savedMethod is a CompiledMethod (not a CompiledBlock).
+    // This allows [^ value] inside blocks to return from the enclosing method.
+    if (frameDepth_ > 1) {
+        // Find the first non-block frame (a real method frame)
+        size_t homeFrame = 0;  // Default to returning from bottom
+        for (size_t i = frameDepth_ - 1; i > 0; i--) {
+            Oop savedMethod = savedFrames_[i - 1].savedMethod;
+            if (savedMethod.isObject() && savedMethod.rawBits() > 0x10000) {
+                ObjectHeader* mHdr = savedMethod.asObjectPtr();
+                // CompiledMethod has format >= 24, CompiledBlock is also format >= 24
+                // Check if the outer literal is present (CompiledBlock has outer method at slot numLits-1)
+                Oop header = memory_.fetchPointer(0, savedMethod);
+                if (header.isSmallInteger()) {
+                    int numLits = header.asSmallInteger() & 0x7FFF;
+                    if (numLits >= 2) {
+                        Oop outerLit = memory_.fetchPointer(numLits - 1, savedMethod);
+                        // If outer literal is a compiled method, this is a CompiledBlock
+                        if (outerLit.isObject() && outerLit.rawBits() > 0x10000) {
+                            ObjectHeader* olHdr = outerLit.asObjectPtr();
+                            if (olHdr->isCompiledMethod()) {
+                                // This is a block, keep looking
+                                continue;
+                            }
+                        }
+                    }
+                }
+                // Found a method frame (not a block) - this is the home
+                homeFrame = i;
+                break;
+            }
+        }
+        savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
+    }
+
     method_ = methodToExecute;
     // For FullBlockClosure, homeMethod should be from the compiledBlock's slot 2 or outerContext
     if (slot1.isObject()) {
@@ -8927,6 +8991,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     frame.savedReceiver = receiver_;
     frame.savedFP = framePointer_;
     frame.savedArgCount = argCount_;
+    frame.homeFrameDepth = 0;  // Default: not a block (will be set by activateBlock if needed)
 
     if (frameLog && frameDepth_ > 400) {
         // Only log deep frames to identify recursion

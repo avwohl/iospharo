@@ -659,20 +659,15 @@ PrimitiveResult Interpreter::primitiveEqual(int argCount) {
         bool result = rcvrVal == argVal;
         Oop resultObj = result ? memory_.trueObject() : memory_.falseObject();
 
-        // Log when 0 = 0 to trace the stuck loop (wait for later calls)
-        if (equalLog && rcvrVal == 0 && argVal == 0 && equalCallCount >= 200 && equalCallCount <= 210) {
-            fprintf(equalLog, "[EQUAL #%d] SmallInt 0 = 0 -> true\n", equalCallCount);
-            fprintf(equalLog, "  trueObj=0x%llx\n",
-                    (unsigned long long)memory_.trueObject().rawBits());
-            fprintf(equalLog, "  Returning result=0x%llx\n",
-                    (unsigned long long)resultObj.rawBits());
-            // Log next 5 bytecodes after this primitive returns
-            fprintf(equalLog, "  Next 5 bytes at IP: ");
-            for (int i = 0; i < 5; i++) {
-                fprintf(equalLog, "%02x ", instructionPointer_[i]);
+        // Log when 0 = 0 to trace platform comparison
+        static int zeroEqualCount = 0;
+        if (rcvrVal == 0 && argVal == 0) {
+            zeroEqualCount++;
+            if (zeroEqualCount <= 10) {
+                std::cerr << "[PRIM7 #" << zeroEqualCount << "] 0 = 0 -> "
+                          << (result ? "true" : "false") << " (0x" << std::hex
+                          << resultObj.rawBits() << std::dec << ")\n";
             }
-            fprintf(equalLog, "\n");
-            fflush(equalLog);
         }
 
         primitiveSuccess(resultObj);
@@ -3548,8 +3543,13 @@ PrimitiveResult Interpreter::primitiveReplaceFromTo(int argCount) {
 
 // ===== FLOAT PRIMITIVES =====
 
-// Helper: Extract double from SmallFloat or boxed Float
+// Helper: Extract double from SmallInteger, SmallFloat, or boxed Float
 static bool extractFloat(ObjectMemory& memory, Oop oop, double& result) {
+    // Handle SmallIntegers - convert to double (for Float >= 0, Float + 1, etc.)
+    if (oop.isSmallInteger()) {
+        result = static_cast<double>(oop.asSmallInteger());
+        return true;
+    }
     if (oop.isSmallFloat()) {
         result = oop.asSmallFloat();
         return true;
@@ -5958,6 +5958,7 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
         case 1001:  // Operating system name
             {
                 // Return "Mac OS" for macOS/iOS - this is what Pharo expects
+                std::cerr << "[ATTR 1001] Returning 'Mac OS' for operatingSystemName\n";
                 Oop str = memory_.createString("Mac OS");
                 pop();
                 push(str);

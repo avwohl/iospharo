@@ -283,6 +283,7 @@ private:
         Oop savedReceiver;
         Oop* savedFP;
         int savedArgCount;
+        size_t homeFrameDepth;  // For non-local block returns: the frame to return to (0 = not a block)
     };
     static constexpr size_t MaxFrameDepth = 512;
     std::array<SavedFrame, MaxFrameDepth> savedFrames_;
