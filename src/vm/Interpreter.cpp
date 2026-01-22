@@ -8900,70 +8900,39 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
         }
     }
 
-    // Early trace: detect first ifTrue:ifFalse: with non-boolean receiver
-    static int ifBoolTraceCount = 0;
-    if (ifBoolTraceCount < 5 && (methodName == "ifTrue:ifFalse:" || methodName == "ifTrue:" || methodName == "ifFalse:")) {
+    // Early intercept: if ifTrue:ifFalse: is called on a non-boolean, return false immediately
+    // This prevents infinite loops caused by non-boolean values in conditionals
+    if (methodName == "ifTrue:ifFalse:" || methodName == "ifTrue:" || methodName == "ifFalse:") {
         Oop rcvr = stackValue(argCount);
         bool isBoolean = rcvr.rawBits() == memory_.trueObject().rawBits() ||
                          rcvr.rawBits() == memory_.falseObject().rawBits();
         if (!isBoolean) {
-            ifBoolTraceCount++;
-            std::string rcvrDesc = "unknown";
-            if (rcvr.isSmallInteger()) {
-                rcvrDesc = "SmallInteger(" + std::to_string(rcvr.asSmallInteger()) + ")";
-            } else if (rcvr.isNil()) {
-                rcvrDesc = "nil";
-            } else if (rcvr.isObject()) {
-                Oop cls = memory_.classOf(rcvr);
-                if (cls.isObject()) {
-                    Oop nameOop = memory_.fetchPointer(6, cls);
-                    if (nameOop.isObject()) {
-                        ObjectHeader* nHdr = nameOop.asObjectPtr();
-                        if (nHdr->isBytesObject() && nHdr->byteSize() < 50) {
-                            rcvrDesc = std::string((char*)nHdr->bytes(), nHdr->byteSize());
-                        }
-                    }
-                }
-            }
-            // Also trace caller method
-            std::string callerClass = "<unknown>";
-            std::string callerMethod = "<unknown>";
-            if (method_.isObject() && method_.rawBits() > 0x10000) {
-                Oop headerOop = memory_.fetchPointer(0, method_);
-                if (headerOop.isSmallInteger()) {
-                    int64_t header = headerOop.asSmallInteger();
-                    int numLits = (header >> 1) & 0x7FFF;
-                    if (numLits >= 2) {
-                        Oop assoc = memory_.fetchPointer(numLits, method_);
-                        if (assoc.isObject() && assoc.rawBits() > 0x10000) {
-                            ObjectHeader* aHdr = assoc.asObjectPtr();
-                            if (aHdr->slotCount() >= 2) {
-                                Oop cls = memory_.fetchPointer(1, assoc);
-                                if (cls.isObject()) {
-                                    Oop nameOop = memory_.fetchPointer(6, cls);
-                                    if (nameOop.isObject()) {
-                                        ObjectHeader* nHdr = nameOop.asObjectPtr();
-                                        if (nHdr->isBytesObject() && nHdr->byteSize() < 50) {
-                                            callerClass = std::string((char*)nHdr->bytes(), nHdr->byteSize());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        Oop selOop = memory_.fetchPointer(numLits - 1, method_);
-                        if (selOop.isObject() && selOop.rawBits() > 0x10000) {
-                            ObjectHeader* sHdr = selOop.asObjectPtr();
-                            if (sHdr->isBytesObject() && sHdr->byteSize() < 100) {
-                                callerMethod = std::string((char*)sHdr->bytes(), sHdr->byteSize());
+            static int ifBoolInterceptCount = 0;
+            if (ifBoolInterceptCount++ < 10) {
+                std::string rcvrDesc = "unknown";
+                if (rcvr.isSmallInteger()) {
+                    rcvrDesc = "SmallInteger(" + std::to_string(rcvr.asSmallInteger()) + ")";
+                } else if (rcvr.isNil()) {
+                    rcvrDesc = "nil";
+                } else if (rcvr.isObject()) {
+                    Oop cls = memory_.classOf(rcvr);
+                    if (cls.isObject()) {
+                        Oop nameOop = memory_.fetchPointer(6, cls);
+                        if (nameOop.isObject()) {
+                            ObjectHeader* nHdr = nameOop.asObjectPtr();
+                            if (nHdr->isBytesObject() && nHdr->byteSize() < 50) {
+                                rcvrDesc = std::string((char*)nHdr->bytes(), nHdr->byteSize());
                             }
                         }
                     }
                 }
+                std::cerr << "[NONBOOL-INTERCEPT #" << ifBoolInterceptCount << "] " << methodName
+                          << " on " << rcvrDesc << " - returning false\n";
             }
-            std::cerr << "[NONBOOL-COND #" << ifBoolTraceCount << "] " << methodName
-                      << " called on " << rcvrDesc << " (0x" << std::hex << rcvr.rawBits()
-                      << std::dec << ") at depth " << frameDepth_
-                      << " from " << callerClass << " >> #" << callerMethod << "\n";
+            // Pop args and receiver, push false to break potential loops
+            popN(argCount + 1);
+            push(memory_.falseObject());
+            return false;  // Don't actually call the method
         }
     }
 
@@ -8974,12 +8943,18 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     static std::string bannedMethod = "";
     static int bannedCallsRemaining = 0;
 
-    // If a method is banned, return nil immediately for all calls to it
+    // If a method is banned, return appropriate value immediately for all calls to it
     if (!methodName.empty() && methodName == bannedMethod && bannedCallsRemaining > 0) {
         bannedCallsRemaining--;
-        // Clean up stack: pop args + receiver, push nil as return value
+        // Clean up stack: pop args + receiver, push appropriate return value
         popN(argCount + 1);
-        push(memory_.nil());
+        // For conditional methods, return false instead of nil
+        if (methodName == "ifTrue:ifFalse:" || methodName == "ifTrue:" ||
+            methodName == "ifFalse:" || methodName == "mustBeBoolean") {
+            push(memory_.falseObject());
+        } else {
+            push(memory_.nil());
+        }
         return false;
     }
 
@@ -9084,9 +9059,15 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
             // Ban this method for the next 1000 calls to break the recursion completely
             bannedMethod = methodName;
             bannedCallsRemaining = 1000;
-            // Clean up stack: pop args + receiver, push nil as return value
+            // Clean up stack: pop args + receiver, push appropriate return value
             popN(argCount + 1);
-            push(memory_.nil());
+            // For conditional methods, return false instead of nil to avoid chains
+            if (methodName == "ifTrue:ifFalse:" || methodName == "ifTrue:" ||
+                methodName == "ifFalse:" || methodName == "mustBeBoolean") {
+                push(memory_.falseObject());
+            } else {
+                push(memory_.nil());
+            }
             sameMethodCount = 0;
             lastMethodName = "";
             return false;
@@ -10331,6 +10312,28 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
         // If we can't call the block, just return the receiver
         push(receiver);
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for mustBeBoolean - this is sent when a non-boolean is used in a conditional
+    // If we're in DNU for mustBeBoolean, it means the error handling failed
+    // Return false to break any potential infinite loops
+    if (origStr == "mustBeBoolean" && argCount == 0) {
+        static int mbDnuCount = 0;
+        if (mbDnuCount++ < 5) {
+            std::string rcvrType = "unknown";
+            if (receiver_.isSmallInteger()) {
+                rcvrType = "SmallInteger(" + std::to_string(receiver_.asSmallInteger()) + ")";
+            } else if (isNilReceiver) {
+                rcvrType = "nil";
+            } else {
+                rcvrType = rcvrClassName;
+            }
+            std::cerr << "[DNU] Fallback for mustBeBoolean on " << rcvrType << " - returning false\n";
+        }
+        pop();  // Pop receiver
+        push(memory_.falseObject());  // Return false to break the loop
         dnuDepth--;
         return;
     }
