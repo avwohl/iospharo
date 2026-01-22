@@ -427,11 +427,34 @@ PrimitiveResult Interpreter::primitiveBitShift(int argCount) {
 
         int64_t result;
         if (shift >= 0) {
-            if (shift >= 64) {
-                return PrimitiveResult::Failure;  // Would overflow
+            // Left shift - check for overflow before shifting
+            // SmallIntegers can hold values in range [-2^62, 2^62-1]
+            if (shift >= 63) {
+                // Would definitely overflow SmallInteger range
+                return PrimitiveResult::Failure;
             }
-            result = value << shift;
+            if (value == 0) {
+                result = 0;
+            } else if (value > 0) {
+                // Check if left shift would overflow
+                // max positive SmallInteger is about 2^62-1
+                int64_t maxBeforeShift = (INT64_MAX >> shift);
+                if (value > maxBeforeShift) {
+                    return PrimitiveResult::Failure;
+                }
+                result = value << shift;
+            } else {
+                // Negative value - use unsigned shift to avoid UB
+                // then convert back considering sign
+                uint64_t uval = static_cast<uint64_t>(-value);
+                int64_t minBeforeShift = -(INT64_MIN >> shift);
+                if (static_cast<int64_t>(uval) > minBeforeShift) {
+                    return PrimitiveResult::Failure;
+                }
+                result = -(static_cast<int64_t>(uval << shift));
+            }
         } else {
+            // Right shift
             if (shift <= -64) {
                 result = (value < 0) ? -1 : 0;
             } else {
@@ -1926,6 +1949,18 @@ PrimitiveResult Interpreter::primitivePerformWithArgs(int argCount) {
     }
 
     ObjectHeader* argsHeader = argsArray.asObjectPtr();
+
+    // Validate argsArray is an indexable pointer object (Array)
+    // Per official Pharo VM: must be format 2 (Indexable) with pointer contents
+    if (argsHeader->isForwarded()) {
+        return PrimitiveResult::Failure;
+    }
+    ObjectFormat fmt = argsHeader->format();
+    if (fmt != ObjectFormat::Indexable) {
+        // Not a proper array - could be fixed-size object, byte array, etc.
+        return PrimitiveResult::Failure;
+    }
+
     size_t numArgs = argsHeader->slotCount();
 
     // Pop selector and args array, push args from array
@@ -3928,8 +3963,20 @@ PrimitiveResult Interpreter::primitiveTimesTwoPower(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    // Clamp exponent to safe range for ldexp (int argument)
+    // IEEE 754 double exponent range is roughly -1074 to +1023
+    // Extreme values just result in 0 or infinity, but clamp to avoid int overflow
+    int clampedPower;
+    if (power > 10000) {
+        clampedPower = 10000;  // Will produce infinity for any non-zero value
+    } else if (power < -10000) {
+        clampedPower = -10000;  // Will produce zero for any finite value
+    } else {
+        clampedPower = static_cast<int>(power);
+    }
+
     // Use ldexp to multiply by 2^power efficiently
-    double result = std::ldexp(value, static_cast<int>(power));
+    double result = std::ldexp(value, clampedPower);
 
     Oop resultOop = makeFloat(memory_, result);
     if (resultOop.isNil()) return PrimitiveResult::Failure;
@@ -5886,7 +5933,8 @@ PrimitiveResult Interpreter::primitiveChangeClass(int argCount) {
 
 // ===== 16-BIT ARRAY ACCESS PRIMITIVES =====
 
-// Primitive 143: Read a 16-bit unsigned integer from a short-indexable object
+// Primitive 143: Read a 16-bit SIGNED integer from a short-indexable object
+// Per official Pharo VM, shortAt returns signed values (-32768 to 32767)
 PrimitiveResult Interpreter::primitiveShortAt(int argCount) {
     Oop indexOop = stackValue(0);
     Oop rcvr = stackValue(1);
@@ -5909,15 +5957,17 @@ PrimitiveResult Interpreter::primitiveShortAt(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    uint16_t* shorts = reinterpret_cast<uint16_t*>(header + 1);
-    int64_t value = shorts[zeroIndex];
+    // Read as signed 16-bit integer (official VM behavior)
+    int16_t* shorts = reinterpret_cast<int16_t*>(header + 1);
+    int64_t value = shorts[zeroIndex];  // Sign-extends automatically
 
     popN(2);
     push(Oop::fromSmallInteger(value));
     return PrimitiveResult::Success;
 }
 
-// Primitive 144: Write a 16-bit unsigned integer to a short-indexable object
+// Primitive 144: Write a 16-bit SIGNED integer to a short-indexable object
+// Per official Pharo VM, shortAtPut accepts signed values (-32768 to 32767)
 PrimitiveResult Interpreter::primitiveShortAtPut(int argCount) {
     Oop valueOop = stackValue(0);
     Oop indexOop = stackValue(1);
@@ -5934,8 +5984,8 @@ PrimitiveResult Interpreter::primitiveShortAtPut(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Check value fits in 16 bits unsigned
-    if (value < 0 || value > 65535) {
+    // Check value fits in 16 bits SIGNED (official VM behavior)
+    if (value < -32768 || value > 32767) {
         return PrimitiveResult::Failure;
     }
 
@@ -5954,8 +6004,9 @@ PrimitiveResult Interpreter::primitiveShortAtPut(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    uint16_t* shorts = reinterpret_cast<uint16_t*>(header + 1);
-    shorts[zeroIndex] = static_cast<uint16_t>(value);
+    // Store as signed 16-bit integer
+    int16_t* shorts = reinterpret_cast<int16_t*>(header + 1);
+    shorts[zeroIndex] = static_cast<int16_t>(value);
 
     popN(3);
     push(valueOop);  // Return the stored value
@@ -11647,8 +11698,36 @@ PrimitiveResult Interpreter::primitiveStringReplace(int argCount) {
     }
 
     // Handle WORD objects (32-bit arrays)
-    if (destHdr->format() == ObjectFormat::Indexable32 &&
-        srcHdr->format() == ObjectFormat::Indexable32) {
+    // Format 10 = Indexable32, Format 11 = Indexable32Odd
+    auto destFmt = destHdr->format();
+    auto srcFmt = srcHdr->format();
+    bool destIs32 = (destFmt == ObjectFormat::Indexable32 || destFmt == ObjectFormat::Indexable32Odd);
+    bool srcIs32 = (srcFmt == ObjectFormat::Indexable32 || srcFmt == ObjectFormat::Indexable32Odd);
+    if (destIs32 && srcIs32) {
+        // Calculate actual 32-bit word count
+        size_t destSlots = destHdr->slotCount();
+        size_t srcSlots = srcHdr->slotCount();
+        size_t destWords = destSlots * 2 - (destFmt == ObjectFormat::Indexable32Odd ? 1 : 0);
+        size_t srcWords = srcSlots * 2 - (srcFmt == ObjectFormat::Indexable32Odd ? 1 : 0);
+
+        if (dstStartIdx + count > destWords || srcIdx + count > srcWords) {
+            return PrimitiveResult::Failure;
+        }
+
+        // Access as 32-bit words
+        uint32_t* destData = reinterpret_cast<uint32_t*>(destHdr + 1);
+        uint32_t* srcData = reinterpret_cast<uint32_t*>(srcHdr + 1);
+        for (size_t i = 0; i < count; i++) {
+            destData[dstStartIdx + i] = srcData[srcIdx + i];
+        }
+
+        popN(4);
+        return PrimitiveResult::Success;
+    }
+
+    // Handle 64-bit word arrays (Indexable64)
+    if (destHdr->format() == ObjectFormat::Indexable64 &&
+        srcHdr->format() == ObjectFormat::Indexable64) {
         size_t destWords = destHdr->slotCount();
         size_t srcWords = srcHdr->slotCount();
 
@@ -11656,9 +11735,11 @@ PrimitiveResult Interpreter::primitiveStringReplace(int argCount) {
             return PrimitiveResult::Failure;
         }
 
+        // Access as 64-bit words
+        uint64_t* destData = reinterpret_cast<uint64_t*>(destHdr + 1);
+        uint64_t* srcData = reinterpret_cast<uint64_t*>(srcHdr + 1);
         for (size_t i = 0; i < count; i++) {
-            Oop value = destHdr->slotAt(srcIdx + i);
-            destHdr->slotAtPut(dstStartIdx + i, value);
+            destData[dstStartIdx + i] = srcData[srcIdx + i];
         }
 
         popN(4);
