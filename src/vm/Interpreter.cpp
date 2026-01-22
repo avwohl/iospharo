@@ -6795,6 +6795,40 @@ tryRegularPrimitive:
     // Cache the method
     cacheMethod(selector, rcvrClass, method);
 
+    // Debug: trace when max:/min: is cached, show the method's bytecodes
+    if (selStr == "max:" || selStr == "min:") {
+        static int maxCacheCount = 0;
+        if (maxCacheCount++ < 5) {
+            std::string className = "<unknown>";
+            if (rcvrClass.isObject()) {
+                Oop nameOop = memory_.fetchPointer(6, rcvrClass);
+                if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                    ObjectHeader* nHdr = nameOop.asObjectPtr();
+                    if (nHdr->isBytesObject() && nHdr->byteSize() < 50) {
+                        className = std::string((char*)nHdr->bytes(), nHdr->byteSize());
+                    }
+                }
+            }
+            std::cerr << "[MAX-CACHED #" << maxCacheCount << "] Caching #" << selStr
+                      << " for class " << className << " method=0x" << std::hex << method.rawBits() << std::dec;
+            if (method.isObject()) {
+                ObjectHeader* mHdr = method.asObjectPtr();
+                Oop header = memory_.fetchPointer(0, method);
+                if (header.isSmallInteger()) {
+                    int64_t hdrBits = header.asSmallInteger();
+                    int numLits = hdrBits & 0x7FFF;
+                    size_t bcStart = (1 + numLits) * 8;
+                    std::cerr << " numLits=" << numLits << " BC[";
+                    for (int i = 0; i < 20 && bcStart + i < mHdr->byteSize(); i++) {
+                        std::cerr << std::hex << (int)mHdr->bytes()[bcStart + i] << std::dec << " ";
+                    }
+                    std::cerr << "]";
+                }
+            }
+            std::cerr << "\n";
+        }
+    }
+
     // Check for primitive
     int primIndex = primitiveIndexOf(method);
 
@@ -6889,6 +6923,26 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
                 }
                 if (maxLookupCount <= 30) {
                     std::cerr << "[MAX-LOOKUP #" << maxLookupCount << "] Looking for #" << selStr
+                              << " in class " << className << "\n";
+                }
+            }
+            // Trace ifTrue:ifFalse: lookups to debug wrong method being found
+            if (selStr == "ifTrue:ifFalse:" || selStr == "ifTrue:" || selStr == "ifFalse:") {
+                static int ifLookupCount = 0;
+                ifLookupCount++;
+                std::string className = "<unknown>";
+                if (classOop.isObject()) {
+                    Oop nameOop = memory_.fetchPointer(6, classOop);
+                    if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                        ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                            className = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                        }
+                    }
+                }
+                // Only trace non-boolean lookups (True/False are expected)
+                if (className != "True" && className != "False" && ifLookupCount <= 20) {
+                    std::cerr << "[IF-LOOKUP #" << ifLookupCount << "] Looking for #" << selStr
                               << " in class " << className << "\n";
                 }
             }
@@ -7257,7 +7311,29 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
                         if (maxFoundCount++ < 10) {
                             std::cerr << "[MAX-FOUND #" << maxFoundCount << "] Found #" << selStr
                                       << " in class " << getClassName(currentClass)
-                                      << " at depth " << depth << " method=0x" << std::hex << method.rawBits() << std::dec << "\n";
+                                      << " at depth " << depth << " method=0x" << std::hex << method.rawBits() << std::dec;
+                            // Dump bytecodes of the method
+                            if (method.isObject()) {
+                                ObjectHeader* mHdr = method.asObjectPtr();
+                                Oop hdr = memory_.fetchPointer(0, method);
+                                if (hdr.isSmallInteger()) {
+                                    int64_t hdrBits = hdr.asSmallInteger();
+                                    // Spur method header: bits 0-14 = numLiterals, bit 15 = largeFrame, 16-23 = numTemps, 24-27 = numArgs
+                                    int numLits = hdrBits & 0x7FFF;  // NOT shifted by 1!
+                                    int numTemps = (hdrBits >> 16) & 0xFF;
+                                    int numArgs = (hdrBits >> 24) & 0xF;
+                                    bool hasPrim = (hdrBits >> 30) & 1;
+                                    size_t bcStart = (1 + numLits) * 8;
+                                    std::cerr << " rawHdr=0x" << std::hex << hdrBits << std::dec
+                                              << " numLits=" << numLits << " temps=" << numTemps << " args=" << numArgs
+                                              << " hasPrim=" << hasPrim << " BC[";
+                                    for (size_t i = 0; i < 30 && bcStart + i < mHdr->byteSize(); i++) {
+                                        std::cerr << std::hex << (int)mHdr->bytes()[bcStart + i] << std::dec << " ";
+                                    }
+                                    std::cerr << "]";
+                                }
+                            }
+                            std::cerr << "\n";
                         }
                     }
                     return method;
@@ -8266,6 +8342,59 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
             }
 
             if (!selectorStr.empty() && memory_.symbolEquals(key, selectorStr.c_str())) {
+                // Debug: trace "max:" lookup specifically
+                if (selectorStr == "max:" || selectorStr == "min:") {
+                    static int maxLookupCount = 0;
+                    if (maxLookupCount++ < 10) {
+                        Oop method = memory_.fetchPointer(i, valuesArray);
+                        std::cerr << "[MAX-DICT-FOUND #" << maxLookupCount << "] Found key '" << selectorStr
+                                  << "' at i=" << i << " valuesSize=" << valuesSize
+                                  << " method=0x" << std::hex << method.rawBits() << std::dec;
+                        // Show method's actual selector from penultimate literal
+                        if (method.isObject() && method.rawBits() > 0x10000) {
+                            ObjectHeader* mHdr = method.asObjectPtr();
+                            if (mHdr->isCompiledMethod()) {
+                                Oop hdr = memory_.fetchPointer(0, method);
+                                if (hdr.isSmallInteger()) {
+                                    int numLits = hdr.asSmallInteger() & 0x7FFF;
+                                    std::cerr << " numLits=" << numLits;
+                                    if (numLits >= 2) {
+                                        Oop penult = memory_.fetchPointer(numLits - 1, method);
+                                        if (penult.isObject() && penult.rawBits() > 0x10000) {
+                                            ObjectHeader* pH = penult.asObjectPtr();
+                                            if (pH->isBytesObject() && pH->byteSize() < 50) {
+                                                std::string penStr((char*)pH->bytes(), pH->byteSize());
+                                                std::cerr << " methodSel(penult)=" << penStr;
+                                            } else if (pH->slotCount() >= 1) {
+                                                // AdditionalMethodState
+                                                Oop inner = memory_.fetchPointer(0, penult);
+                                                if (inner.isObject() && inner.rawBits() > 0x10000) {
+                                                    ObjectHeader* iH = inner.asObjectPtr();
+                                                    if (iH->isBytesObject() && iH->byteSize() < 50) {
+                                                        std::string iStr((char*)iH->bytes(), iH->byteSize());
+                                                        std::cerr << " methodSel(AMS)=" << iStr;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    // Also show lit1
+                                    if (numLits >= 1) {
+                                        Oop lit1 = memory_.fetchPointer(1, method);
+                                        if (lit1.isObject() && lit1.rawBits() > 0x10000) {
+                                            ObjectHeader* l1H = lit1.asObjectPtr();
+                                            if (l1H->isBytesObject() && l1H->byteSize() < 50) {
+                                                std::string l1Str((char*)l1H->bytes(), l1H->byteSize());
+                                                std::cerr << " lit1=" << l1Str;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        std::cerr << "\n";
+                    }
+                }
                 // Debug: trace "hands" lookup specifically
                 if (selectorStr == "hands") {
                     std::cerr << "[MD-HANDS] Found 'hands' at i=" << i
@@ -8299,7 +8428,9 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
             //   - The selector directly (Symbol)
             //   - An AdditionalMethodState object (contains selector at slot 0)
             uint64_t methodHeader = keyHdr->slots()[0].rawBits();
-            size_t numLiterals = (methodHeader >> 1) & 0x7FFF;
+            // SmallInteger rawBits = (value << 3) | 1, so >> 3 extracts value
+            // Then bits 0-14 are numLiterals
+            size_t numLiterals = (methodHeader >> 3) & 0x7FFF;
 
             if (numLiterals >= 1) {
                 Oop selectorLit = memory_.fetchPointer(1, key);
@@ -8452,7 +8583,8 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
         if (entryHdr->isCompiledMethod()) {
             // Check selector at literal 1
             uint64_t mh = entryHdr->slots()[0].rawBits();
-            size_t nLit = (mh >> 1) & 0x7FFF;
+            // SmallInteger rawBits >> 3 to extract value, then bits 0-14 are numLits
+            size_t nLit = (mh >> 3) & 0x7FFF;
             if (nLit >= 1) {
                 Oop selLit = memory_.fetchPointer(1, entry);
                 if (selLit.isObject() && selLit.rawBits() > 0x10000 && selLit.rawBits() < 0x10000000000ULL) {
@@ -8536,7 +8668,8 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                             std::string definingClass = "?";
                             if (hdrOop.isSmallInteger()) {
                                 int64_t hdrBits = hdrOop.asSmallInteger();
-                                int numLits = (hdrBits >> 1) & 0x7FFF;
+                                // asSmallInteger() already did >> 3, bits 0-14 are numLits
+                                int numLits = hdrBits & 0x7FFF;
                                 if (numLits >= 1) {
                                     Oop lastLit = memory_.fetchPointer(numLits, method);
                                     if (lastLit.isObject() && lastLit.rawBits() > 0x10000) {
@@ -8565,7 +8698,8 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                                       << " isSmallInt=" << std::dec << hdrO.isSmallInteger();
                             if (hdrO.isSmallInteger()) {
                                 rawHeader = hdrO.asSmallInteger();
-                                numLitsActual = (rawHeader >> 1) & 0x7FFF;
+                                // asSmallInteger() did >> 3, bits 0-14 are numLits
+                                numLitsActual = rawHeader & 0x7FFF;
                             }
                             size_t bcStartActual = (1 + numLitsActual) * 8;
                             std::cerr << " rawHdr=0x" << std::hex << rawHeader << std::dec
@@ -9055,15 +9189,43 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     static FILE* frameLog = fopen("/tmp/iospharo-frame.log", "a");
 
     // Get method name/selector for recursion detection
+    // IMPORTANT: Use the actual selector (penultimate literal), NOT lit1
+    // lit1 might be a symbol used BY the method, not the method's selector
     std::string methodName = "";
     if (method.isObject() && method.rawBits() > 0x10000) {
-        ObjectHeader* mHdr = method.asObjectPtr();
-        if (mHdr->slotCount() > 1) {
-            Oop lit1 = mHdr->slotAt(1);
-            if (lit1.isObject() && lit1.rawBits() > 0x10000) {
-                ObjectHeader* litHdr = lit1.asObjectPtr();
-                if (litHdr->isBytesObject() && litHdr->byteSize() < 50) {
-                    methodName = std::string((char*)litHdr->bytes(), litHdr->byteSize());
+        Oop hdr = memory_.fetchPointer(0, method);
+        if (hdr.isSmallInteger()) {
+            int numLits = hdr.asSmallInteger() & 0x7FFF;
+            // Selector is at penultimate literal position (numLits - 1)
+            if (numLits >= 2) {
+                Oop selOop = memory_.fetchPointer(numLits - 1, method);
+                if (selOop.isObject() && selOop.rawBits() > 0x10000) {
+                    ObjectHeader* selHdr = selOop.asObjectPtr();
+                    if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                        methodName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                    } else if (selHdr->slotCount() >= 2) {
+                        // AdditionalMethodState - selector at slot 1
+                        Oop innerSel = memory_.fetchPointer(1, selOop);
+                        if (innerSel.isObject() && innerSel.rawBits() > 0x10000) {
+                            ObjectHeader* innerHdr = innerSel.asObjectPtr();
+                            if (innerHdr->isBytesObject() && innerHdr->byteSize() < 50) {
+                                methodName = std::string((char*)innerHdr->bytes(), innerHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+            }
+            // Fallback: try lit1 if selector extraction failed (for small methods)
+            if (methodName.empty() && numLits >= 1) {
+                ObjectHeader* mHdr = method.asObjectPtr();
+                if (mHdr->slotCount() > 1) {
+                    Oop lit1 = mHdr->slotAt(1);
+                    if (lit1.isObject() && lit1.rawBits() > 0x10000) {
+                        ObjectHeader* litHdr = lit1.asObjectPtr();
+                        if (litHdr->isBytesObject() && litHdr->byteSize() < 50) {
+                            methodName = std::string((char*)litHdr->bytes(), litHdr->byteSize());
+                        }
+                    }
                 }
             }
         }
@@ -9082,7 +9244,8 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
                 Oop callerHdr = memory_.fetchPointer(0, method_);
                 if (callerHdr.isSmallInteger()) {
                     int64_t ch = callerHdr.asSmallInteger();
-                    int callerLits = (ch >> 1) & 0x7FFF;
+                    // asSmallInteger() did >> 3, bits 0-14 are numLits
+                    int callerLits = ch & 0x7FFF;
                     if (callerLits >= 1) {
                         Oop callerLit1 = memory_.fetchPointer(1, method_);
                         if (callerLit1.isObject() && callerLit1.rawBits() > 0x10000) {
@@ -9123,7 +9286,8 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
                 Oop hdr = memory_.fetchPointer(0, method);
                 if (hdr.isSmallInteger()) {
                     int64_t hdrBits = hdr.asSmallInteger();
-                    int numLits = (hdrBits >> 1) & 0x7FFF;
+                    // asSmallInteger() did >> 3, bits 0-14 are numLits
+                    int numLits = hdrBits & 0x7FFF;
                     int primIdx = (hdrBits >> 16) & 0x3FF;  // Primitive index
                     size_t bcStart = (1 + numLits) * 8;
                     std::cerr << " numLits=" << numLits << " primIdx=" << primIdx << " BC[";
@@ -9186,13 +9350,18 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
         }
     }
 
-    // Early intercept: if ifTrue:ifFalse: is called on a non-boolean, return false immediately
-    // This prevents infinite loops caused by non-boolean values in conditionals
-    if (methodName == "ifTrue:ifFalse:" || methodName == "ifTrue:" || methodName == "ifFalse:") {
+    // Note: We previously had an aggressive NONBOOL-INTERCEPT here that blocked ifTrue:/ifFalse:
+    // calls on non-boolean receivers. This was removed because:
+    // 1. It was triggering false positives due to incorrect methodName extraction (using lit1)
+    // 2. Classes like BlockClosure/FullBlockClosure have legitimate ifTrue: implementations
+    // The root cause of SmallInteger appearing as receiver was fixed by properly extracting
+    // the method selector from the penultimate literal instead of lit1.
+    if (false && (methodName == "ifTrue:ifFalse:" || methodName == "ifTrue:" || methodName == "ifFalse:")) {
         Oop rcvr = stackValue(argCount);
         bool isBoolean = rcvr.rawBits() == memory_.trueObject().rawBits() ||
                          rcvr.rawBits() == memory_.falseObject().rawBits();
-        if (!isBoolean) {
+        // Only intercept truly problematic cases (immediate values that can't have methods)
+        if (rcvr.isSmallInteger() || rcvr.isNil()) {
             static int ifBoolInterceptCount = 0;
             if (ifBoolInterceptCount++ < 10) {
                 std::string rcvrDesc = "unknown";
@@ -9219,7 +9388,8 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
                     Oop headerOop = memory_.fetchPointer(0, method_);
                     if (headerOop.isSmallInteger()) {
                         int64_t header = headerOop.asSmallInteger();
-                        int numLits = (header >> 1) & 0x7FFF;
+                        // asSmallInteger() did >> 3, bits 0-14 are numLits
+                        int numLits = header & 0x7FFF;
                         if (numLits >= 2) {
                             Oop assoc = memory_.fetchPointer(numLits, method_);
                             if (assoc.isObject() && assoc.rawBits() > 0x10000) {
@@ -9256,7 +9426,8 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
                     Oop hdrOop = memory_.fetchPointer(0, method_);
                     if (hdrOop.isSmallInteger()) {
                         int64_t h = hdrOop.asSmallInteger();
-                        int numLits = (h >> 1) & 0x7FFF;
+                        // asSmallInteger() did >> 3, bits 0-14 are numLits
+                        int numLits = h & 0x7FFF;
                         std::cerr << " numLits=" << numLits;
                         // The selector is at literal numLits-1 (second to last)
                         // The class association is at literal numLits (last)
@@ -9295,7 +9466,8 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
                             Oop smHdr = memory_.fetchPointer(0, senderMethod);
                             if (smHdr.isSmallInteger()) {
                                 int64_t smh = smHdr.asSmallInteger();
-                                int smNumLits = (smh >> 1) & 0x7FFF;
+                                // asSmallInteger() did >> 3, bits 0-14 are numLits
+                                int smNumLits = smh & 0x7FFF;
                                 if (smNumLits >= 1) {
                                     Oop smLit1 = memory_.fetchPointer(1, senderMethod);
                                     if (smLit1.isObject() && smLit1.rawBits() > 0x10000) {
@@ -9407,7 +9579,8 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
                     Oop headerOop = memory_.fetchPointer(0, method_);
                     if (headerOop.isSmallInteger()) {
                         int64_t header = headerOop.asSmallInteger();
-                        int numLits = (header >> 1) & 0x7FFF;
+                        // asSmallInteger() did >> 3, bits 0-14 are numLits
+                        int numLits = header & 0x7FFF;
                         if (numLits >= 2) {
                             Oop assoc = memory_.fetchPointer(numLits, method_);  // Class association (last literal)
                             if (assoc.isObject() && assoc.rawBits() > 0x10000) {
