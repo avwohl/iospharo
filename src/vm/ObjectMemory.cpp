@@ -154,31 +154,19 @@ Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
 
     initializeHeader(obj, classIndex, slotCount, format);
 
-    // TRACE: Log all allocations to understand memory layout
+    // TRACE: Log all allocations for Context class to understand memory layout
     {
         static FILE* allAllocLog = nullptr;
         static int allAllocCount = 0;
-        static bool foundPattern = false;
         if (!allAllocLog) allAllocLog = fopen("/tmp/all_alloc.log", "w");
-        if (allAllocLog && allAllocCount < 200) {
+        if (allAllocLog && allAllocCount < 50 && classIndex == 36) {  // Only Context class
             allAllocCount++;
             uint64_t allocAddr = (uint64_t)obj;
             uint64_t allocEnd = allocAddr + 8 + slotCount * 8;
-            // Log if this allocation ends at or after 0x...1428 and before 0x...1490 (where overlap happens)
-            if ((allocAddr & 0xFFF) >= 0x1300 && (allocAddr & 0xFFF) <= 0x1500) {
-                fprintf(allAllocLog, "[ALLOC #%d] classIdx=%d slots=%zu at 0x%llx (ends 0x%llx)\n",
-                        allAllocCount, classIndex, slotCount, (unsigned long long)allocAddr, (unsigned long long)allocEnd);
-                fflush(allAllocLog);
-                foundPattern = true;
-            }
-            // Also log if the address ends at exactly ...1470 or ...1428
-            if ((allocEnd & 0xFFFF) == 0x1470 || (allocEnd & 0xFFFF) == 0x1428 ||
-                (allocAddr & 0xFFFF) == 0x1470 || (allocAddr & 0xFFFF) == 0x1428) {
-                fprintf(allAllocLog, "[ALLOC #%d] EXACT MATCH! classIdx=%d slots=%zu at 0x%llx (ends 0x%llx)\n",
-                        allAllocCount, classIndex, slotCount, (unsigned long long)allocAddr, (unsigned long long)allocEnd);
-                fflush(allAllocLog);
-                foundPattern = true;
-            }
+            fprintf(allAllocLog, "[CTX-ALLOC #%d] slots=%zu at 0x%llx (ends 0x%llx) edenFree=0x%llx\n",
+                    allAllocCount, slotCount, (unsigned long long)allocAddr,
+                    (unsigned long long)allocEnd, (unsigned long long)edenFree_);
+            fflush(allAllocLog);
         }
     }
 
