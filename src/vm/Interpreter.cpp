@@ -8926,8 +8926,54 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
                         }
                     }
                 }
+                // Also trace caller method for debugging
+                std::string callerClass = "?";
+                std::string callerSel = "?";
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    Oop headerOop = memory_.fetchPointer(0, method_);
+                    if (headerOop.isSmallInteger()) {
+                        int64_t header = headerOop.asSmallInteger();
+                        int numLits = (header >> 1) & 0x7FFF;
+                        if (numLits >= 2) {
+                            Oop assoc = memory_.fetchPointer(numLits, method_);
+                            if (assoc.isObject() && assoc.rawBits() > 0x10000) {
+                                ObjectHeader* aHdr = assoc.asObjectPtr();
+                                if (aHdr->slotCount() >= 2) {
+                                    Oop cls = memory_.fetchPointer(1, assoc);
+                                    if (cls.isObject()) {
+                                        Oop nameOop = memory_.fetchPointer(6, cls);
+                                        if (nameOop.isObject()) {
+                                            ObjectHeader* nHdr = nameOop.asObjectPtr();
+                                            if (nHdr->isBytesObject() && nHdr->byteSize() < 50) {
+                                                callerClass = std::string((char*)nHdr->bytes(), nHdr->byteSize());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Oop selOop = memory_.fetchPointer(numLits - 1, method_);
+                            if (selOop.isObject() && selOop.rawBits() > 0x10000) {
+                                ObjectHeader* sHdr = selOop.asObjectPtr();
+                                if (sHdr->isBytesObject() && sHdr->byteSize() < 100) {
+                                    callerSel = std::string((char*)sHdr->bytes(), sHdr->byteSize());
+                                }
+                            }
+                        }
+                    }
+                }
+                // Debug: show method_ info
                 std::cerr << "[NONBOOL-INTERCEPT #" << ifBoolInterceptCount << "] " << methodName
-                          << " on " << rcvrDesc << " - returning false\n";
+                          << " on " << rcvrDesc;
+                if (method_.isObject()) {
+                    Oop hdr = memory_.fetchPointer(0, method_);
+                    std::cerr << " method=0x" << std::hex << method_.rawBits()
+                              << " hdr=0x" << hdr.rawBits() << std::dec;
+                    if (hdr.isSmallInteger()) {
+                        int64_t h = hdr.asSmallInteger();
+                        std::cerr << " (val=" << h << " numLits=" << ((h >> 1) & 0x7FFF) << ")";
+                    }
+                }
+                std::cerr << " - returning false\n";
             }
             // Pop args and receiver, push false to break potential loops
             popN(argCount + 1);
