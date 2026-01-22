@@ -5116,14 +5116,16 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         static int fullCheckTraceCount = 0;
         static FILE* fcLog = nullptr;
 
+        static int fullCheckCallCount = 0;
         if (selStr == "fullCheck") {
+            fullCheckCallCount++;
             g_inFullCheck = true;
             g_fullCheckBytecodeCount = 0;
             fullCheckTraceCount = 0;
             if (!fcLog) fcLog = fopen("/tmp/fullcheck_trace.log", "w");
             if (!g_fcBytecodeLog) g_fcBytecodeLog = fopen("/tmp/fullcheck_bytecodes.log", "w");
             if (fcLog) {
-                fprintf(fcLog, "\n=== fullCheck entered at send #%d ===\n", allSendCount);
+                fprintf(fcLog, "\n=== fullCheck #%d entered at send #%d ===\n", fullCheckCallCount, allSendCount);
                 fprintf(fcLog, "  method_=0x%llx\n", (unsigned long long)method_.rawBits());
                 // Dump active method's bytecodes
                 if (method_.isObject()) {
