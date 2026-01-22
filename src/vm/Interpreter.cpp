@@ -9879,16 +9879,19 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         dnuDepth--;
         return;
     }
-    // Fallback for adaptToNumber/adaptToInteger/adaptToFloat on nil
-    // This happens when nil participates in arithmetic (e.g., during delay restoration
-    // when stored resumption times are nil). Return 0 to allow arithmetic to proceed.
+    // Fallback for adaptToNumber/adaptToInteger/adaptToFloat on nil or boolean
+    // This happens when nil or booleans participate in arithmetic (e.g., during delay restoration
+    // when stored resumption times are nil, or after our ifTrue:ifFalse: intercept returns false).
+    // Return 0 to allow arithmetic to proceed.
     // For example, `0 - nil` becomes `0 - 0 = 0` which treats nil as having no delta.
-    // Also check for nil itself (receiver_ == 0)
     bool isNilReceiver = rcvrClassName == "UndefinedObject" || receiver_.isNil() ||
                          receiver_.rawBits() == memory_.nil().rawBits();
+    bool isBooleanReceiver = receiver_.rawBits() == memory_.trueObject().rawBits() ||
+                             receiver_.rawBits() == memory_.falseObject().rawBits() ||
+                             rcvrClassName == "True" || rcvrClassName == "False";
 
     if ((origStr == "adaptToNumber:andSend:" || origStr == "adaptToInteger:andSend:" ||
-         origStr == "adaptToFloat:andSend:") && isNilReceiver) {
+         origStr == "adaptToFloat:andSend:") && (isNilReceiver || isBooleanReceiver)) {
         // The second argument is the selector - check if it's a comparison op
         // Stack: [receiver, arg0=number, arg1=selector]
         // For comparison operations, return false; for arithmetic, return 0
