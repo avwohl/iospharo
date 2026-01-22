@@ -45,8 +45,35 @@ PrimitiveResult Interpreter::primitiveNoop(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveLowSpaceSemaphore(int argCount) {
-    (void)argCount;
-    return PrimitiveResult::Failure;  // stub - let Smalltalk handle
+    // Primitive 124: Register the low space semaphore
+    // Args: receiver (ignored), arg = semaphore (or nil to clear)
+    // Stores semaphore in special objects array at TheLowSpaceSemaphore (index 17)
+
+    if (argCount != 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop arg = stackValue(0);
+
+    // Validate: must be nil or a Semaphore
+    if (!arg.isNil()) {
+        if (!arg.isObject()) {
+            return PrimitiveResult::Failure;
+        }
+        // Check that it's a Semaphore (class index should match ClassSemaphore)
+        Oop semaphoreClass = memory_.specialObject(SpecialObjectIndex::ClassSemaphore);
+        if (memory_.classOf(arg) != semaphoreClass) {
+            return PrimitiveResult::Failure;
+        }
+    }
+
+    // Store in special objects array
+    memory_.setSpecialObject(SpecialObjectIndex::TheLowSpaceSemaphore, arg);
+
+    // Return receiver
+    Oop receiver = stackValue(1);
+    primitiveSuccess(receiver);
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveDeferDisplayUpdates(int argCount) {
@@ -3566,11 +3593,12 @@ PrimitiveResult Interpreter::primitiveLocalMicrosecondClock(int argCount) {
 
 PrimitiveResult Interpreter::primitiveSignalAtMilliseconds(int argCount) {
     // Primitive 136: Schedule semaphore signal at given milliseconds
-    // Args: semaphore (receiver), milliseconds (target time in ioMSecs units)
+    // Called as: sema signalAtMilliseconds: msecs
+    // Args: semaphore (receiver at stackValue(1)), milliseconds (arg at stackValue(0))
     // The milliseconds value comes from Smalltalk as `ioMSecs + delayMs`,
     // which is a 30-bit wrapping value. Timer comparison uses wrap-around handling.
 
-    if (argCount != 2) {
+    if (argCount != 1) {
         return PrimitiveResult::Failure;
     }
 
@@ -6896,18 +6924,31 @@ PrimitiveResult Interpreter::primitiveGrowMemoryByAtLeast(int argCount) {
 
 // Primitive 125: Signal semaphore when free bytes drops below threshold
 PrimitiveResult Interpreter::primitiveSignalAtBytesLeft(int argCount) {
+    // Primitive 125: Set low space threshold
+    // Takes 1 argument: bytes (SmallInteger >= 0)
+    // The semaphore is stored separately via primitiveLowSpaceSemaphore (124)
+
+    if (argCount != 1) {
+        return PrimitiveResult::Failure;
+    }
+
     Oop bytesOop = stackValue(0);
-    Oop semaphoreOop = stackValue(1);
 
     if (!bytesOop.isSmallInteger()) {
         return PrimitiveResult::Failure;
     }
 
-    // In a full implementation, we'd register this with the GC
-    // For now, just succeed (the GC will need to check this)
+    int64_t bytes = bytesOop.asSmallInteger();
+    if (bytes < 0) {
+        return PrimitiveResult::Failure;
+    }
 
-    popN(2);
-    push(semaphoreOop);  // Return receiver
+    // Store the threshold for GC to check
+    lowSpaceThreshold_ = static_cast<size_t>(bytes);
+
+    // Return receiver (pop arg, leave receiver)
+    Oop receiver = stackValue(1);
+    primitiveSuccess(receiver);
     return PrimitiveResult::Success;
 }
 
@@ -6915,21 +6956,21 @@ PrimitiveResult Interpreter::primitiveSignalAtBytesLeft(int argCount) {
 
 // Primitive 134: Set the interrupt semaphore
 PrimitiveResult Interpreter::primitiveInterruptSemaphore(int argCount) {
-    Oop semaphoreOop = stackTop();
+    // Primitive 134: Register the interrupt semaphore
+    // Stores semaphore in special objects array at TheInterruptSemaphore (index 30)
 
-    // Store in special objects array at InterruptSemaphore index
-    // Special object index 30 is the interrupt semaphore
-    const size_t InterruptSemaphoreIndex = 30;
-
-    Oop specialArray = memory_.specialObjectsArray();
-    if (specialArray.isNil()) {
+    if (argCount != 1) {
         return PrimitiveResult::Failure;
     }
 
-    memory_.storePointer(InterruptSemaphoreIndex, specialArray, semaphoreOop);
+    Oop semaphoreOop = stackValue(0);
 
-    pop();
-    push(semaphoreOop);
+    // Store in special objects array using the proper constant
+    memory_.setSpecialObject(SpecialObjectIndex::TheInterruptSemaphore, semaphoreOop);
+
+    // Return receiver
+    Oop receiver = stackValue(1);
+    primitiveSuccess(receiver);
     return PrimitiveResult::Success;
 }
 

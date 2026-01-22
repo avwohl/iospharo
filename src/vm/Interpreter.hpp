@@ -417,6 +417,9 @@ private:
     Oop timerSemaphore_ = Oop::nil();
     int64_t nextWakeupTime_ = 0;  // 0 means no timer set (in ioMSecs units)
 
+    // Low space threshold for GC (bytes) - signals TheLowSpaceSemaphore when free < threshold
+    size_t lowSpaceThreshold_ = 0;
+
     // VM start time for ioMSecs() - millisecond clock base
     std::chrono::steady_clock::time_point vmStartTime_ = std::chrono::steady_clock::now();
 

@@ -71,6 +71,7 @@ enum class SpecialObjectIndex : size_t {
     ClassLargePositiveInteger = 13,
     ClassMessage = 14,
     ClassCompiledMethod = 15,
+    TheLowSpaceSemaphore = 17,  // Semaphore signaled when memory is low
     ClassSemaphore = 18,
     ClassCharacter = 19,
     SelectorDoesNotUnderstand = 20,
@@ -79,6 +80,8 @@ enum class SpecialObjectIndex : size_t {
     ClassByteArray = 26,
     ClassProcess = 27,
     CompactClasses = 28,
+    TheTimerSemaphore = 29,     // Semaphore signaled by timer (primitiveSignalAtMilliseconds)
+    TheInterruptSemaphore = 30, // Semaphore signaled on user interrupt
     SelectorCannotReturn = 36,
     SelectorAboutToReturn = 40,
     ClassLargeNegativeInteger = 42,
