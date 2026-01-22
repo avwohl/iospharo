@@ -532,85 +532,17 @@ PrimitiveResult Interpreter::primitiveLessThan(int argCount) {
         return PrimitiveResult::Success;
     }
 
-    // Log < failures to debug SmallInteger(1) in conditionals
-    static int ltFailCount = 0;
-    if (ltFailCount++ < 5) {
-        std::string rcvrType = "unknown";
-        std::string argType = "unknown";
-        if (rcvr.isSmallInteger()) rcvrType = "SmallInteger(" + std::to_string(rcvr.asSmallInteger()) + ")";
-        else if (rcvr.isCharacter()) rcvrType = "Character";
-        else if (rcvr.isNil()) rcvrType = "nil";
-        else if (rcvr.isObject()) {
-            Oop cls = memory_.classOf(rcvr);
-            if (cls.isObject()) {
-                Oop nameOop = memory_.fetchPointer(6, cls);
-                if (nameOop.isObject()) {
-                    ObjectHeader* nHdr = nameOop.asObjectPtr();
-                    if (nHdr->isBytesObject() && nHdr->byteSize() < 50) {
-                        rcvrType = std::string((char*)nHdr->bytes(), nHdr->byteSize());
-                    }
-                }
-            }
-        }
-        if (arg.isSmallInteger()) argType = "SmallInteger(" + std::to_string(arg.asSmallInteger()) + ")";
-        else if (arg.isCharacter()) argType = "Character";
-        else if (arg.isNil()) argType = "nil";
-        else if (arg.isObject()) {
-            Oop cls = memory_.classOf(arg);
-            if (cls.isObject()) {
-                Oop nameOop = memory_.fetchPointer(6, cls);
-                if (nameOop.isObject()) {
-                    ObjectHeader* nHdr = nameOop.asObjectPtr();
-                    if (nHdr->isBytesObject() && nHdr->byteSize() < 50) {
-                        argType = std::string((char*)nHdr->bytes(), nHdr->byteSize());
-                    }
-                }
-            }
-        }
-        std::cerr << "[PRIM-LT-FAIL #" << ltFailCount << "] < failed: "
-                  << rcvrType << " < " << argType << "\n";
-    }
-
     return PrimitiveResult::Failure;
 }
 
 PrimitiveResult Interpreter::primitiveGreaterThan(int argCount) {
-    static int gtCallCount = 0;
-    static FILE* gtLog = nullptr;
-    gtCallCount++;
-
-    if (!gtLog) {
-        gtLog = fopen("/tmp/prim_gt.log", "w");
-    }
-
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
     if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
-        int64_t rcvrVal = rcvr.asSmallInteger();
-        int64_t argVal = arg.asSmallInteger();
-        bool result = rcvrVal > argVal;
-
-        // Log all calls (first 100) and any involving 0
-        if (gtLog && (gtCallCount <= 100 || argVal == 0)) {
-            fprintf(gtLog, "[GT #%d] %lld > %lld = %s\n",
-                    gtCallCount, (long long)rcvrVal, (long long)argVal,
-                    result ? "true" : "false");
-            fflush(gtLog);
-        }
-
+        bool result = rcvr.asSmallInteger() > arg.asSmallInteger();
         primitiveSuccess(result ? memory_.trueObject() : memory_.falseObject());
         return PrimitiveResult::Success;
-    }
-
-    // Log primitive failures
-    static int gtFailCount = 0;
-    if (gtFailCount++ < 10) {
-        std::cerr << "[GT-FAIL #" << gtFailCount << "] > failed: rcvr=0x"
-                  << std::hex << rcvr.rawBits() << " arg=0x" << arg.rawBits() << std::dec;
-        if (rcvr.isSmallInteger()) std::cerr << " rcvrVal=" << rcvr.asSmallInteger();
-        if (arg.isSmallInteger()) std::cerr << " argVal=" << arg.asSmallInteger();
-        std::cerr << "\n";
     }
 
     return PrimitiveResult::Failure;
@@ -742,23 +674,8 @@ PrimitiveResult Interpreter::primitiveEqual(int argCount) {
     }
 
     if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
-        int64_t rcvrVal = rcvr.asSmallInteger();
-        int64_t argVal = arg.asSmallInteger();
-        bool result = rcvrVal == argVal;
-        Oop resultObj = result ? memory_.trueObject() : memory_.falseObject();
-
-        // Log when 0 = 0 to trace platform comparison
-        static int zeroEqualCount = 0;
-        if (rcvrVal == 0 && argVal == 0) {
-            zeroEqualCount++;
-            if (zeroEqualCount <= 10) {
-                std::cerr << "[PRIM7 #" << zeroEqualCount << "] 0 = 0 -> "
-                          << (result ? "true" : "false") << " (0x" << std::hex
-                          << resultObj.rawBits() << std::dec << ")\n";
-            }
-        }
-
-        primitiveSuccess(resultObj);
+        bool result = rcvr.asSmallInteger() == arg.asSmallInteger();
+        primitiveSuccess(result ? memory_.trueObject() : memory_.falseObject());
         return PrimitiveResult::Success;
     }
 
@@ -1506,26 +1423,6 @@ PrimitiveResult Interpreter::primitiveNew(int argCount) {
 PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
     Oop size = stackValue(0);
     Oop rcvr = stackValue(1);  // Class
-
-    // Debug: trace all basicNew: calls
-    static int basicNewCount = 0;
-    basicNewCount++;
-    std::string className = "<unknown>";
-    uint32_t classIdx = 0;
-    if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-        classIdx = rcvr.asObjectPtr()->classIndex();
-        Oop nameOop = memory_.fetchPointer(6, rcvr);
-        if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
-            ObjectHeader* nameHdr = nameOop.asObjectPtr();
-            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
-                className = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-            }
-        }
-    }
-    if (basicNewCount <= 100 || className.find("Context") != std::string::npos) {
-        std::cerr << "[BASICNEW:] #" << basicNewCount << " " << className << " (classIdx=" << classIdx << ")"
-                  << " size=" << (size.isSmallInteger() ? size.asSmallInteger() : -1) << "\n";
-    }
 
     if (!size.isSmallInteger() || !rcvr.isObject()) {
         return PrimitiveResult::Failure;
