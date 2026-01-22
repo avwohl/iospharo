@@ -431,10 +431,14 @@ PrimitiveResult Interpreter::primitiveMod(int argCount) {
             return PrimitiveResult::Failure;
         }
 
-        // Smalltalk mod (\\) uses floored division
-        int64_t result = a - b * static_cast<int64_t>(std::floor(
-            static_cast<double>(a) / static_cast<double>(b)));
-        primitiveSuccess(Oop::fromSmallInteger(result));
+        // Smalltalk mod (\\) returns result with same sign as divisor
+        // Using integer arithmetic to avoid precision loss (unlike float conversion)
+        int64_t rem = a % b;
+        // Adjust sign: C remainder has sign of dividend, Smalltalk mod has sign of divisor
+        if (rem != 0 && ((a < 0) != (b < 0))) {
+            rem += b;
+        }
+        primitiveSuccess(Oop::fromSmallInteger(rem));
         return PrimitiveResult::Success;
     }
 
@@ -453,10 +457,15 @@ PrimitiveResult Interpreter::primitiveDiv(int argCount) {
             return PrimitiveResult::Failure;
         }
 
-        // Floored division (//)
-        int64_t result = static_cast<int64_t>(std::floor(
-            static_cast<double>(a) / static_cast<double>(b)));
-        primitiveSuccess(Oop::fromSmallInteger(result));
+        // Floored division (//) using integer arithmetic
+        // C division truncates toward zero, floor division rounds toward negative infinity
+        int64_t q = a / b;
+        int64_t rem = a % b;
+        // Adjust for floor: when signs differ and there's a remainder, subtract 1
+        if (rem != 0 && ((a < 0) != (b < 0))) {
+            q -= 1;
+        }
+        primitiveSuccess(Oop::fromSmallInteger(q));
         return PrimitiveResult::Success;
     }
 
@@ -3733,70 +3742,6 @@ PrimitiveResult Interpreter::primitiveReplaceFromTo(int argCount) {
     int64_t stopIdx = stop.asSmallInteger();
     int64_t repStartIdx = repStart.asSmallInteger();
 
-    // Trace ALL calls to primitive 105
-    static FILE* replLog = nullptr;
-    static int replCount = 0;
-    if (!replLog) replLog = fopen("/tmp/replace_trace.log", "w");
-    if (replLog && replCount < 100) {
-        replCount++;
-        fprintf(replLog, "[P105 #%d] replaceFrom:%lld to:%lld with:0x%llx startingAt:%lld (rcvr=0x%llx)\n",
-                replCount, startIdx, stopIdx, (unsigned long long)replacement.rawBits(),
-                repStartIdx, (unsigned long long)rcvr.rawBits());
-        fflush(replLog);
-    }
-    if (replLog && rcvr.isObject() && replacement.isObject()) {
-        ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
-        ObjectHeader* replHdr = replacement.asObjectPtr();
-        if (rcvrHdr->isPointersObject() && replHdr->isPointersObject()) {
-            // Count non-nil elements in source (replacement)
-            Oop nilObj = memory_.nil();
-            int srcNonNil = 0;
-            for (size_t i = 0; i < replHdr->slotCount(); i++) {
-                if (replHdr->slotAt(i).rawBits() != nilObj.rawBits()) srcNonNil++;
-            }
-            // Log ALL replaceFrom:to:with:startingAt: calls with meaningful data
-            if (srcNonNil > 0 && stopIdx >= 10) {
-                replCount++;
-                fprintf(replLog, "[REPLACE #%d] rcvr=0x%llx (%zu slots), src=0x%llx (%zu slots, %d non-nil)\n",
-                        replCount, (unsigned long long)rcvr.rawBits(), rcvrHdr->slotCount(),
-                        (unsigned long long)replacement.rawBits(), replHdr->slotCount(), srcNonNil);
-                fprintf(replLog, "  replaceFrom:%lld to:%lld with:src startingAt:%lld\n",
-                        startIdx, stopIdx, repStartIdx);
-                // Show elements in the copy range
-                fprintf(replLog, "  src elements [%lld..%lld]: ", repStartIdx, repStartIdx + (stopIdx - startIdx));
-                for (int64_t i = repStartIdx - 1; i < repStartIdx - 1 + (stopIdx - startIdx + 1) && i < (int64_t)replHdr->slotCount() && i < repStartIdx + 5; i++) {
-                    Oop elem = replHdr->slotAt(i);
-                    if (elem.rawBits() == nilObj.rawBits()) {
-                        fprintf(replLog, "[nil] ");
-                    } else if (elem.isSmallInteger()) {
-                        fprintf(replLog, "[int %lld] ", elem.asSmallInteger());
-                    } else {
-                        // Get class name
-                        Oop elemCls = memory_.classOf(elem);
-                        if (elemCls.isObject()) {
-                            Oop clsName = memory_.fetchPointer(6, elemCls);
-                            if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                                ObjectHeader* cnHdr = clsName.asObjectPtr();
-                                if (cnHdr->isBytesObject() && cnHdr->byteSize() < 30) {
-                                    std::string cn((char*)cnHdr->bytes(), cnHdr->byteSize());
-                                    fprintf(replLog, "[%s] ", cn.c_str());
-                                } else {
-                                    fprintf(replLog, "[obj] ");
-                                }
-                            } else {
-                                fprintf(replLog, "[obj] ");
-                            }
-                        } else {
-                            fprintf(replLog, "[obj] ");
-                        }
-                    }
-                }
-                fprintf(replLog, "...\n");
-                fflush(replLog);
-            }
-        }
-    }
-
     if (startIdx < 1 || repStartIdx < 1) {
         return PrimitiveResult::Failure;
     }
@@ -4752,8 +4697,42 @@ PrimitiveResult Interpreter::primitiveModLargeIntegers(int argCount) {
     std::vector<uint8_t> quotient, remainder;
     divideMagnitudes(aMag, bMag, quotient, remainder);
 
-    // Remainder has same sign as dividend (truncated division)
-    bool resultNeg = aNeg && !(remainder.size() == 1 && remainder[0] == 0);
+    // Smalltalk mod (\\) returns result with same sign as divisor
+    // C-style division gives remainder with sign of dividend
+    // When signs differ and remainder is non-zero, adjust: remainder = b - remainder
+    bool remZero = (remainder.size() == 1 && remainder[0] == 0);
+
+    if (!remZero && (aNeg != bNeg)) {
+        // Adjust remainder: result = divisor - remainder
+        // Subtract remainder from divisor magnitude
+        std::vector<uint8_t> adjusted;
+        int borrow = 0;
+        size_t maxLen = std::max(bMag.size(), remainder.size());
+        adjusted.resize(maxLen);
+
+        for (size_t i = 0; i < maxLen; i++) {
+            int bVal = (i < bMag.size()) ? bMag[i] : 0;
+            int rVal = (i < remainder.size()) ? remainder[i] : 0;
+            int diff = bVal - rVal - borrow;
+            if (diff < 0) {
+                diff += 256;
+                borrow = 1;
+            } else {
+                borrow = 0;
+            }
+            adjusted[i] = static_cast<uint8_t>(diff);
+        }
+
+        // Remove leading zeros
+        while (adjusted.size() > 1 && adjusted.back() == 0) {
+            adjusted.pop_back();
+        }
+        remainder = adjusted;
+    }
+
+    // Result has sign of divisor (unless zero)
+    remZero = (remainder.size() == 1 && remainder[0] == 0);
+    bool resultNeg = bNeg && !remZero;
 
     Oop result = makeLargeInteger(memory_, remainder, resultNeg);
     if (result.isNil()) return PrimitiveResult::Failure;
