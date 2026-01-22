@@ -3923,10 +3923,9 @@ PrimitiveResult Interpreter::primitiveFloatDivide(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    if (b == 0.0) {
-        return PrimitiveResult::Failure;  // Division by zero
-    }
-
+    // Per IEEE 754 semantics: division by zero produces +/-Infinity, not an error
+    // 1.0/0.0 = +Infinity, -1.0/0.0 = -Infinity, 0.0/0.0 = NaN
+    // Do NOT check for b == 0.0 - let IEEE 754 handle it
     double result = a / b;
     Oop resultOop = makeFloat(memory_, result);
     if (resultOop.isNil()) return PrimitiveResult::Failure;
