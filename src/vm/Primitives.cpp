@@ -216,14 +216,7 @@ PrimitiveResult Interpreter::primitiveExecuteMethodArgsArray(int argCount) {
     // Stack: receiver, argsArray, method (top)
     // argCount = 2 (argsArray and method)
 
-    static FILE* p188Log = fopen("/tmp/prim188.log", "w");
-    if (p188Log) {
-        fprintf(p188Log, "[PRIM188] Called with argCount=%d\n", argCount);
-        fflush(p188Log);
-    }
-
     if (argCount < 2) {
-        if (p188Log) { fprintf(p188Log, "[PRIM188] FAIL: argCount < 2\n"); fflush(p188Log); }
         return PrimitiveResult::Failure;
     }
 
@@ -231,31 +224,22 @@ PrimitiveResult Interpreter::primitiveExecuteMethodArgsArray(int argCount) {
     Oop method = stackValue(0);
     // Get args array
     Oop argsArray = stackValue(1);
-    // Get receiver (at position argCount from top)
-    // Note: receiver stays on stack, we don't need to manipulate it
-    (void)stackValue(static_cast<size_t>(argCount));  // receiver - used implicitly
 
     // Validate method is a CompiledMethod
     if (!method.isObject()) {
-        if (p188Log) { fprintf(p188Log, "[PRIM188] FAIL: method not object\n"); fflush(p188Log); }
         return PrimitiveResult::Failure;
     }
     ObjectHeader* methodHdr = method.asObjectPtr();
     if (!methodHdr->isCompiledMethod()) {
-        if (p188Log) { fprintf(p188Log, "[PRIM188] FAIL: method not CompiledMethod (format=%d)\n",
-                               static_cast<int>(methodHdr->format())); fflush(p188Log); }
         return PrimitiveResult::Failure;
     }
 
     // Validate argsArray is an Array (format == 2, Indexable)
     if (!argsArray.isObject()) {
-        if (p188Log) { fprintf(p188Log, "[PRIM188] FAIL: argsArray not object\n"); fflush(p188Log); }
         return PrimitiveResult::Failure;
     }
     ObjectHeader* argsHdr = argsArray.asObjectPtr();
     if (argsHdr->format() != ObjectFormat::Indexable) {
-        if (p188Log) { fprintf(p188Log, "[PRIM188] FAIL: argsArray not Indexable (format=%d)\n",
-                               static_cast<int>(argsHdr->format())); fflush(p188Log); }
         return PrimitiveResult::Failure;
     }
 
@@ -263,7 +247,6 @@ PrimitiveResult Interpreter::primitiveExecuteMethodArgsArray(int argCount) {
     // Method header is slot 0, numArgs is in bits 24-27
     Oop methodHeader = memory_.fetchPointer(0, method);
     if (!methodHeader.isSmallInteger()) {
-        if (p188Log) { fprintf(p188Log, "[PRIM188] FAIL: methodHeader not SmallInteger\n"); fflush(p188Log); }
         return PrimitiveResult::Failure;
     }
     int64_t headerBits = methodHeader.asSmallInteger();
@@ -272,12 +255,8 @@ PrimitiveResult Interpreter::primitiveExecuteMethodArgsArray(int argCount) {
     // Verify array size matches expected argument count
     size_t arraySize = memory_.slotCountOf(argsArray);
     if (static_cast<size_t>(methodNumArgs) != arraySize) {
-        if (p188Log) { fprintf(p188Log, "[PRIM188] FAIL: arg count mismatch (method=%d, array=%zu)\n",
-                               methodNumArgs, arraySize); fflush(p188Log); }
         return PrimitiveResult::Failure;
     }
-
-    if (p188Log) { fprintf(p188Log, "[PRIM188] SUCCESS: activating method with %d args\n", methodNumArgs); fflush(p188Log); }
 
     // Pop the current arguments (method and argsArray) but leave receiver
     popN(static_cast<size_t>(argCount));
@@ -337,14 +316,6 @@ PrimitiveResult Interpreter::primitiveAdd(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveSubtract(int argCount) {
-    static int subCallCount = 0;
-    static FILE* subLog = nullptr;
-    subCallCount++;
-
-    if (!subLog && subCallCount == 1) {
-        subLog = fopen("/tmp/prim_sub.log", "w");
-    }
-
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -352,14 +323,6 @@ PrimitiveResult Interpreter::primitiveSubtract(int argCount) {
         int64_t a = rcvr.asSmallInteger();
         int64_t b = arg.asSmallInteger();
         int64_t result = a - b;
-
-        // Log around zero crossing
-        if (subLog && (a >= -5 && a <= 10) && subCallCount <= 500) {
-            fprintf(subLog, "[SUB #%d] %lld - %lld = %lld (canBe=%d)\n",
-                    subCallCount, (long long)a, (long long)b, (long long)result,
-                    Oop::canBeSmallInteger(result));
-            fflush(subLog);
-        }
 
         if (Oop::canBeSmallInteger(result)) {
             primitiveSuccess(Oop::fromSmallInteger(result));
@@ -378,9 +341,29 @@ PrimitiveResult Interpreter::primitiveMultiply(int argCount) {
         int64_t a = rcvr.asSmallInteger();
         int64_t b = arg.asSmallInteger();
 
-        // Check for overflow before multiplying
-        if (b != 0 && (a > Oop::smallIntegerMax() / std::abs(b) ||
-                       a < Oop::smallIntegerMin() / std::abs(b))) {
+        // Per official VM: 4-case overflow check based on sign combinations
+        bool overflow = false;
+        int64_t maxSmall = Oop::smallIntegerMax();
+        int64_t minSmall = Oop::smallIntegerMin();
+
+        if (a > 0) {
+            if (b > 0) {
+                overflow = a > (maxSmall / b);
+            } else if (b < 0) {
+                overflow = b < (minSmall / a);
+            }
+            // b == 0: no overflow (result is 0)
+        } else if (a < 0) {
+            if (b > 0) {
+                overflow = a < (minSmall / b);
+            } else if (b < 0) {
+                overflow = b < (maxSmall / a);
+            }
+            // b == 0: no overflow (result is 0)
+        }
+        // a == 0: no overflow (result is 0)
+
+        if (overflow) {
             return PrimitiveResult::Failure;
         }
 
