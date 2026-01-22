@@ -4007,25 +4007,15 @@ void Interpreter::arithmeticSend(int which) {
         }
     }
 
-    // For comparison operations (< > <= >= = ~=), provide fallback for non-numeric types
-    if (which >= 2 && which <= 7) {
+    // For ordering comparisons (< > <= >=), provide fallback for non-numeric types
+    // NOTE: = and ~= MUST go through method lookup to handle String comparisons, etc.
+    if (which >= 2 && which <= 5) {
         if (!rcvr.isSmallInteger() || !arg.isSmallInteger()) {
-            // std::cerr << "[ARITH] Comparison fallback for " << rcvrClassName << " which=" << which; // DEBUG
-            popN(2);  // Pop receiver and argument
-            switch (which) {
-                case 2:  // <
-                case 3:  // >
-                case 4:  // <=
-                case 5:  // >=
-                case 6:  // =
-                    push(memory_.falseObject());  // Non-numeric comparisons default to false
-                    return;
-                case 7:  // ~=
-                    push(memory_.trueObject());   // Non-numeric inequality defaults to true
-                    return;
-            }
+            // Ordering comparisons on non-integers - send to method lookup below
+            // (don't short-circuit, let the method handle it)
         }
     }
+    // Don't short-circuit = and ~= (which 6 and 7) - objects define their own equality!
 
     // For bit operations (\\, @, bitShift:, //, bitAnd:, bitOr:), provide fallback for non-integers
     // These ops are 10-15 and only make sense on SmallIntegers
