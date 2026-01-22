@@ -5527,20 +5527,43 @@ PrimitiveResult Interpreter::primitiveCompareBytes(int argCount) {
 
 // Primitive 159: Hash multiply for collections
 PrimitiveResult Interpreter::primitiveHashMultiply(int argCount) {
+    // Primitive 159: Hash multiply for SmallInteger or LargePositiveInteger
+    // hashMultiply is: (value * 1664525) bitAnd: 16rFFFFFFF
     Oop rcvr = stackTop();
 
-    if (!rcvr.isSmallInteger()) {
+    const int64_t HashMultiplier = 1664525;
+    const int64_t HashMask = 0x0FFFFFFF;  // 28 bits
+    uint32_t value;
+
+    if (rcvr.isSmallInteger()) {
+        // SmallInteger case
+        value = static_cast<uint32_t>(rcvr.asSmallInteger() & 0xFFFFFFFF);
+    } else if (rcvr.isObject()) {
+        // Check if LargePositiveInteger
+        Oop largePositiveClass = memory_.specialObject(SpecialObjectIndex::ClassLargePositiveInteger);
+        if (memory_.classOf(rcvr) != largePositiveClass) {
+            return PrimitiveResult::Failure;  // Not a LargePositiveInteger
+        }
+        // Read first 32 bits of magnitude (little-endian)
+        ObjectHeader* hdr = rcvr.asObjectPtr();
+        size_t byteSize = hdr->byteSize();
+        if (byteSize < 4) {
+            // Small LargeInteger - read available bytes
+            value = 0;
+            const uint8_t* bytes = hdr->bytes();
+            for (size_t i = 0; i < byteSize; i++) {
+                value |= (static_cast<uint32_t>(bytes[i]) << (i * 8));
+            }
+        } else {
+            // Read first 4 bytes (little-endian)
+            const uint8_t* bytes = hdr->bytes();
+            value = bytes[0] | (bytes[1] << 8) | (bytes[2] << 16) | (bytes[3] << 24);
+        }
+    } else {
         return PrimitiveResult::Failure;
     }
 
-    int64_t hash = rcvr.asSmallInteger();
-
-    // Standard hash multiply used by Squeak/Pharo
-    // hashMultiply is: (hash * 1664525) bitAnd: 16rFFFFFFF
-    const int64_t HashMultiplier = 1664525;
-    const int64_t HashMask = 0x0FFFFFFF;  // 28 bits
-
-    int64_t result = (hash * HashMultiplier) & HashMask;
+    int64_t result = (static_cast<int64_t>(value) * HashMultiplier) & HashMask;
 
     pop();
     push(Oop::fromSmallInteger(result));
@@ -6478,6 +6501,13 @@ PrimitiveResult Interpreter::primitiveShortAtPut(int argCount) {
     }
 
     ObjectHeader* header = rcvr.asObjectPtr();
+
+    // Validate format: must be pure bits object (format 9-23, not compiled methods 24-31)
+    auto fmt = header->format();
+    int fmtInt = static_cast<int>(fmt);
+    if (fmtInt < 9 || fmtInt >= 24) {
+        return PrimitiveResult::Failure;  // Not a pure bits object
+    }
 
     // Check immutability
     if (header->isImmutable()) {
