@@ -3109,8 +3109,39 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
             {
                 uint8_t tempIndex = fetchByte();
                 uint8_t vectorIndex = fetchByte();
-                // Get temp vector from current context temps
-                Oop tempVector = temporary(vectorIndex);
+
+                // Check if we're executing a CompiledBlock (block method) vs CompiledMethod
+                // CompiledBlock has an outer CompiledMethod at its penultimate literal
+                bool isBlockExecution = false;
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    Oop header = memory_.fetchPointer(0, method_);
+                    if (header.isSmallInteger()) {
+                        size_t numLits = header.asSmallInteger() & 0x7FFF;
+                        if (numLits >= 2) {
+                            // Penultimate literal: for CompiledBlock, this is the outer method
+                            Oop penultLit = memory_.fetchPointer(numLits - 1, method_);
+                            if (penultLit.isObject() && penultLit.rawBits() > 0x10000) {
+                                ObjectHeader* plHdr = penultLit.asObjectPtr();
+                                // If it's a CompiledMethod/Block (format >= 24), we're in a block
+                                if (plHdr->isCompiledMethod()) {
+                                    isBlockExecution = true;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // For FullBlockClosure execution, the temp vector is in the OUTER context,
+                // not in the block's local frame. Read from activeContext_ (outer context).
+                Oop tempVector;
+                if (isBlockExecution && activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
+                    // Read from outer context's temps (slot 6+ is temp area)
+                    tempVector = memory_.fetchPointer(6 + vectorIndex, activeContext_);
+                } else {
+                    // Regular method: read from local temps
+                    tempVector = temporary(vectorIndex);
+                }
+
                 Oop value;
                 if (tempVector.isObject()) {
                     value = memory_.fetchPointer(tempIndex, tempVector);
@@ -3187,7 +3218,35 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 uint8_t tempIndex = fetchByte();
                 uint8_t vectorIndex = fetchByte();
                 Oop value = stackTop();
-                Oop tempVector = temporary(vectorIndex);
+
+                // Check if we're executing a CompiledBlock (block method) vs CompiledMethod
+                bool isBlockExecution = false;
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    Oop header = memory_.fetchPointer(0, method_);
+                    if (header.isSmallInteger()) {
+                        size_t numLits = header.asSmallInteger() & 0x7FFF;
+                        if (numLits >= 2) {
+                            Oop penultLit = memory_.fetchPointer(numLits - 1, method_);
+                            if (penultLit.isObject() && penultLit.rawBits() > 0x10000) {
+                                ObjectHeader* plHdr = penultLit.asObjectPtr();
+                                if (plHdr->isCompiledMethod()) {
+                                    isBlockExecution = true;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // For FullBlockClosure execution, the temp vector is in the OUTER context,
+                // not in the block's local frame. Read from activeContext_ (outer context).
+                Oop tempVector;
+                if (isBlockExecution && activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
+                    // Read from outer context's temps (slot 6+ is temp area)
+                    tempVector = memory_.fetchPointer(6 + vectorIndex, activeContext_);
+                } else {
+                    // Regular method: read from local temps
+                    tempVector = temporary(vectorIndex);
+                }
 
                 // Trace stores to temp vectors
                 static FILE* rtsLog = nullptr;
@@ -3234,7 +3293,35 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 uint8_t tempIndex = fetchByte();
                 uint8_t vectorIndex = fetchByte();
                 Oop value = pop();
-                Oop tempVector = temporary(vectorIndex);
+
+                // Check if we're executing a CompiledBlock (block method) vs CompiledMethod
+                bool isBlockExecution = false;
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    Oop header = memory_.fetchPointer(0, method_);
+                    if (header.isSmallInteger()) {
+                        size_t numLits = header.asSmallInteger() & 0x7FFF;
+                        if (numLits >= 2) {
+                            Oop penultLit = memory_.fetchPointer(numLits - 1, method_);
+                            if (penultLit.isObject() && penultLit.rawBits() > 0x10000) {
+                                ObjectHeader* plHdr = penultLit.asObjectPtr();
+                                if (plHdr->isCompiledMethod()) {
+                                    isBlockExecution = true;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // For FullBlockClosure execution, the temp vector is in the OUTER context,
+                // not in the block's local frame. Read from activeContext_ (outer context).
+                Oop tempVector;
+                if (isBlockExecution && activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
+                    // Read from outer context's temps (slot 6+ is temp area)
+                    tempVector = memory_.fetchPointer(6 + vectorIndex, activeContext_);
+                } else {
+                    // Regular method: read from local temps
+                    tempVector = temporary(vectorIndex);
+                }
 
                 // Trace stores to temp vectors
                 static FILE* rtsLog2 = nullptr;
@@ -9708,19 +9795,150 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         dnuDepth--;
         return;
     }
-    if (origStr == "hasError") {
-        // Return false for error status check
-        popN(argCount + 1);
-        push(memory_.falseObject());
-        dnuDepth--;
-        return;
-    }
-    if (origStr == "isImageStarting" || origStr == "isSessionStarting") {
-        // Return TRUE - we ARE starting the image after snapshot resume
-        popN(argCount + 1);
-        push(memory_.trueObject());
-        dnuDepth--;
-        return;
+    if (origStr == "hasError" || origStr == "isImageStarting" || origStr == "isSessionStarting") {
+        // Log context to understand why these are sent to SessionManager
+        static FILE* heDebug = nullptr;
+        static int heCount = 0;
+        if (!heDebug) heDebug = fopen("/tmp/hasError_debug.log", "w");
+        if (heDebug && heCount++ < 10) {
+            fprintf(heDebug, "[%s #%d] receiver=0x%llx\n", origStr.c_str(), heCount,
+                    (unsigned long long)receiver_.rawBits());
+            // Get calling method name from method_
+            std::string callerMethod = "<unknown>";
+            std::string callerClass = "<unknown>";
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                ObjectHeader* mHdr = method_.asObjectPtr();
+                if (mHdr->isCompiledMethod()) {
+                    Oop hdr = memory_.fetchPointer(0, method_);
+                    if (hdr.isSmallInteger()) {
+                        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                        // Last literal has class association
+                        if (numLits >= 1) {
+                            Oop lastLit = memory_.fetchPointer(numLits, method_);
+                            if (lastLit.isObject() && lastLit.rawBits() > 0x10000) {
+                                ObjectHeader* llHdr = lastLit.asObjectPtr();
+                                if (llHdr->slotCount() >= 1) {
+                                    Oop classRef = memory_.fetchPointer(0, lastLit);
+                                    if (classRef.isObject() && classRef.rawBits() > 0x10000) {
+                                        Oop className = memory_.fetchPointer(6, classRef);
+                                        if (className.isObject() && className.rawBits() > 0x10000) {
+                                            ObjectHeader* cnHdr = className.asObjectPtr();
+                                            if (cnHdr->isBytesObject() && cnHdr->byteSize() < 100) {
+                                                callerClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            // Selector from literal[numLits-1]
+                            Oop selLit = memory_.fetchPointer(numLits - 1, method_);
+                            if (selLit.isObject() && selLit.rawBits() > 0x10000) {
+                                ObjectHeader* slHdr = selLit.asObjectPtr();
+                                if (slHdr->isBytesObject() && slHdr->byteSize() < 100) {
+                                    callerMethod = std::string((char*)slHdr->bytes(), slHdr->byteSize());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            fprintf(heDebug, "  calling method: %s >> %s\n", callerClass.c_str(), callerMethod.c_str());
+            // Show temps to see what snapshotOperation looks like
+            fprintf(heDebug, "  frameDepth=%zu\n", frameDepth_);
+            // Show what's on the stack (receiver was pushed before args)
+            fprintf(heDebug, "  stack (sp=%p):\n", (void*)stackPointer_);
+            for (int s = 0; s < 5; s++) {
+                Oop val = stackValue(s);
+                std::string valClass = "<unknown>";
+                if (val.isObject() && val.rawBits() > 0x10000) {
+                    Oop cls = memory_.classOf(val);
+                    if (cls.isObject() && cls.rawBits() > 0x10000) {
+                        Oop cn = memory_.fetchPointer(6, cls);
+                        if (cn.isObject() && cn.rawBits() > 0x10000) {
+                            ObjectHeader* cnh = cn.asObjectPtr();
+                            if (cnh->isBytesObject() && cnh->byteSize() < 100) {
+                                valClass = std::string((char*)cnh->bytes(), cnh->byteSize());
+                            }
+                        }
+                    }
+                } else if (val.isSmallInteger()) {
+                    valClass = "SmallInteger(" + std::to_string(val.asSmallInteger()) + ")";
+                } else if (val.isNil()) {
+                    valClass = "nil";
+                }
+                fprintf(heDebug, "    stack[%d]=0x%llx (%s)\n", s, (unsigned long long)val.rawBits(), valClass.c_str());
+            }
+            // Show context temps if at frame depth 0
+            if (frameDepth_ == 0 && activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
+                fprintf(heDebug, "  activeContext slots:\n");
+                ObjectHeader* ctxHdr = activeContext_.asObjectPtr();
+                size_t slots = ctxHdr->slotCount();
+                for (size_t i = 0; i < slots && i < 10; i++) {
+                    Oop val = memory_.fetchPointer(i, activeContext_);
+                    std::string valClass = "<unknown>";
+                    if (val.isObject() && val.rawBits() > 0x10000) {
+                        Oop cls = memory_.classOf(val);
+                        if (cls.isObject() && cls.rawBits() > 0x10000) {
+                            Oop cn = memory_.fetchPointer(6, cls);
+                            if (cn.isObject() && cn.rawBits() > 0x10000) {
+                                ObjectHeader* cnh = cn.asObjectPtr();
+                                if (cnh->isBytesObject() && cnh->byteSize() < 100) {
+                                    valClass = std::string((char*)cnh->bytes(), cnh->byteSize());
+                                }
+                            }
+                        }
+                    } else if (val.isSmallInteger()) {
+                        valClass = "SmallInteger(" + std::to_string(val.asSmallInteger()) + ")";
+                    } else if (val.isNil()) {
+                        valClass = "nil";
+                    }
+                    const char* slotNames[] = {"sender", "pc", "sp", "method", "closureOrNil", "receiver", "temp0", "temp1", "temp2", "temp3"};
+                    fprintf(heDebug, "    slot[%zu](%s)=0x%llx (%s)\n", i, slotNames[i], (unsigned long long)val.rawBits(), valClass.c_str());
+
+                    // If this is an Array (temp vector), show its contents
+                    if (i >= 6 && valClass == "Array") {
+                        ObjectHeader* arrHdr = val.asObjectPtr();
+                        fprintf(heDebug, "      [temp vector contents, %zu slots]:\n", arrHdr->slotCount());
+                        for (size_t j = 0; j < arrHdr->slotCount() && j < 8; j++) {
+                            Oop arrVal = memory_.fetchPointer(j, val);
+                            std::string arrValClass = "<unknown>";
+                            if (arrVal.isObject() && arrVal.rawBits() > 0x10000) {
+                                Oop acls = memory_.classOf(arrVal);
+                                if (acls.isObject() && acls.rawBits() > 0x10000) {
+                                    Oop acn = memory_.fetchPointer(6, acls);
+                                    if (acn.isObject() && acn.rawBits() > 0x10000) {
+                                        ObjectHeader* acnh = acn.asObjectPtr();
+                                        if (acnh->isBytesObject() && acnh->byteSize() < 100) {
+                                            arrValClass = std::string((char*)acnh->bytes(), acnh->byteSize());
+                                        }
+                                    }
+                                }
+                            } else if (arrVal.isSmallInteger()) {
+                                arrValClass = "SmallInteger(" + std::to_string(arrVal.asSmallInteger()) + ")";
+                            } else if (arrVal.isNil()) {
+                                arrValClass = "nil";
+                            }
+                            fprintf(heDebug, "        [%zu]=0x%llx (%s)\n", j, (unsigned long long)arrVal.rawBits(), arrValClass.c_str());
+                        }
+                    }
+                }
+            }
+            fflush(heDebug);
+        }
+
+        if (origStr == "hasError") {
+            // Return false for error status check
+            popN(argCount + 1);
+            push(memory_.falseObject());
+            dnuDepth--;
+            return;
+        } else {
+            // isImageStarting/isSessionStarting - Return TRUE
+            popN(argCount + 1);
+            push(memory_.trueObject());
+            dnuDepth--;
+            return;
+        }
     }
     // NOTE: Previously bypassed executeDeferredStartupActions:, runStartup:, startUp:
     // This was preventing tool registration. Let these run normally now.
@@ -13218,12 +13436,16 @@ bool Interpreter::executeFromContext(Oop context) {
             fflush(snapStackLog);
         }
 
-        // Set TOS to true so "result not ifTrue: [quit]" skips the quit path.
+        // Set TOS to true ONLY for the actual snapshot primitive (131) context.
         // This allows the image to proceed with startup instead of quitting.
-        if (stackPointer_ > stackBase_) {
-            *(stackPointer_ - 1) = memory_.trueObject();
-        } else {
-            push(memory_.trueObject());
+        // Do NOT set TOS for other snapshot-related contexts (like SessionManager methods)
+        // as that would corrupt return values.
+        if (primIdx == 131) {
+            if (stackPointer_ > stackBase_) {
+                *(stackPointer_ - 1) = memory_.trueObject();
+            } else {
+                push(memory_.trueObject());
+            }
         }
 
         // For SessionManager (Pharo 13+), the 'quit' parameter might be stored
