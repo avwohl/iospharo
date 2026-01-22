@@ -9214,6 +9214,41 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         if (origHdr->isBytesObject() && origHdr->byteSize() <= 100) {
             origStr = std::string((char*)origHdr->bytes(), origHdr->byteSize());
         }
+    } else {
+        // Debug: selector is not a valid object
+        static int badSelCount = 0;
+        if (badSelCount++ < 5) {
+            std::cerr << "[DNU-DEBUG] Selector is not a valid object! selector=0x"
+                      << std::hex << selector.rawBits() << std::dec
+                      << " isSmallInt=" << selector.isSmallInteger()
+                      << " isSmallFloat=" << selector.isSmallFloat()
+                      << " isChar=" << selector.isCharacter()
+                      << " receiver=0x" << std::hex << receiver_.rawBits() << std::dec
+                      << "\n";
+            // Show method_ and IP
+            std::cerr << "  method_=0x" << std::hex << method_.rawBits() << std::dec;
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                ObjectHeader* mHdr = method_.asObjectPtr();
+                std::cerr << " slots=" << mHdr->slotCount() << " fmt=" << (int)mHdr->format();
+                Oop mHeader = memory_.fetchPointer(0, method_);
+                if (mHeader.isSmallInteger()) {
+                    int numLits = mHeader.asSmallInteger() & 0x7FFF;
+                    std::cerr << " numLits=" << numLits;
+                    // Show last literal (selector)
+                    if (numLits >= 2) {
+                        Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                        std::cerr << " lastLit=0x" << std::hex << sel.rawBits() << std::dec;
+                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                            ObjectHeader* selHdr = sel.asObjectPtr();
+                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                std::cerr << " '" << std::string((char*)selHdr->bytes(), selHdr->byteSize()) << "'";
+                            }
+                        }
+                    }
+                }
+            }
+            std::cerr << "\n";
+        }
     }
     // TRACE: Special debugging for startup: DNU
     if (origStr == "startup:") {

@@ -1028,12 +1028,20 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
         primitiveSuccess(result);
         return PrimitiveResult::Success;
     } else if (header->isCompiledMethod()) {
-        // CompiledMethods are hybrid objects with both literals (pointers) and bytecodes
-        // objectAt: accesses the literal frame (slots)
-        if (arrayIndex >= header->slotCount()) {
+        // CompiledMethods are hybrid objects: slots (header + literals) then bytecodes
+        // at: accesses raw bytes directly using 1-based index
+        // Smalltalk calculates initialPC = (numLiterals+1)*wordSize+1 to find bytecodes
+        // objectAt: (primitive 68) accesses the literal frame instead
+
+        size_t totalBytes = header->byteSize();
+
+        // arrayIndex is (idx - 1), so byteIndex is 0-based
+        if (arrayIndex >= totalBytes) {
             return PrimitiveResult::Failure;
         }
-        primitiveSuccess(header->slotAt(arrayIndex));
+
+        uint8_t byte = header->bytes()[arrayIndex];
+        primitiveSuccess(Oop::fromSmallInteger(byte));
         return PrimitiveResult::Success;
     }
 
@@ -1164,6 +1172,27 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
         header->slotAtPut(arrayIndex, value);
         primitiveSuccess(value);
         return PrimitiveResult::Success;
+    } else if (header->isCompiledMethod()) {
+        // CompiledMethods: at:put: modifies bytecodes, not literals
+        // Use objectAt:put: (primitive 69) for literal modification
+        if (!value.isSmallInteger()) {
+            return PrimitiveResult::Failure;
+        }
+        int64_t byteValue = value.asSmallInteger();
+        if (byteValue < 0 || byteValue > 255) {
+            return PrimitiveResult::Failure;
+        }
+
+        // CompiledMethod at:put: accesses raw bytes directly
+        size_t totalBytes = header->byteSize();
+
+        if (arrayIndex >= totalBytes) {
+            return PrimitiveResult::Failure;
+        }
+
+        header->bytes()[arrayIndex] = static_cast<uint8_t>(byteValue);
+        primitiveSuccess(value);
+        return PrimitiveResult::Success;
     }
 
     return PrimitiveResult::Failure;
@@ -1181,6 +1210,10 @@ PrimitiveResult Interpreter::primitiveSize(int argCount) {
     size_t size;
 
     if (header->isBytesObject()) {
+        size = header->byteSize();
+    } else if (header->isCompiledMethod()) {
+        // For CompiledMethods, size returns the total byte size
+        // Smalltalk calculates bytecode count as: size - initialPC + 1
         size = header->byteSize();
     } else {
         size = header->slotCount();
@@ -1705,16 +1738,46 @@ PrimitiveResult Interpreter::primitiveAtEnd(int argCount) {
 
 PrimitiveResult Interpreter::primitivePerform(int argCount) {
     // perform: selector
-    // Stack: receiver, selector
+    // perform:with: selector arg1
+    // perform:with:with: selector arg1 arg2
+    // etc.
+    //
+    // Stack layout: receiver, selector, arg1, arg2, ... (argN at top)
+    // For argCount=1: receiver, selector  (selector at top)
+    // For argCount=2: receiver, selector, arg1  (selector at stackValue(1))
+    // For argCount=3: receiver, selector, arg1, arg2  (selector at stackValue(2))
+    // General: selector at stackValue(argCount - 1)
+
     if (argCount < 1) return PrimitiveResult::Failure;
 
-    Oop selector = stackValue(0);
+    // Selector is BEFORE the additional arguments
+    Oop selector = stackValue(argCount - 1);
+    int additionalArgs = argCount - 1;
 
-    // Remove selector from stack, leaving receiver
-    popN(1);
+    // Validate selector is a Symbol
+    if (!selector.isObject() || selector.rawBits() < 0x10000) {
+        return PrimitiveResult::Failure;
+    }
 
-    // Send the message with 0 additional args
-    sendSelector(selector, 0);
+    // Remove selector from the middle of the stack, keeping args
+    // Stack before: receiver, selector, arg1, ..., argN
+    // Stack after:  receiver, arg1, ..., argN
+    //
+    // Stack memory layout (stackPointer_ points one past top):
+    // For argCount=2: stackPointer_[-1]=arg1, stackPointer_[-2]=selector, stackPointer_[-3]=receiver
+    // After: stackPointer_[-1]=arg1, stackPointer_[-2]=receiver
+    // So we copy args down one slot to overwrite selector, then pop one slot
+
+    // Shift additional arguments down to cover the selector slot
+    for (int i = 0; i < additionalArgs; i++) {
+        // Copy from stackPointer_[-(i+1)] (args starting from top)
+        // To stackPointer_[-(i+2)] (selector slot and below)
+        stackPointer_[-(i + 2)] = stackPointer_[-(i + 1)];
+    }
+    popN(1);  // Now pop the duplicate top
+
+    // Send the message with the additional args
+    sendSelector(selector, additionalArgs);
     return PrimitiveResult::Success;
 }
 
@@ -1724,6 +1787,35 @@ PrimitiveResult Interpreter::primitivePerformWithArgs(int argCount) {
 
     Oop argsArray = stackValue(0);
     Oop selector = stackValue(1);
+
+    // Debug: detect bad selectors
+    if (!selector.isObject() || selector.rawBits() < 0x10000) {
+        static int badPerformArgsCount = 0;
+        if (badPerformArgsCount++ < 5) {
+            std::cerr << "[PERFORM-ARGS-DEBUG] Bad selector in primitivePerformWithArgs!"
+                      << " selector=0x" << std::hex << selector.rawBits() << std::dec
+                      << " isSmallFloat=" << selector.isSmallFloat()
+                      << " receiver=0x" << std::hex << stackValue(2).rawBits() << std::dec
+                      << "\n";
+            // Show method context
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                Oop mHdr = memory_.fetchPointer(0, method_);
+                if (mHdr.isSmallInteger()) {
+                    int numLits = mHdr.asSmallInteger() & 0x7FFF;
+                    if (numLits >= 2) {
+                        Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                            ObjectHeader* selHdr = sel.asObjectPtr();
+                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                std::cerr << "  in method: #" << std::string((char*)selHdr->bytes(), selHdr->byteSize()) << "\n";
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return PrimitiveResult::Failure;
+    }
 
     if (!argsArray.isObject()) {
         return PrimitiveResult::Failure;
