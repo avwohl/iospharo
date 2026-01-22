@@ -1001,11 +1001,15 @@ void ObjectMemory::ensureIdentityHash(Oop obj) {
 }
 
 uint32_t ObjectMemory::generateHash() {
-    // Simple hash generation - just increment counter
-    // Real implementation would use better randomization
-    lastHash_ = (lastHash_ + 1) & 0x3FFFFF;
-    if (lastHash_ == 0) lastHash_ = 1;  // 0 means unhashed
-    return lastHash_;
+    // Use D.H. Lehmer's linear congruential generator (same as official Pharo VM)
+    // lastHash = lastHash * 16807 (which is 7^5)
+    // Adding top bits gives better spread
+    uint32_t hash;
+    do {
+        lastHash_ = (lastHash_ * 16807) & 0xFFFFFFFF;
+        hash = (lastHash_ + (lastHash_ >> 4)) & 0x3FFFFF;  // 22-bit hash
+    } while (hash == 0);  // 0 means unhashed, so regenerate
+    return hash;
 }
 
 // ===== GARBAGE COLLECTION =====

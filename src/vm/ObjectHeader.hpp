@@ -261,6 +261,14 @@ public:
                   (static_cast<uint64_t>(index & 0x3FFFFF) << ClassIndexShift);
     }
 
+    /// Forwarded object class index (used during GC to indicate object was moved)
+    static constexpr uint32_t ForwardedClassIndex = 8;
+
+    /// Is this a forwarded object? (class index == 8)
+    bool isForwarded() const {
+        return classIndex() == ForwardedClassIndex;
+    }
+
     // ===== FLAGS =====
 
     bool isImmutable() const { return header_ & ImmutableBit; }

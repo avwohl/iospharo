@@ -28,6 +28,9 @@ namespace pharo {
 // External variable from Interpreter.cpp for tracing sends after prim 264
 extern int g_traceSendsAfterPrim264;
 
+// Forward declaration for large integer helper (defined later with other large int primitives)
+static bool trySigned64BitValueOf(ObjectMemory& memory, Oop oop, int64_t& value);
+
 // ===== PRIMITIVE FAILURE STUB =====
 // This is used for primitives that should always fail (fall back to Smalltalk)
 PrimitiveResult Interpreter::primitiveFailure(int argCount) {
@@ -526,64 +529,20 @@ PrimitiveResult Interpreter::primitiveLessThan(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
+    // Fast path: both are SmallIntegers
     if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
         bool result = rcvr.asSmallInteger() < arg.asSmallInteger();
         primitiveSuccess(result ? memory_.trueObject() : memory_.falseObject());
         return PrimitiveResult::Success;
     }
 
-    // Log failed comparisons to understand nil bounds issue
-    static int ltFailCount = 0;
-    if (ltFailCount++ < 3) {
-        std::cerr << "[PRIM-LT-FAIL] ";
-        if (rcvr.isSmallInteger()) std::cerr << rcvr.asSmallInteger();
-        else if (rcvr.isNil()) std::cerr << "nil";
-        else std::cerr << "obj";
-        std::cerr << " < ";
-        if (arg.isSmallInteger()) std::cerr << arg.asSmallInteger();
-        else if (arg.isNil() || arg.rawBits() == memory_.nil().rawBits()) std::cerr << "nil";
-        else std::cerr << "obj";
-        // Get current method selector and receiver details
-        std::cerr << " in #";
-        if (method_.isObject() && method_.rawBits() > 0x10000) {
-            Oop hdr = memory_.fetchPointer(0, method_);
-            if (hdr.isSmallInteger()) {
-                size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                if (numLits >= 2) {
-                    Oop sel = memory_.fetchPointer(numLits - 1, method_);
-                    if (sel.isObject() && sel.rawBits() > 0x10000) {
-                        ObjectHeader* selHdr = sel.asObjectPtr();
-                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                            std::cerr << std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                        }
-                    }
-                }
-            }
-        }
-        // Dump the receiver's slots to understand the corrupt state
-        std::cerr << "\n  Receiver (0x" << std::hex << receiver_.rawBits() << std::dec << "):\n";
-        if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-            ObjectHeader* rcvrHdr = receiver_.asObjectPtr();
-            std::cerr << "    slots=" << rcvrHdr->slotCount() << " classIdx=" << rcvrHdr->classIndex() << "\n";
-            for (size_t s = 0; s < std::min(rcvrHdr->slotCount(), (size_t)5); s++) {
-                Oop slot = memory_.fetchPointer(s, receiver_);
-                std::cerr << "    [" << s << "] = 0x" << std::hex << slot.rawBits() << std::dec;
-                if (slot.isSmallInteger()) std::cerr << " (SmallInt " << slot.asSmallInteger() << ")";
-                else if (slot.isNil() || slot.rawBits() == memory_.nil().rawBits()) std::cerr << " (nil)";
-                else if (slot.isObject()) {
-                    Oop slotCls = memory_.classOf(slot);
-                    if (slotCls.isObject()) {
-                        Oop scn = memory_.fetchPointer(6, slotCls);
-                        if (scn.isObject() && scn.rawBits() > 0x10000) {
-                            ObjectHeader* scnH = scn.asObjectPtr();
-                            if (scnH->isBytesObject() && scnH->byteSize() < 50)
-                                std::cerr << " (" << std::string((char*)scnH->bytes(), scnH->byteSize()) << ")";
-                        }
-                    }
-                }
-                std::cerr << "\n";
-            }
-        }
+    // Try to extract 64-bit signed values (handles LargeIntegers)
+    int64_t rcvrVal, argVal;
+    if (trySigned64BitValueOf(memory_, rcvr, rcvrVal) &&
+        trySigned64BitValueOf(memory_, arg, argVal)) {
+        bool result = (rcvrVal < argVal);
+        primitiveSuccess(result ? memory_.trueObject() : memory_.falseObject());
+        return PrimitiveResult::Success;
     }
 
     return PrimitiveResult::Failure;
@@ -593,24 +552,18 @@ PrimitiveResult Interpreter::primitiveGreaterThan(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
+    // Fast path: both are SmallIntegers
     if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
-        int64_t rcvrVal = rcvr.asSmallInteger();
-        int64_t argVal = arg.asSmallInteger();
-        bool result = rcvrVal > argVal;
+        bool result = rcvr.asSmallInteger() > arg.asSmallInteger();
+        primitiveSuccess(result ? memory_.trueObject() : memory_.falseObject());
+        return PrimitiveResult::Success;
+    }
 
-        // Debug: trace > comparisons in fullCheck
-        static int gtCount = 0;
-        static FILE* gtLog = nullptr;
-        if (!gtLog) gtLog = fopen("/tmp/greater_than.log", "w");
-        if (gtLog && gtCount < 100) {
-            gtCount++;
-            fprintf(gtLog, "[GT #%d] %lld > %lld = %s (true=0x%llx false=0x%llx)\n",
-                    gtCount, rcvrVal, argVal, result ? "true" : "false",
-                    (unsigned long long)memory_.trueObject().rawBits(),
-                    (unsigned long long)memory_.falseObject().rawBits());
-            fflush(gtLog);
-        }
-
+    // Try to extract 64-bit signed values (handles LargeIntegers)
+    int64_t rcvrVal, argVal;
+    if (trySigned64BitValueOf(memory_, rcvr, rcvrVal) &&
+        trySigned64BitValueOf(memory_, arg, argVal)) {
+        bool result = (rcvrVal > argVal);
         primitiveSuccess(result ? memory_.trueObject() : memory_.falseObject());
         return PrimitiveResult::Success;
     }
@@ -622,8 +575,18 @@ PrimitiveResult Interpreter::primitiveLessOrEqual(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
+    // Fast path: both are SmallIntegers
     if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
         bool result = rcvr.asSmallInteger() <= arg.asSmallInteger();
+        primitiveSuccess(result ? memory_.trueObject() : memory_.falseObject());
+        return PrimitiveResult::Success;
+    }
+
+    // Try to extract 64-bit signed values (handles LargeIntegers)
+    int64_t rcvrVal, argVal;
+    if (trySigned64BitValueOf(memory_, rcvr, rcvrVal) &&
+        trySigned64BitValueOf(memory_, arg, argVal)) {
+        bool result = (rcvrVal <= argVal);
         primitiveSuccess(result ? memory_.trueObject() : memory_.falseObject());
         return PrimitiveResult::Success;
     }
@@ -635,116 +598,41 @@ PrimitiveResult Interpreter::primitiveGreaterOrEqual(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
+    // Fast path: both are SmallIntegers
     if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
         bool result = rcvr.asSmallInteger() >= arg.asSmallInteger();
         primitiveSuccess(result ? memory_.trueObject() : memory_.falseObject());
         return PrimitiveResult::Success;
     }
 
-    // Log >= failures to debug SmallInteger(1) in conditionals
-    static int geFailCount = 0;
-    if (geFailCount++ < 5) {
-        std::string rcvrType = "unknown";
-        std::string argType = "unknown";
-        if (rcvr.isSmallInteger()) rcvrType = "SmallInteger";
-        else if (rcvr.isCharacter()) rcvrType = "Character";
-        else if (rcvr.isNil()) rcvrType = "nil";
-        else if (rcvr.isObject()) {
-            Oop cls = memory_.classOf(rcvr);
-            if (cls.isObject()) {
-                Oop nameOop = memory_.fetchPointer(6, cls);
-                if (nameOop.isObject()) {
-                    ObjectHeader* nHdr = nameOop.asObjectPtr();
-                    if (nHdr->isBytesObject() && nHdr->byteSize() < 50) {
-                        rcvrType = std::string((char*)nHdr->bytes(), nHdr->byteSize());
-                    }
-                }
-            }
-        }
-        if (arg.isSmallInteger()) argType = "SmallInteger";
-        else if (arg.isCharacter()) argType = "Character";
-        else if (arg.isNil()) argType = "nil";
-        else if (arg.isObject()) {
-            Oop cls = memory_.classOf(arg);
-            if (cls.isObject()) {
-                Oop nameOop = memory_.fetchPointer(6, cls);
-                if (nameOop.isObject()) {
-                    ObjectHeader* nHdr = nameOop.asObjectPtr();
-                    if (nHdr->isBytesObject() && nHdr->byteSize() < 50) {
-                        argType = std::string((char*)nHdr->bytes(), nHdr->byteSize());
-                    }
-                }
-            }
-        }
-        std::cerr << "[PRIM-GE-FAIL #" << geFailCount << "] >= failed: "
-                  << rcvrType << " >= " << argType << "\n";
+    // Try to extract 64-bit signed values (handles LargeIntegers)
+    int64_t rcvrVal, argVal;
+    if (trySigned64BitValueOf(memory_, rcvr, rcvrVal) &&
+        trySigned64BitValueOf(memory_, arg, argVal)) {
+        bool result = (rcvrVal >= argVal);
+        primitiveSuccess(result ? memory_.trueObject() : memory_.falseObject());
+        return PrimitiveResult::Success;
     }
 
     return PrimitiveResult::Failure;
 }
 
 PrimitiveResult Interpreter::primitiveEqual(int argCount) {
-    static int equalCallCount = 0;
-    static FILE* equalLog = nullptr;
-    equalCallCount++;
-
-    if (!equalLog) {
-        equalLog = fopen("/tmp/prim_smallint_equal.log", "w");
-    }
-
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
-    // Log first 10 calls and also any 0 = something (with method context)
-    bool isZeroRcvr = rcvr.isSmallInteger() && rcvr.asSmallInteger() == 0;
-    if (equalLog && (equalCallCount <= 10 || (isZeroRcvr && equalCallCount <= 200))) {
-        int64_t rcvrVal = rcvr.isSmallInteger() ? rcvr.asSmallInteger() : -9999;
-        int64_t argVal = arg.isSmallInteger() ? arg.asSmallInteger() : -9999;
-
-        // Get current method selector for context
-        std::string methodSel = "<unknown>";
-        if (method_.isObject() && method_.rawBits() > 0x10000) {
-            Oop hdr = memory_.fetchPointer(0, method_);
-            if (hdr.isSmallInteger()) {
-                size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                if (numLits >= 2) {
-                    Oop penult = memory_.fetchPointer(numLits - 1, method_);
-                    if (penult.isObject() && penult.rawBits() > 0x10000) {
-                        ObjectHeader* penHdr = penult.asObjectPtr();
-                        if (penHdr->isBytesObject() && penHdr->byteSize() < 50) {
-                            methodSel = std::string((char*)penHdr->bytes(), penHdr->byteSize());
-                        }
-                    }
-                }
-            }
-        }
-
-        // For 0 = 100 or 0 = 199, also show temps and receiver
-        bool isLoopCheck = (rcvrVal == 0 && (argVal == 100 || argVal == 199 || argVal > 50));
-        if (isLoopCheck) {
-            fprintf(equalLog, "[EQUAL #%d] %lld = %lld in #%s\n",
-                    equalCallCount, (long long)rcvrVal, (long long)argVal, methodSel.c_str());
-            // Show temps 0-3
-            fprintf(equalLog, "  temps: ");
-            for (int t = 0; t < 4; t++) {
-                Oop temp = *(framePointer_ + 1 + t);
-                if (temp.isSmallInteger()) {
-                    fprintf(equalLog, "[%d]=%lld ", t, (long long)temp.asSmallInteger());
-                } else {
-                    fprintf(equalLog, "[%d]=0x%llx ", t, (unsigned long long)temp.rawBits());
-                }
-            }
-            fprintf(equalLog, "\n");
-            fflush(equalLog);
-        } else {
-            fprintf(equalLog, "[EQUAL #%d] %lld = %lld\n",
-                    equalCallCount, (long long)rcvrVal, (long long)argVal);
-            fflush(equalLog);
-        }
+    // Fast path: both are SmallIntegers (most common case)
+    if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
+        bool result = (rcvr.rawBits() == arg.rawBits());
+        primitiveSuccess(result ? memory_.trueObject() : memory_.falseObject());
+        return PrimitiveResult::Success;
     }
 
-    if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
-        bool result = rcvr.asSmallInteger() == arg.asSmallInteger();
+    // Try to extract 64-bit signed values (handles LargeIntegers that fit in 64 bits)
+    int64_t rcvrVal, argVal;
+    if (trySigned64BitValueOf(memory_, rcvr, rcvrVal) &&
+        trySigned64BitValueOf(memory_, arg, argVal)) {
+        bool result = (rcvrVal == argVal);
         primitiveSuccess(result ? memory_.trueObject() : memory_.falseObject());
         return PrimitiveResult::Success;
     }
@@ -756,8 +644,18 @@ PrimitiveResult Interpreter::primitiveNotEqual(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
+    // Fast path: both are SmallIntegers
     if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
-        bool result = rcvr.asSmallInteger() != arg.asSmallInteger();
+        bool result = (rcvr.rawBits() != arg.rawBits());
+        primitiveSuccess(result ? memory_.trueObject() : memory_.falseObject());
+        return PrimitiveResult::Success;
+    }
+
+    // Try to extract 64-bit signed values (handles LargeIntegers)
+    int64_t rcvrVal, argVal;
+    if (trySigned64BitValueOf(memory_, rcvr, rcvrVal) &&
+        trySigned64BitValueOf(memory_, arg, argVal)) {
+        bool result = (rcvrVal != argVal);
         primitiveSuccess(result ? memory_.trueObject() : memory_.falseObject());
         return PrimitiveResult::Success;
     }
@@ -1576,6 +1474,16 @@ PrimitiveResult Interpreter::primitiveShallowCopy(int argCount) {
 
 PrimitiveResult Interpreter::primitiveIdentityHash(int argCount) {
     Oop rcvr = stackValue(0);
+
+    // Fail if receiver is a forwarded object (official VM behavior)
+    if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+        ObjectHeader* hdr = rcvr.asObjectPtr();
+        if (hdr->isForwarded()) {
+            return PrimitiveResult::Failure;
+        }
+    }
+
+    // identityHashOf handles lazy hash generation and caching
     uint32_t hash = memory_.identityHashOf(rcvr);
     primitiveSuccess(Oop::fromSmallInteger(hash));
     return PrimitiveResult::Success;
@@ -1583,6 +1491,15 @@ PrimitiveResult Interpreter::primitiveIdentityHash(int argCount) {
 
 PrimitiveResult Interpreter::primitiveClass(int argCount) {
     Oop rcvr = stackValue(0);
+
+    // Fail if receiver is forwarded (when argCount > 0, per official VM)
+    if (argCount > 0 && rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+        ObjectHeader* hdr = rcvr.asObjectPtr();
+        if (hdr->isForwarded()) {
+            return PrimitiveResult::Failure;
+        }
+    }
+
     Oop classOop = memory_.classOf(rcvr);
     primitiveSuccess(classOop);
     return PrimitiveResult::Success;
@@ -1591,21 +1508,23 @@ PrimitiveResult Interpreter::primitiveClass(int argCount) {
 PrimitiveResult Interpreter::primitiveIdentical(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
-    bool result = (rcvr == arg);
 
-    // Debug: Log == comparisons to understand event loop
-    // (Using separate file from primitiveEqual)
-    static FILE* idLog = nullptr;
-    static int idCount = 0;
-    if (!idLog) idLog = fopen("/tmp/prim_identical.log", "w");
-    if (idLog && idCount < 50) {
-        idCount++;
-        fprintf(idLog, "[== #%d] rcvr=0x%llx arg=0x%llx result=%d\n",
-                idCount, (unsigned long long)rcvr.rawBits(), (unsigned long long)arg.rawBits(),
-                result ? 1 : 0);
-        fflush(idLog);
+    // Fail if either operand is a forwarded object (official VM behavior)
+    // Immediates (SmallInteger, Character, SmallFloat) are never forwarded
+    if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+        ObjectHeader* hdr = rcvr.asObjectPtr();
+        if (hdr->isForwarded()) {
+            return PrimitiveResult::Failure;
+        }
+    }
+    if (arg.isObject() && arg.rawBits() > 0x10000) {
+        ObjectHeader* hdr = arg.asObjectPtr();
+        if (hdr->isForwarded()) {
+            return PrimitiveResult::Failure;
+        }
     }
 
+    bool result = (rcvr == arg);
     primitiveSuccess(result ? memory_.trueObject() : memory_.falseObject());
     return PrimitiveResult::Success;
 }
@@ -1613,6 +1532,21 @@ PrimitiveResult Interpreter::primitiveIdentical(int argCount) {
 PrimitiveResult Interpreter::primitiveNotIdentical(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
+
+    // Fail if either operand is a forwarded object (official VM behavior)
+    if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+        ObjectHeader* hdr = rcvr.asObjectPtr();
+        if (hdr->isForwarded()) {
+            return PrimitiveResult::Failure;
+        }
+    }
+    if (arg.isObject() && arg.rawBits() > 0x10000) {
+        ObjectHeader* hdr = arg.asObjectPtr();
+        if (hdr->isForwarded()) {
+            return PrimitiveResult::Failure;
+        }
+    }
+
     bool result = (rcvr != arg);
     primitiveSuccess(result ? memory_.trueObject() : memory_.falseObject());
     return PrimitiveResult::Success;
@@ -4012,6 +3946,52 @@ PrimitiveResult Interpreter::primitiveLogN(int argCount) {
 }
 
 // ===== LARGE INTEGER PRIMITIVES =====
+
+// Helper: Try to extract a signed 64-bit integer from an Oop
+// Returns true if successful, storing the result in 'value'
+// Works for SmallIntegers and LargeIntegers that fit in 64 bits
+static bool trySigned64BitValueOf(ObjectMemory& memory, Oop oop, int64_t& value) {
+    if (oop.isSmallInteger()) {
+        value = oop.asSmallInteger();
+        return true;
+    }
+
+    if (!oop.isObject()) return false;
+
+    Oop largePositiveClass = memory.specialObject(SpecialObjectIndex::ClassLargePositiveInteger);
+    Oop largeNegativeClass = memory.specialObject(SpecialObjectIndex::ClassLargeNegativeInteger);
+    Oop objClass = memory.classOf(oop);
+
+    bool isNegative = false;
+    if (objClass.rawBits() == largePositiveClass.rawBits()) {
+        isNegative = false;
+    } else if (objClass.rawBits() == largeNegativeClass.rawBits()) {
+        isNegative = true;
+    } else {
+        return false;  // Not a LargeInteger
+    }
+
+    // Extract bytes (little-endian)
+    size_t byteSize = memory.byteSizeOf(oop);
+    if (byteSize > 8) return false;  // Too large for 64 bits
+
+    uint64_t mag = 0;
+    for (size_t i = 0; i < byteSize; i++) {
+        mag |= static_cast<uint64_t>(memory.fetchByte(i, oop)) << (i * 8);
+    }
+
+    // Check if it fits in signed 64 bits
+    if (isNegative) {
+        // For negative, magnitude must be <= 2^63 (to represent -2^63 to -1)
+        if (mag > 0x8000000000000000ULL) return false;
+        value = -static_cast<int64_t>(mag);
+    } else {
+        // For positive, magnitude must be < 2^63
+        if (mag >= 0x8000000000000000ULL) return false;
+        value = static_cast<int64_t>(mag);
+    }
+    return true;
+}
 
 // Helper: Check if Oop is a LargeInteger (positive or negative)
 static bool isLargeInteger(ObjectMemory& memory, Oop oop, bool& isNegative) {
