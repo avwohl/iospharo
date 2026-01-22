@@ -7633,7 +7633,7 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
         // Debug: trace signal lookup
         if (selectorStr == "signal" && key.isObject() && key.rawBits() > 0x10000) {
             static int signalKeyTrace = 0;
-            if (signalKeyTrace++ < 100) {
+            if (signalKeyTrace++ < 2) {  // Reduced from 100
                 ObjectHeader* kh = key.asObjectPtr();
                 if (kh->isBytesObject() && kh->byteSize() < 50) {
                     std::string keyStr((char*)kh->bytes(), kh->byteSize());
