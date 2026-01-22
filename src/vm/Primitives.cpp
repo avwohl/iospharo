@@ -790,22 +790,8 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
     Oop index = stackValue(0);
     Oop rcvr = stackValue(1);
 
-    // Special case: if index is nil, return nil to avoid infinite recursion
-    // during error handling. This happens when error handling code walks the
-    // stack and calls objectAt: with uninitialized/nil slots.
-    bool isNilIndex = (index == memory_.nil());
-    if (!isNilIndex && index.isObject()) {
-        ObjectHeader* idxHdr = index.asObjectPtr();
-        // UndefinedObject has format=0 (ZeroSized) and slots=0
-        if (idxHdr->format() == ObjectFormat::ZeroSized && idxHdr->slotCount() == 0) {
-            isNilIndex = true;
-        }
-    }
-    if (isNilIndex) {
-        primitiveSuccess(memory_.nil());
-        return PrimitiveResult::Success;
-    }
-
+    // Official VM behavior: fail if index is not SmallInteger (PrimErrBadArgument)
+    // or if receiver is not an object (PrimErrInappropriate)
     if (!index.isSmallInteger() || !rcvr.isObject()) {
         // Log when at: is called on non-object (causes Smalltalk error)
         static FILE* atLog = fopen("/tmp/at_fail.log", "a");
