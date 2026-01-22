@@ -5,7 +5,17 @@ Last updated: 2026-01-22
 
 ## Critical (Affects Core Functionality)
 
-None currently - all critical primitives are implemented.
+### Critical Section Primitives (185-187)
+| Primitive | Name | Description |
+|-----------|------|-------------|
+| 185 | primitiveExitCriticalSection | Exit critical section, resume blocked processes |
+| 186 | primitiveEnterCriticalSection | Enter critical section, may block if owned |
+| 187 | primitiveTestAndSetOwnershipOfCriticalSection | Atomic test-and-set for locking |
+
+- **Status**: Stubbed out (always return Failure)
+- **Impact**: HIGH - Process synchronization using Mutex/Semaphore may not work correctly
+- **Workaround**: Many uses of critical sections work via Smalltalk fallback code
+- **Note**: Full implementation requires process scheduling integration
 
 ## High Priority (May Affect Some Features)
 

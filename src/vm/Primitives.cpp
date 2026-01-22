@@ -1632,16 +1632,28 @@ PrimitiveResult Interpreter::primitiveObjectAtPut(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Per official VM: don't allow storing non-SmallInteger at index 1 (method header)
-    // This protects the method header from corruption
-    if (index == 1 && !value.isSmallInteger()) {
-        return PrimitiveResult::Failure;
-    }
+    // Get literal count from current method header
+    uint64_t currentHeader = header->slots()[0].rawBits();
+    // Literal count is in bits 1-15 (after shifting out tag bit)
+    constexpr uint64_t LiteralCountMask = 0x7FFF;
+    size_t currentLiteralCount = (currentHeader >> 1) & LiteralCountMask;
+    size_t maxIndex = currentLiteralCount + 1;
 
-    // Get literal count from method header
-    uint64_t methodHeader = header->slots()[0].rawBits();
-    size_t numLiterals = (methodHeader >> 1) & 0x7FFF;
-    size_t maxIndex = numLiterals + 1;
+    // Per official VM: when storing at index 1 (method header):
+    // 1. Value must be a SmallInteger
+    // 2. Literal count in new header must match current header's literal count
+    // This prevents corruption of the method's literal frame
+    if (index == 1) {
+        if (!value.isSmallInteger()) {
+            return PrimitiveResult::Failure;
+        }
+        // Extract literal count from new value and verify it matches
+        uint64_t newHeader = static_cast<uint64_t>(value.asSmallInteger());
+        size_t newLiteralCount = newHeader & LiteralCountMask;
+        if (newLiteralCount != currentLiteralCount) {
+            return PrimitiveResult::Failure;  // Literal count must be preserved
+        }
+    }
 
     if (static_cast<size_t>(index) > maxIndex) {
         return PrimitiveResult::Failure;
