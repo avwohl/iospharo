@@ -6217,6 +6217,7 @@ PrimitiveResult Interpreter::primitiveIntegerAtPut(int argCount) {
 // ===== CLASS/BEHAVIOR PRIMITIVES =====
 
 // Primitive 175: Return the identity hash for a behavior (class)
+// Per official VM: behaviors should have stable hashes via class table
 PrimitiveResult Interpreter::primitiveBehaviorHash(int argCount) {
     Oop rcvr = stackTop();
 
@@ -6224,17 +6225,9 @@ PrimitiveResult Interpreter::primitiveBehaviorHash(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    ObjectHeader* header = rcvr.asObjectPtr();
-
-    // Return the identity hash from the object header
-    uint32_t hash = header->identityHash();
-
-    // If hash is 0, generate one (behaviors should have stable hashes)
-    if (hash == 0) {
-        // Use a simple hash based on pointer for now
-        hash = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(header) >> 3) & 0x3FFFFF;
-        if (hash == 0) hash = 1;  // Ensure non-zero
-    }
+    // Use identityHashOf which properly generates and stores hash if needed
+    // This ensures hash stability across calls and GC
+    uint32_t hash = memory_.identityHashOf(rcvr);
 
     pop();
     push(Oop::fromSmallInteger(hash));
