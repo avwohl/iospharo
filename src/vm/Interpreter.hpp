@@ -656,7 +656,7 @@ private:
     PrimitiveResult primitiveValueWithArgs(int argCount);        // 82
     PrimitiveResult primitiveClosureCopyWithCopiedValues(int argCount); // 200
     PrimitiveResult primitiveFullClosureValue(int argCount);     // 207
-    PrimitiveResult primitiveClosureValueUnwind(int argCount);   // 208
+    PrimitiveResult primitiveFullClosureValueWithArgs(int argCount); // 208
     PrimitiveResult primitiveFullClosureValueNoContextSwitch(int argCount); // 209
 
     // Process/Scheduler

@@ -2502,35 +2502,6 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
     activateBlock(closure, argCount);
     return PrimitiveResult::Success;
 }
-
-// Primitive 208: Closure value with unwind protection
-// Evaluates a closure but ensures unwind actions are executed
-// Used for ensure: blocks
-PrimitiveResult Interpreter::primitiveClosureValueUnwind(int argCount) {
-    Oop closure = stackValue(static_cast<size_t>(argCount));
-
-    if (!closure.isObject()) {
-        return PrimitiveResult::Failure;
-    }
-
-    // Verify argument count
-    Oop numArgsOop = memory_.fetchPointer(2, closure);
-    if (!numArgsOop.isSmallInteger()) {
-        return PrimitiveResult::Failure;
-    }
-
-    int closureNumArgs = static_cast<int>(numArgsOop.asSmallInteger());
-    if (closureNumArgs != argCount) {
-        return PrimitiveResult::Failure;
-    }
-
-    // Mark this activation for unwind protection
-    // In a full implementation, we'd set a flag on the context
-    // For now, just activate normally
-    activateBlock(closure, argCount);
-    return PrimitiveResult::Success;
-}
-
 // Primitive 209: Full closure value without context switch
 // Same as primitiveFullClosureValue but won't check for interrupts/process switches
 // Used for critical sections where process switching must be avoided
@@ -2553,6 +2524,59 @@ PrimitiveResult Interpreter::primitiveFullClosureValueNoContextSwitch(int argCou
     }
 
     activateBlock(closure, argCount);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 208: Full closure value with arguments array
+// BlockClosure>>valueWithArguments: anArray
+// Takes an array of arguments and passes them to the closure
+PrimitiveResult Interpreter::primitiveFullClosureValueWithArgs(int argCount) {
+    if (argCount != 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop argsArray = stackValue(0);   // The arguments array
+    Oop closure = stackValue(1);     // The closure (receiver)
+
+    if (!closure.isObject() || !argsArray.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get closure's expected numArgs
+    Oop numArgsOop = memory_.fetchPointer(2, closure);
+    if (!numArgsOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+    int closureNumArgs = static_cast<int>(numArgsOop.asSmallInteger());
+
+    // Get the array size
+    ObjectHeader* arrayHeader = argsArray.asObjectPtr();
+    ObjectFormat fmt = arrayHeader->format();
+
+    // Verify it's a pointer array (format 2 = Indexable)
+    if (fmt != ObjectFormat::Indexable) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t arraySize = arrayHeader->slotCount();
+    if (static_cast<int>(arraySize) != closureNumArgs) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Pop the argument and closure from stack
+    popN(2);
+
+    // Push closure back (will be popped by activateBlock)
+    push(closure);
+
+    // Push arguments from array onto stack (in order)
+    for (size_t i = 0; i < arraySize; i++) {
+        Oop arg = memory_.fetchPointer(i, argsArray);
+        push(arg);
+    }
+
+    // Now activate the closure with the pushed arguments
+    activateBlock(closure, closureNumArgs);
     return PrimitiveResult::Success;
 }
 
