@@ -1252,10 +1252,21 @@ GCResult ObjectMemory::scavenge() {
     auto start = std::chrono::steady_clock::now();
     GCResult result{0, 0, 0};
 
-    // Simple Cheney-style copying collector for new space
-    // TODO: Implement proper scavenging
+    // CRITICAL BUG FIX: The previous scavenge implementation copied objects from
+    // eden to old space but DID NOT UPDATE POINTERS. This caused memory corruption
+    // because:
+    // 1. Objects were copied to old space
+    // 2. Eden was reset (edenFree_ = edenStart_)
+    // 3. But pointers to eden objects were NOT updated
+    // 4. New allocations reused eden addresses, overwriting "live" objects
+    //
+    // Proper scavenging requires forwarding pointers or a Cheney-style two-finger
+    // algorithm with pointer updating. Until that's implemented, we MUST NOT
+    // reset eden after copying.
+    //
+    // For now, just promote everything to old space WITHOUT resetting eden.
+    // This wastes eden space but prevents corruption.
 
-    // For now, just promote everything to old space
     uint8_t* scan = edenStart_;
     while (scan < edenFree_) {
         ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(scan);
@@ -1272,8 +1283,8 @@ GCResult ObjectMemory::scavenge() {
         scan += size;
     }
 
-    // Reset eden
-    edenFree_ = edenStart_;
+    // DO NOT reset eden - pointers are not updated!
+    // edenFree_ = edenStart_;  // DISABLED: causes memory corruption
 
     auto end = std::chrono::steady_clock::now();
     result.milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
