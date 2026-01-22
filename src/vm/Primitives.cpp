@@ -5921,6 +5921,7 @@ PrimitiveResult Interpreter::primitiveAllObjects(int argCount) {
 // ===== OBJECT REFERENCE PRIMITIVES =====
 
 // Primitive 132: Does object point to another object?
+// Per official VM: only checks pointer fields, handles compiled methods specially
 PrimitiveResult Interpreter::primitiveObjectPointsTo(int argCount) {
     Oop target = stackValue(0);
     Oop rcvr = stackValue(1);
@@ -5950,9 +5951,29 @@ PrimitiveResult Interpreter::primitiveObjectPointsTo(int argCount) {
         return PrimitiveResult::Success;
     }
 
-    // Check each slot for pointer objects
-    size_t slotCount = header->slotCount();
-    for (size_t i = 0; i < slotCount; i++) {
+    // Determine how many pointer slots to check
+    size_t slotsToCheck;
+
+    if (header->isCompiledMethod()) {
+        // For CompiledMethods, only check header + literal slots, not bytecodes
+        // Method header at slot 0 contains numLiterals in bits 0-14
+        Oop methodHeader = memory_.fetchPointer(0, rcvr);
+        if (methodHeader.isSmallInteger()) {
+            int64_t headerBits = methodHeader.asSmallInteger();
+            size_t numLiterals = headerBits & 0x7FFF;  // bits 0-14
+            // Slots to check: header (1) + literals (numLiterals)
+            slotsToCheck = 1 + numLiterals;
+        } else {
+            // Invalid method header - check no slots
+            slotsToCheck = 0;
+        }
+    } else {
+        // Regular pointer object - check all slots
+        slotsToCheck = header->slotCount();
+    }
+
+    // Check each pointer slot
+    for (size_t i = 0; i < slotsToCheck; i++) {
         Oop slot = memory_.fetchPointer(i, rcvr);
         if (slot.rawBits() == target.rawBits()) {
             popN(2);
