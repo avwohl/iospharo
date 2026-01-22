@@ -208,9 +208,73 @@ PrimitiveResult Interpreter::primitiveClone(int argCount) {
     return primitiveShallowCopy(argCount);
 }
 
+// Primitive 118: Execute a primitive with arguments from an array
+// Stack: receiver, primitiveIndex, argumentArray (top)
 PrimitiveResult Interpreter::primitiveDoPrimitiveWithArgs(int argCount) {
-    (void)argCount;
-    return PrimitiveResult::Failure;  // complex primitive - let Smalltalk handle
+    if (argCount < 2 || argCount > 3) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get arguments from stack
+    Oop argsArrayOop = stackValue(0);  // argument array (top)
+    Oop primIndexOop = stackValue(1);  // primitive index
+
+    // Validate primitive index
+    if (!primIndexOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+    int64_t primIndex = primIndexOop.asSmallInteger();
+    if (primIndex < 0 || primIndex >= static_cast<int64_t>(primitiveTable_.size())) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get the primitive function
+    PrimitiveFunc primFunc = primitiveTable_[static_cast<size_t>(primIndex)];
+    if (primFunc == nullptr) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Validate argument array
+    if (!argsArrayOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+    ObjectHeader* argsHdr = argsArrayOop.asObjectPtr();
+    if (!argsHdr->isPointersObject()) {
+        return PrimitiveResult::Failure;
+    }
+    size_t numArgs = argsHdr->slotCount();
+
+    // Pop the doPrimitive arguments (argsArray, primIndex), leave receiver
+    popN(2);
+
+    // receiver is now at stackTop(), save it
+    Oop receiver = stackTop();
+    pop();  // Remove receiver temporarily
+
+    // Push the new arguments from the array
+    push(receiver);  // Push receiver back as first "argument"
+    for (size_t i = 0; i < numArgs; ++i) {
+        push(argsHdr->slotAt(i));
+    }
+
+    // Execute the primitive with the new argument count
+    // Note: argCount_ needs to be set for the called primitive
+    int oldArgCount = argCount_;
+    argCount_ = static_cast<int>(numArgs);
+    PrimitiveResult result = (this->*primFunc)(static_cast<int>(numArgs));
+    argCount_ = oldArgCount;
+
+    // If primitive failed, restore stack state
+    if (result == PrimitiveResult::Failure) {
+        // Pop the pushed arguments
+        popN(numArgs + 1);  // +1 for receiver
+        // Push back original arguments
+        push(receiver);
+        push(primIndexOop);
+        push(argsArrayOop);
+    }
+
+    return result;
 }
 
 // Note: primitiveScanCharacters, primitiveStringReplace, primitiveSetOrHasIdentityHash,
@@ -1779,19 +1843,20 @@ PrimitiveResult Interpreter::primitiveClass(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveIdentical(int argCount) {
-    Oop arg = stackValue(0);
-    Oop rcvr = stackValue(1);
+    Oop arg = stackValue(0);   // otherObject
+    Oop rcvr = stackValue(1);  // thisObject
 
-    // Per official VM: fail if either operand is a forwarded object
-    // Only heap objects can be forwarded, not immediates
-    if (rcvr.isObject()) {
-        ObjectHeader* hdr = rcvr.asObjectPtr();
+    // Per official VM: fail if forwarded object
+    // - Always check if arg (otherObject) is forwarded
+    // - Only check receiver (thisObject) when argCount > 1
+    if (arg.isObject()) {
+        ObjectHeader* hdr = arg.asObjectPtr();
         if (hdr && hdr->isForwarded()) {
             return PrimitiveResult::Failure;
         }
     }
-    if (arg.isObject()) {
-        ObjectHeader* hdr = arg.asObjectPtr();
+    if (argCount > 1 && rcvr.isObject()) {
+        ObjectHeader* hdr = rcvr.asObjectPtr();
         if (hdr && hdr->isForwarded()) {
             return PrimitiveResult::Failure;
         }
@@ -1805,19 +1870,20 @@ PrimitiveResult Interpreter::primitiveIdentical(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveNotIdentical(int argCount) {
-    Oop arg = stackValue(0);
-    Oop rcvr = stackValue(1);
+    Oop arg = stackValue(0);   // otherObject
+    Oop rcvr = stackValue(1);  // thisObject
 
-    // Per official VM: fail if either operand is a forwarded object
-    // Only heap objects can be forwarded, not immediates
-    if (rcvr.isObject()) {
-        ObjectHeader* hdr = rcvr.asObjectPtr();
+    // Per official VM: fail if forwarded object
+    // - Always check if arg (otherObject) is forwarded
+    // - Only check receiver (thisObject) when argCount > 1
+    if (arg.isObject()) {
+        ObjectHeader* hdr = arg.asObjectPtr();
         if (hdr && hdr->isForwarded()) {
             return PrimitiveResult::Failure;
         }
     }
-    if (arg.isObject()) {
-        ObjectHeader* hdr = arg.asObjectPtr();
+    if (argCount > 1 && rcvr.isObject()) {
+        ObjectHeader* hdr = rcvr.asObjectPtr();
         if (hdr && hdr->isForwarded()) {
             return PrimitiveResult::Failure;
         }
