@@ -55,8 +55,77 @@ PrimitiveResult Interpreter::primitiveDeferDisplayUpdates(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveArrayBecome(int argCount) {
-    // This is the two-way become - redirect to the implementation
-    return primitiveBecomeForward(argCount);  // use becomeForward as fallback
+    // Primitive 128: Two-way become - swaps ALL references bidirectionally
+    // receiver elementsExchange: anotherArray
+    // Per official VM: 1 argument, twoWay: true, copyHash: false
+    if (argCount != 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop toArrayOop = stackValue(0);
+    Oop fromArrayOop = stackValue(1);
+
+    if (!fromArrayOop.isObject() || !toArrayOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* fromHdr = fromArrayOop.asObjectPtr();
+    ObjectHeader* toHdr = toArrayOop.asObjectPtr();
+
+    // Must be indexable pointer objects (Arrays)
+    if (fromHdr->format() != ObjectFormat::Indexable ||
+        toHdr->format() != ObjectFormat::Indexable) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t fromSize = fromHdr->slotCount();
+    size_t toSize = toHdr->slotCount();
+
+    // Arrays must be the same size
+    if (fromSize != toSize) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Perform two-way become: swap all references bidirectionally
+    // In a single pass, references to fromObj[i] become toObj[i] AND vice versa
+    for (size_t i = 0; i < fromSize; i++) {
+        Oop fromObj = memory_.fetchPointer(i, fromArrayOop);
+        Oop toObj = memory_.fetchPointer(i, toArrayOop);
+
+        // Skip if either is an immediate
+        if (!fromObj.isObject() || !toObj.isObject()) {
+            continue;
+        }
+        if (fromObj.rawBits() == toObj.rawBits()) {
+            continue;  // Same object, nothing to swap
+        }
+
+        // Scan all objects and swap references
+        memory_.allObjectsDo([&](Oop obj) {
+            if (!obj.isObject()) return;
+            ObjectHeader* header = obj.asObjectPtr();
+            ObjectFormat fmt = header->format();
+
+            // Skip non-pointer objects
+            if (!header->isPointersObject() && !header->isCompiledMethod()) return;
+
+            size_t slots = header->slotCount();
+            for (size_t s = 0; s < slots; s++) {
+                Oop slot = header->slotAt(s);
+                if (slot.rawBits() == fromObj.rawBits()) {
+                    header->slotAtPut(s, toObj);
+                } else if (slot.rawBits() == toObj.rawBits()) {
+                    header->slotAtPut(s, fromObj);
+                }
+            }
+        });
+    }
+
+    // Flush method cache (critical after become that may affect classes)
+    flushMethodCache();
+
+    popN(1);  // Pop argument, leave receiver
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveIncrementalGC(int argCount) {
@@ -72,7 +141,24 @@ PrimitiveResult Interpreter::primitiveSetInterruptKey(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveClone(int argCount) {
-    return primitiveShallowCopy(argCount);  // clone is same as shallowCopy
+    // Primitive 148: Return a shallow copy of the receiver
+    // Per official VM: immediates return themselves, objects get copied
+    Oop rcvr = stackValue(0);
+
+    // Handle immediates - they are their own copies
+    if (!rcvr.isObject()) {
+        primitiveSuccess(rcvr);
+        return PrimitiveResult::Success;
+    }
+
+    // Check for forwarded objects
+    ObjectHeader* hdr = rcvr.asObjectPtr();
+    if (hdr->isForwarded()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Delegate to shallowCopy
+    return primitiveShallowCopy(argCount);
 }
 
 PrimitiveResult Interpreter::primitiveDoPrimitiveWithArgs(int argCount) {
@@ -1460,16 +1546,22 @@ PrimitiveResult Interpreter::primitiveNew(int argCount) {
     }
 
     // Get instance spec from class
-    // Class layout includes format, instSize, etc.
-    // Slot 2 is typically the format/instSize
-
+    // Slot 2 is the format/instSize (instance specification)
     Oop formatObj = memory_.fetchPointer(2, rcvr);
     if (!formatObj.isSmallInteger()) {
         return PrimitiveResult::Failure;
     }
 
-    int64_t format = formatObj.asSmallInteger();
-    size_t instSize = format & 0xFFFF;  // Low bits are instance size
+    int64_t instSpec = formatObj.asSmallInteger();
+    size_t instSize = instSpec & 0xFFFF;  // Low 16 bits are instance size
+
+    // Per official VM: validate this is a fixed-size class (format < 2)
+    // Bits 16-20 encode the object format: 0=zero-sized, 1=fixed, 2+=variable
+    int instFormat = (instSpec >> 16) & 0x1F;
+    if (instFormat >= 2) {
+        // Variable-sized class (Array, String, etc.) - use new: instead
+        return PrimitiveResult::Failure;
+    }
 
     uint32_t classIndex = memory_.indexOfClass(rcvr);
     Oop newObj = memory_.allocateSlots(classIndex, instSize);
@@ -1483,14 +1575,20 @@ PrimitiveResult Interpreter::primitiveNew(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
-    Oop size = stackValue(0);
+    Oop sizeOop = stackValue(0);
     Oop rcvr = stackValue(1);  // Class
 
-    if (!size.isSmallInteger() || !rcvr.isObject()) {
+    if (!rcvr.isObject()) {
         return PrimitiveResult::Failure;
     }
 
-    int64_t indexableSize = size.asSmallInteger();
+    // Handle size argument - can be SmallInteger or LargePositiveInteger
+    // TODO: Handle LargePositiveInteger sizes for very large allocations
+    if (!sizeOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t indexableSize = sizeOop.asSmallInteger();
     if (indexableSize < 0) {
         return PrimitiveResult::Failure;
     }
@@ -1504,6 +1602,14 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
     int64_t format = formatObj.asSmallInteger();
     size_t fixedSize = format & 0xFFFF;
     int instSpec = (format >> 16) & 0x1F;  // Instance specification (0-31)
+
+    // Per official VM: validate this is a variable-sized class (format >= 2)
+    // Format 0-1 are fixed-size, format 2+ are variable (Array, String, etc.)
+    if (instSpec < 2) {
+        // Fixed-size class - use new instead of new:
+        return PrimitiveResult::Failure;
+    }
+
     bool isBytes = instSpec >= 16;
 
     uint32_t classIndex = memory_.indexOfClass(rcvr);
@@ -7210,41 +7316,52 @@ PrimitiveResult Interpreter::primitiveSetInstructionPointer(int argCount) {
 
 // Primitive 192: Set the stack pointer of a context
 // receiver stackp: aSmallInteger -> receiver
+// Primitive 76: Atomic store into context stackPointer
+// Per official VM: also ensures any newly accessible cells are initialized to nil
 PrimitiveResult Interpreter::primitiveSetStackPointer(int argCount) {
     if (argCount != 1) {
-        std::cerr << "[STACKP] Fail: argCount=" << argCount << " (expected 1)\n";
         return PrimitiveResult::Failure;
     }
 
-    Oop newStackp = stackValue(0);
+    Oop newStackpOop = stackValue(0);
     Oop context = stackValue(1);
 
-    if (!context.isObject() || !newStackp.isSmallInteger()) {
-        std::cerr << "[STACKP] Fail: context.isObject=" << context.isObject()
-                  << " newStackp.isSmallInt=" << newStackp.isSmallInteger() << "\n";
+    if (!context.isObject() || !newStackpOop.isSmallInteger()) {
         return PrimitiveResult::Failure;
     }
 
     ObjectHeader* header = context.asObjectPtr();
     if (header->isImmutable()) {
-        std::cerr << "[STACKP] Fail: context is immutable\n";
         return PrimitiveResult::Failure;
     }
 
     // Validate stack pointer is within bounds
-    int64_t sp = newStackp.asSmallInteger();
+    int64_t newStackp = newStackpOop.asSmallInteger();
     size_t slotCount = header->slotCount();
-    if (sp < 0 || static_cast<size_t>(sp) > slotCount - ContextFixedSlots) {
-        std::cerr << "[STACKP] Fail: sp=" << sp << " slotCount=" << slotCount
-                  << " max=" << (slotCount - ContextFixedSlots) << "\n";
+    if (newStackp < 0 || static_cast<size_t>(newStackp) > slotCount - ContextFixedSlots) {
         return PrimitiveResult::Failure;
     }
 
-    // Stackp is at slot 2
-    memory_.storePointer(ContextStackPIndex, context, newStackp);
+    // Get current stack pointer
+    Oop oldStackpOop = memory_.fetchPointer(ContextStackPIndex, context);
+    int64_t oldStackp = oldStackpOop.isSmallInteger() ? oldStackpOop.asSmallInteger() : 0;
 
-    popN(2);
-    push(context);  // Return receiver
+    // Per official VM: nil any newly accessible cells when growing stack
+    // Temp/stack area starts at ContextFixedSlots (slot 6)
+    if (newStackp > oldStackp) {
+        Oop nilObj = Oop::nil();
+        for (int64_t i = oldStackp + 1; i <= newStackp; i++) {
+            size_t slot = ContextFixedSlots + static_cast<size_t>(i) - 1;
+            if (slot < slotCount) {
+                memory_.storePointer(slot, context, nilObj);
+            }
+        }
+    }
+
+    // Store new stackp at slot 2
+    memory_.storePointer(ContextStackPIndex, context, newStackpOop);
+
+    popN(1);  // Pop argument, leave receiver
     return PrimitiveResult::Success;
 }
 
@@ -8882,7 +8999,10 @@ PrimitiveResult Interpreter::primitiveCompareStringNoCase(int argCount) {
 // fromArray toArray primitiveArrayBecomeOneWay -> fromArray
 // All references to objects in fromArray become references to corresponding objects in toArray
 PrimitiveResult Interpreter::primitiveArrayBecomeOneWay(int argCount) {
-    if (argCount < 2) {
+    // Primitive 72: One-way become with hash copying
+    // receiver elementsForwardIdentityTo: anotherArray
+    // Per official VM: 1 argument, twoWay: false, copyHash: true
+    if (argCount != 1) {
         return PrimitiveResult::Failure;
     }
 
@@ -8893,15 +9013,24 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWay(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    size_t fromSize = memory_.slotCountOf(fromArrayOop);
-    size_t toSize = memory_.slotCountOf(toArrayOop);
+    ObjectHeader* fromHdr = fromArrayOop.asObjectPtr();
+    ObjectHeader* toHdr = toArrayOop.asObjectPtr();
+
+    // Must be indexable pointer objects (Arrays)
+    if (fromHdr->format() != ObjectFormat::Indexable ||
+        toHdr->format() != ObjectFormat::Indexable) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t fromSize = fromHdr->slotCount();
+    size_t toSize = toHdr->slotCount();
 
     // Arrays must be the same size
     if (fromSize != toSize) {
         return PrimitiveResult::Failure;
     }
 
-    // Perform one-way become for each pair
+    // Perform one-way become for each pair, copying hash (per official VM)
     for (size_t i = 0; i < fromSize; i++) {
         Oop fromObj = memory_.fetchPointer(i, fromArrayOop);
         Oop toObj = memory_.fetchPointer(i, toArrayOop);
@@ -8910,13 +9039,25 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWay(int argCount) {
         if (!fromObj.isObject() || fromObj.isNil()) {
             continue;
         }
+        if (!toObj.isObject()) {
+            continue;
+        }
+
+        // Copy identity hash from source to target (per official VM copyHash: true)
+        ObjectHeader* fromObjHdr = fromObj.asObjectPtr();
+        ObjectHeader* toObjHdr = toObj.asObjectPtr();
+        if (fromObjHdr->hasIdentityHash()) {
+            toObjHdr->setIdentityHash(fromObjHdr->identityHash());
+        }
 
         // Perform one-way become: all references to fromObj become toObj
         memory_.becomeForward(fromObj, toObj);
     }
 
-    popN(argCount);
-    push(fromArrayOop);
+    // Flush method cache (critical after become)
+    flushMethodCache();
+
+    popN(1);  // Pop argument, leave receiver
     return PrimitiveResult::Success;
 }
 
