@@ -1906,8 +1906,10 @@ PrimitiveResult Interpreter::primitiveAsCharacter(int argCount) {
 
     int64_t value = rcvr.asSmallInteger();
 
-    // Valid Unicode codepoints are 0 to 0x10FFFF
-    if (value < 0 || value > 0x10FFFF) {
+    // Official VM allows character codes 0 to (2^30 - 1)
+    // This is larger than Unicode (0x10FFFF) to support extended uses
+    constexpr int64_t MaxCharacterCode = (1LL << 30) - 1;  // 0x3FFFFFFF
+    if (value < 0 || value > MaxCharacterCode) {
         return PrimitiveResult::Failure;
     }
 
