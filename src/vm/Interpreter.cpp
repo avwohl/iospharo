@@ -5109,8 +5109,25 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         } else if (rcvr.isSmallInteger()) {
             rcvrName = "[SmallInteger " + std::to_string(rcvr.asSmallInteger()) + "]";
         }
-        fprintf(allSendLog, "[SEND #%d] %s >> #%s (args=%d)\n",
-                allSendCount, rcvrName.c_str(), selStr.c_str(), argCount);
+        // Get current method name for context
+        std::string currentMethod = "?";
+        if (method_.isObject() && method_.rawBits() > 0x10000) {
+            Oop mHdr = memory_.fetchPointer(0, method_);
+            if (mHdr.isSmallInteger()) {
+                size_t numLits = mHdr.asSmallInteger() & 0x7FFF;
+                if (numLits >= 2) {
+                    Oop mSel = memory_.fetchPointer(numLits - 1, method_);
+                    if (mSel.isObject() && mSel.rawBits() > 0x10000) {
+                        ObjectHeader* mSelHdr = mSel.asObjectPtr();
+                        if (mSelHdr->isBytesObject() && mSelHdr->byteSize() < 50) {
+                            currentMethod = std::string((char*)mSelHdr->bytes(), mSelHdr->byteSize());
+                        }
+                    }
+                }
+            }
+        }
+        fprintf(allSendLog, "[SEND #%d @%s] %s >> #%s (args=%d)\n",
+                allSendCount, currentMethod.c_str(), rcvrName.c_str(), selStr.c_str(), argCount);
 
         // Trace fullCheck to understand the infinite loop
         static int fullCheckTraceCount = 0;
