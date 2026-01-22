@@ -5406,8 +5406,9 @@ PrimitiveResult Interpreter::primitiveConstantFill(int argCount) {
 
 // Primitive 156: Compare two byte arrays
 PrimitiveResult Interpreter::primitiveCompareBytes(int argCount) {
-    // Arguments: receiver compareTo: arg startingAt: start1 to: stop1 startingAt: start2
-    // Simplified version: receiver compareWith: arg
+    // Primitive 156: Compare two byte/word indexed objects for EQUALITY
+    // Per official VM: returns boolean (true if equal, false if not equal)
+    // This is an equality check, NOT an ordering comparison
     if (argCount < 1) {
         return PrimitiveResult::Failure;
     }
@@ -5425,34 +5426,36 @@ PrimitiveResult Interpreter::primitiveCompareBytes(int argCount) {
     ObjectFormat rcvrFormat = rcvrHeader->format();
     ObjectFormat argFormat = argHeader->format();
 
-    // Both must be byte-indexable
+    // Both must be byte-indexable or word-indexable
     bool rcvrIsBytes = (rcvrFormat >= ObjectFormat::Indexable8 && rcvrFormat <= ObjectFormat::Indexable8_7);
     bool argIsBytes = (argFormat >= ObjectFormat::Indexable8 && argFormat <= ObjectFormat::Indexable8_7);
+    bool rcvrIsWords = (rcvrFormat == ObjectFormat::Indexable64 ||
+                       (rcvrFormat >= ObjectFormat::Indexable32 && rcvrFormat <= ObjectFormat::Indexable32Odd));
+    bool argIsWords = (argFormat == ObjectFormat::Indexable64 ||
+                      (argFormat >= ObjectFormat::Indexable32 && argFormat <= ObjectFormat::Indexable32Odd));
 
-    if (!rcvrIsBytes || !argIsBytes) {
+    if (!(rcvrIsBytes || rcvrIsWords) || !(argIsBytes || argIsWords)) {
         return PrimitiveResult::Failure;
     }
 
     size_t rcvrSize = memory_.byteSizeOf(rcvr);
     size_t argSize = memory_.byteSizeOf(arg);
 
+    // Different sizes means not equal
+    if (rcvrSize != argSize) {
+        popN(2);
+        push(memory_.falseObject());
+        return PrimitiveResult::Success;
+    }
+
     uint8_t* rcvrBytes = reinterpret_cast<uint8_t*>(rcvrHeader + 1);
     uint8_t* argBytes = reinterpret_cast<uint8_t*>(argHeader + 1);
 
-    // Compare byte by byte
-    size_t minSize = std::min(rcvrSize, argSize);
-    int result = std::memcmp(rcvrBytes, argBytes, minSize);
+    // Compare bytes - official VM returns boolean for equality
+    int result = std::memcmp(rcvrBytes, argBytes, rcvrSize);
 
-    if (result == 0) {
-        // If equal up to minSize, shorter one is "less"
-        if (rcvrSize < argSize) result = -1;
-        else if (rcvrSize > argSize) result = 1;
-    }
-
-    // Return comparison result as SmallInteger (-1, 0, or 1 style, or actual diff)
     popN(2);
-    push(Oop::fromSmallInteger(result < 0 ? 1 : (result > 0 ? 3 : 2)));
-    // Convention: 1 = less, 2 = equal, 3 = greater
+    push(result == 0 ? memory_.trueObject() : memory_.falseObject());
     return PrimitiveResult::Success;
 }
 
