@@ -6686,10 +6686,18 @@ PrimitiveResult Interpreter::primitiveTerminateTo(int argCount) {
 
 // Primitive 38: Read 32-bit word from Float at index (1 or 2)
 PrimitiveResult Interpreter::primitiveFloatAt(int argCount) {
+    // Primitive 38: Read 32-bit word from Float at index (1 or 2)
+    // Per official VM: index 1 = most significant word, index 2 = least significant
+    // On little-endian systems, must swap indices to maintain this semantic
     Oop indexOop = stackValue(0);
     Oop rcvr = stackValue(1);
 
     if (!rcvr.isObject() || !indexOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Reject immediate floats (SmallFloat64)
+    if (rcvr.isSmallFloat()) {
         return PrimitiveResult::Failure;
     }
 
@@ -6706,8 +6714,16 @@ PrimitiveResult Interpreter::primitiveFloatAt(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    // Per official VM: on little-endian, swap indices so index 1 = high word
+    // Memory layout on little-endian: [low word][high word]
+    // Semantic: index 1 = high word, index 2 = low word
+    size_t accessIndex = static_cast<size_t>(index - 1);
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    accessIndex = 1 - accessIndex;  // Swap: 0 -> 1, 1 -> 0
+#endif
+
     uint32_t* words = reinterpret_cast<uint32_t*>(header + 1);
-    uint32_t value = words[index - 1];
+    uint32_t value = words[accessIndex];
 
     popN(2);
     push(Oop::fromSmallInteger(value));
@@ -6715,24 +6731,51 @@ PrimitiveResult Interpreter::primitiveFloatAt(int argCount) {
 }
 
 // Primitive 39: Write 32-bit word to Float at index (1 or 2)
+// Per official VM: index 1 = most significant word, index 2 = least significant
 PrimitiveResult Interpreter::primitiveFloatAtPut(int argCount) {
     Oop valueOop = stackValue(0);
     Oop indexOop = stackValue(1);
     Oop rcvr = stackValue(2);
 
-    if (!rcvr.isObject() || !indexOop.isSmallInteger() || !valueOop.isSmallInteger()) {
+    if (!rcvr.isObject() || !indexOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Reject immediate floats (SmallFloat64)
+    if (rcvr.isSmallFloat()) {
         return PrimitiveResult::Failure;
     }
 
     int64_t index = indexOop.asSmallInteger();
-    int64_t value = valueOop.asSmallInteger();
-
     if (index < 1 || index > 2) {
         return PrimitiveResult::Failure;
     }
 
-    // Check value fits in 32 bits unsigned
-    if (value < 0 || value > 0xFFFFFFFF) {
+    // Get value - accept SmallInteger or LargePositiveInteger that fits in 32 bits
+    uint32_t value;
+    if (valueOop.isSmallInteger()) {
+        int64_t sval = valueOop.asSmallInteger();
+        if (sval < 0 || sval > 0xFFFFFFFF) {
+            return PrimitiveResult::Failure;
+        }
+        value = static_cast<uint32_t>(sval);
+    } else if (valueOop.isObject()) {
+        // Try to extract from LargePositiveInteger
+        ObjectHeader* valHdr = valueOop.asObjectPtr();
+        if (!valHdr->isBytesObject()) {
+            return PrimitiveResult::Failure;
+        }
+        size_t byteSize = valHdr->byteSize();
+        if (byteSize > 4) {
+            return PrimitiveResult::Failure;  // Too large for 32 bits
+        }
+        // Read little-endian bytes
+        value = 0;
+        uint8_t* bytes = valHdr->bytes();
+        for (size_t i = 0; i < byteSize; i++) {
+            value |= static_cast<uint32_t>(bytes[i]) << (i * 8);
+        }
+    } else {
         return PrimitiveResult::Failure;
     }
 
@@ -6749,8 +6792,14 @@ PrimitiveResult Interpreter::primitiveFloatAtPut(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    // Per official VM: on little-endian, swap indices so index 1 = high word
+    size_t accessIndex = static_cast<size_t>(index - 1);
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    accessIndex = 1 - accessIndex;  // Swap: 0 -> 1, 1 -> 0
+#endif
+
     uint32_t* words = reinterpret_cast<uint32_t*>(header + 1);
-    words[index - 1] = static_cast<uint32_t>(value);
+    words[accessIndex] = value;
 
     popN(3);
     push(valueOop);
