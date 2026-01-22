@@ -1219,6 +1219,12 @@ private:
     PrimitiveResult primitiveBytesLeft(int argCount);        // 112
     PrimitiveResult primitiveSpecialObjectsOop(int argCount); // 129
 
+    // Permanent space primitives (stubs - no perm space implementation)
+    PrimitiveResult primitiveMoveToPermSpace(int argCount);           // 90
+    PrimitiveResult primitiveMoveToPermSpaceInBulk(int argCount);     // 91
+    PrimitiveResult primitiveIsInPermSpace(int argCount);             // 92
+    PrimitiveResult primitiveMoveToPermSpaceAllOldObjects(int argCount); // 93
+
     // Object enumeration primitives
     PrimitiveResult primitiveSomeInstance(int argCount);     // 77
     PrimitiveResult primitiveNextInstance(int argCount);     // 78

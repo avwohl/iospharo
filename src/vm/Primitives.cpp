@@ -5248,6 +5248,46 @@ PrimitiveResult Interpreter::primitiveSpecialObjectsOop(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== PERMANENT SPACE PRIMITIVES (90-93) =====
+// Stubs for Spur memory manager permanent space operations.
+// Since we don't implement permanent space, these are no-ops that return
+// sensible values to allow image code to continue working.
+
+// Primitive 90: Move object to permanent space (no-op, return receiver)
+PrimitiveResult Interpreter::primitiveMoveToPermSpace(int argCount) {
+    // No permanent space implementation - just return receiver unchanged
+    (void)argCount;
+    // Stack: receiver -> receiver (no change needed)
+    return PrimitiveResult::Success;
+}
+
+// Primitive 91: Move objects to permanent space in bulk (no-op, return receiver)
+PrimitiveResult Interpreter::primitiveMoveToPermSpaceInBulk(int argCount) {
+    // No permanent space implementation - just return receiver unchanged
+    (void)argCount;
+    // Stack: receiver -> receiver (no change needed)
+    return PrimitiveResult::Success;
+}
+
+// Primitive 92: Check if object is in permanent space (always false)
+PrimitiveResult Interpreter::primitiveIsInPermSpace(int argCount) {
+    // No permanent space implementation - nothing is in perm space
+    (void)argCount;
+    pop();
+    push(memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 93: Move all old objects to permanent space (no-op)
+PrimitiveResult Interpreter::primitiveMoveToPermSpaceAllOldObjects(int argCount) {
+    // No permanent space implementation - just return success
+    (void)argCount;
+    // Returns number moved (0)
+    pop();
+    push(Oop::fromSmallInteger(0));
+    return PrimitiveResult::Success;
+}
+
 // ===== OBJECT ENUMERATION PRIMITIVES =====
 
 // Primitive 77: Return the first instance of a class
