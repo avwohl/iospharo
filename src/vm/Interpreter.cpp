@@ -9571,6 +9571,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     // Limit verbose DNU logging for known fallbacks
     static int assureExtCount = 0;
     static int interCycleCount = 0;
+    static int adaptToNilCount = 0;
     bool skipLog = false;
     if (origStr == "assureExtension") {
         assureExtCount++;
@@ -9579,6 +9580,12 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     if (origStr == "doInterCycleWait") {
         interCycleCount++;
         if (interCycleCount > 3) skipLog = true;  // Only log first 3
+    }
+    // Skip logging for nil arithmetic after first few
+    if ((origStr.find("adaptToNumber:") == 0 || origStr.find("adaptToInteger:") == 0 ||
+         origStr.find("adaptToFloat:") == 0) && rcvrClassName == "UndefinedObject") {
+        adaptToNilCount++;
+        if (adaptToNilCount > 5) skipLog = true;
     }
     if (!skipLog) {
         std::cerr << "[DNU] Selector '#" << origStr << "' not found on " << rcvrClassName
@@ -9764,15 +9771,6 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     bool isNilReceiver = rcvrClassName == "UndefinedObject" || receiver_.isNil() ||
                          receiver_.rawBits() == memory_.nil().rawBits();
 
-    // DEBUG: Check why fallback might not be matching
-    static int adaptDebugCount = 0;
-    if (origStr.find("adaptTo") == 0 && adaptDebugCount++ < 10) {
-        std::cerr << "[ADAPT-DEBUG] origStr='" << origStr << "' rcvrClassName='" << rcvrClassName
-                  << "' isNilReceiver=" << isNilReceiver
-                  << " receiver_.isNil()=" << receiver_.isNil()
-                  << " receiver_.rawBits()=0x" << std::hex << receiver_.rawBits() << std::dec << "\n";
-    }
-
     if ((origStr == "adaptToNumber:andSend:" || origStr == "adaptToInteger:andSend:" ||
          origStr == "adaptToFloat:andSend:") && isNilReceiver) {
         // The second argument is the selector - check if it's a comparison op
@@ -9791,10 +9789,9 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         }
 
         static int adaptNilCount = 0;
-        if (adaptNilCount++ < 10) {
+        if (adaptNilCount++ < 3) {
             std::cerr << "[DNU] Fallback for " << origStr << " on nil with selector '" << selStr
-                      << "' selectorArg=0x" << std::hex << selectorArg.rawBits() << std::dec
-                      << " - returning " << (isComparison ? "false" : "0") << "\n";
+                      << "' - returning " << (isComparison ? "false" : "0") << "\n";
         }
         popN(argCount + 1);
         if (isComparison) {
