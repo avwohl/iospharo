@@ -281,6 +281,7 @@ private:
         Oop savedMethod;
         Oop savedHomeMethod;  // Home method for literal access
         Oop savedReceiver;
+        Oop savedActiveContext;  // Active context at time of call (for proper return chain)
         Oop* savedFP;
         int savedArgCount;
         size_t homeFrameDepth;  // For non-local block returns: the frame to return to (0 = not a block)

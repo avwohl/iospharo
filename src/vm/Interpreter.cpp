@@ -2430,6 +2430,63 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
     recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode;
     recentBytecodeIdx_++;
 
+    // Trace base frame (depth 0) to see what method is running there
+    static FILE* baseFrameBcLog = nullptr;
+    static int baseBcCount = 0;
+    static bool loggedBaseDump = false;
+    if (!baseFrameBcLog) baseFrameBcLog = fopen("/tmp/base_fullcheck.log", "w");
+
+    // Log bytecodes when at frame depth 0
+    if (frameDepth_ == 0 && baseFrameBcLog && baseBcCount < 500) {
+        baseBcCount++;
+
+        // Get current method name
+        std::string methodName = "?";
+        if (method_.isObject() && method_.rawBits() > 0x10000) {
+            Oop mHdr = memory_.fetchPointer(0, method_);
+            if (mHdr.isSmallInteger()) {
+                size_t numLits = mHdr.asSmallInteger() & 0x7FFF;
+                if (numLits >= 2) {
+                    Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                    if (sel.isObject() && sel.rawBits() > 0x10000) {
+                        ObjectHeader* selHdr = sel.asObjectPtr();
+                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                            methodName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Dump method bytecodes once when we first see fullCheck at depth 0
+        if (!loggedBaseDump && methodName == "fullCheck") {
+            loggedBaseDump = true;
+            fprintf(baseFrameBcLog, "[BASE] First fullCheck at depth 0, dumping bytecodes:\n");
+            if (method_.isObject()) {
+                ObjectHeader* mH = method_.asObjectPtr();
+                Oop hdr = memory_.fetchPointer(0, method_);
+                if (hdr.isSmallInteger()) {
+                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                    size_t bcStart = (1 + numLits) * 8;
+                    size_t bcEnd = mH->byteSize();
+                    for (size_t i = bcStart; i < bcEnd; i++) {
+                        fprintf(baseFrameBcLog, "  [%zu] %02x\n", i, mH->bytes()[i]);
+                    }
+                }
+            }
+            fprintf(baseFrameBcLog, "---\n");
+        }
+
+        size_t ipOffset = 0;
+        if (method_.isObject() && instructionPointer_) {
+            ObjectHeader* mHdr = method_.asObjectPtr();
+            ipOffset = (instructionPointer_ - 1) - mHdr->bytes();
+        }
+        fprintf(baseFrameBcLog, "[BASE BC #%d @%s] IP=%zu byte=0x%02x\n",
+                baseBcCount, methodName.c_str(), ipOffset, bytecode);
+        fflush(baseFrameBcLog);
+    }
+
     // Trace bytecodes when inside fullCheck
     if (g_inFullCheck && g_fcBytecodeLog && g_fullCheckBytecodeCount < 1000) {
         g_fullCheckBytecodeCount++;
@@ -3614,11 +3671,27 @@ void Interpreter::returnValue(Oop value) {
 
     // If no frames to pop, check if we have a sender context to return to
     if (frameDepth_ == 0) {
+        // Debug: trace context chain
+        static FILE* ctxChainLog = nullptr;
+        static int ctxChainCount = 0;
+        if (!ctxChainLog) ctxChainLog = fopen("/tmp/ctx_chain.log", "w");
+        if (ctxChainLog && ctxChainCount < 200) {
+            ctxChainCount++;
+            fprintf(ctxChainLog, "[CTX-CHAIN #%d] frameDepth_=0, activeContext_=0x%llx\n",
+                    ctxChainCount, (unsigned long long)activeContext_.rawBits());
+            fflush(ctxChainLog);
+        }
+
         // Check if current context has a sender
         Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
 
         if (activeContext_.isObject() && activeContext_.rawBits() != nilObj.rawBits()) {
             Oop sender = memory_.fetchPointer(0, activeContext_);
+            if (ctxChainLog && ctxChainCount <= 200) {
+                fprintf(ctxChainLog, "  -> sender (slot 0) = 0x%llx\n",
+                        (unsigned long long)sender.rawBits());
+                fflush(ctxChainLog);
+            }
 
             // DEFENSIVE: Check for corrupted sender (raw 0 or very low address)
             if (sender.rawBits() == 0 || sender.rawBits() < 0x10000) {
@@ -3662,6 +3735,42 @@ void Interpreter::returnValue(Oop value) {
                 }
 
                 if (hasEnoughSlots && isContextFormat) {
+                    // Log sender's method to trace the return chain
+                    if (senderCheckLog && senderCheckCount <= 100) {
+                        std::string senderMethodSel = "?";
+                        Oop senderMethod = memory_.fetchPointer(3, sender);
+                        Oop senderPC = memory_.fetchPointer(1, sender);
+                        Oop sendersSender = memory_.fetchPointer(0, sender);
+                        if (senderMethod.isObject() && senderMethod.rawBits() > 0x10000) {
+                            Oop mhdr = memory_.fetchPointer(0, senderMethod);
+                            if (mhdr.isSmallInteger()) {
+                                size_t numLits = mhdr.asSmallInteger() & 0x7FFF;
+                                if (numLits >= 2) {
+                                    Oop sel = memory_.fetchPointer(numLits - 1, senderMethod);
+                                    if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                        ObjectHeader* selHdr = sel.asObjectPtr();
+                                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                            senderMethodSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        fprintf(senderCheckLog, "[SENDER #%d] sender method=#%s pc=%lld sender's-sender=0x%llx\n",
+                                senderCheckCount, senderMethodSel.c_str(),
+                                senderPC.isSmallInteger() ? senderPC.asSmallInteger() : -1,
+                                (unsigned long long)sendersSender.rawBits());
+
+                        // Check for sender cycle: if sender's sender is the same as current activeContext_
+                        if (sendersSender.rawBits() == activeContext_.rawBits() || sendersSender.rawBits() == sender.rawBits()) {
+                            fprintf(senderCheckLog, "  *** SENDER CYCLE DETECTED! Breaking infinite loop.\n");
+                            fflush(senderCheckLog);
+                            // Don't follow this cycle - fall through to terminate process
+                            goto terminate_process;
+                        }
+                        fflush(senderCheckLog);
+                    }
+
                     // Reset stack for new context
                     stackPointer_ = stackBase_;
 
@@ -3681,6 +3790,7 @@ void Interpreter::returnValue(Oop value) {
             }
         }
 
+terminate_process:
         // Mark current process as terminated by clearing its suspendedContext
         {
             static FILE* retTermLog = nullptr;
@@ -3795,8 +3905,87 @@ void Interpreter::returnValue(Oop value) {
         }
     }
 
+    // Debug: track method_ changes through popFrame
+    static FILE* methodChangeLog = nullptr;
+    static int methodChangeCount = 0;
+    if (!methodChangeLog) methodChangeLog = fopen("/tmp/method_change.log", "w");
+
+    // Get method name BEFORE popFrame
+    std::string beforeMethod = "<unknown>";
+    if (method_.isObject() && method_.rawBits() > 0x10000) {
+        Oop mHdr = memory_.fetchPointer(0, method_);
+        if (mHdr.isSmallInteger()) {
+            size_t numLits = mHdr.asSmallInteger() & 0x7FFF;
+            if (numLits >= 2) {
+                Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                if (sel.isObject() && sel.rawBits() > 0x10000) {
+                    ObjectHeader* selHdr = sel.asObjectPtr();
+                    if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                        beforeMethod = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                    }
+                }
+            }
+        }
+    }
+
+    // Get method that WILL be restored
+    std::string willBeRestoredTo = "<none>";
+    if (frameDepth_ > 0) {
+        const auto& frame = savedFrames_[frameDepth_ - 1];
+        if (frame.savedMethod.isObject() && frame.savedMethod.rawBits() > 0x10000) {
+            Oop mHdr = memory_.fetchPointer(0, frame.savedMethod);
+            if (mHdr.isSmallInteger()) {
+                size_t numLits = mHdr.asSmallInteger() & 0x7FFF;
+                if (numLits >= 2) {
+                    Oop sel = memory_.fetchPointer(numLits - 1, frame.savedMethod);
+                    if (sel.isObject() && sel.rawBits() > 0x10000) {
+                        ObjectHeader* selHdr = sel.asObjectPtr();
+                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                            willBeRestoredTo = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Pop frame and push result
     popFrame();
+
+    // Get method name AFTER popFrame
+    std::string afterMethod = "<unknown>";
+    if (method_.isObject() && method_.rawBits() > 0x10000) {
+        Oop mHdr = memory_.fetchPointer(0, method_);
+        if (mHdr.isSmallInteger()) {
+            size_t numLits = mHdr.asSmallInteger() & 0x7FFF;
+            if (numLits >= 2) {
+                Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                if (sel.isObject() && sel.rawBits() > 0x10000) {
+                    ObjectHeader* selHdr = sel.asObjectPtr();
+                    if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                        afterMethod = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                    }
+                }
+            }
+        }
+    }
+
+    // Log transitions involving fullCheck - get IP offset AFTER popFrame (where we'll resume)
+    if (methodChangeLog && methodChangeCount < 5000) {
+        if (beforeMethod == "fullCheck" || afterMethod == "fullCheck" || willBeRestoredTo == "fullCheck") {
+            methodChangeCount++;
+            // Get bytecode offset in afterMethod (the restored method)
+            int ipOffset = -1;
+            if (instructionPointer_ && method_.isObject() && method_.rawBits() > 0x10000) {
+                ObjectHeader* mHdr = method_.asObjectPtr();
+                uint8_t* methodStart = mHdr->bytes();
+                ipOffset = static_cast<int>(instructionPointer_ - methodStart);
+            }
+            fprintf(methodChangeLog, "[RETURN #%d] %s -> %s (resumeIP=%d)\n",
+                    methodChangeCount, beforeMethod.c_str(), afterMethod.c_str(), ipOffset);
+            fflush(methodChangeLog);
+        }
+    }
 
     // After popping, if execution is still running, push the result
     if (running_) {
@@ -8507,6 +8696,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     frame.savedMethod = method_;
     frame.savedHomeMethod = homeMethod_;
     frame.savedReceiver = receiver_;
+    frame.savedActiveContext = activeContext_;  // Save active context for proper return chain
     frame.savedFP = framePointer_;
     frame.savedArgCount = argCount_;
     frame.homeFrameDepth = 0;  // Default: not a block (will be set by activateBlock if needed)
@@ -8516,6 +8706,55 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
         fprintf(frameLog, "[PUSH_FRAME] depth=%zu method=%s\n", frameDepth_,
                 methodName.empty() ? "unknown" : methodName.c_str());
         fflush(frameLog);
+    }
+
+    // Log fullCheck entries and dump its bytecodes
+    static FILE* fcEntryLog = nullptr;
+    static int fcEntryCount = 0;
+    if (!fcEntryLog) fcEntryLog = fopen("/tmp/fullcheck_entries.log", "w");
+    if (fcEntryLog && methodName == "fullCheck" && fcEntryCount < 1000) {
+        fcEntryCount++;
+        // Get the caller method (saved in frame we just created)
+        std::string callerMethod = "<unknown>";
+        if (frame.savedMethod.isObject() && frame.savedMethod.rawBits() > 0x10000) {
+            Oop hdr = memory_.fetchPointer(0, frame.savedMethod);
+            if (hdr.isSmallInteger()) {
+                size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                if (numLits >= 2) {
+                    Oop sel = memory_.fetchPointer(numLits - 1, frame.savedMethod);
+                    if (sel.isObject() && sel.rawBits() > 0x10000) {
+                        ObjectHeader* selHdr = sel.asObjectPtr();
+                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                            callerMethod = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                        }
+                    }
+                }
+            }
+        }
+        fprintf(fcEntryLog, "[fullCheck ENTRY #%d] depth=%zu caller=%s\n",
+                fcEntryCount, frameDepth_, callerMethod.c_str());
+
+        // Dump fullCheck's bytecodes
+        if (method.isObject() && method.rawBits() > 0x10000) {
+            ObjectHeader* mHdr = method.asObjectPtr();
+            Oop hdr = memory_.fetchPointer(0, method);
+            if (hdr.isSmallInteger()) {
+                size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                size_t bcStart = (1 + numLits) * 8;
+                size_t bcEnd = mHdr->byteSize();
+                fprintf(fcEntryLog, "  fullCheck bytecodes (start=%zu, totalSize=%zu):\n", bcStart, bcEnd);
+                for (size_t i = bcStart; i < bcEnd && i < bcStart + 100; i++) {
+                    if ((i - bcStart) % 16 == 0) {
+                        fprintf(fcEntryLog, "    [%3zu]: ", i);
+                    }
+                    fprintf(fcEntryLog, "%02x ", mHdr->bytes()[i]);
+                    if ((i - bcStart) % 16 == 15 || i == bcEnd - 1) {
+                        fprintf(fcEntryLog, "\n");
+                    }
+                }
+            }
+        }
+        fflush(fcEntryLog);
     }
 
     // Calculate number of temporaries for the new method
@@ -8577,6 +8816,7 @@ void Interpreter::popFrame() {
     method_ = frame.savedMethod;
     homeMethod_ = frame.savedHomeMethod;
     receiver_ = frame.savedReceiver;
+    activeContext_ = frame.savedActiveContext;  // Restore active context for proper return chain
     framePointer_ = frame.savedFP;
     argCount_ = frame.savedArgCount;
 
