@@ -6991,14 +6991,17 @@ PrimitiveResult Interpreter::primitiveAdoptInstance(int argCount) {
 PrimitiveResult Interpreter::primitiveIsPinned(int argCount) {
     Oop rcvr = stackTop();
 
+    // Official VM: fail on immediates (PrimErrBadReceiver)
     if (!rcvr.isObject()) {
-        // Immediates are not pinned (they don't move anyway)
-        pop();
-        push(memory_.falseObject());
-        return PrimitiveResult::Success;
+        return PrimitiveResult::Failure;
     }
 
+    // Also fail on forwarded objects
     ObjectHeader* header = rcvr.asObjectPtr();
+    if (header->isForwarded()) {
+        return PrimitiveResult::Failure;
+    }
+
     bool isPinned = header->isPinned();
 
     pop();
@@ -7006,23 +7009,45 @@ PrimitiveResult Interpreter::primitiveIsPinned(int argCount) {
     return PrimitiveResult::Success;
 }
 
-// Primitive 184: Pin an object (prevent GC from moving it)
+// Primitive 184: Pin or unpin an object
+// Takes 1 argument: boolean (true = pin, false = unpin)
+// Returns: true if was pinned before, false if wasn't
 PrimitiveResult Interpreter::primitivePin(int argCount) {
-    Oop rcvr = stackTop();
+    // Official VM signature: receiver pin: aBoolean
+    if (argCount != 1) {
+        return PrimitiveResult::Failure;
+    }
 
+    Oop boolArg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    // Official VM: fail on immediates
     if (!rcvr.isObject()) {
-        // Can't pin immediates, but succeed anyway
-        pop();
-        push(memory_.falseObject());  // Return false (was not pinned)
-        return PrimitiveResult::Success;
+        return PrimitiveResult::Failure;
+    }
+
+    // Validate boolean argument
+    Oop trueObj = memory_.trueObject();
+    Oop falseObj = memory_.falseObject();
+    bool shouldPin;
+    if (boolArg.rawBits() == trueObj.rawBits()) {
+        shouldPin = true;
+    } else if (boolArg.rawBits() == falseObj.rawBits()) {
+        shouldPin = false;
+    } else {
+        return PrimitiveResult::Failure;  // Must be true or false
     }
 
     ObjectHeader* header = rcvr.asObjectPtr();
-    bool wasPinned = header->isPinned();
-    header->setPinned(true);
+    if (header->isForwarded()) {
+        return PrimitiveResult::Failure;
+    }
 
-    pop();
-    push(wasPinned ? memory_.trueObject() : memory_.falseObject());
+    bool wasPinned = header->isPinned();
+    header->setPinned(shouldPin);
+
+    popN(2);
+    push(wasPinned ? trueObj : falseObj);
     return PrimitiveResult::Success;
 }
 
