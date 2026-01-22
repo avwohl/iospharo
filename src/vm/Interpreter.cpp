@@ -6817,14 +6817,15 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
             traceHandler = (selStr == "findNextHandlerContext");
             traceSignal = (selStr == "signal");
             traceInterCycle = (selStr == "doInterCycleWait" || selStr == "doInterCycleWait:");
-            traceSession = (selStr == "hasError" || selStr == "isImageStarting" || selStr == "startup:");
+            traceSession = (selStr == "hasError" || selStr == "isImageStarting" || selStr == "startup:" ||
+                            selStr == "doesNotUnderstand:" || selStr == "executeDeferredStartupActions:");
         }
     }
 
-    // TRACE: Debug why hasError/isImageStarting/startup: aren't found
+    // TRACE: Debug why hasError/isImageStarting/startup:/doesNotUnderstand: aren't found
     static FILE* sessionLookupLog = nullptr;
     static int sessionLookupCount = 0;
-    if (traceSession && sessionLookupCount < 10) {
+    if (traceSession && sessionLookupCount < 30) {
         if (!sessionLookupLog) sessionLookupLog = fopen("/tmp/session_lookup.log", "w");
         if (sessionLookupLog) {
             sessionLookupCount++;
@@ -7088,7 +7089,7 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
         }
 
         // Detailed trace for session method lookup
-        if (traceSession && sessionLookupCount <= 5 && sessionLookupLog) {
+        if (traceSession && sessionLookupCount <= 20 && sessionLookupLog) {
             std::string clsName = getClassName(currentClass);
             fprintf(sessionLookupLog, "[SESSION-LOOKUP] depth=%d class=%s methodDict=0x%llx\n",
                     depth, clsName.c_str(), (unsigned long long)methodDict.rawBits());
@@ -8899,6 +8900,73 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
         }
     }
 
+    // Early trace: detect first ifTrue:ifFalse: with non-boolean receiver
+    static int ifBoolTraceCount = 0;
+    if (ifBoolTraceCount < 5 && (methodName == "ifTrue:ifFalse:" || methodName == "ifTrue:" || methodName == "ifFalse:")) {
+        Oop rcvr = stackValue(argCount);
+        bool isBoolean = rcvr.rawBits() == memory_.trueObject().rawBits() ||
+                         rcvr.rawBits() == memory_.falseObject().rawBits();
+        if (!isBoolean) {
+            ifBoolTraceCount++;
+            std::string rcvrDesc = "unknown";
+            if (rcvr.isSmallInteger()) {
+                rcvrDesc = "SmallInteger(" + std::to_string(rcvr.asSmallInteger()) + ")";
+            } else if (rcvr.isNil()) {
+                rcvrDesc = "nil";
+            } else if (rcvr.isObject()) {
+                Oop cls = memory_.classOf(rcvr);
+                if (cls.isObject()) {
+                    Oop nameOop = memory_.fetchPointer(6, cls);
+                    if (nameOop.isObject()) {
+                        ObjectHeader* nHdr = nameOop.asObjectPtr();
+                        if (nHdr->isBytesObject() && nHdr->byteSize() < 50) {
+                            rcvrDesc = std::string((char*)nHdr->bytes(), nHdr->byteSize());
+                        }
+                    }
+                }
+            }
+            // Also trace caller method
+            std::string callerClass = "<unknown>";
+            std::string callerMethod = "<unknown>";
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                Oop headerOop = memory_.fetchPointer(0, method_);
+                if (headerOop.isSmallInteger()) {
+                    int64_t header = headerOop.asSmallInteger();
+                    int numLits = (header >> 1) & 0x7FFF;
+                    if (numLits >= 2) {
+                        Oop assoc = memory_.fetchPointer(numLits, method_);
+                        if (assoc.isObject() && assoc.rawBits() > 0x10000) {
+                            ObjectHeader* aHdr = assoc.asObjectPtr();
+                            if (aHdr->slotCount() >= 2) {
+                                Oop cls = memory_.fetchPointer(1, assoc);
+                                if (cls.isObject()) {
+                                    Oop nameOop = memory_.fetchPointer(6, cls);
+                                    if (nameOop.isObject()) {
+                                        ObjectHeader* nHdr = nameOop.asObjectPtr();
+                                        if (nHdr->isBytesObject() && nHdr->byteSize() < 50) {
+                                            callerClass = std::string((char*)nHdr->bytes(), nHdr->byteSize());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Oop selOop = memory_.fetchPointer(numLits - 1, method_);
+                        if (selOop.isObject() && selOop.rawBits() > 0x10000) {
+                            ObjectHeader* sHdr = selOop.asObjectPtr();
+                            if (sHdr->isBytesObject() && sHdr->byteSize() < 100) {
+                                callerMethod = std::string((char*)sHdr->bytes(), sHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+            }
+            std::cerr << "[NONBOOL-COND #" << ifBoolTraceCount << "] " << methodName
+                      << " called on " << rcvrDesc << " (0x" << std::hex << rcvr.rawBits()
+                      << std::dec << ") at depth " << frameDepth_
+                      << " from " << callerClass << " >> #" << callerMethod << "\n";
+        }
+    }
+
     // Recursion detection - check if same method NAME is being pushed repeatedly
     // This catches indirect recursion where different classes have same-named methods
     static std::string lastMethodName = "";
@@ -8944,6 +9012,73 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
 
         if (sameMethodCount > threshold) {
             // Same method name pushed too many times - likely infinite recursion
+            // Debug: show receiver info for conditional methods
+            static int recDbg = 0;
+            if (recDbg++ < 3 && (methodName == "ifTrue:ifFalse:" || methodName == "ifTrue:" ||
+                                  methodName == "ifFalse:")) {
+                Oop rcvr = stackValue(argCount);  // Receiver is under the arguments
+                std::string rcvrClass = "unknown";
+                if (rcvr.isSmallInteger()) {
+                    rcvrClass = "SmallInteger(" + std::to_string(rcvr.asSmallInteger()) + ")";
+                } else if (rcvr.isNil() || rcvr.rawBits() == memory_.nil().rawBits()) {
+                    rcvrClass = "nil";
+                } else if (rcvr.rawBits() == memory_.trueObject().rawBits()) {
+                    rcvrClass = "true";
+                } else if (rcvr.rawBits() == memory_.falseObject().rawBits()) {
+                    rcvrClass = "false";
+                } else if (rcvr.isObject()) {
+                    Oop cls = memory_.classOf(rcvr);
+                    if (cls.isObject()) {
+                        Oop nameOop = memory_.fetchPointer(6, cls);
+                        if (nameOop.isObject()) {
+                            ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                                rcvrClass = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+                std::cerr << "[RECURSION] receiver=" << rcvrClass << " rawBits=0x"
+                          << std::hex << rcvr.rawBits() << std::dec << "\n";
+                // Also trace caller method
+                std::string callerMethod = "<unknown>";
+                std::string callerClass = "<unknown>";
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    ObjectHeader* mHdr = method_.asObjectPtr();
+                    // Get literal count from method header (slot 0)
+                    Oop headerOop = memory_.fetchPointer(0, method_);
+                    if (headerOop.isSmallInteger()) {
+                        int64_t header = headerOop.asSmallInteger();
+                        int numLits = (header >> 1) & 0x7FFF;
+                        if (numLits >= 2) {
+                            Oop assoc = memory_.fetchPointer(numLits, method_);  // Class association (last literal)
+                            if (assoc.isObject() && assoc.rawBits() > 0x10000) {
+                                ObjectHeader* aHdr = assoc.asObjectPtr();
+                                if (aHdr->slotCount() >= 2) {
+                                    Oop cls = memory_.fetchPointer(1, assoc);  // value of association
+                                    if (cls.isObject()) {
+                                        Oop nameOop = memory_.fetchPointer(6, cls);
+                                        if (nameOop.isObject()) {
+                                            ObjectHeader* nHdr = nameOop.asObjectPtr();
+                                            if (nHdr->isBytesObject() && nHdr->byteSize() < 50) {
+                                                callerClass = std::string((char*)nHdr->bytes(), nHdr->byteSize());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Oop selOop = memory_.fetchPointer(numLits - 1, method_);  // Selector (second-to-last literal)
+                            if (selOop.isObject() && selOop.rawBits() > 0x10000) {
+                                ObjectHeader* sHdr = selOop.asObjectPtr();
+                                if (sHdr->isBytesObject() && sHdr->byteSize() < 100) {
+                                    callerMethod = std::string((char*)sHdr->bytes(), sHdr->byteSize());
+                                }
+                            }
+                        }
+                    }
+                }
+                std::cerr << "[RECURSION] called from " << callerClass << " >> #" << callerMethod << "\n";
+            }
             std::cerr << "[RECURSION] Breaking infinite recursion: method " << methodName
                       << " pushed " << sameMethodCount << " times at depth " << frameDepth_ << "\n";
             // Ban this method for the next 1000 calls to break the recursion completely
@@ -9779,7 +9914,9 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         Oop selectorArg = stackValue(0);  // Top of stack is the selector
         std::string selStr = "";
         bool isComparison = false;
-        if (selectorArg.isObject() && selectorArg.rawBits() > 0x10000) {
+        bool selectorIsNil = selectorArg.isNil() || selectorArg.rawBits() == memory_.nil().rawBits();
+
+        if (!selectorIsNil && selectorArg.isObject() && selectorArg.rawBits() > 0x10000) {
             ObjectHeader* selHdr = selectorArg.asObjectPtr();
             if (selHdr->isBytesObject() && selHdr->byteSize() <= 10) {
                 selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
@@ -9788,14 +9925,17 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
             }
         }
 
+        // If selector is nil or empty, treat as invalid operation and return false to break loops
+        bool returnFalse = isComparison || selectorIsNil || selStr.empty();
+
         static int adaptNilCount = 0;
-        if (adaptNilCount++ < 3) {
+        if (adaptNilCount++ < 5) {
             std::cerr << "[DNU] Fallback for " << origStr << " on nil with selector '" << selStr
-                      << "' - returning " << (isComparison ? "false" : "0") << "\n";
+                      << "' (nil=" << selectorIsNil << ") - returning " << (returnFalse ? "false" : "0") << "\n";
         }
         popN(argCount + 1);
-        if (isComparison) {
-            push(memory_.falseObject());  // Return false for nil comparisons
+        if (returnFalse) {
+            push(memory_.falseObject());  // Return false for nil comparisons or invalid selectors
         } else {
             push(Oop::fromSmallInteger(0));  // Return 0 for nil arithmetic
         }
@@ -10296,6 +10436,35 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         // Leave receiver on stack
         dnuDepth--;
         return;
+    }
+    // Fallback for ifTrue:ifFalse: on nil/non-boolean
+    // This happens when nil or non-boolean participates in conditional expressions
+    // (e.g., result of comparison returning nil or an integer instead of true/false)
+    // When ifTrue:ifFalse: is sent to a non-boolean, return nil to break any infinite loops
+    if (origStr == "ifTrue:ifFalse:" || origStr == "ifTrue:" || origStr == "ifFalse:" ||
+        origStr == "ifNil:" || origStr == "ifNil:ifNotNil:" || origStr == "ifNotNil:" ||
+        origStr == "ifNotNil:ifNil:") {
+        // Check if receiver is non-boolean (not true or false)
+        bool isBoolean = receiver_.rawBits() == memory_.trueObject().rawBits() ||
+                         receiver_.rawBits() == memory_.falseObject().rawBits();
+        if (!isBoolean) {
+            static int ifNonBoolCount = 0;
+            if (ifNonBoolCount++ < 5) {
+                std::string rcvrType = "unknown";
+                if (receiver_.isSmallInteger()) {
+                    rcvrType = "SmallInteger(" + std::to_string(receiver_.asSmallInteger()) + ")";
+                } else if (isNilReceiver) {
+                    rcvrType = "nil";
+                } else {
+                    rcvrType = rcvrClassName;
+                }
+                std::cerr << "[DNU] Fallback for " << origStr << " on non-boolean " << rcvrType << " - returning nil\n";
+            }
+            popN(argCount + 1);  // Pop blocks and receiver
+            push(memory_.nil());  // Return nil
+            dnuDepth--;
+            return;
+        }
     }
     if (origStr == "newForEncoding:" && argCount == 1) {
         // Character encoder factory - return nil to indicate encoding not available

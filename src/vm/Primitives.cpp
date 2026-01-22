@@ -532,6 +532,45 @@ PrimitiveResult Interpreter::primitiveLessThan(int argCount) {
         return PrimitiveResult::Success;
     }
 
+    // Log < failures to debug SmallInteger(1) in conditionals
+    static int ltFailCount = 0;
+    if (ltFailCount++ < 5) {
+        std::string rcvrType = "unknown";
+        std::string argType = "unknown";
+        if (rcvr.isSmallInteger()) rcvrType = "SmallInteger(" + std::to_string(rcvr.asSmallInteger()) + ")";
+        else if (rcvr.isCharacter()) rcvrType = "Character";
+        else if (rcvr.isNil()) rcvrType = "nil";
+        else if (rcvr.isObject()) {
+            Oop cls = memory_.classOf(rcvr);
+            if (cls.isObject()) {
+                Oop nameOop = memory_.fetchPointer(6, cls);
+                if (nameOop.isObject()) {
+                    ObjectHeader* nHdr = nameOop.asObjectPtr();
+                    if (nHdr->isBytesObject() && nHdr->byteSize() < 50) {
+                        rcvrType = std::string((char*)nHdr->bytes(), nHdr->byteSize());
+                    }
+                }
+            }
+        }
+        if (arg.isSmallInteger()) argType = "SmallInteger(" + std::to_string(arg.asSmallInteger()) + ")";
+        else if (arg.isCharacter()) argType = "Character";
+        else if (arg.isNil()) argType = "nil";
+        else if (arg.isObject()) {
+            Oop cls = memory_.classOf(arg);
+            if (cls.isObject()) {
+                Oop nameOop = memory_.fetchPointer(6, cls);
+                if (nameOop.isObject()) {
+                    ObjectHeader* nHdr = nameOop.asObjectPtr();
+                    if (nHdr->isBytesObject() && nHdr->byteSize() < 50) {
+                        argType = std::string((char*)nHdr->bytes(), nHdr->byteSize());
+                    }
+                }
+            }
+        }
+        std::cerr << "[PRIM-LT-FAIL #" << ltFailCount << "] < failed: "
+                  << rcvrType << " < " << argType << "\n";
+    }
+
     return PrimitiveResult::Failure;
 }
 
@@ -588,6 +627,45 @@ PrimitiveResult Interpreter::primitiveGreaterOrEqual(int argCount) {
         bool result = rcvr.asSmallInteger() >= arg.asSmallInteger();
         primitiveSuccess(result ? memory_.trueObject() : memory_.falseObject());
         return PrimitiveResult::Success;
+    }
+
+    // Log >= failures to debug SmallInteger(1) in conditionals
+    static int geFailCount = 0;
+    if (geFailCount++ < 5) {
+        std::string rcvrType = "unknown";
+        std::string argType = "unknown";
+        if (rcvr.isSmallInteger()) rcvrType = "SmallInteger";
+        else if (rcvr.isCharacter()) rcvrType = "Character";
+        else if (rcvr.isNil()) rcvrType = "nil";
+        else if (rcvr.isObject()) {
+            Oop cls = memory_.classOf(rcvr);
+            if (cls.isObject()) {
+                Oop nameOop = memory_.fetchPointer(6, cls);
+                if (nameOop.isObject()) {
+                    ObjectHeader* nHdr = nameOop.asObjectPtr();
+                    if (nHdr->isBytesObject() && nHdr->byteSize() < 50) {
+                        rcvrType = std::string((char*)nHdr->bytes(), nHdr->byteSize());
+                    }
+                }
+            }
+        }
+        if (arg.isSmallInteger()) argType = "SmallInteger";
+        else if (arg.isCharacter()) argType = "Character";
+        else if (arg.isNil()) argType = "nil";
+        else if (arg.isObject()) {
+            Oop cls = memory_.classOf(arg);
+            if (cls.isObject()) {
+                Oop nameOop = memory_.fetchPointer(6, cls);
+                if (nameOop.isObject()) {
+                    ObjectHeader* nHdr = nameOop.asObjectPtr();
+                    if (nHdr->isBytesObject() && nHdr->byteSize() < 50) {
+                        argType = std::string((char*)nHdr->bytes(), nHdr->byteSize());
+                    }
+                }
+            }
+        }
+        std::cerr << "[PRIM-GE-FAIL #" << geFailCount << "] >= failed: "
+                  << rcvrType << " >= " << argType << "\n";
     }
 
     return PrimitiveResult::Failure;
