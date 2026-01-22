@@ -1419,11 +1419,6 @@ PrimitiveResult Interpreter::primitiveInstVarAtPut(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Fail for immediates (they don't have instance variables)
-    if (!rcvr.isObject()) {
-        return PrimitiveResult::Failure;
-    }
-
     if (header->isImmutable()) {
         return PrimitiveResult::Failure;
     }
@@ -1719,35 +1714,42 @@ PrimitiveResult Interpreter::primitiveShallowCopy(int argCount) {
 // ===== IDENTITY PRIMITIVES =====
 
 PrimitiveResult Interpreter::primitiveIdentityHash(int argCount) {
-    Oop rcvr = stackValue(0);
+    Oop rcvr = stackValue(argCount);  // Receiver is under arguments
 
-    // Fail if receiver is a forwarded object (official VM behavior)
-    if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+    // Per official VM: fail if receiver is immediate
+    if (!rcvr.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Fail if forwarded object (official VM: only check when argCount > 0)
+    if (argCount > 0) {
         ObjectHeader* hdr = rcvr.asObjectPtr();
-        if (hdr->isForwarded()) {
+        if (hdr && hdr->isForwarded()) {
             return PrimitiveResult::Failure;
         }
     }
 
     // identityHashOf handles lazy hash generation and caching
     uint32_t hash = memory_.identityHashOf(rcvr);
-    primitiveSuccess(Oop::fromSmallInteger(hash));
+    popN(argCount + 1);
+    push(Oop::fromSmallInteger(hash));
     return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveClass(int argCount) {
-    Oop rcvr = stackValue(0);
+    Oop rcvr = stackValue(argCount);  // Receiver is under arguments
 
-    // Fail if receiver is forwarded (when argCount > 0, per official VM)
-    if (argCount > 0 && rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+    // Per official VM: fail if forwarded object only when argCount > 0
+    if (argCount > 0 && rcvr.isObject()) {
         ObjectHeader* hdr = rcvr.asObjectPtr();
-        if (hdr->isForwarded()) {
+        if (hdr && hdr->isForwarded()) {
             return PrimitiveResult::Failure;
         }
     }
 
     Oop classOop = memory_.classOf(rcvr);
-    primitiveSuccess(classOop);
+    popN(argCount + 1);
+    push(classOop);
     return PrimitiveResult::Success;
 }
 
@@ -1755,23 +1757,25 @@ PrimitiveResult Interpreter::primitiveIdentical(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
-    // Fail if either operand is a forwarded object (official VM behavior)
-    // Immediates (SmallInteger, Character, SmallFloat) are never forwarded
-    if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+    // Per official VM: fail if either operand is a forwarded object
+    // Only heap objects can be forwarded, not immediates
+    if (rcvr.isObject()) {
         ObjectHeader* hdr = rcvr.asObjectPtr();
-        if (hdr->isForwarded()) {
+        if (hdr && hdr->isForwarded()) {
             return PrimitiveResult::Failure;
         }
     }
-    if (arg.isObject() && arg.rawBits() > 0x10000) {
+    if (arg.isObject()) {
         ObjectHeader* hdr = arg.asObjectPtr();
-        if (hdr->isForwarded()) {
+        if (hdr && hdr->isForwarded()) {
             return PrimitiveResult::Failure;
         }
     }
 
     bool result = (rcvr == arg);
-    primitiveSuccess(result ? memory_.trueObject() : memory_.falseObject());
+    pop();
+    pop();
+    push(result ? memory_.trueObject() : memory_.falseObject());
     return PrimitiveResult::Success;
 }
 
@@ -1779,22 +1783,25 @@ PrimitiveResult Interpreter::primitiveNotIdentical(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
-    // Fail if either operand is a forwarded object (official VM behavior)
-    if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+    // Per official VM: fail if either operand is a forwarded object
+    // Only heap objects can be forwarded, not immediates
+    if (rcvr.isObject()) {
         ObjectHeader* hdr = rcvr.asObjectPtr();
-        if (hdr->isForwarded()) {
+        if (hdr && hdr->isForwarded()) {
             return PrimitiveResult::Failure;
         }
     }
-    if (arg.isObject() && arg.rawBits() > 0x10000) {
+    if (arg.isObject()) {
         ObjectHeader* hdr = arg.asObjectPtr();
-        if (hdr->isForwarded()) {
+        if (hdr && hdr->isForwarded()) {
             return PrimitiveResult::Failure;
         }
     }
 
     bool result = (rcvr != arg);
-    primitiveSuccess(result ? memory_.trueObject() : memory_.falseObject());
+    pop();
+    pop();
+    push(result ? memory_.trueObject() : memory_.falseObject());
     return PrimitiveResult::Success;
 }
 
@@ -2753,6 +2760,7 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
     }
 
     // No signal available - must wait
+    // Per official VM: add current process to wait list and switch to next runnable
     if (waitLog && waitCallCount <= 100) {
         fprintf(waitLog, "[WAIT] #%d sem=%p -> blocking process\n",
                 waitCallCount, (void*)semaphore.rawBits());
@@ -2762,15 +2770,9 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
     addLastLinkToList(activeProcess, semaphore);
 
     // Find next runnable process and switch to it
+    // Per official VM: always transfer, don't check for nil
+    // The scheduler should always have at least one runnable process (idle)
     Oop nextProcess = wakeHighestPriority();
-
-    Oop nilObj = memory_.nil();
-    if (nextProcess.isNil() || nextProcess.rawBits() == nilObj.rawBits()) {
-        // No other process to switch to - remove ourselves and return
-        removeFirstLinkOfList(semaphore);
-        return PrimitiveResult::Success;
-    }
-
     transferTo(nextProcess);
     return PrimitiveResult::Success;
 }
