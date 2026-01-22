@@ -1647,8 +1647,9 @@ void Interpreter::renderWorldMorphs() {
 // ===== INPUT EVENT PROCESSING =====
 
 void Interpreter::processInputEvents() {
-    // Simple passthrough: queue all events for Smalltalk to handle via primitive 264.
-    // No C++ workarounds - Pharo's Morphic handles all event dispatch natively.
+    // Events are handled via SDL_PollEvent (FFI) -> OSWindow -> Morphic.
+    // This function now just logs and doesn't drain the queue.
+    // SDL_PollEvent in FFI.cpp pops events from gEventQueue.
     static FILE* logFile = nullptr;
     static int callCount = 0;
     static bool initialized = false;
@@ -1660,44 +1661,12 @@ void Interpreter::processInputEvents() {
 
     // Log periodically
     if (++callCount % 1000 == 1 && logFile) {
-        fprintf(logFile, "[PROCESS-INPUT] call #%d\n", callCount);
+        fprintf(logFile, "[PROCESS-INPUT] call #%d (events handled via SDL_PollEvent)\n", callCount);
         fflush(logFile);
     }
 
-    pharo::Event event;
-    while (pharo::gEventQueue.pop(event)) {
-        // Skip WindowMetrics events - internal to C++ rendering
-        if (event.type == static_cast<int>(pharo::EventType::WindowMetrics)) {
-            continue;
-        }
-
-        // Log mouse events for debugging
-        if (logFile && event.type == static_cast<int>(pharo::EventType::Mouse)) {
-            fprintf(logFile, "[EVENT] Mouse type=%d at %d,%d buttons=%d\n",
-                    event.arg5, event.arg1, event.arg2, event.arg3);
-            fflush(logFile);
-        }
-
-        // Track mouse position for direct hand updates (backup if event system not working)
-        if (event.type == static_cast<int>(pharo::EventType::Mouse)) {
-            lastMouseX_ = event.arg1 * menuBarScale_;
-            lastMouseY_ = event.arg2 * menuBarScale_;
-            lastMouseButtons_ = event.arg3;
-            lastMouseEventType_ = event.arg5;
-        }
-
-        // All events go to Pharo - let Morphic handle everything
-        passThroughEvents_.push_back(event);
-
-        // Signal the input semaphore to wake up Smalltalk's event loop
-        int inputSemaIdx = pharo::gEventQueue.getInputSemaphoreIndex();
-        if (inputSemaIdx > 0) {
-            signalExternalSemaphore(inputSemaIdx);
-        }
-
-        // NO WORKAROUNDS: Events are queued for Smalltalk to handle via primitive 264
-        // If events aren't being processed, fix InputEventSensor startup, don't add C++ workarounds
-    }
+    // Events flow: Swift -> gEventQueue -> SDL_PollEvent (FFI) -> OSWindow -> Morphic
+    // We don't drain the queue here anymore - SDL_PollEvent does that.
 }
 
 // NO WORKAROUNDS: The following C++ event dispatch functions were removed:
@@ -13447,7 +13416,24 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
     // 256-519 range without being hijacked by quick primitive handling.
     PrimitiveFunc prim = primitiveTable_[primitiveIndex];
 
-    // Debug: Log calls to primitive 264-269 range
+    // Debug: Log all primitive calls to see the pattern
+    static FILE* primExecLog = nullptr;
+    static int primExecCount = 0;
+    if (!primExecLog) {
+        primExecLog = fopen("/tmp/prim_exec.log", "w");
+    }
+    primExecCount++;
+    if (primExecLog && primExecCount <= 500) {
+        fprintf(primExecLog, "[PRIM-EXEC] #%d prim=%d func=%s\n",
+                primExecCount, primitiveIndex, prim ? "YES" : "NULL");
+        fflush(primExecLog);
+    }
+
+    // Debug: Log calls to FFI and event primitives
+    if (primitiveIndex == 117 || primitiveIndex == 120 || primitiveIndex == 147) {
+        fprintf(stderr, "[EXECPRIM] FFI prim %d called (func=%s)\n",
+                primitiveIndex, prim ? "REGISTERED" : "NULL");
+    }
     if (primitiveIndex >= 264 && primitiveIndex <= 269) {
         fprintf(stderr, "[EXECPRIM] prim %d, func=%s\n",
                 primitiveIndex, prim ? "REGISTERED" : "NULL");

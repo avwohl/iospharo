@@ -5,11 +5,79 @@
  */
 
 #include "FFI.hpp"
+#include "../platform/EventQueue.hpp"
 #include <iostream>
 #include <cstring>
 #include <chrono>
 #include <dlfcn.h>
 #include <ffi.h>
+
+// SDL2 event types
+#define SDL_QUIT            0x100
+#define SDL_WINDOWEVENT     0x200
+#define SDL_KEYDOWN         0x300
+#define SDL_KEYUP           0x301
+#define SDL_TEXTINPUT       0x303
+#define SDL_MOUSEMOTION     0x400
+#define SDL_MOUSEBUTTONDOWN 0x401
+#define SDL_MOUSEBUTTONUP   0x402
+#define SDL_MOUSEWHEEL      0x403
+
+// SDL2 mouse button codes
+#define SDL_BUTTON_LEFT     1
+#define SDL_BUTTON_MIDDLE   2
+#define SDL_BUTTON_RIGHT    3
+
+// SDL2 event structures (simplified versions matching what OSWindow expects)
+struct SDL_CommonEvent {
+    uint32_t type;
+    uint32_t timestamp;
+};
+
+struct SDL_MouseMotionEvent {
+    uint32_t type;        // SDL_MOUSEMOTION
+    uint32_t timestamp;
+    uint32_t windowID;
+    uint32_t which;       // Mouse instance id
+    uint32_t state;       // Button state
+    int32_t x;
+    int32_t y;
+    int32_t xrel;
+    int32_t yrel;
+};
+
+struct SDL_MouseButtonEvent {
+    uint32_t type;        // SDL_MOUSEBUTTONDOWN or SDL_MOUSEBUTTONUP
+    uint32_t timestamp;
+    uint32_t windowID;
+    uint32_t which;       // Mouse instance id
+    uint8_t button;       // SDL_BUTTON_LEFT/MIDDLE/RIGHT
+    uint8_t state;        // SDL_PRESSED or SDL_RELEASED
+    uint8_t clicks;       // Click count
+    uint8_t padding1;
+    int32_t x;
+    int32_t y;
+};
+
+struct SDL_MouseWheelEvent {
+    uint32_t type;        // SDL_MOUSEWHEEL
+    uint32_t timestamp;
+    uint32_t windowID;
+    uint32_t which;       // Mouse instance id
+    int32_t x;            // Horizontal scroll
+    int32_t y;            // Vertical scroll
+    uint32_t direction;   // Normal or flipped
+};
+
+// SDL_Event union - just enough for mouse events
+union SDL_Event {
+    uint32_t type;
+    SDL_CommonEvent common;
+    SDL_MouseMotionEvent motion;
+    SDL_MouseButtonEvent button;
+    SDL_MouseWheelEvent wheel;
+    uint8_t padding[56];  // SDL_Event is 56 bytes
+};
 
 namespace pharo {
 namespace ffi {
@@ -40,30 +108,55 @@ void shutdownFFI() {
 }
 
 bool isModuleLoaded(const std::string& moduleName) {
+    static int moduleCheckCount = 0;
+    moduleCheckCount++;
+
     // We support SDL2 and general dlsym lookup
     if (moduleName == "SDL2" || moduleName == "libSDL2" ||
         moduleName.find("SDL2") != std::string::npos) {
         // Check both real SDL2 and our stubs
-        if (dlsym(RTLD_DEFAULT, "SDL_Init") != nullptr) {
+        void* sdlInit = dlsym(RTLD_DEFAULT, "SDL_Init");
+        if (sdlInit != nullptr) {
+            fprintf(stderr, "[FFI-MODULE] #%d '%s' -> FOUND via dlsym (%p)\n",
+                    moduleCheckCount, moduleName.c_str(), sdlInit);
             return true;
         }
         // Check if our stubs are registered
         auto it = sFunctionCache.find("SDL_Init");
-        return it != sFunctionCache.end();
+        bool found = it != sFunctionCache.end();
+        fprintf(stderr, "[FFI-MODULE] #%d '%s' -> stub cache: %s\n",
+                moduleCheckCount, moduleName.c_str(), found ? "YES" : "NO");
+        return found;
+    }
+
+    if (moduleCheckCount <= 20) {
+        fprintf(stderr, "[FFI-MODULE] #%d '%s' -> assuming loaded\n",
+                moduleCheckCount, moduleName.c_str());
     }
     // For other modules, check if any function from that module is available
     return true;  // Assume available, will fail on lookup if not
 }
 
 void* lookupFunction(const std::string& moduleName, const std::string& funcName) {
+    static int lookupCount = 0;
+    lookupCount++;
+
     // Check cache first
     auto it = sFunctionCache.find(funcName);
     if (it != sFunctionCache.end()) {
+        if (lookupCount <= 50) {
+            fprintf(stderr, "[FFI-LOOKUP] #%d '%s' in '%s' -> CACHED %p\n",
+                    lookupCount, funcName.c_str(), moduleName.c_str(), it->second);
+        }
         return it->second;
     }
 
     // Look up the function
     void* func = dlsym(RTLD_DEFAULT, funcName.c_str());
+    if (lookupCount <= 50) {
+        fprintf(stderr, "[FFI-LOOKUP] #%d '%s' in '%s' -> dlsym=%p\n",
+                lookupCount, funcName.c_str(), moduleName.c_str(), func);
+    }
     if (func) {
         sFunctionCache[funcName] = func;
     }
@@ -195,7 +288,6 @@ int stub_SDL_SetRenderDrawColor(void* renderer, uint8_t r, uint8_t g, uint8_t b,
 // Event stubs - critical for InputEventSensor
 // Forward events from our queue to SDL event structure
 int stub_SDL_PollEvent(void* event) {
-    // Debug: Log calls to this stub
     static FILE* sdlLog = nullptr;
     static int sdlCallCount = 0;
     sdlCallCount++;
@@ -203,13 +295,137 @@ int stub_SDL_PollEvent(void* event) {
     if (!sdlLog) {
         sdlLog = fopen("/tmp/sdl_pollevent.log", "w");
     }
-    if (sdlLog && sdlCallCount <= 100) {
-        fprintf(sdlLog, "[SDL_PollEvent] Call #%d event=%p\n", sdlCallCount, event);
-        fflush(sdlLog);
+
+    if (!event) {
+        // Just check if events available
+        if (sdlLog && sdlCallCount <= 100) {
+            fprintf(sdlLog, "[SDL_PollEvent] Call #%d event=null (check only)\n", sdlCallCount);
+            fflush(sdlLog);
+        }
+        return !pharo::gEventQueue.isEmpty() ? 1 : 0;
     }
 
-    // Return 0 = no event available for now
-    // Events are handled through primitive 264 and direct hand manipulation
+    // Pop event from our queue
+    pharo::Event pharoEvent;
+    if (!pharo::gEventQueue.pop(pharoEvent)) {
+        return 0;  // No events available
+    }
+
+    SDL_Event* sdlEvent = reinterpret_cast<SDL_Event*>(event);
+    memset(sdlEvent, 0, sizeof(SDL_Event));
+
+    // Convert Pharo event to SDL event
+    if (pharoEvent.type == static_cast<int>(pharo::EventType::Mouse)) {
+        // pharoEvent.arg5 is the mouse event subtype:
+        // 0 = move, 1 = down, 2 = up, 3 = drag (move with button held)
+        int subtype = pharoEvent.arg5;
+
+        if (subtype == 0 || subtype == 3) {
+            // Mouse motion (move or drag)
+            sdlEvent->motion.type = SDL_MOUSEMOTION;
+            sdlEvent->motion.timestamp = pharoEvent.timeStamp;
+            sdlEvent->motion.windowID = pharoEvent.windowIndex;
+            sdlEvent->motion.which = 0;  // Touch or mouse
+            sdlEvent->motion.x = pharoEvent.arg1;
+            sdlEvent->motion.y = pharoEvent.arg2;
+            // Convert Pharo button mask to SDL state
+            uint32_t sdlState = 0;
+            if (pharoEvent.arg3 & 4) sdlState |= (1 << 0);  // Left/Red button
+            if (pharoEvent.arg3 & 1) sdlState |= (1 << 1);  // Middle/Blue
+            if (pharoEvent.arg3 & 2) sdlState |= (1 << 2);  // Right/Yellow
+            sdlEvent->motion.state = sdlState;
+
+            if (sdlLog && sdlCallCount <= 100) {
+                fprintf(sdlLog, "[SDL_PollEvent] #%d Mouse motion at (%d,%d) state=%u\n",
+                        sdlCallCount, pharoEvent.arg1, pharoEvent.arg2, sdlState);
+                fflush(sdlLog);
+            }
+        } else if (subtype == 1) {
+            // Mouse button down
+            sdlEvent->button.type = SDL_MOUSEBUTTONDOWN;
+            sdlEvent->button.timestamp = pharoEvent.timeStamp;
+            sdlEvent->button.windowID = pharoEvent.windowIndex;
+            sdlEvent->button.which = 0;
+            sdlEvent->button.x = pharoEvent.arg1;
+            sdlEvent->button.y = pharoEvent.arg2;
+            sdlEvent->button.state = 1;  // SDL_PRESSED
+            sdlEvent->button.clicks = 1;
+            // Convert Pharo button to SDL button
+            if (pharoEvent.arg3 & 4) {
+                sdlEvent->button.button = SDL_BUTTON_LEFT;
+            } else if (pharoEvent.arg3 & 2) {
+                sdlEvent->button.button = SDL_BUTTON_RIGHT;
+            } else if (pharoEvent.arg3 & 1) {
+                sdlEvent->button.button = SDL_BUTTON_MIDDLE;
+            } else {
+                sdlEvent->button.button = SDL_BUTTON_LEFT;  // Default
+            }
+
+            if (sdlLog && sdlCallCount <= 100) {
+                fprintf(sdlLog, "[SDL_PollEvent] #%d Mouse DOWN button=%d at (%d,%d)\n",
+                        sdlCallCount, sdlEvent->button.button, pharoEvent.arg1, pharoEvent.arg2);
+                fflush(sdlLog);
+            }
+        } else if (subtype == 2) {
+            // Mouse button up
+            sdlEvent->button.type = SDL_MOUSEBUTTONUP;
+            sdlEvent->button.timestamp = pharoEvent.timeStamp;
+            sdlEvent->button.windowID = pharoEvent.windowIndex;
+            sdlEvent->button.which = 0;
+            sdlEvent->button.x = pharoEvent.arg1;
+            sdlEvent->button.y = pharoEvent.arg2;
+            sdlEvent->button.state = 0;  // SDL_RELEASED
+            sdlEvent->button.clicks = 1;
+            // Convert Pharo button to SDL button
+            if (pharoEvent.arg3 & 4) {
+                sdlEvent->button.button = SDL_BUTTON_LEFT;
+            } else if (pharoEvent.arg3 & 2) {
+                sdlEvent->button.button = SDL_BUTTON_RIGHT;
+            } else if (pharoEvent.arg3 & 1) {
+                sdlEvent->button.button = SDL_BUTTON_MIDDLE;
+            } else {
+                sdlEvent->button.button = SDL_BUTTON_LEFT;  // Default
+            }
+
+            if (sdlLog && sdlCallCount <= 100) {
+                fprintf(sdlLog, "[SDL_PollEvent] #%d Mouse UP button=%d at (%d,%d)\n",
+                        sdlCallCount, sdlEvent->button.button, pharoEvent.arg1, pharoEvent.arg2);
+                fflush(sdlLog);
+            }
+        }
+        return 1;  // Event available
+    } else if (pharoEvent.type == static_cast<int>(pharo::EventType::MouseWheel)) {
+        // Mouse wheel
+        sdlEvent->wheel.type = SDL_MOUSEWHEEL;
+        sdlEvent->wheel.timestamp = pharoEvent.timeStamp;
+        sdlEvent->wheel.windowID = pharoEvent.windowIndex;
+        sdlEvent->wheel.which = 0;
+        sdlEvent->wheel.x = pharoEvent.arg1;  // Horizontal scroll
+        sdlEvent->wheel.y = pharoEvent.arg2;  // Vertical scroll
+        sdlEvent->wheel.direction = 0;  // Normal
+
+        if (sdlLog && sdlCallCount <= 100) {
+            fprintf(sdlLog, "[SDL_PollEvent] #%d Mouse wheel dx=%d dy=%d\n",
+                    sdlCallCount, pharoEvent.arg1, pharoEvent.arg2);
+            fflush(sdlLog);
+        }
+        return 1;
+    } else if (pharoEvent.type == static_cast<int>(pharo::EventType::WindowMetrics)) {
+        // Skip window metrics events - we handle display separately
+        if (sdlLog && sdlCallCount <= 100) {
+            fprintf(sdlLog, "[SDL_PollEvent] #%d WindowMetrics (skipped)\n", sdlCallCount);
+            fflush(sdlLog);
+        }
+        // Recursively try to get next event
+        return stub_SDL_PollEvent(event);
+    }
+
+    // Unknown event type - skip
+    if (sdlLog && sdlCallCount <= 100) {
+        fprintf(sdlLog, "[SDL_PollEvent] #%d Unknown type=%d (skipped)\n",
+                sdlCallCount, pharoEvent.type);
+        fflush(sdlLog);
+    }
     return 0;
 }
 
