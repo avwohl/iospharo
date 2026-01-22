@@ -3943,6 +3943,8 @@ PrimitiveResult Interpreter::primitiveFloatMultiply(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveFloatDivide(int argCount) {
+    // Primitive 50: Float division
+    // Per official Pharo VM: fails on division by zero (image handles error)
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -3951,9 +3953,12 @@ PrimitiveResult Interpreter::primitiveFloatDivide(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Per IEEE 754 semantics: division by zero produces +/-Infinity, not an error
-    // 1.0/0.0 = +Infinity, -1.0/0.0 = -Infinity, 0.0/0.0 = NaN
-    // Do NOT check for b == 0.0 - let IEEE 754 handle it
+    // Division by zero fails the primitive (official Pharo behavior)
+    // The image-side Float>>/ handles this by raising ZeroDivide error
+    if (b == 0.0) {
+        return PrimitiveResult::Failure;
+    }
+
     double result = a / b;
     Oop resultOop = makeFloat(memory_, result);
     if (resultOop.isNil()) return PrimitiveResult::Failure;
@@ -4229,6 +4234,9 @@ PrimitiveResult Interpreter::primitiveExp(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveLogN(int argCount) {
+    // Primitive 58: Natural logarithm
+    // Per official Pharo VM: allows log(0) -> -Infinity, log(negative) -> NaN
+    // (no explicit check, just uses IEEE 754 behavior)
     Oop rcvr = stackTop();
 
     double value;
@@ -4236,10 +4244,8 @@ PrimitiveResult Interpreter::primitiveLogN(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    if (value <= 0.0) {
-        return PrimitiveResult::Failure;  // Negative or zero
-    }
-
+    // Official VM doesn't check for non-positive - allows IEEE 754 special values
+    // log(0) = -Infinity, log(negative) = NaN
     double result = std::log(value);
     Oop resultOop = makeFloat(memory_, result);
     if (resultOop.isNil()) return PrimitiveResult::Failure;
