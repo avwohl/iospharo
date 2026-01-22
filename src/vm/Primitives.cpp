@@ -3532,15 +3532,21 @@ PrimitiveResult Interpreter::primitiveSecondsClock(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveMicrosecondClock(int argCount) {
-    // Primitive 240: Return microseconds (high resolution timer)
-    auto now = std::chrono::high_resolution_clock::now();
-    auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+    // Primitive 240: Return UTC microseconds since Smalltalk epoch (Jan 1, 1901)
+    // Per official VM: ioUTCMicrosecondsNow() returns Smalltalk epoch microseconds
+
+    auto now = std::chrono::system_clock::now();
+    auto unixUs = std::chrono::duration_cast<std::chrono::microseconds>(
         now.time_since_epoch()).count();
 
-    // For large values, we need to handle potential overflow
-    // Return as positive integer (may need LargeInteger for full range)
-    if (Oop::canBeSmallInteger(us)) {
-        primitiveSuccess(Oop::fromSmallInteger(us));
+    // Convert Unix epoch (1970) to Smalltalk epoch (1901)
+    // Difference: 2177452800 seconds = 2177452800000000 microseconds
+    constexpr int64_t unixToSmalltalkOffsetUs = 2177452800LL * 1000000LL;
+    int64_t smalltalkUs = unixUs + unixToSmalltalkOffsetUs;
+
+    // Return as SmallInteger (fits in 61-bit signed for current times)
+    if (Oop::canBeSmallInteger(smalltalkUs)) {
+        primitiveSuccess(Oop::fromSmallInteger(smalltalkUs));
         return PrimitiveResult::Success;
     }
 
