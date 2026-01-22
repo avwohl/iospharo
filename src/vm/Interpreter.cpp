@@ -3110,106 +3110,9 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 uint8_t tempIndex = fetchByte();
                 uint8_t vectorIndex = fetchByte();
 
-                // Check if we're executing a CompiledBlock (block method) vs CompiledMethod
-                // CompiledBlock has an outer CompiledMethod at its penultimate literal
-                bool isBlockExecution = false;
-                if (method_.isObject() && method_.rawBits() > 0x10000) {
-                    Oop header = memory_.fetchPointer(0, method_);
-                    if (header.isSmallInteger()) {
-                        size_t numLits = header.asSmallInteger() & 0x7FFF;
-                        if (numLits >= 2) {
-                            // Penultimate literal: for CompiledBlock, this is the outer method
-                            Oop penultLit = memory_.fetchPointer(numLits - 1, method_);
-                            if (penultLit.isObject() && penultLit.rawBits() > 0x10000) {
-                                ObjectHeader* plHdr = penultLit.asObjectPtr();
-                                // If it's a CompiledMethod/Block (format >= 24), we're in a block
-                                if (plHdr->isCompiledMethod()) {
-                                    isBlockExecution = true;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // For FullBlockClosure execution, the temp vector is in the OUTER context,
-                // not in the block's local frame. Read from activeContext_ (outer context).
-                Oop tempVector;
-                if (isBlockExecution && activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
-                    // Read from outer context's temps (slot 6+ is temp area)
-                    tempVector = memory_.fetchPointer(6 + vectorIndex, activeContext_);
-                } else {
-                    // Regular method: read from local temps
-                    tempVector = temporary(vectorIndex);
-                }
-
-                Oop value;
-                if (tempVector.isObject()) {
-                    value = memory_.fetchPointer(tempIndex, tempVector);
-                } else {
-                    value = memory_.nil();
-                }
-
-                // Trace remote temp access - this is likely the source of nil receivers
-                static FILE* rtLog = nullptr;
-                static int rtCount = 0;
-                if (!rtLog) rtLog = fopen("/tmp/remote_temp.log", "w");
-                if (rtLog && rtCount < 500) {
-                    // Check if value is nil - those are the interesting cases
-                    bool isNil = (value.rawBits() == memory_.nil().rawBits());
-                    if (isNil || rtCount < 20) {
-                        rtCount++;
-                        std::string vecClassName = "<not-object>";
-                        if (tempVector.isObject() && tempVector.rawBits() > 0x10000) {
-                            Oop cls = memory_.classOf(tempVector);
-                            if (cls.isObject()) {
-                                Oop clsName = memory_.fetchPointer(6, cls);
-                                if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                                    ObjectHeader* cnHdr = clsName.asObjectPtr();
-                                    if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
-                                        vecClassName = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
-                                    }
-                                }
-                            }
-                        }
-                        std::string methodSel = "<unknown>";
-                        if (method_.isObject() && method_.rawBits() > 0x10000) {
-                            ObjectHeader* mHdr = method_.asObjectPtr();
-                            if (mHdr->isCompiledMethod()) {
-                                Oop hdr = memory_.fetchPointer(0, method_);
-                                if (hdr.isSmallInteger()) {
-                                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                                    if (numLits >= 2) {
-                                        Oop selLit = memory_.fetchPointer(numLits - 1, method_);
-                                        if (selLit.isObject() && selLit.rawBits() > 0x10000) {
-                                            ObjectHeader* slHdr = selLit.asObjectPtr();
-                                            if (slHdr->isBytesObject() && slHdr->byteSize() < 50) {
-                                                methodSel = std::string((char*)slHdr->bytes(), slHdr->byteSize());
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        fprintf(rtLog, "[REMOTE-TEMP #%d] tempVector[%d] at temp[%d] = 0x%llx%s\n",
-                                rtCount, tempIndex, vectorIndex,
-                                (unsigned long long)value.rawBits(),
-                                isNil ? " [NIL!]" : "");
-                        fprintf(rtLog, "  method=#%s tempVector=0x%llx (%s)\n",
-                                methodSel.c_str(),
-                                (unsigned long long)tempVector.rawBits(), vecClassName.c_str());
-                        // Show all values in the temp vector
-                        if (tempVector.isObject() && tempVector.rawBits() > 0x10000) {
-                            ObjectHeader* tvHdr = tempVector.asObjectPtr();
-                            fprintf(rtLog, "  tempVector slots=%zu contents:\n", tvHdr->slotCount());
-                            for (size_t i = 0; i < std::min(tvHdr->slotCount(), (size_t)10); i++) {
-                                Oop v = memory_.fetchPointer(i, tempVector);
-                                fprintf(rtLog, "    [%zu] = 0x%llx\n", i, (unsigned long long)v.rawBits());
-                            }
-                        }
-                        fflush(rtLog);
-                    }
-                }
-
+                // For blocks, the temp vector is in the outer context; for methods, it's in local temps
+                Oop tempVector = isExecutingBlock() ? outerTemporary(vectorIndex) : temporary(vectorIndex);
+                Oop value = tempVector.isObject() ? memory_.fetchPointer(tempIndex, tempVector) : memory_.nil();
                 push(value);
                 break;
             }
@@ -3219,70 +3122,8 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 uint8_t vectorIndex = fetchByte();
                 Oop value = stackTop();
 
-                // Check if we're executing a CompiledBlock (block method) vs CompiledMethod
-                bool isBlockExecution = false;
-                if (method_.isObject() && method_.rawBits() > 0x10000) {
-                    Oop header = memory_.fetchPointer(0, method_);
-                    if (header.isSmallInteger()) {
-                        size_t numLits = header.asSmallInteger() & 0x7FFF;
-                        if (numLits >= 2) {
-                            Oop penultLit = memory_.fetchPointer(numLits - 1, method_);
-                            if (penultLit.isObject() && penultLit.rawBits() > 0x10000) {
-                                ObjectHeader* plHdr = penultLit.asObjectPtr();
-                                if (plHdr->isCompiledMethod()) {
-                                    isBlockExecution = true;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // For FullBlockClosure execution, the temp vector is in the OUTER context,
-                // not in the block's local frame. Read from activeContext_ (outer context).
-                Oop tempVector;
-                if (isBlockExecution && activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
-                    // Read from outer context's temps (slot 6+ is temp area)
-                    tempVector = memory_.fetchPointer(6 + vectorIndex, activeContext_);
-                } else {
-                    // Regular method: read from local temps
-                    tempVector = temporary(vectorIndex);
-                }
-
-                // Trace stores to temp vectors
-                static FILE* rtsLog = nullptr;
-                static int rtsCount = 0;
-                if (!rtsLog) rtsLog = fopen("/tmp/remote_temp_store.log", "w");
-                if (rtsLog && rtsCount < 500) {
-                    rtsCount++;
-                    std::string methodSel = "<unknown>";
-                    if (method_.isObject() && method_.rawBits() > 0x10000) {
-                        ObjectHeader* mHdr = method_.asObjectPtr();
-                        if (mHdr->isCompiledMethod()) {
-                            Oop hdr = memory_.fetchPointer(0, method_);
-                            if (hdr.isSmallInteger()) {
-                                size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                                if (numLits >= 2) {
-                                    Oop selLit = memory_.fetchPointer(numLits - 1, method_);
-                                    if (selLit.isObject() && selLit.rawBits() > 0x10000) {
-                                        ObjectHeader* slHdr = selLit.asObjectPtr();
-                                        if (slHdr->isBytesObject() && slHdr->byteSize() < 50) {
-                                            methodSel = std::string((char*)slHdr->bytes(), slHdr->byteSize());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    fprintf(rtsLog, "[STORE-REMOTE #%d] tempVector[%d] at temp[%d] := 0x%llx\n",
-                            rtsCount, tempIndex, vectorIndex,
-                            (unsigned long long)value.rawBits());
-                    fprintf(rtsLog, "  method=#%s tempVector=0x%llx isObj=%d\n",
-                            methodSel.c_str(),
-                            (unsigned long long)tempVector.rawBits(),
-                            tempVector.isObject() ? 1 : 0);
-                    fflush(rtsLog);
-                }
-
+                // For blocks, the temp vector is in the outer context; for methods, it's in local temps
+                Oop tempVector = isExecutingBlock() ? outerTemporary(vectorIndex) : temporary(vectorIndex);
                 if (tempVector.isObject()) {
                     memory_.storePointer(tempIndex, tempVector, value);
                 }
@@ -3294,70 +3135,8 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 uint8_t vectorIndex = fetchByte();
                 Oop value = pop();
 
-                // Check if we're executing a CompiledBlock (block method) vs CompiledMethod
-                bool isBlockExecution = false;
-                if (method_.isObject() && method_.rawBits() > 0x10000) {
-                    Oop header = memory_.fetchPointer(0, method_);
-                    if (header.isSmallInteger()) {
-                        size_t numLits = header.asSmallInteger() & 0x7FFF;
-                        if (numLits >= 2) {
-                            Oop penultLit = memory_.fetchPointer(numLits - 1, method_);
-                            if (penultLit.isObject() && penultLit.rawBits() > 0x10000) {
-                                ObjectHeader* plHdr = penultLit.asObjectPtr();
-                                if (plHdr->isCompiledMethod()) {
-                                    isBlockExecution = true;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // For FullBlockClosure execution, the temp vector is in the OUTER context,
-                // not in the block's local frame. Read from activeContext_ (outer context).
-                Oop tempVector;
-                if (isBlockExecution && activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
-                    // Read from outer context's temps (slot 6+ is temp area)
-                    tempVector = memory_.fetchPointer(6 + vectorIndex, activeContext_);
-                } else {
-                    // Regular method: read from local temps
-                    tempVector = temporary(vectorIndex);
-                }
-
-                // Trace stores to temp vectors
-                static FILE* rtsLog2 = nullptr;
-                static int rtsCount2 = 0;
-                if (!rtsLog2) rtsLog2 = fopen("/tmp/remote_temp_store.log", "a");
-                if (rtsLog2 && rtsCount2 < 500) {
-                    rtsCount2++;
-                    std::string methodSel = "<unknown>";
-                    if (method_.isObject() && method_.rawBits() > 0x10000) {
-                        ObjectHeader* mHdr = method_.asObjectPtr();
-                        if (mHdr->isCompiledMethod()) {
-                            Oop hdr = memory_.fetchPointer(0, method_);
-                            if (hdr.isSmallInteger()) {
-                                size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                                if (numLits >= 2) {
-                                    Oop selLit = memory_.fetchPointer(numLits - 1, method_);
-                                    if (selLit.isObject() && selLit.rawBits() > 0x10000) {
-                                        ObjectHeader* slHdr = selLit.asObjectPtr();
-                                        if (slHdr->isBytesObject() && slHdr->byteSize() < 50) {
-                                            methodSel = std::string((char*)slHdr->bytes(), slHdr->byteSize());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    fprintf(rtsLog2, "[POP-STORE-REMOTE #%d] tempVector[%d] at temp[%d] := 0x%llx\n",
-                            rtsCount2, tempIndex, vectorIndex,
-                            (unsigned long long)value.rawBits());
-                    fprintf(rtsLog2, "  method=#%s tempVector=0x%llx isObj=%d\n",
-                            methodSel.c_str(),
-                            (unsigned long long)tempVector.rawBits(),
-                            tempVector.isObject() ? 1 : 0);
-                    fflush(rtsLog2);
-                }
-
+                // For blocks, the temp vector is in the outer context; for methods, it's in local temps
+                Oop tempVector = isExecutingBlock() ? outerTemporary(vectorIndex) : temporary(vectorIndex);
                 if (tempVector.isObject()) {
                     memory_.storePointer(tempIndex, tempVector, value);
                 }
@@ -8968,6 +8747,41 @@ Oop Interpreter::temporary(int index) const {
     }
 
     return result;
+}
+
+bool Interpreter::isExecutingBlock() const {
+    // Check if we're executing a CompiledBlock (as opposed to a CompiledMethod).
+    // CompiledBlock has an outer CompiledMethod at its penultimate literal.
+    if (!method_.isObject() || method_.rawBits() <= 0x10000) return false;
+    Oop header = memory_.fetchPointer(0, method_);
+    if (!header.isSmallInteger()) return false;
+    size_t numLits = header.asSmallInteger() & 0x7FFF;
+    if (numLits < 2) return false;
+    // Penultimate literal: for CompiledBlock, this is the outer CompiledMethod
+    Oop penultLit = memory_.fetchPointer(numLits - 1, method_);
+    if (!penultLit.isObject() || penultLit.rawBits() <= 0x10000) return false;
+    ObjectHeader* plHdr = penultLit.asObjectPtr();
+    return plHdr->isCompiledMethod();
+}
+
+Oop Interpreter::outerTemporary(int index) const {
+    // Read a temp from the outer context (for remote temp access in blocks).
+    // Context layout: slot 0=sender, 1=pc, 2=sp, 3=method, 4=closureOrNil, 5=receiver, 6+=temps
+    if (activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
+        return memory_.fetchPointer(6 + index, activeContext_);
+    }
+    // Fallback to local temps if no outer context
+    return temporary(index);
+}
+
+void Interpreter::setOuterTemporary(int index, Oop value) {
+    // Store a temp into the outer context (for remote temp store in blocks).
+    if (activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
+        memory_.storePointer(6 + index, activeContext_, value);
+    } else {
+        // Fallback to local temps
+        setTemporary(index, value);
+    }
 }
 
 void Interpreter::setTemporary(int index, Oop value) {

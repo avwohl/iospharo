@@ -524,6 +524,15 @@ private:
     /// Get temporary variable
     Oop temporary(int index) const;
 
+    /// Check if currently executing a CompiledBlock (vs CompiledMethod)
+    bool isExecutingBlock() const;
+
+    /// Get temporary from outer context (for remote temp access in blocks)
+    Oop outerTemporary(int index) const;
+
+    /// Set temporary in outer context (for remote temp store in blocks)
+    void setOuterTemporary(int index, Oop value);
+
     /// Set temporary variable
     void setTemporary(int index, Oop value);
 
