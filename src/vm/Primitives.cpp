@@ -2076,16 +2076,18 @@ PrimitiveResult Interpreter::primitivePerform(int argCount) {
     //
     // Stack memory layout (stackPointer_ points one past top):
     // For argCount=2: stackPointer_[-1]=arg1, stackPointer_[-2]=selector, stackPointer_[-3]=receiver
-    // After: stackPointer_[-1]=arg1, stackPointer_[-2]=receiver
-    // So we copy args down one slot to overwrite selector, then pop one slot
+    // After pop: stackPointer_[-1]=arg1, stackPointer_[-2]=receiver
+    //
+    // CRITICAL: Must iterate from deepest argument to top to avoid overwriting!
+    // Otherwise with multiple args, we overwrite args before copying them.
 
     // Shift additional arguments down to cover the selector slot
-    for (int i = 0; i < additionalArgs; i++) {
-        // Copy from stackPointer_[-(i+1)] (args starting from top)
-        // To stackPointer_[-(i+2)] (selector slot and below)
+    // Iterate from bottom arg (deepest) to top arg to preserve order
+    for (int i = additionalArgs - 1; i >= 0; i--) {
+        // Copy arg at position -(i+1) to position -(i+2)
         stackPointer_[-(i + 2)] = stackPointer_[-(i + 1)];
     }
-    popN(1);  // Now pop the duplicate top
+    popN(1);  // Pop the duplicate top slot
 
     // Send the message with the additional args
     sendSelector(selector, additionalArgs);
