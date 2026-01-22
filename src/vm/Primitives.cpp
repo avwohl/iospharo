@@ -5761,6 +5761,7 @@ PrimitiveResult Interpreter::primitiveClosureNumArgs(int argCount) {
 PrimitiveResult Interpreter::primitiveSlotAt(int argCount) {
     // Primitive 173: Low-level slot access
     // Per official VM: handles byte/word/pointer objects differently
+    // Index is 1-BASED from Smalltalk side
     Oop indexOop = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -5769,7 +5770,7 @@ PrimitiveResult Interpreter::primitiveSlotAt(int argCount) {
     }
 
     int64_t index = indexOop.asSmallInteger();
-    if (index < 0) {  // Note: 0-based indexing for slotAt:
+    if (index < 1) {  // 1-based indexing from Smalltalk
         return PrimitiveResult::Failure;
     }
 
@@ -5781,7 +5782,8 @@ PrimitiveResult Interpreter::primitiveSlotAt(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    size_t zeroIndex = static_cast<size_t>(index);
+    // Convert to 0-based for C++ array access
+    size_t zeroIndex = static_cast<size_t>(index - 1);
 
     // Handle byte objects
     if (fmt >= ObjectFormat::Indexable8 && fmt <= ObjectFormat::Indexable8_7) {
@@ -5853,6 +5855,8 @@ PrimitiveResult Interpreter::primitiveSlotAt(int argCount) {
 // Primitive 174: Write slot at given index (0-based)
 // Per official VM: handles byte/word/pointer objects differently
 PrimitiveResult Interpreter::primitiveSlotAtPut(int argCount) {
+    // Primitive 174: Low-level slot write
+    // Index is 1-BASED from Smalltalk side
     Oop value = stackValue(0);
     Oop indexOop = stackValue(1);
     Oop rcvr = stackValue(2);
@@ -5862,7 +5866,7 @@ PrimitiveResult Interpreter::primitiveSlotAtPut(int argCount) {
     }
 
     int64_t index = indexOop.asSmallInteger();
-    if (index < 0) {  // 0-based indexing for slotAtPut:
+    if (index < 1) {  // 1-based indexing from Smalltalk
         return PrimitiveResult::Failure;
     }
 
@@ -5879,7 +5883,8 @@ PrimitiveResult Interpreter::primitiveSlotAtPut(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    size_t zeroIndex = static_cast<size_t>(index);
+    // Convert to 0-based for C++ array access
+    size_t zeroIndex = static_cast<size_t>(index - 1);
 
     // Handle byte objects
     if (fmt >= ObjectFormat::Indexable8 && fmt <= ObjectFormat::Indexable8_7) {
@@ -6694,23 +6699,40 @@ PrimitiveResult Interpreter::primitiveGetImmutability(int argCount) {
     return PrimitiveResult::Success;
 }
 
-// Primitive 151: Set immutability flag of object
+// Primitive 164: Set immutability flag of object
+// Returns the PREVIOUS immutability state (boolean), not the receiver
 PrimitiveResult Interpreter::primitiveSetImmutability(int argCount) {
     Oop flagOop = stackValue(0);
     Oop rcvr = stackValue(1);
 
-    if (!rcvr.isObject()) {
-        // Can't change immutability of immediates
-        return PrimitiveResult::Failure;
+    // Validate flag is boolean
+    bool makeImmutable;
+    if (flagOop.rawBits() == memory_.trueObject().rawBits()) {
+        makeImmutable = true;
+    } else if (flagOop.rawBits() == memory_.falseObject().rawBits()) {
+        makeImmutable = false;
+    } else {
+        return PrimitiveResult::Failure;  // Flag must be true or false
     }
 
-    bool makeImmutable = (flagOop.rawBits() == memory_.trueObject().rawBits());
+    // Immediates are always immutable
+    if (!rcvr.isObject()) {
+        // Immediates always report as immutable
+        popN(2);
+        push(memory_.trueObject());  // Previous state was "immutable"
+        return PrimitiveResult::Success;
+    }
 
     ObjectHeader* header = rcvr.asObjectPtr();
-    header->setImmutable(makeImmutable);
+    bool wasImmutable = header->isImmutable();
+
+    // Only set if we can (not already immutable when trying to make mutable)
+    if (!wasImmutable || !makeImmutable) {
+        header->setImmutable(makeImmutable);
+    }
 
     popN(2);
-    push(rcvr);
+    push(wasImmutable ? memory_.trueObject() : memory_.falseObject());
     return PrimitiveResult::Success;
 }
 
@@ -12125,34 +12147,84 @@ PrimitiveResult Interpreter::primitiveClosureValueWithArgsNoContextSwitch(int ar
 }
 
 // Primitive 224: Set identity hash
-// anObject hash primitiveSetOrHasIdentityHash -> anObject
-// Sets the identity hash of an object
+// Primitive 161: setOrHasIdentityHash
+// Supports 0, 1, or 2 arguments:
+// - 0 args: Check if receiver has identity hash (return boolean)
+// - 1 arg: Set identity hash to given value (return receiver)
+// - 2 args: Complex behavior with boolean flag
 PrimitiveResult Interpreter::primitiveSetOrHasIdentityHash(int argCount) {
-    if (argCount != 1) return PrimitiveResult::Failure;
-
-    Oop hashOop = stackTop();
-    Oop receiver = stackValue(1);
-
-    if (!hashOop.isSmallInteger()) {
-        return PrimitiveResult::Failure;
+    if (argCount == 0) {
+        // Check if receiver has identity hash
+        Oop receiver = stackTop();
+        bool hasHash = false;
+        if (receiver.isObject()) {
+            ObjectHeader* header = receiver.asObjectPtr();
+            hasHash = header->hasIdentityHash();
+        }
+        // Immediates never have hash (they ARE their hash conceptually)
+        pop();
+        push(hasHash ? memory_.trueObject() : memory_.falseObject());
+        return PrimitiveResult::Success;
     }
 
-    if (receiver.isImmediate()) {
-        // Can't set hash on immediates
-        return PrimitiveResult::Failure;
+    if (argCount == 1) {
+        // Set identity hash
+        Oop hashOop = stackTop();
+        Oop receiver = stackValue(1);
+
+        if (!hashOop.isSmallInteger()) {
+            return PrimitiveResult::Failure;
+        }
+
+        if (!receiver.isObject()) {
+            // Can't set hash on immediates
+            return PrimitiveResult::Failure;
+        }
+
+        int64_t hash = hashOop.asSmallInteger();
+        if (hash < 0 || hash > 0x3FFFFF) {  // 22-bit hash max
+            return PrimitiveResult::Failure;
+        }
+
+        ObjectHeader* header = receiver.asObjectPtr();
+        header->setIdentityHash(static_cast<uint32_t>(hash));
+
+        popN(2);
+        push(receiver);
+        return PrimitiveResult::Success;
     }
 
-    int64_t hash = hashOop.asSmallInteger();
-    if (hash < 0 || hash > 0x3FFFFF) {  // 22-bit hash max
-        return PrimitiveResult::Failure;
+    if (argCount == 2) {
+        // Complex form: receiver setIdentityHash: hash isClass: aBoolean
+        // The boolean indicates if receiver is a class (affects behavior hash)
+        Oop boolOop = stackValue(0);
+        Oop hashOop = stackValue(1);
+        Oop receiver = stackValue(2);
+
+        // Validate boolean
+        if (boolOop.rawBits() != memory_.trueObject().rawBits() &&
+            boolOop.rawBits() != memory_.falseObject().rawBits()) {
+            return PrimitiveResult::Failure;
+        }
+
+        if (!hashOop.isSmallInteger() || !receiver.isObject()) {
+            return PrimitiveResult::Failure;
+        }
+
+        int64_t hash = hashOop.asSmallInteger();
+        if (hash < 0 || hash > 0x3FFFFF) {
+            return PrimitiveResult::Failure;
+        }
+
+        ObjectHeader* header = receiver.asObjectPtr();
+        header->setIdentityHash(static_cast<uint32_t>(hash));
+
+        popN(3);
+        push(receiver);
+        return PrimitiveResult::Success;
     }
 
-    // Get object header and set hash
-    ObjectHeader* header = receiver.asObjectPtr();
-    header->setIdentityHash(static_cast<uint32_t>(hash));
-
-    pop();  // pop hash argument, leave receiver
-    return PrimitiveResult::Success;
+    return PrimitiveResult::Failure;
 }
 
 // Primitive 225: Load instance variable (optimized)
