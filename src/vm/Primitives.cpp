@@ -6242,22 +6242,60 @@ PrimitiveResult Interpreter::primitiveBehaviorHash(int argCount) {
 
 // Primitive 115: Change the class of an object
 PrimitiveResult Interpreter::primitiveChangeClass(int argCount) {
-    Oop newClassOop = stackValue(0);
+    // Primitive 115: Change the class of the receiver to the class of the argument
+    // NOTE: The argument is an INSTANCE of the target class, not the class itself!
+    // This is per official VM semantics: receiver adoptInstance: anInstance
+    Oop argInstance = stackValue(0);  // An instance of the target class
     Oop rcvr = stackValue(1);
 
-    if (!rcvr.isObject() || !newClassOop.isObject()) {
+    if (!rcvr.isObject() || !argInstance.isObject()) {
         return PrimitiveResult::Failure;
     }
 
     ObjectHeader* rcvrHeader = rcvr.asObjectPtr();
+    ObjectHeader* argHeader = argInstance.asObjectPtr();
 
     // Check immutability
     if (rcvrHeader->isImmutable()) {
         return PrimitiveResult::Failure;
     }
 
+    // Get the class of the argument instance (not the argument itself!)
+    Oop newClass = memory_.classOf(argInstance);
+    if (!newClass.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Format compatibility check: receiver and argument must have same format category
+    // Can't change bytes object to pointers object, etc.
+    ObjectFormat rcvrFmt = rcvrHeader->format();
+    ObjectFormat argFmt = argHeader->format();
+
+    // Check format compatibility (simplified version)
+    // Both must be pointer objects, or both must be byte objects with same format
+    bool rcvrIsPointers = rcvrFmt <= ObjectFormat::WeakWithFixed;
+    bool argIsPointers = argFmt <= ObjectFormat::WeakWithFixed;
+
+    if (rcvrIsPointers != argIsPointers) {
+        return PrimitiveResult::Failure;  // Can't mix pointers and non-pointers
+    }
+
+    // For non-pointer objects, formats should match more closely
+    if (!rcvrIsPointers) {
+        bool rcvrIsBytes = rcvrFmt >= ObjectFormat::Indexable8 && rcvrFmt <= ObjectFormat::Indexable8_7;
+        bool argIsBytes = argFmt >= ObjectFormat::Indexable8 && argFmt <= ObjectFormat::Indexable8_7;
+        bool rcvrIsWords = rcvrFmt == ObjectFormat::Indexable64 ||
+                          (rcvrFmt >= ObjectFormat::Indexable32 && rcvrFmt <= ObjectFormat::Indexable32Odd);
+        bool argIsWords = argFmt == ObjectFormat::Indexable64 ||
+                         (argFmt >= ObjectFormat::Indexable32 && argFmt <= ObjectFormat::Indexable32Odd);
+
+        if (rcvrIsBytes != argIsBytes || rcvrIsWords != argIsWords) {
+            return PrimitiveResult::Failure;  // Format mismatch
+        }
+    }
+
     // Get the class index for the new class
-    uint32_t newClassIndex = memory_.indexOfClass(newClassOop);
+    uint32_t newClassIndex = memory_.indexOfClass(newClass);
 
     // Basic safety check: the new class should be a valid behavior
     if (newClassIndex == 0) {
