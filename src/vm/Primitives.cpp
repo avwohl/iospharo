@@ -1205,18 +1205,52 @@ PrimitiveResult Interpreter::primitiveInstVarAt(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    // Check for forwarded receiver when argCount > 1 (e.g., object:instVarAt:)
+    if (argCount > 1) {
+        ObjectHeader* hdr = rcvr.asObjectPtr();
+        if (hdr->isForwarded()) {
+            return PrimitiveResult::Failure;
+        }
+    }
+
     int64_t idx = index.asSmallInteger();
     if (idx < 1) {
         return PrimitiveResult::Failure;
     }
 
-    size_t instVarIndex = static_cast<size_t>(idx - 1);
     ObjectHeader* header = rcvr.asObjectPtr();
+    auto fmt = header->format();
+    size_t totalLength = header->slotCount();
 
-    if (instVarIndex >= header->slotCount()) {
+    // Calculate fixed fields based on format (per official Pharo VM)
+    size_t fixedFields;
+    if (fmt == ObjectFormat::Indexable || static_cast<int>(fmt) >= 9) {
+        // Format 2 (pure indexable like Array) or 64-bit indexable: no fixed fields
+        fixedFields = 0;
+    } else if (static_cast<int>(fmt) < 2) {
+        // Format 0-1 (zero-sized or fixed-only): all slots are fixed
+        fixedFields = totalLength;
+    } else {
+        // Formats 3-8 (indexable with fixed fields): look up from class
+        Oop objClass = memory_.classOf(rcvr);
+        if (objClass.isObject()) {
+            Oop formatObj = memory_.fetchPointer(2, objClass);  // InstanceSpecificationIndex
+            if (formatObj.isSmallInteger()) {
+                fixedFields = formatObj.asSmallInteger() & 0xFFFF;  // Low 16 bits
+            } else {
+                fixedFields = 0;
+            }
+        } else {
+            fixedFields = 0;
+        }
+    }
+
+    // Validate index is within fixed fields range (1-based)
+    if (static_cast<size_t>(idx) > fixedFields) {
         return PrimitiveResult::Failure;
     }
 
+    size_t instVarIndex = static_cast<size_t>(idx - 1);
     primitiveSuccess(header->slotAt(instVarIndex));
     return PrimitiveResult::Success;
 }
@@ -1230,7 +1264,17 @@ PrimitiveResult Interpreter::primitiveInstVarAtPut(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    // Check for forwarded receiver when argCount > 2 (e.g., object:instVarAt:put:)
     ObjectHeader* header = rcvr.asObjectPtr();
+    if (argCount > 2 && header->isForwarded()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Fail for immediates (they don't have instance variables)
+    if (!rcvr.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
     if (header->isImmutable()) {
         return PrimitiveResult::Failure;
     }
@@ -1240,11 +1284,38 @@ PrimitiveResult Interpreter::primitiveInstVarAtPut(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    size_t instVarIndex = static_cast<size_t>(idx - 1);
-    if (instVarIndex >= header->slotCount()) {
+    auto fmt = header->format();
+    size_t totalLength = header->slotCount();
+
+    // Calculate fixed fields based on format (per official Pharo VM)
+    size_t fixedFields;
+    if (fmt == ObjectFormat::Indexable || static_cast<int>(fmt) >= 9) {
+        // Format 2 (pure indexable like Array) or 64-bit indexable: no fixed fields
+        fixedFields = 0;
+    } else if (static_cast<int>(fmt) < 2) {
+        // Format 0-1 (zero-sized or fixed-only): all slots are fixed
+        fixedFields = totalLength;
+    } else {
+        // Formats 3-8 (indexable with fixed fields): look up from class
+        Oop objClass = memory_.classOf(rcvr);
+        if (objClass.isObject()) {
+            Oop formatObj = memory_.fetchPointer(2, objClass);  // InstanceSpecificationIndex
+            if (formatObj.isSmallInteger()) {
+                fixedFields = formatObj.asSmallInteger() & 0xFFFF;  // Low 16 bits
+            } else {
+                fixedFields = 0;
+            }
+        } else {
+            fixedFields = 0;
+        }
+    }
+
+    // Validate index is within fixed fields range (1-based)
+    if (static_cast<size_t>(idx) > fixedFields) {
         return PrimitiveResult::Failure;
     }
 
+    size_t instVarIndex = static_cast<size_t>(idx - 1);
     header->slotAtPut(instVarIndex, value);
     primitiveSuccess(value);
     return PrimitiveResult::Success;
@@ -2268,6 +2339,12 @@ PrimitiveResult Interpreter::primitiveSuspend(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    // Check for forwarded process (official VM behavior)
+    ObjectHeader* procHdr = process.asObjectPtr();
+    if (procHdr->isForwarded()) {
+        return PrimitiveResult::Failure;
+    }
+
     Oop activeProcess = getActiveProcess();
     Oop nilObj = memory_.nil();
 
@@ -2288,6 +2365,15 @@ PrimitiveResult Interpreter::primitiveSuspend(int argCount) {
 
     // Suspending another process - it must be on some list
     Oop myList = memory_.fetchPointer(ProcessMyListIndex, process);
+
+    // Check if myList is forwarded (official VM uses followForwarded)
+    if (myList.isObject() && myList.rawBits() > 0x10000) {
+        ObjectHeader* listHdr = myList.asObjectPtr();
+        if (listHdr->isForwarded()) {
+            return PrimitiveResult::Failure;
+        }
+    }
+
     if (myList.isNil() || myList.rawBits() == nilObj.rawBits()) {
         // Process not on any list - can't suspend (already suspended?)
         return PrimitiveResult::Failure;
@@ -2313,21 +2399,22 @@ PrimitiveResult Interpreter::primitiveResume(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    // Check for forwarded process (official VM behavior)
+    ObjectHeader* procHdr = process.asObjectPtr();
+    if (procHdr->isForwarded()) {
+        return PrimitiveResult::Failure;
+    }
+
     // Verify process has a valid suspended context
     Oop context = memory_.fetchPointer(ProcessSuspendedContextIndex, process);
     Oop nilObj = memory_.nil();
 
-    // Debug: log what process is being resumed
-    static FILE* resumeLog = nullptr;
-    if (!resumeLog) {
-        resumeLog = fopen("/tmp/resume.log", "w");
-    }
-    if (resumeLog) {
-        fprintf(resumeLog, "[RESUME] Process 0x%llx context=0x%llx isNil=%d isObject=%d\n",
-                (unsigned long long)process.rawBits(), (unsigned long long)context.rawBits(),
-                (context.isNil() || context.rawBits() == nilObj.rawBits()) ? 1 : 0,
-                context.isObject() ? 1 : 0);
-        fflush(resumeLog);
+    // Check if context is forwarded (official VM uses followFieldofObject)
+    if (context.isObject() && context.rawBits() > 0x10000) {
+        ObjectHeader* ctxHdr = context.asObjectPtr();
+        if (ctxHdr->isForwarded()) {
+            return PrimitiveResult::Failure;
+        }
     }
 
     if (context.isNil() || context.rawBits() == nilObj.rawBits() || !context.isObject()) {
