@@ -1424,6 +1424,26 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
     Oop size = stackValue(0);
     Oop rcvr = stackValue(1);  // Class
 
+    // Debug: trace all basicNew: calls
+    static int basicNewCount = 0;
+    basicNewCount++;
+    std::string className = "<unknown>";
+    uint32_t classIdx = 0;
+    if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+        classIdx = rcvr.asObjectPtr()->classIndex();
+        Oop nameOop = memory_.fetchPointer(6, rcvr);
+        if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+            ObjectHeader* nameHdr = nameOop.asObjectPtr();
+            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                className = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+            }
+        }
+    }
+    if (basicNewCount <= 100 || className.find("Context") != std::string::npos) {
+        std::cerr << "[BASICNEW:] #" << basicNewCount << " " << className << " (classIdx=" << classIdx << ")"
+                  << " size=" << (size.isSmallInteger() ? size.asSmallInteger() : -1) << "\n";
+    }
+
     if (!size.isSmallInteger() || !rcvr.isObject()) {
         return PrimitiveResult::Failure;
     }
@@ -1441,19 +1461,48 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
 
     int64_t format = formatObj.asSmallInteger();
     size_t fixedSize = format & 0xFFFF;
-    bool isBytes = ((format >> 16) & 0xFF) >= 16;  // Simplified check
+    int instSpec = (format >> 16) & 0x1F;  // Instance specification (0-31)
+    bool isBytes = instSpec >= 16;
 
     uint32_t classIndex = memory_.indexOfClass(rcvr);
+
+    // Debug: trace Context allocation
+    static int contextAllocCount = 0;
+    if (instSpec == 3 && contextAllocCount < 5) {
+        contextAllocCount++;
+        std::string className = "<unknown>";
+        Oop nameOop = memory_.fetchPointer(6, rcvr);
+        if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+            ObjectHeader* nameHdr = nameOop.asObjectPtr();
+            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                className = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+            }
+        }
+        std::cerr << "[ALLOC-DEBUG] basicNew: " << className
+                  << " indexableSize=" << indexableSize
+                  << " fixedSize=" << fixedSize
+                  << " classIndex=" << classIndex
+                  << " instSpec=" << instSpec << "\n";
+    }
+
     Oop newObj;
 
     if (isBytes) {
         newObj = memory_.allocateBytes(classIndex, static_cast<size_t>(indexableSize));
     } else {
         size_t totalSlots = fixedSize + static_cast<size_t>(indexableSize);
-        newObj = memory_.allocateSlots(classIndex, totalSlots, ObjectFormat::Indexable);
+        // Choose correct format based on instSpec:
+        // instSpec 2 = variable pointers only (Array)
+        // instSpec 3 = variable pointers with fixed fields (Context, CompiledMethod)
+        ObjectFormat objFormat = (instSpec == 3) ? ObjectFormat::IndexableWithFixed : ObjectFormat::Indexable;
+        newObj = memory_.allocateSlots(classIndex, totalSlots, objFormat);
     }
 
     if (newObj.isNil()) {
+        // Debug: why allocation failed
+        if (instSpec == 3) {
+            std::cerr << "[ALLOC-FAIL] IndexableWithFixed allocation failed!\n";
+        }
         return PrimitiveResult::Failure;
     }
 
@@ -5906,10 +5955,14 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
             pop();
             push(memory_.nil());
             return PrimitiveResult::Success;
-        case 1001:  // VM version string - return nil for now
-            pop();
-            push(memory_.nil());
-            return PrimitiveResult::Success;
+        case 1001:  // Operating system name
+            {
+                // Return "Mac OS" for macOS/iOS - this is what Pharo expects
+                Oop str = memory_.createString("Mac OS");
+                pop();
+                push(str);
+                return PrimitiveResult::Success;
+            }
         case 1002:  // VM build string
             pop();
             push(memory_.nil());
@@ -6985,6 +7038,7 @@ PrimitiveResult Interpreter::primitiveSetInstructionPointer(int argCount) {
 // receiver stackp: aSmallInteger -> receiver
 PrimitiveResult Interpreter::primitiveSetStackPointer(int argCount) {
     if (argCount != 1) {
+        std::cerr << "[STACKP] Fail: argCount=" << argCount << " (expected 1)\n";
         return PrimitiveResult::Failure;
     }
 
@@ -6992,11 +7046,14 @@ PrimitiveResult Interpreter::primitiveSetStackPointer(int argCount) {
     Oop context = stackValue(1);
 
     if (!context.isObject() || !newStackp.isSmallInteger()) {
+        std::cerr << "[STACKP] Fail: context.isObject=" << context.isObject()
+                  << " newStackp.isSmallInt=" << newStackp.isSmallInteger() << "\n";
         return PrimitiveResult::Failure;
     }
 
     ObjectHeader* header = context.asObjectPtr();
     if (header->isImmutable()) {
+        std::cerr << "[STACKP] Fail: context is immutable\n";
         return PrimitiveResult::Failure;
     }
 
@@ -7004,6 +7061,8 @@ PrimitiveResult Interpreter::primitiveSetStackPointer(int argCount) {
     int64_t sp = newStackp.asSmallInteger();
     size_t slotCount = header->slotCount();
     if (sp < 0 || static_cast<size_t>(sp) > slotCount - ContextFixedSlots) {
+        std::cerr << "[STACKP] Fail: sp=" << sp << " slotCount=" << slotCount
+                  << " max=" << (slotCount - ContextFixedSlots) << "\n";
         return PrimitiveResult::Failure;
     }
 
@@ -11631,15 +11690,30 @@ PrimitiveResult Interpreter::primitiveBitmapDecompress(int argCount) {
     return PrimitiveResult::Failure;
 }
 
-// Primitive 235: String compare with collation
-// string1 string2 order primitiveStringCompareWith -> -1/0/1
-// Compares strings using specified collation order
+// Primitive 158: String compare with collation
+// ByteString >> compareWith: anotherString (argCount=1)
+// ByteString >> compareWith: anotherString collated: order (argCount=2)
+// Returns -1, 0, or 1
 PrimitiveResult Interpreter::primitiveStringCompareWith(int argCount) {
-    if (argCount != 2) return PrimitiveResult::Failure;
+    static int p158CallCount = 0;
+    if (p158CallCount++ < 5) {
+        std::cerr << "[P158] Called with argCount=" << argCount << "\n";
+    }
+    if (argCount < 1 || argCount > 2) return PrimitiveResult::Failure;
 
-    Oop orderOop = stackTop();
-    Oop string2Oop = stackValue(1);
-    Oop string1Oop = stackValue(2);
+    Oop string2Oop;
+    Oop string1Oop;  // receiver
+
+    if (argCount == 1) {
+        // compareWith: - Stack: receiver, anotherString
+        string2Oop = stackTop();
+        string1Oop = stackValue(1);
+    } else {
+        // compareWith:collated: - Stack: receiver, anotherString, order
+        // Oop orderOop = stackTop();  // We ignore order for now
+        string2Oop = stackValue(1);
+        string1Oop = stackValue(2);
+    }
 
     if (string1Oop.isImmediate() || string2Oop.isImmediate()) {
         return PrimitiveResult::Failure;
@@ -11648,6 +11722,12 @@ PrimitiveResult Interpreter::primitiveStringCompareWith(int argCount) {
     // Extract strings
     std::string str1 = extractString(memory_, string1Oop);
     std::string str2 = extractString(memory_, string2Oop);
+
+    // Debug logging for platform detection
+    static int compareLogCount = 0;
+    if ((str1 == "Mac OS" || str2 == "Mac OS") && compareLogCount++ < 5) {
+        std::cerr << "[STRCMP] Comparing '" << str1 << "' with '" << str2 << "'\n";
+    }
 
     // Basic comparison (ignoring collation order for now)
     int result;
@@ -11659,8 +11739,11 @@ PrimitiveResult Interpreter::primitiveStringCompareWith(int argCount) {
         result = 0;
     }
 
-    popN(3);  // pop order, string2, string1
-    pop();    // pop receiver
+    if ((str1 == "Mac OS" || str2 == "Mac OS") && compareLogCount <= 5) {
+        std::cerr << "[STRCMP] Result: " << result << "\n";
+    }
+
+    popN(argCount + 1);  // pop args and receiver
     push(Oop::fromSmallInteger(result));
     return PrimitiveResult::Success;
 }

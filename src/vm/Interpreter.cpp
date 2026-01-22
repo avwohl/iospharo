@@ -4471,6 +4471,80 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
     }
 
+    // INTERCEPT: Skip delay scheduler startUp during fresh image start
+    // The saved heap/resumption times may contain nil entries that cause infinite
+    // loops in array operations. Skip the entire scheduler startUp to start fresh.
+    if (selStr2 == "startUp" && argCount == 0) {
+        // Check if receiver is DelaySemaphoreScheduler
+        Oop rcvr = stackValue(0);
+        if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+            Oop cls = memory_.classOf(rcvr);
+            if (cls.isObject()) {
+                Oop clsName = memory_.fetchPointer(6, cls);
+                if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                    ObjectHeader* nameHdr = clsName.asObjectPtr();
+                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                        std::string name((char*)nameHdr->bytes(), nameHdr->byteSize());
+                        if (name.find("DelaySemaphoreScheduler") != std::string::npos ||
+                            name.find("DelayMicrosecondTicker") != std::string::npos) {
+                            static int delaySkipCount = 0;
+                            if (delaySkipCount++ < 3) {
+                                std::cerr << "[STARTUP] Skipping " << name << " >> startUp\n";
+                            }
+                            // Return self - scheduler will be reinitialized properly
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // INTERCEPT: Handle Context class >> newForMethod: directly
+    // Primitive 71 (basicNew:) is failing for Context allocation.
+    // Allocate contexts directly from the VM.
+    if (selStr2 == "newForMethod:" && argCount == 1) {
+        Oop rcvr = stackValue(1);  // Should be Context class
+        if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+            Oop nameOop = memory_.fetchPointer(6, rcvr);
+            if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                    std::string name((char*)nameHdr->bytes(), nameHdr->byteSize());
+                    if (name == "Context") {
+                        Oop methodArg = stackValue(0);
+                        // Get frame size from method/block
+                        int frameSize = 20;  // Default reasonable size
+                        if (methodArg.isObject() && methodArg.rawBits() > 0x10000) {
+                            Oop headerOop = memory_.fetchPointer(0, methodArg);
+                            if (headerOop.isSmallInteger()) {
+                                int64_t headerBits = headerOop.asSmallInteger();
+                                // needsLargeFrame at bit 15, numTemps at bits 16-23
+                                bool needsLarge = (headerBits >> 15) & 1;
+                                int numTemps = (headerBits >> 16) & 0xFF;
+                                int numArgs = (headerBits >> 24) & 0xF;
+                                frameSize = numTemps + numArgs + (needsLarge ? 60 : 20);
+                            }
+                        }
+                        // Context has 6 fixed slots: sender, pc, stackp, method, closureOrNil, receiver
+                        size_t totalSlots = 6 + frameSize;
+                        uint32_t classIndex = memory_.indexOfClass(rcvr);
+                        Oop context = memory_.allocateSlots(classIndex, totalSlots, ObjectFormat::IndexableWithFixed);
+                        if (!context.isNil()) {
+                            static int ctxAllocCount = 0;
+                            if (ctxAllocCount++ < 5) {
+                                std::cerr << "[CONTEXT-ALLOC] Created Context with " << totalSlots << " slots\n";
+                            }
+                            popN(argCount + 1);  // Pop method arg and receiver
+                            push(context);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // INTERCEPT: Skip restoreResumptionTimes: during startup
     // This method tries to do arithmetic with nil values from the saved image,
     // causing cascading failures. Instead of restoring old delay times, we let
@@ -4896,7 +4970,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
     }
 
-    if (allSendLog && allSendCount < 10000) {
+    if (allSendLog && allSendCount < 100000) {
         allSendCount++;
         std::string selStr = "<unknown>";
         if (selector.isObject() && selector.rawBits() > 0x10000) {
