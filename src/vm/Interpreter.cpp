@@ -9760,14 +9760,62 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     // This happens when nil participates in arithmetic (e.g., during delay restoration
     // when stored resumption times are nil). Return 0 to allow arithmetic to proceed.
     // For example, `0 - nil` becomes `0 - 0 = 0` which treats nil as having no delta.
+    // Also check for nil itself (receiver_ == 0)
+    bool isNilReceiver = rcvrClassName == "UndefinedObject" || receiver_.isNil() ||
+                         receiver_.rawBits() == memory_.nil().rawBits();
+
+    // DEBUG: Check why fallback might not be matching
+    static int adaptDebugCount = 0;
+    if (origStr.find("adaptTo") == 0 && adaptDebugCount++ < 10) {
+        std::cerr << "[ADAPT-DEBUG] origStr='" << origStr << "' rcvrClassName='" << rcvrClassName
+                  << "' isNilReceiver=" << isNilReceiver
+                  << " receiver_.isNil()=" << receiver_.isNil()
+                  << " receiver_.rawBits()=0x" << std::hex << receiver_.rawBits() << std::dec << "\n";
+    }
+
     if ((origStr == "adaptToNumber:andSend:" || origStr == "adaptToInteger:andSend:" ||
-         origStr == "adaptToFloat:andSend:") && rcvrClassName == "UndefinedObject") {
+         origStr == "adaptToFloat:andSend:") && isNilReceiver) {
+        // The second argument is the selector - check if it's a comparison op
+        // Stack: [receiver, arg0=number, arg1=selector]
+        // For comparison operations, return false; for arithmetic, return 0
+        Oop selectorArg = stackValue(0);  // Top of stack is the selector
+        std::string selStr = "";
+        bool isComparison = false;
+        if (selectorArg.isObject() && selectorArg.rawBits() > 0x10000) {
+            ObjectHeader* selHdr = selectorArg.asObjectPtr();
+            if (selHdr->isBytesObject() && selHdr->byteSize() <= 10) {
+                selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                isComparison = (selStr == "<" || selStr == ">" || selStr == "<=" ||
+                               selStr == ">=" || selStr == "=" || selStr == "~=");
+            }
+        }
+
         static int adaptNilCount = 0;
-        if (adaptNilCount++ < 5) {
-            std::cerr << "[DNU] Fallback for " << origStr << " on nil - returning 0\n";
+        if (adaptNilCount++ < 10) {
+            std::cerr << "[DNU] Fallback for " << origStr << " on nil with selector '" << selStr
+                      << "' selectorArg=0x" << std::hex << selectorArg.rawBits() << std::dec
+                      << " - returning " << (isComparison ? "false" : "0") << "\n";
         }
         popN(argCount + 1);
-        push(Oop::fromSmallInteger(0));  // Return 0 for nil arithmetic
+        if (isComparison) {
+            push(memory_.falseObject());  // Return false for nil comparisons
+        } else {
+            push(Oop::fromSmallInteger(0));  // Return 0 for nil arithmetic
+        }
+        dnuDepth--;
+        return;
+    }
+
+    // Handle comparison adaptation - when nil is compared with numbers (4 < nil, nil > 5, etc.)
+    // Return false for all comparisons involving nil to break the chain
+    if ((origStr == "adaptToNumber:andCompare:" || origStr == "adaptToInteger:andCompare:" ||
+         origStr == "adaptToFloat:andCompare:") && isNilReceiver) {
+        static int adaptCompareNilCount = 0;
+        if (adaptCompareNilCount++ < 5) {
+            std::cerr << "[DNU] Fallback for " << origStr << " on nil - returning false\n";
+        }
+        popN(argCount + 1);
+        push(memory_.falseObject());  // Return false for nil comparisons
         dnuDepth--;
         return;
     }
