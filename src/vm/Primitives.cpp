@@ -3877,8 +3877,35 @@ PrimitiveResult Interpreter::primitiveAsFloat(int argCount) {
     double value;
     if (rcvr.isSmallInteger()) {
         value = static_cast<double>(rcvr.asSmallInteger());
+    } else if (rcvr.isObject()) {
+        // Check if LargeInteger
+        Oop largePositiveClass = memory_.specialObject(SpecialObjectIndex::ClassLargePositiveInteger);
+        Oop largeNegativeClass = memory_.specialObject(SpecialObjectIndex::ClassLargeNegativeInteger);
+        Oop objClass = memory_.classOf(rcvr);
+
+        bool isNegative;
+        if (objClass.rawBits() == largePositiveClass.rawBits()) {
+            isNegative = false;
+        } else if (objClass.rawBits() == largeNegativeClass.rawBits()) {
+            isNegative = true;
+        } else {
+            return PrimitiveResult::Failure;
+        }
+
+        // Convert magnitude bytes (little-endian) to double
+        size_t byteSize = memory_.byteSizeOf(rcvr);
+        value = 0.0;
+        double multiplier = 1.0;
+        for (size_t i = 0; i < byteSize; i++) {
+            uint8_t byte = memory_.fetchByte(i, rcvr);
+            value += static_cast<double>(byte) * multiplier;
+            multiplier *= 256.0;
+        }
+
+        if (isNegative) {
+            value = -value;
+        }
     } else {
-        // Could be LargeInteger - for now just fail
         return PrimitiveResult::Failure;
     }
 
