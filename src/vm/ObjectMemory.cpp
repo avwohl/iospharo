@@ -8,8 +8,15 @@
 #include <algorithm>
 #include <chrono>
 #include <iostream>
+#include <execinfo.h>
+#include <unordered_set>
 
 namespace pharo {
+
+// Global tracking of allocation addresses for debugging phantom pointer issues
+static std::unordered_set<uint64_t> g_allocAddrs;
+static bool g_trackAllocations = true;
+static int g_allocSeqNum = 0;  // True allocation sequence number
 
 // ===== CONSTRUCTION / INITIALIZATION =====
 
@@ -167,6 +174,30 @@ Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
                     allAllocCount, slotCount, (unsigned long long)allocAddr,
                     (unsigned long long)allocEnd, (unsigned long long)edenFree_);
             fflush(allAllocLog);
+        }
+
+        // Track allocation address in global set for validation
+        if (g_trackAllocations) {
+            uint64_t allocAddr = (uint64_t)obj;
+            g_allocAddrs.insert(allocAddr);
+            g_allocSeqNum++;
+
+            // Log allocations in the 0x1000-0x2000 offset range to see the full picture
+            static uint64_t edenBase = 0;
+            if (edenBase == 0) edenBase = (uint64_t)edenStart_;
+            uint64_t offset = allocAddr - edenBase;
+            if (offset >= 0x1000 && offset <= 0x2000) {
+                static FILE* rangeAllocLog = nullptr;
+                if (!rangeAllocLog) rangeAllocLog = fopen("/tmp/range_alloc.log", "w");
+                if (rangeAllocLog) {
+                    fprintf(rangeAllocLog, "[ALLOC #%d] addr=0x%llx offset=0x%llx classIdx=%u slots=%zu totalSize=%zu\n",
+                            g_allocSeqNum, (unsigned long long)allocAddr, (unsigned long long)offset,
+                            classIndex, slotCount, totalSize);
+                    fprintf(rangeAllocLog, "  edenFree_ before: 0x%llx after: 0x%llx\n",
+                            (unsigned long long)edenFree_ - totalSize, (unsigned long long)edenFree_);
+                    fflush(rangeAllocLog);
+                }
+            }
         }
     }
 
@@ -822,6 +853,125 @@ Oop ObjectMemory::fetchPointer(size_t index, Oop obj) const {
 void ObjectMemory::storePointer(size_t index, Oop obj, Oop value) {
     if (!obj.isObject()) return;
     ObjectHeader* header = obj.asObjectPtr();
+
+    // Debug: Log ALL storePointer calls to Context objects
+    static FILE* allStoreLog = nullptr;
+    static int allStoreCount = 0;
+    if (!allStoreLog) allStoreLog = fopen("/tmp/all_ctx_stores.log", "w");
+
+    // ALSO log if the address has the 0x1428 pattern (phantom pattern)
+    uint64_t addrOffset = (uint64_t)header - (uint64_t)edenStart_;
+    if (allStoreLog && addrOffset == 0x1428) {
+        fprintf(allStoreLog, "\n!!! PHANTOM ADDRESS DETECTED 0x%llx (offset 0x%llx from eden) classIdx=%d\n",
+                (unsigned long long)header, (unsigned long long)addrOffset, header->classIndex());
+        fflush(allStoreLog);
+    }
+
+    if (allStoreLog && allStoreCount < 2000 && header->classIndex() == 36) {
+        allStoreCount++;
+        uint64_t objAddr = (uint64_t)header;
+        bool inTrack = (g_allocAddrs.find(objAddr) != g_allocAddrs.end());
+        fprintf(allStoreLog, "[STORE #%d] ctx=0x%llx slot[%zu] inAlloc=%d allocSetSize=%zu\n",
+                allStoreCount, (unsigned long long)objAddr, index, inTrack, g_allocAddrs.size());
+        if (!inTrack && g_allocAddrs.size() > 0) {
+            fprintf(allStoreLog, "  *** PHANTOM CANDIDATE ***\n");
+        }
+        fflush(allStoreLog);
+    }
+
+    // VALIDATION: Check if this object address was actually allocated
+    // This catches "phantom pointer" bugs where an address inside another object
+    // is being used as if it were a separate object
+    if (g_trackAllocations && header->classIndex() == 36) {  // Only check Context class (36)
+        uint64_t objAddr = (uint64_t)header;
+        bool inOld = (objAddr >= (uint64_t)oldSpaceStart_ && objAddr < (uint64_t)oldSpaceEnd_);
+        bool inAlloc = (g_allocAddrs.find(objAddr) != g_allocAddrs.end());
+
+        // EXTRA: Log specifically when we check the phantom-pattern address
+        uint64_t addrOffCheck = objAddr - (uint64_t)edenStart_;
+        if (addrOffCheck == 0x1428) {
+            static FILE* phantomCheckDbg = nullptr;
+            if (!phantomCheckDbg) phantomCheckDbg = fopen("/tmp/phantom_check_dbg.log", "w");
+            if (phantomCheckDbg) {
+                fprintf(phantomCheckDbg, "[PHANTOM-DBG] addr=0x%llx inOld=%d inAlloc=%d allocSetSize=%zu classIdx=%d\n",
+                        (unsigned long long)objAddr, inOld, inAlloc, g_allocAddrs.size(), header->classIndex());
+                fflush(phantomCheckDbg);
+            }
+        }
+
+        // Debug: log EVERY Context write to see if phantom address is checked
+        static FILE* everyCtxLog = nullptr;
+        static int everyCtxCount = 0;
+        if (!everyCtxLog) everyCtxLog = fopen("/tmp/every_ctx_check.log", "w");
+        if (everyCtxLog && everyCtxCount < 1000) {
+            everyCtxCount++;
+            // Only log if NOT in allocation (to reduce noise)
+            if (!inAlloc) {
+                fprintf(everyCtxLog, "[CTX #%d] addr=0x%llx inOld=%d inAlloc=%d\n",
+                        everyCtxCount, (unsigned long long)objAddr, inOld, inAlloc);
+                fflush(everyCtxLog);
+            }
+        }
+
+        // Only check eden allocations (old space objects are loaded from image, not in our set)
+        // Also log any NOT in allocation (which is the phantom case)
+        if (!inOld && !inAlloc) {
+            // This is the phantom case - log it
+            static FILE* ctxCheckLog = nullptr;
+            if (!ctxCheckLog) ctxCheckLog = fopen("/tmp/ctx_phantom_check.log", "w");
+            if (ctxCheckLog) {
+                fprintf(ctxCheckLog, "[PHANTOM-CHECK] addr=0x%llx inOld=%d inAlloc=%d allocSetSize=%zu index=%zu\n",
+                        (unsigned long long)objAddr, inOld, inAlloc, g_allocAddrs.size(), index);
+                fflush(ctxCheckLog);
+            }
+            static FILE* phantomLog = nullptr;
+            static int phantomCount = 0;
+            if (!phantomLog) phantomLog = fopen("/tmp/phantom_context.log", "w");
+            if (phantomLog && phantomCount < 5) {
+                phantomCount++;
+                fprintf(phantomLog, "\n[PHANTOM #%d] Writing to Context at 0x%llx which was NEVER ALLOCATED!\n",
+                        phantomCount, (unsigned long long)objAddr);
+                fprintf(phantomLog, "  claimed classIdx=%d slots=%zu\n",
+                        header->classIndex(), header->slotCount());
+                fprintf(phantomLog, "  writing slot[%zu] = 0x%llx\n", index, (unsigned long long)value.rawBits());
+                fprintf(phantomLog, "  raw header bytes: 0x%llx\n", (unsigned long long)header->rawHeader());
+                fprintf(phantomLog, "  edenStart_=0x%llx edenFree_=0x%llx\n",
+                        (unsigned long long)edenStart_, (unsigned long long)edenFree_);
+                // Find what allocation this address falls inside of
+                fprintf(phantomLog, "  Looking for enclosing allocation...\n");
+                for (uint64_t allocAddr : g_allocAddrs) {
+                    if (allocAddr < objAddr && objAddr < allocAddr + 4096) {  // Check within 4K
+                        ObjectHeader* enclosingHdr = (ObjectHeader*)allocAddr;
+                        uint64_t enclosingEnd = allocAddr + 8 + enclosingHdr->slotCount() * 8;
+                        if (objAddr < enclosingEnd) {
+                            fprintf(phantomLog, "  FOUND: obj 0x%llx is inside allocation at 0x%llx (slots=%zu, ends 0x%llx)\n",
+                                    (unsigned long long)objAddr, (unsigned long long)allocAddr,
+                                    enclosingHdr->slotCount(), (unsigned long long)enclosingEnd);
+                            size_t offsetInAlloc = objAddr - allocAddr;
+                            size_t slotInAlloc = (offsetInAlloc - 8) / 8;
+                            fprintf(phantomLog, "  Phantom addr is at offset %zu (slot %zu) of enclosing object\n",
+                                    offsetInAlloc, slotInAlloc);
+                        }
+                    }
+                }
+                // Capture stack trace
+                fprintf(phantomLog, "  Stack trace:\n");
+                void* bt[30];
+                int btSize = backtrace(bt, 30);
+                char** btSyms = backtrace_symbols(bt, btSize);
+                if (btSyms) {
+                    for (int i = 0; i < btSize; i++) {
+                        fprintf(phantomLog, "    %s\n", btSyms[i]);
+                    }
+                    free(btSyms);
+                }
+                fflush(phantomLog);
+                if (phantomCount >= 1) {
+                    abort();  // Stop on first phantom to examine
+                }
+            }
+        }
+    }
 
     // WATCHPOINT: Check if this write will corrupt a nearby object header
     static uint64_t watchedAddr = 0;
