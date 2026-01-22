@@ -1055,10 +1055,26 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
         primitiveSuccess(Oop::fromSmallInteger(byte));
         return PrimitiveResult::Success;
     } else if (header->isPointersObject()) {
-        if (arrayIndex >= header->slotCount()) {
+        // Per official VM: at: accesses the INDEXABLE part, skipping fixed fields
+        // For format 2 (Indexable): no fixed fields, access directly
+        // For format 3 (IndexableWithFixed): add fixedFields to index
+        ObjectFormat fmt = header->format();
+        size_t fixedFields = 0;
+        if (fmt == ObjectFormat::IndexableWithFixed || fmt == ObjectFormat::WeakWithFixed) {
+            Oop objClass = memory_.classOf(rcvr);
+            if (objClass.isObject()) {
+                Oop instSpec = memory_.fetchPointer(2, objClass);
+                if (instSpec.isSmallInteger()) {
+                    fixedFields = instSpec.asSmallInteger() & 0xFFFF;
+                }
+            }
+        }
+        size_t indexableSize = header->slotCount() - fixedFields;
+        if (arrayIndex >= indexableSize) {
             return PrimitiveResult::Failure;
         }
-        Oop result = header->slotAt(arrayIndex);
+        size_t actualSlot = fixedFields + arrayIndex;
+        Oop result = header->slotAt(actualSlot);
         // Trace at: results that return nil
         if (result.rawBits() == memory_.nil().rawBits()) {
             static FILE* atNilLog = nullptr;
@@ -1209,44 +1225,24 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
         primitiveSuccess(value);
         return PrimitiveResult::Success;
     } else if (header->isPointersObject()) {
-        if (arrayIndex >= header->slotCount()) {
-            return PrimitiveResult::Failure;
-        }
-        // Trace storage of ClassSessionHandler objects
-        static FILE* storeLog = nullptr;
-        static int storeCount = 0;
-        if (!storeLog) storeLog = fopen("/tmp/atput_store.log", "w");
-        if (storeLog && storeCount < 100) {
-            if (value.isObject() && value.rawBits() > 0x10000) {
-                Oop cls = memory_.classOf(value);
-                if (cls.isObject()) {
-                    Oop clsName = memory_.fetchPointer(6, cls);
-                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                        ObjectHeader* cnHdr = clsName.asObjectPtr();
-                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
-                            std::string className((char*)cnHdr->bytes(), cnHdr->byteSize());
-                            if (className.find("SessionHandler") != std::string::npos) {
-                                storeCount++;
-                                fprintf(storeLog, "[STORE #%d] Storing %s at index %zu in Array 0x%llx (size %zu)\n",
-                                        storeCount, className.c_str(), arrayIndex,
-                                        (unsigned long long)rcvr.rawBits(), header->slotCount());
-                                // Verify the store
-                                header->slotAtPut(arrayIndex, value);
-                                Oop readBack = header->slotAt(arrayIndex);
-                                fprintf(storeLog, "  Stored 0x%llx, read back 0x%llx (%s)\n",
-                                        (unsigned long long)value.rawBits(),
-                                        (unsigned long long)readBack.rawBits(),
-                                        readBack.rawBits() == value.rawBits() ? "OK" : "MISMATCH!");
-                                fflush(storeLog);
-                                primitiveSuccess(value);
-                                return PrimitiveResult::Success;
-                            }
-                        }
-                    }
+        // Per official VM: at:put: accesses the INDEXABLE part, skipping fixed fields
+        ObjectFormat fmt = header->format();
+        size_t fixedFields = 0;
+        if (fmt == ObjectFormat::IndexableWithFixed || fmt == ObjectFormat::WeakWithFixed) {
+            Oop objClass = memory_.classOf(rcvr);
+            if (objClass.isObject()) {
+                Oop instSpec = memory_.fetchPointer(2, objClass);
+                if (instSpec.isSmallInteger()) {
+                    fixedFields = instSpec.asSmallInteger() & 0xFFFF;
                 }
             }
         }
-        header->slotAtPut(arrayIndex, value);
+        size_t indexableSize = header->slotCount() - fixedFields;
+        if (arrayIndex >= indexableSize) {
+            return PrimitiveResult::Failure;
+        }
+        size_t actualSlot = fixedFields + arrayIndex;
+        header->slotAtPut(actualSlot, value);
         primitiveSuccess(value);
         return PrimitiveResult::Success;
     } else if (header->isCompiledMethod()) {
@@ -1276,31 +1272,75 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveSize(int argCount) {
-    // Receiver is at stackValue(argCount) when there are arguments
+    // Primitive 62: Return the indexable size of an object
+    // Per official VM: fails for non-indexable objects (format < 2)
+    // Returns: indexable size = totalSlots - fixedFields
     Oop rcvr = stackValue(argCount);
 
     if (!rcvr.isObject()) {
-        return PrimitiveResult::Failure;
+        return PrimitiveResult::Failure;  // Immediates fail
     }
 
     ObjectHeader* header = rcvr.asObjectPtr();
+    ObjectFormat fmt = header->format();
+    size_t totalSlots = header->slotCount();
     size_t size;
 
+    // Per official VM: fail for non-indexable objects (format 0-1)
+    if (fmt == ObjectFormat::ZeroSized || fmt == ObjectFormat::FixedSize) {
+        return PrimitiveResult::Failure;
+    }
+
     if (header->isBytesObject()) {
+        // Byte objects: return byte count
         size = header->byteSize();
     } else if (header->isCompiledMethod()) {
-        // For CompiledMethods, size returns the total byte size
-        // Smalltalk calculates bytecode count as: size - initialPC + 1
+        // CompiledMethods: return byte size (literal frame + bytecodes)
         size = header->byteSize();
+    } else if (fmt == ObjectFormat::IndexableWithFixed) {
+        // Objects with both fixed and indexable fields (e.g., Context)
+        // Get fixed field count from class instance specification
+        Oop objClass = memory_.classOf(rcvr);
+        size_t fixedFields = 0;
+        if (objClass.isObject()) {
+            Oop instSpec = memory_.fetchPointer(2, objClass);
+            if (instSpec.isSmallInteger()) {
+                fixedFields = instSpec.asSmallInteger() & 0xFFFF;
+            }
+        }
+        size = (totalSlots > fixedFields) ? totalSlots - fixedFields : 0;
+    } else if (fmt == ObjectFormat::Indexable) {
+        // Pure indexable objects (Array): all slots are indexable
+        size = totalSlots;
+    } else if (fmt == ObjectFormat::Weak || fmt == ObjectFormat::WeakWithFixed) {
+        // Weak objects - similar to indexable
+        Oop objClass = memory_.classOf(rcvr);
+        size_t fixedFields = 0;
+        if (objClass.isObject()) {
+            Oop instSpec = memory_.fetchPointer(2, objClass);
+            if (instSpec.isSmallInteger()) {
+                fixedFields = instSpec.asSmallInteger() & 0xFFFF;
+            }
+        }
+        size = (totalSlots > fixedFields) ? totalSlots - fixedFields : 0;
+    } else if (fmt == ObjectFormat::Indexable64) {
+        // 64-bit word array
+        size = totalSlots;
+    } else if (fmt >= ObjectFormat::Indexable32 && fmt <= ObjectFormat::Indexable32Odd) {
+        // 32-bit word arrays
+        size = totalSlots * 2 - (fmt == ObjectFormat::Indexable32Odd ? 1 : 0);
+    } else if (fmt >= ObjectFormat::Indexable16 && fmt <= ObjectFormat::Indexable16_3) {
+        // 16-bit word arrays
+        size = totalSlots * 4 - (static_cast<int>(fmt) - static_cast<int>(ObjectFormat::Indexable16));
     } else {
-        size = header->slotCount();
+        // Default: return slot count
+        size = totalSlots;
     }
 
     if (!Oop::canBeSmallInteger(static_cast<int64_t>(size))) {
         return PrimitiveResult::Failure;
     }
 
-    // Pop args and receiver, push result
     popN(argCount + 1);
     push(Oop::fromSmallInteger(static_cast<int64_t>(size)));
     return PrimitiveResult::Success;
@@ -2085,6 +2125,16 @@ PrimitiveResult Interpreter::primitivePerformWithArgs(int argCount) {
 PrimitiveResult Interpreter::primitiveBlockValue(int argCount) {
     Oop block = stackValue(argCount);
 
+    // Validate block is an object
+    if (!block.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* blockHdr = block.asObjectPtr();
+    if (blockHdr->isForwarded()) {
+        return PrimitiveResult::Failure;
+    }
+
     // Verify arg count matches block's numArgs
     Oop numArgsObj = memory_.fetchPointer(2, block);
     if (!numArgsObj.isSmallInteger()) {
@@ -2094,6 +2144,19 @@ PrimitiveResult Interpreter::primitiveBlockValue(int argCount) {
     int blockArgCount = static_cast<int>(numArgsObj.asSmallInteger());
     if (blockArgCount != argCount) {
         return PrimitiveResult::Failure;
+    }
+
+    // Per official VM: validate slot 1 (compiledBlock for FullBlockClosure)
+    // For old-style BlockClosure, slot 1 is SmallInteger (startPC) - OK
+    // For FullBlockClosure, slot 1 must be a CompiledMethod
+    Oop slot1 = memory_.fetchPointer(1, block);
+    if (slot1.isObject()) {
+        ObjectHeader* slot1Hdr = slot1.asObjectPtr();
+        if (!slot1Hdr->isCompiledMethod()) {
+            return PrimitiveResult::Failure;  // Not a valid compiledBlock
+        }
+    } else if (!slot1.isSmallInteger()) {
+        return PrimitiveResult::Failure;  // Neither startPC nor compiledBlock
     }
 
     activateBlock(block, argCount);
@@ -2523,6 +2586,9 @@ PrimitiveResult Interpreter::primitiveSuspend(int argCount) {
     // Remove from its current list
     removeProcessFromList(process, myList);
 
+    // Per official VM: set myList to nil after removal
+    memory_.storePointer(ProcessMyListIndex, process, nilObj);
+
     // Return the list it was on
     pop();  // Remove receiver
     push(myList);  // Push result (the list)
@@ -2550,16 +2616,19 @@ PrimitiveResult Interpreter::primitiveResume(int argCount) {
     Oop context = memory_.fetchPointer(ProcessSuspendedContextIndex, process);
     Oop nilObj = memory_.nil();
 
-    // Check if context is forwarded (official VM uses followFieldofObject)
-    if (context.isObject() && context.rawBits() > 0x10000) {
-        ObjectHeader* ctxHdr = context.asObjectPtr();
-        if (ctxHdr->isForwarded()) {
-            return PrimitiveResult::Failure;
-        }
-    }
-
     if (context.isNil() || context.rawBits() == nilObj.rawBits() || !context.isObject()) {
         return PrimitiveResult::Failure;  // Can't resume without a valid context
+    }
+
+    // Per official VM: validate context is actually a Context
+    // Check if context is forwarded and validate format
+    ObjectHeader* ctxHdr = context.asObjectPtr();
+    if (ctxHdr->isForwarded()) {
+        return PrimitiveResult::Failure;
+    }
+    // Context objects have format 3 (IndexableWithFixed)
+    if (ctxHdr->format() != ObjectFormat::IndexableWithFixed) {
+        return PrimitiveResult::Failure;  // Not a valid Context
     }
 
     // Get priorities to check for preemption
