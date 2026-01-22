@@ -3506,14 +3506,9 @@ PrimitiveResult Interpreter::primitiveClipboardText(int argCount) {
 // ===== TIME PRIMITIVES =====
 
 PrimitiveResult Interpreter::primitiveMillisecondClock(int argCount) {
-    // Primitive 135: Return milliseconds since VM start or epoch
-    auto now = std::chrono::steady_clock::now();
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        now.time_since_epoch()).count();
-
-    // Return low 30 bits to fit in SmallInteger (wraps every ~12 days)
-    int64_t result = ms & 0x3FFFFFFF;
-    primitiveSuccess(Oop::fromSmallInteger(result));
+    // Primitive 135: Return milliseconds since VM start
+    // Uses ioMSecs() which is a 30-bit wrapping counter
+    primitiveSuccess(Oop::fromSmallInteger(ioMSecs()));
     return PrimitiveResult::Success;
 }
 
@@ -3561,14 +3556,15 @@ PrimitiveResult Interpreter::primitiveLocalMicrosecondClock(int argCount) {
 
 PrimitiveResult Interpreter::primitiveSignalAtMilliseconds(int argCount) {
     // Primitive 136: Schedule semaphore signal at given milliseconds
-    // Arguments: semaphore, milliseconds
-    // Sets up a timer to signal the semaphore at the given time
+    // Args: semaphore (receiver), milliseconds (target time in ioMSecs units)
+    // The milliseconds value comes from Smalltalk as `ioMSecs + delayMs`,
+    // which is a 30-bit wrapping value. Timer comparison uses wrap-around handling.
 
     if (argCount != 2) {
         return PrimitiveResult::Failure;
     }
 
-    Oop msOop = stackValue(0);      // milliseconds (SmallInteger)
+    Oop msOop = stackValue(0);      // milliseconds (SmallInteger, in ioMSecs units)
     Oop semaphore = stackValue(1);  // receiver (the semaphore)
 
     if (!msOop.isSmallInteger()) {
@@ -3585,9 +3581,9 @@ PrimitiveResult Interpreter::primitiveSignalAtMilliseconds(int argCount) {
         return PrimitiveResult::Success;
     }
 
-    // Store the timer info
+    // Store the timer info (in ioMSecs units, 30-bit wrapping)
     timerSemaphore_ = semaphore;
-    nextWakeupTime_ = targetMs;
+    nextWakeupTime_ = targetMs & 0x3FFFFFFF;  // Ensure 30-bit
 
     primitiveSuccess(semaphore);  // Return receiver
     return PrimitiveResult::Success;
@@ -7154,43 +7150,14 @@ PrimitiveResult Interpreter::primitiveFindHandlerContext(int argCount) {
 // Primitive 189: Find the next unwind context up to a limit
 // Walks the sender chain looking for ensure: or similar unwind-protect contexts
 PrimitiveResult Interpreter::primitiveFindNextUnwindContext(int argCount) {
-    // Arguments: limit context (stop searching when we reach this)
-    // Receiver: context to start searching from
-
-    Oop limitContext = stackValue(0);
-    Oop startContext = stackValue(1);
-
-    if (!startContext.isObject()) {
-        return PrimitiveResult::Failure;
-    }
-
-    // Walk the sender chain from startContext up to limitContext
-    // looking for unwind-protect contexts (ensure: blocks)
-
-    Oop current = startContext;
-
-    while (!current.isNil() && current.isObject()) {
-        // Check if this is the limit
-        if (current.rawBits() == limitContext.rawBits()) {
-            // Reached limit without finding unwind context
-            popN(2);
-            push(memory_.nil());
-            return PrimitiveResult::Success;
-        }
-
-        // In a full implementation, we'd check if current is an unwind context
-        // by looking at flags set by primitiveMarkUnwindMethod or by
-        // checking if the method is an ensure: method
-
-        // Get sender
-        Oop sender = memory_.fetchPointer(ContextSenderIndex, current);
-        current = sender;
-    }
-
-    // No unwind context found
-    popN(2);
-    push(memory_.nil());
-    return PrimitiveResult::Success;
+    // Primitive 195: Find the next unwind context up to a limit
+    // This primitive requires tracking which methods were marked as unwind methods
+    // via primitiveMarkUnwindMethod (210). Since we don't have that infrastructure,
+    // return failure to let the Smalltalk fallback code handle unwinding.
+    // The Smalltalk implementation will walk the sender chain itself and check
+    // for ensure: methods by examining method literals.
+    (void)argCount;
+    return PrimitiveResult::Failure;
 }
 
 // ===== CONTEXT INSPECTION PRIMITIVES =====

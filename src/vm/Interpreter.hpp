@@ -175,6 +175,15 @@ public:
     void startHeartbeat();
     void stopHeartbeat();
 
+    /// Get current millisecond clock (30-bit wrapping counter since VM start)
+    /// This is the time base for primitiveMillisecondClock and timer comparisons
+    int64_t ioMSecs() const {
+        auto now = std::chrono::steady_clock::now();
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - vmStartTime_).count();
+        return ms & 0x3FFFFFFF;  // 30 bits, wraps every ~12 days
+    }
+
     /// Get the object memory
     ObjectMemory& memory() { return memory_; }
 
@@ -406,7 +415,10 @@ private:
 
     // Timer/delay semaphore (for Delay class)
     Oop timerSemaphore_ = Oop::nil();
-    int64_t nextWakeupTime_ = 0;  // 0 means no timer set
+    int64_t nextWakeupTime_ = 0;  // 0 means no timer set (in ioMSecs units)
+
+    // VM start time for ioMSecs() - millisecond clock base
+    std::chrono::steady_clock::time_point vmStartTime_ = std::chrono::steady_clock::now();
 
     // Heartbeat thread
     std::atomic<bool> heartbeatRunning_{false};

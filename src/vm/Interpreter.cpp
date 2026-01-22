@@ -2090,12 +2090,16 @@ void Interpreter::checkTimerSemaphore() {
         return;  // No timer set
     }
 
-    // Get current time in milliseconds
-    auto now = std::chrono::steady_clock::now();
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        now.time_since_epoch()).count();
+    // Get current time using ioMSecs() (30-bit wrapping counter)
+    int64_t currentMs = ioMSecs();
+    int64_t targetMs = nextWakeupTime_;
 
-    if (ms >= nextWakeupTime_) {
+    // Compare with wrap-around handling: if difference is positive and
+    // less than half the range, the timer has elapsed
+    int64_t diff = (currentMs - targetMs) & 0x3FFFFFFF;
+    bool timerElapsed = (diff > 0) && (diff < 0x20000000);
+
+    if (timerElapsed) {
         // Time has elapsed - signal the semaphore
         // Signal the timer semaphore
         Oop semaphore = timerSemaphore_;
@@ -2153,11 +2157,13 @@ void Interpreter::startHeartbeat() {
 
             // Check timer semaphore and signal if expired
             if (nextWakeupTime_ != 0 && !timerSemaphore_.isNil()) {
-                auto now = std::chrono::steady_clock::now();
-                auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    now.time_since_epoch()).count();
+                // Use ioMSecs() with wrap-around handling (same as checkTimerSemaphore)
+                int64_t currentMs = ioMSecs();
+                int64_t targetMs = nextWakeupTime_;
+                int64_t diff = (currentMs - targetMs) & 0x3FFFFFFF;
+                bool timerElapsed = (diff > 0) && (diff < 0x20000000);
 
-                if (ms >= nextWakeupTime_) {
+                if (timerElapsed) {
                     // Signal the timer semaphore by incrementing its excessSignals
                     Oop semaphore = timerSemaphore_;
                     timerSemaphore_ = Oop::nil();
