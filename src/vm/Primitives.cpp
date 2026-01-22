@@ -9632,16 +9632,18 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    Oop millisecondsOop = stackTop();
+    Oop microSecondsOop = stackTop();
 
-    if (!millisecondsOop.isSmallInteger()) {
+    if (!microSecondsOop.isSmallInteger()) {
         return PrimitiveResult::Failure;
     }
 
-    int64_t milliseconds = millisecondsOop.asSmallInteger();
+    // CRITICAL: Argument is in MICROSECONDS, not milliseconds!
+    // Per official VM: ioRelinquishProcessorForMicroseconds(microSecs)
+    int64_t microSeconds = microSecondsOop.asSmallInteger();
 
     if (relinquishLog && relinquishCount <= 50) {
-        fprintf(relinquishLog, "[RELINQUISH] #%d ms=%lld\n", relinquishCount, (long long)milliseconds);
+        fprintf(relinquishLog, "[RELINQUISH] #%d us=%lld\n", relinquishCount, (long long)microSeconds);
         fflush(relinquishLog);
     }
 
@@ -9650,30 +9652,20 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
     // 2. Optionally sleep for the requested time
     // 3. Allow process scheduler to run other processes
 
-    // IMPORTANT: Cap the sleep time to avoid blocking the event loop for too long.
-    // Pharo sometimes passes very large values (e.g., 50000ms during startup) which
-    // would completely block event processing.
-    //
-    // For interactive responsiveness, cap the TOTAL delay to a small value.
-    // The original delay request is typically a "yield" - Pharo is saying "I have
-    // nothing to do, let other things run". We honor this by:
-    // 1. Processing any pending events/signals
-    // 2. Sleeping for a SHORT time to allow the system to breathe
-    // 3. Returning to let Pharo decide what to do next
-
-    const int64_t MAX_TOTAL_SLEEP_MS = 10;  // Never sleep more than 10ms total
-    int64_t sleepMs = std::min(milliseconds, MAX_TOTAL_SLEEP_MS);
+    // Cap sleep time to avoid blocking event loop (10ms = 10000 microseconds max)
+    const int64_t MAX_SLEEP_US = 10000;  // 10ms in microseconds
+    int64_t sleepUs = std::min(microSeconds, MAX_SLEEP_US);
 
     // Process any pending events first
     processInputEvents();
     processPendingSignals();
 
-    // Short sleep if requested
-    if (sleepMs > 0) {
+    // Short sleep if requested (usleep takes microseconds)
+    if (sleepUs > 0) {
         #ifdef _WIN32
-        Sleep(static_cast<DWORD>(sleepMs));
+        Sleep(static_cast<DWORD>(sleepUs / 1000));  // Windows Sleep takes milliseconds
         #else
-        usleep(static_cast<useconds_t>(sleepMs * 1000));
+        usleep(static_cast<useconds_t>(sleepUs));  // usleep takes microseconds
         #endif
     }
 
@@ -9682,9 +9674,9 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
     processPendingSignals();
 
     // Debug: Log large delay requests
-    if (relinquishLog && milliseconds > 100) {
-        fprintf(relinquishLog, "[RELINQUISH] Capped %lldms -> %lldms\n",
-                (long long)milliseconds, (long long)sleepMs);
+    if (relinquishLog && microSeconds > 100000) {  // > 100ms
+        fprintf(relinquishLog, "[RELINQUISH] Capped %lldus -> %lldus\n",
+                (long long)microSeconds, (long long)sleepUs);
         fflush(relinquishLog);
     }
 
@@ -9758,7 +9750,28 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
         }
     }
 
-    pop();  // pop milliseconds, leave receiver
+    pop();  // pop microseconds argument, leave receiver
+    return PrimitiveResult::Success;
+}
+
+// Primitive 231: Return the object format from header
+// Used for object introspection
+PrimitiveResult Interpreter::primitiveFormat(int argCount) {
+    (void)argCount;
+    Oop rcvr = stackTop();
+
+    if (!rcvr.isObject()) {
+        // Immediates have no object header, return 0 for SmallInteger
+        pop();
+        push(Oop::fromSmallInteger(0));
+        return PrimitiveResult::Success;
+    }
+
+    ObjectHeader* hdr = rcvr.asObjectPtr();
+    int format = static_cast<int>(hdr->format());
+
+    pop();
+    push(Oop::fromSmallInteger(format));
     return PrimitiveResult::Success;
 }
 

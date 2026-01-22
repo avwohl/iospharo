@@ -832,9 +832,10 @@ private:
     // Context primitive (203)
     PrimitiveResult primitiveValueUninterruptably(int argCount);   // 203
 
-    // Process/system primitives (172, 179)
+    // Process/system primitives (172, 179, 230, 231)
     PrimitiveResult primitiveSetGCSemaphore(int argCount);         // 172
-    PrimitiveResult primitiveRelinquishProcessor(int argCount);    // 179
+    PrimitiveResult primitiveRelinquishProcessor(int argCount);    // 230
+    PrimitiveResult primitiveFormat(int argCount);                 // 231
 
     // Time
     PrimitiveResult primitiveMillisecondClock(int argCount);
