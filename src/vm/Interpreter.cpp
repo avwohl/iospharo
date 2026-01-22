@@ -8136,8 +8136,16 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     } else if (slot1.isObject()) {
         // FullBlockClosure: slot 1 is compiledBlock (the actual method to execute)
         Oop compiledBlock = slot1;
-        methodToExecute = compiledBlock;
+
+        // Validate that compiledBlock is actually a CompiledMethod/CompiledBlock
+        // (format >= 24 per Spur object format spec)
         ObjectHeader* blockObj = compiledBlock.asObjectPtr();
+        if (!blockObj->isCompiledMethod()) {
+            primitiveFail();
+            return;
+        }
+
+        methodToExecute = compiledBlock;
         Oop header = memory_.fetchPointer(0, compiledBlock);
         int64_t headerBits = header.asSmallInteger();
         int numLiterals = headerBits & 0xFFFF;
