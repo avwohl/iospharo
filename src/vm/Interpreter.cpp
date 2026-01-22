@@ -3768,6 +3768,33 @@ void Interpreter::returnValue(Oop value) {
         return;
     }
 
+    // Check if we're returning from fullCheck - reset tracking flag
+    if (g_inFullCheck) {
+        std::string currentMethodSel = "<unknown>";
+        if (method_.isObject() && method_.rawBits() > 0x10000) {
+            Oop hdr = memory_.fetchPointer(0, method_);
+            if (hdr.isSmallInteger()) {
+                size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                if (numLits >= 2) {
+                    Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                    if (sel.isObject() && sel.rawBits() > 0x10000) {
+                        ObjectHeader* selHdr = sel.asObjectPtr();
+                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                            currentMethodSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                        }
+                    }
+                }
+            }
+        }
+        if (currentMethodSel == "fullCheck") {
+            if (g_fcBytecodeLog) {
+                fprintf(g_fcBytecodeLog, "[RETURNING FROM fullCheck after %d bytecodes]\n", g_fullCheckBytecodeCount);
+                fflush(g_fcBytecodeLog);
+            }
+            g_inFullCheck = false;
+        }
+    }
+
     // Pop frame and push result
     popFrame();
 
