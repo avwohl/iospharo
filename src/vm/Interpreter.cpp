@@ -4900,7 +4900,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
 
         // Log ALL sends for first 20000 sends to understand startup flow
-        if (startupTraceLog && startupTraceCount < 20000) {
+        if (startupTraceLog && startupTraceCount < 40000) {
             startupTraceCount++;
             std::string selectorStr(selBytes, selBytes + selLen);
             fprintf(startupTraceLog, "[SEND#%d] %s (argCount=%d) fd=%zu\n",
@@ -12803,11 +12803,12 @@ Oop Interpreter::materializeFrameStack() {
         memory_.storePointer(5, context, frame.savedReceiver);              // receiver
 
         // Copy temps from stack
-        // The saved FP points to the start of this frame's locals in the stack
+        // The saved FP points to the receiver; temps start at savedFP + 1
+        // (same layout as framePointer_: FP[0]=receiver, FP[1]=temp0, etc.)
         int savedCount = 0;
         if (frame.savedFP != nullptr && numTemps > 0) {
             for (int t = 0; t < numTemps && t < 32; t++) {
-                Oop temp = *(frame.savedFP + t);
+                Oop temp = *(frame.savedFP + 1 + t);  // +1 to skip receiver
                 memory_.storePointer(6 + t, context, temp);
                 savedCount++;
             }
