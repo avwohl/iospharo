@@ -4694,6 +4694,323 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         return selLen == nameLen && selBytes && memcmp(selBytes, name, nameLen) == 0;
     };
 
+    // TRACE: Log InputEventSensor, SessionManager, and process creation related calls
+    {
+        static FILE* startupTraceLog = nullptr;
+        static int startupTraceCount = 0;
+        if (!startupTraceLog) {
+            startupTraceLog = fopen("/tmp/startup_trace.log", "w");
+        }
+
+        // Check for interesting selectors - broader list
+        bool interesting = selEquals("startUp") || selEquals("startUp:") ||
+                          selEquals("forkAt:") || selEquals("fork") || selEquals("newProcess") ||
+                          selEquals("eventLoop") || selEquals("eventLoopProcess") ||
+                          selEquals("install") || selEquals("installEventLoop") ||
+                          selEquals("startEventLoop") || selEquals("startIO") ||
+                          selEquals("primGetNextEvent:") || selEquals("sessionStart") ||
+                          selEquals("installEventSensorFramework") ||
+                          selEquals("runStartup:") || selEquals("runList:do:") ||
+                          selEquals("handlerForStartup:") || selEquals("doOneCycle") ||
+                          selEquals("createSensorProcess") || selEquals("initializeEventQueue") ||
+                          selEquals("processEvents") || selEquals("restoreDisplay") ||
+                          selEquals("startUI:") || selEquals("spawnNewProcess") ||
+                          // Error/exception handling
+                          selEquals("signal") || selEquals("signal:") ||
+                          selEquals("defaultAction") || selEquals("doesNotUnderstand:") ||
+                          selEquals("error:") || selEquals("primitiveFailed") ||
+                          // SessionManager and startup list
+                          selEquals("startupList") || selEquals("do:") ||
+                          selEquals("value:") || selEquals("resume:") ||
+                          selEquals("handleStartupError:") ||
+                          // Block/Process creation
+                          selEquals("forkNamed:at:") || selEquals("forkAt:named:") ||
+                          // More SessionManager methods
+                          selEquals("categoryList:") || selEquals("handlerAt:ifAbsent:") ||
+                          selEquals("add:") || selEquals("handlerForCategory:") ||
+                          // Collection building
+                          selEquals("collect:") || selEquals("flatCollect:") ||
+                          selEquals("select:") || selEquals("reject:") ||
+                          selEquals("categories") || selEquals("size") ||
+                          selEquals("startupCategories");
+
+        if (interesting && startupTraceLog && startupTraceCount < 1000) {
+            startupTraceCount++;
+            // Get receiver class name - handle both instances and class objects
+            std::string rcvrClassName = "<unknown>";
+            Oop rcvr = stackValue(argCount);
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+                uint32_t classIdx = rcvrHdr->classIndex();
+
+                // Try to get class name via classAtIndex
+                Oop cls = memory_.classAtIndex(classIdx);
+                if (cls.isObject() && cls.rawBits() > 0x10000) {
+                    Oop clsName = memory_.fetchPointer(6, cls);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 80) {
+                            rcvrClassName = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                            // If the class is a Metaclass, the receiver IS a class
+                            if (rcvrClassName == "Metaclass") {
+                                // The receiver is a class - try to get its name
+                                Oop rcvrName = memory_.fetchPointer(6, rcvr);
+                                if (rcvrName.isObject() && rcvrName.rawBits() > 0x10000) {
+                                    ObjectHeader* rnHdr = rcvrName.asObjectPtr();
+                                    if (rnHdr->isBytesObject() && rnHdr->byteSize() < 80) {
+                                        rcvrClassName = std::string((char*)rnHdr->bytes(), rnHdr->byteSize()) + " class";
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // If still unknown, try classOf as fallback
+                if (rcvrClassName == "<unknown>") {
+                    Oop cls2 = memory_.classOf(rcvr);
+                    if (cls2.isObject()) {
+                        Oop clsName = memory_.fetchPointer(6, cls2);
+                        if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                            ObjectHeader* cnHdr = clsName.asObjectPtr();
+                            if (cnHdr->isBytesObject() && cnHdr->byteSize() < 80) {
+                                rcvrClassName = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+                // If still unknown, show raw info and diagnostics
+                if (rcvrClassName == "<unknown>") {
+                    Oop clsFromTable = memory_.classAtIndex(classIdx);
+
+                    // Try harder - get class name from class table entry
+                    if (clsFromTable.isObject() && clsFromTable.rawBits() > 0x10000) {
+                        ObjectHeader* clsHdr = clsFromTable.asObjectPtr();
+                        if (clsHdr->slotCount() >= 7) {
+                            Oop nameSlot = clsHdr->slotAt(6);  // Name is at slot 6
+                            if (nameSlot.isObject() && nameSlot.rawBits() > 0x10000) {
+                                ObjectHeader* nameHdr = nameSlot.asObjectPtr();
+                                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 80) {
+                                    rcvrClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                } else {
+                                    char buf[128];
+                                    snprintf(buf, sizeof(buf), "<cls=%u nameSlot fmt=%d bytes=%zu>",
+                                             classIdx, nameHdr->format(), nameHdr->byteSize());
+                                    rcvrClassName = buf;
+                                }
+                            } else {
+                                char buf[128];
+                                snprintf(buf, sizeof(buf), "<cls=%u nameSlot=0x%llx>",
+                                         classIdx, (unsigned long long)nameSlot.rawBits());
+                                rcvrClassName = buf;
+                            }
+                        }
+                    }
+
+                    // Final fallback
+                    if (rcvrClassName == "<unknown>") {
+                        char buf[128];
+                        snprintf(buf, sizeof(buf), "<%u slots, classIdx=%u>",
+                                 (unsigned)rcvrHdr->slotCount(), classIdx);
+                        rcvrClassName = buf;
+                    }
+                }
+            } else if (rcvr.isNil()) {
+                rcvrClassName = "nil";
+            } else if (rcvr.isSmallInteger()) {
+                rcvrClassName = "SmallInteger";
+            }
+
+            std::string selName(selBytes, selLen);
+            fprintf(startupTraceLog, "[#%d] %s >> %s (argCount=%d)\n",
+                    startupTraceCount, rcvrClassName.c_str(), selName.c_str(), argCount);
+
+            // Extra detail for runList:do: - dump the list contents
+            if (selEquals("runList:do:") && argCount == 2) {
+                Oop listArg = stackValue(1);  // First arg: the list (Array)
+                fprintf(startupTraceLog, "  -> Dumping startup list (0x%llx):\n",
+                        (unsigned long long)listArg.rawBits());
+                if (listArg.isObject() && listArg.rawBits() > 0x10000) {
+                    ObjectHeader* listHdr = listArg.asObjectPtr();
+                    size_t count = listHdr->slotCount();
+                    fprintf(startupTraceLog, "     List has %zu items:\n", count);
+                    for (size_t i = 0; i < count && i < 50; i++) {
+                        Oop item = listHdr->slotAt(i);
+                        std::string itemDesc = "?";
+                        if (item.isNil()) {
+                            itemDesc = "nil";
+                        } else if (item.isObject() && item.rawBits() > 0x10000) {
+                            ObjectHeader* itemHdr = item.asObjectPtr();
+                            Oop itemCls = memory_.classAtIndex(itemHdr->classIndex());
+                            if (itemCls.isObject() && itemCls.rawBits() > 0x10000) {
+                                ObjectHeader* clsHdr = itemCls.asObjectPtr();
+                                if (clsHdr->slotCount() >= 7) {
+                                    Oop nameSlot = clsHdr->slotAt(6);
+                                    if (nameSlot.isObject() && nameSlot.rawBits() > 0x10000) {
+                                        ObjectHeader* nameHdr = nameSlot.asObjectPtr();
+                                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 80) {
+                                            itemDesc = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                        }
+                                    }
+                                }
+                            }
+                            // If class is ClassRegistration, try to get the registered class name
+                            if (itemDesc == "ClassRegistration" || itemDesc == "?" || itemDesc == "ClassSessionHandler") {
+                                // Slot 0 might be the registered class
+                                Oop regClass = itemHdr->slotAt(0);
+                                if (regClass.isObject() && regClass.rawBits() > 0x10000) {
+                                    ObjectHeader* rcHdr = regClass.asObjectPtr();
+                                    if (rcHdr->slotCount() >= 7) {
+                                        Oop rcName = rcHdr->slotAt(6);
+                                        if (rcName.isObject() && rcName.rawBits() > 0x10000) {
+                                            ObjectHeader* rcnHdr = rcName.asObjectPtr();
+                                            if (rcnHdr->isBytesObject() && rcnHdr->byteSize() < 80) {
+                                                itemDesc = std::string((char*)rcnHdr->bytes(), rcnHdr->byteSize());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        fprintf(startupTraceLog, "     [%zu] %s\n", i, itemDesc.c_str());
+                    }
+                    if (count > 50) {
+                        fprintf(startupTraceLog, "     ... and %zu more items\n", count - 50);
+                    }
+                }
+                fflush(startupTraceLog);
+            }
+
+            // Extra detail for startUp: - show the argument
+            if (selEquals("startUp:") && argCount == 1) {
+                Oop arg = stackValue(0);
+                if (arg.rawBits() == memory_.trueObject().rawBits()) {
+                    fprintf(startupTraceLog, "  -> arg: true (isImageStarting)\n");
+                } else if (arg.rawBits() == memory_.falseObject().rawBits()) {
+                    fprintf(startupTraceLog, "  -> arg: false (isImageStarting)\n");
+                }
+            }
+
+            // Extra detail for flatCollect: - dump the receiver collection
+            if (selEquals("flatCollect:") && argCount == 1) {
+                Oop rcvr = stackValue(1);
+                fprintf(startupTraceLog, "  -> flatCollect: receiver (0x%llx):\n",
+                        (unsigned long long)rcvr.rawBits());
+                if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                    ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+                    size_t count = rcvrHdr->slotCount();
+                    std::string rcvrClass = "?";
+                    Oop cls = memory_.classAtIndex(rcvrHdr->classIndex());
+                    if (cls.isObject() && cls.rawBits() > 0x10000) {
+                        ObjectHeader* clsHdr = cls.asObjectPtr();
+                        if (clsHdr->slotCount() >= 7) {
+                            Oop nameSlot = clsHdr->slotAt(6);
+                            if (nameSlot.isObject() && nameSlot.rawBits() > 0x10000) {
+                                ObjectHeader* nameHdr = nameSlot.asObjectPtr();
+                                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 80) {
+                                    rcvrClass = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                }
+                            }
+                        }
+                    }
+                    fprintf(startupTraceLog, "     Receiver class: %s, slots: %zu\n", rcvrClass.c_str(), count);
+                    // Dump all slots of OrderedCollection to understand its layout
+                    if (rcvrClass == "OrderedCollection") {
+                        fprintf(startupTraceLog, "     Dumping all %zu slots to understand layout:\n", count);
+                        for (size_t si = 0; si < count && si < 5; si++) {
+                            Oop slot = rcvrHdr->slotAt(si);
+                            std::string slotDesc = "?";
+                            if (slot.isNil()) {
+                                slotDesc = "nil";
+                            } else if (slot.isSmallInteger()) {
+                                char buf[32];
+                                snprintf(buf, sizeof(buf), "SmallInt(%lld)", slot.asSmallInteger());
+                                slotDesc = buf;
+                            } else if (slot.isObject() && slot.rawBits() > 0x10000) {
+                                ObjectHeader* slotHdr = slot.asObjectPtr();
+                                Oop slotCls = memory_.classAtIndex(slotHdr->classIndex());
+                                if (slotCls.isObject() && slotCls.rawBits() > 0x10000) {
+                                    ObjectHeader* scHdr = slotCls.asObjectPtr();
+                                    if (scHdr->slotCount() >= 7) {
+                                        Oop scName = scHdr->slotAt(6);
+                                        if (scName.isObject() && scName.rawBits() > 0x10000) {
+                                            ObjectHeader* scnHdr = scName.asObjectPtr();
+                                            if (scnHdr->isBytesObject() && scnHdr->byteSize() < 80) {
+                                                slotDesc = std::string((char*)scnHdr->bytes(), scnHdr->byteSize());
+                                                if (slotDesc == "Array") {
+                                                    char buf[64];
+                                                    snprintf(buf, sizeof(buf), "Array[%zu slots]", slotHdr->slotCount());
+                                                    slotDesc = buf;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            fprintf(startupTraceLog, "       slot[%zu] = 0x%llx (%s)\n",
+                                    si, (unsigned long long)slot.rawBits(), slotDesc.c_str());
+                        }
+                        // Try new layout: slot 0 = array, slot 1 = firstIndex, slot 2 = lastIndex
+                        Oop array = rcvrHdr->slotAt(0);
+                        Oop firstIdx = rcvrHdr->slotAt(1);
+                        Oop lastIdx = rcvrHdr->slotAt(2);
+                        if (array.isObject() && firstIdx.isSmallInteger() && lastIdx.isSmallInteger()) {
+                            fprintf(startupTraceLog, "     Layout: array at slot 0, first=%lld, last=%lld\n",
+                                    firstIdx.asSmallInteger(), lastIdx.asSmallInteger());
+                        } else {
+                            fprintf(startupTraceLog, "     Non-standard layout or corrupted\n");
+                        }
+                        // If slot 0 is an array, iterate through it
+                        if (array.isObject() && array.rawBits() > 0x10000) {
+                            ObjectHeader* arrHdr = array.asObjectPtr();
+                            fprintf(startupTraceLog, "     Internal array has %zu slots\n", arrHdr->slotCount());
+                            // Dump the items
+                            int64_t first = firstIdx.isSmallInteger() ? firstIdx.asSmallInteger() : 1;
+                            int64_t last = lastIdx.isSmallInteger() ? lastIdx.asSmallInteger() : 0;
+                            for (int64_t i = first; i <= last && i <= first + 20; i++) {
+                                Oop item = arrHdr->slotAt(i - 1);  // Smalltalk is 1-indexed
+                                std::string itemDesc = "?";
+                                if (item.isNil()) {
+                                    itemDesc = "nil";
+                                } else if (item.isSmallInteger()) {
+                                    char buf[32];
+                                    snprintf(buf, sizeof(buf), "SmallInt(%lld)", item.asSmallInteger());
+                                    itemDesc = buf;
+                                } else if (item.isObject() && item.rawBits() > 0x10000) {
+                                    ObjectHeader* itemHdr = item.asObjectPtr();
+                                    Oop itemCls = memory_.classAtIndex(itemHdr->classIndex());
+                                    if (itemCls.isObject() && itemCls.rawBits() > 0x10000) {
+                                        ObjectHeader* icHdr = itemCls.asObjectPtr();
+                                        if (icHdr->slotCount() >= 7) {
+                                            Oop icName = icHdr->slotAt(6);
+                                            if (icName.isObject() && icName.rawBits() > 0x10000) {
+                                                ObjectHeader* icnHdr = icName.asObjectPtr();
+                                                if (icnHdr->isBytesObject() && icnHdr->byteSize() < 80) {
+                                                    itemDesc = std::string((char*)icnHdr->bytes(), icnHdr->byteSize());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                fprintf(startupTraceLog, "     [%lld] %s\n", i, itemDesc.c_str());
+                            }
+                        }
+                    }
+                }
+                fflush(startupTraceLog);
+            }
+
+            // Extra detail for forkAt:
+            if (selEquals("forkAt:") && argCount == 1) {
+                Oop priority = stackValue(0);
+                if (priority.isSmallInteger()) {
+                    fprintf(startupTraceLog, "  -> forking at priority %lld\n", priority.asSmallInteger());
+                }
+            }
+
+            fflush(startupTraceLog);
+        }
+    }
+
     // INTERCEPT: Skip delay scheduler startUp during fresh image start
     // The saved heap/resumption times may contain nil entries that cause infinite
     // loops in array operations. Skip the entire scheduler startUp to start fresh.
