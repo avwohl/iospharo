@@ -2993,8 +2993,26 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
             }
             case 0xED: // 237: Jump #iiiiiiii (+ extB * 256, signed)
             {
+                static FILE* jumpLog = nullptr;
+                static int jumpCount = 0;
+                if (!jumpLog) jumpLog = fopen("/tmp/uncond_jump.log", "w");
+
+                uintptr_t ipBefore = reinterpret_cast<uintptr_t>(instructionPointer_);
                 uint8_t offsetByte = fetchByte();
                 int offset = (extB_ << 8) | offsetByte;
+
+                jumpCount++;
+                if (jumpLog && jumpCount <= 500) {
+                    fprintf(jumpLog, "[JUMP #%d] method=0x%llx ip=0x%llx offset=%d -> ip=0x%llx %s fd=%d\n",
+                            jumpCount,
+                            (unsigned long long)method_.rawBits(),
+                            (unsigned long long)ipBefore, offset,
+                            (unsigned long long)(ipBefore + offset),
+                            offset < 0 ? "BACKWARD" : "forward",
+                            (int)frameDepth_);
+                    fflush(jumpLog);
+                }
+
                 extB_ = 0;
                 instructionPointer_ += offset;
                 break;
@@ -4710,12 +4728,80 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     {
         static FILE* startupTraceLog = nullptr;
         static int startupTraceCount = 0;
+        static bool fullTraceMode = false;  // Enable to trace ALL sends after trigger
+        static int fullTraceSinceSmallInteger = 0;
+
         if (!startupTraceLog) {
             startupTraceLog = fopen("/tmp/startup_trace.log", "w");
             if (startupTraceLog) {
                 fprintf(startupTraceLog, "[TRACE] Startup trace initialized (sendCount=%d)\n", sendCount);
                 fflush(startupTraceLog);
             }
+        }
+
+        // Log ALL sends for first 2000 sends to understand startup flow
+        if (startupTraceLog && startupTraceCount < 2000) {
+            startupTraceCount++;
+            std::string selectorStr(selBytes, selBytes + selLen);
+            fprintf(startupTraceLog, "[SEND#%d] %s (argCount=%d)\n",
+                    startupTraceCount, selectorStr.c_str(), argCount);
+
+            // Extra: log <= comparisons to track loop bounds
+            if (selEquals("<=") && argCount == 1) {
+                Oop rcvr = stackValue(1);  // receiver
+                Oop arg = stackValue(0);   // argument
+                if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
+                    int64_t a = rcvr.asSmallInteger();
+                    int64_t b = arg.asSmallInteger();
+                    fprintf(startupTraceLog, "  [CMP] %lld <= %lld -> %s\n",
+                            a, b, (a <= b) ? "true" : "false");
+                }
+            }
+
+            // Extra: log receiver class for do: and flatCollect: to track loop execution
+            if (selEquals("do:") || selEquals("flatCollect:") || selEquals("to:do:")) {
+                Oop rcvr = stackValue(argCount);
+                if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                    ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+                    uint32_t classIdx = rcvrHdr->classIndex();
+                    Oop cls = memory_.classAtIndex(classIdx);
+                    std::string clsName = "?";
+                    if (cls.isObject() && cls.rawBits() > 0x10000) {
+                        ObjectHeader* clsHdr = cls.asObjectPtr();
+                        if (clsHdr->slotCount() >= 7) {
+                            Oop nm = clsHdr->slotAt(6);
+                            if (nm.isObject() && nm.rawBits() > 0x10000) {
+                                ObjectHeader* nmHdr = nm.asObjectPtr();
+                                if (nmHdr->isBytesObject() && nmHdr->byteSize() < 50) {
+                                    clsName = std::string((char*)nmHdr->bytes(), nmHdr->byteSize());
+                                }
+                            }
+                        }
+                    }
+                    size_t slots = rcvrHdr->slotCount();
+                    fprintf(startupTraceLog, "  [LOOP] rcvr class=%s slots=%zu\n", clsName.c_str(), slots);
+
+                    // If OrderedCollection, dump first/last indices
+                    if (clsName == "OrderedCollection" && slots >= 3) {
+                        Oop arr = rcvrHdr->slotAt(0);
+                        Oop first = rcvrHdr->slotAt(1);
+                        Oop last = rcvrHdr->slotAt(2);
+                        int64_t firstIdx = first.isSmallInteger() ? first.asSmallInteger() : -1;
+                        int64_t lastIdx = last.isSmallInteger() ? last.asSmallInteger() : -1;
+                        fprintf(startupTraceLog, "  [LOOP] OrderedCollection first=%lld last=%lld (size=%lld)\n",
+                                firstIdx, lastIdx, lastIdx - firstIdx + 1);
+                    }
+                    // If SmallInteger (for to:do:), log the range
+                    if (selEquals("to:do:") && argCount == 2) {
+                        Oop endVal = stackValue(1);  // arg before block
+                        if (rcvr.isSmallInteger() && endVal.isSmallInteger()) {
+                            fprintf(startupTraceLog, "  [LOOP] to:do: range %lld to %lld\n",
+                                    rcvr.asSmallInteger(), endVal.asSmallInteger());
+                        }
+                    }
+                }
+            }
+            fflush(startupTraceLog);
         }
 
         // Check for interesting selectors - broader list
@@ -4763,7 +4849,22 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                           selEquals("handlerWithId:") || selEquals("includes:") ||
                           selEquals("isNil") || selEquals("ifNil:") || selEquals("ifNotNil:") ||
                           // InputEventSensor specific
-                          selEquals("default") || selEquals("current") || selEquals("install");
+                          selEquals("default") || selEquals("current") || selEquals("install") ||
+                          // Category iteration and sorting
+                          selEquals("sortedStartupList") || selEquals("currentCategory") ||
+                          selEquals("nextPut:") || selEquals("sortedList") ||
+                          selEquals("startup:") || selEquals("startUp:") ||
+                          selEquals("asSortedCollection:") || selEquals("sortBy:") ||
+                          // Iteration control flow
+                          selEquals("do:") || selEquals("with:do:") || selEquals("collect:") ||
+                          selEquals("whileTrue") || selEquals("whileTrue:") ||
+                          selEquals("runStartup:") || selEquals("stopStartup:") ||
+                          selEquals("stop") || selEquals("stopped") ||
+                          // Exception/error handling
+                          selEquals("on:do:") || selEquals("ensure:") || selEquals("ifCurtailed:") ||
+                          selEquals("signal") || selEquals("error:") || selEquals("halt") ||
+                          // Category selection
+                          selEquals("runCategory:") || selEquals("stopCategory:");
 
         if (interesting && startupTraceLog && startupTraceCount < 5000) {
             startupTraceCount++;
