@@ -603,10 +603,10 @@ primitiveTable_[592] = nullptr;  // Reserved (575-595)
 primitiveTable_[593] = nullptr;  // Reserved (575-595)
 primitiveTable_[594] = nullptr;  // Reserved (575-595)
 primitiveTable_[595] = nullptr;  // Reserved (575-595)
-primitiveTable_[596] = nullptr;  // OldSpace Allocation (596-597)
-primitiveTable_[597] = nullptr;  // OldSpace Allocation (596-597)
-primitiveTable_[598] = nullptr;  // Pinned Allocation (598-599)
-primitiveTable_[599] = nullptr;  // Pinned Allocation (598-599)
+primitiveTable_[596] = &Interpreter::primitiveNewOldSpace;         // OldSpace fixed-size allocation
+primitiveTable_[597] = &Interpreter::primitiveNewWithArgOldSpace;  // OldSpace variable-size allocation
+primitiveTable_[598] = &Interpreter::primitiveNewPinned;           // Pinned fixed-size allocation
+primitiveTable_[599] = &Interpreter::primitiveNewWithArgPinned;    // Pinned variable-size allocation
 // FFI Byte Access - Load from Bytes (600-614)
 primitiveTable_[600] = &Interpreter::primitiveLoadBoolean8FromBytes;
 primitiveTable_[601] = &Interpreter::primitiveLoadUInt8FromBytes;

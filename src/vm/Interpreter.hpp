@@ -1395,6 +1395,12 @@ private:
     PrimitiveResult primitiveInt32ToByteArray(int argCount);     // 526
     PrimitiveResult primitivePointerAddress(int argCount);       // 527
 
+    // Old Space / Pinned Allocation Primitives (596-599)
+    PrimitiveResult primitiveNewOldSpace(int argCount);          // 596
+    PrimitiveResult primitiveNewWithArgOldSpace(int argCount);   // 597
+    PrimitiveResult primitiveNewPinned(int argCount);            // 598
+    PrimitiveResult primitiveNewWithArgPinned(int argCount);     // 599
+
     // FFI Byte Access Primitives (600-659)
     // Load from bytes (ByteArray, String, etc.)
     PrimitiveResult primitiveLoadBoolean8FromBytes(int argCount);    // 600

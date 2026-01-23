@@ -17276,6 +17276,200 @@ PrimitiveResult Interpreter::primitiveSmallFloatExp(int argCount) {
     return primitiveExp(argCount);
 }
 
+// ===== OLD SPACE / PINNED ALLOCATION PRIMITIVES (596-599) =====
+//
+// These primitives allocate objects with special placement or pinning:
+// - OldSpace variants: allocate directly in old space (tenured)
+// - Pinned variants: allocate pinned objects (won't be moved by GC)
+//
+// Note: Currently we allocate in the normal way (eden first) and:
+// - For old space: rely on GC promotion (objects naturally move to old space)
+// - For pinned: mark the object as pinned after allocation
+//
+// This is functionally correct but not optimal for immediate old-space placement.
+
+// Primitive 596: Create fixed-size instance directly in old space
+PrimitiveResult Interpreter::primitiveNewOldSpace(int argCount) {
+    Oop rcvr = stackValue(0);  // Class
+
+    if (!rcvr.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get instance spec from class
+    Oop formatObj = memory_.fetchPointer(2, rcvr);
+    if (!formatObj.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t instSpec = formatObj.asSmallInteger();
+    size_t instSize = instSpec & 0xFFFF;
+
+    // Validate this is a fixed-size class (format < 2)
+    int instFormat = (instSpec >> 16) & 0x1F;
+    if (instFormat >= 2) {
+        return PrimitiveResult::Failure;
+    }
+
+    uint32_t classIndex = memory_.indexOfClass(rcvr);
+    Oop newObj = memory_.allocateSlots(classIndex, instSize);
+
+    if (newObj.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Note: Object is allocated in eden but will be promoted to old space by GC
+    primitiveSuccess(newObj);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 597: Create variable-size instance directly in old space
+PrimitiveResult Interpreter::primitiveNewWithArgOldSpace(int argCount) {
+    Oop sizeOop = stackValue(0);
+    Oop rcvr = stackValue(1);  // Class
+
+    if (!rcvr.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    if (!sizeOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t indexableSize = sizeOop.asSmallInteger();
+    if (indexableSize < 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get class format
+    Oop formatObj = memory_.fetchPointer(2, rcvr);
+    if (!formatObj.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t format = formatObj.asSmallInteger();
+    size_t fixedSize = format & 0xFFFF;
+    int instSpec = (format >> 16) & 0x1F;
+
+    // Validate this is a variable-sized class (format >= 2)
+    if (instSpec < 2) {
+        return PrimitiveResult::Failure;
+    }
+
+    bool isBytes = instSpec >= 16;
+    uint32_t classIndex = memory_.indexOfClass(rcvr);
+
+    Oop newObj;
+    if (isBytes) {
+        newObj = memory_.allocateBytes(classIndex, static_cast<size_t>(indexableSize));
+    } else {
+        size_t totalSlots = fixedSize + static_cast<size_t>(indexableSize);
+        ObjectFormat objFormat = (instSpec == 3) ? ObjectFormat::IndexableWithFixed : ObjectFormat::Indexable;
+        newObj = memory_.allocateSlots(classIndex, totalSlots, objFormat);
+    }
+
+    if (newObj.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Note: Object is allocated in eden but will be promoted to old space by GC
+    primitiveSuccess(newObj);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 598: Create fixed-size pinned instance
+PrimitiveResult Interpreter::primitiveNewPinned(int argCount) {
+    Oop rcvr = stackValue(0);  // Class
+
+    if (!rcvr.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get instance spec from class
+    Oop formatObj = memory_.fetchPointer(2, rcvr);
+    if (!formatObj.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t instSpec = formatObj.asSmallInteger();
+    size_t instSize = instSpec & 0xFFFF;
+
+    // Validate this is a fixed-size class (format < 2)
+    int instFormat = (instSpec >> 16) & 0x1F;
+    if (instFormat >= 2) {
+        return PrimitiveResult::Failure;
+    }
+
+    uint32_t classIndex = memory_.indexOfClass(rcvr);
+    Oop newObj = memory_.allocateSlots(classIndex, instSize);
+
+    if (newObj.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Mark the object as pinned so it won't be moved by GC
+    memory_.pinObject(newObj);
+
+    primitiveSuccess(newObj);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 599: Create variable-size pinned instance
+PrimitiveResult Interpreter::primitiveNewWithArgPinned(int argCount) {
+    Oop sizeOop = stackValue(0);
+    Oop rcvr = stackValue(1);  // Class
+
+    if (!rcvr.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    if (!sizeOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t indexableSize = sizeOop.asSmallInteger();
+    if (indexableSize < 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get class format
+    Oop formatObj = memory_.fetchPointer(2, rcvr);
+    if (!formatObj.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t format = formatObj.asSmallInteger();
+    size_t fixedSize = format & 0xFFFF;
+    int instSpec = (format >> 16) & 0x1F;
+
+    // Validate this is a variable-sized class (format >= 2)
+    if (instSpec < 2) {
+        return PrimitiveResult::Failure;
+    }
+
+    bool isBytes = instSpec >= 16;
+    uint32_t classIndex = memory_.indexOfClass(rcvr);
+
+    Oop newObj;
+    if (isBytes) {
+        newObj = memory_.allocateBytes(classIndex, static_cast<size_t>(indexableSize));
+    } else {
+        size_t totalSlots = fixedSize + static_cast<size_t>(indexableSize);
+        ObjectFormat objFormat = (instSpec == 3) ? ObjectFormat::IndexableWithFixed : ObjectFormat::Indexable;
+        newObj = memory_.allocateSlots(classIndex, totalSlots, objFormat);
+    }
+
+    if (newObj.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Mark the object as pinned so it won't be moved by GC
+    memory_.pinObject(newObj);
+
+    primitiveSuccess(newObj);
+    return PrimitiveResult::Success;
+}
+
 // ===== FFI BYTE ACCESS PRIMITIVES (600-659) =====
 //
 // These primitives provide low-level memory access for FFI.

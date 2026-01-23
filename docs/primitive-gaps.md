@@ -25,7 +25,7 @@ Last updated: 2026-01-22
 - Covers: add, subtract, comparisons, multiply, divide, truncated, fractionalPart,
   exponent, timesTwoPower, sqrt, sin, arctan, logN, exp
 
-### Old Space / Pinned Allocation (596-599)
+### ~~Old Space / Pinned Allocation (596-599)~~ ✅ IMPLEMENTED
 | Primitive | Name | Description |
 |-----------|------|-------------|
 | 596 | primitiveNewOldSpace | Create object directly in old space |
@@ -33,8 +33,9 @@ Last updated: 2026-01-22
 | 598 | primitiveNewPinned | Create pinned (non-moving) object |
 | 599 | primitiveNewWithArgPinned | Create sized pinned object |
 
-- **Impact**: Medium - All objects go to default space
-- **Workaround**: GC promotes objects to old space naturally
+- **Status**: IMPLEMENTED (2026-01-22)
+- OldSpace variants allocate normally (GC promotes to old space naturally)
+- Pinned variants allocate and set pinned flag via pinObject()
 
 ### Context/VM Introspection (213-218)
 | Primitive | Name | Description |
