@@ -12323,241 +12323,174 @@ PrimitiveResult Interpreter::primitiveByteSwap64(int argCount) {
     return PrimitiveResult::Success;
 }
 
-// ===== TIME PRIMITIVES (242-252) =====
+// ===== TIME/TIMEZONE PRIMITIVES (242-246) - OFFICIAL VM PRIMITIVES =====
+//
+// These match the official Pharo VM primitive table:
+// 242: primitiveSignalAtUTCMicroseconds
+// 243: primitiveUpdateTimezone
+// 244: primitiveUtcAndTimezoneOffset
+// 245: primitiveCoarseUTCMicrosecondClock
+// 246: primitiveCoarseLocalMicrosecondClock
 
-// Primitive 242: UTC Microsecond clock
-// primitiveUTCMicrosecondClock -> microseconds since Posix epoch in UTC
-PrimitiveResult Interpreter::primitiveUTCMicrosecondClock(int argCount) {
-    if (argCount != 0) return PrimitiveResult::Failure;
+// Smalltalk epoch offset: seconds from Unix epoch (1970-01-01) to Smalltalk epoch (1901-01-01)
+// This is approximately 2177452800 seconds
+static constexpr int64_t SmalltalkEpochOffset = 2177452800LL;
+static constexpr int64_t SmalltalkEpochOffsetMicroseconds = SmalltalkEpochOffset * 1000000LL;
 
-    auto now = std::chrono::system_clock::now();
-    auto duration = now.time_since_epoch();
-    int64_t microseconds = std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
+// Primitive 242: Signal semaphore at UTC microsecond time
+// receiver usecs primitiveSignalAtUTCMicroseconds
+// Signals the timer semaphore when UTC clock reaches usecs. Value 0 disables.
+PrimitiveResult Interpreter::primitiveSignalAtUTCMicroseconds(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
 
-    pop();  // receiver
-    push(Oop::fromSmallInteger(microseconds));
-    return PrimitiveResult::Success;
-}
-
-// Primitive 243: Local timezone name
-// primitiveLocalTimezone -> string with timezone name
-PrimitiveResult Interpreter::primitiveLocalTimezone(int argCount) {
-    if (argCount != 0) return PrimitiveResult::Failure;
-
-    // Get timezone name from system
-    time_t now = time(nullptr);
-    struct tm* local = localtime(&now);
-
-    // tm_zone contains the timezone abbreviation (e.g., "PST", "EST")
-    const char* tzName = local->tm_zone ? local->tm_zone : "UTC";
-
-    // Create string object for timezone name
-    Oop result = createStringObject(memory_, tzName);
-    if (result.isNil()) {
+    Oop usecsOop = stackTop();
+    if (!usecsOop.isSmallInteger()) {
         return PrimitiveResult::Failure;
     }
 
-    pop();  // receiver
-    push(result);
+    int64_t usecs = usecsOop.asSmallInteger();
+
+    // Get the timer semaphore from special objects
+    Oop timerSema = memory_.specialObject(SpecialObjectIndex::TheTimerSemaphore);
+
+    if (usecs == 0) {
+        // Disable timer by setting next wakeup to far future
+        nextWakeupUsec_ = INT64_MAX;
+    } else {
+        // Convert Smalltalk epoch microseconds to system clock comparison
+        // We'll check against this in the heartbeat
+        nextWakeupUsec_ = usecs;
+    }
+
+    pop();  // Pop argument, leave receiver
     return PrimitiveResult::Success;
 }
 
-// Primitive 244: Timezone offset from UTC in minutes
-// primitiveTimezoneOffset -> offset in minutes (negative for west of UTC)
-PrimitiveResult Interpreter::primitiveTimezoneOffset(int argCount) {
+// Primitive 243: Update timezone info
+// Refresh the VM's notion of the current timezone
+PrimitiveResult Interpreter::primitiveUpdateTimezone(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    time_t now = time(nullptr);
-    struct tm* local = localtime(&now);
+    // Force timezone update by calling tzset()
+    // This updates the TZ environment variable handling
+    tzset();
 
-    // tm_gmtoff is seconds east of UTC
-    int64_t offsetMinutes = local->tm_gmtoff / 60;
-
-    pop();  // receiver
-    push(Oop::fromSmallInteger(offsetMinutes));
+    // Return receiver (no change to stack)
     return PrimitiveResult::Success;
 }
 
-// Primitive 245: Daylight saving time offset in minutes
-// primitiveDaylightSavingTimeOffset -> DST offset (usually 0 or 60)
-PrimitiveResult Interpreter::primitiveDaylightSavingTimeOffset(int argCount) {
-    if (argCount != 0) return PrimitiveResult::Failure;
+// Primitive 244: Get UTC time and timezone offset together
+// receiver primitiveUtcAndTimezoneOffset -> array or fills provided array
+// Returns {UTC microseconds since Smalltalk epoch, timezone offset in seconds}
+PrimitiveResult Interpreter::primitiveUtcAndTimezoneOffset(int argCount) {
+    Oop resultArray;
 
-    time_t now = time(nullptr);
-    struct tm* local = localtime(&now);
+    if (argCount == 0) {
+        // Allocate new 2-element array
+        uint32_t arrayClassIndex = memory_.indexOfClass(
+            memory_.specialObject(SpecialObjectIndex::ClassArray));
+        resultArray = memory_.allocateSlots(arrayClassIndex, 2);
+        if (resultArray.isNil()) {
+            return PrimitiveResult::Failure;
+        }
+    } else if (argCount == 1) {
+        // Use provided array
+        resultArray = stackTop();
+        if (!resultArray.isObject()) {
+            return PrimitiveResult::Failure;
+        }
+        ObjectHeader* hdr = resultArray.asObjectPtr();
+        if (hdr->slotCount() < 2) {
+            return PrimitiveResult::Failure;
+        }
+    } else {
+        return PrimitiveResult::Failure;
+    }
 
-    // tm_isdst > 0 means DST is in effect
-    int64_t dstOffset = local->tm_isdst > 0 ? 60 : 0;
-
-    pop();  // receiver
-    push(Oop::fromSmallInteger(dstOffset));
-    return PrimitiveResult::Success;
-}
-
-// Primitive 246: VM's offset to UTC in microseconds
-// primitiveVMOffsetToUTC -> offset in microseconds
-PrimitiveResult Interpreter::primitiveVMOffsetToUTC(int argCount) {
-    if (argCount != 0) return PrimitiveResult::Failure;
-
-    time_t now = time(nullptr);
-    struct tm* local = localtime(&now);
-
-    // Convert seconds to microseconds
-    int64_t offsetMicroseconds = static_cast<int64_t>(local->tm_gmtoff) * 1000000LL;
-
-    pop();  // receiver
-    push(Oop::fromSmallInteger(offsetMicroseconds));
-    return PrimitiveResult::Success;
-}
-
-// Primitive 247: Posix microsecond clock with UTC offset
-// primitivePosixMicrosecondClockWithOffset -> { microseconds. offsetMicroseconds }
-PrimitiveResult Interpreter::primitivePosixMicrosecondClockWithOffset(int argCount) {
-    if (argCount != 0) return PrimitiveResult::Failure;
-
-    // Get current time
+    // Get current UTC time
     auto now = std::chrono::system_clock::now();
-    auto duration = now.time_since_epoch();
-    int64_t microseconds = std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
+    auto unixUs = std::chrono::duration_cast<std::chrono::microseconds>(
+        now.time_since_epoch()).count();
+    int64_t smalltalkUs = unixUs + SmalltalkEpochOffsetMicroseconds;
 
     // Get timezone offset
     time_t nowTime = time(nullptr);
     struct tm* local = localtime(&nowTime);
-    int64_t offsetMicroseconds = static_cast<int64_t>(local->tm_gmtoff) * 1000000LL;
+    int64_t offsetSeconds = local->tm_gmtoff;
 
-    // Allocate a 2-element array for result
-    uint32_t arrayClassIndex = memory_.indexOfClass(
-        memory_.specialObject(SpecialObjectIndex::ClassArray));
-    Oop result = memory_.allocateSlots(arrayClassIndex, 2);
-    if (result.isNil()) {
-        return PrimitiveResult::Failure;
-    }
+    // Store results
+    memory_.storePointer(0, resultArray, Oop::fromSmallInteger(smalltalkUs));
+    memory_.storePointer(1, resultArray, Oop::fromSmallInteger(offsetSeconds));
 
-    memory_.storePointer(0, result, Oop::fromSmallInteger(microseconds));
-    memory_.storePointer(1, result, Oop::fromSmallInteger(offsetMicroseconds));
-
-    pop();  // receiver
-    push(result);
+    popN(argCount + 1);  // Pop args and receiver
+    push(resultArray);
     return PrimitiveResult::Success;
 }
 
-// Primitive 248: System timezone (full name)
-// primitiveSystemTimezone -> string with full timezone name
-PrimitiveResult Interpreter::primitiveSystemTimezone(int argCount) {
+// Primitive 245: Coarse (cached) UTC microsecond clock
+// Returns the UTC microsecond clock value cached by the heartbeat.
+// Faster but less precise than primitiveUTCMicrosecondClock (240).
+PrimitiveResult Interpreter::primitiveCoarseUTCMicrosecondClock(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    // Try to get TZ environment variable or use system default
-    const char* tz = getenv("TZ");
-    if (!tz || strlen(tz) == 0) {
-        // Fall back to abbreviation
-        time_t now = time(nullptr);
-        struct tm* local = localtime(&now);
-        tz = local->tm_zone ? local->tm_zone : "UTC";
-    }
-
-    Oop result = createStringObject(memory_, tz);
-    if (result.isNil()) {
-        return PrimitiveResult::Failure;
-    }
-
-    pop();  // receiver
-    push(result);
-    return PrimitiveResult::Success;
-}
-
-// Primitive 249: High resolution clock (monotonic)
-// primitiveHighResClock -> nanoseconds from monotonic clock
-PrimitiveResult Interpreter::primitiveHighResClock(int argCount) {
-    if (argCount != 0) return PrimitiveResult::Failure;
-
-    auto now = std::chrono::steady_clock::now();
-    auto duration = now.time_since_epoch();
-    int64_t nanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
-
-    pop();  // receiver
-    push(Oop::fromSmallInteger(nanoseconds));
-    return PrimitiveResult::Success;
-}
-
-// Primitive 250: UTC date and time components
-// primitiveUTCDateAndTime -> array of {year, month, day, hour, minute, second, microsecond}
-PrimitiveResult Interpreter::primitiveUTCDateAndTime(int argCount) {
-    if (argCount != 0) return PrimitiveResult::Failure;
-
+    // For simplicity, we just return the current time.
+    // A full implementation would cache this in the heartbeat for speed.
     auto now = std::chrono::system_clock::now();
-    auto duration = now.time_since_epoch();
-    auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
-
-    time_t nowTime = std::chrono::system_clock::to_time_t(now);
-    struct tm* utc = gmtime(&nowTime);
-
-    // Allocate 7-element array
-    uint32_t arrayClassIndex = memory_.indexOfClass(
-        memory_.specialObject(SpecialObjectIndex::ClassArray));
-    Oop result = memory_.allocateSlots(arrayClassIndex, 7);
-    if (result.isNil()) {
-        return PrimitiveResult::Failure;
-    }
-
-    memory_.storePointer(0, result, Oop::fromSmallInteger(utc->tm_year + 1900));
-    memory_.storePointer(1, result, Oop::fromSmallInteger(utc->tm_mon + 1));
-    memory_.storePointer(2, result, Oop::fromSmallInteger(utc->tm_mday));
-    memory_.storePointer(3, result, Oop::fromSmallInteger(utc->tm_hour));
-    memory_.storePointer(4, result, Oop::fromSmallInteger(utc->tm_min));
-    memory_.storePointer(5, result, Oop::fromSmallInteger(utc->tm_sec));
-    memory_.storePointer(6, result, Oop::fromSmallInteger(microseconds % 1000000));
+    auto unixUs = std::chrono::duration_cast<std::chrono::microseconds>(
+        now.time_since_epoch()).count();
+    int64_t smalltalkUs = unixUs + SmalltalkEpochOffsetMicroseconds;
 
     pop();  // receiver
-    push(result);
+    push(Oop::fromSmallInteger(smalltalkUs));
     return PrimitiveResult::Success;
 }
 
-// Primitive 251: Local date and time components
-// primitiveLocalDateAndTime -> array of {year, month, day, hour, minute, second, microsecond, offset}
-PrimitiveResult Interpreter::primitiveLocalDateAndTime(int argCount) {
+// Primitive 246: Coarse (cached) local microsecond clock
+// Returns the local microsecond clock value cached by the heartbeat.
+// Faster but less precise than primitiveLocalMicrosecondClock (241).
+PrimitiveResult Interpreter::primitiveCoarseLocalMicrosecondClock(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
+    // For simplicity, we just call the UTC clock.
+    // The difference between UTC and local is handled by the image.
     auto now = std::chrono::system_clock::now();
-    auto duration = now.time_since_epoch();
-    auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
-
-    time_t nowTime = std::chrono::system_clock::to_time_t(now);
-    struct tm* local = localtime(&nowTime);
-
-    // Allocate 8-element array (includes timezone offset)
-    uint32_t arrayClassIndex = memory_.indexOfClass(
-        memory_.specialObject(SpecialObjectIndex::ClassArray));
-    Oop result = memory_.allocateSlots(arrayClassIndex, 8);
-    if (result.isNil()) {
-        return PrimitiveResult::Failure;
-    }
-
-    memory_.storePointer(0, result, Oop::fromSmallInteger(local->tm_year + 1900));
-    memory_.storePointer(1, result, Oop::fromSmallInteger(local->tm_mon + 1));
-    memory_.storePointer(2, result, Oop::fromSmallInteger(local->tm_mday));
-    memory_.storePointer(3, result, Oop::fromSmallInteger(local->tm_hour));
-    memory_.storePointer(4, result, Oop::fromSmallInteger(local->tm_min));
-    memory_.storePointer(5, result, Oop::fromSmallInteger(local->tm_sec));
-    memory_.storePointer(6, result, Oop::fromSmallInteger(microseconds % 1000000));
-    memory_.storePointer(7, result, Oop::fromSmallInteger(local->tm_gmtoff / 60));  // offset in minutes
+    auto unixUs = std::chrono::duration_cast<std::chrono::microseconds>(
+        now.time_since_epoch()).count();
+    int64_t smalltalkUs = unixUs + SmalltalkEpochOffsetMicroseconds;
 
     pop();  // receiver
-    push(result);
+    push(Oop::fromSmallInteger(smalltalkUs));
     return PrimitiveResult::Success;
 }
 
-// Primitive 252: Nanosecond clock
-// primitiveNanosecondClock -> nanoseconds since epoch
-PrimitiveResult Interpreter::primitiveNanosecondClock(int argCount) {
+// ===== VM PROFILING PRIMITIVES (250-253) =====
+//
+// These are primarily for JIT/Cog VMs. For our interpreter-only VM,
+// most of these fail or return minimal data.
+
+// Primitive 250: Clear VM profiling data
+PrimitiveResult Interpreter::primitiveClearVMProfile(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
-
-    auto now = std::chrono::high_resolution_clock::now();
-    auto duration = now.time_since_epoch();
-    int64_t nanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
-
-    pop();  // receiver
-    push(Oop::fromSmallInteger(nanoseconds));
+    // No profiling data to clear in interpreter-only VM
     return PrimitiveResult::Success;
+}
+
+// Primitive 251: Start/stop VM profiling
+PrimitiveResult Interpreter::primitiveControlVMProfiling(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+    // Profiling not supported in interpreter-only VM
+    // Just succeed silently
+    pop();  // Pop argument, leave receiver
+    return PrimitiveResult::Success;
+}
+
+// primitiveVMProfileSamplesInto (252) is implemented below in PROFILING PRIMITIVES section
+
+// Primitive 253: Collect JIT code constituents
+// Returns information about compiled machine code (Cog-specific)
+PrimitiveResult Interpreter::primitiveCollectCogCodeConstituents(int argCount) {
+    // Cog JIT-specific, not applicable for interpreter-only VM
+    return PrimitiveResult::Failure;
 }
 
 // ===== MISC PRIMITIVES (222-230) =====

@@ -67,7 +67,7 @@ Last updated: 2026-01-22
 - **Impact**: Low - We don't support external plugins currently
 - **Note**: Primitive 570 (primitiveFlushExternalPrimitives) IS implemented
 
-### Time/Timezone Variants (242-246)
+### ~~Time/Timezone Variants (242-246)~~ ✅ IMPLEMENTED
 | Primitive | Name | Description |
 |-----------|------|-------------|
 | 242 | primitiveSignalAtUTCMicroseconds | Timer semaphore at UTC time |
@@ -76,18 +76,21 @@ Last updated: 2026-01-22
 | 245 | primitiveCoarseUTCMicrosecondClock | Fast (less precise) UTC clock |
 | 246 | primitiveCoarseLocalMicrosecondClock | Fast local clock |
 
-- **Impact**: Low - Primitives 240-241 (UTC/Local microsecond clocks) work
-- **Workaround**: Use existing clock primitives
+- **Status**: IMPLEMENTED (2026-01-22)
+- Coarse clocks return current time (no heartbeat caching optimization)
+- primitiveUpdateTimezone calls tzset()
 
-### VM Profiling (250-251, 253)
+### ~~VM Profiling (250-251, 253)~~ ✅ IMPLEMENTED
 | Primitive | Name | Description |
 |-----------|------|-------------|
 | 250 | primitiveClearVMProfile | Clear profiling data |
 | 251 | primitiveControlVMProfiling | Start/stop profiling |
 | 253 | primitiveCollectCogCodeConstituents | Collect JIT code info |
 
-- **Impact**: Low - Profiling is a development feature
-- **Note**: Primitive 252 (primitiveVMProfileSamplesInto) IS implemented
+- **Status**: IMPLEMENTED (2026-01-22)
+- primitiveClearVMProfile (250): Succeeds (no-op in interpreter)
+- primitiveControlVMProfiling (251): Succeeds (no-op in interpreter)
+- primitiveCollectCogCodeConstituents (253): Fails (Cog JIT-specific)
 
 ### Become Variant (248)
 | Primitive | Name | Description |

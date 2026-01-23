@@ -416,6 +416,7 @@ private:
     // Timer/delay semaphore (for Delay class)
     Oop timerSemaphore_ = Oop::nil();
     int64_t nextWakeupTime_ = 0;  // 0 means no timer set (in ioMSecs units)
+    int64_t nextWakeupUsec_ = INT64_MAX;  // UTC microsecond wakeup (for primitive 242)
 
     // Low space threshold for GC (bytes) - signals TheLowSpaceSemaphore when free < threshold
     size_t lowSpaceThreshold_ = 0;
@@ -847,18 +848,18 @@ private:
     PrimitiveResult primitiveLocalMicrosecondClock(int argCount);
     PrimitiveResult primitiveSignalAtMilliseconds(int argCount);
 
-    // Time primitives (242-252)
-    PrimitiveResult primitiveUTCMicrosecondClock(int argCount);    // 242
-    PrimitiveResult primitiveLocalTimezone(int argCount);          // 243
-    PrimitiveResult primitiveTimezoneOffset(int argCount);         // 244
-    PrimitiveResult primitiveDaylightSavingTimeOffset(int argCount); // 245
-    PrimitiveResult primitiveVMOffsetToUTC(int argCount);          // 246
-    PrimitiveResult primitivePosixMicrosecondClockWithOffset(int argCount); // 247
-    PrimitiveResult primitiveSystemTimezone(int argCount);         // 248
-    PrimitiveResult primitiveHighResClock(int argCount);           // 249
-    PrimitiveResult primitiveUTCDateAndTime(int argCount);         // 250
-    PrimitiveResult primitiveLocalDateAndTime(int argCount);       // 251
-    PrimitiveResult primitiveNanosecondClock(int argCount);        // 252
+    // Time/Timezone primitives (242-246)
+    PrimitiveResult primitiveSignalAtUTCMicroseconds(int argCount);  // 242
+    PrimitiveResult primitiveUpdateTimezone(int argCount);           // 243
+    PrimitiveResult primitiveUtcAndTimezoneOffset(int argCount);     // 244
+    PrimitiveResult primitiveCoarseUTCMicrosecondClock(int argCount); // 245
+    PrimitiveResult primitiveCoarseLocalMicrosecondClock(int argCount); // 246
+
+    // VM Profiling primitives (250-253)
+    PrimitiveResult primitiveClearVMProfile(int argCount);           // 250
+    PrimitiveResult primitiveControlVMProfiling(int argCount);       // 251
+    // primitiveVMProfileSamplesInto is declared below (260) and reused for 252
+    PrimitiveResult primitiveCollectCogCodeConstituents(int argCount); // 253 (Cog-specific)
 
     // Misc primitives (222-230)
     PrimitiveResult primitiveClosureValueNoContextSwitch2(int argCount); // 222
