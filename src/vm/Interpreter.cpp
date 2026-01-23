@@ -4220,6 +4220,85 @@ void Interpreter::arithmeticSend(int which) {
     static const int argCounts[] = {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
     int argCount = argCounts[which];
 
+    // TRACE: Log arithmetic ops that involve non-SmallIntegers
+    {
+        static FILE* arithLog2 = nullptr;
+        static int arithCount2 = 0;
+        if (!arithLog2) arithLog2 = fopen("/tmp/arith_non_int.log", "w");
+        if (arithLog2 && arithCount2 < 200) {
+            Oop rcvr = stackValue(1);
+            Oop arg = stackValue(0);
+            // Only log if receiver or arg is not a SmallInteger
+            if (!rcvr.isSmallInteger() || !arg.isSmallInteger()) {
+                arithCount2++;
+                static const char* opNames[] = {"+", "-", "<", ">", "<=", ">=", "=", "~=",
+                                                  "*", "/", "\\\\", "@", "bitShift:", "//", "bitAnd:", "bitOr:"};
+                const char* op = (which >= 0 && which < 16) ? opNames[which] : "?";
+
+                // Get receiver class
+                std::string rcvrClass = "SmallInt";
+                if (!rcvr.isSmallInteger()) {
+                    if (rcvr.isSmallFloat()) rcvrClass = "SmallFloat";
+                    else if (rcvr.isCharacter()) rcvrClass = "Character";
+                    else if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                        Oop cls = memory_.classOf(rcvr);
+                        if (cls.isObject()) {
+                            ObjectHeader* clsHdr = cls.asObjectPtr();
+                            if (clsHdr->slotCount() >= 7) {
+                                Oop nm = clsHdr->slotAt(6);
+                                if (nm.isObject() && nm.rawBits() > 0x10000) {
+                                    ObjectHeader* nmHdr = nm.asObjectPtr();
+                                    if (nmHdr->isBytesObject() && nmHdr->byteSize() < 50) {
+                                        rcvrClass = std::string((char*)nmHdr->bytes(), nmHdr->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Get arg class
+                std::string argClass = "SmallInt";
+                if (!arg.isSmallInteger()) {
+                    if (arg.isSmallFloat()) argClass = "SmallFloat";
+                    else if (arg.isCharacter()) argClass = "Character";
+                    else if (arg.isObject() && arg.rawBits() > 0x10000) {
+                        Oop cls = memory_.classOf(arg);
+                        if (cls.isObject()) {
+                            ObjectHeader* clsHdr = cls.asObjectPtr();
+                            if (clsHdr->slotCount() >= 7) {
+                                Oop nm = clsHdr->slotAt(6);
+                                if (nm.isObject() && nm.rawBits() > 0x10000) {
+                                    ObjectHeader* nmHdr = nm.asObjectPtr();
+                                    if (nmHdr->isBytesObject() && nmHdr->byteSize() < 50) {
+                                        argClass = std::string((char*)nmHdr->bytes(), nmHdr->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                fprintf(arithLog2, "[ARITH #%d] %s %s %s (fd=%zu)",
+                        arithCount2, rcvrClass.c_str(), op, argClass.c_str(), frameDepth_);
+                // For FullBlockClosure, also log the raw values
+                if (rcvrClass == "FullBlockClosure" || argClass == "FullBlockClosure") {
+                    fprintf(arithLog2, " rcvr=0x%llx arg=0x%llx",
+                            (unsigned long long)rcvr.rawBits(),
+                            (unsigned long long)arg.rawBits());
+                    if (rcvr.isSmallInteger()) {
+                        fprintf(arithLog2, " (rcvr_val=%lld)", rcvr.asSmallInteger());
+                    }
+                    if (arg.isSmallInteger()) {
+                        fprintf(arithLog2, " (arg_val=%lld)", arg.asSmallInteger());
+                    }
+                }
+                fprintf(arithLog2, "\n");
+                fflush(arithLog2);
+            }
+        }
+    }
+
     // TRACE: Log all <= sends to understand loop iteration
     if (which == 4) {  // <=
         static FILE* arithLog = nullptr;
@@ -4824,8 +4903,8 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         if (startupTraceLog && startupTraceCount < 20000) {
             startupTraceCount++;
             std::string selectorStr(selBytes, selBytes + selLen);
-            fprintf(startupTraceLog, "[SEND#%d] %s (argCount=%d)\n",
-                    startupTraceCount, selectorStr.c_str(), argCount);
+            fprintf(startupTraceLog, "[SEND#%d] %s (argCount=%d) fd=%zu\n",
+                    startupTraceCount, selectorStr.c_str(), argCount, frameDepth_);
 
             // Extra: log <= comparisons to track loop bounds
             if (selEquals("<=") && argCount == 1) {
@@ -12718,24 +12797,30 @@ Oop Interpreter::materializeFrameStack() {
         // Initialize context
         memory_.storePointer(0, context, sender);                           // sender
         memory_.storePointer(1, context, Oop::fromSmallInteger(pc));        // pc
-        memory_.storePointer(2, context, Oop::fromSmallInteger(numTemps + 5)); // stackp
+        // stackp is set below after we know how many items we saved
         memory_.storePointer(3, context, frame.savedMethod);                // method
         memory_.storePointer(4, context, memory_.nil());                    // closureOrNil
         memory_.storePointer(5, context, frame.savedReceiver);              // receiver
 
         // Copy temps from stack
         // The saved FP points to the start of this frame's locals in the stack
+        int savedCount = 0;
         if (frame.savedFP != nullptr && numTemps > 0) {
             for (int t = 0; t < numTemps && t < 32; t++) {
                 Oop temp = *(frame.savedFP + t);
                 memory_.storePointer(6 + t, context, temp);
+                savedCount++;
             }
         } else {
             // Initialize temps to nil
             for (int t = 0; t < numTemps; t++) {
                 memory_.storePointer(6 + t, context, memory_.nil());
+                savedCount++;
             }
         }
+
+        // Set stackp to actual number of items saved (not numTemps + 5!)
+        memory_.storePointer(2, context, Oop::fromSmallInteger(savedCount)); // stackp
 
         // This context becomes the sender for the next frame
         sender = context;
@@ -12786,24 +12871,42 @@ Oop Interpreter::materializeFrameStack() {
 
                 memory_.storePointer(0, context, sender);                       // sender
                 memory_.storePointer(1, context, Oop::fromSmallInteger(pc));    // pc
-                memory_.storePointer(2, context, Oop::fromSmallInteger(numTemps + 5)); // stackp
+                // stackp is set below after we know how many items we saved
                 memory_.storePointer(3, context, method_);                      // method
                 memory_.storePointer(4, context, memory_.nil());                // closureOrNil
                 memory_.storePointer(5, context, receiver_);                    // receiver
 
-                // Copy current temps from stack
+                // Copy current temps from frame
+                // Temps are at framePointer_[1..numTemps] (receiver is at framePointer_[0])
+                int savedCount = 0;
                 for (int t = 0; t < numTemps && t < 32; t++) {
-                    Oop temp = stackValue(t);  // Get from current stack
+                    Oop temp = *(framePointer_ + 1 + t);
                     memory_.storePointer(6 + t, context, temp);
+                    savedCount++;
                 }
+
+                // Also save operand stack items (above temps)
+                // The operand stack is from framePointer_ + 1 + numTemps to stackPointer_ - 1
+                Oop* operandBase = framePointer_ + 1 + numTemps;
+                ptrdiff_t operandCount = stackPointer_ - operandBase;
+                if (operandCount > 0 && operandCount < 100) {
+                    for (ptrdiff_t o = 0; o < operandCount; o++) {
+                        Oop item = *(operandBase + o);
+                        memory_.storePointer(6 + numTemps + o, context, item);
+                        savedCount++;
+                    }
+                }
+
+                // Set stackp to actual number of items saved
+                memory_.storePointer(2, context, Oop::fromSmallInteger(savedCount)); // stackp
 
                 if (matLog) {
                     fprintf(matLog, "[MATERIALIZE] Created %zu+1 contexts, topmost=0x%llx\n",
                             frameDepth_, (unsigned long long)context.rawBits());
-                    fprintf(matLog, "  slots: sender=0x%llx pc=%lld stackp=%lld method=0x%llx closure=0x%llx rcvr=0x%llx\n",
+                    fprintf(matLog, "  slots: sender=0x%llx pc=%lld stackp=%d method=0x%llx closure=0x%llx rcvr=0x%llx\n",
                             (unsigned long long)sender.rawBits(),
                             (long long)pc,
-                            (long long)(numTemps + 5),
+                            savedCount,
                             (unsigned long long)method_.rawBits(),
                             (unsigned long long)memory_.nil().rawBits(),
                             (unsigned long long)receiver_.rawBits());
