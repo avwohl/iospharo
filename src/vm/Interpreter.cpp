@@ -4782,8 +4782,46 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             }
         }
 
-        // Log ALL sends for first 2000 sends to understand startup flow
-        if (startupTraceLog && startupTraceCount < 2000) {
+        // TRACE: Log ALL startUp: calls to see which handler is causing issues
+        if (selEquals("startUp:") && argCount == 1) {
+            static int startUpTraceCount = 0;
+            if (startUpTraceCount++ < 20) {
+                Oop rcvr = stackValue(1);  // Receiver (the class or handler)
+                std::string className = "<unknown>";
+                if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                    ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+                    size_t rcvrSlots = rcvrHdr->slotCount();
+                    uint32_t classIdx = rcvrHdr->classIndex();
+
+                    // The receiver IS the class (when called as SomeClass class >> startUp:)
+                    // Check if receiver directly has the name at slot 6
+                    if (rcvrSlots >= 7) {
+                        Oop clsName = rcvrHdr->slotAt(6);
+                        if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                            ObjectHeader* cnHdr = clsName.asObjectPtr();
+                            if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                                className = std::string((char*)cnHdr->bytes(), cnHdr->byteSize()) + " class";
+                            }
+                        }
+                    }
+                    // If receiver is a ClassSessionHandler (small object), get registeredClass
+                    else if (rcvrSlots < 7 && rcvrSlots >= 1) {
+                        Oop regClass = rcvrHdr->slotAt(0);
+                        if (regClass.isObject() && regClass.rawBits() > 0x10000) {
+                            ObjectHeader* regHdr = regClass.asObjectPtr();
+                            if (regHdr->isBytesObject() && regHdr->byteSize() < 50) {
+                                className = std::string((char*)regHdr->bytes(), regHdr->byteSize());
+                                className += " (via ClassSessionHandler)";
+                            }
+                        }
+                    }
+                }
+                std::cerr << "[STARTUP-HANDLER] Starting: " << className << "\n";
+            }
+        }
+
+        // Log ALL sends for first 20000 sends to understand startup flow
+        if (startupTraceLog && startupTraceCount < 20000) {
             startupTraceCount++;
             std::string selectorStr(selBytes, selBytes + selLen);
             fprintf(startupTraceLog, "[SEND#%d] %s (argCount=%d)\n",
@@ -5721,32 +5759,50 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
     }
 
-    // INTERCEPT: Skip delay scheduler startUp during fresh image start
-    // The saved heap/resumption times may contain nil entries that cause infinite
-    // loops in array operations. Skip the entire scheduler startUp to start fresh.
-    if (selEquals("startUp") && argCount == 0) {
-        // Check if receiver is DelaySemaphoreScheduler
-        Oop rcvr = stackValue(0);
+    // INTERCEPT: Skip certain scheduler/process startUp methods during fresh image start
+    // to avoid blocking operations or infinite loops with nil data from saved image.
+    if ((selEquals("startUp") && argCount == 0) || (selEquals("startUp:") && argCount == 1)) {
+        Oop rcvr = stackValue(argCount);  // Receiver is under args
+        std::string rcvrClassName = "";
         if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-            Oop cls = memory_.classOf(rcvr);
-            if (cls.isObject()) {
-                Oop clsName = memory_.fetchPointer(6, cls);
+            ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+            size_t rcvrSlots = rcvrHdr->slotCount();
+            // For classes (receiver of class methods), name is at slot 6
+            if (rcvrSlots >= 7) {
+                Oop clsName = rcvrHdr->slotAt(6);
                 if (clsName.isObject() && clsName.rawBits() > 0x10000) {
                     ObjectHeader* nameHdr = clsName.asObjectPtr();
                     if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
-                        std::string name((char*)nameHdr->bytes(), nameHdr->byteSize());
-                        if (name.find("DelaySemaphoreScheduler") != std::string::npos ||
-                            name.find("DelayMicrosecondTicker") != std::string::npos) {
-                            static int delaySkipCount = 0;
-                            if (delaySkipCount++ < 3) {
-                                std::cerr << "[STARTUP] Skipping " << name << " >> startUp\n";
-                            }
-                            // Return self - scheduler will be reinitialized properly
-                            return;
+                        rcvrClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                    }
+                }
+            } else {
+                // For instances, get class name from classOf
+                Oop cls = memory_.classOf(rcvr);
+                if (cls.isObject()) {
+                    Oop clsName = memory_.fetchPointer(6, cls);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* nameHdr = clsName.asObjectPtr();
+                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                            rcvrClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
                         }
                     }
                 }
             }
+        }
+        // Skip problematic startup handlers
+        bool shouldSkip = (rcvrClassName.find("DelaySemaphoreScheduler") != std::string::npos ||
+                          rcvrClassName.find("DelayMicrosecondTicker") != std::string::npos ||
+                          rcvrClassName == "ProcessorScheduler");  // Blocks on process operations
+        if (shouldSkip) {
+            static int skipCount = 0;
+            if (skipCount++ < 5) {
+                std::cerr << "[STARTUP] Skipping " << rcvrClassName << " >> startUp"
+                          << (argCount > 0 ? ":" : "") << "\n";
+            }
+            // Pop args, leave receiver as return value (return self)
+            if (argCount > 0) popN(argCount);
+            return;
         }
     }
 
@@ -9544,7 +9600,15 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
                                 methodName == "<" ||
                                 methodName == ">" ||
                                 methodName == "max:" ||
-                                methodName == "min:");
+                                methodName == "min:" ||
+                                // Collection building methods - common in loops
+                                methodName == "addLast:" ||
+                                methodName == "add:" ||
+                                methodName == "nextPut:" ||
+                                methodName == "nextPutAll:" ||
+                                methodName == "<<" ||
+                                methodName == "value:" ||
+                                methodName == "value:value:");
         int threshold = isLegitHighFreq ? 100000 : 50;  // Allow much more for loop ops
 
         if (sameMethodCount > threshold) {

@@ -12508,31 +12508,52 @@ static constexpr int64_t SmalltalkEpochOffset = 2177452800LL;
 static constexpr int64_t SmalltalkEpochOffsetMicroseconds = SmalltalkEpochOffset * 1000000LL;
 
 // Primitive 242: Signal semaphore at UTC microsecond time
-// receiver usecs primitiveSignalAtUTCMicroseconds
+// Called as: ticker primSignal: sema atUTCMicroseconds: usecs
 // Signals the timer semaphore when UTC clock reaches usecs. Value 0 disables.
+// Stack: receiver ticker, arg1 sema, arg2 usecs
 PrimitiveResult Interpreter::primitiveSignalAtUTCMicroseconds(int argCount) {
-    if (argCount != 1) return PrimitiveResult::Failure;
+    if (argCount != 2) return PrimitiveResult::Failure;
 
-    Oop usecsOop = stackTop();
-    if (!usecsOop.isSmallInteger()) {
+    Oop usecsOop = stackTop();        // usecs is 2nd argument (stackValue(0))
+    Oop sema = stackValue(1);         // semaphore is 1st argument (stackValue(1))
+
+    // usecs can be a SmallInteger or a LargePositiveInteger
+    int64_t usecs = 0;
+    if (usecsOop.isSmallInteger()) {
+        usecs = usecsOop.asSmallInteger();
+    } else if (usecsOop.isObject() && usecsOop.rawBits() > 0x10000) {
+        // Try to read as a LargePositiveInteger
+        ObjectHeader* hdr = usecsOop.asObjectPtr();
+        if (hdr->isBytesObject()) {
+            size_t byteLen = hdr->byteSize();
+            if (byteLen <= 8) {
+                uint8_t* bytes = (uint8_t*)hdr->bytes();
+                usecs = 0;
+                for (size_t i = 0; i < byteLen; i++) {
+                    usecs |= ((int64_t)bytes[i]) << (i * 8);
+                }
+            } else {
+                return PrimitiveResult::Failure;  // Too large
+            }
+        } else {
+            return PrimitiveResult::Failure;
+        }
+    } else {
         return PrimitiveResult::Failure;
     }
 
-    int64_t usecs = usecsOop.asSmallInteger();
-
-    // Get the timer semaphore from special objects
-    Oop timerSema = memory_.specialObject(SpecialObjectIndex::TheTimerSemaphore);
-
-    if (usecs == 0) {
-        // Disable timer by setting next wakeup to far future
+    // Store the timer info
+    if (usecs == 0 || sema.isNil()) {
+        // Disable timer
+        timerSemaphore_ = Oop::nil();
         nextWakeupUsec_ = INT64_MAX;
     } else {
-        // Convert Smalltalk epoch microseconds to system clock comparison
-        // We'll check against this in the heartbeat
+        // Schedule the timer
+        timerSemaphore_ = sema;
         nextWakeupUsec_ = usecs;
     }
 
-    pop();  // Pop argument, leave receiver
+    popN(2);  // Pop both arguments, leave receiver
     return PrimitiveResult::Success;
 }
 
