@@ -19,11 +19,11 @@ Last updated: 2026-01-22
 
 ## High Priority (May Affect Some Features)
 
-### SmallFloat Primitives (541-559)
-- **Status**: Not implemented (nullptr in table)
-- **Impact**: Low - Regular Float primitives handle SmallFloat operands via `extractFloat()` helper
-- **Official VM**: Optimized paths when both operands are SmallFloat immediates
-- **Our behavior**: Falls back to regular Float primitives, slightly slower but functionally correct
+### ~~SmallFloat Primitives (541-559)~~ ✅ IMPLEMENTED
+- **Status**: IMPLEMENTED (2026-01-22)
+- Delegates to existing Float primitives (which already handle SmallFloat via extractFloat)
+- Covers: add, subtract, comparisons, multiply, divide, truncated, fractionalPart,
+  exponent, timesTwoPower, sqrt, sin, arctan, logN, exp
 
 ### Old Space / Pinned Allocation (596-599)
 | Primitive | Name | Description |
