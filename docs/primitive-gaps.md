@@ -3,19 +3,19 @@
 This document lists known gaps in primitive implementations identified during the audit.
 Last updated: 2026-01-22
 
-## Critical (Affects Core Functionality)
+## ~~Critical (Affects Core Functionality)~~ ✅ RESOLVED
 
-### Critical Section Primitives (185-187)
+### ~~Critical Section Primitives (185-187)~~ ✅ IMPLEMENTED
 | Primitive | Name | Description |
 |-----------|------|-------------|
 | 185 | primitiveExitCriticalSection | Exit critical section, resume blocked processes |
 | 186 | primitiveEnterCriticalSection | Enter critical section, may block if owned |
 | 187 | primitiveTestAndSetOwnershipOfCriticalSection | Atomic test-and-set for locking |
 
-- **Status**: Stubbed out (always return Failure)
-- **Impact**: HIGH - Process synchronization using Mutex/Semaphore may not work correctly
-- **Workaround**: Many uses of critical sections work via Smalltalk fallback code
-- **Note**: Full implementation requires process scheduling integration
+- **Status**: IMPLEMENTED (2026-01-22)
+- Supports reentrant locking (same process can enter multiple times)
+- Blocking enter suspends process and switches to highest priority runnable
+- Non-blocking test-and-set returns nil if owned by another process
 
 ## High Priority (May Affect Some Features)
 
