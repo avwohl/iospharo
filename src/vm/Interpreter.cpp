@@ -2692,7 +2692,22 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                     case 0x5B: returnValue(memory_.nil()); break;          // return nil
                     case 0x5C: returnFromMethod(); break;                  // return top
                     case 0x5D: returnValue(memory_.nil()); break;          // block return nil
-                    case 0x5E: returnFromBlock(); break;                   // block return top
+                    case 0x5E: {                                           // block return top
+                        // Sista V1: 0x5E is extensible via Extend A
+                        // extA_ = 0: return from current block (simple return)
+                        // extA_ = N: return from N-th enclosing block (non-local return)
+                        int enclosingLevels = extA_;
+                        extA_ = 0;  // Consume extension
+                        if (enclosingLevels > 0) {
+                            // Non-local return - unwind enclosingLevels blocks
+                            returnFromBlock();
+                        } else {
+                            // Simple block return - just return the value
+                            Oop value = pop();
+                            returnValue(value);
+                        }
+                        break;
+                    }
                     case 0x5F: /* Nop */ break;
                 }
             }
@@ -3003,13 +3018,20 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
 
                 jumpCount++;
                 if (jumpLog && jumpCount <= 500) {
-                    fprintf(jumpLog, "[JUMP #%d] method=0x%llx ip=0x%llx offset=%d -> ip=0x%llx %s fd=%d\n",
+                    fprintf(jumpLog, "[JUMP #%d] method=0x%llx ip=0x%llx offset=%d -> ip=0x%llx %s fd=%d",
                             jumpCount,
                             (unsigned long long)method_.rawBits(),
                             (unsigned long long)ipBefore, offset,
                             (unsigned long long)(ipBefore + offset),
                             offset < 0 ? "BACKWARD" : "forward",
                             (int)frameDepth_);
+                    // For backward jumps, show the next few bytes at jump target
+                    if (offset < 0) {
+                        uint8_t* target = instructionPointer_ + offset;
+                        fprintf(jumpLog, " nextBc=[%02x %02x %02x %02x]",
+                                target[0], target[1], target[2], target[3]);
+                    }
+                    fprintf(jumpLog, "\n");
                     fflush(jumpLog);
                 }
 
@@ -4197,6 +4219,27 @@ void Interpreter::arithmeticSend(int which) {
     // Arithmetic selectors: + - < > <= >= = ~= * / \\ @ bitShift: // bitAnd: bitOr:
     static const int argCounts[] = {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
     int argCount = argCounts[which];
+
+    // TRACE: Log all <= sends to understand loop iteration
+    if (which == 4) {  // <=
+        static FILE* arithLog = nullptr;
+        static int arithCount = 0;
+        if (!arithLog) arithLog = fopen("/tmp/arith_le_trace.log", "w");
+        if (arithLog && arithCount < 500) {
+            arithCount++;
+            Oop rcvr = stackValue(1);
+            Oop arg = stackValue(0);
+            if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
+                fprintf(arithLog, "[<= #%d] %lld <= %lld fd=%d\n",
+                        arithCount, rcvr.asSmallInteger(), arg.asSmallInteger(), (int)frameDepth_);
+            } else {
+                fprintf(arithLog, "[<= #%d] rcvr=0x%llx arg=0x%llx (non-int) fd=%d\n",
+                        arithCount, (unsigned long long)rcvr.rawBits(),
+                        (unsigned long long)arg.rawBits(), (int)frameDepth_);
+            }
+            fflush(arithLog);
+        }
+    }
 
     // Get receiver and check for nil early to prevent crashes
     Oop arg = stackValue(0);
@@ -9739,6 +9782,55 @@ void Interpreter::popFrame() {
     if (frameDepth_ == 0) {
         running_ = false;
         return;
+    }
+
+    // TRACE: Log frame transitions for loop debugging
+    static FILE* frameLog = nullptr;
+    static int frameLogCount = 0;
+    if (!frameLog) frameLog = fopen("/tmp/frame_pop.log", "w");
+    if (frameLog && frameLogCount < 500 && frameDepth_ >= 10 && frameDepth_ <= 25) {
+        frameLogCount++;
+        // Get current method name
+        std::string fromMethod = "<unknown>";
+        if (method_.isObject() && method_.rawBits() > 0x10000) {
+            Oop mHdr = memory_.fetchPointer(0, method_);
+            if (mHdr.isSmallInteger()) {
+                size_t numLits = mHdr.asSmallInteger() & 0x7FFF;
+                if (numLits >= 2) {
+                    Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                    if (sel.isObject() && sel.rawBits() > 0x10000) {
+                        ObjectHeader* selHdr = sel.asObjectPtr();
+                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                            fromMethod = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                        }
+                    }
+                }
+            }
+        }
+        // Get method we're returning TO
+        const SavedFrame& nextFrame = savedFrames_[frameDepth_ - 1];
+        std::string toMethod = "<unknown>";
+        if (nextFrame.savedMethod.isObject() && nextFrame.savedMethod.rawBits() > 0x10000) {
+            Oop mHdr = memory_.fetchPointer(0, nextFrame.savedMethod);
+            if (mHdr.isSmallInteger()) {
+                size_t numLits = mHdr.asSmallInteger() & 0x7FFF;
+                if (numLits >= 2) {
+                    Oop sel = memory_.fetchPointer(numLits - 1, nextFrame.savedMethod);
+                    if (sel.isObject() && sel.rawBits() > 0x10000) {
+                        ObjectHeader* selHdr = sel.asObjectPtr();
+                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                            toMethod = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                        }
+                    }
+                }
+            }
+        }
+        // Show next bytecode at return address
+        uint8_t nextBc = nextFrame.savedIP ? *nextFrame.savedIP : 0;
+        fprintf(frameLog, "[POP #%d] fd=%zu->%zu from=%s to=%s nextBC=0x%02x\n",
+                frameLogCount, frameDepth_, frameDepth_ - 1,
+                fromMethod.c_str(), toMethod.c_str(), nextBc);
+        fflush(frameLog);
     }
 
     --frameDepth_;
