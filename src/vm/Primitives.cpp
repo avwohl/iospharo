@@ -10460,6 +10460,62 @@ PrimitiveResult Interpreter::primitiveFlushExternalPrimitives(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// Primitive 571: Unload an external module
+// moduleName primitiveUnloadModule -> self
+// Unloads the module with the given name
+PrimitiveResult Interpreter::primitiveUnloadModule(int argCount) {
+    if (argCount != 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    // We don't have external plugins, so this is a no-op
+    // Just succeed as if the module was unloaded (or never loaded)
+    pop();  // Pop argument, leave receiver
+    return PrimitiveResult::Success;
+}
+
+// Primitive 572: List builtin modules
+// index primitiveListBuiltinModule -> moduleName or nil
+// Returns the n-th builtin module name (1-based index), nil if no more
+PrimitiveResult Interpreter::primitiveListBuiltinModule(int argCount) {
+    if (argCount != 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop indexOop = stackTop();
+    if (!indexOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // We don't have any builtin modules to list
+    // Return nil for any index
+    pop();  // Pop argument
+    pop();  // Pop receiver
+    push(memory_.nil());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 573: List external (loaded) modules
+// index primitiveListExternalModule -> moduleName or nil
+// Returns the n-th loaded external module name (1-based index), nil if no more
+PrimitiveResult Interpreter::primitiveListExternalModule(int argCount) {
+    if (argCount != 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop indexOop = stackTop();
+    if (!indexOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // We don't have any external modules loaded
+    // Return nil for any index
+    pop();  // Pop argument
+    pop();  // Pop receiver
+    push(memory_.nil());
+    return PrimitiveResult::Success;
+}
+
 // Primitive 117: Call out to FFI (Foreign Function Interface)
 // externalFunction args primitiveCalloutToFFI -> result
 // Calls a foreign function through FFI mechanism

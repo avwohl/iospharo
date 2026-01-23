@@ -57,15 +57,17 @@ Last updated: 2026-01-22
 
 ## Medium Priority (Optional Features)
 
-### External Plugin Management (571-573)
+### ~~External Plugin Management (571-573)~~ ✅ IMPLEMENTED
 | Primitive | Name | Description |
 |-----------|------|-------------|
 | 571 | primitiveUnloadModule | Unload external plugin module |
 | 572 | primitiveListBuiltinModule | List built-in modules |
 | 573 | primitiveListExternalModule | List external modules |
 
-- **Impact**: Low - We don't support external plugins currently
-- **Note**: Primitive 570 (primitiveFlushExternalPrimitives) IS implemented
+- **Status**: IMPLEMENTED (2026-01-22)
+- primitiveUnloadModule (571): Succeeds (no-op, no plugins to unload)
+- primitiveListBuiltinModule (572): Returns nil (no builtin modules)
+- primitiveListExternalModule (573): Returns nil (no external modules)
 
 ### ~~Time/Timezone Variants (242-246)~~ ✅ IMPLEMENTED
 | Primitive | Name | Description |

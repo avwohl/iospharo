@@ -726,11 +726,14 @@ private:
     PrimitiveResult primitiveInputWord(int argCount);              // 154
     PrimitiveResult primitiveCompareString(int argCount);          // 155
 
-    // FFI/External primitives (116-118, 147)
-    PrimitiveResult primitiveFlushExternalPrimitives(int argCount); // 116
+    // FFI/External primitives (116-118, 147, 570-573)
+    PrimitiveResult primitiveFlushExternalPrimitives(int argCount); // 116 (also 570)
     PrimitiveResult primitiveCalloutToFFI(int argCount);           // 117
     PrimitiveResult primitiveDLLCall(int argCount);                // 118
     PrimitiveResult primitiveExternalCall(int argCount);           // 147
+    PrimitiveResult primitiveUnloadModule(int argCount);           // 571
+    PrimitiveResult primitiveListBuiltinModule(int argCount);      // 572
+    PrimitiveResult primitiveListExternalModule(int argCount);     // 573
 
     // Socket primitive (133)
     PrimitiveResult primitiveSocket(int argCount);                 // 133
