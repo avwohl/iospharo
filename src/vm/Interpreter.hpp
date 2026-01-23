@@ -1331,6 +1331,14 @@ private:
     PrimitiveResult primitiveContextAt(int argCount);            // 211
     PrimitiveResult primitiveContextAtPut(int argCount);         // 212
 
+    // Context/VM Introspection primitives (213-218)
+    PrimitiveResult primitiveContextXray(int argCount);          // 213
+    PrimitiveResult primitiveVoidVMState(int argCount);          // 214
+    PrimitiveResult primitiveVoidVMStateForMethod(int argCount); // 215
+    PrimitiveResult primitiveMethodXray(int argCount);           // 216 (Cog-specific, fails)
+    PrimitiveResult primitiveMethodProfilingData(int argCount);  // 217 (Cog-specific, fails)
+    PrimitiveResult primitiveDoNamedPrimitiveWithArgs(int argCount); // 218
+
     // Cache flushing primitives
     PrimitiveResult primitiveFlushCacheByMethod(int argCount);   // 119
     PrimitiveResult primitiveFlushCacheBySelector(int argCount); // 120

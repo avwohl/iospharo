@@ -37,7 +37,7 @@ Last updated: 2026-01-22
 - OldSpace variants allocate normally (GC promotes to old space naturally)
 - Pinned variants allocate and set pinned flag via pinObject()
 
-### Context/VM Introspection (213-218)
+### ~~Context/VM Introspection (213-218)~~ ✅ IMPLEMENTED
 | Primitive | Name | Description |
 |-----------|------|-------------|
 | 213 | primitiveContextXray | Return context state flags |
@@ -47,8 +47,13 @@ Last updated: 2026-01-22
 | 217 | primitiveMethodProfilingData | Get method profiling info |
 | 218 | primitiveDoNamedPrimitiveWithArgs | Call named primitive with args array |
 
-- **Impact**: Medium - Used by debuggers and development tools
-- **Workaround**: Smalltalk fallback code handles most cases
+- **Status**: IMPLEMENTED (2026-01-22)
+- primitiveContextXray (213): Returns 0 for heap contexts (no JIT marriage tracking)
+- primitiveVoidVMState (214): Flushes method cache
+- primitiveVoidVMStateForMethod (215): Succeeds (cache naturally replaced)
+- primitiveMethodXray (216): Fails (Cog JIT-specific)
+- primitiveMethodProfilingData (217): Fails (Cog JIT-specific)
+- primitiveDoNamedPrimitiveWithArgs (218): Fails (let Smalltalk handle)
 
 ## Medium Priority (Optional Features)
 

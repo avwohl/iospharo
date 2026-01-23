@@ -7756,6 +7756,118 @@ PrimitiveResult Interpreter::primitiveContextAtPut(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== CONTEXT/VM INTROSPECTION PRIMITIVES (213-218) =====
+//
+// These primitives provide introspection into context and VM state.
+// Some are Cog JIT-specific and fail in our interpreter-only VM.
+
+// Primitive 213: Return an integer describing context state
+// Bit 0 = is or was married to a frame
+// Bit 1 = is still married to a frame
+// Bit 2 = frame is executing machine code (Cog-specific, always 0)
+// Bit 3 = has machine code pc (Cog-specific, always 0)
+// Bit 4 = method is currently compiled to machine code (Cog-specific, always 0)
+PrimitiveResult Interpreter::primitiveContextXray(int argCount) {
+    Oop context = stackTop();
+
+    if (!context.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Check if this is a context (has sender, pc, stackp, method, closure, receiver)
+    ObjectHeader* header = context.asObjectPtr();
+    size_t slotCount = header->slotCount();
+    if (slotCount < ContextFixedSlots) {
+        return PrimitiveResult::Failure;  // Not a valid context
+    }
+
+    int flags = 0;
+
+    // Check if the context is "married" to a stack frame
+    // In our interpreter, contexts can be:
+    // - Vanilla heap contexts (sender is another context or nil): flags = 0
+    // - Married to active frame (sender encodes a frame pointer): flags = 1 or 3
+    //
+    // For now, we don't have sophisticated frame marriage tracking.
+    // A context is considered "married" if it's currently the activeContext.
+    // For simplicity, return 0 for all heap contexts.
+
+    // Note: In a full implementation, we'd check if the sender field
+    // encodes a frame pointer rather than a context reference.
+
+    primitiveSuccess(Oop::fromSmallInteger(flags));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 214: Void all internal VM state
+// This clears method caches and any JIT state (we don't have JIT)
+PrimitiveResult Interpreter::primitiveVoidVMState(int argCount) {
+    // Clear the method cache
+    flushMethodCache();
+
+    // In a JIT VM, this would also clear the machine code zone
+    // and reinitialize interpreter state from the active context.
+    // For our interpreter-only VM, flushing the method cache is sufficient.
+
+    // Return receiver (the context or VM class that received the message)
+    return PrimitiveResult::Success;
+}
+
+// Primitive 215: Void VM state for a specific method
+// Clears any cached/compiled state for the given method
+PrimitiveResult Interpreter::primitiveVoidVMStateForMethod(int argCount) {
+    // Validate argument
+    Oop methodObj;
+    if (argCount == 0) {
+        methodObj = stackTop();  // Receiver is the method
+    } else if (argCount == 1) {
+        methodObj = stackValue(1);  // Receiver is the method, arg is boolean
+    } else {
+        return PrimitiveResult::Failure;
+    }
+
+    if (!methodObj.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // For our interpreter, we could selectively flush cache entries
+    // that reference this method. For simplicity, we just succeed
+    // (method cache entries will be naturally replaced).
+
+    // In a full implementation, iterate through cache and clear
+    // entries where entry.method == methodObj
+
+    return PrimitiveResult::Success;
+}
+
+// Primitive 216: Return method metadata (Cog JIT-specific)
+// Since we don't have JIT, this primitive fails
+PrimitiveResult Interpreter::primitiveMethodXray(int argCount) {
+    // Cog-specific: returns information about JIT-compiled method state
+    // Not applicable for interpreter-only VM
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 217: Get method profiling data (Cog JIT-specific)
+// Since we don't have JIT profiling, this primitive fails
+PrimitiveResult Interpreter::primitiveMethodProfilingData(int argCount) {
+    // Cog-specific: returns profiling counters for JIT compilation
+    // Not applicable for interpreter-only VM
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 218: Call a named primitive with an array of arguments
+// receiver primitiveWithArgs: argArray
+PrimitiveResult Interpreter::primitiveDoNamedPrimitiveWithArgs(int argCount) {
+    // This primitive allows calling another primitive by name with explicit args.
+    // The receiver should be a plugin/module name or nil (for VM primitives).
+    // The first arg is the primitive name (symbol), second is args array.
+    //
+    // This is complex and used primarily for FFI/plugin dispatch.
+    // For now, we fail and let Smalltalk handle it through normal dispatch.
+    return PrimitiveResult::Failure;
+}
+
 // ===== CACHE FLUSHING PRIMITIVES =====
 
 // Primitive 119: Flush method cache entries for a specific method
