@@ -287,19 +287,161 @@ PrimitiveResult Interpreter::primitiveFetchNextMourner(int argCount) {
     return PrimitiveResult::Failure;  // GC mourner queue - let Smalltalk handle
 }
 
+// Primitive 185: Exit critical section
+// Release ownership and potentially resume a waiting process
 PrimitiveResult Interpreter::primitiveExitCriticalSection(int argCount) {
-    (void)argCount;
-    return PrimitiveResult::Failure;  // critical section - let Smalltalk handle
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop criticalSection = stackTop();  // receiver
+    if (!criticalSection.isObject()) return PrimitiveResult::Failure;
+
+    // CriticalSections are laid out like Semaphores
+    // Slot 2 (ExcessSignalsIndex) stores the owning process
+    constexpr int OwnerIndex = SemaphoreExcessSignalsIndex;
+
+    // Check if the wait list is empty
+    Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, criticalSection);
+    Oop nilObj = memory_.nil();
+
+    if (firstLink == nilObj) {
+        // No waiting processes - just clear owner
+        memory_.storePointer(OwnerIndex, criticalSection, nilObj);
+        // Return self (don't change stack, just success)
+        return PrimitiveResult::Success;
+    } else {
+        // There are waiting processes - transfer ownership to first waiter
+        Oop newOwner = removeFirstLinkOfList(criticalSection);
+
+        // Set new owner
+        memory_.storePointer(OwnerIndex, criticalSection, newOwner);
+
+        // Resume the new owner process
+        // This is similar to primitiveResume
+        Oop activeProcess = getActiveProcess();
+
+        // Get priority of new owner
+        Oop newPriorityOop = memory_.fetchPointer(ProcessPriorityIndex, newOwner);
+        if (!newPriorityOop.isSmallInteger()) {
+            return PrimitiveResult::Failure;
+        }
+        int64_t newPriority = newPriorityOop.asSmallInteger();
+
+        // Get priority of active process
+        Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
+        if (!activePriorityOop.isSmallInteger()) {
+            return PrimitiveResult::Failure;
+        }
+        int64_t activePriority = activePriorityOop.asSmallInteger();
+
+        // Put new owner to sleep (add to its priority queue)
+        putToSleep(newOwner);
+
+        // If new owner has higher or equal priority, switch to it
+        if (newPriority >= activePriority) {
+            // Put active process to sleep and switch
+            putToSleep(activeProcess);
+            transferTo(wakeHighestPriority());
+        }
+
+        return PrimitiveResult::Success;
+    }
 }
 
+// Primitive 186: Enter critical section
+// If not owned, set owner and return false.
+// If owned by current process, return true (reentrant).
+// If owned by another, suspend and wait.
 PrimitiveResult Interpreter::primitiveEnterCriticalSection(int argCount) {
-    (void)argCount;
-    return PrimitiveResult::Failure;  // critical section - let Smalltalk handle
+    Oop criticalSection;
+    Oop activeProc;
+
+    // Support both 0-arg (use active process) and 1-arg (explicit process) forms
+    if (argCount > 1) return PrimitiveResult::Failure;
+
+    if (argCount > 0) {
+        criticalSection = stackValue(1);  // receiver
+        activeProc = stackTop();          // explicit process argument
+    } else {
+        criticalSection = stackTop();     // receiver
+        activeProc = getActiveProcess();
+    }
+
+    if (!criticalSection.isObject()) return PrimitiveResult::Failure;
+
+    constexpr int OwnerIndex = SemaphoreExcessSignalsIndex;
+    Oop nilObj = memory_.nil();
+
+    Oop owningProcess = memory_.fetchPointer(OwnerIndex, criticalSection);
+
+    if (owningProcess == nilObj) {
+        // Not owned - claim it and return false
+        memory_.storePointer(OwnerIndex, criticalSection, activeProc);
+        primitiveSuccess(memory_.falseObject());
+        return PrimitiveResult::Success;
+    }
+
+    if (owningProcess.rawBits() == activeProc.rawBits()) {
+        // Already owned by us - return true (reentrant)
+        primitiveSuccess(memory_.trueObject());
+        return PrimitiveResult::Success;
+    }
+
+    // Owned by another process - must wait
+    // First, set up to return false when we're eventually resumed
+    // Pop args, push false as the result for when we resume
+    popN(argCount + 1);
+    push(memory_.falseObject());
+
+    // Add current process to the critical section's wait queue
+    addLastLinkToList(activeProc, criticalSection);
+
+    // Switch to highest priority runnable process
+    transferTo(wakeHighestPriority());
+
+    return PrimitiveResult::Success;
 }
 
+// Primitive 187: Test and set ownership of critical section (non-blocking)
+// If not owned, set owner and return false.
+// If owned by current process, return true.
+// If owned by another process, return nil (don't block).
 PrimitiveResult Interpreter::primitiveTestAndSetOwnershipOfCriticalSection(int argCount) {
-    (void)argCount;
-    return PrimitiveResult::Failure;  // critical section - let Smalltalk handle
+    Oop criticalSection;
+    Oop activeProc;
+
+    if (argCount > 1) return PrimitiveResult::Failure;
+
+    if (argCount > 0) {
+        criticalSection = stackValue(1);  // receiver
+        activeProc = stackTop();          // explicit process argument
+    } else {
+        criticalSection = stackTop();     // receiver
+        activeProc = getActiveProcess();
+    }
+
+    if (!criticalSection.isObject()) return PrimitiveResult::Failure;
+
+    constexpr int OwnerIndex = SemaphoreExcessSignalsIndex;
+    Oop nilObj = memory_.nil();
+
+    Oop owningProcess = memory_.fetchPointer(OwnerIndex, criticalSection);
+
+    if (owningProcess == nilObj) {
+        // Not owned - claim it and return false
+        memory_.storePointer(OwnerIndex, criticalSection, activeProc);
+        primitiveSuccess(memory_.falseObject());
+        return PrimitiveResult::Success;
+    }
+
+    if (owningProcess.rawBits() == activeProc.rawBits()) {
+        // Already owned by us - return true
+        primitiveSuccess(memory_.trueObject());
+        return PrimitiveResult::Success;
+    }
+
+    // Owned by another process - return nil (non-blocking)
+    primitiveSuccess(nilObj);
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveExecuteMethodArgsArray(int argCount) {
