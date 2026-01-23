@@ -17175,6 +17175,107 @@ PrimitiveResult Interpreter::primitiveGetSystemLocale(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== SMALLFLOAT PRIMITIVES (541-559) =====
+//
+// SmallFloat primitives are optimized versions of Float primitives.
+// Since our Float primitives already handle SmallFloat via extractFloat(),
+// these simply delegate to the corresponding Float primitives.
+
+// Primitive 541: SmallFloat add
+PrimitiveResult Interpreter::primitiveSmallFloatAdd(int argCount) {
+    return primitiveFloatAdd(argCount);
+}
+
+// Primitive 542: SmallFloat subtract
+PrimitiveResult Interpreter::primitiveSmallFloatSubtract(int argCount) {
+    return primitiveFloatSubtract(argCount);
+}
+
+// Primitive 543: SmallFloat less than
+PrimitiveResult Interpreter::primitiveSmallFloatLessThan(int argCount) {
+    return primitiveFloatLessThan(argCount);
+}
+
+// Primitive 544: SmallFloat greater than
+PrimitiveResult Interpreter::primitiveSmallFloatGreaterThan(int argCount) {
+    return primitiveFloatGreaterThan(argCount);
+}
+
+// Primitive 545: SmallFloat less or equal
+PrimitiveResult Interpreter::primitiveSmallFloatLessOrEqual(int argCount) {
+    return primitiveFloatLessOrEqual(argCount);
+}
+
+// Primitive 546: SmallFloat greater or equal
+PrimitiveResult Interpreter::primitiveSmallFloatGreaterOrEqual(int argCount) {
+    return primitiveFloatGreaterOrEqual(argCount);
+}
+
+// Primitive 547: SmallFloat equal
+PrimitiveResult Interpreter::primitiveSmallFloatEqual(int argCount) {
+    return primitiveFloatEqual(argCount);
+}
+
+// Primitive 548: SmallFloat not equal
+PrimitiveResult Interpreter::primitiveSmallFloatNotEqual(int argCount) {
+    return primitiveFloatNotEqual(argCount);
+}
+
+// Primitive 549: SmallFloat multiply
+PrimitiveResult Interpreter::primitiveSmallFloatMultiply(int argCount) {
+    return primitiveFloatMultiply(argCount);
+}
+
+// Primitive 550: SmallFloat divide
+PrimitiveResult Interpreter::primitiveSmallFloatDivide(int argCount) {
+    return primitiveFloatDivide(argCount);
+}
+
+// Primitive 551: SmallFloat truncated
+PrimitiveResult Interpreter::primitiveSmallFloatTruncated(int argCount) {
+    return primitiveTruncated(argCount);
+}
+
+// Primitive 552: SmallFloat fractional part
+PrimitiveResult Interpreter::primitiveSmallFloatFractionalPart(int argCount) {
+    return primitiveFractionalPart(argCount);
+}
+
+// Primitive 553: SmallFloat exponent
+PrimitiveResult Interpreter::primitiveSmallFloatExponent(int argCount) {
+    return primitiveExponent(argCount);
+}
+
+// Primitive 554: SmallFloat times two power
+PrimitiveResult Interpreter::primitiveSmallFloatTimesTwoPower(int argCount) {
+    return primitiveTimesTwoPower(argCount);
+}
+
+// Primitive 555: SmallFloat square root
+PrimitiveResult Interpreter::primitiveSmallFloatSquareRoot(int argCount) {
+    return primitiveSquareRoot(argCount);
+}
+
+// Primitive 556: SmallFloat sine
+PrimitiveResult Interpreter::primitiveSmallFloatSine(int argCount) {
+    return primitiveSine(argCount);
+}
+
+// Primitive 557: SmallFloat arctan
+PrimitiveResult Interpreter::primitiveSmallFloatArctan(int argCount) {
+    return primitiveArctan(argCount);
+}
+
+// Primitive 558: SmallFloat natural log
+PrimitiveResult Interpreter::primitiveSmallFloatLogN(int argCount) {
+    return primitiveLogN(argCount);
+}
+
+// Primitive 559: SmallFloat exp
+PrimitiveResult Interpreter::primitiveSmallFloatExp(int argCount) {
+    return primitiveExp(argCount);
+}
+
 // ===== FFI BYTE ACCESS PRIMITIVES (600-659) =====
 //
 // These primitives provide low-level memory access for FFI.

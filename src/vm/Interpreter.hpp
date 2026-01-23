@@ -1464,6 +1464,29 @@ private:
     PrimitiveResult primitiveStoreFloat32IntoExternalAddress(int argCount);   // 658
     PrimitiveResult primitiveStoreFloat64IntoExternalAddress(int argCount);   // 659
 
+    // SmallFloat primitives (541-559)
+    // These are optimized versions of Float primitives for SmallFloat immediates
+    // Our Float primitives already handle SmallFloat via extractFloat(), so these delegate
+    PrimitiveResult primitiveSmallFloatAdd(int argCount);          // 541
+    PrimitiveResult primitiveSmallFloatSubtract(int argCount);     // 542
+    PrimitiveResult primitiveSmallFloatLessThan(int argCount);     // 543
+    PrimitiveResult primitiveSmallFloatGreaterThan(int argCount);  // 544
+    PrimitiveResult primitiveSmallFloatLessOrEqual(int argCount);  // 545
+    PrimitiveResult primitiveSmallFloatGreaterOrEqual(int argCount); // 546
+    PrimitiveResult primitiveSmallFloatEqual(int argCount);        // 547
+    PrimitiveResult primitiveSmallFloatNotEqual(int argCount);     // 548
+    PrimitiveResult primitiveSmallFloatMultiply(int argCount);     // 549
+    PrimitiveResult primitiveSmallFloatDivide(int argCount);       // 550
+    PrimitiveResult primitiveSmallFloatTruncated(int argCount);    // 551
+    PrimitiveResult primitiveSmallFloatFractionalPart(int argCount); // 552
+    PrimitiveResult primitiveSmallFloatExponent(int argCount);     // 553
+    PrimitiveResult primitiveSmallFloatTimesTwoPower(int argCount); // 554
+    PrimitiveResult primitiveSmallFloatSquareRoot(int argCount);   // 555
+    PrimitiveResult primitiveSmallFloatSine(int argCount);         // 556
+    PrimitiveResult primitiveSmallFloatArctan(int argCount);       // 557
+    PrimitiveResult primitiveSmallFloatLogN(int argCount);         // 558
+    PrimitiveResult primitiveSmallFloatExp(int argCount);          // 559
+
     // ===== STARTUP SUPPORT =====
 
     /// Bootstrap startup when active process has nil suspendedContext.
