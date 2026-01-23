@@ -390,8 +390,8 @@ private:
     Oop trueObject_;
     Oop falseObject_;
 
-    // Identity hash counter
-    uint32_t lastHash_ = 0;
+    // Identity hash counter (must be non-zero for LCG to work)
+    uint32_t lastHash_ = 2166136261;
 
     // GC state
     bool forceGCFlag_ = false;
