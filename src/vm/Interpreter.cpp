@@ -25,6 +25,9 @@
 
 namespace pharo {
 
+// Set to false to disable all debug file logging for performance
+constexpr bool ENABLE_DEBUG_LOGGING = false;
+
 // Global flag to trace sends after primitive 264 completes
 int g_traceSendsAfterPrim264 = 0;
 
@@ -2231,27 +2234,30 @@ void Interpreter::processPendingSignals() {
     int index = pendingSignalIndex_.exchange(0, std::memory_order_acquire);
     if (index <= 0) return;
 
-    // Debug: Log signal processing
-    static FILE* sigLog = fopen("/tmp/signal_process.log", "a");
+    // Debug: Log signal processing (disabled for performance)
+    static FILE* sigLog = nullptr;
     static int sigCount = 0;
     sigCount++;
-    if (sigLog && sigCount <= 100) {
-        fprintf(sigLog, "[SIGNAL] #%d Processing semaphore index %d\n", sigCount, index);
-        fflush(sigLog);
-    }
-
-    // Debug: Dump semaphore table info on first call
-    if (sigCount == 1 && sigLog) {
-        Oop semTableCheck = memory_.specialObject(SpecialObjectIndex::ExternalSemaphoreTable);
-        if (!semTableCheck.isNil() && semTableCheck.isObject()) {
-            size_t tblSize = memory_.slotCountOf(semTableCheck);
-            fprintf(sigLog, "[SIGNAL] ExternalSemaphoreTable has %zu slots\n", tblSize);
-            for (size_t i = 0; i < std::min(tblSize, (size_t)10); i++) {
-                Oop slot = memory_.fetchPointer(i, semTableCheck);
-                fprintf(sigLog, "[SIGNAL]   slot[%zu] = 0x%llx (isNil=%d isObj=%d)\n",
-                        i, (unsigned long long)slot.rawBits(), slot.isNil() ? 1 : 0, slot.isObject() ? 1 : 0);
-            }
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        if (!sigLog) sigLog = fopen("/tmp/signal_process.log", "a");
+        if (sigLog && sigCount <= 100) {
+            fprintf(sigLog, "[SIGNAL] #%d Processing semaphore index %d\n", sigCount, index);
             fflush(sigLog);
+        }
+
+        // Debug: Dump semaphore table info on first call
+        if (sigCount == 1 && sigLog) {
+            Oop semTableCheck = memory_.specialObject(SpecialObjectIndex::ExternalSemaphoreTable);
+            if (!semTableCheck.isNil() && semTableCheck.isObject()) {
+                size_t tblSize = memory_.slotCountOf(semTableCheck);
+                fprintf(sigLog, "[SIGNAL] ExternalSemaphoreTable has %zu slots\n", tblSize);
+                for (size_t i = 0; i < std::min(tblSize, (size_t)10); i++) {
+                    Oop slot = memory_.fetchPointer(i, semTableCheck);
+                    fprintf(sigLog, "[SIGNAL]   slot[%zu] = 0x%llx (isNil=%d isObj=%d)\n",
+                            i, (unsigned long long)slot.rawBits(), slot.isNil() ? 1 : 0, slot.isObject() ? 1 : 0);
+                }
+                fflush(sigLog);
+            }
         }
     }
 
@@ -2437,6 +2443,35 @@ ExecuteResult Interpreter::stepDetailed() {
 // ===== BYTECODE DISPATCH =====
 
 void Interpreter::dispatchBytecode(uint8_t bytecode) {
+    // Simple profiling: detect when slowdown happens
+    static int bcCount = 0;
+    static auto lastReport = std::chrono::steady_clock::now();
+    static int slowCount = 0;
+    bcCount++;
+
+    // Report rate every 1000 bytecodes between 5000-15000
+    if (bcCount >= 5000 && bcCount <= 15000 && bcCount % 1000 == 0) {
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastReport).count();
+        if (elapsed > 10) {  // Only report if significant time passed
+            fprintf(stderr, "[BC-RATE @%d] 1000 bc in %lldms (%.0f bc/s)\n",
+                    bcCount, elapsed, 1000.0 / elapsed * 1000);
+        }
+        lastReport = now;
+    }
+
+    // Check for individual slow bytecodes
+    if (bcCount >= 6500 && bcCount <= 7500) {
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - lastReport).count();
+        if (elapsed > 50000 && slowCount < 10) {  // > 50ms for one bytecode
+            slowCount++;
+            fprintf(stderr, "[SLOW-BC @%d] bc=0x%02x took %lldus fd=%d\n",
+                    bcCount, bytecode, elapsed, (int)frameDepth_);
+        }
+        lastReport = now;
+    }
+
     // Record bytecode in history buffer for debugging
     recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode;
     recentBytecodeIdx_++;
@@ -2445,9 +2480,12 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
     static FILE* baseFrameBcLog = nullptr;
     static int baseBcCount = 0;
     static bool loggedBaseDump = false;
-    if (!baseFrameBcLog) baseFrameBcLog = fopen("/tmp/base_fullcheck.log", "w");
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        if (!baseFrameBcLog) baseFrameBcLog = fopen("/tmp/base_fullcheck.log", "w");
+    }
 
     // Log bytecodes when at frame depth 0
+    if constexpr (ENABLE_DEBUG_LOGGING)
     if (frameDepth_ == 0 && baseFrameBcLog && baseBcCount < 500) {
         baseBcCount++;
 
@@ -4626,23 +4664,40 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 }
 
 void Interpreter::sendSelector(Oop selector, int argCount) {
-    // TRACE: Log all sends to see what's happening
+    // Debug logging (declare here to ensure available throughout function)
     static FILE* allSendLog = nullptr;
     static int allSendCount = 0;
-    if (!allSendLog) allSendLog = fopen("/tmp/all_sends.log", "w");
-    // Trace ifNotNil: sends specifically
-    std::string selStr2 = "";
-    if (selector.isObject() && selector.rawBits() > 0x10000) {
-        ObjectHeader* selHdr2 = selector.asObjectPtr();
-        if (selHdr2->isBytesObject() && selHdr2->byteSize() < 50) {
-            selStr2 = std::string((char*)selHdr2->bytes(), selHdr2->byteSize());
+    static int sendCount = 0;  // Track total send calls
+    sendCount++;
+
+    // Initialize debug log lazily
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        if (!allSendLog) {
+            allSendLog = fopen("/tmp/all_sends.log", "w");
         }
     }
+
+    // Fast path: Get selector bytes without creating std::string
+    const char* selBytes = nullptr;
+    size_t selLen = 0;
+    if (selector.isObject() && selector.rawBits() > 0x10000) {
+        ObjectHeader* selHdr = selector.asObjectPtr();
+        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+            selBytes = (const char*)selHdr->bytes();
+            selLen = selHdr->byteSize();
+        }
+    }
+
+    // Helper lambda for fast selector comparison (no string allocation)
+    auto selEquals = [selBytes, selLen](const char* name) {
+        size_t nameLen = strlen(name);
+        return selLen == nameLen && selBytes && memcmp(selBytes, name, nameLen) == 0;
+    };
 
     // INTERCEPT: Skip delay scheduler startUp during fresh image start
     // The saved heap/resumption times may contain nil entries that cause infinite
     // loops in array operations. Skip the entire scheduler startUp to start fresh.
-    if (selStr2 == "startUp" && argCount == 0) {
+    if (selEquals("startUp") && argCount == 0) {
         // Check if receiver is DelaySemaphoreScheduler
         Oop rcvr = stackValue(0);
         if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
@@ -4671,7 +4726,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     // INTERCEPT: Handle Context class >> newForMethod: directly
     // Primitive 71 (basicNew:) is failing for Context allocation.
     // Allocate contexts directly from the VM.
-    if (selStr2 == "newForMethod:" && argCount == 1) {
+    if (selEquals("newForMethod:") && argCount == 1) {
         Oop rcvr = stackValue(1);  // Should be Context class
         if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
             Oop nameOop = memory_.fetchPointer(6, rcvr);
@@ -4717,7 +4772,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     // This method tries to do arithmetic with nil values from the saved image,
     // causing cascading failures. Instead of restoring old delay times, we let
     // the delay scheduler start fresh with no pending delays.
-    if (selStr2 == "restoreResumptionTimes:") {
+    if (selEquals("restoreResumptionTimes:")) {
         static int restoreSkipCount = 0;
         if (restoreSkipCount++ < 3) {
             std::cerr << "[STARTUP] Skipping restoreResumptionTimes: - delay scheduler starts fresh\n";
@@ -4731,7 +4786,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     // Trace startupList and runList:do: to see what's being passed
     // Trace Association >> value to see what's being returned
     // NOTE: This traces BEFORE the method executes
-    if (selStr2 == "value" && argCount == 0) {
+    if (selEquals("value") && argCount == 0) {
         static FILE* assocLog = nullptr;
         static int assocCount = 0;
         if (!assocLog) assocLog = fopen("/tmp/assoc_value.log", "w");
@@ -4770,7 +4825,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
     }
     // Trace value: on blocks during collect: operations
-    if (selStr2 == "value:" && argCount == 1) {
+    if (selEquals("value:") && argCount == 1) {
         static FILE* valueLog = nullptr;
         static int valueCount = 0;
         if (!valueLog) valueLog = fopen("/tmp/block_value.log", "w");
@@ -4841,7 +4896,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
     }
     // Trace addLast: to see when nil is passed
-    if (selStr2 == "addLast:" && argCount == 1) {
+    if (selEquals("addLast:") && argCount == 1) {
         static FILE* addLastLog = nullptr;
         static int addLastCount = 0;
         if (!addLastLog) addLastLog = fopen("/tmp/addlast_trace.log", "w");
@@ -4900,7 +4955,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
     }
     // Trace nextPutAll: to see what collection is being added
-    if (selStr2 == "nextPutAll:" && argCount == 1) {
+    if (selEquals("nextPutAll:") && argCount == 1) {
         static FILE* nextPutAllLog = nullptr;
         static int nextPutAllCount = 0;
         if (!nextPutAllLog) nextPutAllLog = fopen("/tmp/nextputall.log", "w");
@@ -4969,7 +5024,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
     }
     // Trace nextPut: to see if elements are being stored
-    if (selStr2 == "nextPut:" && argCount == 1) {
+    if (selEquals("nextPut:") && argCount == 1) {
         static FILE* nextPutLog = nullptr;
         static int nextPutCount = 0;
         if (!nextPutLog) nextPutLog = fopen("/tmp/nextput_all.log", "w");
@@ -5012,7 +5067,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
     }
     // Trace copyFrom:to: to see what indices are used
-    if (selStr2 == "copyFrom:to:" && argCount == 2) {
+    if (selEquals("copyFrom:to:") && argCount == 2) {
         static FILE* copyLog = nullptr;
         static int copyCount = 0;
         if (!copyLog) copyLog = fopen("/tmp/copyfromto.log", "w");
@@ -5071,14 +5126,14 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             fflush(copyLog);
         }
     }
-    if (selStr2 == "startupList" || selStr2 == "runList:do:") {
+    if (selEquals("startupList") || selEquals("runList:do:")) {
         static FILE* startupListLog = nullptr;
         static int startupListCount = 0;
         if (!startupListLog) startupListLog = fopen("/tmp/startupList_trace.log", "w");
         if (startupListLog && startupListCount < 20) {
             startupListCount++;
-            fprintf(startupListLog, "[%s #%d]\n", selStr2.c_str(), startupListCount);
-            if (selStr2 == "runList:do:" && argCount >= 1) {
+            fprintf(startupListLog, "[%.*s #%d]\n", (int)selLen, selBytes, startupListCount);
+            if (selEquals("runList:do:") && argCount >= 1) {
                 // Show the list argument
                 Oop listArg = stackValue(1);  // list is arg0, block is arg1, so list is at stackValue(1)
                 std::string listClass = "<unknown>";
@@ -5125,15 +5180,15 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             fflush(startupListLog);
         }
     }
-    if (selStr2 == "ifNotNil:" || selStr2 == "ifNil:" || selStr2 == "ifNil:ifNotNil:" || selStr2 == "ifNotNil:ifNil:") {
+    if (selEquals("ifNotNil:") || selEquals("ifNil:") || selEquals("ifNil:ifNotNil:") || selEquals("ifNotNil:ifNil:")) {
         static FILE* ifNotNilLog = nullptr;
         static int ifNotNilCount = 0;
         if (!ifNotNilLog) ifNotNilLog = fopen("/tmp/ifNotNil_trace.log", "w");
         if (ifNotNilLog && ifNotNilCount < 100) {
             ifNotNilCount++;
             Oop rcvr = stackValue(static_cast<size_t>(argCount));
-            fprintf(ifNotNilLog, "[IFNOTNIL #%d] %s sent to rcvr=0x%llx\n",
-                    ifNotNilCount, selStr2.c_str(), (unsigned long long)rcvr.rawBits());
+            fprintf(ifNotNilLog, "[IFNOTNIL #%d] %.*s sent to rcvr=0x%llx\n",
+                    ifNotNilCount, (int)selLen, selBytes, (unsigned long long)rcvr.rawBits());
             fflush(ifNotNilLog);
         }
     }
@@ -5192,8 +5247,12 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 }
             }
         }
-        fprintf(allSendLog, "[SEND #%d @%s] %s >> #%s (args=%d)\n",
-                allSendCount, currentMethod.c_str(), rcvrName.c_str(), selStr.c_str(), argCount);
+        // Only log first 1000 sends to avoid massive slowdown
+        if (allSendCount <= 1000) {
+            fprintf(allSendLog, "[SEND #%d @%s] %s >> #%s (args=%d)\n",
+                    allSendCount, currentMethod.c_str(), rcvrName.c_str(), selStr.c_str(), argCount);
+            fflush(allSendLog);
+        }
 
         // Trace fullCheck to understand the infinite loop
         static int fullCheckTraceCount = 0;
@@ -5659,8 +5718,7 @@ extern int g_traceSendsAfterPrim264;
     }
 
     // Message send tracing (limited to first 50 for cleaner output)
-    static int sendCount = 0;
-    sendCount++;
+    // NOTE: sendCount already declared at function start
 
     if (sendCount <= 50) {
         // Show selector name
@@ -6705,9 +6763,12 @@ extern int g_traceSendsAfterPrim264;
         }
     }
 
-    // Check method cache
+    // Check method cache (with statistics)
+    static int cacheHits = 0, cacheMisses = 0;
+    static int lastReport = 0;
     MethodCacheEntry* cached = probeCache(selector, rcvrClass);
     if (cached && cached->method != Oop::nil()) {
+        cacheHits++;
         // Cache hit
         if (cached->primitiveIndex > 0) {
             // Check for quick primitives (256-519) - these are handled specially
@@ -6763,6 +6824,13 @@ tryRegularPrimitive:
     }
 
     // Cache miss - look up method
+    cacheMisses++;
+    if ((cacheHits + cacheMisses) % 1000 == 0 && (cacheHits + cacheMisses) > lastReport) {
+        lastReport = cacheHits + cacheMisses;
+        fprintf(stderr, "[CACHE @%d] hits=%d misses=%d (%.1f%% hit rate)\n",
+                cacheHits + cacheMisses, cacheHits, cacheMisses,
+                100.0 * cacheHits / (cacheHits + cacheMisses));
+    }
     Oop method = lookupMethod(selector, rcvrClass);
     if (method.isNil()) {
         sendDoesNotUnderstand(selector, argCount);
@@ -13459,9 +13527,12 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
         primExecLog = fopen("/tmp/prim_exec.log", "w");
     }
     primExecCount++;
-    if (primExecLog && primExecCount <= 500) {
-        fprintf(primExecLog, "[PRIM-EXEC] #%d prim=%d func=%s\n",
-                primExecCount, primitiveIndex, prim ? "YES" : "NULL");
+    // Always log event-related primitives (230, 264-269) and first 500 others
+    bool isEventPrim = (primitiveIndex == 230 || (primitiveIndex >= 264 && primitiveIndex <= 269));
+    if (primExecLog && (primExecCount <= 500 || isEventPrim)) {
+        fprintf(primExecLog, "[PRIM-EXEC] #%d prim=%d func=%s%s\n",
+                primExecCount, primitiveIndex, prim ? "YES" : "NULL",
+                isEventPrim ? " <<EVENT>>" : "");
         fflush(primExecLog);
     }
 

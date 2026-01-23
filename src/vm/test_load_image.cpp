@@ -526,6 +526,7 @@ int main(int argc, char* argv[]) {
 
         // Run bytecode steps for testing
         std::cout << "\n=== Execution Test ===" << std::endl;
+        auto execStart = std::chrono::steady_clock::now();
         int totalSteps = 2000000;  // Run more steps to allow Morphic to render
         std::cout << "Running up to " << totalSteps << " bytecode steps..." << std::endl;
         int activeSteps = 0;
@@ -534,7 +535,29 @@ int main(int argc, char* argv[]) {
         int clickResponseSteps = 0;
 
         for (int i = 0; i < totalSteps; i++) {
+            // Debug to find the blocking step
+            if (i >= 1020 && i <= 1030) {
+                fprintf(stderr, "[D-%d] before step()\n", i);
+            }
             bool result = interpreter.step();
+            if (i >= 1020 && i <= 1030) {
+                fprintf(stderr, "[D-%d] after step(), result=%d\n", i, result);
+            }
+
+            // Progress report every 100k steps
+            if (i > 0 && i % 100000 == 0) {
+                std::cout << "[PROGRESS] Step " << i << ": active=" << activeSteps
+                          << " idle=" << idleSteps << " result=" << result << std::endl;
+            }
+
+            // Report every 1000 steps
+            if (i > 0 && i % 1000 == 0) {
+                static auto start = std::chrono::steady_clock::now();
+                auto now = std::chrono::steady_clock::now();
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();
+                fprintf(stderr, "[STEP %d] active=%d total_time=%lldms\n", i, activeSteps, elapsed);
+            }
+
             if (result) {
                 activeSteps++;
                 idleSteps = 0;  // Reset consecutive idle count
@@ -572,6 +595,10 @@ int main(int argc, char* argv[]) {
                 }
             } else {
                 idleSteps++;
+                // Report when we start getting idle
+                if (idleSteps == 1) {
+                    std::cout << "[IDLE] Started at step " << i << " after " << activeSteps << " active steps" << std::endl;
+                }
                 // If we get too many consecutive idle steps, stop
                 if (idleSteps > 1000) {
                     std::cout << "Interpreter stopped (1000 consecutive idle steps) at step " << i << std::endl;
