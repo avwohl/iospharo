@@ -92,13 +92,13 @@ Last updated: 2026-01-22
 - primitiveControlVMProfiling (251): Succeeds (no-op in interpreter)
 - primitiveCollectCogCodeConstituents (253): Fails (Cog JIT-specific)
 
-### Become Variant (248)
+### ~~Become Variant (248)~~ ✅ IMPLEMENTED
 | Primitive | Name | Description |
 |-----------|------|-------------|
 | 248 | primitiveArrayBecomeOneWayNoCopyHash | One-way become without hash copy |
 
-- **Impact**: Low - Primitive 249 (with hash copy) is implemented
-- **Workaround**: Use primitive 249 or primitive 72
+- **Status**: IMPLEMENTED (2026-01-22)
+- Like primitive 249 but never copies identity hash from source to target
 
 ## Low Priority (Rarely Used)
 

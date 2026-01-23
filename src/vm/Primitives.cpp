@@ -10037,6 +10037,55 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWayCopyHash(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// Primitive 248: One-way become without hash copying
+// receiver elementsForwardIdentityTo: toArray -> receiver
+// Like primitiveArrayBecomeOneWayCopyHash but never copies identity hash
+PrimitiveResult Interpreter::primitiveArrayBecomeOneWayNoCopyHash(int argCount) {
+    if (argCount != 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop toArrayOop = stackValue(0);
+    Oop fromArrayOop = stackValue(1);
+
+    if (!fromArrayOop.isObject() || !toArrayOop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t fromSize = memory_.slotCountOf(fromArrayOop);
+    size_t toSize = memory_.slotCountOf(toArrayOop);
+
+    // Arrays must be the same size
+    if (fromSize != toSize) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Perform one-way become for each pair (without copying hash)
+    for (size_t i = 0; i < fromSize; i++) {
+        Oop fromObj = memory_.fetchPointer(i, fromArrayOop);
+        Oop toObj = memory_.fetchPointer(i, toArrayOop);
+
+        // Skip if either is an immediate or nil
+        if (!fromObj.isObject() || fromObj.isNil()) {
+            continue;
+        }
+        if (!toObj.isObject() || toObj.isNil()) {
+            continue;
+        }
+
+        // Do NOT copy identity hash (that's the difference from primitive 249)
+
+        // Perform one-way become: all references to fromObj become toObj
+        memory_.becomeForward(fromObj, toObj);
+    }
+
+    // Flush method cache (critical after become)
+    flushMethodCache();
+
+    popN(1);  // Pop argument, leave receiver
+    return PrimitiveResult::Success;
+}
+
 // ===== CONTEXT PRIMITIVE (203) =====
 
 // Primitive 203: Evaluate block value uninterruptably

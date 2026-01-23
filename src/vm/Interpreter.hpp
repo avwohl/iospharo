@@ -829,9 +829,10 @@ private:
     PrimitiveResult primitiveCompareStringCollated(int argCount);  // 157
     PrimitiveResult primitiveCompareStringNoCase(int argCount);    // 158
 
-    // Process/become primitives (197-198)
-    PrimitiveResult primitiveArrayBecomeOneWay(int argCount);      // 197
-    PrimitiveResult primitiveArrayBecomeOneWayCopyHash(int argCount); // 198
+    // Process/become primitives (197-198, 248-249)
+    PrimitiveResult primitiveArrayBecomeOneWay(int argCount);           // 197
+    PrimitiveResult primitiveArrayBecomeOneWayCopyHash(int argCount);   // 198 (also 249)
+    PrimitiveResult primitiveArrayBecomeOneWayNoCopyHash(int argCount); // 248
 
     // Context primitive (203)
     PrimitiveResult primitiveValueUninterruptably(int argCount);   // 203
