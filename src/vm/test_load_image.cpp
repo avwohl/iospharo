@@ -539,7 +539,16 @@ int main(int argc, char* argv[]) {
             if (i >= 1020 && i <= 1030) {
                 fprintf(stderr, "[D-%d] before step()\n", i);
             }
+            // Debug around 14000+ steps to catch the hang
+            if (i >= 14000 && i <= 15100) {
+                fprintf(stderr, "[D2-%d] before step()\n", i);
+                fflush(stderr);
+            }
             bool result = interpreter.step();
+            if (i >= 14000 && i <= 15100) {
+                fprintf(stderr, "[D2-%d] after step(), result=%d\n", i, result);
+                fflush(stderr);
+            }
             if (i >= 1020 && i <= 1030) {
                 fprintf(stderr, "[D-%d] after step(), result=%d\n", i, result);
             }

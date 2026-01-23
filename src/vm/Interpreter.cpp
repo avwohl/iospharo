@@ -38,6 +38,11 @@ static bool g_inFullCheck = false;
 static int g_fullCheckBytecodeCount = 0;
 static FILE* g_fcBytecodeLog = nullptr;
 
+// Global flag to enable bytecode tracing after a certain send count
+static bool g_bytecodeTraceEnabled = false;
+static int g_bytecodeTraceCount = 0;
+static FILE* g_bytecodeTraceLog = nullptr;
+
 // ===== CONSTRUCTION =====
 
 Interpreter::Interpreter(ObjectMemory& memory)
@@ -2354,12 +2359,26 @@ void Interpreter::processPendingSignals() {
 }
 
 bool Interpreter::step() {
+    static uint64_t stepCallCount = 0;
+    stepCallCount++;
+
+    // Debug around hang point (step 14967)
+    bool debugThisStep = (stepCallCount >= 14960 && stepCallCount <= 14975);
+    if (debugThisStep) {
+        fprintf(stderr, "[STEP-INNER %llu] entry running=%d\n", stepCallCount, running_ ? 1 : 0);
+        fflush(stderr);
+    }
+
     if (!running_) {
         return false;
     }
 
     // Process any pending external semaphore signals (from heartbeat/events)
     if (hasPendingSignals()) {
+        if (debugThisStep) {
+            fprintf(stderr, "[STEP-INNER %llu] processing signals\n", stepCallCount);
+            fflush(stderr);
+        }
         processPendingSignals();
     }
 
@@ -2387,6 +2406,10 @@ bool Interpreter::step() {
 
     // Check if we've run past the end of bytecodes
     if (instructionPointer_ >= bytecodeEnd_) {
+        if (debugThisStep) {
+            fprintf(stderr, "[STEP-INNER %llu] past bytecode end, returning\n", stepCallCount);
+            fflush(stderr);
+        }
         returnValue(receiver_);
         return running_;
     }
@@ -2396,8 +2419,39 @@ bool Interpreter::step() {
     // NEXT bytecode uses them. The consuming bytecodes reset them after use.
     // Resetting here would break extension byte chains.
 
+    if (debugThisStep) {
+        fprintf(stderr, "[STEP-INNER %llu] about to fetch bytecode, IP=%p fd=%zu\n",
+                stepCallCount, (void*)instructionPointer_, frameDepth_);
+        fflush(stderr);
+    }
+
     uint8_t bytecode = fetchByte();
+
+    if (debugThisStep) {
+        fprintf(stderr, "[STEP-INNER %llu] fetched bytecode 0x%02X, dispatching\n", stepCallCount, bytecode);
+        fflush(stderr);
+    }
+
+    // Bytecode-level tracing (enabled after certain send count)
+    if (g_bytecodeTraceEnabled && g_bytecodeTraceCount < 2000) {
+        if (!g_bytecodeTraceLog) {
+            g_bytecodeTraceLog = fopen("/tmp/bytecode_trace.log", "w");
+        }
+        if (g_bytecodeTraceLog) {
+            g_bytecodeTraceCount++;
+            fprintf(g_bytecodeTraceLog, "[BC#%d] 0x%02X fd=%zu sp=%zu\n",
+                    g_bytecodeTraceCount, bytecode, frameDepth_,
+                    (size_t)(stackPointer_ - stackBase_));
+            fflush(g_bytecodeTraceLog);
+        }
+    }
+
     dispatchBytecode(bytecode);
+
+    if (debugThisStep) {
+        fprintf(stderr, "[STEP-INNER %llu] dispatchBytecode returned, running=%d\n", stepCallCount, running_ ? 1 : 0);
+        fflush(stderr);
+    }
 
     return running_;
 }
@@ -3257,6 +3311,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
 
 void Interpreter::push(Oop value) {
     if (stackPointer_ >= stack_.data() + MaxStackDepth) {
+        std::cerr << "[VM-STOP] Stack overflow in push()\n";
         running_ = false;
         return;
     }
@@ -3835,6 +3890,7 @@ terminate_process:
         static int maxIdleCycles = 500;  // ~5 seconds of idle
         idleCount++;
         if (idleCount >= maxIdleCycles) {
+            std::cerr << "[VM-STOP] Idle timeout in scheduler\n";
             running_ = false;
             push(value);
             return;
@@ -4822,6 +4878,66 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     static int sendCount = 0;  // Track total send calls
     sendCount++;
 
+    // Debug at hang point (sendCount 4575 is the last logged send before hang)
+    static bool hangDebugEnabled = false;
+    if (sendCount >= 4575) {
+        hangDebugEnabled = true;
+    }
+    if (hangDebugEnabled && sendCount <= 4590) {
+        std::string selStr = "<unknown>";
+        if (selector.isObject() && selector.rawBits() > 0x10000) {
+            ObjectHeader* selHdr = selector.asObjectPtr();
+            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+            }
+        }
+        fprintf(stderr, "[SEND-DEBUG #%d] entry, selector=%s argCount=%d fd=%zu\n",
+                sendCount, selStr.c_str(), argCount, frameDepth_);
+        fflush(stderr);
+    }
+
+    // Trace sends after bytecode tracing is enabled
+    if (g_bytecodeTraceEnabled) {
+        static FILE* debugSendLog = nullptr;
+        static int debugSendCount = 0;
+        if (!debugSendLog) {
+            debugSendLog = fopen("/tmp/debug_sends.log", "w");
+        }
+        if (debugSendLog && debugSendCount < 100) {
+            debugSendCount++;
+            std::string selStr = "<unknown>";
+            if (selector.isObject() && selector.rawBits() > 0x10000) {
+                ObjectHeader* selHdr = selector.asObjectPtr();
+                if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                    selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                }
+            }
+            // Get receiver class name
+            std::string rcvrClassName = "<unknown>";
+            Oop rcvr = stackValue(argCount);
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+                uint32_t classIdx = rcvrHdr->classIndex();
+                Oop cls = memory_.classAtIndex(classIdx);
+                if (cls.isObject() && cls.rawBits() > 0x10000) {
+                    ObjectHeader* clsHdr = cls.asObjectPtr();
+                    if (clsHdr->slotCount() >= 7) {
+                        Oop nm = clsHdr->slotAt(6);
+                        if (nm.isObject() && nm.rawBits() > 0x10000) {
+                            ObjectHeader* nmHdr = nm.asObjectPtr();
+                            if (nmHdr->isBytesObject() && nmHdr->byteSize() < 50) {
+                                rcvrClassName = std::string((char*)nmHdr->bytes(), nmHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+            }
+            fprintf(debugSendLog, "[POST-BC] sendSelector: %s >> %s (argCount=%d) fd=%zu running=%d\n",
+                    rcvrClassName.c_str(), selStr.c_str(), argCount, frameDepth_, running_ ? 1 : 0);
+            fflush(debugSendLog);
+        }
+    }
+
     // Initialize debug log lazily
     if constexpr (ENABLE_DEBUG_LOGGING) {
         if (!allSendLog) {
@@ -4905,6 +5021,14 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             std::string selectorStr(selBytes, selBytes + selLen);
             fprintf(startupTraceLog, "[SEND#%d] %s (argCount=%d) fd=%zu\n",
                     startupTraceCount, selectorStr.c_str(), argCount, frameDepth_);
+
+            // Enable bytecode tracing after send #4570 (the last send before hang)
+            if (startupTraceCount == 4570) {
+                g_bytecodeTraceEnabled = true;
+                g_bytecodeTraceCount = 0;  // Reset count
+                fprintf(startupTraceLog, "[TRACE] Enabling bytecode tracing after send #4570\n");
+                fflush(startupTraceLog);
+            }
 
             // Extra: log <= comparisons to track loop bounds
             if (selEquals("<=") && argCount == 1) {
@@ -7928,9 +8052,21 @@ extern int g_traceSendsAfterPrim264;
     // Check method cache (with statistics)
     static int cacheHits = 0, cacheMisses = 0;
     static int lastReport = 0;
+
+    if (hangDebugEnabled && sendCount <= 4590) {
+        fprintf(stderr, "[SEND-DEBUG #%d] about to probe cache\n", sendCount);
+        fflush(stderr);
+    }
+
     MethodCacheEntry* cached = probeCache(selector, rcvrClass);
     if (cached && cached->method != Oop::nil()) {
         cacheHits++;
+
+        if (hangDebugEnabled && sendCount <= 4590) {
+            fprintf(stderr, "[SEND-DEBUG #%d] cache hit, primIdx=%d\n", sendCount, cached->primitiveIndex);
+            fflush(stderr);
+        }
+
         // Cache hit
         if (cached->primitiveIndex > 0) {
             // Check for quick primitives (256-519) - these are handled specially
@@ -7981,7 +8117,19 @@ tryRegularPrimitive:
                 }
             }
         }
+
+        if (hangDebugEnabled && sendCount <= 4590) {
+            fprintf(stderr, "[SEND-DEBUG #%d] cache hit, about to activateMethod (cached)\n", sendCount);
+            fflush(stderr);
+        }
+
         activateMethod(cached->method, argCount);
+
+        if (hangDebugEnabled && sendCount <= 4590) {
+            fprintf(stderr, "[SEND-DEBUG #%d] cache hit, activateMethod returned\n", sendCount);
+            fflush(stderr);
+        }
+
         return;
     }
 
@@ -7993,6 +8141,12 @@ tryRegularPrimitive:
                 cacheHits + cacheMisses, cacheHits, cacheMisses,
                 100.0 * cacheHits / (cacheHits + cacheMisses));
     }
+
+    if (hangDebugEnabled && sendCount <= 4590) {
+        fprintf(stderr, "[SEND-DEBUG #%d] cache miss, looking up method\n", sendCount);
+        fflush(stderr);
+    }
+
     Oop method = lookupMethod(selector, rcvrClass);
     if (method.isNil()) {
         sendDoesNotUnderstand(selector, argCount);
@@ -8054,7 +8208,17 @@ tryRegularPrimitive:
         }
     }
 
+    if (hangDebugEnabled && sendCount <= 4590) {
+        fprintf(stderr, "[SEND-DEBUG #%d] about to activateMethod\n", sendCount);
+        fflush(stderr);
+    }
+
     activateMethod(method, argCount);
+
+    if (hangDebugEnabled && sendCount <= 4590) {
+        fprintf(stderr, "[SEND-DEBUG #%d] activateMethod returned\n", sendCount);
+        fflush(stderr);
+    }
 }
 
 // ===== METHOD LOOKUP =====
@@ -9809,6 +9973,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
 
     // Save current execution state before switching to new method
     if (frameDepth_ >= MaxFrameDepth) {
+        std::cerr << "[VM-STOP] Frame depth overflow in pushFrame(): " << frameDepth_ << " >= " << MaxFrameDepth << "\n";
         running_ = false;
         return false;
     }
@@ -9923,6 +10088,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
 void Interpreter::popFrame() {
     // Restore previous execution state
     if (frameDepth_ == 0) {
+        std::cerr << "[VM-STOP] popFrame at frameDepth 0\n";
         running_ = false;
         return;
     }
@@ -9994,6 +10160,7 @@ void Interpreter::popFrame() {
 
     // If this was the last frame, we're done
     if (frameDepth_ == 0 && frame.savedIP == nullptr) {
+        std::cerr << "[VM-STOP] Last frame popped in popFrame()\n";
         running_ = false;
     }
 }
