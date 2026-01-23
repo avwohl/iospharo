@@ -10516,6 +10516,71 @@ PrimitiveResult Interpreter::primitiveListExternalModule(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// Primitive 574: SIMD Float64 Array Addition
+// arg1 arg2 res primitiveFloat64ArrayAdd -> res
+// Adds corresponding elements of arg1 and arg2, stores in res
+// All arrays must be Float64Array (64-bit indexable words)
+PrimitiveResult Interpreter::primitiveFloat64ArrayAdd(int argCount) {
+    if (argCount != 3) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop resOop = stackValue(0);   // Result array (top of stack)
+    Oop arg2Oop = stackValue(1);  // Second source array
+    Oop arg1Oop = stackValue(2);  // First source array
+
+    // All must be non-immediate objects
+    if (!resOop.isObject() || !arg2Oop.isObject() || !arg1Oop.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get object headers
+    ObjectHeader* resHeader = resOop.asObjectPtr();
+    ObjectHeader* arg1Header = arg1Oop.asObjectPtr();
+    ObjectHeader* arg2Header = arg2Oop.asObjectPtr();
+
+    if (!resHeader || !arg1Header || !arg2Header) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Check format - must be 64-bit indexable (Indexable64 = format 9)
+    ObjectFormat resFormat = resHeader->format();
+    ObjectFormat arg1Format = arg1Header->format();
+    ObjectFormat arg2Format = arg2Header->format();
+
+    if (resFormat != ObjectFormat::Indexable64 ||
+        arg1Format != ObjectFormat::Indexable64 ||
+        arg2Format != ObjectFormat::Indexable64) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get sizes (in 64-bit slots)
+    size_t resSize = resHeader->slotCount();
+    size_t arg1Size = arg1Header->slotCount();
+    size_t arg2Size = arg2Header->slotCount();
+
+    // All must have the same size
+    if (resSize != arg1Size || resSize != arg2Size) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Get pointers to the data (64-bit slots contain doubles)
+    double* resData = reinterpret_cast<double*>(resHeader->slots());
+    double* arg1Data = reinterpret_cast<double*>(arg1Header->slots());
+    double* arg2Data = reinterpret_cast<double*>(arg2Header->slots());
+
+    // Perform addition (simple loop - no actual SIMD instructions)
+    for (size_t i = 0; i < resSize; i++) {
+        resData[i] = arg1Data[i] + arg2Data[i];
+    }
+
+    // Pop arguments and receiver, push result
+    popN(3);
+    pop();  // Pop receiver
+    push(resOop);
+    return PrimitiveResult::Success;
+}
+
 // Primitive 117: Call out to FFI (Foreign Function Interface)
 // externalFunction args primitiveCalloutToFFI -> result
 // Calls a foreign function through FFI mechanism

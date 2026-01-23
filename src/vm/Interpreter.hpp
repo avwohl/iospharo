@@ -734,6 +734,7 @@ private:
     PrimitiveResult primitiveUnloadModule(int argCount);           // 571
     PrimitiveResult primitiveListBuiltinModule(int argCount);      // 572
     PrimitiveResult primitiveListExternalModule(int argCount);     // 573
+    PrimitiveResult primitiveFloat64ArrayAdd(int argCount);        // 574
 
     // Socket primitive (133)
     PrimitiveResult primitiveSocket(int argCount);                 // 133
