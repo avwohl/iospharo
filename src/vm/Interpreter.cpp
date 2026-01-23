@@ -4753,9 +4753,19 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                           selEquals("handlers") || selEquals("handlerList") ||
                           selEquals("categoryList:") || selEquals("select:thenCollect:") ||
                           selEquals("at:ifAbsent:") || selEquals("at:") ||
-                          selEquals("registeredClasses") || selEquals("selectedHandlersFor:");
+                          selEquals("registeredClasses") || selEquals("selectedHandlersFor:") ||
+                          // Handler selection and registration
+                          selEquals("handledId") || selEquals("hasRegistered:") ||
+                          selEquals("isRegistered") || selEquals("shouldHandleCategory:") ||
+                          selEquals("handlerPriority") || selEquals("priority") ||
+                          selEquals("registerAsStartupHandler:") || selEquals("registerHandler:") ||
+                          selEquals("registeredHandlers") || selEquals("allHandlers") ||
+                          selEquals("handlerWithId:") || selEquals("includes:") ||
+                          selEquals("isNil") || selEquals("ifNil:") || selEquals("ifNotNil:") ||
+                          // InputEventSensor specific
+                          selEquals("default") || selEquals("current") || selEquals("install");
 
-        if (interesting && startupTraceLog && startupTraceCount < 1000) {
+        if (interesting && startupTraceLog && startupTraceCount < 5000) {
             startupTraceCount++;
             // Get receiver class name - handle both instances and class objects
             std::string rcvrClassName = "<unknown>";
@@ -4914,6 +4924,320 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             std::string selName(selBytes, selLen);
             fprintf(startupTraceLog, "[#%d] %s >> %s (argCount=%d)\n",
                     startupTraceCount, rcvrClassName.c_str(), selName.c_str(), argCount);
+
+            // Extra detail for value: - check if argument is SessionCategory
+            if (selEquals("value:") && argCount == 1) {
+                Oop catArg = stackValue(0);  // The argument passed to value:
+                if (catArg.isObject() && catArg.rawBits() > 0x10000) {
+                    ObjectHeader* catHdr = catArg.asObjectPtr();
+                    // Check if this is a SessionCategory (2 slots, slot[0]=name, slot[1]=handlers)
+                    uint32_t catClassIdx = catHdr->classIndex();
+                    Oop catClass = memory_.classAtIndex(catClassIdx);
+                    std::string catClassName = "?";
+                    if (catClass.isObject() && catClass.rawBits() > 0x10000) {
+                        ObjectHeader* ccHdr = catClass.asObjectPtr();
+                        if (ccHdr->slotCount() >= 7) {
+                            Oop ccName = ccHdr->slotAt(6);
+                            if (ccName.isObject() && ccName.rawBits() > 0x10000) {
+                                ObjectHeader* ccnHdr = ccName.asObjectPtr();
+                                if (ccnHdr->isBytesObject() && ccnHdr->byteSize() < 50) {
+                                    catClassName = std::string((char*)ccnHdr->bytes(), ccnHdr->byteSize());
+                                }
+                            }
+                        }
+                    }
+                    if (catClassName == "SessionCategory" && catHdr->slotCount() >= 2) {
+                        // SessionCategory has: slot[0] = name (ByteString), slot[1] = handlers (Dictionary)
+                        Oop catName = catHdr->slotAt(0);
+                        Oop handlers = catHdr->slotAt(1);
+                        std::string catNameStr = "?";
+                        if (catName.isObject() && catName.rawBits() > 0x10000) {
+                            ObjectHeader* cnHdr = catName.asObjectPtr();
+                            if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                                catNameStr = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                            }
+                        }
+                        fprintf(startupTraceLog, "  -> Category: '%s'\n", catNameStr.c_str());
+                        // Dump handlers dictionary
+                        if (handlers.isObject() && handlers.rawBits() > 0x10000) {
+                            ObjectHeader* hdlHdr = handlers.asObjectPtr();
+                            size_t hdlSlots = hdlHdr->slotCount();
+                            fprintf(startupTraceLog, "  -> Handlers dictionary: %zu slots\n", hdlSlots);
+                            // Dictionary has array at slot 1
+                            if (hdlSlots >= 2) {
+                                Oop assocArray = hdlHdr->slotAt(1);
+                                if (assocArray.isObject() && assocArray.rawBits() > 0x10000) {
+                                    ObjectHeader* aaHdr = assocArray.asObjectPtr();
+                                    size_t aaSlots = aaHdr->slotCount();
+                                    int nonNilCount = 0;
+                                    for (size_t i = 0; i < aaSlots && i < 100; i++) {
+                                        Oop assoc = aaHdr->slotAt(i);
+                                        if (!assoc.isNil() && assoc.isObject() && assoc.rawBits() > 0x10000) {
+                                            nonNilCount++;
+                                            // Association: slot[0] = key, slot[1] = value
+                                            ObjectHeader* assocHdr = assoc.asObjectPtr();
+                                            if (assocHdr->slotCount() >= 2) {
+                                                Oop key = assocHdr->slotAt(0);
+                                                Oop val = assocHdr->slotAt(1);
+                                                std::string keyStr = "?";
+                                                if (key.isObject() && key.rawBits() > 0x10000) {
+                                                    ObjectHeader* kHdr = key.asObjectPtr();
+                                                    size_t kSlots = kHdr->slotCount();
+                                                    int kFmt = static_cast<int>(kHdr->format());
+                                                    if (kHdr->isBytesObject()) {
+                                                        size_t kBytes = kHdr->byteSize();
+                                                        if (kBytes < 80) {
+                                                            keyStr = std::string((char*)kHdr->bytes(), kBytes);
+                                                        } else {
+                                                            char buf[64];
+                                                            snprintf(buf, sizeof(buf), "<bytes=%zu>", kBytes);
+                                                            keyStr = buf;
+                                                        }
+                                                    } else if (kSlots >= 7) {
+                                                        // Might be a Class - try to get name from slot 6
+                                                        Oop kName = kHdr->slotAt(6);
+                                                        if (kName.isObject() && kName.rawBits() > 0x10000) {
+                                                            ObjectHeader* knHdr = kName.asObjectPtr();
+                                                            if (knHdr->isBytesObject() && knHdr->byteSize() < 80) {
+                                                                keyStr = std::string((char*)knHdr->bytes(), knHdr->byteSize());
+                                                            }
+                                                        }
+                                                    } else {
+                                                        char buf[64];
+                                                        snprintf(buf, sizeof(buf), "<fmt=%d slots=%zu>", kFmt, kSlots);
+                                                        keyStr = buf;
+                                                    }
+                                                } else if (key.isSmallInteger()) {
+                                                    char buf[32];
+                                                    snprintf(buf, sizeof(buf), "SmallInt(%lld)", key.asSmallInteger());
+                                                    keyStr = buf;
+                                                }
+                                                // Also get the value (the actual handler)
+                                                // Structure: Dict value = OrderedCollection containing ClassSessionHandler objects
+                                                // OrderedCollection: slot[0]=array, slot[1]=first, slot[2]=last
+                                                // ClassSessionHandler: slot[0]=handledId (class), slot[1]=priority, slot[2]=flag
+                                                std::string valStr = "?";
+                                                std::string handlerClassName = "?";
+                                                if (val.isObject() && val.rawBits() > 0x10000) {
+                                                    ObjectHeader* vHdr = val.asObjectPtr();
+                                                    size_t vSlots = vHdr->slotCount();
+
+                                                    // First, find out what class the handler container is
+                                                    uint32_t handlerClassIdx = vHdr->classIndex();
+                                                    Oop handlerClass = memory_.classAtIndex(handlerClassIdx);
+                                                    if (handlerClass.isObject() && handlerClass.rawBits() > 0x10000) {
+                                                        ObjectHeader* hclsHdr = handlerClass.asObjectPtr();
+                                                        if (hclsHdr->slotCount() >= 7) {
+                                                            Oop hn = hclsHdr->slotAt(6);
+                                                            if (hn.isObject() && hn.rawBits() > 0x10000) {
+                                                                ObjectHeader* hnHdr = hn.asObjectPtr();
+                                                                if (hnHdr->isBytesObject() && hnHdr->byteSize() < 50) {
+                                                                    handlerClassName = std::string((char*)hnHdr->bytes(), hnHdr->byteSize());
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+
+                                                    // If this is an OrderedCollection, extract the ClassSessionHandler(s) from it
+                                                    if (handlerClassName == "OrderedCollection" && vSlots >= 3) {
+                                                        // OrderedCollection: slot[0]=array, slot[1]=first, slot[2]=last
+                                                        Oop internalArray = vHdr->slotAt(0);
+                                                        int64_t first = vHdr->slotAt(1).asSmallInteger();
+                                                        int64_t last = vHdr->slotAt(2).asSmallInteger();
+                                                        if (internalArray.isObject() && internalArray.rawBits() > 0x10000 && first >= 1) {
+                                                            ObjectHeader* arrHdr = internalArray.asObjectPtr();
+                                                            size_t arrSlots = arrHdr->slotCount();
+
+                                                            // Collect all handler class names
+                                                            std::vector<std::string> handlerNames;
+                                                            for (int64_t idx = first; idx <= last && (size_t)(idx - 1) < arrSlots && handlerNames.size() < 5; idx++) {
+                                                                Oop handler = arrHdr->slotAt(idx - 1); // 1-indexed
+                                                                if (handler.isObject() && handler.rawBits() > 0x10000) {
+                                                                    ObjectHeader* hHdr = handler.asObjectPtr();
+                                                                    // ClassSessionHandler: slot[0] = handledId (the class)
+                                                                    if (hHdr->slotCount() >= 1) {
+                                                                        Oop handledId = hHdr->slotAt(0);
+                                                                        std::string className = "?";
+                                                                        if (handledId.isNil()) {
+                                                                            className = "<nil>";
+                                                                        } else if (handledId.isSmallInteger()) {
+                                                                            className = "<SI>";
+                                                                        } else if (handledId.isObject() && handledId.rawBits() > 0x10000) {
+                                                                            ObjectHeader* hidHdr = handledId.asObjectPtr();
+                                                                            size_t hidSlots = hidHdr->slotCount();
+
+                                                                            if (hidSlots == 6) {
+                                                                                // Metaclass instance - get thisClass from slot 5
+                                                                                Oop thisClass = hidHdr->slotAt(5);
+                                                                                if (thisClass.isObject() && thisClass.rawBits() > 0x10000) {
+                                                                                    ObjectHeader* tcHdr = thisClass.asObjectPtr();
+                                                                                    if (tcHdr->slotCount() >= 7) {
+                                                                                        Oop nameSlot = tcHdr->slotAt(6);
+                                                                                        if (nameSlot.isObject() && nameSlot.rawBits() > 0x10000) {
+                                                                                            ObjectHeader* nsHdr = nameSlot.asObjectPtr();
+                                                                                            if (nsHdr->isBytesObject() && nsHdr->byteSize() < 80) {
+                                                                                                className = std::string((char*)nsHdr->bytes(), nsHdr->byteSize()) + " class";
+                                                                                            }
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                            } else if (hidSlots >= 7) {
+                                                                                // Regular Class - name at slot 6
+                                                                                Oop nameSlot = hidHdr->slotAt(6);
+                                                                                if (nameSlot.isObject() && nameSlot.rawBits() > 0x10000) {
+                                                                                    ObjectHeader* nsHdr = nameSlot.asObjectPtr();
+                                                                                    if (nsHdr->isBytesObject() && nsHdr->byteSize() < 80) {
+                                                                                        className = std::string((char*)nsHdr->bytes(), nsHdr->byteSize());
+                                                                                    } else {
+                                                                                        // Slot 6 is not a string - show what it is
+                                                                                        // Also check what class the handledId is
+                                                                                        Oop hidCls = memory_.classAtIndex(hidHdr->classIndex());
+                                                                                        std::string hidTypeName = "?";
+                                                                                        if (hidCls.isObject() && hidCls.rawBits() > 0x10000) {
+                                                                                            ObjectHeader* hctHdr = hidCls.asObjectPtr();
+                                                                                            if (hctHdr->slotCount() >= 7) {
+                                                                                                Oop tn = hctHdr->slotAt(6);
+                                                                                                if (tn.isObject() && tn.rawBits() > 0x10000) {
+                                                                                                    ObjectHeader* tnHdr = tn.asObjectPtr();
+                                                                                                    if (tnHdr->isBytesObject() && tnHdr->byteSize() < 50) {
+                                                                                                        hidTypeName = std::string((char*)tnHdr->bytes(), tnHdr->byteSize());
+                                                                                                    }
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                        char buf[128];
+                                                                                        snprintf(buf, sizeof(buf), "<%s %zu>", hidTypeName.c_str(), hidSlots);
+                                                                                        className = buf;
+                                                                                    }
+                                                                                } else if (nameSlot.isNil()) {
+                                                                                    className = "<nil@6>";
+                                                                                } else if (nameSlot.isSmallInteger()) {
+                                                                                    className = "<SI@6>";
+                                                                                }
+                                                                            } else {
+                                                                                // handledId has < 6 slots - check what type it is
+                                                                                Oop hidCls = memory_.classAtIndex(hidHdr->classIndex());
+                                                                                std::string hidTypeName = "?";
+                                                                                if (hidCls.isObject() && hidCls.rawBits() > 0x10000) {
+                                                                                    ObjectHeader* hctHdr = hidCls.asObjectPtr();
+                                                                                    if (hctHdr->slotCount() >= 7) {
+                                                                                        Oop tn = hctHdr->slotAt(6);
+                                                                                        if (tn.isObject() && tn.rawBits() > 0x10000) {
+                                                                                            ObjectHeader* tnHdr = tn.asObjectPtr();
+                                                                                            if (tnHdr->isBytesObject() && tnHdr->byteSize() < 50) {
+                                                                                                hidTypeName = std::string((char*)tnHdr->bytes(), tnHdr->byteSize());
+                                                                                            }
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                                // If it's an Association, check key and value
+                                                                                if (hidTypeName == "Association" && hidSlots >= 2) {
+                                                                                    Oop assocKey = hidHdr->slotAt(0);
+                                                                                    if (assocKey.isObject() && assocKey.rawBits() > 0x10000) {
+                                                                                        ObjectHeader* akHdr = assocKey.asObjectPtr();
+                                                                                        if (akHdr->isBytesObject() && akHdr->byteSize() < 50) {
+                                                                                            className = std::string((char*)akHdr->bytes(), akHdr->byteSize());
+                                                                                        }
+                                                                                    }
+                                                                                } else if (hidTypeName == "Symbol" || hidTypeName == "ByteSymbol") {
+                                                                                    // Symbol is a bytes object - read its content directly
+                                                                                    if (hidHdr->isBytesObject() && hidHdr->byteSize() < 80) {
+                                                                                        className = std::string((char*)hidHdr->bytes(), hidHdr->byteSize());
+                                                                                    } else {
+                                                                                        className = "<Symbol>";
+                                                                                    }
+                                                                                } else {
+                                                                                    char buf[64];
+                                                                                    snprintf(buf, sizeof(buf), "<%s %zu>", hidTypeName.c_str(), hidSlots);
+                                                                                    className = buf;
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                        handlerNames.push_back(className);
+                                                                    }
+                                                                }
+                                                            }
+                                                            // Build output string
+                                                            if (!handlerNames.empty()) {
+                                                                valStr = "";
+                                                                for (size_t i = 0; i < handlerNames.size(); i++) {
+                                                                    if (i > 0) valStr += ", ";
+                                                                    valStr += handlerNames[i];
+                                                                }
+                                                                int64_t total = last - first + 1;
+                                                                if (total > (int64_t)handlerNames.size()) {
+                                                                    char buf[32];
+                                                                    snprintf(buf, sizeof(buf), " (+%lld more)", total - (int64_t)handlerNames.size());
+                                                                    valStr += buf;
+                                                                }
+                                                            }
+                                                        }
+                                                    } else if (vSlots >= 1) {
+                                                        // Fall back - try direct ClassSessionHandler structure
+                                                        Oop handledClass = vHdr->slotAt(0);
+                                                        if (handledClass.isObject() && handledClass.rawBits() > 0x10000) {
+                                                            ObjectHeader* hcHdr = handledClass.asObjectPtr();
+                                                            size_t hcSlots = hcHdr->slotCount();
+
+                                                            if (hcSlots == 6) {
+                                                                // Metaclass instance
+                                                                Oop thisClass = hcHdr->slotAt(5);
+                                                                if (thisClass.isObject() && thisClass.rawBits() > 0x10000) {
+                                                                    ObjectHeader* tcHdr = thisClass.asObjectPtr();
+                                                                    if (tcHdr->slotCount() >= 7) {
+                                                                        Oop nameSlot = tcHdr->slotAt(6);
+                                                                        if (nameSlot.isObject() && nameSlot.rawBits() > 0x10000) {
+                                                                            ObjectHeader* nsHdr = nameSlot.asObjectPtr();
+                                                                            if (nsHdr->isBytesObject() && nsHdr->byteSize() < 80) {
+                                                                                valStr = std::string((char*)nsHdr->bytes(), nsHdr->byteSize()) + " class";
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            } else if (hcSlots >= 7) {
+                                                                Oop nameSlot = hcHdr->slotAt(6);
+                                                                if (nameSlot.isObject() && nameSlot.rawBits() > 0x10000) {
+                                                                    ObjectHeader* nsHdr = nameSlot.asObjectPtr();
+                                                                    if (nsHdr->isBytesObject() && nsHdr->byteSize() < 80) {
+                                                                        valStr = std::string((char*)nsHdr->bytes(), nsHdr->byteSize());
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    // If still unknown, show fallback info with slot dump
+                                                    if (valStr == "?" && nonNilCount <= 5) {
+                                                        std::string slotDump;
+                                                        for (size_t si = 0; si < vSlots; si++) {
+                                                            Oop slot = vHdr->slotAt(si);
+                                                            char sbuf[128];
+                                                            if (slot.isSmallInteger()) {
+                                                                snprintf(sbuf, sizeof(sbuf), "s%zu=SI(%lld) ", si, slot.asSmallInteger());
+                                                            } else if (slot.isObject() && slot.rawBits() > 0x10000) {
+                                                                ObjectHeader* sh = slot.asObjectPtr();
+                                                                snprintf(sbuf, sizeof(sbuf), "s%zu=<obj %zu slots> ", si, sh->slotCount());
+                                                            } else if (slot.isNil()) {
+                                                                snprintf(sbuf, sizeof(sbuf), "s%zu=nil ", si);
+                                                            } else {
+                                                                snprintf(sbuf, sizeof(sbuf), "s%zu=0x%llx ", si, (unsigned long long)slot.rawBits());
+                                                            }
+                                                            slotDump += sbuf;
+                                                        }
+                                                        valStr = slotDump;
+                                                    }
+                                                }
+                                                fprintf(startupTraceLog, "       [priority=%s] %s: '%s'\n", keyStr.c_str(), handlerClassName.c_str(), valStr.c_str());
+                                            }
+                                        }
+                                    }
+                                    fprintf(startupTraceLog, "       (%d handlers total)\n", nonNilCount);
+                                }
+                            }
+                        }
+                    }
+                }
+                fflush(startupTraceLog);
+            }
 
             // Extra detail for runList:do: - dump the list contents
             if (selEquals("runList:do:") && argCount == 2) {
