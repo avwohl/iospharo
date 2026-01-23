@@ -292,18 +292,30 @@ bool Interpreter::initialize() {
         std::string rcvrClassName = "<unknown>";
         std::string methodSelector = "<unknown>";
 
-        // Get receiver's class name
+        // Get receiver's class name (Pharo 12 layout)
         if (receiver.isObject() && receiver.rawBits() > 0x10000) {
             Oop rcvrClass = memory_.classOf(receiver);
             if (rcvrClass.isObject()) {
                 ObjectHeader* clsHdr = rcvrClass.asObjectPtr();
-                if (clsHdr->slotCount() > 6) {
-                    Oop nameOop = memory_.fetchPointer(6, rcvrClass);
-                    if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
-                        ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                        if (nameHdr->isBytesObject() && nameHdr->byteSize() <= 50) {
-                            rcvrClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                size_t clsSlots = clsHdr->slotCount();
+                Oop nameOop;
+                if (clsSlots == 6) {
+                    // Metaclass - get thisClass from slot 5, then name from slot 6
+                    Oop thisClass = memory_.fetchPointer(5, rcvrClass);
+                    if (thisClass.isObject() && thisClass.rawBits() > 0x10000) {
+                        ObjectHeader* tcHdr = thisClass.asObjectPtr();
+                        if (tcHdr->slotCount() >= 7) {
+                            nameOop = memory_.fetchPointer(6, thisClass);
                         }
+                    }
+                } else if (clsSlots >= 7) {
+                    // Regular Class - name is at slot 6
+                    nameOop = memory_.fetchPointer(6, rcvrClass);
+                }
+                if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                    if (nameHdr->isBytesObject() && nameHdr->byteSize() <= 50) {
+                        rcvrClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
                     }
                 }
             }
@@ -4700,6 +4712,10 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         static int startupTraceCount = 0;
         if (!startupTraceLog) {
             startupTraceLog = fopen("/tmp/startup_trace.log", "w");
+            if (startupTraceLog) {
+                fprintf(startupTraceLog, "[TRACE] Startup trace initialized (sendCount=%d)\n", sendCount);
+                fflush(startupTraceLog);
+            }
         }
 
         // Check for interesting selectors - broader list
@@ -4732,7 +4748,12 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                           selEquals("collect:") || selEquals("flatCollect:") ||
                           selEquals("select:") || selEquals("reject:") ||
                           selEquals("categories") || selEquals("size") ||
-                          selEquals("startupCategories");
+                          selEquals("startupCategories") ||
+                          // SessionCategory methods
+                          selEquals("handlers") || selEquals("handlerList") ||
+                          selEquals("categoryList:") || selEquals("select:thenCollect:") ||
+                          selEquals("at:ifAbsent:") || selEquals("at:") ||
+                          selEquals("registeredClasses") || selEquals("selectedHandlersFor:");
 
         if (interesting && startupTraceLog && startupTraceCount < 1000) {
             startupTraceCount++;
@@ -4746,21 +4767,61 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 // Try to get class name via classAtIndex
                 Oop cls = memory_.classAtIndex(classIdx);
                 if (cls.isObject() && cls.rawBits() > 0x10000) {
-                    Oop clsName = memory_.fetchPointer(6, cls);
+                    ObjectHeader* clsHdr = cls.asObjectPtr();
+                    size_t clsSlots = clsHdr->slotCount();
+                    // Debug: Log slot count for classes that might fail
+                    static int classDebugCount = 0;
+                    if (classDebugCount < 50 && clsSlots < 7) {
+                        classDebugCount++;
+                        // Get the metaclass of this class object to understand what type it is
+                        uint32_t clsMetaIdx = clsHdr->classIndex();
+                        Oop clsMeta = memory_.classAtIndex(clsMetaIdx);
+                        std::string metaName = "?";
+                        if (clsMeta.isObject() && clsMeta.rawBits() > 0x10000) {
+                            ObjectHeader* metaHdr = clsMeta.asObjectPtr();
+                            if (metaHdr->slotCount() > 6) {
+                                Oop metaNameOop = memory_.fetchPointer(6, clsMeta);
+                                if (metaNameOop.isObject() && metaNameOop.rawBits() > 0x10000) {
+                                    ObjectHeader* mnHdr = metaNameOop.asObjectPtr();
+                                    if (mnHdr->isBytesObject() && mnHdr->byteSize() < 50) {
+                                        metaName = std::string((char*)mnHdr->bytes(), mnHdr->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                        fprintf(startupTraceLog, "  [CLASS-DBG] classIdx=%u has %zu slots (need 7+ for name), metaclassIdx=%u (%s)\n",
+                                classIdx, clsSlots, clsMetaIdx, metaName.c_str());
+                    }
+                    // In Pharo 12, class name lookup depends on the type:
+                    // - For regular Class objects (12+ slots): name is at slot 7
+                    // - For Metaclass instances (6 slots): thisClass is at slot 5, then name at slot 7
+                    Oop clsName;
+                    bool isMetaclass = false;
+
+                    if (clsSlots == 6) {
+                        // Metaclass instance (6 slots): thisClass at slot 5, then name at slot 6
+                        Oop thisClass = memory_.fetchPointer(5, cls);
+                        if (thisClass.isObject() && thisClass.rawBits() > 0x10000) {
+                            ObjectHeader* tcHdr = thisClass.asObjectPtr();
+                            if (tcHdr->slotCount() >= 7) {
+                                clsName = memory_.fetchPointer(6, thisClass);
+                                isMetaclass = true;
+                            }
+                        }
+                    } else if (clsSlots >= 7) {
+                        // Regular Class - name is at slot 6
+                        clsName = memory_.fetchPointer(6, cls);
+                    } else {
+                        // Very small class object - unlikely but try slot 6 anyway
+                        clsName = memory_.fetchPointer(6, cls);
+                    }
+
                     if (clsName.isObject() && clsName.rawBits() > 0x10000) {
                         ObjectHeader* cnHdr = clsName.asObjectPtr();
                         if (cnHdr->isBytesObject() && cnHdr->byteSize() < 80) {
                             rcvrClassName = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
-                            // If the class is a Metaclass, the receiver IS a class
-                            if (rcvrClassName == "Metaclass") {
-                                // The receiver is a class - try to get its name
-                                Oop rcvrName = memory_.fetchPointer(6, rcvr);
-                                if (rcvrName.isObject() && rcvrName.rawBits() > 0x10000) {
-                                    ObjectHeader* rnHdr = rcvrName.asObjectPtr();
-                                    if (rnHdr->isBytesObject() && rnHdr->byteSize() < 80) {
-                                        rcvrClassName = std::string((char*)rnHdr->bytes(), rnHdr->byteSize()) + " class";
-                                    }
-                                }
+                            if (isMetaclass) {
+                                rcvrClassName += " class";
                             }
                         }
                     }
@@ -4769,7 +4830,24 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 if (rcvrClassName == "<unknown>") {
                     Oop cls2 = memory_.classOf(rcvr);
                     if (cls2.isObject()) {
-                        Oop clsName = memory_.fetchPointer(6, cls2);
+                        ObjectHeader* cls2Hdr = cls2.asObjectPtr();
+                        size_t cls2Slots = cls2Hdr->slotCount();
+                        Oop clsName;
+                        if (cls2Slots == 6) {
+                            // Metaclass - get thisClass from slot 5, then name from slot 6
+                            Oop thisClass = memory_.fetchPointer(5, cls2);
+                            if (thisClass.isObject() && thisClass.rawBits() > 0x10000) {
+                                ObjectHeader* tcHdr = thisClass.asObjectPtr();
+                                if (tcHdr->slotCount() >= 7) {
+                                    clsName = memory_.fetchPointer(6, thisClass);
+                                }
+                            }
+                        } else if (cls2Slots >= 7) {
+                            clsName = memory_.fetchPointer(6, cls2);
+                        } else {
+                            // Fallback for very small class objects
+                            clsName = memory_.fetchPointer(6, cls2);
+                        }
                         if (clsName.isObject() && clsName.rawBits() > 0x10000) {
                             ObjectHeader* cnHdr = clsName.asObjectPtr();
                             if (cnHdr->isBytesObject() && cnHdr->byteSize() < 80) {
@@ -4785,24 +4863,37 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                     // Try harder - get class name from class table entry
                     if (clsFromTable.isObject() && clsFromTable.rawBits() > 0x10000) {
                         ObjectHeader* clsHdr = clsFromTable.asObjectPtr();
-                        if (clsHdr->slotCount() >= 7) {
-                            Oop nameSlot = clsHdr->slotAt(6);  // Name is at slot 6
-                            if (nameSlot.isObject() && nameSlot.rawBits() > 0x10000) {
-                                ObjectHeader* nameHdr = nameSlot.asObjectPtr();
-                                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 80) {
-                                    rcvrClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                                } else {
-                                    char buf[128];
-                                    snprintf(buf, sizeof(buf), "<cls=%u nameSlot fmt=%d bytes=%zu>",
-                                             classIdx, nameHdr->format(), nameHdr->byteSize());
-                                    rcvrClassName = buf;
+                        size_t clsSlots2 = clsHdr->slotCount();
+                        Oop nameSlot;
+                        if (clsSlots2 == 6) {
+                            // Metaclass - get thisClass from slot 5, then name from slot 6
+                            Oop thisClass = clsHdr->slotAt(5);
+                            if (thisClass.isObject() && thisClass.rawBits() > 0x10000) {
+                                ObjectHeader* tcHdr = thisClass.asObjectPtr();
+                                if (tcHdr->slotCount() >= 7) {
+                                    nameSlot = tcHdr->slotAt(6);
                                 }
+                            }
+                        } else if (clsSlots2 >= 7) {
+                            nameSlot = clsHdr->slotAt(6);  // Name is at slot 6
+                        } else {
+                            nameSlot = clsHdr->slotAt(6);  // Fallback
+                        }
+                        if (nameSlot.isObject() && nameSlot.rawBits() > 0x10000) {
+                            ObjectHeader* nameHdr = nameSlot.asObjectPtr();
+                            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 80) {
+                                rcvrClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
                             } else {
                                 char buf[128];
-                                snprintf(buf, sizeof(buf), "<cls=%u nameSlot=0x%llx>",
-                                         classIdx, (unsigned long long)nameSlot.rawBits());
+                                snprintf(buf, sizeof(buf), "<cls=%u nameSlot fmt=%d bytes=%zu>",
+                                         classIdx, nameHdr->format(), nameHdr->byteSize());
                                 rcvrClassName = buf;
                             }
+                        } else {
+                            char buf[128];
+                            snprintf(buf, sizeof(buf), "<cls=%u nameSlot=0x%llx>",
+                                     classIdx, (unsigned long long)nameSlot.rawBits());
+                            rcvrClassName = buf;
                         }
                     }
 
@@ -4880,13 +4971,94 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 fflush(startupTraceLog);
             }
 
-            // Extra detail for startUp: - show the argument
+            // Extra detail for startUp: - show the argument and receiver info
             if (selEquals("startUp:") && argCount == 1) {
                 Oop arg = stackValue(0);
+                Oop rcvr = stackValue(1);
                 if (arg.rawBits() == memory_.trueObject().rawBits()) {
                     fprintf(startupTraceLog, "  -> arg: true (isImageStarting)\n");
                 } else if (arg.rawBits() == memory_.falseObject().rawBits()) {
                     fprintf(startupTraceLog, "  -> arg: false (isImageStarting)\n");
+                }
+                // Dump receiver info for debugging class lookup
+                if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                    ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+                    uint32_t classIdx = rcvrHdr->classIndex();
+                    Oop cls = memory_.classAtIndex(classIdx);
+                    fprintf(startupTraceLog, "  -> receiver classIdx=%u classOop=0x%llx\n",
+                            classIdx, (unsigned long long)cls.rawBits());
+                    // Try to get the actual class by following the object's classIndex
+                    // The classAtIndex returns what's in the class table, but maybe
+                    // the REAL class is found via classOf() which uses the object's header
+                    Oop realClass = memory_.classOf(rcvr);
+                    fprintf(startupTraceLog, "  -> classOf(rcvr)=0x%llx (via header classIdx)\n",
+                            (unsigned long long)realClass.rawBits());
+                    // Try to get class name from the REAL class
+                    if (realClass.isObject() && realClass.rawBits() > 0x10000) {
+                        ObjectHeader* realClsHdr = realClass.asObjectPtr();
+                        fprintf(startupTraceLog, "  -> realClass: %zu slots, format=%d, rawHdr=0x%llx\n",
+                                realClsHdr->slotCount(), static_cast<int>(realClsHdr->format()),
+                                realClsHdr->rawHeader());
+                        // Try to read slot 6 regardless of slotCount (for debugging)
+                        // Dump first 10 slots to see what's there
+                        fprintf(startupTraceLog, "  -> Dumping first 10 slots of class object:\n");
+                        Oop* slots = reinterpret_cast<Oop*>(realClsHdr + 1);
+                        for (size_t s = 0; s < 10; s++) {
+                            Oop slot = slots[s];
+                            std::string desc = "?";
+                            if (slot.isNil()) {
+                                desc = "nil";
+                            } else if (slot.isSmallInteger()) {
+                                char buf[32];
+                                snprintf(buf, sizeof(buf), "SmallInt(%lld)", slot.asSmallInteger());
+                                desc = buf;
+                            } else if (slot.isObject() && slot.rawBits() > 0x10000) {
+                                ObjectHeader* sHdr = slot.asObjectPtr();
+                                desc = "<obj slots=" + std::to_string(sHdr->slotCount()) + ">";
+                                // Check if bytes object (likely a name)
+                                if (sHdr->isBytesObject() && sHdr->byteSize() < 80) {
+                                    desc = "'" + std::string((char*)sHdr->bytes(), sHdr->byteSize()) + "'";
+                                }
+                            }
+                            fprintf(startupTraceLog, "       slot[%zu] = 0x%llx %s\n",
+                                    s, (unsigned long long)slots[s].rawBits(), desc.c_str());
+                        }
+                    }
+                    // Also check what's in the class table
+                    if (cls.isObject() && cls.rawBits() > 0x10000) {
+                        ObjectHeader* clsHdr = cls.asObjectPtr();
+                        fprintf(startupTraceLog, "  -> classTable[%u]: %zu slots, format=%d, rawHdr=0x%llx\n",
+                                classIdx, clsHdr->slotCount(), static_cast<int>(clsHdr->format()),
+                                clsHdr->rawHeader());
+                    }
+                    // Skip the duplicate slot check below
+                } else if (false) {
+                    ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+                    uint32_t classIdx = rcvrHdr->classIndex();
+                    Oop cls = memory_.classAtIndex(classIdx);
+                    // Try to get class name from the class
+                    if (cls.isObject() && cls.rawBits() > 0x10000) {
+                        ObjectHeader* clsHdr = cls.asObjectPtr();
+                        fprintf(startupTraceLog, "  -> class has %zu slots, format=%d\n",
+                                clsHdr->slotCount(), static_cast<int>(clsHdr->format()));
+                        if (clsHdr->slotCount() >= 7) {
+                            Oop nameSlot = clsHdr->slotAt(6);
+                            fprintf(startupTraceLog, "  -> slot[6] (name) = 0x%llx\n",
+                                    (unsigned long long)nameSlot.rawBits());
+                            if (nameSlot.isObject() && nameSlot.rawBits() > 0x10000) {
+                                ObjectHeader* nameHdr = nameSlot.asObjectPtr();
+                                fprintf(startupTraceLog, "  -> name obj: format=%d byteSize=%zu isBytesObj=%d\n",
+                                        static_cast<int>(nameHdr->format()), nameHdr->byteSize(),
+                                        nameHdr->isBytesObject() ? 1 : 0);
+                                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 80) {
+                                    std::string name((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                    fprintf(startupTraceLog, "  -> CLASS NAME: '%s'\n", name.c_str());
+                                }
+                            }
+                        }
+                    } else {
+                        fprintf(startupTraceLog, "  -> class NOT in class table or nil!\n");
+                    }
                 }
             }
 
@@ -4997,6 +5169,76 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                     }
                 }
                 fflush(startupTraceLog);
+            }
+
+            // Extra detail for value: - check if arg is SessionCategory
+            if (selEquals("value:") && argCount == 1) {
+                static int valueDetailCount = 0;
+                if (valueDetailCount < 20) {
+                    Oop arg = stackValue(0);
+                    if (arg.isObject() && arg.rawBits() > 0x10000) {
+                        ObjectHeader* argHdr = arg.asObjectPtr();
+                        Oop argCls = memory_.classAtIndex(argHdr->classIndex());
+                        if (argCls.isObject() && argCls.rawBits() > 0x10000) {
+                            ObjectHeader* acHdr = argCls.asObjectPtr();
+                            if (acHdr->slotCount() >= 7) {
+                                Oop acName = acHdr->slotAt(6);
+                                if (acName.isObject() && acName.rawBits() > 0x10000) {
+                                    ObjectHeader* acnHdr = acName.asObjectPtr();
+                                    if (acnHdr->isBytesObject() && acnHdr->byteSize() < 80) {
+                                        std::string argClass((char*)acnHdr->bytes(), acnHdr->byteSize());
+                                        if (argClass == "SessionCategory") {
+                                            valueDetailCount++;
+                                            fprintf(startupTraceLog, "  -> value: with SessionCategory, %zu slots:\n",
+                                                    argHdr->slotCount());
+                                            // Dump SessionCategory slots
+                                            for (size_t s = 0; s < argHdr->slotCount() && s < 5; s++) {
+                                                Oop slot = argHdr->slotAt(s);
+                                                std::string slotDesc = "?";
+                                                if (slot.isNil()) {
+                                                    slotDesc = "nil";
+                                                } else if (slot.isSmallInteger()) {
+                                                    char buf[32];
+                                                    snprintf(buf, sizeof(buf), "SmallInt(%lld)", slot.asSmallInteger());
+                                                    slotDesc = buf;
+                                                } else if (slot.isObject() && slot.rawBits() > 0x10000) {
+                                                    ObjectHeader* sHdr = slot.asObjectPtr();
+                                                    Oop sCls = memory_.classAtIndex(sHdr->classIndex());
+                                                    if (sCls.isObject()) {
+                                                        ObjectHeader* scHdr = sCls.asObjectPtr();
+                                                        if (scHdr->slotCount() >= 7) {
+                                                            Oop scName = scHdr->slotAt(6);
+                                                            if (scName.isObject() && scName.rawBits() > 0x10000) {
+                                                                ObjectHeader* scnHdr = scName.asObjectPtr();
+                                                                if (scnHdr->isBytesObject() && scnHdr->byteSize() < 80) {
+                                                                    slotDesc = std::string((char*)scnHdr->bytes(), scnHdr->byteSize());
+                                                                    if (slotDesc == "ByteSymbol" && sHdr->isBytesObject()) {
+                                                                        slotDesc = "#" + std::string((char*)sHdr->bytes(), sHdr->byteSize());
+                                                                    } else if (slotDesc == "OrderedCollection") {
+                                                                        // Get size
+                                                                        Oop fi = sHdr->slotAt(1);
+                                                                        Oop li = sHdr->slotAt(2);
+                                                                        if (fi.isSmallInteger() && li.isSmallInteger()) {
+                                                                            int64_t count = li.asSmallInteger() - fi.asSmallInteger() + 1;
+                                                                            char buf[64];
+                                                                            snprintf(buf, sizeof(buf), "OrderedCollection[%lld items]", count);
+                                                                            slotDesc = buf;
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                fprintf(startupTraceLog, "       slot[%zu] = %s\n", s, slotDesc.c_str());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             // Extra detail for forkAt:
