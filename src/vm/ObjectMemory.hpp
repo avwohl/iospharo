@@ -351,6 +351,9 @@ public:
     /// Iterate over all objects in the heap
     void allObjectsDo(std::function<void(Oop)> callback);
 
+    /// Iterate over all objects in old space (for GC)
+    void forEachObjectInOldSpace(std::function<void(ObjectHeader*)> callback);
+
     /// Find the first instance of a class (by class index)
     Oop firstInstanceOf(uint32_t classIndex);
 
