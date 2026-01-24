@@ -1976,9 +1976,8 @@ void Interpreter::syncDisplayToSurface() {
     // NO WORKAROUNDS: Removed processPendingWorldMenu, processPendingMenuAction, updateActiveHandPosition
     // Events must be handled by Smalltalk's InputEventSensor, not C++ workarounds
 
-    // For now, always use direct morph rendering instead of Display Form
-    // This works around BitBlt not updating the Form properly
-    renderWorldMorphs();
+    // DISABLED: renderWorldMorphs is expensive and slowing down the VM
+    // renderWorldMorphs();
     return;
 
     // TODO: Re-enable Display Form path once BitBlt primitives work correctly
