@@ -535,23 +535,7 @@ int main(int argc, char* argv[]) {
         int clickResponseSteps = 0;
 
         for (int i = 0; i < totalSteps; i++) {
-            // Debug to find the blocking step
-            if (i >= 1020 && i <= 1030) {
-                fprintf(stderr, "[D-%d] before step()\n", i);
-            }
-            // Debug around 14000+ steps to catch the hang
-            if (i >= 14000 && i <= 15100) {
-                fprintf(stderr, "[D2-%d] before step()\n", i);
-                fflush(stderr);
-            }
             bool result = interpreter.step();
-            if (i >= 14000 && i <= 15100) {
-                fprintf(stderr, "[D2-%d] after step(), result=%d\n", i, result);
-                fflush(stderr);
-            }
-            if (i >= 1020 && i <= 1030) {
-                fprintf(stderr, "[D-%d] after step(), result=%d\n", i, result);
-            }
 
             // Progress report every 100k steps
             if (i > 0 && i % 100000 == 0) {
@@ -559,8 +543,8 @@ int main(int argc, char* argv[]) {
                           << " idle=" << idleSteps << " result=" << result << std::endl;
             }
 
-            // Report every 1000 steps
-            if (i > 0 && i % 1000 == 0) {
+            // Report every 10000 steps (reduced from 1000 to reduce noise)
+            if (i > 0 && i % 10000 == 0) {
                 static auto start = std::chrono::steady_clock::now();
                 auto now = std::chrono::steady_clock::now();
                 auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();

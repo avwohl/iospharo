@@ -2359,26 +2359,12 @@ void Interpreter::processPendingSignals() {
 }
 
 bool Interpreter::step() {
-    static uint64_t stepCallCount = 0;
-    stepCallCount++;
-
-    // Debug around hang point (step 14967)
-    bool debugThisStep = (stepCallCount >= 14960 && stepCallCount <= 14975);
-    if (debugThisStep) {
-        fprintf(stderr, "[STEP-INNER %llu] entry running=%d\n", stepCallCount, running_ ? 1 : 0);
-        fflush(stderr);
-    }
-
     if (!running_) {
         return false;
     }
 
     // Process any pending external semaphore signals (from heartbeat/events)
     if (hasPendingSignals()) {
-        if (debugThisStep) {
-            fprintf(stderr, "[STEP-INNER %llu] processing signals\n", stepCallCount);
-            fflush(stderr);
-        }
         processPendingSignals();
     }
 
@@ -2406,10 +2392,6 @@ bool Interpreter::step() {
 
     // Check if we've run past the end of bytecodes
     if (instructionPointer_ >= bytecodeEnd_) {
-        if (debugThisStep) {
-            fprintf(stderr, "[STEP-INNER %llu] past bytecode end, returning\n", stepCallCount);
-            fflush(stderr);
-        }
         returnValue(receiver_);
         return running_;
     }
@@ -2419,39 +2401,8 @@ bool Interpreter::step() {
     // NEXT bytecode uses them. The consuming bytecodes reset them after use.
     // Resetting here would break extension byte chains.
 
-    if (debugThisStep) {
-        fprintf(stderr, "[STEP-INNER %llu] about to fetch bytecode, IP=%p fd=%zu\n",
-                stepCallCount, (void*)instructionPointer_, frameDepth_);
-        fflush(stderr);
-    }
-
     uint8_t bytecode = fetchByte();
-
-    if (debugThisStep) {
-        fprintf(stderr, "[STEP-INNER %llu] fetched bytecode 0x%02X, dispatching\n", stepCallCount, bytecode);
-        fflush(stderr);
-    }
-
-    // Bytecode-level tracing (enabled after certain send count)
-    if (g_bytecodeTraceEnabled && g_bytecodeTraceCount < 2000) {
-        if (!g_bytecodeTraceLog) {
-            g_bytecodeTraceLog = fopen("/tmp/bytecode_trace.log", "w");
-        }
-        if (g_bytecodeTraceLog) {
-            g_bytecodeTraceCount++;
-            fprintf(g_bytecodeTraceLog, "[BC#%d] 0x%02X fd=%zu sp=%zu\n",
-                    g_bytecodeTraceCount, bytecode, frameDepth_,
-                    (size_t)(stackPointer_ - stackBase_));
-            fflush(g_bytecodeTraceLog);
-        }
-    }
-
     dispatchBytecode(bytecode);
-
-    if (debugThisStep) {
-        fprintf(stderr, "[STEP-INNER %llu] dispatchBytecode returned, running=%d\n", stepCallCount, running_ ? 1 : 0);
-        fflush(stderr);
-    }
 
     return running_;
 }
@@ -3062,33 +3013,8 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
             }
             case 0xED: // 237: Jump #iiiiiiii (+ extB * 256, signed)
             {
-                static FILE* jumpLog = nullptr;
-                static int jumpCount = 0;
-                if (!jumpLog) jumpLog = fopen("/tmp/uncond_jump.log", "w");
-
-                uintptr_t ipBefore = reinterpret_cast<uintptr_t>(instructionPointer_);
                 uint8_t offsetByte = fetchByte();
                 int offset = (extB_ << 8) | offsetByte;
-
-                jumpCount++;
-                if (jumpLog && jumpCount <= 500) {
-                    fprintf(jumpLog, "[JUMP #%d] method=0x%llx ip=0x%llx offset=%d -> ip=0x%llx %s fd=%d",
-                            jumpCount,
-                            (unsigned long long)method_.rawBits(),
-                            (unsigned long long)ipBefore, offset,
-                            (unsigned long long)(ipBefore + offset),
-                            offset < 0 ? "BACKWARD" : "forward",
-                            (int)frameDepth_);
-                    // For backward jumps, show the next few bytes at jump target
-                    if (offset < 0) {
-                        uint8_t* target = instructionPointer_ + offset;
-                        fprintf(jumpLog, " nextBc=[%02x %02x %02x %02x]",
-                                target[0], target[1], target[2], target[3]);
-                    }
-                    fprintf(jumpLog, "\n");
-                    fflush(jumpLog);
-                }
-
                 extB_ = 0;
                 instructionPointer_ += offset;
                 break;
@@ -4872,77 +4798,12 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 }
 
 void Interpreter::sendSelector(Oop selector, int argCount) {
-    // Debug logging (declare here to ensure available throughout function)
-    static FILE* allSendLog = nullptr;
-    static int allSendCount = 0;
-    static int sendCount = 0;  // Track total send calls
-    sendCount++;
-
-    // Debug at hang point (sendCount 4575 is the last logged send before hang)
-    static bool hangDebugEnabled = false;
-    if (sendCount >= 4575) {
-        hangDebugEnabled = true;
-    }
-    if (hangDebugEnabled && sendCount <= 4590) {
-        std::string selStr = "<unknown>";
-        if (selector.isObject() && selector.rawBits() > 0x10000) {
-            ObjectHeader* selHdr = selector.asObjectPtr();
-            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-            }
-        }
-        fprintf(stderr, "[SEND-DEBUG #%d] entry, selector=%s argCount=%d fd=%zu\n",
-                sendCount, selStr.c_str(), argCount, frameDepth_);
-        fflush(stderr);
-    }
-
-    // Trace sends after bytecode tracing is enabled
-    if (g_bytecodeTraceEnabled) {
-        static FILE* debugSendLog = nullptr;
-        static int debugSendCount = 0;
-        if (!debugSendLog) {
-            debugSendLog = fopen("/tmp/debug_sends.log", "w");
-        }
-        if (debugSendLog && debugSendCount < 100) {
-            debugSendCount++;
-            std::string selStr = "<unknown>";
-            if (selector.isObject() && selector.rawBits() > 0x10000) {
-                ObjectHeader* selHdr = selector.asObjectPtr();
-                if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                    selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                }
-            }
-            // Get receiver class name
-            std::string rcvrClassName = "<unknown>";
-            Oop rcvr = stackValue(argCount);
-            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-                ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
-                uint32_t classIdx = rcvrHdr->classIndex();
-                Oop cls = memory_.classAtIndex(classIdx);
-                if (cls.isObject() && cls.rawBits() > 0x10000) {
-                    ObjectHeader* clsHdr = cls.asObjectPtr();
-                    if (clsHdr->slotCount() >= 7) {
-                        Oop nm = clsHdr->slotAt(6);
-                        if (nm.isObject() && nm.rawBits() > 0x10000) {
-                            ObjectHeader* nmHdr = nm.asObjectPtr();
-                            if (nmHdr->isBytesObject() && nmHdr->byteSize() < 50) {
-                                rcvrClassName = std::string((char*)nmHdr->bytes(), nmHdr->byteSize());
-                            }
-                        }
-                    }
-                }
-            }
-            fprintf(debugSendLog, "[POST-BC] sendSelector: %s >> %s (argCount=%d) fd=%zu running=%d\n",
-                    rcvrClassName.c_str(), selStr.c_str(), argCount, frameDepth_, running_ ? 1 : 0);
-            fflush(debugSendLog);
-        }
-    }
-
-    // Initialize debug log lazily
+    // Debug variables - only used when ENABLE_DEBUG_LOGGING is true
+    [[maybe_unused]] static int sendCount = 0;
+    [[maybe_unused]] static bool hangDebugEnabled = false;
     if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!allSendLog) {
-            allSendLog = fopen("/tmp/all_sends.log", "w");
-        }
+        sendCount++;
+        if (sendCount >= 4575) hangDebugEnabled = true;
     }
 
     // Fast path: Get selector bytes without creating std::string
@@ -4963,9 +4824,12 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     };
 
     // TRACE: Log InputEventSensor, SessionManager, and process creation related calls
-    {
+    // Disabled for performance - enable ENABLE_DEBUG_LOGGING at top of file to re-enable
+    if constexpr (ENABLE_DEBUG_LOGGING) {
         static FILE* startupTraceLog = nullptr;
         static int startupTraceCount = 0;
+        static int sendCount = 0;
+        sendCount++;
         static bool fullTraceMode = false;  // Enable to trace ALL sends after trigger
         static int fullTraceSinceSmallInteger = 0;
 
@@ -6479,7 +6343,10 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
     }
 
-    if (allSendLog && allSendCount < 100000) {
+    // Debug send logging - disabled for performance
+    [[maybe_unused]] static FILE* allSendLog = nullptr;
+    [[maybe_unused]] static int allSendCount = 0;
+    if constexpr (ENABLE_DEBUG_LOGGING) if (allSendLog && allSendCount < 100000) {
         allSendCount++;
         std::string selStr = "<unknown>";
         if (selector.isObject() && selector.rawBits() > 0x10000) {
@@ -7004,9 +6871,9 @@ extern int g_traceSendsAfterPrim264;
     }
 
     // Message send tracing (limited to first 50 for cleaner output)
-    // NOTE: sendCount already declared at function start
+    // Disabled for performance - wrapped in ENABLE_DEBUG_LOGGING
 
-    if (sendCount <= 50) {
+    if constexpr (ENABLE_DEBUG_LOGGING) if (sendCount <= 50) {
         // Show selector name
         std::string selName = "<unknown>";
         bool isValidSymbol = false;
@@ -8053,7 +7920,7 @@ extern int g_traceSendsAfterPrim264;
     static int cacheHits = 0, cacheMisses = 0;
     static int lastReport = 0;
 
-    if (hangDebugEnabled && sendCount <= 4590) {
+    if constexpr (ENABLE_DEBUG_LOGGING) if (hangDebugEnabled && sendCount <= 4590) {
         fprintf(stderr, "[SEND-DEBUG #%d] about to probe cache\n", sendCount);
         fflush(stderr);
     }
@@ -8062,7 +7929,7 @@ extern int g_traceSendsAfterPrim264;
     if (cached && cached->method != Oop::nil()) {
         cacheHits++;
 
-        if (hangDebugEnabled && sendCount <= 4590) {
+        if constexpr (ENABLE_DEBUG_LOGGING) if (hangDebugEnabled && sendCount <= 4590) {
             fprintf(stderr, "[SEND-DEBUG #%d] cache hit, primIdx=%d\n", sendCount, cached->primitiveIndex);
             fflush(stderr);
         }
@@ -8118,14 +7985,14 @@ tryRegularPrimitive:
             }
         }
 
-        if (hangDebugEnabled && sendCount <= 4590) {
+        if constexpr (ENABLE_DEBUG_LOGGING) if (hangDebugEnabled && sendCount <= 4590) {
             fprintf(stderr, "[SEND-DEBUG #%d] cache hit, about to activateMethod (cached)\n", sendCount);
             fflush(stderr);
         }
 
         activateMethod(cached->method, argCount);
 
-        if (hangDebugEnabled && sendCount <= 4590) {
+        if constexpr (ENABLE_DEBUG_LOGGING) if (hangDebugEnabled && sendCount <= 4590) {
             fprintf(stderr, "[SEND-DEBUG #%d] cache hit, activateMethod returned\n", sendCount);
             fflush(stderr);
         }
@@ -8142,7 +8009,7 @@ tryRegularPrimitive:
                 100.0 * cacheHits / (cacheHits + cacheMisses));
     }
 
-    if (hangDebugEnabled && sendCount <= 4590) {
+    if constexpr (ENABLE_DEBUG_LOGGING) if (hangDebugEnabled && sendCount <= 4590) {
         fprintf(stderr, "[SEND-DEBUG #%d] cache miss, looking up method\n", sendCount);
         fflush(stderr);
     }
@@ -8208,14 +8075,14 @@ tryRegularPrimitive:
         }
     }
 
-    if (hangDebugEnabled && sendCount <= 4590) {
+    if constexpr (ENABLE_DEBUG_LOGGING) if (hangDebugEnabled && sendCount <= 4590) {
         fprintf(stderr, "[SEND-DEBUG #%d] about to activateMethod\n", sendCount);
         fflush(stderr);
     }
 
     activateMethod(method, argCount);
 
-    if (hangDebugEnabled && sendCount <= 4590) {
+    if constexpr (ENABLE_DEBUG_LOGGING) if (hangDebugEnabled && sendCount <= 4590) {
         fprintf(stderr, "[SEND-DEBUG #%d] activateMethod returned\n", sendCount);
         fflush(stderr);
     }
@@ -9305,8 +9172,8 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // Get receiver from stack (now in the frame)
     receiver_ = argument(0);  // First "argument" slot is actually receiver
 
-    // Trace fullCheck activation specifically
-    {
+    // Trace fullCheck activation specifically (disabled for performance)
+    if constexpr (ENABLE_DEBUG_LOGGING) {
         std::string methodSelector = "";
         if (method.isObject() && method.rawBits() > 0x10000) {
             Oop hdr = memory_.fetchPointer(0, method);
@@ -9355,9 +9222,10 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         }
     }
 
-    // Trace method activation to debug SessionManager default
-    static FILE* actLog = nullptr;
-    static int actCount = 0;
+    // Trace method activation to debug SessionManager default (disabled for performance)
+    [[maybe_unused]] static FILE* actLog = nullptr;
+    [[maybe_unused]] static int actCount = 0;
+    if constexpr (ENABLE_DEBUG_LOGGING) {
     if (!actLog) actLog = fopen("/tmp/method_activation.log", "w");
     if (actLog && actCount < 200) {
         // Get method selector for logging
@@ -9422,6 +9290,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             fflush(actLog);
         }
     }
+    } // end if constexpr (ENABLE_DEBUG_LOGGING)
 
     // FIX: Create a context for this method activation so blocks can capture correct receiver
     // Without this, activeContext_ stays stale and blocks get wrong 'self'
@@ -9654,55 +9523,6 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     if (slot1.isObject()) {
         // FullBlockClosure: receiver is at slot 3
         receiver_ = memory_.fetchPointer(3, block);
-        // TRACE: Log block activation to debug nil receiver
-        static FILE* blockActLog = nullptr;
-        static int blockActCount = 0;
-        if (!blockActLog) blockActLog = fopen("/tmp/block_activation.log", "w");
-        if (blockActLog && blockActCount < 500) {
-            blockActCount++;
-            size_t blockSlots = memory_.slotCountOf(block);
-            Oop nilObj = memory_.nil();
-            std::string rcvrClassName = "<unknown>";
-            if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-                Oop cls = memory_.classOf(receiver_);
-                if (cls.isObject()) {
-                    Oop clsName = memory_.fetchPointer(6, cls);
-                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                        ObjectHeader* cnHdr = clsName.asObjectPtr();
-                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
-                            rcvrClassName = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
-                        }
-                    }
-                }
-            } else if (receiver_.rawBits() == nilObj.rawBits()) {
-                rcvrClassName = "nil";
-            }
-            fprintf(blockActLog, "[BLOCK #%d] FullBlockClosure activated: receiver from slot3 = %s (0x%llx) blockSlots=%zu\n",
-                    blockActCount, rcvrClassName.c_str(), (unsigned long long)receiver_.rawBits(), blockSlots);
-            // Also log outerContext info
-            if (outerContext.isObject() && !outerContext.isNil()) {
-                Oop ctxRcvr = memory_.fetchPointer(5, outerContext);
-                fprintf(blockActLog, "  outerContext slot5 (receiver) = 0x%llx\n",
-                        (unsigned long long)ctxRcvr.rawBits());
-            }
-            // Log copied values (slots 4+)
-            int numCopiedVals = static_cast<int>(blockSlots) - 4;
-            if (numCopiedVals > 0) {
-                fprintf(blockActLog, "  copiedValues (%d): ", numCopiedVals);
-                for (int cv = 0; cv < numCopiedVals && cv < 5; cv++) {
-                    Oop copiedVal = memory_.fetchPointer(4 + cv, block);
-                    if (copiedVal.rawBits() == nilObj.rawBits()) {
-                        fprintf(blockActLog, "[%d]=nil ", cv);
-                    } else if (copiedVal.isSmallInteger()) {
-                        fprintf(blockActLog, "[%d]=SI%lld ", cv, copiedVal.asSmallInteger());
-                    } else {
-                        fprintf(blockActLog, "[%d]=0x%llx ", cv, (unsigned long long)copiedVal.rawBits());
-                    }
-                }
-                fprintf(blockActLog, "\n");
-            }
-            fflush(blockActLog);
-        }
     } else if (outerContext.isObject() && !outerContext.isNil()) {
         // Old-style BlockClosure: receiver from outer context
         receiver_ = memory_.fetchPointer(5, outerContext);
@@ -10052,29 +9872,6 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
 
     // New frame pointer is at current position minus args (receiver is first "arg")
     Oop* newFP = stackPointer_ - argCount - 1;  // -1 for receiver position
-
-    // Debug: Log frame pointer setup
-    static FILE* fpLog = nullptr;
-    static int fpLogCount = 0;
-    if (!fpLog) fpLog = fopen("/tmp/frame_setup.log", "w");
-    if (fpLog && fpLogCount < 200) {
-        fpLogCount++;
-        Oop receiverAtFP = *newFP;
-        fprintf(fpLog, "[FP #%d] depth=%zu argCount=%d SP=%p newFP=%p rcvrAtFP=0x%llx\n",
-                fpLogCount, frameDepth_, argCount, (void*)stackPointer_, (void*)newFP,
-                (unsigned long long)receiverAtFP.rawBits());
-        // Also show stack contents
-        if (argCount >= 0 && argCount <= 3) {
-            fprintf(fpLog, "  Stack: ");
-            for (int i = argCount; i >= -1; i--) {
-                Oop val = *(stackPointer_ - argCount - 1 + i);
-                fprintf(fpLog, "[%d]=0x%llx ", i, (unsigned long long)val.rawBits());
-            }
-            fprintf(fpLog, "\n");
-        }
-        fflush(fpLog);
-    }
-
     framePointer_ = newFP;
 
     // Initialize temporaries to nil
@@ -10091,55 +9888,6 @@ void Interpreter::popFrame() {
         std::cerr << "[VM-STOP] popFrame at frameDepth 0\n";
         running_ = false;
         return;
-    }
-
-    // TRACE: Log frame transitions for loop debugging
-    static FILE* frameLog = nullptr;
-    static int frameLogCount = 0;
-    if (!frameLog) frameLog = fopen("/tmp/frame_pop.log", "w");
-    if (frameLog && frameLogCount < 500 && frameDepth_ >= 10 && frameDepth_ <= 25) {
-        frameLogCount++;
-        // Get current method name
-        std::string fromMethod = "<unknown>";
-        if (method_.isObject() && method_.rawBits() > 0x10000) {
-            Oop mHdr = memory_.fetchPointer(0, method_);
-            if (mHdr.isSmallInteger()) {
-                size_t numLits = mHdr.asSmallInteger() & 0x7FFF;
-                if (numLits >= 2) {
-                    Oop sel = memory_.fetchPointer(numLits - 1, method_);
-                    if (sel.isObject() && sel.rawBits() > 0x10000) {
-                        ObjectHeader* selHdr = sel.asObjectPtr();
-                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                            fromMethod = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                        }
-                    }
-                }
-            }
-        }
-        // Get method we're returning TO
-        const SavedFrame& nextFrame = savedFrames_[frameDepth_ - 1];
-        std::string toMethod = "<unknown>";
-        if (nextFrame.savedMethod.isObject() && nextFrame.savedMethod.rawBits() > 0x10000) {
-            Oop mHdr = memory_.fetchPointer(0, nextFrame.savedMethod);
-            if (mHdr.isSmallInteger()) {
-                size_t numLits = mHdr.asSmallInteger() & 0x7FFF;
-                if (numLits >= 2) {
-                    Oop sel = memory_.fetchPointer(numLits - 1, nextFrame.savedMethod);
-                    if (sel.isObject() && sel.rawBits() > 0x10000) {
-                        ObjectHeader* selHdr = sel.asObjectPtr();
-                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                            toMethod = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                        }
-                    }
-                }
-            }
-        }
-        // Show next bytecode at return address
-        uint8_t nextBc = nextFrame.savedIP ? *nextFrame.savedIP : 0;
-        fprintf(frameLog, "[POP #%d] fd=%zu->%zu from=%s to=%s nextBC=0x%02x\n",
-                frameLogCount, frameDepth_, frameDepth_ - 1,
-                fromMethod.c_str(), toMethod.c_str(), nextBc);
-        fflush(frameLog);
     }
 
     --frameDepth_;
