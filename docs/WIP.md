@@ -348,13 +348,29 @@ Uses LOW bits for tags (not high bits):
 0xF9-0xFF (249-255):  Extended operations (push closure, etc.)
 ```
 
-## Next Steps (Future Work)
+## Current Priority
 
-1. **GUI Support**: Implement display primitives for iOS rendering
-2. **iOS Integration**: Bridge to Swift/UIKit for touch events, display
-3. **Full GC**: Mark-sweep-compact for long-running applications (simplified scavenge works for now)
+**Fix Morphic Processes** - The image's Morphic event loop and InputEventSensor aren't running:
+- Primitive 264 (getNextEvent) is registered but never called
+- Only primitive 230 (relinquishProcessor) runs in a loop
+- The scheduler works but only the idle process is active
+- Event sensor process never starts
 
-## Previous Notes (Archived)
+See `WIP-input-handling.md` for current investigation.
+
+## Archived Issues (Fixed)
+
+### Embedded VM Startup (Fixed 2026-01-14)
+**Problem:** When loading a Pharo image in embedded mode, `primitiveQuit` was called and left the VM in a broken state with corrupted stack.
+
+**Solution:** Modified `primitiveQuit` to properly handle embedded mode by popping the broken stack state and calling `tryReschedule()` to find another runnable process (MorphicRenderLoop at priority 40).
+
+### World Menu Drawing (Fixed 2026-01-17)
+**Problem:** Method lookup failures caused DNU errors for basic methods like `#owner`, `#layoutChanged`.
+
+**Root Cause:** Method lookup had a 1024 entry limit but Morph's methodDict has 2050+ slots.
+
+**Solution:** Removed the arbitrary limit - `size_t maxSearch = size;` instead of `std::min(size, (size_t)1024)`.
 
 ### Old C-based VM Issues (before clean rewrite)
 - BitBltPlugin registration fixed with sqNamedPrims.h
