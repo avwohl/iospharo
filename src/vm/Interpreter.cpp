@@ -4894,6 +4894,56 @@ void Interpreter::commonSend(int which) {
         }
     }
 
+    // DEBUG: Trace value: (selectorIndex=26) to see if receiver is OrderedCollection BEFORE sendSelector
+    if (selectorIndex == 26) {  // value:
+        Oop rcvr = stackValue(argCount);
+        std::string rcvrClass = "?";
+        int rcvrSlots = -1;
+        if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+            ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+            rcvrSlots = rcvrHdr->slotCount();
+            uint32_t classIdx = rcvrHdr->classIndex();
+            Oop rcvrCls = memory_.classAtIndex(classIdx);
+            if (rcvrCls.isObject() && rcvrCls.rawBits() > 0x10000) {
+                Oop clsName = memory_.fetchPointer(6, rcvrCls);
+                if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                    ObjectHeader* cnHdr = clsName.asObjectPtr();
+                    if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                        rcvrClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                    }
+                }
+            }
+        }
+        if (rcvrClass == "OrderedCollection") {
+            static int commonValueOrdCollCount = 0;
+            commonValueOrdCollCount++;
+            std::cerr << "[COMMON-VALUE-ORDCOLL #" << commonValueOrdCollCount << "] rcvr=0x" << std::hex << rcvr.rawBits()
+                      << std::dec << " slots=" << rcvrSlots << " argCount=" << argCount << " frame=" << frameDepth_ << "\n";
+            // Print call stack
+            std::cerr << "  commonSend call stack:\n";
+            for (size_t d = 0; d < frameDepth_ && d < 12; d++) {
+                SavedFrame& sf = savedFrames_[frameDepth_ - 1 - d];
+                std::string frameSel = "<unknown>";
+                if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                    Oop hdr = memory_.fetchPointer(0, sf.savedMethod);
+                    if (hdr.isSmallInteger()) {
+                        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                        if (numLits >= 2) {
+                            Oop sel = memory_.fetchPointer(numLits - 1, sf.savedMethod);
+                            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                ObjectHeader* selHdr = sel.asObjectPtr();
+                                if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                    frameSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                                }
+                            }
+                        }
+                    }
+                }
+                std::cerr << "    [" << d << "] " << frameSel << "\n";
+            }
+        }
+    }
+
     sendSelector(selector, argCount);
 }
 
@@ -5191,6 +5241,195 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         return selLen == nameLen && selBytes && memcmp(selBytes, name, nameLen) == 0;
     };
 
+    // DEBUG: Trace EVERY value: send to see if the function is even being called
+    if (selLen == 6 && selBytes && memcmp(selBytes, "value:", 6) == 0) {
+        static int everyValueCount = 0;
+        everyValueCount++;
+        Oop rcvr = stackValue(argCount);
+        std::string rcvrClass = "?";
+        bool isNil = (rcvr.rawBits() == memory_.nil().rawBits());
+        if (!isNil && rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+            ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+            uint32_t classIdx = rcvrHdr->classIndex();
+            Oop rcvrCls = memory_.classAtIndex(classIdx);
+            if (rcvrCls.isObject() && rcvrCls.rawBits() > 0x10000) {
+                Oop clsName = memory_.fetchPointer(6, rcvrCls);
+                if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                    ObjectHeader* cnHdr = clsName.asObjectPtr();
+                    if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                        rcvrClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                    }
+                }
+            }
+        } else if (isNil) {
+            rcvrClass = "nil";
+        }
+        // ALWAYS trace if receiver is nil (problematic case)
+        if (isNil) {
+            static int nilValueCount = 0;
+            nilValueCount++;
+            std::cerr << "[VALUE-TO-NIL #" << nilValueCount << "] value: sent to nil! frame=" << frameDepth_ << "\n";
+            // Print call stack
+            std::cerr << "  Call stack:\n";
+            for (size_t d = 0; d < frameDepth_ && d < 12; d++) {
+                SavedFrame& sf = savedFrames_[frameDepth_ - 1 - d];
+                std::string frameSel = "<unknown>";
+                if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                    Oop hdr = memory_.fetchPointer(0, sf.savedMethod);
+                    if (hdr.isSmallInteger()) {
+                        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                        if (numLits >= 2) {
+                            Oop sel = memory_.fetchPointer(numLits - 1, sf.savedMethod);
+                            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                ObjectHeader* selHdr = sel.asObjectPtr();
+                                if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                    frameSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                                }
+                            }
+                        }
+                    }
+                }
+                std::cerr << "    [" << d << "] " << frameSel << "\n";
+            }
+            // Print bytecodes of current method around IP
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                ObjectHeader* mHdr = method_.asObjectPtr();
+                Oop hdr = memory_.fetchPointer(0, method_);
+                if (hdr.isSmallInteger()) {
+                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                    size_t bcStart = (1 + numLits) * 8;
+                    size_t ip = instructionPointer_ - mHdr->bytes();
+                    std::string methodSel = "<unknown>";
+                    if (numLits >= 2) {
+                        Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                            ObjectHeader* selHdr = sel.asObjectPtr();
+                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                methodSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                            }
+                        }
+                    }
+                    std::cerr << "  Current method: " << methodSel << " ip=" << ip << " bcStart=" << bcStart << "\n";
+                    std::cerr << "  Bytecodes around IP: ";
+                    for (int i = -5; i <= 2; i++) {
+                        if ((int)ip + i >= (int)bcStart && (int)ip + i < (int)mHdr->byteSize()) {
+                            uint8_t bc = mHdr->bytes()[(int)ip + i];
+                            if (i == 0) std::cerr << "[";
+                            std::cerr << std::hex << (int)bc << std::dec;
+                            if (i == 0) std::cerr << "]";
+                            std::cerr << " ";
+                        }
+                    }
+                    std::cerr << "\n";
+                }
+            }
+        }
+        if (everyValueCount <= 200 || everyValueCount % 100 == 0) {
+            std::cerr << "[EVERY-VALUE #" << everyValueCount << "] rcvr=" << rcvrClass << " frame=" << frameDepth_ << "\n";
+        }
+    }
+
+    // DEBUG: ALWAYS trace value: when receiver is OrderedCollection
+    if (selEquals("value:") && argCount == 1) {
+        Oop rcvr = stackValue(argCount);
+        if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+            ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+            uint32_t classIdx = rcvrHdr->classIndex();
+            Oop rcvrCls = memory_.classAtIndex(classIdx);
+            if (rcvrCls.isObject() && rcvrCls.rawBits() > 0x10000) {
+                Oop clsName = memory_.fetchPointer(6, rcvrCls);
+                if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                    ObjectHeader* cnHdr = clsName.asObjectPtr();
+                    if (cnHdr->isBytesObject() && cnHdr->byteSize() == 17 &&
+                        memcmp(cnHdr->bytes(), "OrderedCollection", 17) == 0) {
+                        static int sendSelValueOrdCollCount = 0;
+                        sendSelValueOrdCollCount++;
+                        std::cerr << "[SENDSEL-VALUE-ORDCOLL #" << sendSelValueOrdCollCount << "] rcvr=0x"
+                                  << std::hex << rcvr.rawBits() << std::dec
+                                  << " slots=" << rcvrHdr->slotCount() << " frame=" << frameDepth_ << "\n";
+                        // Print call stack
+                        std::cerr << "  sendSelector call stack:\n";
+                        for (size_t d = 0; d < frameDepth_ && d < 12; d++) {
+                            SavedFrame& sf = savedFrames_[frameDepth_ - 1 - d];
+                            std::string frameSel = "<unknown>";
+                            if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                                Oop hdr = memory_.fetchPointer(0, sf.savedMethod);
+                                if (hdr.isSmallInteger()) {
+                                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                                    if (numLits >= 2) {
+                                        Oop sel = memory_.fetchPointer(numLits - 1, sf.savedMethod);
+                                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                            ObjectHeader* selHdr = sel.asObjectPtr();
+                                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                                frameSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            std::cerr << "    [" << d << "] " << frameSel << "\n";
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // TRACE: detect:ifFound:ifNone: to see if blocks are nil
+    {
+        static int detectFoundNoneCount = 0;
+        if (selEquals("detect:ifFound:ifNone:") && detectFoundNoneCount++ < 10) {
+            Oop rcvr = stackValue(argCount);     // Receiver (the collection)
+            Oop detectBlock = stackValue(2);     // Detection block
+            Oop foundBlock = stackValue(1);      // ifFound block
+            Oop ifNoneBlock = stackValue(0);     // ifNone block
+            std::string detectBlockClass = "?";
+            std::string foundBlockClass = "?";
+            std::string ifNoneBlockClass = "?";
+            bool detectIsNil = (detectBlock.rawBits() == memory_.nil().rawBits());
+            bool foundIsNil = (foundBlock.rawBits() == memory_.nil().rawBits());
+            bool ifNoneIsNil = (ifNoneBlock.rawBits() == memory_.nil().rawBits());
+            if (!detectIsNil && detectBlock.isObject() && detectBlock.rawBits() > 0x10000) {
+                Oop cls = memory_.classAtIndex(detectBlock.asObjectPtr()->classIndex());
+                if (cls.isObject()) {
+                    Oop clsName = memory_.fetchPointer(6, cls);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            detectBlockClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                        }
+                    }
+                }
+            } else if (detectIsNil) detectBlockClass = "nil";
+            if (!foundIsNil && foundBlock.isObject() && foundBlock.rawBits() > 0x10000) {
+                Oop cls = memory_.classAtIndex(foundBlock.asObjectPtr()->classIndex());
+                if (cls.isObject()) {
+                    Oop clsName = memory_.fetchPointer(6, cls);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            foundBlockClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                        }
+                    }
+                }
+            } else if (foundIsNil) foundBlockClass = "nil";
+            if (!ifNoneIsNil && ifNoneBlock.isObject() && ifNoneBlock.rawBits() > 0x10000) {
+                Oop cls = memory_.classAtIndex(ifNoneBlock.asObjectPtr()->classIndex());
+                if (cls.isObject()) {
+                    Oop clsName = memory_.fetchPointer(6, cls);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            ifNoneBlockClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                        }
+                    }
+                }
+            } else if (ifNoneIsNil) ifNoneBlockClass = "nil";
+            std::cerr << "[DETECT-IFOUND-IFNONE #" << detectFoundNoneCount << "] detectBlock=" << detectBlockClass
+                      << " foundBlock=" << foundBlockClass << " ifNoneBlock=" << ifNoneBlockClass << " frame=" << frameDepth_ << "\n";
+        }
+    }
+
     // TRACE: detect:ifNone: investigation
     // The issue: determineActivePlatform returns OrderedCollection instance instead of class
     {
@@ -5312,29 +5551,53 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 std::cerr << "\n";
             }
         }
-        // Trace ALL value: sends for debugging
+        // Trace ALL value: sends for debugging - specifically trace when receiver is NOT a block
         if (selEquals("value:") && argCount == 1) {
-            static int valueAllCount = 0;
-            if (valueAllCount++ < 100) {  // First 100 value: sends
-                Oop stackRcvr = stackValue(argCount);
-                std::string rcvrClass = "?";
-                if (stackRcvr.isObject() && stackRcvr.rawBits() > 0x10000) {
-                    ObjectHeader* rcvrHdr = stackRcvr.asObjectPtr();
-                    uint32_t classIdx = rcvrHdr->classIndex();
-                    Oop rcvrCls = memory_.classAtIndex(classIdx);
-                    if (rcvrCls.isObject() && rcvrCls.rawBits() > 0x10000) {
-                        Oop clsName = memory_.fetchPointer(6, rcvrCls);
-                        if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                            ObjectHeader* cnHdr = clsName.asObjectPtr();
-                            if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
-                                rcvrClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
-                            }
+            Oop stackRcvr = stackValue(argCount);
+            std::string rcvrClass = "?";
+            int rcvrSlots = -1;
+            if (stackRcvr.isObject() && stackRcvr.rawBits() > 0x10000) {
+                ObjectHeader* rcvrHdr = stackRcvr.asObjectPtr();
+                rcvrSlots = rcvrHdr->slotCount();
+                uint32_t classIdx = rcvrHdr->classIndex();
+                Oop rcvrCls = memory_.classAtIndex(classIdx);
+                if (rcvrCls.isObject() && rcvrCls.rawBits() > 0x10000) {
+                    Oop clsName = memory_.fetchPointer(6, rcvrCls);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            rcvrClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
                         }
                     }
                 }
-                // Only print if it's not a FullBlockClosure (to filter out normal calls)
-                if (rcvrClass != "FullBlockClosure" || valueAllCount <= 10) {
-                    std::cerr << "[VALUE-ALL #" << valueAllCount << "] rcvr=" << rcvrClass << " frame=" << frameDepth_ << "\n";
+            }
+            // ALWAYS trace if receiver is OrderedCollection (the problematic case)
+            if (rcvrClass == "OrderedCollection") {
+                static int ordCollValueCount = 0;
+                ordCollValueCount++;
+                std::cerr << "[VALUE-TO-ORDCOLL #" << ordCollValueCount << "] rcvr=0x" << std::hex << stackRcvr.rawBits()
+                          << std::dec << " slots=" << rcvrSlots << " frame=" << frameDepth_ << "\n";
+                // Print call stack
+                std::cerr << "  Call stack:\n";
+                for (size_t d = 0; d < frameDepth_ && d < 12; d++) {
+                    SavedFrame& sf = savedFrames_[frameDepth_ - 1 - d];
+                    std::string frameSel = "<unknown>";
+                    if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                        Oop hdr = memory_.fetchPointer(0, sf.savedMethod);
+                        if (hdr.isSmallInteger()) {
+                            size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                            if (numLits >= 2) {
+                                Oop sel = memory_.fetchPointer(numLits - 1, sf.savedMethod);
+                                if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                    ObjectHeader* selHdr = sel.asObjectPtr();
+                                    if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                        frameSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    std::cerr << "    [" << d << "] " << frameSel << "\n";
                 }
             }
         }
@@ -5385,10 +5648,42 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 std::cerr << "\n";
             }
         }
-        // Trace do: calls on OrderedCollection with 3 slots (the allSubclasses result)
+        // Trace do: calls - check if block argument is nil
         if (selEquals("do:") && argCount == 1) {
             static int doTraceCount = 0;
             Oop rcvr = stackValue(argCount);
+            Oop blockArg = stackValue(0);  // The block argument
+            bool blockIsNil = (blockArg.rawBits() == memory_.nil().rawBits());
+
+            // ALWAYS trace if block is nil (problematic case)
+            if (blockIsNil) {
+                static int doNilBlockCount = 0;
+                doNilBlockCount++;
+                std::cerr << "[DO-NIL-BLOCK #" << doNilBlockCount << "] do: called with NIL block! frame=" << frameDepth_ << "\n";
+                // Print call stack
+                std::cerr << "  Call stack:\n";
+                for (size_t d = 0; d < frameDepth_ && d < 12; d++) {
+                    SavedFrame& sf = savedFrames_[frameDepth_ - 1 - d];
+                    std::string frameSel = "<unknown>";
+                    if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                        Oop hdr = memory_.fetchPointer(0, sf.savedMethod);
+                        if (hdr.isSmallInteger()) {
+                            size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                            if (numLits >= 2) {
+                                Oop sel = memory_.fetchPointer(numLits - 1, sf.savedMethod);
+                                if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                    ObjectHeader* selHdr = sel.asObjectPtr();
+                                    if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                        frameSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    std::cerr << "    [" << d << "] " << frameSel << "\n";
+                }
+            }
+
             if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
                 ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
                 if (rcvrHdr->slotCount() == 3 && doTraceCount++ < 5) {
@@ -11123,6 +11418,53 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
     dnuDepth++;
 
+    // DEBUG: Compare stack receiver with receiver_ for value: sends
+    {
+        Oop stackRcvr = stackValue(argCount);
+        bool isValueSel = false;
+        if (selector.isObject() && selector.rawBits() > 0x10000) {
+            ObjectHeader* selHdr = selector.asObjectPtr();
+            if (selHdr->isBytesObject() && selHdr->byteSize() == 6 &&
+                memcmp(selHdr->bytes(), "value:", 6) == 0) {
+                isValueSel = true;
+            }
+        }
+        if (isValueSel) {
+            static int dnuValueCount = 0;
+            dnuValueCount++;
+            std::string stackRcvrClass = "?";
+            std::string rcvrClass = "?";
+            if (stackRcvr.isObject() && stackRcvr.rawBits() > 0x10000) {
+                Oop cls = memory_.classAtIndex(stackRcvr.asObjectPtr()->classIndex());
+                if (cls.isObject()) {
+                    Oop clsName = memory_.fetchPointer(6, cls);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            stackRcvrClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                        }
+                    }
+                }
+            }
+            if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+                Oop cls = memory_.classAtIndex(receiver_.asObjectPtr()->classIndex());
+                if (cls.isObject()) {
+                    Oop clsName = memory_.fetchPointer(6, cls);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            rcvrClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                        }
+                    }
+                }
+            }
+            std::cerr << "[DNU-VALUE-DIAG #" << dnuValueCount << "] stackRcvr=" << stackRcvrClass
+                      << " receiver_=" << rcvrClass << " frame=" << frameDepth_
+                      << " stackRcvrOop=0x" << std::hex << stackRcvr.rawBits()
+                      << " receiverOop=0x" << receiver_.rawBits() << std::dec << "\n";
+        }
+    }
+
     // DEBUG: Capture initial stack state to detect corruption
     static FILE* stackDebug = nullptr;
     static int stackDebugCount = 0;
@@ -11433,21 +11775,23 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     }
 
     // Log DNU for menu action debugging
+    // IMPORTANT: Use stack receiver, NOT receiver_ instance variable (which may be stale)
+    Oop actualReceiver = stackValue(argCount);
     std::string rcvrClassName = "";
     bool isClass = false;
-    if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-        Oop rcvrClass = memory_.classOf(receiver_);
+    if (actualReceiver.isObject() && actualReceiver.rawBits() > 0x10000) {
+        Oop rcvrClass = memory_.classOf(actualReceiver);
         if (rcvrClass.isObject()) {
             // Check if the receiver itself is a class (has a metaclass as its class)
             ObjectHeader* rcvrClassHdr = rcvrClass.asObjectPtr();
             // In Pharo, metaclasses have a specific format and inherit from Metaclass
             // Classes have format 1 (fixed), while instances have various formats
-            ObjectHeader* rcvrHdr = receiver_.asObjectPtr();
+            ObjectHeader* rcvrHdr = actualReceiver.asObjectPtr();
             // A class has format 1 (fixed) and slot 1 is methodDict
             if (rcvrHdr->format() == ObjectFormat::FixedSize &&
                 rcvrHdr->slotCount() >= 10) {
                 // Could be a class - check if slot 1 looks like a methodDict
-                Oop maybeMethodDict = memory_.fetchPointer(1, receiver_);
+                Oop maybeMethodDict = memory_.fetchPointer(1, actualReceiver);
                 if (maybeMethodDict.isObject() && maybeMethodDict.rawBits() > 0x10000) {
                     ObjectHeader* mdHdr = maybeMethodDict.asObjectPtr();
                     if (mdHdr->slotCount() >= 2) {
@@ -11457,7 +11801,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
             }
 
             // If receiver is a class, get name from receiver itself, not metaclass
-            Oop nameSource = isClass ? receiver_ : rcvrClass;
+            Oop nameSource = isClass ? actualReceiver : rcvrClass;
             Oop nameOop = memory_.fetchPointer(6, nameSource);
             if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
                 ObjectHeader* nameHdr = nameOop.asObjectPtr();
@@ -11466,6 +11810,8 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                 }
             }
         }
+    } else if (actualReceiver.isNil() || actualReceiver.rawBits() == memory_.nil().rawBits()) {
+        rcvrClassName = "UndefinedObject";
     }
     // Limit verbose DNU logging for known fallbacks
     static int assureExtCount = 0;
@@ -11489,7 +11835,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     if (!skipLog) {
         std::cerr << "[DNU] Selector '#" << origStr << "' not found on " << rcvrClassName
                   << (isClass ? " [CLASS]" : " [instance]")
-                  << " (args=" << argCount << ") rcvr=0x" << std::hex << receiver_.rawBits()
+                  << " (args=" << argCount << ") rcvr=0x" << std::hex << actualReceiver.rawBits()
                   << std::dec << "\n";
         // Print call stack for value: on OrderedCollection (NLR investigation)
         static int valueCollStackCount = 0;
@@ -13159,6 +13505,17 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
     size_t slots = 4 + numCopied;  // 4 fixed slots + copied values
     Oop block = memory_.allocateSlots(classIdx, slots, ObjectFormat::Indexable);
 
+    // DEBUG: Trace block allocation to see if it succeeds
+    {
+        bool blockIsNil = (block.rawBits() == memory_.nil().rawBits() || block.rawBits() == 0);
+        static int allocFailCount = 0;
+        if (blockIsNil) {
+            allocFailCount++;
+            std::cerr << "[BLOCK-ALLOC-FAIL #" << allocFailCount << "] allocateSlots returned nil/zero! classIdx="
+                      << classIdx << " slots=" << slots << " frame=" << frameDepth_ << "\n";
+        }
+    }
+
     // Use activeContext_ as the outer context
     // Note: activateBlock now updates activeContext_ when entering blocks,
     // so blocks created inside other blocks will capture the correct context chain
@@ -13342,6 +13699,16 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
                 fprintf(copiedLog, "\n");
             }
             fflush(copiedLog);
+        }
+    }
+
+    // DEBUG: Trace what gets pushed
+    {
+        bool blockIsNil = (block.rawBits() == memory_.nil().rawBits() || block.rawBits() == 0);
+        if (blockIsNil) {
+            static int pushNilBlockCount = 0;
+            pushNilBlockCount++;
+            std::cerr << "[PUSH-NIL-BLOCK #" << pushNilBlockCount << "] about to push nil block! frame=" << frameDepth_ << "\n";
         }
     }
 

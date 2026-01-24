@@ -101,8 +101,10 @@ Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
     // Align to 8 bytes
     totalSize = (totalSize + 7) & ~7ULL;
 
-    // Allocate in eden for new objects
-    ObjectHeader* obj = allocateInEden(totalSize);
+    // TEMPORARY FIX: Allocate directly in old space to bypass broken scavenge
+    // The scavenge doesn't reset eden (to avoid corruption from missing pointer forwarding)
+    // which causes eden to fill up. Until proper GC is implemented, allocate in old space.
+    ObjectHeader* obj = allocateRaw(totalSize, Space::Old);
 
     // TRACE: Log Dictionary allocations (classIndex 3143)
     if (classIndex == 3143) {
@@ -135,14 +137,16 @@ Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
     }
 
     if (!obj) {
-        // Eden is full, try scavenge
-        scavenge();
-        obj = allocateInEden(totalSize);
-        if (!obj) {
-            // Still can't allocate, fall back to old space
-            obj = allocateRaw(totalSize, Space::Old);
-            if (!obj) return nilObject_;
+        // Old space is full - log the failure
+        static int allocFailCount = 0;
+        allocFailCount++;
+        if (allocFailCount <= 10) {
+            std::cerr << "[ALLOC-FAIL #" << allocFailCount << "] allocateSlots failed in old space! classIdx="
+                      << classIndex << " slots=" << slotCount << " totalSize=" << totalSize << "\n";
+            std::cerr << "  oldSpaceFree_=" << std::hex << (uintptr_t)oldSpaceFree_
+                      << " oldSpaceEnd_=" << (uintptr_t)oldSpaceEnd_ << std::dec << "\n";
         }
+        return nilObject_;
     }
 
     // Set up overflow word if needed
@@ -191,16 +195,9 @@ Oop ObjectMemory::allocateBytes(uint32_t classIndex, size_t byteCount) {
     size_t totalSize = headerSize + slotCount * 8;
     totalSize = (totalSize + 7) & ~7ULL;
 
-    // Allocate
-    ObjectHeader* obj = allocateInEden(totalSize);
-    if (!obj) {
-        scavenge();
-        obj = allocateInEden(totalSize);
-        if (!obj) {
-            obj = allocateRaw(totalSize, Space::Old);
-            if (!obj) return nilObject_;
-        }
-    }
+    // TEMPORARY FIX: Allocate directly in old space (see allocateSlots comment)
+    ObjectHeader* obj = allocateRaw(totalSize, Space::Old);
+    if (!obj) return nilObject_;
 
     // Handle overflow
     if (hasOverflow) {
@@ -261,15 +258,9 @@ Oop ObjectMemory::allocateWords(uint32_t classIndex, size_t wordCount) {
     size_t totalSize = headerSize + slotCount * 8;
     totalSize = (totalSize + 7) & ~7ULL;
 
-    ObjectHeader* obj = allocateInEden(totalSize);
-    if (!obj) {
-        scavenge();
-        obj = allocateInEden(totalSize);
-        if (!obj) {
-            obj = allocateRaw(totalSize, Space::Old);
-            if (!obj) return nilObject_;
-        }
-    }
+    // TEMPORARY FIX: Allocate directly in old space (see allocateSlots comment)
+    ObjectHeader* obj = allocateRaw(totalSize, Space::Old);
+    if (!obj) return nilObject_;
 
     if (hasOverflow) {
         uint64_t* overflow = reinterpret_cast<uint64_t*>(obj);
@@ -292,15 +283,9 @@ Oop ObjectMemory::shallowCopy(Oop original) {
     ObjectHeader* src = original.asObjectPtr();
     size_t size = src->totalSize();
 
-    ObjectHeader* copy = allocateInEden(size);
-    if (!copy) {
-        scavenge();
-        copy = allocateInEden(size);
-        if (!copy) {
-            copy = allocateRaw(size, Space::Old);
-            if (!copy) return nilObject_;
-        }
-    }
+    // TEMPORARY FIX: Allocate directly in old space (see allocateSlots comment)
+    ObjectHeader* copy = allocateRaw(size, Space::Old);
+    if (!copy) return nilObject_;
 
     // Copy all bytes including header
     std::memcpy(copy, src, size);
@@ -1203,6 +1188,13 @@ ObjectHeader* ObjectMemory::allocateRaw(size_t size, Space space) {
 
         case Space::Old:
             if (oldSpaceFree_ + size > oldSpaceEnd_) {
+                static int oldSpaceFailCount = 0;
+                oldSpaceFailCount++;
+                if (oldSpaceFailCount <= 5) {
+                    std::cerr << "[OLD-SPACE-FAIL #" << oldSpaceFailCount << "] oldSpaceFree_=" << std::hex
+                              << (uintptr_t)oldSpaceFree_ << " oldSpaceEnd_=" << (uintptr_t)oldSpaceEnd_
+                              << " size=" << std::dec << size << "\n";
+                }
                 return nullptr;
             }
             {
