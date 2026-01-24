@@ -7901,8 +7901,10 @@ extern int g_traceSendsAfterPrim264;
         }
     }
 
+
     // Determine receiver's class
     Oop rcvrClass = memory_.classOf(rcvr);
+
 
     // Check for invalid class (can happen with corrupted state)
     if (rcvrClass.rawBits() == 0) {
@@ -7977,11 +7979,6 @@ extern int g_traceSendsAfterPrim264;
     // Check method cache (with statistics)
     static int cacheHits = 0, cacheMisses = 0;
     static int lastReport = 0;
-
-    if constexpr (ENABLE_DEBUG_LOGGING) if (hangDebugEnabled && sendCount <= 4590) {
-        fprintf(stderr, "[SEND-DEBUG #%d] about to probe cache\n", sendCount);
-        fflush(stderr);
-    }
 
     MethodCacheEntry* cached = probeCache(selector, rcvrClass);
     if (cached && cached->method != Oop::nil()) {
@@ -8060,17 +8057,6 @@ tryRegularPrimitive:
 
     // Cache miss - look up method
     cacheMisses++;
-    if ((cacheHits + cacheMisses) % 1000 == 0 && (cacheHits + cacheMisses) > lastReport) {
-        lastReport = cacheHits + cacheMisses;
-        fprintf(stderr, "[CACHE @%d] hits=%d misses=%d (%.1f%% hit rate)\n",
-                cacheHits + cacheMisses, cacheHits, cacheMisses,
-                100.0 * cacheHits / (cacheHits + cacheMisses));
-    }
-
-    if constexpr (ENABLE_DEBUG_LOGGING) if (hangDebugEnabled && sendCount <= 4590) {
-        fprintf(stderr, "[SEND-DEBUG #%d] cache miss, looking up method\n", sendCount);
-        fflush(stderr);
-    }
 
     Oop method = lookupMethod(selector, rcvrClass);
     if (method.isNil()) {
@@ -8133,17 +8119,7 @@ tryRegularPrimitive:
         }
     }
 
-    if constexpr (ENABLE_DEBUG_LOGGING) if (hangDebugEnabled && sendCount <= 4590) {
-        fprintf(stderr, "[SEND-DEBUG #%d] about to activateMethod\n", sendCount);
-        fflush(stderr);
-    }
-
     activateMethod(method, argCount);
-
-    if constexpr (ENABLE_DEBUG_LOGGING) if (hangDebugEnabled && sendCount <= 4590) {
-        fprintf(stderr, "[SEND-DEBUG #%d] activateMethod returned\n", sendCount);
-        fflush(stderr);
-    }
 }
 
 // ===== METHOD LOOKUP =====
@@ -14754,19 +14730,19 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
     }
 
     // Specifically log primitives we're interested in (event-related)
-    if (primitiveIndex >= 264 && primitiveIndex <= 269) {
+    if (allPrimLog && primitiveIndex >= 264 && primitiveIndex <= 269) {
         fprintf(allPrimLog, "[PRIM-EVENT] #%d primitive=%d (264=getNext, 265=inputSem, 267=sound)\n",
                 primCallCount, primitiveIndex);
         fflush(allPrimLog);
     }
     // Also log wait/relinquish/signal
-    if (primitiveIndex == 86 || primitiveIndex == 179 || primitiveIndex == 85) {
+    if (allPrimLog && (primitiveIndex == 86 || primitiveIndex == 179 || primitiveIndex == 85)) {
         fprintf(allPrimLog, "[PRIM-SCHED] #%d primitive=%d (85=signal, 86=wait, 179=relinquish)\n",
                 primCallCount, primitiveIndex);
         fflush(allPrimLog);
     }
     // Log external call primitive (117) and primitives during dispatch
-    if (primitiveIndex == 117 || primitiveIndex == 146 || primitiveIndex == 147) {
+    if (allPrimLog && (primitiveIndex == 117 || primitiveIndex == 146 || primitiveIndex == 147)) {
         fprintf(allPrimLog, "[PRIM-EXT] #%d primitive=%d (117=externalCall, 146/147=misc)\n",
                 primCallCount, primitiveIndex);
         fflush(allPrimLog);
@@ -14792,9 +14768,6 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
 
     if (prim) {
         // Real primitive function exists - call it
-        if (primitiveIndex == 264) {
-            fprintf(stderr, "[EXECPRIM] About to call primitiveGetNextEvent, argCount=%d\n", argCount);
-        }
         PrimitiveResult result = (this->*prim)(argCount);
         if (result == PrimitiveResult::Success) {
             lastPrimitiveIndex_ = primitiveIndex;

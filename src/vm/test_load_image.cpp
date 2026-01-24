@@ -537,6 +537,7 @@ int main(int argc, char* argv[]) {
         for (int i = 0; i < totalSteps; i++) {
             bool result = interpreter.step();
 
+
             // Progress report every 100k steps
             if (i > 0 && i % 100000 == 0) {
                 std::cout << "[PROGRESS] Step " << i << ": active=" << activeSteps

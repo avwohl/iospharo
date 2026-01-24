@@ -10,6 +10,9 @@
 #include "FFI.hpp"
 #include "../platform/DisplaySurface.hpp"
 #include "../platform/EventQueue.hpp"
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -2991,14 +2994,6 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
     // Wait on a semaphore. If excessSignals > 0, decrement and return.
     // Otherwise suspend current process on the semaphore's wait list.
 
-    static int waitCallCount = 0;
-    static FILE* waitLog = nullptr;
-    waitCallCount++;
-
-    if (!waitLog) {
-        waitLog = fopen("/tmp/prim_wait.log", "w");
-    }
-
     if (stackPointer_ < stackBase_ + argCount + 1) {
         return PrimitiveResult::Failure;
     }
@@ -3021,11 +3016,6 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
         int64_t excess = excessOop.asSmallInteger();
         if (excess > 0) {
             // Semaphore is signaled - decrement and return immediately
-            if (waitLog && waitCallCount <= 100) {
-                fprintf(waitLog, "[WAIT] #%d sem=%p excess=%lld -> decrement and return\n",
-                        waitCallCount, (void*)semaphore.rawBits(), (long long)excess);
-                fflush(waitLog);
-            }
             memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
                                 Oop::fromSmallInteger(excess - 1));
             return PrimitiveResult::Success;
@@ -3033,19 +3023,16 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
     }
 
     // No signal available - must wait
-    // Per official VM: add current process to wait list and switch to next runnable
-    if (waitLog && waitCallCount <= 100) {
-        fprintf(waitLog, "[WAIT] #%d sem=%p -> blocking process\n",
-                waitCallCount, (void*)semaphore.rawBits());
-        fflush(waitLog);
-    }
+    // Add current process to semaphore wait list and switch to next runnable
     Oop activeProcess = getActiveProcess();
     addLastLinkToList(activeProcess, semaphore);
 
     // Find next runnable process and switch to it
-    // Per official VM: always transfer, don't check for nil
-    // The scheduler should always have at least one runnable process (idle)
     Oop nextProcess = wakeHighestPriority();
+    if (nextProcess.isNil()) {
+        // No runnable process - this shouldn't happen in a working system
+        return PrimitiveResult::Failure;
+    }
     transferTo(nextProcess);
     return PrimitiveResult::Success;
 }
@@ -6913,14 +6900,13 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
             push(memory_.nil());
             return PrimitiveResult::Success;
         case 1001:  // Operating system name
-            {
-                // Return "Mac OS" for macOS/iOS - this is what Pharo expects
-                std::cerr << "[ATTR 1001] Returning 'Mac OS' for operatingSystemName\n";
-                Oop str = memory_.createString("Mac OS");
-                pop();
-                push(str);
-                return PrimitiveResult::Success;
-            }
+            pop();
+#if TARGET_OS_IOS || TARGET_OS_IPHONE
+            push(memory_.createString("iOS"));
+#else
+            push(memory_.createString("Mac OS"));
+#endif
+            return PrimitiveResult::Success;
         case 1002:  // VM build string
             pop();
             push(memory_.nil());
@@ -10586,22 +10572,13 @@ PrimitiveResult Interpreter::primitiveFloat64ArrayAdd(int argCount) {
 // Calls a foreign function through FFI mechanism
 PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
     static bool ffiInitialized = false;
-    static int callCount = 0;
-    callCount++;
-
-    // Log FFI calls to see what's being requested
-    if (callCount <= 100) {
-        fprintf(stderr, "[FFI] primitiveCalloutToFFI called #%d (argCount=%d)\n", callCount, argCount);
-    }
 
     // Initialize FFI on first call
     if (!ffiInitialized) {
         ffiInitialized = ffi::initializeFFI();
         if (!ffiInitialized) {
-            fprintf(stderr, "[FFI] initializeFFI FAILED\n");
             return PrimitiveResult::Failure;
         }
-        fprintf(stderr, "[FFI] initializeFFI succeeded\n");
     }
 
     // The FFI call specification comes from the method's literals
@@ -10725,21 +10702,14 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
     }
 
     if (funcName.empty()) {
-        if (callCount <= 50) {
-            fprintf(stderr, "[FFI] No function name found in method literals\n");
-        }
         return PrimitiveResult::Failure;
     }
-
-    fprintf(stderr, "[FFI] Looking up function: %s\n", funcName.c_str());
 
     // Look up the function
     void* funcPtr = ffi::lookupFunction("SDL2", funcName);
     if (!funcPtr) {
-        fprintf(stderr, "[FFI] Function not found: %s\n", funcName.c_str());
         return PrimitiveResult::Failure;
     }
-    fprintf(stderr, "[FFI] Found function %s at %p\n", funcName.c_str(), funcPtr);
 
     // Marshal arguments from stack
     std::vector<ffi::FFIType> argTypes;
@@ -13135,10 +13105,6 @@ PrimitiveResult Interpreter::primitiveBitmapDecompress(int argCount) {
 // ByteString >> compareWith: anotherString collated: order (argCount=2)
 // Returns -1, 0, or 1
 PrimitiveResult Interpreter::primitiveStringCompareWith(int argCount) {
-    static int p158CallCount = 0;
-    if (p158CallCount++ < 5) {
-        std::cerr << "[P158] Called with argCount=" << argCount << "\n";
-    }
     if (argCount < 1 || argCount > 2) return PrimitiveResult::Failure;
 
     Oop string2Oop;
@@ -13163,12 +13129,6 @@ PrimitiveResult Interpreter::primitiveStringCompareWith(int argCount) {
     std::string str1 = extractString(memory_, string1Oop);
     std::string str2 = extractString(memory_, string2Oop);
 
-    // Debug logging for platform detection
-    static int compareLogCount = 0;
-    if ((str1 == "Mac OS" || str2 == "Mac OS") && compareLogCount++ < 5) {
-        std::cerr << "[STRCMP] Comparing '" << str1 << "' with '" << str2 << "'\n";
-    }
-
     // Basic comparison (ignoring collation order for now)
     int result;
     if (str1 < str2) {
@@ -13177,10 +13137,6 @@ PrimitiveResult Interpreter::primitiveStringCompareWith(int argCount) {
         result = 1;
     } else {
         result = 0;
-    }
-
-    if ((str1 == "Mac OS" || str2 == "Mac OS") && compareLogCount <= 5) {
-        std::cerr << "[STRCMP] Result: " << result << "\n";
     }
 
     popN(argCount + 1);  // pop args and receiver
