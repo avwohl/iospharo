@@ -7314,12 +7314,74 @@ PrimitiveResult Interpreter::primitiveTerminateTo(int argCount) {
 
     // Debug: trace what we're terminating
     static int terminateToCount = 0;
-    bool shouldTrace = (terminateToCount++ < 5);
+    bool shouldTrace = (terminateToCount++ < 10);
     if (shouldTrace) {
         std::cerr << "[PRIM-TERMINATE-TO #" << terminateToCount << "] rcvr=0x" << std::hex << rcvr.rawBits()
                   << " target=0x" << targetContext.rawBits() << std::dec;
         if (targetContext.isNil() || targetContext.rawBits() == memory_.nil().rawBits()) {
             std::cerr << " (target is NIL!)";
+        }
+        // Check if receiver is a context
+        uint32_t rcvrClassIdx = 0;
+        std::string rcvrClassName = "<unknown>";
+        if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+            ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+            rcvrClassIdx = rcvrHdr->classIndex();
+            Oop rcvrCls = memory_.classAtIndex(rcvrClassIdx);
+            if (rcvrCls.isObject()) {
+                Oop nm = memory_.fetchPointer(6, rcvrCls);
+                if (nm.isObject() && nm.rawBits() > 0x10000) {
+                    ObjectHeader* nmH = nm.asObjectPtr();
+                    if (nmH->isBytesObject() && nmH->byteSize() < 50) {
+                        rcvrClassName = std::string((char*)nmH->bytes(), nmH->byteSize());
+                    }
+                }
+            }
+        }
+        std::cerr << " rcvrClass=" << rcvrClassName;
+
+        // Check if target is in sender chain
+        Oop check = rcvr;
+        bool foundTarget = false;
+        int checkCount = 0;
+        while (!check.isNil() && check.isObject() && checkCount < 20) {
+            if (check.rawBits() == targetContext.rawBits()) {
+                foundTarget = true;
+                break;
+            }
+            check = memory_.fetchPointer(0, check);  // sender
+            checkCount++;
+        }
+        if (!foundTarget) {
+            std::cerr << " (TARGET NOT IN FIRST 20!)";
+            // Check what the target IS
+            if (targetContext.isObject() && targetContext.rawBits() > 0x10000) {
+                ObjectHeader* tHdr = targetContext.asObjectPtr();
+                uint32_t tClassIdx = tHdr->classIndex();
+                Oop tCls = memory_.classAtIndex(tClassIdx);
+                std::string tClassName = "<unknown>";
+                if (tCls.isObject()) {
+                    Oop nm = memory_.fetchPointer(6, tCls);
+                    if (nm.isObject() && nm.rawBits() > 0x10000) {
+                        ObjectHeader* nmH = nm.asObjectPtr();
+                        if (nmH->isBytesObject() && nmH->byteSize() < 50) {
+                            tClassName = std::string((char*)nmH->bytes(), nmH->byteSize());
+                        }
+                    }
+                }
+                std::cerr << " targetClass=" << tClassName;
+                // Check target's sender
+                Oop tSender = memory_.fetchPointer(0, targetContext);
+                std::cerr << " targetSender=0x" << std::hex << tSender.rawBits() << std::dec;
+            }
+            // Show first few senders to debug
+            std::cerr << "\n  Sender chain: ";
+            Oop ch = rcvr;
+            for (int i = 0; i < 5 && ch.isObject() && ch.rawBits() > 0x10000; i++) {
+                std::cerr << "0x" << std::hex << ch.rawBits() << " -> ";
+                ch = memory_.fetchPointer(0, ch);
+            }
+            std::cerr << std::dec;
         }
         std::cerr << "\n";
     }
@@ -7340,31 +7402,53 @@ PrimitiveResult Interpreter::primitiveTerminateTo(int argCount) {
     // Context layout: sender is slot 0
     const size_t SenderIndex = 0;
 
+    // First, check if target is reachable within a reasonable depth WITHOUT nilling
+    Oop check = rcvr;
+    bool targetReachable = false;
+    for (int i = 0; i < 100 && check.isObject() && check.rawBits() > 0x10000; i++) {
+        if (check.rawBits() == targetContext.rawBits()) {
+            targetReachable = true;
+            break;
+        }
+        Oop nextSender = memory_.fetchPointer(SenderIndex, check);
+        if (nextSender.isNil() || nextSender.rawBits() == memory_.nil().rawBits()) {
+            break;
+        }
+        check = nextSender;
+    }
+
+    if (!targetReachable) {
+        // Target not in sender chain - don't corrupt the chain
+        // Just succeed without doing anything
+        static int unreachableCount = 0;
+        if (unreachableCount++ < 5) {
+            std::cerr << "[PRIM-TERMINATE-TO] Target unreachable - succeeding as no-op\n";
+        }
+        popN(2);
+        push(rcvr);
+        return PrimitiveResult::Success;
+    }
+
+    // Now we know target is reachable - nil out senders up to but not including target
     Oop current = rcvr;
     int iterations = 0;
-    const int maxIterations = 10000;  // Safety limit to prevent infinite loops
-    while (!current.isNil() && current.isObject() && iterations < maxIterations) {
+    while (!current.isNil() && current.isObject() && iterations < 100) {
         iterations++;
-        Oop sender = memory_.fetchPointer(SenderIndex, current);
 
-        // Nil out this context's sender (use real nil object, not raw 0)
-        memory_.storePointer(SenderIndex, current, memory_.nil());
-
-        // If we've reached the target, stop
+        // If we've reached the target, stop (don't nil target's sender)
         if (current.rawBits() == targetContext.rawBits()) {
             break;
         }
 
+        Oop sender = memory_.fetchPointer(SenderIndex, current);
+
+        // Nil out this context's sender
+        memory_.storePointer(SenderIndex, current, memory_.nil());
+
         current = sender;
     }
 
-    if (iterations >= maxIterations) {
-        // Safety limit reached - likely a cycle or very deep chain
-        static int warnCount = 0;
-        if (warnCount++ < 5) {
-            fprintf(stderr, "[WARN] primitiveTerminateTo hit iteration limit (%d)\n", maxIterations);
-        }
-    } else if (shouldTrace) {
+    if (shouldTrace) {
         std::cerr << "[PRIM-TERMINATE-TO] Completed after " << iterations << " iterations\n";
     }
 

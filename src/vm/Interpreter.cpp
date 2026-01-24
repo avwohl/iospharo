@@ -5039,6 +5039,47 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             fflush(startupTraceLog);
         }
 
+        // Trace all sends before #new failure to see what's happening
+        static int preNewFailSendCount = 0;
+        static bool sawNewFail = false;
+        if (!sawNewFail && preNewFailSendCount < 100) {
+            preNewFailSendCount++;
+            // Log last 20 sends before the failure
+            static std::string lastSelectors[20];
+            static int lastIdx = 0;
+            std::string selStr = "<unknown>";
+            if (selBytes && selLen < 50) {
+                selStr = std::string(selBytes, selLen);
+            }
+            lastSelectors[lastIdx % 20] = selStr;
+            lastIdx++;
+
+            // When #new fails, dump the last 20 selectors
+            if (selStr == "new" && argCount == 0) {
+                // Check if this #new will fail by doing a quick lookup
+                Oop rcvr = stackValue(0);
+                Oop rcvrClass = memory_.classOf(rcvr);
+                std::string rcvrClassName = "";
+                if (rcvrClass.isObject()) {
+                    Oop nm = memory_.fetchPointer(6, rcvrClass);
+                    if (nm.isObject() && nm.rawBits() > 0x10000) {
+                        ObjectHeader* nmH = nm.asObjectPtr();
+                        if (nmH->isBytesObject() && nmH->byteSize() < 50) {
+                            rcvrClassName = std::string((char*)nmH->bytes(), nmH->byteSize());
+                        }
+                    }
+                }
+                if (rcvrClassName == "OrderedCollection") {
+                    sawNewFail = true;
+                    std::cerr << "[PRE-NEW-FAIL] Last 20 selectors before #new on OrderedCollection:\n";
+                    for (int i = 0; i < 20 && i < lastIdx; i++) {
+                        int idx = (lastIdx - 20 + i + 20) % 20;
+                        std::cerr << "  [" << i << "] " << lastSelectors[idx] << "\n";
+                    }
+                }
+            }
+        }
+
         // Check for interesting selectors - broader list
         bool interesting = selEquals("startUp") || selEquals("startUp:") ||
                           selEquals("forkAt:") || selEquals("fork") || selEquals("newProcess") ||
@@ -8193,26 +8234,81 @@ tryRegularPrimitive:
                 std::cerr << "  rcvr=0x" << std::hex << rcvr.rawBits();
                 if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
                     ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
-                    std::cerr << " rcvrClassIdx=" << std::dec << rcvrHdr->classIndex();
-                    std::cerr << " rcvrFmt=" << static_cast<int>(rcvrHdr->format());
+                    std::cerr << " classIdx=" << std::dec << rcvrHdr->classIndex();
+                    std::cerr << " slots=" << rcvrHdr->slotCount();
                 }
-                std::cerr << "\n  rcvrClass=0x" << std::hex << rcvrClass.rawBits() << std::dec;
-                std::cerr << " (" << className << ")";
-                // Check if rcvrClass is a metaclass (format 0-4 and name ends with " class" or is missing)
-                // Metaclasses have format 1 (with-inst-vars) and their thisClass slot points to the real class
-                if (rcvrClass.isObject() && rcvrClass.rawBits() > 0x10000) {
-                    ObjectHeader* rcvrClassHdr = rcvrClass.asObjectPtr();
-                    std::cerr << " rcvrClassFmt=" << static_cast<int>(rcvrClassHdr->format());
-                    // Check if rcvr is itself a class object by seeing if it has instVars layout
-                    // and checking the format
-                    if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-                        ObjectHeader* rHdr = rcvr.asObjectPtr();
-                        // Class objects have format 1 (pointers with inst vars)
-                        // and usually many slots (superclass, methodDict, format, etc.)
-                        std::cerr << " rcvrSlots=" << rHdr->slotCount();
+                std::cerr << " (" << className << ")\n";
+
+                // Show current method executing when #new is sent
+                std::string currentMethodSel = "<unknown>";
+                std::string currentMethodClass = "<unknown>";
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    Oop hdr = memory_.fetchPointer(0, method_);
+                    if (hdr.isSmallInteger()) {
+                        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                        if (numLits >= 2) {
+                            Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                ObjectHeader* selHdr = sel.asObjectPtr();
+                                if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                    currentMethodSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                                }
+                            }
+                            // Get method class from class binding (penultimate literal - 2)
+                            if (numLits >= 3) {
+                                Oop classBinding = memory_.fetchPointer(numLits - 2, method_);
+                                if (classBinding.isObject() && classBinding.rawBits() > 0x10000) {
+                                    // It's an Association - value is slot 1
+                                    Oop methodClass = memory_.fetchPointer(1, classBinding);
+                                    if (methodClass.isObject() && methodClass.rawBits() > 0x10000) {
+                                        Oop className = memory_.fetchPointer(6, methodClass);
+                                        if (className.isObject() && className.rawBits() > 0x10000) {
+                                            ObjectHeader* cnHdr = className.asObjectPtr();
+                                            if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                                                currentMethodClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
-                std::cerr << "\n";
+                std::cerr << "  Current method: " << currentMethodClass << " >> #" << currentMethodSel << "\n";
+                // Show bytecode context
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    ObjectHeader* mHdr = method_.asObjectPtr();
+                    uint8_t* bytecodeStart = mHdr->bytes();
+                    size_t ipOffset = instructionPointer_ - bytecodeStart;
+                    std::cerr << "  IP offset: " << ipOffset << " bytecode: 0x"
+                              << std::hex << static_cast<int>(instructionPointer_[-1]) << std::dec << "\n";
+                    // Show a few bytes around the current IP
+                    std::cerr << "  Bytecodes around IP: ";
+                    for (int i = -3; i <= 2; i++) {
+                        if (instructionPointer_ + i >= bytecodeStart) {
+                            std::cerr << std::hex << static_cast<int>(instructionPointer_[i]) << " ";
+                        }
+                    }
+                    std::cerr << std::dec << "\n";
+
+                    // The bytecode 0x80 = Send Literal Selector #0 - show what literal 0 is
+                    Oop hdr = memory_.fetchPointer(0, method_);
+                    if (hdr.isSmallInteger()) {
+                        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                        std::cerr << "  Method has " << numLits << " literals\n";
+                        for (size_t i = 1; i < numLits && i <= 5; i++) {
+                            Oop lit = memory_.fetchPointer(i, method_);
+                            std::cerr << "    literal[" << i << "]=0x" << std::hex << lit.rawBits() << std::dec;
+                            if (lit.isObject() && lit.rawBits() > 0x10000) {
+                                ObjectHeader* litHdr = lit.asObjectPtr();
+                                if (litHdr->isBytesObject() && litHdr->byteSize() < 50) {
+                                    std::cerr << " ('" << std::string((char*)litHdr->bytes(), litHdr->byteSize()) << "')";
+                                }
+                            }
+                            std::cerr << "\n";
+                        }
+                    }
+                }
             }
         }
         sendDoesNotUnderstand(selector, argCount);
