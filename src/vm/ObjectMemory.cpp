@@ -361,6 +361,15 @@ Oop ObjectMemory::classOf(Oop obj) const {
     ObjectHeader* header = obj.asObjectPtr();
     uint32_t classIdx = header->classIndex();
     Oop cls = classAtIndex(classIdx);
+
+    // Debug: trace classOf for nil object (classIdx 3075)
+    static int nilClassOfCount = 0;
+    if (classIdx == 3075 && nilClassOfCount++ < 5) {
+        std::cerr << "[CLASSOF-NIL #" << nilClassOfCount << "] obj=0x" << std::hex << obj.rawBits()
+                  << " classIdx=" << classIdx << " -> cls=0x" << cls.rawBits()
+                  << " isNil=" << std::dec << cls.isNil() << "\n";
+    }
+
     if (cls.isNil() || cls.rawBits() == 0) {
         static int nilClassCount = 0;
         static uint32_t lastBadClassIdx = 0;

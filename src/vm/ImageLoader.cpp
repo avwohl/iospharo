@@ -578,6 +578,7 @@ bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
         }
         numPages++;
     }
+    std::cerr << "[CLASS-TABLE] Found " << numPages << " class table pages\n";
 
     // Iterate through each page
     for (size_t pageNum = 0; pageNum < numPages; pageNum++) {
@@ -596,8 +597,8 @@ bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
         for (size_t i = 0; i < pageSlots && i < PageSize; i++) {
             Oop classOop = pageHdr->slotAt(i);
 
-            // Skip nil entries
-            if (classOop.rawBits() == 0 || classOop.isNil()) {
+            // Skip nil entries (both raw 0 and the actual nil object)
+            if (classOop.rawBits() == 0 || classOop.rawBits() == nilObj.rawBits()) {
                 continue;
             }
 
@@ -609,8 +610,28 @@ bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
             uint32_t classIndex = static_cast<uint32_t>(pageNum * PageSize + i);
             memory.setClassAtIndex(classIndex, classOop);
             totalClasses++;
+
+            // Debug: log class 3075 (UndefinedObject) registration
+            if (classIndex == 3075) {
+                std::cerr << "[CLASS-TABLE] Registered UndefinedObject at index 3075: 0x"
+                          << std::hex << classOop.rawBits() << std::dec << "\n";
+            }
         }
     }
+
+    std::cerr << "[CLASS-TABLE] Registered " << totalClasses << " classes from pages\n";
+
+    // Debug: check if key classes are registered
+    Oop class3075 = memory.classAtIndex(3075);
+    std::cerr << "[CLASS-TABLE] Class 3075 (UndefinedObject): "
+              << (class3075.isNil() ? "NIL" : "registered")
+              << " 0x" << std::hex << class3075.rawBits() << std::dec << "\n";
+
+    // Check class 1 (Association)
+    Oop class1 = memory.classAtIndex(1);
+    std::cerr << "[CLASS-TABLE] Class 1: "
+              << (class1.isNil() ? "NIL" : (class1.rawBits() == memory.nil().rawBits() ? "NIL-OBJ" : "registered"))
+              << " 0x" << std::hex << class1.rawBits() << std::dec << "\n";
 
     if (totalClasses > 0) {
         return true;
@@ -639,11 +660,13 @@ fallback_scan:
 
         Oop classTableFirstPageOop = hrHdr->slotAt(0);
 
-        if (classTableFirstPageOop.isNil() || !classTableFirstPageOop.isObject()) {
+        // Check for both raw 0 and the actual nil object
+        if (classTableFirstPageOop.rawBits() == 0 || classTableFirstPageOop.rawBits() == nilObj.rawBits() || !classTableFirstPageOop.isObject()) {
             // Try using hiddenRoots itself as the class table first page
             for (size_t i = 0; i < hrSlots; i++) {
                 Oop classOop = hrHdr->slotAt(i);
-                if (!classOop.isNil() && classOop.isObject()) {
+                // Skip both raw 0 and the actual nil object
+                if (classOop.rawBits() != 0 && classOop.rawBits() != nilObj.rawBits() && classOop.isObject()) {
                     memory.setClassAtIndex(static_cast<uint32_t>(i), classOop);
                     totalClasses++;
                 }
@@ -663,7 +686,8 @@ fallback_scan:
         for (size_t pageNum = 0; pageNum < numPages && pageNum < 20; pageNum++) {
             Oop pageOop = classTableFirstPageHdr->slotAt(pageNum);
 
-            if (pageOop.isNil() || !pageOop.isObject()) {
+            // Skip both raw 0 and the actual nil object
+            if (pageOop.rawBits() == 0 || pageOop.rawBits() == nilObj.rawBits() || !pageOop.isObject()) {
                 continue;
             }
 
@@ -853,7 +877,8 @@ direct_scan:
     // std::cerr << "[DEBUG] Checking special objects for classes..." << std::endl;
     for (int soIdx = 5; soIdx < 20; soIdx++) {
         Oop specialObj = memory.specialObject(static_cast<SpecialObjectIndex>(soIdx));
-        if (specialObj.isNil() || !specialObj.isObject()) continue;
+        // Skip both raw 0 and the actual nil object
+        if (specialObj.rawBits() == 0 || specialObj.rawBits() == nilObj.rawBits() || !specialObj.isObject()) continue;
 
         ObjectHeader* objHdr = specialObj.asObjectPtr();
         auto soFmt = objHdr->format();

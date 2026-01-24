@@ -147,7 +147,24 @@ public:
     /// Set the class object at a given index
     void setClassAtIndex(uint32_t index, Oop classOop) {
         if (index < classTable_.size()) {
+            // Detect if class 1 is being overwritten with nil
+            if (index == 1) {
+                Oop oldValue = classTable_[1];
+                if (oldValue.rawBits() != 0 && classOop.rawBits() != oldValue.rawBits()) {
+                    fprintf(stderr, "[CLASS-OVERWRITE-1] old=0x%llx new=0x%llx\n",
+                            (unsigned long long)oldValue.rawBits(),
+                            (unsigned long long)classOop.rawBits());
+                }
+            }
             classTable_[index] = classOop;
+            // Verify for class 1
+            if (index == 1) {
+                Oop verify = classTable_[1];
+                fprintf(stderr, "[CLASS-SET-1] set=0x%llx verify=0x%llx match=%d\n",
+                        (unsigned long long)classOop.rawBits(),
+                        (unsigned long long)verify.rawBits(),
+                        classOop.rawBits() == verify.rawBits());
+            }
             // Log registration of low-numbered classes (these are often core classes)
             if (index < 100) {
                 static FILE* classRegLog = nullptr;

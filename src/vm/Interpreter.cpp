@@ -2375,6 +2375,24 @@ bool Interpreter::step() {
         return false;
     }
 
+    // Debug: check of class 1 periodically and detect when it changes
+    static Oop lastClass1 = Oop::nil();
+    static int class1CheckCount = 0;
+    static bool class1CorruptionDetected = false;
+    Oop class1 = memory_.classAtIndex(1);
+    Oop nilObj = memory_.nil();
+    if (!class1CorruptionDetected && class1.rawBits() == nilObj.rawBits() && lastClass1.rawBits() != 0 && lastClass1.rawBits() != nilObj.rawBits()) {
+        std::cerr << "[STEP-CHECK #" << class1CheckCount << "] CLASS1 CORRUPTED! was=0x" << std::hex << lastClass1.rawBits()
+                  << " now=0x" << class1.rawBits() << std::dec << "\n";
+        class1CorruptionDetected = true;
+    }
+    if (class1CheckCount == 0) {
+        std::cerr << "[STEP-CHECK #" << class1CheckCount << "] class1=0x" << std::hex << class1.rawBits()
+                  << " nilObj=0x" << nilObj.rawBits() << std::dec << "\n";
+    }
+    lastClass1 = class1;
+    class1CheckCount++;
+
     // Process any pending external semaphore signals (from heartbeat/events)
     if (hasPendingSignals()) {
         processPendingSignals();
@@ -7910,6 +7928,31 @@ extern int g_traceSendsAfterPrim264;
     // Determine receiver's class
     Oop rcvrClass = memory_.classOf(rcvr);
 
+    // Debug: trace when rcvrClass is the nil object itself (wrong)
+    static int nilClassDebugCount = 0;
+    if (rcvrClass.rawBits() == nilObj.rawBits() && nilClassDebugCount++ < 5) {
+        uint32_t rcvrClassIdx = 0;
+        if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+            ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+            rcvrClassIdx = rcvrHdr->classIndex();
+            std::cerr << "[SEND-NIL-CLASS #" << nilClassDebugCount << "] rcvr=0x" << std::hex << rcvr.rawBits()
+                      << " rcvrClass=0x" << rcvrClass.rawBits() << std::dec
+                      << " rcvr.classIdx=" << rcvrClassIdx
+                      << " fmt=" << static_cast<int>(rcvrHdr->format())
+                      << " slots=" << rcvrHdr->slotCount();
+
+            // Re-fetch class to verify class table
+            Oop directClass = memory_.classAtIndex(rcvrClassIdx);
+            std::cerr << " directLookup=0x" << std::hex << directClass.rawBits() << std::dec;
+            if (directClass.rawBits() != rcvrClass.rawBits()) {
+                std::cerr << " MISMATCH!";
+            }
+            std::cerr << "\n";
+        } else {
+            std::cerr << "[SEND-NIL-CLASS #" << nilClassDebugCount << "] rcvr=0x" << std::hex << rcvr.rawBits()
+                      << " NOT OBJECT\n";
+        }
+    }
 
     // Check for invalid class (can happen with corrupted state)
     if (rcvrClass.rawBits() == 0) {
@@ -8142,6 +8185,15 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
         }
     }
 
+    // Debug: trace specific method lookups
+    static int traceCount = 0;
+    static int foundCount = 0;
+    static int notFoundCount = 0;
+    bool traceThis = (selStr == "isHandlerOrSignalingContext");
+    if (traceThis) {
+        traceCount++;
+    }
+
     // Helper to get class name
     auto getClassName = [this](Oop cls) -> std::string {
         if (!cls.isObject() || cls.rawBits() < 0x10000) return "?";
@@ -8155,6 +8207,15 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
         return "?";
     };
 
+    // Debug: trace doesNotUnderstand: lookup
+    static int dnuLookupCount = 0;
+    bool traceDNU = (selStr == "doesNotUnderstand:");
+    if (traceDNU && dnuLookupCount++ < 5) {
+        std::cerr << "[DNU-LOOKUP #" << dnuLookupCount << "] Looking for doesNotUnderstand:\n";
+        std::cerr << "  Starting class: " << getClassName(classOop)
+                  << " (0x" << std::hex << classOop.rawBits() << std::dec << ")\n";
+    }
+
     // Get nil object for proper comparison
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
     auto isNilOrEnd = [nilObj](Oop o) -> bool {
@@ -8163,6 +8224,12 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
 
     while (!isNilOrEnd(currentClass) && currentClass.isObject() && depth < 100) {
         Oop methodDict = methodDictOf(currentClass);
+
+        // Trace DNU lookup path
+        if (traceDNU && dnuLookupCount <= 5) {
+            std::cerr << "  [depth=" << depth << "] class=" << getClassName(currentClass)
+                      << " methodDict=" << (isNilOrEnd(methodDict) ? "nil" : "ok") << "\n";
+        }
 
         if (!isNilOrEnd(methodDict) && methodDict.isObject()) {
             // WORKAROUND: Skip Deprecation's broken signal method
@@ -8174,12 +8241,33 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
             if (!skipThisClass) {
                 Oop method = lookupInMethodDict(methodDict, selector);
                 if (!isNilOrEnd(method) && method.isObject()) {
+                    if (traceThis) {
+                        foundCount++;
+                    }
+                    if (traceDNU && dnuLookupCount <= 5) {
+                        std::cerr << "  FOUND in " << getClassName(currentClass) << "!\n";
+                    }
                     return method;
                 }
             }
         }
         currentClass = superclassOf(currentClass);
         depth++;
+    }
+    if (traceDNU && dnuLookupCount <= 5) {
+        std::cerr << "  NOT FOUND after " << depth << " levels\n";
+    }
+    if (traceThis) {
+        notFoundCount++;
+        // Only print first few NOT FOUND cases with details
+        if (notFoundCount <= 3) {
+            fprintf(stderr, "[LOOKUP-FAIL #%d] isHandlerOrSignalingContext NOT FOUND (total: found=%d notFound=%d)\n",
+                    notFoundCount, foundCount, notFoundCount);
+            // Show what class we started with
+            std::string startClassName = getClassName(classOop);
+            fprintf(stderr, "  Starting class: %s\n", startClassName.c_str());
+            fflush(stderr);
+        }
     }
 
     return Oop::nil();  // Not found
@@ -10688,13 +10776,32 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         dnuDepth--;
         return;
     }
-    // Fallback for message:/receiver:/reachedDefaultHandler on nil/false
+    // Fallback for message:/receiver:/reachedDefaultHandler/signal on nil/false
     // - happens when DNU handler fails to create Message object properly
-    if ((origStr == "message:" || origStr == "receiver:" || origStr == "reachedDefaultHandler") &&
-        (rcvrClassName == "UndefinedObject" || rcvrClassName == "False" || rcvrClassName == "True" || rcvrClassName.empty())) {
+    // - or when exception class returns nil for 'new'
+    // Check both rcvrClassName and the actual stack receiver
+    Oop stackRcvr = stackValue(argCount);
+    bool stackRcvrIsNil = (stackRcvr.rawBits() == memory_.nil().rawBits());
+    bool selectorMatches = (origStr == "message:" || origStr == "receiver:" ||
+                           origStr == "reachedDefaultHandler" || origStr == "signal");
+    bool rcvrMatches = (rcvrClassName == "UndefinedObject" || rcvrClassName == "False" ||
+                        rcvrClassName == "True" || rcvrClassName.empty() || stackRcvrIsNil);
+
+    static int debugFallbackCount = 0;
+    if (selectorMatches && debugFallbackCount++ < 10) {
+        std::cerr << "[DNU-FALLBACK-DEBUG] selector=" << origStr
+                  << " rcvrClassName='" << rcvrClassName << "'"
+                  << " stackRcvr=0x" << std::hex << stackRcvr.rawBits()
+                  << " nilObj=0x" << memory_.nil().rawBits() << std::dec
+                  << " stackRcvrIsNil=" << stackRcvrIsNil
+                  << " rcvrMatches=" << rcvrMatches << "\n";
+    }
+
+    if (selectorMatches && rcvrMatches) {
         static int messageOnNilCount = 0;
         if (messageOnNilCount++ < 5) {
-            std::cerr << "[DNU] Fallback for " << origStr << " on " << rcvrClassName << " - returning nil\n";
+            std::cerr << "[DNU] Fallback for " << origStr << " on " << rcvrClassName
+                      << " (stackRcvrIsNil=" << stackRcvrIsNil << ") - returning nil\n";
         }
         popN(argCount + 1);
         push(memory_.nil());
