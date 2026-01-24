@@ -2276,10 +2276,10 @@ void Interpreter::processPendingSignals() {
 
         // Debug: Dump semaphore table info on first call
         if (sigCount == 1 && sigLog) {
-            Oop semTableCheck = memory_.specialObject(SpecialObjectIndex::ExternalSemaphoreTable);
+            Oop semTableCheck = memory_.specialObject(SpecialObjectIndex::ExternalObjectsArray);
             if (!semTableCheck.isNil() && semTableCheck.isObject()) {
                 size_t tblSize = memory_.slotCountOf(semTableCheck);
-                fprintf(sigLog, "[SIGNAL] ExternalSemaphoreTable has %zu slots\n", tblSize);
+                fprintf(sigLog, "[SIGNAL] ExternalObjectsArray has %zu slots\n", tblSize);
                 for (size_t i = 0; i < std::min(tblSize, (size_t)10); i++) {
                     Oop slot = memory_.fetchPointer(i, semTableCheck);
                     fprintf(sigLog, "[SIGNAL]   slot[%zu] = 0x%llx (isNil=%d isObj=%d)\n",
@@ -2291,7 +2291,7 @@ void Interpreter::processPendingSignals() {
     }
 
     // Get the external semaphore table from special objects
-    Oop semTable = memory_.specialObject(SpecialObjectIndex::ExternalSemaphoreTable);
+    Oop semTable = memory_.specialObject(SpecialObjectIndex::ExternalObjectsArray);
     if (semTable.isNil() || !semTable.isObject()) {
         return;
     }
@@ -2379,8 +2379,59 @@ bool Interpreter::step() {
     static Oop lastClass1 = Oop::nil();
     static int class1CheckCount = 0;
     static bool class1CorruptionDetected = false;
+    static bool preCorruptionLogging = false;
     Oop class1 = memory_.classAtIndex(1);
     Oop nilObj = memory_.nil();
+
+    // Enable detailed logging near the corruption point (step 21250-21260)
+    if (class1CheckCount >= 21250 && class1CheckCount <= 21260 && !preCorruptionLogging) {
+        preCorruptionLogging = true;
+    }
+    if (preCorruptionLogging && class1CheckCount <= 21265) {
+        // Get current method and selector for context
+        std::string methodName = "<unknown>";
+        if (method_.isObject() && method_.rawBits() > 0x10000) {
+            ObjectHeader* mHdr = method_.asObjectPtr();
+            if (mHdr->isCompiledMethod()) {
+                Oop hdr = memory_.fetchPointer(0, method_);
+                if (hdr.isSmallInteger()) {
+                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                    if (numLits >= 2) {
+                        Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                            ObjectHeader* selHdr = sel.asObjectPtr();
+                            if (selHdr->isBytesObject() && selHdr->byteSize() < 100) {
+                                methodName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Get next bytecode
+        uint8_t bc = 0;
+        if (instructionPointer_ < bytecodeEnd_) {
+            bc = *instructionPointer_;
+        }
+        // Get lastPrimitiveIndex from previous step
+        std::cerr << "[STEP #" << class1CheckCount << "] class1=0x" << std::hex << class1.rawBits() << std::dec
+                  << " method=" << methodName << " bc=0x" << std::hex << (int)bc << std::dec
+                  << " lastPrim=" << lastPrimitiveIndex_ << "\n";
+
+        // For step 21256, trace what selector is being sent
+        if (class1CheckCount == 21256 && bc == 0x81) {
+            Oop sel = literal(1);  // literalIndex 1 for 0x81
+            std::string selStr = "<unknown>";
+            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                ObjectHeader* selHdr = sel.asObjectPtr();
+                if (selHdr->isBytesObject() && selHdr->byteSize() < 100) {
+                    selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                }
+            }
+            std::cerr << "  [CORRUPTION-STEP] Sending #" << selStr << "\n";
+        }
+    }
+
     if (!class1CorruptionDetected && class1.rawBits() == nilObj.rawBits() && lastClass1.rawBits() != 0 && lastClass1.rawBits() != nilObj.rawBits()) {
         std::cerr << "[STEP-CHECK #" << class1CheckCount << "] CLASS1 CORRUPTED! was=0x" << std::hex << lastClass1.rawBits()
                   << " now=0x" << class1.rawBits() << std::dec << "\n";
@@ -2389,6 +2440,11 @@ bool Interpreter::step() {
     if (class1CheckCount == 0) {
         std::cerr << "[STEP-CHECK #" << class1CheckCount << "] class1=0x" << std::hex << class1.rawBits()
                   << " nilObj=0x" << nilObj.rawBits() << std::dec << "\n";
+        // Print memory layout to debug corruption
+        std::cerr << "[MEM-LAYOUT] classTable_[1] addr=" << memory_.classTableEntryAddress(1)
+                  << " oldSpace=[" << (void*)memory_.oldSpaceStart() << "-" << (void*)memory_.oldSpaceEnd() << "]"
+                  << " permSpace=[" << (void*)memory_.permSpaceStart() << "-0x???]"
+                  << " newSpace=[" << (void*)memory_.newSpaceStart() << "-0x???]\n";
     }
     lastClass1 = class1;
     class1CheckCount++;
@@ -8029,6 +8085,17 @@ extern int g_traceSendsAfterPrim264;
     static int lastReport = 0;
 
     MethodCacheEntry* cached = probeCache(selector, rcvrClass);
+    if (cached) {
+        // Debug: check for cached nil method (shouldn't happen but might explain issues)
+        if (cached->method.isNil() || cached->method.rawBits() == 0) {
+            if (selLen == 3 && selBytes && memcmp(selBytes, "new", 3) == 0) {
+                static int cachedNilNewCount = 0;
+                if (cachedNilNewCount++ < 5) {
+                    std::cerr << "[CACHE-NIL-NEW #" << cachedNilNewCount << "] cache has nil method for #new\n";
+                }
+            }
+        }
+    }
     if (cached && cached->method != Oop::nil()) {
         cacheHits++;
 
@@ -8108,6 +8175,46 @@ tryRegularPrimitive:
 
     Oop method = lookupMethod(selector, rcvrClass);
     if (method.isNil()) {
+        // Debug: trace when #new lookup fails
+        if (selLen == 3 && selBytes && memcmp(selBytes, "new", 3) == 0) {
+            static int newFailCount = 0;
+            if (newFailCount++ < 20) {
+                std::string className = "?";
+                if (rcvrClass.isObject() && rcvrClass.rawBits() > 0x10000) {
+                    Oop nameOop = memory_.fetchPointer(6, rcvrClass);
+                    if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                        ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                            className = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                        }
+                    }
+                }
+                std::cerr << "[SEND-NEW-FAIL #" << newFailCount << "] #new not found\n";
+                std::cerr << "  rcvr=0x" << std::hex << rcvr.rawBits();
+                if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                    ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+                    std::cerr << " rcvrClassIdx=" << std::dec << rcvrHdr->classIndex();
+                    std::cerr << " rcvrFmt=" << static_cast<int>(rcvrHdr->format());
+                }
+                std::cerr << "\n  rcvrClass=0x" << std::hex << rcvrClass.rawBits() << std::dec;
+                std::cerr << " (" << className << ")";
+                // Check if rcvrClass is a metaclass (format 0-4 and name ends with " class" or is missing)
+                // Metaclasses have format 1 (with-inst-vars) and their thisClass slot points to the real class
+                if (rcvrClass.isObject() && rcvrClass.rawBits() > 0x10000) {
+                    ObjectHeader* rcvrClassHdr = rcvrClass.asObjectPtr();
+                    std::cerr << " rcvrClassFmt=" << static_cast<int>(rcvrClassHdr->format());
+                    // Check if rcvr is itself a class object by seeing if it has instVars layout
+                    // and checking the format
+                    if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                        ObjectHeader* rHdr = rcvr.asObjectPtr();
+                        // Class objects have format 1 (pointers with inst vars)
+                        // and usually many slots (superclass, methodDict, format, etc.)
+                        std::cerr << " rcvrSlots=" << rHdr->slotCount();
+                    }
+                }
+                std::cerr << "\n";
+            }
+        }
         sendDoesNotUnderstand(selector, argCount);
         return;
     }
@@ -8216,6 +8323,21 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
                   << " (0x" << std::hex << classOop.rawBits() << std::dec << ")\n";
     }
 
+    // Debug: trace #new lookup to understand why it fails
+    static int newLookupCount = 0;
+    bool traceNew = (selStr == "new");
+    // Trace #new lookups - show first 15 and any that fail
+    std::string startClassName = getClassName(classOop);
+    bool shouldTraceNew = (traceNew && newLookupCount < 15);
+    if (shouldTraceNew) {
+        newLookupCount++;
+        std::cerr << "[NEW-LOOKUP #" << newLookupCount << "] Looking for new\n";
+        std::cerr << "  Starting class: " << startClassName
+                  << " (0x" << std::hex << classOop.rawBits() << std::dec << ")\n";
+        // Show superclass chain for lookups that fail
+        // (save chain info for use after loop completes)
+    }
+
     // Get nil object for proper comparison
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
     auto isNilOrEnd = [nilObj](Oop o) -> bool {
@@ -8227,6 +8349,11 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
 
         // Trace DNU lookup path
         if (traceDNU && dnuLookupCount <= 5) {
+            std::cerr << "  [depth=" << depth << "] class=" << getClassName(currentClass)
+                      << " methodDict=" << (isNilOrEnd(methodDict) ? "nil" : "ok") << "\n";
+        }
+        // Trace #new lookup path
+        if (shouldTraceNew) {
             std::cerr << "  [depth=" << depth << "] class=" << getClassName(currentClass)
                       << " methodDict=" << (isNilOrEnd(methodDict) ? "nil" : "ok") << "\n";
         }
@@ -8247,6 +8374,9 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
                     if (traceDNU && dnuLookupCount <= 5) {
                         std::cerr << "  FOUND in " << getClassName(currentClass) << "!\n";
                     }
+                    if (shouldTraceNew) {
+                        std::cerr << "  FOUND #new in " << getClassName(currentClass) << "!\n";
+                    }
                     return method;
                 }
             }
@@ -8256,6 +8386,20 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
     }
     if (traceDNU && dnuLookupCount <= 5) {
         std::cerr << "  NOT FOUND after " << depth << " levels\n";
+    }
+    if (shouldTraceNew) {
+        std::cerr << "  #new NOT FOUND after " << depth << " levels (started from " << startClassName << ")\n";
+        // Show the actual superclass chain that was walked
+        std::cerr << "  Superclass chain: ";
+        Oop c = classOop;
+        Oop nilObj2 = memory_.specialObject(SpecialObjectIndex::NilObject);
+        for (int i = 0; i < 10 && c.isObject() && c.rawBits() > 0x10000; i++) {
+            std::cerr << getClassName(c) << " -> ";
+            Oop next = superclassOf(c);
+            if (next.isNil() || next.rawBits() == nilObj2.rawBits() || next.rawBits() < 0x10000) break;
+            c = next;
+        }
+        std::cerr << "(end)\n";
     }
     if (traceThis) {
         notFoundCount++;
@@ -10758,12 +10902,70 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         return;
     }
 
-    // Fallback for startup to avoid DNU spiral
+    // NOTE: Do NOT add workaround for #new DNU - need to fix root cause
+    // The root cause is that class method lookup is walking the wrong hierarchy
+    // See CLAUDE.md: "DO NOT add workarounds, hacks, or band-aids to bypass problems"
+
+    // Debug: when #new DNU happens, trace the receiver and call stack
     if (origStr == "new" && argCount == 0) {
-        pop();  // Pop receiver
-        push(memory_.nil());
-        dnuDepth--;
-        return;
+        static int newDnuTraceCount = 0;
+        if (newDnuTraceCount++ < 5) {
+            Oop stackRcvr = stackValue(0);  // receiver is at stackValue(argCount) which is 0
+            std::cerr << "[NEW-DNU-TRACE #" << newDnuTraceCount << "] #new DNU on receiver 0x"
+                      << std::hex << stackRcvr.rawBits() << std::dec << "\n";
+            if (stackRcvr.isObject() && stackRcvr.rawBits() > 0x10000) {
+                ObjectHeader* rcvrHdr = stackRcvr.asObjectPtr();
+                Oop rcvrCls = memory_.classOf(stackRcvr);
+                std::string rcvrClsName = "";
+                if (rcvrCls.isObject()) {
+                    Oop nm = memory_.fetchPointer(6, rcvrCls);
+                    if (nm.isObject() && nm.rawBits() > 0x10000) {
+                        ObjectHeader* nmH = nm.asObjectPtr();
+                        if (nmH->isBytesObject() && nmH->byteSize() < 50) {
+                            rcvrClsName = std::string((char*)nmH->bytes(), nmH->byteSize());
+                        }
+                    }
+                }
+                std::cerr << "  rcvrClass=" << rcvrClsName << " slots=" << rcvrHdr->slotCount() << "\n";
+
+                // Show call stack to find where this erroneous #new comes from
+                std::cerr << "  Call stack:\n";
+                for (size_t d = 0; d < frameDepth_ && d < 8; d++) {
+                    SavedFrame& sf = savedFrames_[frameDepth_ - 1 - d];
+                    std::string frameSel = "<unknown>";
+                    std::string frameRcvrClass = "<unknown>";
+                    if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                        Oop hdr = memory_.fetchPointer(0, sf.savedMethod);
+                        if (hdr.isSmallInteger()) {
+                            size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                            if (numLits >= 2) {
+                                Oop sel = memory_.fetchPointer(numLits - 1, sf.savedMethod);
+                                if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                    ObjectHeader* selHdr = sel.asObjectPtr();
+                                    if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                        frameSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (sf.savedReceiver.isObject()) {
+                        Oop frc = memory_.classOf(sf.savedReceiver);
+                        if (frc.isObject()) {
+                            Oop frcName = memory_.fetchPointer(6, frc);
+                            if (frcName.isObject() && frcName.rawBits() > 0x10000) {
+                                ObjectHeader* frnH = frcName.asObjectPtr();
+                                if (frnH->isBytesObject() && frnH->byteSize() < 50) {
+                                    frameRcvrClass = std::string((char*)frnH->bytes(), frnH->byteSize());
+                                }
+                            }
+                        }
+                    }
+                    std::cerr << "    [" << d << "] " << frameRcvrClass << " >> #" << frameSel << "\n";
+                }
+            }
+        }
+        // Don't return early - let DNU handling continue
     }
     if (origStr == "receiver:" && argCount == 1) {
         Oop arg = pop();  // Pop argument
@@ -11716,20 +11918,17 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     }
 
     // DIAGNOSTIC: Check if stack receiver differs from instance variable
+    // NOTE: The stack receiver is the CORRECT one for this DNU. receiver_ may be stale
+    // from a previous activation. Don't replace failedReceiver with receiver_.
     if (failedReceiver.rawBits() != receiver_.rawBits()) {
         static int mismatchCount = 0;
         if (++mismatchCount <= 5) {
             std::cerr << "[DNU-MISMATCH] Stack receiver 0x" << std::hex << failedReceiver.rawBits()
                       << " != receiver_ 0x" << receiver_.rawBits() << std::dec << "\n";
             std::cerr << "  argCount=" << argCount << " stackPointer depth=" << (stackPointer_ - stackBase_) << "\n";
+            std::cerr << "  Using stack receiver (receiver_ may be stale)\n";
         }
-        // Use receiver_ instead if it's valid
-        if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-            ObjectHeader* hdr = receiver_.asObjectPtr();
-            if (hdr->classIndex() != 0) {
-                failedReceiver = receiver_;  // Use the valid one
-            }
-        }
+        // DO NOT replace failedReceiver with receiver_ - stack receiver is correct
     }
 
     // FAIL FAST: If we can't resolve the receiver's class, sending doesNotUnderstand:
@@ -12423,6 +12622,21 @@ void Interpreter::initializeSelectors() {
     selectors_.mustBeBoolean = memory_.specialObject(SpecialObjectIndex::SelectorMustBeBoolean);
     selectors_.cannotReturn = memory_.specialObject(SpecialObjectIndex::SelectorCannotReturn);
     selectors_.aboutToReturn = memory_.specialObject(SpecialObjectIndex::SelectorAboutToReturn);
+
+    // Debug: show what we got for doesNotUnderstand
+    {
+        Oop dnu = selectors_.doesNotUnderstand;
+        std::cerr << "[INIT-SELECTORS] doesNotUnderstand=0x" << std::hex << dnu.rawBits() << std::dec;
+        if (dnu.isObject() && dnu.rawBits() > 0x10000) {
+            ObjectHeader* hdr = dnu.asObjectPtr();
+            if (hdr->isBytesObject() && hdr->byteSize() < 50) {
+                std::cerr << " (#" << std::string((char*)hdr->bytes(), hdr->byteSize()) << ")";
+            }
+        } else if (dnu.isNil() || dnu.rawBits() == 0) {
+            std::cerr << " (NIL!)";
+        }
+        std::cerr << "\n";
+    }
     // DEBUG: "[DEBUG] initializeSelectors: Got special selectors"
 
     // For arithmetic selectors, search SmallInteger's method dictionary

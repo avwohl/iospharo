@@ -7312,6 +7312,30 @@ PrimitiveResult Interpreter::primitiveTerminateTo(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    // Debug: trace what we're terminating
+    static int terminateToCount = 0;
+    bool shouldTrace = (terminateToCount++ < 5);
+    if (shouldTrace) {
+        std::cerr << "[PRIM-TERMINATE-TO #" << terminateToCount << "] rcvr=0x" << std::hex << rcvr.rawBits()
+                  << " target=0x" << targetContext.rawBits() << std::dec;
+        if (targetContext.isNil() || targetContext.rawBits() == memory_.nil().rawBits()) {
+            std::cerr << " (target is NIL!)";
+        }
+        std::cerr << "\n";
+    }
+
+    // If target is nil, we'd terminate the entire chain - that's probably wrong
+    // Let's check if that's what's happening
+    if (targetContext.isNil() || targetContext.rawBits() == memory_.nil().rawBits()) {
+        // Target is nil - this will nil out the entire sender chain
+        // which is likely not intended behavior
+        static int nilTargetCount = 0;
+        if (nilTargetCount++ < 3) {
+            std::cerr << "[PRIM-TERMINATE-TO] Target is nil - would terminate entire chain, failing instead\n";
+        }
+        return PrimitiveResult::Failure;  // Don't corrupt the entire context chain
+    }
+
     // Walk the sender chain from receiver, nilling out senders until we reach target
     // Context layout: sender is slot 0
     const size_t SenderIndex = 0;
@@ -7340,6 +7364,8 @@ PrimitiveResult Interpreter::primitiveTerminateTo(int argCount) {
         if (warnCount++ < 5) {
             fprintf(stderr, "[WARN] primitiveTerminateTo hit iteration limit (%d)\n", maxIterations);
         }
+    } else if (shouldTrace) {
+        std::cerr << "[PRIM-TERMINATE-TO] Completed after " << iterations << " iterations\n";
     }
 
     popN(2);

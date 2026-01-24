@@ -52,7 +52,7 @@ struct MemoryConfig {
 };
 
 /// Indices into special objects array
-/// These must match the Smalltalk image layout
+/// These must match VMMaker/SpurMemoryManager >>initializeSpecialObjectIndices
 enum class SpecialObjectIndex : size_t {
     NilObject = 0,
     FalseObject = 1,
@@ -60,34 +60,51 @@ enum class SpecialObjectIndex : size_t {
     SchedulerAssociation = 3,
     ClassBitmap = 4,
     ClassSmallInteger = 5,
-    ClassByteString = 6,
+    ClassByteString = 6,           // Was: ClassString
     ClassArray = 7,
-    // Smalltalk dictionary
-    SmalltalkDictionary = 8,
+    SmalltalkDictionary = 8,       // May be unused in modern images but we try it
     ClassFloat = 9,
     ClassMethodContext = 10,
-    ClassBlockClosure = 11,
+    SuspendedProcessInCallout = 11, // NOT ClassBlockClosure (that's unused by VM)
+    // ClassBlockClosure is NOT in special objects array in Spur/Pharo 12+
+    // Use ClassFullBlockClosure (index 59) or look up by name
+    ClassBlockClosure = 11,         // WARNING: Returns SuspendedProcessInCallout, not a class!
+    ClassProcess = 27,              // WARNING: May be unused/nil in modern images
     ClassPoint = 12,
     ClassLargePositiveInteger = 13,
-    ClassMessage = 14,
-    ClassCompiledMethod = 15,
-    TheLowSpaceSemaphore = 17,  // Semaphore signaled when memory is low
+    // 14 is unused
+    ClassMessage = 15,             // Was incorrectly 14
+    // ClassCompiledMethod = 16,   // Unused by VM
+    TheLowSpaceSemaphore = 17,     // Semaphore signaled when memory is low
     ClassSemaphore = 18,
     ClassCharacter = 19,
     SelectorDoesNotUnderstand = 20,
-    SpecialSelectorsArray = 23,  // Array of 32 special selectors (+, -, at:, at:put:, etc.)
+    SelectorCannotReturn = 21,     // Was incorrectly 36
+    ProcessSignalingLowSpace = 22, // Was: TheInputSemaphore
+    SpecialSelectorsArray = 23,    // Array of special selectors (+, -, at:, at:put:, etc.)
+    // 24 is unused
     SelectorMustBeBoolean = 25,
     ClassByteArray = 26,
-    ClassProcess = 27,
+    // ClassProcess = 27,          // Unused by VM
     CompactClasses = 28,
-    TheTimerSemaphore = 29,     // Semaphore signaled by timer (primitiveSignalAtMilliseconds)
-    TheInterruptSemaphore = 30, // Semaphore signaled on user interrupt
-    SelectorCannotReturn = 36,
-    SelectorAboutToReturn = 40,
+    TheTimerSemaphore = 29,        // Semaphore signaled by timer
+    TheInterruptSemaphore = 30,    // Semaphore signaled on user interrupt
+    ClassFloat32Register = 31,
+    ClassFloat64Register = 32,
+    // 33 is unused
+    SelectorCannotInterpret = 34,
+    // 35-37 were context protos, now unused
+    ExternalObjectsArray = 38,     // External semaphores/objects
+    ClassMutex = 39,
+    ProcessInExternalCodeTag = 40, // Was: ClassTranslatedMethod
+    TheFinalizationSemaphore = 41,
     ClassLargeNegativeInteger = 42,
-    ExternalSemaphoreTable = 38,  // Array of external semaphores (signaled by index)
+    ClassExternalAddress = 43,
+    // 44-47 unused
+    SelectorAboutToReturn = 48,    // Was incorrectly 40
+    SelectorRunWithIn = 49,
+    // ... more indices up to 59
     ClassFullBlockClosure = 59,
-    // Add more as needed
     Count = 60
 };
 
@@ -382,6 +399,12 @@ public:
         // Check if it's in perm space
         if (ptr >= permSpaceStart_ && ptr < permSpaceEnd_) return true;
         return false;
+    }
+
+    /// Debug: Get address of class table entry for detecting corruption
+    void* classTableEntryAddress(uint32_t index) const {
+        if (index >= classTable_.size()) return nullptr;
+        return const_cast<void*>(static_cast<const void*>(&classTable_[index]));
     }
 
 private:
