@@ -6,24 +6,30 @@
 
 ## Latest Debug Session (2026-01-24)
 
-### Fixed: VM Hang at Step 260
-The VM was hanging during startup at step 260-261. Root causes:
-1. **Null file pointer crash**: `fprintf(allPrimLog, ...)` called when allPrimLog was null
-   - Fixed by adding null checks before all allPrimLog fprintf calls
-2. **Wrapped 98 debug fopen calls**: All debug logging now uses `if constexpr (ENABLE_DEBUG_LOGGING)`
+### Fixed: VM Now Runs 283k+ Steps
+The VM was hanging during startup. Fixed multiple issues:
 
-### Also Fixed
+1. **Hang at step 260** - Null allPrimLog file pointer crash
+   - Fixed by adding null checks before all allPrimLog fprintf calls
+
+2. **Hang at step 10284** - Null defaultSendLog file pointer crash
+   - Fixed by adding null check when writing to defaultSendLog in sendSelector
+   - The log file is only opened when ENABLE_DEBUG_LOGGING is true
+
+3. **Hang at step 20392** - Infinite loop in primitiveTerminateTo
+   - Added safety limit (10000 iterations) to prevent infinite loops
+   - The context sender chain had a cycle or was extremely long
+
+### VM Status After Fixes
+- Runs 283872 bytecode steps before becoming idle
+- Becomes idle waiting for external events (semaphore wait)
+- No more hangs during startup
+
+### Also Fixed (Previous Session)
 - OS name detection now returns "iOS" on iOS devices (TARGET_OS_IOS)
 - Cleaned up temporary debug output from step(), sendSelector(), primitiveWait()
 - Removed ~70 lines of temporary debugging code
-
-### Remaining Logging Issues
-Some unconditional fopen calls still exist:
-- /tmp/at_nil_trace.log (Primitives.cpp:1316)
-- /tmp/atput_nil.log (Primitives.cpp:1386)
-- /tmp/block_args.log (Primitives.cpp:2654)
-- /tmp/external_prim.log (Primitives.cpp:10884)
-- /tmp/ensure_lookup.log (Interpreter.cpp)
+- Wrapped 98 debug fopen calls with `if constexpr (ENABLE_DEBUG_LOGGING)`
 
 ## Original Problem
 
