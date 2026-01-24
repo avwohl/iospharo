@@ -3425,6 +3425,24 @@ void Interpreter::push(Oop value) {
         overflowCount++;
         std::cerr << "[VM-STOP] Stack overflow #" << overflowCount << " in push() at step " << g_stepNum
                   << " frameDepth=" << frameDepth_ << " method=0x" << std::hex << method_.rawBits() << std::dec << "\n";
+        // Log receiver class
+        if (receiver_.isObject() && receiver_.rawBits() > 0x10000 && memory_.isValidObject(receiver_)) {
+            Oop cls = memory_.classOf(receiver_);
+            if (cls.isObject() && memory_.isValidObject(cls)) {
+                ObjectHeader* clsHdr = cls.asObjectPtr();
+                if (clsHdr->slotCount() >= 7) {
+                    Oop clsName = memory_.fetchPointer(6, cls);
+                    if (clsName.isObject() && memory_.isValidObject(clsName)) {
+                        ObjectHeader* nameHdr = clsName.asObjectPtr();
+                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                            std::cerr << "  receiver class: " << std::string((char*)nameHdr->bytes(), nameHdr->byteSize()) << "\n";
+                        }
+                    }
+                }
+            }
+        } else if (receiver_.isSmallInteger()) {
+            std::cerr << "  receiver: SmallInteger(" << receiver_.asSmallInteger() << ")\n";
+        }
         // Log the current method selector
         if (method_.isObject() && method_.rawBits() > 0x10000 && memory_.isValidObject(method_)) {
             ObjectHeader* mHdr = method_.asObjectPtr();
@@ -3436,16 +3454,15 @@ void Interpreter::push(Oop value) {
                 if (hdr.isSmallInteger()) {
                     size_t numLits = hdr.asSmallInteger() & 0x7FFF;
                     std::cerr << "  numLits=" << numLits << "\n";
-                    if (numLits > 0 && numLits < mHdr->slotCount()) {
-                        Oop sel = memory_.fetchPointer(numLits, method_);
-                        std::cerr << "  sel=0x" << std::hex << sel.rawBits() << std::dec
-                                  << " isObj=" << sel.isObject() << " isValid=" << memory_.isValidObject(sel) << "\n";
+                    // Try both slot numLits and numLits-1 for selector
+                    for (size_t trySlot = (numLits > 0 ? numLits - 1 : 0); trySlot <= numLits && trySlot < mHdr->slotCount(); trySlot++) {
+                        Oop sel = memory_.fetchPointer(trySlot, method_);
                         if (sel.isObject() && sel.rawBits() > 0x10000 && memory_.isValidObject(sel)) {
                             ObjectHeader* selHdr = sel.asObjectPtr();
-                            std::cerr << "  selHdr isBytesObj=" << selHdr->isBytesObject()
-                                      << " byteSize=" << selHdr->byteSize() << "\n";
                             if (selHdr->isBytesObject() && selHdr->byteSize() < 100) {
-                                std::cerr << "  selector: " << std::string((char*)selHdr->bytes(), selHdr->byteSize()) << "\n";
+                                std::cerr << "  selector (slot " << trySlot << "): "
+                                          << std::string((char*)selHdr->bytes(), selHdr->byteSize()) << "\n";
+                                break;
                             }
                         }
                     }
@@ -12293,6 +12310,20 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
             std::cerr << "[DNU] EMPTY SELECTOR - likely memory corruption, returning nil\n";
         }
         // Pop args and receiver, push nil
+        popN(argCount + 1);
+        push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for copyTo: on nil - causes infinite recursion via exception handling
+    // The cycle: copyTo: on nil -> DNU -> exception -> copyTo: contexts -> copyTo: on nil -> ...
+    if (origStr == "copyTo:" && (actualReceiver.isNil() || actualReceiver.rawBits() == memory_.nil().rawBits())) {
+        static int copyToNilCount = 0;
+        copyToNilCount++;
+        if (copyToNilCount <= 5) {
+            std::cerr << "[DNU-COPYTNIL #" << copyToNilCount << "] copyTo: on nil - returning nil to break cycle\n";
+        }
         popN(argCount + 1);
         push(memory_.nil());
         dnuDepth--;

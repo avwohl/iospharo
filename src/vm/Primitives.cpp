@@ -2889,15 +2889,33 @@ PrimitiveResult Interpreter::primitiveResume(int argCount) {
     // Primitive 87: Process>>resume
     // Resume a suspended process. Add to scheduler queue.
     // If it has higher priority than current, preempt.
+
+    static int resumeCallCount = 0;
+    static FILE* resumeLog = nullptr;
+    resumeCallCount++;
+
+    if (!resumeLog) {
+        resumeLog = fopen("/tmp/prim_resume.log", "w");
+    }
     Oop process = stackTop();  // Receiver is the process to resume
 
     if (!process.isObject()) {
+        if (resumeLog && resumeCallCount <= 50) {
+            fprintf(resumeLog, "[RESUME #%d] FAIL: process not object 0x%llx\n",
+                    resumeCallCount, (unsigned long long)process.rawBits());
+            fflush(resumeLog);
+        }
         return PrimitiveResult::Failure;
     }
 
     // Check for forwarded process (official VM behavior)
     ObjectHeader* procHdr = process.asObjectPtr();
     if (procHdr->isForwarded()) {
+        if (resumeLog && resumeCallCount <= 50) {
+            fprintf(resumeLog, "[RESUME #%d] FAIL: forwarded process 0x%llx\n",
+                    resumeCallCount, (unsigned long long)process.rawBits());
+            fflush(resumeLog);
+        }
         return PrimitiveResult::Failure;
     }
 
@@ -2906,6 +2924,12 @@ PrimitiveResult Interpreter::primitiveResume(int argCount) {
     Oop nilObj = memory_.nil();
 
     if (context.isNil() || context.rawBits() == nilObj.rawBits() || !context.isObject()) {
+        if (resumeLog && resumeCallCount <= 50) {
+            fprintf(resumeLog, "[RESUME #%d] FAIL: no valid context, proc=0x%llx ctx=0x%llx nil=0x%llx\n",
+                    resumeCallCount, (unsigned long long)process.rawBits(),
+                    (unsigned long long)context.rawBits(), (unsigned long long)nilObj.rawBits());
+            fflush(resumeLog);
+        }
         return PrimitiveResult::Failure;  // Can't resume without a valid context
     }
 
@@ -2913,10 +2937,19 @@ PrimitiveResult Interpreter::primitiveResume(int argCount) {
     // Check if context is forwarded and validate format
     ObjectHeader* ctxHdr = context.asObjectPtr();
     if (ctxHdr->isForwarded()) {
+        if (resumeLog && resumeCallCount <= 50) {
+            fprintf(resumeLog, "[RESUME #%d] FAIL: forwarded context\n", resumeCallCount);
+            fflush(resumeLog);
+        }
         return PrimitiveResult::Failure;
     }
     // Context objects have format 3 (IndexableWithFixed)
     if (ctxHdr->format() != ObjectFormat::IndexableWithFixed) {
+        if (resumeLog && resumeCallCount <= 50) {
+            fprintf(resumeLog, "[RESUME #%d] FAIL: context wrong format=%d (expected 3)\n",
+                    resumeCallCount, (int)ctxHdr->format());
+            fflush(resumeLog);
+        }
         return PrimitiveResult::Failure;  // Not a valid Context
     }
 
@@ -2927,6 +2960,14 @@ PrimitiveResult Interpreter::primitiveResume(int argCount) {
     Oop activeProcess = getActiveProcess();
     Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
     int activePriority = static_cast<int>(activePriorityOop.asSmallInteger());
+
+    if (resumeLog && resumeCallCount <= 50) {
+        fprintf(resumeLog, "[RESUME #%d] proc=0x%llx pri=%d active_pri=%d -> %s\n",
+                resumeCallCount, (unsigned long long)process.rawBits(),
+                processPriority, activePriority,
+                processPriority > activePriority ? "PREEMPT" : "enqueue");
+        fflush(resumeLog);
+    }
 
     if (processPriority > activePriority) {
         // Resumed process has higher priority - preempt current process
