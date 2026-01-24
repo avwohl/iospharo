@@ -492,6 +492,15 @@ int main(int argc, char* argv[]) {
                       << " width: " << (width.isSmallInteger() ? width.asSmallInteger() : -1)
                       << " height: " << (height.isSmallInteger() ? height.asSmallInteger() : -1)
                       << " depth: " << (depth.isSmallInteger() ? depth.asSmallInteger() : -1) << std::endl;
+            // Debug: show raw slot values
+            std::cout << "  Raw slots: bits=0x" << std::hex << bits.rawBits()
+                      << " width=0x" << width.rawBits()
+                      << " height=0x" << height.rawBits()
+                      << " depth=0x" << depth.rawBits() << std::dec << std::endl;
+            std::cout << "  Slot types: bits=" << (bits.isObject() ? "obj" : bits.isSmallInteger() ? "smi" : "other")
+                      << " width=" << (width.isObject() ? "obj" : width.isSmallInteger() ? "smi" : "other")
+                      << " height=" << (height.isObject() ? "obj" : height.isSmallInteger() ? "smi" : "other")
+                      << " depth=" << (depth.isObject() ? "obj" : depth.isSmallInteger() ? "smi" : "other") << std::endl;
 
             // If bits is a Bitmap object, fill the entire display with a gradient
             if (bits.isObject()) {

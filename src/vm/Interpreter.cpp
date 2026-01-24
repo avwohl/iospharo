@@ -12344,6 +12344,20 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         return;
     }
 
+    // Fallback for #pointerArity: on Error - FFI-related message on error object
+    // Causes infinite loop when error handling tries to introspect the error
+    if (origStr == "pointerArity:" && rcvrClassName == "Error" && argCount == 1) {
+        static int arityCount = 0;
+        arityCount++;
+        if (arityCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] pointerArity: on Error #" << arityCount << " - returning 0\n";
+        }
+        popN(argCount + 1);  // Pop receiver and argument
+        push(Oop::fromSmallInteger(0));  // Return 0 (no pointer arity)
+        dnuDepth--;
+        return;
+    }
+
     // Fallback for #readStream on non-collection objects
     // MorphicRenderLoop incorrectly receives this during menu action execution
     if (origStr == "readStream" && argCount == 0) {
