@@ -3421,7 +3421,37 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
 
 void Interpreter::push(Oop value) {
     if (stackPointer_ >= stack_.data() + MaxStackDepth) {
-        std::cerr << "[VM-STOP] Stack overflow in push()\n";
+        static int overflowCount = 0;
+        overflowCount++;
+        std::cerr << "[VM-STOP] Stack overflow #" << overflowCount << " in push() at step " << g_stepNum
+                  << " frameDepth=" << frameDepth_ << " method=0x" << std::hex << method_.rawBits() << std::dec << "\n";
+        // Log the current method selector
+        if (method_.isObject() && method_.rawBits() > 0x10000 && memory_.isValidObject(method_)) {
+            ObjectHeader* mHdr = method_.asObjectPtr();
+            std::cerr << "  method classIdx=" << mHdr->classIndex() << " slotCount=" << mHdr->slotCount() << "\n";
+            // CompiledMethod: header is slot 0, selector is at (numLiterals)
+            if (mHdr->slotCount() > 0) {
+                Oop hdr = memory_.fetchPointer(0, method_);
+                std::cerr << "  hdr=0x" << std::hex << hdr.rawBits() << std::dec << " isSmallInt=" << hdr.isSmallInteger() << "\n";
+                if (hdr.isSmallInteger()) {
+                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                    std::cerr << "  numLits=" << numLits << "\n";
+                    if (numLits > 0 && numLits < mHdr->slotCount()) {
+                        Oop sel = memory_.fetchPointer(numLits, method_);
+                        std::cerr << "  sel=0x" << std::hex << sel.rawBits() << std::dec
+                                  << " isObj=" << sel.isObject() << " isValid=" << memory_.isValidObject(sel) << "\n";
+                        if (sel.isObject() && sel.rawBits() > 0x10000 && memory_.isValidObject(sel)) {
+                            ObjectHeader* selHdr = sel.asObjectPtr();
+                            std::cerr << "  selHdr isBytesObj=" << selHdr->isBytesObject()
+                                      << " byteSize=" << selHdr->byteSize() << "\n";
+                            if (selHdr->isBytesObject() && selHdr->byteSize() < 100) {
+                                std::cerr << "  selector: " << std::string((char*)selHdr->bytes(), selHdr->byteSize()) << "\n";
+                            }
+                        }
+                    }
+                }
+            }
+        }
         running_ = false;
         return;
     }
