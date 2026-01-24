@@ -31,6 +31,9 @@ constexpr bool ENABLE_DEBUG_LOGGING = false;
 // Global flag to trace sends after primitive 264 completes
 int g_traceSendsAfterPrim264 = 0;
 
+// Global flag to trace jumps after isActivePlatform returns TRUE
+bool g_traceDetectJumps = false;
+
 // REMOVED: g_debugPendingFlag (was for workaround code)
 
 // File-scope variables for fullCheck bytecode tracing
@@ -2784,7 +2787,16 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                     case 0x59: returnValue(memory_.trueObject()); break;   // return true
                     case 0x5A: returnValue(memory_.falseObject()); break;  // return false
                     case 0x5B: returnValue(memory_.nil()); break;          // return nil
-                    case 0x5C: returnFromMethod(); break;                  // return top
+                    case 0x5C: {
+                        // TRACE: Method return for detect investigation
+                        extern bool g_traceDetectJumps;
+                        static int methodRetTraceCount = 0;
+                        if (g_traceDetectJumps && methodRetTraceCount++ < 10) {
+                            std::cerr << "[METHOD-RET #" << methodRetTraceCount << "] 0x5C (ReturnTop) frame=" << frameDepth_ << "\n";
+                        }
+                        returnFromMethod();
+                        break;
+                    }
                     case 0x5D: returnValue(memory_.nil()); break;          // block return nil
                     case 0x5E: {                                           // block return top
                         // Sista V1: 0x5E is extensible via Extend A
@@ -2792,6 +2804,16 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                         // extA_ = N: return from N-th enclosing block (non-local return)
                         int enclosingLevels = extA_;
                         extA_ = 0;  // Consume extension
+
+                        // TRACE: Block return bytecode for detect investigation
+                        {
+                            extern bool g_traceDetectJumps;
+                            static int blockRetTraceCount = 0;
+                            if (g_traceDetectJumps && blockRetTraceCount++ < 10) {
+                                std::cerr << "[BLOCK-RET #" << blockRetTraceCount << "] 0x5E (BlockReturn) extA=" << enclosingLevels << " frame=" << frameDepth_ << "\n";
+                            }
+                        }
+
                         if (enclosingLevels > 0) {
                             // Non-local return - unwind enclosingLevels blocks
                             returnFromBlock();
@@ -4051,12 +4073,104 @@ terminate_process:
 
     // After popping, if execution is still running, push the result
     if (running_) {
+        // TRACE: Return values for detect investigation
+        {
+            extern bool g_traceDetectJumps;
+            static int retPushTraceCount = 0;
+            if (g_traceDetectJumps && retPushTraceCount++ < 20) {
+                bool isT = (value.rawBits() == memory_.trueObject().rawBits());
+                bool isF = (value.rawBits() == memory_.falseObject().rawBits());
+                std::cerr << "[RET-PUSH #" << retPushTraceCount << "] pushing ";
+                if (isT) std::cerr << "TRUE";
+                else if (isF) std::cerr << "FALSE";
+                else std::cerr << "0x" << std::hex << value.rawBits() << std::dec;
+                std::cerr << " onto frame " << frameDepth_ << " stack (sp=" << (stackPointer_ - stackBase_) << ")\n";
+            }
+        }
         push(value);
     }
 }
 
 void Interpreter::returnFromMethod() {
+    // TRACE: Stack state before popping return value
+    {
+        extern bool g_traceDetectJumps;
+        static int prePopTraceCount = 0;
+        if (g_traceDetectJumps && prePopTraceCount++ < 15) {
+            std::cerr << "[RET-PRE-POP #" << prePopTraceCount << "] frame=" << frameDepth_
+                      << " sp=" << (stackPointer_ - stackBase_);
+            // Peek at top of stack before popping
+            if (stackPointer_ > stackBase_) {
+                Oop topVal = stackPointer_[-1];
+                std::cerr << " top=0x" << std::hex << topVal.rawBits() << std::dec;
+                if (topVal.isObject() && topVal.rawBits() > 0x10000) {
+                    ObjectHeader* tvHdr = topVal.asObjectPtr();
+                    std::cerr << " (slots=" << tvHdr->slotCount() << ")";
+                }
+            }
+            std::cerr << "\n";
+        }
+    }
+
     Oop value = pop();
+
+    // TRACE: Returns from detect:ifNone: and determineActivePlatform for DNU investigation
+    {
+        static int retTraceCount = 0;
+        if (retTraceCount < 30 && method_.isObject() && method_.rawBits() > 0x10000) {
+            Oop hdr = memory_.fetchPointer(0, method_);
+            if (hdr.isSmallInteger()) {
+                size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                if (numLits >= 2) {
+                    Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                    if (sel.isObject() && sel.rawBits() > 0x10000) {
+                        ObjectHeader* selHdr = sel.asObjectPtr();
+                        if (selHdr->isBytesObject()) {
+                            std::string selStr((char*)selHdr->bytes(), selHdr->byteSize());
+                            bool shouldTrace = (selStr == "detect:ifNone:" || selStr == "determineActivePlatform" ||
+                                selStr == "allSubclasses" || selStr == "do:" || selStr == "detect:ifFound:ifNone:" ||
+                                selStr == "isActivePlatform");
+                            if (shouldTrace) {
+                                retTraceCount++;
+                                std::cerr << "[RET-TRACE #" << retTraceCount << "] " << selStr << " returns ";
+                                if (value.rawBits() == memory_.trueObject().rawBits()) {
+                                    std::cerr << "TRUE";
+                                    // Enable jump tracing when isActivePlatform returns TRUE
+                                    if (selStr == "isActivePlatform") {
+                                        extern bool g_traceDetectJumps;
+                                        g_traceDetectJumps = true;
+                                        std::cerr << " [ENABLING JUMP TRACE]";
+                                    }
+                                } else if (value.rawBits() == memory_.falseObject().rawBits()) {
+                                    std::cerr << "FALSE";
+                                } else if (value.isObject() && value.rawBits() > 0x10000) {
+                                    ObjectHeader* vHdr = value.asObjectPtr();
+                                    uint32_t classIdx = vHdr->classIndex();
+                                    Oop valClass = memory_.classAtIndex(classIdx);
+                                    std::string className = "<unknown>";
+                                    if (valClass.isObject() && valClass.rawBits() > 0x10000) {
+                                        Oop clsName = memory_.fetchPointer(6, valClass);
+                                        if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                                            ObjectHeader* cnHdr = clsName.asObjectPtr();
+                                            if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                                                className = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                                            }
+                                        }
+                                    }
+                                    std::cerr << className << " (slots=" << vHdr->slotCount() << ")";
+                                } else if (value.isSmallInteger()) {
+                                    std::cerr << "SmallInt=" << value.asSmallInteger();
+                                } else {
+                                    std::cerr << "0x" << std::hex << value.rawBits() << std::dec;
+                                }
+                                std::cerr << " at frame " << frameDepth_ << "\n";
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // Trace returns from startup-related methods
     if constexpr (ENABLE_DEBUG_LOGGING) {
@@ -4128,6 +4242,127 @@ void Interpreter::returnFromMethod() {
         }
     }
 
+    // Check if we're executing inside a block (CompiledBlock)
+    // If so, a "return from method" (^) should actually return from the HOME method,
+    // not just from this block. This handles inlined ^ in blocks like:
+    //   [:each | condition ifTrue: [^ value]]
+    // where the ^ is inlined but should still escape the entire block.
+    if (frameDepth_ > 0) {
+        size_t homeFrame = savedFrames_[frameDepth_ - 1].homeFrameDepth;
+        if (homeFrame > 0) {
+            // TRACE: Non-local return from block via 0x5C
+            {
+                extern bool g_traceDetectJumps;
+                static int nlr5cTraceCount = 0;
+                if (g_traceDetectJumps && nlr5cTraceCount++ < 10) {
+                    std::cerr << "[NLR-5C #" << nlr5cTraceCount << "] returnFromMethod in block, doing non-local return from frame " << frameDepth_ << " to home " << homeFrame;
+                    // TRACE THE VALUE BEING RETURNED
+                    std::cerr << "\n  NLR VALUE=0x" << std::hex << value.rawBits() << std::dec;
+                    if (value.rawBits() == memory_.trueObject().rawBits()) {
+                        std::cerr << " (TRUE)";
+                    } else if (value.rawBits() == memory_.falseObject().rawBits()) {
+                        std::cerr << " (FALSE)";
+                    } else if (value.isObject() && value.rawBits() > 0x10000) {
+                        ObjectHeader* vHdr = value.asObjectPtr();
+                        uint32_t classIdx = vHdr->classIndex();
+                        Oop valClass = memory_.classAtIndex(classIdx);
+                        std::string className = "<unknown>";
+                        if (valClass.isObject() && valClass.rawBits() > 0x10000) {
+                            Oop clsName = memory_.fetchPointer(6, valClass);
+                            if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                                ObjectHeader* cnHdr = clsName.asObjectPtr();
+                                if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                                    className = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                                }
+                            }
+                        }
+                        std::cerr << " (" << className << " slots=" << vHdr->slotCount() << ")";
+                    } else if (value.isSmallInteger()) {
+                        std::cerr << " (SmallInt=" << value.asSmallInteger() << ")";
+                    }
+                    // Trace what method is at the home frame
+                    if (homeFrame > 0 && homeFrame < frameDepth_) {
+                        Oop homeMethod = savedFrames_[homeFrame - 1].savedMethod;
+                        if (homeMethod.isObject() && homeMethod.rawBits() > 0x10000) {
+                            Oop hdr = memory_.fetchPointer(0, homeMethod);
+                            if (hdr.isSmallInteger()) {
+                                size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                                if (numLits >= 2) {
+                                    Oop sel = memory_.fetchPointer(numLits - 1, homeMethod);
+                                    if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                        ObjectHeader* selHdr = sel.asObjectPtr();
+                                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                            std::cerr << " (home method: " << std::string((char*)selHdr->bytes(), selHdr->byteSize()) << ")";
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    std::cerr << "\n";
+                }
+            }
+            // Unwind frames from current down to homeFrame
+            // We want to return FROM the home method, so we pop down to homeFrame,
+            // then returnValue pops one more and pushes the value to the caller
+            {
+                extern bool g_traceDetectJumps;
+                static int nlrTraceCount2 = 0;
+                if (g_traceDetectJumps && nlrTraceCount2++ < 5) {
+                    std::cerr << "[NLR-UNWIND] Before: frameDepth=" << frameDepth_ << " homeFrame=" << homeFrame << "\n";
+                }
+            }
+            while (frameDepth_ > homeFrame) {
+                // TRACE: What method is at each frame during NLR unwind
+                {
+                    extern bool g_traceDetectJumps;
+                    static int nlrUnwindDetailCount = 0;
+                    if (g_traceDetectJumps && nlrUnwindDetailCount++ < 10) {
+                        std::cerr << "[NLR-FRAME-POP] frame " << frameDepth_ << " -> " << (frameDepth_ - 1);
+                        // Get savedMethod from the frame we're about to pop to
+                        if (frameDepth_ > 0) {
+                            Oop savedM = savedFrames_[frameDepth_ - 1].savedMethod;
+                            if (savedM.isObject() && savedM.rawBits() > 0x10000) {
+                                Oop hdr = memory_.fetchPointer(0, savedM);
+                                if (hdr.isSmallInteger()) {
+                                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                                    if (numLits >= 2) {
+                                        Oop sel = memory_.fetchPointer(numLits - 1, savedM);
+                                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                            ObjectHeader* selHdr = sel.asObjectPtr();
+                                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                                std::cerr << " (savedMethod=" << std::string((char*)selHdr->bytes(), selHdr->byteSize()) << ")";
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        std::cerr << " sp_before=" << (stackPointer_ - stackBase_);
+                        std::cerr << "\n";
+                    }
+                }
+                popFrame();
+            }
+            {
+                extern bool g_traceDetectJumps;
+                static int nlrTraceCount3 = 0;
+                if (g_traceDetectJumps && nlrTraceCount3++ < 5) {
+                    std::cerr << "[NLR-UNWIND] After while: frameDepth=" << frameDepth_ << ", calling returnValue\n";
+                }
+            }
+            // Now we're at homeFrame, returnValue pops this frame and returns to caller
+            returnValue(value);
+            {
+                extern bool g_traceDetectJumps;
+                static int nlrTraceCount4 = 0;
+                if (g_traceDetectJumps && nlrTraceCount4++ < 5) {
+                    std::cerr << "[NLR-UNWIND] After returnValue: frameDepth=" << frameDepth_ << "\n";
+                }
+            }
+            return;
+        }
+    }
     returnValue(value);
 }
 
@@ -4141,6 +4376,32 @@ void Interpreter::returnFromBlock() {
     size_t homeFrame = 0;
     if (frameDepth_ > 0) {
         homeFrame = savedFrames_[frameDepth_ - 1].homeFrameDepth;
+    }
+
+    // TRACE: Non-local returns for detect:ifNone: investigation
+    {
+        static int nlrTraceCount = 0;
+        if (nlrTraceCount++ < 20) {
+            std::cerr << "[NLR-TRACE #" << nlrTraceCount << "] from frame " << frameDepth_
+                      << " to home frame " << homeFrame << ", value=0x" << std::hex << value.rawBits() << std::dec;
+            if (value.isObject() && value.rawBits() > 0x10000) {
+                ObjectHeader* vHdr = value.asObjectPtr();
+                uint32_t classIdx = vHdr->classIndex();
+                Oop valClass = memory_.classAtIndex(classIdx);
+                if (valClass.isObject() && valClass.rawBits() > 0x10000) {
+                    Oop clsName = memory_.fetchPointer(6, valClass);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            std::cerr << " (" << std::string((char*)cnHdr->bytes(), cnHdr->byteSize()) << ")";
+                        }
+                    }
+                }
+            } else if (value.isSmallInteger()) {
+                std::cerr << " (SmallInt=" << value.asSmallInteger() << ")";
+            }
+            std::cerr << "\n";
+        }
     }
 
     // Debug: log non-local returns
@@ -4269,6 +4530,26 @@ void Interpreter::shortJumpIfTrue(int offset) {
 
 void Interpreter::shortJumpIfFalse(int offset) {
     Oop value = pop();
+
+    // TRACE: Conditional jumps for detect:ifNone: investigation
+    // Use global flag triggered by IS-ACTIVE returning TRUE
+    {
+        static int jifTraceCount = 0;
+        extern bool g_traceDetectJumps;  // Set when isActivePlatform returns TRUE
+        if (g_traceDetectJumps && jifTraceCount < 30) {
+            bool isT = (value.rawBits() == memory_.trueObject().rawBits());
+            bool isF = (value.rawBits() == memory_.falseObject().rawBits());
+            jifTraceCount++;
+            if (isT) {
+                std::cerr << "[JIF-DETECT #" << jifTraceCount << "] shortJumpIfFalse: TRUE, NOT jumping (offset=" << offset << ") frame=" << frameDepth_ << "\n";
+            } else if (isF) {
+                std::cerr << "[JIF-DETECT #" << jifTraceCount << "] shortJumpIfFalse: FALSE, jumping (offset=" << offset << ") frame=" << frameDepth_ << "\n";
+            } else {
+                std::cerr << "[JIF-DETECT #" << jifTraceCount << "] shortJumpIfFalse: UNKNOWN 0x" << std::hex << value.rawBits() << std::dec << ", treating as false, frame=" << frameDepth_ << "\n";
+            }
+        }
+    }
+
     if (!isTrue(value)) {
         // Jump if false OR if non-boolean (treat non-booleans as false)
         instructionPointer_ += offset;
@@ -4909,6 +5190,173 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         size_t nameLen = strlen(name);
         return selLen == nameLen && selBytes && memcmp(selBytes, name, nameLen) == 0;
     };
+
+    // TRACE: detect:ifNone: investigation
+    // The issue: determineActivePlatform returns OrderedCollection instance instead of class
+    {
+        static int detectTraceCount = 0;
+        if (selEquals("detect:ifNone:") && detectTraceCount++ < 10) {
+            Oop rcvr = stackValue(argCount);  // Receiver (the collection)
+            std::cerr << "[DETECT-TRACE #" << detectTraceCount << "] detect:ifNone: called on ";
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+                uint32_t classIdx = rcvrHdr->classIndex();
+                Oop rcvrClass = memory_.classAtIndex(classIdx);
+                if (rcvrClass.isObject() && rcvrClass.rawBits() > 0x10000) {
+                    Oop clsName = memory_.fetchPointer(6, rcvrClass);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            std::cerr << std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                        }
+                    }
+                }
+                std::cerr << " slots=" << rcvrHdr->slotCount();
+            }
+            std::cerr << "\n";
+        }
+        if (selEquals("allSubclasses") && detectTraceCount < 20) {
+            static int allSubTraceCount = 0;
+            if (allSubTraceCount++ < 5) {
+                Oop rcvr = stackValue(argCount);
+                std::cerr << "[ALLSUB-TRACE #" << allSubTraceCount << "] allSubclasses called on ";
+                if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                    Oop clsName = memory_.fetchPointer(6, rcvr);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            std::cerr << std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                        }
+                    }
+                }
+                std::cerr << "\n";
+            }
+        }
+        if (selEquals("determineActivePlatform")) {
+            static int detPlatTraceCount = 0;
+            if (detPlatTraceCount++ < 5) {
+                Oop rcvr = stackValue(argCount);
+                std::cerr << "[DET-PLAT-TRACE #" << detPlatTraceCount << "] determineActivePlatform called on ";
+                if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                    Oop clsName = memory_.fetchPointer(6, rcvr);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            std::cerr << std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                        }
+                    }
+                }
+                std::cerr << " rcvr=0x" << std::hex << rcvr.rawBits() << std::dec << "\n";
+            }
+        }
+        // Trace isActivePlatform calls to see if any return true
+        if (selEquals("isActivePlatform")) {
+            static int isActiveTraceCount = 0;
+            if (isActiveTraceCount++ < 10) {
+                Oop rcvr = stackValue(argCount);
+                std::cerr << "[IS-ACTIVE-TRACE #" << isActiveTraceCount << "] isActivePlatform called on ";
+                if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                    Oop clsName = memory_.fetchPointer(6, rcvr);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            std::cerr << std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                        }
+                    }
+                }
+                std::cerr << "\n";
+            }
+        }
+        // Trace cull: calls to see if foundBlock is evaluated
+        if (selEquals("cull:")) {
+            extern bool g_traceDetectJumps;
+            static int cullTraceCount = 0;
+            if (g_traceDetectJumps && cullTraceCount++ < 10) {
+                Oop rcvr = stackValue(argCount);  // The block
+                Oop arg = stackValue(0);          // The argument
+                std::cerr << "[CULL-TRACE #" << cullTraceCount << "] cull: called at frame " << frameDepth_;
+                std::cerr << " block=0x" << std::hex << rcvr.rawBits() << std::dec;
+                if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                    ObjectHeader* blkHdr = rcvr.asObjectPtr();
+                    std::cerr << " (slots=" << blkHdr->slotCount() << ")";
+                }
+                std::cerr << " arg=0x" << std::hex << arg.rawBits() << std::dec;
+                if (arg.isObject() && arg.rawBits() > 0x10000) {
+                    Oop clsName = memory_.fetchPointer(6, arg);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                            std::cerr << " (" << std::string((char*)cnHdr->bytes(), cnHdr->byteSize()) << ")";
+                        }
+                    }
+                }
+                std::cerr << "\n";
+            }
+        }
+        // Trace ALL sends after detect tracing is enabled
+        {
+            extern bool g_traceDetectJumps;
+            static int detectSendCount = 0;
+            if (g_traceDetectJumps && detectSendCount++ < 30 && frameDepth_ >= 10 && frameDepth_ <= 16) {
+                std::string selStr(selBytes, selBytes + selLen);
+                std::cerr << "[SEND-DETECT #" << detectSendCount << "] " << selStr << " (argCount=" << argCount << ") frame=" << frameDepth_;
+                // For = comparisons, trace what's being compared
+                if (selStr == "=" && argCount == 1) {
+                    Oop rcvr = stackValue(1);
+                    Oop arg = stackValue(0);
+                    std::cerr << " rcvr=";
+                    if (rcvr.isSmallInteger()) std::cerr << rcvr.asSmallInteger();
+                    else std::cerr << "0x" << std::hex << rcvr.rawBits() << std::dec;
+                    std::cerr << " arg=";
+                    if (arg.isSmallInteger()) std::cerr << arg.asSmallInteger();
+                    else std::cerr << "0x" << std::hex << arg.rawBits() << std::dec;
+                }
+                std::cerr << "\n";
+            }
+        }
+        // Trace do: calls on OrderedCollection with 3 slots (the allSubclasses result)
+        if (selEquals("do:") && argCount == 1) {
+            static int doTraceCount = 0;
+            Oop rcvr = stackValue(argCount);
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+                if (rcvrHdr->slotCount() == 3 && doTraceCount++ < 5) {
+                    uint32_t classIdx = rcvrHdr->classIndex();
+                    Oop rcvrClass = memory_.classAtIndex(classIdx);
+                    std::string className = "<unknown>";
+                    if (rcvrClass.isObject() && rcvrClass.rawBits() > 0x10000) {
+                        Oop clsName = memory_.fetchPointer(6, rcvrClass);
+                        if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                            ObjectHeader* cnHdr = clsName.asObjectPtr();
+                            if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                                className = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                            }
+                        }
+                    }
+                    if (className == "OrderedCollection") {
+                        std::cerr << "[DO-TRACE #" << doTraceCount << "] do: called on " << className
+                                  << " with 3 slots (allSubclasses result?)\n";
+                    }
+                }
+            }
+        }
+        // Trace ifTrue: calls to see if TRUE is being recognized
+        if (selEquals("ifTrue:") && argCount == 1) {
+            static int ifTrueTraceCount = 0;
+            Oop rcvr = stackValue(argCount);  // The boolean receiver
+            if (ifTrueTraceCount++ < 20) {
+                bool isTrue = (rcvr.rawBits() == memory_.trueObject().rawBits());
+                bool isFalse = (rcvr.rawBits() == memory_.falseObject().rawBits());
+                if (isTrue) {
+                    std::cerr << "[IFTRUE-TRACE #" << ifTrueTraceCount << "] ifTrue: called with TRUE at frame " << frameDepth_ << "\n";
+                } else if (!isFalse && !rcvr.isSmallInteger()) {
+                    // Not true, not false, not smallinteger - weird!
+                    std::cerr << "[IFTRUE-TRACE #" << ifTrueTraceCount << "] ifTrue: called with UNKNOWN (0x"
+                              << std::hex << rcvr.rawBits() << std::dec << ") at frame " << frameDepth_ << "\n";
+                }
+            }
+        }
+    }
 
     // TRACE: Log InputEventSensor, SessionManager, and process creation related calls
     // Disabled for performance - enable ENABLE_DEBUG_LOGGING at top of file to re-enable
@@ -9773,6 +10221,7 @@ void Interpreter::activateBlock(Oop block, int argCount) {
 
     Oop methodToExecute;
     uint8_t* startAddress = nullptr;
+    Oop homeMethodForNLR = memory_.nil();  // The enclosing CompiledMethod for NLR home frame detection
 
     if (slot1.isSmallInteger()) {
         // Old-style BlockClosure: slot 1 is startPC
@@ -9800,6 +10249,18 @@ void Interpreter::activateBlock(Oop block, int argCount) {
         int numLiterals = headerBits & 0xFFFF;
         size_t bytecodeOffset = (1 + numLiterals) * 8;
         startAddress = blockObj->bytes() + bytecodeOffset;
+
+        // For FullBlockClosure, get the home method (the enclosing CompiledMethod)
+        // The last literal of a CompiledBlock is the enclosing method
+        if (numLiterals >= 1) {
+            Oop lastLit = memory_.fetchPointer(numLiterals, compiledBlock);  // literals at slots 1 to numLits
+            if (lastLit.isObject() && lastLit.rawBits() > 0x10000) {
+                ObjectHeader* lastLitHdr = lastLit.asObjectPtr();
+                if (lastLitHdr->isCompiledMethod()) {
+                    homeMethodForNLR = lastLit;  // Store for later use in home frame detection
+                }
+            }
+        }
     } else {
         primitiveFail();
         return;
@@ -9811,40 +10272,143 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     }
 
     // For blocks: set the home frame depth for non-local returns
-    // The home frame is where the block was created. For now, we use a heuristic:
-    // walk up to find a frame that's a method (not a block) by checking if the
-    // frame's savedMethod is a CompiledMethod (not a CompiledBlock).
-    // This allows [^ value] inside blocks to return from the enclosing method.
-    if (frameDepth_ > 1) {
-        // Find the first non-block frame (a real method frame)
+    // The home frame is where the block was LEXICALLY created, not just the
+    // first non-block frame on the call stack.
+    //
+    // For FullBlockClosure, we need to find the frame executing the method
+    // that lexically contains this block. We do this by:
+    // 1. Getting the home method from the CompiledBlock (the last literal is the enclosing method)
+    // 2. Walking up the frame stack to find a frame executing that home method
+    if (frameDepth_ > 1 && homeMethodForNLR.isObject() && !homeMethodForNLR.isNil()) {
         size_t homeFrame = 0;  // Default to returning from bottom
+
+        // Use the home method we extracted from the CompiledBlock's last literal
+        Oop homeMethodOop = homeMethodForNLR;
+
+        // Walk up the frame stack looking for the frame executing our home method
+        // Note on frame indexing:
+        //   savedFrames_[i] contains the state saved when entering frame i+1
+        //   So savedFrames_[i].savedMethod is the method that was executing at frame i
+        //   When we find a match at savedFrames_[i].savedMethod, the home frame is i+1
+        //   (because frame i+1 is where the method continued after pushing)
+        //
+        // Actually, wait - when we call pushFrame, we save the CURRENT state before
+        // incrementing frameDepth_. So savedFrames_[frameDepth_-1] after push contains
+        // the state of the CALLER frame. If savedFrames_[X].savedMethod = M, then
+        // the frame at depth X+1 was pushed WHILE M was executing, meaning M was
+        // the caller. So if we want to return FROM M, we need homeFrame = X+1.
+        //
+        // NO WAIT - let's think again. When detect:ifFound:ifNone: calls do:,
+        // pushFrame saves state to savedFrames_[frameDepth_] (let's say 10), then
+        // increments to frameDepth_=11. So savedFrames_[10].savedMethod =
+        // detect:ifFound:ifNone:. Frame 11 executes do:.
+        //
+        // When do: calls the block, pushFrame saves state to savedFrames_[11]
+        // (with method_=do:), then increments to frameDepth_=12. The block executes.
+        //
+        // So savedFrames_[10].savedMethod = detect:ifFound:ifNone: represents
+        // the state when frame 10 was active. The NLR should return FROM frame 10
+        // (detect:ifFound:ifNone:), not to frame 10.
+        //
+        // When we unwind to homeFrame=10, then call returnValue, we pop frame 10
+        // and return to frame 9.
         for (size_t i = frameDepth_ - 1; i > 0; i--) {
+            // savedFrames_[i - 1].savedMethod is the method at frame i-1+1 = frame i
+            // NO - savedFrames_[i - 1] contains state saved when entering frame i
+            // savedFrames_[i - 1].savedMethod is method_ BEFORE entering frame i
+            // So it's the method that was executing at frame i-1
             Oop savedMethod = savedFrames_[i - 1].savedMethod;
+
+            // Check if this saved method matches our home method
+            if (savedMethod.rawBits() == homeMethodOop.rawBits()) {
+                // savedFrames_[i-1].savedMethod = homeMethod means frame i-1 was executing homeMethod
+                // We want to return FROM that frame, so homeFrame should be i-1+1 = i
+                // NO - we want to return FROM the frame executing homeMethod, which is i-1
+                // Then returnValue pops that frame and returns to i-2
+                // Actually, let's verify: if savedFrames_[10].savedMethod = detect:ifFound:ifNone:
+                // That means when we pushed frame 11, method_ was detect:ifFound:ifNone:
+                // So frame 10 was executing detect:ifFound:ifNone:
+                // To return FROM frame 10, homeFrame should be 10
+                homeFrame = i - 1 + 1;  // = i, keep the original behavior but document why
+                // WAIT, that's wrong. Let me trace through example:
+                // - Frame 10 executes detect:ifFound:ifNone:
+                // - It calls do:, pushFrame saves state (method_=detect:ifFound:ifNone:) to savedFrames_[10]
+                // - frameDepth_ becomes 11, frame 11 executes do:
+                // - do: activates block, pushFrame saves state (method_=do:) to savedFrames_[11]
+                // - frameDepth_ becomes 12, frame 12 executes block
+                //
+                // When block wants NLR to detect:ifFound:ifNone:, we search:
+                // - i=11: savedFrames_[10].savedMethod = detect:ifFound:ifNone: ✓ MATCH
+                // - homeFrame = i = 11? No, that's wrong. Frame 11 executes do:.
+                // - The frame executing detect:ifFound:ifNone: is frame 10.
+                // - So homeFrame should be i - 1 = 10
+                homeFrame = i - 1;  // FIX: The frame executing savedMethod is at depth i-1
+                break;
+            }
+
+            // Also check if this frame is a block whose home is our home method
+            // This handles nested blocks
             if (savedMethod.isObject() && savedMethod.rawBits() > 0x10000) {
                 ObjectHeader* mHdr = savedMethod.asObjectPtr();
-                // CompiledMethod has format >= 24, CompiledBlock is also format >= 24
-                // Check if the outer literal is present (CompiledBlock has outer method at slot numLits-1)
-                Oop header = memory_.fetchPointer(0, savedMethod);
-                if (header.isSmallInteger()) {
-                    int numLits = header.asSmallInteger() & 0x7FFF;
-                    if (numLits >= 2) {
-                        Oop outerLit = memory_.fetchPointer(numLits - 1, savedMethod);
-                        // If outer literal is a compiled method, this is a CompiledBlock
-                        if (outerLit.isObject() && outerLit.rawBits() > 0x10000) {
-                            ObjectHeader* olHdr = outerLit.asObjectPtr();
-                            if (olHdr->isCompiledMethod()) {
-                                // This is a block, keep looking
+                if (mHdr->isCompiledMethod()) {
+                    // Check if this is a CompiledBlock (last literal is a CompiledMethod)
+                    Oop header = memory_.fetchPointer(0, savedMethod);
+                    if (header.isSmallInteger()) {
+                        int numLits = header.asSmallInteger() & 0x7FFF;
+                        if (numLits >= 2) {
+                            Oop outerLit = memory_.fetchPointer(numLits - 1, savedMethod);
+                            // For CompiledBlock, last literal is the enclosing method
+                            if (outerLit.rawBits() == homeMethodOop.rawBits()) {
+                                // This frame's block was also created in our home method
+                                // but we want the method frame itself, not another block frame
                                 continue;
                             }
                         }
                     }
                 }
-                // Found a method frame (not a block) - this is the home
-                homeFrame = i;
-                break;
             }
         }
+
         savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
+
+        // TRACE: Home frame detection
+        {
+            static int homeFrameTraceCount = 0;
+            // Always trace for detect-related methods, or conditionally for others
+            bool shouldTrace = false;
+            std::string homeMethodName;
+            if (homeMethodOop.isObject() && homeMethodOop.rawBits() > 0x10000) {
+                Oop hdr = memory_.fetchPointer(0, homeMethodOop);
+                if (hdr.isSmallInteger()) {
+                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                    if (numLits >= 2) {
+                        Oop sel = memory_.fetchPointer(numLits - 1, homeMethodOop);
+                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                            ObjectHeader* selHdr = sel.asObjectPtr();
+                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                homeMethodName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                                // Trace for detect-related methods
+                                if (homeMethodName.find("detect") != std::string::npos ||
+                                    homeMethodName.find("ifFound") != std::string::npos ||
+                                    homeMethodName.find("ifNone") != std::string::npos ||
+                                    homeMethodName.find("Platform") != std::string::npos ||
+                                    homeMethodName == "do:") {
+                                    shouldTrace = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            extern bool g_traceDetectJumps;
+            if ((shouldTrace && homeFrameTraceCount++ < 20) || (g_traceDetectJumps && homeFrameTraceCount++ < 30)) {
+                std::cerr << "[HOME-FRAME-SET] frame=" << frameDepth_ << " homeFrame=" << homeFrame;
+                if (!homeMethodName.empty()) {
+                    std::cerr << " homeMethod=" << homeMethodName;
+                }
+                std::cerr << "\n";
+            }
+        }
     }
 
     method_ = methodToExecute;
