@@ -94,6 +94,7 @@ bool Interpreter::initialize() {
     }
 
     // Dump all processes in the scheduler to understand what's running
+    if constexpr (ENABLE_DEBUG_LOGGING) {
     static FILE* procLog = fopen("/tmp/process_dump.log", "w");
     if (procLog) {
         fprintf(procLog, "[INIT] Dumping all processes in scheduler\n");
@@ -225,6 +226,7 @@ bool Interpreter::initialize() {
                     activeName.c_str(), activeMethod.c_str(), (unsigned long long)active.rawBits());
         }
         fflush(procLog);
+    }
     }
 
     // Get the active process
@@ -828,8 +830,10 @@ void Interpreter::renderWorldMorphs() {
 
     // Debug logging to file (first 10 calls only)
     static FILE* logFile = nullptr;
-    if (!logFile) {
-        logFile = fopen("/tmp/iospharo-render.log", "w");
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        if (!logFile) {
+            logFile = fopen("/tmp/iospharo-render.log", "w");
+        }
     }
     if (logFile && renderCallCount <= 10) {
         fprintf(logFile, "[RENDER #%d] Starting renderWorldMorphs\n", renderCallCount);
@@ -1588,13 +1592,15 @@ void Interpreter::renderWorldMorphs() {
     }
 
     // Debug test - write to doOneCycle_debug.log from renderWorldMorphs
-    static FILE* testLog = nullptr;
-    if (!testLog) {
-        testLog = fopen("/tmp/doOneCycle_debug.log", "w");
-    }
-    if (testLog) {
-        fprintf(testLog, "[RENDER-END #%d] renderWorldMorphs completed\n", renderCallCount);
-        fflush(testLog);
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        static FILE* testLog = nullptr;
+        if (!testLog) {
+            testLog = fopen("/tmp/doOneCycle_debug.log", "w");
+        }
+        if (testLog) {
+            fprintf(testLog, "[RENDER-END #%d] renderWorldMorphs completed\n", renderCallCount);
+            fflush(testLog);
+        }
     }
 
     // Redraw world menu if visible (placeholder menu from right-click)
@@ -1679,17 +1685,19 @@ void Interpreter::processInputEvents() {
     static int callCount = 0;
     static bool initialized = false;
 
-    if (!initialized) {
-        initialized = true;
-        logFile = fopen("/tmp/iospharo-events.log", "a");
-    }
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        if (!initialized) {
+            initialized = true;
+            logFile = fopen("/tmp/iospharo-events.log", "a");
+        }
 
-    // Log periodically
-    if (++callCount % 1000 == 1 && logFile) {
-        fprintf(logFile, "[PROCESS-INPUT] call #%d passthrough=%zu queue=%s\n",
-                callCount, passThroughEvents_.size(),
-                pharo::gEventQueue.isEmpty() ? "empty" : "has events");
-        fflush(logFile);
+        // Log periodically
+        if (++callCount % 1000 == 1 && logFile) {
+            fprintf(logFile, "[PROCESS-INPUT] call #%d passthrough=%zu queue=%s\n",
+                    callCount, passThroughEvents_.size(),
+                    pharo::gEventQueue.isEmpty() ? "empty" : "has events");
+            fflush(logFile);
+        }
     }
 
     pharo::Event event;
@@ -1744,20 +1752,22 @@ void Interpreter::processInputEvents() {
 void Interpreter::updateActiveHandPosition() {
     static FILE* handLog = nullptr;
     static int handLogCount = 0;
-    if (!handLog) {
-        handLog = fopen("/tmp/activehand_update.log", "w");
-        if (handLog) {
-            fprintf(handLog, "[HAND] Log file opened\n");
-            fflush(handLog);
-        } else {
-            fprintf(stderr, "[HAND] Failed to open log file!\n");
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        if (!handLog) {
+            handLog = fopen("/tmp/activehand_update.log", "w");
+            if (handLog) {
+                fprintf(handLog, "[HAND] Log file opened\n");
+                fflush(handLog);
+            } else {
+                fprintf(stderr, "[HAND] Failed to open log file!\n");
+            }
         }
-    }
 
-    // Always log to stderr for debugging
-    static int stderrCount = 0;
-    if (stderrCount++ < 5) {
-        fprintf(stderr, "[HAND] updateActiveHandPosition called #%d\n", stderrCount);
+        // Always log to stderr for debugging
+        static int stderrCount = 0;
+        if (stderrCount++ < 5) {
+            fprintf(stderr, "[HAND] updateActiveHandPosition called #%d\n", stderrCount);
+        }
     }
 
     // Find the hand through World >> activeHand (World's slot 6 is activeHand)
@@ -2072,19 +2082,21 @@ void Interpreter::syncDisplayToSurface() {
 
 void Interpreter::interpret() {
     // Debug: Log special object addresses once at start
-    static bool loggedSpecialObjects = false;
-    if (!loggedSpecialObjects) {
-        loggedSpecialObjects = true;
-        FILE* soLog = fopen("/tmp/special_objects.log", "w");
-        if (soLog) {
-            Oop trueObj = memory_.trueObject();
-            Oop falseObj = memory_.falseObject();
-            Oop nilObj = memory_.nil();
-            fprintf(soLog, "true:  0x%llx\n", (unsigned long long)trueObj.rawBits());
-            fprintf(soLog, "false: 0x%llx\n", (unsigned long long)falseObj.rawBits());
-            fprintf(soLog, "nil:   0x%llx\n", (unsigned long long)nilObj.rawBits());
-            fflush(soLog);
-            fclose(soLog);
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        static bool loggedSpecialObjects = false;
+        if (!loggedSpecialObjects) {
+            loggedSpecialObjects = true;
+            FILE* soLog = fopen("/tmp/special_objects.log", "w");
+            if (soLog) {
+                Oop trueObj = memory_.trueObject();
+                Oop falseObj = memory_.falseObject();
+                Oop nilObj = memory_.nil();
+                fprintf(soLog, "true:  0x%llx\n", (unsigned long long)trueObj.rawBits());
+                fprintf(soLog, "false: 0x%llx\n", (unsigned long long)falseObj.rawBits());
+                fprintf(soLog, "nil:   0x%llx\n", (unsigned long long)nilObj.rawBits());
+                fflush(soLog);
+                fclose(soLog);
+            }
         }
     }
 
@@ -2901,34 +2913,36 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                     Oop array = memory_.allocateSlots(classIndex, arraySize);
 
                     // Trace temp vector creation
-                    static FILE* e7Log = nullptr;
-                    static int e7Count = 0;
-                    if (!e7Log) e7Log = fopen("/tmp/temp_vector_create.log", "w");
-                    if (e7Log && e7Count < 50) {
-                        e7Count++;
-                        std::string methodSel = "<unknown>";
-                        if (method_.isObject() && method_.rawBits() > 0x10000) {
-                            ObjectHeader* mHdr = method_.asObjectPtr();
-                            if (mHdr->isCompiledMethod()) {
-                                Oop hdr = memory_.fetchPointer(0, method_);
-                                if (hdr.isSmallInteger()) {
-                                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                                    if (numLits >= 2) {
-                                        Oop selLit = memory_.fetchPointer(numLits - 1, method_);
-                                        if (selLit.isObject() && selLit.rawBits() > 0x10000) {
-                                            ObjectHeader* slHdr = selLit.asObjectPtr();
-                                            if (slHdr->isBytesObject() && slHdr->byteSize() < 50) {
-                                                methodSel = std::string((char*)slHdr->bytes(), slHdr->byteSize());
+                    if constexpr (ENABLE_DEBUG_LOGGING) {
+                        static FILE* e7Log = nullptr;
+                        static int e7Count = 0;
+                        if (!e7Log) e7Log = fopen("/tmp/temp_vector_create.log", "w");
+                        if (e7Log && e7Count < 50) {
+                            e7Count++;
+                            std::string methodSel = "<unknown>";
+                            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                                ObjectHeader* mHdr = method_.asObjectPtr();
+                                if (mHdr->isCompiledMethod()) {
+                                    Oop hdr = memory_.fetchPointer(0, method_);
+                                    if (hdr.isSmallInteger()) {
+                                        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                                        if (numLits >= 2) {
+                                            Oop selLit = memory_.fetchPointer(numLits - 1, method_);
+                                            if (selLit.isObject() && selLit.rawBits() > 0x10000) {
+                                                ObjectHeader* slHdr = selLit.asObjectPtr();
+                                                if (slHdr->isBytesObject() && slHdr->byteSize() < 50) {
+                                                    methodSel = std::string((char*)slHdr->bytes(), slHdr->byteSize());
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
+                            fprintf(e7Log, "[E7 #%d] Created Array size=%d popInto=%s in #%s\n",
+                                    e7Count, arraySize, popIntoArray ? "YES" : "NO", methodSel.c_str());
+                            fprintf(e7Log, "  array=0x%llx\n", (unsigned long long)array.rawBits());
+                            fflush(e7Log);
                         }
-                        fprintf(e7Log, "[E7 #%d] Created Array size=%d popInto=%s in #%s\n",
-                                e7Count, arraySize, popIntoArray ? "YES" : "NO", methodSel.c_str());
-                        fprintf(e7Log, "  array=0x%llx\n", (unsigned long long)array.rawBits());
-                        fflush(e7Log);
                     }
 
                     if (popIntoArray) {
@@ -3020,23 +3034,24 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
             }
             case 0xEE: // 238: Pop and Jump On True #iiiiiiii (+ extB * 256)
             {
-                static int eeCount = 0;
-                static FILE* jumpLog = nullptr;
-                if (!jumpLog) jumpLog = fopen("/tmp/cond_jump.log", "w");
-
                 uint8_t offsetByte = fetchByte();
                 int offset = (extB_ << 8) | offsetByte;
                 extB_ = 0;
                 Oop value = pop();
                 bool isT = isTrue(value);
-                bool isF = isFalse(value);
 
-                eeCount++;
-                if (jumpLog && eeCount <= 200) {
-                    fprintf(jumpLog, "[JIT #%d] value=0x%llx isTrue=%d isFalse=%d offset=%d %s\n",
-                            eeCount, (unsigned long long)value.rawBits(),
-                            isT, isF, offset, isT ? "JUMP" : "no-jump");
-                    fflush(jumpLog);
+                if constexpr (ENABLE_DEBUG_LOGGING) {
+                    static int eeCount = 0;
+                    static FILE* jumpLog = nullptr;
+                    if (!jumpLog) jumpLog = fopen("/tmp/cond_jump.log", "w");
+                    bool isF = isFalse(value);
+                    eeCount++;
+                    if (jumpLog && eeCount <= 200) {
+                        fprintf(jumpLog, "[JIT #%d] value=0x%llx isTrue=%d isFalse=%d offset=%d %s\n",
+                                eeCount, (unsigned long long)value.rawBits(),
+                                isT, isF, offset, isT ? "JUMP" : "no-jump");
+                        fflush(jumpLog);
+                    }
                 }
 
                 if (isT) {
@@ -3046,24 +3061,25 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
             }
             case 0xEF: // 239: Pop and Jump On False #iiiiiiii (+ extB * 256)
             {
-                static int efCount = 0;
-                static FILE* jumpLog = nullptr;
-                if (!jumpLog) jumpLog = fopen("/tmp/cond_jump.log", "a");
-
                 uint8_t offsetByte = fetchByte();
                 int offset = (extB_ << 8) | offsetByte;
                 extB_ = 0;
                 Oop value = pop();
                 bool isT = isTrue(value);
-                bool isF = isFalse(value);
                 bool willJump = !isT;
 
-                efCount++;
-                if (jumpLog && efCount <= 200) {
-                    fprintf(jumpLog, "[JIF #%d] value=0x%llx isTrue=%d isFalse=%d offset=%d %s\n",
-                            efCount, (unsigned long long)value.rawBits(),
-                            isT, isF, offset, willJump ? "JUMP" : "no-jump");
-                    fflush(jumpLog);
+                if constexpr (ENABLE_DEBUG_LOGGING) {
+                    static int efCount = 0;
+                    static FILE* jumpLog = nullptr;
+                    if (!jumpLog) jumpLog = fopen("/tmp/cond_jump.log", "a");
+                    bool isF = isFalse(value);
+                    efCount++;
+                    if (jumpLog && efCount <= 200) {
+                        fprintf(jumpLog, "[JIF #%d] value=0x%llx isTrue=%d isFalse=%d offset=%d %s\n",
+                                efCount, (unsigned long long)value.rawBits(),
+                                isT, isF, offset, willJump ? "JUMP" : "no-jump");
+                        fflush(jumpLog);
+                    }
                 }
 
                 if (willJump) {
@@ -3285,45 +3301,47 @@ uint16_t Interpreter::fetchTwoBytes() {
 
 void Interpreter::pushReceiverVariable(int index) {
     // Trace ALL instance variable reads to debug SessionManager default
-    static FILE* civLog = nullptr;
-    static int civCount = 0;
-    if (!civLog) civLog = fopen("/tmp/class_instvar_access.log", "w");
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        static FILE* civLog = nullptr;
+        static int civCount = 0;
+        if (!civLog) civLog = fopen("/tmp/class_instvar_access.log", "w");
 
-    // Check if receiver is SessionManager - trace bytecodes
-    if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-        Oop cls = memory_.classOf(receiver_);
-        if (cls.isObject()) {
-            Oop clsName = memory_.fetchPointer(6, cls);
-            if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                ObjectHeader* cnHdr = clsName.asObjectPtr();
-                if (cnHdr->isBytesObject() && cnHdr->byteSize() == 14) {
-                    std::string n((char*)cnHdr->bytes(), 14);
-                    if (n == "SessionManager") {
-                        static FILE* smLog = nullptr;
-                        static int smCount = 0;
-                        if (!smLog) smLog = fopen("/tmp/session_manager_access.log", "w");
-                        if (smLog && smCount < 20) {
-                            smCount++;
-                            // Show current method
-                            std::string methodSel = "<unknown>";
-                            if (method_.isObject() && method_.rawBits() > 0x10000) {
-                                ObjectHeader* mHdr = method_.asObjectPtr();
-                                if (mHdr->isCompiledMethod()) {
-                                    Oop hdr = memory_.fetchPointer(0, method_);
-                                    if (hdr.isSmallInteger()) {
-                                        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                                        if (numLits >= 2) {
-                                            Oop selLit = memory_.fetchPointer(numLits - 1, method_);
-                                            if (selLit.isObject() && selLit.rawBits() > 0x10000) {
-                                                ObjectHeader* slHdr = selLit.asObjectPtr();
-                                                if (slHdr->isBytesObject() && slHdr->byteSize() < 50) {
-                                                    methodSel = std::string((char*)slHdr->bytes(), slHdr->byteSize());
-                                                } else if (slHdr->format() == ObjectFormat::FixedSize && slHdr->slotCount() >= 1) {
-                                                    Oop inner = memory_.fetchPointer(0, selLit);
-                                                    if (inner.isObject() && inner.rawBits() > 0x10000) {
-                                                        ObjectHeader* iHdr = inner.asObjectPtr();
-                                                        if (iHdr->isBytesObject() && iHdr->byteSize() < 50) {
-                                                            methodSel = std::string((char*)iHdr->bytes(), iHdr->byteSize());
+        // Check if receiver is SessionManager - trace bytecodes
+        if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+            Oop cls = memory_.classOf(receiver_);
+            if (cls.isObject()) {
+                Oop clsName = memory_.fetchPointer(6, cls);
+                if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                    ObjectHeader* cnHdr = clsName.asObjectPtr();
+                    if (cnHdr->isBytesObject() && cnHdr->byteSize() == 14) {
+                        std::string n((char*)cnHdr->bytes(), 14);
+                        if (n == "SessionManager") {
+                            static FILE* smLog = nullptr;
+                            static int smCount = 0;
+                            if (!smLog) smLog = fopen("/tmp/session_manager_access.log", "w");
+                            if (smLog && smCount < 20) {
+                                smCount++;
+                                // Show current method
+                                std::string methodSel = "<unknown>";
+                                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                                    ObjectHeader* mHdr = method_.asObjectPtr();
+                                    if (mHdr->isCompiledMethod()) {
+                                        Oop hdr = memory_.fetchPointer(0, method_);
+                                        if (hdr.isSmallInteger()) {
+                                            size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                                            if (numLits >= 2) {
+                                                Oop selLit = memory_.fetchPointer(numLits - 1, method_);
+                                                if (selLit.isObject() && selLit.rawBits() > 0x10000) {
+                                                    ObjectHeader* slHdr = selLit.asObjectPtr();
+                                                    if (slHdr->isBytesObject() && slHdr->byteSize() < 50) {
+                                                        methodSel = std::string((char*)slHdr->bytes(), slHdr->byteSize());
+                                                    } else if (slHdr->format() == ObjectFormat::FixedSize && slHdr->slotCount() >= 1) {
+                                                        Oop inner = memory_.fetchPointer(0, selLit);
+                                                        if (inner.isObject() && inner.rawBits() > 0x10000) {
+                                                            ObjectHeader* iHdr = inner.asObjectPtr();
+                                                            if (iHdr->isBytesObject() && iHdr->byteSize() < 50) {
+                                                                methodSel = std::string((char*)iHdr->bytes(), iHdr->byteSize());
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -3331,116 +3349,119 @@ void Interpreter::pushReceiverVariable(int index) {
                                         }
                                     }
                                 }
+                                Oop val = memory_.fetchPointer(index, receiver_);
+                                fprintf(smLog, "[SM-READ #%d] SessionManager >> %s reads slot[%d] = 0x%llx (ip=%zu method=0x%llx)\n",
+                                        smCount, methodSel.c_str(), index,
+                                        (unsigned long long)val.rawBits(),
+                                        instructionPointer_ - method_.asObjectPtr()->bytes(),
+                                        (unsigned long long)method_.rawBits());
+                                fflush(smLog);
                             }
-                            Oop val = memory_.fetchPointer(index, receiver_);
-                            fprintf(smLog, "[SM-READ #%d] SessionManager >> %s reads slot[%d] = 0x%llx (ip=%zu method=0x%llx)\n",
-                                    smCount, methodSel.c_str(), index,
-                                    (unsigned long long)val.rawBits(),
-                                    instructionPointer_ - method_.asObjectPtr()->bytes(),
-                                    (unsigned long long)method_.rawBits());
-                            fflush(smLog);
                         }
                     }
                 }
             }
         }
-    }
 
-    // Also log when we read nil from any object at index > 10 (likely class instvar)
+        // Also log when we read nil from any object at index > 10 (likely class instvar)
+        Oop result = memory_.fetchPointer(index, receiver_);
+        Oop nilObj = memory_.nil();
+
+        if (civLog && civCount < 200) {
+            bool shouldLog = false;
+            std::string rcvrName = "<unknown>";
+
+            // Check if receiver is a class object
+            if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+                ObjectHeader* rcvrHdr = receiver_.asObjectPtr();
+
+                // Get class name for classes, or instance class name for others
+                if (rcvrHdr->slotCount() >= 7) {
+                    Oop nameOop = memory_.fetchPointer(6, receiver_);
+                    if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                        ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                            rcvrName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                            shouldLog = true;
+                        }
+                    }
+                }
+
+                // Also get instance class name if above didn't work
+                if (rcvrName == "<unknown>") {
+                    Oop cls = memory_.classOf(receiver_);
+                    if (cls.isObject()) {
+                        Oop clsName = memory_.fetchPointer(6, cls);
+                        if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                            ObjectHeader* cnHdr = clsName.asObjectPtr();
+                            if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                                rcvrName = "[" + std::string((char*)cnHdr->bytes(), cnHdr->byteSize()) + " instance]";
+                            }
+                        }
+                    }
+                }
+
+                // Log if: reading from class object at high index OR reading nil from any index > 10
+                // OR if name contains "Session"
+                bool isHighIndex = (index >= 11);
+                bool isNilResult = (result.rawBits() == nilObj.rawBits());
+                bool isSessionRelated = (rcvrName.find("Session") != std::string::npos);
+
+                if (isSessionRelated || (isHighIndex && shouldLog) || civCount < 30) {
+                    civCount++;
+                    fprintf(civLog, "[INSTVAR #%d] %s slot[%d] = 0x%llx%s (receiver=0x%llx)\n",
+                            civCount, rcvrName.c_str(), index,
+                            (unsigned long long)result.rawBits(),
+                            isNilResult ? " [NIL!]" : "",
+                            (unsigned long long)receiver_.rawBits());
+                    fflush(civLog);
+                }
+            }
+        }
+    }
     Oop result = memory_.fetchPointer(index, receiver_);
-    Oop nilObj = memory_.nil();
-
-    if (civLog && civCount < 200) {
-        bool shouldLog = false;
-        std::string rcvrName = "<unknown>";
-
-        // Check if receiver is a class object
-        if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-            ObjectHeader* rcvrHdr = receiver_.asObjectPtr();
-
-            // Get class name for classes, or instance class name for others
-            if (rcvrHdr->slotCount() >= 7) {
-                Oop nameOop = memory_.fetchPointer(6, receiver_);
-                if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
-                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
-                        rcvrName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                        shouldLog = true;
-                    }
-                }
-            }
-
-            // Also get instance class name if above didn't work
-            if (rcvrName == "<unknown>") {
-                Oop cls = memory_.classOf(receiver_);
-                if (cls.isObject()) {
-                    Oop clsName = memory_.fetchPointer(6, cls);
-                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                        ObjectHeader* cnHdr = clsName.asObjectPtr();
-                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
-                            rcvrName = "[" + std::string((char*)cnHdr->bytes(), cnHdr->byteSize()) + " instance]";
-                        }
-                    }
-                }
-            }
-
-            // Log if: reading from class object at high index OR reading nil from any index > 10
-            // OR if name contains "Session"
-            bool isHighIndex = (index >= 11);
-            bool isNilResult = (result.rawBits() == nilObj.rawBits());
-            bool isSessionRelated = (rcvrName.find("Session") != std::string::npos);
-
-            if (isSessionRelated || (isHighIndex && shouldLog) || civCount < 30) {
-                civCount++;
-                fprintf(civLog, "[INSTVAR #%d] %s slot[%d] = 0x%llx%s (receiver=0x%llx)\n",
-                        civCount, rcvrName.c_str(), index,
-                        (unsigned long long)result.rawBits(),
-                        isNilResult ? " [NIL!]" : "",
-                        (unsigned long long)receiver_.rawBits());
-                fflush(civLog);
-            }
-        }
-    }
     push(result);
 }
 
 void Interpreter::pushTemporary(int index) {
     Oop temp = temporary(index);
     // Trace nil temp pushes to understand value: with nil args
-    static FILE* nilTempLog = nullptr;
-    static int nilTempCount = 0;
-    if (temp.rawBits() == memory_.nil().rawBits()) {
-        if (!nilTempLog) nilTempLog = fopen("/tmp/nil_temp_push.log", "w");
-        if (nilTempLog && nilTempCount < 100) {
-            nilTempCount++;
-            // Get method selector for context
-            std::string methodSel = "<unknown>";
-            if (method_.isObject() && method_.rawBits() > 0x10000) {
-                ObjectHeader* mHdr = method_.asObjectPtr();
-                Oop hdr = memory_.fetchPointer(0, method_);
-                if (hdr.isSmallInteger()) {
-                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                    if (numLits >= 2) {
-                        Oop sel = memory_.fetchPointer(numLits - 1, method_);
-                        if (sel.isObject() && sel.rawBits() > 0x10000) {
-                            ObjectHeader* selHdr = sel.asObjectPtr();
-                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                                methodSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        static FILE* nilTempLog = nullptr;
+        static int nilTempCount = 0;
+        if (temp.rawBits() == memory_.nil().rawBits()) {
+            if (!nilTempLog) nilTempLog = fopen("/tmp/nil_temp_push.log", "w");
+            if (nilTempLog && nilTempCount < 100) {
+                nilTempCount++;
+                // Get method selector for context
+                std::string methodSel = "<unknown>";
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    ObjectHeader* mHdr = method_.asObjectPtr();
+                    Oop hdr = memory_.fetchPointer(0, method_);
+                    if (hdr.isSmallInteger()) {
+                        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                        if (numLits >= 2) {
+                            Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                ObjectHeader* selHdr = sel.asObjectPtr();
+                                if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                    methodSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                                }
                             }
                         }
                     }
                 }
+                fprintf(nilTempLog, "[NIL-TEMP #%d] pushTemporary(%d) = nil in %s frameDepth=%zu\n",
+                        nilTempCount, index, methodSel.c_str(), frameDepth_);
+                // Dump first few temps
+                fprintf(nilTempLog, "  temps: ");
+                for (int t = 0; t < 5; t++) {
+                    Oop tv = temporary(t);
+                    fprintf(nilTempLog, "[%d]=0x%llx ", t, (unsigned long long)tv.rawBits());
+                }
+                fprintf(nilTempLog, "\n");
+                fflush(nilTempLog);
             }
-            fprintf(nilTempLog, "[NIL-TEMP #%d] pushTemporary(%d) = nil in %s frameDepth=%zu\n",
-                    nilTempCount, index, methodSel.c_str(), frameDepth_);
-            // Dump first few temps
-            fprintf(nilTempLog, "  temps: ");
-            for (int t = 0; t < 5; t++) {
-                Oop tv = temporary(t);
-                fprintf(nilTempLog, "[%d]=0x%llx ", t, (unsigned long long)tv.rawBits());
-            }
-            fprintf(nilTempLog, "\n");
-            fflush(nilTempLog);
         }
     }
     push(temp);
@@ -3488,37 +3509,39 @@ void Interpreter::storeTemporary(int index) {
     Oop value = pop();
 
     // Trace stores in snapshot:andQuit:
-    static FILE* snapStoreLog = nullptr;
-    static int snapStoreCount = 0;
-    if (!snapStoreLog) snapStoreLog = fopen("/tmp/snap_stores.log", "w");
-    if (snapStoreLog && snapStoreCount < 100) {
-        std::string methodSel = "<unknown>";
-        if (method_.isObject() && method_.rawBits() > 0x10000) {
-            ObjectHeader* mHdr = method_.asObjectPtr();
-            if (mHdr->isCompiledMethod()) {
-                Oop hdr = memory_.fetchPointer(0, method_);
-                if (hdr.isSmallInteger()) {
-                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                    if (numLits >= 2) {
-                        Oop selLit = memory_.fetchPointer(numLits - 1, method_);
-                        if (selLit.isObject() && selLit.rawBits() > 0x10000) {
-                            ObjectHeader* slHdr = selLit.asObjectPtr();
-                            if (slHdr->isBytesObject() && slHdr->byteSize() < 50) {
-                                methodSel = std::string((char*)slHdr->bytes(), slHdr->byteSize());
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        static FILE* snapStoreLog = nullptr;
+        static int snapStoreCount = 0;
+        if (!snapStoreLog) snapStoreLog = fopen("/tmp/snap_stores.log", "w");
+        if (snapStoreLog && snapStoreCount < 100) {
+            std::string methodSel = "<unknown>";
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                ObjectHeader* mHdr = method_.asObjectPtr();
+                if (mHdr->isCompiledMethod()) {
+                    Oop hdr = memory_.fetchPointer(0, method_);
+                    if (hdr.isSmallInteger()) {
+                        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                        if (numLits >= 2) {
+                            Oop selLit = memory_.fetchPointer(numLits - 1, method_);
+                            if (selLit.isObject() && selLit.rawBits() > 0x10000) {
+                                ObjectHeader* slHdr = selLit.asObjectPtr();
+                                if (slHdr->isBytesObject() && slHdr->byteSize() < 50) {
+                                    methodSel = std::string((char*)slHdr->bytes(), slHdr->byteSize());
+                                }
                             }
                         }
                     }
                 }
             }
-        }
-        if (methodSel.find("snapshot") != std::string::npos ||
-            methodSel.find("Session") != std::string::npos ||
-            snapStoreCount < 30) {
-            snapStoreCount++;
-            fprintf(snapStoreLog, "[TEMP-STORE #%d] temp[%d] := 0x%llx in #%s\n",
-                    snapStoreCount, index,
-                    (unsigned long long)value.rawBits(), methodSel.c_str());
-            fflush(snapStoreLog);
+            if (methodSel.find("snapshot") != std::string::npos ||
+                methodSel.find("Session") != std::string::npos ||
+                snapStoreCount < 30) {
+                snapStoreCount++;
+                fprintf(snapStoreLog, "[TEMP-STORE #%d] temp[%d] := 0x%llx in #%s\n",
+                        snapStoreCount, index,
+                        (unsigned long long)value.rawBits(), methodSel.c_str());
+                fflush(snapStoreLog);
+            }
         }
     }
 
@@ -3540,6 +3563,7 @@ void Interpreter::pushSpecial(int which) {
 
 void Interpreter::returnValue(Oop value) {
     // Trace returns to see where nil-filled Arrays come from
+    if constexpr (ENABLE_DEBUG_LOGGING) {
     static FILE* retValLog = nullptr;
     static int retValCount = 0;
     if (!retValLog) retValLog = fopen("/tmp/return_value_trace.log", "w");
@@ -3615,18 +3639,21 @@ void Interpreter::returnValue(Oop value) {
             }
         }
     }
+    }
 
     // If no frames to pop, check if we have a sender context to return to
     if (frameDepth_ == 0) {
         // Debug: trace context chain
         static FILE* ctxChainLog = nullptr;
         static int ctxChainCount = 0;
-        if (!ctxChainLog) ctxChainLog = fopen("/tmp/ctx_chain.log", "w");
-        if (ctxChainLog && ctxChainCount < 200) {
-            ctxChainCount++;
-            fprintf(ctxChainLog, "[CTX-CHAIN #%d] frameDepth_=0, activeContext_=0x%llx\n",
-                    ctxChainCount, (unsigned long long)activeContext_.rawBits());
-            fflush(ctxChainLog);
+        if constexpr (ENABLE_DEBUG_LOGGING) {
+            if (!ctxChainLog) ctxChainLog = fopen("/tmp/ctx_chain.log", "w");
+            if (ctxChainLog && ctxChainCount < 200) {
+                ctxChainCount++;
+                fprintf(ctxChainLog, "[CTX-CHAIN #%d] frameDepth_=0, activeContext_=0x%llx\n",
+                        ctxChainCount, (unsigned long long)activeContext_.rawBits());
+                fflush(ctxChainLog);
+            }
         }
 
         // Check if current context has a sender
@@ -3634,10 +3661,12 @@ void Interpreter::returnValue(Oop value) {
 
         if (activeContext_.isObject() && activeContext_.rawBits() != nilObj.rawBits()) {
             Oop sender = memory_.fetchPointer(0, activeContext_);
-            if (ctxChainLog && ctxChainCount <= 200) {
-                fprintf(ctxChainLog, "  -> sender (slot 0) = 0x%llx\n",
-                        (unsigned long long)sender.rawBits());
-                fflush(ctxChainLog);
+            if constexpr (ENABLE_DEBUG_LOGGING) {
+                if (ctxChainLog && ctxChainCount <= 200) {
+                    fprintf(ctxChainLog, "  -> sender (slot 0) = 0x%llx\n",
+                            (unsigned long long)sender.rawBits());
+                    fflush(ctxChainLog);
+                }
             }
 
             // DEFENSIVE: Check for corrupted sender (raw 0 or very low address)
@@ -3659,8 +3688,10 @@ void Interpreter::returnValue(Oop value) {
 
                 static FILE* senderCheckLog = nullptr;
                 static int senderCheckCount = 0;
-                if (!senderCheckLog) senderCheckLog = fopen("/tmp/sender_check.log", "w");
-                senderCheckCount++;
+                if constexpr (ENABLE_DEBUG_LOGGING) {
+                    if (!senderCheckLog) senderCheckLog = fopen("/tmp/sender_check.log", "w");
+                    senderCheckCount++;
+                }
                 if (senderCheckLog && senderCheckCount <= 100) {
                     // Get sender's class name
                     std::string senderClsName = "?";
@@ -3739,7 +3770,7 @@ void Interpreter::returnValue(Oop value) {
 
 terminate_process:
         // Mark current process as terminated by clearing its suspendedContext
-        {
+        if constexpr (ENABLE_DEBUG_LOGGING) {
             static FILE* retTermLog = nullptr;
             static int retTermCount = 0;
             if (!retTermLog) retTermLog = fopen("/tmp/return_terminate.log", "w");
@@ -3854,85 +3885,90 @@ terminate_process:
     }
 
     // Debug: track method_ changes through popFrame
-    static FILE* methodChangeLog = nullptr;
-    static int methodChangeCount = 0;
-    if (!methodChangeLog) methodChangeLog = fopen("/tmp/method_change.log", "w");
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        static FILE* methodChangeLog = nullptr;
+        static int methodChangeCount = 0;
+        if (!methodChangeLog) methodChangeLog = fopen("/tmp/method_change.log", "w");
 
-    // Get method name BEFORE popFrame
-    std::string beforeMethod = "<unknown>";
-    if (method_.isObject() && method_.rawBits() > 0x10000) {
-        Oop mHdr = memory_.fetchPointer(0, method_);
-        if (mHdr.isSmallInteger()) {
-            size_t numLits = mHdr.asSmallInteger() & 0x7FFF;
-            if (numLits >= 2) {
-                Oop sel = memory_.fetchPointer(numLits - 1, method_);
-                if (sel.isObject() && sel.rawBits() > 0x10000) {
-                    ObjectHeader* selHdr = sel.asObjectPtr();
-                    if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                        beforeMethod = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                    }
-                }
-            }
-        }
-    }
-
-    // Get method that WILL be restored
-    std::string willBeRestoredTo = "<none>";
-    if (frameDepth_ > 0) {
-        const auto& frame = savedFrames_[frameDepth_ - 1];
-        if (frame.savedMethod.isObject() && frame.savedMethod.rawBits() > 0x10000) {
-            Oop mHdr = memory_.fetchPointer(0, frame.savedMethod);
+        // Get method name BEFORE popFrame
+        std::string beforeMethod = "<unknown>";
+        if (method_.isObject() && method_.rawBits() > 0x10000) {
+            Oop mHdr = memory_.fetchPointer(0, method_);
             if (mHdr.isSmallInteger()) {
                 size_t numLits = mHdr.asSmallInteger() & 0x7FFF;
                 if (numLits >= 2) {
-                    Oop sel = memory_.fetchPointer(numLits - 1, frame.savedMethod);
+                    Oop sel = memory_.fetchPointer(numLits - 1, method_);
                     if (sel.isObject() && sel.rawBits() > 0x10000) {
                         ObjectHeader* selHdr = sel.asObjectPtr();
                         if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                            willBeRestoredTo = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                            beforeMethod = std::string((char*)selHdr->bytes(), selHdr->byteSize());
                         }
                     }
                 }
             }
         }
-    }
 
-    // Pop frame and push result
-    popFrame();
-
-    // Get method name AFTER popFrame
-    std::string afterMethod = "<unknown>";
-    if (method_.isObject() && method_.rawBits() > 0x10000) {
-        Oop mHdr = memory_.fetchPointer(0, method_);
-        if (mHdr.isSmallInteger()) {
-            size_t numLits = mHdr.asSmallInteger() & 0x7FFF;
-            if (numLits >= 2) {
-                Oop sel = memory_.fetchPointer(numLits - 1, method_);
-                if (sel.isObject() && sel.rawBits() > 0x10000) {
-                    ObjectHeader* selHdr = sel.asObjectPtr();
-                    if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                        afterMethod = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+        // Get method that WILL be restored
+        std::string willBeRestoredTo = "<none>";
+        if (frameDepth_ > 0) {
+            const auto& frame = savedFrames_[frameDepth_ - 1];
+            if (frame.savedMethod.isObject() && frame.savedMethod.rawBits() > 0x10000) {
+                Oop mHdr = memory_.fetchPointer(0, frame.savedMethod);
+                if (mHdr.isSmallInteger()) {
+                    size_t numLits = mHdr.asSmallInteger() & 0x7FFF;
+                    if (numLits >= 2) {
+                        Oop sel = memory_.fetchPointer(numLits - 1, frame.savedMethod);
+                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                            ObjectHeader* selHdr = sel.asObjectPtr();
+                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                willBeRestoredTo = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                            }
+                        }
                     }
                 }
             }
         }
-    }
 
-    // Log transitions involving fullCheck - get IP offset AFTER popFrame (where we'll resume)
-    if (methodChangeLog && methodChangeCount < 5000) {
-        if (beforeMethod == "fullCheck" || afterMethod == "fullCheck" || willBeRestoredTo == "fullCheck") {
-            methodChangeCount++;
-            // Get bytecode offset in afterMethod (the restored method)
-            int ipOffset = -1;
-            if (instructionPointer_ && method_.isObject() && method_.rawBits() > 0x10000) {
-                ObjectHeader* mHdr = method_.asObjectPtr();
-                uint8_t* methodStart = mHdr->bytes();
-                ipOffset = static_cast<int>(instructionPointer_ - methodStart);
+        // Pop frame and push result
+        popFrame();
+
+        // Get method name AFTER popFrame
+        std::string afterMethod = "<unknown>";
+        if (method_.isObject() && method_.rawBits() > 0x10000) {
+            Oop mHdr = memory_.fetchPointer(0, method_);
+            if (mHdr.isSmallInteger()) {
+                size_t numLits = mHdr.asSmallInteger() & 0x7FFF;
+                if (numLits >= 2) {
+                    Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                    if (sel.isObject() && sel.rawBits() > 0x10000) {
+                        ObjectHeader* selHdr = sel.asObjectPtr();
+                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                            afterMethod = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                        }
+                    }
+                }
             }
-            fprintf(methodChangeLog, "[RETURN #%d] %s -> %s (resumeIP=%d)\n",
-                    methodChangeCount, beforeMethod.c_str(), afterMethod.c_str(), ipOffset);
-            fflush(methodChangeLog);
         }
+
+        // Log transitions involving fullCheck - get IP offset AFTER popFrame (where we'll resume)
+        if (methodChangeLog && methodChangeCount < 5000) {
+            if (beforeMethod == "fullCheck" || afterMethod == "fullCheck" || willBeRestoredTo == "fullCheck") {
+                methodChangeCount++;
+                // Get bytecode offset in afterMethod (the restored method)
+                int ipOffset = -1;
+                if (instructionPointer_ && method_.isObject() && method_.rawBits() > 0x10000) {
+                    ObjectHeader* mHdr = method_.asObjectPtr();
+                    uint8_t* methodStart = mHdr->bytes();
+                    ipOffset = static_cast<int>(instructionPointer_ - methodStart);
+                }
+                fprintf(methodChangeLog, "[RETURN #%d] %s -> %s (resumeIP=%d)\n",
+                        methodChangeCount, beforeMethod.c_str(), afterMethod.c_str(), ipOffset);
+                fflush(methodChangeLog);
+            }
+        }
+    } else {
+        // Pop frame and push result
+        popFrame();
     }
 
     // After popping, if execution is still running, push the result
@@ -3945,70 +3981,72 @@ void Interpreter::returnFromMethod() {
     Oop value = pop();
 
     // Trace returns from startup-related methods
-    static FILE* retLog = nullptr;
-    static int retCount = 0;
-    if (!retLog) retLog = fopen("/tmp/method_return_trace.log", "w");
-    if (retLog && retCount < 100) {
-        // Get current method selector
-        std::string methodSel = "<unknown>";
-        if (method_.isObject() && method_.rawBits() > 0x10000) {
-            Oop hdr = memory_.fetchPointer(0, method_);
-            if (hdr.isSmallInteger()) {
-                size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                if (numLits >= 2) {
-                    Oop sel = memory_.fetchPointer(numLits - 1, method_);
-                    if (sel.isObject() && sel.rawBits() > 0x10000) {
-                        ObjectHeader* selHdr = sel.asObjectPtr();
-                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                            methodSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        static FILE* retLog = nullptr;
+        static int retCount = 0;
+        if (!retLog) retLog = fopen("/tmp/method_return_trace.log", "w");
+        if (retLog && retCount < 100) {
+            // Get current method selector
+            std::string methodSel = "<unknown>";
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                Oop hdr = memory_.fetchPointer(0, method_);
+                if (hdr.isSmallInteger()) {
+                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                    if (numLits >= 2) {
+                        Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                            ObjectHeader* selHdr = sel.asObjectPtr();
+                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                methodSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                            }
                         }
                     }
                 }
             }
-        }
-        // Log returns from specific methods
-        bool isStartupMethod = (methodSel.find("startup") != std::string::npos ||
-                                methodSel.find("List") != std::string::npos ||
-                                methodSel.find("flatten") != std::string::npos ||
-                                methodSel.find("Collect") != std::string::npos ||
-                                methodSel.find("withAll") != std::string::npos ||
-                                methodSel.find("addAll") != std::string::npos);
-        if (isStartupMethod) {
-            retCount++;
-            std::string valueClass = "<unknown>";
-            int valueSlots = -1;
-            if (value.isObject() && value.rawBits() > 0x10000) {
-                ObjectHeader* valHdr = value.asObjectPtr();
-                valueSlots = valHdr->slotCount();
-                Oop cls = memory_.classOf(value);
-                if (cls.isObject()) {
-                    Oop clsName = memory_.fetchPointer(6, cls);
-                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                        ObjectHeader* cnHdr = clsName.asObjectPtr();
-                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
-                            valueClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+            // Log returns from specific methods
+            bool isStartupMethod = (methodSel.find("startup") != std::string::npos ||
+                                    methodSel.find("List") != std::string::npos ||
+                                    methodSel.find("flatten") != std::string::npos ||
+                                    methodSel.find("Collect") != std::string::npos ||
+                                    methodSel.find("withAll") != std::string::npos ||
+                                    methodSel.find("addAll") != std::string::npos);
+            if (isStartupMethod) {
+                retCount++;
+                std::string valueClass = "<unknown>";
+                int valueSlots = -1;
+                if (value.isObject() && value.rawBits() > 0x10000) {
+                    ObjectHeader* valHdr = value.asObjectPtr();
+                    valueSlots = valHdr->slotCount();
+                    Oop cls = memory_.classOf(value);
+                    if (cls.isObject()) {
+                        Oop clsName = memory_.fetchPointer(6, cls);
+                        if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                            ObjectHeader* cnHdr = clsName.asObjectPtr();
+                            if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                                valueClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                            }
                         }
                     }
+                } else if (value.isSmallInteger()) {
+                    valueClass = "[SmallInteger " + std::to_string(value.asSmallInteger()) + "]";
                 }
-            } else if (value.isSmallInteger()) {
-                valueClass = "[SmallInteger " + std::to_string(value.asSmallInteger()) + "]";
+                fprintf(retLog, "[RETURN #%d] %s returns %s (0x%llx, %d slots)\n",
+                        retCount, methodSel.c_str(), valueClass.c_str(),
+                        (unsigned long long)value.rawBits(), valueSlots);
+                // If returning an Array, check for nil elements
+                if (valueClass == "Array" && value.isObject()) {
+                    ObjectHeader* valHdr = value.asObjectPtr();
+                    Oop nilObj = memory_.nil();
+                    int nilCount = 0;
+                    for (size_t i = 0; i < valHdr->slotCount(); i++) {
+                        if (valHdr->slotAt(i).rawBits() == nilObj.rawBits()) nilCount++;
+                    }
+                    if (nilCount > 0) {
+                        fprintf(retLog, "  *** Array has %d nil out of %d elements\n", nilCount, valueSlots);
+                    }
+                }
+                fflush(retLog);
             }
-            fprintf(retLog, "[RETURN #%d] %s returns %s (0x%llx, %d slots)\n",
-                    retCount, methodSel.c_str(), valueClass.c_str(),
-                    (unsigned long long)value.rawBits(), valueSlots);
-            // If returning an Array, check for nil elements
-            if (valueClass == "Array" && value.isObject()) {
-                ObjectHeader* valHdr = value.asObjectPtr();
-                Oop nilObj = memory_.nil();
-                int nilCount = 0;
-                for (size_t i = 0; i < valHdr->slotCount(); i++) {
-                    if (valHdr->slotAt(i).rawBits() == nilObj.rawBits()) nilCount++;
-                }
-                if (nilCount > 0) {
-                    fprintf(retLog, "  *** Array has %d nil out of %d elements\n", nilCount, valueSlots);
-                }
-            }
-            fflush(retLog);
         }
     }
 
@@ -4028,14 +4066,16 @@ void Interpreter::returnFromBlock() {
     }
 
     // Debug: log non-local returns
-    static FILE* nlrLog = nullptr;
-    static int nlrCount = 0;
-    if (!nlrLog) nlrLog = fopen("/tmp/nonlocal_return.log", "w");
-    if (nlrLog && nlrCount < 100) {
-        nlrCount++;
-        fprintf(nlrLog, "[NLR #%d] from frame %zu to home frame %zu\n",
-                nlrCount, frameDepth_, homeFrame);
-        fflush(nlrLog);
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        static FILE* nlrLog = nullptr;
+        static int nlrCount = 0;
+        if (!nlrLog) nlrLog = fopen("/tmp/nonlocal_return.log", "w");
+        if (nlrLog && nlrCount < 100) {
+            nlrCount++;
+            fprintf(nlrLog, "[NLR #%d] from frame %zu to home frame %zu\n",
+                    nlrCount, frameDepth_, homeFrame);
+            fflush(nlrLog);
+        }
     }
 
     // If homeFrame is valid and greater than 0, unwind to it
@@ -4125,18 +4165,20 @@ void Interpreter::shortJumpIfTrue(int offset) {
     Oop value = pop();
 
     // TRACE: Log conditional jumps for nil filtering debugging
-    static FILE* jumpTLog = nullptr;
-    static int jumpTCount = 0;
-    if (!jumpTLog) jumpTLog = fopen("/tmp/jump_true_trace.log", "w");
-    if (jumpTLog && jumpTCount < 200) {
-        jumpTCount++;
-        bool isTrueVal = isTrue(value);
-        bool isFalseVal = isFalse(value);
-        bool willJump = isTrueVal;
-        fprintf(jumpTLog, "[JUMP-IF-TRUE #%d] value=0x%llx isTrue=%d isFalse=%d willJump=%d\n",
-                jumpTCount, (unsigned long long)value.rawBits(),
-                isTrueVal ? 1 : 0, isFalseVal ? 1 : 0, willJump ? 1 : 0);
-        fflush(jumpTLog);
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        static FILE* jumpTLog = nullptr;
+        static int jumpTCount = 0;
+        if (!jumpTLog) jumpTLog = fopen("/tmp/jump_true_trace.log", "w");
+        if (jumpTLog && jumpTCount < 200) {
+            jumpTCount++;
+            bool isTrueVal = isTrue(value);
+            bool isFalseVal = isFalse(value);
+            bool willJump = isTrueVal;
+            fprintf(jumpTLog, "[JUMP-IF-TRUE #%d] value=0x%llx isTrue=%d isFalse=%d willJump=%d\n",
+                    jumpTCount, (unsigned long long)value.rawBits(),
+                    isTrueVal ? 1 : 0, isFalseVal ? 1 : 0, willJump ? 1 : 0);
+            fflush(jumpTLog);
+        }
     }
 
     if (isTrue(value)) {
@@ -4186,7 +4228,7 @@ void Interpreter::arithmeticSend(int which) {
     int argCount = argCounts[which];
 
     // TRACE: Log arithmetic ops that involve non-SmallIntegers
-    {
+    if constexpr (ENABLE_DEBUG_LOGGING) {
         static FILE* arithLog2 = nullptr;
         static int arithCount2 = 0;
         if (!arithLog2) arithLog2 = fopen("/tmp/arith_non_int.log", "w");
@@ -4262,26 +4304,26 @@ void Interpreter::arithmeticSend(int which) {
                 fflush(arithLog2);
             }
         }
-    }
 
-    // TRACE: Log all <= sends to understand loop iteration
-    if (which == 4) {  // <=
-        static FILE* arithLog = nullptr;
-        static int arithCount = 0;
-        if (!arithLog) arithLog = fopen("/tmp/arith_le_trace.log", "w");
-        if (arithLog && arithCount < 500) {
-            arithCount++;
-            Oop rcvr = stackValue(1);
-            Oop arg = stackValue(0);
-            if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
-                fprintf(arithLog, "[<= #%d] %lld <= %lld fd=%d\n",
-                        arithCount, rcvr.asSmallInteger(), arg.asSmallInteger(), (int)frameDepth_);
-            } else {
-                fprintf(arithLog, "[<= #%d] rcvr=0x%llx arg=0x%llx (non-int) fd=%d\n",
-                        arithCount, (unsigned long long)rcvr.rawBits(),
-                        (unsigned long long)arg.rawBits(), (int)frameDepth_);
+        // TRACE: Log all <= sends to understand loop iteration
+        if (which == 4) {  // <=
+            static FILE* arithLog = nullptr;
+            static int arithCount = 0;
+            if (!arithLog) arithLog = fopen("/tmp/arith_le_trace.log", "w");
+            if (arithLog && arithCount < 500) {
+                arithCount++;
+                Oop rcvr = stackValue(1);
+                Oop arg = stackValue(0);
+                if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
+                    fprintf(arithLog, "[<= #%d] %lld <= %lld fd=%d\n",
+                            arithCount, rcvr.asSmallInteger(), arg.asSmallInteger(), (int)frameDepth_);
+                } else {
+                    fprintf(arithLog, "[<= #%d] rcvr=0x%llx arg=0x%llx (non-int) fd=%d\n",
+                            arithCount, (unsigned long long)rcvr.rawBits(),
+                            (unsigned long long)arg.rawBits(), (int)frameDepth_);
+                }
+                fflush(arithLog);
             }
-            fflush(arithLog);
         }
     }
 
@@ -4506,6 +4548,7 @@ void Interpreter::sendSpecial(int which) {
     // Sista V1: Send special message (special selectors 0-15 map to selectors 16-31)
 
     // Trace value: (which=10) sends with nil arguments
+    if constexpr (ENABLE_DEBUG_LOGGING) {
     if (which == 10) {  // value:
         Oop arg = stackValue(0);
         Oop rcvr = stackValue(1);
@@ -4745,6 +4788,7 @@ void Interpreter::sendSpecial(int which) {
             }
             fflush(doSendLog);
         }
+    }
     }
     // Delegates to existing commonSend implementation which handles selectors 16-31
     commonSend(which);
@@ -5904,7 +5948,9 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     if (selEquals("value") && argCount == 0) {
         static FILE* assocLog = nullptr;
         static int assocCount = 0;
-        if (!assocLog) assocLog = fopen("/tmp/assoc_value.log", "w");
+        if constexpr (ENABLE_DEBUG_LOGGING) {
+            if (!assocLog) assocLog = fopen("/tmp/assoc_value.log", "w");
+        }
         if (assocLog && assocCount < 50) {
             Oop rcvr = stackValue(0);
             if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
@@ -5943,7 +5989,9 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     if (selEquals("value:") && argCount == 1) {
         static FILE* valueLog = nullptr;
         static int valueCount = 0;
-        if (!valueLog) valueLog = fopen("/tmp/block_value.log", "w");
+        if constexpr (ENABLE_DEBUG_LOGGING) {
+            if (!valueLog) valueLog = fopen("/tmp/block_value.log", "w");
+        }
         if (valueLog && valueCount < 100) {
             Oop rcvr = stackValue(1);  // Block
             Oop arg = stackValue(0);   // Argument to block
@@ -6014,7 +6062,9 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     if (selEquals("addLast:") && argCount == 1) {
         static FILE* addLastLog = nullptr;
         static int addLastCount = 0;
-        if (!addLastLog) addLastLog = fopen("/tmp/addlast_trace.log", "w");
+        if constexpr (ENABLE_DEBUG_LOGGING) {
+            if (!addLastLog) addLastLog = fopen("/tmp/addlast_trace.log", "w");
+        }
         if (addLastLog && addLastCount < 100) {
             Oop arg = stackValue(0);  // The value being added
             Oop nilObj = memory_.nil();
@@ -6073,7 +6123,9 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     if (selEquals("nextPutAll:") && argCount == 1) {
         static FILE* nextPutAllLog = nullptr;
         static int nextPutAllCount = 0;
-        if (!nextPutAllLog) nextPutAllLog = fopen("/tmp/nextputall.log", "w");
+        if constexpr (ENABLE_DEBUG_LOGGING) {
+            if (!nextPutAllLog) nextPutAllLog = fopen("/tmp/nextputall.log", "w");
+        }
         if (nextPutAllLog && nextPutAllCount < 50) {
             Oop arg = stackValue(0);  // Collection to add
             Oop rcvr = stackValue(1); // Stream
@@ -6142,7 +6194,9 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     if (selEquals("nextPut:") && argCount == 1) {
         static FILE* nextPutLog = nullptr;
         static int nextPutCount = 0;
-        if (!nextPutLog) nextPutLog = fopen("/tmp/nextput_all.log", "w");
+        if constexpr (ENABLE_DEBUG_LOGGING) {
+            if (!nextPutLog) nextPutLog = fopen("/tmp/nextput_all.log", "w");
+        }
         if (nextPutLog && nextPutCount < 100) {
             Oop arg = stackValue(0);
             Oop rcvr = stackValue(1);
@@ -6185,7 +6239,9 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     if (selEquals("copyFrom:to:") && argCount == 2) {
         static FILE* copyLog = nullptr;
         static int copyCount = 0;
-        if (!copyLog) copyLog = fopen("/tmp/copyfromto.log", "w");
+        if constexpr (ENABLE_DEBUG_LOGGING) {
+            if (!copyLog) copyLog = fopen("/tmp/copyfromto.log", "w");
+        }
         if (copyLog && copyCount < 50) {
             Oop start = stackValue(1);
             Oop stop = stackValue(0);
@@ -6244,7 +6300,9 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     if (selEquals("startupList") || selEquals("runList:do:")) {
         static FILE* startupListLog = nullptr;
         static int startupListCount = 0;
-        if (!startupListLog) startupListLog = fopen("/tmp/startupList_trace.log", "w");
+        if constexpr (ENABLE_DEBUG_LOGGING) {
+            if (!startupListLog) startupListLog = fopen("/tmp/startupList_trace.log", "w");
+        }
         if (startupListLog && startupListCount < 20) {
             startupListCount++;
             fprintf(startupListLog, "[%.*s #%d]\n", (int)selLen, selBytes, startupListCount);
@@ -6298,7 +6356,9 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     if (selEquals("ifNotNil:") || selEquals("ifNil:") || selEquals("ifNil:ifNotNil:") || selEquals("ifNotNil:ifNil:")) {
         static FILE* ifNotNilLog = nullptr;
         static int ifNotNilCount = 0;
-        if (!ifNotNilLog) ifNotNilLog = fopen("/tmp/ifNotNil_trace.log", "w");
+        if constexpr (ENABLE_DEBUG_LOGGING) {
+            if (!ifNotNilLog) ifNotNilLog = fopen("/tmp/ifNotNil_trace.log", "w");
+        }
         if (ifNotNilLog && ifNotNilCount < 100) {
             ifNotNilCount++;
             Oop rcvr = stackValue(static_cast<size_t>(argCount));
@@ -6382,8 +6442,10 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             g_inFullCheck = true;
             g_fullCheckBytecodeCount = 0;
             fullCheckTraceCount = 0;
-            if (!fcLog) fcLog = fopen("/tmp/fullcheck_trace.log", "w");
-            if (!g_fcBytecodeLog) g_fcBytecodeLog = fopen("/tmp/fullcheck_bytecodes.log", "w");
+            if constexpr (ENABLE_DEBUG_LOGGING) {
+                if (!fcLog) fcLog = fopen("/tmp/fullcheck_trace.log", "w");
+                if (!g_fcBytecodeLog) g_fcBytecodeLog = fopen("/tmp/fullcheck_bytecodes.log", "w");
+            }
             if (fcLog) {
                 fprintf(fcLog, "\n=== fullCheck #%d entered at send #%d ===\n", fullCheckCallCount, allSendCount);
                 fprintf(fcLog, "  method_=0x%llx\n", (unsigned long long)method_.rawBits());
@@ -6452,7 +6514,9 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         bool isNilRcvr = (rcvrName == "[UndefinedObject]" || rcvrName == "<unknown>");
         if ((selStr == "hasError" || selStr == "isImageStarting") && isNilRcvr) {
             static FILE* heLog = nullptr;
-            if (!heLog) heLog = fopen("/tmp/hasError_trace.log", "w");
+            if constexpr (ENABLE_DEBUG_LOGGING) {
+                if (!heLog) heLog = fopen("/tmp/hasError_trace.log", "w");
+            }
             if (heLog) {
                 fprintf(heLog, "[HE-TRACE] %s sent to 0x%llx (nil?)\n", selStr.c_str(), (unsigned long long)rcvr.rawBits());
                 // Show frame info
@@ -6575,7 +6639,9 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     // TRACE: Log when 'default' is sent to understand the call chain
     static FILE* defaultSendLog = nullptr;
     static int defaultSendCount = 0;
-    if (!defaultSendLog) defaultSendLog = fopen("/tmp/default_send.log", "w");
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        if (!defaultSendLog) defaultSendLog = fopen("/tmp/default_send.log", "w");
+    }
     if (selector.isObject() && selector.rawBits() > 0x10000) {
         ObjectHeader* selHdr = selector.asObjectPtr();
         if (selHdr->isBytesObject() && selHdr->byteSize() == 7) {
@@ -6629,7 +6695,9 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             if (s == "doInterCycleWait" && intercycleSendCount < 5) {
                 intercycleSendCount++;
                 static FILE* icSendLog = nullptr;
-                if (!icSendLog) icSendLog = fopen("/tmp/intercycle_send.log", "w");
+                if constexpr (ENABLE_DEBUG_LOGGING) {
+                    if (!icSendLog) icSendLog = fopen("/tmp/intercycle_send.log", "w");
+                }
                 if (icSendLog) {
                     // Log the receiver from stack
                     Oop rcvr = stackValue(static_cast<size_t>(argCount));
@@ -6755,7 +6823,9 @@ extern int g_traceSendsAfterPrim264;
                 if (!isInternalLookup) {
                     g_traceSendsAfterPrim264--;
                     static FILE* postPrimLog = nullptr;
-                    if (!postPrimLog) postPrimLog = fopen("/tmp/post_prim264.log", "w");
+                    if constexpr (ENABLE_DEBUG_LOGGING) {
+                        if (!postPrimLog) postPrimLog = fopen("/tmp/post_prim264.log", "w");
+                    }
                     if (postPrimLog) {
                         Oop rcvr = stackValue(static_cast<size_t>(argCount));
                         std::string rcvrClass = "<unknown>";
@@ -6883,7 +6953,10 @@ extern int g_traceSendsAfterPrim264;
             // ===== LOG toolNamed: to debug symbol identity issues =====
             if (selStr == "toolNamed:" && argCount == 1) {
                 Oop toolArg = stackValue(0);  // The tool name symbol
-                static FILE* toolLog = fopen("/tmp/tool_lookup.log", "a");
+                static FILE* toolLog = nullptr;
+                if constexpr (ENABLE_DEBUG_LOGGING) {
+                    if (!toolLog) toolLog = fopen("/tmp/tool_lookup.log", "a");
+                }
                 if (toolLog) {
                     std::string argStr = "<unknown>";
                     unsigned long long argBits = toolArg.rawBits();
@@ -6964,7 +7037,10 @@ extern int g_traceSendsAfterPrim264;
 
                 // Special trace for "Not suspended"
                 if (errorMsg == "Not suspended") {
-                    static FILE* notSuspLog = fopen("/tmp/not_suspended.log", "w");
+                    static FILE* notSuspLog = nullptr;
+                    if constexpr (ENABLE_DEBUG_LOGGING) {
+                        if (!notSuspLog) notSuspLog = fopen("/tmp/not_suspended.log", "w");
+                    }
                     if (notSuspLog) {
                         fprintf(notSuspLog, "=== 'Not suspended' ERROR ===\n");
                         // Get the receiver
@@ -7042,7 +7118,10 @@ extern int g_traceSendsAfterPrim264;
                 }
 
                 // Trace the call stack for ALL errors
-                static FILE* indexErrLog = fopen("/tmp/index_error_trace.log", "a");
+                static FILE* indexErrLog = nullptr;
+                if constexpr (ENABLE_DEBUG_LOGGING) {
+                    if (!indexErrLog) indexErrLog = fopen("/tmp/index_error_trace.log", "a");
+                }
                 if (indexErrLog) {
                     fprintf(indexErrLog, "\n=== ERROR: '%s' ===\n", errorMsg.c_str());
                     fprintf(indexErrLog, "  error: receiver=0x%llx isSmallInt=%d value=%lld\n",
@@ -7229,10 +7308,13 @@ extern int g_traceSendsAfterPrim264;
                         }
                     }
                 }
-                static FILE* errorLog = fopen("/tmp/error_messages.log", "a");
-                if (errorLog) {
-                    fprintf(errorLog, "[ERROR] %s >> error: '%s'\n", rcvrClassName.c_str(), errorMsg.c_str());
-                    fflush(errorLog);
+                static FILE* errorLog = nullptr;
+                if constexpr (ENABLE_DEBUG_LOGGING) {
+                    if (!errorLog) errorLog = fopen("/tmp/error_messages.log", "a");
+                    if (errorLog) {
+                        fprintf(errorLog, "[ERROR] %s >> error: '%s'\n", rcvrClassName.c_str(), errorMsg.c_str());
+                        fflush(errorLog);
+                    }
                 }
 
                 // Log error but let Smalltalk error handling work
@@ -7244,7 +7326,10 @@ extern int g_traceSendsAfterPrim264;
 
                 // INTERCEPT: If the error is "No tool named: browser", investigate what tools exist
                 if (rcvrClassName == "PharoCommonTools" && errorMsg.find("No tool named") != std::string::npos) {
-                    static FILE* browserLog = fopen("/tmp/browser_fallback.log", "a");
+                    static FILE* browserLog = nullptr;
+                    if constexpr (ENABLE_DEBUG_LOGGING) {
+                        if (!browserLog) browserLog = fopen("/tmp/browser_fallback.log", "a");
+                    }
 
                     // Dump the contents of PharoCommonTools >> tools dictionary
                     if (browserLog && rcvr.isObject()) {
@@ -7402,8 +7487,10 @@ extern int g_traceSendsAfterPrim264;
             // Log when comeToFront is being called
             if (selStr == "comeToFront" && argCount == 0) {
                 static FILE* ctfLog = nullptr;
-                if (!ctfLog) {
-                    ctfLog = fopen("/tmp/cometofront_debug.log", "w");
+                if constexpr (ENABLE_DEBUG_LOGGING) {
+                    if (!ctfLog) {
+                        ctfLog = fopen("/tmp/cometofront_debug.log", "w");
+                    }
                 }
                 if (ctfLog) {
                     std::string rcvrClassName = "<unknown>";
@@ -7442,8 +7529,10 @@ extern int g_traceSendsAfterPrim264;
             if (selStr == "terminateRealActive" || selStr == "terminateActive" ||
                 selStr == "doTerminationFromYourself" || selStr == "terminate") {
                 static FILE* termLog = nullptr;
-                if (!termLog) {
-                    termLog = fopen("/tmp/terminate_intercept.log", "a");
+                if constexpr (ENABLE_DEBUG_LOGGING) {
+                    if (!termLog) {
+                        termLog = fopen("/tmp/terminate_intercept.log", "a");
+                    }
                 }
                 if (termLog) {
                     fprintf(termLog, "[TERMINATE] Intercepted %s - returning self to prevent exit\n",
@@ -7556,8 +7645,10 @@ extern int g_traceSendsAfterPrim264;
                         std::string errMsg((char*)errHdr->bytes(), errHdr->byteSize());
                         // Log the error for debugging
                         static FILE* errLog = nullptr;
-                        if (!errLog) {
-                            errLog = fopen("/tmp/error_messages.log", "w");
+                        if constexpr (ENABLE_DEBUG_LOGGING) {
+                            if (!errLog) {
+                                errLog = fopen("/tmp/error_messages.log", "w");
+                            }
                         }
                         if (errLog) {
                             std::string rcvrClassName = "<unknown>";
@@ -7722,7 +7813,9 @@ extern int g_traceSendsAfterPrim264;
     if (rcvr.rawBits() == nilObj.rawBits() && selector.isObject()) {
         static FILE* nilSendLog = nullptr;
         static int nilSendCount = 0;
-        if (!nilSendLog) nilSendLog = fopen("/tmp/nil_send_trace.log", "w");
+        if constexpr (ENABLE_DEBUG_LOGGING) {
+            if (!nilSendLog) nilSendLog = fopen("/tmp/nil_send_trace.log", "w");
+        }
         if (nilSendLog && nilSendCount < 30) {
             ObjectHeader* selHdr = selector.asObjectPtr();
             if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
@@ -8301,7 +8394,10 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
         // Critical: check i=109 when searching for ensure: - why is it being skipped?
         static bool traceEnsure109 = false;
         if (selectorStr == "ensure:" && size == 256 && !traceEnsure109 && i == 109) {
-            static FILE* ensLog = fopen("/tmp/ensure_lookup.log", "a");
+            static FILE* ensLog = nullptr;
+            if constexpr (ENABLE_DEBUG_LOGGING) {
+                if (!ensLog) ensLog = fopen("/tmp/ensure_lookup.log", "a");
+            }
             if (ensLog) {
                 fprintf(ensLog, "[ENSURE-109] i=%zu mdSlotIndex=%zu key=0x%llx\n",
                         i, mdSlotIndex, (unsigned long long)key.rawBits());
@@ -8729,7 +8825,10 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
         static int ensureSlotTrace = 0;
         if ((selectorStr == "ensure:" || selectorStr == "value:" || selectorStr == "value") &&
             ensureSlotTrace++ <= 50) {
-            static FILE* ensLog = fopen("/tmp/ensure_lookup.log", "a");
+            static FILE* ensLog = nullptr;
+            if constexpr (ENABLE_DEBUG_LOGGING) {
+                if (!ensLog) ensLog = fopen("/tmp/ensure_lookup.log", "a");
+            }
             if (ensLog && (i == 51 || i == 109 || i == 233 || (ensureSlotTrace <= 20 && (i % 30 == 0)))) {
                 fprintf(ensLog, "[ENSURE-SLOT] i=%zu slot=%zu key=0x%llx isBytes=%d fmt=%d byteSize=%zu",
                         i, i + 2, (unsigned long long)key.rawBits(),
@@ -8750,7 +8849,10 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
             // Debug: trace ensure: searches - also check what key contains 'ensure'
             static bool traceEnsureSearchDone = false;
             if (selectorStr == "ensure:" && size == 256 && !traceEnsureSearchDone) {
-                static FILE* ensLog = fopen("/tmp/ensure_lookup.log", "a");
+                static FILE* ensLog = nullptr;
+                if constexpr (ENABLE_DEBUG_LOGGING) {
+                    if (!ensLog) ensLog = fopen("/tmp/ensure_lookup.log", "a");
+                }
                 if (ensLog) {
                     std::string keyStr((char*)keyHdr->bytes(), keyHdr->byteSize());
                     // Log keys around index 109 AND any key containing 'ensure'
@@ -9158,7 +9260,9 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         if (methodSelector == "fullCheck") {
             static FILE* fcActivateLog = nullptr;
             static int fcActivateCount = 0;
-            if (!fcActivateLog) fcActivateLog = fopen("/tmp/fc_activate.log", "w");
+            if constexpr (ENABLE_DEBUG_LOGGING) {
+                if (!fcActivateLog) fcActivateLog = fopen("/tmp/fc_activate.log", "w");
+            }
             if (fcActivateLog && fcActivateCount < 10) {
                 fcActivateCount++;
                 fprintf(fcActivateLog, "[FC-ACTIVATE #%d] fullCheck activated\n", fcActivateCount);
@@ -9295,8 +9399,11 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     bytecodeEnd_ = methodBytes + totalBytes;
 
     // DEBUG: Dump bytecodes for signal method
-    static FILE* bcLog = fopen("/tmp/bytecode-dump.log", "w");
+    static FILE* bcLog = nullptr;
     static int activationCount = 0;
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        if (!bcLog) bcLog = fopen("/tmp/bytecode-dump.log", "w");
+    }
     activationCount++;
     if (bcLog && methodObj->slotCount() > 1 && activationCount < 100) {
         std::string sel = "";
@@ -9506,7 +9613,10 @@ void Interpreter::activateBlock(Oop block, int argCount) {
 // ===== FRAME MANAGEMENT =====
 
 bool Interpreter::pushFrame(Oop method, int argCount) {
-    static FILE* frameLog = fopen("/tmp/iospharo-frame.log", "a");
+    static FILE* frameLog = nullptr;
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        if (!frameLog) frameLog = fopen("/tmp/iospharo-frame.log", "a");
+    }
 
     // Get method name/selector for recursion detection
     // IMPORTANT: Use the actual selector (penultimate literal), NOT lit1
@@ -9755,7 +9865,9 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     // Log fullCheck entries and dump its bytecodes
     static FILE* fcEntryLog = nullptr;
     static int fcEntryCount = 0;
-    if (!fcEntryLog) fcEntryLog = fopen("/tmp/fullcheck_entries.log", "w");
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        if (!fcEntryLog) fcEntryLog = fopen("/tmp/fullcheck_entries.log", "w");
+    }
     if (fcEntryLog && methodName == "fullCheck" && fcEntryCount < 1000) {
         fcEntryCount++;
         // Get the caller method (saved in frame we just created)
@@ -9895,7 +10007,9 @@ Oop Interpreter::temporary(int index) const {
     // Log temp reads for debugging infinite loop
     static FILE* tempLog = nullptr;
     static int tempReadCount = 0;
-    if (!tempLog) tempLog = fopen("/tmp/temp_access.log", "w");
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        if (!tempLog) tempLog = fopen("/tmp/temp_access.log", "w");
+    }
     if (tempLog && tempReadCount < 100) {
         tempReadCount++;
         fprintf(tempLog, "[TEMP_READ #%d] index=%d value=0x%llx frameDepth=%zu\n",
@@ -9947,7 +10061,9 @@ void Interpreter::setTemporary(int index, Oop value) {
     // Log temp writes for debugging infinite loop
     static FILE* tempLog = nullptr;
     static int tempWriteCount = 0;
-    if (!tempLog) tempLog = fopen("/tmp/temp_write.log", "w");
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        if (!tempLog) tempLog = fopen("/tmp/temp_write.log", "w");
+    }
     if (tempLog && tempWriteCount < 100) {
         tempWriteCount++;
         Oop oldValue = *(framePointer_ + 1 + index);
@@ -9981,7 +10097,9 @@ Oop Interpreter::receiverInstVar(size_t index) const {
     // Log slot 0 (superclass) accesses to debug infinite inheritsFrom loop
     static FILE* instVarLog = nullptr;
     static int instVarCount = 0;
-    if (!instVarLog) instVarLog = fopen("/tmp/instvar_access.log", "w");
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        if (!instVarLog) instVarLog = fopen("/tmp/instvar_access.log", "w");
+    }
     if (instVarLog && index == 0 && instVarCount < 100) {
         instVarCount++;
         fprintf(instVarLog, "[INSTVAR #%d] slot0 receiver=0x%llx result=0x%llx\n",
@@ -10007,7 +10125,9 @@ void Interpreter::setReceiverInstVar(size_t index, Oop value) {
     // Trace stores to SessionManager
     static FILE* storeLog = nullptr;
     static int storeCount = 0;
-    if (!storeLog) storeLog = fopen("/tmp/instvar_store.log", "w");
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        if (!storeLog) storeLog = fopen("/tmp/instvar_store.log", "w");
+    }
     if (storeLog && storeCount < 100) {
         std::string rcvrName = "<unknown>";
         if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
@@ -10062,7 +10182,9 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     // DEBUG: Capture initial stack state to detect corruption
     static FILE* stackDebug = nullptr;
     static int stackDebugCount = 0;
-    if (!stackDebug) stackDebug = fopen("/tmp/stack_corruption.log", "w");
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        if (!stackDebug) stackDebug = fopen("/tmp/stack_corruption.log", "w");
+    }
 
     Oop initialStackRcvr = stackValue(argCount);
     uint64_t initialRcvrBits = initialStackRcvr.rawBits();
@@ -10113,8 +10235,10 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     // Log DNU to file
     static FILE* dnuTraceLog = nullptr;
     static int dnuTraceCount = 0;
-    if (!dnuTraceLog) {
-        dnuTraceLog = fopen("/tmp/dnu_trace.log", "w");
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        if (!dnuTraceLog) {
+            dnuTraceLog = fopen("/tmp/dnu_trace.log", "w");
+        }
     }
     if (dnuTraceLog && dnuTraceCount < 100) {
         std::string selStr = "<unknown>";
@@ -10251,7 +10375,9 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     // TRACE: Special debugging for startup: DNU
     if (origStr == "startup:") {
         static FILE* startupLog = nullptr;
-        if (!startupLog) startupLog = fopen("/tmp/startup_dnu.log", "w");
+        if constexpr (ENABLE_DEBUG_LOGGING) {
+            if (!startupLog) startupLog = fopen("/tmp/startup_dnu.log", "w");
+        }
         if (startupLog) {
             fprintf(startupLog, "[STARTUP: DNU]\n");
             fprintf(startupLog, "  receiver_ (stale) = 0x%llx\n", (unsigned long long)receiver_.rawBits());
@@ -10479,7 +10605,9 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         // Trace the sender context to understand who is calling this
         static FILE* senderLog = nullptr;
         static int senderLogCount = 0;
-        if (!senderLog) senderLog = fopen("/tmp/intercycle_sender.log", "w");
+        if constexpr (ENABLE_DEBUG_LOGGING) {
+            if (!senderLog) senderLog = fopen("/tmp/intercycle_sender.log", "w");
+        }
         if (senderLog && senderLogCount < 20) {
             senderLogCount++;
             // Get current method selector from active context
@@ -10702,7 +10830,9 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         // Trace fullCheck receiver state AFTER fallback
         static FILE* fcExitLog = nullptr;
         static int fcExitCount = 0;
-        if (!fcExitLog) fcExitLog = fopen("/tmp/fc_exit_trace.log", "w");
+        if constexpr (ENABLE_DEBUG_LOGGING) {
+            if (!fcExitLog) fcExitLog = fopen("/tmp/fc_exit_trace.log", "w");
+        }
         if (fcExitLog && fcExitCount < 50) {
             for (size_t d = 0; d < frameDepth_ && d < 12; d++) {
                 SavedFrame& sf = savedFrames_[frameDepth_ - 1 - d];
@@ -10770,7 +10900,9 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         // Log context to understand why these are sent to SessionManager
         static FILE* heDebug = nullptr;
         static int heCount = 0;
-        if (!heDebug) heDebug = fopen("/tmp/hasError_debug.log", "w");
+        if constexpr (ENABLE_DEBUG_LOGGING) {
+            if (!heDebug) heDebug = fopen("/tmp/hasError_debug.log", "w");
+        }
         if (heDebug && heCount++ < 10) {
             fprintf(heDebug, "[%s #%d] receiver=0x%llx\n", origStr.c_str(), heCount,
                     (unsigned long long)receiver_.rawBits());
@@ -10917,8 +11049,10 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     if (origStr == "terminateRealActive" || origStr == "terminateActive" ||
         origStr == "doTerminationFromYourself" || origStr == "terminate") {
         static FILE* termLog = nullptr;
-        if (!termLog) {
-            termLog = fopen("/tmp/terminate_intercept.log", "a");
+        if constexpr (ENABLE_DEBUG_LOGGING) {
+            if (!termLog) {
+                termLog = fopen("/tmp/terminate_intercept.log", "a");
+            }
         }
         if (termLog) {
             fprintf(termLog, "[DNU-TERMINATE] Intercepted %s - returning self\n", origStr.c_str());
@@ -11457,7 +11591,9 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     if (selector.rawBits() == selectors_.doesNotUnderstand.rawBits()) {
         static FILE* dnuLog = nullptr;
         static int dnuStopCount = 0;
-        if (!dnuLog) dnuLog = fopen("/tmp/dnu_stop.log", "w");
+        if constexpr (ENABLE_DEBUG_LOGGING) {
+            if (!dnuLog) dnuLog = fopen("/tmp/dnu_stop.log", "w");
+        }
         if (dnuLog && dnuStopCount < 20) {
             fprintf(dnuLog, "[DNU-GRACEFUL #%d] DNU called with DNU selector - returning nil\n", ++dnuStopCount);
             fflush(dnuLog);
@@ -11984,7 +12120,9 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
     // TRACE: What is activeContext_ when we create a block?
     static FILE* blockCreateLog = nullptr;
     static int blockCreateCount = 0;
-    if (!blockCreateLog) blockCreateLog = fopen("/tmp/block_create.log", "w");
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        if (!blockCreateLog) blockCreateLog = fopen("/tmp/block_create.log", "w");
+    }
     if (blockCreateLog && blockCreateCount < 500) {
         blockCreateCount++;
         std::string ctxRcvrClass = "<unknown>";
@@ -12053,7 +12191,9 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
     // TRACE: Log copied values
     static FILE* copiedLog = nullptr;
     static int copiedCount = 0;
-    if (!copiedLog) copiedLog = fopen("/tmp/copied_values.log", "w");
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        if (!copiedLog) copiedLog = fopen("/tmp/copied_values.log", "w");
+    }
 
     // Log block creation params
     if (copiedLog && copiedCount < 200 && numCopied > 0) {
@@ -12336,7 +12476,9 @@ void Interpreter::initializeSelectors() {
 void Interpreter::terminateCurrentProcess() {
     static FILE* termLog = nullptr;
     static int termCount = 0;
-    if (!termLog) termLog = fopen("/tmp/process_terminate.log", "w");
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        if (!termLog) termLog = fopen("/tmp/process_terminate.log", "w");
+    }
     termCount++;
 
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
@@ -12492,8 +12634,10 @@ Oop Interpreter::wakeHighestPriority() {
     static FILE* wakeLog = nullptr;
     wakeCallCount++;
 
-    if (!wakeLog) {
-        wakeLog = fopen("/tmp/wake_priority.log", "w");
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        if (!wakeLog) {
+            wakeLog = fopen("/tmp/wake_priority.log", "w");
+        }
     }
 
     Oop nilObj = memory_.nil();
@@ -12547,8 +12691,10 @@ void Interpreter::putToSleep(Oop process) {
     static FILE* sleepLog = nullptr;
     sleepCallCount++;
 
-    if (!sleepLog) {
-        sleepLog = fopen("/tmp/put_sleep.log", "w");
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        if (!sleepLog) {
+            sleepLog = fopen("/tmp/put_sleep.log", "w");
+        }
     }
 
     Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
@@ -12580,7 +12726,9 @@ Oop Interpreter::materializeFrameStack() {
     }
 
     static FILE* matLog = nullptr;
-    if (!matLog) matLog = fopen("/tmp/materialize.log", "w");
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        if (!matLog) matLog = fopen("/tmp/materialize.log", "w");
+    }
 
     // Build contexts from bottom to top (oldest to newest)
     // The sender of the first frame is activeContext_
@@ -12776,7 +12924,9 @@ Oop Interpreter::materializeFrameStack() {
 void Interpreter::transferTo(Oop newProcess) {
     static FILE* xferLog = nullptr;
     static int xferCount = 0;
-    if (!xferLog) xferLog = fopen("/tmp/process_switch.log", "w");
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        if (!xferLog) xferLog = fopen("/tmp/process_switch.log", "w");
+    }
     xferCount++;
 
     Oop oldProcess = getActiveProcess();
@@ -12942,7 +13092,9 @@ bool Interpreter::tryReschedule() {
     // Debug: dump scheduler queues periodically
     static FILE* schedLog = nullptr;
     static int schedDump = 0;
-    if (!schedLog) schedLog = fopen("/tmp/scheduler_dump.log", "w");
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        if (!schedLog) schedLog = fopen("/tmp/scheduler_dump.log", "w");
+    }
     schedDump++;
 
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
@@ -13052,7 +13204,9 @@ void Interpreter::checkForPreemption() {
     // This simulates the timer-based preemption of CogVM
     static FILE* preemptLog = nullptr;
     static int preemptCount = 0;
-    if (!preemptLog) preemptLog = fopen("/tmp/preempt_check.log", "w");
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        if (!preemptLog) preemptLog = fopen("/tmp/preempt_check.log", "w");
+    }
     preemptCount++;
 
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
@@ -13278,11 +13432,13 @@ bool Interpreter::bootstrapStartup() {
 
     startupAttempt++;
     // Log every startup attempt to verify the code is being reached
-    fprintf(stderr, "[BOOTSTRAP] Attempt #%d\n", startupAttempt);
-    static FILE* startupLog = fopen("/tmp/bootstrap_startup.log", "w");
-    if (startupLog) {
-        fprintf(startupLog, "[BOOTSTRAP] Attempt #%d\n", startupAttempt);
-        fflush(startupLog);
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        fprintf(stderr, "[BOOTSTRAP] Attempt #%d\n", startupAttempt);
+        static FILE* startupLog = fopen("/tmp/bootstrap_startup.log", "w");
+        if (startupLog) {
+            fprintf(startupLog, "[BOOTSTRAP] Attempt #%d\n", startupAttempt);
+            fflush(startupLog);
+        }
     }
 
     // Initialize the platform display ONCE with a test pattern
@@ -13425,7 +13581,10 @@ bool Interpreter::bootstrapStartup() {
         Oop smalltalkImageClass = memory_.findGlobal("SmalltalkImage");
 
         // Debug logging
-        static FILE* startupDebugLog = fopen("/tmp/startup_debug.log", "w");
+        static FILE* startupDebugLog = nullptr;
+        if constexpr (ENABLE_DEBUG_LOGGING) {
+            if (!startupDebugLog) startupDebugLog = fopen("/tmp/startup_debug.log", "w");
+        }
         Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
         if (startupDebugLog) {
             fprintf(startupDebugLog, "[STARTUP-1] nil object: 0x%llx\n", (unsigned long long)nilObj.rawBits());
@@ -13511,10 +13670,13 @@ bool Interpreter::bootstrapStartup() {
         Oop smalltalk = memory_.findGlobal("Smalltalk");
         Oop smalltalkImageClass = memory_.findGlobal("SmalltalkImage");
 
-        static FILE* startupDebugLog = fopen("/tmp/startup_debug.log", "a");
-        if (startupDebugLog) {
-            fprintf(startupDebugLog, "[STARTUP-2] Looking for restartMethods\n");
-            fflush(startupDebugLog);
+        static FILE* startupDebugLog = nullptr;
+        if constexpr (ENABLE_DEBUG_LOGGING) {
+            if (!startupDebugLog) startupDebugLog = fopen("/tmp/startup_debug.log", "a");
+            if (startupDebugLog) {
+                fprintf(startupDebugLog, "[STARTUP-2] Looking for restartMethods\n");
+                fflush(startupDebugLog);
+            }
         }
 
         Oop receiver = smalltalk.isObject() ? smalltalk : smalltalkImageClass;
@@ -13541,8 +13703,10 @@ bool Interpreter::bootstrapStartup() {
         // One-time: Try to start InputEventSensor's event loop
         static bool sensorStartAttempted = false;
         static FILE* sensorLog = nullptr;
-        if (!sensorLog) {
-            sensorLog = fopen("/tmp/sensor_start.log", "w");
+        if constexpr (ENABLE_DEBUG_LOGGING) {
+            if (!sensorLog) {
+                sensorLog = fopen("/tmp/sensor_start.log", "w");
+            }
         }
         if (!sensorStartAttempted) {
             sensorStartAttempted = true;
@@ -14197,10 +14361,13 @@ bool Interpreter::executeFromContext(Oop context) {
     static bool firstSnapshotResume = true;
 
     // Log snapshot resume detection
-    static FILE* snapLog = fopen("/tmp/snapshot_resume.log", "w");
-    if (snapLog && firstSnapshotResume) {
-        fprintf(snapLog, "[SNAP] Checking for snapshot resume, primIdx=%d\n", primIdx);
-        fflush(snapLog);
+    static FILE* snapLog = nullptr;
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        if (!snapLog) snapLog = fopen("/tmp/snapshot_resume.log", "w");
+        if (snapLog && firstSnapshotResume) {
+            fprintf(snapLog, "[SNAP] Checking for snapshot resume, primIdx=%d\n", primIdx);
+            fflush(snapLog);
+        }
     }
 
     // Check for snapshot primitive (131) by primitive number
@@ -14294,7 +14461,9 @@ bool Interpreter::executeFromContext(Oop context) {
     // Log context restoration details
     static FILE* ctxRestoreLog = nullptr;
     static int ctxRestoreCount = 0;
-    if (!ctxRestoreLog) ctxRestoreLog = fopen("/tmp/context_restore.log", "w");
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        if (!ctxRestoreLog) ctxRestoreLog = fopen("/tmp/context_restore.log", "w");
+    }
     ctxRestoreCount++;
     if (ctxRestoreLog && ctxRestoreCount <= 50) {
         // Get active process
@@ -14415,7 +14584,9 @@ bool Interpreter::executeFromContext(Oop context) {
     //   slot 2: isQuit (Boolean) - if true, quitPrimitive is called after resume
     if (isSnapshotResume) {
         static FILE* snapStackLog = nullptr;
-        if (!snapStackLog) snapStackLog = fopen("/tmp/snapshot_stack.log", "w");
+        if constexpr (ENABLE_DEBUG_LOGGING) {
+            if (!snapStackLog) snapStackLog = fopen("/tmp/snapshot_stack.log", "w");
+        }
         if (snapStackLog) {
             // Log the context's stack/temp area
             fprintf(snapStackLog, "[SNAP-STACK] stackp=%d Context slots 6+:\n", stackp);
@@ -14502,16 +14673,18 @@ void Interpreter::initializePrimitives() {
     #include "../ios/generated_primitives.inc"
 
     // Debug: Verify event primitives are registered
-    static FILE* primInitLog = fopen("/tmp/prim_init.log", "w");
-    if (primInitLog) {
-        fprintf(primInitLog, "[PRIM_INIT] primitiveTable_[264]=%s\n",
-                primitiveTable_[264] ? "REGISTERED" : "NULL");
-        fprintf(primInitLog, "[PRIM_INIT] primitiveTable_[265]=%s\n",
-                primitiveTable_[265] ? "REGISTERED" : "NULL");
-        fprintf(primInitLog, "[PRIM_INIT] primitiveTable_[267]=%s\n",
-                primitiveTable_[267] ? "REGISTERED" : "NULL");
-        fflush(primInitLog);
-        fclose(primInitLog);
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        static FILE* primInitLog = fopen("/tmp/prim_init.log", "w");
+        if (primInitLog) {
+            fprintf(primInitLog, "[PRIM_INIT] primitiveTable_[264]=%s\n",
+                    primitiveTable_[264] ? "REGISTERED" : "NULL");
+            fprintf(primInitLog, "[PRIM_INIT] primitiveTable_[265]=%s\n",
+                    primitiveTable_[265] ? "REGISTERED" : "NULL");
+            fprintf(primInitLog, "[PRIM_INIT] primitiveTable_[267]=%s\n",
+                    primitiveTable_[267] ? "REGISTERED" : "NULL");
+            fflush(primInitLog);
+            fclose(primInitLog);
+        }
     }
 
     // NOTE: The generated file maps VMMaker primitive names to C++ method names.
@@ -14563,8 +14736,10 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
 
     // Log all primitive calls for debugging
     static FILE* allPrimLog = nullptr;
-    if (!allPrimLog) {
-        allPrimLog = fopen("/tmp/prim_all_calls.log", "w");
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        if (!allPrimLog) {
+            allPrimLog = fopen("/tmp/prim_all_calls.log", "w");
+        }
     }
 
     if (primitiveIndex >= 0 && primitiveIndex < 1000) {
