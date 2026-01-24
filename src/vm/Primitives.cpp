@@ -2947,6 +2947,15 @@ PrimitiveResult Interpreter::primitiveSignal(int argCount) {
     // Primitive 85: Semaphore>>signal
     // Signal a semaphore. If processes are waiting, wake the first one.
     // Otherwise increment excessSignals.
+
+    static int signalCallCount = 0;
+    static FILE* signalLog = nullptr;
+    signalCallCount++;
+
+    if (!signalLog) {
+        signalLog = fopen("/tmp/prim_signal.log", "w");
+    }
+
     Oop semaphore = stackTop();  // Receiver
 
     if (!semaphore.isObject()) {
@@ -2962,6 +2971,11 @@ PrimitiveResult Interpreter::primitiveSignal(int argCount) {
         int64_t excess = excessOop.isSmallInteger() ? excessOop.asSmallInteger() : 0;
         memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
                             Oop::fromSmallInteger(excess + 1));
+        if (signalLog && signalCallCount <= 100) {
+            fprintf(signalLog, "[SIGNAL #%d] sem=0x%llx no waiters -> excess=%lld\n",
+                    signalCallCount, (unsigned long long)semaphore.rawBits(), (long long)(excess + 1));
+            fflush(signalLog);
+        }
         // Return receiver (semaphore stays on stack)
         return PrimitiveResult::Success;
     }
@@ -2976,6 +2990,14 @@ PrimitiveResult Interpreter::primitiveSignal(int argCount) {
     Oop activeProcess = getActiveProcess();
     Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
     int activePriority = static_cast<int>(activePriorityOop.asSmallInteger());
+
+    if (signalLog && signalCallCount <= 100) {
+        fprintf(signalLog, "[SIGNAL #%d] sem=0x%llx waking process 0x%llx (pri=%d) active_pri=%d -> %s\n",
+                signalCallCount, (unsigned long long)semaphore.rawBits(),
+                (unsigned long long)process.rawBits(), processPriority, activePriority,
+                processPriority > activePriority ? "PREEMPT" : "enqueue");
+        fflush(signalLog);
+    }
 
     if (processPriority > activePriority) {
         // Higher priority - preempt current process
@@ -2993,6 +3015,14 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
     // Primitive 86: Semaphore>>wait
     // Wait on a semaphore. If excessSignals > 0, decrement and return.
     // Otherwise suspend current process on the semaphore's wait list.
+
+    static int waitCallCount = 0;
+    static FILE* waitLog = nullptr;
+    waitCallCount++;
+
+    if (!waitLog) {
+        waitLog = fopen("/tmp/prim_wait.log", "w");
+    }
 
     if (stackPointer_ < stackBase_ + argCount + 1) {
         return PrimitiveResult::Failure;
@@ -3016,6 +3046,11 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
         int64_t excess = excessOop.asSmallInteger();
         if (excess > 0) {
             // Semaphore is signaled - decrement and return immediately
+            if (waitLog && waitCallCount <= 100) {
+                fprintf(waitLog, "[WAIT #%d] sem=0x%llx excess=%lld -> immediate return\n",
+                        waitCallCount, (unsigned long long)semaphore.rawBits(), (long long)excess);
+                fflush(waitLog);
+            }
             memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
                                 Oop::fromSmallInteger(excess - 1));
             return PrimitiveResult::Success;
@@ -3023,16 +3058,41 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
     }
 
     // No signal available - must wait
-    // Add current process to semaphore wait list and switch to next runnable
     Oop activeProcess = getActiveProcess();
+    Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
+    int activePriority = activePriorityOop.isSmallInteger() ?
+                         static_cast<int>(activePriorityOop.asSmallInteger()) : -1;
+
+    if (waitLog && waitCallCount <= 100) {
+        fprintf(waitLog, "[WAIT #%d] sem=0x%llx excess=0 -> BLOCKING process 0x%llx (priority %d)\n",
+                waitCallCount, (unsigned long long)semaphore.rawBits(),
+                (unsigned long long)activeProcess.rawBits(), activePriority);
+        fflush(waitLog);
+    }
+
+    // Add current process to semaphore wait list and switch to next runnable
     addLastLinkToList(activeProcess, semaphore);
 
     // Find next runnable process and switch to it
     Oop nextProcess = wakeHighestPriority();
     if (nextProcess.isNil()) {
         // No runnable process - this shouldn't happen in a working system
+        if (waitLog) {
+            fprintf(waitLog, "[WAIT #%d] ERROR: No runnable process after blocking!\n", waitCallCount);
+            fflush(waitLog);
+        }
         return PrimitiveResult::Failure;
     }
+
+    Oop nextPriorityOop = memory_.fetchPointer(ProcessPriorityIndex, nextProcess);
+    int nextPriority = nextPriorityOop.isSmallInteger() ?
+                       static_cast<int>(nextPriorityOop.asSmallInteger()) : -1;
+    if (waitLog && waitCallCount <= 100) {
+        fprintf(waitLog, "[WAIT #%d] -> Switching to process 0x%llx (priority %d)\n",
+                waitCallCount, (unsigned long long)nextProcess.rawBits(), nextPriority);
+        fflush(waitLog);
+    }
+
     transferTo(nextProcess);
     return PrimitiveResult::Success;
 }
