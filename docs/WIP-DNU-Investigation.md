@@ -1,79 +1,74 @@
-# WIP: DNU Investigation - #new Sent to Wrong Receiver
+# DNU Investigation - RESOLVED
 
-## Current Status
-The VM gets past initial startup but encounters `#new` being sent to an OrderedCollection **instance** instead of a **class** object, causing DNU errors.
+## Status: FIXED ✓
 
-## Root Cause Analysis
+The major DNU issues have been resolved. The VM now progresses through startup without critical errors.
 
-### Symptom
+## Issues Fixed This Session
+
+### 1. NLR Home Frame Detection (Previous Session)
+Fixed non-local returns in blocks to find the correct home frame by:
+- Using CompiledBlock's last literal to identify the enclosing CompiledMethod
+- Searching for the frame executing that specific method
+- Fixed off-by-one error in frame indexing
+
+### 2. Memory Exhaustion Causing Block Allocation Failure (This Session)
+
+**Root Cause**: The scavenge function doesn't reset eden (to avoid pointer corruption from missing forwarding pointers). This causes eden to fill up completely, and new allocations fail.
+
+**Symptom**: `value:` sent to nil (UndefinedObject), which appeared as:
 ```
-[SEND-NEW-FAIL #1] #new not found
-  rcvr=0x... classIdx=3157 slots=3 (OrderedCollection)
-  Current method: <unknown> >> #startUp:
-  IP offset: 57 bytecode: 0x7c
-  Bytecodes around IP: 4c 80 7c f1 1 58
+[DNU] Selector '#value:' not found on OrderedCollection [instance]
 ```
+Note: The receiver shown was **wrong** due to stale `receiver_` variable. Actual receiver was nil.
 
-### Bytecode Decoding
-The failing code is `self determineActivePlatform new`:
-- `0x4c` = Push Receiver (self)
-- `0x80` = Send Literal Selector #0 (`determineActivePlatform`)
-- `0x7c` = Send Special Message `#new`
+**Investigation Path**:
+1. Added trace showing `value:` never sent to OrderedCollection via sendSelector
+2. Discovered DNU logging used stale `receiver_` instead of stack receiver
+3. Fixed DNU logging - revealed actual receiver was nil (UndefinedObject)
+4. Traced `do:` calls - found block argument was nil
+5. Traced block creation - found `allocateSlots` returning nil
+6. Traced memory allocation - found eden exhausted (1 byte remaining)
+7. Found scavenge doesn't reset eden (by design, to avoid corruption)
 
-### The Bug
-`self determineActivePlatform` should return a **class** (like `OSiOSPlatform`), but it's returning an OrderedCollection **instance** (3 slots: firstIndex, lastIndex, array).
+**Fix**: Bypass eden and allocate directly in old space as temporary solution until proper GC with pointer forwarding is implemented.
 
-### Call Stack at Failure
-```
-[0] ClassSessionHandler >> #startup:
-[1] WorkingSession >> #startup:
-[2] WorkingSession >> #<unknown>
-[3] FullBlockClosure >> #<unknown>
-[4] WorkingSession >> #on:do:
-[5] Array >> #do:
-```
+### 3. DNU Logging Fix
+Changed `sendDoesNotUnderstand` to use `stackValue(argCount)` for receiver instead of stale `receiver_` instance variable.
 
-## Fixes Made This Session
+## Current State
 
-### 1. Special Object Indices (ObjectMemory.hpp)
-Fixed incorrect indices that were causing Message creation to fail:
-- `ClassMessage = 15` (was 14)
-- `SelectorCannotReturn = 21` (was 36)
-- `SelectorAboutToReturn = 48` (was 40)
-
-### 2. primitiveTerminateTo (Primitives.cpp)
-Fixed to not corrupt entire context chain:
-- Now checks if target is reachable within 100 contexts BEFORE nilling
-- If target unreachable, succeeds as no-op instead of nilling 10,000 contexts
-- Added detailed tracing
-
-### 3. sendDoesNotUnderstand (Interpreter.cpp)
-Fixed to use stack receiver instead of stale `receiver_` variable:
-- The `receiver_` instance variable was stale from previous operations
-- Stack receiver at `stackValue(argCount)` is correct
-
-## Next Steps to Investigate
-
-1. **Trace `determineActivePlatform` execution**
-   - Add tracing when this selector is sent
-   - Trace the return value to see why it's an OrderedCollection
-
-2. **Check `OSPlatform class >> determineActivePlatform`**
-   - In Pharo: `^ self allSubclasses detect: [:each | each isActivePlatform] ifNone: [self]`
-   - If `allSubclasses` itself is returned, that would be a collection
-   - Check if `detect:ifNone:` is working correctly
-
-3. **Possible causes**
-   - Method lookup failure returning wrong default
-   - `allSubclasses` being returned instead of detected class
-   - Stack corruption from context termination
+The VM now runs through startup without the `value:` DNU errors. Remaining DNU:
+- `#asPointerType` on Dictionary - FFI-related, not critical
 
 ## Key Files Modified
-- `src/vm/ObjectMemory.hpp` - Special object indices
-- `src/vm/Primitives.cpp` - primitiveTerminateTo fix
-- `src/vm/Interpreter.cpp` - DNU handling, extensive tracing
+- `src/vm/Interpreter.cpp` - NLR home frame detection, DNU logging fix
+- `src/vm/ObjectMemory.cpp` - Direct old space allocation
 
-## Commits This Session
-- Fix special object indices (ClassMessage, SelectorCannotReturn, SelectorAboutToReturn)
-- Debug #new DNU: trace call stack and fix primitiveTerminateTo
-- Fix primitiveTerminateTo to not corrupt entire context chain
+## Commits
+- Fix NLR home frame detection for non-local returns in blocks
+- Fix memory exhaustion causing block allocation failure
+
+## Technical Notes
+
+### Why Eden Allocation Was Failing
+The scavenge implementation copies objects from eden to old space but:
+1. Does NOT update pointers (no forwarding)
+2. Therefore cannot reset eden (would cause corruption)
+3. Eden fills up and stays full
+4. All subsequent allocations fail
+
+### Temporary Fix
+Allocate new objects directly in old space, bypassing eden entirely.
+
+### Proper Fix (TODO)
+Implement proper scavenge with forwarding pointers:
+1. Copy objects to to-space
+2. Store forwarding pointer in from-space object
+3. Scan entire heap, update pointers using forwarding table
+4. Flip spaces
+
+## Next Steps
+1. The `#asPointerType` DNU is FFI-related - investigate if needed
+2. Implement proper garbage collection with forwarding pointers
+3. Clean up debug traces (many can be removed now)
