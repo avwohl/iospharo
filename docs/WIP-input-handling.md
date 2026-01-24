@@ -1,8 +1,30 @@
 # WIP: Input Handling - InputEventSensor Not Starting
 
-## Status: In Progress (2026-01-21)
+## Status: In Progress (2026-01-24)
 
-**Current Problem:** InputEventSensor's process isn't starting during image startup.
+**Current Problem:** VM slows dramatically after ~24k bytecode steps during startup.
+
+## Latest Debug Session (2026-01-24)
+
+### Performance Issue
+- Steps 0-20000: Fast (~17ms total, ~1M steps/sec)
+- Steps 20000-24000: Slow (~30 seconds for 4k steps)
+- Caused by extensive debug logging in hot paths
+
+### Fixed
+- Removed 200+ lines of debug logging from hot paths
+- Disabled renderWorldMorphs() call in heartbeat (expensive morph tree walk)
+- Removed event queue push/pop logging
+- Still 92 fopen calls remaining in Interpreter.cpp
+
+### Remaining Issue
+VM still slows after ~24k steps. May need:
+1. Bulk disable remaining 92 log file opens
+2. Or investigate actual performance bug (not just logging)
+
+## Original Problem
+
+InputEventSensor's process isn't starting during image startup.
 
 ## Evidence
 
