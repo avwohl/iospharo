@@ -4149,22 +4149,6 @@ void Interpreter::shortJumpIfTrue(int offset) {
 
 void Interpreter::shortJumpIfFalse(int offset) {
     Oop value = pop();
-
-    // TRACE: Log conditional jumps for nil filtering debugging
-    static FILE* jumpLog = nullptr;
-    static int jumpCount = 0;
-    if (!jumpLog) jumpLog = fopen("/tmp/jump_trace.log", "w");
-    if (jumpLog && jumpCount < 200) {
-        jumpCount++;
-        bool isTrueVal = isTrue(value);
-        bool isFalseVal = isFalse(value);
-        bool willJump = !isTrueVal;
-        fprintf(jumpLog, "[JUMP-IF-FALSE #%d] value=0x%llx isTrue=%d isFalse=%d willJump=%d\n",
-                jumpCount, (unsigned long long)value.rawBits(),
-                isTrueVal ? 1 : 0, isFalseVal ? 1 : 0, willJump ? 1 : 0);
-        fflush(jumpLog);
-    }
-
     if (!isTrue(value)) {
         // Jump if false OR if non-boolean (treat non-booleans as false)
         instructionPointer_ += offset;
@@ -4760,24 +4744,6 @@ void Interpreter::sendSpecial(int which) {
                 }
             }
             fflush(doSendLog);
-        }
-    }
-    // Trace #== (which=6) sends to understand ifNotNil: behavior
-    if (which == 6) {  // #==
-        Oop arg = stackValue(0);
-        Oop rcvr = stackValue(1);
-        Oop nilObj = memory_.nil();
-        static FILE* eqSendLog = nullptr;
-        static int eqSendCount = 0;
-        if (!eqSendLog) eqSendLog = fopen("/tmp/eq_send_trace.log", "w");
-        // Log all sends where nil is involved (for ifNotNil: pattern)
-        if (eqSendLog && eqSendCount < 500 && (rcvr.rawBits() == nilObj.rawBits() || arg.rawBits() == nilObj.rawBits())) {
-            eqSendCount++;
-            fprintf(eqSendLog, "[== SEND #%d] rcvr=0x%llx arg=0x%llx rcvrIsNil=%d argIsNil=%d\n",
-                    eqSendCount, (unsigned long long)rcvr.rawBits(), (unsigned long long)arg.rawBits(),
-                    rcvr.rawBits() == nilObj.rawBits() ? 1 : 0,
-                    arg.rawBits() == nilObj.rawBits() ? 1 : 0);
-            fflush(eqSendLog);
         }
     }
     // Delegates to existing commonSend implementation which handles selectors 16-31
@@ -9421,35 +9387,6 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     } else {
         primitiveFail();
         return;
-    }
-
-    // DEBUG: Log stack state BEFORE pushFrame to diagnose nil arg issue
-    static FILE* blockStackLog = nullptr;
-    static int blockStackCount = 0;
-    if (!blockStackLog) blockStackLog = fopen("/tmp/block_stack_before_push.log", "w");
-    if (blockStackLog && blockStackCount < 100) {
-        blockStackCount++;
-        Oop nilObj = memory_.nil();
-        // Show what would become the args after pushFrame
-        fprintf(blockStackLog, "[BLOCK-STACK #%d] activateBlock argCount=%d SP depth=%ld\n",
-                blockStackCount, argCount, (long)(stackPointer_ - stackBase_));
-        fprintf(blockStackLog, "  Stack values that will become frame:\n");
-        for (int i = argCount; i >= 0; i--) {
-            Oop val = *(stackPointer_ - 1 - i);
-            bool isNil = (val.rawBits() == nilObj.rawBits());
-            fprintf(blockStackLog, "    [SP-%d] = 0x%llx%s <- ", i, (unsigned long long)val.rawBits(),
-                    isNil ? " [NIL]" : "");
-            if (i == argCount) fprintf(blockStackLog, "block/receiver");
-            else fprintf(blockStackLog, "arg%d", argCount - 1 - i);
-            fprintf(blockStackLog, "\n");
-        }
-        // After pushFrame: FP = SP - argCount - 1
-        // FP[0] = block, FP[1] = arg0, etc.
-        // temp(0) = FP[1] = arg0
-        fprintf(blockStackLog, "  After pushFrame, temp0 will be: 0x%llx%s\n",
-                (unsigned long long)(*(stackPointer_ - argCount)).rawBits(),
-                (*(stackPointer_ - argCount)).rawBits() == nilObj.rawBits() ? " [NIL!]" : "");
-        fflush(blockStackLog);
     }
 
     if (!pushFrame(methodToExecute, argCount)) {
@@ -14678,33 +14615,6 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
     // 256-519 range without being hijacked by quick primitive handling.
     PrimitiveFunc prim = primitiveTable_[primitiveIndex];
 
-    // Debug: Log all primitive calls to see the pattern
-    static FILE* primExecLog = nullptr;
-    static int primExecCount = 0;
-    if (!primExecLog) {
-        primExecLog = fopen("/tmp/prim_exec.log", "w");
-    }
-    primExecCount++;
-    // Always log event-related primitives (230, 264-269) and first 500 others
-    bool isEventPrim = (primitiveIndex == 230 || (primitiveIndex >= 264 && primitiveIndex <= 269));
-    if (primExecLog && (primExecCount <= 500 || isEventPrim)) {
-        fprintf(primExecLog, "[PRIM-EXEC] #%d prim=%d func=%s%s\n",
-                primExecCount, primitiveIndex, prim ? "YES" : "NULL",
-                isEventPrim ? " <<EVENT>>" : "");
-        fflush(primExecLog);
-    }
-
-    // Debug: Log calls to FFI and event primitives
-    if (primitiveIndex == 117 || primitiveIndex == 120 || primitiveIndex == 147) {
-        fprintf(stderr, "[EXECPRIM] FFI prim %d called (func=%s)\n",
-                primitiveIndex, prim ? "REGISTERED" : "NULL");
-    }
-    if (primitiveIndex >= 264 && primitiveIndex <= 269) {
-        fprintf(stderr, "[EXECPRIM] prim %d, func=%s\n",
-                primitiveIndex, prim ? "REGISTERED" : "NULL");
-    }
-
-
     if (prim) {
         // Real primitive function exists - call it
         if (primitiveIndex == 264) {
@@ -14735,20 +14645,6 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
                 return PrimitiveResult::Failure;
             }
             Oop value = memory_.fetchPointer(instVarIndex, receiver);
-
-            // Debug: log quick primitive 264 (superclass accessor) calls
-            static FILE* quickLog = nullptr;
-            static int quickCount = 0;
-            if (!quickLog) quickLog = fopen("/tmp/quick_prim264.log", "w");
-            if (quickLog && instVarIndex == 0 && quickCount < 100) {
-                quickCount++;
-                fprintf(quickLog, "[QUICK #%d] prim=%d slot=%zu rcvr=0x%llx value=0x%llx slotCount=%zu\n",
-                        quickCount, primitiveIndex, instVarIndex,
-                        (unsigned long long)receiver.rawBits(),
-                        (unsigned long long)value.rawBits(), slotCount);
-                fflush(quickLog);
-            }
-
             *(stackPointer_ - 1) = value;  // Replace stack top
             return PrimitiveResult::Success;
         }
