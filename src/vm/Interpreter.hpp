@@ -66,7 +66,7 @@
 namespace pharo {
 
 /// Maximum stack depth
-constexpr size_t MaxStackDepth = 4096;
+constexpr size_t MaxStackDepth = 8192;  // Increased from 4096 for deep context chains
 
 /// Method cache size (must be power of 2)
 constexpr size_t MethodCacheSize = 2048;
