@@ -7317,7 +7317,10 @@ PrimitiveResult Interpreter::primitiveTerminateTo(int argCount) {
     const size_t SenderIndex = 0;
 
     Oop current = rcvr;
-    while (!current.isNil() && current.isObject()) {
+    int iterations = 0;
+    const int maxIterations = 10000;  // Safety limit to prevent infinite loops
+    while (!current.isNil() && current.isObject() && iterations < maxIterations) {
+        iterations++;
         Oop sender = memory_.fetchPointer(SenderIndex, current);
 
         // Nil out this context's sender (use real nil object, not raw 0)
@@ -7329,6 +7332,14 @@ PrimitiveResult Interpreter::primitiveTerminateTo(int argCount) {
         }
 
         current = sender;
+    }
+
+    if (iterations >= maxIterations) {
+        // Safety limit reached - likely a cycle or very deep chain
+        static int warnCount = 0;
+        if (warnCount++ < 5) {
+            fprintf(stderr, "[WARN] primitiveTerminateTo hit iteration limit (%d)\n", maxIterations);
+        }
     }
 
     popN(2);

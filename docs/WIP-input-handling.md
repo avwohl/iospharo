@@ -2,25 +2,28 @@
 
 ## Status: In Progress (2026-01-24)
 
-**Current Problem:** VM slows dramatically after ~24k bytecode steps during startup.
+**Current Problem:** InputEventSensor process not starting during image startup.
 
 ## Latest Debug Session (2026-01-24)
 
-### Performance Issue
-- Steps 0-20000: Fast (~17ms total, ~1M steps/sec)
-- Steps 20000-24000: Slow (~30 seconds for 4k steps)
-- Caused by extensive debug logging in hot paths
+### Fixed: VM Hang at Step 260
+The VM was hanging during startup at step 260-261. Root causes:
+1. **Null file pointer crash**: `fprintf(allPrimLog, ...)` called when allPrimLog was null
+   - Fixed by adding null checks before all allPrimLog fprintf calls
+2. **Wrapped 98 debug fopen calls**: All debug logging now uses `if constexpr (ENABLE_DEBUG_LOGGING)`
 
-### Fixed
-- Removed 200+ lines of debug logging from hot paths
-- Disabled renderWorldMorphs() call in heartbeat (expensive morph tree walk)
-- Removed event queue push/pop logging
-- Still 92 fopen calls remaining in Interpreter.cpp
+### Also Fixed
+- OS name detection now returns "iOS" on iOS devices (TARGET_OS_IOS)
+- Cleaned up temporary debug output from step(), sendSelector(), primitiveWait()
+- Removed ~70 lines of temporary debugging code
 
-### Remaining Issue
-VM still slows after ~24k steps. May need:
-1. Bulk disable remaining 92 log file opens
-2. Or investigate actual performance bug (not just logging)
+### Remaining Logging Issues
+Some unconditional fopen calls still exist:
+- /tmp/at_nil_trace.log (Primitives.cpp:1316)
+- /tmp/atput_nil.log (Primitives.cpp:1386)
+- /tmp/block_args.log (Primitives.cpp:2654)
+- /tmp/external_prim.log (Primitives.cpp:10884)
+- /tmp/ensure_lookup.log (Interpreter.cpp)
 
 ## Original Problem
 

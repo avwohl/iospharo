@@ -544,8 +544,8 @@ int main(int argc, char* argv[]) {
                           << " idle=" << idleSteps << " result=" << result << std::endl;
             }
 
-            // Report every 10000 steps (reduced from 1000 to reduce noise)
-            if (i > 0 && i % 10000 == 0) {
+            // Report every 10000 steps (or 1000 after step 10000 for debugging)
+            if (i > 0 && (i % 10000 == 0 || (i > 10000 && i % 1000 == 0))) {
                 static auto start = std::chrono::steady_clock::now();
                 auto now = std::chrono::steady_clock::now();
                 auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();

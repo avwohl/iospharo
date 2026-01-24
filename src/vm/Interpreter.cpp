@@ -42,6 +42,7 @@ static FILE* g_fcBytecodeLog = nullptr;
 static bool g_bytecodeTraceEnabled = false;
 static int g_bytecodeTraceCount = 0;
 static FILE* g_bytecodeTraceLog = nullptr;
+static uint64_t g_stepNum = 0;  // Global step counter for hang debugging
 
 // ===== CONSTRUCTION =====
 
@@ -2411,6 +2412,9 @@ bool Interpreter::step() {
     // In Sista V1, extension bytecodes (0xE0/0xE1) set these values, then the
     // NEXT bytecode uses them. The consuming bytecodes reset them after use.
     // Resetting here would break extension byte chains.
+
+    // Track step count (for debugging if needed)
+    g_stepNum++;
 
     uint8_t bytecode = fetchByte();
     dispatchBytecode(bytecode);
@@ -6676,9 +6680,11 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                         }
                     }
                 }
-                fprintf(defaultSendLog, "[DEFAULT-SEND #%d] #default sent to %s (0x%llx) argCount=%d\n",
-                        defaultSendCount, rcvrName.c_str(), (unsigned long long)rcvr.rawBits(), argCount);
-                fflush(defaultSendLog);
+                if (defaultSendLog) {
+                    fprintf(defaultSendLog, "[DEFAULT-SEND #%d] #default sent to %s (0x%llx) argCount=%d\n",
+                            defaultSendCount, rcvrName.c_str(), (unsigned long long)rcvr.rawBits(), argCount);
+                    fflush(defaultSendLog);
+                }
             }
         }
     }
@@ -7900,7 +7906,6 @@ extern int g_traceSendsAfterPrim264;
             }
         }
     }
-
 
     // Determine receiver's class
     Oop rcvrClass = memory_.classOf(rcvr);
