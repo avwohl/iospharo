@@ -137,16 +137,40 @@ Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
     }
 
     if (!obj) {
-        // Old space is full - log the failure
+        // Old space is full - try a full GC and retry once
         static int allocFailCount = 0;
+        static int gcRetryCount = 0;
         allocFailCount++;
-        if (allocFailCount <= 10) {
-            std::cerr << "[ALLOC-FAIL #" << allocFailCount << "] allocateSlots failed in old space! classIdx="
-                      << classIndex << " slots=" << slotCount << " totalSize=" << totalSize << "\n";
-            std::cerr << "  oldSpaceFree_=" << std::hex << (uintptr_t)oldSpaceFree_
-                      << " oldSpaceEnd_=" << (uintptr_t)oldSpaceEnd_ << std::dec << "\n";
+
+        if (gcRetryCount < 10) {
+            gcRetryCount++;
+            if (gcRetryCount <= 3) {
+                std::cerr << "[ALLOC-GC #" << gcRetryCount << "] Old space full, triggering GC and retry...\n";
+            }
+            fullGC();
+            obj = allocateRaw(totalSize, Space::Old);
+            if (obj) {
+                if (gcRetryCount <= 3) {
+                    std::cerr << "[ALLOC-GC #" << gcRetryCount << "] GC freed space, allocation succeeded\n";
+                }
+                // Fall through to continue with allocation
+            } else {
+                // GC didn't help
+                if (gcRetryCount <= 3) {
+                    std::cerr << "[ALLOC-GC #" << gcRetryCount << "] GC didn't free enough space\n";
+                }
+            }
         }
-        return nilObject_;
+
+        if (!obj) {
+            if (allocFailCount <= 10) {
+                std::cerr << "[ALLOC-FAIL #" << allocFailCount << "] allocateSlots failed in old space! classIdx="
+                          << classIndex << " slots=" << slotCount << " totalSize=" << totalSize << "\n";
+                std::cerr << "  oldSpaceFree_=" << std::hex << (uintptr_t)oldSpaceFree_
+                          << " oldSpaceEnd_=" << (uintptr_t)oldSpaceEnd_ << std::dec << "\n";
+            }
+            return nilObject_;
+        }
     }
 
     // Set up overflow word if needed

@@ -12330,6 +12330,20 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         return;
     }
 
+    // Fallback for #newReferentClass: on ByteSymbol - reflection/class loading code
+    // This DNU happens many times during startup and is expensive to handle each time
+    if (origStr == "newReferentClass:" && rcvrClassName == "ByteSymbol" && argCount == 1) {
+        static int newRefCount = 0;
+        newRefCount++;
+        if (newRefCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] newReferentClass: on ByteSymbol #" << newRefCount << " - returning nil\n";
+        }
+        popN(argCount + 1);  // Pop receiver and argument
+        push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+
     // Fallback for #readStream on non-collection objects
     // MorphicRenderLoop incorrectly receives this during menu action execution
     if (origStr == "readStream" && argCount == 0) {

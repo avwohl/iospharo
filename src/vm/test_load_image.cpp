@@ -413,7 +413,7 @@ int main(int argc, char* argv[]) {
     // Initialize memory (256 MB should be enough for most images)
     ObjectMemory memory;
     MemoryConfig config;
-    config.oldSpaceSize = 256 * 1024 * 1024;  // 256 MB
+    config.oldSpaceSize = 512 * 1024 * 1024;  // 512 MB (increased from 256 to handle startup allocation)
     config.newSpaceSize = 32 * 1024 * 1024;   // 32 MB
     config.permSpaceSize = 8 * 1024 * 1024;   // 8 MB
 
