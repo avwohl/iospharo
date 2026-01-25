@@ -122,3 +122,51 @@ To avoid context pollution from large files (Interpreter.cpp: 8K lines, Primitiv
 
 ### Why This Matters
 With 577 manual primitive table entries, even 1% error rate = 5-6 wrong primitives. The repeated "fix 40+ incorrect mappings" commits show this is a real problem. Agents can do systematic verification without context limits causing drift.
+
+---
+## Investigation Log
+
+### Verified Working (2025-01-25)
+1. **SDL2 symbols are exported and findable via dlsym**
+   - Added `__attribute__((used, visibility("default")))` to FFI.cpp
+   - Verified in osdriver_install.log: `SDL_Init=0x1026bcd2c SDL_PollEvent=0x1026bd164`
+   - The symbols ARE available at runtime
+
+2. **primitiveLoadSymbolFromModule is registered**
+   - Registered in namedPrimitives_ under both "" and "SqueakFFIPrims" modules
+   - Would work IF it were ever called
+
+3. **Event injection to HandMorph works** (but is a WORKAROUND)
+   - Events appear in /tmp/iospharo-events.log
+   - Input semaphore is signaled
+   - HandMorph's lastMouseEvent is updated
+
+### Known Problems (need root cause fix)
+1. **OrderedCollection >> #new causes DNU** (~99 times at startup)
+   - This is FIRST thing that fails
+   - If basic class instantiation doesn't work, nothing will work
+   - TODO: Check metaclass lookup, check if Behavior>>new is found
+
+2. **UndefinedObject >> #platformName** (~194 times)
+   - Something returns nil when it should return a platform object
+   - primitiveGetAttribute(1001) returns "iOS" or "Mac OS" - so that's working
+   - TODO: Find what code calls platformName and why receiver is nil
+
+3. **UndefinedObject >> #privSender:** (hundreds)
+   - Context chains are broken - contexts have nil senders
+   - This breaks process scheduling
+
+4. **Cascade of exception handling failures**
+   - #signal, #message:, #receiver:, #reachedDefaultHandler all on nil
+   - Exception objects are nil because earlier failures corrupted state
+
+### Workarounds We've Added (need to be removed)
+1. `installOSiOSDriver()` - creates raw driver instance, bypasses normal initialization
+2. `updateMouseEvent()` / `processInputEvents()` - direct HandMorph manipulation
+3. Direct semaphore signaling - bypasses normal event flow
+4. DNU handlers for privSender:, copyTo:, resume:through: on nil - hide root cause
+
+### NOT the problem
+- SDL2 availability (verified working)
+- primitiveGetAttribute (returns correct values)
+- Class table (classOf returns valid classes)

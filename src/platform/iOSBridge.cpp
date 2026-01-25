@@ -72,7 +72,7 @@ int vm_init(VMParameters* parameters) {
     // Initialize VM memory
     size_t heapSize = parameters->maxOldSpaceSize > 0
                       ? (size_t)parameters->maxOldSpaceSize
-                      : 256 * 1024 * 1024;
+                      : 2ULL * 1024 * 1024 * 1024;  // 2 GB default until scavenge/GC is fixed
 
     if (!vm_initialize(heapSize)) {
         return 0;

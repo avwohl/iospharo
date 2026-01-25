@@ -373,6 +373,22 @@ Oop ObjectMemory::classOf(Oop obj) const {
     uint32_t classIdx = header->classIndex();
     Oop cls = classAtIndex(classIdx);
 
+    // Debug: trace classOf for classIndex 3156 (OrderedCollection's metaclass)
+    static int oc3156Count = 0;
+    if (classIdx == 3156 && oc3156Count++ < 10) {
+        static FILE* ocLog = fopen("/tmp/classof_3156.log", "w");
+        if (ocLog) {
+            fprintf(ocLog, "[CLASSOF-3156 #%d] obj=0x%llx classIdx=%u -> cls=0x%llx\n",
+                    oc3156Count, (unsigned long long)obj.rawBits(), classIdx,
+                    (unsigned long long)cls.rawBits());
+            // Check if obj and cls are the same
+            if (obj.rawBits() == cls.rawBits()) {
+                fprintf(ocLog, "  WARNING: obj == cls! This is wrong for class objects.\n");
+            }
+            fflush(ocLog);
+        }
+    }
+
     // Debug: trace classOf for nil object (classIdx 3075)
     static int nilClassOfCount = 0;
     if (classIdx == 3075 && nilClassOfCount++ < 5) {

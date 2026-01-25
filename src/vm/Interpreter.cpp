@@ -9667,6 +9667,27 @@ tryRegularPrimitive:
     // Cache miss - look up method
     cacheMisses++;
 
+    // Debug: trace rcvrClass for #new lookups
+    if (selLen == 3 && selBytes && memcmp(selBytes, "new", 3) == 0) {
+        static int newSendTraceCount = 0;
+        if (newSendTraceCount++ < 10) {
+            static FILE* newSendLog = fopen("/tmp/new_send_trace.log", "w");
+            if (newSendLog) {
+                fprintf(newSendLog, "[#new SEND #%d] rcvr=0x%llx rcvrClass=0x%llx\n",
+                        newSendTraceCount, (unsigned long long)rcvr.rawBits(),
+                        (unsigned long long)rcvrClass.rawBits());
+                // Verify classOf again
+                Oop verifyClass = memory_.classOf(rcvr);
+                fprintf(newSendLog, "  classOf(rcvr) = 0x%llx (should == rcvrClass)\n",
+                        (unsigned long long)verifyClass.rawBits());
+                if (verifyClass.rawBits() != rcvrClass.rawBits()) {
+                    fprintf(newSendLog, "  MISMATCH! rcvrClass differs from classOf(rcvr)\n");
+                }
+                fflush(newSendLog);
+            }
+        }
+    }
+
     Oop method = lookupMethod(selector, rcvrClass);
     if (method.isNil()) {
         // Debug: trace when #new lookup fails
@@ -9981,6 +10002,71 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
     }
     if (traceDNU && dnuLookupCount <= 5) {
         std::cerr << "  NOT FOUND after " << depth << " levels\n";
+    }
+    // Always trace #new failures (first 20)
+    if (traceNew) {
+        static int newFailCount = 0;
+        if (newFailCount++ < 20) {
+            static FILE* newLog = fopen("/tmp/new_lookup_fail.log", "w");
+            if (newLog) {
+                fprintf(newLog, "[#new FAIL #%d] NOT FOUND after %d levels (started from %s)\n",
+                        newFailCount, depth, startClassName.c_str());
+
+                // Trace classOop details
+                if (classOop.isObject() && classOop.rawBits() > 0x10000) {
+                    ObjectHeader* clsHdr = classOop.asObjectPtr();
+                    fprintf(newLog, "  classOop=0x%llx classIndex=%u format=%d slots=%zu\n",
+                            (unsigned long long)classOop.rawBits(),
+                            clsHdr->classIndex(), (int)clsHdr->format(), clsHdr->slotCount());
+
+                    // Check if classOop is itself a class (has name in slot 6)
+                    // vs a metaclass (has thisClass in slot 6)
+                    Oop slot6 = memory_.fetchPointer(6, classOop);
+                    if (slot6.isObject() && slot6.rawBits() > 0x10000) {
+                        ObjectHeader* s6Hdr = slot6.asObjectPtr();
+                        if (s6Hdr->isBytesObject()) {
+                            std::string name((char*)s6Hdr->bytes(), s6Hdr->byteSize());
+                            fprintf(newLog, "  slot6 is STRING: '%s' (this is a regular class)\n", name.c_str());
+                        } else {
+                            // Not a bytes object - likely a metaclass where slot6 = thisClass
+                            fprintf(newLog, "  slot6 is OOP: 0x%llx format=%d (this is a METACLASS)\n",
+                                    (unsigned long long)slot6.rawBits(), (int)s6Hdr->format());
+                            // Get the name of thisClass
+                            Oop thisClassName = memory_.fetchPointer(6, slot6);
+                            if (thisClassName.isObject() && thisClassName.rawBits() > 0x10000) {
+                                ObjectHeader* tcnHdr = thisClassName.asObjectPtr();
+                                if (tcnHdr->isBytesObject() && tcnHdr->byteSize() < 50) {
+                                    std::string tcn((char*)tcnHdr->bytes(), tcnHdr->byteSize());
+                                    fprintf(newLog, "    thisClass name: '%s' (so this is '%s class')\n",
+                                            tcn.c_str(), tcn.c_str());
+                                }
+                            }
+                        }
+                    }
+
+                    // What class is this classOop?
+                    Oop metaCls = memory_.classOf(classOop);
+                    std::string metaName = getClassName(metaCls);
+                    fprintf(newLog, "  classOf(classOop) = %s (0x%llx)\n",
+                            metaName.c_str(), (unsigned long long)metaCls.rawBits());
+                }
+
+                // Show the actual superclass chain that was walked
+                fprintf(newLog, "  Superclass chain: ");
+                Oop c = classOop;
+                Oop nilObj2 = memory_.specialObject(SpecialObjectIndex::NilObject);
+                for (int i = 0; i < 10 && c.isObject() && c.rawBits() > 0x10000; i++) {
+                    fprintf(newLog, "%s -> ", getClassName(c).c_str());
+                    Oop next = superclassOf(c);
+                    if (next.isNil() || next.rawBits() == nilObj2.rawBits() || next.rawBits() < 0x10000) {
+                        fprintf(newLog, "(nil/end)\n");
+                        break;
+                    }
+                    c = next;
+                }
+                fflush(newLog);
+            }
+        }
     }
     if (shouldTraceNew) {
         std::cerr << "  #new NOT FOUND after " << depth << " levels (started from " << startClassName << ")\n";

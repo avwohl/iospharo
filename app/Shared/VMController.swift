@@ -17,7 +17,7 @@ class VMController: ObservableObject {
         statusMessage = "Initializing VM..."
         logger.info("[VMController] initialize() called")
 
-        let heapSize = 256 * 1024 * 1024  // 256 MB
+        let heapSize = 2 * 1024 * 1024 * 1024  // 2 GB - needed until scavenge/GC is fixed
         logger.info("[VMController] Calling vm_initialize with heapSize=\(heapSize)")
         guard vm_initialize(heapSize) else {
             statusMessage = "Failed to initialize VM"

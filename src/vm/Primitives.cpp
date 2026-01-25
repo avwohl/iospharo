@@ -7017,6 +7017,12 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
 
     int64_t index = indexOop.asSmallInteger();
 
+    // Trace what attribute indices are being requested
+    static int attrTraceCount = 0;
+    if (attrTraceCount++ < 20) {
+        std::cerr << "[ATTR-149 #" << attrTraceCount << "] primitiveGetAttribute(" << index << ")\n";
+    }
+
     // VM attributes (simplified set)
     // Indices 0-2 are VM/image paths
     // Index 3+ are command line arguments (Smalltalk argumentAt: i uses index 2+i)
