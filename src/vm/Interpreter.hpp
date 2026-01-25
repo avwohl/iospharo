@@ -1588,6 +1588,9 @@ private:
     /// Find and return highest priority runnable process
     Oop wakeHighestPriority();
 
+    /// Find a runnable process at lower priority than the given priority
+    Oop wakeLowerPriorityProcess(int currentPriority);
+
     /// Add process to its priority queue
     void putToSleep(Oop process);
 

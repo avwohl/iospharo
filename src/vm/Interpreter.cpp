@@ -2276,9 +2276,10 @@ void Interpreter::startHeartbeat() {
                 }
             }
 
-            // Every ~100ms, set force yield flag to allow lower priority processes to run
+            // Every ~1000ms, set force yield flag to allow lower priority processes to run
             // This simulates the preemption that would happen from primitive 230 (relinquishProcessor)
-            if (tickCount % 100 == 0) {
+            // Using a longer interval (1 second) to allow more startup work to complete
+            if (tickCount % 1000 == 0) {
                 forceYield_.store(true, std::memory_order_release);
             }
         }
@@ -2601,15 +2602,29 @@ bool Interpreter::step() {
     if (forceYield_.load(std::memory_order_acquire)) {
         forceYield_.store(false, std::memory_order_release);
         static int forceYieldCount = 0;
+        static int yieldPriorityOffset = 0;  // Rotate through priorities to give everyone a chance
         forceYieldCount++;
+
+        // Get current process's priority
+        Oop activeProcess = getActiveProcess();
+        Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
+        int activePriority = activePriorityOop.isSmallInteger() ?
+                            static_cast<int>(activePriorityOop.asSmallInteger()) : 0;
+
+        // Try to find a process at a LOWER priority to give it a chance
+        // This implements cooperative time-slicing
+        Oop nextProcess = wakeLowerPriorityProcess(activePriority);
+        Oop nilObj = memory_.nil();
+        bool foundProcess = nextProcess.isObject() &&
+                           nextProcess.rawBits() != nilObj.rawBits() &&
+                           nextProcess.rawBits() != activeProcess.rawBits();
+
         if (forceYieldCount <= 10 || forceYieldCount % 100 == 0) {
-            std::cerr << "[FORCE-YIELD #" << forceYieldCount << "] Yielding to allow lower-priority processes to run\n";
+            std::cerr << "[FORCE-YIELD #" << forceYieldCount << "] Current priority " << activePriority
+                      << " yielding to lower priority process: " << (foundProcess ? "found" : "none") << "\n";
         }
-        // Try to switch to a ready process at any priority
-        // This is equivalent to what relinquishProcessor would do
-        Oop nextProcess = wakeHighestPriority();
-        if (nextProcess.isObject() && nextProcess.rawBits() != getActiveProcess().rawBits()) {
-            Oop activeProcess = getActiveProcess();
+
+        if (foundProcess) {
             putToSleep(activeProcess);
             transferTo(nextProcess);
         }
@@ -14869,23 +14884,47 @@ void Interpreter::terminateCurrentProcess() {
         return;
     }
 
+    // Check if already terminated (suspendedContext is nil) - prevent duplicate termination
+    Oop suspendedCtx = memory_.fetchPointer(ProcessSuspendedContextIndex, activeProcess);
+    if (suspendedCtx.rawBits() == nilObj.rawBits()) {
+        if (termLog && termCount <= 50) {
+            Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
+            int prio = prioOop.isSmallInteger() ? static_cast<int>(prioOop.asSmallInteger()) : -1;
+            fprintf(termLog, "[TERMINATE #%d] process=0x%llx priority=%d ALREADY TERMINATED - skipping\n",
+                    termCount, (unsigned long long)activeProcess.rawBits(), prio);
+            fflush(termLog);
+        }
+        return;  // Already terminated
+    }
+
     if (termLog && termCount <= 50) {
-        // Get current suspendedContext before clearing
-        Oop oldCtx = memory_.fetchPointer(1, activeProcess);
         // Get priority
-        Oop prioOop = memory_.fetchPointer(2, activeProcess);  // ProcessPriorityIndex = 2
+        Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
         int prio = prioOop.isSmallInteger() ? static_cast<int>(prioOop.asSmallInteger()) : -1;
         fprintf(termLog, "[TERMINATE #%d] process=0x%llx priority=%d oldSuspendedContext=0x%llx\n",
                 termCount, (unsigned long long)activeProcess.rawBits(), prio,
-                (unsigned long long)oldCtx.rawBits());
+                (unsigned long long)suspendedCtx.rawBits());
         fflush(termLog);
     }
 
-    // Process: slot 1 = suspendedContext - set it to nil to mark as terminated
-    memory_.storePointer(1, activeProcess, nilObj);
+    // Get the list this process belongs to and remove it properly
+    Oop myList = memory_.fetchPointer(ProcessMyListIndex, activeProcess);
+    if (myList.isObject() && myList.rawBits() != nilObj.rawBits()) {
+        // Remove from its linked list properly
+        removeProcessFromList(activeProcess, myList);
+        if (termLog && termCount <= 50) {
+            fprintf(termLog, "[TERMINATE #%d] Removed from list 0x%llx\n",
+                    termCount, (unsigned long long)myList.rawBits());
+            fflush(termLog);
+        }
+    }
 
-    // Also remove from scheduler queue (slot 0 = nextLink in Process, clear it)
-    memory_.storePointer(0, activeProcess, nilObj);
+    // Process: slot 1 = suspendedContext - set it to nil to mark as terminated
+    memory_.storePointer(ProcessSuspendedContextIndex, activeProcess, nilObj);
+
+    // Clear nextLink and myList (should already be done by removeProcessFromList)
+    memory_.storePointer(ProcessNextLinkIndex, activeProcess, nilObj);
+    memory_.storePointer(ProcessMyListIndex, activeProcess, nilObj);
 }
 
 Oop Interpreter::getActiveProcess() {
@@ -15049,6 +15088,61 @@ Oop Interpreter::wakeHighestPriority() {
     if (wakeLog && wakeCallCount <= 50) {
         fprintf(wakeLog, "[WAKE #%d] -> No runnable process found!\n", wakeCallCount);
         fflush(wakeLog);
+    }
+    return nilObj;
+}
+
+Oop Interpreter::wakeLowerPriorityProcess(int currentPriority) {
+    // Similar to wakeHighestPriority but only considers processes at LOWER priorities
+    // This is used for force-yield to give lower priority processes CPU time
+    static int wakeLowerCount = 0;
+    static FILE* wakeLowerLog = nullptr;
+    wakeLowerCount++;
+
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        if (!wakeLowerLog) {
+            wakeLowerLog = fopen("/tmp/wake_lower.log", "w");
+        }
+    }
+
+    Oop nilObj = memory_.nil();
+    Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
+    Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
+    Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
+
+    ObjectHeader* listsHeader = schedLists.asObjectPtr();
+    size_t numPriorities = listsHeader->slotCount();
+
+    // Current priority is 1-based, array index is 0-based
+    int maxPriorityIndex = currentPriority - 2;  // One below current priority
+
+    if (wakeLowerLog && wakeLowerCount <= 50) {
+        fprintf(wakeLowerLog, "[WAKE-LOWER #%d] Current priority %d, scanning up to index %d\n",
+                wakeLowerCount, currentPriority, maxPriorityIndex);
+        fflush(wakeLowerLog);
+    }
+
+    // Search from highest to lowest priority, but only below current priority
+    for (int p = maxPriorityIndex; p >= 0; p--) {
+        Oop processList = memory_.fetchPointer(p, schedLists);
+        Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, processList);
+
+        if (!first.isNil() && first.rawBits() != nilObj.rawBits()) {
+            // Found a runnable process at lower priority - remove and return it
+            Oop result = removeFirstLinkOfList(processList);
+            if (wakeLowerLog && wakeLowerCount <= 50) {
+                fprintf(wakeLowerLog, "[WAKE-LOWER #%d] -> Selected process 0x%llx at priority %d\n",
+                        wakeLowerCount, (unsigned long long)result.rawBits(), p + 1);
+                fflush(wakeLowerLog);
+            }
+            return result;
+        }
+    }
+
+    // No lower priority process found
+    if (wakeLowerLog && wakeLowerCount <= 50) {
+        fprintf(wakeLowerLog, "[WAKE-LOWER #%d] -> No lower priority process found\n", wakeLowerCount);
+        fflush(wakeLowerLog);
     }
     return nilObj;
 }
