@@ -236,6 +236,11 @@ public:
     /// Returns the value (not the Association), nil if not found.
     Oop findGlobal(const std::string& name) const;
 
+    /// Look up an interned Symbol by string content.
+    /// Searches through the SymbolTable or symbol cache.
+    /// Returns the Symbol object, or nil if not found.
+    Oop lookupSymbol(const std::string& name);
+
     /// Set a global in SmalltalkDictionary.
     /// If the global exists, updates its value. Otherwise creates new binding.
     /// Returns true if successful.

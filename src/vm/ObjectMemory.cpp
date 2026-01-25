@@ -643,6 +643,123 @@ Oop ObjectMemory::findGlobal(const std::string& name) const {
     return nilObject_;
 }
 
+Oop ObjectMemory::lookupSymbol(const std::string& name) {
+    // Symbols are interned in Pharo. We need to find the Symbol instance
+    // with the given content.
+
+    static FILE* symLog = nullptr;
+    static bool logInit = false;
+    if (!logInit) {
+        logInit = true;
+        symLog = fopen("/tmp/symbol_lookup.log", "w");
+    }
+
+    // Also find ByteSymbol class - Pharo uses ByteSymbol for most symbols
+    Oop symbolClass = findGlobal("Symbol");
+    Oop byteSymbolClass = findGlobal("ByteSymbol");
+
+    // Debug logging removed for cleaner output
+
+    // Use ByteSymbol if available (more common in Pharo), otherwise Symbol
+    Oop targetClass = byteSymbolClass.isNil() ? symbolClass : byteSymbolClass;
+    if (targetClass.isNil() || !targetClass.isObject()) {
+        if (symLog) { fprintf(symLog, "[SYM] Symbol/ByteSymbol class not found for '%s'\n", name.c_str()); fflush(symLog); }
+        return nilObject_;
+    }
+
+    // The class index that Symbol INSTANCES have is the identity hash of the Symbol class
+    uint32_t symbolClassIdx = identityHashOf(targetClass);
+    if (symbolClassIdx == 0) {
+        symbolClassIdx = indexOfClass(targetClass);
+    }
+    if (symbolClassIdx == 0) {
+        if (symLog) { fprintf(symLog, "[SYM] Symbol/ByteSymbol class has no valid index for '%s'\n", name.c_str()); fflush(symLog); }
+        return nilObject_;
+    }
+    if (symLog) { fprintf(symLog, "[SYM] Looking for '%s', target classIdx=%u\n", name.c_str(), symbolClassIdx); fflush(symLog); }
+    if (symLog) { fprintf(symLog, "[SYM] permSpace=%p-%p oldSpace=%p-%p\n",
+                          (void*)permSpaceStart_, (void*)permSpaceEnd_,
+                          (void*)oldSpaceStart_, (void*)oldSpaceEnd_); fflush(symLog); }
+
+    // Helper lambda to scan a memory region for a symbol
+    auto scanRegion = [&](const uint8_t* start, const uint8_t* end, const char* regionName) -> Oop {
+        if (symLog) { fprintf(symLog, "[SYM] Scanning %s: %p-%p (%zu bytes)\n", regionName, (void*)start, (void*)end, (size_t)(end-start)); fflush(symLog); }
+        if (start == nullptr || end == nullptr || start >= end) {
+            if (symLog) { fprintf(symLog, "[SYM] %s is empty or invalid, skipping\n", regionName); fflush(symLog); }
+            return nilObject_;
+        }
+        const uint8_t* scan = start;
+        size_t objectCount = 0;
+        while (scan < end) {
+            ObjectHeader* header = reinterpret_cast<ObjectHeader*>(const_cast<uint8_t*>(scan));
+            uint64_t rawHeader = header->rawHeader();
+
+            // Debug disabled to reduce log size
+
+            // Free chunks have classIndex == 0 (Spur format)
+            uint32_t clsIdx = header->classIndex();
+            if (clsIdx == 0) {
+                // Skip this word and continue - classIndex 0 is reserved for free space
+                scan += 8;
+                continue;
+            }
+
+            // Debug bytes objects disabled
+
+            // Check if this is a Symbol (ByteSymbol)
+            if (clsIdx == symbolClassIdx) {
+                // Check if content matches
+                if (header->isBytesObject()) {
+                    size_t byteSize = header->byteSize();
+                    if (byteSize == name.size()) {
+                        const uint8_t* bytes = header->bytes();
+                        if (memcmp(bytes, name.c_str(), byteSize) == 0) {
+                            // Found the symbol!
+                            Oop result = Oop::fromObject(header);
+                            if (symLog) { fprintf(symLog, "[SYM] FOUND '%s' in %s at 0x%llx\n", name.c_str(), regionName, (unsigned long long)result.rawBits()); fflush(symLog); }
+                            return result;
+                        }
+                    }
+                }
+            }
+
+            // Move to next object
+            size_t objSize = header->totalSize();
+            if (objSize == 0 || objSize > static_cast<size_t>(end - scan)) {
+                // Invalid object size - skip 8 bytes and keep trying
+                scan += 8;
+                continue;
+            }
+            scan += objSize;
+            objectCount++;
+            if (objectCount % 200000 == 0 && symLog) {
+                fprintf(symLog, "[SYM] %s: scanned %zu objects, at %p\n", regionName, objectCount, (void*)scan); fflush(symLog);
+            }
+        }
+        if (symLog) { fprintf(symLog, "[SYM] %s: finished, scanned %zu objects\n", regionName, objectCount); fflush(symLog); }
+        return nilObject_;
+    };
+
+    // Scan permanent space first (symbols are often there)
+    if (symLog) { fprintf(symLog, "[SYM] Starting permSpace scan...\n"); fflush(symLog); }
+    Oop result = scanRegion(permSpaceStart_, permSpaceEnd_, "permSpace");
+    if (symLog) { fprintf(symLog, "[SYM] permSpace result: bits=0x%llx nilObj=0x%llx isFound=%d\n",
+                          (unsigned long long)result.rawBits(), (unsigned long long)nilObject_.rawBits(),
+                          result.rawBits() != nilObject_.rawBits()); fflush(symLog); }
+    if (result.rawBits() != nilObject_.rawBits()) return result;
+
+    // Scan old space (use oldSpaceFree_ which is the end of actual data, not oldSpaceEnd_ which is end of buffer)
+    if (symLog) { fprintf(symLog, "[SYM] Starting oldSpace scan (using oldSpaceFree_=%p)...\n", (void*)oldSpaceFree_); fflush(symLog); }
+    result = scanRegion(oldSpaceStart_, oldSpaceFree_, "oldSpace");
+    if (symLog) { fprintf(symLog, "[SYM] oldSpace result: bits=0x%llx isFound=%d\n",
+                          (unsigned long long)result.rawBits(),
+                          result.rawBits() != nilObject_.rawBits()); fflush(symLog); }
+    if (result.rawBits() != nilObject_.rawBits()) return result;
+
+    if (symLog) { fprintf(symLog, "[SYM] NOT FOUND '%s' after scanning all spaces\n", name.c_str()); fflush(symLog); }
+    return nilObject_;
+}
+
 bool ObjectMemory::setGlobal(const std::string& name, Oop value) {
     // Get SmalltalkDictionary from special objects
     Oop smalltalkDict = specialObject(SpecialObjectIndex::SmalltalkDictionary);
