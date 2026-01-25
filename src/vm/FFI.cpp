@@ -752,6 +752,16 @@ FFIResult callFunction(
     const std::vector<uint64_t>& argValues,
     FFIType returnType
 ) {
+    static FILE* ffiLog = fopen("/tmp/ffi_calls.log", "w");
+    static int ffiCallCount = 0;
+    ffiCallCount++;
+
+    if (ffiLog && ffiCallCount <= 1000) {
+        fprintf(ffiLog, "[FFI #%d] callFunction funcPtr=%p argc=%zu\n",
+                ffiCallCount, funcPtr, argTypes.size());
+        fflush(ffiLog);
+    }
+
     FFIResult result;
     result.success = false;
     result.intValue = 0;

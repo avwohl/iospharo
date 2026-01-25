@@ -10843,6 +10843,15 @@ PrimitiveResult Interpreter::primitiveFloat64ArrayAdd(int argCount) {
 // externalFunction args primitiveCalloutToFFI -> result
 // Calls a foreign function through FFI mechanism
 PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
+    static FILE* ffiCalloutLog = fopen("/tmp/ffi_callout.log", "w");
+    static int calloutCount = 0;
+    calloutCount++;
+
+    if (ffiCalloutLog && calloutCount <= 100) {
+        fprintf(ffiCalloutLog, "[FFI-CALLOUT] #%d argCount=%d\n", calloutCount, argCount);
+        fflush(ffiCalloutLog);
+    }
+
     static bool ffiInitialized = false;
 
     // Initialize FFI on first call
@@ -10974,7 +10983,17 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
     }
 
     if (funcName.empty()) {
+        if (ffiCalloutLog && calloutCount <= 100) {
+            fprintf(ffiCalloutLog, "[FFI-CALLOUT] #%d No funcName found, failing\n", calloutCount);
+            fflush(ffiCalloutLog);
+        }
         return PrimitiveResult::Failure;
+    }
+
+    if (ffiCalloutLog && calloutCount <= 100) {
+        fprintf(ffiCalloutLog, "[FFI-CALLOUT] #%d Found funcName='%s' retType='%s'\n",
+                calloutCount, funcName.c_str(), returnTypeName.c_str());
+        fflush(ffiCalloutLog);
     }
 
     // Look up the function

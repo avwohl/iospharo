@@ -1848,7 +1848,7 @@ void Interpreter::processInputEvents() {
                 if (logFile) {
                     const char* typeStr = (event.arg5 == 1) ? "DOWN" : (event.arg5 == 2) ? "UP" : "MOVE";
                     fprintf(logFile, "[DIRECT-HAND] Updated MouseEvent: pos=(%d,%d) buttons=%d type=%s\n",
-                            event.arg1, event.arg2, pharoButtons, typeStr);
+                            event.arg1, event.arg2, event.arg3, typeStr);
                     fflush(logFile);
                 }
             }
@@ -16666,33 +16666,29 @@ void Interpreter::installOSiOSDriver() {
                     }
                     fflush(driverLog);
 
-                    // Try to install OSNullWindowDriver as Current
-                    Oop nullDriverClass = memory_.findGlobal("OSNullWindowDriver");
-                    if (nullDriverClass.isObject() && nullDriverClass.rawBits() != nilObj.rawBits()) {
-                        fprintf(driverLog, "[DRIVER] Attempting to install OSNullWindowDriver as Current\n");
+                    // Try to install OSSDL2Driver as Current (we have SDL2 stubs that will handle events)
+                    // Get DriverClass which should be OSSDL2Driver
+                    Oop sdl2DriverClass = memory_.findGlobal("OSSDL2Driver");
+                    if (sdl2DriverClass.rawBits() == nilObj.rawBits()) {
+                        fprintf(driverLog, "[DRIVER] OSSDL2Driver not found, falling back to OSNullWindowDriver\n");
+                        sdl2DriverClass = memory_.findGlobal("OSNullWindowDriver");
+                    }
+
+                    if (sdl2DriverClass.isObject() && sdl2DriverClass.rawBits() != nilObj.rawBits()) {
+                        fprintf(driverLog, "[DRIVER] Attempting to install OSSDL2Driver as Current\n");
                         fflush(driverLog);
 
                         // Check the class format to see how many instance vars it has
-                        Oop formatOop = memory_.fetchPointer(2, nullDriverClass);  // format at slot 2
-                        fprintf(driverLog, "[DRIVER] OSNullWindowDriver format: 0x%llx\n",
+                        Oop formatOop = memory_.fetchPointer(2, sdl2DriverClass);  // format at slot 2
+                        fprintf(driverLog, "[DRIVER] OSSDL2Driver format: 0x%llx\n",
                                 (unsigned long long)formatOop.rawBits());
 
                         // Get instance spec to determine number of instance variables
-                        // Format is a SmallInteger containing the instance format
                         int64_t format = 0;
                         if (formatOop.isSmallInteger()) {
                             format = formatOop.asSmallInteger();
                             fprintf(driverLog, "[DRIVER] Format value: %lld\n", format);
                         }
-
-                        // Instance variables = (format >> 1) & 0xFFFF for fixed part
-                        // This is simplified - actual spec is more complex
-                        // Let's check OSNullWindowDriver's slot count by looking at its instances
-                        // For now, try creating with 0 inst vars (drivers might be stateless)
-
-                        // Actually, let's just set Current to the CLASS itself as a test
-                        // to see if having a non-nil Current unblocks the event system
-                        // This is clearly a test/debug step, not a permanent solution
 
                         // Find the Current association in OSWindowDriver's classPool
                         if (osWindowDriverClass.isObject()) {
@@ -16715,22 +16711,21 @@ void Interpreter::installOSiOSDriver() {
                                                         if (keyHdr->isBytesObject() && keyHdr->byteSize() == 7) {
                                                             std::string keyName((char*)keyHdr->bytes(), keyHdr->byteSize());
                                                             if (keyName == "Current") {
-                                                                // Create an instance of OSNullWindowDriver
+                                                                // Create an instance of OSSDL2Driver (we have SDL2 stubs that will handle events)
                                                                 // Need to find out how many inst vars it has
-                                                                // For now, try allocating with standard driver size
 
                                                                 // First, let me try creating a minimal instance
                                                                 // OSWindowDriver has inst vars, let's check format
-                                                                ObjectHeader* ndcHdr = nullDriverClass.asObjectPtr();
-                                                                fprintf(driverLog, "[DRIVER] OSNullWindowDriver class has %zu slots\n", ndcHdr->slotCount());
+                                                                ObjectHeader* ndcHdr = sdl2DriverClass.asObjectPtr();
+                                                                fprintf(driverLog, "[DRIVER] OSSDL2Driver class has %zu slots\n", ndcHdr->slotCount());
 
                                                                 // Get class index from identity hash (this is how Pharo stores class refs)
                                                                 uint32_t classIdx = ndcHdr->identityHash();
-                                                                fprintf(driverLog, "[DRIVER] OSNullWindowDriver class index: %u\n", classIdx);
+                                                                fprintf(driverLog, "[DRIVER] OSSDL2Driver class index: %u\n", classIdx);
 
                                                                 // Get instance format and size from the class
                                                                 // format is at slot 2, contains encoding of inst var count
-                                                                Oop formatOop2 = memory_.fetchPointer(2, nullDriverClass);
+                                                                Oop formatOop2 = memory_.fetchPointer(2, sdl2DriverClass);
                                                                 size_t instVarCount = 0;
                                                                 if (formatOop2.isSmallInteger()) {
                                                                     int64_t fmt = formatOop2.asSmallInteger();
@@ -16749,7 +16744,7 @@ void Interpreter::installOSiOSDriver() {
                                                                 if (driverInstance.isObject() && driverInstance.rawBits() != nilObj.rawBits()) {
                                                                     // Set the Current value
                                                                     memory_.storePointer(1, assoc, driverInstance);
-                                                                    fprintf(driverLog, "[DRIVER] Successfully set OSNullWindowDriver instance as Current: 0x%llx\n",
+                                                                    fprintf(driverLog, "[DRIVER] Successfully set OSSDL2Driver instance as Current: 0x%llx\n",
                                                                             (unsigned long long)driverInstance.rawBits());
 
                                                                     // Verify it was set
@@ -16891,7 +16886,7 @@ void Interpreter::installOSiOSDriver() {
                                                                         }
                                                                     }
                                                                 } else {
-                                                                    fprintf(driverLog, "[DRIVER] Failed to instantiate OSNullWindowDriver\n");
+                                                                    fprintf(driverLog, "[DRIVER] Failed to instantiate OSSDL2Driver\n");
                                                                 }
                                                                 break;
                                                             }
