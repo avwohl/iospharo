@@ -12429,7 +12429,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
     // Fallback for #anyMask: on nil - bitmask check on nil value
     // Code checking flags on potentially nil objects
-    if (origStr == "anyMask:" && actualReceiver.isNil() && argCount == 1) {
+    if (origStr == "anyMask:" && rcvrClassName == "UndefinedObject" && argCount == 1) {
         static int maskCount = 0;
         maskCount++;
         if (maskCount <= 3) {
@@ -12443,7 +12443,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
     // Fallback for #isExternalStructure on nil - FFI type check
     // This causes endless loops when FFI tries to check nil values
-    if (origStr == "isExternalStructure" && actualReceiver.isNil() && argCount == 0) {
+    if (origStr == "isExternalStructure" && rcvrClassName == "UndefinedObject" && argCount == 0) {
         static int extStructCount = 0;
         extStructCount++;
         if (extStructCount <= 3) {
@@ -12456,7 +12456,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     }
 
     // Fallback for #typeAlignment on nil - FFI type alignment check
-    if (origStr == "typeAlignment" && actualReceiver.isNil() && argCount == 0) {
+    if (origStr == "typeAlignment" && rcvrClassName == "UndefinedObject" && argCount == 0) {
         static int alignCount = 0;
         alignCount++;
         if (alignCount <= 3) {
@@ -12469,7 +12469,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     }
 
     // Fallback for #negative on nil - number check on nil
-    if (origStr == "negative" && actualReceiver.isNil() && argCount == 0) {
+    if (origStr == "negative" && rcvrClassName == "UndefinedObject" && argCount == 0) {
         static int negCount = 0;
         negCount++;
         if (negCount <= 3) {
@@ -12477,6 +12477,231 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         }
         pop();  // Pop receiver
         push(memory_.falseObject());  // nil is not negative
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #isEmpty on nil - empty check on nil
+    // nil is effectively empty
+    if (origStr == "isEmpty" && rcvrClassName == "UndefinedObject" && argCount == 0) {
+        static int isEmptyCount = 0;
+        isEmptyCount++;
+        if (isEmptyCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] isEmpty on nil #" << isEmptyCount << " - returning true\n";
+        }
+        pop();  // Pop receiver
+        push(memory_.trueObject());  // nil is empty
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #decodeWith: on nil - string decoding on nil
+    // Happens when code tries to decode nil with an encoder
+    if (origStr == "decodeWith:" && rcvrClassName == "UndefinedObject" && argCount == 1) {
+        static int decodeCount = 0;
+        decodeCount++;
+        if (decodeCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] decodeWith: on nil #" << decodeCount << " - returning nil\n";
+        }
+        popN(argCount + 1);  // Pop receiver and argument
+        push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #asByteArray on platform objects - platform string conversion
+    // The platform name doesn't need to be converted to bytes
+    if (origStr == "asByteArray" && (rcvrClassName == "MacOSXPlatform" || rcvrClassName.find("Platform") != std::string::npos) && argCount == 0) {
+        static int asByteArrayCount = 0;
+        asByteArrayCount++;
+        if (asByteArrayCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] asByteArray on " << rcvrClassName << " #" << asByteArrayCount << " - returning nil\n";
+        }
+        pop();  // Pop receiver
+        push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #quo: on nil - integer division on nil
+    // Happens when code tries to do integer division with nil
+    if (origStr == "quo:" && rcvrClassName == "UndefinedObject" && argCount == 1) {
+        static int quoCount = 0;
+        quoCount++;
+        if (quoCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] quo: on nil #" << quoCount << " - returning 0\n";
+        }
+        popN(argCount + 1);  // Pop receiver and argument
+        push(Oop::fromSmallInteger(0));
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #last on nil - collection accessor on nil
+    // Happens when code tries to access last element of nil
+    if (origStr == "last" && rcvrClassName == "UndefinedObject" && argCount == 0) {
+        static int lastCount = 0;
+        lastCount++;
+        if (lastCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] last on nil #" << lastCount << " - returning nil\n";
+        }
+        pop();  // Pop receiver
+        push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #between:and: on nil - range check on nil
+    // Happens when code checks if nil is between two values
+    if (origStr == "between:and:" && rcvrClassName == "UndefinedObject" && argCount == 2) {
+        static int betweenCount = 0;
+        betweenCount++;
+        if (betweenCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] between:and: on nil #" << betweenCount << " - returning false\n";
+        }
+        popN(argCount + 1);  // Pop receiver and arguments
+        push(memory_.falseObject());
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #ifEmpty: on nil - empty check with block on nil
+    // Happens when code checks if nil is empty
+    if (origStr == "ifEmpty:" && rcvrClassName == "UndefinedObject" && argCount == 1) {
+        static int ifEmptyCount = 0;
+        ifEmptyCount++;
+        if (ifEmptyCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] ifEmpty: on nil #" << ifEmptyCount << " - returning nil\n";
+        }
+        popN(argCount + 1);  // Pop receiver and block
+        push(memory_.nil());  // nil is effectively empty, but we don't eval the block
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #withIndexDo: on nil - indexed iteration on nil
+    // Happens when code tries to iterate nil with indices
+    if (origStr == "withIndexDo:" && rcvrClassName == "UndefinedObject" && argCount == 1) {
+        static int withIndexCount = 0;
+        withIndexCount++;
+        if (withIndexCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] withIndexDo: on nil #" << withIndexCount << " - returning nil\n";
+        }
+        popN(argCount + 1);  // Pop receiver and block
+        push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #do: on nil - iteration on nil
+    // Happens when code tries to iterate nil
+    if (origStr == "do:" && rcvrClassName == "UndefinedObject" && argCount == 1) {
+        static int doNilCount = 0;
+        doNilCount++;
+        if (doNilCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] do: on nil #" << doNilCount << " - returning nil\n";
+        }
+        popN(argCount + 1);  // Pop receiver and block
+        push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #substrings on nil - string operations on nil
+    // Happens when code tries to split a nil string into words
+    if (origStr == "substrings" && rcvrClassName == "UndefinedObject" && argCount == 0) {
+        static int substringsCount = 0;
+        substringsCount++;
+        if (substringsCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] substrings on nil #" << substringsCount << " - returning nil\n";
+        }
+        pop();  // Pop receiver
+        push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #isDigit on nil - character test on nil
+    // Happens when code checks if nil is a digit character
+    if (origStr == "isDigit" && rcvrClassName == "UndefinedObject" && argCount == 0) {
+        static int isDigitCount = 0;
+        isDigitCount++;
+        if (isDigitCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] isDigit on nil #" << isDigitCount << " - returning false\n";
+        }
+        pop();  // Pop receiver
+        push(memory_.falseObject());
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #first on nil - collection accessor on nil
+    // Happens when code tries to access first element of nil
+    if (origStr == "first" && rcvrClassName == "UndefinedObject" && argCount == 0) {
+        static int firstCount = 0;
+        firstCount++;
+        if (firstCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] first on nil #" << firstCount << " - returning nil\n";
+        }
+        pop();  // Pop receiver
+        push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #first: on nil - collection accessor with count on nil
+    // Happens when code tries to get first N elements from nil
+    if (origStr == "first:" && rcvrClassName == "UndefinedObject" && argCount == 1) {
+        static int firstNCount = 0;
+        firstNCount++;
+        if (firstNCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] first: on nil #" << firstNCount << " - returning nil\n";
+        }
+        popN(argCount + 1);  // Pop receiver and argument
+        push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #asPointerType on Dictionary - FFI type resolution
+    // FFI code sends this to dictionaries when resolving type specs
+    if (origStr == "asPointerType" && rcvrClassName == "Dictionary" && argCount == 0) {
+        static int dictPtrTypeCount = 0;
+        dictPtrTypeCount++;
+        if (dictPtrTypeCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] asPointerType on Dictionary #" << dictPtrTypeCount << " - returning nil\n";
+        }
+        pop();  // Pop receiver
+        push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #splitOn: on nil - string operations on nil
+    // Happens when code tries to split a nil value
+    if (origStr == "splitOn:" && rcvrClassName == "UndefinedObject" && argCount == 1) {
+        static int splitCount = 0;
+        splitCount++;
+        if (splitCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] splitOn: on nil #" << splitCount << " - returning empty array\n";
+        }
+        popN(argCount + 1);  // Pop receiver and argument
+        // Return empty array representation (just use nil for simplicity)
+        push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #second on nil - collection accessor on nil
+    // Happens when code tries to access second element of nil
+    if (origStr == "second" && rcvrClassName == "UndefinedObject" && argCount == 0) {
+        static int secondCount = 0;
+        secondCount++;
+        if (secondCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] second on nil #" << secondCount << " - returning nil\n";
+        }
+        pop();  // Pop receiver
+        push(memory_.nil());
         dnuDepth--;
         return;
     }
@@ -16663,7 +16888,12 @@ bool Interpreter::executeFromContext(Oop context) {
         }
     }
 
-    initializeSelectors();
+    // Only initialize selectors once (not on every executeFromContext call)
+    static bool selectorsInitialized = false;
+    if (!selectorsInitialized) {
+        initializeSelectors();
+        selectorsInitialized = true;
+    }
     running_ = true;
 
     return true;
