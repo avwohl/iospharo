@@ -4511,24 +4511,10 @@ terminate_process:
 }
 
 void Interpreter::returnFromMethod() {
-    // TRACE: Stack state before popping return value
-    {
-        extern bool g_traceDetectJumps;
-        static int prePopTraceCount = 0;
-        if (g_traceDetectJumps && prePopTraceCount++ < 15) {
-            std::cerr << "[RET-PRE-POP #" << prePopTraceCount << "] frame=" << frameDepth_
-                      << " sp=" << (stackPointer_ - stackBase_);
-            // Peek at top of stack before popping
-            if (stackPointer_ > stackBase_) {
-                Oop topVal = stackPointer_[-1];
-                std::cerr << " top=0x" << std::hex << topVal.rawBits() << std::dec;
-                if (topVal.isObject() && topVal.rawBits() > 0x10000) {
-                    ObjectHeader* tvHdr = topVal.asObjectPtr();
-                    std::cerr << " (slots=" << tvHdr->slotCount() << ")";
-                }
-            }
-            std::cerr << "\n";
-        }
+    // Simple trace for all returns to see if returnFromMethod is called
+    static int simpleRetCount = 0;
+    if (simpleRetCount++ < 5) {
+        std::cerr << "[RETURN-FROM-METHOD #" << simpleRetCount << "] frame=" << frameDepth_ << "\n";
     }
 
     Oop value = pop();
