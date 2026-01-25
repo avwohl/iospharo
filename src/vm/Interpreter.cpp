@@ -16342,38 +16342,69 @@ void Interpreter::installOSiOSDriver() {
                     fprintf(driverLog, "[DRIVER] OSWindowDriver classPool: 0x%llx isObj=%d\n",
                             (unsigned long long)classPool.rawBits(), classPool.isObject() ? 1 : 0);
 
-                    // Check if there's a Current key in the classPool
+                    // Check if there's a Current key in the classPool (which is a Dictionary)
+                    // Dictionary layout: slot[0]=tally, slot[1]=array of associations
                     if (classPool.isObject() && classPool.rawBits() != nilObj.rawBits()) {
                         ObjectHeader* poolHdr = classPool.asObjectPtr();
-                        fprintf(driverLog, "[DRIVER] ClassPool has %zu slots\n", poolHdr->slotCount());
-                        // Dictionary slots are key-value pairs
-                        for (size_t i = 0; i < poolHdr->slotCount() && i < 10; i++) {
-                            Oop slot = memory_.fetchPointer(i, classPool);
-                            if (slot.isObject() && slot.rawBits() != nilObj.rawBits()) {
-                                ObjectHeader* slotHdr = slot.asObjectPtr();
-                                // Associations have key at slot 0, value at slot 1
-                                if (slotHdr->slotCount() >= 2) {
-                                    Oop key = memory_.fetchPointer(0, slot);
-                                    Oop val = memory_.fetchPointer(1, slot);
-                                    if (key.isObject()) {
-                                        ObjectHeader* keyHdr = key.asObjectPtr();
-                                        if (keyHdr->isBytesObject() && keyHdr->byteSize() < 50) {
-                                            std::string keyName((char*)keyHdr->bytes(), keyHdr->byteSize());
-                                            fprintf(driverLog, "[DRIVER]   ClassPool[%zu] key='%s' val=0x%llx\n",
+                        fprintf(driverLog, "[DRIVER] ClassPool has %zu slots, format=%d\n", poolHdr->slotCount(), poolHdr->format());
+
+                        // Get the associations array from slot 1
+                        if (poolHdr->slotCount() >= 2) {
+                            Oop assocArray = memory_.fetchPointer(1, classPool);
+                            if (assocArray.isObject() && assocArray.rawBits() != nilObj.rawBits()) {
+                                ObjectHeader* arrayHdr = assocArray.asObjectPtr();
+                                fprintf(driverLog, "[DRIVER] ClassPool associations array has %zu slots\n", arrayHdr->slotCount());
+
+                                // Look for "Current" in the associations
+                                for (size_t i = 0; i < arrayHdr->slotCount(); i++) {
+                                    Oop assoc = memory_.fetchPointer(i, assocArray);
+                                    if (assoc.isObject() && assoc.rawBits() != nilObj.rawBits()) {
+                                        ObjectHeader* assocHdr = assoc.asObjectPtr();
+                                        if (assocHdr->slotCount() >= 2) {
+                                            Oop key = memory_.fetchPointer(0, assoc);
+                                            Oop val = memory_.fetchPointer(1, assoc);
+                                            std::string keyName = "<notBytes>";
+                                            if (key.isObject()) {
+                                                ObjectHeader* keyHdr = key.asObjectPtr();
+                                                if (keyHdr->isBytesObject() && keyHdr->byteSize() < 50) {
+                                                    keyName = std::string((char*)keyHdr->bytes(), keyHdr->byteSize());
+                                                }
+                                            }
+                                            fprintf(driverLog, "[DRIVER]   assoc[%zu]: key='%s' val=0x%llx",
                                                     i, keyName.c_str(), (unsigned long long)val.rawBits());
-                                            if (keyName == "Current" && val.isObject() && val.rawBits() != nilObj.rawBits()) {
-                                                // Found the current driver!
-                                                Oop driverClass = memory_.classOf(val);
-                                                Oop driverName = memory_.fetchPointer(6, driverClass);
-                                                std::string name = "<unknown>";
-                                                if (driverName.isObject()) {
-                                                    ObjectHeader* nHdr = driverName.asObjectPtr();
-                                                    if (nHdr->isBytesObject()) {
-                                                        name = std::string((char*)nHdr->bytes(), nHdr->byteSize());
+                                            if (val.rawBits() == nilObj.rawBits()) {
+                                                fprintf(driverLog, " (nil)");
+                                            } else if (val.isObject()) {
+                                                Oop valClass = memory_.classOf(val);
+                                                std::string valClassName = "<unknown>";
+                                                if (valClass.isObject()) {
+                                                    // Get class name
+                                                    Oop nameOop = memory_.fetchPointer(6, valClass);
+                                                    if (nameOop.isObject()) {
+                                                        ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                                                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                                                            valClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                                        }
                                                     }
                                                 }
-                                                fprintf(driverLog, "[DRIVER] Current driver is: %s\n", name.c_str());
+                                                fprintf(driverLog, " (class=%s)", valClassName.c_str());
+                                                // If this is a class (metaclass), get the actual class name
+                                                if (valClassName.find("class") != std::string::npos || valClassName == "Class" || valClassName == "<unknown>") {
+                                                    // Try to get name slot directly from val (if it's a class)
+                                                    ObjectHeader* valHdr = val.asObjectPtr();
+                                                    if (valHdr->slotCount() >= 7) {
+                                                        Oop valName = memory_.fetchPointer(6, val);
+                                                        if (valName.isObject()) {
+                                                            ObjectHeader* vnHdr = valName.asObjectPtr();
+                                                            if (vnHdr->isBytesObject() && vnHdr->byteSize() < 100) {
+                                                                std::string name((char*)vnHdr->bytes(), vnHdr->byteSize());
+                                                                fprintf(driverLog, " actualName='%s'", name.c_str());
+                                                            }
+                                                        }
+                                                    }
+                                                }
                                             }
+                                            fprintf(driverLog, "\n");
                                         }
                                     }
                                 }
@@ -16381,6 +16412,340 @@ void Interpreter::installOSiOSDriver() {
                         }
                     }
                     fflush(driverLog);
+
+                    // Check for World global
+                    Oop world = memory_.findGlobal("World");
+                    fprintf(driverLog, "[DRIVER] World global: 0x%llx sameAsNil=%d\n",
+                            (unsigned long long)world.rawBits(),
+                            world.rawBits() == nilObj.rawBits() ? 1 : 0);
+                    if (world.isObject() && world.rawBits() != nilObj.rawBits()) {
+                        Oop worldClass = memory_.classOf(world);
+                        std::string className = "<unknown>";
+                        if (worldClass.isObject()) {
+                            Oop nameOop = memory_.fetchPointer(6, worldClass);
+                            if (nameOop.isObject()) {
+                                ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                                    className = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                }
+                            }
+                        }
+                        fprintf(driverLog, "[DRIVER] World class: %s\n", className.c_str());
+                    }
+
+                    // Check for InputEventFetcher
+                    Oop eventFetcher = memory_.findGlobal("InputEventFetcher");
+                    fprintf(driverLog, "[DRIVER] InputEventFetcher class: 0x%llx sameAsNil=%d\n",
+                            (unsigned long long)eventFetcher.rawBits(),
+                            eventFetcher.rawBits() == nilObj.rawBits() ? 1 : 0);
+
+                    // Look for the Hand morph through World
+                    // WorldMorph has: submorphs, owner, bounds, fullBounds, color, extension, eventHandler, hands
+                    // hands is typically at slot 7 or similar
+                    if (world.isObject() && world.rawBits() != nilObj.rawBits()) {
+                        ObjectHeader* worldHdr = world.asObjectPtr();
+                        fprintf(driverLog, "[DRIVER] World has %zu slots\n", worldHdr->slotCount());
+                        // Find hands - search for an OrderedCollection or Array containing HandMorph
+                        for (size_t i = 0; i < worldHdr->slotCount() && i < 20; i++) {
+                            Oop slot = memory_.fetchPointer(i, world);
+                            if (slot.isObject() && slot.rawBits() != nilObj.rawBits()) {
+                                Oop slotClass = memory_.classOf(slot);
+                                std::string className = "<unknown>";
+                                if (slotClass.isObject()) {
+                                    Oop nameOop = memory_.fetchPointer(6, slotClass);
+                                    if (nameOop.isObject()) {
+                                        ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                                            className = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                        }
+                                    }
+                                }
+                                ObjectHeader* slotHdr = slot.asObjectPtr();
+                                fprintf(driverLog, "[DRIVER] World slot[%zu]: class=%s slots=%zu\n",
+                                        i, className.c_str(), slotHdr->slotCount());
+                                // If it's WorldState, examine its slots
+                                if (className == "WorldState") {
+                                    fprintf(driverLog, "[DRIVER] Found WorldState - examining slots:\n");
+                                    for (size_t j = 0; j < slotHdr->slotCount() && j < 15; j++) {
+                                        Oop wsSlot = memory_.fetchPointer(j, slot);
+                                        std::string wsClassName = "nil";
+                                        size_t wsSlotCount = 0;
+                                        if (wsSlot.isObject() && wsSlot.rawBits() != nilObj.rawBits()) {
+                                            Oop wsSlotClass = memory_.classOf(wsSlot);
+                                            if (wsSlotClass.isObject()) {
+                                                Oop wsNameOop = memory_.fetchPointer(6, wsSlotClass);
+                                                if (wsNameOop.isObject()) {
+                                                    ObjectHeader* wsNameHdr = wsNameOop.asObjectPtr();
+                                                    if (wsNameHdr->isBytesObject() && wsNameHdr->byteSize() < 100) {
+                                                        wsClassName = std::string((char*)wsNameHdr->bytes(), wsNameHdr->byteSize());
+                                                    }
+                                                }
+                                            }
+                                            wsSlotCount = wsSlot.asObjectPtr()->slotCount();
+                                        } else if (wsSlot.isSmallInteger()) {
+                                            wsClassName = "SmallInt";
+                                        }
+                                        fprintf(driverLog, "[DRIVER]   WorldState slot[%zu]: class=%s slots=%zu\n",
+                                                j, wsClassName.c_str(), wsSlotCount);
+                                        // Look for Array or OrderedCollection containing HandMorph
+                                        if (wsClassName == "Array" && wsSlotCount > 0) {
+                                            for (size_t k = 0; k < wsSlotCount && k < 3; k++) {
+                                                Oop elem = memory_.fetchPointer(k, wsSlot);
+                                                if (elem.isObject() && elem.rawBits() != nilObj.rawBits()) {
+                                                    Oop elemClass = memory_.classOf(elem);
+                                                    std::string elemClassName = "<unknown>";
+                                                    if (elemClass.isObject()) {
+                                                        Oop elemName = memory_.fetchPointer(6, elemClass);
+                                                        if (elemName.isObject()) {
+                                                            ObjectHeader* enHdr = elemName.asObjectPtr();
+                                                            if (enHdr->isBytesObject() && enHdr->byteSize() < 100) {
+                                                                elemClassName = std::string((char*)enHdr->bytes(), enHdr->byteSize());
+                                                            }
+                                                        }
+                                                    }
+                                                    fprintf(driverLog, "[DRIVER]     Array[%zu]: class=%s\n", k, elemClassName.c_str());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Check for MorphicUIManager
+                    Oop uiManager = memory_.findGlobal("MorphicUIManager");
+                    fprintf(driverLog, "[DRIVER] MorphicUIManager class: 0x%llx sameAsNil=%d\n",
+                            (unsigned long long)uiManager.rawBits(),
+                            uiManager.rawBits() == nilObj.rawBits() ? 1 : 0);
+
+                    // Check for event-related classes
+                    const char* eventClasses[] = {
+                        "MouseEvent", "MouseButtonEvent", "MouseMoveEvent",
+                        "MouseButtonPressedEvent", "MouseButtonReleasedEvent",
+                        "KeyboardEvent", "MorphicEvent", "UserInputEvent",
+                        "OSMouseButtonPressEvent", "OSMouseMoveEvent",
+                        nullptr
+                    };
+                    for (int i = 0; eventClasses[i]; i++) {
+                        Oop evtClass = memory_.findGlobal(eventClasses[i]);
+                        if (evtClass.isObject() && evtClass.rawBits() != nilObj.rawBits()) {
+                            fprintf(driverLog, "[DRIVER] Found event class: %s at 0x%llx\n",
+                                    eventClasses[i], (unsigned long long)evtClass.rawBits());
+                        }
+                    }
+
+                    // Check for driver-related classes
+                    const char* driverClasses[] = {
+                        "OSNullDriver", "OSNullWindowDriver", "OSHeadlessDriver",
+                        "NullWindowDriver", "HeadlessDriver",
+                        "OSHeadlessWorldRenderer", "OSNullWorldRenderer",
+                        "OSWindowMorphicEventHandler",
+                        "OSAbstractRenderer", "OSWorldRenderer",
+                        nullptr
+                    };
+                    for (int i = 0; driverClasses[i]; i++) {
+                        Oop driverClass = memory_.findGlobal(driverClasses[i]);
+                        if (driverClass.isObject() && driverClass.rawBits() != nilObj.rawBits()) {
+                            fprintf(driverLog, "[DRIVER] Found driver class: %s at 0x%llx\n",
+                                    driverClasses[i], (unsigned long long)driverClass.rawBits());
+                        }
+                    }
+
+                    // Check for UIManager (the singleton, not the class)
+                    Oop uiManagerSingleton = memory_.findGlobal("UIManager");
+                    fprintf(driverLog, "[DRIVER] UIManager global: 0x%llx sameAsNil=%d\n",
+                            (unsigned long long)uiManagerSingleton.rawBits(),
+                            uiManagerSingleton.rawBits() == nilObj.rawBits() ? 1 : 0);
+
+                    // Check process list to see what's running
+                    // Processor activeProcess gives us the current process
+                    Oop scheduler = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
+                    if (scheduler.isObject()) {
+                        Oop processScheduler = memory_.fetchPointer(1, scheduler);  // value
+                        if (processScheduler.isObject()) {
+                            // ProcessScheduler>>activeProcess is inst var 0
+                            Oop activeProcess = memory_.fetchPointer(0, processScheduler);
+                            fprintf(driverLog, "[DRIVER] Active process: 0x%llx\n", (unsigned long long)activeProcess.rawBits());
+                            if (activeProcess.isObject() && activeProcess.rawBits() != nilObj.rawBits()) {
+                                // Process has: suspendedContext, priority, myList, name, env
+                                // name is at slot 3
+                                ObjectHeader* procHdr = activeProcess.asObjectPtr();
+                                if (procHdr->slotCount() >= 4) {
+                                    Oop procName = memory_.fetchPointer(3, activeProcess);
+                                    if (procName.isObject()) {
+                                        ObjectHeader* nameHdr = procName.asObjectPtr();
+                                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                                            std::string name((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                            fprintf(driverLog, "[DRIVER] Active process name: '%s'\n", name.c_str());
+                                        }
+                                    }
+                                }
+                            }
+                            // List all processes in all priority queues
+                            // quiescentProcessLists is inst var 1
+                            Oop processLists = memory_.fetchPointer(1, processScheduler);
+                            if (processLists.isObject()) {
+                                ObjectHeader* listsHdr = processLists.asObjectPtr();
+                                fprintf(driverLog, "[DRIVER] Process priority levels: %zu\n", listsHdr->slotCount());
+                            }
+                        }
+                    }
+                    fflush(driverLog);
+
+                    // Try to install OSNullWindowDriver as Current
+                    Oop nullDriverClass = memory_.findGlobal("OSNullWindowDriver");
+                    if (nullDriverClass.isObject() && nullDriverClass.rawBits() != nilObj.rawBits()) {
+                        fprintf(driverLog, "[DRIVER] Attempting to install OSNullWindowDriver as Current\n");
+                        fflush(driverLog);
+
+                        // Check the class format to see how many instance vars it has
+                        Oop formatOop = memory_.fetchPointer(2, nullDriverClass);  // format at slot 2
+                        fprintf(driverLog, "[DRIVER] OSNullWindowDriver format: 0x%llx\n",
+                                (unsigned long long)formatOop.rawBits());
+
+                        // Get instance spec to determine number of instance variables
+                        // Format is a SmallInteger containing the instance format
+                        int64_t format = 0;
+                        if (formatOop.isSmallInteger()) {
+                            format = formatOop.asSmallInteger();
+                            fprintf(driverLog, "[DRIVER] Format value: %lld\n", format);
+                        }
+
+                        // Instance variables = (format >> 1) & 0xFFFF for fixed part
+                        // This is simplified - actual spec is more complex
+                        // Let's check OSNullWindowDriver's slot count by looking at its instances
+                        // For now, try creating with 0 inst vars (drivers might be stateless)
+
+                        // Actually, let's just set Current to the CLASS itself as a test
+                        // to see if having a non-nil Current unblocks the event system
+                        // This is clearly a test/debug step, not a permanent solution
+
+                        // Find the Current association in OSWindowDriver's classPool
+                        if (osWindowDriverClass.isObject()) {
+                            Oop classPool = memory_.fetchPointer(7, osWindowDriverClass);
+                            if (classPool.isObject()) {
+                                ObjectHeader* poolHdr = classPool.asObjectPtr();
+                                if (poolHdr->slotCount() >= 2) {
+                                    Oop assocArray = memory_.fetchPointer(1, classPool);
+                                    if (assocArray.isObject()) {
+                                        ObjectHeader* arrayHdr = assocArray.asObjectPtr();
+                                        // Find Current association and set its value
+                                        for (size_t i = 0; i < arrayHdr->slotCount(); i++) {
+                                            Oop assoc = memory_.fetchPointer(i, assocArray);
+                                            if (assoc.isObject() && assoc.rawBits() != nilObj.rawBits()) {
+                                                ObjectHeader* assocHdr = assoc.asObjectPtr();
+                                                if (assocHdr->slotCount() >= 2) {
+                                                    Oop key = memory_.fetchPointer(0, assoc);
+                                                    if (key.isObject()) {
+                                                        ObjectHeader* keyHdr = key.asObjectPtr();
+                                                        if (keyHdr->isBytesObject() && keyHdr->byteSize() == 7) {
+                                                            std::string keyName((char*)keyHdr->bytes(), keyHdr->byteSize());
+                                                            if (keyName == "Current") {
+                                                                // Create an instance of OSNullWindowDriver
+                                                                // Need to find out how many inst vars it has
+                                                                // For now, try allocating with standard driver size
+
+                                                                // First, let me try creating a minimal instance
+                                                                // OSWindowDriver has inst vars, let's check format
+                                                                ObjectHeader* ndcHdr = nullDriverClass.asObjectPtr();
+                                                                fprintf(driverLog, "[DRIVER] OSNullWindowDriver class has %zu slots\n", ndcHdr->slotCount());
+
+                                                                // Get class index from identity hash (this is how Pharo stores class refs)
+                                                                uint32_t classIdx = ndcHdr->identityHash();
+                                                                fprintf(driverLog, "[DRIVER] OSNullWindowDriver class index: %u\n", classIdx);
+
+                                                                // Get instance format and size from the class
+                                                                // format is at slot 2, contains encoding of inst var count
+                                                                Oop formatOop2 = memory_.fetchPointer(2, nullDriverClass);
+                                                                size_t instVarCount = 0;
+                                                                if (formatOop2.isSmallInteger()) {
+                                                                    int64_t fmt = formatOop2.asSmallInteger();
+                                                                    // Format encodes: (instVarCount << 1) | ... in complex way
+                                                                    // For simplicity, let's try 2 inst vars (typical for drivers)
+                                                                    // Actually check the format value
+                                                                    fprintf(driverLog, "[DRIVER] Format raw value: %lld\n", fmt);
+                                                                    // Extract inst var count from format (Pharo 10+ format)
+                                                                    // instVarCount = (format >> 1) & 0xFFFF roughly
+                                                                    instVarCount = (fmt >> 1) & 0xFFFF;
+                                                                    fprintf(driverLog, "[DRIVER] Extracted instVarCount: %zu\n", instVarCount);
+                                                                }
+
+                                                                // Allocate the instance using allocateSlots
+                                                                Oop driverInstance = memory_.allocateSlots(classIdx, instVarCount, ObjectFormat::FixedSize);
+                                                                if (driverInstance.isObject() && driverInstance.rawBits() != nilObj.rawBits()) {
+                                                                    // Set the Current value
+                                                                    memory_.storePointer(1, assoc, driverInstance);
+                                                                    fprintf(driverLog, "[DRIVER] Successfully set OSNullWindowDriver instance as Current: 0x%llx\n",
+                                                                            (unsigned long long)driverInstance.rawBits());
+
+                                                                    // Verify it was set
+                                                                    Oop verifyVal = memory_.fetchPointer(1, assoc);
+                                                                    fprintf(driverLog, "[DRIVER] Verified Current value: 0x%llx\n",
+                                                                            (unsigned long long)verifyVal.rawBits());
+
+                                                                    // Now let's examine the MouseButtonEvent class to understand its structure
+                                                                    Oop mouseEventClass = memory_.findGlobal("MouseButtonEvent");
+                                                                    if (mouseEventClass.isObject() && mouseEventClass.rawBits() != nilObj.rawBits()) {
+                                                                        ObjectHeader* mecHdr = mouseEventClass.asObjectPtr();
+                                                                        fprintf(driverLog, "[DRIVER] MouseButtonEvent class has %zu slots\n", mecHdr->slotCount());
+
+                                                                        // Get instance variable names from layout (slot 3)
+                                                                        Oop layout = memory_.fetchPointer(3, mouseEventClass);
+                                                                        fprintf(driverLog, "[DRIVER] MouseButtonEvent layout: 0x%llx\n",
+                                                                                (unsigned long long)layout.rawBits());
+                                                                        if (layout.isObject() && layout.rawBits() != nilObj.rawBits()) {
+                                                                            ObjectHeader* layoutHdr = layout.asObjectPtr();
+                                                                            fprintf(driverLog, "[DRIVER] Layout has %zu slots, format=%d\n",
+                                                                                    layoutHdr->slotCount(), layoutHdr->format());
+                                                                        }
+
+                                                                        // Get format from slot 2
+                                                                        Oop evtFormat = memory_.fetchPointer(2, mouseEventClass);
+                                                                        if (evtFormat.isSmallInteger()) {
+                                                                            fprintf(driverLog, "[DRIVER] MouseButtonEvent format: %lld\n",
+                                                                                    evtFormat.asSmallInteger());
+                                                                            // Extract inst var count
+                                                                            int64_t fmt = evtFormat.asSmallInteger();
+                                                                            size_t evtInstVars = (fmt >> 1) & 0xFFFF;
+                                                                            fprintf(driverLog, "[DRIVER] MouseButtonEvent instVars: %zu\n", evtInstVars);
+                                                                        }
+
+                                                                        // Try to get instance variable names from class
+                                                                        // Slot 4 is instanceVariables (may be nil or array of symbols)
+                                                                        Oop instVars = memory_.fetchPointer(4, mouseEventClass);
+                                                                        fprintf(driverLog, "[DRIVER] MouseButtonEvent instanceVariables: 0x%llx\n",
+                                                                                (unsigned long long)instVars.rawBits());
+                                                                        if (instVars.isObject() && instVars.rawBits() != nilObj.rawBits()) {
+                                                                            ObjectHeader* ivHdr = instVars.asObjectPtr();
+                                                                            for (size_t j = 0; j < ivHdr->slotCount() && j < 20; j++) {
+                                                                                Oop iv = memory_.fetchPointer(j, instVars);
+                                                                                if (iv.isObject()) {
+                                                                                    ObjectHeader* ivnHdr = iv.asObjectPtr();
+                                                                                    if (ivnHdr->isBytesObject() && ivnHdr->byteSize() < 50) {
+                                                                                        std::string name((char*)ivnHdr->bytes(), ivnHdr->byteSize());
+                                                                                        fprintf(driverLog, "[DRIVER]   instVar[%zu]: '%s'\n", j, name.c_str());
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                } else {
+                                                                    fprintf(driverLog, "[DRIVER] Failed to instantiate OSNullWindowDriver\n");
+                                                                }
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        fflush(driverLog);
+                    }
                 }
 
                 fflush(driverLog);
