@@ -1961,70 +1961,72 @@ void Interpreter::processInputEvents() {
                                             fflush(logFile);
                                         }
 
-                                        // ALTERNATIVE: Also try direct method call via context creation
-                                        // Look up #handleEvent: on HandMorph and invoke it directly
-                                        static bool triedDirectCall = false;
-                                        if (!triedDirectCall && event.arg5 == 1) {  // Only on first mouseDown
-                                            triedDirectCall = true;
-                                            Oop handClass = memory_.classOf(eventInjectionHand_);
-                                            if (handClass.isObject()) {
-                                                // Search for handleEvent: in the class hierarchy
-                                                Oop currentClass = handClass;
-                                                Oop nilObj = memory_.nil();
-                                                Oop handleEventMethod = nilObj;
-                                                int searchDepth = 0;
-                                                const int maxSearchDepth = 20;
+                                        // Direct method call: Look up and cache handleEvent:
+                                        // This runs for EVERY button event (down/up) to ensure dispatch
+                                        static Oop cachedHandleEventMethod = Oop::nil();
+                                        static bool methodLookupDone = false;
 
-                                                while (currentClass.isObject() && currentClass.rawBits() != nilObj.rawBits() && searchDepth < maxSearchDepth) {
-                                                    Oop methodDict = memory_.fetchPointer(1, currentClass);  // methodDict at slot 1
-                                                    if (methodDict.isObject() && methodDict.rawBits() != nilObj.rawBits()) {
-                                                        ObjectHeader* mdHdr = methodDict.asObjectPtr();
-                                                        if (mdHdr->slotCount() >= 2) {
-                                                            Oop methods = memory_.fetchPointer(1, methodDict);  // array at slot 1
-                                                            if (methods.isObject()) {
-                                                                ObjectHeader* arrHdr = methods.asObjectPtr();
-                                                                for (size_t i = 0; i < arrHdr->slotCount(); i++) {
-                                                                    Oop assoc = arrHdr->slotAt(i);
-                                                                    if (assoc.isObject() && assoc.rawBits() != nilObj.rawBits()) {
-                                                                        ObjectHeader* assocHdr = assoc.asObjectPtr();
-                                                                        if (assocHdr->slotCount() >= 2) {
-                                                                            Oop key = memory_.fetchPointer(0, assoc);
-                                                                            if (key.isObject()) {
-                                                                                ObjectHeader* keyHdr = key.asObjectPtr();
-                                                                                if (keyHdr->isBytesObject() && keyHdr->byteSize() == 12) {
-                                                                                    if (memcmp(keyHdr->bytes(), "handleEvent:", 12) == 0) {
-                                                                                        handleEventMethod = memory_.fetchPointer(1, assoc);
-                                                                                        if (logFile) {
-                                                                                            fprintf(logFile, "[DIRECT-CALL] Found handleEvent: at depth %d\n", searchDepth);
-                                                                                            fflush(logFile);
-                                                                                        }
-                                                                                        break;
-                                                                                    }
-                                                                                }
-                                                                            }
-                                                                        }
+                                        if (!methodLookupDone) {
+                                            methodLookupDone = true;
+                                            Oop handClass = memory_.classOf(eventInjectionHand_);
+                                            Oop nilObj = memory_.nil();
+
+                                            // Search in class hierarchy using correct MethodDictionary layout
+                                            Oop currentClass = handClass;
+                                            int searchDepth = 0;
+                                            while (currentClass.isObject() && currentClass.rawBits() != nilObj.rawBits() && searchDepth < 20) {
+                                                Oop methodDict = memory_.fetchPointer(1, currentClass);
+                                                if (methodDict.isObject() && methodDict.rawBits() != nilObj.rawBits()) {
+                                                    ObjectHeader* mdHdr = methodDict.asObjectPtr();
+                                                    size_t mdSlots = mdHdr->slotCount();
+                                                    // MethodDictionary: slot 0 = tally, slot 1 = values array, slot 2+ = keys
+                                                    for (size_t ki = 2; ki < mdSlots; ki++) {
+                                                        Oop key = mdHdr->slotAt(ki);
+                                                        if (!key.isObject() || key.isNil()) continue;
+                                                        ObjectHeader* keyHdr = key.asObjectPtr();
+                                                        if (!keyHdr->isBytesObject()) continue;
+                                                        size_t keyLen = keyHdr->byteSize();
+                                                        if (keyLen == 12 && memcmp(keyHdr->bytes(), "handleEvent:", 12) == 0) {
+                                                            // Found! Get method from values array
+                                                            Oop values = memory_.fetchPointer(1, methodDict);
+                                                            if (values.isObject()) {
+                                                                size_t valueIdx = ki - 2;  // Offset by 2
+                                                                ObjectHeader* valHdr = values.asObjectPtr();
+                                                                if (valueIdx < valHdr->slotCount()) {
+                                                                    cachedHandleEventMethod = valHdr->slotAt(valueIdx);
+                                                                    if (logFile) {
+                                                                        fprintf(logFile, "[DIRECT-CALL] Found handleEvent: at depth %d, method=0x%llx\n",
+                                                                                searchDepth, (unsigned long long)cachedHandleEventMethod.rawBits());
+                                                                        fflush(logFile);
                                                                     }
                                                                 }
                                                             }
+                                                            break;
                                                         }
                                                     }
-                                                    if (handleEventMethod.rawBits() != nilObj.rawBits()) break;
-                                                    currentClass = memory_.fetchPointer(0, currentClass);  // superclass
-                                                    searchDepth++;
                                                 }
+                                                if (cachedHandleEventMethod.rawBits() != nilObj.rawBits()) break;
+                                                currentClass = memory_.fetchPointer(0, currentClass);
+                                                searchDepth++;
+                                            }
+                                            if (cachedHandleEventMethod.rawBits() == nilObj.rawBits() && logFile) {
+                                                fprintf(logFile, "[DIRECT-CALL] handleEvent: NOT FOUND after searching %d levels\n", searchDepth);
+                                                fflush(logFile);
+                                            }
+                                        }
 
-                                                if (handleEventMethod.isObject() && handleEventMethod.rawBits() != nilObj.rawBits()) {
-                                                    // Create context for hand handleEvent: clonedEvent
-                                                    Oop ctx = memory_.createStartupContextWithArg(handleEventMethod, eventInjectionHand_, clonedEvent);
-                                                    if (ctx.isObject() && ctx.rawBits() != nilObj.rawBits()) {
-                                                        // Schedule by adding to active process
-                                                        pendingEventContext_ = ctx;
-                                                        hasPendingEventContext_ = true;
-                                                        if (logFile) {
-                                                            fprintf(logFile, "[DIRECT-CALL] Created context for handleEvent:, will execute\n");
-                                                            fflush(logFile);
-                                                        }
-                                                    }
+                                        // Call handleEvent: for this button event
+                                        Oop nilObj = memory_.nil();
+                                        if (cachedHandleEventMethod.isObject() && cachedHandleEventMethod.rawBits() != nilObj.rawBits()) {
+                                            Oop ctx = memory_.createStartupContextWithArg(cachedHandleEventMethod, eventInjectionHand_, clonedEvent);
+                                            if (ctx.isObject() && ctx.rawBits() != nilObj.rawBits()) {
+                                                pendingEventContext_ = ctx;
+                                                hasPendingEventContext_ = true;
+                                                if (logFile) {
+                                                    static int callNum = 0;
+                                                    fprintf(logFile, "[DIRECT-CALL] #%d Queued handleEvent: for %s at (%d,%d)\n",
+                                                            ++callNum, (event.arg5 == 1) ? "DOWN" : "UP", event.arg1, event.arg2);
+                                                    fflush(logFile);
                                                 }
                                             }
                                         }
