@@ -413,7 +413,7 @@ int main(int argc, char* argv[]) {
     // Initialize memory (256 MB should be enough for most images)
     ObjectMemory memory;
     MemoryConfig config;
-    config.oldSpaceSize = 1024 * 1024 * 1024;  // 1 GB (GC is too slow, need more space for startup)
+    config.oldSpaceSize = 2ULL * 1024 * 1024 * 1024;  // 2 GB (GC is too slow, need more space for startup)
     config.newSpaceSize = 32 * 1024 * 1024;   // 32 MB
     config.permSpaceSize = 8 * 1024 * 1024;   // 8 MB
 
@@ -536,7 +536,7 @@ int main(int argc, char* argv[]) {
         // Run bytecode steps for testing
         std::cout << "\n=== Execution Test ===" << std::endl;
         auto execStart = std::chrono::steady_clock::now();
-        int totalSteps = 20000000;  // Run 20M steps
+        int totalSteps = 50000000;  // Run 50M steps to see if startup completes
         std::cout << "Running up to " << totalSteps << " bytecode steps..." << std::endl;
         int activeSteps = 0;
         int idleSteps = 0;

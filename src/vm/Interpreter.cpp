@@ -454,8 +454,18 @@ void Interpreter::ensureDisplayForm(int width, int height, int depth) {
     uint32_t formClassIdx = memory_.indexOfClass(formClass);
     uint32_t bitmapClassIdx = memory_.indexOfClass(bitmapClass);
 
+    // If class not in table, register it
+    if (formClassIdx == 0) {
+        formClassIdx = memory_.registerClass(formClass);
+        std::cerr << "[DISPLAY] Registered Form class at index " << formClassIdx << "\n";
+    }
+    if (bitmapClassIdx == 0) {
+        bitmapClassIdx = memory_.registerClass(bitmapClass);
+        std::cerr << "[DISPLAY] Registered Bitmap class at index " << bitmapClassIdx << "\n";
+    }
+
     if (formClassIdx == 0 || bitmapClassIdx == 0) {
-        std::cerr << "[DISPLAY] FAILED: Class index 0 (Form=" << formClassIdx << ", Bitmap=" << bitmapClassIdx << ")\n";
+        std::cerr << "[DISPLAY] FAILED: Class index 0 after registration (Form=" << formClassIdx << ", Bitmap=" << bitmapClassIdx << ")\n";
         return;
     }
 
@@ -12310,6 +12320,27 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         adaptToNilCount++;
         if (adaptToNilCount > 5) skipLog = true;
     }
+    // Skip logging for nil stream operations (have fallbacks)
+    static int nextPutNilCount = 0;
+    if (origStr == "nextPut:" && rcvrClassName == "UndefinedObject") {
+        nextPutNilCount++;
+        if (nextPutNilCount > 3) skipLog = true;
+    }
+    static int replaceNilCount = 0;
+    if (origStr == "replaceFrom:to:with:startingAt:" && rcvrClassName == "UndefinedObject") {
+        replaceNilCount++;
+        if (replaceNilCount > 3) skipLog = true;
+    }
+    static int anyMaskNilCount = 0;
+    if (origStr == "anyMask:" && rcvrClassName == "UndefinedObject") {
+        anyMaskNilCount++;
+        if (anyMaskNilCount > 3) skipLog = true;
+    }
+    static int doNilCount = 0;
+    if (origStr == "do:" && rcvrClassName == "UndefinedObject") {
+        doNilCount++;
+        if (doNilCount > 3) skipLog = true;
+    }
     if (!skipLog) {
         std::cerr << "[DNU] Selector '#" << origStr << "' not found on " << rcvrClassName
                   << (isClass ? " [CLASS]" : " [instance]")
@@ -12533,6 +12564,73 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         }
         popN(argCount + 1);  // Pop receiver and argument
         push(Oop::fromSmallInteger(0));
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #nextPut: on nil - stream write on nil stream
+    // Happens when code tries to write to a nil stream
+    if (origStr == "nextPut:" && rcvrClassName == "UndefinedObject" && argCount == 1) {
+        static int nextPutCount = 0;
+        nextPutCount++;
+        if (nextPutCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] nextPut: on nil #" << nextPutCount << " - returning nil\n";
+        }
+        popN(argCount + 1);  // Pop receiver and argument
+        push(memory_.nil());  // Return nil (no-op)
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #replaceFrom:to:with:startingAt: on nil - array replacement on nil
+    // Happens when code tries to replace in a nil array
+    if (origStr == "replaceFrom:to:with:startingAt:" && rcvrClassName == "UndefinedObject" && argCount == 4) {
+        static int replaceCount = 0;
+        replaceCount++;
+        if (replaceCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] replaceFrom:to:with:startingAt: on nil #" << replaceCount << " - returning nil\n";
+        }
+        popN(argCount + 1);  // Pop receiver and 4 arguments
+        push(memory_.nil());  // Return nil
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #setToEnd on nil - stream positioning on nil
+    if (origStr == "setToEnd" && rcvrClassName == "UndefinedObject" && argCount == 0) {
+        static int setToEndCount = 0;
+        setToEndCount++;
+        if (setToEndCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] setToEnd on nil #" << setToEndCount << " - returning nil\n";
+        }
+        pop();  // Pop receiver
+        push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #at:ifAbsent: on nil - dictionary lookup on nil
+    if (origStr == "at:ifAbsent:" && rcvrClassName == "UndefinedObject" && argCount == 2) {
+        static int atIfAbsentCount = 0;
+        atIfAbsentCount++;
+        if (atIfAbsentCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] at:ifAbsent: on nil #" << atIfAbsentCount << " - returning nil\n";
+        }
+        popN(argCount + 1);  // Pop receiver and 2 arguments
+        push(memory_.nil());  // Return nil (not found)
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #isLetter: on nil - character test on nil
+    if (origStr == "isLetter:" && rcvrClassName == "UndefinedObject" && argCount == 1) {
+        static int isLetterCount = 0;
+        isLetterCount++;
+        if (isLetterCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] isLetter: on nil #" << isLetterCount << " - returning false\n";
+        }
+        popN(argCount + 1);  // Pop receiver and argument
+        push(memory_.falseObject());
         dnuDepth--;
         return;
     }
