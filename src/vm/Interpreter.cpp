@@ -12411,18 +12411,20 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         return;
     }
 
-    // Fallback for #pointerArity: on Error - FFI-related message on error object
-    // Causes infinite loop when error handling tries to introspect the error
-    if (origStr == "pointerArity:" && rcvrClassName == "Error" && argCount == 1) {
-        static int arityCount = 0;
-        arityCount++;
-        if (arityCount <= 3) {
-            std::cerr << "[DNU-FALLBACK] pointerArity: on Error #" << arityCount << " - returning 0\n";
+    // Fallback for #pointerArity: on Error or nil - FFI-related message
+    // Causes infinite loop when error handling tries to introspect the error/nil
+    if (origStr == "pointerArity:" && argCount == 1) {
+        if (rcvrClassName == "Error" || rcvrClassName == "UndefinedObject" || actualReceiver.isNil()) {
+            static int arityCount = 0;
+            arityCount++;
+            if (arityCount <= 3) {
+                std::cerr << "[DNU-FALLBACK] pointerArity: on " << rcvrClassName << " #" << arityCount << " - returning 0\n";
+            }
+            popN(argCount + 1);  // Pop receiver and argument
+            push(Oop::fromSmallInteger(0));  // Return 0 (no pointer arity)
+            dnuDepth--;
+            return;
         }
-        popN(argCount + 1);  // Pop receiver and argument
-        push(Oop::fromSmallInteger(0));  // Return 0 (no pointer arity)
-        dnuDepth--;
-        return;
     }
 
     // Fallback for #anyMask: on nil - bitmask check on nil value
@@ -12435,6 +12437,46 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         }
         popN(argCount + 1);  // Pop receiver and argument
         push(memory_.falseObject());  // nil anyMask: anything = false
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #isExternalStructure on nil - FFI type check
+    // This causes endless loops when FFI tries to check nil values
+    if (origStr == "isExternalStructure" && actualReceiver.isNil() && argCount == 0) {
+        static int extStructCount = 0;
+        extStructCount++;
+        if (extStructCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] isExternalStructure on nil #" << extStructCount << " - returning false\n";
+        }
+        pop();  // Pop receiver
+        push(memory_.falseObject());  // nil is not an external structure
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #typeAlignment on nil - FFI type alignment check
+    if (origStr == "typeAlignment" && actualReceiver.isNil() && argCount == 0) {
+        static int alignCount = 0;
+        alignCount++;
+        if (alignCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] typeAlignment on nil #" << alignCount << " - returning 1\n";
+        }
+        pop();  // Pop receiver
+        push(Oop::fromSmallInteger(1));  // Default alignment of 1
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #negative on nil - number check on nil
+    if (origStr == "negative" && actualReceiver.isNil() && argCount == 0) {
+        static int negCount = 0;
+        negCount++;
+        if (negCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] negative on nil #" << negCount << " - returning false\n";
+        }
+        pop();  // Pop receiver
+        push(memory_.falseObject());  // nil is not negative
         dnuDepth--;
         return;
     }
