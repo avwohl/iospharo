@@ -48,7 +48,9 @@ install
     | driver |
     self isSupported ifTrue: [
         driver := self new.
-        OSWindowDriver current: driver.
+        "Set the Current class variable directly since OSWindowDriver has no current: setter"
+        OSWindowDriver classPool at: #Current put: driver.
+        OSWindowDriver classPool at: #Session put: Smalltalk session.
         driver ensureEventLoop.
         Transcript show: 'OSiOSDriver installed and event loop started'; cr]
     ifFalse: [

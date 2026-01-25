@@ -12314,7 +12314,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
             dnuTraceLog = fopen("/tmp/dnu_trace.log", "w");
         }
     }
-    if (dnuTraceLog && dnuTraceCount < 100) {
+    if (dnuTraceLog && dnuTraceCount < 500) {
         std::string selStr = "<unknown>";
         if (selector.isObject() && selector.rawBits() > 0x10000) {
             ObjectHeader* selHdr = selector.asObjectPtr();
@@ -12745,6 +12745,80 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         push(memory_.nil());
         dnuDepth--;
         return;
+    }
+
+    // Fallback for #current: on OSWindowDriver class - set the current driver
+    // OSWindowDriver doesn't have a current: setter, but OSiOSDriver tries to use it
+    if (origStr == "current:" && argCount == 1) {
+        // Check if receiver is OSWindowDriver class (a metaclass)
+        bool isWindowDriverClass = false;
+        if (actualReceiver.isObject()) {
+            Oop className = memory_.fetchPointer(6, actualReceiver);
+            if (className.isObject()) {
+                ObjectHeader* cnHdr = className.asObjectPtr();
+                if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                    std::string name((char*)cnHdr->bytes(), cnHdr->byteSize());
+                    if (name == "OSWindowDriver" || name.find("Driver") != std::string::npos) {
+                        isWindowDriverClass = true;
+                    }
+                }
+            }
+        }
+
+        if (isWindowDriverClass) {
+            static int currentSetCount = 0;
+            currentSetCount++;
+            // Get the driver value being set
+            Oop newDriver = stackTop();
+            if (currentSetCount <= 5) {
+                std::cerr << "[DNU-FALLBACK] current: on OSWindowDriver #" << currentSetCount
+                          << " - setting Current class variable to 0x" << std::hex << newDriver.rawBits() << std::dec << "\n";
+            }
+
+            // Find OSWindowDriver's classPool and set Current
+            Oop classPool = memory_.fetchPointer(7, actualReceiver);  // classPool at slot 7
+            if (classPool.isObject() && classPool.rawBits() != memory_.nil().rawBits()) {
+                ObjectHeader* poolHdr = classPool.asObjectPtr();
+                size_t poolSlots = poolHdr->slotCount();
+
+                // Dictionary has 'array' at slot 1 containing associations
+                Oop assocArray = memory_.fetchPointer(1, classPool);
+                if (assocArray.isObject() && assocArray.rawBits() != memory_.nil().rawBits()) {
+                    ObjectHeader* arrHdr = assocArray.asObjectPtr();
+                    size_t arrSlots = arrHdr->slotCount();
+
+                    // Search for 'Current' association
+                    for (size_t i = 0; i < arrSlots; i++) {
+                        Oop assoc = memory_.fetchPointer(i, assocArray);
+                        if (assoc.isObject() && assoc.rawBits() != memory_.nil().rawBits()) {
+                            ObjectHeader* assocHdr = assoc.asObjectPtr();
+                            if (assocHdr->slotCount() >= 2) {
+                                Oop key = memory_.fetchPointer(0, assoc);
+                                if (key.isObject()) {
+                                    ObjectHeader* keyHdr = key.asObjectPtr();
+                                    if (keyHdr->isBytesObject()) {
+                                        std::string keyStr((char*)keyHdr->bytes(), keyHdr->byteSize());
+                                        if (keyStr == "Current") {
+                                            // Set the value!
+                                            memory_.storePointer(1, assoc, newDriver);
+                                            if (currentSetCount <= 5) {
+                                                std::cerr << "[DNU-FALLBACK] current: Successfully set Current in classPool\n";
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            popN(argCount + 1);  // Pop receiver and argument
+            push(newDriver);  // Return the driver that was set
+            dnuDepth--;
+            return;
+        }
     }
 
     // Fallback for #newReferentClass: on ByteSymbol or nil - FFI type resolution

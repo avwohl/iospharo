@@ -11199,6 +11199,44 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
     }
     deepSearchCount++;
 
+    // Log ALL calls to primitive 117 for debugging
+    if (deepLog && deepSearchCount <= 500) {
+        fprintf(deepLog, "[PRIM117] #%d argCount=%d numLiterals=%zu\n",
+                deepSearchCount, argCount, numLiterals);
+        // Dump first few literals to see what's there
+        for (size_t i = 1; i <= numLiterals && i <= 5; i++) {
+            Oop lit = memory_.fetchPointer(i, method);
+            if (lit.isObject() && memory_.isValidPointer(lit)) {
+                ObjectHeader* lh = lit.asObjectPtr();
+                if (lh->isBytesObject() && lh->byteSize() < 100) {
+                    std::string s((char*)lh->bytes(), lh->byteSize());
+                    fprintf(deepLog, "  lit[%zu]='%s'\n", i, s.c_str());
+                } else {
+                    fprintf(deepLog, "  lit[%zu] fmt=%u slots=%zu clsIdx=%u\n",
+                            i, (uint32_t)lh->format(), lh->slotCount(), lh->classIndex());
+                }
+            }
+        }
+        // Also check the penultimate literal (numLiterals-1 slot = numLiterals literal index)
+        // which contains AdditionalMethodState with Pragma objects
+        if (numLiterals >= 1) {
+            Oop penult = memory_.fetchPointer(numLiterals, method);  // penultimate literal
+            if (penult.isObject() && memory_.isValidPointer(penult)) {
+                ObjectHeader* ph = penult.asObjectPtr();
+                fprintf(deepLog, "  penult[%zu] fmt=%u slots=%zu clsIdx=%u\n",
+                        numLiterals, (uint32_t)ph->format(), ph->slotCount(), ph->classIndex());
+                // Deep search for any LoadSymbol or primitive reference
+                if (containsString(penult, "LoadSymbol", 0, nullptr)) {
+                    fprintf(deepLog, "  *** FOUND LoadSymbol in penultimate! ***\n");
+                }
+                if (containsString(penult, "primitive", 0, nullptr)) {
+                    fprintf(deepLog, "  *** FOUND 'primitive' in penultimate ***\n");
+                }
+            }
+        }
+        fflush(deepLog);
+    }
+
     for (size_t i = 1; i <= numLiterals; i++) {
         Oop literal = memory_.fetchPointer(i, method);
         if (!literal.isObject() || !memory_.isValidPointer(literal)) continue;
