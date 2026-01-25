@@ -1777,8 +1777,22 @@ void Interpreter::processInputEvents() {
 
         // Signal the input semaphore to wake up Smalltalk's event loop
         int inputSemaIdx = pharo::gEventQueue.getInputSemaphoreIndex();
+        static int semaSignalCount = 0;
         if (inputSemaIdx > 0) {
+            semaSignalCount++;
+            if (logFile && semaSignalCount <= 10) {
+                fprintf(logFile, "[SEMA] Signaling input semaphore index=%d (signal #%d)\n",
+                        inputSemaIdx, semaSignalCount);
+                fflush(logFile);
+            }
             signalExternalSemaphore(inputSemaIdx);
+        } else {
+            static bool loggedNoSema = false;
+            if (logFile && !loggedNoSema) {
+                loggedNoSema = true;
+                fprintf(logFile, "[SEMA] Input semaphore index is %d - no signaling\n", inputSemaIdx);
+                fflush(logFile);
+            }
         }
 
         // Try direct Hand update: write position to HandMorph
@@ -16900,6 +16914,44 @@ void Interpreter::installOSiOSDriver() {
                             }
                         }
                         fflush(driverLog);
+                    }
+
+                    // Set up a default input semaphore so events can be signaled
+                    // Check the external semaphore array for an available slot
+                    Oop extSemArray = memory_.specialObject(SpecialObjectIndex::ExternalObjectsArray);
+                    if (extSemArray.isObject() && extSemArray.rawBits() != nilObj.rawBits()) {
+                        ObjectHeader* esaHdr = extSemArray.asObjectPtr();
+                        size_t esaSize = esaHdr->slotCount();
+                        fprintf(driverLog, "[DRIVER] External semaphore array has %zu slots\n", esaSize);
+
+                        // Look for a semaphore in the first few slots
+                        for (size_t i = 0; i < std::min(esaSize, (size_t)10); i++) {
+                            Oop slot = memory_.fetchPointer(i, extSemArray);
+                            if (slot.isObject() && slot.rawBits() != nilObj.rawBits()) {
+                                Oop slotClass = memory_.classOf(slot);
+                                if (slotClass.isObject()) {
+                                    Oop className = memory_.fetchPointer(6, slotClass);
+                                    if (className.isObject()) {
+                                        ObjectHeader* cnHdr = className.asObjectPtr();
+                                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 30) {
+                                            std::string name((char*)cnHdr->bytes(), cnHdr->byteSize());
+                                            fprintf(driverLog, "[DRIVER] ExternalSema[%zu]: class=%s\n", i, name.c_str());
+                                            if (name == "Semaphore") {
+                                                // Found a semaphore! Use this slot as input semaphore
+                                                pharo::gEventQueue.setInputSemaphoreIndex(static_cast<int>(i + 1));  // 1-indexed
+                                                fprintf(driverLog, "[DRIVER] Set input semaphore index to %zu (1-indexed)\n", i + 1);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // If no semaphore found, use slot 1 as default (common convention)
+                        if (pharo::gEventQueue.getInputSemaphoreIndex() == 0) {
+                            pharo::gEventQueue.setInputSemaphoreIndex(1);
+                            fprintf(driverLog, "[DRIVER] Using default input semaphore index 1\n");
+                        }
                     }
                 }
 
