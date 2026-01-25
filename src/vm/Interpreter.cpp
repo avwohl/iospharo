@@ -1780,6 +1780,53 @@ void Interpreter::processInputEvents() {
         if (inputSemaIdx > 0) {
             signalExternalSemaphore(inputSemaIdx);
         }
+
+        // Try direct Hand update: write position to HandMorph
+        // slot[13] is the position (Point)
+        static int directUpdateCount = 0;
+        static bool loggedHandStatus = false;
+
+        // Debug: log Hand status periodically
+        if (logFile && !loggedHandStatus && callCount > 5) {
+            loggedHandStatus = true;
+            fprintf(logFile, "[DIRECT-HAND] eventInjectionHand_ = 0x%llx (nil=0x%llx) isObj=%d\n",
+                    (unsigned long long)eventInjectionHand_.rawBits(),
+                    (unsigned long long)memory_.nil().rawBits(),
+                    eventInjectionHand_.isObject() ? 1 : 0);
+            fflush(logFile);
+        }
+
+        if (eventInjectionHand_.isObject() &&
+            eventInjectionHand_.rawBits() != memory_.nil().rawBits() &&
+            event.type == static_cast<int>(pharo::EventType::Mouse)) {
+
+            directUpdateCount++;
+
+            // Log all direct updates for now
+            if (logFile) {
+                fprintf(logFile, "[DIRECT-HAND] Update #%d position to (%d,%d) type=%d\n",
+                        directUpdateCount, event.arg1, event.arg2, event.arg5);
+                fflush(logFile);
+            }
+
+            // Get the position Point
+            Oop position = memory_.fetchPointer(13, eventInjectionHand_);
+            if (position.isObject() && position.rawBits() != memory_.nil().rawBits()) {
+                // Point has x at slot 0, y at slot 1
+                memory_.storePointer(0, position, Oop::fromSmallInteger(event.arg1));
+                memory_.storePointer(1, position, Oop::fromSmallInteger(event.arg2));
+                if (logFile) {
+                    fprintf(logFile, "[DIRECT-HAND] Updated Point 0x%llx\n",
+                            (unsigned long long)position.rawBits());
+                    fflush(logFile);
+                }
+            } else {
+                if (logFile) {
+                    fprintf(logFile, "[DIRECT-HAND] Position slot is nil/invalid\n");
+                    fflush(logFile);
+                }
+            }
+        }
     }
 }
 
