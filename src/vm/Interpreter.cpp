@@ -2550,6 +2550,12 @@ bool Interpreter::step() {
         installOSiOSDriver();  // Call helper method to install driver
     }
 
+    // Process input events periodically (every 1000 steps after initialization)
+    // This ensures events are drained from gEventQueue even without an event loop process
+    if (osDriverInstallAttempted && (stepCountForDriver % 1000) == 0) {
+        processInputEvents();
+    }
+
     // Debug: check of class 1 periodically and detect when it changes
     static Oop lastClass1 = Oop::nil();
     static int class1CheckCount = 0;
@@ -14093,11 +14099,19 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         // This is used during exception handling and process switching
         Oop newSender = pop();  // Pop argument (the new sender)
         Oop context = stackValue(0);  // Peek at receiver (Context)
+        Oop nilObj = memory_.nil();
 
         static int privSenderDnuCount = 0;
         if (++privSenderDnuCount <= 3) {
             std::cerr << "[DNU-privSender:] Context=0x" << std::hex << context.rawBits()
                       << " newSender=0x" << newSender.rawBits() << std::dec << "\n";
+        }
+
+        // Check if receiver is nil - can't set sender on nil
+        if (context.isNil() || context.rawBits() == nilObj.rawBits()) {
+            // Just return receiver (nil) without doing anything
+            dnuDepth--;
+            return;
         }
 
         // Set the sender slot (slot 0) of the context
@@ -14110,6 +14124,45 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         // Leave receiver on stack
         dnuDepth--;
         return;
+    }
+
+    // Handler for resume:through: on nil - happens during exception handling when process is nil
+    if ((origStr == "resume:through:" && argCount == 2) ||
+        (origStr == "resumeUnchecked:" && argCount == 1)) {
+        Oop receiver = stackValue(argCount);  // Receiver should be a Process
+        Oop nilObj = memory_.nil();
+
+        if (receiver.isNil() || receiver.rawBits() == nilObj.rawBits()) {
+            // Can't resume nil - just return nil and don't crash
+            static int nilResumeCount = 0;
+            if (++nilResumeCount <= 5) {
+                std::cerr << "[DNU] " << origStr << " called on nil - ignoring\n";
+            }
+            popN(argCount + 1);  // Pop args and receiver
+            push(nilObj);  // Return nil
+            dnuDepth--;
+            return;
+        }
+        // If receiver is a real process, fall through to normal DNU handling
+    }
+
+    // Handler for copyTo: on nil - happens during context chain manipulation when context is nil
+    if (origStr == "copyTo:" && argCount == 1) {
+        Oop receiver = stackValue(1);  // Receiver should be a Context
+        Oop nilObj = memory_.nil();
+
+        if (receiver.isNil() || receiver.rawBits() == nilObj.rawBits()) {
+            // Can't copy nil context - just return nil
+            static int nilCopyToCount = 0;
+            if (++nilCopyToCount <= 3) {
+                std::cerr << "[DNU] copyTo: called on nil context - returning nil\n";
+            }
+            popN(2);  // Pop arg and receiver
+            push(nilObj);  // Return nil
+            dnuDepth--;
+            return;
+        }
+        // If receiver is a real context, fall through to normal DNU handling
     }
 
     // Fallback for stream operations to avoid DNU spiral during startup
