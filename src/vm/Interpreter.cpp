@@ -47,6 +47,12 @@ static int g_bytecodeTraceCount = 0;
 static FILE* g_bytecodeTraceLog = nullptr;
 static uint64_t g_stepNum = 0;  // Global step counter for hang debugging
 
+// Crash trace: enabled after restoreResumptionTimes: is skipped
+// Disabled now that the crash is fixed
+bool g_crashTraceEnabled = false;
+static int g_crashTraceCount = 0;
+static bool g_verboseCrashTrace = false;  // Set to true to enable all the EXEC-CTX-TRACE output
+
 // ===== CONSTRUCTION =====
 
 Interpreter::Interpreter(ObjectMemory& memory)
@@ -2632,6 +2638,13 @@ bool Interpreter::step() {
 
     dispatchBytecode(bytecode);
 
+    // Crash trace: after dispatch
+    if (g_crashTraceEnabled && g_crashTraceCount <= 70 && bytecode == 0x5E) {
+        fprintf(stderr, "[CRASH-TRACE] AFTER 0x5E dispatch: running=%d fd=%zu\n",
+                running_ ? 1 : 0, frameDepth_);
+        fflush(stderr);
+    }
+
     // Log after dispatch
     if (bcLog && g_stepNum >= 162000 && g_stepNum <= 163000) {
         fprintf(bcLog, "[BC %llu] AFTER dispatch running=%d\n", g_stepNum, running_ ? 1 : 0);
@@ -2694,6 +2707,21 @@ ExecuteResult Interpreter::stepDetailed() {
 // ===== BYTECODE DISPATCH =====
 
 void Interpreter::dispatchBytecode(uint8_t bytecode) {
+    // Crash trace: log every bytecode after restoreResumptionTimes: is skipped
+    if (g_crashTraceEnabled && g_crashTraceCount < 200) {
+        g_crashTraceCount++;
+        // For bytecode 0x5E at frame depth 0, add extra context before and after
+        if (bytecode == 0x5E && frameDepth_ == 0) {
+            fprintf(stderr, "[CRASH-TRACE #%d] bc=0x%02X ip=%p fd=%zu **RETURN-FROM-BASE** stack=%p activeCtx=0x%llx\n",
+                    g_crashTraceCount, bytecode, (void*)instructionPointer_, frameDepth_,
+                    (void*)stackPointer_, (unsigned long long)activeContext_.rawBits());
+        } else {
+            fprintf(stderr, "[CRASH-TRACE #%d] bc=0x%02X ip=%p fd=%zu\n",
+                    g_crashTraceCount, bytecode, (void*)instructionPointer_, frameDepth_);
+        }
+        fflush(stderr);
+    }
+
     // Simple profiling: detect when slowdown happens
     static int bcCount = 0;
     static auto lastReport = std::chrono::steady_clock::now();
@@ -2947,6 +2975,13 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                         int enclosingLevels = extA_;
                         extA_ = 0;  // Consume extension
 
+                        // Crash trace for 0x5E
+                        if (g_crashTraceEnabled && frameDepth_ == 0) {
+                            fprintf(stderr, "[0x5E-TRACE] enclosingLevels=%d extA=0 about to %s\n",
+                                    enclosingLevels, enclosingLevels > 0 ? "returnFromBlock" : "pop+returnValue");
+                            fflush(stderr);
+                        }
+
                         // TRACE: Block return bytecode for detect investigation
                         {
                             extern bool g_traceDetectJumps;
@@ -2961,8 +2996,21 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                             returnFromBlock();
                         } else {
                             // Simple block return - just return the value
+                            if (g_crashTraceEnabled && frameDepth_ == 0) {
+                                fprintf(stderr, "[0x5E-TRACE] before pop()\n");
+                                fflush(stderr);
+                            }
                             Oop value = pop();
+                            if (g_crashTraceEnabled && frameDepth_ == 0) {
+                                fprintf(stderr, "[0x5E-TRACE] after pop, value=0x%llx, before returnValue\n",
+                                        (unsigned long long)value.rawBits());
+                                fflush(stderr);
+                            }
                             returnValue(value);
+                            if (g_crashTraceEnabled && frameDepth_ == 0) {
+                                fprintf(stderr, "[0x5E-TRACE] after returnValue\n");
+                                fflush(stderr);
+                            }
                         }
                         break;
                     }
@@ -3932,6 +3980,13 @@ void Interpreter::returnValue(Oop value) {
 
     // If no frames to pop, check if we have a sender context to return to
     if (frameDepth_ == 0) {
+        // Crash trace
+        if (g_crashTraceEnabled) {
+            fprintf(stderr, "[RETVAL-TRACE] frameDepth_==0, activeCtx=0x%llx\n",
+                    (unsigned long long)activeContext_.rawBits());
+            fflush(stderr);
+        }
+
         // Debug: trace context chain
         static FILE* ctxChainLog = nullptr;
         static int ctxChainCount = 0;
@@ -3947,9 +4002,21 @@ void Interpreter::returnValue(Oop value) {
 
         // Check if current context has a sender
         Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
+        if (g_crashTraceEnabled) {
+            fprintf(stderr, "[RETVAL-TRACE] got nilObj=0x%llx\n", (unsigned long long)nilObj.rawBits());
+            fflush(stderr);
+        }
 
         if (activeContext_.isObject() && activeContext_.rawBits() != nilObj.rawBits()) {
+            if (g_crashTraceEnabled) {
+                fprintf(stderr, "[RETVAL-TRACE] about to fetch sender from activeContext\n");
+                fflush(stderr);
+            }
             Oop sender = memory_.fetchPointer(0, activeContext_);
+            if (g_crashTraceEnabled) {
+                fprintf(stderr, "[RETVAL-TRACE] sender=0x%llx\n", (unsigned long long)sender.rawBits());
+                fflush(stderr);
+            }
             if constexpr (ENABLE_DEBUG_LOGGING) {
                 if (ctxChainLog && ctxChainCount <= 200) {
                     fprintf(ctxChainLog, "  -> sender (slot 0) = 0x%llx\n",
@@ -3969,7 +4036,16 @@ void Interpreter::returnValue(Oop value) {
                 }
                 // Fall through to terminate current process
             } else if (sender.isObject() && sender.rawBits() != nilObj.rawBits()) {
+                if (g_crashTraceEnabled) {
+                    fprintf(stderr, "[RETVAL-TRACE] sender valid, about to access senderHdr\n");
+                    fflush(stderr);
+                }
                 ObjectHeader* senderHdr = sender.asObjectPtr();
+                if (g_crashTraceEnabled) {
+                    fprintf(stderr, "[RETVAL-TRACE] senderHdr=%p slots=%zu fmt=%d\n",
+                            (void*)senderHdr, senderHdr->slotCount(), (int)senderHdr->format());
+                    fflush(stderr);
+                }
 
                 // Check if sender looks like a Context (has enough slots and right format)
                 bool hasEnoughSlots = senderHdr->slotCount() >= 6;
@@ -4002,10 +4078,22 @@ void Interpreter::returnValue(Oop value) {
                 }
 
                 if (hasEnoughSlots && isContextFormat) {
+                    if (g_crashTraceEnabled) {
+                        fprintf(stderr, "[RETVAL-TRACE] sender is valid context, will execute from it\n");
+                        fflush(stderr);
+                    }
                     // Log sender's method to trace the return chain
                     if (senderCheckLog && senderCheckCount <= 100) {
+                        if (g_crashTraceEnabled) {
+                            fprintf(stderr, "[RETVAL-TRACE] in logging block, fetching senderMethod\n");
+                            fflush(stderr);
+                        }
                         std::string senderMethodSel = "?";
                         Oop senderMethod = memory_.fetchPointer(3, sender);
+                        if (g_crashTraceEnabled) {
+                            fprintf(stderr, "[RETVAL-TRACE] senderMethod=0x%llx\n", (unsigned long long)senderMethod.rawBits());
+                            fflush(stderr);
+                        }
                         Oop senderPC = memory_.fetchPointer(1, sender);
                         Oop sendersSender = memory_.fetchPointer(0, sender);
                         if (senderMethod.isObject() && senderMethod.rawBits() > 0x10000) {
@@ -4043,6 +4131,11 @@ void Interpreter::returnValue(Oop value) {
 
                     // Execute from sender, which will push the return value appropriately
                     // First, set up the sender context
+                    if (g_crashTraceEnabled) {
+                        fprintf(stderr, "[RETVAL-TRACE] about to executeFromContext(sender=0x%llx)\n",
+                                (unsigned long long)sender.rawBits());
+                        fflush(stderr);
+                    }
                     if (executeFromContext(sender)) {
                         // Push the return value onto the new context's stack
                         push(value);
@@ -7240,7 +7333,11 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         static int restoreSkipCount = 0;
         if (restoreSkipCount++ < 3) {
             std::cerr << "[STARTUP] Skipping restoreResumptionTimes: - delay scheduler starts fresh\n";
+            std::cerr << std::flush;
         }
+        // Crash tracing disabled - bug was fixed
+        // extern bool g_crashTraceEnabled;
+        // g_crashTraceEnabled = true;
         // Pop the argument and receiver, push receiver (return self)
         popN(argCount);  // Pop argument(s)
         // Top of stack is now the receiver, leave it there (return self)
@@ -12917,6 +13014,33 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         return;
     }
 
+    // Fallback for #sourceNodeExecuted on nil - debugging/profiling hook called on nil nodes
+    // Just return self (nil) to continue execution
+    if (origStr == "sourceNodeExecuted" && rcvrClassName == "UndefinedObject" && argCount == 0) {
+        static int srcNodeCount = 0;
+        srcNodeCount++;
+        if (srcNodeCount <= 5) {
+            std::cerr << "[DNU-FALLBACK] sourceNodeExecuted on nil #" << srcNodeCount << " - returning nil\n";
+        }
+        // Leave receiver on stack (return self)
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #includes: on nil - collection membership test on nil
+    // Returns false since nil doesn't include anything
+    if (origStr == "includes:" && rcvrClassName == "UndefinedObject" && argCount == 1) {
+        static int includesCount = 0;
+        includesCount++;
+        if (includesCount <= 5) {
+            std::cerr << "[DNU-FALLBACK] includes: on nil #" << includesCount << " - returning false\n";
+        }
+        popN(argCount + 1);  // Pop receiver and argument
+        push(memory_.falseObject());  // nil doesn't include anything
+        dnuDepth--;
+        return;
+    }
+
     // Fallback for MorphicRenderLoop#doInterCycleWait - method may not exist in modern Pharo
     // The waiting is handled by C++ side (sleep in idle loop), so just return self
     if (origStr == "doInterCycleWait" && argCount == 0) {
@@ -16630,6 +16754,12 @@ Oop Interpreter::findSelector(const char* name) {
 }
 
 bool Interpreter::executeFromContext(Oop context) {
+    // Crash trace
+    if (g_crashTraceEnabled) {
+        fprintf(stderr, "[EXEC-CTX-TRACE] enter ctx=0x%llx\n", (unsigned long long)context.rawBits());
+        fflush(stderr);
+    }
+
     // Reset interpreter stack - each context execution starts fresh
     // The context object stores the Smalltalk stack state, which we'll restore below
     stackPointer_ = stackBase_;
@@ -16641,10 +16771,18 @@ bool Interpreter::executeFromContext(Oop context) {
     // Disabled for cleaner output: if (execCtxCount <= 10) { ... }
 
     if (context.isNil()) {
+        if (g_crashTraceEnabled) {
+            fprintf(stderr, "[EXEC-CTX-TRACE] context is nil, returning false\n");
+            fflush(stderr);
+        }
         return false;
     }
 
     if (!context.isObject()) {
+        if (g_crashTraceEnabled) {
+            fprintf(stderr, "[EXEC-CTX-TRACE] context not object, returning false\n");
+            fflush(stderr);
+        }
         return false;
     }
 
@@ -16667,14 +16805,34 @@ bool Interpreter::executeFromContext(Oop context) {
     // slot 5: receiver
     // slot 6+: temps and stack values
 
+    if (g_crashTraceEnabled) {
+        fprintf(stderr, "[EXEC-CTX-TRACE] about to get ctxHeader\n");
+        fflush(stderr);
+    }
     ObjectHeader* ctxHeader = context.asObjectPtr();
+    if (g_crashTraceEnabled) {
+        fprintf(stderr, "[EXEC-CTX-TRACE] ctxHeader=%p\n", (void*)ctxHeader);
+        fflush(stderr);
+    }
     size_t slotCount = ctxHeader->slotCount();
+    if (g_crashTraceEnabled) {
+        fprintf(stderr, "[EXEC-CTX-TRACE] slotCount=%zu\n", slotCount);
+        fflush(stderr);
+    }
 
     if (slotCount < 6) {
         return false;
     }
 
+    if (g_crashTraceEnabled) {
+        fprintf(stderr, "[EXEC-CTX-TRACE] fetching method\n");
+        fflush(stderr);
+    }
     method_ = memory_.fetchPointer(3, context);
+    if (g_crashTraceEnabled) {
+        fprintf(stderr, "[EXEC-CTX-TRACE] method=0x%llx\n", (unsigned long long)method_.rawBits());
+        fflush(stderr);
+    }
     receiver_ = memory_.fetchPointer(5, context);
 
     // Check for and fix unrelocated pointers (old image base 0x10000000000+)
@@ -16728,19 +16886,44 @@ bool Interpreter::executeFromContext(Oop context) {
 
     activeContext_ = context;  // Track for sender chain on return
 
+    if (g_crashTraceEnabled) {
+        fprintf(stderr, "[EXEC-CTX-TRACE] set activeContext_, about to set homeMethod_\n");
+        fflush(stderr);
+    }
+
     // Set homeMethod_ for literal access
     // For CompiledMethods, homeMethod_ = method_
     // For CompiledBlocks, find the home method through the closure's outer context chain
     homeMethod_ = method_;
+    if (g_crashTraceEnabled) {
+        fprintf(stderr, "[EXEC-CTX-TRACE] homeMethod_ = method_ set, checking if method is object\n");
+        fflush(stderr);
+    }
     if (method_.isObject()) {
+        if (g_crashTraceEnabled) {
+            fprintf(stderr, "[EXEC-CTX-TRACE] method is object, getting methodHdr\n");
+            fflush(stderr);
+        }
         ObjectHeader* methodHdr = method_.asObjectPtr();
+        if (g_crashTraceEnabled) {
+            fprintf(stderr, "[EXEC-CTX-TRACE] methodHdr=%p\n", (void*)methodHdr);
+            fflush(stderr);
+        }
         uint32_t methodClsIdx = methodHdr->classIndex();
+        if (g_crashTraceEnabled) {
+            fprintf(stderr, "[EXEC-CTX-TRACE] methodClsIdx=%u\n", methodClsIdx);
+            fflush(stderr);
+        }
 
         if (methodClsIdx == 3101) {
             // CompiledMethod - this is the home method
             homeMethod_ = method_;
         } else if (methodClsIdx == 3117) {
             // CompiledBlock - get home method
+            if (g_crashTraceEnabled) {
+                fprintf(stderr, "[EXEC-CTX-TRACE] CompiledBlock detected, getting slot 2\n");
+                fflush(stderr);
+            }
             // In FullBlockClosure model (Pharo 11+), CompiledBlock layout:
             // slot 0: block header (SmallInteger with numArgs, etc.)
             // slot 1: selector (Symbol)
@@ -16749,10 +16932,26 @@ bool Interpreter::executeFromContext(Oop context) {
 
             // First try slot 2 which should be the home CompiledMethod
             Oop slot2 = memory_.fetchPointer(2, method_);
-            if (slot2.isObject()) {
-                ObjectHeader* slot2Hdr = slot2.asObjectPtr();
-                if (slot2Hdr->classIndex() == 3101) {
-                    homeMethod_ = slot2;
+            if (g_crashTraceEnabled) {
+                fprintf(stderr, "[EXEC-CTX-TRACE] slot2=0x%llx\n", (unsigned long long)slot2.rawBits());
+                fflush(stderr);
+            }
+            if (slot2.isObject() && slot2.rawBits() > 0x10000) {
+                // Additional safety check: ensure the pointer is in valid memory range
+                uintptr_t slot2Addr = slot2.rawBits() & ~7ULL;
+                uintptr_t oldStart = reinterpret_cast<uintptr_t>(memory_.oldSpaceStart());
+                uintptr_t oldEnd = reinterpret_cast<uintptr_t>(memory_.oldSpaceEnd());
+                if (slot2Addr >= oldStart && slot2Addr < oldEnd) {
+                    ObjectHeader* slot2Hdr = slot2.asObjectPtr();
+                    if (slot2Hdr->classIndex() == 3101) {
+                        homeMethod_ = slot2;
+                    }
+                } else {
+                    if (g_crashTraceEnabled) {
+                        fprintf(stderr, "[EXEC-CTX-TRACE] slot2 out of range! addr=0x%llx range=[0x%llx-0x%llx]\n",
+                                (unsigned long long)slot2Addr, (unsigned long long)oldStart, (unsigned long long)oldEnd);
+                        fflush(stderr);
+                    }
                 }
             }
 
@@ -16832,6 +17031,12 @@ bool Interpreter::executeFromContext(Oop context) {
         }
     }
 
+    if (g_crashTraceEnabled) {
+        fprintf(stderr, "[EXEC-CTX-TRACE] homeMethod_ set, homeMethod=0x%llx\n",
+                (unsigned long long)homeMethod_.rawBits());
+        fflush(stderr);
+    }
+
     // DEBUG_LOG("[DEBUG] executeFromContext: context=0x" << std::hex << context.rawBits()
               // << " method=0x" << method_.rawBits()
               // << " receiver=0x" << receiver_.rawBits() << std::dec;
@@ -16856,8 +17061,19 @@ bool Interpreter::executeFromContext(Oop context) {
         return false;
     }
 
+    if (g_crashTraceEnabled) {
+        fprintf(stderr, "[EXEC-CTX-TRACE] method valid, getting methodObj\n");
+        fflush(stderr);
+    }
+
     // Get method header to calculate bytecode start
     ObjectHeader* methodObj = method_.asObjectPtr();
+
+    if (g_crashTraceEnabled) {
+        fprintf(stderr, "[EXEC-CTX-TRACE] methodObj=%p slotCount=%zu\n",
+                (void*)methodObj, methodObj->slotCount());
+        fflush(stderr);
+    }
     // DEBUG_LOG("[DEBUG] executeFromContext: Method has " << methodObj->slotCount() << " slots, cls=" << methodObj->classIndex() << ", fmt=" << (int)methodObj->format();
 
     // Check if method has a primitive or if we're in snapshotPrimitive method
