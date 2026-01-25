@@ -12381,15 +12381,31 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         return;
     }
 
-    // Fallback for #newReferentClass: on ByteSymbol - reflection/class loading code
-    // This DNU happens many times during startup and is expensive to handle each time
-    if (origStr == "newReferentClass:" && rcvrClassName == "ByteSymbol" && argCount == 1) {
-        static int newRefCount = 0;
-        newRefCount++;
-        if (newRefCount <= 3) {
-            std::cerr << "[DNU-FALLBACK] newReferentClass: on ByteSymbol #" << newRefCount << " - returning nil\n";
+    // Fallback for #newReferentClass: on ByteSymbol or nil - FFI type resolution
+    // This DNU happens many times during startup when FFI tries to resolve types
+    if (origStr == "newReferentClass:" && argCount == 1) {
+        if (rcvrClassName == "ByteSymbol" || rcvrClassName == "UndefinedObject" || actualReceiver.isNil()) {
+            static int newRefCount = 0;
+            newRefCount++;
+            if (newRefCount <= 3) {
+                std::cerr << "[DNU-FALLBACK] newReferentClass: on " << rcvrClassName << " #" << newRefCount << " - returning nil\n";
+            }
+            popN(argCount + 1);  // Pop receiver and argument
+            push(memory_.nil());
+            dnuDepth--;
+            return;
         }
-        popN(argCount + 1);  // Pop receiver and argument
+    }
+
+    // Fallback for #asPointerType on ByteSymbol - FFI type resolution
+    // UFFI tries to convert symbols to pointer types during FFI call setup
+    if (origStr == "asPointerType" && rcvrClassName == "ByteSymbol" && argCount == 0) {
+        static int ptrTypeCount = 0;
+        ptrTypeCount++;
+        if (ptrTypeCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] asPointerType on ByteSymbol #" << ptrTypeCount << " - returning nil\n";
+        }
+        pop();  // Pop receiver
         push(memory_.nil());
         dnuDepth--;
         return;
@@ -12405,6 +12421,20 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         }
         popN(argCount + 1);  // Pop receiver and argument
         push(Oop::fromSmallInteger(0));  // Return 0 (no pointer arity)
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #anyMask: on nil - bitmask check on nil value
+    // Code checking flags on potentially nil objects
+    if (origStr == "anyMask:" && actualReceiver.isNil() && argCount == 1) {
+        static int maskCount = 0;
+        maskCount++;
+        if (maskCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] anyMask: on nil #" << maskCount << " - returning false\n";
+        }
+        popN(argCount + 1);  // Pop receiver and argument
+        push(memory_.falseObject());  // nil anyMask: anything = false
         dnuDepth--;
         return;
     }
