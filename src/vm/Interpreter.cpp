@@ -17324,6 +17324,72 @@ void Interpreter::installOSiOSDriver() {
                                                                     fprintf(driverLog, "[DRIVER] Verified Current value: 0x%llx\n",
                                                                             (unsigned long long)verifyVal.rawBits());
 
+                                                                    // CRITICAL: Start the event loop by calling ensureEventLoop on the driver
+                                                                    // Inline method lookup since lookupMethodInClass is in another function
+                                                                    auto findMethodInClass = [&](Oop classObj, const char* selectorName) -> Oop {
+                                                                        if (!classObj.isObject()) return Oop::nil();
+                                                                        Oop methodDict = memory_.fetchPointer(1, classObj);
+                                                                        if (!methodDict.isObject()) return Oop::nil();
+                                                                        ObjectHeader* mdHeader = methodDict.asObjectPtr();
+                                                                        size_t mdSlots = mdHeader->slotCount();
+                                                                        for (size_t mi = 2; mi < mdSlots; mi++) {
+                                                                            Oop key = mdHeader->slotAt(mi);
+                                                                            if (!key.isObject() || key.isNil()) continue;
+                                                                            ObjectHeader* keyHdr = key.asObjectPtr();
+                                                                            if (!keyHdr->isBytesObject()) continue;
+                                                                            size_t keyLen = keyHdr->byteSize();
+                                                                            if (keyLen == strlen(selectorName) &&
+                                                                                memcmp(keyHdr->bytes(), selectorName, keyLen) == 0) {
+                                                                                Oop values = memory_.fetchPointer(1, methodDict);
+                                                                                if (values.isObject()) {
+                                                                                    ObjectHeader* valHdr = values.asObjectPtr();
+                                                                                    size_t valueIdx = mi - 2;
+                                                                                    if (valueIdx < valHdr->slotCount()) {
+                                                                                        return valHdr->slotAt(valueIdx);
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                        return Oop::nil();
+                                                                    };
+
+                                                                    // First try instance method ensureEventLoop
+                                                                    Oop ensureMethod = findMethodInClass(sdl2DriverClass, "ensureEventLoop");
+                                                                    if (ensureMethod.isObject() && ensureMethod.rawBits() != nilObj.rawBits()) {
+                                                                        fprintf(driverLog, "[DRIVER] Found instance ensureEventLoop method, queuing for execution\n");
+                                                                        pendingDriverInstallMethod_ = ensureMethod;
+                                                                        pendingDriverInstallReceiver_ = driverInstance;
+                                                                        hasPendingDriverInstall_ = true;
+                                                                        pendingDriverMethodNeedsArg_ = false;
+                                                                    } else {
+                                                                        fprintf(driverLog, "[DRIVER] ensureEventLoop instance method NOT found in OSSDL2Driver\n");
+                                                                        // Try CLASS-SIDE startUp: - this is in the metaclass!
+                                                                        // The metaclass is classOf(sdl2DriverClass)
+                                                                        Oop metaclass = memory_.classOf(sdl2DriverClass);
+                                                                        fprintf(driverLog, "[DRIVER] OSSDL2Driver metaclass: 0x%llx\n", (unsigned long long)metaclass.rawBits());
+                                                                        Oop classStartUpMethod = findMethodInClass(metaclass, "startUp:");
+                                                                        if (classStartUpMethod.isObject() && classStartUpMethod.rawBits() != nilObj.rawBits()) {
+                                                                            fprintf(driverLog, "[DRIVER] Found CLASS-SIDE startUp: in metaclass, calling on class\n");
+                                                                            pendingDriverInstallMethod_ = classStartUpMethod;
+                                                                            pendingDriverInstallReceiver_ = sdl2DriverClass;  // Call on CLASS, not instance
+                                                                            hasPendingDriverInstall_ = true;
+                                                                            pendingDriverMethodNeedsArg_ = true;  // startUp: needs true as argument
+                                                                        } else {
+                                                                            fprintf(driverLog, "[DRIVER] CLASS-SIDE startUp: not found in metaclass\n");
+                                                                            // Fall back to instance-side startUp:
+                                                                            Oop instanceStartUpMethod = findMethodInClass(sdl2DriverClass, "startUp:");
+                                                                            if (instanceStartUpMethod.isObject() && instanceStartUpMethod.rawBits() != nilObj.rawBits()) {
+                                                                                fprintf(driverLog, "[DRIVER] Found instance-side startUp: as fallback\n");
+                                                                                pendingDriverInstallMethod_ = instanceStartUpMethod;
+                                                                                pendingDriverInstallReceiver_ = driverInstance;
+                                                                                hasPendingDriverInstall_ = true;
+                                                                                pendingDriverMethodNeedsArg_ = true;
+                                                                            } else {
+                                                                                fprintf(driverLog, "[DRIVER] No startUp: method found anywhere!\n");
+                                                                            }
+                                                                        }
+                                                                    }
+
                                                                     // Now let's examine the HandMorph structure
                                                                     // HandMorph was found at WorldState slot 7
                                                                     if (world.isObject() && world.rawBits() != nilObj.rawBits()) {
@@ -17677,7 +17743,19 @@ bool Interpreter::executePendingDriverInstall() {
     }
 
     // Create a context for OSiOSDriver install and execute it
-    Oop context = memory_.createStartupContext(pendingDriverInstallMethod_, pendingDriverInstallReceiver_);
+    Oop context;
+    if (pendingDriverMethodNeedsArg_) {
+        // startUp: needs a boolean argument (resuming = true)
+        context = memory_.createStartupContextWithArg(pendingDriverInstallMethod_, pendingDriverInstallReceiver_, memory_.trueObject());
+        if (driverLog) {
+            fprintf(driverLog, "[DRIVER] executePendingDriverInstall: Created context with arg=true for startUp:\n");
+            fflush(driverLog);
+        }
+    } else {
+        context = memory_.createStartupContext(pendingDriverInstallMethod_, pendingDriverInstallReceiver_);
+    }
+    pendingDriverMethodNeedsArg_ = false;  // Reset flag
+
     if (context.isNil()) {
         if (driverLog) {
             fprintf(driverLog, "[DRIVER] executePendingDriverInstall: Failed to create context\n");
@@ -19331,6 +19409,12 @@ void Interpreter::initializeNamedPrimitives() {
     // Also register with explicit module name for compatibility
     registerNamedPrimitive("SqueakFFIPrims", "primitiveLoadSymbolFromModule", &Interpreter::primitiveLoadSymbolFromModule);
     registerNamedPrimitive("SqueakFFIPrims", "primitiveLoadModule", &Interpreter::primitiveLoadModule);
+
+    // SDL2 display detection - CRITICAL for OSSDL2Driver to start its event loop
+    // Without this, OSSDL2Driver checks isVMDisplayUsingSDL2 and if it fails,
+    // the driver won't start its event loop process
+    registerNamedPrimitive("", "isVMDisplayUsingSDL2", &Interpreter::primitiveIsVMDisplayUsingSDL2);
+    registerNamedPrimitive("SqueakPlugin", "isVMDisplayUsingSDL2", &Interpreter::primitiveIsVMDisplayUsingSDL2);
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {

@@ -3823,6 +3823,26 @@ PrimitiveResult Interpreter::primitiveScreenDepth(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// Named primitive: isVMDisplayUsingSDL2
+// Returns true to indicate that SDL2 display subsystem is being used.
+// CRITICAL: OSSDL2Driver checks this to decide whether to start its event loop.
+// Without this returning true, the driver won't poll for SDL events.
+PrimitiveResult Interpreter::primitiveIsVMDisplayUsingSDL2(int argCount) {
+    static bool logged = false;
+    if (!logged) {
+        static FILE* sdlLog = fopen("/tmp/sdl2_detection.log", "w");
+        if (sdlLog) {
+            fprintf(sdlLog, "[SDL2-DETECT] isVMDisplayUsingSDL2 called, returning true\n");
+            fflush(sdlLog);
+        }
+        logged = true;
+    }
+    // Return true - we're providing SDL2 stubs that will handle events
+    pop();  // Pop receiver
+    push(memory_.trueObject());
+    return PrimitiveResult::Success;
+}
+
 // Primitive 140: Beep
 // Produces a system beep sound (no-op in headless mode)
 PrimitiveResult Interpreter::primitiveBeep(int argCount) {

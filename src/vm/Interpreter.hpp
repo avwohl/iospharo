@@ -397,6 +397,7 @@ private:
     Oop pendingDriverInstallMethod_ = Oop::nil();
     Oop pendingDriverInstallReceiver_ = Oop::nil();
     bool hasPendingDriverInstall_ = false;
+    bool pendingDriverMethodNeedsArg_ = false;  // True if method takes an argument (e.g., startUp:)
 
     // Event injection: HandMorph reference for direct event delivery
     Oop eventInjectionHand_ = Oop::nil();
@@ -733,6 +734,7 @@ private:
     PrimitiveResult primitiveKeyboardNext(int argCount);
     PrimitiveResult primitiveScreenSize(int argCount);           // 106
     PrimitiveResult primitiveScreenDepth(int argCount);          // 108
+    PrimitiveResult primitiveIsVMDisplayUsingSDL2(int argCount); // SDL2 detection for OSSDL2Driver
     PrimitiveResult primitiveBeep(int argCount);                 // 140
     PrimitiveResult primitiveClipboardText(int argCount);        // 141
     PrimitiveResult primitiveForceDisplayUpdate(int argCount);
