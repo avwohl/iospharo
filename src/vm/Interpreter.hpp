@@ -211,7 +211,7 @@ public:
     Oop lookupMethodByName(Oop classObj, const char* selectorName); // Find method by name
     void processPendingWorldMenu(); // Execute queued world menu invocation
     void drawClickIndicator(int x, int y, int buttons); // Draw visible click feedback
-    void updateActiveHandPosition(); // Directly update ActiveHand's position/buttons
+    // NOTE: updateActiveHandPosition() REMOVED - was a workaround for missing InputEventSensor process
     void syncDisplayToSurface();   // Copy Display Form to platform surface
     void ensureDisplayForm(int width, int height, int depth);  // Create Form and bind to Display global
     int screenDepth() const { return screenDepth_; }
@@ -399,15 +399,8 @@ private:
     bool hasPendingDriverInstall_ = false;
     bool pendingDriverMethodNeedsArg_ = false;  // True if method takes an argument (e.g., startUp:)
 
-    // Event injection: HandMorph reference for direct event delivery
-    Oop eventInjectionHand_ = Oop::nil();
-    Oop existingMouseEvent_ = Oop::nil();  // Existing MouseEvent to update
-    Oop handEventQueue_ = Oop::nil();  // Hand's WaitfreeQueue for event injection
-    uint32_t mouseEventClassIndex_ = 0;  // Class index for creating MouseEvent objects
-
-    // Direct event handling via context creation
-    Oop pendingEventContext_ = Oop::nil();
-    bool hasPendingEventContext_ = false;
+    // NOTE: Event injection workaround member variables REMOVED
+    // Events must go through proper Smalltalk InputEventSensor process, not C++ workarounds
 
     // Debug: visual click indicator
     int debugClickX_ = -1;
