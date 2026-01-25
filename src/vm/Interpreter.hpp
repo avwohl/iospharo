@@ -398,6 +398,9 @@ private:
     Oop pendingDriverInstallReceiver_ = Oop::nil();
     bool hasPendingDriverInstall_ = false;
 
+    // Event injection: HandMorph reference for direct event delivery
+    Oop eventInjectionHand_ = Oop::nil();
+
     // Debug: visual click indicator
     int debugClickX_ = -1;
     int debugClickY_ = -1;

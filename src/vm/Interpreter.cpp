@@ -16684,49 +16684,70 @@ void Interpreter::installOSiOSDriver() {
                                                                     fprintf(driverLog, "[DRIVER] Verified Current value: 0x%llx\n",
                                                                             (unsigned long long)verifyVal.rawBits());
 
-                                                                    // Now let's examine the MouseButtonEvent class to understand its structure
-                                                                    Oop mouseEventClass = memory_.findGlobal("MouseButtonEvent");
-                                                                    if (mouseEventClass.isObject() && mouseEventClass.rawBits() != nilObj.rawBits()) {
-                                                                        ObjectHeader* mecHdr = mouseEventClass.asObjectPtr();
-                                                                        fprintf(driverLog, "[DRIVER] MouseButtonEvent class has %zu slots\n", mecHdr->slotCount());
+                                                                    // Now let's examine the HandMorph structure
+                                                                    // HandMorph was found at WorldState slot 7
+                                                                    if (world.isObject() && world.rawBits() != nilObj.rawBits()) {
+                                                                        Oop worldState = memory_.fetchPointer(9, world);  // slot 9 is WorldState
+                                                                        if (worldState.isObject() && worldState.rawBits() != nilObj.rawBits()) {
+                                                                            Oop handMorph = memory_.fetchPointer(7, worldState);  // slot 7 is HandMorph
+                                                                            if (handMorph.isObject() && handMorph.rawBits() != nilObj.rawBits()) {
+                                                                                ObjectHeader* handHdr = handMorph.asObjectPtr();
+                                                                                fprintf(driverLog, "[DRIVER] HandMorph has %zu slots\n", handHdr->slotCount());
 
-                                                                        // Get instance variable names from layout (slot 3)
-                                                                        Oop layout = memory_.fetchPointer(3, mouseEventClass);
-                                                                        fprintf(driverLog, "[DRIVER] MouseButtonEvent layout: 0x%llx\n",
-                                                                                (unsigned long long)layout.rawBits());
-                                                                        if (layout.isObject() && layout.rawBits() != nilObj.rawBits()) {
-                                                                            ObjectHeader* layoutHdr = layout.asObjectPtr();
-                                                                            fprintf(driverLog, "[DRIVER] Layout has %zu slots, format=%d\n",
-                                                                                    layoutHdr->slotCount(), layoutHdr->format());
-                                                                        }
+                                                                                // Examine HandMorph slots to understand structure
+                                                                                for (size_t j = 0; j < handHdr->slotCount() && j < 30; j++) {
+                                                                                    Oop slot = memory_.fetchPointer(j, handMorph);
+                                                                                    std::string slotClass = "nil/int";
+                                                                                    size_t slotSlots = 0;
+                                                                                    if (slot.isSmallInteger()) {
+                                                                                        slotClass = "SmallInt";
+                                                                                    } else if (slot.isObject() && slot.rawBits() != nilObj.rawBits()) {
+                                                                                        Oop sc = memory_.classOf(slot);
+                                                                                        if (sc.isObject()) {
+                                                                                            Oop scName = memory_.fetchPointer(6, sc);
+                                                                                            if (scName.isObject()) {
+                                                                                                ObjectHeader* scnHdr = scName.asObjectPtr();
+                                                                                                if (scnHdr->isBytesObject() && scnHdr->byteSize() < 100) {
+                                                                                                    slotClass = std::string((char*)scnHdr->bytes(), scnHdr->byteSize());
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                        slotSlots = slot.asObjectPtr()->slotCount();
+                                                                                    }
+                                                                                    fprintf(driverLog, "[DRIVER] HandMorph slot[%zu]: class=%s slots=%zu\n",
+                                                                                            j, slotClass.c_str(), slotSlots);
+                                                                                }
 
-                                                                        // Get format from slot 2
-                                                                        Oop evtFormat = memory_.fetchPointer(2, mouseEventClass);
-                                                                        if (evtFormat.isSmallInteger()) {
-                                                                            fprintf(driverLog, "[DRIVER] MouseButtonEvent format: %lld\n",
-                                                                                    evtFormat.asSmallInteger());
-                                                                            // Extract inst var count
-                                                                            int64_t fmt = evtFormat.asSmallInteger();
-                                                                            size_t evtInstVars = (fmt >> 1) & 0xFFFF;
-                                                                            fprintf(driverLog, "[DRIVER] MouseButtonEvent instVars: %zu\n", evtInstVars);
-                                                                        }
-
-                                                                        // Try to get instance variable names from class
-                                                                        // Slot 4 is instanceVariables (may be nil or array of symbols)
-                                                                        Oop instVars = memory_.fetchPointer(4, mouseEventClass);
-                                                                        fprintf(driverLog, "[DRIVER] MouseButtonEvent instanceVariables: 0x%llx\n",
-                                                                                (unsigned long long)instVars.rawBits());
-                                                                        if (instVars.isObject() && instVars.rawBits() != nilObj.rawBits()) {
-                                                                            ObjectHeader* ivHdr = instVars.asObjectPtr();
-                                                                            for (size_t j = 0; j < ivHdr->slotCount() && j < 20; j++) {
-                                                                                Oop iv = memory_.fetchPointer(j, instVars);
-                                                                                if (iv.isObject()) {
-                                                                                    ObjectHeader* ivnHdr = iv.asObjectPtr();
-                                                                                    if (ivnHdr->isBytesObject() && ivnHdr->byteSize() < 50) {
-                                                                                        std::string name((char*)ivnHdr->bytes(), ivnHdr->byteSize());
-                                                                                        fprintf(driverLog, "[DRIVER]   instVar[%zu]: '%s'\n", j, name.c_str());
+                                                                                // Examine the WaitfreeQueue at slot 25
+                                                                                Oop eventQueue = memory_.fetchPointer(25, handMorph);
+                                                                                fprintf(driverLog, "[DRIVER] HandMorph eventQueue (slot 25): 0x%llx\n",
+                                                                                        (unsigned long long)eventQueue.rawBits());
+                                                                                if (eventQueue.isObject() && eventQueue.rawBits() != nilObj.rawBits()) {
+                                                                                    ObjectHeader* eqHdr = eventQueue.asObjectPtr();
+                                                                                    fprintf(driverLog, "[DRIVER] WaitfreeQueue has %zu slots\n", eqHdr->slotCount());
+                                                                                    for (size_t k = 0; k < eqHdr->slotCount() && k < 10; k++) {
+                                                                                        Oop eqs = memory_.fetchPointer(k, eventQueue);
+                                                                                        std::string eqsClass = "nil/int";
+                                                                                        if (eqs.isObject() && eqs.rawBits() != nilObj.rawBits()) {
+                                                                                            Oop sc = memory_.classOf(eqs);
+                                                                                            if (sc.isObject()) {
+                                                                                                Oop scName = memory_.fetchPointer(6, sc);
+                                                                                                if (scName.isObject()) {
+                                                                                                    ObjectHeader* scnHdr = scName.asObjectPtr();
+                                                                                                    if (scnHdr->isBytesObject() && scnHdr->byteSize() < 100) {
+                                                                                                        eqsClass = std::string((char*)scnHdr->bytes(), scnHdr->byteSize());
+                                                                                                    }
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                        fprintf(driverLog, "[DRIVER]   WaitfreeQueue slot[%zu]: class=%s\n", k, eqsClass.c_str());
                                                                                     }
                                                                                 }
+
+                                                                                // Store the HandMorph in a member variable for later event injection
+                                                                                eventInjectionHand_ = handMorph;
+                                                                                fprintf(driverLog, "[DRIVER] HandMorph stored at 0x%llx - will use for event injection\n",
+                                                                                        (unsigned long long)handMorph.rawBits());
                                                                             }
                                                                         }
                                                                     }
