@@ -2028,6 +2028,18 @@ void Interpreter::updateActiveHandPosition() {
 // render World morphs directly.
 
 void Interpreter::syncDisplayToSurface() {
+    static int syncCallCount = 0;
+    static FILE* syncLog = nullptr;
+    syncCallCount++;
+    if (syncCallCount <= 10) {
+        if (!syncLog) syncLog = fopen("/tmp/sync_display.log", "w");
+        if (syncLog) {
+            fprintf(syncLog, "[SYNC #%d] syncDisplayToSurface called, gDisplaySurface=%p\n",
+                    syncCallCount, (void*)pharo::gDisplaySurface);
+            fflush(syncLog);
+        }
+    }
+
     if (!pharo::gDisplaySurface) return;
 
     // Process input events - queued for Smalltalk via primitive 264
@@ -2038,9 +2050,24 @@ void Interpreter::syncDisplayToSurface() {
 
     // Sync Display Form to surface if we have one
     // Auto-discover Display global if displayForm_ not set
+    static FILE* displayFormLog = nullptr;
+    static int displayFormLogCount = 0;
+    displayFormLogCount++;
+    if (!displayFormLog) displayFormLog = fopen("/tmp/displayform.log", "w");
+    if (displayFormLog && displayFormLogCount <= 10) {
+        fprintf(displayFormLog, "[DISPLAYFORM #%d] displayForm_.isNil()=%d\n",
+                displayFormLogCount, displayForm_.isNil() ? 1 : 0);
+        fflush(displayFormLog);
+    }
+
     if (displayForm_.isNil()) {
         // First try direct Display global
         Oop display = memory_.findGlobal("Display");
+        if (displayFormLog && displayFormLogCount <= 10) {
+            fprintf(displayFormLog, "[DISPLAYFORM #%d] Display global: %s\n",
+                    displayFormLogCount, display.isNil() ? "nil" : "found");
+            fflush(displayFormLog);
+        }
 
         // If not found, try to get Display from World
         if (display.isNil()) {
@@ -2087,10 +2114,27 @@ void Interpreter::syncDisplayToSurface() {
 
     // Get the Form's bits (slot 0)
     Oop bits = memory_.fetchPointer(0, displayForm_);
-    if (bits.isNil() || !bits.isObject()) return;
+    if (bits.isNil() || !bits.isObject()) {
+        if (displayFormLog && displayFormLogCount <= 10) {
+            fprintf(displayFormLog, "[DISPLAYFORM #%d] bits is nil or not object\n", displayFormLogCount);
+            fflush(displayFormLog);
+        }
+        return;
+    }
 
     ObjectHeader* bitsHdr = bits.asObjectPtr();
     uint32_t* srcPixels = reinterpret_cast<uint32_t*>(bitsHdr->bytes());
+
+    if (displayFormLog && displayFormLogCount <= 10) {
+        // Sample first few pixels to see if Form has content
+        int nonZero = 0;
+        for (int i = 0; i < 100 && i < (int)(bitsHdr->byteSize() / 4); i++) {
+            if (srcPixels[i] != 0) nonZero++;
+        }
+        fprintf(displayFormLog, "[DISPLAYFORM #%d] bits object size=%zu, first 100 pixels nonzero=%d\n",
+                displayFormLogCount, bitsHdr->byteSize(), nonZero);
+        fflush(displayFormLog);
+    }
 
     // Get Form dimensions
     Oop widthOop = memory_.fetchPointer(1, displayForm_);
@@ -2225,9 +2269,20 @@ void Interpreter::checkTimerSemaphore() {
 void Interpreter::startHeartbeat() {
     if (heartbeatRunning_) return;
 
+    FILE* heartbeatLog = fopen("/tmp/heartbeat.log", "w");
+    if (heartbeatLog) {
+        fprintf(heartbeatLog, "[HEARTBEAT] Starting heartbeat thread\n");
+        fflush(heartbeatLog);
+    }
+
     heartbeatRunning_ = true;
-    heartbeatThread_ = std::thread([this]() {
+    heartbeatThread_ = std::thread([this, heartbeatLog]() {
         int tickCount = 0;
+
+        if (heartbeatLog) {
+            fprintf(heartbeatLog, "[HEARTBEAT] Thread started, entering loop\n");
+            fflush(heartbeatLog);
+        }
 
         while (heartbeatRunning_) {
             // Sleep for ~1ms between ticks (like official VM heartbeat)
@@ -2261,6 +2316,10 @@ void Interpreter::startHeartbeat() {
 
             // Every ~33ms (30fps), sync Display Form to platform surface AND push a timer event
             if (tickCount % 33 == 0) {
+                if (heartbeatLog && tickCount <= 330) {
+                    fprintf(heartbeatLog, "[HEARTBEAT] tick=%d, calling syncDisplayToSurface\n", tickCount);
+                    fflush(heartbeatLog);
+                }
                 syncDisplayToSurface();
 
                 // Push a timer/redraw event to wake up the UI process
@@ -12965,6 +13024,23 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         return;
     }
 
+    // Emergency bail-out: if stack is already deep and we're getting DNUs,
+    // we're likely in an error handling loop. Just return nil for ANY DNU
+    // to prevent further stack growth.
+    size_t currentFrameDepth = frameDepth_;
+    if (currentFrameDepth > 200) {
+        static int deepBailCount = 0;
+        deepBailCount++;
+        if (deepBailCount <= 10) {
+            std::cerr << "[DNU-DEEP-BAIL #" << deepBailCount << "] frameDepth=" << currentFrameDepth
+                      << " selector=" << origStr << " - returning nil\n";
+        }
+        popN(argCount + 1);  // Pop receiver and all args
+        push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+
     // Fallback for #isHandlerOrSignalingContext - used during exception handling
     // When called on unknown/corrupted objects, return false (not a handler context)
     // This prevents the exception cascade from spiraling out of control
@@ -15623,9 +15699,13 @@ Oop Interpreter::materializeFrameStack() {
         // Calculate context size (6 fixed + temps + some stack)
         size_t contextSize = 6 + numTemps + 32;
 
-        // Get Context class
+        // Get Context class and its index in the class table
         Oop contextClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
-        uint32_t classIndex = contextClass.isObject() ? contextClass.asObjectPtr()->classIndex() : 3104;
+        // Use indexOfClass to get the class table index, NOT the object's own classIndex (which is the metaclass)
+        uint32_t classIndex = contextClass.isObject() ? memory_.indexOfClass(contextClass) : 0;
+        if (classIndex == 0) {
+            classIndex = 36;  // Fallback to typical Context class index
+        }
 
         // Allocate context - use IndexableWithFixed (format 3) for contexts
         // Contexts have fixed fields (sender, pc, stackp, method, closure, receiver)
@@ -15711,7 +15791,11 @@ Oop Interpreter::materializeFrameStack() {
 
             size_t contextSize = 6 + numTemps + 32;
             Oop contextClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
-            uint32_t classIndex = contextClass.isObject() ? contextClass.asObjectPtr()->classIndex() : 3104;
+            // Use indexOfClass to get the class table index, NOT the object's own classIndex (which is the metaclass)
+            uint32_t classIndex = contextClass.isObject() ? memory_.indexOfClass(contextClass) : 0;
+            if (classIndex == 0) {
+                classIndex = 36;  // Fallback to typical Context class index
+            }
 
             // Use IndexableWithFixed for contexts (format 3)
             Oop context = memory_.allocateSlots(classIndex, contextSize, ObjectFormat::IndexableWithFixed);

@@ -749,6 +749,50 @@ Oop ObjectMemory::createStartupContext(Oop method, Oop receiver) {
         return nilObject_;
     }
 
+    // Debug: Log Context class info once
+    static bool loggedContextClass = false;
+    if (!loggedContextClass) {
+        loggedContextClass = true;
+        if (contextClass.isObject()) {
+            ObjectHeader* ctxClsHdr = contextClass.asObjectPtr();
+            std::cerr << "[CONTEXT-CLASS] ClassMethodContext at 0x" << std::hex << contextClass.rawBits()
+                      << " classIndex=" << std::dec << ctxClsHdr->classIndex()
+                      << " format=" << (int)ctxClsHdr->format()
+                      << " slots=" << ctxClsHdr->slotCount() << "\n";
+            // Try to get class name
+            if (ctxClsHdr->slotCount() > 6) {
+                Oop nameOop = fetchPointer(6, contextClass);
+                if (nameOop.isObject()) {
+                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                        std::string name((char*)nameHdr->bytes(), nameHdr->byteSize());
+                        std::cerr << "[CONTEXT-CLASS] Name: '" << name << "'\n";
+                    }
+                }
+            }
+            // Also check what class 3104 is
+            Oop class3104 = classAtIndex(3104);
+            if (class3104.isObject() && !class3104.isNil()) {
+                ObjectHeader* c3104Hdr = class3104.asObjectPtr();
+                std::cerr << "[CLASS-3104] Class at index 3104: 0x" << std::hex << class3104.rawBits()
+                          << " format=" << std::dec << (int)c3104Hdr->format()
+                          << " slots=" << c3104Hdr->slotCount() << "\n";
+                if (c3104Hdr->slotCount() > 6) {
+                    Oop name3104 = fetchPointer(6, class3104);
+                    if (name3104.isObject()) {
+                        ObjectHeader* n3104Hdr = name3104.asObjectPtr();
+                        if (n3104Hdr->isBytesObject() && n3104Hdr->byteSize() < 100) {
+                            std::string name((char*)n3104Hdr->bytes(), n3104Hdr->byteSize());
+                            std::cerr << "[CLASS-3104] Name: '" << name << "'\n";
+                        }
+                    }
+                }
+            } else {
+                std::cerr << "[CLASS-3104] Class at index 3104 is nil or not object\n";
+            }
+        }
+    }
+
     // Get method header to determine temp count
     Oop methodHeader = fetchPointer(0, method);
     if (!methodHeader.isSmallInteger()) {
@@ -776,6 +820,24 @@ Oop ObjectMemory::createStartupContext(Oop method, Oop receiver) {
     if (classIndex == 0) {
         // Context class not in table, try to register it
         classIndex = const_cast<ObjectMemory*>(this)->registerClass(contextClass);
+    }
+
+    // Debug: Log Context class index once
+    static bool loggedClassIndex = false;
+    if (!loggedClassIndex) {
+        loggedClassIndex = true;
+        std::cerr << "[CONTEXT-ALLOC] Using classIndex=" << classIndex
+                  << " for Context instances\n";
+        // Verify round-trip
+        Oop verifyClass = classAtIndex(classIndex);
+        std::cerr << "[CONTEXT-ALLOC] classAtIndex(" << classIndex << ") returns 0x"
+                  << std::hex << verifyClass.rawBits() << std::dec;
+        if (verifyClass.rawBits() == contextClass.rawBits()) {
+            std::cerr << " (MATCHES contextClass)\n";
+        } else {
+            std::cerr << " (MISMATCH! contextClass=0x" << std::hex << contextClass.rawBits()
+                      << std::dec << ")\n";
+        }
     }
 
     // Use IndexableWithFixed for contexts (format 3) - they have fixed + indexed fields
