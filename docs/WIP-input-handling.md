@@ -102,3 +102,64 @@ processPendingSignals() → signals semaphore
 - `src/platform/PlatformBridge.h/cpp` - C interface for Swift
 - `src/vm/Interpreter.hpp/cpp` - External semaphore signaling
 - `src/vm/Primitives.cpp` - Event primitives (264, 265, 266)
+- `src/smalltalk/OSiOSDriver.st` - iOS driver with event loop (NOT in standard image)
+
+## Root Cause Analysis (2026-01-25)
+
+### Why No Event Loop Process
+
+Investigation reveals the exact gap:
+
+1. **OSiOSDriver class doesn't exist in standard Pharo images**
+   - Our OSiOSDriver.st defines it but it's not filed in
+   - Log shows: `OSiOSDriver class: 0xcf9000000 sameAsNil=1` (not found)
+
+2. **OSSDL2Driver is used instead**
+   - Log: `Successfully set OSSDL2Driver instance as Current: 0xcfd248368`
+   - But OSSDL2Driver relies on FFI to call SDL_PollEvent
+   - FFI primitives (117, 118, 147) aren't fully implemented
+
+3. **OSSDL2Driver has no ensureEventLoop**
+   - Log: `ensureEventLoop instance method NOT found in OSSDL2Driver`
+   - OSSDL2Driver expects FFI to poll SDL2 events, doesn't have a primitive 264 polling loop
+
+4. **InputEventSensor doesn't exist in modern Pharo**
+   - Log: `InputEventSensor class: 0xcf9000000 sameAsNil=1`
+   - Modern Pharo uses OSWindow/OSWorldRenderer, not InputEventSensor
+
+### Working Components
+
+- **Event queue** - Events arrive from UIKit/AppKit via PlatformBridge ✓
+- **Input semaphore signaling** - processPendingSignals() correctly signals ✓
+- **Primitive 264** - Implemented and ready to return events ✓
+- **Events accumulate** - 26+ events in passThroughEvents_, 99+ excess signals ✓
+
+### The Gap
+
+No Smalltalk process is waiting on the input semaphore to wake up and call primitive 264:
+- OSiOSDriver would create this process but isn't in the image
+- OSSDL2Driver expects FFI to work but it doesn't
+- Result: semaphore signals are wasted, primitive 264 never called
+
+### Solution Options
+
+1. **File in OSiOSDriver.st at startup** (Recommended)
+   - Implement autoLoadDriver() to file in OSiOSDriver.st
+   - OSiOSDriver.install will create the event loop process
+   - Process will poll primitive 264 and dispatch events
+
+2. **Make OSSDL2Driver work via FFI**
+   - Implement FFI primitives properly for SDL2 calls
+   - Complex: requires full libffi integration
+
+3. **Create event loop process from C++**
+   - Would be a workaround (violates CLAUDE.md)
+   - Complex: requires creating BlockClosure from C++
+
+### Next Steps
+
+Implement autoLoadDriver() to file in OSiOSDriver.st:
+1. Read OSiOSDriver.st file from bundle/resources
+2. Create a Compiler or ChunkFileReader to evaluate it
+3. Or: Evaluate `'path/to/OSiOSDriver.st' asFileReference fileIn`
+4. Then call `OSiOSDriver install` to start event loop
