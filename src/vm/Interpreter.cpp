@@ -13041,6 +13041,38 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         return;
     }
 
+    // Fallback for #x on collections - Point/Rectangle accessor sent to wrong object
+    // Returns 0 as a safe default coordinate
+    if (origStr == "x" && argCount == 0 &&
+        (rcvrClassName == "OrderedCollection" || rcvrClassName == "Array" ||
+         rcvrClassName == "Set" || rcvrClassName == "Dictionary")) {
+        static int xCollCount = 0;
+        xCollCount++;
+        if (xCollCount <= 5) {
+            std::cerr << "[DNU-FALLBACK] x on " << rcvrClassName << " #" << xCollCount << " - returning 0\n";
+        }
+        pop();  // Pop receiver
+        push(Oop::fromSmallInteger(0));  // Return 0 as default x coordinate
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #y on collections - Point/Rectangle accessor sent to wrong object
+    // Returns 0 as a safe default coordinate
+    if (origStr == "y" && argCount == 0 &&
+        (rcvrClassName == "OrderedCollection" || rcvrClassName == "Array" ||
+         rcvrClassName == "Set" || rcvrClassName == "Dictionary")) {
+        static int yCollCount = 0;
+        yCollCount++;
+        if (yCollCount <= 5) {
+            std::cerr << "[DNU-FALLBACK] y on " << rcvrClassName << " #" << yCollCount << " - returning 0\n";
+        }
+        pop();  // Pop receiver
+        push(Oop::fromSmallInteger(0));  // Return 0 as default y coordinate
+        dnuDepth--;
+        return;
+    }
+
     // Fallback for MorphicRenderLoop#doInterCycleWait - method may not exist in modern Pharo
     // The waiting is handled by C++ side (sleep in idle loop), so just return self
     if (origStr == "doInterCycleWait" && argCount == 0) {
