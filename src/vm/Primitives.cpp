@@ -13979,6 +13979,11 @@ enum FormFields {
 // aBitBlt primitiveCopyBits -> aBitBlt
 // The core BitBlt operation that copies pixels from source to destination
 PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
+    static int copyBitsCallCount = 0;
+    copyBitsCallCount++;
+    if (copyBitsCallCount <= 10 || copyBitsCallCount % 1000 == 0) {
+        std::cerr << "[COPYBITS #" << copyBitsCallCount << "] primitiveCopyBits called with " << argCount << " args\n";
+    }
     if (argCount != 0) return PrimitiveResult::Failure;
 
     Oop bitBlt = stackTop();
