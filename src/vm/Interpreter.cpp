@@ -2275,6 +2275,12 @@ void Interpreter::startHeartbeat() {
                     pendingSignalIndex_.store(inputSemaIdx, std::memory_order_release);
                 }
             }
+
+            // Every ~100ms, set force yield flag to allow lower priority processes to run
+            // This simulates the preemption that would happen from primitive 230 (relinquishProcessor)
+            if (tickCount % 100 == 0) {
+                forceYield_.store(true, std::memory_order_release);
+            }
         }
     });
 }
@@ -2588,6 +2594,24 @@ bool Interpreter::step() {
             fprintf(bcLog, "[BC %llu] BEFORE dispatch bytecode=0x%02X sel=%s\n",
                     g_stepNum, bytecode, selName.c_str());
             fflush(bcLog);
+        }
+    }
+
+    // Check for forced process yield (set by heartbeat to allow lower-priority processes to run)
+    if (forceYield_.load(std::memory_order_acquire)) {
+        forceYield_.store(false, std::memory_order_release);
+        static int forceYieldCount = 0;
+        forceYieldCount++;
+        if (forceYieldCount <= 10 || forceYieldCount % 100 == 0) {
+            std::cerr << "[FORCE-YIELD #" << forceYieldCount << "] Yielding to allow lower-priority processes to run\n";
+        }
+        // Try to switch to a ready process at any priority
+        // This is equivalent to what relinquishProcessor would do
+        Oop nextProcess = wakeHighestPriority();
+        if (nextProcess.isObject() && nextProcess.rawBits() != getActiveProcess().rawBits()) {
+            Oop activeProcess = getActiveProcess();
+            putToSleep(activeProcess);
+            transferTo(nextProcess);
         }
     }
 

@@ -413,6 +413,9 @@ private:
     // Simple approach: store one pending signal index, process in interpret loop
     std::atomic<int> pendingSignalIndex_{0};
 
+    // Force yield flag - set by heartbeat to preempt long-running processes
+    std::atomic<bool> forceYield_{false};
+
     // Timer/delay semaphore (for Delay class)
     Oop timerSemaphore_ = Oop::nil();
     int64_t nextWakeupTime_ = 0;  // 0 means no timer set (in ioMSecs units)
