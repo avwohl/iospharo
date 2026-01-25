@@ -2028,18 +2028,6 @@ void Interpreter::updateActiveHandPosition() {
 // render World morphs directly.
 
 void Interpreter::syncDisplayToSurface() {
-    static int syncCallCount = 0;
-    static FILE* syncLog = nullptr;
-    syncCallCount++;
-    if (syncCallCount <= 10) {
-        if (!syncLog) syncLog = fopen("/tmp/sync_display.log", "w");
-        if (syncLog) {
-            fprintf(syncLog, "[SYNC #%d] syncDisplayToSurface called, gDisplaySurface=%p\n",
-                    syncCallCount, (void*)pharo::gDisplaySurface);
-            fflush(syncLog);
-        }
-    }
-
     if (!pharo::gDisplaySurface) return;
 
     // Process input events - queued for Smalltalk via primitive 264
@@ -2050,24 +2038,9 @@ void Interpreter::syncDisplayToSurface() {
 
     // Sync Display Form to surface if we have one
     // Auto-discover Display global if displayForm_ not set
-    static FILE* displayFormLog = nullptr;
-    static int displayFormLogCount = 0;
-    displayFormLogCount++;
-    if (!displayFormLog) displayFormLog = fopen("/tmp/displayform.log", "w");
-    if (displayFormLog && displayFormLogCount <= 10) {
-        fprintf(displayFormLog, "[DISPLAYFORM #%d] displayForm_.isNil()=%d\n",
-                displayFormLogCount, displayForm_.isNil() ? 1 : 0);
-        fflush(displayFormLog);
-    }
-
     if (displayForm_.isNil()) {
         // First try direct Display global
         Oop display = memory_.findGlobal("Display");
-        if (displayFormLog && displayFormLogCount <= 10) {
-            fprintf(displayFormLog, "[DISPLAYFORM #%d] Display global: %s\n",
-                    displayFormLogCount, display.isNil() ? "nil" : "found");
-            fflush(displayFormLog);
-        }
 
         // If not found, try to get Display from World
         if (display.isNil()) {
@@ -2114,27 +2087,10 @@ void Interpreter::syncDisplayToSurface() {
 
     // Get the Form's bits (slot 0)
     Oop bits = memory_.fetchPointer(0, displayForm_);
-    if (bits.isNil() || !bits.isObject()) {
-        if (displayFormLog && displayFormLogCount <= 10) {
-            fprintf(displayFormLog, "[DISPLAYFORM #%d] bits is nil or not object\n", displayFormLogCount);
-            fflush(displayFormLog);
-        }
-        return;
-    }
+    if (bits.isNil() || !bits.isObject()) return;
 
     ObjectHeader* bitsHdr = bits.asObjectPtr();
     uint32_t* srcPixels = reinterpret_cast<uint32_t*>(bitsHdr->bytes());
-
-    if (displayFormLog && displayFormLogCount <= 10) {
-        // Sample first few pixels to see if Form has content
-        int nonZero = 0;
-        for (int i = 0; i < 100 && i < (int)(bitsHdr->byteSize() / 4); i++) {
-            if (srcPixels[i] != 0) nonZero++;
-        }
-        fprintf(displayFormLog, "[DISPLAYFORM #%d] bits object size=%zu, first 100 pixels nonzero=%d\n",
-                displayFormLogCount, bitsHdr->byteSize(), nonZero);
-        fflush(displayFormLog);
-    }
 
     // Get Form dimensions
     Oop widthOop = memory_.fetchPointer(1, displayForm_);
@@ -2269,20 +2225,9 @@ void Interpreter::checkTimerSemaphore() {
 void Interpreter::startHeartbeat() {
     if (heartbeatRunning_) return;
 
-    FILE* heartbeatLog = fopen("/tmp/heartbeat.log", "w");
-    if (heartbeatLog) {
-        fprintf(heartbeatLog, "[HEARTBEAT] Starting heartbeat thread\n");
-        fflush(heartbeatLog);
-    }
-
     heartbeatRunning_ = true;
-    heartbeatThread_ = std::thread([this, heartbeatLog]() {
+    heartbeatThread_ = std::thread([this]() {
         int tickCount = 0;
-
-        if (heartbeatLog) {
-            fprintf(heartbeatLog, "[HEARTBEAT] Thread started, entering loop\n");
-            fflush(heartbeatLog);
-        }
 
         while (heartbeatRunning_) {
             // Sleep for ~1ms between ticks (like official VM heartbeat)
@@ -2316,10 +2261,6 @@ void Interpreter::startHeartbeat() {
 
             // Every ~33ms (30fps), sync Display Form to platform surface AND push a timer event
             if (tickCount % 33 == 0) {
-                if (heartbeatLog && tickCount <= 330) {
-                    fprintf(heartbeatLog, "[HEARTBEAT] tick=%d, calling syncDisplayToSurface\n", tickCount);
-                    fflush(heartbeatLog);
-                }
                 syncDisplayToSurface();
 
                 // Push a timer/redraw event to wake up the UI process
