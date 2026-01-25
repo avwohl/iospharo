@@ -1029,10 +1029,39 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
     // Official VM behavior: fail if index is not SmallInteger (PrimErrBadArgument)
     // or if receiver is not an object (PrimErrInappropriate)
     if (!index.isSmallInteger() || !rcvr.isObject()) {
-        // Log when at: is called on non-object (causes Smalltalk error)
+        // Log when at: is called with bad arguments (causes Smalltalk error)
         static FILE* atLog = fopen("/tmp/at_fail.log", "a");
         static int atFailCount = 0;
-        if (atLog && !rcvr.isObject() && atFailCount < 5) {
+        atFailCount++;
+        if (atLog && atFailCount <= 20) {
+            fprintf(atLog, "[AT-FAIL #%d] ", atFailCount);
+            if (!index.isSmallInteger()) {
+                fprintf(atLog, "NON-INT INDEX: 0x%llx isObj=%d isChar=%d ",
+                        index.rawBits(), index.isObject() ? 1 : 0, index.isCharacter() ? 1 : 0);
+                if (index.isObject()) {
+                    Oop indexCls = memory_.classOf(index);
+                    if (indexCls.isObject()) {
+                        ObjectHeader* icH = indexCls.asObjectPtr();
+                        if (icH->slotCount() > 6) {
+                            Oop icn = memory_.fetchPointer(6, indexCls);
+                            if (icn.isObject()) {
+                                ObjectHeader* icnH = icn.asObjectPtr();
+                                if (icnH->isBytesObject() && icnH->byteSize() < 100) {
+                                    fprintf(atLog, "indexClass='%s' ",
+                                            std::string((char*)icnH->bytes(), icnH->byteSize()).c_str());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (!rcvr.isObject()) {
+                fprintf(atLog, "NON-OBJ RCVR: 0x%llx ", rcvr.rawBits());
+            }
+            fprintf(atLog, "\n");
+            fflush(atLog);
+        }
+        if (atLog && !rcvr.isObject() && atFailCount <= 5) {
             atFailCount++;
             fprintf(atLog, "[AT-FAIL #%d] rcvr=0x%llx isSmallInt=%d value=%lld receiver_=0x%llx index=",
                     atFailCount, rcvr.rawBits(), rcvr.isSmallInteger() ? 1 : 0,

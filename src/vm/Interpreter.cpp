@@ -12744,6 +12744,52 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         return;
     }
 
+    // Fallback for #isHandlerOrSignalingContext - used during exception handling
+    // When called on unknown/corrupted objects, return false (not a handler context)
+    // This prevents the exception cascade from spiraling out of control
+    if (origStr == "isHandlerOrSignalingContext" && argCount == 0) {
+        static int handlerCtxCount = 0;
+        handlerCtxCount++;
+        if (handlerCtxCount <= 10) {
+            std::cerr << "[DNU-FALLBACK] isHandlerOrSignalingContext on " << rcvrClassName
+                      << " #" << handlerCtxCount << " - returning false\n";
+        }
+        pop();  // Pop receiver
+        push(memory_.falseObject());  // Not a handler context
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #primitive on CompiledMethod - returns 0 (not a primitive method)
+    // Prevents cascading errors during exception handling method inspection
+    if (origStr == "primitive" && argCount == 0) {
+        static int primCount = 0;
+        primCount++;
+        if (primCount <= 10) {
+            std::cerr << "[DNU-FALLBACK] primitive on " << rcvrClassName
+                      << " #" << primCount << " - returning 0\n";
+        }
+        pop();  // Pop receiver
+        push(Oop::fromSmallInteger(0));  // Not a primitive
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #sender - returns nil (no sender)
+    // Prevents cascading errors during exception handling
+    if (origStr == "sender" && argCount == 0) {
+        static int senderCount = 0;
+        senderCount++;
+        if (senderCount <= 10) {
+            std::cerr << "[DNU-FALLBACK] sender on " << rcvrClassName
+                      << " #" << senderCount << " - returning nil\n";
+        }
+        pop();  // Pop receiver
+        push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+
     // Fallback for #substrings on nil - string operations on nil
     // Happens when code tries to split a nil string into words
     if (origStr == "substrings" && rcvrClassName == "UndefinedObject" && argCount == 0) {
