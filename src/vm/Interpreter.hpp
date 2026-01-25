@@ -393,6 +393,10 @@ private:
     Oop pendingMenuActionArgs_ = Oop::nil();
     std::string pendingMenuActionSelector_;
 
+    // Pending OSiOSDriver install (scheduled for deferred execution)
+    Oop pendingDriverInstallMethod_ = Oop::nil();
+    Oop pendingDriverInstallReceiver_ = Oop::nil();
+    bool hasPendingDriverInstall_ = false;
 
     // Debug: visual click indicator
     int debugClickX_ = -1;
@@ -1515,6 +1519,14 @@ private:
     /// Bootstrap startup when active process has nil suspendedContext.
     /// Looks up startup entry point and creates synthetic context.
     bool bootstrapStartup();
+
+    /// Install OSiOSDriver to start the event loop.
+    /// Called from step() after the image has had time to initialize.
+    void installOSiOSDriver();
+
+    /// Execute pending driver install if scheduled.
+    /// Returns true if the install was executed.
+    bool executePendingDriverInstall();
 
     /// Auto-load OSiOSDriver.st by evaluating Smalltalk code
     /// Called once at startup to enable the event system

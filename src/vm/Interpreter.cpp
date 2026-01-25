@@ -2446,6 +2446,23 @@ bool Interpreter::step() {
         return false;
     }
 
+    // One-time: Install OSiOSDriver after image has started running (around 100K steps)
+    // This ensures the SessionManager and other startup handlers have had a chance to run
+    static bool osDriverInstallAttempted = false;
+    static uint64_t stepCountForDriver = 0;
+    stepCountForDriver++;
+
+    // Log every 50K steps to verify step() is running
+    if (stepCountForDriver % 50000 == 0 && stepCountForDriver <= 250000) {
+        std::cerr << "[DRIVER-STEP] Step count: " << stepCountForDriver << "\n";
+    }
+
+    if (!osDriverInstallAttempted && stepCountForDriver == 100000) {
+        osDriverInstallAttempted = true;
+        std::cerr << "[DRIVER] Step 100K reached - installing OSiOSDriver\n";
+        installOSiOSDriver();  // Call helper method to install driver
+    }
+
     // Debug: check of class 1 periodically and detect when it changes
     static Oop lastClass1 = Oop::nil();
     static int class1CheckCount = 0;
@@ -2654,6 +2671,11 @@ bool Interpreter::step() {
         if (foundProcess) {
             putToSleep(activeProcess);
             transferTo(nextProcess);
+        }
+
+        // Execute any pending driver install during yield
+        if (hasPendingDriverInstall_) {
+            executePendingDriverInstall();
         }
     }
 
@@ -16224,6 +16246,201 @@ void Interpreter::checkForPreemption() {
 }
 
 // ===== STARTUP SUPPORT =====
+
+void Interpreter::installOSiOSDriver() {
+    // Try to install OSiOSDriver to start the event loop
+    // This is called from step() after the image has had time to initialize
+
+    static FILE* driverLog = fopen("/tmp/osdriver_install.log", "w");
+    if (driverLog) {
+        fprintf(driverLog, "[DRIVER] installOSiOSDriver called (step 100K)\n");
+        fflush(driverLog);
+    }
+
+    Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
+    Oop osDriverClass = memory_.findGlobal("OSiOSDriver");
+
+    if (driverLog) {
+        fprintf(driverLog, "[DRIVER] OSiOSDriver class: 0x%llx isNil=%d isObj=%d\n",
+                (unsigned long long)osDriverClass.rawBits(), osDriverClass.isNil() ? 1 : 0,
+                osDriverClass.isObject() ? 1 : 0);
+        fflush(driverLog);
+    }
+
+    if (osDriverClass.isNil() || !osDriverClass.isObject()) {
+        if (driverLog) {
+            fprintf(driverLog, "[DRIVER] OSiOSDriver class not found\n");
+            fflush(driverLog);
+        }
+        return;
+    }
+
+    // Get the metaclass (class of the class) for class-side method lookup
+    Oop metaclass = memory_.classOf(osDriverClass);
+    if (driverLog) {
+        fprintf(driverLog, "[DRIVER] Metaclass: 0x%llx isObj=%d\n",
+                (unsigned long long)metaclass.rawBits(), metaclass.isObject() ? 1 : 0);
+        fflush(driverLog);
+    }
+
+    if (metaclass.isNil() || !metaclass.isObject()) {
+        if (driverLog) {
+            fprintf(driverLog, "[DRIVER] Metaclass not found\n");
+            fflush(driverLog);
+        }
+        return;
+    }
+
+    // Debug: Get metaclass name
+    if (driverLog) {
+        // Class has name at slot 6
+        Oop nameOop = memory_.fetchPointer(6, osDriverClass);
+        if (nameOop.isObject()) {
+            ObjectHeader* nameHdr = nameOop.asObjectPtr();
+            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                std::string name((char*)nameHdr->bytes(), nameHdr->byteSize());
+                fprintf(driverLog, "[DRIVER] Class name: '%s'\n", name.c_str());
+            }
+        }
+        fflush(driverLog);
+    }
+
+    // Look up the "install" method in the metaclass's methodDict
+    Oop methodDict = memory_.fetchPointer(1, metaclass);
+    if (driverLog) {
+        fprintf(driverLog, "[DRIVER] Metaclass methodDict: 0x%llx isObj=%d\n",
+                (unsigned long long)methodDict.rawBits(), methodDict.isObject() ? 1 : 0);
+        if (methodDict.isObject()) {
+            ObjectHeader* mdHdr = methodDict.asObjectPtr();
+            fprintf(driverLog, "[DRIVER] MethodDict slots: %zu\n", mdHdr->slotCount());
+        }
+        fflush(driverLog);
+    }
+    if (!methodDict.isObject()) {
+        if (driverLog) {
+            fprintf(driverLog, "[DRIVER] Metaclass has no methodDict\n");
+            fflush(driverLog);
+        }
+        return;
+    }
+
+    ObjectHeader* mdHeader = methodDict.asObjectPtr();
+    size_t mdSlots = mdHeader->slotCount();
+    Oop installMethod = Oop::nil();
+
+    for (size_t i = 2; i < mdSlots; i++) {
+        Oop key = mdHeader->slotAt(i);
+        if (!key.isObject() || key.rawBits() == nilObj.rawBits()) continue;
+
+        ObjectHeader* keyHdr = key.asObjectPtr();
+        if (!keyHdr->isBytesObject()) continue;
+
+        size_t keyLen = keyHdr->byteSize();
+        const char* keyBytes = (const char*)keyHdr->bytes();
+
+        if (keyLen == 7 && memcmp(keyBytes, "install", 7) == 0) {
+            // Found "install" selector - get the method from values array
+            Oop values = memory_.fetchPointer(1, methodDict);
+            if (values.isObject()) {
+                ObjectHeader* valHdr = values.asObjectPtr();
+                size_t valueIdx = i - 2;
+                if (valueIdx < valHdr->slotCount()) {
+                    installMethod = valHdr->slotAt(valueIdx);
+                    if (driverLog) {
+                        fprintf(driverLog, "[DRIVER] Found 'install' method at idx %zu\n", valueIdx);
+                        fflush(driverLog);
+                    }
+                }
+            }
+            break;
+        }
+    }
+
+    if (installMethod.isNil() || !installMethod.isObject()) {
+        if (driverLog) {
+            fprintf(driverLog, "[DRIVER] 'install' method not found\n");
+            fflush(driverLog);
+        }
+        return;
+    }
+
+    // Create a process to run OSiOSDriver install
+    // We can't interrupt the current process, so we schedule it for later
+    if (driverLog) {
+        fprintf(driverLog, "[DRIVER] Found install method 0x%llx - scheduling execution\n",
+                (unsigned long long)installMethod.rawBits());
+        fflush(driverLog);
+    }
+
+    // Store the method for deferred execution in the run loop
+    // We'll execute it when the current process yields
+    pendingDriverInstallMethod_ = installMethod;
+    pendingDriverInstallReceiver_ = osDriverClass;
+    hasPendingDriverInstall_ = true;
+
+    if (driverLog) {
+        fprintf(driverLog, "[DRIVER] Scheduled OSiOSDriver install for deferred execution\n");
+        fflush(driverLog);
+    }
+}
+
+bool Interpreter::executePendingDriverInstall() {
+    if (!hasPendingDriverInstall_) {
+        return false;
+    }
+
+    hasPendingDriverInstall_ = false;  // Clear flag before executing
+
+    static FILE* driverLog = fopen("/tmp/osdriver_install.log", "a");
+    if (driverLog) {
+        fprintf(driverLog, "[DRIVER] executePendingDriverInstall: Creating context for install\n");
+        fflush(driverLog);
+    }
+
+    if (pendingDriverInstallMethod_.isNil() || !pendingDriverInstallMethod_.isObject()) {
+        if (driverLog) {
+            fprintf(driverLog, "[DRIVER] executePendingDriverInstall: Invalid method\n");
+            fflush(driverLog);
+        }
+        return false;
+    }
+
+    // Create a context for OSiOSDriver install and execute it
+    Oop context = memory_.createStartupContext(pendingDriverInstallMethod_, pendingDriverInstallReceiver_);
+    if (context.isNil()) {
+        if (driverLog) {
+            fprintf(driverLog, "[DRIVER] executePendingDriverInstall: Failed to create context\n");
+            fflush(driverLog);
+        }
+        return false;
+    }
+
+    if (driverLog) {
+        fprintf(driverLog, "[DRIVER] executePendingDriverInstall: Executing install method\n");
+        fflush(driverLog);
+    }
+
+    // Save current execution state
+    Oop savedContext = activeContext_;
+    Oop savedMethod = method_;
+    Oop savedReceiver = receiver_;
+
+    // Execute the install method
+    stackPointer_ = stackBase_;
+    frameDepth_ = 0;
+    bool result = executeFromContext(context);
+
+    if (driverLog) {
+        fprintf(driverLog, "[DRIVER] executePendingDriverInstall: Result=%s\n", result ? "success" : "failed");
+        fflush(driverLog);
+    }
+
+    // Clear the pending install
+    pendingDriverInstallMethod_ = Oop::nil();
+    pendingDriverInstallReceiver_ = Oop::nil();
+
+    return result;
+}
 
 bool Interpreter::autoLoadDriver() {
     // Auto-load disabled - OSiOSDriver must be loaded from Pharo image side
