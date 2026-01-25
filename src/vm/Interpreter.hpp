@@ -1497,6 +1497,10 @@ private:
     PrimitiveResult primitiveStoreFloat32IntoExternalAddress(int argCount);   // 658
     PrimitiveResult primitiveStoreFloat64IntoExternalAddress(int argCount);   // 659
 
+    // FFI Module/Symbol Loading Primitives (named primitives via primitive 117)
+    PrimitiveResult primitiveLoadSymbolFromModule(int argCount);  // Named: load symbol address
+    PrimitiveResult primitiveLoadModule(int argCount);            // Named: load module handle
+
     // SmallFloat primitives (541-559)
     // These are optimized versions of Float primitives for SmallFloat immediates
     // Our Float primitives already handle SmallFloat via extractFloat(), so these delegate

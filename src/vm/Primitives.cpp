@@ -16,6 +16,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <dlfcn.h>
 #include <dirent.h>
 #include <thread>
 #include <fstream>
@@ -19471,6 +19472,277 @@ PrimitiveResult Interpreter::primitiveStoreFloat64IntoExternalAddress(int argCou
 
     memcpy(ptr + index, &dvalue, sizeof(dvalue));
     primitiveSuccess(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// ===== FFI MODULE/SYMBOL LOADING PRIMITIVES =====
+// These are named primitives called via primitive 117 (primitiveExternalCall)
+// They are used by UFFI to load symbols from dynamic libraries
+
+// primitiveLoadSymbolFromModule
+// Stack: receiver, symbolString, moduleStringOrNil
+// Returns: ExternalAddress containing the symbol address, or fails
+PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
+    static FILE* ffiLog = nullptr;
+    static int loadCount = 0;
+    loadCount++;
+
+    if (!ffiLog) {
+        ffiLog = fopen("/tmp/ffi_load_symbol.log", "w");
+    }
+
+    if (argCount != 2) {
+        if (ffiLog) {
+            fprintf(ffiLog, "[LOAD_SYMBOL] #%d argCount=%d (expected 2)\n", loadCount, argCount);
+            fflush(ffiLog);
+        }
+        return PrimitiveResult::Failure;
+    }
+
+    // Get arguments
+    Oop moduleOop = stackTop();        // Module name (string or nil)
+    Oop symbolOop = stackValue(1);     // Symbol name (string)
+    Oop receiver = stackValue(2);      // Receiver (ignored)
+
+    // Symbol must be a string
+    if (!symbolOop.isObject()) {
+        if (ffiLog) {
+            fprintf(ffiLog, "[LOAD_SYMBOL] #%d symbol is not an object\n", loadCount);
+            fflush(ffiLog);
+        }
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* symbolHdr = symbolOop.asObjectPtr();
+    if (!symbolHdr->isBytesObject()) {
+        if (ffiLog) {
+            fprintf(ffiLog, "[LOAD_SYMBOL] #%d symbol is not a bytes object\n", loadCount);
+            fflush(ffiLog);
+        }
+        return PrimitiveResult::Failure;
+    }
+
+    std::string symbolName((char*)symbolHdr->bytes(), symbolHdr->byteSize());
+
+    // Module can be nil (search all loaded) or a string
+    std::string moduleName;
+    void* moduleHandle = nullptr;
+
+    if (!moduleOop.isNil() && moduleOop.rawBits() != memory_.nil().rawBits()) {
+        if (moduleOop.isObject()) {
+            ObjectHeader* moduleHdr = moduleOop.asObjectPtr();
+            if (moduleHdr->isBytesObject()) {
+                moduleName = std::string((char*)moduleHdr->bytes(), moduleHdr->byteSize());
+
+                // Try to load the module
+                // For SDL2 or common libraries, use our FFI lookup
+                if (moduleName.find("SDL2") != std::string::npos ||
+                    moduleName.find("SDL") != std::string::npos) {
+                    // SDL2 is "built-in" via our stubs
+                    moduleHandle = RTLD_DEFAULT;
+                } else {
+                    // Try to load the library
+                    moduleHandle = dlopen(moduleName.c_str(), RTLD_NOW | RTLD_GLOBAL);
+                    if (!moduleHandle) {
+                        // Try with common prefixes/suffixes
+                        std::string libName = "lib" + moduleName + ".dylib";
+                        moduleHandle = dlopen(libName.c_str(), RTLD_NOW | RTLD_GLOBAL);
+                    }
+                }
+            }
+        }
+    } else {
+        // nil module - search in all loaded modules (RTLD_DEFAULT)
+        moduleHandle = RTLD_DEFAULT;
+    }
+
+    if (ffiLog && loadCount <= 100) {
+        fprintf(ffiLog, "[LOAD_SYMBOL] #%d symbol='%s' module='%s' handle=%p\n",
+                loadCount, symbolName.c_str(), moduleName.c_str(), moduleHandle);
+        fflush(ffiLog);
+    }
+
+    // Look up the symbol
+    void* symbolAddr = dlsym(moduleHandle, symbolName.c_str());
+
+    // Also check our FFI function cache (for SDL2 stubs)
+    if (!symbolAddr) {
+        symbolAddr = ffi::lookupFunction(moduleName.empty() ? "" : moduleName, symbolName);
+    }
+
+    if (!symbolAddr) {
+        if (ffiLog && loadCount <= 100) {
+            fprintf(ffiLog, "[LOAD_SYMBOL] #%d FAILED to find '%s' in '%s'\n",
+                    loadCount, symbolName.c_str(), moduleName.c_str());
+            fflush(ffiLog);
+        }
+        return PrimitiveResult::Failure;
+    }
+
+    if (ffiLog && loadCount <= 100) {
+        fprintf(ffiLog, "[LOAD_SYMBOL] #%d FOUND '%s' at %p\n",
+                loadCount, symbolName.c_str(), symbolAddr);
+        fflush(ffiLog);
+    }
+
+    // Create an ExternalAddress containing the symbol address
+    // ExternalAddress is a bytes object holding sizeof(void*) bytes
+    Oop externalAddressClass = memory_.specialObject(SpecialObjectIndex::ClassExternalAddress);
+    if (externalAddressClass.isNil()) {
+        if (ffiLog) {
+            fprintf(ffiLog, "[LOAD_SYMBOL] #%d ClassExternalAddress not found in special objects\n", loadCount);
+            fflush(ffiLog);
+        }
+        return PrimitiveResult::Failure;
+    }
+
+    // Allocate the ExternalAddress (8 bytes for a 64-bit pointer)
+    uint32_t classIndex = memory_.indexOfClass(externalAddressClass);
+    Oop result = memory_.allocateBytes(classIndex, sizeof(void*));
+    if (result.isNil()) {
+        if (ffiLog) {
+            fprintf(ffiLog, "[LOAD_SYMBOL] #%d Failed to allocate ExternalAddress\n", loadCount);
+            fflush(ffiLog);
+        }
+        return PrimitiveResult::Failure;
+    }
+
+    // Store the address in the object's bytes
+    ObjectHeader* resultHdr = result.asObjectPtr();
+    memcpy(resultHdr->bytes(), &symbolAddr, sizeof(void*));
+
+    if (ffiLog && loadCount <= 100) {
+        fprintf(ffiLog, "[LOAD_SYMBOL] #%d SUCCESS - created ExternalAddress %p containing %p\n",
+                loadCount, (void*)result.rawBits(), symbolAddr);
+        fflush(ffiLog);
+    }
+
+    // Pop args and push result
+    popN(static_cast<size_t>(argCount + 1));  // Pop args and receiver
+    push(result);
+
+    return PrimitiveResult::Success;
+}
+
+// primitiveLoadModule
+// Stack: receiver, moduleString
+// Returns: ExternalAddress containing the module handle, or fails
+PrimitiveResult Interpreter::primitiveLoadModule(int argCount) {
+    static FILE* ffiLog = nullptr;
+    static int loadCount = 0;
+    loadCount++;
+
+    if (!ffiLog) {
+        ffiLog = fopen("/tmp/ffi_load_module.log", "w");
+    }
+
+    if (argCount != 1) {
+        if (ffiLog) {
+            fprintf(ffiLog, "[LOAD_MODULE] #%d argCount=%d (expected 1)\n", loadCount, argCount);
+            fflush(ffiLog);
+        }
+        return PrimitiveResult::Failure;
+    }
+
+    // Get module name
+    Oop moduleOop = stackTop();
+    Oop receiver = stackValue(1);
+
+    if (!moduleOop.isObject()) {
+        if (ffiLog) {
+            fprintf(ffiLog, "[LOAD_MODULE] #%d module is not an object\n", loadCount);
+            fflush(ffiLog);
+        }
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* moduleHdr = moduleOop.asObjectPtr();
+    if (!moduleHdr->isBytesObject()) {
+        if (ffiLog) {
+            fprintf(ffiLog, "[LOAD_MODULE] #%d module is not a bytes object\n", loadCount);
+            fflush(ffiLog);
+        }
+        return PrimitiveResult::Failure;
+    }
+
+    std::string moduleName((char*)moduleHdr->bytes(), moduleHdr->byteSize());
+
+    if (ffiLog && loadCount <= 100) {
+        fprintf(ffiLog, "[LOAD_MODULE] #%d module='%s'\n", loadCount, moduleName.c_str());
+        fflush(ffiLog);
+    }
+
+    void* moduleHandle = nullptr;
+
+    // Special handling for SDL2
+    if (moduleName.find("SDL2") != std::string::npos ||
+        moduleName.find("SDL") != std::string::npos) {
+        // SDL2 is "built-in" via our stubs - return a non-null handle
+        moduleHandle = reinterpret_cast<void*>(0xDEADBEEF);
+
+        if (ffiLog && loadCount <= 100) {
+            fprintf(ffiLog, "[LOAD_MODULE] #%d SDL2 detected - using built-in stubs, handle=%p\n",
+                    loadCount, moduleHandle);
+            fflush(ffiLog);
+        }
+    } else {
+        // Try to load the library
+        moduleHandle = dlopen(moduleName.c_str(), RTLD_NOW | RTLD_GLOBAL);
+        if (!moduleHandle) {
+            // Try with common prefixes/suffixes
+            std::string libName = "lib" + moduleName + ".dylib";
+            moduleHandle = dlopen(libName.c_str(), RTLD_NOW | RTLD_GLOBAL);
+        }
+        if (!moduleHandle) {
+            // Try just .dylib suffix
+            std::string libName = moduleName + ".dylib";
+            moduleHandle = dlopen(libName.c_str(), RTLD_NOW | RTLD_GLOBAL);
+        }
+    }
+
+    if (!moduleHandle) {
+        if (ffiLog && loadCount <= 100) {
+            fprintf(ffiLog, "[LOAD_MODULE] #%d FAILED to load '%s': %s\n",
+                    loadCount, moduleName.c_str(), dlerror());
+            fflush(ffiLog);
+        }
+        return PrimitiveResult::Failure;
+    }
+
+    if (ffiLog && loadCount <= 100) {
+        fprintf(ffiLog, "[LOAD_MODULE] #%d SUCCESS - loaded '%s' at %p\n",
+                loadCount, moduleName.c_str(), moduleHandle);
+        fflush(ffiLog);
+    }
+
+    // Create an ExternalAddress containing the module handle
+    Oop externalAddressClass = memory_.specialObject(SpecialObjectIndex::ClassExternalAddress);
+    if (externalAddressClass.isNil()) {
+        if (ffiLog) {
+            fprintf(ffiLog, "[LOAD_MODULE] #%d ClassExternalAddress not found\n", loadCount);
+            fflush(ffiLog);
+        }
+        return PrimitiveResult::Failure;
+    }
+
+    uint32_t classIndex = memory_.indexOfClass(externalAddressClass);
+    Oop result = memory_.allocateBytes(classIndex, sizeof(void*));
+    if (result.isNil()) {
+        if (ffiLog) {
+            fprintf(ffiLog, "[LOAD_MODULE] #%d Failed to allocate ExternalAddress\n", loadCount);
+            fflush(ffiLog);
+        }
+        return PrimitiveResult::Failure;
+    }
+
+    // Store the handle in the object's bytes
+    ObjectHeader* resultHdr = result.asObjectPtr();
+    memcpy(resultHdr->bytes(), &moduleHandle, sizeof(void*));
+
+    // Pop args and push result
+    popN(static_cast<size_t>(argCount + 1));
+    push(result);
+
     return PrimitiveResult::Success;
 }
 

@@ -18686,6 +18686,14 @@ void Interpreter::initializeNamedPrimitives() {
 
     // MiscPrimitivePlugin - string hashing
     registerNamedPrimitive("MiscPrimitivePlugin", "primitiveStringHash", &Interpreter::primitiveStringHashInitialHash);
+
+    // FFI Module/Symbol Loading - these are VM built-in primitives used by UFFI
+    // They are called without a module (empty module name) because they're VM internals
+    registerNamedPrimitive("", "primitiveLoadSymbolFromModule", &Interpreter::primitiveLoadSymbolFromModule);
+    registerNamedPrimitive("", "primitiveLoadModule", &Interpreter::primitiveLoadModule);
+    // Also register with explicit module name for compatibility
+    registerNamedPrimitive("SqueakFFIPrims", "primitiveLoadSymbolFromModule", &Interpreter::primitiveLoadSymbolFromModule);
+    registerNamedPrimitive("SqueakFFIPrims", "primitiveLoadModule", &Interpreter::primitiveLoadModule);
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {
