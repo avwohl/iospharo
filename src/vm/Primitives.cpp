@@ -11156,53 +11156,88 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
 
     // Fast path: Check for known primitives by name in literals
     // Note: literals are at slots 1..numLiterals (slot 0 is the header)
-    // Also search recursively inside arrays/objects for function names
-    std::function<std::string(Oop, int)> extractString;
-    extractString = [&](Oop obj, int depth) -> std::string {
-        if (depth > 3 || !obj.isObject() || !memory_.isValidPointer(obj)) return "";
+    // Pragma objects store primitive names in their arguments array
+
+    // Helper to recursively search for a string containing a pattern
+    std::function<bool(Oop, const std::string&, int, FILE*)> containsString;
+    containsString = [&](Oop obj, const std::string& pattern, int depth, FILE* log) -> bool {
+        if (depth > 5 || !obj.isObject() || !memory_.isValidPointer(obj)) return false;
         ObjectHeader* hdr = obj.asObjectPtr();
-        if (hdr->isBytesObject() && hdr->byteSize() < 100) {
-            return std::string((char*)hdr->bytes(), hdr->byteSize());
+
+        // Check if this is a string/symbol containing the pattern
+        if (hdr->isBytesObject() && hdr->byteSize() < 200) {
+            std::string str((char*)hdr->bytes(), hdr->byteSize());
+            if (str.find(pattern) != std::string::npos) {
+                if (log) {
+                    fprintf(log, "[DEEP-SEARCH] Found '%s' at depth %d\n", str.c_str(), depth);
+                    fflush(log);
+                }
+                return true;
+            }
         }
-        return "";
+
+        // Recursively search arrays and fixed objects
+        if ((hdr->format() == ObjectFormat::Indexable || hdr->format() == ObjectFormat::FixedSize)
+            && hdr->slotCount() >= 1 && hdr->slotCount() <= 30) {
+            for (size_t i = 0; i < hdr->slotCount(); i++) {
+                Oop slot = memory_.fetchPointer(i, obj);
+                if (containsString(slot, pattern, depth + 1, log)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     };
 
-    // Search ALL literals (not just first 10) for known primitive/function names
+    // Search ALL literals for known primitive/function names
+    static FILE* deepLog = nullptr;
+    static int deepSearchCount = 0;
+    static bool deepLogInit = false;
+    if (!deepLogInit) {
+        deepLogInit = true;
+        deepLog = fopen("/tmp/deep_prim_search.log", "w");
+    }
+    deepSearchCount++;
+
     for (size_t i = 1; i <= numLiterals; i++) {
         Oop literal = memory_.fetchPointer(i, method);
         if (!literal.isObject() || !memory_.isValidPointer(literal)) continue;
 
         ObjectHeader* litHdr = literal.asObjectPtr();
-        std::string str = extractString(literal, 0);
 
-        // Check for known string primitives
-        if (str == "stringHash:initialHash:") {
-            return primitiveStringHashInitialHash(argCount);
+        // Direct string check
+        if (litHdr->isBytesObject() && litHdr->byteSize() < 100) {
+            std::string str((char*)litHdr->bytes(), litHdr->byteSize());
+            if (str == "stringHash:initialHash:") {
+                return primitiveStringHashInitialHash(argCount);
+            }
+            if (str == "indexOfAscii:inString:startingAt:") {
+                return primitiveIndexOfAscii(argCount);
+            }
+            if (str == "primitiveLoadSymbolFromModule") {
+                return primitiveLoadSymbolFromModule(argCount);
+            }
+            if (str == "primitiveLoadModule") {
+                return primitiveLoadModule(argCount);
+            }
         }
-        if (str == "indexOfAscii:inString:startingAt:") {
-            return primitiveIndexOfAscii(argCount);
-        }
-        // FFI module/symbol loading primitives (used by UFFI)
-        if (str == "primitiveLoadSymbolFromModule") {
+
+        // Deep search for FFI primitives in Pragma objects
+        // Pragma objects have selector (like #primitive:) and arguments array
+        if (containsString(literal, "LoadSymbolFromModule", 0, deepSearchCount <= 50 ? deepLog : nullptr)) {
+            if (deepLog && deepSearchCount <= 50) {
+                fprintf(deepLog, "[PRIM] #%d Found LoadSymbolFromModule in literal %zu, calling primitive\n",
+                        deepSearchCount, i);
+                fflush(deepLog);
+            }
             return primitiveLoadSymbolFromModule(argCount);
         }
-        if (str == "primitiveLoadModule") {
-            return primitiveLoadModule(argCount);
-        }
-
-        // Also search inside arrays/objects for these strings
-        if ((litHdr->format() == ObjectFormat::Indexable || litHdr->format() == ObjectFormat::FixedSize)
-            && litHdr->slotCount() >= 1 && litHdr->slotCount() <= 20) {
-            for (size_t j = 0; j < litHdr->slotCount(); j++) {
-                Oop innerOop = memory_.fetchPointer(j, literal);
-                std::string innerStr = extractString(innerOop, 1);
-                if (innerStr == "primitiveLoadSymbolFromModule") {
-                    return primitiveLoadSymbolFromModule(argCount);
-                }
-                if (innerStr == "primitiveLoadModule") {
-                    return primitiveLoadModule(argCount);
-                }
+        if (containsString(literal, "LoadModule", 0, nullptr)) {
+            if (containsString(literal, "LoadSymbol", 0, nullptr)) {
+                // This is LoadSymbolFromModule, not LoadModule
+                continue;
             }
+            return primitiveLoadModule(argCount);
         }
     }
 
