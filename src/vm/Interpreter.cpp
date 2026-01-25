@@ -16261,13 +16261,62 @@ void Interpreter::installOSiOSDriver() {
     Oop osDriverClass = memory_.findGlobal("OSiOSDriver");
 
     if (driverLog) {
-        fprintf(driverLog, "[DRIVER] OSiOSDriver class: 0x%llx isNil=%d isObj=%d\n",
+        fprintf(driverLog, "[DRIVER] nilObj: 0x%llx\n", (unsigned long long)nilObj.rawBits());
+        fprintf(driverLog, "[DRIVER] OSiOSDriver class: 0x%llx isNil=%d isObj=%d sameAsNil=%d\n",
                 (unsigned long long)osDriverClass.rawBits(), osDriverClass.isNil() ? 1 : 0,
-                osDriverClass.isObject() ? 1 : 0);
+                osDriverClass.isObject() ? 1 : 0,
+                osDriverClass.rawBits() == nilObj.rawBits() ? 1 : 0);
         fflush(driverLog);
     }
 
-    if (osDriverClass.isNil() || !osDriverClass.isObject()) {
+    // Check if OSiOSDriver was actually found (compare against nilObj, not just isNil())
+    if (osDriverClass.rawBits() == nilObj.rawBits()) {
+        if (driverLog) {
+            fprintf(driverLog, "[DRIVER] OSiOSDriver not found in image - trying InputEventSensor\n");
+            fflush(driverLog);
+        }
+
+        // Try InputEventSensor instead
+        Oop sensor = memory_.findGlobal("Sensor");
+        if (driverLog) {
+            fprintf(driverLog, "[DRIVER] Sensor global: 0x%llx sameAsNil=%d\n",
+                    (unsigned long long)sensor.rawBits(),
+                    sensor.rawBits() == nilObj.rawBits() ? 1 : 0);
+            fflush(driverLog);
+        }
+        if (sensor.isObject() && sensor.rawBits() != nilObj.rawBits()) {
+            Oop sensorClass = memory_.classOf(sensor);
+            if (driverLog) {
+                Oop className = memory_.fetchPointer(6, sensorClass);
+                std::string name = "<unknown>";
+                if (className.isObject()) {
+                    ObjectHeader* hdr = className.asObjectPtr();
+                    if (hdr->isBytesObject() && hdr->byteSize() < 50) {
+                        name = std::string((char*)hdr->bytes(), hdr->byteSize());
+                    }
+                }
+                fprintf(driverLog, "[DRIVER] Sensor class: %s (0x%llx)\n", name.c_str(),
+                        (unsigned long long)sensorClass.rawBits());
+                fflush(driverLog);
+            }
+            if (sensorClass.isObject() && sensorClass.rawBits() != nilObj.rawBits()) {
+                fprintf(driverLog, "[DRIVER] InputEventSensor found - checking if event loop is running\n");
+                fflush(driverLog);
+
+                // The event loop should already be running from session startup.
+                // Let's verify by checking if primitive 264 is being called.
+                // If events aren't being consumed, we might need to start the loop.
+            }
+        } else {
+            if (driverLog) {
+                fprintf(driverLog, "[DRIVER] Sensor global not found\n");
+                fflush(driverLog);
+            }
+        }
+        return;
+    }
+
+    if (!osDriverClass.isObject()) {
         if (driverLog) {
             fprintf(driverLog, "[DRIVER] OSiOSDriver class not found\n");
             fflush(driverLog);
@@ -16327,6 +16376,25 @@ void Interpreter::installOSiOSDriver() {
     ObjectHeader* mdHeader = methodDict.asObjectPtr();
     size_t mdSlots = mdHeader->slotCount();
     Oop installMethod = Oop::nil();
+
+    // Debug: dump first 10 selectors
+    if (driverLog) {
+        fprintf(driverLog, "[DRIVER] Scanning selectors in methodDict (slots 2-%zu):\n", mdSlots);
+        int selectorCount = 0;
+        for (size_t i = 2; i < mdSlots && selectorCount < 15; i++) {
+            Oop key = mdHeader->slotAt(i);
+            if (!key.isObject() || key.rawBits() == nilObj.rawBits()) continue;
+            ObjectHeader* keyHdr = key.asObjectPtr();
+            if (!keyHdr->isBytesObject()) continue;
+            size_t keyLen = keyHdr->byteSize();
+            if (keyLen > 0 && keyLen < 50) {
+                std::string sel((char*)keyHdr->bytes(), keyLen);
+                fprintf(driverLog, "[DRIVER]   slot[%zu] = '%s' (len=%zu)\n", i, sel.c_str(), keyLen);
+                selectorCount++;
+            }
+        }
+        fflush(driverLog);
+    }
 
     for (size_t i = 2; i < mdSlots; i++) {
         Oop key = mdHeader->slotAt(i);
