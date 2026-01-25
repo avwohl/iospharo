@@ -3776,6 +3776,15 @@ PrimitiveResult Interpreter::primitiveVMPath(int argCount) {
 // Primitive 106: Get the screen size as a Point
 // Returns Point with x = width, y = height
 PrimitiveResult Interpreter::primitiveScreenSize(int argCount) {
+    static int callCount = 0;
+    callCount++;
+    static FILE* log = fopen("/tmp/prim106_screensize.log", "a");
+    if (log && callCount <= 20) {
+        fprintf(log, "[PRIM106] primitiveScreenSize called #%d -> %dx%d\n",
+                callCount, screenWidth_, screenHeight_);
+        fflush(log);
+    }
+
     // Create a Point object with screen dimensions
     // Point is stored as: x @ y where x and y are SmallIntegers
 
