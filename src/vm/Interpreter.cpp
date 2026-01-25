@@ -1896,8 +1896,27 @@ void Interpreter::processInputEvents() {
                                     memory_.storePointer(1, clonedEvent, eventInjectionHand_);
                                     // slot 2: nil (modifiers or unused)
                                     memory_.storePointer(2, clonedEvent, memory_.nil());
-                                    // slot 3: type symbol - copy from existing
-                                    Oop typeSymbol = memory_.fetchPointer(3, existingMouseEvent_);
+                                    // slot 3: type symbol - MUST match event type
+                                    // Cache the symbols for mouseDown and mouseUp
+                                    static Oop mouseDownSymbol = Oop::nil();
+                                    static Oop mouseUpSymbol = Oop::nil();
+                                    static bool symbolsLookedUp = false;
+                                    if (!symbolsLookedUp) {
+                                        symbolsLookedUp = true;
+                                        mouseDownSymbol = memory_.lookupSymbol("mouseDown");
+                                        mouseUpSymbol = memory_.lookupSymbol("mouseUp");
+                                        if (logFile) {
+                                            fprintf(logFile, "[EVENT-SYMBOLS] mouseDown=0x%llx mouseUp=0x%llx\n",
+                                                    (unsigned long long)mouseDownSymbol.rawBits(),
+                                                    (unsigned long long)mouseUpSymbol.rawBits());
+                                            fflush(logFile);
+                                        }
+                                    }
+                                    Oop typeSymbol = (event.arg5 == 1) ? mouseDownSymbol : mouseUpSymbol;
+                                    if (typeSymbol.rawBits() == memory_.nil().rawBits()) {
+                                        // Fallback: copy from existing (which is #mouseMove, not ideal)
+                                        typeSymbol = memory_.fetchPointer(3, existingMouseEvent_);
+                                    }
                                     memory_.storePointer(3, clonedEvent, typeSymbol);
                                     // slot 4: buttons
                                     memory_.storePointer(4, clonedEvent, Oop::fromSmallInteger(event.arg3));
