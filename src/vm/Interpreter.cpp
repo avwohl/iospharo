@@ -12996,14 +12996,17 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         return;
     }
 
-    // Fallback for #sender - returns nil (no sender)
-    // Prevents cascading errors during exception handling
+    // Fallback for #sender - return nil to end exception handling chain
+    // We don't try to read actual sender because:
+    // 1. The context doesn't have proper methods (class issue)
+    // 2. There may be sender chain cycles that cause infinite loops
+    // Returning nil tells exception handler "no more senders to check"
     if (origStr == "sender" && argCount == 0) {
         static int senderCount = 0;
         senderCount++;
         if (senderCount <= 10) {
             std::cerr << "[DNU-FALLBACK] sender on " << rcvrClassName
-                      << " #" << senderCount << " - returning nil\n";
+                      << " #" << senderCount << " - returning nil (end chain)\n";
         }
         pop();  // Pop receiver
         push(memory_.nil());
