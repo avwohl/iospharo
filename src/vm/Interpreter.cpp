@@ -2036,6 +2036,12 @@ void Interpreter::syncDisplayToSurface() {
     // NO WORKAROUNDS: Removed processPendingWorldMenu, processPendingMenuAction, updateActiveHandPosition
     // Events must be handled by Smalltalk's InputEventSensor, not C++ workarounds
 
+    // WORKAROUND: BitBlt isn't rendering morphs to Display Form correctly.
+    // Use direct morph rendering until BitBlt primitives are fixed.
+    // TODO: Remove this once BitBlt is working
+    renderWorldMorphs();
+    return;
+
     // Sync Display Form to surface if we have one
     // Auto-discover Display global if displayForm_ not set
     if (displayForm_.isNil()) {
@@ -2104,6 +2110,21 @@ void Interpreter::syncDisplayToSurface() {
     uint32_t* dstPixels = pharo::gDisplaySurface->pixels();
     int dstWidth = pharo::gDisplaySurface->width();
     int dstHeight = pharo::gDisplaySurface->height();
+
+    // Debug log Form dimensions (first 5 times only)
+    static int formCopyCount = 0;
+    formCopyCount++;
+    if (formCopyCount <= 5) {
+        static FILE* formLog = fopen("/tmp/form_copy.log", "w");
+        if (formLog) {
+            fprintf(formLog, "[FORM #%d] src=%dx%d depth=%d, dst=%dx%d, bitsSize=%zu\n",
+                    formCopyCount, srcWidth, srcHeight, srcDepth, dstWidth, dstHeight, bitsHdr->byteSize());
+            // Sample a few source pixels
+            fprintf(formLog, "[FORM #%d] first src pixels: %08x %08x %08x %08x\n",
+                    formCopyCount, srcPixels[0], srcPixels[1], srcPixels[2], srcPixels[3]);
+            fflush(formLog);
+        }
+    }
 
     int copyWidth = std::min(srcWidth, dstWidth);
     int copyHeight = std::min(srcHeight, dstHeight);
@@ -9536,24 +9557,58 @@ tryRegularPrimitive:
         if (selLen == 3 && selBytes && memcmp(selBytes, "new", 3) == 0) {
             static int newFailCount = 0;
             if (newFailCount++ < 20) {
-                std::string className = "?";
+                // Get receiver's class name (if it's a class object, we expect this to be the metaclass name)
+                std::string rcvrClassName = "?";
+                std::string lookupClassName = "?";
+                bool receiverIsClass = false;
+
+                // Check if receiver is a class (has name in slot 6)
+                if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                    ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+                    if (rcvrHdr->slotCount() > 6) {
+                        Oop nameOop = memory_.fetchPointer(6, rcvr);
+                        if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                            ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                                rcvrClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                receiverIsClass = true;  // Receiver has a name -> it's a class
+                            }
+                        }
+                    }
+                }
+
+                // Get lookup class name
                 if (rcvrClass.isObject() && rcvrClass.rawBits() > 0x10000) {
                     Oop nameOop = memory_.fetchPointer(6, rcvrClass);
                     if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
                         ObjectHeader* nameHdr = nameOop.asObjectPtr();
                         if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
-                            className = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                            lookupClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                        } else {
+                            // Slot 6 is not a bytes object - for metaclasses, it's thisClass
+                            // So this IS a metaclass. Show that.
+                            lookupClassName = "<metaclass>";
                         }
                     }
                 }
+
                 std::cerr << "[SEND-NEW-FAIL #" << newFailCount << "] #new not found\n";
+                std::cerr << "  receiver=" << (receiverIsClass ? "CLASS:" : "instance:") << rcvrClassName << "\n";
+                std::cerr << "  lookupStartClass=" << lookupClassName << "\n";
                 std::cerr << "  rcvr=0x" << std::hex << rcvr.rawBits();
                 if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
                     ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
-                    std::cerr << " classIdx=" << std::dec << rcvrHdr->classIndex();
-                    std::cerr << " slots=" << rcvrHdr->slotCount();
+                    std::cerr << std::dec << " rcvrClassIdx=" << rcvrHdr->classIndex();
+                    std::cerr << " rcvrSlots=" << rcvrHdr->slotCount();
                 }
-                std::cerr << " (" << className << ")\n";
+                std::cerr << "\n";
+                std::cerr << "  rcvrClass=0x" << std::hex << rcvrClass.rawBits();
+                if (rcvrClass.isObject() && rcvrClass.rawBits() > 0x10000) {
+                    ObjectHeader* clsHdr = rcvrClass.asObjectPtr();
+                    std::cerr << std::dec << " lookupClassIdx=" << clsHdr->classIndex();
+                    std::cerr << " lookupSlots=" << clsHdr->slotCount();
+                }
+                std::cerr << "\n";
 
                 // Show current method executing when #new is sent
                 std::string currentMethodSel = "<unknown>";
