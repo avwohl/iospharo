@@ -15,6 +15,7 @@
 #include <thread>
 #include <chrono>
 #include <set>
+#include <dlfcn.h>
 
 #if __APPLE__
 #include <CoreGraphics/CoreGraphics.h>
@@ -16468,6 +16469,21 @@ void Interpreter::installOSiOSDriver() {
     static FILE* driverLog = fopen("/tmp/osdriver_install.log", "w");
     if (driverLog) {
         fprintf(driverLog, "[DRIVER] installOSiOSDriver called (step 100K)\n");
+        fflush(driverLog);
+    }
+
+    // Test if dlsym can find SDL2 functions at runtime
+    if (driverLog) {
+        void* sdlInit = dlsym(RTLD_DEFAULT, "SDL_Init");
+        void* sdlPoll = dlsym(RTLD_DEFAULT, "SDL_PollEvent");
+        void* sdlQuit = dlsym(RTLD_DEFAULT, "SDL_Quit");
+        fprintf(driverLog, "[DRIVER] dlsym SDL_Init=%p SDL_PollEvent=%p SDL_Quit=%p\n",
+                sdlInit, sdlPoll, sdlQuit);
+        if (sdlInit) {
+            fprintf(driverLog, "[DRIVER] SUCCESS: SDL2 functions are accessible via dlsym!\n");
+        } else {
+            fprintf(driverLog, "[DRIVER] FAILED: SDL2 functions NOT found via dlsym\n");
+        }
         fflush(driverLog);
     }
 

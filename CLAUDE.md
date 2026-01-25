@@ -72,6 +72,12 @@ The bytecode ranges 0xE0-0xFF are completely different between the two sets.
 - **Use fresh images only**: Always test with freshly downloaded Pharo images, not previously-saved ones
 - **Save is disabled**: Image saving (snapshot) is disabled for now to ensure consistent testing from fresh state
 
+## SDL2 and FFI
+- **SDL2 is set up and should be working** - SDL2 stubs are registered with the VM
+- The standard Pharo image uses OSSDL2Driver which calls SDL2 via FFI
+- If SDL2/FFI isn't working, **fix the FFI loading** - don't assume SDL2 isn't available
+- Check `primitiveLoadSymbolFromModule` and FFI callout paths if SDL2 functions aren't found
+
 ## Debugging
 - **Debug before asking**: Always run the app and check logs yourself before asking the user to test. Use `/tmp/iospharo-render.log` and other log files to diagnose issues.
 - Always test on Mac first - it starts up much faster than the iOS simulator
