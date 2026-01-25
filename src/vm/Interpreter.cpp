@@ -1866,6 +1866,174 @@ void Interpreter::processInputEvents() {
                             event.arg1, event.arg2, event.arg3, typeStr);
                     fflush(logFile);
                 }
+
+                // CRITICAL FIX: Also inject into HandMorph's eventQueue (WaitfreeQueue)
+                // The HandMorph's processEvents method reads from eventQueue, not from slot 12
+                if (handEventQueue_.isObject() &&
+                    handEventQueue_.rawBits() != memory_.nil().rawBits()) {
+
+                    static int queueInjectCount = 0;
+
+                    // Only inject button events (down/up), not moves (too many)
+                    // event.arg5: 1=down, 2=up, 3=move
+                    if (event.arg5 == 1 || event.arg5 == 2) {
+                        queueInjectCount++;
+
+                        // Get the WaitfreeQueue's current dummy (slot 0)
+                        Oop currentDummy = memory_.fetchPointer(0, handEventQueue_);
+                        if (currentDummy.isObject() && currentDummy.rawBits() != memory_.nil().rawBits()) {
+                            // Get dummy's class to create a new one
+                            Oop dummyClass = memory_.classOf(currentDummy);
+                            if (dummyClass.isObject()) {
+                                // Clone the existing MouseEvent for this queue entry
+                                // MouseEvent has 8 slots
+                                Oop clonedEvent = memory_.allocateSlots(mouseEventClassIndex_, 8);
+                                if (clonedEvent.isObject() && clonedEvent.rawBits() != memory_.nil().rawBits()) {
+                                    // Copy from existing MouseEvent and update
+                                    // slot 0: nil (timeStamp or unused)
+                                    memory_.storePointer(0, clonedEvent, memory_.nil());
+                                    // slot 1: hand reference
+                                    memory_.storePointer(1, clonedEvent, eventInjectionHand_);
+                                    // slot 2: nil (modifiers or unused)
+                                    memory_.storePointer(2, clonedEvent, memory_.nil());
+                                    // slot 3: type symbol - copy from existing
+                                    Oop typeSymbol = memory_.fetchPointer(3, existingMouseEvent_);
+                                    memory_.storePointer(3, clonedEvent, typeSymbol);
+                                    // slot 4: buttons
+                                    memory_.storePointer(4, clonedEvent, Oop::fromSmallInteger(event.arg3));
+                                    // slot 5: position - create new Point
+                                    Oop pointClass = memory_.findGlobal("Point");
+                                    if (pointClass.isObject()) {
+                                        // In Spur, class's identity hash == its class index
+                                        uint32_t pointClassIdx = memory_.identityHashOf(pointClass);
+                                        Oop newPoint = memory_.allocateSlots(pointClassIdx, 2);
+                                        if (newPoint.isObject()) {
+                                            memory_.storePointer(0, newPoint, Oop::fromSmallInteger(event.arg1));
+                                            memory_.storePointer(1, newPoint, Oop::fromSmallInteger(event.arg2));
+                                            memory_.storePointer(5, clonedEvent, newPoint);
+                                        } else {
+                                            // Fallback: copy position from existing
+                                            memory_.storePointer(5, clonedEvent, memory_.fetchPointer(5, existingMouseEvent_));
+                                        }
+                                    }
+                                    // slot 6: nil (handler or unused)
+                                    memory_.storePointer(6, clonedEvent, memory_.nil());
+                                    // slot 7: wasHandled = false
+                                    memory_.storePointer(7, clonedEvent, memory_.specialObject(SpecialObjectIndex::FalseObject));
+
+                                    // Create new dummy for queue
+                                    ObjectHeader* dummyHdr = currentDummy.asObjectPtr();
+                                    Oop newDummy = memory_.allocateSlots(dummyHdr->classIndex(), 2);
+                                    if (newDummy.isObject() && newDummy.rawBits() != memory_.nil().rawBits()) {
+                                        // Initialize new dummy as circular (points to itself) - this is how
+                                        // WaitfreeQueue works: empty dummy is circular, nextOrNil checks next != nil
+                                        memory_.storePointer(0, newDummy, newDummy);  // object = self
+                                        memory_.storePointer(1, newDummy, newDummy);  // next = self
+
+                                        // WaitfreeQueue-like insertion:
+                                        // The queue slot 0 might be the HEAD (for reading), not just dummy
+                                        // Current dummy is circular (points to self), we insert the event
+                                        // by making the current item point to a new item containing our event
+                                        //
+                                        // Alternative approach: insert event in the NEXT item, not current
+                                        // So that dummy.next.object = event, dummy.next.next = newDummy
+                                        //
+                                        // Actually, let me try storing in current item and chaining:
+                                        // - currentDummy.object was self, becomes event
+                                        // - currentDummy.next was self, becomes newDummy
+                                        // - Keep queue slot 0 pointing to currentDummy (where data now is)
+                                        // - DON'T update queue slot 0 - keep it as head for reading
+                                        memory_.storePointer(0, currentDummy, clonedEvent);  // object = event
+                                        memory_.storePointer(1, currentDummy, newDummy);     // next = newDummy
+                                        // Note: NOT updating queue slot 0 - it stays pointing to currentDummy
+                                        // This way nextOrNil sees: dummy(D0).next = D1, reads D1.object
+                                        // But wait, that would read newDummy's object which is itself...
+                                        //
+                                        // OK different interpretation: WaitfreeQueue might use slot 1 for writes
+                                        // Let me update slot 1 instead to be the new tail:
+                                        memory_.storePointer(1, handEventQueue_, newDummy);  // queue slot 1 = newDummy
+
+                                        if (logFile) {
+                                            fprintf(logFile, "[QUEUE-INJECT] #%d Added %s event to queue: pos=(%d,%d) buttons=%d\n",
+                                                    queueInjectCount,
+                                                    (event.arg5 == 1) ? "DOWN" : "UP",
+                                                    event.arg1, event.arg2, event.arg3);
+                                            fflush(logFile);
+                                        }
+
+                                        // ALTERNATIVE: Also try direct method call via context creation
+                                        // Look up #handleEvent: on HandMorph and invoke it directly
+                                        static bool triedDirectCall = false;
+                                        if (!triedDirectCall && event.arg5 == 1) {  // Only on first mouseDown
+                                            triedDirectCall = true;
+                                            Oop handClass = memory_.classOf(eventInjectionHand_);
+                                            if (handClass.isObject()) {
+                                                // Search for handleEvent: in the class hierarchy
+                                                Oop currentClass = handClass;
+                                                Oop nilObj = memory_.nil();
+                                                Oop handleEventMethod = nilObj;
+                                                int searchDepth = 0;
+                                                const int maxSearchDepth = 20;
+
+                                                while (currentClass.isObject() && currentClass.rawBits() != nilObj.rawBits() && searchDepth < maxSearchDepth) {
+                                                    Oop methodDict = memory_.fetchPointer(1, currentClass);  // methodDict at slot 1
+                                                    if (methodDict.isObject() && methodDict.rawBits() != nilObj.rawBits()) {
+                                                        ObjectHeader* mdHdr = methodDict.asObjectPtr();
+                                                        if (mdHdr->slotCount() >= 2) {
+                                                            Oop methods = memory_.fetchPointer(1, methodDict);  // array at slot 1
+                                                            if (methods.isObject()) {
+                                                                ObjectHeader* arrHdr = methods.asObjectPtr();
+                                                                for (size_t i = 0; i < arrHdr->slotCount(); i++) {
+                                                                    Oop assoc = arrHdr->slotAt(i);
+                                                                    if (assoc.isObject() && assoc.rawBits() != nilObj.rawBits()) {
+                                                                        ObjectHeader* assocHdr = assoc.asObjectPtr();
+                                                                        if (assocHdr->slotCount() >= 2) {
+                                                                            Oop key = memory_.fetchPointer(0, assoc);
+                                                                            if (key.isObject()) {
+                                                                                ObjectHeader* keyHdr = key.asObjectPtr();
+                                                                                if (keyHdr->isBytesObject() && keyHdr->byteSize() == 12) {
+                                                                                    if (memcmp(keyHdr->bytes(), "handleEvent:", 12) == 0) {
+                                                                                        handleEventMethod = memory_.fetchPointer(1, assoc);
+                                                                                        if (logFile) {
+                                                                                            fprintf(logFile, "[DIRECT-CALL] Found handleEvent: at depth %d\n", searchDepth);
+                                                                                            fflush(logFile);
+                                                                                        }
+                                                                                        break;
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    if (handleEventMethod.rawBits() != nilObj.rawBits()) break;
+                                                    currentClass = memory_.fetchPointer(0, currentClass);  // superclass
+                                                    searchDepth++;
+                                                }
+
+                                                if (handleEventMethod.isObject() && handleEventMethod.rawBits() != nilObj.rawBits()) {
+                                                    // Create context for hand handleEvent: clonedEvent
+                                                    Oop ctx = memory_.createStartupContextWithArg(handleEventMethod, eventInjectionHand_, clonedEvent);
+                                                    if (ctx.isObject() && ctx.rawBits() != nilObj.rawBits()) {
+                                                        // Schedule by adding to active process
+                                                        pendingEventContext_ = ctx;
+                                                        hasPendingEventContext_ = true;
+                                                        if (logFile) {
+                                                            fprintf(logFile, "[DIRECT-CALL] Created context for handleEvent:, will execute\n");
+                                                            fflush(logFile);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -2911,6 +3079,40 @@ bool Interpreter::step() {
         // Execute any pending driver install during yield
         if (hasPendingDriverInstall_) {
             executePendingDriverInstall();
+        }
+
+        // Execute any pending event context (direct handleEvent: call)
+        if (hasPendingEventContext_) {
+            hasPendingEventContext_ = false;
+            if (pendingEventContext_.isObject() && pendingEventContext_.rawBits() != memory_.nil().rawBits()) {
+                static FILE* evtLog = nullptr;
+                if (!evtLog) evtLog = fopen("/tmp/pending_event.log", "w");
+                if (evtLog) {
+                    fprintf(evtLog, "[PENDING-EVENT] Executing handleEvent: context\n");
+                    fflush(evtLog);
+                }
+                // Push context to execute
+                Oop savedContext = activeContext_;
+                activeContext_ = pendingEventContext_;
+                pendingEventContext_ = memory_.nil();
+                // Execute until it returns
+                int maxSteps = 10000;
+                while (maxSteps-- > 0 && activeContext_.isObject() &&
+                       activeContext_.rawBits() != memory_.nil().rawBits()) {
+                    // Read and execute one bytecode
+                    if (instructionPointer_ && instructionPointer_ < bytecodeEnd_) {
+                        uint8_t bytecode = *instructionPointer_++;
+                        dispatchBytecode(bytecode);
+                    } else {
+                        break;
+                    }
+                }
+                if (evtLog) {
+                    fprintf(evtLog, "[PENDING-EVENT] Completed handleEvent: (steps left: %d)\n", maxSteps);
+                    fflush(evtLog);
+                }
+                activeContext_ = savedContext;
+            }
         }
     }
 

@@ -404,6 +404,10 @@ private:
     Oop handEventQueue_ = Oop::nil();  // Hand's WaitfreeQueue for event injection
     uint32_t mouseEventClassIndex_ = 0;  // Class index for creating MouseEvent objects
 
+    // Direct event handling via context creation
+    Oop pendingEventContext_ = Oop::nil();
+    bool hasPendingEventContext_ = false;
+
     // Debug: visual click indicator
     int debugClickX_ = -1;
     int debugClickY_ = -1;
