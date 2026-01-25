@@ -11371,6 +11371,14 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
                 }
                 return PrimitiveResult::Success;
             }
+            // CRITICAL: isVMDisplayUsingSDL2 check - OSSDL2Driver uses this to decide event handling
+            if (str == "isVMDisplayUsingSDL2") {
+                if (extLog) {
+                    fprintf(extLog, "[EXT] #%d Found isVMDisplayUsingSDL2, returning TRUE\n", extCallCount);
+                    fflush(extLog);
+                }
+                return primitiveIsVMDisplayUsingSDL2(argCount);
+            }
         }
 
         // Check if it's an Array (format 2 = indexable pointers) or ExternalLibraryFunction (format 1)
