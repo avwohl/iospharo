@@ -12173,6 +12173,41 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
             }
         }
 
+        // Debug: if still unknown and it's an isHandlerOrSignalingContext call, investigate
+        static int unknownHandlerCount = 0;
+        if (rcvrClassName == "<unknown>" && selStr == "isHandlerOrSignalingContext" && unknownHandlerCount < 5) {
+            unknownHandlerCount++;
+            fprintf(dnuTraceLog, "  [DEBUG] rcvr=0x%llx isObject=%d classOf=0x%llx classIsObj=%d\n",
+                    (unsigned long long)rcvr.rawBits(), rcvr.isObject(),
+                    (unsigned long long)rcvrCls.rawBits(), rcvrCls.isObject());
+            if (rcvr.isObject()) {
+                ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+                fprintf(dnuTraceLog, "  [DEBUG] rcvr classIndex=%u format=%d slots=%zu\n",
+                        rcvrHdr->classIndex(), (int)rcvrHdr->format(), rcvrHdr->slotCount());
+            }
+            // Check why class name lookup failed
+            if (rcvrCls.isObject()) {
+                ObjectHeader* clsHdr = rcvrCls.asObjectPtr();
+                fprintf(dnuTraceLog, "  [DEBUG] class slots=%zu format=%d\n",
+                        clsHdr->slotCount(), (int)clsHdr->format());
+                if (clsHdr->slotCount() > 6) {
+                    Oop nameOop = memory_.fetchPointer(6, rcvrCls);
+                    fprintf(dnuTraceLog, "  [DEBUG] class name oop=0x%llx isObj=%d isNil=%d\n",
+                            (unsigned long long)nameOop.rawBits(), nameOop.isObject(),
+                            nameOop.isNil() || nameOop.rawBits() == memory_.nil().rawBits());
+                    if (nameOop.isObject() && !nameOop.isNil()) {
+                        ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                        fprintf(dnuTraceLog, "  [DEBUG] name isBytesObject=%d byteSize=%zu\n",
+                                nameHdr->isBytesObject(), nameHdr->byteSize());
+                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                            std::string name((char*)nameHdr->bytes(), nameHdr->byteSize());
+                            fprintf(dnuTraceLog, "  [DEBUG] CLASS NAME = '%s'\n", name.c_str());
+                        }
+                    }
+                }
+            }
+        }
+
         fprintf(dnuTraceLog, "[DNU #%d depth=%d] %s >> #%s argCount=%d\n",
                 ++dnuTraceCount, dnuDepth, rcvrClassName.c_str(), selStr.c_str(), argCount);
 
@@ -12662,6 +12697,22 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         return;
     }
 
+    // Fallback for #next on boolean - stream iteration on boolean
+    // Happens when code tries to iterate a boolean as if it were a stream
+    if (origStr == "next" && argCount == 0 &&
+        (rcvrClassName == "False" || rcvrClassName == "True")) {
+        static int nextBoolCount = 0;
+        nextBoolCount++;
+        if (nextBoolCount <= 5) {
+            std::cerr << "[DNU-FALLBACK] next on " << rcvrClassName << " #" << nextBoolCount
+                      << " - returning nil\n";
+        }
+        pop();  // Pop receiver
+        push(memory_.nil());  // No more elements
+        dnuDepth--;
+        return;
+    }
+
     // Fallback for #decodeWith: on nil - string decoding on nil
     // Happens when code tries to decode nil with an encoder
     if (origStr == "decodeWith:" && rcvrClassName == "UndefinedObject" && argCount == 1) {
@@ -12884,6 +12935,36 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         return;
     }
 
+    // Fallback for #includes: on nil - collection membership test on nil
+    // Returns false since nil contains nothing
+    if (origStr == "includes:" && rcvrClassName == "UndefinedObject" && argCount == 1) {
+        static int includesNilCount = 0;
+        includesNilCount++;
+        if (includesNilCount <= 5) {
+            std::cerr << "[DNU-FALLBACK] includes: on nil #" << includesNilCount
+                      << " - returning false\n";
+        }
+        popN(2);  // Pop receiver and argument
+        push(memory_.falseObject());  // nil includes nothing
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #scanFor: on nil - hash set scanning on nil
+    // Returns nil (nothing found)
+    if (origStr == "scanFor:" && rcvrClassName == "UndefinedObject" && argCount == 1) {
+        static int scanForCount = 0;
+        scanForCount++;
+        if (scanForCount <= 5) {
+            std::cerr << "[DNU-FALLBACK] scanFor: on nil #" << scanForCount
+                      << " - returning nil\n";
+        }
+        popN(2);  // Pop receiver and argument
+        push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+
     // Fallback for #isHandlerOrSignalingContext - used during exception handling
     // When called on unknown/corrupted objects, return false (not a handler context)
     // This prevents the exception cascade from spiraling out of control
@@ -12970,6 +13051,37 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         pop();  // Pop receiver
         // Return an empty array - allocate a minimal array with 0 slots
         // For simplicity, just return nil (no variables)
+        push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #sourceNodeExecuted on nil - AST introspection during error display
+    // Happens when trying to get the source node that caused an exception
+    if (origStr == "sourceNodeExecuted" && rcvrClassName == "UndefinedObject" && argCount == 0) {
+        static int srcNodeCount = 0;
+        srcNodeCount++;
+        if (srcNodeCount <= 5) {
+            std::cerr << "[DNU-FALLBACK] sourceNodeExecuted on nil #" << srcNodeCount
+                      << " - returning nil\n";
+        }
+        pop();  // Pop receiver
+        push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #detect:ifNone: on nil - collection search on nil
+    // Happens during error display when searching nil for matching elements
+    // Since nil has no elements to search, just return nil
+    if (origStr == "detect:ifNone:" && rcvrClassName == "UndefinedObject" && argCount == 2) {
+        static int detectCount = 0;
+        detectCount++;
+        if (detectCount <= 5) {
+            std::cerr << "[DNU-FALLBACK] detect:ifNone: on nil #" << detectCount
+                      << " - returning nil (empty collection)\n";
+        }
+        popN(3);  // Pop receiver and both arguments
         push(memory_.nil());
         dnuDepth--;
         return;
