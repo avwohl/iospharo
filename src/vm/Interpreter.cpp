@@ -16310,6 +16310,79 @@ void Interpreter::installOSiOSDriver() {
         } else {
             if (driverLog) {
                 fprintf(driverLog, "[DRIVER] Sensor global not found\n");
+
+                // Check if InputEventSensor class exists
+                Oop ieClass = memory_.findGlobal("InputEventSensor");
+                fprintf(driverLog, "[DRIVER] InputEventSensor class: 0x%llx sameAsNil=%d\n",
+                        (unsigned long long)ieClass.rawBits(),
+                        ieClass.rawBits() == nilObj.rawBits() ? 1 : 0);
+
+                // Check OSWindow infrastructure
+                Oop osWindowDriverClass = memory_.findGlobal("OSWindowDriver");
+                fprintf(driverLog, "[DRIVER] OSWindowDriver class: 0x%llx sameAsNil=%d\n",
+                        (unsigned long long)osWindowDriverClass.rawBits(),
+                        osWindowDriverClass.rawBits() == nilObj.rawBits() ? 1 : 0);
+
+                Oop osWindow = memory_.findGlobal("OSWindow");
+                fprintf(driverLog, "[DRIVER] OSWindow class: 0x%llx sameAsNil=%d\n",
+                        (unsigned long long)osWindow.rawBits(),
+                        osWindow.rawBits() == nilObj.rawBits() ? 1 : 0);
+
+                // If OSWindowDriver exists, try to get the current driver and check its class
+                if (osWindowDriverClass.isObject() && osWindowDriverClass.rawBits() != nilObj.rawBits()) {
+                    // OSWindowDriver has a 'Current' class variable at slot 12 (after standard class slots)
+                    // Class layout: superclass[0], methodDict[1], format[2], layout[3],
+                    // instanceVariables[4], organization[5], name[6], classPool[7], sharedPools[8],
+                    // environment[9], category[10], then class inst vars start at 11+
+                    ObjectHeader* driverHdr = osWindowDriverClass.asObjectPtr();
+                    fprintf(driverLog, "[DRIVER] OSWindowDriver class has %zu slots\n", driverHdr->slotCount());
+
+                    // The Current class variable is in classPool (slot 7)
+                    Oop classPool = memory_.fetchPointer(7, osWindowDriverClass);
+                    fprintf(driverLog, "[DRIVER] OSWindowDriver classPool: 0x%llx isObj=%d\n",
+                            (unsigned long long)classPool.rawBits(), classPool.isObject() ? 1 : 0);
+
+                    // Check if there's a Current key in the classPool
+                    if (classPool.isObject() && classPool.rawBits() != nilObj.rawBits()) {
+                        ObjectHeader* poolHdr = classPool.asObjectPtr();
+                        fprintf(driverLog, "[DRIVER] ClassPool has %zu slots\n", poolHdr->slotCount());
+                        // Dictionary slots are key-value pairs
+                        for (size_t i = 0; i < poolHdr->slotCount() && i < 10; i++) {
+                            Oop slot = memory_.fetchPointer(i, classPool);
+                            if (slot.isObject() && slot.rawBits() != nilObj.rawBits()) {
+                                ObjectHeader* slotHdr = slot.asObjectPtr();
+                                // Associations have key at slot 0, value at slot 1
+                                if (slotHdr->slotCount() >= 2) {
+                                    Oop key = memory_.fetchPointer(0, slot);
+                                    Oop val = memory_.fetchPointer(1, slot);
+                                    if (key.isObject()) {
+                                        ObjectHeader* keyHdr = key.asObjectPtr();
+                                        if (keyHdr->isBytesObject() && keyHdr->byteSize() < 50) {
+                                            std::string keyName((char*)keyHdr->bytes(), keyHdr->byteSize());
+                                            fprintf(driverLog, "[DRIVER]   ClassPool[%zu] key='%s' val=0x%llx\n",
+                                                    i, keyName.c_str(), (unsigned long long)val.rawBits());
+                                            if (keyName == "Current" && val.isObject() && val.rawBits() != nilObj.rawBits()) {
+                                                // Found the current driver!
+                                                Oop driverClass = memory_.classOf(val);
+                                                Oop driverName = memory_.fetchPointer(6, driverClass);
+                                                std::string name = "<unknown>";
+                                                if (driverName.isObject()) {
+                                                    ObjectHeader* nHdr = driverName.asObjectPtr();
+                                                    if (nHdr->isBytesObject()) {
+                                                        name = std::string((char*)nHdr->bytes(), nHdr->byteSize());
+                                                    }
+                                                }
+                                                fprintf(driverLog, "[DRIVER] Current driver is: %s\n", name.c_str());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    fflush(driverLog);
+                }
+
                 fflush(driverLog);
             }
         }
