@@ -247,6 +247,13 @@ public:
     /// @return The new Context object, or nil on failure
     Oop createStartupContext(Oop method, Oop receiver);
 
+    /// Create a Context for executing a startup method with one argument
+    /// @param method The CompiledMethod to execute (should take 1 argument)
+    /// @param receiver The object to receive the message (self)
+    /// @param arg The argument to pass to the method
+    /// @return The new Context object, or nil on failure
+    Oop createStartupContextWithArg(Oop method, Oop receiver, Oop arg);
+
     // ===== OBJECT ACCESS =====
 
     /// Fetch a pointer field from an object (0-based index)

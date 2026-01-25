@@ -882,6 +882,70 @@ Oop ObjectMemory::createStartupContext(Oop method, Oop receiver) {
     return context;
 }
 
+Oop ObjectMemory::createStartupContextWithArg(Oop method, Oop receiver, Oop arg) {
+    // Get MethodContext class
+    Oop contextClass = specialObject(SpecialObjectIndex::ClassMethodContext);
+    if (contextClass.isNil()) {
+        return nilObject_;
+    }
+
+    // Get method header to determine temp count and arg count
+    Oop methodHeader = fetchPointer(0, method);
+    if (!methodHeader.isSmallInteger()) {
+        return nilObject_;
+    }
+
+    int64_t headerBits = methodHeader.asSmallInteger();
+    int numTemps = (headerBits >> 16) & 0xFF;
+    int numArgs = (headerBits >> 24) & 0xF;  // Arguments are in bits 24-27
+    int numLiterals = headerBits & 0x7FFF;
+
+    // Sanity check: we expect 1 argument for this method
+    if (numArgs != 1) {
+        static FILE* uiLog = nullptr;
+        if (!uiLog) uiLog = fopen("/tmp/uimanager_startup.log", "a");
+        if (uiLog) {
+            fprintf(uiLog, "[UI] Warning: method has %d args, expected 1\n", numArgs);
+            fflush(uiLog);
+        }
+        // Still try to create context with the provided arg
+    }
+
+    // Context needs: 6 fixed slots + 1 arg + temps + some stack space
+    size_t contextSize = 6 + numArgs + numTemps + 32;
+
+    uint32_t classIndex = indexOfClass(contextClass);
+    if (classIndex == 0) {
+        classIndex = const_cast<ObjectMemory*>(this)->registerClass(contextClass);
+    }
+
+    Oop context = allocateSlots(classIndex, contextSize, ObjectFormat::IndexableWithFixed);
+    if (context.isNil()) {
+        return nilObject_;
+    }
+
+    // Calculate initial PC (after header + literals)
+    int initialPC = (1 + numLiterals) * 8 + 1;
+
+    // Initialize context
+    storePointer(0, context, nil());                                      // sender
+    storePointer(1, context, Oop::fromSmallInteger(initialPC));           // pc
+    storePointer(2, context, Oop::fromSmallInteger(numArgs + numTemps + 5)); // stackp
+    storePointer(3, context, method);                                      // method
+    storePointer(4, context, nil());                                       // closureOrNil
+    storePointer(5, context, receiver);                                    // receiver
+
+    // Store the argument
+    storePointer(6, context, arg);
+
+    // Initialize temporaries to nil (after args)
+    for (int i = 0; i < numTemps; ++i) {
+        storePointer(6 + numArgs + i, context, nil());
+    }
+
+    return context;
+}
+
 // ===== OBJECT ACCESS =====
 
 Oop ObjectMemory::fetchPointer(size_t index, Oop obj) const {

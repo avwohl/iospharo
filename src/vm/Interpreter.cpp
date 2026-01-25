@@ -2551,6 +2551,147 @@ bool Interpreter::step() {
         installOSiOSDriver();  // Call helper method to install driver
     }
 
+    // At step 5M, check if UIManager needs to be initialized
+    // This runs after session startup handlers have completed
+    static bool uiManagerStartupAttempted = false;
+    if (!uiManagerStartupAttempted && stepCountForDriver == 5000000) {
+        uiManagerStartupAttempted = true;
+        std::cerr << "[UI] Step 5M reached - ensuring UIManager is started\n";
+
+        // Call UIManager startUp: true to ensure UI process is running
+        Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
+        Oop uiManagerClass = memory_.findGlobal("UIManager");
+
+        static FILE* uiLog = nullptr;
+        uiLog = fopen("/tmp/uimanager_startup.log", "w");
+
+        if (uiLog) {
+            fprintf(uiLog, "[UI] Attempting to initialize UIManager at step 5M\n");
+            fprintf(uiLog, "[UI] UIManager class: 0x%llx sameAsNil=%d\n",
+                    (unsigned long long)uiManagerClass.rawBits(),
+                    uiManagerClass.rawBits() == nilObj.rawBits() ? 1 : 0);
+            fflush(uiLog);
+        }
+
+        if (uiManagerClass.isObject() && uiManagerClass.rawBits() != nilObj.rawBits()) {
+            // Get the metaclass (UIManager class) for class-side method lookup
+            Oop metaclass = memory_.classOf(uiManagerClass);
+
+            if (uiLog) {
+                fprintf(uiLog, "[UI] UIManager metaclass: 0x%llx\n",
+                        (unsigned long long)metaclass.rawBits());
+                fflush(uiLog);
+            }
+
+            // Look up startUp: method on the class side using hierarchical lookup
+            // Search through the metaclass and its superclasses
+            Oop method = Oop::nil();
+            const char* selectorName = "startUp:";
+            size_t selLen = 8;  // strlen("startUp:")
+            Oop currentClass = metaclass;
+            int searchDepth = 0;
+            const int maxDepth = 20;
+
+            while (currentClass.isObject() && currentClass.rawBits() != nilObj.rawBits() && searchDepth < maxDepth) {
+                Oop methodDict = memory_.fetchPointer(1, currentClass);
+                if (methodDict.isObject()) {
+                    ObjectHeader* mdHeader = methodDict.asObjectPtr();
+                    size_t mdSlots = mdHeader->slotCount();
+
+                    for (size_t i = 2; i < mdSlots; i++) {
+                        Oop key = mdHeader->slotAt(i);
+                        if (!key.isObject() || key.isNil()) continue;
+
+                        ObjectHeader* keyHdr = key.asObjectPtr();
+                        if (!keyHdr->isBytesObject()) continue;
+
+                        size_t keyLen = keyHdr->byteSize();
+                        if (keyLen == selLen && memcmp(keyHdr->bytes(), selectorName, keyLen) == 0) {
+                            // Found! Get method from values array
+                            Oop values = memory_.fetchPointer(1, methodDict);
+                            if (values.isObject()) {
+                                ObjectHeader* valHdr = values.asObjectPtr();
+                                size_t valueIdx = i - 2;
+                                if (valueIdx < valHdr->slotCount()) {
+                                    method = valHdr->slotAt(valueIdx);
+                                    if (uiLog) {
+                                        fprintf(uiLog, "[UI] Found startUp: at depth %d\n", searchDepth);
+                                        fflush(uiLog);
+                                    }
+                                }
+                            }
+                            break;
+                        }
+                    }
+                    if (!method.isNil()) break;
+                }
+
+                // Move to superclass (slot 0)
+                currentClass = memory_.fetchPointer(0, currentClass);
+                searchDepth++;
+            }
+
+            if (uiLog) {
+                fprintf(uiLog, "[UI] UIManager class>>startUp: method: 0x%llx isNil=%d\n",
+                        (unsigned long long)method.rawBits(), method.isNil() ? 1 : 0);
+                fflush(uiLog);
+            }
+
+            if (!method.isNil() && method.isObject()) {
+                // Save current execution state
+                Oop savedMethod = method_;
+                Oop savedReceiver = receiver_;
+                Oop savedContext = activeContext_;
+                uint8_t* savedIP = instructionPointer_;
+                uint8_t* savedBCEnd = bytecodeEnd_;
+                Oop* savedSP = stackPointer_;
+                int savedFrame = frameDepth_;
+
+                // Create context for UIManager class>>startUp: true
+                Oop context = memory_.createStartupContextWithArg(method, uiManagerClass, memory_.trueObject());
+
+                if (!context.isNil()) {
+                    if (uiLog) {
+                        fprintf(uiLog, "[UI] Executing UIManager class>>startUp: true\n");
+                        fflush(uiLog);
+                    }
+
+                    // Set up execution state
+                    stackPointer_ = stackBase_;
+                    frameDepth_ = 0;
+
+                    // Execute the method
+                    if (executeFromContext(context)) {
+                        if (uiLog) {
+                            fprintf(uiLog, "[UI] UIManager startUp: returned successfully\n");
+                            fflush(uiLog);
+                        }
+                    } else if (uiLog) {
+                        fprintf(uiLog, "[UI] executeFromContext returned false\n");
+                        fflush(uiLog);
+                    }
+
+                    // Restore execution state
+                    method_ = savedMethod;
+                    receiver_ = savedReceiver;
+                    activeContext_ = savedContext;
+                    instructionPointer_ = savedIP;
+                    bytecodeEnd_ = savedBCEnd;
+                    stackPointer_ = savedSP;
+                    frameDepth_ = savedFrame;
+                } else if (uiLog) {
+                    fprintf(uiLog, "[UI] Failed to create context for UIManager startUp:\n");
+                    fflush(uiLog);
+                }
+            }
+        }
+
+        if (uiLog) {
+            fclose(uiLog);
+            uiLog = nullptr;
+        }
+    }
+
     // Process input events periodically (every 1000 steps after initialization)
     // This ensures events are drained from gEventQueue even without an event loop process
     if (osDriverInstallAttempted && (stepCountForDriver % 1000) == 0) {
@@ -17776,8 +17917,87 @@ bool Interpreter::bootstrapStartup() {
         }
     }
 
-    // Third try and beyond: Keep calling World>>doOneCycle for UI loop
-    if (startupAttempt >= 3 && startupAttempt <= 100) {
+    // Attempt 3: Ensure UIManager is initialized (spawns UI process)
+    // This is needed because UIManager may not be registered as a startup handler
+    // in some Pharo images, preventing the Morphic event loop from starting.
+    if (startupAttempt == 3) {
+        static bool uiManagerStarted = false;
+        static FILE* uiLog = nullptr;
+        if constexpr (ENABLE_DEBUG_LOGGING) {
+            if (!uiLog) uiLog = fopen("/tmp/uimanager_startup.log", "w");
+        }
+
+        if (!uiManagerStarted) {
+            uiManagerStarted = true;
+
+            if (uiLog) {
+                fprintf(uiLog, "[UI] Attempting to initialize UIManager\n");
+                fflush(uiLog);
+            }
+
+            // Find UIManager class
+            Oop uiManagerClass = memory_.findGlobal("UIManager");
+            Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
+
+            if (uiLog) {
+                fprintf(uiLog, "[UI] UIManager class: 0x%llx sameAsNil=%d\n",
+                        (unsigned long long)uiManagerClass.rawBits(),
+                        uiManagerClass.rawBits() == nilObj.rawBits() ? 1 : 0);
+                fflush(uiLog);
+            }
+
+            if (uiManagerClass.isObject() && uiManagerClass.rawBits() != nilObj.rawBits()) {
+                // Get the metaclass (UIManager class) for class-side method lookup
+                Oop metaclass = memory_.classOf(uiManagerClass);
+
+                if (uiLog) {
+                    fprintf(uiLog, "[UI] UIManager metaclass: 0x%llx\n",
+                            (unsigned long long)metaclass.rawBits());
+                    fflush(uiLog);
+                }
+
+                // Look up startUp: method on the class side
+                Oop method = lookupMethodInClass(metaclass, "startUp:");
+
+                if (uiLog) {
+                    fprintf(uiLog, "[UI] UIManager class>>startUp: method: 0x%llx isNil=%d\n",
+                            (unsigned long long)method.rawBits(), method.isNil() ? 1 : 0);
+                    fflush(uiLog);
+                }
+
+                if (!method.isNil() && method.isObject()) {
+                    // Create context for UIManager class>>startUp: true
+                    // The receiver is UIManager class, argument is true
+                    Oop context = memory_.createStartupContextWithArg(method, uiManagerClass, memory_.trueObject());
+
+                    if (!context.isNil()) {
+                        stackPointer_ = stackBase_;
+                        frameDepth_ = 0;
+                        if (uiLog) {
+                            fprintf(uiLog, "[UI] Executing UIManager class>>startUp: true\n");
+                            fflush(uiLog);
+                        }
+                        if (executeFromContext(context)) {
+                            if (uiLog) {
+                                fprintf(uiLog, "[UI] UIManager startUp: returned successfully\n");
+                                fflush(uiLog);
+                            }
+                            return true;
+                        }
+                    } else if (uiLog) {
+                        fprintf(uiLog, "[UI] Failed to create context for UIManager startUp:\n");
+                        fflush(uiLog);
+                    }
+                } else if (uiLog) {
+                    fprintf(uiLog, "[UI] startUp: method not found on UIManager class\n");
+                    fflush(uiLog);
+                }
+            }
+        }
+    }
+
+    // Fourth try and beyond: Keep calling World>>doOneCycle for UI loop
+    if (startupAttempt >= 4 && startupAttempt <= 100) {
         // One-time: Try to start InputEventSensor's event loop
         static bool sensorStartAttempted = false;
         static FILE* sensorLog = nullptr;
