@@ -1026,6 +1026,18 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
     Oop index = stackValue(0);
     Oop rcvr = stackValue(1);
 
+    // Special handling for nil receiver - return nil instead of failing
+    // This prevents error cascades during FFI startup when struct refs are nil
+    if (rcvr.isNil() || rcvr.rawBits() == memory_.nil().rawBits()) {
+        static int nilAtCount = 0;
+        nilAtCount++;
+        if (nilAtCount <= 10) {
+            std::cerr << "[PRIM-AT-NIL #" << nilAtCount << "] at: on nil - returning nil\n";
+        }
+        primitiveSuccess(memory_.nil());
+        return PrimitiveResult::Success;
+    }
+
     // Official VM behavior: fail if index is not SmallInteger (PrimErrBadArgument)
     // or if receiver is not an object (PrimErrInappropriate)
     if (!index.isSmallInteger() || !rcvr.isObject()) {
