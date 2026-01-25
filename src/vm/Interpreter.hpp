@@ -400,6 +400,9 @@ private:
 
     // Event injection: HandMorph reference for direct event delivery
     Oop eventInjectionHand_ = Oop::nil();
+    Oop existingMouseEvent_ = Oop::nil();  // Existing MouseEvent to update
+    Oop handEventQueue_ = Oop::nil();  // Hand's WaitfreeQueue for event injection
+    uint32_t mouseEventClassIndex_ = 0;  // Class index for creating MouseEvent objects
 
     // Debug: visual click indicator
     int debugClickX_ = -1;

@@ -1809,20 +1809,46 @@ void Interpreter::processInputEvents() {
                 fflush(logFile);
             }
 
-            // Get the position Point
+            // Get the position Point and update it
             Oop position = memory_.fetchPointer(13, eventInjectionHand_);
             if (position.isObject() && position.rawBits() != memory_.nil().rawBits()) {
                 // Point has x at slot 0, y at slot 1
                 memory_.storePointer(0, position, Oop::fromSmallInteger(event.arg1));
                 memory_.storePointer(1, position, Oop::fromSmallInteger(event.arg2));
-                if (logFile) {
-                    fprintf(logFile, "[DIRECT-HAND] Updated Point 0x%llx\n",
-                            (unsigned long long)position.rawBits());
-                    fflush(logFile);
+            }
+
+            // Also update the existing MouseEvent (slot 12) if we have it
+            if (existingMouseEvent_.isObject() &&
+                existingMouseEvent_.rawBits() != memory_.nil().rawBits()) {
+
+                // MouseEvent slots:
+                // 0: nil
+                // 1: hand
+                // 2: nil
+                // 3: type symbol (#mouseMove, #mouseDown, #mouseUp)
+                // 4: buttons (SmallInteger)
+                // 5: position (Point)
+                // 6: nil
+                // 7: wasHandled (False/True)
+
+                // Update position (slot 5)
+                Oop mePosition = memory_.fetchPointer(5, existingMouseEvent_);
+                if (mePosition.isObject() && mePosition.rawBits() != memory_.nil().rawBits()) {
+                    memory_.storePointer(0, mePosition, Oop::fromSmallInteger(event.arg1));
+                    memory_.storePointer(1, mePosition, Oop::fromSmallInteger(event.arg2));
                 }
-            } else {
+
+                // Update buttons (slot 4)
+                // Bridge already sends in Pharo format: 4=red(left), 2=yellow(right), 1=blue(middle)
+                memory_.storePointer(4, existingMouseEvent_, Oop::fromSmallInteger(event.arg3));
+
+                // Update wasHandled to false (slot 7)
+                memory_.storePointer(7, existingMouseEvent_, memory_.specialObject(SpecialObjectIndex::FalseObject));
+
                 if (logFile) {
-                    fprintf(logFile, "[DIRECT-HAND] Position slot is nil/invalid\n");
+                    const char* typeStr = (event.arg5 == 1) ? "DOWN" : (event.arg5 == 2) ? "UP" : "MOVE";
+                    fprintf(logFile, "[DIRECT-HAND] Updated MouseEvent: pos=(%d,%d) buttons=%d type=%s\n",
+                            event.arg1, event.arg2, pharoButtons, typeStr);
                     fflush(logFile);
                 }
             }
@@ -16771,30 +16797,96 @@ void Interpreter::installOSiOSDriver() {
                                                                                         (unsigned long long)eventQueue.rawBits());
                                                                                 if (eventQueue.isObject() && eventQueue.rawBits() != nilObj.rawBits()) {
                                                                                     ObjectHeader* eqHdr = eventQueue.asObjectPtr();
-                                                                                    fprintf(driverLog, "[DRIVER] WaitfreeQueue has %zu slots\n", eqHdr->slotCount());
-                                                                                    for (size_t k = 0; k < eqHdr->slotCount() && k < 10; k++) {
+                                                                                    fprintf(driverLog, "[DRIVER] WaitfreeQueue has %zu slots, classIdx=%u\n",
+                                                                                            eqHdr->slotCount(), eqHdr->classIndex());
+
+                                                                                    // Examine the AtomicQueueItem structures
+                                                                                    for (size_t k = 0; k < eqHdr->slotCount() && k < 5; k++) {
                                                                                         Oop eqs = memory_.fetchPointer(k, eventQueue);
-                                                                                        std::string eqsClass = "nil/int";
+                                                                                        fprintf(driverLog, "[DRIVER]   WaitfreeQueue slot[%zu]: 0x%llx\n",
+                                                                                                k, (unsigned long long)eqs.rawBits());
                                                                                         if (eqs.isObject() && eqs.rawBits() != nilObj.rawBits()) {
-                                                                                            Oop sc = memory_.classOf(eqs);
-                                                                                            if (sc.isObject()) {
-                                                                                                Oop scName = memory_.fetchPointer(6, sc);
-                                                                                                if (scName.isObject()) {
-                                                                                                    ObjectHeader* scnHdr = scName.asObjectPtr();
-                                                                                                    if (scnHdr->isBytesObject() && scnHdr->byteSize() < 100) {
-                                                                                                        eqsClass = std::string((char*)scnHdr->bytes(), scnHdr->byteSize());
+                                                                                            ObjectHeader* eqsHdr = eqs.asObjectPtr();
+                                                                                            fprintf(driverLog, "[DRIVER]     AtomicQueueItem has %zu slots, classIdx=%u\n",
+                                                                                                    eqsHdr->slotCount(), eqsHdr->classIndex());
+                                                                                            // AtomicQueueItem typically has: value, next
+                                                                                            for (size_t m = 0; m < eqsHdr->slotCount() && m < 5; m++) {
+                                                                                                Oop aqis = memory_.fetchPointer(m, eqs);
+                                                                                                std::string aqisInfo = "";
+                                                                                                if (aqis.rawBits() == nilObj.rawBits()) {
+                                                                                                    aqisInfo = "nil";
+                                                                                                } else if (aqis.isObject()) {
+                                                                                                    Oop sc = memory_.classOf(aqis);
+                                                                                                    if (sc.isObject()) {
+                                                                                                        Oop scName = memory_.fetchPointer(6, sc);
+                                                                                                        if (scName.isObject()) {
+                                                                                                            ObjectHeader* scnHdr = scName.asObjectPtr();
+                                                                                                            if (scnHdr->isBytesObject() && scnHdr->byteSize() < 100) {
+                                                                                                                aqisInfo = std::string((char*)scnHdr->bytes(), scnHdr->byteSize());
+                                                                                                            }
+                                                                                                        }
                                                                                                     }
                                                                                                 }
+                                                                                                fprintf(driverLog, "[DRIVER]       AQI slot[%zu]: 0x%llx (%s)\n",
+                                                                                                        m, (unsigned long long)aqis.rawBits(), aqisInfo.c_str());
                                                                                             }
                                                                                         }
-                                                                                        fprintf(driverLog, "[DRIVER]   WaitfreeQueue slot[%zu]: class=%s\n", k, eqsClass.c_str());
                                                                                     }
+
+                                                                                    // Store queue references for event injection
+                                                                                    handEventQueue_ = eventQueue;
                                                                                 }
 
                                                                                 // Store the HandMorph in a member variable for later event injection
                                                                                 eventInjectionHand_ = handMorph;
                                                                                 fprintf(driverLog, "[DRIVER] HandMorph stored at 0x%llx - will use for event injection\n",
                                                                                         (unsigned long long)handMorph.rawBits());
+
+                                                                                // Examine the existing MouseEvent in slot 12 to understand structure
+                                                                                Oop lastMouseEvent = memory_.fetchPointer(12, handMorph);
+                                                                                fprintf(driverLog, "[DRIVER] lastMouseEvent (slot 12): 0x%llx\n",
+                                                                                        (unsigned long long)lastMouseEvent.rawBits());
+                                                                                if (lastMouseEvent.isObject() && lastMouseEvent.rawBits() != nilObj.rawBits()) {
+                                                                                    ObjectHeader* meHdr = lastMouseEvent.asObjectPtr();
+                                                                                    fprintf(driverLog, "[DRIVER] MouseEvent has %zu slots, format=%d, classIdx=%u\n",
+                                                                                            meHdr->slotCount(), meHdr->format(), meHdr->classIndex());
+
+                                                                                    // Dump all slots of the MouseEvent
+                                                                                    for (size_t l = 0; l < meHdr->slotCount() && l < 15; l++) {
+                                                                                        Oop mes = memory_.fetchPointer(l, lastMouseEvent);
+                                                                                        std::string mesInfo = "";
+                                                                                        if (mes.isSmallInteger()) {
+                                                                                            mesInfo = "SmallInt=" + std::to_string(mes.asSmallInteger());
+                                                                                        } else if (mes.rawBits() == nilObj.rawBits()) {
+                                                                                            mesInfo = "nil";
+                                                                                        } else if (mes.isObject()) {
+                                                                                            ObjectHeader* mesHdr = mes.asObjectPtr();
+                                                                                            // Check if it's a symbol (ByteSymbol)
+                                                                                            if (mesHdr->isBytesObject() && mesHdr->byteSize() < 50) {
+                                                                                                mesInfo = "Symbol=#" + std::string((char*)mesHdr->bytes(), mesHdr->byteSize());
+                                                                                            } else {
+                                                                                                Oop sc = memory_.classOf(mes);
+                                                                                                if (sc.isObject()) {
+                                                                                                    Oop scName = memory_.fetchPointer(6, sc);
+                                                                                                    if (scName.isObject()) {
+                                                                                                        ObjectHeader* scnHdr = scName.asObjectPtr();
+                                                                                                        if (scnHdr->isBytesObject() && scnHdr->byteSize() < 100) {
+                                                                                                            mesInfo = std::string((char*)scnHdr->bytes(), scnHdr->byteSize());
+                                                                                                        }
+                                                                                                    }
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                        fprintf(driverLog, "[DRIVER]   MouseEvent slot[%zu]: 0x%llx (%s)\n",
+                                                                                                l, (unsigned long long)mes.rawBits(), mesInfo.c_str());
+                                                                                    }
+
+                                                                                    // Store MouseEvent reference and class index for updating events
+                                                                                    existingMouseEvent_ = lastMouseEvent;
+                                                                                    mouseEventClassIndex_ = meHdr->classIndex();
+                                                                                    fprintf(driverLog, "[DRIVER] Stored mouseEventClassIndex_ = %u, existingMouseEvent_ = 0x%llx\n",
+                                                                                            mouseEventClassIndex_, (unsigned long long)existingMouseEvent_.rawBits());
+                                                                                }
                                                                             }
                                                                         }
                                                                     }
