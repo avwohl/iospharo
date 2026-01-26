@@ -6,7 +6,10 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Detect platform for xcframework slice selection
-if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+# Check for Mac Catalyst by looking for "macabi" in compiler flags
+if(CMAKE_C_FLAGS MATCHES "macabi" OR CMAKE_CXX_FLAGS MATCHES "macabi")
+    set(XCFRAMEWORK_PLATFORM "ios-arm64_x86_64-maccatalyst")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     if(CMAKE_OSX_SYSROOT MATCHES "Simulator")
         set(XCFRAMEWORK_PLATFORM "ios-arm64_x86_64-simulator")
     else()

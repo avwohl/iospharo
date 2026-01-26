@@ -13147,6 +13147,20 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         return;
     }
 
+    // Fallback for #homeMethod on nil - Context chain has nil
+    // Happens when walking Context chains hits nil instead of proper Context
+    if (origStr == "homeMethod" && rcvrClassName == "UndefinedObject" && argCount == 0) {
+        static int homeMethodCount = 0;
+        homeMethodCount++;
+        if (homeMethodCount <= 10) {
+            std::cerr << "[DNU-FALLBACK] homeMethod on nil #" << homeMethodCount << " - returning nil (broken context chain)\n";
+        }
+        pop();  // Pop receiver
+        push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+
     // Fallback for #substrings on nil - string operations on nil
     // Happens when code tries to split a nil string into words
     if (origStr == "substrings" && rcvrClassName == "UndefinedObject" && argCount == 0) {
@@ -17249,10 +17263,15 @@ bool Interpreter::executePendingDriverInstall() {
         fflush(driverLog);
     }
 
-    // Save current execution state
-    Oop savedContext = activeContext_;
+    // Save ALL current execution state (similar to UIManager startup)
     Oop savedMethod = method_;
     Oop savedReceiver = receiver_;
+    Oop savedContext = activeContext_;
+    Oop savedHomeMethod = homeMethod_;
+    uint8_t* savedIP = instructionPointer_;
+    uint8_t* savedBCEnd = bytecodeEnd_;
+    Oop* savedSP = stackPointer_;
+    size_t savedFrame = frameDepth_;
 
     // Execute the install method
     stackPointer_ = stackBase_;
@@ -17260,9 +17279,19 @@ bool Interpreter::executePendingDriverInstall() {
     bool result = executeFromContext(context);
 
     if (driverLog) {
-        fprintf(driverLog, "[DRIVER] executePendingDriverInstall: Result=%s\n", result ? "success" : "failed");
+        fprintf(driverLog, "[DRIVER] executePendingDriverInstall: Result=%s, restoring state\n", result ? "success" : "failed");
         fflush(driverLog);
     }
+
+    // Restore ALL execution state
+    method_ = savedMethod;
+    receiver_ = savedReceiver;
+    activeContext_ = savedContext;
+    homeMethod_ = savedHomeMethod;
+    instructionPointer_ = savedIP;
+    bytecodeEnd_ = savedBCEnd;
+    stackPointer_ = savedSP;
+    frameDepth_ = savedFrame;
 
     // Clear the pending install
     pendingDriverInstallMethod_ = Oop::nil();
