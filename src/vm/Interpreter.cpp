@@ -2983,15 +2983,41 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                     case 0x50: push(Oop::fromSmallInteger(0)); break;  // push 0
                     case 0x51: push(Oop::fromSmallInteger(1)); break;  // push 1
                     case 0x52: {
-                        // TRACE: Log when thisContext is nil
-                        static int thisCtxNilCount = 0;
-                        if (activeContext_.isNil() || activeContext_.rawBits() == memory_.nil().rawBits()) {
+                        // Push thisContext - must materialize inline frames first!
+                        // Without this, FFI code traversing the context chain would
+                        // see a stale activeContext_ that doesn't include inline frames.
+                        static int thisCtxCount = 0;
+                        thisCtxCount++;
+
+                        Oop contextToPush = activeContext_;
+
+                        if (frameDepth_ > 0) {
+                            // We have inline frames - materialize them so the context
+                            // chain is complete. This is critical for FFI which does
+                            // thisContext sender sender ... to find calling methods.
+                            size_t savedFrameDepth = frameDepth_;
+                            contextToPush = materializeFrameStack();
+
+                            // Update activeContext_ to the materialized chain
+                            activeContext_ = contextToPush;
+
+                            // Reset inline frame state since we've materialized
+                            frameDepth_ = 0;
+
+                            if (thisCtxCount <= 20) {
+                                std::cerr << "[THISCTX #" << thisCtxCount
+                                          << "] Materialized " << savedFrameDepth
+                                          << " inline frames for thisContext access\n";
+                            }
+                        } else if (contextToPush.isNil() || contextToPush.rawBits() == memory_.nil().rawBits()) {
+                            static int thisCtxNilCount = 0;
                             if (thisCtxNilCount++ < 10) {
                                 std::cerr << "[THISCTX-NIL #" << thisCtxNilCount
-                                          << "] Pushing nil activeContext at frame=" << frameDepth_ << "\n";
+                                          << "] Pushing nil activeContext (no inline frames)\n";
                             }
                         }
-                        push(activeContext_);
+
+                        push(contextToPush);
                         break;
                     }
                     case 0x53: push(stackTop()); break;                // duplicate top
@@ -4084,6 +4110,32 @@ void Interpreter::returnValue(Oop value) {
                               << " - treating as end of chain\n";
                 }
                 // Fall through to terminate current process
+            } else if (sender.rawBits() == nilObj.rawBits()) {
+                // Sender is nil - this method is at the top of the context chain
+                static int nilSenderCount = 0;
+                nilSenderCount++;
+                // Get current method name for logging
+                std::string methodSel = "?";
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    Oop mHdr = memory_.fetchPointer(0, method_);
+                    if (mHdr.isSmallInteger()) {
+                        size_t numLits = mHdr.asSmallInteger() & 0x7FFF;
+                        if (numLits >= 2) {
+                            Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                ObjectHeader* selHdr = sel.asObjectPtr();
+                                if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                    methodSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                                }
+                            }
+                        }
+                    }
+                }
+                if (nilSenderCount <= 10) {
+                    std::cerr << "[NIL-SENDER #" << nilSenderCount << "] Return from " << methodSel
+                              << " with nil sender - going to terminate_process\n";
+                }
+                // Fall through to terminate current process
             } else if (sender.isObject() && sender.rawBits() != nilObj.rawBits()) {
                 if (g_crashTraceEnabled) {
                     fprintf(stderr, "[RETVAL-TRACE] sender valid, about to access senderHdr\n");
@@ -4241,6 +4293,90 @@ terminate_process:
             }
         }
         terminateCurrentProcess();
+
+        // Check if we need to call setupEventLoop after install completed
+        if (hasPendingDriverSetup_ && pendingDriverSetupMethod_.isObject()) {
+            static FILE* driverLog = fopen("/tmp/osdriver_install.log", "a");
+            if (driverLog) {
+                fprintf(driverLog, "[DRIVER] Install completed - now calling setupEventLoop\n");
+                fflush(driverLog);
+            }
+
+            // Get the driver instance from OSWindowDriver's Current class variable
+            Oop nilObj = memory_.nil();
+            Oop osWindowDriverClass = memory_.findGlobal("OSWindowDriver");
+            Oop driverInstance = Oop::nil();
+
+            if (osWindowDriverClass.isObject() && osWindowDriverClass.rawBits() != nilObj.rawBits()) {
+                // ClassPool is at slot 7
+                Oop classPool = memory_.fetchPointer(7, osWindowDriverClass);
+                if (classPool.isObject() && classPool.rawBits() != nilObj.rawBits()) {
+                    ObjectHeader* poolHdr = classPool.asObjectPtr();
+                    if (poolHdr->slotCount() >= 2) {
+                        Oop assocArray = memory_.fetchPointer(1, classPool);
+                        if (assocArray.isObject()) {
+                            ObjectHeader* arrayHdr = assocArray.asObjectPtr();
+                            for (size_t i = 0; i < arrayHdr->slotCount(); i++) {
+                                Oop assoc = memory_.fetchPointer(i, assocArray);
+                                if (assoc.isObject() && assoc.rawBits() != nilObj.rawBits()) {
+                                    ObjectHeader* assocHdr = assoc.asObjectPtr();
+                                    if (assocHdr->slotCount() >= 2) {
+                                        Oop key = memory_.fetchPointer(0, assoc);
+                                        if (key.isObject()) {
+                                            ObjectHeader* keyHdr = key.asObjectPtr();
+                                            if (keyHdr->isBytesObject() && keyHdr->byteSize() == 7) {
+                                                std::string keyName((char*)keyHdr->bytes(), keyHdr->byteSize());
+                                                if (keyName == "Current") {
+                                                    driverInstance = memory_.fetchPointer(1, assoc);
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (driverInstance.isObject() && driverInstance.rawBits() != nilObj.rawBits()) {
+                if (driverLog) {
+                    fprintf(driverLog, "[DRIVER] Got Current driver instance: 0x%llx\n",
+                            (unsigned long long)driverInstance.rawBits());
+                    fflush(driverLog);
+                }
+
+                // Schedule setupEventLoop on the driver instance
+                pendingDriverInstallMethod_ = pendingDriverSetupMethod_;
+                pendingDriverInstallReceiver_ = driverInstance;
+                hasPendingDriverInstall_ = true;
+                pendingDriverMethodNeedsArg_ = false;
+
+                // Clear setup state
+                hasPendingDriverSetup_ = false;
+                pendingDriverSetupMethod_ = Oop::nil();
+                pendingDriverSetupReceiver_ = Oop::nil();
+
+                // Execute it now (like executePendingDriverInstall does)
+                if (executePendingDriverInstall()) {
+                    if (driverLog) {
+                        fprintf(driverLog, "[DRIVER] setupEventLoop scheduled successfully!\n");
+                        fflush(driverLog);
+                    }
+                    return;  // Let the method run
+                }
+            } else {
+                if (driverLog) {
+                    fprintf(driverLog, "[DRIVER] WARNING: Could not find Current driver instance!\n");
+                    fflush(driverLog);
+                }
+            }
+
+            // Clear setup state even if we couldn't call it
+            hasPendingDriverSetup_ = false;
+            pendingDriverSetupMethod_ = Oop::nil();
+        }
 
         // Try to find another runnable process
         if (tryReschedule()) {
@@ -17346,6 +17482,106 @@ void Interpreter::installOSiOSDriver() {
     if (driverLog) {
         fprintf(driverLog, "[DRIVER] Scheduled OSiOSDriver install for deferred execution\n");
         fflush(driverLog);
+    }
+
+    // Also find setupEventLoop method to call AFTER install completes
+    // This is an INSTANCE method in OSSDL2Driver (superclass of OSiOSDriver)
+    // We look it up now but will call it on the Current instance after install runs
+    auto findMethodInClass = [&](Oop classObj, const char* selectorName) -> Oop {
+        if (!classObj.isObject()) return Oop::nil();
+        Oop methodDict = memory_.fetchPointer(1, classObj);
+        if (!methodDict.isObject()) return Oop::nil();
+        ObjectHeader* mdHeader = methodDict.asObjectPtr();
+        size_t mdSlots = mdHeader->slotCount();
+        for (size_t mi = 2; mi < mdSlots; mi++) {
+            Oop key = mdHeader->slotAt(mi);
+            if (!key.isObject() || key.isNil()) continue;
+            ObjectHeader* keyHdr = key.asObjectPtr();
+            if (!keyHdr->isBytesObject()) continue;
+            size_t keyLen = keyHdr->byteSize();
+            if (keyLen == strlen(selectorName) &&
+                memcmp(keyHdr->bytes(), selectorName, keyLen) == 0) {
+                Oop values = memory_.fetchPointer(1, methodDict);
+                if (values.isObject()) {
+                    ObjectHeader* valHdr = values.asObjectPtr();
+                    size_t valueIdx = mi - 2;
+                    if (valueIdx < valHdr->slotCount()) {
+                        return valHdr->slotAt(valueIdx);
+                    }
+                }
+            }
+        }
+        return Oop::nil();
+    };
+
+    // Look for setupEventLoop in OSSDL2Driver (which OSiOSDriver delegates to)
+    // Note: OSiOSDriver inherits from OSWindowDriver, not OSSDL2Driver
+    // But setupEventLoop is in OSSDL2Driver which is what we want to use
+    Oop setupMethod = Oop::nil();
+
+    // First try OSSDL2Driver directly
+    Oop ossdl2DriverClass = memory_.findGlobal("OSSDL2Driver");
+    if (ossdl2DriverClass.isObject() && ossdl2DriverClass.rawBits() != nilObj.rawBits()) {
+        if (driverLog) {
+            fprintf(driverLog, "[DRIVER] Looking for setupEventLoop in OSSDL2Driver\n");
+            fflush(driverLog);
+        }
+        setupMethod = findMethodInClass(ossdl2DriverClass, "setupEventLoop");
+        if (setupMethod.isObject() && !setupMethod.isNil()) {
+            if (driverLog) {
+                fprintf(driverLog, "[DRIVER] FOUND setupEventLoop in OSSDL2Driver!\n");
+                fflush(driverLog);
+            }
+        }
+    }
+
+    // If not found, try OSiOSDriver's hierarchy
+    if (setupMethod.isNil() || !setupMethod.isObject()) {
+        Oop currentClass = osDriverClass;
+        int depth = 0;
+        while (currentClass.isObject() && !currentClass.isNil() && depth < 10) {
+            std::string className = "<unknown>";
+            Oop nameOop = memory_.fetchPointer(6, currentClass);
+            if (nameOop.isObject()) {
+                ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                    className = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                }
+            }
+            if (driverLog) {
+                fprintf(driverLog, "[DRIVER] Looking for setupEventLoop in %s (depth %d)\n",
+                        className.c_str(), depth);
+                fflush(driverLog);
+            }
+
+            setupMethod = findMethodInClass(currentClass, "setupEventLoop");
+            if (setupMethod.isObject() && !setupMethod.isNil()) {
+                if (driverLog) {
+                    fprintf(driverLog, "[DRIVER] FOUND setupEventLoop in %s!\n", className.c_str());
+                    fflush(driverLog);
+                }
+                break;
+            }
+
+            currentClass = memory_.fetchPointer(0, currentClass);
+            depth++;
+        }
+    }
+
+    if (setupMethod.isObject() && !setupMethod.isNil()) {
+        pendingDriverSetupMethod_ = setupMethod;
+        // NOTE: receiver will be set to Current value after install completes
+        pendingDriverSetupReceiver_ = Oop::nil();  // Placeholder - will be filled in later
+        hasPendingDriverSetup_ = true;
+        if (driverLog) {
+            fprintf(driverLog, "[DRIVER] Scheduled setupEventLoop for execution after install\n");
+            fflush(driverLog);
+        }
+    } else {
+        if (driverLog) {
+            fprintf(driverLog, "[DRIVER] WARNING: setupEventLoop not found - event loop won't start!\n");
+            fflush(driverLog);
+        }
     }
 }
 

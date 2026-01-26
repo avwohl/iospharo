@@ -399,6 +399,11 @@ private:
     bool hasPendingDriverInstall_ = false;
     bool pendingDriverMethodNeedsArg_ = false;  // True if method takes an argument (e.g., startUp:)
 
+    // Second phase method (setupEventLoop after install)
+    Oop pendingDriverSetupMethod_ = Oop::nil();
+    Oop pendingDriverSetupReceiver_ = Oop::nil();
+    bool hasPendingDriverSetup_ = false;
+
     // NOTE: Event injection workaround member variables REMOVED
     // Events must go through proper Smalltalk InputEventSensor process, not C++ workarounds
 
