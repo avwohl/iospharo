@@ -13599,14 +13599,16 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     // when stored resumption times are nil, or after our ifTrue:ifFalse: intercept returns false).
     // Return 0 to allow arithmetic to proceed.
     // For example, `0 - nil` becomes `0 - 0 = 0` which treats nil as having no delta.
+    // Also handle <unknown> class names - these might be nil with failed class lookup.
     bool isNilReceiver = rcvrClassName == "UndefinedObject" || receiver_.isNil() ||
                          receiver_.rawBits() == memory_.nil().rawBits();
     bool isBooleanReceiver = receiver_.rawBits() == memory_.trueObject().rawBits() ||
                              receiver_.rawBits() == memory_.falseObject().rawBits() ||
                              rcvrClassName == "True" || rcvrClassName == "False";
+    bool isUnknownReceiver = rcvrClassName == "<unknown>";
 
     if ((origStr == "adaptToNumber:andSend:" || origStr == "adaptToInteger:andSend:" ||
-         origStr == "adaptToFloat:andSend:") && (isNilReceiver || isBooleanReceiver)) {
+         origStr == "adaptToFloat:andSend:") && (isNilReceiver || isBooleanReceiver || isUnknownReceiver)) {
         // The second argument is the selector - check if it's a comparison op
         // Stack: [receiver, arg0=number, arg1=selector]
         // For comparison operations, return false; for arithmetic, return 0
@@ -13743,8 +13745,9 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
     // Handle comparison adaptation - when nil is compared with numbers (4 < nil, nil > 5, etc.)
     // Return false for all comparisons involving nil to break the chain
+    // Also handle <unknown> class names which might be nil with failed class lookup
     if ((origStr == "adaptToNumber:andCompare:" || origStr == "adaptToInteger:andCompare:" ||
-         origStr == "adaptToFloat:andCompare:") && isNilReceiver) {
+         origStr == "adaptToFloat:andCompare:") && (isNilReceiver || isUnknownReceiver)) {
         static int adaptCompareNilCount = 0;
         if (adaptCompareNilCount++ < 5) {
             std::cerr << "[DNU] Fallback for " << origStr << " on nil - returning false\n";
