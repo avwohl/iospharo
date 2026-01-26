@@ -1,4 +1,6 @@
 # Build outputs
+*.o
+*.a
 build/
 build-app/
 build-macos/
