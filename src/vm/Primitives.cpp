@@ -7144,7 +7144,10 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
 #if TARGET_OS_IOS || TARGET_OS_IPHONE
             push(memory_.createString("iOS"));
 #else
-            push(memory_.createString("Mac OS"));
+            // DIAGNOSTIC: Return "unix" to match Linux-built Pharo images
+            // This skips FFI structure recompilation which is extremely slow
+            // TODO: Investigate why recompilation is so slow or implement proper GC
+            push(memory_.createString("unix"));
 #endif
             return PrimitiveResult::Success;
         case 1002:  // VM build string

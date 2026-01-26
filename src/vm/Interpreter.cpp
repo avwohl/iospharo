@@ -27,7 +27,7 @@
 namespace pharo {
 
 // Set to false to disable all debug file logging for performance
-constexpr bool ENABLE_DEBUG_LOGGING = true;  // TEMP: Enabled for scheduler debugging
+constexpr bool ENABLE_DEBUG_LOGGING = true;  // Enabled to trace startup
 
 // Global flag to trace sends after primitive 264 completes
 int g_traceSendsAfterPrim264 = 0;
@@ -6112,77 +6112,36 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             }
         }
 
-        // Log ALL sends for first 20000 sends to understand startup flow
-        if (startupTraceLog && startupTraceCount < 40000) {
-            startupTraceCount++;
+        // Log progress during FFI structure recompilation
+        // Only log key selectors to track progress, not every send
+        startupTraceCount++;
+        if (startupTraceLog) {
+            bool logThis = false;
             std::string selectorStr(selBytes, selBytes + selLen);
-            fprintf(startupTraceLog, "[SEND#%d] %s (argCount=%d) fd=%zu\n",
-                    startupTraceCount, selectorStr.c_str(), argCount, frameDepth_);
 
-            // Enable bytecode tracing after send #4570 (the last send before hang)
-            if (startupTraceCount == 4570) {
-                g_bytecodeTraceEnabled = true;
-                g_bytecodeTraceCount = 0;  // Reset count
-                fprintf(startupTraceLog, "[TRACE] Enabling bytecode tracing after send #4570\n");
+            // Log key progress markers
+            if (selectorStr == "recompileStructures" ||
+                selectorStr == "sortStructs:into:" ||
+                selectorStr == "typeNamesFromWhichIDepend" ||
+                selectorStr == "checkFieldLayoutChange" ||
+                selectorStr == "compileFields" ||
+                selectorStr == "install" ||
+                selectorStr == "startUp:" ||
+                selectorStr == "activate") {
+                logThis = true;
+            }
+
+            // Also log every 100000 sends as progress indicator
+            if (startupTraceCount % 100000 == 0) {
+                fprintf(startupTraceLog, "[PROGRESS] %d sends completed\n", startupTraceCount);
                 fflush(startupTraceLog);
             }
 
-            // Extra: log <= comparisons to track loop bounds
-            if (selEquals("<=") && argCount == 1) {
-                Oop rcvr = stackValue(1);  // receiver
-                Oop arg = stackValue(0);   // argument
-                if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
-                    int64_t a = rcvr.asSmallInteger();
-                    int64_t b = arg.asSmallInteger();
-                    fprintf(startupTraceLog, "  [CMP] %lld <= %lld -> %s\n",
-                            a, b, (a <= b) ? "true" : "false");
-                }
+            if (logThis) {
+                fprintf(startupTraceLog, "[SEND#%d] %s (argCount=%d) fd=%zu\n",
+                        startupTraceCount, selectorStr.c_str(), argCount, frameDepth_);
+                fflush(startupTraceLog);
             }
-
-            // Extra: log receiver class for do: and flatCollect: to track loop execution
-            if (selEquals("do:") || selEquals("flatCollect:") || selEquals("to:do:")) {
-                Oop rcvr = stackValue(argCount);
-                if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-                    ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
-                    uint32_t classIdx = rcvrHdr->classIndex();
-                    Oop cls = memory_.classAtIndex(classIdx);
-                    std::string clsName = "?";
-                    if (cls.isObject() && cls.rawBits() > 0x10000) {
-                        ObjectHeader* clsHdr = cls.asObjectPtr();
-                        if (clsHdr->slotCount() >= 7) {
-                            Oop nm = clsHdr->slotAt(6);
-                            if (nm.isObject() && nm.rawBits() > 0x10000) {
-                                ObjectHeader* nmHdr = nm.asObjectPtr();
-                                if (nmHdr->isBytesObject() && nmHdr->byteSize() < 50) {
-                                    clsName = std::string((char*)nmHdr->bytes(), nmHdr->byteSize());
-                                }
-                            }
-                        }
-                    }
-                    size_t slots = rcvrHdr->slotCount();
-                    fprintf(startupTraceLog, "  [LOOP] rcvr class=%s slots=%zu\n", clsName.c_str(), slots);
-
-                    // If OrderedCollection, dump first/last indices
-                    if (clsName == "OrderedCollection" && slots >= 3) {
-                        Oop arr = rcvrHdr->slotAt(0);
-                        Oop first = rcvrHdr->slotAt(1);
-                        Oop last = rcvrHdr->slotAt(2);
-                        int64_t firstIdx = first.isSmallInteger() ? first.asSmallInteger() : -1;
-                        int64_t lastIdx = last.isSmallInteger() ? last.asSmallInteger() : -1;
-                        fprintf(startupTraceLog, "  [LOOP] OrderedCollection first=%lld last=%lld (size=%lld)\n",
-                                firstIdx, lastIdx, lastIdx - firstIdx + 1);
-                    }
-                    // If SmallInteger (for to:do:), log the range
-                    if (selEquals("to:do:") && argCount == 2) {
-                        Oop endVal = stackValue(1);  // arg before block
-                        if (rcvr.isSmallInteger() && endVal.isSmallInteger()) {
-                            fprintf(startupTraceLog, "  [LOOP] to:do: range %lld to %lld\n",
-                                    rcvr.asSmallInteger(), endVal.asSmallInteger());
-                        }
-                    }
-                }
-            }
-            fflush(startupTraceLog);
         }
 
         // TRACE: After startupTraceLog section
