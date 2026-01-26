@@ -12783,6 +12783,19 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                                             if (currentSetCount <= 5) {
                                                 std::cerr << "[DNU-FALLBACK] current: Successfully set Current in classPool\n";
                                             }
+
+                                            // TRIGGER: Now that Current is set, schedule setupEventLoop if we have it pending
+                                            if (hasPendingDriverSetup_ && pendingDriverSetupMethod_.isObject()) {
+                                                std::cerr << "[DNU-FALLBACK] current: Scheduling setupEventLoop on new driver\n";
+                                                // The setup method will be called on this driver instance
+                                                pendingDriverInstallMethod_ = pendingDriverSetupMethod_;
+                                                pendingDriverInstallReceiver_ = newDriver;
+                                                hasPendingDriverInstall_ = true;
+                                                pendingDriverMethodNeedsArg_ = false;
+                                                // Clear setup flags
+                                                hasPendingDriverSetup_ = false;
+                                                pendingDriverSetupMethod_ = Oop::nil();
+                                            }
                                             break;
                                         }
                                     }
@@ -12858,6 +12871,36 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         push(memory_.falseObject());  // nil anyMask: anything = false
         dnuDepth--;
         return;
+    }
+
+    // Fallback for #isVMDisplayUsingSDL2 on driver classes
+    // setupEventLoop checks this before starting - we have SDL2 stubs, so return true
+    if (origStr == "isVMDisplayUsingSDL2" && argCount == 0) {
+        // Check if receiver is a driver class (OSiOSDriver, OSSDL2Driver, etc.)
+        bool isDriverClass = false;
+        if (actualReceiver.isObject()) {
+            Oop className = memory_.fetchPointer(6, actualReceiver);
+            if (className.isObject()) {
+                ObjectHeader* cnHdr = className.asObjectPtr();
+                if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                    std::string name((char*)cnHdr->bytes(), cnHdr->byteSize());
+                    if (name.find("Driver") != std::string::npos || name.find("SDL") != std::string::npos) {
+                        isDriverClass = true;
+                    }
+                }
+            }
+        }
+        if (isDriverClass) {
+            static int sdl2CheckCount = 0;
+            sdl2CheckCount++;
+            if (sdl2CheckCount <= 3) {
+                std::cerr << "[DNU-FALLBACK] isVMDisplayUsingSDL2 #" << sdl2CheckCount << " - returning true (we have SDL2 stubs)\n";
+            }
+            pop();  // Pop receiver
+            push(memory_.trueObject());  // Yes, we're using SDL2
+            dnuDepth--;
+            return;
+        }
     }
 
     // Fallback for #isExternalStructure on nil - FFI type check
