@@ -290,10 +290,22 @@ int stub_SDL_SetRenderDrawColor(void* renderer, uint8_t r, uint8_t g, uint8_t b,
 int stub_SDL_PollEvent(void* event) {
     static FILE* sdlLog = nullptr;
     static int sdlCallCount = 0;
+    static bool flagSet = false;
     sdlCallCount++;
 
     if (!sdlLog) {
         sdlLog = fopen("/tmp/sdl_pollevent.log", "w");
+    }
+
+    // Mark SDL2 event polling as active - this prevents processInputEvents
+    // from draining gEventQueue (we handle it here instead)
+    if (!flagSet) {
+        flagSet = true;
+        pharo::gEventQueue.setSDL2EventPollingActive(true);
+        if (sdlLog) {
+            fprintf(sdlLog, "[SDL_PollEvent] SDL2 event polling NOW ACTIVE\n");
+            fflush(sdlLog);
+        }
     }
 
     if (!event) {
