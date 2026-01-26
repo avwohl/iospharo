@@ -728,6 +728,7 @@ private:
     PrimitiveResult primitiveScreenSize(int argCount);           // 106
     PrimitiveResult primitiveScreenDepth(int argCount);          // 108
     PrimitiveResult primitiveIsVMDisplayUsingSDL2(int argCount); // SDL2 detection for OSSDL2Driver
+    PrimitiveResult primitiveSetVMSDL2Input(int argCount);       // Set SDL2 input semaphore
     PrimitiveResult primitiveBeep(int argCount);                 // 140
     PrimitiveResult primitiveClipboardText(int argCount);        // 141
     PrimitiveResult primitiveForceDisplayUpdate(int argCount);

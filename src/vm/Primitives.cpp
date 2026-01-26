@@ -3843,6 +3843,68 @@ PrimitiveResult Interpreter::primitiveIsVMDisplayUsingSDL2(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// Named primitive: primitiveSetVMSDL2Input
+// receiver primitiveSetVMSDL2Input: aSemaphoreIndex -> receiver
+// Sets the semaphore index to signal when SDL2 events are available.
+// This enables SDL2 event handling by the image's OSSDL2Driver.
+PrimitiveResult Interpreter::primitiveSetVMSDL2Input(int argCount) {
+    static FILE* sdlLog = nullptr;
+    static int callCount = 0;
+    callCount++;
+
+    if (!sdlLog) {
+        sdlLog = fopen("/tmp/sdl2_input.log", "w");
+    }
+
+    if (sdlLog && callCount <= 20) {
+        fprintf(sdlLog, "[SDL2-INPUT] primitiveSetVMSDL2Input called #%d, argCount=%d\n",
+                callCount, argCount);
+        fflush(sdlLog);
+    }
+
+    // Expect 1 argument: the semaphore index
+    if (argCount != 1) {
+        if (sdlLog) {
+            fprintf(sdlLog, "[SDL2-INPUT] Wrong argCount=%d (expected 1), failing\n", argCount);
+            fflush(sdlLog);
+        }
+        return PrimitiveResult::Failure;
+    }
+
+    Oop semIndexOop = stackTop();
+
+    if (!semIndexOop.isSmallInteger()) {
+        if (sdlLog) {
+            fprintf(sdlLog, "[SDL2-INPUT] Semaphore index is not SmallInteger, failing\n");
+            fflush(sdlLog);
+        }
+        return PrimitiveResult::Failure;
+    }
+
+    int64_t semIndex = semIndexOop.asSmallInteger();
+
+    if (sdlLog) {
+        fprintf(sdlLog, "[SDL2-INPUT] Setting SDL2 input semaphore index to %lld\n", (long long)semIndex);
+        fflush(sdlLog);
+    }
+
+    // Store the semaphore index for SDL2 event signaling
+    gEventQueue.setSDL2InputSemaphoreIndex(static_cast<int>(semIndex));
+
+    // Also enable SDL2 event polling - this is the key!
+    gEventQueue.setSDL2EventPollingActive(true);
+
+    if (sdlLog) {
+        fprintf(sdlLog, "[SDL2-INPUT] SDL2 event polling NOW ACTIVE\n");
+        fflush(sdlLog);
+    }
+
+    // Pop argument and return receiver
+    pop();  // Pop semaphore index argument
+    // Receiver stays on stack
+    return PrimitiveResult::Success;
+}
+
 // Primitive 140: Beep
 // Produces a system beep sound (no-op in headless mode)
 PrimitiveResult Interpreter::primitiveBeep(int argCount) {
@@ -11378,6 +11440,14 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
                     fflush(extLog);
                 }
                 return primitiveIsVMDisplayUsingSDL2(argCount);
+            }
+            // SDL2 input semaphore - enables SDL2 event polling
+            if (str == "primitiveSetVMSDL2Input:" || str == "primitiveSetVMSDL2Input") {
+                if (extLog) {
+                    fprintf(extLog, "[EXT] #%d Found primitiveSetVMSDL2Input, enabling SDL2 input\n", extCallCount);
+                    fflush(extLog);
+                }
+                return primitiveSetVMSDL2Input(argCount);
             }
         }
 

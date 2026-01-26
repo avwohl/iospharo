@@ -66,12 +66,23 @@ public:
     void setInputSemaphoreIndex(int index);
     int getInputSemaphoreIndex() const;
 
+    /// Set SDL2 input semaphore index (for SDL2-specific event signaling)
+    void setSDL2InputSemaphoreIndex(int index);
+    int getSDL2InputSemaphoreIndex() const;
+
+    /// SDL2 event polling flag - when true, SDL_PollEvent handles events
+    /// When false, processInputEvents drains to passThroughEvents_
+    void setSDL2EventPollingActive(bool active);
+    bool isSDL2EventPollingActive() const;
+
 private:
     mutable std::mutex mutex_;
     std::queue<Event> events_;
     EventCallback callback_ = nullptr;
     void* callbackContext_ = nullptr;
     int inputSemaphoreIndex_ = 0;
+    int sdl2InputSemaphoreIndex_ = 0;
+    bool sdl2EventPollingActive_ = false;
 };
 
 /// Global event queue

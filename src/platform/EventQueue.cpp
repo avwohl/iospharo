@@ -59,4 +59,24 @@ int EventQueue::getInputSemaphoreIndex() const {
     return inputSemaphoreIndex_;
 }
 
+void EventQueue::setSDL2InputSemaphoreIndex(int index) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    sdl2InputSemaphoreIndex_ = index;
+}
+
+int EventQueue::getSDL2InputSemaphoreIndex() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return sdl2InputSemaphoreIndex_;
+}
+
+void EventQueue::setSDL2EventPollingActive(bool active) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    sdl2EventPollingActive_ = active;
+}
+
+bool EventQueue::isSDL2EventPollingActive() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return sdl2EventPollingActive_;
+}
+
 } // namespace pharo
