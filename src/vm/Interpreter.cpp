@@ -8154,11 +8154,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
     }
 
-    // Recursion detection - break infinite recursion patterns
-    // Compare by string content since same symbol may have different Oops
-    static std::string lastSelStr;
-    static int sameSelCount = 0;
-    static int totalSends = 0;
+    // Extract selector string for tracing
     std::string selStr;
     if (selector.isObject() && selector.rawBits() > 0x10000) {
         ObjectHeader* selHdr = selector.asObjectPtr();
@@ -8209,60 +8205,9 @@ extern int g_traceSendsAfterPrim264;
         }
     }
 
-    if (!selStr.empty() && selStr == lastSelStr) {
-        sameSelCount++;
-        // Only break on infinite recursion, NOT on expected high-frequency selectors
-        // relinquishProcessorForMicroseconds: is called repeatedly during idle - that's normal
-        // privSender: is called repeatedly during context chain manipulation - that's normal
-        // adaptTo*: selectors are called for each nil entry during delay restoration
-        if (sameSelCount > 50 && selStr != "relinquishProcessorForMicroseconds:"
-                               && selStr != "privSender:"
-                               && selStr != "adaptToNumber:andSend:"
-                               && selStr != "adaptToInteger:andSend:"
-                               && selStr != "adaptToFloat:andSend:"
-                               && selStr != "yield"
-                               && selStr != "highestPriority:"
-                               && selStr != "primRelinquishProcessorForMicroseconds:") {
-            // Same selector called 50+ times in a row - likely infinite recursion
-            static int recursionBreakCount = 0;
-            if (++recursionBreakCount <= 3) {
-                std::cerr << "[RECURSION] Breaking infinite loop: #" << selStr
-                          << " called " << sameSelCount << " times\n";
-                // Show receiver info
-                Oop rcvr = stackValue(argCount);
-                std::cerr << "  Receiver: 0x" << std::hex << rcvr.rawBits() << std::dec;
-                if (rcvr.isSmallInteger()) {
-                    std::cerr << " (SmallInteger " << rcvr.asSmallInteger() << ")";
-                } else if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-                    Oop cls = memory_.classOf(rcvr);
-                    if (cls.isObject() && cls.rawBits() > 0x10000) {
-                        ObjectHeader* clsHdr = cls.asObjectPtr();
-                        if (clsHdr->slotCount() > 6) {
-                            Oop nameOop = memory_.fetchPointer(6, cls);
-                            if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
-                                ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
-                                    std::string name((char*)nameHdr->bytes(), nameHdr->byteSize());
-                                    std::cerr << " (" << name << ")";
-                                }
-                            }
-                        }
-                    }
-                }
-                std::cerr << "\n";
-                std::cerr << "  frameDepth=" << frameDepth_ << " stackDepth=" << (stackPointer_ - stackBase_) << "\n";
-            }
-            // Pop args and receiver, return nil
-            popN(argCount + 1);
-            push(memory_.nil());
-            sameSelCount = 0;
-            lastSelStr.clear();
-            return;
-        }
-    } else {
-        lastSelStr = selStr;
-        sameSelCount = 1;
-    }
+    // NOTE: Selector-level recursion detection removed - it caused false positives
+    // for normal Smalltalk patterns like scheduler idle loops. The frame depth
+    // limit (MaxFrameDepth) already protects against actual stack overflow.
 
     // Message send tracing (limited to first 50 for cleaner output)
     // Disabled for performance - wrapped in ENABLE_DEBUG_LOGGING
@@ -11599,187 +11544,6 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
         }
     }
 
-    // Recursion detection - check if same method NAME is being pushed repeatedly
-    // This catches indirect recursion where different classes have same-named methods
-    static std::string lastMethodName = "";
-    static int sameMethodCount = 0;
-    static std::string bannedMethod = "";
-    static int bannedCallsRemaining = 0;
-
-    // If a method is banned, return appropriate value immediately for all calls to it
-    if (!methodName.empty() && methodName == bannedMethod && bannedCallsRemaining > 0) {
-        bannedCallsRemaining--;
-        // Clean up stack: pop args + receiver, push appropriate return value
-        popN(argCount + 1);
-        // For conditional methods, return false instead of nil
-        if (methodName == "ifTrue:ifFalse:" || methodName == "ifTrue:" ||
-            methodName == "ifFalse:" || methodName == "mustBeBoolean") {
-            push(memory_.falseObject());
-        } else {
-            push(memory_.nil());
-        }
-        return false;
-    }
-
-    if (!methodName.empty() && methodName == lastMethodName) {
-        sameMethodCount++;
-        // Exception for methods that are legitimately called many times in sequence
-        // privSender: is called when walking context chains during exception handling
-        // adaptTo*: methods are called for each nil entry during delay restoration
-        // species, to:do:, do:, at:, size, etc. are called repeatedly in loops - totally normal
-        // at:put: is called repeatedly in array copying
-        bool isLegitHighFreq = (methodName == "privSender:" ||
-                                methodName == "adaptToNumber:andSend:" ||
-                                methodName == "adaptToInteger:andSend:" ||
-                                methodName == "adaptToFloat:andSend:" ||
-                                methodName == "species" ||
-                                methodName == "to:do:" ||
-                                methodName == "do:" ||
-                                methodName == "collect:" ||
-                                methodName == "select:" ||
-                                methodName == "at:" ||
-                                methodName == "at:put:" ||
-                                methodName == "size" ||
-                                methodName == "+" ||
-                                methodName == "-" ||
-                                methodName == "<=" ||
-                                methodName == ">=" ||
-                                methodName == "<" ||
-                                methodName == ">" ||
-                                methodName == "max:" ||
-                                methodName == "min:" ||
-                                // Collection building methods - common in loops
-                                methodName == "addLast:" ||
-                                methodName == "add:" ||
-                                methodName == "nextPut:" ||
-                                methodName == "nextPutAll:" ||
-                                methodName == "<<" ||
-                                methodName == "value:" ||
-                                methodName == "value:value:" ||
-                                // Scheduler methods - called frequently in idle loop
-                                methodName == "yield" ||
-                                methodName == "relinquishProcessorForMicroseconds:" ||
-                                methodName == "primRelinquishProcessorForMicroseconds:" ||
-                                methodName == "highestPriority:");
-        int threshold = isLegitHighFreq ? 100000 : 50;  // Allow much more for loop ops
-
-        if (sameMethodCount > threshold) {
-            // Same method name pushed too many times - likely infinite recursion
-            // Debug: show receiver info for conditional methods
-            static int recDbg = 0;
-            if (recDbg++ < 5 && (methodName == "ifTrue:ifFalse:" || methodName == "ifTrue:" ||
-                                  methodName == "ifFalse:" || methodName == "max:" || methodName == "min:")) {
-                Oop rcvr = stackValue(argCount);  // Receiver is under the arguments
-                std::string rcvrClass = "unknown";
-                if (rcvr.isSmallInteger()) {
-                    rcvrClass = "SmallInteger(" + std::to_string(rcvr.asSmallInteger()) + ")";
-                } else if (rcvr.isNil() || rcvr.rawBits() == memory_.nil().rawBits()) {
-                    rcvrClass = "nil";
-                } else if (rcvr.rawBits() == memory_.trueObject().rawBits()) {
-                    rcvrClass = "true";
-                } else if (rcvr.rawBits() == memory_.falseObject().rawBits()) {
-                    rcvrClass = "false";
-                } else if (rcvr.isObject()) {
-                    Oop cls = memory_.classOf(rcvr);
-                    if (cls.isObject()) {
-                        Oop nameOop = memory_.fetchPointer(6, cls);
-                        if (nameOop.isObject()) {
-                            ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
-                                rcvrClass = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                            }
-                        }
-                    }
-                }
-                std::cerr << "[RECURSION] receiver=" << rcvrClass;
-                // For max:/min:, also show the argument
-                if ((methodName == "max:" || methodName == "min:") && argCount >= 1) {
-                    Oop arg = stackValue(0);  // Argument is at top of stack
-                    std::cerr << " arg=";
-                    if (arg.isSmallInteger()) std::cerr << arg.asSmallInteger();
-                    else if (arg.isNil() || arg.rawBits() == memory_.nil().rawBits()) std::cerr << "nil";
-                    else std::cerr << "obj@0x" << std::hex << arg.rawBits() << std::dec;
-                }
-                std::cerr << "\n";
-                // Also trace caller method
-                std::string callerMethod = "<unknown>";
-                std::string callerClass = "<unknown>";
-                if (method_.isObject() && method_.rawBits() > 0x10000) {
-                    ObjectHeader* mHdr = method_.asObjectPtr();
-                    // Get literal count from method header (slot 0)
-                    Oop headerOop = memory_.fetchPointer(0, method_);
-                    if (headerOop.isSmallInteger()) {
-                        int64_t header = headerOop.asSmallInteger();
-                        // asSmallInteger() did >> 3, bits 0-14 are numLits
-                        int numLits = header & 0x7FFF;
-                        if (numLits >= 2) {
-                            Oop assoc = memory_.fetchPointer(numLits, method_);  // Class association (last literal)
-                            if (assoc.isObject() && assoc.rawBits() > 0x10000) {
-                                ObjectHeader* aHdr = assoc.asObjectPtr();
-                                if (aHdr->slotCount() >= 2) {
-                                    Oop cls = memory_.fetchPointer(1, assoc);  // value of association
-                                    if (cls.isObject()) {
-                                        Oop nameOop = memory_.fetchPointer(6, cls);
-                                        if (nameOop.isObject()) {
-                                            ObjectHeader* nHdr = nameOop.asObjectPtr();
-                                            if (nHdr->isBytesObject() && nHdr->byteSize() < 50) {
-                                                callerClass = std::string((char*)nHdr->bytes(), nHdr->byteSize());
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            Oop selOop = memory_.fetchPointer(numLits - 1, method_);  // Selector (second-to-last literal)
-                            if (selOop.isObject() && selOop.rawBits() > 0x10000) {
-                                ObjectHeader* sHdr = selOop.asObjectPtr();
-                                if (sHdr->isBytesObject() && sHdr->byteSize() < 100) {
-                                    callerMethod = std::string((char*)sHdr->bytes(), sHdr->byteSize());
-                                }
-                            }
-                        }
-                    }
-                }
-                std::cerr << "[RECURSION] called from " << callerClass << " >> #" << callerMethod << "\n";
-            }
-            std::cerr << "[RECURSION] Breaking infinite recursion: method " << methodName
-                      << " pushed " << sameMethodCount << " times at depth " << frameDepth_ << "\n";
-            // Ban this method for the next 1000 calls to break the recursion completely
-            bannedMethod = methodName;
-            bannedCallsRemaining = 1000;
-            // Clean up stack: pop args + receiver, push appropriate return value
-            popN(argCount + 1);
-            // For conditional methods, return false instead of nil to avoid chains
-            if (methodName == "ifTrue:ifFalse:" || methodName == "ifTrue:" ||
-                methodName == "ifFalse:" || methodName == "mustBeBoolean") {
-                push(memory_.falseObject());
-            } else {
-                push(memory_.nil());
-            }
-            sameMethodCount = 0;
-            lastMethodName = "";
-            return false;
-        }
-    } else {
-        lastMethodName = methodName;
-        sameMethodCount = 1;
-    }
-
-    // Stagnation detection - if we stay at high depth too long, break out
-    static int highDepthCycles = 0;
-    if (frameDepth_ > 40) {
-        highDepthCycles++;
-        if (highDepthCycles > 100000) {
-            std::cerr << "[STAGNATION] Stuck at high depth " << frameDepth_
-                      << " for " << highDepthCycles << " cycles - breaking out\n";
-            popN(argCount + 1);
-            push(memory_.nil());
-            highDepthCycles = 0;
-            return false;
-        }
-    } else {
-        highDepthCycles = 0;  // Reset when we return to low depth
-    }
-
     // Save current execution state before switching to new method
     if (frameDepth_ >= MaxFrameDepth) {
         std::cerr << "[VM-STOP] Frame depth overflow in pushFrame(): " << frameDepth_ << " >= " << MaxFrameDepth << "\n";
@@ -12290,6 +12054,73 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
         fprintf(dnuTraceLog, "[DNU #%d depth=%d] %s >> #%s argCount=%d\n",
                 ++dnuTraceCount, dnuDepth, rcvrClassName.c_str(), selStr.c_str(), argCount);
+        fflush(dnuTraceLog);
+
+        // FATAL: DNU errors indicate VM bugs - fix them, don't workaround
+        std::cerr << "\n[FATAL DNU] " << rcvrClassName << " >> #" << selStr << " (argCount=" << argCount << ")\n";
+        std::cerr << "  This is a VM bug - fix the root cause, don't workaround!\n";
+        std::cerr << "  frameDepth=" << frameDepth_ << " dnuDepth=" << dnuDepth << "\n";
+
+        // Print call stack
+        std::cerr << "  Call stack:\n";
+        // Current method
+        std::string curMethod = "<unknown>", curClass = "<unknown>";
+        if (method_.isObject() && method_.rawBits() > 0x10000) {
+            Oop hdr = memory_.fetchPointer(0, method_);
+            if (hdr.isSmallInteger()) {
+                size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                if (numLits >= 2) {
+                    Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                    if (sel.isObject() && sel.rawBits() > 0x10000) {
+                        ObjectHeader* selHdr = sel.asObjectPtr();
+                        if (selHdr->isBytesObject() && selHdr->byteSize() < 100) {
+                            curMethod = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                        }
+                    }
+                    Oop classAssoc = memory_.fetchPointer(numLits, method_);
+                    if (classAssoc.isObject() && classAssoc.rawBits() > 0x10000) {
+                        ObjectHeader* assocHdr = classAssoc.asObjectPtr();
+                        if (assocHdr->slotCount() >= 2) {
+                            Oop cls = memory_.fetchPointer(1, classAssoc);
+                            if (cls.isObject()) {
+                                Oop nameOop = memory_.fetchPointer(6, cls);
+                                if (nameOop.isObject()) {
+                                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                                        curClass = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        std::cerr << "    [0] " << curClass << " >> #" << curMethod << " (current)\n";
+
+        // Saved frames
+        for (size_t d = 0; d < frameDepth_ && d < 10; d++) {
+            SavedFrame& sf = savedFrames_[frameDepth_ - 1 - d];
+            std::string frameMethod = "<unknown>", frameClass = "<unknown>";
+            if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                Oop hdr = memory_.fetchPointer(0, sf.savedMethod);
+                if (hdr.isSmallInteger()) {
+                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                    if (numLits >= 2) {
+                        Oop sel = memory_.fetchPointer(numLits - 1, sf.savedMethod);
+                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                            ObjectHeader* selHdr = sel.asObjectPtr();
+                            if (selHdr->isBytesObject() && selHdr->byteSize() < 100) {
+                                frameMethod = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+            }
+            std::cerr << "    [" << (d+1) << "] " << frameClass << " >> #" << frameMethod << "\n";
+        }
+
+        std::abort();
 
         // For SmallInteger/UndefinedObject >> #do:, trace the calling method
         if ((rcvrClassName == "SmallInteger" || rcvrClassName == "UndefinedObject") && selStr == "do:") {
