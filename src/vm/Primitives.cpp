@@ -1422,6 +1422,79 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
     Oop index = stackValue(1);
     Oop rcvr = stackValue(2);
 
+    // TRACE: Log when Process suspendedContext (slot 2, 1-indexed) is written
+    // This is CRITICAL for understanding why forked processes have wrong context
+    if (index.isSmallInteger() && index.asSmallInteger() == 2 && rcvr.isObject()) {
+        Oop cls = memory_.classOf(rcvr);
+        if (cls.isObject()) {
+            Oop clsName = memory_.fetchPointer(6, cls);
+            if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                ObjectHeader* cnHdr = clsName.asObjectPtr();
+                if (cnHdr->isBytesObject() && cnHdr->byteSize() == 7) {
+                    std::string name((char*)cnHdr->bytes(), 7);
+                    if (name == "Process") {
+                        static FILE* procCtxLog = nullptr;
+                        static int procCtxCount = 0;
+                        procCtxCount++;
+                        if (procCtxCount <= 20) {
+                            if (!procCtxLog) procCtxLog = fopen("/tmp/process_context_set.log", "w");
+                            if (procCtxLog) {
+                                fprintf(procCtxLog, "[PROC-CTX #%d] Process 0x%llx suspendedContext := 0x%llx\n",
+                                        procCtxCount, (unsigned long long)rcvr.rawBits(),
+                                        (unsigned long long)value.rawBits());
+                                // Show what method the context will run
+                                if (value.isObject() && value.rawBits() > 0x10000) {
+                                    Oop ctxMethod = memory_.fetchPointer(3, value);  // Method slot
+                                    std::string methName = "?";
+                                    if (ctxMethod.isObject() && ctxMethod.rawBits() > 0x10000) {
+                                        Oop mhdr = memory_.fetchPointer(0, ctxMethod);
+                                        if (mhdr.isSmallInteger()) {
+                                            int nLits = mhdr.asSmallInteger() & 0x7FFF;
+                                            if (nLits >= 2 && nLits < 100) {
+                                                Oop sel = memory_.fetchPointer(nLits - 1, ctxMethod);
+                                                if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                                    ObjectHeader* selH = sel.asObjectPtr();
+                                                    if (selH->isBytesObject() && selH->byteSize() < 100) {
+                                                        methName = std::string((char*)selH->bytes(), selH->byteSize());
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    fprintf(procCtxLog, "  context method: #%s\n", methName.c_str());
+                                    // Also show context's sender
+                                    Oop sender = memory_.fetchPointer(0, value);
+                                    fprintf(procCtxLog, "  context sender: 0x%llx\n",
+                                            (unsigned long long)sender.rawBits());
+                                }
+                                // Show current call stack
+                                fprintf(procCtxLog, "  Set from method: #");
+                                if (method_.isObject()) {
+                                    Oop hdr = memory_.fetchPointer(0, method_);
+                                    if (hdr.isSmallInteger()) {
+                                        int nLits = hdr.asSmallInteger() & 0x7FFF;
+                                        if (nLits >= 2) {
+                                            Oop sel = memory_.fetchPointer(nLits - 1, method_);
+                                            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                                ObjectHeader* selH = sel.asObjectPtr();
+                                                if (selH->isBytesObject() && selH->byteSize() < 100) {
+                                                    fprintf(procCtxLog, "%s",
+                                                            std::string((char*)selH->bytes(), selH->byteSize()).c_str());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                fprintf(procCtxLog, "\n");
+                                fflush(procCtxLog);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // TRACE: Log nil values being stored
     static FILE* atPutLog = nullptr;
     static int atPutNilCount = 0;
@@ -1684,6 +1757,87 @@ PrimitiveResult Interpreter::primitiveInstVarAtPut(int argCount) {
     Oop value = stackValue(0);
     Oop index = stackValue(1);
     Oop rcvr = stackValue(2);
+
+    // TRACE: Log ALL instVarAtPut calls with Process receiver
+    static FILE* allInstVarLog = nullptr;
+    static int allInstVarCount = 0;
+    if (!allInstVarLog) allInstVarLog = fopen("/tmp/instvar_atput.log", "w");
+    if (allInstVarLog && rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+        Oop cls = memory_.classOf(rcvr);
+        if (cls.isObject()) {
+            Oop clsName = memory_.fetchPointer(6, cls);
+            if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                ObjectHeader* cnHdr = clsName.asObjectPtr();
+                if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                    std::string name((char*)cnHdr->bytes(), cnHdr->byteSize());
+                    if (name == "Process" && allInstVarCount < 30) {
+                        allInstVarCount++;
+                        fprintf(allInstVarLog, "[INSTVAR #%d] Process 0x%llx instVarAt:%lld put:0x%llx\n",
+                                allInstVarCount, (unsigned long long)rcvr.rawBits(),
+                                index.isSmallInteger() ? index.asSmallInteger() : -1,
+                                (unsigned long long)value.rawBits());
+                        fflush(allInstVarLog);
+                    }
+                }
+            }
+        }
+    }
+
+    // TRACE: Log when Process suspendedContext (instVar 2) is written
+    if (index.isSmallInteger() && index.asSmallInteger() == 2 && rcvr.isObject()) {
+        Oop cls = memory_.classOf(rcvr);
+        if (cls.isObject()) {
+            Oop clsName = memory_.fetchPointer(6, cls);
+            if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                ObjectHeader* cnHdr = clsName.asObjectPtr();
+                if (cnHdr->isBytesObject() && cnHdr->byteSize() == 7) {
+                    std::string name((char*)cnHdr->bytes(), 7);
+                    if (name == "Process") {
+                        static FILE* procCtxLog = nullptr;
+                        static int procCtxCount = 0;
+                        procCtxCount++;
+                        if (procCtxCount <= 20) {
+                            if (!procCtxLog) procCtxLog = fopen("/tmp/process_context_set.log", "w");
+                            if (procCtxLog) {
+                                fprintf(procCtxLog, "[PROC-INSTVAR #%d] Process 0x%llx suspendedContext := 0x%llx\n",
+                                        procCtxCount, (unsigned long long)rcvr.rawBits(),
+                                        (unsigned long long)value.rawBits());
+                                // Show what method the context will run
+                                if (value.isObject() && value.rawBits() > 0x10000) {
+                                    Oop ctxMethod = memory_.fetchPointer(3, value);  // Method slot
+                                    std::string methName = "?";
+                                    if (ctxMethod.isObject() && ctxMethod.rawBits() > 0x10000) {
+                                        Oop mhdr = memory_.fetchPointer(0, ctxMethod);
+                                        if (mhdr.isSmallInteger()) {
+                                            int nLits = mhdr.asSmallInteger() & 0x7FFF;
+                                            if (nLits >= 2 && nLits < 100) {
+                                                Oop sel = memory_.fetchPointer(nLits - 1, ctxMethod);
+                                                if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                                    ObjectHeader* selH = sel.asObjectPtr();
+                                                    if (selH->isBytesObject() && selH->byteSize() < 100) {
+                                                        methName = std::string((char*)selH->bytes(), selH->byteSize());
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    fprintf(procCtxLog, "  context method: #%s\n", methName.c_str());
+                                    // Also show context's sender
+                                    Oop sender = memory_.fetchPointer(0, value);
+                                    fprintf(procCtxLog, "  context sender: 0x%llx (isNil=%d)\n",
+                                            (unsigned long long)sender.rawBits(),
+                                            sender.rawBits() == memory_.nil().rawBits() ? 1 : 0);
+                                } else {
+                                    fprintf(procCtxLog, "  value is nil or invalid\n");
+                                }
+                                fflush(procCtxLog);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     if (!index.isSmallInteger() || !rcvr.isObject()) {
         return PrimitiveResult::Failure;
@@ -3008,6 +3162,30 @@ PrimitiveResult Interpreter::primitiveResume(int argCount) {
                 resumeCallCount, (unsigned long long)process.rawBits(),
                 processPriority, activePriority,
                 processPriority > activePriority ? "PREEMPT" : "enqueue");
+
+        // Log what method the process will run
+        std::string ctxMethod = "?";
+        if (context.isObject() && context.rawBits() > 0x10000) {
+            Oop method = memory_.fetchPointer(3, context);  // MethodIndex = 3
+            if (method.isObject() && method.rawBits() > 0x10000) {
+                Oop mhdr = memory_.fetchPointer(0, method);
+                if (mhdr.isSmallInteger()) {
+                    int64_t hv = mhdr.asSmallInteger();
+                    int nLits = hv & 0x7FFF;
+                    if (nLits >= 2 && nLits < 100) {
+                        Oop sel = memory_.fetchPointer(nLits - 1, method);
+                        if (sel.isObject()) {
+                            ObjectHeader* selH = sel.asObjectPtr();
+                            if (selH->isBytesObject() && selH->byteSize() < 100) {
+                                ctxMethod = std::string((char*)selH->bytes(), selH->byteSize());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        fprintf(resumeLog, "[RESUME #%d]   context=0x%llx will run method: #%s\n",
+                resumeCallCount, (unsigned long long)context.rawBits(), ctxMethod.c_str());
         fflush(resumeLog);
     }
 

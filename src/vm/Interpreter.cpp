@@ -3752,6 +3752,76 @@ uint16_t Interpreter::fetchTwoBytes() {
 }
 
 void Interpreter::pushReceiverVariable(int index) {
+    // TRACE: When accessing slot 1 on FullBlockClosure (compiledBlock slot)
+    // This is the critical path for understanding why compiledBlock returns wrong value
+    if (index == 1 && receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+        Oop rcvrCls = memory_.classOf(receiver_);
+        std::string rcvrClassName;
+        if (rcvrCls.isObject()) {
+            Oop clsName = memory_.fetchPointer(6, rcvrCls);
+            if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                ObjectHeader* cnHdr = clsName.asObjectPtr();
+                if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                    rcvrClassName = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                }
+            }
+        }
+        if (rcvrClassName.find("FullBlockClosure") != std::string::npos ||
+            rcvrClassName.find("BlockClosure") != std::string::npos) {
+            static FILE* slot1Log = nullptr;
+            static int slot1Count = 0;
+            slot1Count++;
+            if (slot1Count <= 30) {
+                if (!slot1Log) slot1Log = fopen("/tmp/block_slot1_access.log", "w");
+                if (slot1Log) {
+                    Oop slot1Val = memory_.fetchPointer(1, receiver_);
+                    std::string slot1Method = "?";
+                    if (slot1Val.isObject() && slot1Val.rawBits() > 0x10000) {
+                        Oop hdr = memory_.fetchPointer(0, slot1Val);
+                        if (hdr.isSmallInteger()) {
+                            size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                            if (numLits >= 2) {
+                                Oop sel = memory_.fetchPointer(numLits - 1, slot1Val);
+                                if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                    ObjectHeader* selHdr = sel.asObjectPtr();
+                                    if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                        slot1Method = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                    } else if (slot1Val.isSmallInteger()) {
+                        slot1Method = "<SmallInteger startPC>";
+                    }
+                    // Also show what method we're currently executing
+                    std::string currentMethod = "?";
+                    if (method_.isObject() && method_.rawBits() > 0x10000) {
+                        Oop hdr = memory_.fetchPointer(0, method_);
+                        if (hdr.isSmallInteger()) {
+                            size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                            if (numLits >= 2) {
+                                Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                                if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                    ObjectHeader* selHdr = sel.asObjectPtr();
+                                    if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                        currentMethod = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    fprintf(slot1Log, "[BLOCK-SLOT1 #%d] %s[1] = 0x%llx method=#%s (in %s)\n",
+                            slot1Count, rcvrClassName.c_str(),
+                            (unsigned long long)slot1Val.rawBits(),
+                            slot1Method.c_str(), currentMethod.c_str());
+                    // Show receiver (block) address for correlation
+                    fprintf(slot1Log, "  block=0x%llx\n", (unsigned long long)receiver_.rawBits());
+                    fflush(slot1Log);
+                }
+            }
+        }
+    }
+
     // Trace ALL instance variable reads to debug SessionManager default
     if constexpr (ENABLE_DEBUG_LOGGING) {
         static FILE* civLog = nullptr;
@@ -5819,6 +5889,91 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         return selLen == nameLen && selBytes && memcmp(selBytes, name, nameLen) == 0;
     };
 
+    // TRACE: Intercept compiledBlock sends to FullBlockClosure
+    // This is the key debug point - when asContextWithSender: calls self compiledBlock,
+    // we need to see what value slot 1 has at that moment
+    if (selLen == 13 && selBytes && memcmp(selBytes, "compiledBlock", 13) == 0) {
+        static FILE* cbLog = nullptr;
+        static int cbCount = 0;
+        cbCount++;
+        if (cbCount <= 20) {
+            if (!cbLog) cbLog = fopen("/tmp/compiled_block_send.log", "w");
+            if (cbLog) {
+                Oop rcvr = stackValue(argCount);
+                std::string rcvrClass = "?";
+                if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                    Oop rcvrCls = memory_.classOf(rcvr);
+                    if (rcvrCls.isObject()) {
+                        Oop clsName = memory_.fetchPointer(6, rcvrCls);
+                        if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                            ObjectHeader* cnHdr = clsName.asObjectPtr();
+                            if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                                rcvrClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+                fprintf(cbLog, "[COMPILED-BLOCK-SEND #%d] receiver=0x%llx class=%s\n",
+                        cbCount, (unsigned long long)rcvr.rawBits(), rcvrClass.c_str());
+
+                // If it's a FullBlockClosure, show what's in slot 1 (the compiledBlock slot)
+                if (rcvrClass.find("FullBlockClosure") != std::string::npos ||
+                    rcvrClass.find("BlockClosure") != std::string::npos) {
+                    ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+                    if (rcvrHdr->slotCount() > 1) {
+                        Oop slot1 = memory_.fetchPointer(1, rcvr);  // compiledBlock slot
+                        std::string slot1Method = "?";
+                        if (slot1.isObject() && slot1.rawBits() > 0x10000) {
+                            // Get the method name from slot1's last literal
+                            Oop hdr = memory_.fetchPointer(0, slot1);
+                            if (hdr.isSmallInteger()) {
+                                size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                                if (numLits >= 2) {
+                                    Oop sel = memory_.fetchPointer(numLits - 1, slot1);
+                                    if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                        ObjectHeader* selHdr = sel.asObjectPtr();
+                                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                            slot1Method = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                                        }
+                                    }
+                                }
+                            }
+                        } else if (slot1.isSmallInteger()) {
+                            slot1Method = "<SmallInteger startPC>";
+                        } else {
+                            slot1Method = "<nil or invalid>";
+                        }
+                        fprintf(cbLog, "  slot1 (compiledBlock) = 0x%llx method=#%s\n",
+                                (unsigned long long)slot1.rawBits(), slot1Method.c_str());
+                    }
+                }
+
+                // Also show caller context to understand where this is called from
+                if (frameDepth_ > 0) {
+                    std::string callerMethod = "<unknown>";
+                    SavedFrame& sf = savedFrames_[frameDepth_ - 1];
+                    if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                        Oop hdr = memory_.fetchPointer(0, sf.savedMethod);
+                        if (hdr.isSmallInteger()) {
+                            size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                            if (numLits >= 2) {
+                                Oop sel = memory_.fetchPointer(numLits - 1, sf.savedMethod);
+                                if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                    ObjectHeader* selHdr = sel.asObjectPtr();
+                                    if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                        callerMethod = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    fprintf(cbLog, "  called from: #%s\n", callerMethod.c_str());
+                }
+                fflush(cbLog);
+            }
+        }
+    }
+
     // TRACE: After selEquals setup
     if (traceThisSend && sendTraceLog) {
         fprintf(sendTraceLog, "[SEND step=%llu] After selEquals setup, selLen=%zu\n", g_stepNum, selLen);
@@ -7605,8 +7760,27 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                         Oop context = memory_.allocateSlots(classIndex, totalSlots, ObjectFormat::IndexableWithFixed);
                         if (!context.isNil()) {
                             static int ctxAllocCount = 0;
-                            if (ctxAllocCount++ < 5) {
-                                std::cerr << "[CONTEXT-ALLOC] Created Context with " << totalSlots << " slots\n";
+                            ctxAllocCount++;
+                            if (ctxAllocCount <= 10) {
+                                // Log the method being used
+                                std::string methodName = "?";
+                                if (methodArg.isObject() && methodArg.rawBits() > 0x10000) {
+                                    ObjectHeader* methHdr = methodArg.asObjectPtr();
+                                    int64_t mhdr = memory_.fetchPointer(0, methodArg).asSmallInteger();
+                                    int nLits = mhdr & 0x7FFF;
+                                    if (nLits >= 2 && nLits < 100) {
+                                        Oop sel = memory_.fetchPointer(nLits - 1, methodArg);
+                                        if (sel.isObject()) {
+                                            ObjectHeader* selH = sel.asObjectPtr();
+                                            if (selH->isBytesObject() && selH->byteSize() < 100) {
+                                                methodName = std::string((char*)selH->bytes(), selH->byteSize());
+                                            }
+                                        }
+                                    }
+                                }
+                                std::cerr << "[CONTEXT-ALLOC #" << ctxAllocCount << "] Created Context 0x"
+                                          << std::hex << context.rawBits() << std::dec
+                                          << " for method: #" << methodName << "\n";
                             }
                             popN(argCount + 1);  // Pop method arg and receiver
                             push(context);
@@ -12178,6 +12352,142 @@ Oop Interpreter::receiverInstVar(size_t index) const {
 }
 
 void Interpreter::setReceiverInstVar(size_t index, Oop value) {
+    // TRACE: Log when Context PC (slot 1) is written - key for understanding wrong PC bug
+    if (index == 1 && receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+        Oop rcvrCls = memory_.classOf(receiver_);
+        if (rcvrCls.isObject()) {
+            Oop clsName = memory_.fetchPointer(6, rcvrCls);
+            if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                ObjectHeader* cnHdr = clsName.asObjectPtr();
+                if (cnHdr->isBytesObject()) {
+                    std::string name((char*)cnHdr->bytes(), cnHdr->byteSize());
+                    if (name == "Context") {
+                        static FILE* ctxPcLog = nullptr;
+                        static int ctxPcCount = 0;
+                        ctxPcCount++;
+                        if (ctxPcCount <= 30) {
+                            if (!ctxPcLog) ctxPcLog = fopen("/tmp/context_pc_set.log", "w");
+                            if (ctxPcLog) {
+                                fprintf(ctxPcLog, "[CTX-PC #%d] Context 0x%llx pc := %lld\n",
+                                        ctxPcCount, (unsigned long long)receiver_.rawBits(),
+                                        value.isSmallInteger() ? value.asSmallInteger() : -999);
+                                // Also show what method this context is for
+                                Oop ctxMethod = memory_.fetchPointer(3, receiver_);  // Might be nil if not yet set
+                                if (ctxMethod.isObject() && ctxMethod.rawBits() > 0x10000) {
+                                    Oop mhdr = memory_.fetchPointer(0, ctxMethod);
+                                    if (mhdr.isSmallInteger()) {
+                                        int nLits = mhdr.asSmallInteger() & 0x7FFF;
+                                        if (nLits >= 2 && nLits < 100) {
+                                            Oop sel = memory_.fetchPointer(nLits - 1, ctxMethod);
+                                            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                                ObjectHeader* selH = sel.asObjectPtr();
+                                                if (selH->isBytesObject() && selH->byteSize() < 100) {
+                                                    fprintf(ctxPcLog, "  context method: #%s\n",
+                                                            std::string((char*)selH->bytes(), selH->byteSize()).c_str());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                // Show call stack (what setter is running)
+                                if (method_.isObject()) {
+                                    Oop hdr = memory_.fetchPointer(0, method_);
+                                    if (hdr.isSmallInteger()) {
+                                        int nLits = hdr.asSmallInteger() & 0x7FFF;
+                                        if (nLits >= 2) {
+                                            Oop sel = memory_.fetchPointer(nLits - 1, method_);
+                                            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                                ObjectHeader* selH = sel.asObjectPtr();
+                                                if (selH->isBytesObject() && selH->byteSize() < 100) {
+                                                    fprintf(ctxPcLog, "  set by method: #%s\n",
+                                                            std::string((char*)selH->bytes(), selH->byteSize()).c_str());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                fflush(ctxPcLog);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // TRACE: Log when Process suspendedContext (slot 1) is written
+    // This is the KEY tracing point for understanding why forked processes have wrong context
+    if (index == 1 && receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+        Oop rcvrCls = memory_.classOf(receiver_);
+        if (rcvrCls.isObject()) {
+            Oop clsName = memory_.fetchPointer(6, rcvrCls);
+            if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                ObjectHeader* cnHdr = clsName.asObjectPtr();
+                if (cnHdr->isBytesObject() && cnHdr->byteSize() == 7) {
+                    std::string name((char*)cnHdr->bytes(), 7);
+                    if (name == "Process") {
+                        static FILE* procCtxLog = nullptr;
+                        static int procCtxCount = 0;
+                        procCtxCount++;
+                        if (procCtxCount <= 30) {
+                            if (!procCtxLog) procCtxLog = fopen("/tmp/process_suspendedctx_set.log", "w");
+                            if (procCtxLog) {
+                                fprintf(procCtxLog, "[PROC-SLOT1 #%d] Process 0x%llx suspendedContext := 0x%llx\n",
+                                        procCtxCount, (unsigned long long)receiver_.rawBits(),
+                                        (unsigned long long)value.rawBits());
+                                // Show context details
+                                if (value.isObject() && value.rawBits() > 0x10000) {
+                                    Oop ctxMethod = memory_.fetchPointer(3, value);  // Method slot
+                                    std::string methName = "?";
+                                    if (ctxMethod.isObject() && ctxMethod.rawBits() > 0x10000) {
+                                        Oop mhdr = memory_.fetchPointer(0, ctxMethod);
+                                        if (mhdr.isSmallInteger()) {
+                                            int nLits = mhdr.asSmallInteger() & 0x7FFF;
+                                            if (nLits >= 2 && nLits < 100) {
+                                                Oop sel = memory_.fetchPointer(nLits - 1, ctxMethod);
+                                                if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                                    ObjectHeader* selH = sel.asObjectPtr();
+                                                    if (selH->isBytesObject() && selH->byteSize() < 100) {
+                                                        methName = std::string((char*)selH->bytes(), selH->byteSize());
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    fprintf(procCtxLog, "  context method: #%s (0x%llx)\n",
+                                            methName.c_str(), (unsigned long long)ctxMethod.rawBits());
+                                    Oop sender = memory_.fetchPointer(0, value);
+                                    fprintf(procCtxLog, "  context sender: 0x%llx\n",
+                                            (unsigned long long)sender.rawBits());
+                                }
+                                // Show call stack
+                                fprintf(procCtxLog, "  Call stack (current method: ");
+                                if (method_.isObject()) {
+                                    Oop hdr = memory_.fetchPointer(0, method_);
+                                    if (hdr.isSmallInteger()) {
+                                        int nLits = hdr.asSmallInteger() & 0x7FFF;
+                                        if (nLits >= 2) {
+                                            Oop sel = memory_.fetchPointer(nLits - 1, method_);
+                                            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                                ObjectHeader* selH = sel.asObjectPtr();
+                                                if (selH->isBytesObject() && selH->byteSize() < 100) {
+                                                    fprintf(procCtxLog, "#%s",
+                                                            std::string((char*)selH->bytes(), selH->byteSize()).c_str());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                fprintf(procCtxLog, ")\n");
+                                fflush(procCtxLog);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Check if receiver is a byte object - can't store to byte objects
     if (receiver_.isObject()) {
         ObjectHeader* hdr = receiver_.asObjectPtr();
@@ -13263,6 +13573,34 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         }
         pop();  // Pop receiver
         push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #findNextUnwindContextUpTo: on nil - exception handling at end of sender chain
+    // When we reach nil at the bottom of a process's stack, return nil to indicate no unwind context
+    if (origStr == "findNextUnwindContextUpTo:" && rcvrClassName == "UndefinedObject" && argCount == 1) {
+        static int findUnwindCount = 0;
+        findUnwindCount++;
+        if (findUnwindCount <= 5) {
+            std::cerr << "[DNU-FALLBACK] findNextUnwindContextUpTo: on nil #" << findUnwindCount
+                      << " - returning nil (bottom of sender chain)\n";
+        }
+        popN(argCount + 1);  // Pop receiver and argument
+        push(memory_.nil());  // Return nil - no unwind context found
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #freeze on nil - called during error handling on nil receiver
+    // Just return self (nil) as a no-op
+    if (origStr == "freeze" && rcvrClassName == "UndefinedObject" && argCount == 0) {
+        static int freezeCount = 0;
+        freezeCount++;
+        if (freezeCount <= 5) {
+            std::cerr << "[DNU-FALLBACK] freeze on nil #" << freezeCount << " - returning nil\n";
+        }
+        // Leave receiver on stack (return self = nil)
         dnuDepth--;
         return;
     }
@@ -15367,6 +15705,184 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
     // Sista V1 0xF9: Push FullBlockClosure
     // The closure's code is in a CompiledBlock literal at litIndex
     Oop compiledBlock = literal(litIndex);
+
+    // TRACE: Log what CompiledBlock is being fetched
+    static int createBlockCount = 0;
+    createBlockCount++;
+
+    // Get method name from compiledBlock for tracing
+    auto getMethodName = [this](Oop cb) -> std::string {
+        if (!cb.isObject() || cb.rawBits() < 0x10000) return "<invalid>";
+        Oop cbHeaderOop = memory_.fetchPointer(0, cb);
+        if (!cbHeaderOop.isSmallInteger()) return "<no header>";
+        int64_t cbHeader = cbHeaderOop.asSmallInteger();
+        int cbNumLits = cbHeader & 0x7FFF;
+        if (cbNumLits < 1 || cbNumLits >= 100) return "<bad numLits>";
+        // For CompiledBlock: last literal is home method
+        // For CompiledMethod: second-to-last literal is selector
+        Oop lastLit = memory_.fetchPointer(cbNumLits, cb);
+        if (lastLit.isObject() && lastLit.rawBits() > 0x10000) {
+            ObjectHeader* lastHdr = lastLit.asObjectPtr();
+            if (lastHdr->isCompiledMethod()) {
+                // CompiledBlock - get enclosing method's selector
+                Oop methHeader = memory_.fetchPointer(0, lastLit);
+                if (methHeader.isSmallInteger()) {
+                    int nLits = methHeader.asSmallInteger() & 0x7FFF;
+                    if (nLits >= 2 && nLits < 100) {
+                        Oop sel = memory_.fetchPointer(nLits - 1, lastLit);
+                        if (sel.isObject()) {
+                            ObjectHeader* selH = sel.asObjectPtr();
+                            if (selH->isBytesObject() && selH->byteSize() < 100) {
+                                return std::string((char*)selH->bytes(), selH->byteSize());
+                            }
+                        }
+                    }
+                }
+            } else if (lastHdr->isBytesObject() && lastHdr->byteSize() < 100) {
+                // CompiledMethod - this IS the selector (second-to-last literal)
+                return std::string((char*)lastHdr->bytes(), lastHdr->byteSize());
+            }
+        }
+        // Try second-to-last literal as selector
+        if (cbNumLits >= 2) {
+            Oop selLit = memory_.fetchPointer(cbNumLits - 1, cb);
+            if (selLit.isObject() && selLit.rawBits() > 0x10000) {
+                ObjectHeader* selH = selLit.asObjectPtr();
+                if (selH->isBytesObject() && selH->byteSize() < 100) {
+                    return std::string((char*)selH->bytes(), selH->byteSize());
+                }
+            }
+        }
+        return "?";
+    };
+
+    std::string cbMethod = getMethodName(compiledBlock);
+
+    // CRITICAL: Trace when we create a block with terminateRealActive - this is the bug
+    if (cbMethod == "terminateRealActive") {
+        static FILE* termLog = nullptr;
+        static int termCount = 0;
+        termCount++;
+        if (termCount <= 30) {
+            if (!termLog) termLog = fopen("/tmp/terminate_block_create.log", "w");
+            if (termLog) {
+                std::string currMethod = "?";
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    currMethod = getMethodName(method_);
+                }
+
+                // Deep analysis of the compiledBlock itself
+                fprintf(termLog, "--- Analysis of compiledBlock 0x%llx ---\n",
+                        (unsigned long long)compiledBlock.rawBits());
+                if (compiledBlock.isObject() && compiledBlock.rawBits() > 0x10000) {
+                    ObjectHeader* cbHdr = compiledBlock.asObjectPtr();
+                    fprintf(termLog, "  isCompiledMethod: %s\n",
+                            cbHdr->isCompiledMethod() ? "YES" : "NO");
+                    fprintf(termLog, "  format: %d  classIndex: %u  slotCount: %zu\n",
+                            (int)cbHdr->format(), cbHdr->classIndex(), cbHdr->slotCount());
+
+                    Oop cbHeaderOop = memory_.fetchPointer(0, compiledBlock);
+                    if (cbHeaderOop.isSmallInteger()) {
+                        int64_t cbHeader = cbHeaderOop.asSmallInteger();
+                        int cbNumLits = cbHeader & 0x7FFF;
+                        int cbPrimIdx = (cbHeader >> 15) & 0xFFFF;
+                        fprintf(termLog, "  numLiterals: %d  primIndex: %d\n", cbNumLits, cbPrimIdx);
+
+                        // Show all literals of this CompiledBlock
+                        fprintf(termLog, "  CompiledBlock literals:\n");
+                        for (int i = 0; i < cbNumLits && i < 10; i++) {
+                            Oop lit = memory_.fetchPointer(i + 1, compiledBlock);
+                            std::string litInfo = "?";
+                            if (lit.isSmallInteger()) {
+                                litInfo = "SmallInt:" + std::to_string(lit.asSmallInteger());
+                            } else if (lit.isObject() && lit.rawBits() > 0x10000) {
+                                ObjectHeader* litHdr = lit.asObjectPtr();
+                                if (litHdr->isBytesObject() && litHdr->byteSize() < 100) {
+                                    litInfo = "\"" + std::string((char*)litHdr->bytes(), litHdr->byteSize()) + "\"";
+                                } else if (litHdr->isCompiledMethod()) {
+                                    litInfo = "CompiledCode:" + getMethodName(lit);
+                                } else {
+                                    // Get class name
+                                    Oop cls = memory_.classOf(lit);
+                                    if (cls.isObject()) {
+                                        Oop clsName = memory_.fetchPointer(6, cls);
+                                        if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                                            ObjectHeader* cnHdr = clsName.asObjectPtr();
+                                            if (cnHdr->isBytesObject() && cnHdr->byteSize() < 100) {
+                                                litInfo = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            fprintf(termLog, "    cb[%d] = 0x%llx %s\n",
+                                    i, (unsigned long long)lit.rawBits(), litInfo.c_str());
+                        }
+                    }
+                }
+                fprintf(termLog, "--- End analysis ---\n\n");
+                fprintf(termLog, "[TERM-BLOCK #%d] Creating block with terminateRealActive!\n", termCount);
+                fprintf(termLog, "  litIndex=%d compiledBlock=0x%llx\n",
+                        litIndex, (unsigned long long)compiledBlock.rawBits());
+                fprintf(termLog, "  current method_=#%s (0x%llx)\n",
+                        currMethod.c_str(), (unsigned long long)method_.rawBits());
+                fprintf(termLog, "  frameDepth=%zu\n", frameDepth_);
+
+                // Detailed analysis of method_'s literal frame
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    Oop hdr = memory_.fetchPointer(0, method_);
+                    fprintf(termLog, "  method_ header: 0x%llx\n", (unsigned long long)hdr.rawBits());
+                    if (hdr.isSmallInteger()) {
+                        int64_t headerBits = hdr.asSmallInteger();
+                        int numLits = headerBits & 0x7FFF;
+                        fprintf(termLog, "  method_ numLiterals=%d\n", numLits);
+                        // Dump first few literals
+                        fprintf(termLog, "  Literals:\n");
+                        for (int i = 0; i < numLits && i < 10; i++) {
+                            Oop lit = memory_.fetchPointer(i + 1, method_);
+                            std::string litName = getMethodName(lit);
+                            std::string litType = "?";
+                            if (lit.isSmallInteger()) {
+                                litType = "SmallInt";
+                                litName = std::to_string(lit.asSmallInteger());
+                            } else if (lit.isObject() && lit.rawBits() > 0x10000) {
+                                ObjectHeader* litHdr = lit.asObjectPtr();
+                                if (litHdr->isCompiledMethod()) {
+                                    litType = "CompiledCode";
+                                } else if (litHdr->isBytesObject()) {
+                                    litType = "ByteObject";
+                                    if (litHdr->byteSize() < 50) {
+                                        litName = "\"" + std::string((char*)litHdr->bytes(), litHdr->byteSize()) + "\"";
+                                    }
+                                } else {
+                                    litType = "Object";
+                                }
+                            }
+                            fprintf(termLog, "    [%d] %s: 0x%llx %s\n",
+                                    i, litType.c_str(), (unsigned long long)lit.rawBits(), litName.c_str());
+                        }
+                    }
+                }
+
+                // Dump stack frames to understand how we got here
+                fprintf(termLog, "  Call stack:\n");
+                for (size_t d = 0; d < frameDepth_ && d < 10; d++) {
+                    SavedFrame& sf = savedFrames_[frameDepth_ - 1 - d];
+                    std::string frameMethod = getMethodName(sf.savedMethod);
+                    fprintf(termLog, "    [%zu] #%s\n", d, frameMethod.c_str());
+                }
+                fflush(termLog);
+            }
+        }
+    }
+
+    if (createBlockCount <= 30) {
+        std::string currMethod = getMethodName(method_);
+        std::cerr << "[CREATE-BLOCK #" << createBlockCount << "] litIndex=" << litIndex
+                  << " compiledBlock=0x" << std::hex << compiledBlock.rawBits() << std::dec
+                  << " homeMethod=#" << cbMethod
+                  << " (in #" << currMethod << ")\n";
+    }
 
     // Create FullBlockClosure
     // Get the class from special objects - index 59 is ClassFullBlockClosure
