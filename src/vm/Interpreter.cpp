@@ -2033,9 +2033,24 @@ void Interpreter::checkTimerSemaphore() {
             int activePriority = static_cast<int>(activePriorityOop.asSmallInteger());
 
             if (processPriority > activePriority) {
-                // Higher priority - preempt current process
-                putToSleep(activeProcess);
-                transferTo(process);
+                // Higher priority - check if we should preempt (same logic as signalExternalSemaphoreWithIndex)
+                static auto lastTimerSwitchTime = std::chrono::steady_clock::now();
+                auto now = std::chrono::steady_clock::now();
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastTimerSwitchTime).count();
+
+                int priorityDiff = processPriority - activePriority;
+                bool urgentSwitch = priorityDiff >= 20;
+                bool timeElapsed = elapsed >= 50;
+                bool shallowStack = frameDepth_ < 50;
+
+                if (urgentSwitch || timeElapsed || shallowStack) {
+                    lastTimerSwitchTime = now;
+                    putToSleep(activeProcess);
+                    transferTo(process);
+                } else {
+                    // Defer the switch
+                    putToSleep(process);
+                }
             } else {
                 // Same or lower priority - just add to ready queue
                 putToSleep(process);
@@ -2234,9 +2249,34 @@ void Interpreter::processPendingSignals() {
         int activePriority = static_cast<int>(activePriorityOop.asSmallInteger());
 
         if (processPriority > activePriority) {
-            // Higher priority - preempt current process
-            putToSleep(activeProcess);
-            transferTo(process);
+            // Higher priority - check if we should preempt
+            // Rate-limit switches to prevent thrashing during expensive operations
+            static auto lastSwitchTime = std::chrono::steady_clock::now();
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastSwitchTime).count();
+
+            // Only switch if:
+            // 1. Priority difference is large (urgent), OR
+            // 2. Enough time has passed since last switch, OR
+            // 3. Stack is shallow (cheap to switch)
+            int priorityDiff = processPriority - activePriority;
+            bool urgentSwitch = priorityDiff >= 20;  // Very high priority jump
+            bool timeElapsed = elapsed >= 50;  // 50ms since last switch
+            bool shallowStack = frameDepth_ < 50;  // Stack is manageable
+
+            if (urgentSwitch || timeElapsed || shallowStack) {
+                lastSwitchTime = now;
+                putToSleep(activeProcess);
+                transferTo(process);
+            } else {
+                // Defer the switch - add to ready queue for later
+                if (sigLog && sigCount <= 50) {
+                    fprintf(sigLog, "[SIGNAL] #%d DEFERRING switch (elapsed=%lldms, frameDepth=%zu, priorityDiff=%d)\n",
+                            sigCount, elapsed, frameDepth_, priorityDiff);
+                    fflush(sigLog);
+                }
+                putToSleep(process);
+            }
         } else {
             // Same or lower priority - just add to ready queue
             putToSleep(process);
@@ -6265,6 +6305,95 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                               << std::hex << rcvr.rawBits() << std::dec << ") at frame " << frameDepth_ << "\n";
                 }
             }
+        }
+    }
+
+    // TRACE: Log all sends from setupEventLoop to debug why fork doesn't complete
+    {
+        static FILE* eventLoopLog = nullptr;
+        static bool insideSetupEventLoop = false;
+        static int setupEventLoopSendCount = 0;
+
+        // Check if we're entering setupEventLoop
+        std::string currentMethodName = "";
+        if (method_.isObject() && method_.rawBits() > 0x10000) {
+            Oop mHdr = memory_.fetchPointer(0, method_);
+            if (mHdr.isSmallInteger()) {
+                size_t numLits = mHdr.asSmallInteger() & 0x7FFF;
+                if (numLits >= 2) {
+                    Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                    if (sel.isObject() && sel.rawBits() > 0x10000) {
+                        ObjectHeader* selHdr = sel.asObjectPtr();
+                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                            currentMethodName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                        }
+                    }
+                }
+            }
+        }
+
+        if (currentMethodName == "setupEventLoop") {
+            if (!insideSetupEventLoop) {
+                insideSetupEventLoop = true;
+                if (!eventLoopLog) eventLoopLog = fopen("/tmp/setup_eventloop.log", "w");
+                if (eventLoopLog) {
+                    fprintf(eventLoopLog, "[SETUP-EVENT-LOOP] Entered setupEventLoop at step %llu\n", g_stepNum);
+                    fflush(eventLoopLog);
+                }
+            }
+        }
+
+        // Log sends while inside setupEventLoop
+        if (insideSetupEventLoop && eventLoopLog) {
+            setupEventLoopSendCount++;
+            if (setupEventLoopSendCount <= 500) {
+                // Get receiver class
+                std::string rcvrClass = "?";
+                Oop rcvr = stackValue(argCount);
+                if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                    Oop cls = memory_.classOf(rcvr);
+                    if (cls.isObject()) {
+                        Oop clsName = memory_.fetchPointer(6, cls);
+                        if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                            ObjectHeader* cnHdr = clsName.asObjectPtr();
+                            if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                                rcvrClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                            }
+                        }
+                    }
+                } else if (rcvr.rawBits() == memory_.nil().rawBits()) {
+                    rcvrClass = "nil";
+                } else if (rcvr.rawBits() == memory_.trueObject().rawBits()) {
+                    rcvrClass = "true";
+                } else if (rcvr.rawBits() == memory_.falseObject().rawBits()) {
+                    rcvrClass = "false";
+                } else if (rcvr.isSmallInteger()) {
+                    rcvrClass = "SmallInt";
+                }
+
+                // Get selector as string
+                std::string selStr = "?";
+                if (selector.isObject() && selector.rawBits() > 0x10000) {
+                    ObjectHeader* selHdr = selector.asObjectPtr();
+                    if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                        selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                    }
+                }
+                fprintf(eventLoopLog, "[SETUP #%d] %s >> %s (args=%d) current=%s frame=%zu\n",
+                        setupEventLoopSendCount, rcvrClass.c_str(), selStr.c_str(), argCount,
+                        currentMethodName.c_str(), frameDepth_);
+                fflush(eventLoopLog);
+            }
+        }
+
+        // Check if we're leaving setupEventLoop
+        if (insideSetupEventLoop && currentMethodName != "setupEventLoop" && frameDepth_ == 0) {
+            if (eventLoopLog) {
+                fprintf(eventLoopLog, "[SETUP-EVENT-LOOP] Exited setupEventLoop (now in %s) after %d sends\n",
+                        currentMethodName.c_str(), setupEventLoopSendCount);
+                fflush(eventLoopLog);
+            }
+            insideSetupEventLoop = false;
         }
     }
 
@@ -13026,6 +13155,19 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         return;
     }
 
+    // Fallback for #wait on nil - event loop trying to wait on uninitialized semaphore
+    // Return immediately to allow event loop to continue polling
+    if (origStr == "wait" && rcvrClassName == "UndefinedObject" && argCount == 0) {
+        static int waitNilCount = 0;
+        waitNilCount++;
+        if (waitNilCount <= 10) {
+            std::cerr << "[DNU-FALLBACK] wait on nil #" << waitNilCount << " - returning self (no-op)\n";
+        }
+        // Don't pop - return receiver (nil) as result
+        dnuDepth--;
+        return;
+    }
+
     // Fallback for #next on boolean - stream iteration on boolean
     // Happens when code tries to iterate a boolean as if it were a stream
     if (origStr == "next" && argCount == 0 &&
@@ -15950,6 +16092,23 @@ Oop Interpreter::wakeLowerPriorityProcess(int currentPriority) {
         fprintf(wakeLowerLog, "[WAKE-LOWER #%d] Current priority %d, scanning up to index %d\n",
                 wakeLowerCount, currentPriority, maxPriorityIndex);
         fflush(wakeLowerLog);
+    }
+
+    // Every 5th call, specifically try lowIOPriority (10) first to prevent starvation
+    // lowIOPriority is where the event loop runs
+    if (wakeLowerCount % 5 == 0 && maxPriorityIndex >= 9) {
+        int lowIOIndex = 9;  // Priority 10 = index 9
+        Oop processList = memory_.fetchPointer(lowIOIndex, schedLists);
+        Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, processList);
+        if (!first.isNil() && first.rawBits() != nilObj.rawBits()) {
+            Oop result = removeFirstLinkOfList(processList);
+            if (wakeLowerLog && wakeLowerCount <= 50) {
+                fprintf(wakeLowerLog, "[WAKE-LOWER #%d] -> PRIORITY BOOST: Selected lowIOPriority process 0x%llx\n",
+                        wakeLowerCount, (unsigned long long)result.rawBits());
+                fflush(wakeLowerLog);
+            }
+            return result;
+        }
     }
 
     // Search from highest to lowest priority, but only below current priority
