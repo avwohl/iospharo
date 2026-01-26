@@ -7141,19 +7141,22 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
             return PrimitiveResult::Success;
         case 1001:  // Operating system name
             pop();
-#if TARGET_OS_IOS || TARGET_OS_IPHONE
-            push(memory_.createString("iOS"));
-#else
-            // DIAGNOSTIC: Return "unix" to match Linux-built Pharo images
-            // This skips FFI structure recompilation which is extremely slow
-            // TODO: Investigate why recompilation is so slow or implement proper GC
+#if TARGET_OS_MACCATALYST
+            // Mac Catalyst - return "Mac OS" to match MacOSPlatform
+            // Mac Catalyst has TARGET_OS_IOS=1 but should report as Mac for platform detection
             {
                 static int platformCallCount = 0;
                 if (platformCallCount++ < 3) {
-                    std::cerr << "[PLATFORM-NAME #" << platformCallCount << "] Returning 'unix'\n";
+                    std::cerr << "[PLATFORM-NAME #" << platformCallCount << "] Returning 'Mac OS' (Mac Catalyst)\n";
                 }
             }
-            push(memory_.createString("unix"));
+            push(memory_.createString("Mac OS"));
+#elif TARGET_OS_IOS || TARGET_OS_IPHONE
+            // Pure iOS - return "iOS"
+            push(memory_.createString("iOS"));
+#else
+            // Other platforms (macOS desktop, Linux, etc.)
+            push(memory_.createString("Mac OS"));
 #endif
             return PrimitiveResult::Success;
         case 1002:  // VM build string

@@ -2626,6 +2626,10 @@ bool Interpreter::step() {
         // Execute any pending driver install during yield
         if (hasPendingDriverInstall_) {
             executePendingDriverInstall();
+            // CRITICAL: Return early so next step() fetches correct bytecode from new context.
+            // The driver install changed activeContext_ and instructionPointer_, so we must
+            // NOT dispatch the stale bytecode that was fetched from the old context.
+            return running_;
         }
 
         // NO WORKAROUNDS: Removed pendingEventContext_ execution.
@@ -2929,6 +2933,44 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 // 0x4C-0x4F: Push specials
                 switch (bytecode) {
                     case 0x4C:
+                        {
+                            // DEBUG: Trace push-self in startUp: context
+                            static int pushSelfCount = 0;
+                            if (pushSelfCount++ < 20) {
+                                std::string methodSel = "<unknown>";
+                                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                                    Oop hdr = memory_.fetchPointer(0, method_);
+                                    if (hdr.isSmallInteger()) {
+                                        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                                        if (numLits >= 2) {
+                                            Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                                            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                                ObjectHeader* selHdr = sel.asObjectPtr();
+                                                if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                                    methodSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                std::string rcvrClassName = "<unknown>";
+                                if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+                                    Oop cls = memory_.classOf(receiver_);
+                                    if (cls.isObject()) {
+                                        Oop clsName = memory_.fetchPointer(6, cls);
+                                        if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                                            ObjectHeader* cnHdr = clsName.asObjectPtr();
+                                            if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                                                rcvrClassName = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                                            }
+                                        }
+                                    }
+                                }
+                                std::cerr << "[PUSH-SELF #" << pushSelfCount << "] in #" << methodSel
+                                          << " receiver_=0x" << std::hex << receiver_.rawBits() << std::dec
+                                          << " (" << rcvrClassName << ")\n";
+                            }
+                        }
                         push(receiver_);
                         break;
                     case 0x4D: push(memory_.trueObject()); break;   // push true
@@ -9494,6 +9536,22 @@ tryRegularPrimitive:
 
                 std::cerr << "[SEND-NEW-FAIL #" << newFailCount << "] #new not found\n";
                 std::cerr << "  receiver=" << (receiverIsClass ? "CLASS:" : "instance:") << rcvrClassName << "\n";
+                // Also show what receiver_ (self for current method) is
+                std::string selfClassName = "<unknown>";
+                if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+                    Oop selfCls = memory_.classOf(receiver_);
+                    if (selfCls.isObject()) {
+                        Oop selfClsName = memory_.fetchPointer(6, selfCls);
+                        if (selfClsName.isObject() && selfClsName.rawBits() > 0x10000) {
+                            ObjectHeader* scnHdr = selfClsName.asObjectPtr();
+                            if (scnHdr->isBytesObject() && scnHdr->byteSize() < 50) {
+                                selfClassName = std::string((char*)scnHdr->bytes(), scnHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+                std::cerr << "  self (receiver_ for current method) = " << selfClassName
+                          << " (0x" << std::hex << receiver_.rawBits() << std::dec << ")\n";
                 std::cerr << "  lookupStartClass=" << lookupClassName << "\n";
                 std::cerr << "  rcvr=0x" << std::hex << rcvr.rawBits();
                 if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
@@ -9566,7 +9624,9 @@ tryRegularPrimitive:
                     Oop hdr = memory_.fetchPointer(0, method_);
                     if (hdr.isSmallInteger()) {
                         size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                        std::cerr << "  Method has " << numLits << " literals\n";
+                        std::cerr << "  Method has " << numLits << " literals, usesSistaV1=" << (usesSistaV1_ ? "true" : "false") << "\n";
+                        std::cerr << "  Method header bits: 0x" << std::hex << (hdr.asSmallInteger()) << std::dec
+                                  << " (negative=" << (hdr.asSmallInteger() < 0 ? "yes" : "no") << ")\n";
                         for (size_t i = 1; i < numLits && i <= 5; i++) {
                             Oop lit = memory_.fetchPointer(i, method_);
                             std::cerr << "    literal[" << i << "]=0x" << std::hex << lit.rawBits() << std::dec;
