@@ -12759,6 +12759,33 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         return;
     }
 
+    // Fallback for #instanceSide on nil - class manipulation
+    // During reflection/class operations, nil class refs get instanceSide sent to them
+    if (origStr == "instanceSide" && rcvrClassName == "UndefinedObject" && argCount == 0) {
+        static int instanceSideCount = 0;
+        instanceSideCount++;
+        if (instanceSideCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] instanceSide on nil #" << instanceSideCount << " - returning nil\n";
+        }
+        pop();  // Pop receiver
+        push(memory_.nil());  // nil has no instance side
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #hasPrimitive on nil - method checking
+    if (origStr == "hasPrimitive" && rcvrClassName == "UndefinedObject" && argCount == 0) {
+        static int hasPrimCount = 0;
+        hasPrimCount++;
+        if (hasPrimCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] hasPrimitive on nil #" << hasPrimCount << " - returning false\n";
+        }
+        pop();  // Pop receiver
+        push(memory_.falseObject());  // nil has no primitive
+        dnuDepth--;
+        return;
+    }
+
     // Fallback for #negative on nil - number check on nil
     if (origStr == "negative" && rcvrClassName == "UndefinedObject" && argCount == 0) {
         static int negCount = 0;
