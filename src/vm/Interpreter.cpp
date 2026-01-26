@@ -5541,8 +5541,42 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         if (sendCount >= 4575) hangDebugEnabled = true;
     }
 
-    // TRACE: Log sendSelector entry/exit at hang point
+    // TRACE: Log sendSelector entry/exit at hang point or during driver install
     static FILE* sendTraceLog = nullptr;
+    static FILE* driverSendLog = nullptr;
+    // Trace sends during driver install (steps 100K-500K) to a separate log
+    bool traceDriverSend = (g_stepNum >= 100000 && g_stepNum <= 500000);
+    if (traceDriverSend && !driverSendLog) {
+        driverSendLog = fopen("/tmp/driver_sends.log", "w");
+    }
+    if (traceDriverSend && driverSendLog) {
+        std::string selStr = "";
+        if (selector.isObject() && selector.rawBits() > 0x10000) {
+            ObjectHeader* sh = selector.asObjectPtr();
+            if (sh->isBytesObject() && sh->byteSize() < 100) {
+                selStr = std::string((char*)sh->bytes(), sh->byteSize());
+            }
+        }
+        Oop dbgRcvr = stackValue(argCount);
+        std::string dbgRcvrClass = "<unknown>";
+        if (dbgRcvr.isNil() || dbgRcvr.rawBits() == memory_.nil().rawBits()) {
+            dbgRcvrClass = "nil";
+        } else if (dbgRcvr.isObject() && dbgRcvr.rawBits() > 0x10000) {
+            Oop dbgCls = memory_.classOf(dbgRcvr);
+            if (dbgCls.isObject()) {
+                Oop dbgClsName = memory_.fetchPointer(6, dbgCls);
+                if (dbgClsName.isObject() && dbgClsName.rawBits() > 0x10000) {
+                    ObjectHeader* dcnHdr = dbgClsName.asObjectPtr();
+                    if (dcnHdr->isBytesObject() && dcnHdr->byteSize() < 100) {
+                        dbgRcvrClass = std::string((char*)dcnHdr->bytes(), dcnHdr->byteSize());
+                    }
+                }
+            }
+        }
+        fprintf(driverSendLog, "[step %llu] %s >> #%s (args=%d)\n",
+                g_stepNum, dbgRcvrClass.c_str(), selStr.c_str(), argCount);
+        fflush(driverSendLog);
+    }
     bool traceThisSend = (g_stepNum >= 162000 && g_stepNum <= 163000);
     if (traceThisSend) {
         if (!sendTraceLog) sendTraceLog = fopen("/tmp/send_trace_hang.log", "w");
@@ -13161,6 +13195,34 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         return;
     }
 
+    // Fallback for #methodClass on nil - method introspection on nil
+    // Happens when FFI tries to determine the calling method's class
+    if (origStr == "methodClass" && rcvrClassName == "UndefinedObject" && argCount == 0) {
+        static int methodClassCount = 0;
+        methodClassCount++;
+        if (methodClassCount <= 10) {
+            std::cerr << "[DNU-FALLBACK] methodClass on nil #" << methodClassCount << " - returning nil\n";
+        }
+        pop();  // Pop receiver
+        push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #method on nil - Context method lookup on nil
+    // Happens when traversing context chains with nil entries
+    if (origStr == "method" && rcvrClassName == "UndefinedObject" && argCount == 0) {
+        static int methodCount = 0;
+        methodCount++;
+        if (methodCount <= 10) {
+            std::cerr << "[DNU-FALLBACK] method on nil #" << methodCount << " - returning nil\n";
+        }
+        pop();  // Pop receiver
+        push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+
     // Fallback for #substrings on nil - string operations on nil
     // Happens when code tries to split a nil string into words
     if (origStr == "substrings" && rcvrClassName == "UndefinedObject" && argCount == 0) {
@@ -16046,6 +16108,38 @@ void Interpreter::transferTo(Oop newProcess) {
                     }
                 }
             }
+            // Show sender chain for debugging forked processes
+            fprintf(xferLog, "  SENDER CHAIN:\n");
+            Oop ctx = newContext;
+            for (int chainDepth = 0; chainDepth < 5 && ctx.isObject() && ctx.rawBits() > 0x10000; chainDepth++) {
+                Oop ctxMethod = memory_.fetchPointer(3, ctx);  // MethodIndex = 3
+                std::string ctxSel = "?";
+                if (ctxMethod.isObject() && ctxMethod.rawBits() > 0x10000) {
+                    Oop cmhdr = memory_.fetchPointer(0, ctxMethod);
+                    if (cmhdr.isSmallInteger()) {
+                        int64_t chv = cmhdr.asSmallInteger();
+                        int cnLits = chv & 0x7FFF;
+                        if (cnLits >= 2 && cnLits < 100) {
+                            Oop csel = memory_.fetchPointer(cnLits - 1, ctxMethod);
+                            if (csel.isObject()) {
+                                ObjectHeader* cselH = csel.asObjectPtr();
+                                if (cselH->isBytesObject() && cselH->byteSize() < 100) {
+                                    ctxSel = std::string((char*)cselH->bytes(), cselH->byteSize());
+                                }
+                            }
+                        }
+                    }
+                }
+                // Get PC from context
+                Oop ctxPC = memory_.fetchPointer(1, ctx);
+                int64_t pcVal = ctxPC.isSmallInteger() ? ctxPC.asSmallInteger() : -1;
+                // Get sender
+                Oop sender = memory_.fetchPointer(0, ctx);
+                fprintf(xferLog, "    [%d] ctx=0x%llx method=#%s pc=%lld sender=0x%llx\n",
+                        chainDepth, (unsigned long long)ctx.rawBits(), ctxSel.c_str(),
+                        pcVal, (unsigned long long)sender.rawBits());
+                ctx = sender;
+            }
         } else {
             Oop nilObj = memory_.nil();
             fprintf(xferLog, "  newProc has %s suspendedContext\n",
@@ -16853,6 +16947,46 @@ void Interpreter::installOSiOSDriver() {
                                                                         Oop setupMethod = findMethodInClass(sdl2DriverClass, "setupEventLoop");
                                                                         if (setupMethod.isObject() && setupMethod.rawBits() != nilObj.rawBits()) {
                                                                             fprintf(driverLog, "[DRIVER] Found setupEventLoop, queuing for execution\n");
+
+                                                                            // Dump method details to understand what it does
+                                                                            ObjectHeader* methHdr = setupMethod.asObjectPtr();
+                                                                            Oop methHeader = memory_.fetchPointer(0, setupMethod);
+                                                                            if (methHeader.isSmallInteger()) {
+                                                                                int64_t hBits = methHeader.asSmallInteger();
+                                                                                int numLits = hBits & 0x7FFF;
+                                                                                int numTemps = (hBits >> 16) & 0xFF;
+                                                                                int numArgs = (hBits >> 24) & 0xF;
+                                                                                int primIdx = (hBits >> 28) & 0x3FF;
+                                                                                fprintf(driverLog, "[DRIVER] setupEventLoop method: lits=%d temps=%d args=%d prim=%d\n",
+                                                                                        numLits, numTemps, numArgs, primIdx);
+
+                                                                                // Dump literals (selectors being called)
+                                                                                for (int li = 1; li <= numLits && li <= 10; li++) {
+                                                                                    Oop lit = memory_.fetchPointer(li, setupMethod);
+                                                                                    if (lit.isObject() && lit.rawBits() > 0x10000) {
+                                                                                        ObjectHeader* litH = lit.asObjectPtr();
+                                                                                        if (litH->isBytesObject() && litH->byteSize() < 100) {
+                                                                                            std::string s((char*)litH->bytes(), litH->byteSize());
+                                                                                            fprintf(driverLog, "[DRIVER]   lit[%d]='%s'\n", li, s.c_str());
+                                                                                        } else {
+                                                                                            fprintf(driverLog, "[DRIVER]   lit[%d] fmt=%d cls=%u slots=%zu\n",
+                                                                                                    li, (int)litH->format(), litH->classIndex(), litH->slotCount());
+                                                                                        }
+                                                                                    }
+                                                                                }
+
+                                                                                // Dump first 20 bytecodes
+                                                                                size_t bcStart = (1 + numLits) * 8;
+                                                                                uint8_t* bytes = methHdr->bytes();
+                                                                                size_t totalBytes = methHdr->byteSize();
+                                                                                fprintf(driverLog, "[DRIVER]   bytecodes (offset %zu):", bcStart);
+                                                                                for (size_t bi = bcStart; bi < totalBytes && bi < bcStart + 20; bi++) {
+                                                                                    fprintf(driverLog, " %02x", bytes[bi]);
+                                                                                }
+                                                                                fprintf(driverLog, "\n");
+                                                                            }
+                                                                            fflush(driverLog);
+
                                                                             pendingDriverInstallMethod_ = setupMethod;
                                                                             pendingDriverInstallReceiver_ = driverInstance;
                                                                             hasPendingDriverInstall_ = true;
@@ -18685,6 +18819,32 @@ bool Interpreter::executeFromContext(Oop context) {
                 (unsigned long long)sender.rawBits(),
                 savedPC.isSmallInteger() ? savedPC.asSmallInteger() : -1,
                 bytecodeStart);
+
+        // Dump first few bytecodes at PC position for debugging
+        int64_t pcVal = savedPC.isSmallInteger() ? savedPC.asSmallInteger() : 0;
+        if (pcVal > 0 && pcVal <= static_cast<int64_t>(totalBytes)) {
+            size_t startOff = static_cast<size_t>(pcVal - 1);
+            fprintf(ctxRestoreLog, "  bytecodes at PC %lld:", pcVal);
+            for (size_t j = startOff; j < std::min(startOff + 20, totalBytes); j++) {
+                fprintf(ctxRestoreLog, " %02x", methodBytes[j]);
+            }
+            fprintf(ctxRestoreLog, "\n");
+        }
+
+        // Show the method object's class to distinguish CompiledMethod vs CompiledBlock
+        Oop methodClass = memory_.classOf(method_);
+        std::string methodClassName = "?";
+        if (methodClass.isObject()) {
+            Oop mcn = memory_.fetchPointer(6, methodClass);
+            if (mcn.isObject() && mcn.rawBits() > 0x10000) {
+                ObjectHeader* mcnH = mcn.asObjectPtr();
+                if (mcnH->isBytesObject() && mcnH->byteSize() < 50) {
+                    methodClassName = std::string((char*)mcnH->bytes(), mcnH->byteSize());
+                }
+            }
+        }
+        fprintf(ctxRestoreLog, "  method class: %s, numLiterals=%d\n", methodClassName.c_str(), numLiterals);
+
         fflush(ctxRestoreLog);
     }
     int64_t pcOffset = 0;
