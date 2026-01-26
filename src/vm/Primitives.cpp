@@ -7147,6 +7147,12 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
             // DIAGNOSTIC: Return "unix" to match Linux-built Pharo images
             // This skips FFI structure recompilation which is extremely slow
             // TODO: Investigate why recompilation is so slow or implement proper GC
+            {
+                static int platformCallCount = 0;
+                if (platformCallCount++ < 3) {
+                    std::cerr << "[PLATFORM-NAME #" << platformCallCount << "] Returning 'unix'\n";
+                }
+            }
             push(memory_.createString("unix"));
 #endif
             return PrimitiveResult::Success;

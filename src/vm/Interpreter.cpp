@@ -2940,7 +2940,18 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 switch (bytecode) {
                     case 0x50: push(Oop::fromSmallInteger(0)); break;  // push 0
                     case 0x51: push(Oop::fromSmallInteger(1)); break;  // push 1
-                    case 0x52: push(activeContext_); break;            // push thisContext
+                    case 0x52: {
+                        // TRACE: Log when thisContext is nil
+                        static int thisCtxNilCount = 0;
+                        if (activeContext_.isNil() || activeContext_.rawBits() == memory_.nil().rawBits()) {
+                            if (thisCtxNilCount++ < 10) {
+                                std::cerr << "[THISCTX-NIL #" << thisCtxNilCount
+                                          << "] Pushing nil activeContext at frame=" << frameDepth_ << "\n";
+                            }
+                        }
+                        push(activeContext_);
+                        break;
+                    }
                     case 0x53: push(stackTop()); break;                // duplicate top
                 }
             } else if (bytecode <= 0x57) {
@@ -8208,7 +8219,10 @@ extern int g_traceSendsAfterPrim264;
                                && selStr != "privSender:"
                                && selStr != "adaptToNumber:andSend:"
                                && selStr != "adaptToInteger:andSend:"
-                               && selStr != "adaptToFloat:andSend:") {
+                               && selStr != "adaptToFloat:andSend:"
+                               && selStr != "yield"
+                               && selStr != "highestPriority:"
+                               && selStr != "primRelinquishProcessorForMicroseconds:") {
             // Same selector called 50+ times in a row - likely infinite recursion
             static int recursionBreakCount = 0;
             if (++recursionBreakCount <= 3) {
@@ -11641,7 +11655,12 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
                                 methodName == "nextPutAll:" ||
                                 methodName == "<<" ||
                                 methodName == "value:" ||
-                                methodName == "value:value:");
+                                methodName == "value:value:" ||
+                                // Scheduler methods - called frequently in idle loop
+                                methodName == "yield" ||
+                                methodName == "relinquishProcessorForMicroseconds:" ||
+                                methodName == "primRelinquishProcessorForMicroseconds:" ||
+                                methodName == "highestPriority:");
         int threshold = isLegitHighFreq ? 100000 : 50;  // Allow much more for loop ops
 
         if (sameMethodCount > threshold) {
