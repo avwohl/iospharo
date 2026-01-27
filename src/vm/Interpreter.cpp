@@ -13342,6 +13342,26 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         }
     }
 
+    // Fallback for #setupEventLoop / #ensureEventLoop / #eventLoop on OSiOSDriver
+    // If OSiOSDriver doesn't have event loop methods, we start native event polling
+    if ((origStr == "setupEventLoop" || origStr == "ensureEventLoop" || origStr == "eventLoop") && argCount == 0) {
+        bool isIOSDriver = (rcvrClassName == "OSiOSDriver");
+        if (isIOSDriver) {
+            static int eventLoopFallbackCount = 0;
+            eventLoopFallbackCount++;
+            if (eventLoopFallbackCount <= 3) {
+                std::cerr << "[DNU-FALLBACK] " << origStr << " on OSiOSDriver #" << eventLoopFallbackCount
+                          << " - starting native event polling via primitive 264\n";
+            }
+            // Enable SDL2 event polling in the native code
+            gEventQueue.setSDL2EventPollingActive(true);
+            pop();  // Pop receiver
+            push(actualReceiver);  // Return self
+            dnuDepth--;
+            return;
+        }
+    }
+
     // Fallback for #isExternalStructure on nil - FFI type check
     // This causes endless loops when FFI tries to check nil values
     if (origStr == "isExternalStructure" && rcvrClassName == "UndefinedObject" && argCount == 0) {
@@ -18232,29 +18252,12 @@ void Interpreter::installOSiOSDriver() {
         return Oop::nil();
     };
 
-    // Look for setupEventLoop in OSSDL2Driver (which OSiOSDriver delegates to)
-    // Note: OSiOSDriver inherits from OSWindowDriver, not OSSDL2Driver
-    // But setupEventLoop is in OSSDL2Driver which is what we want to use
+    // Look for setupEventLoop - FIRST in OSiOSDriver (uses primitive 264),
+    // then fall back to OSSDL2Driver (uses FFI which may fail)
     Oop setupMethod = Oop::nil();
 
-    // First try OSSDL2Driver directly
-    Oop ossdl2DriverClass = memory_.findGlobal("OSSDL2Driver");
-    if (ossdl2DriverClass.isObject() && ossdl2DriverClass.rawBits() != nilObj.rawBits()) {
-        if (driverLog) {
-            fprintf(driverLog, "[DRIVER] Looking for setupEventLoop in OSSDL2Driver\n");
-            fflush(driverLog);
-        }
-        setupMethod = findMethodInClass(ossdl2DriverClass, "setupEventLoop");
-        if (setupMethod.isObject() && !setupMethod.isNil()) {
-            if (driverLog) {
-                fprintf(driverLog, "[DRIVER] FOUND setupEventLoop in OSSDL2Driver!\n");
-                fflush(driverLog);
-            }
-        }
-    }
-
-    // If not found, try OSiOSDriver's hierarchy
-    if (setupMethod.isNil() || !setupMethod.isObject()) {
+    // First try OSiOSDriver's hierarchy (priority: uses primitive 264 instead of FFI)
+    {
         Oop currentClass = osDriverClass;
         int depth = 0;
         while (currentClass.isObject() && !currentClass.isNil() && depth < 10) {
@@ -18269,6 +18272,24 @@ void Interpreter::installOSiOSDriver() {
             if (driverLog) {
                 fprintf(driverLog, "[DRIVER] Looking for setupEventLoop in %s (depth %d)\n",
                         className.c_str(), depth);
+                // Dump instance methods at depth 0 to see what's available
+                if (depth == 0) {
+                    Oop methodDict = memory_.fetchPointer(1, currentClass);
+                    if (methodDict.isObject()) {
+                        ObjectHeader* mdHdr = methodDict.asObjectPtr();
+                        fprintf(driverLog, "[DRIVER] Instance methodDict has %zu slots:\n", mdHdr->slotCount());
+                        for (size_t mi = 2; mi < mdHdr->slotCount() && mi < 50; mi++) {
+                            Oop key = mdHdr->slotAt(mi);
+                            if (key.isObject() && !key.isNil()) {
+                                ObjectHeader* keyHdr = key.asObjectPtr();
+                                if (keyHdr->isBytesObject() && keyHdr->byteSize() < 50) {
+                                    std::string name((char*)keyHdr->bytes(), keyHdr->byteSize());
+                                    fprintf(driverLog, "[DRIVER]   [%zu] '%s'\n", mi, name.c_str());
+                                }
+                            }
+                        }
+                    }
+                }
                 fflush(driverLog);
             }
 
@@ -18283,6 +18304,52 @@ void Interpreter::installOSiOSDriver() {
 
             currentClass = memory_.fetchPointer(0, currentClass);
             depth++;
+        }
+    }
+
+    // If not found in OSiOSDriver hierarchy, check if we should use OSSDL2Driver fallback
+    // NOTE: For OSiOSDriver, the install method calls ensureEventLoop which triggers our
+    // DNU fallback that enables native event polling. We DON'T want OSSDL2Driver's
+    // FFI-based event loop in that case.
+    bool usingOSiOSDriver = false;
+    {
+        Oop nameOop = memory_.fetchPointer(6, osDriverClass);
+        if (nameOop.isObject()) {
+            ObjectHeader* nameHdr = nameOop.asObjectPtr();
+            if (nameHdr->isBytesObject() && nameHdr->byteSize() == 11) {
+                if (memcmp(nameHdr->bytes(), "OSiOSDriver", 11) == 0) {
+                    usingOSiOSDriver = true;
+                }
+            }
+        }
+    }
+
+    if (setupMethod.isNil() || !setupMethod.isObject()) {
+        if (usingOSiOSDriver) {
+            // OSiOSDriver should use native event polling via primitive 264
+            // Don't schedule OSSDL2Driver's FFI-based setupEventLoop
+            if (driverLog) {
+                fprintf(driverLog, "[DRIVER] Using OSiOSDriver - enabling native event polling now\n");
+                fflush(driverLog);
+            }
+            // Enable native event polling immediately
+            gEventQueue.setSDL2EventPollingActive(true);
+        } else {
+            // Not using OSiOSDriver, try OSSDL2Driver as fallback (uses FFI)
+            Oop ossdl2DriverClass = memory_.findGlobal("OSSDL2Driver");
+            if (ossdl2DriverClass.isObject() && ossdl2DriverClass.rawBits() != nilObj.rawBits()) {
+                if (driverLog) {
+                    fprintf(driverLog, "[DRIVER] Looking for setupEventLoop in OSSDL2Driver (fallback)\n");
+                    fflush(driverLog);
+                }
+                setupMethod = findMethodInClass(ossdl2DriverClass, "setupEventLoop");
+                if (setupMethod.isObject() && !setupMethod.isNil()) {
+                    if (driverLog) {
+                        fprintf(driverLog, "[DRIVER] FOUND setupEventLoop in OSSDL2Driver (fallback - uses FFI)\n");
+                        fflush(driverLog);
+                    }
+                }
+            }
         }
     }
 
