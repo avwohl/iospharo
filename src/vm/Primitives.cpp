@@ -7861,21 +7861,29 @@ PrimitiveResult Interpreter::primitiveTerminateTo(int argCount) {
         std::cerr << "\n";
     }
 
-    // If target is nil, we'd terminate the entire chain - that's probably wrong
-    // Let's check if that's what's happening
-    if (targetContext.isNil() || targetContext.rawBits() == memory_.nil().rawBits()) {
-        // Target is nil - this will nil out the entire sender chain
-        // which is likely not intended behavior
-        static int nilTargetCount = 0;
-        if (nilTargetCount++ < 3) {
-            std::cerr << "[PRIM-TERMINATE-TO] Target is nil - would terminate entire chain, failing instead\n";
-        }
-        return PrimitiveResult::Failure;  // Don't corrupt the entire context chain
-    }
-
-    // Walk the sender chain from receiver, nilling out senders until we reach target
     // Context layout: sender is slot 0
     const size_t SenderIndex = 0;
+
+    // Target can be nil - this terminates the entire chain and sets sender to nil.
+    // This is used by endProcess (thisContext terminateTo: nil) and unwindAndStop:.
+    bool targetIsNil = (targetContext.isNil() || targetContext.rawBits() == memory_.nil().rawBits());
+    if (targetIsNil) {
+        // Nil all senders in the chain
+        Oop current = rcvr;
+        int iterations = 0;
+        while (current.isObject() && current.rawBits() > 0x10000 && iterations < 200) {
+            Oop sender = memory_.fetchPointer(SenderIndex, current);
+            memory_.storePointer(SenderIndex, current, memory_.nil());
+            if (sender.isNil() || sender.rawBits() == memory_.nil().rawBits()) break;
+            current = sender;
+            iterations++;
+        }
+        // Set receiver's sender to nil (the target)
+        memory_.storePointer(SenderIndex, rcvr, memory_.nil());
+        popN(2);
+        push(rcvr);
+        return PrimitiveResult::Success;
+    }
 
     // First, check if target is reachable within a reasonable depth WITHOUT nilling
     Oop check = rcvr;
@@ -7928,7 +7936,10 @@ PrimitiveResult Interpreter::primitiveTerminateTo(int argCount) {
 
     // Reconnect: set receiver's sender to target so returns work
     // This is equivalent to what the Cog VM's frame-based mechanism does implicitly
-    memory_.storePointer(SenderIndex, rcvr, targetContext);
+    // Only reconnect if receiver != target (avoid self-loop)
+    if (rcvr.rawBits() != targetContext.rawBits()) {
+        memory_.storePointer(SenderIndex, rcvr, targetContext);
+    }
 
     if (shouldTrace) {
         // Check receiver's sender after nilling
