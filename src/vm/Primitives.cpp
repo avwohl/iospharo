@@ -7364,16 +7364,32 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
             return PrimitiveResult::Success;
         case 1002:  // VM build string
             pop();
-            push(memory_.nil());
+            push(memory_.createString("iospharo VM 0.1"));
             return PrimitiveResult::Success;
         case 1003:  // Interpreter class name
             pop();
-            push(memory_.nil());
+            push(memory_.createString("StackInterpreter"));
             return PrimitiveResult::Success;
         case 1004:  // VM type (1=stack, 2=cog, 3=sista)
             pop();
             push(Oop::fromSmallInteger(1));  // Stack VM
             return PrimitiveResult::Success;
+        case 1005:  // Window system name
+            pop();
+            push(memory_.createString("Quartz"));
+            return PrimitiveResult::Success;
+        case 1006:  // VM build date
+        case 1007:  // Compiler used
+        case 1008:  // Platform source version
+            pop();
+            push(memory_.createString("iospharo 2025-01-28"));
+            return PrimitiveResult::Success;
+        case 1009: { // Interpreter source version (needs "Date: " prefix for parsing)
+            pop();
+            Oop str = memory_.createString("iospharo Date: 2025-01-28T00:00:00+00:00");
+            push(str);
+            return PrimitiveResult::Success;
+        }
         default:
             return PrimitiveResult::Failure;
     }
