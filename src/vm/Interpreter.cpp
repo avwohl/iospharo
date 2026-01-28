@@ -14234,9 +14234,10 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     // Log DNU to file
     static FILE* dnuTraceLog = nullptr;
     static int dnuTraceCount = 0;
-    if constexpr (ENABLE_DEBUG_LOGGING) {
+    if (!dnuTraceLog) {
+        dnuTraceLog = fopen("/tmp/dnu_trace.log", "w");
         if (!dnuTraceLog) {
-            dnuTraceLog = fopen("/tmp/dnu_trace.log", "w");
+            std::cerr << "[ERROR] Failed to open /tmp/dnu_trace.log: " << strerror(errno) << "\n";
         }
     }
     if (dnuTraceLog && dnuTraceCount < 500) {
@@ -14396,6 +14397,44 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
         fprintf(dnuTraceLog, "[DNU #%d depth=%d] %s >> #%s argCount=%d\n",
                 ++dnuTraceCount, dnuDepth, rcvrClassName.c_str(), selStr.c_str(), argCount);
+
+        // Log caller info for key DNUs
+        if (selStr == "privSender:" || selStr == "freeze" || (dnuTraceCount <= 20)) {
+            // Extract current method name from method_ header
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                Oop hdr = memory_.fetchPointer(0, method_);
+                if (hdr.isSmallInteger()) {
+                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                    if (numLits >= 2) {
+                        Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                            ObjectHeader* selHdr = sel.asObjectPtr();
+                            if (selHdr->isBytesObject() && selHdr->byteSize() < 100) {
+                                std::string mName((char*)selHdr->bytes(), selHdr->byteSize());
+                                Oop classAssoc = memory_.fetchPointer(numLits, method_);
+                                std::string cName = "<unknown>";
+                                if (classAssoc.isObject() && classAssoc.rawBits() > 0x10000) {
+                                    ObjectHeader* assocHdr = classAssoc.asObjectPtr();
+                                    if (assocHdr->slotCount() >= 2) {
+                                        Oop cls = memory_.fetchPointer(1, classAssoc);
+                                        if (cls.isObject()) {
+                                            Oop nameOop = memory_.fetchPointer(6, cls);
+                                            if (nameOop.isObject()) {
+                                                ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                                                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                                                    cName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                fprintf(dnuTraceLog, "  caller: %s >> #%s\n", cName.c_str(), mName.c_str());
+                            }
+                        }
+                    }
+                }
+            }
+        }
         fflush(dnuTraceLog);
 
         // FATAL: DNU errors indicate VM bugs - fix them, don't workaround
