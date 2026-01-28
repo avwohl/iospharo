@@ -350,65 +350,47 @@ Uses LOW bits for tags (not high bits):
 
 ## Current Priority
 
-**Fix Morphic Processes** - The image's Morphic event loop and InputEventSensor aren't running:
-- Primitive 264 (getNextEvent) is registered but never called
-- Only primitive 230 (relinquishProcessor) runs in a loop
-- The scheduler works but only the idle process is active
-- Event sensor process never starts
+**Image startup is now fully working.** Morphic renders, SessionManager initializes, zero DNU errors.
 
-See `WIP-input-handling.md` for current investigation.
+Remaining work:
+- Event loop: OSSDL2Driver's event loop has nil semaphore (FFI type resolution broken)
+- Need OSiOSDriver with proper event loop methods (see scripts/load_ios_driver.st)
+- Display rendering works but needs BitBlt for proper morph drawing
 
-## Current Investigation (2026-01-28)
+## Fixed Investigation (2026-01-28)
 
-### Root Cause: SessionManager.currentSession is nil
+### FIXED: SessionManager.currentSession was nil
 
-**Finding:** The first illegitimate message to nil during startup is:
-```
-UndefinedObject >> #hasError
-  Called from: SessionManager >> #snapshot:andQuit:
-  Stack: nil (the receiver for hasError) on top
-```
+**Root Cause 1: primitiveSnapshot returned Failure instead of true**
 
-The code in `SessionManager >> snapshot:andQuit:` does:
-```smalltalk
-self currentSession hasError ifTrue: [...]
-```
-And `self currentSession` returns nil.
+When the VM loads a saved image, the active process is suspended inside
+`SnapshotOperation>>snapshotPrimitive` (primitive 97). On resume, the
+primitive must return `true` to indicate "resuming from saved image".
+This sets `isImageStarting := true` in SnapshotOperation, which triggers
+`SessionManager>>installNewSession` to create and store a WorkingSession
+in currentSession.
 
-**Why is currentSession nil?**
+Our VM returned `PrimitiveResult::Failure`, which caused `handleSnapshotError:`
+to raise an exception. `executeStoringError:` caught it, but `isImageStarting`
+was set to the exception object (not true). Since the VM treats non-booleans
+as false in conditionals, `installNewSession` was never called.
 
-Traced slot writes during startup:
-- SessionManager slot[1] (startupList) = OrderedCollection ✓ WRITTEN
-- SessionManager slot[0] (currentSession) = nil ✗ NEVER WRITTEN
+**Fix:** primitiveSnapshot returns true (PrimitiveResult::Success) with
+the true object on the stack.
 
-The method `SessionManager >> installSession:` should set `currentSession`:
-```smalltalk
-installSession: aWorkingSession [
-    currentSession := aWorkingSession
-]
-```
+**Root Cause 2: Temp vector bytecodes used wrong context for blocks**
 
-But `installSession:` is never being called during startup!
+Bytecodes 0xFB-0xFD (Push/Store/PopStore Temp In Temp Vector) used
+`outerTemporary()` for blocks, which reads from `activeContext_`. For
+FullBlockClosures in Sista V1, the temp vector is a copied local temp,
+not an outer context reference. This broke shared mutable variables
+between methods and blocks (like `snapshotOperation` in snapshot:andQuit:).
 
-**Startup Sequence Observed:**
-1. WorkingSession >> runStartup: (send #76) - session exists and runs
-2. SessionManager >> startupList (send #78) - fetches handlers
-3. WorkingSession >> runList:do: (send #3320) - iterates 54 handlers
-4. All ClassSessionHandlers run (Delay, FFI, File, etc.)
+**Fix:** Always use `temporary()` for the temp vector index, regardless
+of whether executing in a block or method.
 
-The problem: A WorkingSession EXISTS and runs startup, but nobody calls
-`SessionManager >> installSession:` to store it in the currentSession slot.
-
-**Next Steps:**
-1. Find who creates the WorkingSession and should call installSession:
-2. In Pharo source, check `SessionManager >> start:` or `launchStartup:`
-3. Likely the VM entry point code is calling runStartup: directly on a
-   WorkingSession without going through SessionManager's install flow
-
-**Related DNUs after hasError:**
-- `UndefinedObject >> #isImageStarting` (session method)
-- `UndefinedObject >> #privSender:` (context chain broken - cascading failures)
-- Many `UndefinedObject >> #freeze` (process operations on nil)
+**Result:** Zero DNU errors, 16M+ bytecode steps, Morphic rendering
+with MenubarMorph, TaskbarMorph, SpWindow, ImageMorph visible.
 
 ## Archived Issues (Fixed)
 
