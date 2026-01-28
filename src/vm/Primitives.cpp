@@ -29,6 +29,9 @@
 
 namespace pharo {
 
+// External step counter from Interpreter.cpp for debugging
+extern uint64_t g_stepNum;
+
 // External variable from Interpreter.cpp for tracing sends after prim 264
 extern int g_traceSendsAfterPrim264;
 
@@ -3102,8 +3105,8 @@ PrimitiveResult Interpreter::primitiveResume(int argCount) {
             Oop priOop = memory_.fetchPointer(2, proc);  // ProcessPriorityIndex = 2
             if (priOop.isSmallInteger()) pri = (int)priOop.asSmallInteger();
         }
-        fprintf(resumeLog, "[RESUME-ENTRY #%d] proc=0x%llx pri=%d\n",
-                resumeCallCount, (unsigned long long)proc.rawBits(), pri);
+        fprintf(resumeLog, "[RESUME-ENTRY #%d step=%llu] proc=0x%llx pri=%d\n",
+                resumeCallCount, (unsigned long long)g_stepNum, (unsigned long long)proc.rawBits(), pri);
         fflush(resumeLog);
     }
 

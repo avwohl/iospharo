@@ -46,7 +46,7 @@ static FILE* g_fcBytecodeLog = nullptr;
 static bool g_bytecodeTraceEnabled = false;
 static int g_bytecodeTraceCount = 0;
 static FILE* g_bytecodeTraceLog = nullptr;
-static uint64_t g_stepNum = 0;  // Global step counter for hang debugging
+uint64_t g_stepNum = 0;  // Global step counter for hang debugging (non-static for use in Primitives.cpp)
 
 // Crash trace: enabled after restoreResumptionTimes: is skipped
 // Disabled now that the crash is fixed
