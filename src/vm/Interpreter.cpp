@@ -3791,6 +3791,42 @@ void Interpreter::popN(size_t n) {
 // ===== BYTECODE IMPLEMENTATIONS =====
 
 uint8_t Interpreter::fetchByte() {
+    // Bounds check: detect when IP is past bytecodeEnd_
+    if (instructionPointer_ >= bytecodeEnd_) {
+        static int ipOobCount = 0;
+        static FILE* ipOobLog = nullptr;
+        if (!ipOobLog) ipOobLog = fopen("/tmp/ip_out_of_bounds.log", "w");
+        ipOobCount++;
+        if (ipOobLog && ipOobCount <= 20) {
+            fprintf(ipOobLog, "[IP-OOB #%d step=%llu] IP=%p bytecodeEnd_=%p method_=0x%llx\n",
+                    ipOobCount, g_stepNum, (void*)instructionPointer_, (void*)bytecodeEnd_,
+                    (unsigned long long)method_.rawBits());
+            // Log method info
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                ObjectHeader* mh = method_.asObjectPtr();
+                Oop hdr = memory_.fetchPointer(0, method_);
+                if (hdr.isSmallInteger()) {
+                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                    fprintf(ipOobLog, "  method: format=%d byteSize=%zu numLits=%zu\n",
+                            (int)mh->format(), mh->byteSize(), numLits);
+                    // Get selector
+                    if (numLits >= 2) {
+                        Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                            ObjectHeader* sh = sel.asObjectPtr();
+                            if (sh->isBytesObject() && sh->byteSize() < 100) {
+                                std::string selStr((char*)sh->bytes(), sh->byteSize());
+                                fprintf(ipOobLog, "  selector: #%s\n", selStr.c_str());
+                            }
+                        }
+                    }
+                }
+            }
+            fflush(ipOobLog);
+        }
+        // Return 0x5C (returnTop) to try to recover gracefully
+        return 0x5C;
+    }
     return *instructionPointer_++;
 }
 
@@ -5545,9 +5581,13 @@ void Interpreter::commonSend(int which) {
     // Get special selectors array
     Oop specialSelectors = memory_.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
     if (!specialSelectors.isObject() || specialSelectors.rawBits() < 0x10000) {
-        // std::cerr << "[COMMON] ERROR: Special selectors array not found - falling back to literal"; // DEBUG
-        // Fallback: try using literal (old incorrect behavior)
-        sendSelector(literal(which), 0);
+        static int ssErrCount = 0;
+        if (++ssErrCount <= 5) {
+            std::cerr << "[SPECIAL-SEND] ERROR: Special selectors array not found (which=" << which << ")\n";
+        }
+        // Cannot proceed without special selectors - return receiver as no-op
+        // Do NOT use literal(which) - that's wrong and causes OOB access
+        push(receiver_);
         return;
     }
 
@@ -13200,8 +13240,104 @@ Oop Interpreter::literal(size_t index) const {
         size_t numLiterals = headerBits & 0x7FFF;  // bits 0-14
 
         if (index >= numLiterals) {
-            // Out-of-bounds access - return nil gracefully
-            // This can happen with stale contexts from image snapshot
+            // Out-of-bounds literal access - this is a bug!
+            // Log details to help diagnose
+            static int litOobCount = 0;
+            static FILE* litOobLog = nullptr;
+            if (!litOobLog) litOobLog = fopen("/tmp/literal_out_of_bounds.log", "w");
+            litOobCount++;
+            if (litOobLog && litOobCount <= 50) {
+                fprintf(litOobLog, "[LIT-OOB #%d step=%llu] index=%zu >= numLiterals=%zu\n",
+                        litOobCount, g_stepNum, index, numLiterals);
+                // Log raw header to understand the decoding
+                fprintf(litOobLog, "  headerRaw=0x%llx headerBits=%lld (0x%llx)\n",
+                        (unsigned long long)methodHeader.rawBits(),
+                        (long long)headerBits, (unsigned long long)headerBits);
+                fprintf(litOobLog, "  method_=0x%llx\n", (unsigned long long)method_.rawBits());
+                // Check if method_ is a CompiledBlock (has outerCode in penultimate literal)
+                ObjectHeader* mh = literalMethod.asObjectPtr();
+                uint32_t methodClassIdx = mh->classIndex();
+                Oop methodClass = memory_.classAtIndex(methodClassIdx);
+                std::string methodClassName = "?";
+                if (methodClass.isObject()) {
+                    Oop mcName = memory_.fetchPointer(6, methodClass);
+                    if (mcName.isObject() && mcName.rawBits() > 0x10000) {
+                        ObjectHeader* mcnh = mcName.asObjectPtr();
+                        if (mcnh->isBytesObject() && mcnh->byteSize() < 50) {
+                            methodClassName = std::string((char*)mcnh->bytes(), mcnh->byteSize());
+                        }
+                    }
+                }
+                fprintf(litOobLog, "  method class: %s (classIdx=%u)\n",
+                        methodClassName.c_str(), methodClassIdx);
+                // Show bytecodes around IP to understand what's happening
+                fprintf(litOobLog, "  bytecodes around IP:\n");
+                uint8_t* methodBytes = mh->bytes();
+                size_t methodSize = mh->byteSize();
+                size_t ipOffset = instructionPointer_ - methodBytes;
+                size_t bytecodeStart = (1 + numLiterals) * 8;
+                fprintf(litOobLog, "    IP offset from method start: %zu, bytecodeStart: %zu\n",
+                        ipOffset, bytecodeStart);
+                // Show previous 10 bytecodes
+                fprintf(litOobLog, "    previous bytecodes: ");
+                for (int i = 10; i > 0; i--) {
+                    if (instructionPointer_ > methodBytes + i) {
+                        fprintf(litOobLog, "%02X ", *(instructionPointer_ - i));
+                    }
+                }
+                fprintf(litOobLog, "\n");
+                // Call stack
+                fprintf(litOobLog, "  Call stack (frame depth=%zu):\n", frameDepth_);
+                for (size_t i = 0; i < std::min(frameDepth_, (size_t)5); i++) {
+                    if (frameDepth_ > i) {
+                        const auto& sf = savedFrames_[frameDepth_ - 1 - i];
+                        std::string frameSel = "<unknown>";
+                        if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                            Oop sfHdr = memory_.fetchPointer(0, sf.savedMethod);
+                            if (sfHdr.isSmallInteger()) {
+                                size_t sfLits = sfHdr.asSmallInteger() & 0x7FFF;
+                                if (sfLits >= 2) {
+                                    Oop sfSel = memory_.fetchPointer(sfLits - 1, sf.savedMethod);
+                                    if (sfSel.isObject() && sfSel.rawBits() > 0x10000) {
+                                        ObjectHeader* sfSelHdr = sfSel.asObjectPtr();
+                                        if (sfSelHdr->isBytesObject() && sfSelHdr->byteSize() < 50) {
+                                            frameSel = std::string((char*)sfSelHdr->bytes(), sfSelHdr->byteSize());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        fprintf(litOobLog, "    [%zu] %s\n", i, frameSel.c_str());
+                    }
+                }
+                fprintf(litOobLog, "  IP=%p bytecodeEnd_=%p\n", (void*)instructionPointer_, (void*)bytecodeEnd_);
+                // Get method selector
+                if (numLiterals >= 2) {
+                    Oop sel = memory_.fetchPointer(numLiterals - 1, literalMethod);
+                    if (sel.isObject() && sel.rawBits() > 0x10000) {
+                        ObjectHeader* sh = sel.asObjectPtr();
+                        if (sh->isBytesObject() && sh->byteSize() < 100) {
+                            std::string selStr((char*)sh->bytes(), sh->byteSize());
+                            fprintf(litOobLog, "  method selector: #%s\n", selStr.c_str());
+                        }
+                    }
+                }
+                // Check if IP is within method's bytes
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    ObjectHeader* mh = method_.asObjectPtr();
+                    uint8_t* methodBytes = mh->bytes();
+                    size_t methodSize = mh->byteSize();
+                    bool ipInMethod = (instructionPointer_ >= methodBytes &&
+                                      instructionPointer_ < methodBytes + methodSize);
+                    fprintf(litOobLog, "  IP in method bounds: %s\n", ipInMethod ? "YES" : "NO");
+                    if (!ipInMethod) {
+                        fprintf(litOobLog, "  methodBytes=[%p-%p), IP=%p\n",
+                                (void*)methodBytes, (void*)(methodBytes + methodSize),
+                                (void*)instructionPointer_);
+                    }
+                }
+                fflush(litOobLog);
+            }
             return memory_.specialObject(SpecialObjectIndex::NilObject);
         }
     } else {
