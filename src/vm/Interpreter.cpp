@@ -3675,9 +3675,21 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 uint8_t tempIndex = fetchByte();
                 uint8_t vectorIndex = fetchByte();
 
-                // For blocks, the temp vector is in the outer context; for methods, it's in local temps
-                Oop tempVector = isExecutingBlock() ? outerTemporary(vectorIndex) : temporary(vectorIndex);
+                // Temp vector is always a local temp (for both methods and blocks).
+                // For FullBlockClosures, the temp vector is copied into the block's local temps.
+                Oop tempVector = temporary(vectorIndex);
                 Oop value = tempVector.isObject() ? memory_.fetchPointer(tempIndex, tempVector) : memory_.nil();
+                // Trace reads that return nil during startup
+                static int tvReadNilCount = 0;
+                if (value.isNil()) {
+                    tvReadNilCount++;
+                    if (tvReadNilCount <= 50) {
+                        std::cerr << "[TV-READ-NIL #" << tvReadNilCount << " step=" << g_stepNum
+                                  << "] tempVector[" << (int)tempIndex << "] is nil (vec@temp" << (int)vectorIndex
+                                  << " block=" << isExecutingBlock()
+                                  << " vecObj=" << (tempVector.isObject() ? "yes" : "no") << ")\n";
+                    }
+                }
                 push(value);
                 break;
             }
@@ -3687,8 +3699,8 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 uint8_t vectorIndex = fetchByte();
                 Oop value = stackTop();
 
-                // For blocks, the temp vector is in the outer context; for methods, it's in local temps
-                Oop tempVector = isExecutingBlock() ? outerTemporary(vectorIndex) : temporary(vectorIndex);
+                // Temp vector is always a local temp (for both methods and blocks).
+                Oop tempVector = temporary(vectorIndex);
                 if (tempVector.isObject()) {
                     memory_.storePointer(tempIndex, tempVector, value);
                 }
@@ -3700,10 +3712,39 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 uint8_t vectorIndex = fetchByte();
                 Oop value = pop();
 
-                // For blocks, the temp vector is in the outer context; for methods, it's in local temps
-                Oop tempVector = isExecutingBlock() ? outerTemporary(vectorIndex) : temporary(vectorIndex);
+                // Temp vector is always a local temp (for both methods and blocks).
+                Oop tempVector = temporary(vectorIndex);
                 if (tempVector.isObject()) {
                     memory_.storePointer(tempIndex, tempVector, value);
+                    // Trace temp vector stores during startup
+                    static int tvStoreCount = 0;
+                    tvStoreCount++;
+                    if (tvStoreCount <= 50) {
+                        std::string valClass = "?";
+                        if (value.isObject() && value.rawBits() > 0x10000) {
+                            Oop vc = memory_.classOf(value);
+                            if (vc.isObject()) {
+                                Oop vcn = memory_.fetchPointer(6, vc);
+                                if (vcn.isObject() && vcn.rawBits() > 0x10000) {
+                                    ObjectHeader* vcnH = vcn.asObjectPtr();
+                                    if (vcnH->isBytesObject() && vcnH->byteSize() < 50)
+                                        valClass = std::string((char*)vcnH->bytes(), vcnH->byteSize());
+                                }
+                            }
+                        } else if (value.isNil()) {
+                            valClass = "nil";
+                        }
+                        std::cerr << "[TV-STORE #" << tvStoreCount << " step=" << g_stepNum
+                                  << "] tempVector[" << (int)tempIndex << "] := " << valClass
+                                  << " (vec@temp" << (int)vectorIndex << " block=" << isExecutingBlock() << ")\n";
+                    }
+                } else {
+                    static int tvMissCount = 0;
+                    tvMissCount++;
+                    if (tvMissCount <= 10) {
+                        std::cerr << "[TV-MISS #" << tvMissCount << " step=" << g_stepNum
+                                  << "] tempVector at " << (int)vectorIndex << " is not object! (block=" << isExecutingBlock() << ")\n";
+                    }
                 }
                 break;
             }

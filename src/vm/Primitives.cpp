@@ -3578,11 +3578,19 @@ static uint64_t oopToImageFormat(Oop oop, uint8_t* runtimeBase, uint64_t imageBa
 }
 
 PrimitiveResult Interpreter::primitiveSnapshot(int argCount) {
-    // SAVE IS DISABLED per CLAUDE.md
-    // "Save is disabled for now to ensure consistent testing from fresh state"
-    // Always fail to prevent any image saving
-    std::cerr << "[VM] primitiveSnapshot: Save disabled - failing primitive\n";
-    return PrimitiveResult::Failure;
+    // Image saving is disabled, but we must return true to indicate
+    // "resuming from saved image" — this is how the active process
+    // was suspended when the image was saved. Returning true triggers
+    // SnapshotOperation to set isImageStarting=true, which calls
+    // SessionManager>>installNewSession to initialize currentSession.
+    // Failing the primitive breaks the entire startup sequence.
+    std::cerr << "[VM] primitiveSnapshot: returning true (resume, save disabled)\n";
+    if (argCount > 0) {
+        popN(argCount);  // pop arguments
+    }
+    // Pop receiver, push true (isImageStarting = true)
+    stackTop() = memory_.specialObject(SpecialObjectIndex::TrueObject);
+    return PrimitiveResult::Success;
 
     // === ORIGINAL IMPLEMENTATION DISABLED ===
     // The code below is kept for reference but never executes due to early return above
