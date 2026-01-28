@@ -12940,20 +12940,6 @@ void Interpreter::activateBlock(Oop block, int argCount) {
         }
     }
 
-    // FIX: Create a proper context for block activation with correct sender chain
-    // The sender should be the CALLER's context (activeContext_ before activation),
-    // NOT the block's outerContext (where the block was created).
-    // This ensures that when the block returns, it goes back to the caller (e.g., do:),
-    // not to where the block was defined (e.g., runStartup:).
-    Oop blockContext = memory_.createStartupContext(methodToExecute, receiver_);
-    if (!blockContext.isNil()) {
-        // Link to the caller's context (activeContext_ before this activation)
-        if (activeContext_.isObject() && !activeContext_.isNil()) {
-            memory_.storePointer(0, blockContext, activeContext_);  // sender = caller's context
-        }
-        activeContext_ = blockContext;
-    }
-
     // Copy the copied values from the closure into the temp area
     // BlockClosure layout (old style):
     //   0: outerContext
