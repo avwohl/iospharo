@@ -7769,9 +7769,13 @@ PrimitiveResult Interpreter::primitiveTerminateTo(int argCount) {
 
     // Debug: trace what we're terminating
     static int terminateToCount = 0;
-    bool shouldTrace = (terminateToCount++ < 10);
+    terminateToCount++;
+    Oop apTT = getActiveProcess();
+    Oop prioTT = memory_.fetchPointer(2, apTT);
+    int prioValTT = prioTT.isSmallInteger() ? static_cast<int>(prioTT.asSmallInteger()) : -1;
+    bool shouldTrace = (terminateToCount < 50 && prioValTT >= 60);
     if (shouldTrace) {
-        std::cerr << "[PRIM-TERMINATE-TO #" << terminateToCount << "] rcvr=0x" << std::hex << rcvr.rawBits()
+        std::cerr << "[PRIM-TERMINATE-TO #" << terminateToCount << " p" << prioValTT << "] rcvr=0x" << std::hex << rcvr.rawBits()
                   << " target=0x" << targetContext.rawBits() << std::dec;
         if (targetContext.isNil() || targetContext.rawBits() == memory_.nil().rawBits()) {
             std::cerr << " (target is NIL!)";
@@ -7885,6 +7889,9 @@ PrimitiveResult Interpreter::primitiveTerminateTo(int argCount) {
     }
 
     // Now we know target is reachable - nil out senders up to but not including target
+    // Then reconnect receiver's sender to the target so that method returns
+    // reach the target context. In the Cog VM, frame-based returns bypass
+    // reified context senders; our context-based VM needs this explicit reconnection.
     Oop current = rcvr;
     int iterations = 0;
     while (!current.isNil() && current.isObject() && iterations < 100) {
@@ -7903,8 +7910,16 @@ PrimitiveResult Interpreter::primitiveTerminateTo(int argCount) {
         current = sender;
     }
 
+    // Reconnect: set receiver's sender to target so returns work
+    // This is equivalent to what the Cog VM's frame-based mechanism does implicitly
+    memory_.storePointer(SenderIndex, rcvr, targetContext);
+
     if (shouldTrace) {
-        std::cerr << "[PRIM-TERMINATE-TO] Completed after " << iterations << " iterations\n";
+        // Check receiver's sender after nilling
+        Oop rcvrSenderAfter = memory_.fetchPointer(SenderIndex, rcvr);
+        std::cerr << "[PRIM-TERMINATE-TO] Completed after " << iterations << " iterations"
+                  << " rcvr.sender=0x" << std::hex << rcvrSenderAfter.rawBits() << std::dec
+                  << (rcvrSenderAfter.rawBits() == memory_.nil().rawBits() ? " (NIL!)" : "") << "\n";
     }
 
     popN(2);
