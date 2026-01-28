@@ -2653,17 +2653,32 @@ bool Interpreter::step() {
         if (!bcLog) bcLog = fopen("/tmp/bytecode_hang.log", "w");
         if (bcLog) {
             // Get selector name for send bytecodes
+            // NOTE: 0x60-0x6F are arithmetic sends, 0x70-0x7F are special sends
+            // These use the special selectors array, NOT literal(). Only 0x80-0xAF use literal().
             std::string selName = "n/a";
-            if ((bytecode >= 0x60 && bytecode <= 0x7F) ||
-                (bytecode >= 0x90 && bytecode <= 0xAF)) {
+            if (bytecode >= 0x80 && bytecode <= 0xAF) {
+                // Literal selector sends - safe to use literal()
                 int litIdx = bytecode & 0x0F;
-                Oop sel = literal(litIdx);
-                if (sel.isObject() && sel.rawBits() > 0x10000) {
-                    ObjectHeader* selHdr = sel.asObjectPtr();
-                    if (selHdr->isBytesObject() && selHdr->byteSize() < 100) {
-                        selName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                Oop hdr = memory_.fetchPointer(0, method_);
+                size_t numLits = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+                if ((size_t)litIdx < numLits) {
+                    Oop sel = literal(litIdx);
+                    if (sel.isObject() && sel.rawBits() > 0x10000) {
+                        ObjectHeader* selHdr = sel.asObjectPtr();
+                        if (selHdr->isBytesObject() && selHdr->byteSize() < 100) {
+                            selName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                        }
                     }
                 }
+            } else if (bytecode >= 0x60 && bytecode <= 0x7F) {
+                // Arithmetic (0x60-0x6F) or special (0x70-0x7F) sends - don't use literal()
+                static const char* arithNames[] = {"+", "-", "<", ">", "<=", ">=", "=", "~=",
+                                                   "*", "/", "\\\\", "@", "bitShift:", "//", "bitAnd:", "bitOr:"};
+                static const char* specNames[] = {"at:", "at:put:", "size", "next", "nextPut:", "atEnd",
+                                                  "==", "class", "~~", "value", "value:", "do:", "new", "new:", "x", "y"};
+                int idx = bytecode & 0x0F;
+                if (bytecode <= 0x6F && idx < 16) selName = arithNames[idx];
+                else if (idx < 16) selName = specNames[idx];
             }
             fprintf(bcLog, "[BC %llu] BEFORE dispatch bytecode=0x%02X sel=%s\n",
                     g_stepNum, bytecode, selName.c_str());
