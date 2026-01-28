@@ -2050,9 +2050,27 @@ PrimitiveResult Interpreter::primitiveNew(int argCount) {
     }
 
     uint32_t classIndex = memory_.indexOfClass(rcvr);
+
+    // TRACE: Log OSSDL2Driver creation
+    {
+        Oop clsName = memory_.fetchPointer(6, rcvr);
+        if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+            ObjectHeader* cnH = clsName.asObjectPtr();
+            if (cnH->isBytesObject() && cnH->byteSize() == 12 &&
+                memcmp(cnH->bytes(), "OSSDL2Driver", 12) == 0) {
+                static FILE* sdlNewLog = fopen("/tmp/ossdl2_new.log", "w");
+                if (sdlNewLog) {
+                    fprintf(sdlNewLog, "[SDL2-NEW] Creating OSSDL2Driver instance! classIdx=%u instSize=%zu step=%llu\n",
+                            classIndex, instSize, (unsigned long long)g_stepNum);
+                    fflush(sdlNewLog);
+                }
+            }
+        }
+    }
+
     Oop newObj = memory_.allocateSlots(classIndex, instSize);
 
-    if (newObj.isNil()) {
+    if (newObj.isNil() || newObj.rawBits() == memory_.nil().rawBits()) {
         return PrimitiveResult::Failure;  // Out of memory
     }
 

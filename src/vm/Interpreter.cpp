@@ -13675,6 +13675,47 @@ Oop Interpreter::receiverInstVar(size_t index) const {
 }
 
 void Interpreter::setReceiverInstVar(size_t index, Oop value) {
+    // TRACE: Log OSSDL2Driver slot writes (especially inputSemaphore = slot 0)
+    if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+        Oop rcls = memory_.classOf(receiver_);
+        if (rcls.isObject()) {
+            Oop cn = memory_.fetchPointer(6, rcls);
+            if (cn.isObject() && cn.rawBits() > 0x10000) {
+                ObjectHeader* cnh = cn.asObjectPtr();
+                if (cnh->isBytesObject() && cnh->byteSize() == 12 &&
+                    memcmp(cnh->bytes(), "OSSDL2Driver", 12) == 0) {
+                    static FILE* sdlStoreLog = nullptr;
+                    static int sdlStoreCount = 0;
+                    if (!sdlStoreLog) sdlStoreLog = fopen("/tmp/ossdl2_stores.log", "w");
+                    if (sdlStoreLog && sdlStoreCount++ < 50) {
+                        bool isNil = (value.rawBits() == memory_.nil().rawBits());
+                        fprintf(sdlStoreLog, "[SDL2-STORE #%d step=%llu] slot[%zu] := 0x%llx%s\n",
+                                sdlStoreCount, (unsigned long long)g_stepNum, index,
+                                (unsigned long long)value.rawBits(), isNil ? " (NIL!)" : "");
+                        // Get method name
+                        std::string msel = "?";
+                        if (method_.isObject() && method_.rawBits() > 0x10000) {
+                            Oop mh = memory_.fetchPointer(0, method_);
+                            if (mh.isSmallInteger()) {
+                                int nl = mh.asSmallInteger() & 0x7FFF;
+                                if (nl >= 2) {
+                                    Oop s = memory_.fetchPointer(nl - 1, method_);
+                                    if (s.isObject() && s.rawBits() > 0x10000) {
+                                        ObjectHeader* sh = s.asObjectPtr();
+                                        if (sh->isBytesObject() && sh->byteSize() < 50)
+                                            msel = std::string((char*)sh->bytes(), sh->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                        fprintf(sdlStoreLog, "  from method: #%s\n", msel.c_str());
+                        fflush(sdlStoreLog);
+                    }
+                }
+            }
+        }
+    }
+
     // TRACE: Log when Context sender (slot 0) is written during setupEventLoop
     if (index == 0 && receiver_.isObject() && receiver_.rawBits() > 0x10000) {
         Oop rcvrCls = memory_.classOf(receiver_);
@@ -14229,6 +14270,60 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
             }
             // Show bytecode that triggered this
             fprintf(dnuTraceLog, "  ip=%zu bytecodeEnd=%zu\n", instructionPointer_, bytecodeEnd_);
+            // Dump method literals
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                Oop hdr = memory_.fetchPointer(0, method_);
+                if (hdr.isSmallInteger()) {
+                    int nLits = hdr.asSmallInteger() & 0x7FFF;
+                    for (int li = 0; li < nLits && li < 10; li++) {
+                        Oop lit = memory_.fetchPointer(1 + li, method_);
+                        fprintf(dnuTraceLog, "  literal[%d]=0x%llx isSmallInt=%d", li, (unsigned long long)lit.rawBits(), lit.isSmallInteger());
+                        if (lit.isObject() && lit.rawBits() > 0x10000) {
+                            ObjectHeader* lh = lit.asObjectPtr();
+                            fprintf(dnuTraceLog, " classIdx=%u format=%d", lh->classIndex(), (int)lh->format());
+                            if (lh->isBytesObject()) {
+                                size_t sz = lh->byteSize();
+                                const char* bytes = (const char*)lh->bytes();
+                                fprintf(dnuTraceLog, " str=\"%.*s\"", (int)(sz > 40 ? 40 : sz), bytes);
+                            }
+                        }
+                        fprintf(dnuTraceLog, "\n");
+                    }
+                }
+            }
+            // Try to identify the selector's class
+            if (selector.isObject() && selector.rawBits() > 0x10000) {
+                Oop selCls = memory_.classOf(selector);
+                if (selCls.isObject() && selCls.rawBits() > 0x10000) {
+                    ObjectHeader* clsHdr = selCls.asObjectPtr();
+                    if (clsHdr->slotCount() > 6) {
+                        Oop nameOop = memory_.fetchPointer(6, selCls);
+                        if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                            ObjectHeader* nh = nameOop.asObjectPtr();
+                            if (nh->isBytesObject()) {
+                                size_t sz = nh->byteSize();
+                                const char* bytes = (const char*)nh->bytes();
+                                fprintf(dnuTraceLog, "  selector class name: \"%.*s\"\n", (int)(sz > 60 ? 60 : sz), bytes);
+                            }
+                        }
+                    }
+                }
+            }
+            // Show bytecodes around ip
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                ObjectHeader* mh = method_.asObjectPtr();
+                Oop hdr = memory_.fetchPointer(0, method_);
+                if (hdr.isSmallInteger()) {
+                    int nLits = hdr.asSmallInteger() & 0x7FFF;
+                    size_t bcStart = (size_t)method_.rawBits() + 8 + (1 + nLits) * 8;
+                    size_t bcEnd = (size_t)method_.rawBits() + 8 + mh->byteSize();
+                    fprintf(dnuTraceLog, "  bytecodes [%zu..%zu]: ", bcStart, bcEnd);
+                    for (size_t a = bcStart; a < bcEnd && a < bcStart + 30; a++) {
+                        fprintf(dnuTraceLog, "%02x ", *(uint8_t*)a);
+                    }
+                    fprintf(dnuTraceLog, "\n");
+                }
+            }
             fflush(dnuTraceLog);
         }
 
@@ -14613,7 +14708,77 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
             std::cerr << "[DNU] MAX_DNU_DEPTH exceeded (#" << maxDepthCount << ") - terminating process.\n";
         }
         if (dnuTraceLog) {
-            fprintf(dnuTraceLog, "[DNU] MAX_DNU_DEPTH exceeded! Terminating process.\n");
+            // Get selector name for logging
+            std::string termSelStr = "?", termRcvrClass = "?";
+            if (selector.isObject() && selector.rawBits() > 0x10000) {
+                ObjectHeader* sh = selector.asObjectPtr();
+                if (sh->isBytesObject() && sh->byteSize() < 80)
+                    termSelStr = std::string((char*)sh->bytes(), sh->byteSize());
+            }
+            Oop termRcvr = stackValue(argCount);
+            Oop termRcvrCls = memory_.classOf(termRcvr);
+            if (termRcvrCls.isObject() && termRcvrCls.rawBits() > 0x10000) {
+                ObjectHeader* ch = termRcvrCls.asObjectPtr();
+                if (ch->slotCount() > 6) {
+                    Oop nm = memory_.fetchPointer(6, termRcvrCls);
+                    if (nm.isObject() && nm.rawBits() > 0x10000) {
+                        ObjectHeader* nh = nm.asObjectPtr();
+                        if (nh->isBytesObject() && nh->byteSize() < 80)
+                            termRcvrClass = std::string((char*)nh->bytes(), nh->byteSize());
+                    }
+                }
+            }
+            fprintf(dnuTraceLog, "[DNU] MAX_DNU_DEPTH exceeded (#%d)! selector=%s receiver=%s argCount=%d\n",
+                    maxDepthCount, termSelStr.c_str(), termRcvrClass.c_str(), argCount);
+            // Dump call stack
+            fprintf(dnuTraceLog, "  Call stack at termination:\n");
+            Oop ctx = activeContext_;
+            for (int fi = 0; fi < 20 && ctx.isObject() && ctx.rawBits() != memory_.nil().rawBits(); fi++) {
+                ObjectHeader* ch = ctx.asObjectPtr();
+                if (ch->slotCount() > 3) {
+                    Oop ctxMethod = memory_.fetchPointer(3, ctx);
+                    if (ctxMethod.isObject() && ctxMethod.rawBits() > 0x10000) {
+                        ObjectHeader* cmh = ctxMethod.asObjectPtr();
+                        if (cmh->isCompiledMethod()) {
+                            Oop hdr = memory_.fetchPointer(0, ctxMethod);
+                            if (hdr.isSmallInteger()) {
+                                int nLits = hdr.asSmallInteger() & 0x7FFF;
+                                if (nLits >= 2) {
+                                    Oop lastLit = memory_.fetchPointer(nLits, ctxMethod);
+                                    // Last literal is method class association
+                                    std::string clsName = "?", methName = "?";
+                                    if (lastLit.isObject() && lastLit.rawBits() > 0x10000) {
+                                        ObjectHeader* llh = lastLit.asObjectPtr();
+                                        if (llh->slotCount() >= 2) {
+                                            Oop cls = memory_.fetchPointer(1, lastLit);
+                                            if (cls.isObject() && cls.rawBits() > 0x10000) {
+                                                ObjectHeader* clsh = cls.asObjectPtr();
+                                                if (clsh->slotCount() > 6) {
+                                                    Oop nm = memory_.fetchPointer(6, cls);
+                                                    if (nm.isObject() && nm.rawBits() > 0x10000) {
+                                                        ObjectHeader* nmh = nm.asObjectPtr();
+                                                        if (nmh->isBytesObject() && nmh->byteSize() < 80)
+                                                            clsName = std::string((char*)nmh->bytes(), nmh->byteSize());
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Oop selLit = memory_.fetchPointer(nLits - 1, ctxMethod);
+                                    if (selLit.isObject() && selLit.rawBits() > 0x10000) {
+                                        ObjectHeader* slh = selLit.asObjectPtr();
+                                        if (slh->isBytesObject() && slh->byteSize() < 80)
+                                            methName = std::string((char*)slh->bytes(), slh->byteSize());
+                                    }
+                                    fprintf(dnuTraceLog, "    [%d] %s >> #%s\n", fi, clsName.c_str(), methName.c_str());
+                                }
+                            }
+                        }
+                    }
+                }
+                Oop sender = memory_.fetchPointer(0, ctx);
+                ctx = sender;
+            }
             fflush(dnuTraceLog);
         }
         // Terminate the process instead of killing the VM
