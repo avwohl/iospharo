@@ -30,14 +30,14 @@ When something doesn't work:
 
 **If you find yourself writing code that "works around" something, STOP and investigate the root cause instead.**
 
-### Current Priority: Fix Morphic Processes
-The image's Morphic event loop and InputEventSensor aren't running. This is THE problem to fix:
-- Primitive 264 (getNextEvent) is registered but never called
-- Only primitive 230 (relinquishProcessor) runs in a loop
-- The scheduler works but only the idle process is active
-- Event sensor process never starts
+### Current Priority: Load OSiOSDriver Event Loop Methods
+The image's OSiOSDriver is a STUB without event loop methods. This is THE problem to fix:
+- Primitive 264 (getNextEvent) works but nothing calls it
+- OSiOSDriver needs `setupEventLoop` method to create event loop process
+- OSSDL2Driver can't be used (FFI type resolution broken)
+- Solution: Load `scripts/load_ios_driver.st` into the image
 
-**FIX THIS. Don't wander off to other issues. Don't add workarounds.**
+**Next Step:** Use standard Pharo VM to load load_ios_driver.st, then test with our custom VM.
 
 ---
 
@@ -170,3 +170,35 @@ With 577 manual primitive table entries, even 1% error rate = 5-6 wrong primitiv
 - SDL2 availability (verified working)
 - primitiveGetAttribute (returns correct values)
 - Class table (classOf returns valid classes)
+
+### Investigation: Event Loop Not Starting (2025-01-28)
+
+**Root Cause Identified:**
+1. **OSiOSDriver in the image is just a STUB** - missing setupEventLoop, eventLoop, and all event handling methods
+2. **OSSDL2Driver's setupEventLoop fails** - uses FFI which has broken type resolution
+3. **No process polls primitive 264** - events collect in passThroughEvents_ but nobody reads them
+
+**Key Finding: Priority Values in Pharo 13:**
+- `lowIOPriority` = 60 (NOT 33 as in older Pharo versions)
+- Verified from ProcessorScheduler source: `LowIOPriority := 60`
+- Priority 60 for event loop process IS CORRECT
+
+**FFI Type Resolution Broken:**
+- `ByteSymbol >> newReferentClass:` not found - should be on ExternalType
+- `ByteSymbol >> asPointerType` not found - same issue
+- FFI is returning Symbols instead of ExternalType objects
+- This blocks OSSDL2Driver which uses FFI for SDL_PollEvent
+
+**Event Collection Works:**
+- VM's processInputEvents() collects events correctly
+- Events go into passThroughEvents_
+- Input semaphore is signaled
+- Primitive 264 is implemented and works
+- BUT: Nothing calls primitive 264!
+
+**Solution:**
+Load `scripts/load_ios_driver.st` into the image to add the missing methods to OSiOSDriver:
+- `setupEventLoop` - creates event loop process at priority 60
+- `eventLoop` - loops calling primitive 264
+- `processMouseEvent:` / `processKeyboardEvent:` - event dispatch
+This bypasses FFI entirely and uses primitive 264 directly.
