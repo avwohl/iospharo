@@ -7223,8 +7223,51 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             }
 
             if (logThis) {
-                fprintf(startupTraceLog, "[SEND#%d] %s (argCount=%d) fd=%zu\n",
-                        startupTraceCount, selectorStr.c_str(), argCount, frameDepth_);
+                // For startUp: calls, also log the receiver class
+                std::string rcvrInfo = "";
+                if (selectorStr == "startUp:" && argCount == 1) {
+                    Oop rcvr = stackValue(1);  // Receiver
+                    if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                        ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+                        uint32_t classIdx = rcvrHdr->classIndex();
+                        rcvrInfo = " rcvrClassIdx=" + std::to_string(classIdx);
+
+                        // Try to get class name
+                        Oop rcvrClass = memory_.classOf(rcvr);
+                        if (rcvrClass.isObject()) {
+                            ObjectHeader* rcvrClsHdr = rcvrClass.asObjectPtr();
+                            if (rcvrClsHdr->slotCount() >= 7) {
+                                Oop clsName = rcvrClsHdr->slotAt(6);
+                                if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                                    ObjectHeader* cnHdr = clsName.asObjectPtr();
+                                    if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                                        rcvrInfo += " rcvrClass=" + std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                                    }
+                                }
+                            }
+                        }
+
+                        // If receiver is a ClassSessionHandler, get the registered class name
+                        if (rcvrHdr->slotCount() >= 1 && rcvrHdr->slotCount() < 5) {
+                            Oop regClass = rcvrHdr->slotAt(0);  // registeredClass
+                            if (regClass.isObject() && regClass.rawBits() > 0x10000) {
+                                ObjectHeader* regHdr = regClass.asObjectPtr();
+                                // Check if it's a class by looking for name at slot 6
+                                if (regHdr->slotCount() >= 7) {
+                                    Oop regName = regHdr->slotAt(6);
+                                    if (regName.isObject() && regName.rawBits() > 0x10000) {
+                                        ObjectHeader* rnHdr = regName.asObjectPtr();
+                                        if (rnHdr->isBytesObject() && rnHdr->byteSize() < 50) {
+                                            rcvrInfo += " handler=" + std::string((char*)rnHdr->bytes(), rnHdr->byteSize());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                fprintf(startupTraceLog, "[SEND#%d] %s (argCount=%d) fd=%zu%s\n",
+                        startupTraceCount, selectorStr.c_str(), argCount, frameDepth_, rcvrInfo.c_str());
                 fflush(startupTraceLog);
             }
         }
