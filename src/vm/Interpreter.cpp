@@ -2246,6 +2246,36 @@ void Interpreter::processPendingSignals() {
         Oop process = removeFirstLinkOfList(semaphore);
         if (sigLog && sigCount <= 50) {
             fprintf(sigLog, "[SIGNAL] #%d Waking process 0x%llx\n", sigCount, (unsigned long long)process.rawBits());
+
+            // Get process priority and context for debugging
+            Oop procPriorityOop = memory_.fetchPointer(ProcessPriorityIndex, process);
+            int procPriority = procPriorityOop.isSmallInteger() ? static_cast<int>(procPriorityOop.asSmallInteger()) : -1;
+            Oop procContext = memory_.fetchPointer(ProcessSuspendedContextIndex, process);
+            fprintf(sigLog, "[SIGNAL] #%d Process priority=%d suspendedContext=0x%llx\n",
+                    sigCount, procPriority, (unsigned long long)procContext.rawBits());
+
+            // Try to get the method from the suspended context
+            if (procContext.isObject() && !procContext.isNil()) {
+                Oop ctxMethod = memory_.fetchPointer(3, procContext);  // slot 3 = method
+                if (ctxMethod.isObject() && ctxMethod.rawBits() > 0x10000) {
+                    Oop mhdr = memory_.fetchPointer(0, ctxMethod);
+                    if (mhdr.isSmallInteger()) {
+                        int64_t hv = mhdr.asSmallInteger();
+                        int nLits = hv & 0x7FFF;
+                        if (nLits >= 2 && nLits < 100) {
+                            Oop sel = memory_.fetchPointer(nLits - 1, ctxMethod);
+                            if (sel.isObject()) {
+                                ObjectHeader* selH = sel.asObjectPtr();
+                                if (selH->isBytesObject() && selH->byteSize() < 100) {
+                                    std::string methodName((char*)selH->bytes(), selH->byteSize());
+                                    fprintf(sigLog, "[SIGNAL] #%d Woken process will resume in method #%s\n",
+                                            sigCount, methodName.c_str());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             fflush(sigLog);
         }
 
@@ -19180,42 +19210,16 @@ void Interpreter::installOSiOSDriver() {
                         fflush(driverLog);
                     }
 
-                    // Set up a default input semaphore so events can be signaled
-                    // Check the external semaphore array for an available slot
-                    Oop extSemArray = memory_.specialObject(SpecialObjectIndex::ExternalObjectsArray);
-                    if (extSemArray.isObject() && extSemArray.rawBits() != nilObj.rawBits()) {
-                        ObjectHeader* esaHdr = extSemArray.asObjectPtr();
-                        size_t esaSize = esaHdr->slotCount();
-                        fprintf(driverLog, "[DRIVER] External semaphore array has %zu slots\n", esaSize);
-
-                        // Look for a semaphore in the first few slots
-                        for (size_t i = 0; i < std::min(esaSize, (size_t)10); i++) {
-                            Oop slot = memory_.fetchPointer(i, extSemArray);
-                            if (slot.isObject() && slot.rawBits() != nilObj.rawBits()) {
-                                Oop slotClass = memory_.classOf(slot);
-                                if (slotClass.isObject()) {
-                                    Oop className = memory_.fetchPointer(6, slotClass);
-                                    if (className.isObject()) {
-                                        ObjectHeader* cnHdr = className.asObjectPtr();
-                                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 30) {
-                                            std::string name((char*)cnHdr->bytes(), cnHdr->byteSize());
-                                            fprintf(driverLog, "[DRIVER] ExternalSema[%zu]: class=%s\n", i, name.c_str());
-                                            if (name == "Semaphore") {
-                                                // Found a semaphore! Use this slot as input semaphore
-                                                pharo::gEventQueue.setInputSemaphoreIndex(static_cast<int>(i + 1));  // 1-indexed
-                                                fprintf(driverLog, "[DRIVER] Set input semaphore index to %zu (1-indexed)\n", i + 1);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // If no semaphore found, use slot 1 as default (common convention)
-                        if (pharo::gEventQueue.getInputSemaphoreIndex() == 0) {
-                            pharo::gEventQueue.setInputSemaphoreIndex(1);
-                            fprintf(driverLog, "[DRIVER] Using default input semaphore index 1\n");
-                        }
+                    // NOTE: Input semaphore index should be set by primitive 153/265 when
+                    // InputEventSensor registers. Don't use a fallback - if no semaphore is
+                    // registered, events won't be signaled but that's better than signaling
+                    // the wrong semaphore (like TFCallbackQueue's).
+                    if (pharo::gEventQueue.getInputSemaphoreIndex() == 0) {
+                        fprintf(driverLog, "[DRIVER] No input semaphore registered yet (index=0)\n");
+                        fprintf(driverLog, "[DRIVER] InputEventSensor should register via primitive 153/265\n");
+                    } else {
+                        fprintf(driverLog, "[DRIVER] Input semaphore index already set to %d\n",
+                                pharo::gEventQueue.getInputSemaphoreIndex());
                     }
                 }
 

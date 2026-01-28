@@ -14345,9 +14345,9 @@ PrimitiveResult Interpreter::primitiveInputSemaphore2(int argCount) {
                 }
             }
         }
-        // Fallback: use index 1 (common for input semaphore)
-        gEventQueue.setInputSemaphoreIndex(1);
-        return PrimitiveResult::Success;
+        // Don't use fallback - wrong semaphore is worse than no semaphore
+        // Let the primitive fail so Smalltalk can handle it
+        return PrimitiveResult::Failure;
     }
 
     int64_t semIndex = semIndexOop.asSmallInteger();
