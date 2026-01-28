@@ -3093,6 +3093,20 @@ PrimitiveResult Interpreter::primitiveResume(int argCount) {
     if (!resumeLog) {
         resumeLog = fopen("/tmp/prim_resume.log", "w");
     }
+
+    // Log EVERY entry to primitiveResume
+    if (resumeLog && resumeCallCount <= 100) {
+        Oop proc = stackTop();
+        int pri = -1;
+        if (proc.isObject() && proc.rawBits() > 0x10000) {
+            Oop priOop = memory_.fetchPointer(2, proc);  // ProcessPriorityIndex = 2
+            if (priOop.isSmallInteger()) pri = (int)priOop.asSmallInteger();
+        }
+        fprintf(resumeLog, "[RESUME-ENTRY #%d] proc=0x%llx pri=%d\n",
+                resumeCallCount, (unsigned long long)proc.rawBits(), pri);
+        fflush(resumeLog);
+    }
+
     Oop process = stackTop();  // Receiver is the process to resume
 
     if (!process.isObject()) {

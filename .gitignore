@@ -76,3 +76,4 @@ test-cpp-generation/
 src/vm/build/
 src/vm/test_load_image
 build-maccatalyst/
+build-catalyst/

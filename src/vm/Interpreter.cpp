@@ -2126,6 +2126,15 @@ void Interpreter::startHeartbeat() {
             // Using a longer interval (1 second) to allow more startup work to complete
             if (tickCount % 1000 == 0) {
                 forceYield_.store(true, std::memory_order_release);
+                static FILE* yieldSetLog = nullptr;
+                static int yieldSetCount = 0;
+                if (!yieldSetLog) yieldSetLog = fopen("/tmp/yield_set.log", "w");
+                if (yieldSetLog && yieldSetCount < 50) {
+                    yieldSetCount++;
+                    fprintf(yieldSetLog, "[YIELD-SET #%d] tickCount=%d setting forceYield=true\n",
+                            yieldSetCount, tickCount);
+                    fflush(yieldSetLog);
+                }
             }
         }
     });
@@ -2633,11 +2642,21 @@ bool Interpreter::step() {
     }
 
     // Check for forced process yield (set by heartbeat to allow lower-priority processes to run)
-    if (forceYield_.load(std::memory_order_acquire)) {
+    bool shouldYield = forceYield_.load(std::memory_order_acquire);
+    if (shouldYield) {
         forceYield_.store(false, std::memory_order_release);
         static int forceYieldCount = 0;
         static int yieldPriorityOffset = 0;  // Rotate through priorities to give everyone a chance
         forceYieldCount++;
+
+        // Log that we're processing a force yield
+        static FILE* yieldCheckLog = nullptr;
+        if (!yieldCheckLog) yieldCheckLog = fopen("/tmp/yield_check.log", "w");
+        if (yieldCheckLog && forceYieldCount <= 50) {
+            fprintf(yieldCheckLog, "[YIELD-CHECK #%d] step=%llu processing forceYield\n",
+                    forceYieldCount, g_stepNum);
+            fflush(yieldCheckLog);
+        }
 
         // Get current process's priority
         Oop activeProcess = getActiveProcess();
@@ -4019,6 +4038,50 @@ void Interpreter::pushLiteralVariable(int index) {
 
     // Normal case: Association with key in slot 0, value in slot 1
     Oop value = memory_.fetchPointer(1, assoc);  // Association>>value
+
+    // TRACE: Log when pushing nil from a literal variable (class lookup failure)
+    if (value.isNil()) {
+        static FILE* nilLitLog = nullptr;
+        static int nilLitCount = 0;
+        if (!nilLitLog) nilLitLog = fopen("/tmp/nil_literal.log", "w");
+        if (nilLitLog && nilLitCount < 50) {
+            nilLitCount++;
+            // Get the key (slot 0) to see what global returned nil
+            Oop key = memory_.fetchPointer(0, assoc);
+            std::string keyStr = "<unknown>";
+            if (key.isObject() && key.rawBits() > 0x10000) {
+                ObjectHeader* keyHdr = key.asObjectPtr();
+                if (keyHdr->isBytesObject() && keyHdr->byteSize() < 100) {
+                    keyStr = std::string((char*)keyHdr->bytes(), keyHdr->byteSize());
+                }
+            }
+            // Get current method selector
+            std::string methodSel = "<unknown>";
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                ObjectHeader* mHdr = method_.asObjectPtr();
+                if (mHdr->isCompiledMethod()) {
+                    Oop hdr = memory_.fetchPointer(0, method_);
+                    if (hdr.isSmallInteger()) {
+                        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                        if (numLits >= 2) {
+                            Oop selLit = memory_.fetchPointer(numLits - 1, method_);
+                            if (selLit.isObject() && selLit.rawBits() > 0x10000) {
+                                ObjectHeader* slHdr = selLit.asObjectPtr();
+                                if (slHdr->isBytesObject() && slHdr->byteSize() < 100) {
+                                    methodSel = std::string((char*)slHdr->bytes(), slHdr->byteSize());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            fprintf(nilLitLog, "[NIL-LIT #%d] Global '%s' is nil in method #%s (assoc=0x%llx)\n",
+                    nilLitCount, keyStr.c_str(), methodSel.c_str(),
+                    (unsigned long long)assoc.rawBits());
+            fflush(nilLitLog);
+        }
+    }
+
     push(value);
 }
 
@@ -6549,6 +6612,60 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 fflush(eventLoopLog);
             }
             insideSetupEventLoop = false;
+        }
+    }
+
+    // TRACE: Log ALL resume sends to debug why event loop process isn't scheduled
+    {
+        std::string selStr = "";
+        if (selector.isObject() && selector.rawBits() > 0x10000) {
+            ObjectHeader* selHdr = selector.asObjectPtr();
+            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+            }
+        }
+        if (selStr == "resume" || selStr == "primitiveResume") {
+            static FILE* resumeLog = nullptr;
+            static int resumeLogCount = 0;
+            if (!resumeLog) resumeLog = fopen("/tmp/resume_sends.log", "w");
+            if (resumeLog && resumeLogCount++ < 100) {
+                Oop rcvr = stackValue(argCount);
+                std::string rcvrInfo = "?";
+                if (rcvr.rawBits() == memory_.nil().rawBits()) {
+                    rcvrInfo = "nil";
+                } else if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                    Oop cls = memory_.classOf(rcvr);
+                    if (cls.isObject()) {
+                        Oop clsName = memory_.fetchPointer(6, cls);
+                        if (clsName.isObject()) {
+                            ObjectHeader* cnHdr = clsName.asObjectPtr();
+                            if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
+                                rcvrInfo = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
+                            }
+                        }
+                    }
+                    // Get process priority if it's a Process
+                    if (rcvrInfo == "Process") {
+                        Oop pri = memory_.fetchPointer(2, rcvr);  // ProcessPriorityIndex = 2
+                        if (pri.isSmallInteger()) {
+                            rcvrInfo += " pri=" + std::to_string(pri.asSmallInteger());
+                        }
+                        // Get suspended context
+                        Oop ctx = memory_.fetchPointer(1, rcvr);  // ProcessSuspendedContextIndex = 1
+                        if (ctx.rawBits() == memory_.nil().rawBits()) {
+                            rcvrInfo += " ctx=nil";
+                        } else {
+                            rcvrInfo += " ctx=valid";
+                        }
+                    }
+                } else if (rcvr.isSmallInteger()) {
+                    rcvrInfo = "SmallInt(" + std::to_string(rcvr.asSmallInteger()) + ")";
+                }
+                fprintf(resumeLog, "[RESUME-SEND #%d] step=%llu %s >> %s receiver=%s frame=%zu\n",
+                        resumeLogCount, g_stepNum, rcvrInfo.c_str(), selStr.c_str(),
+                        (selStr == "resume" ? "resume" : "primitiveResume"), frameDepth_);
+                fflush(resumeLog);
+            }
         }
     }
 
@@ -9871,6 +9988,27 @@ extern int g_traceSendsAfterPrim264;
     if (cached && cached->method != Oop::nil()) {
         cacheHits++;
 
+        // DEBUG: Log cache hits for primitiveResume with primIdx=0
+        {
+            std::string cacheSelStr = "";
+            if (selector.isObject() && selector.rawBits() > 0x10000) {
+                ObjectHeader* sHdr = selector.asObjectPtr();
+                if (sHdr->isBytesObject() && sHdr->byteSize() < 50) {
+                    cacheSelStr = std::string((char*)sHdr->bytes(), sHdr->byteSize());
+                }
+            }
+            if (cacheSelStr == "primitiveResume" && cached->primitiveIndex == 0) {
+                static FILE* cacheZeroLog = nullptr;
+                static int cacheZeroCount = 0;
+                if (!cacheZeroLog) cacheZeroLog = fopen("/tmp/cache_prim0.log", "w");
+                if (cacheZeroLog && cacheZeroCount++ < 50) {
+                    fprintf(cacheZeroLog, "[CACHE-PRIMIDX-0 #%d] primitiveResume cache hit with primIdx=0!\n",
+                            cacheZeroCount);
+                    fflush(cacheZeroLog);
+                }
+            }
+        }
+
         if constexpr (ENABLE_DEBUG_LOGGING) if (hangDebugEnabled && sendCount <= 4590) {
             fprintf(stderr, "[SEND-DEBUG #%d] cache hit, primIdx=%d\n", sendCount, cached->primitiveIndex);
             fflush(stderr);
@@ -9917,6 +10055,23 @@ extern int g_traceSendsAfterPrim264;
                 }
             } else {
 tryRegularPrimitive:
+                // DEBUG: Log cached primitiveResume calls
+                if (primIdx == 87) {
+                    static FILE* cachedResLog = nullptr;
+                    static int cachedResCount = 0;
+                    if (!cachedResLog) cachedResLog = fopen("/tmp/cached_prim87.log", "w");
+                    if (cachedResLog && cachedResCount++ < 50) {
+                        Oop proc = stackValue(0);  // receiver
+                        int pri = -1;
+                        if (proc.isObject() && proc.rawBits() > 0x10000) {
+                            Oop priOop = memory_.fetchPointer(2, proc);
+                            if (priOop.isSmallInteger()) pri = (int)priOop.asSmallInteger();
+                        }
+                        fprintf(cachedResLog, "[CACHED-PRIM87 #%d] proc=0x%llx pri=%d\n",
+                                cachedResCount, (unsigned long long)proc.rawBits(), pri);
+                        fflush(cachedResLog);
+                    }
+                }
                 // Regular primitive (not quick) - try via primitive table
                 argCount_ = argCount;
                 primitiveFailed_ = false;
@@ -10125,6 +10280,40 @@ tryRegularPrimitive:
     // Check for primitive
     int primIndex = primitiveIndexOf(method);
 
+    // DEBUG: Log primitive detection for resume-related methods
+    {
+        std::string selStr = "";
+        if (selector.isObject() && selector.rawBits() > 0x10000) {
+            ObjectHeader* selHdr = selector.asObjectPtr();
+            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+            }
+        }
+        if (selStr == "primitiveResume" || selStr == "resume") {
+            static FILE* primDetLog = nullptr;
+            static int primDetCount = 0;
+            if (!primDetLog) primDetLog = fopen("/tmp/prim_detect.log", "w");
+            if (primDetLog && primDetCount++ < 50) {
+                fprintf(primDetLog, "[PRIM-DETECT #%d] selector=%s primIndex=%d\n",
+                        primDetCount, selStr.c_str(), primIndex);
+                // Also dump method bytecodes
+                if (method.isObject() && method.rawBits() > 0x10000) {
+                    Oop hdr = memory_.fetchPointer(0, method);
+                    if (hdr.isSmallInteger()) {
+                        int64_t bits = hdr.asSmallInteger();
+                        int nLits = bits & 0x7FFF;
+                        bool hasPrim = (bits >> 30) & 1;
+                        ObjectHeader* mObj = method.asObjectPtr();
+                        uint8_t* bc = mObj->bytes() + (1 + nLits) * 8;
+                        fprintf(primDetLog, "  nLits=%d hasPrim=%d bc[0..5]=%02x %02x %02x %02x %02x %02x\n",
+                                nLits, hasPrim ? 1 : 0, bc[0], bc[1], bc[2], bc[3], bc[4], bc[5]);
+                    }
+                }
+                fflush(primDetLog);
+            }
+        }
+    }
+
     if (primIndex > 0) {
         // Check for quick primitives (256-519) - handle directly, don't use primitive table
         if (primIndex >= 256 && primIndex <= 519) {
@@ -10163,6 +10352,23 @@ tryRegularPrimitive:
                 }
             }
         } else {
+            // DEBUG: Log non-cached primitive 87 calls
+            if (primIndex == 87) {
+                static FILE* ncResLog = nullptr;
+                static int ncResCount = 0;
+                if (!ncResLog) ncResLog = fopen("/tmp/noncached_prim87.log", "w");
+                if (ncResLog && ncResCount++ < 50) {
+                    Oop proc = stackValue(0);  // receiver
+                    int pri = -1;
+                    if (proc.isObject() && proc.rawBits() > 0x10000) {
+                        Oop priOop = memory_.fetchPointer(2, proc);
+                        if (priOop.isSmallInteger()) pri = (int)priOop.asSmallInteger();
+                    }
+                    fprintf(ncResLog, "[NONCACHED-PRIM87 #%d] proc=0x%llx pri=%d\n",
+                            ncResCount, (unsigned long long)proc.rawBits(), pri);
+                    fflush(ncResLog);
+                }
+            }
             // Regular primitive - try via primitive table
             argCount_ = argCount;
             primitiveFailed_ = false;
@@ -11359,6 +11565,25 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
     entry.method = method;
     entry.primitiveIndex = primitiveIndexOf(method);
     entry.primitive = nullptr;  // Will be set on first call
+
+    // DEBUG: Log when primitiveResume is cached
+    std::string selStr = "";
+    if (selector.isObject() && selector.rawBits() > 0x10000) {
+        ObjectHeader* sHdr = selector.asObjectPtr();
+        if (sHdr->isBytesObject() && sHdr->byteSize() < 50) {
+            selStr = std::string((char*)sHdr->bytes(), sHdr->byteSize());
+        }
+    }
+    if (selStr == "primitiveResume") {
+        static FILE* cacheStoreLog = nullptr;
+        static int cacheStoreCount = 0;
+        if (!cacheStoreLog) cacheStoreLog = fopen("/tmp/cache_store.log", "w");
+        if (cacheStoreLog && cacheStoreCount++ < 20) {
+            fprintf(cacheStoreLog, "[CACHE-STORE #%d] primitiveResume cached with primIdx=%d\n",
+                    cacheStoreCount, entry.primitiveIndex);
+            fflush(cacheStoreLog);
+        }
+    }
 }
 
 size_t Interpreter::cacheHash(Oop selector, Oop classOop) const {
@@ -12352,6 +12577,78 @@ Oop Interpreter::receiverInstVar(size_t index) const {
 }
 
 void Interpreter::setReceiverInstVar(size_t index, Oop value) {
+    // TRACE: Log when Context sender (slot 0) is written during setupEventLoop
+    if (index == 0 && receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+        Oop rcvrCls = memory_.classOf(receiver_);
+        if (rcvrCls.isObject()) {
+            Oop clsName = memory_.fetchPointer(6, rcvrCls);
+            if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                ObjectHeader* cnHdr = clsName.asObjectPtr();
+                if (cnHdr->isBytesObject()) {
+                    std::string name((char*)cnHdr->bytes(), cnHdr->byteSize());
+                    if (name == "Context") {
+                        static FILE* ctxSenderLog = nullptr;
+                        static int ctxSenderCount = 0;
+                        ctxSenderCount++;
+                        // Only log during driver install timeframe (expanded range)
+                        if (g_stepNum >= 400000 && g_stepNum <= 450000 && ctxSenderCount <= 100) {
+                            if (!ctxSenderLog) ctxSenderLog = fopen("/tmp/context_sender_set.log", "w");
+                            if (ctxSenderLog) {
+                                Oop nilObj = memory_.nil();
+                                bool senderIsNil = (value.rawBits() == nilObj.rawBits());
+                                fprintf(ctxSenderLog, "[CTX-SENDER #%d step=%llu] Context 0x%llx sender := 0x%llx (nil=%d)\n",
+                                        ctxSenderCount, g_stepNum,
+                                        (unsigned long long)receiver_.rawBits(),
+                                        (unsigned long long)value.rawBits(),
+                                        senderIsNil ? 1 : 0);
+                                // Show what method this context is for
+                                Oop ctxMethod = memory_.fetchPointer(3, receiver_);
+                                if (ctxMethod.isObject() && ctxMethod.rawBits() > 0x10000) {
+                                    Oop mhdr = memory_.fetchPointer(0, ctxMethod);
+                                    if (mhdr.isSmallInteger()) {
+                                        int nLits = mhdr.asSmallInteger() & 0x7FFF;
+                                        if (nLits >= 2 && nLits < 100) {
+                                            Oop sel = memory_.fetchPointer(nLits - 1, ctxMethod);
+                                            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                                ObjectHeader* selH = sel.asObjectPtr();
+                                                if (selH->isBytesObject() && selH->byteSize() < 100) {
+                                                    fprintf(ctxSenderLog, "  context method: #%s\n",
+                                                            std::string((char*)selH->bytes(), selH->byteSize()).c_str());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                // Show what method is setting this sender
+                                std::string methodSel = "<unknown>";
+                                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                                    ObjectHeader* mHdr = method_.asObjectPtr();
+                                    if (mHdr->isCompiledMethod()) {
+                                        Oop mh = memory_.fetchPointer(0, method_);
+                                        if (mh.isSmallInteger()) {
+                                            int nLits = mh.asSmallInteger() & 0x7FFF;
+                                            if (nLits >= 2 && nLits < 100) {
+                                                Oop sel = memory_.fetchPointer(nLits - 1, method_);
+                                                if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                                    ObjectHeader* selH = sel.asObjectPtr();
+                                                    if (selH->isBytesObject() && selH->byteSize() < 100) {
+                                                        methodSel = std::string((char*)selH->bytes(), selH->byteSize());
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                fprintf(ctxSenderLog, "  in method: #%s\n", methodSel.c_str());
+                                fflush(ctxSenderLog);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // TRACE: Log when Context PC (slot 1) is written - key for understanding wrong PC bug
     if (index == 1 && receiver_.isObject() && receiver_.rawBits() > 0x10000) {
         Oop rcvrCls = memory_.classOf(receiver_);
