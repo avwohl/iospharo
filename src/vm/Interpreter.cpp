@@ -14032,12 +14032,44 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                     fprintf(f, "  [0] method=#%s receiver=%s (0x%llx)\n",
                             getMethodName(method_).c_str(), getClassName(receiver_).c_str(),
                             (unsigned long long)receiver_.rawBits());
+                    // Dump receiver_ inst vars (the object that sent `wait` to nil inputSemaphore)
+                    if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+                        ObjectHeader* rh = receiver_.asObjectPtr();
+                        fprintf(f, "  Receiver raw header: 0x%llx\n", (unsigned long long)rh->rawHeader());
+                        fprintf(f, "  Receiver format: %d classIndex: %u hash: %u\n",
+                                (int)rh->format(), rh->classIndex(), rh->identityHash());
+                        // Also dump word before header (overflow slot count area)
+                        const uint64_t* prevWord = reinterpret_cast<const uint64_t*>(rh) - 1;
+                        fprintf(f, "  Word before header: 0x%llx\n", (unsigned long long)*prevWord);
+                        size_t nSlots = rh->slotCount();
+                        fprintf(f, "  Receiver inst vars (%zu slots):\n", nSlots);
+                        for (size_t si = 0; si < nSlots && si < 10; si++) {
+                            Oop sv = memory_.fetchPointer(si, receiver_);
+                            std::string svClass = sv.isSmallInteger() ? "SmallInteger" :
+                                (sv.rawBits() == memory_.nil().rawBits() ? "nil" : getClassName(sv));
+                            fprintf(f, "    [%zu] = 0x%llx (%s)\n", si, (unsigned long long)sv.rawBits(), svClass.c_str());
+                        }
+                    }
+                    // Also dump the parent frame (who called the event loop block)
                     for (size_t d = 0; d < frameDepth_ && d < 30; d++) {
                         SavedFrame& sf = savedFrames_[frameDepth_ - 1 - d];
                         fprintf(f, "  [%zu] method=#%s receiver=%s (0x%llx)\n",
                                 d + 1, getMethodName(sf.savedMethod).c_str(),
                                 getClassName(sf.savedReceiver).c_str(),
                                 (unsigned long long)sf.savedReceiver.rawBits());
+                        // Dump inst vars of OSSDL2Driver receivers
+                        std::string rcvrCls = getClassName(sf.savedReceiver);
+                        if (rcvrCls.find("SDL2") != std::string::npos || rcvrCls.find("Driver") != std::string::npos) {
+                            ObjectHeader* rh = sf.savedReceiver.asObjectPtr();
+                            size_t nSlots = rh->slotCount();
+                            fprintf(f, "    Driver inst vars (%zu slots):\n", nSlots);
+                            for (size_t si = 0; si < nSlots && si < 10; si++) {
+                                Oop sv = memory_.fetchPointer(si, sf.savedReceiver);
+                                std::string svClass = sv.isSmallInteger() ? "SmallInteger" :
+                                    (sv.rawBits() == memory_.nil().rawBits() ? "nil" : getClassName(sv));
+                                fprintf(f, "      [%zu] = 0x%llx (%s)\n", si, (unsigned long long)sv.rawBits(), svClass.c_str());
+                            }
+                        }
                     }
                     fclose(f);
                 }
