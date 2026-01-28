@@ -358,6 +358,58 @@ Uses LOW bits for tags (not high bits):
 
 See `WIP-input-handling.md` for current investigation.
 
+## Current Investigation (2026-01-28)
+
+### Root Cause: SessionManager.currentSession is nil
+
+**Finding:** The first illegitimate message to nil during startup is:
+```
+UndefinedObject >> #hasError
+  Called from: SessionManager >> #snapshot:andQuit:
+  Stack: nil (the receiver for hasError) on top
+```
+
+The code in `SessionManager >> snapshot:andQuit:` does:
+```smalltalk
+self currentSession hasError ifTrue: [...]
+```
+And `self currentSession` returns nil.
+
+**Why is currentSession nil?**
+
+Traced slot writes during startup:
+- SessionManager slot[1] (startupList) = OrderedCollection ✓ WRITTEN
+- SessionManager slot[0] (currentSession) = nil ✗ NEVER WRITTEN
+
+The method `SessionManager >> installSession:` should set `currentSession`:
+```smalltalk
+installSession: aWorkingSession [
+    currentSession := aWorkingSession
+]
+```
+
+But `installSession:` is never being called during startup!
+
+**Startup Sequence Observed:**
+1. WorkingSession >> runStartup: (send #76) - session exists and runs
+2. SessionManager >> startupList (send #78) - fetches handlers
+3. WorkingSession >> runList:do: (send #3320) - iterates 54 handlers
+4. All ClassSessionHandlers run (Delay, FFI, File, etc.)
+
+The problem: A WorkingSession EXISTS and runs startup, but nobody calls
+`SessionManager >> installSession:` to store it in the currentSession slot.
+
+**Next Steps:**
+1. Find who creates the WorkingSession and should call installSession:
+2. In Pharo source, check `SessionManager >> start:` or `launchStartup:`
+3. Likely the VM entry point code is calling runStartup: directly on a
+   WorkingSession without going through SessionManager's install flow
+
+**Related DNUs after hasError:**
+- `UndefinedObject >> #isImageStarting` (session method)
+- `UndefinedObject >> #privSender:` (context chain broken - cascading failures)
+- Many `UndefinedObject >> #freeze` (process operations on nil)
+
 ## Archived Issues (Fixed)
 
 ### Embedded VM Startup (Fixed 2026-01-14)

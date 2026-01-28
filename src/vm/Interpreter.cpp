@@ -14034,6 +14034,228 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         // The FATAL message is logged for diagnostics, but fallbacks may handle this DNU.
         // If no fallback matches, the code falls through to Message creation and DNU send.
 
+        // TRAP: First illegitimate message to nil
+        // Legitimate nil messages that should NOT trigger the trap:
+        static const std::set<std::string> legitimateNilMessages = {
+            "isNil", "notNil", "ifNil:", "ifNotNil:", "ifNil:ifNotNil:", "ifNotNil:ifNil:",
+            "class", "==", "~~", "hash", "identityHash", "basicIdentityHash",
+            "printString", "printOn:", "yourself", "asString",
+            "respondsTo:", "perform:", "perform:with:", "perform:with:with:",
+            "doesNotUnderstand:", "error:", "halt", "halt:",
+            "value", "value:", "value:value:",  // Common block-like invocations
+            "species", "copy", "deepCopy", "shallowCopy", "veryDeepCopy",
+            "basicClass", "instVarAt:", "instVarAt:put:", "basicAt:", "basicAt:put:", "basicSize",
+            "handleSignal:",  // Exception handling
+        };
+        static bool trappedFirstNilDNU = false;
+        static FILE* nilTrapLog = nullptr;
+        if (!nilTrapLog) {
+            nilTrapLog = fopen("/tmp/first_nil_dnu.log", "w");
+        }
+
+        if (rcvrClassName == "UndefinedObject" && !trappedFirstNilDNU) {
+            bool isLegitimate = legitimateNilMessages.count(selStr) > 0;
+            if (!isLegitimate) {
+                trappedFirstNilDNU = true;
+
+                fprintf(nilTrapLog, "========== FIRST ILLEGITIMATE NIL MESSAGE ==========\n");
+                fprintf(nilTrapLog, "UndefinedObject >> #%s (argCount=%d)\n", selStr.c_str(), argCount);
+                fprintf(nilTrapLog, "step=%llu frameDepth=%zu\n", (unsigned long long)g_stepNum, frameDepth_);
+                fprintf(nilTrapLog, "\nFull call stack:\n");
+
+                // Current method
+                std::string curMethod = "<unknown>", curClass = "<unknown>";
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    Oop hdr = memory_.fetchPointer(0, method_);
+                    if (hdr.isSmallInteger()) {
+                        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                        if (numLits >= 2) {
+                            Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                ObjectHeader* selHdr = sel.asObjectPtr();
+                                if (selHdr->isBytesObject() && selHdr->byteSize() < 100) {
+                                    curMethod = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                                }
+                            }
+                            Oop classAssoc = memory_.fetchPointer(numLits, method_);
+                            if (classAssoc.isObject() && classAssoc.rawBits() > 0x10000) {
+                                ObjectHeader* assocHdr = classAssoc.asObjectPtr();
+                                if (assocHdr->slotCount() >= 2) {
+                                    Oop cls = memory_.fetchPointer(1, classAssoc);
+                                    if (cls.isObject()) {
+                                        Oop nameOop = memory_.fetchPointer(6, cls);
+                                        if (nameOop.isObject()) {
+                                            ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                                            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                                                curClass = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                fprintf(nilTrapLog, "  [0] %s >> #%s (current)\n", curClass.c_str(), curMethod.c_str());
+
+                // All saved frames (as many as we have)
+                for (size_t d = 0; d < frameDepth_; d++) {
+                    SavedFrame& sf = savedFrames_[frameDepth_ - 1 - d];
+                    std::string frameMethod = "<unknown>", frameClass = "<unknown>";
+                    if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                        Oop hdr = memory_.fetchPointer(0, sf.savedMethod);
+                        if (hdr.isSmallInteger()) {
+                            size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                            if (numLits >= 2) {
+                                Oop sel = memory_.fetchPointer(numLits - 1, sf.savedMethod);
+                                if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                    ObjectHeader* selHdr = sel.asObjectPtr();
+                                    if (selHdr->isBytesObject() && selHdr->byteSize() < 100) {
+                                        frameMethod = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                                    }
+                                }
+                                Oop classAssoc = memory_.fetchPointer(numLits, sf.savedMethod);
+                                if (classAssoc.isObject() && classAssoc.rawBits() > 0x10000) {
+                                    ObjectHeader* assocHdr = classAssoc.asObjectPtr();
+                                    if (assocHdr->slotCount() >= 2) {
+                                        Oop cls = memory_.fetchPointer(1, classAssoc);
+                                        if (cls.isObject()) {
+                                            Oop nameOop = memory_.fetchPointer(6, cls);
+                                            if (nameOop.isObject()) {
+                                                ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                                                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                                                    frameClass = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    fprintf(nilTrapLog, "  [%zu] %s >> #%s\n", d+1, frameClass.c_str(), frameMethod.c_str());
+                }
+
+                // Arguments on stack
+                fprintf(nilTrapLog, "\nArguments:\n");
+                for (int i = 0; i < argCount; i++) {
+                    Oop arg = stackValue(argCount - 1 - i);  // Arguments in order
+                    fprintf(nilTrapLog, "  arg[%d] = 0x%llx", i, (unsigned long long)arg.rawBits());
+                    if (arg.isSmallInteger()) {
+                        fprintf(nilTrapLog, " (SmallInt %lld)", arg.asSmallInteger());
+                    } else if (arg.isNil() || arg.rawBits() == memory_.nil().rawBits()) {
+                        fprintf(nilTrapLog, " (nil)");
+                    } else if (arg.isObject() && arg.rawBits() > 0x10000) {
+                        Oop cls = memory_.classOf(arg);
+                        if (cls.isObject()) {
+                            Oop nameOop = memory_.fetchPointer(6, cls);
+                            if (nameOop.isObject()) {
+                                ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                                    std::string clsName((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                    fprintf(nilTrapLog, " (%s)", clsName.c_str());
+                                }
+                            }
+                        }
+                    }
+                    fprintf(nilTrapLog, "\n");
+                }
+
+                // Current receiver_ (the context's receiver, not nil)
+                fprintf(nilTrapLog, "\nCurrent receiver_ (method context):\n");
+                fprintf(nilTrapLog, "  receiver_ = 0x%llx", (unsigned long long)receiver_.rawBits());
+                if (receiver_.isSmallInteger()) {
+                    fprintf(nilTrapLog, " (SmallInt %lld)", receiver_.asSmallInteger());
+                } else if (receiver_.isNil() || receiver_.rawBits() == memory_.nil().rawBits()) {
+                    fprintf(nilTrapLog, " (nil)");
+                } else if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+                    Oop cls = memory_.classOf(receiver_);
+                    if (cls.isObject()) {
+                        Oop nameOop = memory_.fetchPointer(6, cls);
+                        if (nameOop.isObject()) {
+                            ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                                std::string clsName((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                fprintf(nilTrapLog, " (%s)", clsName.c_str());
+                            }
+                        }
+                    }
+                }
+                fprintf(nilTrapLog, "\n");
+
+                // Stack dump (more values)
+                fprintf(nilTrapLog, "\nFull stack (top 20 values):\n");
+                size_t stackDepth = stackPointer_ - stackBase_;
+                for (size_t i = 0; i < 20 && i < stackDepth; i++) {
+                    Oop val = stackValue(i);
+                    fprintf(nilTrapLog, "  [%zu] = 0x%llx", i, (unsigned long long)val.rawBits());
+                    if (val.isSmallInteger()) {
+                        fprintf(nilTrapLog, " (SmallInt %lld)", val.asSmallInteger());
+                    } else if (val.isNil() || val.rawBits() == memory_.nil().rawBits()) {
+                        fprintf(nilTrapLog, " (nil)");
+                    } else if (val.isObject() && val.rawBits() > 0x10000) {
+                        Oop cls = memory_.classOf(val);
+                        if (cls.isObject()) {
+                            Oop nameOop = memory_.fetchPointer(6, cls);
+                            if (nameOop.isObject()) {
+                                ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                                    std::string clsName((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                    fprintf(nilTrapLog, " (%s)", clsName.c_str());
+                                }
+                            }
+                        }
+                    }
+                    fprintf(nilTrapLog, "\n");
+                }
+
+                // Method literals (to see what selectors are in play)
+                fprintf(nilTrapLog, "\nCurrent method literals:\n");
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    Oop hdr = memory_.fetchPointer(0, method_);
+                    if (hdr.isSmallInteger()) {
+                        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                        fprintf(nilTrapLog, "  numLiterals=%zu\n", numLits);
+                        for (size_t li = 1; li <= numLits && li <= 10; li++) {
+                            Oop lit = memory_.fetchPointer(li, method_);
+                            fprintf(nilTrapLog, "  [%zu] = 0x%llx", li, (unsigned long long)lit.rawBits());
+                            if (lit.isSmallInteger()) {
+                                fprintf(nilTrapLog, " (SmallInt %lld)", lit.asSmallInteger());
+                            } else if (lit.isNil()) {
+                                fprintf(nilTrapLog, " (nil)");
+                            } else if (lit.isObject() && lit.rawBits() > 0x10000) {
+                                ObjectHeader* litHdr = lit.asObjectPtr();
+                                if (litHdr->isBytesObject() && litHdr->byteSize() < 100) {
+                                    std::string litStr((char*)litHdr->bytes(), litHdr->byteSize());
+                                    fprintf(nilTrapLog, " ='%s'", litStr.c_str());
+                                } else {
+                                    Oop cls = memory_.classOf(lit);
+                                    if (cls.isObject()) {
+                                        Oop nameOop = memory_.fetchPointer(6, cls);
+                                        if (nameOop.isObject()) {
+                                            ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                                            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                                                std::string clsName((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                                fprintf(nilTrapLog, " (%s)", clsName.c_str());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            fprintf(nilTrapLog, "\n");
+                        }
+                    }
+                }
+
+                fprintf(nilTrapLog, "\n=======================================================\n");
+                fflush(nilTrapLog);
+
+                std::cerr << "\n*** TRAPPED FIRST ILLEGITIMATE NIL MESSAGE ***\n";
+                std::cerr << "*** UndefinedObject >> #" << selStr << " ***\n";
+                std::cerr << "*** See /tmp/first_nil_dnu.log for full trace ***\n\n";
+            }
+        }
+
         // For SmallInteger/UndefinedObject >> #do:, trace the calling method
         if ((rcvrClassName == "SmallInteger" || rcvrClassName == "UndefinedObject") && selStr == "do:") {
             // Get the current method's selector from its penultimate literal
