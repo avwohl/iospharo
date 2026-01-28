@@ -5842,6 +5842,22 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 }
 
 void Interpreter::sendSelector(Oop selector, int argCount) {
+    // Unconditional test log to verify sendSelector is being called
+    static FILE* sendTestLog = nullptr;
+    static int sendTestCount = 0;
+    if (!sendTestLog) {
+        sendTestLog = fopen("/tmp/send_test.log", "w");
+        if (sendTestLog) {
+            fprintf(sendTestLog, "[SEND-TEST] sendSelector called\n");
+            fflush(sendTestLog);
+        }
+    }
+    if (sendTestLog && ++sendTestCount <= 10) {
+        fprintf(sendTestLog, "[SEND-TEST #%d] selector=0x%llx argCount=%d\n",
+                sendTestCount, (unsigned long long)selector.rawBits(), argCount);
+        fflush(sendTestLog);
+    }
+
     // Debug variables - only used when ENABLE_DEBUG_LOGGING is true
     [[maybe_unused]] static int sendCount = 0;
     [[maybe_unused]] static bool hangDebugEnabled = false;
@@ -6042,6 +6058,136 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                     fprintf(priLog, " ctx=0x%llx\n", (unsigned long long)ctxArg.rawBits());
                     fflush(priLog);
                 }
+            }
+
+            // TRACE: UIManager and WorldRenderer startup methods
+            static FILE* uiStartLog = nullptr;
+            static int uiStartCount = 0;
+            static int uiBytesCount = 0;
+            static bool uiLogInit = false;
+            if (!uiLogInit) {
+                uiStartLog = fopen("/tmp/ui_startup.log", "w");
+                if (uiStartLog) {
+                    fprintf(uiStartLog, "[UI-TRACE] Log initialized\n");
+                    fflush(uiStartLog);
+                }
+                uiLogInit = true;
+            }
+            // Log every 100000th bytes-object selector to verify this code runs
+            if (++uiBytesCount <= 10 || (uiBytesCount % 100000 == 0)) {
+                if (uiStartLog) {
+                    std::string sel(selBytes, std::min(selLen, (size_t)30));
+                    fprintf(uiStartLog, "[UI-BYTES #%d] selector len=%zu: %s\n",
+                            uiBytesCount, selLen, sel.c_str());
+                    fflush(uiStartLog);
+                }
+            }
+            // Log ALL selectors in the critical step range 17300-18600
+            static int criticalRangeCount = 0;
+            if (g_stepNum >= 17300 && g_stepNum <= 18600 && criticalRangeCount++ < 1000) {
+                if (uiStartLog) {
+                    std::string sel(selBytes, std::min(selLen, (size_t)50));
+                    fprintf(uiStartLog, "[CRITICAL step=%llu] len=%zu selector: %s\n",
+                            (unsigned long long)g_stepNum, selLen, sel.c_str());
+                    fflush(uiStartLog);
+                }
+            }
+            // Log any selectors with lengths matching our missing ones (13=isInteractive, 36=isValidForCurrentSystemConfiguration)
+            static int len36count = 0, len13count = 0, isValidCount = 0;
+            if (selLen == 36 && ++len36count <= 20) {
+                if (uiStartLog) {
+                    std::string sel(selBytes, 36);
+                    fprintf(uiStartLog, "[LEN36 #%d] selector: %s\n", len36count, sel.c_str());
+                    fflush(uiStartLog);
+                }
+            }
+            if (selLen == 13 && ++len13count <= 20) {
+                if (uiStartLog) {
+                    std::string sel(selBytes, 13);
+                    fprintf(uiStartLog, "[LEN13 #%d] selector: %s\n", len13count, sel.c_str());
+                    fflush(uiStartLog);
+                }
+            }
+            // Log all selectors starting with "isValid"
+            if (selLen >= 7 && memcmp(selBytes, "isValid", 7) == 0 && ++isValidCount <= 50) {
+                if (uiStartLog) {
+                    std::string sel(selBytes, std::min(selLen, (size_t)50));
+                    fprintf(uiStartLog, "[ISVALID #%d step=%llu len=%zu] selector: %s\n",
+                            isValidCount, (unsigned long long)g_stepNum, selLen, sel.c_str());
+                    fflush(uiStartLog);
+                }
+            }
+            auto getReceiverClassName = [this](int argCount) -> std::string {
+                Oop rcvr = stackValue(argCount);
+                if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                    Oop cls = memory_.classOf(rcvr);
+                    if (cls.isObject() && cls.rawBits() > 0x10000) {
+                        Oop clsName = memory_.fetchPointer(6, cls);
+                        if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                            ObjectHeader* nh = clsName.asObjectPtr();
+                            if (nh->isBytesObject() && nh->byteSize() < 60) {
+                                return std::string((char*)nh->bytes(), nh->byteSize());
+                            }
+                        }
+                    }
+                }
+                return "?";
+            };
+
+            // Track UIManager and WorldRenderer key methods
+            bool isUIMethod = (selLen == 8 && memcmp(selBytes, "activate", 8) == 0) ||
+                              (selLen == 8 && memcmp(selBytes, "default:", 8) == 0) ||
+                              (selLen == 29 && memcmp(selBytes, "forCurrentSystemConfiguration", 29) == 0) ||
+                              (selLen == 36 && memcmp(selBytes, "isValidForCurrentSystemConfiguration", 36) == 0) ||
+                              (selLen == 25 && memcmp(selBytes, "detectCorrectOneForWorld:", 25) == 0) ||
+                              (selLen == 16 && memcmp(selBytes, "isApplicableFor:", 16) == 0) ||
+                              (selLen == 14 && memcmp(selBytes, "worldRenderer:", 14) == 0) ||
+                              (selLen == 13 && memcmp(selBytes, "worldRenderer", 13) == 0) ||
+                              (selLen == 10 && memcmp(selBytes, "hasOption:", 10) == 0) ||
+                              (selLen == 13 && memcmp(selBytes, "isInteractive", 13) == 0) ||
+                              (selLen == 19 && memcmp(selBytes, "getSystemAttribute:", 19) == 0) ||
+                              (selLen == 13 && memcmp(selBytes, "allSubclasses", 13) == 0) ||
+                              (selLen == 14 && memcmp(selBytes, "detect:ifNone:", 14) == 0) ||
+                              (selLen == 8 && memcmp(selBytes, "startUp:", 8) == 0);
+
+            if (isUIMethod && uiStartLog && uiStartCount++ < 200) {
+                std::string rcvrClass = getReceiverClassName(argCount);
+                std::string selName(selBytes, selLen);
+                fprintf(uiStartLog, "[UI-START #%d step=%llu] %s >> #%s argCount=%d\n",
+                        uiStartCount, (unsigned long long)g_stepNum, rcvrClass.c_str(), selName.c_str(), argCount);
+
+                // For isApplicableFor:, log the world argument
+                if (selLen == 16 && memcmp(selBytes, "isApplicableFor:", 16) == 0 && argCount == 1) {
+                    Oop worldArg = stackValue(0);
+                    std::string worldClass = "nil";
+                    if (worldArg.isObject() && worldArg.rawBits() > 0x10000) {
+                        Oop wCls = memory_.classOf(worldArg);
+                        if (wCls.isObject()) {
+                            Oop wcName = memory_.fetchPointer(6, wCls);
+                            if (wcName.isObject() && wcName.rawBits() > 0x10000) {
+                                ObjectHeader* wnh = wcName.asObjectPtr();
+                                if (wnh->isBytesObject() && wnh->byteSize() < 60) {
+                                    worldClass = std::string((char*)wnh->bytes(), wnh->byteSize());
+                                }
+                            }
+                        }
+                    }
+                    fprintf(uiStartLog, "  -> world arg class: %s\n", worldClass.c_str());
+                }
+
+                // For hasOption:, log the option string
+                if (selLen == 10 && memcmp(selBytes, "hasOption:", 10) == 0 && argCount == 1) {
+                    Oop optArg = stackValue(0);
+                    if (optArg.isObject() && optArg.rawBits() > 0x10000) {
+                        ObjectHeader* oh = optArg.asObjectPtr();
+                        if (oh->isBytesObject() && oh->byteSize() < 60) {
+                            std::string opt((char*)oh->bytes(), oh->byteSize());
+                            fprintf(uiStartLog, "  -> option: '%s'\n", opt.c_str());
+                        }
+                    }
+                }
+
+                fflush(uiStartLog);
             }
         }
     }
