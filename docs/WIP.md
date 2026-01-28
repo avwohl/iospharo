@@ -350,43 +350,46 @@ Uses LOW bits for tags (not high bits):
 
 ## Current Priority
 
-**Display rendering works.** Morphic renders correctly: 50M steps, 1391 display updates, 227 unique colors.
-**Input events don't reach Smalltalk.** The event loop process terminates during startup.
+**Display rendering works.** Morphic renders correctly: 50M steps, 859 display updates, 227 unique colors.
+**Input events don't reach Smalltalk.** Input semaphore index = 0, no process polls primitive 264.
 
 ### What works:
-- Image loads and runs (50M bytecodes)
+- Image loads and runs (50M bytecodes) — NO CRASHES
+- 20842 classes loaded correctly from class table
 - SessionManager initializes correctly
 - MorphicRenderLoop renders Morphic UI (MenubarMorph, TaskbarMorph, etc.)
 - Display surface receives BitBlt updates
-- Only 500 DNUs total (mostly harmless `nil>>freeze` during startup)
-- VM stable — no crashes on standard image
+- Only 517 DNUs total (mostly nil>>privSender:, nil>>freeze during startup)
+- VM stable — runs to completion on standard image
+
+### FIXED (2026-01-28): Spur Overflow Slot Count Bug
+**Root cause:** The Spur 64-bit overflow word stores the slot count in its low 56 bits,
+with 0xFF in the top byte (matching the numSlots marker). The standard Cog VM extracts
+the count using `(word << 8) >> 8`. Our code was reading the full 64-bit value, giving
+absurd counts (18 quintillion instead of 1024 or 4104).
+
+This caused:
+1. Class table pages (1024 slots each) had wrong slot counts
+2. Pointer relocation missed slots in large objects
+3. Class table loaded 0 classes (fell back to heuristic scan)
+4. OSSDL2Driver appeared to have 32769 slots instead of 3
+5. All instance variables of large objects read as nil/wrong values
+
+Also fixed: minimum object size is 16 bytes (not 8) per Spur spec.
+
+**Result:** Class table now loads 20842 classes directly. VM runs to completion.
 
 ### What's broken: Input Event Loop
-- OSSDL2Driver's `setupEventLoop` starts but the forked event loop process terminates
-- The event loop calls `inputSemaphore wait` but inputSemaphore is nil
-- `inputSemaphore` is nil because OSSDL2Driver>>initialize calls `SDL2 initEverything` via FFI, which fails
-- FFI fails because `ExternalType` resolution returns ByteSymbols instead of ExternalType objects
-- Specific DNU: `ByteSymbol >> #asPointerType` and `ByteSymbol >> #newReferentClass:`
-- Primitive 264 (getNextEvent) is implemented but NEVER called — no process polls it
-- Input semaphore index = 0 — never registered via primitiveExternalObjectRegister
+- Input semaphore index = 0 — never registered
+- OSSDL2Driver's event loop doesn't start or terminates
+- Primitive 264 (getNextEvent) is implemented but never called
+- The FFI-related DNUs (pointerArity:, isExternalStructure, typeAlignment) still occur
+  but are now only ~10 DNUs instead of the primary problem
 
-### Root Cause: FFI Type Resolution Bug
-During startup, `FFIStructure resetAllStructuresIfPlatformChanged` recompiles all FFI struct fields.
-The call chain is: `resetStructureIfNotIn:` → `compileFields` → `compileFields:withAccessors:` → `ExternalType noticeModificationOf:`.
-In `compileFields:withAccessors:`, type names (ByteSymbols) should be resolved to ExternalType objects via `ExternalType atomicTypeNamed:` or `structTypeNamed:`. Something in this resolution returns the Symbol itself instead of an ExternalType.
-
-The `ExternalType class >> noticeModificationOf:` method iterates `StructTypes` dictionary and sends `type asPointerType` and `type newReferentClass:` on each entry. If an entry is a ByteSymbol instead of ExternalType, it triggers DNU.
-
-**Possible causes:**
-1. `ExternalType class >> initializeDefaultTypes` was never called (class init didn't run)
-2. `AtomicTypes` or `StructTypes` dictionaries are nil or improperly populated
-3. The StructTypes dictionary has ByteSymbol values instead of ExternalType values
-
-### Next Step: Fix FFI Type Resolution
-1. Check if ExternalType class variables (AtomicTypes, StructTypes) are properly initialized
-2. If they're nil, the class initialization didn't run — need to trigger `ExternalType initialize`
-3. If they exist but contain wrong types, trace where ByteSymbols are inserted
-4. This should fix OSSDL2Driver initialization → fix event loop → fix input handling
+### Next Step: Fix Input Event Loop
+1. Investigate why input semaphore index is 0 (should be set via primitiveExternalObjectRegister)
+2. Check if OSSDL2Driver>>initialize runs and what fails
+3. The event loop process needs to start and keep running
 
 ## Fixed Investigation (2026-01-28)
 
