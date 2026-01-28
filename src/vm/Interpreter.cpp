@@ -5850,6 +5850,125 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         if (sendCount >= 4575) hangDebugEnabled = true;
     }
 
+    // CRITICAL: Detect nil selector - this should NEVER happen
+    static FILE* nilSelLog = nullptr;
+    static int nilSelCount = 0;
+    bool selectorIsNil = selector.isNil() || selector.rawBits() == memory_.nil().rawBits() ||
+                         (selector.isObject() && selector.rawBits() > 0x10000 &&
+                          selector.asObjectPtr()->classIndex() == memory_.nil().asObjectPtr()->classIndex() &&
+                          selector.asObjectPtr()->slotCount() == 0);
+    if (selectorIsNil && nilSelCount < 5) {
+        nilSelCount++;
+        if (!nilSelLog) nilSelLog = fopen("/tmp/nil_selector.log", "w");
+        if (nilSelLog) {
+            fprintf(nilSelLog, "\n[NIL-SELECTOR #%d step=%llu]\n", nilSelCount, g_stepNum);
+            fprintf(nilSelLog, "  selector oop=0x%llx\n", (unsigned long long)selector.rawBits());
+            fprintf(nilSelLog, "  argCount=%d\n", argCount);
+
+            // Current method being executed
+            fprintf(nilSelLog, "  method_=0x%llx\n", (unsigned long long)method_.rawBits());
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                ObjectHeader* mh = method_.asObjectPtr();
+                fprintf(nilSelLog, "  method format=%d isCompiledMethod=%d\n",
+                        (int)mh->format(), mh->isCompiledMethod() ? 1 : 0);
+                if (mh->isCompiledMethod()) {
+                    // Get method selector (literal 1 or 2 depending on format)
+                    // First, get header to find numLiterals
+                    Oop header = memory_.fetchPointer(0, method_);
+                    if (header.isSmallInteger()) {
+                        int64_t hdrVal = header.asSmallInteger();
+                        int numLits = (hdrVal >> 1) & 0x7FFF;
+                        fprintf(nilSelLog, "  method numLiterals=%d\n", numLits);
+                        // Selector is usually in literal slot (numLits - 1) or (numLits - 2)
+                        if (numLits > 0) {
+                            Oop lastLit = memory_.fetchPointer(numLits, method_);
+                            if (lastLit.isObject() && lastLit.rawBits() > 0x10000) {
+                                ObjectHeader* llh = lastLit.asObjectPtr();
+                                if (llh->isBytesObject() && llh->byteSize() < 100) {
+                                    std::string litStr((char*)llh->bytes(), llh->byteSize());
+                                    fprintf(nilSelLog, "  method lastLiteral='%s'\n", litStr.c_str());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Current IP and recent bytecodes
+            fprintf(nilSelLog, "  instructionPointer_=%llu\n", instructionPointer_);
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                ObjectHeader* mh = method_.asObjectPtr();
+                if (mh->isCompiledMethod()) {
+                    size_t bcSize = mh->byteSize();
+                    uint8_t* bcStart = mh->bytes();
+                    // Show bytecodes around current IP
+                    int64_t bcOffset = (int64_t)(instructionPointer_ - bcStart);
+                    fprintf(nilSelLog, "  bytecode offset=%lld (method size=%zu)\n", bcOffset, bcSize);
+                    // Show 10 bytes before and after current position
+                    int start = std::max(0LL, bcOffset - 10);
+                    int end = std::min((int64_t)bcSize, bcOffset + 10);
+                    fprintf(nilSelLog, "  bytecodes around IP: ");
+                    for (int i = start; i < end; i++) {
+                        if (i == bcOffset) fprintf(nilSelLog, "[");
+                        fprintf(nilSelLog, "%02x", bcStart[i]);
+                        if (i == bcOffset) fprintf(nilSelLog, "]");
+                        fprintf(nilSelLog, " ");
+                    }
+                    fprintf(nilSelLog, "\n");
+                    // Identify the bytecode that triggered this send
+                    if (bcOffset > 0 && bcOffset <= (int64_t)bcSize) {
+                        uint8_t prevByte = bcStart[bcOffset - 1];
+                        fprintf(nilSelLog, "  previous bytecode=0x%02x\n", prevByte);
+                    }
+                }
+            }
+
+            // Receiver on stack
+            Oop rcvr = stackValue(argCount);
+            fprintf(nilSelLog, "  receiver=0x%llx", (unsigned long long)rcvr.rawBits());
+            if (rcvr.isNil() || rcvr.rawBits() == memory_.nil().rawBits()) {
+                fprintf(nilSelLog, " (nil)\n");
+            } else if (rcvr.isSmallInteger()) {
+                fprintf(nilSelLog, " (SmallInteger %lld)\n", (long long)rcvr.asSmallInteger());
+            } else if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                Oop rcvrCls = memory_.classOf(rcvr);
+                if (rcvrCls.isObject()) {
+                    Oop clsName = memory_.fetchPointer(6, rcvrCls);
+                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                        ObjectHeader* cnHdr = clsName.asObjectPtr();
+                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 100) {
+                            std::string cn((char*)cnHdr->bytes(), cnHdr->byteSize());
+                            fprintf(nilSelLog, " (%s)\n", cn.c_str());
+                        } else {
+                            fprintf(nilSelLog, " (class name not bytes)\n");
+                        }
+                    } else {
+                        fprintf(nilSelLog, " (no class name)\n");
+                    }
+                } else {
+                    fprintf(nilSelLog, " (class not object)\n");
+                }
+            } else {
+                fprintf(nilSelLog, " (unknown format)\n");
+            }
+
+            // Stack dump
+            fprintf(nilSelLog, "  stack (top 5 values):\n");
+            for (int i = 0; i < 5 && i <= argCount + 2; i++) {
+                Oop sv = stackValue(i);
+                fprintf(nilSelLog, "    [%d] 0x%llx", i, (unsigned long long)sv.rawBits());
+                if (sv.isNil() || sv.rawBits() == memory_.nil().rawBits()) {
+                    fprintf(nilSelLog, " (nil)");
+                } else if (sv.isSmallInteger()) {
+                    fprintf(nilSelLog, " (SmallInt %lld)", (long long)sv.asSmallInteger());
+                }
+                fprintf(nilSelLog, "\n");
+            }
+
+            fflush(nilSelLog);
+        }
+    }
+
     // TRACE: Log sendSelector entry/exit at hang point or during driver install
     static FILE* sendTraceLog = nullptr;
     static FILE* driverSendLog = nullptr;
@@ -12214,6 +12333,43 @@ void Interpreter::activateBlock(Oop block, int argCount) {
         receiver_ = memory_.nil();
     }
 
+    // CRITICAL: Check if receiver is raw 0 - this indicates corruption
+    if (receiver_.rawBits() == 0) {
+        static FILE* blkRcvrZeroLog = nullptr;
+        static int blkRcvrZeroCount = 0;
+        if (!blkRcvrZeroLog) blkRcvrZeroLog = fopen("/tmp/block_receiver_zero.log", "w");
+        if (blkRcvrZeroLog && blkRcvrZeroCount++ < 20) {
+            fprintf(blkRcvrZeroLog, "[BLK-RCVR-ZERO #%d] In activateBlock! block=0x%llx\n",
+                    blkRcvrZeroCount, (unsigned long long)block.rawBits());
+            // Dump block slots
+            ObjectHeader* blkHdr = block.asObjectPtr();
+            fprintf(blkRcvrZeroLog, "  block slots: ");
+            for (size_t i = 0; i < std::min(blkHdr->slotCount(), (size_t)10); i++) {
+                fprintf(blkRcvrZeroLog, "[%zu]=0x%llx ", i, (unsigned long long)blkHdr->slotAt(i).rawBits());
+            }
+            fprintf(blkRcvrZeroLog, "\n");
+            // Get method name from compiledBlock
+            if (slot1.isObject()) {
+                std::string methodName = "?";
+                Oop hdr = memory_.fetchPointer(0, slot1);
+                if (hdr.isSmallInteger()) {
+                    int numLits = hdr.asSmallInteger() & 0x7FFF;
+                    if (numLits >= 2) {
+                        Oop sel = memory_.fetchPointer(numLits - 1, slot1);
+                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                            ObjectHeader* selHdr = sel.asObjectPtr();
+                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                methodName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+                fprintf(blkRcvrZeroLog, "  compiledBlock method: #%s\n", methodName.c_str());
+            }
+            fflush(blkRcvrZeroLog);
+        }
+    }
+
     // Update activeContext_ so blocks created inside this block
     // capture the correct outer context chain
     if (outerContext.isObject() && !outerContext.isNil()) {
@@ -12983,6 +13139,49 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
             }
         }
 
+        // Debug: if both receiver and selector are unknown, investigate
+        static int unknownBothCount = 0;
+        if (rcvrClassName == "<unknown>" && selStr == "<unknown>" && unknownBothCount < 10) {
+            unknownBothCount++;
+            fprintf(dnuTraceLog, "  [FULL-UNKNOWN #%d] Both receiver and selector unknown!\n", unknownBothCount);
+            fprintf(dnuTraceLog, "  selector oop=0x%llx isObj=%d isNil=%d\n",
+                    (unsigned long long)selector.rawBits(), selector.isObject(),
+                    selector.isNil() || selector.rawBits() == memory_.nil().rawBits());
+            if (selector.isObject() && selector.rawBits() > 0x10000) {
+                ObjectHeader* selHdr = selector.asObjectPtr();
+                fprintf(dnuTraceLog, "  selector classIdx=%u format=%d isBytesObj=%d size=%zu\n",
+                        selHdr->classIndex(), (int)selHdr->format(), selHdr->isBytesObject(), selHdr->byteSize());
+            }
+            fprintf(dnuTraceLog, "  rcvr=0x%llx isObj=%d isNil=%d isSmallInt=%d\n",
+                    (unsigned long long)rcvr.rawBits(), rcvr.isObject(),
+                    rcvr.isNil() || rcvr.rawBits() == memory_.nil().rawBits(),
+                    rcvr.isSmallInteger());
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+                fprintf(dnuTraceLog, "  rcvr classIdx=%u format=%d slots=%zu\n",
+                        rcvrHdr->classIndex(), (int)rcvrHdr->format(), rcvrHdr->slotCount());
+                Oop cls = memory_.classOf(rcvr);
+                fprintf(dnuTraceLog, "  classOf result=0x%llx\n", (unsigned long long)cls.rawBits());
+            }
+            // Show current method info
+            fprintf(dnuTraceLog, "  method_=0x%llx\n", (unsigned long long)method_.rawBits());
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                ObjectHeader* mh = method_.asObjectPtr();
+                fprintf(dnuTraceLog, "  method format=%d isCompiledMethod=%d\n",
+                        (int)mh->format(), mh->isCompiledMethod());
+                Oop hdr = memory_.fetchPointer(0, method_);
+                fprintf(dnuTraceLog, "  method header=0x%llx isSmallInt=%d\n",
+                        (unsigned long long)hdr.rawBits(), hdr.isSmallInteger());
+                if (hdr.isSmallInteger()) {
+                    int nLits = hdr.asSmallInteger() & 0x7FFF;
+                    fprintf(dnuTraceLog, "  method numLiterals=%d\n", nLits);
+                }
+            }
+            // Show bytecode that triggered this
+            fprintf(dnuTraceLog, "  ip=%zu bytecodeEnd=%zu\n", instructionPointer_, bytecodeEnd_);
+            fflush(dnuTraceLog);
+        }
+
         // Debug: if still unknown and it's an isHandlerOrSignalingContext call, investigate
         static int unknownHandlerCount = 0;
         if (rcvrClassName == "<unknown>" && selStr == "isHandlerOrSignalingContext" && unknownHandlerCount < 5) {
@@ -13450,16 +13649,27 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
     // Fallback for copyTo: on nil - causes infinite recursion via exception handling
     // The cycle: copyTo: on nil -> DNU -> exception -> copyTo: contexts -> copyTo: on nil -> ...
-    if (origStr == "copyTo:" && (actualReceiver.isNil() || actualReceiver.rawBits() == memory_.nil().rawBits())) {
-        static int copyToNilCount = 0;
-        copyToNilCount++;
-        if (copyToNilCount <= 5) {
-            std::cerr << "[DNU-COPYTNIL #" << copyToNilCount << "] copyTo: on nil - returning nil to break cycle\n";
+    if (origStr == "copyTo:") {
+        static int copyToDebugCount = 0;
+        copyToDebugCount++;
+        if (copyToDebugCount <= 10) {
+            std::cerr << "[DNU-COPYTO-DEBUG #" << copyToDebugCount << "] actualReceiver=0x" << std::hex << actualReceiver.rawBits()
+                      << " memory_.nil()=0x" << memory_.nil().rawBits()
+                      << " isNil=" << actualReceiver.isNil()
+                      << " rcvrClassName=" << rcvrClassName << std::dec << "\n";
         }
-        popN(argCount + 1);
-        push(memory_.nil());
-        dnuDepth--;
-        return;
+        // More lenient check - if rcvrClassName is UndefinedObject, treat as nil
+        if (rcvrClassName == "UndefinedObject" || actualReceiver.isNil() || actualReceiver.rawBits() == memory_.nil().rawBits()) {
+            static int copyToNilCount = 0;
+            copyToNilCount++;
+            if (copyToNilCount <= 5) {
+                std::cerr << "[DNU-COPYTNIL #" << copyToNilCount << "] copyTo: on nil - returning nil to break cycle\n";
+            }
+            popN(argCount + 1);
+            push(memory_.nil());
+            dnuDepth--;
+            return;
+        }
     }
 
     // Fallback for #current: on OSWindowDriver class - set the current driver
@@ -14104,6 +14314,73 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         }
         popN(argCount + 1);  // Pop receiver and all args
         push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+
+    // Debug: MethodDictionary >> #> is a bug - something is returning wrong type
+    if (origStr == ">" && rcvrClassName == "MethodDictionary" && argCount == 1) {
+        static FILE* mdGtLog = nullptr;
+        static int mdGtCount = 0;
+        mdGtCount++;
+        if (mdGtCount <= 5) {
+            if (!mdGtLog) mdGtLog = fopen("/tmp/method_dict_gt.log", "w");
+            if (mdGtLog) {
+                fprintf(mdGtLog, "[MD>GT #%d] MethodDictionary >> #> with arg=0x%llx\n",
+                        mdGtCount, (unsigned long long)stackValue(0).rawBits());
+                // Show argument type
+                Oop arg = stackValue(0);
+                if (arg.isSmallInteger()) {
+                    fprintf(mdGtLog, "  arg is SmallInteger: %lld\n", arg.asSmallInteger());
+                } else if (arg.isObject()) {
+                    Oop argCls = memory_.classOf(arg);
+                    std::string argClassName = "<unknown>";
+                    if (argCls.isObject()) {
+                        Oop argName = memory_.fetchPointer(6, argCls);
+                        if (argName.isObject() && argName.rawBits() > 0x10000) {
+                            ObjectHeader* anHdr = argName.asObjectPtr();
+                            if (anHdr->isBytesObject() && anHdr->byteSize() < 100) {
+                                argClassName = std::string((char*)anHdr->bytes(), anHdr->byteSize());
+                            }
+                        }
+                    }
+                    fprintf(mdGtLog, "  arg is object of class: %s\n", argClassName.c_str());
+                }
+                // Show call stack
+                fprintf(mdGtLog, "  Current method: ");
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    Oop hdr = memory_.fetchPointer(0, method_);
+                    if (hdr.isSmallInteger()) {
+                        int nLits = hdr.asSmallInteger() & 0x7FFF;
+                        if (nLits >= 2 && nLits < 100) {
+                            Oop sel = memory_.fetchPointer(nLits - 1, method_);
+                            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                ObjectHeader* selHdr = sel.asObjectPtr();
+                                if (selHdr->isBytesObject() && selHdr->byteSize() < 100) {
+                                    fprintf(mdGtLog, "#%s\n",
+                                            std::string((char*)selHdr->bytes(), selHdr->byteSize()).c_str());
+                                } else {
+                                    fprintf(mdGtLog, "<bad selector>\n");
+                                }
+                            } else {
+                                fprintf(mdGtLog, "<no selector>\n");
+                            }
+                        } else {
+                            fprintf(mdGtLog, "<bad nLits=%d>\n", nLits);
+                        }
+                    } else {
+                        fprintf(mdGtLog, "<bad header>\n");
+                    }
+                } else {
+                    fprintf(mdGtLog, "<no method>\n");
+                }
+                fprintf(mdGtLog, "  frameDepth=%zu\n", frameDepth_);
+                fflush(mdGtLog);
+            }
+        }
+        // Return false as a fallback - comparison failed
+        popN(argCount + 1);
+        push(memory_.falseObject());
         dnuDepth--;
         return;
     }
@@ -19744,6 +20021,43 @@ bool Interpreter::executeFromContext(Oop context) {
         fflush(stderr);
     }
     receiver_ = memory_.fetchPointer(5, context);
+
+    // CRITICAL: Check if receiver is raw 0 - this indicates corruption
+    if (receiver_.rawBits() == 0) {
+        static FILE* rcvrZeroLog = nullptr;
+        static int rcvrZeroCount = 0;
+        if (!rcvrZeroLog) rcvrZeroLog = fopen("/tmp/receiver_zero.log", "w");
+        if (rcvrZeroLog && rcvrZeroCount++ < 20) {
+            fprintf(rcvrZeroLog, "[RCVR-ZERO #%d] In executeFromContext! context=0x%llx\n",
+                    rcvrZeroCount, (unsigned long long)context.rawBits());
+            // Dump context slots to understand the corruption
+            ObjectHeader* ctxHdr = context.asObjectPtr();
+            fprintf(rcvrZeroLog, "  context slots: ");
+            for (size_t i = 0; i < std::min(ctxHdr->slotCount(), (size_t)10); i++) {
+                fprintf(rcvrZeroLog, "[%zu]=0x%llx ", i, (unsigned long long)ctxHdr->slotAt(i).rawBits());
+            }
+            fprintf(rcvrZeroLog, "\n");
+            // Get method name
+            std::string methodName = "?";
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                Oop hdr = memory_.fetchPointer(0, method_);
+                if (hdr.isSmallInteger()) {
+                    int numLits = hdr.asSmallInteger() & 0x7FFF;
+                    if (numLits >= 2) {
+                        Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                            ObjectHeader* selHdr = sel.asObjectPtr();
+                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                methodName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+            }
+            fprintf(rcvrZeroLog, "  method: #%s\n", methodName.c_str());
+            fflush(rcvrZeroLog);
+        }
+    }
 
     // Check for and fix unrelocated pointers (old image base 0x10000000000+)
     // The old Spur 64-bit image base is 0x10000000000 (1TB)
