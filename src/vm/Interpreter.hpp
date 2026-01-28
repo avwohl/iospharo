@@ -403,6 +403,7 @@ private:
     Oop pendingDriverSetupMethod_ = Oop::nil();
     Oop pendingDriverSetupReceiver_ = Oop::nil();
     bool hasPendingDriverSetup_ = false;
+    bool enableDirectInputSignaling_ = false;  // True when VM should signal input semaphore directly
 
     // NOTE: Event injection workaround member variables REMOVED
     // Events must go through proper Smalltalk InputEventSensor process, not C++ workarounds

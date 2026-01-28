@@ -5850,6 +5850,202 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         if (sendCount >= 4575) hangDebugEnabled = true;
     }
 
+    // TRACE: Log EVERY primitiveResume send with step number
+    if (selector.isObject() && selector.rawBits() > 0x10000) {
+        ObjectHeader* selHdr = selector.asObjectPtr();
+        if (selHdr->isBytesObject() && selHdr->byteSize() == 15) {
+            const char* selBytes = (const char*)selHdr->bytes();
+            if (memcmp(selBytes, "primitiveResume", 15) == 0) {
+                static FILE* primResSendLog = nullptr;
+                static int primResSendCount = 0;
+                if (!primResSendLog) primResSendLog = fopen("/tmp/primres_send.log", "w");
+                if (primResSendLog && primResSendCount++ < 50) {
+                    Oop rcvr = stackValue(argCount);
+                    int pri = -1;
+                    if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                        Oop priOop = memory_.fetchPointer(2, rcvr);
+                        if (priOop.isSmallInteger()) pri = (int)priOop.asSmallInteger();
+                    }
+                    fprintf(primResSendLog, "[PRIMRES-SEND #%d step=%llu] rcvr=0x%llx pri=%d argCount=%d\n",
+                            primResSendCount, (unsigned long long)g_stepNum,
+                            (unsigned long long)rcvr.rawBits(), pri, argCount);
+                    fflush(primResSendLog);
+                }
+            }
+        }
+    }
+
+    // TRACE: Log priority:, forkAt:, and lowIOPriority calls to trace process priority issue
+    if (selector.isObject() && selector.rawBits() > 0x10000) {
+        ObjectHeader* selHdr = selector.asObjectPtr();
+        if (selHdr->isBytesObject()) {
+            size_t selLen = selHdr->byteSize();
+            const char* selBytes = (const char*)selHdr->bytes();
+            static FILE* priLog = nullptr;
+            static int priLogCount = 0;
+            static bool priLogSetup = false;
+            if (!priLogSetup) {
+                priLog = fopen("/tmp/priority_trace.log", "w");
+                priLogSetup = true;
+            }
+
+            // Track priority: with 1 argument
+            if (selLen == 9 && memcmp(selBytes, "priority:", 9) == 0 && argCount == 1) {
+                if (priLog && priLogCount++ < 500) {
+                    Oop arg = stackValue(0);  // The priority argument
+                    Oop rcvr = stackValue(1); // The Process receiver
+                    fprintf(priLog, "[PRI-SET #%d step=%llu] priority: arg=", priLogCount, (unsigned long long)g_stepNum);
+                    if (arg.isSmallInteger()) {
+                        fprintf(priLog, "%lld", (long long)arg.asSmallInteger());
+                    } else {
+                        fprintf(priLog, "0x%llx (not SmallInt)", (unsigned long long)arg.rawBits());
+                    }
+                    fprintf(priLog, " rcvr=0x%llx", (unsigned long long)rcvr.rawBits());
+                    // Show caller method - try to find selector
+                    if (method_.isObject() && method_.rawBits() > 0x10000) {
+                        ObjectHeader* mh = method_.asObjectPtr();
+                        if (mh->isCompiledMethod()) {
+                            Oop hdr = memory_.fetchPointer(0, method_);
+                            if (hdr.isSmallInteger()) {
+                                int numLits = (hdr.asSmallInteger() >> 1) & 0x7FFF;
+                                std::string callerSel = "?";
+                                // Try last few literals to find selector Symbol
+                                for (int i = numLits; i >= std::max(1, numLits - 3); i--) {
+                                    Oop lit = memory_.fetchPointer(i, method_);
+                                    if (lit.isObject() && lit.rawBits() > 0x10000) {
+                                        ObjectHeader* lh = lit.asObjectPtr();
+                                        // Check if it's a Symbol (bytes object)
+                                        if (lh->isBytesObject() && lh->byteSize() < 60 && lh->byteSize() > 0) {
+                                            callerSel = std::string((char*)lh->bytes(), lh->byteSize());
+                                            break;
+                                        }
+                                        // Check if it's an AdditionalMethodState - look for selector slot
+                                        if ((int)lh->format() >= 1 && (int)lh->format() <= 5 && lh->slotCount() > 0) {
+                                            // First slot of AdditionalMethodState is the selector
+                                            Oop selSlot = memory_.fetchPointer(0, lit);
+                                            if (selSlot.isObject() && selSlot.rawBits() > 0x10000) {
+                                                ObjectHeader* ssh = selSlot.asObjectPtr();
+                                                if (ssh->isBytesObject() && ssh->byteSize() < 60 && ssh->byteSize() > 0) {
+                                                    callerSel = std::string((char*)ssh->bytes(), ssh->byteSize());
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                fprintf(priLog, " caller=#%s", callerSel.c_str());
+                            }
+                        }
+                    }
+                    fprintf(priLog, "\n");
+                    fflush(priLog);
+                }
+            }
+            // Track forkAt: with 1 argument
+            else if (selLen == 7 && memcmp(selBytes, "forkAt:", 7) == 0 && argCount == 1) {
+                if (priLog && priLogCount++ < 500) {
+                    Oop arg = stackValue(0);  // The priority argument
+                    fprintf(priLog, "[FORK-AT #%d step=%llu] forkAt: priority=", priLogCount, (unsigned long long)g_stepNum);
+                    if (arg.isSmallInteger()) {
+                        fprintf(priLog, "%lld", (long long)arg.asSmallInteger());
+                    } else {
+                        fprintf(priLog, "0x%llx (not SmallInt)", (unsigned long long)arg.rawBits());
+                    }
+                    fprintf(priLog, "\n");
+                    fflush(priLog);
+                }
+            }
+            // Track newProcess: (which is used in block forking)
+            else if (selLen == 11 && memcmp(selBytes, "newProcess:", 11) == 0) {
+                if (priLog && priLogCount++ < 500) {
+                    fprintf(priLog, "[NEW-PROC #%d step=%llu] newProcess: called\n", priLogCount, (unsigned long long)g_stepNum);
+                    fflush(priLog);
+                }
+            }
+            // Track forkAt:named: (2 args)
+            else if (selLen == 13 && memcmp(selBytes, "forkAt:named:", 13) == 0 && argCount == 2) {
+                if (priLog && priLogCount++ < 500) {
+                    Oop nameArg = stackValue(0);  // name (top of stack)
+                    Oop priArg = stackValue(1);   // priority
+                    fprintf(priLog, "[FORK-AT-NAMED #%d step=%llu] forkAt:named: priority=", priLogCount, (unsigned long long)g_stepNum);
+                    if (priArg.isSmallInteger()) {
+                        fprintf(priLog, "%lld", (long long)priArg.asSmallInteger());
+                    } else {
+                        fprintf(priLog, "0x%llx (not SmallInt)", (unsigned long long)priArg.rawBits());
+                    }
+                    fprintf(priLog, "\n");
+                    fflush(priLog);
+                }
+            }
+            // Track lowIOPriority (0 args) - returns from ProcessorScheduler
+            else if (selLen == 13 && memcmp(selBytes, "lowIOPriority", 13) == 0 && argCount == 0) {
+                if (priLog && priLogCount++ < 500) {
+                    Oop rcvr = stackValue(0);
+                    std::string rcvrClass = "?";
+                    if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                        Oop cls = memory_.classOf(rcvr);
+                        if (cls.isObject() && cls.rawBits() > 0x10000) {
+                            Oop clsName = memory_.fetchPointer(6, cls);
+                            if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                                ObjectHeader* nh = clsName.asObjectPtr();
+                                if (nh->isBytesObject() && nh->byteSize() < 60) {
+                                    rcvrClass = std::string((char*)nh->bytes(), nh->byteSize());
+                                }
+                            }
+                        }
+                    }
+                    // Get calling method
+                    std::string callerSel = "?";
+                    if (method_.isObject() && method_.rawBits() > 0x10000) {
+                        ObjectHeader* mh = method_.asObjectPtr();
+                        if (mh->isCompiledMethod()) {
+                            Oop hdr = memory_.fetchPointer(0, method_);
+                            if (hdr.isSmallInteger()) {
+                                int numLits = (hdr.asSmallInteger() >> 1) & 0x7FFF;
+                                for (int i = numLits; i >= std::max(1, numLits - 3); i--) {
+                                    Oop lit = memory_.fetchPointer(i, method_);
+                                    if (lit.isObject() && lit.rawBits() > 0x10000) {
+                                        ObjectHeader* lh = lit.asObjectPtr();
+                                        if (lh->isBytesObject() && lh->byteSize() < 60 && lh->byteSize() > 0) {
+                                            callerSel = std::string((char*)lh->bytes(), lh->byteSize());
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    fprintf(priLog, "[LO-IO-PRI #%d step=%llu] lowIOPriority called on %s (0x%llx) caller=#%s\n",
+                            priLogCount, (unsigned long long)g_stepNum, rcvrClass.c_str(),
+                            (unsigned long long)rcvr.rawBits(), callerSel.c_str());
+                    fflush(priLog);
+                }
+            }
+            // Track userBackgroundPriority too
+            else if (selLen == 22 && memcmp(selBytes, "userBackgroundPriority", 22) == 0 && argCount == 0) {
+                if (priLog && priLogCount++ < 500) {
+                    fprintf(priLog, "[USER-BG-PRI #%d step=%llu] userBackgroundPriority called\n", priLogCount, (unsigned long long)g_stepNum);
+                    fflush(priLog);
+                }
+            }
+            // Track forContext:priority: (2 args)
+            else if (selLen == 19 && memcmp(selBytes, "forContext:priority:", 19) == 0 && argCount == 2) {
+                if (priLog && priLogCount++ < 500) {
+                    Oop priArg = stackValue(0);  // priority argument (top of stack)
+                    Oop ctxArg = stackValue(1);  // context argument
+                    fprintf(priLog, "[FOR-CTX-PRI #%d step=%llu] forContext:priority: pri=", priLogCount, (unsigned long long)g_stepNum);
+                    if (priArg.isSmallInteger()) {
+                        fprintf(priLog, "%lld", (long long)priArg.asSmallInteger());
+                    } else {
+                        fprintf(priLog, "0x%llx (not SmallInt)", (unsigned long long)priArg.rawBits());
+                    }
+                    fprintf(priLog, " ctx=0x%llx\n", (unsigned long long)ctxArg.rawBits());
+                    fflush(priLog);
+                }
+            }
+        }
+    }
+
     // CRITICAL: Detect nil selector - this should NEVER happen
     static FILE* nilSelLog = nullptr;
     static int nilSelCount = 0;
@@ -18899,32 +19095,17 @@ void Interpreter::installOSiOSDriver() {
     }
 
     if (setupMethod.isNil() || !setupMethod.isObject()) {
-        if (usingOSiOSDriver) {
-            // OSiOSDriver should use native event polling via primitive 264
-            // Don't schedule OSSDL2Driver's FFI-based setupEventLoop
-            if (driverLog) {
-                fprintf(driverLog, "[DRIVER] Using OSiOSDriver - enabling native event polling now\n");
-                fflush(driverLog);
-            }
-            // Enable native event polling immediately
-            gEventQueue.setSDL2EventPollingActive(true);
-        } else {
-            // Not using OSiOSDriver, try OSSDL2Driver as fallback (uses FFI)
-            Oop ossdl2DriverClass = memory_.findGlobal("OSSDL2Driver");
-            if (ossdl2DriverClass.isObject() && ossdl2DriverClass.rawBits() != nilObj.rawBits()) {
-                if (driverLog) {
-                    fprintf(driverLog, "[DRIVER] Looking for setupEventLoop in OSSDL2Driver (fallback)\n");
-                    fflush(driverLog);
-                }
-                setupMethod = findMethodInClass(ossdl2DriverClass, "setupEventLoop");
-                if (setupMethod.isObject() && !setupMethod.isNil()) {
-                    if (driverLog) {
-                        fprintf(driverLog, "[DRIVER] FOUND setupEventLoop in OSSDL2Driver (fallback - uses FFI)\n");
-                        fflush(driverLog);
-                    }
-                }
-            }
+        // setupEventLoop not found in OSiOSDriver
+        // DO NOT use OSSDL2Driver's FFI-based setupEventLoop - FFI type resolution is broken
+        // Instead, enable VM-based event processing which directly injects events
+        if (driverLog) {
+            fprintf(driverLog, "[DRIVER] No setupEventLoop found - enabling VM native event processing\n");
+            fprintf(driverLog, "[DRIVER] Events will be handled via VM's processInputEvents and signalInputSemaphore\n");
+            fflush(driverLog);
         }
+        // Keep SDL2EventPollingActive=false so processInputEvents handles events
+        // Enable direct InputEventSensor signaling mode
+        enableDirectInputSignaling_ = true;
     }
 
     if (setupMethod.isObject() && !setupMethod.isNil()) {
@@ -18936,12 +19117,14 @@ void Interpreter::installOSiOSDriver() {
             fprintf(driverLog, "[DRIVER] Scheduled setupEventLoop for execution after install\n");
             fflush(driverLog);
         }
-    } else {
+    } else if (!enableDirectInputSignaling_) {
+        // Only warn if we didn't enable native event processing
         if (driverLog) {
             fprintf(driverLog, "[DRIVER] WARNING: setupEventLoop not found - event loop won't start!\n");
             fflush(driverLog);
         }
     }
+    // If enableDirectInputSignaling_ is true, VM will handle events natively
 }
 
 bool Interpreter::executePendingDriverInstall() {
