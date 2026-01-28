@@ -7154,10 +7154,93 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             fflush(sendTraceLog);
         }
 
+        // TRACE: Log session handler iteration to understand why it stops
+        if (selEquals("startup:") && argCount == 1) {
+            // ClassSessionHandler >> startup: (not startUp:) is the iteration method
+            static int handlerCallCount = 0;
+            handlerCallCount++;
+            if (handlerCallCount <= 30) {
+                fprintf(stderr, "[HANDLER-ITER #%d step=%llu] startup: called fd=%zu\n",
+                        handlerCallCount, g_stepNum, frameDepth_);
+            }
+        }
+
+        // TRACE: Track return from iteration - when does frame depth get low again?
+        static uint64_t lastLowFDStep = 0;
+        if (frameDepth_ <= 4 && g_stepNum > 20000) {
+            if (g_stepNum - lastLowFDStep > 100000) {
+                // Log when we return to low frame depth after a long time
+                std::string traceSelStr(selBytes, selBytes + selLen);
+                fprintf(stderr, "[LOW-FD step=%llu fd=%zu] %s (gap=%llu)\n",
+                        g_stepNum, frameDepth_, traceSelStr.c_str(), g_stepNum - lastLowFDStep);
+            }
+            lastLowFDStep = g_stepNum;
+        }
+
+        // Track when we first go to very low frame depth
+        static bool seenFD0 = false;
+        if (frameDepth_ <= 1 && g_stepNum > 20000 && !seenFD0) {
+            seenFD0 = true;
+            std::string traceSelStr(selBytes, selBytes + selLen);
+            fprintf(stderr, "[FIRST-FD0 step=%llu fd=%zu] %s - startup chain unwound!\n",
+                    g_stepNum, frameDepth_, traceSelStr.c_str());
+        }
+
+        // Track runStartup: completion
+        if (selEquals("runStartup:") || selEquals("runShutdown:")) {
+            static int rsCount = 0;
+            if (rsCount++ < 10) {
+                std::string traceSelStr(selBytes, selBytes + selLen);
+                fprintf(stderr, "[RUN-STARTUP #%d step=%llu fd=%zu] %s\n",
+                        rsCount, g_stepNum, frameDepth_, traceSelStr.c_str());
+            }
+        }
+
+        // Track non-local returns, terminateProcess, and yield/sleep
+        if (selEquals("terminate") || selEquals("terminateProcess") ||
+            selEquals("yield") || selEquals("wait") || selEquals("suspend") ||
+            selEquals("resume") || selEquals("transferTo:")) {
+            static int procCtrl = 0;
+            if (procCtrl++ < 50) {
+                std::string traceSelStr(selBytes, selBytes + selLen);
+                fprintf(stderr, "[PROC-CTRL #%d step=%llu fd=%zu] %s\n",
+                        procCtrl, g_stepNum, frameDepth_, traceSelStr.c_str());
+            }
+        }
+        // Track frame depth transitions around the problematic range
+        static int prevFD = 0;
+        if (g_stepNum >= 344000 && g_stepNum <= 346000) {
+            // Detail ALL sends in the critical range
+            static int critDetail = 0;
+            if (critDetail++ < 300) {
+                std::string traceSelStr(selBytes, selBytes + selLen);
+                fprintf(stderr, "[CRIT step=%llu fd=%zu] %s argCount=%d\n",
+                        g_stepNum, frameDepth_, traceSelStr.c_str(), argCount);
+            }
+        }
+        if (g_stepNum >= 340000 && g_stepNum <= 360000) {
+            if (abs((int)frameDepth_ - prevFD) > 3) {
+                std::string traceSelStr(selBytes, selBytes + selLen);
+                fprintf(stderr, "[FD-JUMP step=%llu fd=%d->%zu] %s\n",
+                        g_stepNum, prevFD, frameDepth_, traceSelStr.c_str());
+            }
+        }
+        prevFD = frameDepth_;
+        // Track error/exception signals anywhere
+        if (selEquals("signal") || selEquals("handleSignal:") ||
+            selEquals("defaultAction") || selEquals("pass")) {
+            static int sigCount = 0;
+            if (sigCount++ < 50) {
+                std::string traceSelStr(selBytes, selBytes + selLen);
+                fprintf(stderr, "[SIGNAL #%d step=%llu fd=%zu] %s\n",
+                        sigCount, g_stepNum, frameDepth_, traceSelStr.c_str());
+            }
+        }
+
         // TRACE: Log ALL startUp: calls to see which handler is causing issues
         if (selEquals("startUp:") && argCount == 1) {
             static int startUpTraceCount = 0;
-            if (startUpTraceCount++ < 20) {
+            if (startUpTraceCount++ < 30) {
                 Oop rcvr = stackValue(1);  // Receiver (the class or handler)
                 std::string className = "<unknown>";
                 if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
@@ -7194,6 +7277,35 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             if (traceThisSend && sendTraceLog) {
                 fprintf(sendTraceLog, "[SEND step=%llu] After startUp: handler logging\n", g_stepNum);
                 fflush(sendTraceLog);
+            }
+        }
+
+        // TRACE: Track iteration flow - log do: and value: calls in the startup step range
+        static bool iterTracingEnabled = true;
+        if (iterTracingEnabled && g_stepNum < 100000) {
+            if (selEquals("do:") && argCount == 1) {
+                static int doCount = 0;
+                if (doCount++ < 50) {
+                    Oop rcvr = stackValue(1);
+                    std::string rcvrClass = "<unknown>";
+                    if (rcvr.isObject()) {
+                        Oop rcvrClassOop = memory_.classOf(rcvr);
+                        if (rcvrClassOop.isObject()) {
+                            ObjectHeader* clsHdr = rcvrClassOop.asObjectPtr();
+                            if (clsHdr->slotCount() >= 7) {
+                                Oop nm = clsHdr->slotAt(6);
+                                if (nm.isObject() && nm.rawBits() > 0x10000) {
+                                    ObjectHeader* nmHdr = nm.asObjectPtr();
+                                    if (nmHdr->isBytesObject() && nmHdr->byteSize() < 50) {
+                                        rcvrClass = std::string((char*)nmHdr->bytes(), nmHdr->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    fprintf(stderr, "[ITER-DO #%d step=%llu] %s >> do: fd=%zu\n",
+                            doCount, g_stepNum, rcvrClass.c_str(), frameDepth_);
+                }
             }
         }
 
