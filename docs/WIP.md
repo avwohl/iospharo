@@ -350,12 +350,43 @@ Uses LOW bits for tags (not high bits):
 
 ## Current Priority
 
-**Image startup is now fully working.** Morphic renders, SessionManager initializes, zero DNU errors.
+**Display rendering works.** Morphic renders correctly: 50M steps, 1391 display updates, 227 unique colors.
+**Input events don't reach Smalltalk.** The event loop process terminates during startup.
 
-Remaining work:
-- Event loop: OSSDL2Driver's event loop has nil semaphore (FFI type resolution broken)
-- Need OSiOSDriver with proper event loop methods (see scripts/load_ios_driver.st)
-- Display rendering works but needs BitBlt for proper morph drawing
+### What works:
+- Image loads and runs (50M bytecodes)
+- SessionManager initializes correctly
+- MorphicRenderLoop renders Morphic UI (MenubarMorph, TaskbarMorph, etc.)
+- Display surface receives BitBlt updates
+- Only 500 DNUs total (mostly harmless `nil>>freeze` during startup)
+- VM stable — no crashes on standard image
+
+### What's broken: Input Event Loop
+- OSSDL2Driver's `setupEventLoop` starts but the forked event loop process terminates
+- The event loop calls `inputSemaphore wait` but inputSemaphore is nil
+- `inputSemaphore` is nil because OSSDL2Driver>>initialize calls `SDL2 initEverything` via FFI, which fails
+- FFI fails because `ExternalType` resolution returns ByteSymbols instead of ExternalType objects
+- Specific DNU: `ByteSymbol >> #asPointerType` and `ByteSymbol >> #newReferentClass:`
+- Primitive 264 (getNextEvent) is implemented but NEVER called — no process polls it
+- Input semaphore index = 0 — never registered via primitiveExternalObjectRegister
+
+### Root Cause: FFI Type Resolution Bug
+During startup, `FFIStructure resetAllStructuresIfPlatformChanged` recompiles all FFI struct fields.
+The call chain is: `resetStructureIfNotIn:` → `compileFields` → `compileFields:withAccessors:` → `ExternalType noticeModificationOf:`.
+In `compileFields:withAccessors:`, type names (ByteSymbols) should be resolved to ExternalType objects via `ExternalType atomicTypeNamed:` or `structTypeNamed:`. Something in this resolution returns the Symbol itself instead of an ExternalType.
+
+The `ExternalType class >> noticeModificationOf:` method iterates `StructTypes` dictionary and sends `type asPointerType` and `type newReferentClass:` on each entry. If an entry is a ByteSymbol instead of ExternalType, it triggers DNU.
+
+**Possible causes:**
+1. `ExternalType class >> initializeDefaultTypes` was never called (class init didn't run)
+2. `AtomicTypes` or `StructTypes` dictionaries are nil or improperly populated
+3. The StructTypes dictionary has ByteSymbol values instead of ExternalType values
+
+### Next Step: Fix FFI Type Resolution
+1. Check if ExternalType class variables (AtomicTypes, StructTypes) are properly initialized
+2. If they're nil, the class initialization didn't run — need to trigger `ExternalType initialize`
+3. If they exist but contain wrong types, trace where ByteSymbols are inserted
+4. This should fix OSSDL2Driver initialization → fix event loop → fix input handling
 
 ## Fixed Investigation (2026-01-28)
 

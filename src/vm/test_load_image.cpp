@@ -14,6 +14,9 @@
 #include <chrono>
 #include <vector>
 #include <cstring>
+#include <csignal>
+#include <execinfo.h>
+#include <unistd.h>
 #include <unordered_map>
 
 using namespace pharo;
@@ -394,7 +397,17 @@ void testOopTagging() {
     std::cout << "  Character tag:    " << (ch.rawBits() & 7) << " (expected 3)" << std::endl;
 }
 
+static void sigsegvHandler(int sig) {
+    fprintf(stderr, "\n[SIGSEGV] Signal %d caught!\n", sig);
+    void* callstack[128];
+    int frames = backtrace(callstack, 128);
+    backtrace_symbols_fd(callstack, frames, 2);
+    _exit(139);
+}
+
 int main(int argc, char* argv[]) {
+    signal(SIGSEGV, sigsegvHandler);
+    signal(SIGBUS, sigsegvHandler);
     std::cout << "Pharo Clean VM - Image Loader Test" << std::endl;
     std::cout << "===================================" << std::endl;
 
