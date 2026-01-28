@@ -350,42 +350,14 @@ bool ImageLoader::relocatePointers(ObjectMemory& memory, LoadResult& result) {
         uint8_t slotCountByte = extractNumSlots(header);
         uint8_t format = extractFormat(header);
 
-        // Check for overflow header - must match ObjectHeader::slotCount() logic!
+        // Check for overflow header - mask top byte per standard Spur
         size_t slotCount;
         uint64_t* firstSlot;
         size_t headerSize = 8;  // Base header size
         if (slotCountByte == 255) {
-            // Check if previous word looks like a valid overflow count
+            // Overflow: previous word has count in low 56 bits (top byte is 0xFF marker)
             uint64_t prevWord = *(headerPtr - 1);
-            bool looksLikeOverflow = false;
-            size_t overflowCount = 255;
-
-            // Check 1: High 32 bits = 0 means it's definitely a raw count
-            if (prevWord >= 255 && prevWord <= 1000000) {
-                if ((prevWord >> 32) == 0) {
-                    looksLikeOverflow = true;
-                    overflowCount = static_cast<size_t>(prevWord);
-                }
-            }
-
-            // Check 2: Low 32 bits might be a valid count even if high bits set
-            // This matches ObjectHeader::slotCount() for cases like 0xff00000000000400
-            if (!looksLikeOverflow) {
-                uint32_t lowBits = static_cast<uint32_t>(prevWord);
-                if (lowBits >= 255 && lowBits <= 65536) {
-                    looksLikeOverflow = true;
-                    overflowCount = static_cast<size_t>(lowBits);
-                }
-            }
-
-            if (looksLikeOverflow) {
-                slotCount = overflowCount;
-                // NOTE: headerSize stays at 8. The overflow word is at headerPtr - 1,
-                // BEFORE the header, so it's not part of the size from headerPtr forward.
-            } else {
-                // Not overflow - exactly 255 slots
-                slotCount = 255;
-            }
+            slotCount = static_cast<size_t>((prevWord << 8) >> 8);
             firstSlot = headerPtr + 1;
         } else {
             slotCount = slotCountByte;

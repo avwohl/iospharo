@@ -438,18 +438,18 @@ void ImageLoader::forEachObject(Func callback) {
         size_t size = objectSize(headerPtr);
         size_t offset = scan - loadedData_;
 
-        // Debug: print first 20 objects to trace scan path
-        if (objectNum < 20) {
-            std::cerr << "[OBJ] #" << objectNum
-                      << " @0x" << std::hex << offset
-                      << " hdr=0x" << header
-                      << " slots=" << std::dec << (int)numSlots
-                      << " fmt=" << (int)format
-                      << " cls=" << classIndex
-                      << " sz=" << size
-                      << " overflow=" << isOverflowObject
-                      << " end=0x" << std::hex << (offset + size) << std::dec << std::endl;
-        }
+        // Debug: uncomment to trace first objects
+        // if (objectNum < 20) {
+        //     std::cerr << "[OBJ] #" << objectNum
+        //               << " @0x" << std::hex << offset
+        //               << " hdr=0x" << header
+        //               << " slots=" << std::dec << (int)numSlots
+        //               << " fmt=" << (int)format
+        //               << " cls=" << classIndex
+        //               << " sz=" << size
+        //               << " overflow=" << isOverflowObject
+        //               << " end=0x" << std::hex << (offset + size) << std::dec << std::endl;
+        // }
 
         // Sanity check size
         if (size == 0 || size > (end - scan)) {
