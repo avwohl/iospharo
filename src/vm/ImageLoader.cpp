@@ -474,21 +474,9 @@ void ImageLoader::relocateObjectSlots(uint64_t* headerPtr) {
     uint8_t numSlots = extractNumSlots(header);
     size_t slotCount = numSlots;
     if (numSlots == 255) {
-        // Overflow: word before header may contain count
-        // Must match ObjectHeader::slotCount() logic
-        uint64_t prevWord = *(headerPtr - 1);
-
-        // Check 1: High 32 bits = 0 means it's definitely a raw count
-        if (prevWord >= 255 && prevWord <= 1000000 && (prevWord >> 32) == 0) {
-            slotCount = static_cast<size_t>(prevWord);
-        } else {
-            // Check 2: Low 32 bits might be valid count
-            uint32_t lowBits = static_cast<uint32_t>(prevWord);
-            if (lowBits >= 255 && lowBits <= 65536) {
-                slotCount = static_cast<size_t>(lowBits);
-            }
-            // else keep slotCount = 255
-        }
+        // Overflow: previous word contains count. Mask off top byte (standard Spur).
+        uint64_t rawWord = *(headerPtr - 1);
+        slotCount = static_cast<size_t>((rawWord << 8) >> 8);
     }
 
     // Slots are after the header
@@ -1092,42 +1080,9 @@ size_t ImageLoader::objectSize(uint64_t* headerPtr) const {
     size_t headerSize = 8;  // Base header
 
     if (numSlots == 255) {
-        // Could be overflow (previous word is count) or exactly 255 slots
-        uint64_t prevWord = *(headerPtr - 1);
-
-        // Check if prevWord looks like a valid overflow count.
-        // Must match ObjectHeader::slotCount() logic for consistency.
-        bool looksLikeOverflow = false;
-        size_t overflowCount = 255;
-
-        // Check 1: High 32 bits = 0 means it's definitely a raw count
-        if (prevWord >= 255 && prevWord <= 1000000) {
-            if ((prevWord >> 32) == 0) {
-                looksLikeOverflow = true;
-                overflowCount = static_cast<size_t>(prevWord);
-            }
-        }
-
-        // Check 2: Low 32 bits might be a valid count even if high bits set
-        // This handles cases like 0xff00000000000400 (1024 slots)
-        if (!looksLikeOverflow) {
-            uint32_t lowBits = static_cast<uint32_t>(prevWord);
-            if (lowBits >= 255 && lowBits <= 65536) {
-                looksLikeOverflow = true;
-                overflowCount = static_cast<size_t>(lowBits);
-            }
-        }
-
-        if (looksLikeOverflow) {
-            slotCount = overflowCount;
-            // NOTE: Do NOT add 8 for overflow word here!
-            // The overflow word is at headerPtr - 1, BEFORE the header.
-            // When we calculate size, we measure from header forward,
-            // so the overflow word was already passed and doesn't count.
-        } else {
-            // Not overflow - exactly 255 slots
-            slotCount = 255;
-        }
+        // Overflow: previous word contains count. Mask off top byte (standard Spur).
+        uint64_t rawWord = *(headerPtr - 1);
+        slotCount = static_cast<size_t>((rawWord << 8) >> 8);
     } else {
         slotCount = numSlots;
     }
@@ -1158,8 +1113,10 @@ size_t ImageLoader::objectSize(uint64_t* headerPtr) const {
         bodySize = slotCount * 8;
     }
 
-    // Total size (8-byte aligned)
+    // Total size: minimum 16 bytes (Spur requires 2 words minimum for forwarding pointer)
+    // Then align to 8 bytes
     size_t totalSize = headerSize + bodySize;
+    if (totalSize < 16) totalSize = 16;
     return (totalSize + 7) & ~7ULL;
 }
 

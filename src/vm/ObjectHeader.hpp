@@ -143,38 +143,19 @@ public:
     // ===== SLOT COUNT =====
 
     /// Get the number of pointer slots in this object.
-    /// For overflow headers, reads the previous word (with validation).
+    /// For overflow headers (numSlots==255), the previous word contains the
+    /// actual slot count. The standard Spur VM masks off the top byte of the
+    /// overflow word: (overflowWord << 8) >> 8, extracting the low 56 bits.
+    /// This is because the overflow word has 0xFF in its top byte (matching
+    /// the numSlots marker pattern).
     size_t slotCount() const {
         uint64_t count = (header_ & SlotCountMask) >> SlotCountShift;
         if (count == OverflowSlots) {
-            // Previous word might contain actual count
             const uint64_t* overflow = reinterpret_cast<const uint64_t*>(this) - 1;
-            uint64_t prevWord = *overflow;
-
-            // Check 1: High 32 bits = 0 means it's definitely a raw count
-            if (prevWord >= 255 && prevWord <= 1000000) {
-                if ((prevWord >> 32) == 0) {
-                    return static_cast<size_t>(prevWord);
-                }
-            }
-
-            // Check 2: The previous word might look like a header but actually
-            // contains an overflow count in a specific format. In 64-bit Spur,
-            // overflow counts are stored as raw 64-bit integers.
-            // If prevWord looks like 0xffXXXXXX00000YYY, where YYY is a valid count
-            // and the structure suggests it's tagged data, try using low 22 bits.
-            //
-            // Actually, for objects > 255 slots, the count is stored in full 64 bits.
-            // Let's check if low 32 bits make sense as a count:
-            uint32_t lowBits = static_cast<uint32_t>(prevWord);
-            if (lowBits >= 255 && lowBits <= 65536) {
-                // This could be a valid overflow count
-                // Verify the count is reasonable for the object size
-                return static_cast<size_t>(lowBits);
-            }
-
-            // Not a valid overflow count - this object has exactly 255 slots
-            return 255;
+            uint64_t rawWord = *overflow;
+            // Mask off top byte: standard Spur uses (word << 8) >> 8
+            uint64_t slotCount = (rawWord << 8) >> 8;
+            return static_cast<size_t>(slotCount);
         }
         return static_cast<size_t>(count);
     }

@@ -246,36 +246,23 @@ void ImageLoader::forEachObject(Func callback) {
             continue;
         }
 
-        // Check for overflow header: current word is slot count, next word has numSlots=255
-        // Large objects (>254 slots) store the actual count in a preceding word
+        // Check for overflow header: current word is overflow count, next word has numSlots=255
+        // In standard Spur, large objects (>254 slots) have:
+        //   [overflow word (0xFF top byte + count in low 56 bits)] [header with numSlots=255] [slots...]
+        // The overflow word ALSO has 0xFF in the top byte (same as numSlots marker).
         bool isOverflowObject = false;
         uint64_t overflowSlotCount = 0;
         if (scan + 8 < end) {
             uint64_t nextWord = *(headerPtr + 1);
-            // Check if next word looks like a valid overflow header
-            // (numSlots byte = 255, and it's a valid header structure)
             if (spurNumSlots(nextWord) == 255 && looksLikeValidHeader(nextWord)) {
-                // Current word is the overflow slot count
-                // Check 1: High 32 bits = 0 means full 64-bit value is the count
-                if (header >= 255 && header <= 1000000 && (header >> 32) == 0) {
-                    overflowSlotCount = header;
-                }
-                // Check 2: Low 32 bits might contain the count (handles 0xff00000000000400)
-                else {
-                    uint32_t lowBits = static_cast<uint32_t>(header);
-                    if (lowBits >= 255 && lowBits <= 65536) {
-                        overflowSlotCount = lowBits;
-                    }
-                }
-
-                if (overflowSlotCount > 0) {
-                    // Calculate how much space the object would need
-                    size_t objectBytes = 8 + 8 + overflowSlotCount * 8;  // overflow + header + slots
+                // Current word is the overflow count. Both current and next have top byte 0xFF.
+                // The actual count is in the low 56 bits: (word << 8) >> 8
+                if (spurNumSlots(header) == 255) {
+                    overflowSlotCount = (header << 8) >> 8;
+                    size_t objectBytes = 8 + 8 + overflowSlotCount * 8;
                     size_t remaining = end - scan;
-                    // Validate: fits in remaining space
-                    if (objectBytes <= remaining) {
+                    if (overflowSlotCount >= 255 && objectBytes <= remaining) {
                         isOverflowObject = true;
-                        // Move to the actual header
                         headerPtr = headerPtr + 1;
                         header = *headerPtr;
                         scan += 8;  // Account for the overflow word
@@ -284,41 +271,15 @@ void ImageLoader::forEachObject(Func callback) {
             }
         }
 
-        // Handle case where current header has numSlots=255
-        // This could be: (a) object with exactly 255 slots, or (b) we ARE at an overflow header
+        // If current header has numSlots=255 but we didn't detect overflow from forward scan,
+        // the previous word is the overflow count (mask top byte per standard Spur)
         if (!isOverflowObject && spurNumSlots(header) == 255) {
-            // Check if PREVIOUS word could be an overflow slot count
             if (scan > loadedData_) {
                 uint64_t prevWord = *(headerPtr - 1);
-                // Check 1: High 32 bits = 0 means it's definitely a raw count
-                if (prevWord >= 255 && prevWord <= 1000000 && (prevWord >> 32) == 0) {
-                    size_t objectBytes = 8 + 8 + prevWord * 8;
-                    size_t remaining = end - scan + 8;
-                    if (objectBytes <= remaining) {
-                        isOverflowObject = true;
-                        overflowSlotCount = prevWord;
-                    }
-                }
-                // Check 2: Low 32 bits might contain valid count (handles 0xff00000000000400)
-                else {
-                    uint32_t lowBits = static_cast<uint32_t>(prevWord);
-                    if (lowBits >= 255 && lowBits <= 65536) {
-                        size_t objectBytes = 8 + 8 + lowBits * 8;
-                        size_t remaining = end - scan + 8;
-                        if (objectBytes <= remaining) {
-                            isOverflowObject = true;
-                            overflowSlotCount = lowBits;
-                        }
-                    }
-                }
+                overflowSlotCount = (prevWord << 8) >> 8;
+                isOverflowObject = true;
             }
-
-            // If still not overflow, check if this looks like a valid header for a 255-slot object
-            if (!isOverflowObject && looksLikeValidHeader(header)) {
-                // Could be a real object with exactly 255 slots - let it through
-                // The objectSize function will handle it correctly
-            } else if (!isOverflowObject) {
-                // Not a valid header, skip it
+            if (!isOverflowObject && !looksLikeValidHeader(header)) {
                 scan += 8;
                 continue;
             }
@@ -477,17 +438,18 @@ void ImageLoader::forEachObject(Func callback) {
         size_t size = objectSize(headerPtr);
         size_t offset = scan - loadedData_;
 
-        // Debug: print objects near scheduler area
-        // if (objectNum < 20 || (offset >= 0x6db00 && offset < 0x6de00)) {
-        //     std::cerr << "[OBJ] #" << objectNum
-        //               << " @0x" << std::hex << offset
-        //               << " hdr=0x" << header
-        //               << " slots=" << std::dec << (int)numSlots
-        //               << " fmt=" << (int)format
-        //               << " cls=" << classIndex
-        //               << " sz=" << size
-        //               << " end=0x" << std::hex << (offset + size) << std::dec << std::endl;
-        // }
+        // Debug: print first 20 objects to trace scan path
+        if (objectNum < 20) {
+            std::cerr << "[OBJ] #" << objectNum
+                      << " @0x" << std::hex << offset
+                      << " hdr=0x" << header
+                      << " slots=" << std::dec << (int)numSlots
+                      << " fmt=" << (int)format
+                      << " cls=" << classIndex
+                      << " sz=" << size
+                      << " overflow=" << isOverflowObject
+                      << " end=0x" << std::hex << (offset + size) << std::dec << std::endl;
+        }
 
         // Sanity check size
         if (size == 0 || size > (end - scan)) {
