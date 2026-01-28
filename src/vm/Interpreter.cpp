@@ -4188,7 +4188,7 @@ void Interpreter::pushLiteralVariable(int index) {
     Oop value = memory_.fetchPointer(1, assoc);  // Association>>value
 
     // TRACE: Log when pushing nil from a literal variable (class lookup failure)
-    if (value.isNil()) {
+    if (value.isNil() || value.rawBits() == memory_.nil().rawBits()) {
         static FILE* nilLitLog = nullptr;
         static int nilLitCount = 0;
         if (!nilLitLog) nilLitLog = fopen("/tmp/nil_literal.log", "w");
@@ -13950,6 +13950,60 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
     dnuDepth++;
 
+    // Trace first nil>>wait with full stack
+    {
+        static bool tracedNilWait = false;
+        if (!tracedNilWait && argCount == 0 && stackValue(0).rawBits() == memory_.nil().rawBits()) {
+            // Check if selector is "wait"
+            bool isWait = false;
+            if (selector.isObject() && selector.rawBits() > 0x10000) {
+                ObjectHeader* selH = selector.asObjectPtr();
+                if (selH->isBytesObject() && selH->byteSize() == 4 &&
+                    memcmp(selH->bytes(), "wait", 4) == 0) isWait = true;
+            }
+            if (isWait) {
+                tracedNilWait = true;
+                FILE* f = fopen("/tmp/nil_wait_stack.log", "w");
+                if (f) {
+                    fprintf(f, "[nil>>wait] step=%llu frameDepth=%zu\n", (unsigned long long)g_stepNum, frameDepth_);
+                    // Current method
+                    auto getMethodName = [&](Oop meth) -> std::string {
+                        if (!meth.isObject() || meth.rawBits() <= 0x10000) return "?";
+                        Oop hdr = memory_.fetchPointer(0, meth);
+                        if (!hdr.isSmallInteger()) return "?";
+                        int nL = hdr.asSmallInteger() & 0x7FFF;
+                        if (nL < 2) return "?";
+                        Oop sel = memory_.fetchPointer(nL - 1, meth);
+                        if (!sel.isObject() || sel.rawBits() <= 0x10000) return "?";
+                        ObjectHeader* sH = sel.asObjectPtr();
+                        if (!sH->isBytesObject() || sH->byteSize() > 80) return "?";
+                        return std::string((char*)sH->bytes(), sH->byteSize());
+                    };
+                    auto getClassName = [&](Oop obj) -> std::string {
+                        Oop cls = memory_.classOf(obj);
+                        if (!cls.isObject()) return "?";
+                        Oop nm = memory_.fetchPointer(6, cls);
+                        if (!nm.isObject() || nm.rawBits() <= 0x10000) return "?";
+                        ObjectHeader* nH = nm.asObjectPtr();
+                        if (!nH->isBytesObject() || nH->byteSize() > 50) return "?";
+                        return std::string((char*)nH->bytes(), nH->byteSize());
+                    };
+                    fprintf(f, "  [0] method=#%s receiver=%s (0x%llx)\n",
+                            getMethodName(method_).c_str(), getClassName(receiver_).c_str(),
+                            (unsigned long long)receiver_.rawBits());
+                    for (size_t d = 0; d < frameDepth_ && d < 30; d++) {
+                        SavedFrame& sf = savedFrames_[frameDepth_ - 1 - d];
+                        fprintf(f, "  [%zu] method=#%s receiver=%s (0x%llx)\n",
+                                d + 1, getMethodName(sf.savedMethod).c_str(),
+                                getClassName(sf.savedReceiver).c_str(),
+                                (unsigned long long)sf.savedReceiver.rawBits());
+                    }
+                    fclose(f);
+                }
+            }
+        }
+    }
+
     // Log DNUs in high-priority processes (p60+) to correlate with process termination
     {
         Oop ap = getActiveProcess();
@@ -14554,16 +14608,19 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     }
 
     if (dnuDepth > MAX_DNU_DEPTH) {
-        std::cerr << "[DNU] MAX_DNU_DEPTH exceeded! Stopping VM.\n";
-        std::cerr << "[DNU] Last selector attempted: " << (selector.isObject() && selector.rawBits() > 0x10000 ?
-            std::string((char*)selector.asObjectPtr()->bytes(),
-                        std::min((size_t)50, selector.asObjectPtr()->byteSize())) : "unknown") << "\n";
+        static int maxDepthCount = 0;
+        if (++maxDepthCount <= 5) {
+            std::cerr << "[DNU] MAX_DNU_DEPTH exceeded (#" << maxDepthCount << ") - terminating process.\n";
+        }
         if (dnuTraceLog) {
-            fprintf(dnuTraceLog, "[DNU] MAX_DNU_DEPTH exceeded! Stopping VM.\n");
+            fprintf(dnuTraceLog, "[DNU] MAX_DNU_DEPTH exceeded! Terminating process.\n");
             fflush(dnuTraceLog);
         }
-        running_ = false;
+        // Terminate the process instead of killing the VM
+        // This lets other processes continue running
+        for (int i = 0; i < argCount + 1; i++) pop();
         dnuDepth = 0;
+        terminateCurrentProcess();
         return;
     }
 
@@ -17258,6 +17315,16 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     }
     Oop message = memory_.allocateSlots(messageClassIdx, 2, ObjectFormat::FixedSize);
 
+    // Guard against allocation failure (returns nil when out of memory)
+    if (message.rawBits() == memory_.nil().rawBits()) {
+        std::cerr << "[DNU-FATAL] Failed to allocate Message object - out of memory\n";
+        // Pop args + receiver to clean up stack
+        for (int i = 0; i < argCount + 1; i++) pop();
+        dnuDepth--;
+        running_ = false;
+        return;
+    }
+
     // Message layout: selector, arguments
     memory_.storePointer(0, message, selector);
 
@@ -17268,6 +17335,15 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         arrayClassIdx = memory_.registerClass(arrayClass);
     }
     Oop args = memory_.allocateSlots(arrayClassIdx, argCount, ObjectFormat::Indexable);
+
+    if (args.rawBits() == memory_.nil().rawBits() && argCount > 0) {
+        std::cerr << "[DNU-FATAL] Failed to allocate Array for DNU args - out of memory\n";
+        // Pop args + receiver to clean up stack
+        for (int i = 0; i < argCount + 1; i++) pop();
+        dnuDepth--;
+        running_ = false;
+        return;
+    }
 
     for (int i = argCount - 1; i >= 0; --i) {
         memory_.storePointer(i, args, pop());
