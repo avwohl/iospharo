@@ -4147,6 +4147,79 @@ void Interpreter::pushSpecial(int which) {
 }
 
 void Interpreter::returnValue(Oop value) {
+    // CRITICAL TRACE: Track when frame depth drops significantly during startup
+    static FILE* startupUnwindLog = nullptr;
+    static bool startupUnwindLogged = false;
+    if (!startupUnwindLog) startupUnwindLog = fopen("/tmp/startup_unwind.log", "w");
+
+    // Log when we're at low frame depth and about to return further
+    // Focus on the 350000-360000 step range where startup chain unwinds
+    if (frameDepth_ <= 20 && g_stepNum >= 350000 && g_stepNum < 360000 && !startupUnwindLogged) {
+        if (startupUnwindLog) {
+            fprintf(startupUnwindLog, "[UNWIND step=%llu fd=%zu] About to return\n", g_stepNum, frameDepth_);
+
+            // Get current method name
+            std::string methodName = "<unknown>";
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                Oop mHdr = memory_.fetchPointer(0, method_);
+                if (mHdr.isSmallInteger()) {
+                    size_t numLits = mHdr.asSmallInteger() & 0x7FFF;
+                    if (numLits >= 2) {
+                        Oop sel = memory_.fetchPointer(numLits - 1, method_);
+                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                            ObjectHeader* selHdr = sel.asObjectPtr();
+                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                                methodName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+            }
+            fprintf(startupUnwindLog, "  Current method: #%s\n", methodName.c_str());
+
+            // Log activeContext_ sender chain
+            fprintf(startupUnwindLog, "  activeContext_=0x%llx\n", (unsigned long long)activeContext_.rawBits());
+            Oop ctx = activeContext_;
+            Oop nilObj = memory_.nil();
+            for (int i = 0; i < 15 && ctx.isObject() && ctx.rawBits() != nilObj.rawBits(); i++) {
+                ObjectHeader* ctxHdr = ctx.asObjectPtr();
+                if (ctxHdr->slotCount() < 4) break;
+
+                Oop ctxMethod = memory_.fetchPointer(3, ctx);
+                std::string ctxMethodName = "<unknown>";
+                if (ctxMethod.isObject() && ctxMethod.rawBits() > 0x10000) {
+                    Oop cmHdr = memory_.fetchPointer(0, ctxMethod);
+                    if (cmHdr.isSmallInteger()) {
+                        size_t cmLits = cmHdr.asSmallInteger() & 0x7FFF;
+                        if (cmLits >= 2) {
+                            Oop cmSel = memory_.fetchPointer(cmLits - 1, ctxMethod);
+                            if (cmSel.isObject() && cmSel.rawBits() > 0x10000) {
+                                ObjectHeader* cmSelHdr = cmSel.asObjectPtr();
+                                if (cmSelHdr->isBytesObject() && cmSelHdr->byteSize() < 50) {
+                                    ctxMethodName = std::string((char*)cmSelHdr->bytes(), cmSelHdr->byteSize());
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Oop sender = memory_.fetchPointer(0, ctx);
+                fprintf(startupUnwindLog, "  [%d] ctx=0x%llx method=#%s sender=0x%llx%s\n",
+                        i, (unsigned long long)ctx.rawBits(), ctxMethodName.c_str(),
+                        (unsigned long long)sender.rawBits(),
+                        sender.rawBits() == nilObj.rawBits() ? " (nil!)" : "");
+
+                if (sender.rawBits() == nilObj.rawBits() || sender.rawBits() < 0x10000) {
+                    // Mark that startup chain is being unwound
+                    if (frameDepth_ == 0) startupUnwindLogged = true;
+                    break;
+                }
+                ctx = sender;
+            }
+            fflush(startupUnwindLog);
+        }
+    }
+
     // Trace returns to see where nil-filled Arrays come from
     if constexpr (ENABLE_DEBUG_LOGGING) {
     static FILE* retValLog = nullptr;
@@ -12867,10 +12940,18 @@ void Interpreter::activateBlock(Oop block, int argCount) {
         }
     }
 
-    // Update activeContext_ so blocks created inside this block
-    // capture the correct outer context chain
-    if (outerContext.isObject() && !outerContext.isNil()) {
-        activeContext_ = outerContext;
+    // FIX: Create a proper context for block activation with correct sender chain
+    // The sender should be the CALLER's context (activeContext_ before activation),
+    // NOT the block's outerContext (where the block was created).
+    // This ensures that when the block returns, it goes back to the caller (e.g., do:),
+    // not to where the block was defined (e.g., runStartup:).
+    Oop blockContext = memory_.createStartupContext(methodToExecute, receiver_);
+    if (!blockContext.isNil()) {
+        // Link to the caller's context (activeContext_ before this activation)
+        if (activeContext_.isObject() && !activeContext_.isNil()) {
+            memory_.storePointer(0, blockContext, activeContext_);  // sender = caller's context
+        }
+        activeContext_ = blockContext;
     }
 
     // Copy the copied values from the closure into the temp area
