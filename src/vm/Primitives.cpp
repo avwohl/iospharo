@@ -590,13 +590,6 @@ PrimitiveResult Interpreter::primitiveAdd(int argCount) {
     bool aNeg, bNeg;
     if (extractInteger(memory_, rcvr, aMag, aNeg) &&
         extractInteger(memory_, arg, bMag, bNeg)) {
-        static int p1mixLog = 0;
-        if (p1mixLog++ < 5) {
-            fprintf(stderr, "[PRIM1-MIX] rcvr=0x%llx(smi=%d) arg=0x%llx(smi=%d) step=%llu\n",
-                    (unsigned long long)rcvr.rawBits(), rcvr.isSmallInteger(),
-                    (unsigned long long)arg.rawBits(), arg.isSmallInteger(),
-                    (unsigned long long)g_stepNum);
-        }
         std::vector<uint8_t> resultMag;
         bool resultNeg;
         if (aNeg == bNeg) {
@@ -762,12 +755,6 @@ PrimitiveResult Interpreter::primitiveMultiply(int argCount) {
 
             popN(2);
             push(largeInt);
-            static int p9overflowLog = 0;
-            if (p9overflowLog++ < 5) {
-                fprintf(stderr, "[PRIM9-OVERFLOW] %lld * %lld -> LargeInt(0x%llx) magLen=%d step=%llu\n",
-                        (long long)a, (long long)b, (unsigned long long)largeInt.rawBits(),
-                        magLen, (unsigned long long)g_stepNum);
-            }
             return PrimitiveResult::Success;
         }
 
@@ -6311,13 +6298,6 @@ PrimitiveResult Interpreter::primDigitAddLargeIntegers(int argCount) {
 
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
-    static int digitAddLog = 0;
-    if (digitAddLog++ < 50) {
-        fprintf(stderr, "[DIGIT-ADD] rcvr=0x%llx(smi=%d) arg=0x%llx(smi=%d) step=%llu\n",
-                (unsigned long long)rcvr.rawBits(), rcvr.isSmallInteger(),
-                (unsigned long long)arg.rawBits(), arg.isSmallInteger(),
-                (unsigned long long)g_stepNum);
-    }
 
     std::vector<uint8_t> aMag, bMag;
     bool aNeg, bNeg;
@@ -6384,10 +6364,6 @@ PrimitiveResult Interpreter::primNormalizeNegative(int argCount) {
 // primDigitDivNegative: receiver digitDiv: arg neg: ng
 // Returns Array of (quotient, remainder)
 PrimitiveResult Interpreter::primDigitDivNegative(int argCount) {
-    static int divLog = 0;
-    if (divLog++ < 10) {
-        fprintf(stderr, "[DIGIT-DIV] called argCount=%d step=%llu\n", argCount, (unsigned long long)g_stepNum);
-    }
     if (argCount != 2) return PrimitiveResult::Failure;
 
     Oop negFlag = stackValue(0);  // Boolean (neg flag for quotient)
@@ -12073,83 +12049,25 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
     // Pragma objects store primitive names in their arguments array
 
     // Helper to recursively search for a string containing a pattern
-    std::function<bool(Oop, const std::string&, int, FILE*)> containsString;
-    containsString = [&](Oop obj, const std::string& pattern, int depth, FILE* log) -> bool {
+    std::function<bool(Oop, const std::string&, int)> containsString;
+    containsString = [&](Oop obj, const std::string& pattern, int depth) -> bool {
         if (depth > 5 || !obj.isObject() || !memory_.isValidPointer(obj)) return false;
         ObjectHeader* hdr = obj.asObjectPtr();
 
-        // Check if this is a string/symbol containing the pattern
         if (hdr->isBytesObject() && hdr->byteSize() < 200) {
             std::string str((char*)hdr->bytes(), hdr->byteSize());
-            if (str.find(pattern) != std::string::npos) {
-                if (log) {
-                    fprintf(log, "[DEEP-SEARCH] Found '%s' at depth %d\n", str.c_str(), depth);
-                    fflush(log);
-                }
-                return true;
-            }
+            if (str.find(pattern) != std::string::npos) return true;
         }
 
-        // Recursively search arrays and fixed objects
         if ((hdr->format() == ObjectFormat::Indexable || hdr->format() == ObjectFormat::FixedSize)
             && hdr->slotCount() >= 1 && hdr->slotCount() <= 30) {
             for (size_t i = 0; i < hdr->slotCount(); i++) {
                 Oop slot = memory_.fetchPointer(i, obj);
-                if (containsString(slot, pattern, depth + 1, log)) {
-                    return true;
-                }
+                if (containsString(slot, pattern, depth + 1)) return true;
             }
         }
         return false;
     };
-
-    // Search ALL literals for known primitive/function names
-    static FILE* deepLog = nullptr;
-    static int deepSearchCount = 0;
-    static bool deepLogInit = false;
-    if (!deepLogInit) {
-        deepLogInit = true;
-        deepLog = fopen("/tmp/deep_prim_search.log", "w");
-    }
-    deepSearchCount++;
-
-    // Log ALL calls to primitive 117 for debugging
-    if (deepLog && deepSearchCount <= 500) {
-        fprintf(deepLog, "[PRIM117] #%d argCount=%d numLiterals=%zu\n",
-                deepSearchCount, argCount, numLiterals);
-        // Dump first few literals to see what's there
-        for (size_t i = 1; i <= numLiterals && i <= 5; i++) {
-            Oop lit = memory_.fetchPointer(i, method);
-            if (lit.isObject() && memory_.isValidPointer(lit)) {
-                ObjectHeader* lh = lit.asObjectPtr();
-                if (lh->isBytesObject() && lh->byteSize() < 100) {
-                    std::string s((char*)lh->bytes(), lh->byteSize());
-                    fprintf(deepLog, "  lit[%zu]='%s'\n", i, s.c_str());
-                } else {
-                    fprintf(deepLog, "  lit[%zu] fmt=%u slots=%zu clsIdx=%u\n",
-                            i, (uint32_t)lh->format(), lh->slotCount(), lh->classIndex());
-                }
-            }
-        }
-        // Also check the penultimate literal (numLiterals-1 slot = numLiterals literal index)
-        // which contains AdditionalMethodState with Pragma objects
-        if (numLiterals >= 1) {
-            Oop penult = memory_.fetchPointer(numLiterals, method);  // penultimate literal
-            if (penult.isObject() && memory_.isValidPointer(penult)) {
-                ObjectHeader* ph = penult.asObjectPtr();
-                fprintf(deepLog, "  penult[%zu] fmt=%u slots=%zu clsIdx=%u\n",
-                        numLiterals, (uint32_t)ph->format(), ph->slotCount(), ph->classIndex());
-                // Deep search for any LoadSymbol or primitive reference
-                if (containsString(penult, "LoadSymbol", 0, nullptr)) {
-                    fprintf(deepLog, "  *** FOUND LoadSymbol in penultimate! ***\n");
-                }
-                if (containsString(penult, "primitive", 0, nullptr)) {
-                    fprintf(deepLog, "  *** FOUND 'primitive' in penultimate ***\n");
-                }
-            }
-        }
-        fflush(deepLog);
-    }
 
     // Check all literals for our known named primitives (direct string scan)
     // Collect all string literals for module:name lookup
@@ -12216,19 +12134,12 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
         }
 
         // Deep search for FFI primitives in Pragma objects
-        // Pragma objects have selector (like #primitive:) and arguments array
-        if (containsString(literal, "LoadSymbolFromModule", 0, deepSearchCount <= 50 ? deepLog : nullptr)) {
-            if (deepLog && deepSearchCount <= 50) {
-                fprintf(deepLog, "[PRIM] #%d Found LoadSymbolFromModule in literal %zu, calling primitive\n",
-                        deepSearchCount, i);
-                fflush(deepLog);
-            }
+        if (containsString(literal, "LoadSymbolFromModule", 0)) {
             return primitiveLoadSymbolFromModule(argCount);
         }
-        if (containsString(literal, "LoadModule", 0, nullptr)) {
-            if (containsString(literal, "LoadSymbol", 0, nullptr)) {
-                // This is LoadSymbolFromModule, not LoadModule
-                continue;
+        if (containsString(literal, "LoadModule", 0)) {
+            if (containsString(literal, "LoadSymbol", 0)) {
+                continue;  // This is LoadSymbolFromModule, not LoadModule
             }
             return primitiveLoadModule(argCount);
         }
