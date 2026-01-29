@@ -2,16 +2,22 @@
 
 ## Date: 2026-01-08
 
-## Current Status
-Clean C++ VM implementation is functional. Image loads, interpreter initializes, and executes Smalltalk bytecode. Headless image runs startup code and goes idle (expected behavior).
+## Current Status (2026-01-28)
+VM runs 50M bytecode steps to completion with 0 crashes. 260K objects loaded, 20842 classes.
+Display renders (menubar visible). Events injected but don't reach Smalltalk (input semaphore index = 0).
+
+Key remaining issue: OSSDL2Driver fails to initialize due to FFI type resolution returning nil,
+which causes an error cascade (freeze/privSender: DNUs). No event loop process is created,
+so events sit in the VM queue unread.
 
 ## Test Results
 ```
-./test_load_image /tmp/pharo-test/Pharo.image
-- Image loaded: 51 MB Spur 64-bit (format 68021)
-- Objects: 1,326,597 total
-- Interpreter: 18 active bytecode steps before idle
-- Status: Working correctly for headless image
+./test_load_image Pharo.image
+- Image: 51 MB Spur 64-bit (format 68021), 260460 objects, 20842 classes
+- Interpreter: 50M steps, exit 0, no SIGSEGV
+- Display: 1024x768, menubar renders
+- DNUs: 500 total (285 freeze, 180 privSender:, 15 findNextUnwind, misc FFI)
+- Events: injected but sdl2Active=0, input semaphore index=0
 ```
 
 ## Completed Work
