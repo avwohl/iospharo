@@ -405,7 +405,7 @@ public:
 
     /// Check if an Oop points to a valid location within any heap space
     bool isValidPointer(Oop oop) const {
-        if (!oop.isObject() || oop.isNil()) return false;
+        if (!oop.isObject()) return false;
         uint8_t* ptr = reinterpret_cast<uint8_t*>(oop.asObjectPtr());
         // Check if it's in old space
         if (ptr >= oldSpaceStart_ && ptr < oldSpaceEnd_) return true;

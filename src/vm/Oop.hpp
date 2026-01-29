@@ -81,6 +81,11 @@ private:
     static constexpr int64_t SmallIntegerMin = -(1LL << 60);
     static constexpr int64_t SmallIntegerMax = (1LL << 60) - 1;
 
+    // The actual nil Oop bits after image relocation.
+    // Set once by ObjectMemory::initialize() after loading the image.
+    // Before that, remains 0 which is correct for pre-relocation nil.
+    static inline uint64_t s_nilBits = 0;
+
     // Character max (29-bit codepoint)
     static constexpr uint32_t CharacterMax = 0x1FFFFFFF;
 
@@ -113,8 +118,9 @@ public:
     /// Is this a SmallFloat immediate?
     bool isSmallFloat() const { return (bits_ & TagMask) == SmallFloatTag; }
 
-    /// Is this nil (zero pointer)?
-    bool isNil() const { return bits_ == 0; }
+    /// Is this nil? Compares against the actual nil Oop (which has a real
+    /// heap address after image relocation, not necessarily 0).
+    bool isNil() const { return bits_ == s_nilBits; }
 
     // ===== IMMEDIATE VALUE EXTRACTION =====
 
@@ -262,7 +268,7 @@ public:
     /// Space is determined by address range, not by tag bits.
     static Oop fromObject(ObjectHeader* obj, Space /*space*/ = Space::Old) {
         if (obj == nullptr) {
-            return Oop(0);  // nil
+            return nil();  // actual nil Oop
         }
         uint64_t addr = reinterpret_cast<uint64_t>(obj);
         assert((addr & TagMask) == 0 && "Object must be 8-byte aligned");
@@ -272,8 +278,15 @@ public:
 
     // ===== SPECIAL VALUES =====
 
-    /// Create nil Oop
-    static constexpr Oop nil() { return Oop(0); }
+    /// Create nil Oop (uses actual relocated nil address)
+    static Oop nil() { return Oop(s_nilBits); }
+
+    /// Set the actual nil bits after image relocation.
+    /// Must be called once during ObjectMemory initialization.
+    static void setNilBits(uint64_t bits) { s_nilBits = bits; }
+
+    /// Get the current nil bits value.
+    static uint64_t getNilBits() { return s_nilBits; }
 
     // ===== COMPARISON =====
 

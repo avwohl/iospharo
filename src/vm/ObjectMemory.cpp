@@ -343,6 +343,14 @@ Oop ObjectMemory::classOf(Oop obj) const {
         return nilObject_;  // Return proper nil, not raw 0
     }
 
+    // nil, true, false are valid heap objects - look up their class normally
+    // (isValidPointer rejects nil, so handle it before the check)
+    if (obj.isNil()) {
+        // nil's class is UndefinedObject - read classIndex from nil's header
+        ObjectHeader* header = obj.asObjectPtr();
+        return classAtIndex(header->classIndex());
+    }
+
     // Validate pointer before dereferencing to catch corruption
     if (!isValidPointer(obj)) {
         static int corruptCount = 0;
@@ -480,8 +488,19 @@ void ObjectMemory::setSpecialObject(SpecialObjectIndex index, Oop value) {
 
 void ObjectMemory::cacheSpecialObjects() {
     nilObject_ = specialObject(SpecialObjectIndex::NilObject);
+    uint64_t oldNilBits = Oop::getNilBits();
+    Oop::setNilBits(nilObject_.rawBits());
     trueObject_ = specialObject(SpecialObjectIndex::TrueObject);
     falseObject_ = specialObject(SpecialObjectIndex::FalseObject);
+
+    // Update class table: replace old nil (Oop(0)) entries with real nil
+    if (oldNilBits != nilObject_.rawBits()) {
+        for (size_t i = 0; i < classTable_.size(); i++) {
+            if (classTable_[i].rawBits() == oldNilBits) {
+                classTable_[i] = nilObject_;
+            }
+        }
+    }
 }
 
 // ===== SYMBOL AND GLOBAL LOOKUP =====
@@ -1559,7 +1578,10 @@ GCResult ObjectMemory::fullGC() {
     }
     if (nilObject_.isObject()) {
         auto it = forwarding.find(nilObject_.asObjectPtr());
-        if (it != forwarding.end()) nilObject_ = Oop::fromObject(it->second);
+        if (it != forwarding.end()) {
+            nilObject_ = Oop::fromObject(it->second);
+            Oop::setNilBits(nilObject_.rawBits());
+        }
     }
     if (trueObject_.isObject()) {
         auto it = forwarding.find(trueObject_.asObjectPtr());
