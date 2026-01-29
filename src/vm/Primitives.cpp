@@ -781,6 +781,41 @@ PrimitiveResult Interpreter::primitiveMultiply(int argCount) {
         //  but handle it as failure for safety)
     }
 
+    // Mixed SmallInt/LargeInt multiplication using trySigned64BitValueOf
+    int64_t a, b;
+    if (trySigned64BitValueOf(memory_, rcvr, a) &&
+        trySigned64BitValueOf(memory_, arg, b)) {
+        __int128 wideResult = (__int128)a * (__int128)b;
+        bool resultNeg = (wideResult < 0);
+        if (resultNeg) wideResult = -wideResult;
+
+        // Try SmallInteger first
+        if (!resultNeg && wideResult <= Oop::smallIntegerMax()) {
+            primitiveSuccess(Oop::fromSmallInteger((int64_t)wideResult));
+            return PrimitiveResult::Success;
+        }
+        if (resultNeg && (-((__int128)1) * wideResult) >= Oop::smallIntegerMin()) {
+            primitiveSuccess(Oop::fromSmallInteger((int64_t)(-wideResult)));
+            return PrimitiveResult::Success;
+        }
+
+        // Create LargeInteger
+        uint8_t mag[16];
+        int magLen = 0;
+        __int128 val = wideResult;
+        while (val > 0 && magLen < 16) {
+            mag[magLen++] = (uint8_t)(val & 0xFF);
+            val >>= 8;
+        }
+        if (magLen == 0) { mag[0] = 0; magLen = 1; }
+
+        std::vector<uint8_t> bytes(mag, mag + magLen);
+        Oop largeResult = makeLargeInteger(memory_, bytes, resultNeg);
+        if (largeResult.rawBits() == 0) return PrimitiveResult::Failure;
+        primitiveSuccess(largeResult);
+        return PrimitiveResult::Success;
+    }
+
     return PrimitiveResult::Failure;
 }
 
@@ -813,22 +848,32 @@ PrimitiveResult Interpreter::primitiveMod(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
-    if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
-        int64_t a = rcvr.asSmallInteger();
-        int64_t b = arg.asSmallInteger();
-
+    int64_t a, b;
+    if (trySigned64BitValueOf(memory_, rcvr, a) &&
+        trySigned64BitValueOf(memory_, arg, b)) {
         if (b == 0) {
             return PrimitiveResult::Failure;
         }
 
         // Smalltalk mod (\\) returns result with same sign as divisor
-        // Using integer arithmetic to avoid precision loss (unlike float conversion)
         int64_t rem = a % b;
         // Adjust sign: C remainder has sign of dividend, Smalltalk mod has sign of divisor
         if (rem != 0 && ((a < 0) != (b < 0))) {
             rem += b;
         }
-        primitiveSuccess(Oop::fromSmallInteger(rem));
+        if (rem >= Oop::smallIntegerMin() && rem <= Oop::smallIntegerMax()) {
+            primitiveSuccess(Oop::fromSmallInteger(rem));
+            return PrimitiveResult::Success;
+        }
+        // Result doesn't fit in SmallInteger - create LargeInteger
+        bool neg = rem < 0;
+        uint64_t mag = neg ? (uint64_t)(-(rem + 1)) + 1 : (uint64_t)rem;
+        std::vector<uint8_t> bytes;
+        while (mag > 0) { bytes.push_back(mag & 0xFF); mag >>= 8; }
+        if (bytes.empty()) bytes.push_back(0);
+        Oop result = makeLargeInteger(memory_, bytes, neg);
+        if (result.rawBits() == 0) return PrimitiveResult::Failure;
+        primitiveSuccess(result);
         return PrimitiveResult::Success;
     }
 
@@ -893,17 +938,28 @@ PrimitiveResult Interpreter::primitiveQuo(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
-    if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
-        int64_t a = rcvr.asSmallInteger();
-        int64_t b = arg.asSmallInteger();
-
+    int64_t a, b;
+    if (trySigned64BitValueOf(memory_, rcvr, a) &&
+        trySigned64BitValueOf(memory_, arg, b)) {
         if (b == 0) {
             return PrimitiveResult::Failure;
         }
 
         // Truncated division (quo:)
         int64_t result = a / b;
-        primitiveSuccess(Oop::fromSmallInteger(result));
+        if (result >= Oop::smallIntegerMin() && result <= Oop::smallIntegerMax()) {
+            primitiveSuccess(Oop::fromSmallInteger(result));
+            return PrimitiveResult::Success;
+        }
+        // Result doesn't fit in SmallInteger
+        bool neg = result < 0;
+        uint64_t mag = neg ? (uint64_t)(-(result + 1)) + 1 : (uint64_t)result;
+        std::vector<uint8_t> bytes;
+        while (mag > 0) { bytes.push_back(mag & 0xFF); mag >>= 8; }
+        if (bytes.empty()) bytes.push_back(0);
+        Oop largeResult = makeLargeInteger(memory_, bytes, neg);
+        if (largeResult.rawBits() == 0) return PrimitiveResult::Failure;
+        primitiveSuccess(largeResult);
         return PrimitiveResult::Success;
     }
 
@@ -914,9 +970,22 @@ PrimitiveResult Interpreter::primitiveBitAnd(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
-    if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
-        int64_t result = rcvr.asSmallInteger() & arg.asSmallInteger();
-        primitiveSuccess(Oop::fromSmallInteger(result));
+    int64_t a, b;
+    if (trySigned64BitValueOf(memory_, rcvr, a) &&
+        trySigned64BitValueOf(memory_, arg, b)) {
+        int64_t result = a & b;
+        if (Oop::canBeSmallInteger(result)) {
+            primitiveSuccess(Oop::fromSmallInteger(result));
+            return PrimitiveResult::Success;
+        }
+        bool neg = result < 0;
+        uint64_t mag = neg ? (uint64_t)(-(result + 1)) + 1 : (uint64_t)result;
+        std::vector<uint8_t> bytes;
+        while (mag > 0) { bytes.push_back(mag & 0xFF); mag >>= 8; }
+        if (bytes.empty()) bytes.push_back(0);
+        Oop largeResult = makeLargeInteger(memory_, bytes, neg);
+        if (largeResult.rawBits() == 0) return PrimitiveResult::Failure;
+        primitiveSuccess(largeResult);
         return PrimitiveResult::Success;
     }
 
@@ -927,9 +996,22 @@ PrimitiveResult Interpreter::primitiveBitOr(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
-    if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
-        int64_t result = rcvr.asSmallInteger() | arg.asSmallInteger();
-        primitiveSuccess(Oop::fromSmallInteger(result));
+    int64_t a, b;
+    if (trySigned64BitValueOf(memory_, rcvr, a) &&
+        trySigned64BitValueOf(memory_, arg, b)) {
+        int64_t result = a | b;
+        if (Oop::canBeSmallInteger(result)) {
+            primitiveSuccess(Oop::fromSmallInteger(result));
+            return PrimitiveResult::Success;
+        }
+        bool neg = result < 0;
+        uint64_t mag = neg ? (uint64_t)(-(result + 1)) + 1 : (uint64_t)result;
+        std::vector<uint8_t> bytes;
+        while (mag > 0) { bytes.push_back(mag & 0xFF); mag >>= 8; }
+        if (bytes.empty()) bytes.push_back(0);
+        Oop largeResult = makeLargeInteger(memory_, bytes, neg);
+        if (largeResult.rawBits() == 0) return PrimitiveResult::Failure;
+        primitiveSuccess(largeResult);
         return PrimitiveResult::Success;
     }
 
@@ -940,9 +1022,22 @@ PrimitiveResult Interpreter::primitiveBitXor(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
-    if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
-        int64_t result = rcvr.asSmallInteger() ^ arg.asSmallInteger();
-        primitiveSuccess(Oop::fromSmallInteger(result));
+    int64_t a, b;
+    if (trySigned64BitValueOf(memory_, rcvr, a) &&
+        trySigned64BitValueOf(memory_, arg, b)) {
+        int64_t result = a ^ b;
+        if (Oop::canBeSmallInteger(result)) {
+            primitiveSuccess(Oop::fromSmallInteger(result));
+            return PrimitiveResult::Success;
+        }
+        bool neg = result < 0;
+        uint64_t mag = neg ? (uint64_t)(-(result + 1)) + 1 : (uint64_t)result;
+        std::vector<uint8_t> bytes;
+        while (mag > 0) { bytes.push_back(mag & 0xFF); mag >>= 8; }
+        if (bytes.empty()) bytes.push_back(0);
+        Oop largeResult = makeLargeInteger(memory_, bytes, neg);
+        if (largeResult.rawBits() == 0) return PrimitiveResult::Failure;
+        primitiveSuccess(largeResult);
         return PrimitiveResult::Success;
     }
 
@@ -953,47 +1048,42 @@ PrimitiveResult Interpreter::primitiveBitShift(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
-    if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
-        int64_t value = rcvr.asSmallInteger();
-        int64_t shift = arg.asSmallInteger();
+    if (!arg.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t shift = arg.asSmallInteger();
 
-        int64_t result;
-        if (shift >= 0) {
-            // Left shift - check for overflow before shifting
-            // SmallIntegers can hold values in range [-2^62, 2^62-1]
-            if (shift >= 63) {
-                // Would definitely overflow SmallInteger range
-                return PrimitiveResult::Failure;
-            }
-            if (value == 0) {
-                result = 0;
-            } else if (value > 0) {
-                // Check if left shift would overflow
-                // max positive SmallInteger is about 2^62-1
-                int64_t maxBeforeShift = (INT64_MAX >> shift);
-                if (value > maxBeforeShift) {
-                    return PrimitiveResult::Failure;
-                }
-                result = value << shift;
-            } else {
-                // Negative value - use unsigned shift to avoid UB
-                // then convert back considering sign
-                uint64_t uval = static_cast<uint64_t>(-value);
-                int64_t minBeforeShift = -(INT64_MIN >> shift);
-                if (static_cast<int64_t>(uval) > minBeforeShift) {
-                    return PrimitiveResult::Failure;
-                }
-                result = -(static_cast<int64_t>(uval << shift));
-            }
-        } else {
-            // Right shift
-            if (shift <= -64) {
-                result = (value < 0) ? -1 : 0;
-            } else {
-                result = value >> (-shift);
-            }
+    int64_t value;
+    if (!trySigned64BitValueOf(memory_, rcvr, value))
+        return PrimitiveResult::Failure;
+
+    if (shift >= 0) {
+        // Left shift - use __int128 for overflow safety
+        if (shift >= 127) return PrimitiveResult::Failure;
+        __int128 wide = (__int128)value << shift;
+        if (wide >= Oop::smallIntegerMin() && wide <= Oop::smallIntegerMax()) {
+            primitiveSuccess(Oop::fromSmallInteger((int64_t)wide));
+            return PrimitiveResult::Success;
         }
-
+        // Check if fits in int64
+        if (wide > INT64_MAX || wide < INT64_MIN)
+            return PrimitiveResult::Failure;
+        int64_t result = (int64_t)wide;
+        bool neg = result < 0;
+        uint64_t mag = neg ? (uint64_t)(-(result + 1)) + 1 : (uint64_t)result;
+        std::vector<uint8_t> bytes;
+        while (mag > 0) { bytes.push_back(mag & 0xFF); mag >>= 8; }
+        if (bytes.empty()) bytes.push_back(0);
+        Oop largeResult = makeLargeInteger(memory_, bytes, neg);
+        if (largeResult.rawBits() == 0) return PrimitiveResult::Failure;
+        primitiveSuccess(largeResult);
+        return PrimitiveResult::Success;
+    } else {
+        // Right shift
+        int64_t result;
+        if (shift <= -64) {
+            result = (value < 0) ? -1 : 0;
+        } else {
+            result = value >> (-shift);
+        }
         if (Oop::canBeSmallInteger(result)) {
             primitiveSuccess(Oop::fromSmallInteger(result));
             return PrimitiveResult::Success;
@@ -6222,7 +6312,7 @@ PrimitiveResult Interpreter::primDigitAddLargeIntegers(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
     static int digitAddLog = 0;
-    if (digitAddLog++ < 20) {
+    if (digitAddLog++ < 50) {
         fprintf(stderr, "[DIGIT-ADD] rcvr=0x%llx(smi=%d) arg=0x%llx(smi=%d) step=%llu\n",
                 (unsigned long long)rcvr.rawBits(), rcvr.isSmallInteger(),
                 (unsigned long long)arg.rawBits(), arg.isSmallInteger(),

@@ -11172,6 +11172,27 @@ tryRegularPrimitive:
                 fprintf(stderr, "[NORMALIZE] called step=%llu\n", (unsigned long long)g_stepNum);
             }
         }
+        if (selStr == "asSeconds") {
+            static int asSecCount = 0;
+            if (asSecCount++ < 10) {
+                Oop r = stackValue(argCount);
+                std::string rcvrCls = "?";
+                if (r.isSmallInteger()) rcvrCls = "SmallInteger";
+                else if (r.isObject() && memory_.isValidPointer(r)) {
+                    Oop cls = memory_.classOf(r);
+                    if (cls.isObject() && memory_.isValidPointer(cls)) {
+                        Oop nm = memory_.fetchPointer(6, cls);
+                        if (nm.isObject() && memory_.isValidPointer(nm)) {
+                            ObjectHeader* nh = nm.asObjectPtr();
+                            if (nh->isBytesObject() && nh->byteSize() < 50)
+                                rcvrCls = std::string((char*)nh->bytes(), nh->byteSize());
+                        }
+                    }
+                }
+                fprintf(stderr, "[AS-SECONDS] rcvrClass=%s rcvr=0x%llx step=%llu\n",
+                        rcvrCls.c_str(), (unsigned long long)r.rawBits(), (unsigned long long)g_stepNum);
+            }
+        }
         if (selStr == "primitiveResume" || selStr == "resume") {
             static FILE* primDetLog = nullptr;
             static int primDetCount = 0;
@@ -11593,6 +11614,32 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
             fprintf(cacheStoreLog, "[CACHE-STORE #%d] primitiveResume cached with primIdx=%d\n",
                     cacheStoreCount, entry.primitiveIndex);
             fflush(cacheStoreLog);
+        }
+    }
+    if (selStr == "digitAdd:" || selStr == "digitDiv:neg:" || selStr == "digitSubtract:") {
+        static FILE* digitCacheLog = nullptr;
+        static int digitCacheCount = 0;
+        if (!digitCacheLog) digitCacheLog = fopen("/tmp/digit_cache.log", "w");
+        if (digitCacheLog && digitCacheCount++ < 50) {
+            fprintf(digitCacheLog, "[DIGIT-CACHE #%d] '%s' cached primIdx=%d method=0x%llx class=0x%llx\n",
+                    digitCacheCount, selStr.c_str(), entry.primitiveIndex,
+                    (unsigned long long)method.rawBits(),
+                    (unsigned long long)classOop.rawBits());
+            // Dump method header
+            Oop mhdr = memory_.fetchPointer(0, method);
+            if (mhdr.isSmallInteger()) {
+                int64_t hbits = mhdr.asSmallInteger();
+                int nLit = hbits & 0x7FFF;
+                bool hasPrim = (hbits >> 30) & 1;
+                fprintf(digitCacheLog, "  header=0x%llx nLit=%d hasPrim=%d\n",
+                        (unsigned long long)hbits, nLit, hasPrim ? 1 : 0);
+                // Check first bytecodes
+                ObjectHeader* mo = method.asObjectPtr();
+                uint8_t* bc = mo->bytes() + (1 + nLit) * 8;
+                fprintf(digitCacheLog, "  bc[0..5]: %d %d %d %d %d %d\n",
+                        bc[0], bc[1], bc[2], bc[3], bc[4], bc[5]);
+            }
+            fflush(digitCacheLog);
         }
     }
 }
