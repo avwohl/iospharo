@@ -29,6 +29,13 @@
 
 namespace pharo {
 
+// Forward declarations for LargeInteger arithmetic helpers
+static bool extractInteger(ObjectMemory& memory, Oop oop, std::vector<uint8_t>& magnitude, bool& isNegative);
+static std::vector<uint8_t> addMagnitudes(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b);
+static std::vector<uint8_t> subtractMagnitudes(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b);
+static int compareMagnitudes(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b);
+static Oop makeLargeInteger(ObjectMemory& memory, const std::vector<uint8_t>& magnitude, bool isNegative);
+
 // External step counter from Interpreter.cpp for debugging
 extern uint64_t g_stepNum;
 
@@ -550,6 +557,68 @@ PrimitiveResult Interpreter::primitiveAdd(int argCount) {
             primitiveSuccess(Oop::fromSmallInteger(result));
             return PrimitiveResult::Success;
         }
+
+        // Overflow: produce LargeInteger
+        bool resultNeg = (result < 0);
+        uint64_t absResult = resultNeg ? static_cast<uint64_t>(-result) : static_cast<uint64_t>(result);
+        uint8_t mag[8];
+        int magLen = 0;
+        uint64_t val = absResult;
+        while (val > 0 && magLen < 8) {
+            mag[magLen++] = (uint8_t)(val & 0xFF);
+            val >>= 8;
+        }
+        if (magLen == 0) { mag[0] = 0; magLen = 1; }
+
+        Oop intClass = resultNeg
+            ? memory_.specialObject(SpecialObjectIndex::ClassLargeNegativeInteger)
+            : memory_.specialObject(SpecialObjectIndex::ClassLargePositiveInteger);
+        uint32_t classIndex = memory_.indexOfClass(intClass);
+        if (classIndex == 0) classIndex = memory_.registerClass(intClass);
+        Oop largeInt = memory_.allocateBytes(classIndex, magLen);
+        if (largeInt.isNil() || largeInt.rawBits() == memory_.nil().rawBits())
+            return PrimitiveResult::Failure;
+        for (int i = 0; i < magLen; i++)
+            memory_.storeByte(i, largeInt, mag[i]);
+        popN(2);
+        push(largeInt);
+        return PrimitiveResult::Success;
+    }
+
+    // Handle SmallInteger + LargeInteger (and vice versa)
+    std::vector<uint8_t> aMag, bMag;
+    bool aNeg, bNeg;
+    if (extractInteger(memory_, rcvr, aMag, aNeg) &&
+        extractInteger(memory_, arg, bMag, bNeg)) {
+        static int p1mixLog = 0;
+        if (p1mixLog++ < 5) {
+            fprintf(stderr, "[PRIM1-MIX] rcvr=0x%llx(smi=%d) arg=0x%llx(smi=%d) step=%llu\n",
+                    (unsigned long long)rcvr.rawBits(), rcvr.isSmallInteger(),
+                    (unsigned long long)arg.rawBits(), arg.isSmallInteger(),
+                    (unsigned long long)g_stepNum);
+        }
+        std::vector<uint8_t> resultMag;
+        bool resultNeg;
+        if (aNeg == bNeg) {
+            resultMag = addMagnitudes(aMag, bMag);
+            resultNeg = aNeg;
+        } else {
+            // Different signs: subtract the smaller magnitude from larger
+            int cmp = compareMagnitudes(aMag, bMag);
+            if (cmp >= 0) {
+                resultMag = subtractMagnitudes(aMag, bMag);
+                resultNeg = aNeg;
+            } else {
+                resultMag = subtractMagnitudes(bMag, aMag);
+                resultNeg = bNeg;
+            }
+        }
+        Oop result = makeLargeInteger(memory_, resultMag, resultNeg);
+        if (!result.isNil()) {
+            popN(2);
+            push(result);
+            return PrimitiveResult::Success;
+        }
     }
 
     return PrimitiveResult::Failure;  // Fall back to Smalltalk
@@ -566,6 +635,62 @@ PrimitiveResult Interpreter::primitiveSubtract(int argCount) {
 
         if (Oop::canBeSmallInteger(result)) {
             primitiveSuccess(Oop::fromSmallInteger(result));
+            return PrimitiveResult::Success;
+        }
+
+        // Overflow: produce LargeInteger
+        bool resultNeg = (result < 0);
+        uint64_t absResult = resultNeg ? static_cast<uint64_t>(-result) : static_cast<uint64_t>(result);
+        uint8_t mag[8];
+        int magLen = 0;
+        uint64_t val = absResult;
+        while (val > 0 && magLen < 8) {
+            mag[magLen++] = (uint8_t)(val & 0xFF);
+            val >>= 8;
+        }
+        if (magLen == 0) { mag[0] = 0; magLen = 1; }
+
+        Oop intClass = resultNeg
+            ? memory_.specialObject(SpecialObjectIndex::ClassLargeNegativeInteger)
+            : memory_.specialObject(SpecialObjectIndex::ClassLargePositiveInteger);
+        uint32_t classIndex = memory_.indexOfClass(intClass);
+        if (classIndex == 0) classIndex = memory_.registerClass(intClass);
+        Oop largeInt = memory_.allocateBytes(classIndex, magLen);
+        if (largeInt.isNil() || largeInt.rawBits() == memory_.nil().rawBits())
+            return PrimitiveResult::Failure;
+        for (int i = 0; i < magLen; i++)
+            memory_.storeByte(i, largeInt, mag[i]);
+        popN(2);
+        push(largeInt);
+        return PrimitiveResult::Success;
+    }
+
+    // Handle mixed SmallInteger/LargeInteger subtraction
+    std::vector<uint8_t> aMag, bMag;
+    bool aNeg, bNeg;
+    if (extractInteger(memory_, rcvr, aMag, aNeg) &&
+        extractInteger(memory_, arg, bMag, bNeg)) {
+        // a - b = a + (-b)
+        bool bNegFlipped = !bNeg;
+        std::vector<uint8_t> resultMag;
+        bool resultNeg;
+        if (aNeg == bNegFlipped) {
+            resultMag = addMagnitudes(aMag, bMag);
+            resultNeg = aNeg;
+        } else {
+            int cmp = compareMagnitudes(aMag, bMag);
+            if (cmp >= 0) {
+                resultMag = subtractMagnitudes(aMag, bMag);
+                resultNeg = aNeg;
+            } else {
+                resultMag = subtractMagnitudes(bMag, aMag);
+                resultNeg = bNegFlipped;
+            }
+        }
+        Oop result = makeLargeInteger(memory_, resultMag, resultNeg);
+        if (!result.isNil()) {
+            popN(2);
+            push(result);
             return PrimitiveResult::Success;
         }
     }
@@ -637,6 +762,12 @@ PrimitiveResult Interpreter::primitiveMultiply(int argCount) {
 
             popN(2);
             push(largeInt);
+            static int p9overflowLog = 0;
+            if (p9overflowLog++ < 5) {
+                fprintf(stderr, "[PRIM9-OVERFLOW] %lld * %lld -> LargeInt(0x%llx) magLen=%d step=%llu\n",
+                        (long long)a, (long long)b, (unsigned long long)largeInt.rawBits(),
+                        magLen, (unsigned long long)g_stepNum);
+            }
             return PrimitiveResult::Success;
         }
 
@@ -645,6 +776,9 @@ PrimitiveResult Interpreter::primitiveMultiply(int argCount) {
             primitiveSuccess(Oop::fromSmallInteger(result));
             return PrimitiveResult::Success;
         }
+        // Overflow but both SmallInt — produce LargeInteger
+        // (This case: overflow detected but fell through above — shouldn't happen
+        //  but handle it as failure for safety)
     }
 
     return PrimitiveResult::Failure;
@@ -714,15 +848,42 @@ PrimitiveResult Interpreter::primitiveDiv(int argCount) {
         }
 
         // Floored division (//) using integer arithmetic
-        // C division truncates toward zero, floor division rounds toward negative infinity
         int64_t q = a / b;
         int64_t rem = a % b;
-        // Adjust for floor: when signs differ and there's a remainder, subtract 1
         if (rem != 0 && ((a < 0) != (b < 0))) {
             q -= 1;
         }
         primitiveSuccess(Oop::fromSmallInteger(q));
         return PrimitiveResult::Success;
+    }
+
+    // Handle mixed SmallInteger/LargeInteger division
+    int64_t aVal, bVal;
+    if (trySigned64BitValueOf(memory_, rcvr, aVal) &&
+        trySigned64BitValueOf(memory_, arg, bVal)) {
+        if (bVal == 0) return PrimitiveResult::Failure;
+        int64_t q = aVal / bVal;
+        int64_t rem = aVal % bVal;
+        if (rem != 0 && ((aVal < 0) != (bVal < 0))) {
+            q -= 1;
+        }
+        if (Oop::canBeSmallInteger(q)) {
+            popN(2);
+            push(Oop::fromSmallInteger(q));
+            return PrimitiveResult::Success;
+        }
+        // Result doesn't fit SmallInt — make LargeInteger
+        bool resultNeg = q < 0;
+        uint64_t absQ = resultNeg ? static_cast<uint64_t>(-q) : static_cast<uint64_t>(q);
+        std::vector<uint8_t> mag;
+        if (absQ == 0) { mag.push_back(0); }
+        else { while (absQ > 0) { mag.push_back(absQ & 0xFF); absQ >>= 8; } }
+        Oop result = makeLargeInteger(memory_, mag, resultNeg);
+        if (!result.isNil()) {
+            popN(2);
+            push(result);
+            return PrimitiveResult::Success;
+        }
     }
 
     return PrimitiveResult::Failure;
@@ -5264,6 +5425,7 @@ static Oop makeLargeInteger(ObjectMemory& memory, const std::vector<uint8_t>& ma
         ? memory.specialObject(SpecialObjectIndex::ClassLargeNegativeInteger)
         : memory.specialObject(SpecialObjectIndex::ClassLargePositiveInteger);
     uint32_t classIndex = memory.indexOfClass(intClass);
+    if (classIndex == 0) classIndex = memory.registerClass(intClass);
 
     Oop largeInt = memory.allocateBytes(classIndex, magnitude.size());
     if (largeInt.isNil()) return largeInt;
@@ -6059,6 +6221,13 @@ PrimitiveResult Interpreter::primDigitAddLargeIntegers(int argCount) {
 
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
+    static int digitAddLog = 0;
+    if (digitAddLog++ < 20) {
+        fprintf(stderr, "[DIGIT-ADD] rcvr=0x%llx(smi=%d) arg=0x%llx(smi=%d) step=%llu\n",
+                (unsigned long long)rcvr.rawBits(), rcvr.isSmallInteger(),
+                (unsigned long long)arg.rawBits(), arg.isSmallInteger(),
+                (unsigned long long)g_stepNum);
+    }
 
     std::vector<uint8_t> aMag, bMag;
     bool aNeg, bNeg;
@@ -6118,6 +6287,130 @@ PrimitiveResult Interpreter::primNormalizeNegative(int argCount) {
     if (result.isNil()) return PrimitiveResult::Failure;
 
     pop();
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// primDigitDivNegative: receiver digitDiv: arg neg: ng
+// Returns Array of (quotient, remainder)
+PrimitiveResult Interpreter::primDigitDivNegative(int argCount) {
+    static int divLog = 0;
+    if (divLog++ < 10) {
+        fprintf(stderr, "[DIGIT-DIV] called argCount=%d step=%llu\n", argCount, (unsigned long long)g_stepNum);
+    }
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop negFlag = stackValue(0);  // Boolean (neg flag for quotient)
+    Oop arg = stackValue(1);      // divisor Integer
+    Oop rcvr = stackValue(2);     // dividend Integer (self)
+
+    std::vector<uint8_t> dividendMag, divisorMag;
+    bool dividendNeg, divisorNeg;
+
+    if (!extractInteger(memory_, rcvr, dividendMag, dividendNeg) ||
+        !extractInteger(memory_, arg, divisorMag, divisorNeg)) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Convert magnitudes to unsigned values for division
+    // For simplicity, handle up to 128-bit using __int128
+    if (dividendMag.size() > 16 || divisorMag.size() > 16)
+        return PrimitiveResult::Failure;  // Too large, let Smalltalk handle
+
+    __uint128_t dividend = 0;
+    for (size_t i = dividendMag.size(); i > 0; i--)
+        dividend = (dividend << 8) | dividendMag[i - 1];
+
+    __uint128_t divisor = 0;
+    for (size_t i = divisorMag.size(); i > 0; i--)
+        divisor = (divisor << 8) | divisorMag[i - 1];
+
+    if (divisor == 0) return PrimitiveResult::Failure;  // Division by zero
+
+    __uint128_t quotientVal = dividend / divisor;
+    __uint128_t remainderVal = dividend % divisor;
+
+    // Determine quotient sign from the neg flag
+    bool quotientNeg = (negFlag.rawBits() == memory_.trueObject().rawBits());
+
+    // Convert quotient to magnitude bytes
+    std::vector<uint8_t> quotientMag;
+    if (quotientVal == 0) {
+        quotientMag.push_back(0);
+    } else {
+        __uint128_t v = quotientVal;
+        while (v > 0) {
+            quotientMag.push_back(static_cast<uint8_t>(v & 0xFF));
+            v >>= 8;
+        }
+    }
+
+    // Convert remainder to magnitude bytes (remainder is always non-negative in digit division)
+    std::vector<uint8_t> remainderMag;
+    if (remainderVal == 0) {
+        remainderMag.push_back(0);
+    } else {
+        __uint128_t v = remainderVal;
+        while (v > 0) {
+            remainderMag.push_back(static_cast<uint8_t>(v & 0xFF));
+            v >>= 8;
+        }
+    }
+
+    Oop quotient = makeLargeInteger(memory_, quotientMag, quotientNeg);
+    if (quotient.isNil()) return PrimitiveResult::Failure;
+
+    // Remainder keeps the sign of the dividend (per Smalltalk semantics of digitDiv)
+    Oop remainder = makeLargeInteger(memory_, remainderMag, dividendNeg);
+    if (remainder.isNil()) return PrimitiveResult::Failure;
+
+    // Allocate a 2-element Array
+    Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
+    uint32_t arrayClassIdx = memory_.indexOfClass(arrayClass);
+    if (arrayClassIdx == 0) arrayClassIdx = memory_.registerClass(arrayClass);
+    Oop resultArray = memory_.allocateSlots(arrayClassIdx, 2);
+    if (resultArray.isNil()) return PrimitiveResult::Failure;
+
+    memory_.storePointer(0, resultArray, quotient);
+    memory_.storePointer(1, resultArray, remainder);
+
+    popN(3);  // pop receiver + 2 args
+    push(resultArray);
+    return PrimitiveResult::Success;
+}
+
+// primDigitSubtract: receiver digitSubtract: arg
+// Used by Integer>>- for same-sign subtraction
+PrimitiveResult Interpreter::primDigitSubtractLargeIntegers(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    std::vector<uint8_t> aMag, bMag;
+    bool aNeg, bNeg;
+
+    if (!extractInteger(memory_, rcvr, aMag, aNeg) ||
+        !extractInteger(memory_, arg, bMag, bNeg)) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Determine result based on magnitude comparison
+    std::vector<uint8_t> resultMag;
+    bool resultNeg;
+    int cmp = compareMagnitudes(aMag, bMag);
+    if (cmp >= 0) {
+        resultMag = subtractMagnitudes(aMag, bMag);
+        resultNeg = aNeg;
+    } else {
+        resultMag = subtractMagnitudes(bMag, aMag);
+        resultNeg = !aNeg;  // Flip sign when |b| > |a|
+    }
+
+    Oop result = makeLargeInteger(memory_, resultMag, resultNeg);
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    popN(2);
     push(result);
     return PrimitiveResult::Success;
 }
@@ -11769,32 +12062,42 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
     }
 
     // Check all literals for our known named primitives (direct string scan)
+    // Collect all string literals for module:name lookup
+    std::vector<std::string> literalStrings;
     for (size_t i = 1; i <= numLiterals; i++) {
         Oop literal = memory_.fetchPointer(i, method);
         if (!literal.isObject() || !memory_.isValidPointer(literal)) continue;
         ObjectHeader* litHdr = literal.asObjectPtr();
         if (litHdr->isBytesObject() && litHdr->byteSize() < 100) {
-            std::string str((char*)litHdr->bytes(), litHdr->byteSize());
-            // Check if this literal is a known named primitive name
-            auto it = namedPrimitives_.find(":" + str);
-            if (it != namedPrimitives_.end()) {
-                return (this->*(it->second))(argCount);
-            }
+            literalStrings.emplace_back((char*)litHdr->bytes(), litHdr->byteSize());
         }
-        // Also search inside arrays/fixed objects for primitive names
+        // Also search inside arrays/fixed objects
         if (!litHdr->isBytesObject() && litHdr->slotCount() >= 1 && litHdr->slotCount() <= 10) {
             for (size_t j = 0; j < litHdr->slotCount(); j++) {
                 Oop sub = memory_.fetchPointer(j, literal);
                 if (sub.isObject() && memory_.isValidPointer(sub)) {
                     ObjectHeader* sh = sub.asObjectPtr();
                     if (sh->isBytesObject() && sh->byteSize() < 100) {
-                        std::string s((char*)sh->bytes(), sh->byteSize());
-                        auto it2 = namedPrimitives_.find(":" + s);
-                        if (it2 != namedPrimitives_.end()) {
-                            return (this->*(it2->second))(argCount);
-                        }
+                        literalStrings.emplace_back((char*)sh->bytes(), sh->byteSize());
                     }
                 }
+            }
+        }
+    }
+    // Try all combinations of module:name from literal strings
+    for (size_t a = 0; a < literalStrings.size(); a++) {
+        // Try as direct name with empty module
+        auto it = namedPrimitives_.find(":" + literalStrings[a]);
+        if (it != namedPrimitives_.end()) {
+            return (this->*(it->second))(argCount);
+        }
+        // Try as module:name with other literals as names
+        for (size_t b = 0; b < literalStrings.size(); b++) {
+            if (a == b) continue;
+            std::string key = literalStrings[a] + ":" + literalStrings[b];
+            auto it2 = namedPrimitives_.find(key);
+            if (it2 != namedPrimitives_.end()) {
+                return (this->*(it2->second))(argCount);
             }
         }
     }
@@ -11841,7 +12144,7 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
         }
     }
 
-    static FILE* extLog = nullptr;  // Set to fopen("/tmp/external_prim.log", "a") to enable debug logging
+    static FILE* extLog = nullptr;  // Set to fopen() to enable debug logging
     static int extCallCount = 0;
     extCallCount++;
 
