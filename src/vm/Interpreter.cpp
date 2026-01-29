@@ -14242,7 +14242,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     }
     if (dnuTraceLog && dnuTraceCount < 500) {
         std::string selStr = "<unknown>";
-        if (selector.isObject() && selector.rawBits() > 0x10000) {
+        if (selector.isObject() && selector.rawBits() > 0x10000 && memory_.isValidObject(selector)) {
             ObjectHeader* selHdr = selector.asObjectPtr();
             if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
                 selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
@@ -14253,7 +14253,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         Oop rcvr = stackValue(argCount);
         std::string rcvrClassName = "<unknown>";
         Oop rcvrCls = memory_.classOf(rcvr);
-        if (rcvrCls.isObject()) {
+        if (rcvrCls.isObject() && memory_.isValidObject(rcvrCls)) {
             Oop nameOop = memory_.fetchPointer(6, rcvrCls);  // classNameIndex
             if (nameOop.isObject()) {
                 ObjectHeader* nameHdr = nameOop.asObjectPtr();
@@ -17588,6 +17588,50 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
     // Pop receiver (will be repushed for send) - save it!
     Oop originalReceiver = pop();
+
+    // DNU loop detector: if the same selector on nil is happening repeatedly,
+    // terminate the process instead of looping forever through error handlers
+    {
+        static uint64_t lastNilDnuStep = 0;
+        static int nilDnuRepeatCount = 0;
+        static uint64_t lastNilDnuSelector = 0;
+
+        bool isNilReceiver = (originalReceiver.rawBits() == 0 || originalReceiver.rawBits() == memory_.nil().rawBits());
+        if (isNilReceiver) {
+            uint64_t selBits = selector.rawBits();
+            if (selBits == lastNilDnuSelector && (g_stepNum - lastNilDnuStep) < 500) {
+                nilDnuRepeatCount++;
+            } else {
+                nilDnuRepeatCount = 1;
+                lastNilDnuSelector = selBits;
+            }
+            lastNilDnuStep = g_stepNum;
+
+            if (nilDnuRepeatCount > 3) {
+                // We're in a DNU loop on nil — terminate this process
+                static int loopTermCount = 0;
+                if (loopTermCount++ < 3) {
+                    std::string selStr = "<unknown>";
+                    if (selector.isObject() && selector.rawBits() > 0x10000) {
+                        ObjectHeader* sh = selector.asObjectPtr();
+                        if (sh->isBytesObject() && sh->byteSize() < 80)
+                            selStr = std::string((char*)sh->bytes(), sh->byteSize());
+                    }
+                    std::cerr << "[DNU-LOOP] Breaking infinite DNU loop: nil>>#" << selStr
+                              << " repeated " << nilDnuRepeatCount << " times, terminating process\n";
+                }
+                nilDnuRepeatCount = 0;
+                // Unwind the stack: pop everything and return to the scheduler
+                while (frameDepth_ > 0) {
+                    popFrame();
+                }
+                // Push nil as return value
+                push(memory_.nil());
+                dnuDepth--;
+                return;
+            }
+        }
+    }
 
     // Send doesNotUnderstand: message to the ORIGINAL receiver
     push(originalReceiver);
