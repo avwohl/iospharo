@@ -2386,27 +2386,13 @@ bool Interpreter::step() {
         }
     }
 
-    // One-time: Install OSiOSDriver after image has started running (around 100K steps)
-    // This ensures the SessionManager and other startup handlers have had a chance to run
-    static bool osDriverInstallAttempted = false;
     static uint64_t stepCountForDriver = 0;
     stepCountForDriver++;
 
-    // Log every 50K steps to verify step() is running
-    if (stepCountForDriver % 50000 == 0 && stepCountForDriver <= 250000) {
-        std::cerr << "[DRIVER-STEP] Step count: " << stepCountForDriver << "\n";
-    }
-
-    if (!osDriverInstallAttempted && stepCountForDriver == 100000) {
-        osDriverInstallAttempted = true;
-        std::cerr << "[DRIVER] Step 100K reached - installing OSiOSDriver\n";
-        installOSiOSDriver();  // Call helper method to install driver
-    }
-
-    // At step 5M, check if UIManager needs to be initialized
-    // This runs after session startup handlers have completed
+    // UIManager startup workaround removed — the image's SessionManager
+    // should handle this via normal startup handlers.
     static bool uiManagerStartupAttempted = false;
-    if (!uiManagerStartupAttempted && stepCountForDriver == 5000000) {
+    if (false && !uiManagerStartupAttempted && stepCountForDriver == 5000000) {
         uiManagerStartupAttempted = true;
         std::cerr << "[UI] Step 5M reached - ensuring UIManager is started\n";
 
@@ -2542,12 +2528,6 @@ bool Interpreter::step() {
             fclose(uiLog);
             uiLog = nullptr;
         }
-    }
-
-    // Process input events periodically (every 1000 steps after initialization)
-    // This ensures events are drained from gEventQueue even without an event loop process
-    if (osDriverInstallAttempted && (stepCountForDriver % 1000) == 0) {
-        processInputEvents();
     }
 
     // Debug: check of class 1 periodically and detect when it changes
@@ -14171,7 +14151,13 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         static int dnuLogCount = 0;
         if (dnuLogCount++ < 200) {
             std::cerr << "[DNU] Selector '#" << selStr << "' not found on " << rcvrClassName
-                      << " (args=" << argCount << ")\n";
+                      << " (args=" << argCount << ") rcvr=0x" << std::hex << rcvr.rawBits() << std::dec;
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                ObjectHeader* rh = rcvr.asObjectPtr();
+                std::cerr << " classIdx=" << rh->classIndex() << " fmt=" << (int)rh->format()
+                          << " slots=" << rh->slotCount();
+            }
+            std::cerr << " step=" << g_stepNum << "\n";
         }
     }
 
