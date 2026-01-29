@@ -11670,7 +11670,7 @@ extern int g_traceSendsAfterPrim264;
                 fprintf(g_sendTraceFile, "[CACHE-MISS step=%lld] header-bits=0x%llx numArgs=%lld numLits=%lld hasPrim=%lld\n",
                         (long long)g_stepCount, (long long)bits,
                         (long long)((bits >> 24) & 0xF), (long long)(bits & 0x7FFF),
-                        (long long)((bits >> 30) & 1));
+                        (long long)((bits >> 16) & 1));
             }
         }
         fflush(g_sendTraceFile);
@@ -11899,6 +11899,13 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
                     if (shouldTraceNew) {
                         std::cerr << "  FOUND #new in " << getClassName(currentClass) << "!\n";
                     }
+                    // TRACE: Log which class #size is found in during critical steps
+                    if (g_sendTraceFile && g_stepCount >= 420 && g_stepCount <= 440 && selStr == "size") {
+                        fprintf(g_sendTraceFile, "[LOOKUP step=%lld] #size found in %s (depth=%d) method=0x%llx\n",
+                                (long long)g_stepCount, getClassName(currentClass).c_str(), depth,
+                                (unsigned long long)method.rawBits());
+                        fflush(g_sendTraceFile);
+                    }
                     return method;
                 }
             }
@@ -12052,6 +12059,9 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
         return o.isNil() || o.rawBits() == nilObj.rawBits() || o.rawBits() < 0x10000;
     };
 
+    // TRACE: Log lookupInMethodDict for #size during critical steps
+    bool traceSizeLookup = (g_sendTraceFile && g_stepCount >= 420 && g_stepCount <= 440 && selectorStr == "size");
+
     // Search all key slots (linear scan — correct but O(n))
     for (size_t i = 0; i < keySlotCount; ++i) {
         size_t mdSlotIndex = i + 2;
@@ -12063,6 +12073,11 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
         if (key.rawBits() == actualSelector.rawBits() || key.rawBits() == selector.rawBits()) {
             if (i < valuesSize) {
                 Oop method = memory_.fetchPointer(i, valuesArray);
+                if (traceSizeLookup) {
+                    fprintf(g_sendTraceFile, "[LOOKUP-DICT step=%lld] IDENTITY match #size at i=%zu method=0x%llx\n",
+                            (long long)g_stepCount, i, (unsigned long long)method.rawBits());
+                    fflush(g_sendTraceFile);
+                }
                 if (method.isObject() && method.rawBits() > 0x10000) {
                     return method;
                 }
@@ -12079,6 +12094,13 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
                     memcmp(keyHdr->bytes(), selectorStr.data(), keyLen) == 0) {
                     if (i < valuesSize) {
                         Oop method = memory_.fetchPointer(i, valuesArray);
+                        if (traceSizeLookup) {
+                            fprintf(g_sendTraceFile, "[LOOKUP-DICT step=%lld] STRING match #size at i=%zu key=0x%llx(!=sel 0x%llx) method=0x%llx\n",
+                                    (long long)g_stepCount, i, (unsigned long long)key.rawBits(),
+                                    (unsigned long long)actualSelector.rawBits(),
+                                    (unsigned long long)method.rawBits());
+                            fflush(g_sendTraceFile);
+                        }
                         if (method.isObject() && method.rawBits() > 0x10000) {
                             return method;
                         }
@@ -14032,8 +14054,10 @@ int Interpreter::primitiveIndexOf(Oop method) const {
     // The primitive number is encoded in the bytecode stream.
     // When hasPrimitive is set, bytecodes start with a callPrimitive bytecode.
 
-    // Check hasPrimitive flag (bit 30)
-    bool hasPrimitive = (bits >> 30) & 1;
+    // Check hasPrimitive flag
+    // In the raw SmallInteger oop, this is bit 19 (AlternateHeaderHasPrimFlag = 0x80000)
+    // After asSmallInteger() decoding (>> 3), it becomes bit 16
+    bool hasPrimitive = (bits >> 16) & 1;
     if (!hasPrimitive) return 0;
 
     ObjectHeader* methodObj = method.asObjectPtr();
@@ -18416,25 +18440,12 @@ void Interpreter::initializePrimitives() {
     // This ensures the table matches what the Pharo image expects
     #include "../ios/generated_primitives.inc"
 
-    // Override: The generated file incorrectly marks 264+ as "quick return" primitives.
-    // In Spur, quick returns are handled by bytecodes, not primitive indices.
-    // Primitive 264 = getNextEvent, 265 = inputSemaphore2 (these are real primitives).
-    primitiveTable_[264] = &Interpreter::primitiveGetNextEvent;
-    primitiveTable_[265] = &Interpreter::primitiveInputSemaphore2;
-
-    // Debug: Verify event primitives are registered
-    if constexpr (ENABLE_DEBUG_LOGGING) {
-        static FILE* primInitLog = fopen("/tmp/prim_init.log", "w");
-        if (primInitLog) {
-            fprintf(primInitLog, "[PRIM_INIT] primitiveTable_[264]=%s\n",
-                    primitiveTable_[264] ? "REGISTERED" : "NULL");
-            fprintf(primInitLog, "[PRIM_INIT] primitiveTable_[265]=%s\n",
-                    primitiveTable_[265] ? "REGISTERED" : "NULL");
-            fprintf(primInitLog, "[PRIM_INIT] primitiveTable_[267]=%s\n",
-                    primitiveTable_[267] ? "REGISTERED" : "NULL");
-            fflush(primInitLog);
-            fclose(primInitLog);
-        }
+    // Primitives 256-519 are ALL external/named primitives in the standard Pharo VM.
+    // They should be dispatched via primitiveExternalCall (primitive 117), which reads
+    // the method's first literal to determine the plugin function name.
+    // Do NOT hardcode specific functions at these indices - the dispatch is by name.
+    for (int i = 256; i < 520; i++) {
+        primitiveTable_[i] = &Interpreter::primitiveExternalCall;
     }
 
     // NOTE: The generated file maps VMMaker primitive names to C++ method names.
@@ -18614,57 +18625,8 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
         return result;
     }
 
-    // No primitive function - check if this is a quick primitive (256-519)
-    // Quick primitives return constants or instance variables for accessor methods
-    // NOTE: Quick primitives are normally handled by bytecode, but some methods
-    // may have `<primitive: 256>` etc in their pragma for backwards compatibility
-    if (primitiveIndex >= 256 && primitiveIndex <= 519) {
-        Oop receiver = stackTop();
-
-        if (primitiveIndex >= 264) {
-            // Return instance variable at index (primitiveIndex - 264)
-            if (!receiver.isObject()) {
-                return PrimitiveResult::Failure;
-            }
-            size_t instVarIndex = static_cast<size_t>(primitiveIndex - 264);
-            size_t slotCount = memory_.slotCountOf(receiver);
-            if (instVarIndex >= slotCount) {
-                return PrimitiveResult::Failure;
-            }
-            Oop value = memory_.fetchPointer(instVarIndex, receiver);
-            *(stackPointer_ - 1) = value;  // Replace stack top
-            return PrimitiveResult::Success;
-        }
-
-        // Return constants
-        switch (primitiveIndex) {
-            case 256:  // return self - no change needed
-                return PrimitiveResult::Success;
-            case 257:  // return true
-                *(stackPointer_ - 1) = memory_.trueObject();
-                return PrimitiveResult::Success;
-            case 258:  // return false
-                *(stackPointer_ - 1) = memory_.falseObject();
-                return PrimitiveResult::Success;
-            case 259:  // return nil
-                *(stackPointer_ - 1) = memory_.nil();
-                return PrimitiveResult::Success;
-            case 260:  // return -1
-                *(stackPointer_ - 1) = Oop::fromSmallInteger(-1);
-                return PrimitiveResult::Success;
-            case 261:  // return 0
-                *(stackPointer_ - 1) = Oop::fromSmallInteger(0);
-                return PrimitiveResult::Success;
-            case 262:  // return 1
-                *(stackPointer_ - 1) = Oop::fromSmallInteger(1);
-                return PrimitiveResult::Success;
-            case 263:  // return 2
-                *(stackPointer_ - 1) = Oop::fromSmallInteger(2);
-                return PrimitiveResult::Success;
-            default:
-                return PrimitiveResult::Failure;
-        }
-    }
+    // Primitives 256-519 are all external/named primitives, handled by
+    // primitiveExternalCall via the primitive table. No fallback needed.
 
     // No primitive function and not a quick primitive
     // Log interesting unimplemented primitives
