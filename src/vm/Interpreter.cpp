@@ -2003,6 +2003,12 @@ void Interpreter::checkTimerSemaphore() {
     int64_t diff = (currentMs - targetMs) & 0x3FFFFFFF;
     bool timerElapsed = (diff > 0) && (diff < 0x20000000);
 
+    static int timerCheckLog = 0;
+    if (timerCheckLog++ < 5) {
+        fprintf(stderr, "[TIMER-CHK #%d] current=%lld target=%lld diff=%lld elapsed=%d\n",
+                timerCheckLog, currentMs, targetMs, diff, timerElapsed?1:0);
+    }
+
     if (timerElapsed) {
         // Time has elapsed - signal the semaphore
         // Signal the timer semaphore
@@ -8764,7 +8770,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     }
 
     // TRACE: Log ALL sends in a window around driver startUp:
-    if (g_stepNum >= 390355 && g_stepNum <= 391500 && frameDepth_ <= 10) {
+    if (g_stepNum >= 479000 && g_stepNum <= 6000000 && frameDepth_ <= 3) {
         std::string tSel(selBytes, selBytes + selLen);
         std::string tRcvr = "?";
         Oop rcv = stackValue(argCount);
@@ -22449,7 +22455,7 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
     primCallCount++;
 
     // Trace primitives around driver startup
-    if (g_stepNum >= 390355 && g_stepNum <= 391500 && frameDepth_ <= 10) {
+    if (g_stepNum >= 479000 && g_stepNum <= 6000000 && frameDepth_ <= 3) {
         fprintf(stderr, "[PRIM-AT-STEP step=%llu] primitive=%d argCount=%d\n",
                 g_stepNum, primitiveIndex, argCount);
     }

@@ -4292,6 +4292,12 @@ PrimitiveResult Interpreter::primitiveSignalAtMilliseconds(int argCount) {
     timerSemaphore_ = semaphore;
     nextWakeupTime_ = targetMs & 0x3FFFFFFF;  // Ensure 30-bit
 
+    static int timerSetLog = 0;
+    if (timerSetLog++ < 10) {
+        fprintf(stderr, "[TIMER-SET #%d] target=%lld current=%lld\n",
+                timerSetLog, nextWakeupTime_, ioMSecs());
+    }
+
     primitiveSuccess(semaphore);  // Return receiver
     return PrimitiveResult::Success;
 }
