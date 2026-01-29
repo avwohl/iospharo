@@ -9130,13 +9130,13 @@ PrimitiveResult Interpreter::primitiveStringHash(int argCount) {
     size_t byteCount = memory_.byteSizeOf(obj);
     uint8_t* bytes = reinterpret_cast<uint8_t*>(header + 1);
 
-    // Per official VM MiscPrimitivePlugin algorithm
-    // Uses same algorithm as primitiveStringHashInitialHash but with 0 as initial
+    // Official VM MiscPrimitivePlugin algorithm:
+    // hash := (hash + byte) * 1664525. Result masked to 28 bits.
     uint32_t hash = 0;
     for (size_t i = 0; i < byteCount; ++i) {
-        hash = hash + (bytes[i] * 0x19660D);
+        hash = (hash + bytes[i]) * 1664525;
     }
-    hash = hash & 0x0FFFFFFF;  // 28 bits per official VM
+    hash = hash & 0x0FFFFFFF;
 
     pop();
     push(Oop::fromSmallInteger(static_cast<int64_t>(hash)));
@@ -9216,14 +9216,12 @@ PrimitiveResult Interpreter::primitiveStringHashInitialHash(int argCount) {
     size_t stringSize = memory_.byteSizeOf(stringOop);
     uint8_t* bytes = reinterpret_cast<uint8_t*>(header + 1);
 
-    // Per official VM MiscPrimitivePlugin:
-    // hash := initialHash.
-    // 0 to: stringSize - 1 do: [:pos |
-    //     hash := hash + ((aByteArray at: pos) * 16r19660D)].
-    // ^ hash bitAnd: 16r0FFFFFFF
+    // Official VM MiscPrimitivePlugin (from generated C):
+    // hash = (hash + aByteArray[pos]) * 1664525;
+    // Result masked to 28 bits (0xFFFFFFF)
     uint32_t hash = static_cast<uint32_t>(speciesHash);
     for (size_t i = 0; i < stringSize; ++i) {
-        hash = hash + (bytes[i] * 0x19660D);
+        hash = (hash + bytes[i]) * 1664525;
     }
     hash = hash & 0x0FFFFFFF;
 

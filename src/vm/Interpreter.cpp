@@ -22495,8 +22495,12 @@ void Interpreter::initializeNamedPrimitives() {
     registerNamedPrimitive("SqueakPlugin", "primitiveGetNextEvent", &Interpreter::primitiveGetNextEvent);
     registerNamedPrimitive("SurfacePlugin", "primitiveShowDisplayRect", &Interpreter::primitiveShowDisplayRect);
 
-    // MiscPrimitivePlugin - string hashing
+    // MiscPrimitivePlugin
     registerNamedPrimitive("MiscPrimitivePlugin", "primitiveStringHash", &Interpreter::primitiveStringHashInitialHash);
+    registerNamedPrimitive("MiscPrimitivePlugin", "primitiveFindSubstring", &Interpreter::primitiveFindSubstring);
+    registerNamedPrimitive("MiscPrimitivePlugin", "primitiveIndexOfAsciiInString", &Interpreter::primitiveIndexOfAscii);
+    registerNamedPrimitive("MiscPrimitivePlugin", "primitiveTranslateStringWithTable", &Interpreter::primitiveTranslateStringWithTable);
+    registerNamedPrimitive("MiscPrimitivePlugin", "primitiveCompareString", &Interpreter::primitiveCompareString);
 
     // FFI Module/Symbol Loading - these are VM built-in primitives used by UFFI
     // They are called without a module (empty module name) because they're VM internals
@@ -22521,12 +22525,13 @@ void Interpreter::initializeNamedPrimitives() {
     registerNamedPrimitive("FilePlugin", "primitiveFileDelete", &Interpreter::primitiveFileDelete);
     registerNamedPrimitive("FilePlugin", "primitiveFileRename", &Interpreter::primitiveFileRename);
     registerNamedPrimitive("FilePlugin", "primitiveFileDescriptorType", &Interpreter::primitiveFileDescriptorType);
+    registerNamedPrimitive("FilePlugin", "primitiveDirectoryDelimitor", &Interpreter::primitiveDirectoryDelimitor);
 
     // SDL2 display detection - CRITICAL for OSSDL2Driver to start its event loop
-    // Without this, OSSDL2Driver checks isVMDisplayUsingSDL2 and if it fails,
-    // the driver won't start its event loop process
     registerNamedPrimitive("", "isVMDisplayUsingSDL2", &Interpreter::primitiveIsVMDisplayUsingSDL2);
+    registerNamedPrimitive("", "primitiveIsVMDisplayUsingSDL2", &Interpreter::primitiveIsVMDisplayUsingSDL2);
     registerNamedPrimitive("SqueakPlugin", "isVMDisplayUsingSDL2", &Interpreter::primitiveIsVMDisplayUsingSDL2);
+    registerNamedPrimitive("SDL2DisplayPlugin", "primitiveHasDisplayPlugin", &Interpreter::primitiveIsVMDisplayUsingSDL2);
 
     // SDL2 input semaphore - enables SDL2 event polling
     // The image calls this to register a semaphore for SDL2 event notification
