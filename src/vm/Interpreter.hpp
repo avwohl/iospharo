@@ -326,6 +326,8 @@ private:
     bool running_;
     bool primitiveFailed_;
     int lastPrimitiveIndex_ = 0;  // For stepDetailed() tracking
+    int lastFailedPrimIndex_ = -1;
+    uint64_t lastFailedPrimStep_ = 0;
 
     // System paths
     std::string imageName_;
@@ -873,7 +875,15 @@ private:
     PrimitiveResult primitiveSecondsClock(int argCount);
     PrimitiveResult primitiveMicrosecondClock(int argCount);
     PrimitiveResult primitiveLocalMicrosecondClock(int argCount);
+    PrimitiveResult primitiveHighResClock(int argCount);
+    PrimitiveResult primitiveUtcWithOffset(int argCount);
     PrimitiveResult primitiveSignalAtMilliseconds(int argCount);
+
+    // LargeIntegers plugin named primitives
+    PrimitiveResult primDigitMultiplyNegative(int argCount);
+    PrimitiveResult primDigitAddLargeIntegers(int argCount);
+    PrimitiveResult primNormalizePositive(int argCount);
+    PrimitiveResult primNormalizeNegative(int argCount);
 
     // Time/Timezone primitives (242-246)
     PrimitiveResult primitiveSignalAtUTCMicroseconds(int argCount);  // 242

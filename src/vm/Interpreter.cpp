@@ -13063,14 +13063,130 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         static int dnuLogCount = 0;
         if (dnuLogCount++ < 200) {
             std::cerr << "[DNU] Selector '#" << selStr << "' not found on " << rcvrClassName
-                      << " (args=" << argCount << ") rcvr=0x" << std::hex << rcvr.rawBits() << std::dec;
-            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-                ObjectHeader* rh = rcvr.asObjectPtr();
-                std::cerr << " classIdx=" << rh->classIndex() << " fmt=" << (int)rh->format()
-                          << " slots=" << rh->slotCount();
-            }
-            std::cerr << " step=" << g_stepNum << "\n";
+                      << " (args=" << argCount << ") step=" << g_stepNum
+                      << " lastFailedPrim=" << lastFailedPrimIndex_ << "@step=" << lastFailedPrimStep_ << "\n";
 
+            // Trace caller for specific selectors
+            if (selStr == "printStringHex") {
+                // Dump the caller method's literal variables to find NanosInSecond
+                if (activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
+                    Oop callerMethod = memory_.fetchPointer(3, activeContext_);
+                    if (callerMethod.isObject() && callerMethod.rawBits() > 0x10000) {
+                        Oop cmHeader = memory_.fetchPointer(0, callerMethod);
+                        if (cmHeader.isSmallInteger()) {
+                            int cmNumLits = cmHeader.asSmallInteger() & 0x7FFF;
+                            std::cerr << "  [LITS] callerMethod numLits=" << cmNumLits << ":";
+                            for (int li = 1; li <= cmNumLits && li <= 15; li++) {
+                                Oop lit = memory_.fetchPointer(li, callerMethod);
+                                if (lit.isSmallInteger()) {
+                                    std::cerr << " [" << li << "]=smi(" << lit.asSmallInteger() << ")";
+                                } else if (lit.rawBits() == memory_.nil().rawBits() || lit.rawBits() == 0) {
+                                    std::cerr << " [" << li << "]=nil";
+                                } else if (lit.isObject() && memory_.isValidPointer(lit)) {
+                                    ObjectHeader* lh = lit.asObjectPtr();
+                                    if (lh->isBytesObject() && lh->byteSize() < 50) {
+                                        std::cerr << " [" << li << "]='" << std::string((char*)lh->bytes(), lh->byteSize()) << "'";
+                                    } else if (lh->slotCount() >= 2 && lh->slotCount() <= 5) {
+                                        // Association-like: dump key and value
+                                        Oop k = memory_.fetchPointer(0, lit);
+                                        Oop v = memory_.fetchPointer(1, lit);
+                                        std::string ks = "?", vs = "?";
+                                        if (k.isObject() && memory_.isValidPointer(k)) {
+                                            ObjectHeader* kh = k.asObjectPtr();
+                                            if (kh->isBytesObject() && kh->byteSize() < 50)
+                                                ks = std::string((char*)kh->bytes(), kh->byteSize());
+                                        }
+                                        if (v.isSmallInteger()) vs = "smi(" + std::to_string(v.asSmallInteger()) + ")";
+                                        else if (v.rawBits() == memory_.nil().rawBits()) vs = "nil";
+                                        else vs = "obj(0x" + std::to_string(v.rawBits()) + ")";
+                                        std::cerr << " [" << li << "]=" << ks << "->" << vs;
+                                    } else {
+                                        std::cerr << " [" << li << "]=obj(fmt=" << (int)lh->format()
+                                                  << " cls=" << lh->classIndex() << ")";
+                                    }
+                                }
+                            }
+                            std::cerr << "\n";
+                        }
+                    }
+                }
+                // Dump method bytecodes around IP
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    ObjectHeader* mHdr = method_.asObjectPtr();
+                    Oop mHeader = memory_.fetchPointer(0, method_);
+                    if (mHeader.isSmallInteger()) {
+                        int64_t hBits = mHeader.asSmallInteger();
+                        int numLits = hBits & 0x7FFF;
+                        size_t bcStart = (numLits + 1) * 8;
+                        size_t bcLen = mHdr->byteSize() - bcStart;
+                        uint8_t* bcBytes = mHdr->bytes() + bcStart;
+                        // IP is byte offset from method start; convert to bytecode offset
+                        int64_t rawIP = 105; // from context slot 1
+                        // Actually read IP from activeContext_
+                        if (activeContext_.isObject()) {
+                            Oop ipOop = memory_.fetchPointer(1, activeContext_);
+                            if (ipOop.isSmallInteger()) rawIP = ipOop.asSmallInteger();
+                        }
+                        int64_t bcIdx = rawIP - (int64_t)bcStart;
+                        std::cerr << "  [BC] numLits=" << numLits << " bcLen=" << bcLen
+                                  << " rawIP=" << rawIP << " bcStart=" << bcStart << " bcIdx=" << bcIdx << " bytes:";
+                        size_t start = 0;
+                        size_t end = bcLen;
+                        for (size_t b = start; b < end; b++) {
+                            std::cerr << " " << (b==(size_t)bcIdx?"*":"") << (int)bcBytes[b];
+                        }
+                        std::cerr << "\n";
+                    }
+                }
+                // Dump caller's temps/stack to find what's nil
+                if (activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
+                    ObjectHeader* ctxHdr = activeContext_.asObjectPtr();
+                    size_t ctxSlots = ctxHdr->slotCount();
+                    std::cerr << "  [CTX] activeContext slots=" << ctxSlots << ":";
+                    for (size_t s = 0; s < ctxSlots && s < 20; s++) {
+                        Oop val = memory_.fetchPointer(s, activeContext_);
+                        if (val.isSmallInteger()) {
+                            std::cerr << " [" << s << "]=smi(" << val.asSmallInteger() << ")";
+                        } else if (val.rawBits() == memory_.nil().rawBits() || val.rawBits() == 0) {
+                            std::cerr << " [" << s << "]=nil";
+                        } else if (val.isObject()) {
+                            ObjectHeader* vh = val.asObjectPtr();
+                            if (vh->isBytesObject() && vh->byteSize() < 50) {
+                                std::cerr << " [" << s << "]='" << std::string((char*)vh->bytes(), vh->byteSize()) << "'";
+                            } else {
+                                std::cerr << " [" << s << "]=obj(cls=" << vh->classIndex() << " fmt=" << (int)vh->format() << ")";
+                            }
+                        } else {
+                            std::cerr << " [" << s << "]=0x" << std::hex << val.rawBits() << std::dec;
+                        }
+                    }
+                    std::cerr << "\n";
+                }
+            }
+            if (selStr == "printStringHex" || selStr == "value:" || selStr == "worldRenderer:") {
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    auto getMethodSel = [&](Oop m) -> std::string {
+                        if (!m.isObject() || m.rawBits() < 0x10000) return "?";
+                        Oop mh = memory_.fetchPointer(0, m);
+                        if (!mh.isSmallInteger()) return "?";
+                        int nl = mh.asSmallInteger() & 0x7FFF;
+                        if (nl < 2 || nl >= 100) return "?";
+                        Oop s = memory_.fetchPointer(nl - 1, m);
+                        if (!s.isObject() || s.rawBits() < 0x10000) return "?";
+                        ObjectHeader* sh = s.asObjectPtr();
+                        if (!sh->isBytesObject() || sh->byteSize() > 100) return "?";
+                        return std::string((char*)sh->bytes(), sh->byteSize());
+                    };
+                    std::cerr << "  caller=#" << getMethodSel(method_);
+                    Oop ctx = activeContext_;
+                    for (int d = 0; d < 8 && ctx.isObject() && ctx.rawBits() > 0x10000; d++) {
+                        Oop cm = memory_.fetchPointer(3, ctx);
+                        std::cerr << " <- " << getMethodSel(cm);
+                        ctx = memory_.fetchPointer(0, ctx);
+                    }
+                    std::cerr << "\n";
+                }
+            }
         }
     }
 
@@ -17908,6 +18024,22 @@ void Interpreter::initializeNamedPrimitives() {
     registerNamedPrimitive("SqueakPlugin", "isVMDisplayUsingSDL2", &Interpreter::primitiveIsVMDisplayUsingSDL2);
     registerNamedPrimitive("SDL2DisplayPlugin", "primitiveHasDisplayPlugin", &Interpreter::primitiveIsVMDisplayUsingSDL2);
 
+    // High-resolution clock (used by Time class>>primNanoClock)
+    registerNamedPrimitive("", "primitiveHighResClock", &Interpreter::primitiveHighResClock);
+
+    // LocalePlugin primitives
+    registerNamedPrimitive("LocalePlugin", "primitiveTimezoneOffset", &Interpreter::primitiveLocaleTimezoneOffset);
+    registerNamedPrimitive("LocalePlugin", "primitiveDaylightSavingTimeActive", &Interpreter::primitiveLocaleDaylightSaving);
+
+    // DateAndTime>>now uses this named primitive (module: '')
+    registerNamedPrimitive("", "primitiveUtcWithOffset", &Interpreter::primitiveUtcWithOffset);
+
+    // LargeIntegers plugin primitives
+    registerNamedPrimitive("LargeIntegers", "primDigitMultiplyNegative", &Interpreter::primDigitMultiplyNegative);
+    registerNamedPrimitive("LargeIntegers", "primDigitAdd", &Interpreter::primDigitAddLargeIntegers);
+    registerNamedPrimitive("LargeIntegers", "primNormalizePositive", &Interpreter::primNormalizePositive);
+    registerNamedPrimitive("LargeIntegers", "primNormalizeNegative", &Interpreter::primNormalizeNegative);
+
     // SDL2 input semaphore - enables SDL2 event polling
     // The image calls this to register a semaphore for SDL2 event notification
     registerNamedPrimitive("", "primitiveSetVMSDL2Input:", &Interpreter::primitiveSetVMSDL2Input);
@@ -17987,6 +18119,9 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
         PrimitiveResult result = (this->*prim)(argCount);
         if (result == PrimitiveResult::Success) {
             lastPrimitiveIndex_ = primitiveIndex;
+        } else {
+            lastFailedPrimIndex_ = primitiveIndex;
+            lastFailedPrimStep_ = g_stepNum;
         }
         return result;
     }
