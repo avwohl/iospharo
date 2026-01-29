@@ -4269,21 +4269,6 @@ PrimitiveResult Interpreter::primitiveSecondsClock(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveMicrosecondClock(int argCount) {
-    static int p240count = 0;
-    p240count++;
-    if (p240count <= 20) {
-        int64_t checkUs;
-        {
-            auto now2 = std::chrono::system_clock::now();
-            auto ux = std::chrono::duration_cast<std::chrono::microseconds>(
-                now2.time_since_epoch()).count();
-            constexpr int64_t off = 2177452800LL * 1000000LL;
-            checkUs = ux + off;
-        }
-        fprintf(stderr, "[PRIM240] #%d called argCount=%d step=%llu canBeSmi=%d val=%lld\n",
-                p240count, argCount, g_stepNum,
-                Oop::canBeSmallInteger(checkUs) ? 1 : 0, (long long)checkUs);
-    }
     // Primitive 240: Return UTC microseconds since Smalltalk epoch (Jan 1, 1901)
     // Per official VM: ioUTCMicrosecondsNow() returns Smalltalk epoch microseconds
 
@@ -11700,37 +11685,6 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
     int64_t headerBits = methodHeader.asSmallInteger();
     size_t numLiterals = headerBits & 0x7FFF;  // bits 0-14 are numLiterals
 
-    // Deep trace: search all literals recursively for 'UtcWithOffset'
-    {
-        static int utcSearchCount = 0;
-        std::function<bool(Oop, int)> findUtc;
-        findUtc = [&](Oop obj, int depth) -> bool {
-            if (depth > 4 || !obj.isObject() || !memory_.isValidPointer(obj)) return false;
-            ObjectHeader* h = obj.asObjectPtr();
-            if (h->isBytesObject() && h->byteSize() < 200) {
-                std::string s((char*)h->bytes(), h->byteSize());
-                if (s.find("UtcWithOffset") != std::string::npos || s.find("utcWithOffset") != std::string::npos) {
-                    if (utcSearchCount++ < 5) {
-                        fprintf(stderr, "[UTC-FOUND] step=%llu depth=%d str='%s' argCount=%d numLit=%zu\n",
-                                g_stepNum, depth, s.c_str(), argCount, numLiterals);
-                    }
-                    return true;
-                }
-            }
-            if (!h->isBytesObject() && h->slotCount() >= 1 && h->slotCount() <= 30) {
-                for (size_t i = 0; i < h->slotCount(); i++) {
-                    Oop sub = memory_.fetchPointer(i, obj);
-                    if (findUtc(sub, depth + 1)) return true;
-                }
-            }
-            return false;
-        };
-        for (size_t i = 1; i <= numLiterals; i++) {
-            Oop lit = memory_.fetchPointer(i, method);
-            findUtc(lit, 0);
-        }
-    }
-
     // Fast path: Check for known primitives by name in literals
     // Note: literals are at slots 1..numLiterals (slot 0 is the header)
     // Pragma objects store primitive names in their arguments array
@@ -11887,8 +11841,7 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
         }
     }
 
-    // Debug logging
-    static FILE* extLog = fopen("/tmp/external_prim.log", "a");
+    static FILE* extLog = nullptr;  // Set to fopen("/tmp/external_prim.log", "a") to enable debug logging
     static int extCallCount = 0;
     extCallCount++;
 
@@ -12237,85 +12190,6 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
                     }
                 }
             }
-        }
-    }
-
-    // Log failing prim 117 with method selector for debugging
-    {
-        // Get selector from method's last literal (association value) or second-to-last
-        std::string methodSel = "?";
-        if (numLiterals >= 2) {
-            // selector is in the penultimate literal's association
-            // Actually, get it from the last literal slot (numLiterals index = selector or association)
-            Oop lastLit = memory_.fetchPointer(numLiterals, method);
-            if (lastLit.isObject() && memory_.isValidPointer(lastLit)) {
-                ObjectHeader* lh = lastLit.asObjectPtr();
-                if (lh->isBytesObject() && lh->byteSize() < 100) {
-                    methodSel = std::string((char*)lh->bytes(), lh->byteSize());
-                } else if (lh->slotCount() >= 2) {
-                    // Association: key is slot 0
-                    Oop key = memory_.fetchPointer(0, lastLit);
-                    if (key.isObject() && memory_.isValidPointer(key)) {
-                        ObjectHeader* kh = key.asObjectPtr();
-                        if (kh->isBytesObject() && kh->byteSize() < 100) {
-                            methodSel = std::string((char*)kh->bytes(), kh->byteSize());
-                        }
-                    }
-                }
-            }
-        }
-        // Also get selector from numLiterals-1 slot
-        std::string sel2 = "?";
-        if (numLiterals >= 1) {
-            Oop prevLit = memory_.fetchPointer(numLiterals - 1, method);
-            if (prevLit.isObject() && memory_.isValidPointer(prevLit)) {
-                ObjectHeader* ph = prevLit.asObjectPtr();
-                if (ph->isBytesObject() && ph->byteSize() < 100) {
-                    sel2 = std::string((char*)ph->bytes(), ph->byteSize());
-                }
-            }
-        }
-        // Also dump all literals for LocalTimeZone methods
-        std::string allLits;
-        if (methodSel == "LocalTimeZone" || sel2 == "LocalTimeZone" ||
-            methodSel == "Integer" || methodSel == "LargePositiveInteger" ||
-            methodSel == "LargeNegativeInteger" || sel2 == "Integer" ||
-            sel2 == "LargePositiveInteger" || sel2 == "LargeNegativeInteger") {
-            for (size_t li = 1; li <= numLiterals; li++) {
-                Oop lit = memory_.fetchPointer(li, method);
-                allLits += " lit[" + std::to_string(li) + "]=";
-                if (lit.isSmallInteger()) {
-                    allLits += "smi(" + std::to_string(lit.asSmallInteger()) + ")";
-                } else if (lit.isObject() && memory_.isValidPointer(lit)) {
-                    ObjectHeader* lhdr = lit.asObjectPtr();
-                    if (lhdr->isBytesObject() && lhdr->byteSize() < 100) {
-                        allLits += "'" + std::string((char*)lhdr->bytes(), lhdr->byteSize()) + "'";
-                    } else {
-                        allLits += "obj(fmt=" + std::to_string((int)lhdr->format()) +
-                                   " slots=" + std::to_string(lhdr->slotCount()) +
-                                   " cls=" + std::to_string(lhdr->classIndex()) + ")";
-                        // Deep search for strings
-                        for (size_t si = 0; si < lhdr->slotCount() && si < 5; si++) {
-                            Oop s = memory_.fetchPointer(si, lit);
-                            if (s.isObject() && memory_.isValidPointer(s)) {
-                                ObjectHeader* sh = s.asObjectPtr();
-                                if (sh->isBytesObject() && sh->byteSize() < 100) {
-                                    allLits += "[" + std::to_string(si) + "]='" +
-                                               std::string((char*)sh->bytes(), sh->byteSize()) + "'";
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    allLits += "bits(0x" + std::to_string(lit.rawBits()) + ")";
-                }
-            }
-        }
-        static int p117FailLog = 0;
-        if (p117FailLog++ < 500) {
-            fprintf(stderr, "[PRIM117-FAIL] step=%llu method=%s/%s argCount=%d numLit=%zu%s\n",
-                    g_stepNum, methodSel.c_str(), sel2.c_str(), argCount, numLiterals,
-                    allLits.c_str());
         }
     }
 
@@ -13735,10 +13609,6 @@ PrimitiveResult Interpreter::primitiveUpdateTimezone(int argCount) {
 // receiver primitiveUtcAndTimezoneOffset -> array or fills provided array
 // Returns {UTC microseconds since Smalltalk epoch, timezone offset in seconds}
 PrimitiveResult Interpreter::primitiveUtcAndTimezoneOffset(int argCount) {
-    static int p244count = 0;
-    if (p244count++ < 20) {
-        fprintf(stderr, "[PRIM244] #%d called argCount=%d step=%llu\n", p244count, argCount, g_stepNum);
-    }
     Oop resultArray;
 
     if (argCount == 0) {
@@ -13823,10 +13693,6 @@ PrimitiveResult Interpreter::primitiveCoarseLocalMicrosecondClock(int argCount) 
 // Used by DateAndTime class>>now via <primitive: 'primitiveUtcWithOffset' module: ''>
 // Returns a 2-element array: {UTC microseconds since Posix epoch, timezone offset in seconds}
 PrimitiveResult Interpreter::primitiveUtcWithOffset(int argCount) {
-    static int utcCount = 0;
-    if (utcCount++ < 20) {
-        fprintf(stderr, "[PRIM-UTC] #%d called argCount=%d step=%llu\n", utcCount, argCount, g_stepNum);
-    }
     Oop resultArray;
 
     if (argCount > 1) return PrimitiveResult::Failure;
