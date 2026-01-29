@@ -2403,24 +2403,65 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
                 indexableSize |= ((int64_t)bytes[i]) << (i * 8);
             }
         } else {
-            // Log details about the "too large" object
+            // Log details about the non-integer argument object
             if (newArgCallCount <= 10) {
                 FILE* f = fopen("/tmp/init_trace.log", "a");
                 if (f) {
-                    fprintf(f, "[basicNew:] LPI byteSize=%zu isBytesObj=%d fmt=%d classIdx=%u slots=%zu\n",
+                    fprintf(f, "[basicNew:] arg byteSize=%zu isBytesObj=%d fmt=%d classIdx=%u slots=%zu\n",
                             hdr->byteSize(), hdr->isBytesObject() ? 1 : 0,
                             (int)hdr->format(), hdr->classIndex(), hdr->slotCount());
-                    // Dump first 16 bytes
-                    uint8_t* bytes = (uint8_t*)hdr->bytes();
-                    fprintf(f, "[basicNew:] LPI bytes:");
-                    for (size_t i = 0; i < std::min(hdr->byteSize(), (size_t)16); i++) {
-                        fprintf(f, " %02x", bytes[i]);
+                    // Resolve class name of the argument
+                    Oop argClass = memory_.classOf(sizeOop);
+                    if (argClass.isObject() && argClass.rawBits() > 0x10000) {
+                        ObjectHeader* acHdr = argClass.asObjectPtr();
+                        if (acHdr->slotCount() >= 7) {
+                            Oop acName = memory_.fetchPointer(6, argClass);
+                            if (acName.isObject() && acName.rawBits() > 0x10000) {
+                                ObjectHeader* anHdr = acName.asObjectPtr();
+                                if (anHdr->isBytesObject() && anHdr->byteSize() < 100) {
+                                    fprintf(f, "[basicNew:] arg class name: %.*s\n",
+                                            (int)anHdr->byteSize(), (char*)anHdr->bytes());
+                                }
+                            }
+                        }
                     }
-                    fprintf(f, "\n");
+                    // Dump slot values
+                    for (size_t s = 0; s < std::min(hdr->slotCount(), (size_t)4); s++) {
+                        Oop slotVal = memory_.fetchPointer(s, sizeOop);
+                        fprintf(f, "[basicNew:] arg slot[%zu] = 0x%llx isSmallInt=%d",
+                                s, (unsigned long long)slotVal.rawBits(), slotVal.isSmallInteger() ? 1 : 0);
+                        if (slotVal.isSmallInteger()) {
+                            fprintf(f, " value=%lld", (long long)slotVal.asSmallInteger());
+                        } else if (slotVal.isObject() && slotVal.rawBits() > 0x10000) {
+                            // Try to get class name of slot value
+                            Oop slotClass = memory_.classOf(slotVal);
+                            if (slotClass.isObject() && slotClass.rawBits() > 0x10000) {
+                                ObjectHeader* scHdr = slotClass.asObjectPtr();
+                                if (scHdr->slotCount() >= 7) {
+                                    Oop scName = memory_.fetchPointer(6, slotClass);
+                                    if (scName.isObject() && scName.rawBits() > 0x10000) {
+                                        ObjectHeader* snHdr = scName.asObjectPtr();
+                                        if (snHdr->isBytesObject() && snHdr->byteSize() < 100) {
+                                            fprintf(f, " class=%.*s", (int)snHdr->byteSize(), (char*)snHdr->bytes());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        fprintf(f, "\n");
+                    }
+                    // Dump stack context: show several stack values around the failure
+                    fprintf(f, "[basicNew:] stack dump (argCount=%d frameDepth=%zu):\n", argCount, frameDepth_);
+                    for (int sv = 0; sv < 6; sv++) {
+                        Oop val = stackValue(sv);
+                        fprintf(f, "  stackValue(%d) = 0x%llx isSmallInt=%d isObj=%d\n",
+                                sv, (unsigned long long)val.rawBits(),
+                                val.isSmallInteger() ? 1 : 0, val.isObject() ? 1 : 0);
+                    }
                     fclose(f);
                 }
             }
-            logNewArgFail("LPI-too-large");
+            logNewArgFail("non-integer-arg");
             return PrimitiveResult::Failure;
         }
     } else {

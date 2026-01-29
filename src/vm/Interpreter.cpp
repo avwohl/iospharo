@@ -2476,6 +2476,30 @@ bool Interpreter::step() {
         fprintf(g_sendTraceFile, "[STEP] %lld running=%d\n", (long long)g_stepCount, running_ ? 1 : 0);
         fflush(g_sendTraceFile);
     }
+    // Targeted stack dump around size/new:streamContents: corruption
+    if (g_sendTraceFile && g_stepCount >= 420 && g_stepCount <= 440) {
+        fprintf(g_sendTraceFile, "[STACK step=%lld fd=%zu sp-base=%ld] top5:",
+                (long long)g_stepCount, frameDepth_, (long)(stackPointer_ - stackBase_));
+        for (int si = 0; si < 5 && si < (stackPointer_ - stackBase_); si++) {
+            Oop sv = stackValue(si);
+            if (sv.isSmallInteger()) {
+                fprintf(g_sendTraceFile, " SI(%lld)", (long long)sv.asSmallInteger());
+            } else if (sv.rawBits() == memory_.nil().rawBits()) {
+                fprintf(g_sendTraceFile, " nil");
+            } else if (sv.isObject() && sv.rawBits() > 0x10000) {
+                ObjectHeader* h = sv.asObjectPtr();
+                fprintf(g_sendTraceFile, " obj(ci=%u)", h->classIndex());
+            } else {
+                fprintf(g_sendTraceFile, " 0x%llx", (unsigned long long)sv.rawBits());
+            }
+        }
+        // Also show current bytecode
+        if (instructionPointer_) {
+            fprintf(g_sendTraceFile, " bc=0x%02x", *instructionPointer_);
+        }
+        fprintf(g_sendTraceFile, "\n");
+        fflush(g_sendTraceFile);
+    }
 
     // Check timer and process pending signals every step
     // (needed when step() is called directly, not via run())
@@ -3222,9 +3246,10 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 returnFromBlock();
             }
         } else {
-            // Sista V1: 0x70-0x7F = Send Special Message 0-15
+            // Sista V1: 0x70-0x7F = Send Special Message 16-31
             // (at:, at:put:, size, next, nextPut:, atEnd, ==, class, ~~, value, value:, do:, new, new:, x, y)
-            sendSpecial(bytecode - 0x70);
+            // These map to special selectors 16-31, NOT 0-15 (arithmetic)
+            commonSend(bytecode - 0x70);
         }
     }
     else if (bytecode <= 0x8F) {
@@ -4997,6 +5022,27 @@ terminate_process:
                 std::cerr << " onto frame " << frameDepth_ << " stack (sp=" << (stackPointer_ - stackBase_) << ")\n";
             }
         }
+        // Trace return values during critical startup sequence
+        if (g_sendTraceFile && g_stepCount >= 300 && g_stepCount < 600) {
+            fprintf(g_sendTraceFile, "[RET] step=%lld fd=%zu val=", (long long)g_stepCount, frameDepth_);
+            if (value.isSmallInteger()) {
+                fprintf(g_sendTraceFile, "SI(%lld)", (long long)value.asSmallInteger());
+            } else if (value.rawBits() == memory_.trueObject().rawBits()) {
+                fprintf(g_sendTraceFile, "true");
+            } else if (value.rawBits() == memory_.falseObject().rawBits()) {
+                fprintf(g_sendTraceFile, "false");
+            } else if (value.rawBits() == memory_.nil().rawBits()) {
+                fprintf(g_sendTraceFile, "nil");
+            } else if (value.isObject() && value.rawBits() > 0x10000) {
+                ObjectHeader* vh = value.asObjectPtr();
+                fprintf(g_sendTraceFile, "obj:0x%llx(ci=%u,fmt=%d)",
+                        (unsigned long long)value.rawBits(), vh->classIndex(), (int)vh->format());
+            } else {
+                fprintf(g_sendTraceFile, "0x%llx", (unsigned long long)value.rawBits());
+            }
+            fprintf(g_sendTraceFile, "\n");
+            fflush(g_sendTraceFile);
+        }
         push(value);
     }
 }
@@ -5723,6 +5769,13 @@ void Interpreter::commonSend(int which) {
 
     int selectorIndex = which + 16;  // Offset by 16 from the arithmetic sends
 
+    // TRACE: Log commonSend entry for the critical step range
+    if (g_sendTraceFile && g_stepCount >= 420 && g_stepCount <= 440) {
+        fprintf(g_sendTraceFile, "[COMMON-SEND step=%lld] which=%d selectorIndex=%d\n",
+                (long long)g_stepCount, which, selectorIndex);
+        fflush(g_sendTraceFile);
+    }
+
     // Get special selectors array
     Oop specialSelectors = memory_.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
     if (!specialSelectors.isObject() || specialSelectors.rawBits() < 0x10000) {
@@ -5731,7 +5784,10 @@ void Interpreter::commonSend(int which) {
             std::cerr << "[SPECIAL-SEND] ERROR: Special selectors array not found (which=" << which << ")\n";
         }
         // Cannot proceed without special selectors - return receiver as no-op
-        // Do NOT use literal(which) - that's wrong and causes OOB access
+        if (g_sendTraceFile && g_stepCount >= 420 && g_stepCount <= 440) {
+            fprintf(g_sendTraceFile, "[COMMON-SEND step=%lld] FALLBACK: no special selectors array!\n", (long long)g_stepCount);
+            fflush(g_sendTraceFile);
+        }
         push(receiver_);
         return;
     }
@@ -5744,8 +5800,11 @@ void Interpreter::commonSend(int which) {
     size_t argCountSlot = selectorIndex * 2 + 1;
 
     if (selectorSlot >= arraySlots || argCountSlot >= arraySlots) {
-        // std::cerr << "[COMMON] ERROR: Special selector index " << selectorIndex
-                  // << " out of range (array has " << arraySlots << " slots)";
+        if (g_sendTraceFile && g_stepCount >= 420 && g_stepCount <= 440) {
+            fprintf(g_sendTraceFile, "[COMMON-SEND step=%lld] FALLBACK: index OOB! selectorSlot=%zu argCountSlot=%zu arraySlots=%zu\n",
+                    (long long)g_stepCount, selectorSlot, argCountSlot, arraySlots);
+            fflush(g_sendTraceFile);
+        }
         returnValue(receiver_);
         return;
     }
@@ -5856,6 +5915,13 @@ void Interpreter::commonSend(int which) {
                 std::cerr << "    [" << d << "] " << frameSel << "\n";
             }
         }
+    }
+
+    // TRACE: Log before sendSelector for critical steps
+    if (g_sendTraceFile && g_stepCount >= 420 && g_stepCount <= 440) {
+        fprintf(g_sendTraceFile, "[COMMON-SEND step=%lld] calling sendSelector sel=0x%llx argCount=%d\n",
+                (long long)g_stepCount, (unsigned long long)selector.rawBits(), argCount);
+        fflush(g_sendTraceFile);
     }
 
     sendSelector(selector, argCount);
@@ -6168,7 +6234,30 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         // Trace startup-related sends
         // Trace all sends around the failure point (steps 300-600) to understand what breaks
         if (g_sendTraceFile && g_stepCount >= 300 && g_stepCount < 600) {
-            fprintf(g_sendTraceFile, "[SEND] #%s at step %lld fd=%zu\n", selStr.c_str(), (long long)g_stepCount, frameDepth_);
+            fprintf(g_sendTraceFile, "[SEND] #%s at step %lld fd=%zu numArgs=%d", selStr.c_str(), (long long)g_stepCount, frameDepth_, argCount);
+            // For sends with args, dump argument values
+            if (argCount > 0 && argCount <= 3) {
+                fprintf(g_sendTraceFile, " args=[");
+                for (int ai = 0; ai < argCount; ai++) {
+                    Oop arg = stackValue(argCount - 1 - ai);
+                    if (arg.isSmallInteger()) {
+                        fprintf(g_sendTraceFile, "%lld", (long long)arg.asSmallInteger());
+                    } else {
+                        fprintf(g_sendTraceFile, "obj:0x%llx", (unsigned long long)arg.rawBits());
+                    }
+                    if (ai < argCount - 1) fprintf(g_sendTraceFile, ", ");
+                }
+                fprintf(g_sendTraceFile, "]");
+            }
+            // Also show receiver
+            Oop sendRcvr = stackValue(argCount);
+            if (sendRcvr.isSmallInteger()) {
+                fprintf(g_sendTraceFile, " rcvr=SI(%lld)", (long long)sendRcvr.asSmallInteger());
+            } else if (sendRcvr.isObject() && sendRcvr.rawBits() > 0x10000) {
+                ObjectHeader* rHdr = sendRcvr.asObjectPtr();
+                fprintf(g_sendTraceFile, " rcvr=obj:0x%llx(ci=%u)", (unsigned long long)sendRcvr.rawBits(), rHdr->classIndex());
+            }
+            fprintf(g_sendTraceFile, "\n");
             fflush(g_sendTraceFile);
         }
         // Trace ALL sends between caseOf:otherwise: and beginsWith: on '+'
@@ -11290,6 +11379,12 @@ extern int g_traceSendsAfterPrim264;
                 }
             }
             // Trace startup sends via cached path
+            if (g_sendTraceFile && g_stepCount >= 420 && g_stepCount <= 435) {
+                fprintf(g_sendTraceFile, "[CACHE-HIT step=%lld] #%s primIdx=%d method=0x%llx\n",
+                        (long long)g_stepCount, cacheSelStr.c_str(), cached->primitiveIndex,
+                        (unsigned long long)cached->method.rawBits());
+                fflush(g_sendTraceFile);
+            }
             if (g_sendTraceFile && g_stepCount < 100000 && (
                 cacheSelStr == "startUp:" || cacheSelStr == "setupEventLoop" ||
                 cacheSelStr == "forceNewEventLoop" || cacheSelStr == "ensureEventLoop" ||
@@ -11396,6 +11491,13 @@ extern int g_traceSendsAfterPrim264;
     }
 
     Oop method = lookupMethod(selector, rcvrClass);
+    // TRACE: Log lookup result for critical steps
+    if (g_sendTraceFile && g_stepCount >= 420 && g_stepCount <= 440) {
+        fprintf(g_sendTraceFile, "[LOOKUP step=%lld] method=0x%llx isNil=%d rcvrClass=0x%llx\n",
+                (long long)g_stepCount, (unsigned long long)method.rawBits(), method.isNil() ? 1 : 0,
+                (unsigned long long)rcvrClass.rawBits());
+        fflush(g_sendTraceFile);
+    }
     if (method.isNil()) {
         // Debug: trace when #new lookup fails
         if (selLen == 3 && selBytes && memcmp(selBytes, "new", 3) == 0) {
@@ -11554,6 +11656,26 @@ extern int g_traceSendsAfterPrim264;
     // Check for primitive
     int primIndex = primitiveIndexOf(method);
 
+    // TRACE: Log primitive index for critical steps
+    if (g_sendTraceFile && g_stepCount >= 420 && g_stepCount <= 440) {
+        fprintf(g_sendTraceFile, "[CACHE-MISS step=%lld] primIndex=%d method=0x%llx\n",
+                (long long)g_stepCount, primIndex, (unsigned long long)method.rawBits());
+        // Also dump the method header to understand why primIndex=264
+        if (method.isObject() && method.rawBits() > 0x10000) {
+            Oop hdr = memory_.fetchPointer(0, method);
+            fprintf(g_sendTraceFile, "[CACHE-MISS step=%lld] method-header=0x%llx isSmallInt=%d\n",
+                    (long long)g_stepCount, (unsigned long long)hdr.rawBits(), hdr.isSmallInteger() ? 1 : 0);
+            if (hdr.isSmallInteger()) {
+                int64_t bits = hdr.asSmallInteger();
+                fprintf(g_sendTraceFile, "[CACHE-MISS step=%lld] header-bits=0x%llx numArgs=%lld numLits=%lld hasPrim=%lld\n",
+                        (long long)g_stepCount, (long long)bits,
+                        (long long)((bits >> 24) & 0xF), (long long)(bits & 0x7FFF),
+                        (long long)((bits >> 30) & 1));
+            }
+        }
+        fflush(g_sendTraceFile);
+    }
+
     // DEBUG: Log primitive detection for resume-related methods
     {
         std::string selStr = "";
@@ -11664,6 +11786,12 @@ extern int g_traceSendsAfterPrim264;
             primitiveFailed_ = false;
             newMethod_ = method;  // For primitive 117 to read target method literals
             PrimitiveResult result = executePrimitive(primIndex, argCount);
+            // TRACE: Log primitive result for critical steps
+            if (g_sendTraceFile && g_stepCount >= 420 && g_stepCount <= 440) {
+                fprintf(g_sendTraceFile, "[PRIM-RESULT step=%lld] primIndex=%d result=%d (0=success)\n",
+                        (long long)g_stepCount, primIndex, (int)result);
+                fflush(g_sendTraceFile);
+            }
             if (result == PrimitiveResult::Success) {
                 return;
             }
@@ -13906,42 +14034,22 @@ int Interpreter::primitiveIndexOf(Oop method) const {
 
     // Check hasPrimitive flag (bit 30)
     bool hasPrimitive = (bits >> 30) & 1;
+    if (!hasPrimitive) return 0;
 
     ObjectHeader* methodObj = method.asObjectPtr();
     int numLiterals = bits & 0x7FFF;  // bits 0-14 are numLiterals
     uint8_t* bytecodes = methodObj->bytes() + (1 + numLiterals) * 8;
 
     // In Sista V1, primitive call is encoded as:
-    // 248 extB: callPrimitive with index from extension bytes
-    // The format is: 248 extA extB where primitive = extA + (extB << 8)
-    //
-    // Or in simpler encoding for common primitives:
-    // The primitive number may be embedded in special send bytecodes
-
-    // Check for callPrimitive bytecode (248 = 0xf8)
+    // 248 lowByte highByte (callPrimitive)
+    // The primitive number = lowByte | (highByte << 8)
     if (bytecodes[0] == 248) {
-        // callPrimitive: 248 lowByte highByte
         int primIndex = bytecodes[1] | (bytecodes[2] << 8);
         return primIndex;
     }
 
-    // If hasPrimitive flag is set but no 248 bytecode at start,
-    // scan first few bytecodes for callPrimitive
-    if (hasPrimitive) {
-        for (int i = 0; i < 20; i++) {
-            if (bytecodes[i] == 248) {
-                int primIndex = bytecodes[i+1] | (bytecodes[i+2] << 8);
-                return primIndex;
-            }
-        }
-    }
-
-    // In some Sista images, primitive methods might use inline primitive calls
-    // Check for "quick primitive" patterns - these are methods that just do
-    // simple operations and have the primitive flag set but no explicit call
-
-    // For now, return 0 if no explicit callPrimitive bytecode found
-    // The method will fall back to executing its bytecodes
+    // hasPrimitive is set but first bytecode isn't callPrimitive - shouldn't happen
+    // in well-formed methods, but return 0 to be safe
     return 0;
 }
 
