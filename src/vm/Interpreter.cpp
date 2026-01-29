@@ -14205,13 +14205,13 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         for (size_t d = 0; d < frameDepth_ && d < 12; d++) {
             SavedFrame& sf = savedFrames_[frameDepth_ - 1 - d];
             std::string frameSel = "<unknown>";
-            if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+            if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000 && memory_.isValidPointer(sf.savedMethod)) {
                 Oop hdr = memory_.fetchPointer(0, sf.savedMethod);
                 if (hdr.isSmallInteger()) {
                     size_t numLits = hdr.asSmallInteger() & 0x7FFF;
                     if (numLits >= 2) {
                         Oop sel = memory_.fetchPointer(numLits - 1, sf.savedMethod);
-                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                        if (sel.isObject() && sel.rawBits() > 0x10000 && memory_.isValidPointer(sel)) {
                             ObjectHeader* selHdr = sel.asObjectPtr();
                             if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
                                 frameSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
@@ -14446,26 +14446,26 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         std::cerr << "  Call stack:\n";
         // Current method
         std::string curMethod = "<unknown>", curClass = "<unknown>";
-        if (method_.isObject() && method_.rawBits() > 0x10000) {
+        if (method_.isObject() && method_.rawBits() > 0x10000 && memory_.isValidPointer(method_)) {
             Oop hdr = memory_.fetchPointer(0, method_);
             if (hdr.isSmallInteger()) {
                 size_t numLits = hdr.asSmallInteger() & 0x7FFF;
                 if (numLits >= 2) {
                     Oop sel = memory_.fetchPointer(numLits - 1, method_);
-                    if (sel.isObject() && sel.rawBits() > 0x10000) {
+                    if (sel.isObject() && sel.rawBits() > 0x10000 && memory_.isValidPointer(sel)) {
                         ObjectHeader* selHdr = sel.asObjectPtr();
                         if (selHdr->isBytesObject() && selHdr->byteSize() < 100) {
                             curMethod = std::string((char*)selHdr->bytes(), selHdr->byteSize());
                         }
                     }
                     Oop classAssoc = memory_.fetchPointer(numLits, method_);
-                    if (classAssoc.isObject() && classAssoc.rawBits() > 0x10000) {
+                    if (classAssoc.isObject() && classAssoc.rawBits() > 0x10000 && memory_.isValidPointer(classAssoc)) {
                         ObjectHeader* assocHdr = classAssoc.asObjectPtr();
                         if (assocHdr->slotCount() >= 2) {
                             Oop cls = memory_.fetchPointer(1, classAssoc);
-                            if (cls.isObject()) {
+                            if (cls.isObject() && memory_.isValidPointer(cls)) {
                                 Oop nameOop = memory_.fetchPointer(6, cls);
-                                if (nameOop.isObject()) {
+                                if (nameOop.isObject() && memory_.isValidPointer(nameOop)) {
                                     ObjectHeader* nameHdr = nameOop.asObjectPtr();
                                     if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
                                         curClass = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
@@ -14483,13 +14483,13 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         for (size_t d = 0; d < frameDepth_ && d < 10; d++) {
             SavedFrame& sf = savedFrames_[frameDepth_ - 1 - d];
             std::string frameMethod = "<unknown>", frameClass = "<unknown>";
-            if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+            if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000 && memory_.isValidPointer(sf.savedMethod)) {
                 Oop hdr = memory_.fetchPointer(0, sf.savedMethod);
                 if (hdr.isSmallInteger()) {
                     size_t numLits = hdr.asSmallInteger() & 0x7FFF;
                     if (numLits >= 2) {
                         Oop sel = memory_.fetchPointer(numLits - 1, sf.savedMethod);
-                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                        if (sel.isObject() && sel.rawBits() > 0x10000 && memory_.isValidPointer(sel)) {
                             ObjectHeader* selHdr = sel.asObjectPtr();
                             if (selHdr->isBytesObject() && selHdr->byteSize() < 100) {
                                 frameMethod = std::string((char*)selHdr->bytes(), selHdr->byteSize());
@@ -14505,7 +14505,9 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         // The FATAL message is logged for diagnostics, but fallbacks may handle this DNU.
         // If no fallback matches, the code falls through to Message creation and DNU send.
 
-        // TRAP: First illegitimate message to nil
+        // TRAP: First illegitimate message to nil (DISABLED - isNil fix resolved the root cause)
+        // This diagnostic code has unguarded pointer dereferences that can SIGSEGV.
+        if constexpr (false) {
         // Legitimate nil messages that should NOT trigger the trap:
         static const std::set<std::string> legitimateNilMessages = {
             "isNil", "notNil", "ifNil:", "ifNotNil:", "ifNil:ifNotNil:", "ifNotNil:ifNil:",
@@ -14726,6 +14728,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                 std::cerr << "*** See /tmp/first_nil_dnu.log for full trace ***\n\n";
             }
         }
+        } // end if constexpr (false) - disabled nil trap
 
         // For SmallInteger/UndefinedObject >> #do:, trace the calling method
         if ((rcvrClassName == "SmallInteger" || rcvrClassName == "UndefinedObject") && selStr == "do:") {
