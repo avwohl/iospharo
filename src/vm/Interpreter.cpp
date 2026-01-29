@@ -32,6 +32,10 @@ constexpr bool ENABLE_DEBUG_LOGGING = true;  // Enabled to trace startup
 // Global flag to trace sends after primitive 264 completes
 int g_traceSendsAfterPrim264 = 0;
 
+// Global step count and send trace file for startup debugging
+int64_t g_stepCount = 0;
+FILE* g_sendTraceFile = nullptr;
+
 // Global flag to trace jumps after isActivePlatform returns TRUE
 bool g_traceDetectJumps = false;
 
@@ -88,7 +92,10 @@ bool Interpreter::initialize() {
     // Set up initial execution context
     // Find the startup process from special objects
 
-    // Uncomment for debugging: std::cerr << "[INIT] Starting...\n";
+    {
+        FILE* initLog = fopen("/tmp/init_trace.log", "w");
+        if (initLog) { fprintf(initLog, "[INIT] Starting interpreter initialize...\n"); fclose(initLog); }
+    }
     Oop scheduler = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
     // DEBUG_LOG("[DEBUG] Scheduler: 0x" << std::hex << scheduler.rawBits() << std::dec;
     if (scheduler.isNil()) {
@@ -362,6 +369,12 @@ bool Interpreter::initialize() {
             (void)primIdx;  // Unused when debug disabled
         }
 
+        // Log the context chain to understand what we're resuming
+        {
+            FILE* chainLog = fopen("/tmp/init_trace.log", "a");
+            if (chainLog) { fprintf(chainLog, "[CHAIN %d] %s >> %s\n", depth, rcvrClassName.c_str(), methodSelector.c_str()); fclose(chainLog); }
+        }
+
         // Check if we're in snapshot-related code
         // Include SmalltalkImage which handles snapshot:andQuit:
         if (rcvrClassName == "SnapshotOperation" || rcvrClassName == "SessionManager" ||
@@ -369,11 +382,12 @@ bool Interpreter::initialize() {
             methodSelector == "snapshotPrimitive" || methodSelector == "primSnapshot" ||
             methodSelector == "primSnapshot:") {
             inSnapshotCode = true;
+            { FILE* f = fopen("/tmp/init_trace.log", "a"); if (f) { fprintf(f, "[CHAIN] -> snapshot code detected\n"); fclose(f); } }
         } else if (inSnapshotCode && snapshotEndDepth < 0) {
             // First context after snapshot code
             snapshotEndDepth = depth;
             resumeContext = currentCtx;
-            // DEBUG: "[CHAIN] First non-snapshot context at depth " << depth
+            { FILE* f = fopen("/tmp/init_trace.log", "a"); if (f) { fprintf(f, "[CHAIN] First non-snapshot at depth %d\n", depth); fclose(f); } }
         }
 
         // Move to sender
@@ -388,18 +402,61 @@ bool Interpreter::initialize() {
     //   non-nil = resuming from save -> run startup handlers
     // We need to modify the context to indicate "resuming" by ensuring the
     // snapshot primitive returns a non-nil value (true).
+    {
+        FILE* f = fopen("/tmp/init_trace.log", "a");
+        if (f) {
+            fprintf(f, "[INIT] inSnapshotCode=%d snapshotEndDepth=%d\n", inSnapshotCode, snapshotEndDepth);
+            fclose(f);
+        }
+    }
     if (inSnapshotCode) {
-        // Detected snapshot resume - context slot modification for startup
-        // This is handled more thoroughly in executeFromContext, but we
-        // pre-set here too for safety.
-        // (Debug output disabled for cleaner logs)
+        // Patch the snapshot context's stack top to true so Smalltalk
+        // interprets this as "resuming from saved image" instead of
+        // "save succeeded, now quit".
+        // Context slot 2 = stackp (1-based index of top of stack)
+        // Context slot 6+ = temps and stack values
+        // The stack top value (return from snapshot primitive) is at
+        // slot (6 + stackp - 1) where stackp is 1-based.
+        ObjectHeader* ctxHdr = context.asObjectPtr();
+        Oop stackpOop = memory_.fetchPointer(2, context);
+        if (stackpOop.isSmallInteger()) {
+            int64_t stackp = stackpOop.asSmallInteger();
+            if (stackp > 0) {
+                size_t stackTopSlot = 6 + static_cast<size_t>(stackp) - 1;
+                if (stackTopSlot < ctxHdr->slotCount()) {
+                    Oop trueObj = memory_.specialObject(SpecialObjectIndex::TrueObject);
+                    Oop oldVal = memory_.fetchPointer(stackTopSlot, context);
+                    memory_.storePointer(stackTopSlot, context, trueObj);
+                    FILE* f = fopen("/tmp/init_trace.log", "a");
+                    if (f) {
+                        fprintf(f, "[INIT] Patched snapshot context stack top (slot %zu): 0x%llx -> true (0x%llx)\n",
+                                stackTopSlot, (unsigned long long)oldVal.rawBits(),
+                                (unsigned long long)trueObj.rawBits());
+                        fclose(f);
+                    }
+                }
+            }
+        }
     }
 
     // Note: Display initialization is deferred to primitiveForceDisplayUpdate
     // to avoid crashes during early VM setup
 
+    // Log context details before executing
+    {
+        FILE* f = fopen("/tmp/init_trace.log", "a");
+        if (f) {
+            ObjectHeader* ctxHdr = context.asObjectPtr();
+            Oop pc = memory_.fetchPointer(1, context);
+            Oop stackp = memory_.fetchPointer(2, context);
+            Oop method = memory_.fetchPointer(3, context);
+            fprintf(f, "[INIT] Resuming context: pc=0x%llx stackp=0x%llx method=0x%llx slots=%zu\n",
+                    (unsigned long long)pc.rawBits(), (unsigned long long)stackp.rawBits(),
+                    (unsigned long long)method.rawBits(), ctxHdr->slotCount());
+            fclose(f);
+        }
+    }
     // Now execute from the original context
-    // DEBUG_LOG("[DEBUG] Found valid context - delegating to executeFromContext()";
     return executeFromContext(context);
 }
 
@@ -1758,6 +1815,15 @@ void Interpreter::processInputEvents() {
         return;
     }
 
+    // Debug: Log queue address once for comparison with push address
+    static bool loggedQueueAddr = false;
+    if (!loggedQueueAddr && logFile) {
+        loggedQueueAddr = true;
+        fprintf(logFile, "[PROCESS-INPUT] queue addr=%p empty=%d\n",
+                (void*)&pharo::gEventQueue, pharo::gEventQueue.isEmpty() ? 1 : 0);
+        fflush(logFile);
+    }
+
     pharo::Event event;
     while (pharo::gEventQueue.pop(event)) {
         // Skip WindowMetrics events - internal to C++ rendering
@@ -1949,6 +2015,7 @@ void Interpreter::syncDisplayToSurface() {
 // ===== MAIN LOOP =====
 
 void Interpreter::interpret() {
+    { FILE* f = fopen("/tmp/interpret_trace.log", "w"); if (f) { fprintf(f, "[INTERPRET] entered interpret() running_=%d\n", running_ ? 1 : 0); fclose(f); } }
     // Debug: Log special object addresses once at start
     if constexpr (ENABLE_DEBUG_LOGGING) {
         static bool loggedSpecialObjects = false;
@@ -2399,6 +2466,15 @@ void Interpreter::processPendingSignals() {
 bool Interpreter::step() {
     if (!running_) {
         return false;
+    }
+
+    g_stepCount++;
+    if (g_stepCount == 1) {
+        g_sendTraceFile = fopen("/tmp/send_trace.log", "w");
+    }
+    if (g_sendTraceFile && (g_stepCount <= 10 || g_stepCount % 1000000 == 0)) {
+        fprintf(g_sendTraceFile, "[STEP] %lld running=%d\n", (long long)g_stepCount, running_ ? 1 : 0);
+        fflush(g_sendTraceFile);
     }
 
     // Check timer and process pending signals every step
@@ -6088,6 +6164,12 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             ObjectHeader* sh = selector.asObjectPtr();
             if (sh->isBytesObject() && sh->byteSize() < 100)
                 selStr = std::string((char*)sh->bytes(), sh->byteSize());
+        }
+        // Trace startup-related sends
+        // Trace all sends around the failure point (steps 300-600) to understand what breaks
+        if (g_sendTraceFile && g_stepCount >= 300 && g_stepCount < 600) {
+            fprintf(g_sendTraceFile, "[SEND] #%s at step %lld fd=%zu\n", selStr.c_str(), (long long)g_stepCount, frameDepth_);
+            fflush(g_sendTraceFile);
         }
         // Trace ALL sends between caseOf:otherwise: and beginsWith: on '+'
         static bool traceAllSends = false;
@@ -11206,6 +11288,18 @@ extern int g_traceSendsAfterPrim264;
                 if (sHdr->isBytesObject() && sHdr->byteSize() < 50) {
                     cacheSelStr = std::string((char*)sHdr->bytes(), sHdr->byteSize());
                 }
+            }
+            // Trace startup sends via cached path
+            if (g_sendTraceFile && g_stepCount < 100000 && (
+                cacheSelStr == "startUp:" || cacheSelStr == "setupEventLoop" ||
+                cacheSelStr == "forceNewEventLoop" || cacheSelStr == "ensureEventLoop" ||
+                cacheSelStr == "doesNotUnderstand:" || cacheSelStr == "primitiveFailed" ||
+                cacheSelStr == "primitiveFailed:" || cacheSelStr == "handledId" ||
+                cacheSelStr == "startUp:" || cacheSelStr == "signal" ||
+                cacheSelStr == "runStartup:" || cacheSelStr == "quit" || cacheSelStr == "exit:")) {
+                fprintf(g_sendTraceFile, "[SEND-CACHED] #%s at step %lld fd=%zu primIdx=%d\n",
+                        cacheSelStr.c_str(), (long long)g_stepCount, frameDepth_, cached->primitiveIndex);
+                fflush(g_sendTraceFile);
             }
             if (cacheSelStr == "primitiveResume" && cached->primitiveIndex == 0) {
                 static FILE* cacheZeroLog = nullptr;

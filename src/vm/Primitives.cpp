@@ -2356,24 +2356,86 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
     Oop sizeOop = stackValue(0);
     Oop rcvr = stackValue(1);  // Class
 
+    // Debug: trace all calls during startup
+    static int newArgCallCount = 0;
+    newArgCallCount++;
+    auto logNewArgFail = [&](const char* reason) {
+        if (newArgCallCount <= 10) {
+            FILE* f = fopen("/tmp/init_trace.log", "a");
+            if (f) {
+                std::string className = "?";
+                if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                    ObjectHeader* ch = rcvr.asObjectPtr();
+                    if (ch->slotCount() >= 7) {
+                        Oop nm = memory_.fetchPointer(6, rcvr);
+                        if (nm.isObject() && nm.rawBits() > 0x10000) {
+                            ObjectHeader* nh = nm.asObjectPtr();
+                            if (nh->isBytesObject() && nh->byteSize() < 50)
+                                className = std::string((char*)nh->bytes(), nh->byteSize());
+                        }
+                    }
+                }
+                fprintf(f, "[basicNew: #%d] FAIL %s class=%s size=0x%llx sizeIsSmallInt=%d sizeIsObj=%d argCount=%d\n",
+                        newArgCallCount, reason, className.c_str(),
+                        (unsigned long long)sizeOop.rawBits(), sizeOop.isSmallInteger() ? 1 : 0,
+                        sizeOop.isObject() ? 1 : 0, argCount);
+                fclose(f);
+            }
+        }
+    };
+
     if (!rcvr.isObject()) {
+        logNewArgFail("rcvr-not-object");
         return PrimitiveResult::Failure;
     }
 
     // Handle size argument - can be SmallInteger or LargePositiveInteger
-    // TODO: Handle LargePositiveInteger sizes for very large allocations
-    if (!sizeOop.isSmallInteger()) {
+    int64_t indexableSize = 0;
+    if (sizeOop.isSmallInteger()) {
+        indexableSize = sizeOop.asSmallInteger();
+    } else if (sizeOop.isObject() && sizeOop.rawBits() > 0x10000) {
+        // Extract value from LargePositiveInteger (little-endian bytes)
+        ObjectHeader* hdr = sizeOop.asObjectPtr();
+        if (hdr->isBytesObject() && hdr->byteSize() <= 8) {
+            uint8_t* bytes = (uint8_t*)hdr->bytes();
+            size_t byteLen = hdr->byteSize();
+            for (size_t i = 0; i < byteLen; i++) {
+                indexableSize |= ((int64_t)bytes[i]) << (i * 8);
+            }
+        } else {
+            // Log details about the "too large" object
+            if (newArgCallCount <= 10) {
+                FILE* f = fopen("/tmp/init_trace.log", "a");
+                if (f) {
+                    fprintf(f, "[basicNew:] LPI byteSize=%zu isBytesObj=%d fmt=%d classIdx=%u slots=%zu\n",
+                            hdr->byteSize(), hdr->isBytesObject() ? 1 : 0,
+                            (int)hdr->format(), hdr->classIndex(), hdr->slotCount());
+                    // Dump first 16 bytes
+                    uint8_t* bytes = (uint8_t*)hdr->bytes();
+                    fprintf(f, "[basicNew:] LPI bytes:");
+                    for (size_t i = 0; i < std::min(hdr->byteSize(), (size_t)16); i++) {
+                        fprintf(f, " %02x", bytes[i]);
+                    }
+                    fprintf(f, "\n");
+                    fclose(f);
+                }
+            }
+            logNewArgFail("LPI-too-large");
+            return PrimitiveResult::Failure;
+        }
+    } else {
+        logNewArgFail("size-not-int-or-obj");
         return PrimitiveResult::Failure;
     }
-
-    int64_t indexableSize = sizeOop.asSmallInteger();
     if (indexableSize < 0) {
+        logNewArgFail("size-negative");
         return PrimitiveResult::Failure;
     }
 
     // Get class format to determine if bytes or pointers
     Oop formatObj = memory_.fetchPointer(2, rcvr);
     if (!formatObj.isSmallInteger()) {
+        logNewArgFail("format-not-smallint");
         return PrimitiveResult::Failure;
     }
 
@@ -2384,7 +2446,7 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
     // Per official VM: validate this is a variable-sized class (format >= 2)
     // Format 0-1 are fixed-size, format 2+ are variable (Array, String, etc.)
     if (instSpec < 2) {
-        // Fixed-size class - use new instead of new:
+        logNewArgFail("not-variable");
         return PrimitiveResult::Failure;
     }
 
@@ -2425,10 +2487,7 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
     }
 
     if (newObj.isNil()) {
-        // Debug: why allocation failed
-        if (instSpec == 3) {
-            std::cerr << "[ALLOC-FAIL] IndexableWithFixed allocation failed!\n";
-        }
+        logNewArgFail("alloc-returned-nil");
         return PrimitiveResult::Failure;
     }
 
@@ -3685,7 +3744,7 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
         }
     }
 
-    std::cerr << "[VM] primitiveQuit called (call #" << quitCallCount << ") exit code " << exitCode << "\n";
+    { FILE* f = fopen("/tmp/init_trace.log", "a"); if (f) { fprintf(f, "[VM] primitiveQuit called (call #%d) exit code %d\n", quitCallCount, exitCode); fclose(f); } }
 
     if (quitCallCount == 1) {
         // First quit - during startup. Try to reschedule to UI process.
@@ -3876,7 +3935,7 @@ PrimitiveResult Interpreter::primitiveSnapshot(int argCount) {
     // SnapshotOperation to set isImageStarting=true, which calls
     // SessionManager>>installNewSession to initialize currentSession.
     // Failing the primitive breaks the entire startup sequence.
-    std::cerr << "[VM] primitiveSnapshot: returning true (resume, save disabled)\n";
+    { FILE* f = fopen("/tmp/init_trace.log", "a"); if (f) { fprintf(f, "[VM] primitiveSnapshot CALLED! argCount=%d\n", argCount); fclose(f); } }
     if (argCount > 0) {
         popN(argCount);  // pop arguments
     }
