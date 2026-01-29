@@ -163,6 +163,24 @@ public:
                 std::cout << "  0x" << std::hex << color << std::dec << ": " << count << " pixels" << std::endl;
             }
         }
+
+        // Dump framebuffer to PPM file
+        const char* ppmPath = "/tmp/pharo-display.ppm";
+        FILE* f = fopen(ppmPath, "wb");
+        if (f) {
+            fprintf(f, "P6\n%d %d\n255\n", width_, height_);
+            for (int i = 0; i < width_ * height_; i++) {
+                uint32_t p = pixels_[i];
+                uint8_t rgb[3] = {
+                    (uint8_t)((p >> 16) & 0xFF),
+                    (uint8_t)((p >> 8) & 0xFF),
+                    (uint8_t)(p & 0xFF)
+                };
+                fwrite(rgb, 1, 3, f);
+            }
+            fclose(f);
+            std::cout << "\nFramebuffer saved to " << ppmPath << std::endl;
+        }
     }
 };
 
