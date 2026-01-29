@@ -2050,6 +2050,9 @@ PrimitiveResult Interpreter::primitiveNew(int argCount) {
     }
 
     uint32_t classIndex = memory_.indexOfClass(rcvr);
+    if (classIndex == 0) {
+        classIndex = memory_.registerClass(rcvr);
+    }
 
     // TRACE: Log OSSDL2Driver creation
     {

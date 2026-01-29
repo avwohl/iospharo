@@ -11294,14 +11294,7 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
         return "?";
     };
 
-    // Debug: trace doesNotUnderstand: lookup
-    static int dnuLookupCount = 0;
-    bool traceDNU = (selStr == "doesNotUnderstand:");
-    if (traceDNU && dnuLookupCount++ < 5) {
-        std::cerr << "[DNU-LOOKUP #" << dnuLookupCount << "] Looking for doesNotUnderstand:\n";
-        std::cerr << "  Starting class: " << getClassName(classOop)
-                  << " (0x" << std::hex << classOop.rawBits() << std::dec << ")\n";
-    }
+
 
     // Debug: trace #new lookup to understand why it fails
     static int newLookupCount = 0;
@@ -11327,11 +11320,6 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
     while (!isNilOrEnd(currentClass) && currentClass.isObject() && depth < 100) {
         Oop methodDict = methodDictOf(currentClass);
 
-        // Trace DNU lookup path
-        if (traceDNU && dnuLookupCount <= 5) {
-            std::cerr << "  [depth=" << depth << "] class=" << getClassName(currentClass)
-                      << " methodDict=" << (isNilOrEnd(methodDict) ? "nil" : "ok") << "\n";
-        }
         // Trace #new lookup path
         if (shouldTraceNew) {
             std::cerr << "  [depth=" << depth << "] class=" << getClassName(currentClass)
@@ -11351,9 +11339,6 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
                     if (traceThis) {
                         foundCount++;
                     }
-                    if (traceDNU && dnuLookupCount <= 5) {
-                        std::cerr << "  FOUND in " << getClassName(currentClass) << "!\n";
-                    }
                     if (shouldTraceNew) {
                         std::cerr << "  FOUND #new in " << getClassName(currentClass) << "!\n";
                     }
@@ -11363,9 +11348,6 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
         }
         currentClass = superclassOf(currentClass);
         depth++;
-    }
-    if (traceDNU && dnuLookupCount <= 5) {
-        std::cerr << "  NOT FOUND after " << depth << " levels\n";
     }
     // Always trace #new failures (first 20)
     if (traceNew) {
@@ -13088,6 +13070,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                           << " slots=" << rh->slotCount();
             }
             std::cerr << " step=" << g_stepNum << "\n";
+
         }
     }
 
@@ -13141,6 +13124,45 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     memory_.storePointer(1, message, args);
 
     Oop originalReceiver = pop();
+
+    // Context method on nil detector: if a Context method (resumeUnchecked:,
+    // findNextUnwindContextUpTo:, etc.) is sent to nil, the sender chain is broken.
+    // No amount of exception handling can fix this — terminate the process.
+    {
+        bool isNilReceiver = (originalReceiver.rawBits() == 0 || originalReceiver.rawBits() == memory_.nil().rawBits());
+        if (isNilReceiver) {
+            bool isContextMethod = false;
+            if (selector.isObject() && selector.rawBits() > 0x10000) {
+                ObjectHeader* sh = selector.asObjectPtr();
+                if (sh->isBytesObject() && sh->byteSize() <= 40) {
+                    std::string selStr((char*)sh->bytes(), sh->byteSize());
+                    isContextMethod = (selStr == "resumeUnchecked:" ||
+                                       selStr == "findNextUnwindContextUpTo:" ||
+                                       selStr == "privSender:" ||
+                                       selStr == "resume:" ||
+                                       selStr == "resume:through:");
+                }
+            }
+            if (isContextMethod) {
+                static int ctxNilCount = 0;
+                if (ctxNilCount++ < 5) {
+                    std::string selStr = "<unknown>";
+                    if (selector.isObject() && selector.rawBits() > 0x10000) {
+                        ObjectHeader* sh = selector.asObjectPtr();
+                        if (sh->isBytesObject() && sh->byteSize() < 80)
+                            selStr = std::string((char*)sh->bytes(), sh->byteSize());
+                    }
+                    std::cerr << "[DNU-CTXNIL] Context method #" << selStr
+                              << " on nil — broken sender chain, terminating process (step="
+                              << g_stepNum << ")\n";
+                }
+                push(memory_.nil());
+                suspendActiveProcess_ = true;
+                dnuDepth--;
+                return;
+            }
+        }
+    }
 
     // DNU loop detector: if DNU on nil repeats rapidly, terminate process
     {
