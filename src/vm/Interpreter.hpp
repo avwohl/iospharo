@@ -309,6 +309,7 @@ private:
     uint8_t* instructionPointer_;
     uint8_t* bytecodeEnd_;  // End of bytecodes in current method
     Oop method_;            // Current method or CompiledBlock being executed
+    Oop newMethod_;         // Method about to be activated (for primitive 117 to read literals)
     Oop homeMethod_;        // Home CompiledMethod (for literal access in blocks)
     Oop receiver_;
     Oop activeContext_;  // Current Smalltalk context (for sender chain)

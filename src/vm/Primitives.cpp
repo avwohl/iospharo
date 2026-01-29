@@ -10211,16 +10211,7 @@ PrimitiveResult Interpreter::primitiveFileDescriptorType(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    int fileId = static_cast<int>(fileIdOop.asSmallInteger());
-    auto it = openFiles_.find(fileId);
-    if (it == openFiles_.end()) {
-        pop();
-        push(Oop::fromSmallInteger(-1));  // Invalid handle
-        return PrimitiveResult::Success;
-    }
-
-    FILE* file = it->second;
-    int fd = fileno(file);
+    int fd = static_cast<int>(fileIdOop.asSmallInteger());
 
     struct stat statBuf;
     if (fstat(fd, &statBuf) != 0) {
@@ -11505,12 +11496,11 @@ PrimitiveResult Interpreter::primitiveDLLCall(int argCount) {
 // primitiveExternalCall -> result
 // Calls a primitive defined in an external plugin module
 PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
-    // External call uses pragma in method to specify:
-    // <primitive: 'primitiveName' module: 'ModuleName'>
-    // The VM looks up the module, finds the primitive, and calls it
+    bool traceThis = (g_stepNum >= 390600 && g_stepNum <= 391500);
 
-    // Get current method to find the external primitive spec
-    Oop method = method_;
+    // Use newMethod_ (the method being activated) rather than method_ (the caller)
+    // because executePrimitive runs BEFORE activateMethod
+    Oop method = newMethod_.isObject() ? newMethod_ : method_;
     if (!method.isObject()) {
         return PrimitiveResult::Failure;
     }
@@ -11873,6 +11863,9 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
                     fprintf(extLog, "[EXT] #%d Looking up '%s'\n", extCallCount, key.c_str());
                     fflush(extLog);
                 }
+                if (moduleName == "iOSPlugin") {
+                    std::cerr << "[iOS-PRIM] Looking up '" << key << "'\n";
+                }
 
                 // Handle ThreadedFFI callback primitives - return nil/0 instead of failing
                 // This prevents exception handling from consuming startup cycles
@@ -11932,28 +11925,69 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
 
                 std::string moduleName, functionName;
 
+                if (traceThis) {
+                    fprintf(stderr, "[EXT-TRACE] lit0 array: slots=%zu mod=0x%llx func=0x%llx\n",
+                            lit0Hdr->slotCount(), moduleOop.rawBits(), functionOop.rawBits());
+                }
+
                 // Extract module name
                 if (moduleOop.isObject() && memory_.isValidPointer(moduleOop) &&
                     moduleOop.rawBits() != memory_.nil().rawBits()) {
                     ObjectHeader* modHdr = moduleOop.asObjectPtr();
+                    if (traceThis) {
+                        fprintf(stderr, "[EXT-TRACE] moduleOop: fmt=%u isBytes=%d byteSize=%zu\n",
+                                (uint32_t)modHdr->format(), modHdr->isBytesObject()?1:0,
+                                modHdr->isBytesObject()?modHdr->byteSize():0);
+                    }
                     if (modHdr->isBytesObject() && modHdr->byteSize() < 100) {
                         moduleName = std::string((char*)modHdr->bytes(), modHdr->byteSize());
                     }
+                } else if (traceThis) {
+                    fprintf(stderr, "[EXT-TRACE] moduleOop: isObj=%d valid=%d isNil=%d\n",
+                            moduleOop.isObject()?1:0,
+                            (moduleOop.isObject() && memory_.isValidPointer(moduleOop))?1:0,
+                            (moduleOop.rawBits() == memory_.nil().rawBits())?1:0);
                 }
 
                 // Extract function name
                 if (functionOop.isObject() && memory_.isValidPointer(functionOop)) {
                     ObjectHeader* funcHdr = functionOop.asObjectPtr();
+                    if (traceThis) {
+                        fprintf(stderr, "[EXT-TRACE] functionOop: fmt=%u isBytes=%d byteSize=%zu\n",
+                                (uint32_t)funcHdr->format(), funcHdr->isBytesObject()?1:0,
+                                funcHdr->isBytesObject()?funcHdr->byteSize():0);
+                    }
                     if (funcHdr->isBytesObject() && funcHdr->byteSize() < 100) {
                         functionName = std::string((char*)funcHdr->bytes(), funcHdr->byteSize());
                     }
                 }
 
+                if (traceThis) {
+                    fprintf(stderr, "[EXT-TRACE] module='%s' function='%s'\n",
+                            moduleName.c_str(), functionName.c_str());
+                }
+
                 if (!functionName.empty()) {
-                    // Try to load the symbol
+                    // First try named primitive lookup
+                    std::string key = moduleName + ":" + functionName;
+                    auto it = namedPrimitives_.find(key);
+                    if (it != namedPrimitives_.end()) {
+                        if (extLog && extCallCount <= 500) {
+                            fprintf(extLog, "[EXT] #%d Found named primitive '%s' via lit0 array\n",
+                                    extCallCount, key.c_str());
+                            fflush(extLog);
+                        }
+                        return (this->*(it->second))(argCount);
+                    }
+                    // Try without module
+                    auto it2 = namedPrimitives_.find(":" + functionName);
+                    if (it2 != namedPrimitives_.end()) {
+                        return (this->*(it2->second))(argCount);
+                    }
+
+                    // Try to load the symbol dynamically
                     void* funcPtr = dlsym(RTLD_DEFAULT, functionName.c_str());
                     if (!funcPtr) {
-                        // Try our FFI stub cache
                         funcPtr = ffi::lookupFunction(moduleName, functionName);
                     }
 
@@ -11962,9 +11996,6 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
                                 extCallCount, functionName.c_str(), moduleName.c_str(), funcPtr);
                         fflush(extLog);
                     }
-
-                    // Note: Actually calling the function requires more complex FFI marshalling
-                    // For now, we just log that we found it. Full FFI call support is complex.
                 }
             }
         }

@@ -7457,7 +7457,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             // ClassSessionHandler >> startup: (not startUp:) is the iteration method
             static int handlerCallCount = 0;
             handlerCallCount++;
-            if (handlerCallCount <= 30) {
+            if (handlerCallCount <= 60) {
                 fprintf(stderr, "[HANDLER-ITER #%d step=%llu] startup: called fd=%zu\n",
                         handlerCallCount, g_stepNum, frameDepth_);
             }
@@ -7538,7 +7538,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         // TRACE: Log ALL startUp: calls to see which handler is causing issues
         if (selEquals("startUp:") && argCount == 1) {
             static int startUpTraceCount = 0;
-            if (startUpTraceCount++ < 30) {
+            if (startUpTraceCount++ < 60) {
                 Oop rcvr = stackValue(1);  // Receiver (the class or handler)
                 std::string className = "<unknown>";
                 if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
@@ -8748,6 +8748,8 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 Oop priority = stackValue(0);
                 if (priority.isSmallInteger()) {
                     fprintf(startupTraceLog, "  -> forking at priority %lld\n", priority.asSmallInteger());
+                    fprintf(stderr, "[FORK step=%llu fd=%zu] forkAt: %lld\n",
+                            g_stepNum, frameDepth_, priority.asSmallInteger());
                 }
             }
 
@@ -8759,6 +8761,49 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     if (traceThisSend && sendTraceLog) {
         fprintf(sendTraceLog, "[SEND step=%llu] After interesting logging section\n", g_stepNum);
         fflush(sendTraceLog);
+    }
+
+    // TRACE: Log ALL sends in a window around driver startUp:
+    if (g_stepNum >= 390355 && g_stepNum <= 391500 && frameDepth_ <= 10) {
+        std::string tSel(selBytes, selBytes + selLen);
+        std::string tRcvr = "?";
+        Oop rcv = stackValue(argCount);
+        if (rcv.isNil()) tRcvr = "nil";
+        else if (rcv.isSmallInteger()) tRcvr = "SmallInt(" + std::to_string(rcv.asSmallInteger()) + ")";
+        else if (rcv == memory_.trueObject()) tRcvr = "true";
+        else if (rcv == memory_.falseObject()) tRcvr = "false";
+        else if (rcv.isObject() && rcv.rawBits() > 0x10000) {
+            ObjectHeader* h = rcv.asObjectPtr();
+            Oop cls = memory_.classAtIndex(h->classIndex());
+            if (cls.isObject() && cls.rawBits() > 0x10000) {
+                ObjectHeader* ch = cls.asObjectPtr();
+                if (ch->slotCount() >= 7) {
+                    Oop nm = ch->slotAt(6);
+                    if (nm.isObject() && nm.rawBits() > 0x10000) {
+                        ObjectHeader* nh = nm.asObjectPtr();
+                        if (nh->isBytesObject() && nh->byteSize() < 80)
+                            tRcvr = std::string((char*)nh->bytes(), nh->byteSize());
+                    }
+                }
+            }
+        }
+        fprintf(stderr, "[STEP-%llu fd=%zu] %s >> %s\n", g_stepNum, frameDepth_, tRcvr.c_str(), tSel.c_str());
+    }
+
+    // TRACE: Log specific event-loop related selectors
+    if (selEquals("forceNewEventLoop") || selEquals("ensureEventLoop") ||
+        selEquals("setupEventLoop") || selEquals("shutdownEventLoop") ||
+        selEquals("eventLoop")) {
+        std::string trSel(selBytes, selBytes + selLen);
+        fprintf(stderr, "[EVLOOP step=%llu fd=%zu] %s argCount=%d\n",
+                g_stepNum, frameDepth_, trSel.c_str(), argCount);
+    }
+    if (selEquals("forkAt:") || selEquals("fork") || selEquals("forkAt:named:") || selEquals("forkNamed:at:")) {
+        std::string trSel(selBytes, selBytes + selLen);
+        Oop prio = argCount >= 1 ? stackValue(0) : Oop::nil();
+        fprintf(stderr, "[FORK-ALL step=%llu fd=%zu] %s prio=%s\n",
+                g_stepNum, frameDepth_, trSel.c_str(),
+                prio.isSmallInteger() ? std::to_string(prio.asSmallInteger()).c_str() : "?");
     }
 
     // INTERCEPT: Skip certain scheduler/process startUp methods during fresh image start
@@ -8809,6 +8854,25 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             return;
         }
         // TRACE: Not skipping this startUp call
+        if (rcvrClassName.find("iOS") != std::string::npos ||
+            rcvrClassName.find("Window") != std::string::npos ||
+            rcvrClassName.find("Driver") != std::string::npos) {
+            fprintf(stderr, "[STARTUP-TRACE step=%llu] startUp:%s on %s\n",
+                    g_stepNum, argCount > 0 ? "" : "(no args)", rcvrClassName.c_str());
+            // Log the 'resuming' argument value
+            if (argCount > 0) {
+                Oop arg = stackValue(0);
+                if (arg == memory_.trueObject()) {
+                    fprintf(stderr, "  -> resuming = TRUE\n");
+                } else if (arg == memory_.falseObject()) {
+                    fprintf(stderr, "  -> resuming = FALSE\n");
+                } else if (arg.isNil()) {
+                    fprintf(stderr, "  -> resuming = nil\n");
+                } else {
+                    fprintf(stderr, "  -> resuming = 0x%llx (unknown)\n", arg.rawBits());
+                }
+            }
+        }
         if (traceThisSend && sendTraceLog) {
             fprintf(sendTraceLog, "[SEND step=%llu] startUp: NOT skipped for class %s\n",
                     g_stepNum, rcvrClassName.c_str());
@@ -11046,6 +11110,9 @@ tryRegularPrimitive:
                 // Regular primitive (not quick) - try via primitive table
                 argCount_ = argCount;
                 primitiveFailed_ = false;
+                // For primitive 117 (external call), set newMethod_ so
+                // primitiveExternalCall can read the target method's literals
+                newMethod_ = cached->method;
                 PrimitiveResult result = executePrimitive(primIdx, argCount);
                 if (result == PrimitiveResult::Success) {
                     return;  // Primitive handled it
@@ -11343,6 +11410,7 @@ tryRegularPrimitive:
             // Regular primitive - try via primitive table
             argCount_ = argCount;
             primitiveFailed_ = false;
+            newMethod_ = method;  // For primitive 117 to read target method literals
             PrimitiveResult result = executePrimitive(primIndex, argCount);
             if (result == PrimitiveResult::Success) {
                 return;
@@ -17689,8 +17757,22 @@ void Interpreter::sendMustBeBoolean(Oop value) {
     static Oop lastMustBeBooleanValue = Oop::nil();
     static int mbCount = 0;
     static int totalMbCount = 0;  // Total across entire execution
+    static int loggedCount = 0;
 
     totalMbCount++;
+
+    // Log first 20 mustBeBoolean errors to stderr
+    if (loggedCount < 20) {
+        loggedCount++;
+        std::string valDesc;
+        if (value.isNil()) valDesc = "nil";
+        else if (value.isSmallInteger()) { char b[32]; snprintf(b,32,"SmallInt(%lld)",value.asSmallInteger()); valDesc=b; }
+        else if (value == memory_.trueObject()) valDesc = "true";
+        else if (value == memory_.falseObject()) valDesc = "false";
+        else { char b[32]; snprintf(b,32,"0x%llx",value.rawBits()); valDesc=b; }
+        fprintf(stderr, "[MUSTBEBOOL step=%llu fd=%zu #%d] value=%s\n",
+                g_stepNum, frameDepth_, totalMbCount, valDesc.c_str());
+    }
 
     // Hard limit: if we've had too many mustBeBoolean errors total, something is wrong
     if (totalMbCount > 50) {
@@ -22332,6 +22414,22 @@ void Interpreter::initializeNamedPrimitives() {
     registerNamedPrimitive("SqueakFFIPrims", "primitiveLoadSymbolFromModule", &Interpreter::primitiveLoadSymbolFromModule);
     registerNamedPrimitive("SqueakFFIPrims", "primitiveLoadModule", &Interpreter::primitiveLoadModule);
 
+    // FilePlugin - file I/O primitives
+    registerNamedPrimitive("FilePlugin", "primitiveFileStdioHandles", &Interpreter::primitiveFileStdioHandles);
+    registerNamedPrimitive("FilePlugin", "primitiveFileOpen", &Interpreter::primitiveFileOpen);
+    registerNamedPrimitive("FilePlugin", "primitiveFileClose", &Interpreter::primitiveFileClose);
+    registerNamedPrimitive("FilePlugin", "primitiveFileRead", &Interpreter::primitiveFileRead);
+    registerNamedPrimitive("FilePlugin", "primitiveFileWrite", &Interpreter::primitiveFileWrite);
+    registerNamedPrimitive("FilePlugin", "primitiveFileAtEnd", &Interpreter::primitiveFileAtEnd);
+    registerNamedPrimitive("FilePlugin", "primitiveFileGetPosition", &Interpreter::primitiveFileGetPosition);
+    registerNamedPrimitive("FilePlugin", "primitiveFileSetPosition", &Interpreter::primitiveFileSetPosition);
+    registerNamedPrimitive("FilePlugin", "primitiveFileSize", &Interpreter::primitiveFileSize);
+    registerNamedPrimitive("FilePlugin", "primitiveFileFlush", &Interpreter::primitiveFileFlush);
+    registerNamedPrimitive("FilePlugin", "primitiveFileTruncate", &Interpreter::primitiveFileTruncate);
+    registerNamedPrimitive("FilePlugin", "primitiveFileDelete", &Interpreter::primitiveFileDelete);
+    registerNamedPrimitive("FilePlugin", "primitiveFileRename", &Interpreter::primitiveFileRename);
+    registerNamedPrimitive("FilePlugin", "primitiveFileDescriptorType", &Interpreter::primitiveFileDescriptorType);
+
     // SDL2 display detection - CRITICAL for OSSDL2Driver to start its event loop
     // Without this, OSSDL2Driver checks isVMDisplayUsingSDL2 and if it fails,
     // the driver won't start its event loop process
@@ -22349,6 +22447,12 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
     static int primCallCount = 0;
     static int primCounts[1000] = {0};  // Track calls per primitive
     primCallCount++;
+
+    // Trace primitives around driver startup
+    if (g_stepNum >= 390355 && g_stepNum <= 391500 && frameDepth_ <= 10) {
+        fprintf(stderr, "[PRIM-AT-STEP step=%llu] primitive=%d argCount=%d\n",
+                g_stepNum, primitiveIndex, argCount);
+    }
 
     // Log all primitive calls for debugging
     static FILE* allPrimLog = nullptr;
