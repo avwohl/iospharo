@@ -7322,8 +7322,15 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
 
     // Trace what attribute indices are being requested
     static int attrTraceCount = 0;
-    if (attrTraceCount++ < 20) {
+    static FILE* attrLog = nullptr;
+    if (!attrLog) attrLog = fopen("/tmp/attr_trace.log", "w");
+    attrTraceCount++;
+    if (attrTraceCount <= 20) {
         std::cerr << "[ATTR-149 #" << attrTraceCount << "] primitiveGetAttribute(" << index << ")\n";
+    }
+    if (attrLog && attrTraceCount <= 5000) {
+        fprintf(attrLog, "[ATTR #%d] index=%lld\n", attrTraceCount, (long long)index);
+        fflush(attrLog);
     }
 
     // VM attributes (simplified set)
@@ -7348,7 +7355,16 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
             pop();
             push(memory_.nil());
             return PrimitiveResult::Success;
-        case 3:  // First command line argument - fake --interactive!
+        case 3:  // First command line argument - --headless
+            {
+                // isHeadless checks attributes -1000..1000 for --headless
+                // OSWorldRenderer.isApplicableFor: requires isHeadless AND --interactive
+                Oop str = memory_.createString("--headless");
+                pop();
+                push(str);
+                return PrimitiveResult::Success;
+            }
+        case 4:  // Second command line argument - --interactive
             {
                 // This triggers OSWorldRenderer.isApplicableFor: to return true
                 Oop str = memory_.createString("--interactive");
@@ -7356,7 +7372,7 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
                 push(str);
                 return PrimitiveResult::Success;
             }
-        case 4:  // No more arguments
+        case 5:  // No more arguments
             pop();
             push(memory_.nil());
             return PrimitiveResult::Success;

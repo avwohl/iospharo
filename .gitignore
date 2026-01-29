@@ -77,3 +77,5 @@ src/vm/build/
 src/vm/test_load_image
 build-maccatalyst/
 build-catalyst/
+Pharo.image
+test_vm

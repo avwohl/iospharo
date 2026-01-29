@@ -15104,11 +15104,44 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         doNilCount++;
         if (doNilCount > 3) skipLog = true;
     }
+    static int freezeNilCount = 0;
+    if (origStr == "freeze" && rcvrClassName == "UndefinedObject") {
+        freezeNilCount++;
+        if (freezeNilCount > 3) skipLog = true;
+    }
     if (!skipLog) {
         std::cerr << "[DNU] Selector '#" << origStr << "' not found on " << rcvrClassName
                   << (isClass ? " [CLASS]" : " [instance]")
                   << " (args=" << argCount << ") rcvr=0x" << std::hex << actualReceiver.rawBits()
                   << std::dec << "\n";
+        // Print call stack for freeze on nil
+        static int freezeNilStackCount = 0;
+        if (origStr == "freeze" && rcvrClassName == "UndefinedObject" && freezeNilStackCount++ < 3) {
+            std::cerr << "  Call stack:\n";
+            for (size_t i = 0; i < std::min(frameDepth_, (size_t)12); i++) {
+                size_t fi = frameDepth_ - 1 - i;
+                if (fi < frameDepth_) {
+                    const auto& sf = savedFrames_[fi];
+                    std::string sfMethod = "<unknown>";
+                    if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                        Oop sfHdr = memory_.fetchPointer(0, sf.savedMethod);
+                        if (sfHdr.isSmallInteger()) {
+                            size_t sfLits = sfHdr.asSmallInteger() & 0x7FFF;
+                            if (sfLits >= 2) {
+                                Oop sfSel = memory_.fetchPointer(sfLits - 1, sf.savedMethod);
+                                if (sfSel.isObject() && sfSel.rawBits() > 0x10000) {
+                                    ObjectHeader* sfSelHdr = sfSel.asObjectPtr();
+                                    if (sfSelHdr->isBytesObject() && sfSelHdr->byteSize() < 80) {
+                                        sfMethod = std::string((char*)sfSelHdr->bytes(), sfSelHdr->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    std::cerr << "    [" << i << "] " << sfMethod << "\n";
+                }
+            }
+        }
         // Print call stack for value: on OrderedCollection (NLR investigation)
         static int valueCollStackCount = 0;
         if (origStr == "value:" && rcvrClassName == "OrderedCollection" && valueCollStackCount++ < 3) {
@@ -22435,6 +22468,16 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
     }
 
     // No primitive function and not a quick primitive
+    // Log interesting unimplemented primitives
+    static FILE* unimplPrimLog = nullptr;
+    static int unimplCount = 0;
+    if (!unimplPrimLog) unimplPrimLog = fopen("/tmp/unimpl_prim.log", "w");
+    if (unimplPrimLog && unimplCount < 200) {
+        unimplCount++;
+        fprintf(unimplPrimLog, "[UNIMPL-PRIM #%d step=%llu] primitive=%d argCount=%d\n",
+                unimplCount, (unsigned long long)g_stepNum, primitiveIndex, argCount);
+        fflush(unimplPrimLog);
+    }
     return PrimitiveResult::Failure;
 }
 

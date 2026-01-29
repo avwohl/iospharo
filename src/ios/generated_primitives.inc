@@ -269,13 +269,16 @@ primitiveTable_[260] = nullptr;  // Quick Primitives (256-519) - Push constants 
 primitiveTable_[261] = nullptr;  // Quick Primitives (256-519) - Push constants and inst vars
 primitiveTable_[262] = nullptr;  // Quick Primitives (256-519) - Push constants and inst vars
 primitiveTable_[263] = nullptr;  // Quick Primitives (256-519) - Push constants and inst vars
-// Event/Input primitives 264-269 (override quick primitive defaults)
-primitiveTable_[264] = &Interpreter::primitiveGetNextEvent;      // 264 - Get next event from queue
-primitiveTable_[265] = &Interpreter::primitiveInputSemaphore2;   // 265 - Set input semaphore (variant 2)
-primitiveTable_[266] = nullptr;  // 266 - Reserved for events
-primitiveTable_[267] = &Interpreter::primitiveSampledSound;  // 267 - Sound primitive
-primitiveTable_[268] = nullptr;  // 268 - Reserved for events
-primitiveTable_[269] = nullptr;  // 269 - Reserved for events
+// Primitives 264-519 are quick return primitives (instance variable access).
+// Event primitives are now accessed via named primitives (module: 'iOSPlugin').
+// DO NOT register real primitives at indices 264+ as they conflict with
+// BlockClosure>>outerContext (264), compiledBlock (265), numArgs (266).
+primitiveTable_[264] = nullptr;  // Quick: return instVar 0 (outerContext)
+primitiveTable_[265] = nullptr;  // Quick: return instVar 1 (compiledBlock)
+primitiveTable_[266] = nullptr;  // Quick: return instVar 2 (numArgs)
+primitiveTable_[267] = nullptr;  // Quick: return instVar 3
+primitiveTable_[268] = nullptr;  // Quick: return instVar 4
+primitiveTable_[269] = nullptr;  // Quick: return instVar 5
 primitiveTable_[270] = nullptr;  // Quick Primitives (256-519) - Push constants and inst vars
 primitiveTable_[271] = nullptr;  // Quick Primitives (256-519) - Push constants and inst vars
 primitiveTable_[272] = nullptr;  // Quick Primitives (256-519) - Push constants and inst vars
