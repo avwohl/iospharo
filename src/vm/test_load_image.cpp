@@ -592,6 +592,7 @@ int main(int argc, char* argv[]) {
                 fprintf(stderr, "[STEP %d] active=%d total_time=%lldms\n", i, activeSteps, elapsed);
             }
 
+            static int totalIdleSteps = 0;
             if (result) {
                 activeSteps++;
                 idleSteps = 0;  // Reset consecutive idle count
@@ -629,13 +630,20 @@ int main(int argc, char* argv[]) {
                 }
             } else {
                 idleSteps++;
+                totalIdleSteps++;
                 // Report when we start getting idle
-                if (idleSteps == 1) {
+                if (idleSteps == 1 && totalIdleSteps <= 10) {
                     std::cout << "[IDLE] Started at step " << i << " after " << activeSteps << " active steps" << std::endl;
                 }
-                // If we get too many consecutive idle steps, stop
+                // Stop if 1000 consecutive idle OR if mostly idle (>50% of recent steps)
                 if (idleSteps > 1000) {
                     std::cout << "Interpreter stopped (1000 consecutive idle steps) at step " << i << std::endl;
+                    break;
+                }
+                // If we have 200+ total idle steps and step count > 300K, we're in the idle loop
+                if (totalIdleSteps > 200 && i > 300000) {
+                    std::cout << "[IDLE] Detected relinquish-based idle at step " << i
+                              << " (" << totalIdleSteps << " total idle steps, " << activeSteps << " active)" << std::endl;
                     break;
                 }
             }

@@ -10874,6 +10874,7 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
 
     // Short sleep if requested (usleep takes microseconds)
     if (sleepUs > 0) {
+        relinquishSlept_ = true;  // Signal to test harness that VM is idle
         #ifdef _WIN32
         Sleep(static_cast<DWORD>(sleepUs / 1000));  // Windows Sleep takes milliseconds
         #else

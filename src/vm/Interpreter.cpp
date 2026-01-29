@@ -2334,53 +2334,55 @@ bool Interpreter::step() {
         return false;
     }
 
+    // If the previous step slept in relinquishProcessor, report as idle
+    if (relinquishSlept_) {
+        relinquishSlept_ = false;
+        return false;  // Signal idle to caller
+    }
+
     // If DNU handler requested process suspension (e.g., stuck error loop),
     // terminate the active process and switch to the next runnable one
     if (suspendActiveProcess_) {
         suspendActiveProcess_ = false;
         Oop activeProcess = getActiveProcess();
-        if (!activeProcess.isNil()) {
-            Oop nextProcess = wakeHighestPriority();
-            if (!nextProcess.isNil() && nextProcess.rawBits() != memory_.nil().rawBits()) {
-                // Remove stuck process from its priority queue first
-                Oop nilObj = memory_.nil();
-                Oop myList = memory_.fetchPointer(ProcessMyListIndex, activeProcess);
-                if (myList.isObject() && myList.rawBits() != nilObj.rawBits()) {
-                    removeProcessFromList(activeProcess, myList);
-                }
-                // Also scan all priority queues to ensure it's not in any
-                Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
-                Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
-                Oop processLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
-                ObjectHeader* listsHdr = processLists.asObjectPtr();
-                for (size_t p = 0; p < listsHdr->slotCount(); p++) {
-                    Oop list = memory_.fetchPointer(p, processLists);
-                    Oop link = memory_.fetchPointer(LinkedListFirstLinkIndex, list);
-                    while (link.isObject() && link.rawBits() != nilObj.rawBits()) {
-                        if (link.rawBits() == activeProcess.rawBits()) {
-                            removeProcessFromList(activeProcess, list);
-                            break;
-                        }
-                        link = memory_.fetchPointer(0, link);  // nextLink
+        Oop nilObj = memory_.nil();
+        if (!activeProcess.isNil() && activeProcess.rawBits() != nilObj.rawBits()) {
+            // First: remove stuck process from ALL priority queues
+            Oop myList = memory_.fetchPointer(ProcessMyListIndex, activeProcess);
+            if (myList.isObject() && myList.rawBits() != nilObj.rawBits()) {
+                removeProcessFromList(activeProcess, myList);
+            }
+            Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
+            Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
+            Oop processLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
+            ObjectHeader* listsHdr = processLists.asObjectPtr();
+            for (size_t p = 0; p < listsHdr->slotCount(); p++) {
+                Oop list = memory_.fetchPointer(p, processLists);
+                Oop link = memory_.fetchPointer(LinkedListFirstLinkIndex, list);
+                while (link.isObject() && link.rawBits() != nilObj.rawBits()) {
+                    if (link.rawBits() == activeProcess.rawBits()) {
+                        removeProcessFromList(activeProcess, list);
+                        break;
                     }
+                    link = memory_.fetchPointer(0, link);  // nextLink
                 }
-                // Mark old process as terminated
-                memory_.storePointer(ProcessSuspendedContextIndex, activeProcess, nilObj);
-                memory_.storePointer(0, activeProcess, nilObj);  // nextLink
-                memory_.storePointer(ProcessMyListIndex, activeProcess, nilObj);
-                // Now find next process
-                nextProcess = wakeHighestPriority();
-                if (nextProcess.isNil() || nextProcess.rawBits() == nilObj.rawBits()) {
-                    std::cerr << "[TERMINATE-STUCK] No runnable process after cleanup!\n";
-                    return true;
-                }
-                std::cerr << "[TERMINATE-STUCK] Terminated 0x" << std::hex
-                          << activeProcess.rawBits() << ", switching to 0x"
-                          << nextProcess.rawBits() << std::dec << "\n";
-                // Switch to next process
-                transferTo(nextProcess);
+            }
+            // Mark process as terminated
+            memory_.storePointer(ProcessSuspendedContextIndex, activeProcess, nilObj);
+            memory_.storePointer(0, activeProcess, nilObj);  // nextLink
+            memory_.storePointer(ProcessMyListIndex, activeProcess, nilObj);
+
+            // Now find next runnable process
+            Oop nextProcess = wakeHighestPriority();
+            if (nextProcess.isNil() || nextProcess.rawBits() == nilObj.rawBits()) {
+                std::cerr << "[TERMINATE-STUCK] No runnable process after cleanup!\n";
                 return true;
             }
+            std::cerr << "[TERMINATE-STUCK] Terminated 0x" << std::hex
+                      << activeProcess.rawBits() << ", switching to 0x"
+                      << nextProcess.rawBits() << std::dec << "\n";
+            transferTo(nextProcess);
+            return true;
         }
     }
 
@@ -15799,11 +15801,37 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         if (freezeCount <= 3) {
             std::cerr << "[DNU-FALLBACK] freeze on nil #" << freezeCount << "\n";
         }
-        if (freezeCount >= 3) {
-            // Suspend this process to break the infinite error loop
-            suspendActiveProcess_ = true;
-        }
+        // Always suspend — each freeze-on-nil is an error cascade that will burn CPU
+        suspendActiveProcess_ = true;
         // Leave receiver on stack (return self = nil)
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for exception handling on nil - broken error cascade
+    // When handleSignal:/resumeUnchecked: are sent to nil, the exception system is broken.
+    // Return nil to prevent infinite error cascades.
+    if (rcvrClassName == "UndefinedObject" && argCount == 1 &&
+        (origStr == "handleSignal:" || origStr == "resumeUnchecked:")) {
+        static int excCount = 0;
+        excCount++;
+        if (excCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] " << origStr << " on nil #" << excCount << " - returning nil (broken exception chain)\n";
+        }
+        popN(argCount + 1);  // Pop receiver and argument
+        push(memory_.nil());
+        dnuDepth--;
+        return;
+    }
+
+    // Fallback for #numArgs on nil - FFI callout sender walk hits nil context
+    if (origStr == "numArgs" && rcvrClassName == "UndefinedObject" && argCount == 0) {
+        static int numArgsCount = 0;
+        if (++numArgsCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] numArgs on nil #" << numArgsCount << " - returning 0\n";
+        }
+        popN(1);  // Pop receiver
+        push(Oop::fromSmallInteger(0));
         dnuDepth--;
         return;
     }
@@ -19436,7 +19464,10 @@ void Interpreter::transferTo(Oop newProcess) {
         fflush(xferLog);
     }
 
-    if (!contextToSave.isNil() && contextToSave.isObject()) {
+    // Don't save context for terminated processes (suspendedContext already set to nil)
+    Oop oldSuspCtx = memory_.fetchPointer(ProcessSuspendedContextIndex, oldProcess);
+    bool oldProcessTerminated = (oldSuspCtx.rawBits() == memory_.nil().rawBits());
+    if (!oldProcessTerminated && !contextToSave.isNil() && contextToSave.isObject()) {
         memory_.storePointer(ProcessSuspendedContextIndex, oldProcess, contextToSave);
         if (xferLog && xferCount <= 100) {
             // Verify the save
