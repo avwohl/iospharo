@@ -3202,7 +3202,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                     // Create array
                     Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
                     uint32_t classIndex = memory_.indexOfClass(arrayClass);
-                    Oop array = memory_.allocateSlots(classIndex, arraySize);
+                    Oop array = memory_.allocateSlots(classIndex, arraySize, ObjectFormat::Indexable);
 
                     // Trace temp vector creation
                     if constexpr (ENABLE_DEBUG_LOGGING) {
@@ -5334,7 +5334,7 @@ void Interpreter::arithmeticSend(int which) {
         static FILE* arithLog2 = nullptr;
         static int arithCount2 = 0;
         if (!arithLog2) arithLog2 = fopen("/tmp/arith_non_int.log", "w");
-        if (arithLog2 && arithCount2 < 200) {
+        if (arithLog2 && arithCount2 < 5000) {
             Oop rcvr = stackValue(1);
             Oop arg = stackValue(0);
             // Only log if receiver or arg is not a SmallInteger
@@ -5390,6 +5390,20 @@ void Interpreter::arithmeticSend(int which) {
 
                 fprintf(arithLog2, "[ARITH #%d] %s %s %s (fd=%zu)",
                         arithCount2, rcvrClass.c_str(), op, argClass.c_str(), frameDepth_);
+                // For string = comparisons, dump actual values
+                if (which == 6 && (rcvrClass.find("String") != std::string::npos || rcvrClass.find("Symbol") != std::string::npos)) {
+                    auto getStr = [&](Oop o) -> std::string {
+                        if (o.isImmediate()) return "<imm>";
+                        ObjectHeader* h = o.asObjectPtr();
+                        if (!h->isBytesObject()) return "<not-bytes>";
+                        size_t sz = h->byteSize();
+                        if (sz > 30) return "<long>";
+                        return std::string((char*)h->bytes(), sz);
+                    };
+                    fprintf(arithLog2, " rcvr='%s'(0x%llx) arg='%s'(0x%llx)",
+                            getStr(rcvr).c_str(), (unsigned long long)rcvr.rawBits(),
+                            getStr(arg).c_str(), (unsigned long long)arg.rawBits());
+                }
                 // For FullBlockClosure, also log the raw values
                 if (rcvrClass == "FullBlockClosure" || argClass == "FullBlockClosure") {
                     fprintf(arithLog2, " rcvr=0x%llx arg=0x%llx",
@@ -5977,6 +5991,124 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         fprintf(sendTestLog, "[SEND-TEST #%d] selector=0x%llx argCount=%d\n",
                 sendTestCount, (unsigned long long)selector.rawBits(), argCount);
         fflush(sendTestLog);
+    }
+    // Trace sends where receiver is a 1-byte object containing '+'
+    {
+        static FILE* symLog = nullptr;
+        static int symCount = 0;
+        if (!symLog) symLog = fopen("/tmp/sym_plus_trace.log", "w");
+        Oop rcvr = stackValue(argCount);
+        bool match = false;
+        if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+            ObjectHeader* rh = rcvr.asObjectPtr();
+            if (rh->isBytesObject() && rh->byteSize() == 1 && rh->bytes()[0] == '+') {
+                match = true;
+            }
+        }
+        // Also detect caseOf:otherwise: send and dump method bytecodes
+        std::string selStr = "<unknown>";
+        if (selector.isObject() && selector.rawBits() > 0x10000) {
+            ObjectHeader* sh = selector.asObjectPtr();
+            if (sh->isBytesObject() && sh->byteSize() < 100)
+                selStr = std::string((char*)sh->bytes(), sh->byteSize());
+        }
+        // Trace ALL sends between caseOf:otherwise: and beginsWith: on '+'
+        static bool traceAllSends = false;
+        static int traceAllCount = 0;
+        if (selStr == "caseOf:otherwise:" && match) traceAllSends = true;
+        if (traceAllSends && symLog && traceAllCount < 100) {
+            traceAllCount++;
+            fprintf(symLog, "[ALL #%d] send #%s fd=%zu rcvr=0x%llx\n",
+                    traceAllCount, selStr.c_str(), frameDepth_,
+                    (unsigned long long)stackValue(argCount).rawBits());
+            fflush(symLog);
+            if (selStr == "beginsWith:" || traceAllCount >= 100) traceAllSends = false;
+        }
+        if (match && symLog && symCount < 200) {
+            symCount++;
+            Oop cls = memory_.classOf(rcvr);
+            std::string clsName = "?";
+            if (cls.isObject() && memory_.isValidPointer(cls)) {
+                ObjectHeader* ch = cls.asObjectPtr();
+                if (ch->slotCount() > 6) {
+                    Oop nm = memory_.fetchPointer(6, cls);
+                    if (nm.isObject() && memory_.isValidPointer(nm)) {
+                        ObjectHeader* nh = nm.asObjectPtr();
+                        if (nh->isBytesObject() && nh->byteSize() < 100)
+                            clsName = std::string((char*)nh->bytes(), nh->byteSize());
+                    }
+                }
+            }
+            fprintf(symLog, "[SYM+ #%d] send #%s to '+'(%s@0x%llx) fd=%zu args=%d",
+                    symCount, selStr.c_str(), clsName.c_str(),
+                    (unsigned long long)rcvr.rawBits(), frameDepth_, argCount);
+            // For caseOf:otherwise:, dump the arguments
+            if (selStr == "caseOf:otherwise:" && argCount == 2) {
+                Oop arg1 = stackValue(1); // first arg (association collection)
+                Oop arg2 = stackValue(0); // second arg (otherwise block)
+                fprintf(symLog, "\n  arg1(assocColl)=0x%llx", (unsigned long long)arg1.rawBits());
+                if (arg1.isObject() && memory_.isValidPointer(arg1)) {
+                    ObjectHeader* a1h = arg1.asObjectPtr();
+                    Oop a1cls = memory_.classOf(arg1);
+                    std::string a1cn = "?";
+                    if (a1cls.isObject() && memory_.isValidPointer(a1cls)) {
+                        ObjectHeader* a1ch = a1cls.asObjectPtr();
+                        if (a1ch->slotCount() > 6) {
+                            Oop a1nm = memory_.fetchPointer(6, a1cls);
+                            if (a1nm.isObject() && memory_.isValidPointer(a1nm)) {
+                                ObjectHeader* a1nh = a1nm.asObjectPtr();
+                                if (a1nh->isBytesObject() && a1nh->byteSize() < 100)
+                                    a1cn = std::string((char*)a1nh->bytes(), a1nh->byteSize());
+                            }
+                        }
+                    }
+                    fprintf(symLog, " class=%s slots=%zu fmt=%u", a1cn.c_str(), a1h->slotCount(), (unsigned)a1h->format());
+                    // Dump elements
+                    for (size_t i = 0; i < std::min(a1h->slotCount(), (size_t)10); i++) {
+                        Oop elem = a1h->slotAt(i);
+                        fprintf(symLog, "\n    [%zu]=0x%llx", i, (unsigned long long)elem.rawBits());
+                        if (elem.isNil()) {
+                            fprintf(symLog, " (nil)");
+                        } else if (elem.isObject() && memory_.isValidPointer(elem)) {
+                            ObjectHeader* eh = elem.asObjectPtr();
+                            Oop ecls = memory_.classOf(elem);
+                            std::string ecn = "?";
+                            if (ecls.isObject() && memory_.isValidPointer(ecls)) {
+                                ObjectHeader* ech = ecls.asObjectPtr();
+                                if (ech->slotCount() > 6) {
+                                    Oop enm = memory_.fetchPointer(6, ecls);
+                                    if (enm.isObject() && memory_.isValidPointer(enm)) {
+                                        ObjectHeader* enh = enm.asObjectPtr();
+                                        if (enh->isBytesObject() && enh->byteSize() < 100)
+                                            ecn = std::string((char*)enh->bytes(), enh->byteSize());
+                                    }
+                                }
+                            }
+                            fprintf(symLog, " %s(slots=%zu)", ecn.c_str(), eh->slotCount());
+                            // If Association, dump key and value
+                            if (ecn == "Association" && eh->slotCount() >= 2) {
+                                Oop key = eh->slotAt(0);
+                                Oop val = eh->slotAt(1);
+                                fprintf(symLog, " key=");
+                                if (key.isObject() && memory_.isValidPointer(key)) {
+                                    ObjectHeader* kh = key.asObjectPtr();
+                                    if (kh->isBytesObject() && kh->byteSize() < 30)
+                                        fprintf(symLog, "'%.*s'(0x%llx)", (int)kh->byteSize(), (char*)kh->bytes(),
+                                                (unsigned long long)key.rawBits());
+                                    else
+                                        fprintf(symLog, "obj(0x%llx)", (unsigned long long)key.rawBits());
+                                } else {
+                                    fprintf(symLog, "0x%llx", (unsigned long long)key.rawBits());
+                                }
+                            }
+                        }
+                    }
+                }
+                fprintf(symLog, "\n  arg2(otherwiseBlock)=0x%llx", (unsigned long long)arg2.rawBits());
+            }
+            fprintf(symLog, "\n");
+            fflush(symLog);
+        }
     }
 
     // Debug variables - only used when ENABLE_DEBUG_LOGGING is true
@@ -9867,7 +9999,43 @@ extern int g_traceSendsAfterPrim264;
                     static FILE* optLog = fopen("/tmp/ffi_options_debug.log", "w");
                     if (optLog) {
                         fprintf(optLog, "=== FFI OPTIONS ERROR: '%s' ===\n", errorMsg.c_str());
-                        // Walk context chain to find parseOptions: and dump its arg
+
+                        // Dump ALL context slots (not just 6-14)
+                        auto dumpOop = [&](FILE* f, const char* label, Oop o) {
+                            if (o.isSmallInteger()) {
+                                fprintf(f, "%s=SmallInt(%lld)", label, o.asSmallInteger());
+                            } else if (o.isNil()) {
+                                fprintf(f, "%s=nil", label);
+                            } else if (o.isImmediate()) {
+                                fprintf(f, "%s=imm(0x%llx)", label, (unsigned long long)o.rawBits());
+                            } else if (o.isObject() && memory_.isValidPointer(o)) {
+                                ObjectHeader* h = o.asObjectPtr();
+                                Oop cls = memory_.classOf(o);
+                                std::string cn = "?";
+                                if (cls.isObject() && memory_.isValidPointer(cls)) {
+                                    ObjectHeader* ch = cls.asObjectPtr();
+                                    if (ch->slotCount() > 6) {
+                                        Oop nm = memory_.fetchPointer(6, cls);
+                                        if (nm.isObject() && memory_.isValidPointer(nm)) {
+                                            ObjectHeader* nh = nm.asObjectPtr();
+                                            if (nh->isBytesObject() && nh->byteSize() < 100)
+                                                cn = std::string((char*)nh->bytes(), nh->byteSize());
+                                        }
+                                    }
+                                }
+                                if (h->isBytesObject() && h->byteSize() < 100) {
+                                    fprintf(f, "%s='%.*s'(%s@0x%llx)", label, (int)h->byteSize(), (char*)h->bytes(),
+                                            cn.c_str(), (unsigned long long)o.rawBits());
+                                } else {
+                                    fprintf(f, "%s=%s(slots=%zu,fmt=%u@0x%llx)", label, cn.c_str(),
+                                            h->slotCount(), (unsigned)h->format(), (unsigned long long)o.rawBits());
+                                }
+                            } else {
+                                fprintf(f, "%s=???(0x%llx)", label, (unsigned long long)o.rawBits());
+                            }
+                        };
+
+                        // Walk context chain
                         Oop ctx = activeContext_;
                         for (int d = 0; d < 20 && ctx.isObject() && !ctx.isNil(); d++) {
                             Oop meth = memory_.fetchPointer(3, ctx);
@@ -9882,79 +10050,48 @@ extern int g_traceSendsAfterPrim264;
                                             if (selH->isBytesObject() && selH->byteSize() < 100) {
                                                 std::string selName((char*)selH->bytes(), selH->byteSize());
                                                 fprintf(optLog, "  [%d] #%s\n", d, selName.c_str());
-                                                // If this is parseOptions:, dump the temp slots
-                                                if (selName == "parseOptions:" || selName == "options:") {
-                                                    // Dump temp values from this context
+                                                // Dump ALL slots for interesting contexts
+                                                if (selName == "parseOptions:" || selName == "options:" || selName == "caseOf:otherwise:") {
                                                     ObjectHeader* ctxH = ctx.asObjectPtr();
                                                     size_t ctxSlots = ctxH->slotCount();
-                                                    fprintf(optLog, "    Context slots=%zu\n", ctxSlots);
-                                                    for (size_t s = 6; s < std::min(ctxSlots, (size_t)15); s++) {
+                                                    fprintf(optLog, "    Context slots=%zu receiver=", ctxSlots);
+                                                    Oop rcvr = memory_.fetchPointer(5, ctx);
+                                                    dumpOop(optLog, "", rcvr);
+                                                    fprintf(optLog, "\n");
+                                                    for (size_t s = 6; s < std::min(ctxSlots, (size_t)25); s++) {
                                                         Oop slot = memory_.fetchPointer(s, ctx);
-                                                        if (slot.isSmallInteger()) {
-                                                            fprintf(optLog, "    [%zu]=SmallInt(%lld)\n", s, slot.asSmallInteger());
-                                                        } else if (slot.isNil()) {
-                                                            fprintf(optLog, "    [%zu]=nil\n", s);
-                                                        } else if (slot.isObject() && memory_.isValidPointer(slot)) {
-                                                            ObjectHeader* sh = slot.asObjectPtr();
-                                                            if (sh->isBytesObject() && sh->byteSize() < 100) {
-                                                                fprintf(optLog, "    [%zu]='%.*s'\n", s, (int)sh->byteSize(), (char*)sh->bytes());
-                                                            } else {
-                                                                Oop sc = memory_.classOf(slot);
-                                                                std::string scn = "?";
-                                                                if (sc.isObject()) {
-                                                                    ObjectHeader* sch = sc.asObjectPtr();
-                                                                    if (sch->slotCount() > 6) {
-                                                                        Oop scname = memory_.fetchPointer(6, sc);
-                                                                        if (scname.isObject()) {
-                                                                            ObjectHeader* scnh = scname.asObjectPtr();
-                                                                            if (scnh->isBytesObject() && scnh->byteSize() < 100)
-                                                                                scn = std::string((char*)scnh->bytes(), scnh->byteSize());
-                                                                        }
-                                                                    }
-                                                                }
-                                                                fprintf(optLog, "    [%zu]=%s(slots=%zu fmt=%u)\n", s, scn.c_str(), sh->slotCount(), (unsigned)sh->format());
-                                                                // Dump array contents if it's an array
-                                                                if (sh->format() == ObjectFormat::Indexable && sh->slotCount() <= 20) {
-                                                                    for (size_t j = 0; j < sh->slotCount(); j++) {
-                                                                        Oop elem = memory_.fetchPointer(j, slot);
-                                                                        if (elem.isSmallInteger()) {
-                                                                            fprintf(optLog, "      [%zu]=SmallInt(%lld)\n", j, elem.asSmallInteger());
-                                                                        } else if (elem.isObject() && memory_.isValidPointer(elem)) {
-                                                                            ObjectHeader* eh = elem.asObjectPtr();
-                                                                            if (eh->isBytesObject() && eh->byteSize() < 100) {
-                                                                                fprintf(optLog, "      [%zu]='%.*s' class=", j, (int)eh->byteSize(), (char*)eh->bytes());
-                                                                                Oop ec = memory_.classOf(elem);
-                                                                                if (ec.isObject()) {
-                                                                                    ObjectHeader* ech = ec.asObjectPtr();
-                                                                                    if (ech->slotCount() > 6) {
-                                                                                        Oop ecn = memory_.fetchPointer(6, ec);
-                                                                                        if (ecn.isObject()) {
-                                                                                            ObjectHeader* ecnh = ecn.asObjectPtr();
-                                                                                            if (ecnh->isBytesObject() && ecnh->byteSize() < 100)
-                                                                                                fprintf(optLog, "%.*s", (int)ecnh->byteSize(), (char*)ecnh->bytes());
-                                                                                        }
-                                                                                    }
-                                                                                }
-                                                                                fprintf(optLog, "\n");
-                                                                            } else {
-                                                                                fprintf(optLog, "      [%zu]=obj(slots=%zu)\n", j, eh->slotCount());
-                                                                            }
-                                                                        } else if (elem.isNil()) {
-                                                                            fprintf(optLog, "      [%zu]=nil\n", j);
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
+                                                        char lbl[16]; snprintf(lbl, sizeof(lbl), "    [%zu]", s);
+                                                        dumpOop(optLog, lbl, slot);
+                                                        fprintf(optLog, "\n");
+                                                    }
+                                                }
+                                                // For parseOptions:, also dump the option value specifically
+                                                if (selName == "parseOptions:") {
+                                                    // Slot 6 = optionsArray arg, slot 7 = include, slot 8 = option, slot 9 = rs
+                                                    fprintf(optLog, "    --- parseOptions: breakdown ---\n");
+                                                    Oop optArray = memory_.fetchPointer(6, ctx);
+                                                    dumpOop(optLog, "    optionsArray", optArray);
+                                                    fprintf(optLog, "\n");
+                                                    if (optArray.isObject() && memory_.isValidPointer(optArray)) {
+                                                        ObjectHeader* ah = optArray.asObjectPtr();
+                                                        for (size_t i = 0; i < std::min(ah->slotCount(), (size_t)10); i++) {
+                                                            Oop elem = ah->slotAt(i);
+                                                            char lbl[32]; snprintf(lbl, sizeof(lbl), "    elem[%zu]", i);
+                                                            dumpOop(optLog, lbl, elem);
+                                                            fprintf(optLog, "\n");
                                                         }
                                                     }
+                                                    dumpOop(optLog, "    option(slot8)", memory_.fetchPointer(8, ctx));
+                                                    fprintf(optLog, "\n");
                                                 }
                                             }
                                         }
                                     }
                                 }
                             }
+                            // Follow sender chain
                             Oop sender = memory_.fetchPointer(0, ctx);
-                            if (sender.rawBits() == ctx.rawBits()) break;
+                            if (sender.isNil() || !sender.isObject()) break;
                             ctx = sender;
                         }
                         fflush(optLog);
@@ -18111,7 +18248,7 @@ void Interpreter::initializeNamedPrimitives() {
     registerNamedPrimitive("MiscPrimitivePlugin", "primitiveFindSubstring", &Interpreter::primitiveFindSubstring);
     registerNamedPrimitive("MiscPrimitivePlugin", "primitiveIndexOfAsciiInString", &Interpreter::primitiveIndexOfAscii);
     registerNamedPrimitive("MiscPrimitivePlugin", "primitiveTranslateStringWithTable", &Interpreter::primitiveTranslateStringWithTable);
-    registerNamedPrimitive("MiscPrimitivePlugin", "primitiveCompareString", &Interpreter::primitiveCompareString);
+    registerNamedPrimitive("MiscPrimitivePlugin", "primitiveCompareString", &Interpreter::primitiveCompareStringCollated);
 
     // FFI Module/Symbol Loading - these are VM built-in primitives used by UFFI
     // They are called without a module (empty module name) because they're VM internals

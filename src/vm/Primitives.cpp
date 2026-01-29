@@ -14631,6 +14631,14 @@ PrimitiveResult Interpreter::primitiveBitmapDecompress(int argCount) {
 // ByteString >> compareWith: anotherString collated: order (argCount=2)
 // Returns -1, 0, or 1
 PrimitiveResult Interpreter::primitiveStringCompareWith(int argCount) {
+    {
+        static int p158_entry = 0;
+        if (p158_entry < 20) {
+            p158_entry++;
+            static FILE* f158e = fopen("/tmp/prim158_entry.log", "w");
+            if (f158e) { fprintf(f158e, "[P158-ENTRY #%d] argCount=%d\n", p158_entry, argCount); fflush(f158e); }
+        }
+    }
     if (argCount < 1 || argCount > 2) return PrimitiveResult::Failure;
 
     Oop string2Oop;
@@ -14654,6 +14662,27 @@ PrimitiveResult Interpreter::primitiveStringCompareWith(int argCount) {
     // Extract strings
     std::string str1 = extractString(memory_, string1Oop);
     std::string str2 = extractString(memory_, string2Oop);
+
+    // Debug: trace string comparisons
+    static int p158_count = 0;
+    if (p158_count < 2000) {
+        p158_count++;
+        static FILE* f158 = fopen("/tmp/prim158_trace.log", "w");
+        if (f158) {
+            auto cn = [&](Oop o) -> std::string {
+                Oop cls = memory_.classOf(o);
+                if (cls.isNil()) return "nil";
+                Oop name = memory_.fetchPointer(5, cls);
+                if (name.isNil() || name.isImmediate()) return "?";
+                return extractString(memory_, name);
+            };
+            fprintf(f158, "[P158 #%d] '%s'(%s) vs '%s'(%s) argCount=%d result=%d\n",
+                    p158_count, str1.c_str(), cn(string1Oop).c_str(),
+                    str2.c_str(), cn(string2Oop).c_str(), argCount,
+                    str1 == str2 ? 0 : (str1 < str2 ? -1 : 1));
+            fflush(f158);
+        }
+    }
 
     // Basic comparison (ignoring collation order for now)
     int result;
