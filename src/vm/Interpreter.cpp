@@ -1990,8 +1990,75 @@ void Interpreter::interpret() {
 }
 
 void Interpreter::checkTimerSemaphore() {
+    static int callCount242 = 0;
+    if (callCount242++ == 0) {
+        fprintf(stderr, "[TIMER-FUNC] checkTimerSemaphore first call, this=%p &usec=%p usec=%lld\n",
+                (void*)this, (void*)&nextWakeupUsec_, nextWakeupUsec_);
+    }
+    // Check microsecond timer (primitive 242 - used by DelaySemaphoreScheduler)
+    // Trace when usec timer is set
+    if (nextWakeupUsec_ != INT64_MAX) {
+        static int topTrace = 0;
+        if (topTrace++ < 5) {
+            fprintf(stderr, "[TIMER-TOP #%d] this=%p usec=%lld sema=0x%llx isNil=%d &usec=%p\n",
+                    topTrace, (void*)this, nextWakeupUsec_,
+                    timerSemaphore_.rawBits(), timerSemaphore_.isNil() ? 1 : 0,
+                    (void*)&nextWakeupUsec_);
+        }
+    }
+    if (nextWakeupUsec_ != INT64_MAX && !timerSemaphore_.isNil()) {
+        // Get current UTC microseconds in Smalltalk epoch (Jan 1, 1901)
+        // Unix epoch is Jan 1, 1970 = 2177452800 seconds after Smalltalk epoch
+        static constexpr int64_t kSmalltalkEpochOffset = 2177452800LL * 1000000LL;
+        auto now = std::chrono::system_clock::now();
+        auto epoch = now.time_since_epoch();
+        int64_t unixUsec = std::chrono::duration_cast<std::chrono::microseconds>(epoch).count();
+        int64_t currentUsec = unixUsec + kSmalltalkEpochOffset;
+
+        static int usecCheckCount = 0;
+        if (usecCheckCount++ < 5) {
+            fprintf(stderr, "[TIMER-USEC-CHK #%d] current=%lld target=%lld delta=%lldms\n",
+                    usecCheckCount, currentUsec, nextWakeupUsec_,
+                    (nextWakeupUsec_ - currentUsec) / 1000);
+        }
+        if (currentUsec >= nextWakeupUsec_) {
+            static int usecTimerLog = 0;
+            if (usecTimerLog++ < 10) {
+                fprintf(stderr, "[TIMER-USEC #%d] fired! current=%lld target=%lld\n",
+                        usecTimerLog, currentUsec, nextWakeupUsec_);
+            }
+            Oop semaphore = timerSemaphore_;
+            timerSemaphore_ = Oop::nil();
+            nextWakeupUsec_ = INT64_MAX;
+
+            // Signal the semaphore (same logic as ms timer below)
+            Oop nilObj = memory_.nil();
+            Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, semaphore);
+            if (firstLink.isNil() || firstLink.rawBits() == nilObj.rawBits()) {
+                Oop excessOop = memory_.fetchPointer(SemaphoreExcessSignalsIndex, semaphore);
+                int64_t excess = excessOop.isSmallInteger() ? excessOop.asSmallInteger() : 0;
+                memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
+                                    Oop::fromSmallInteger(excess + 1));
+            } else {
+                Oop process = removeFirstLinkOfList(semaphore);
+                Oop processPriorityOop = memory_.fetchPointer(ProcessPriorityIndex, process);
+                int processPriority = static_cast<int>(processPriorityOop.asSmallInteger());
+                Oop activeProcess = getActiveProcess();
+                Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
+                int activePriority = static_cast<int>(activePriorityOop.asSmallInteger());
+                if (processPriority > activePriority) {
+                    putToSleep(activeProcess);
+                    transferTo(process);
+                } else {
+                    putToSleep(process);
+                }
+            }
+            return;
+        }
+    }
+
     if (nextWakeupTime_ == 0 || timerSemaphore_.isNil()) {
-        return;  // No timer set
+        return;  // No millisecond timer set
     }
 
     // Get current time using ioMSecs() (30-bit wrapping counter)
@@ -2332,6 +2399,16 @@ void Interpreter::processPendingSignals() {
 bool Interpreter::step() {
     if (!running_) {
         return false;
+    }
+
+    // Check timer and process pending signals every step
+    // (needed when step() is called directly, not via run())
+    static int stepCheckCounter = 0;
+    if (++stepCheckCounter % 100 == 0) {
+        checkTimerSemaphore();
+        if (hasPendingSignals()) {
+            processPendingSignals();
+        }
     }
 
     // If the previous step slept in relinquishProcessor, report as idle
@@ -8828,9 +8905,11 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         // Skip problematic startup handlers
         // NOTE: ProcessorScheduler was skipped before but memory allocation is now fixed
         // Try enabling it to see if Morphic processes can start
-        bool shouldSkip = (rcvrClassName.find("DelaySemaphoreScheduler") != std::string::npos ||
-                          rcvrClassName.find("DelayMicrosecondTicker") != std::string::npos);
-                          // rcvrClassName == "ProcessorScheduler" - try enabling
+        bool shouldSkip = false;
+        // DelaySemaphoreScheduler and DelayMicrosecondTicker startUp are no longer skipped.
+        // Skipping them prevented the delay scheduler from running, which caused
+        // the world loop to stall after one doOneCycleFor: cycle (interCyclePause
+        // uses Delay, which requires the scheduler to be active).
         if (shouldSkip) {
             static int skipCount = 0;
             if (skipCount++ < 5) {
@@ -8932,23 +9011,46 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
     }
 
-    // INTERCEPT: Skip restoreResumptionTimes: during startup
-    // This method tries to do arithmetic with nil values from the saved image,
-    // causing cascading failures. Instead of restoring old delay times, we let
-    // the delay scheduler start fresh with no pending delays.
-    if (selEquals("restoreResumptionTimes:")) {
-        static int restoreSkipCount = 0;
-        if (restoreSkipCount++ < 3) {
-            std::cerr << "[STARTUP] Skipping restoreResumptionTimes: - delay scheduler starts fresh\n";
-            std::cerr << std::flush;
+    // restoreResumptionTimes: skip removed - let delay scheduler handle this normally.
+    // Previously skipped due to nil arithmetic failures, but those may have been
+    // caused by the FixedSize/Indexable format bug now fixed.
+
+    // TRACE: Log resume/signal on delay scheduler-related objects
+    if (selEquals("resume") && argCount == 0) {
+        Oop rcvr = stackValue(0);
+        if (rcvr.isObject()) {
+            Oop cls = memory_.classOf(rcvr);
+            if (cls.isObject()) {
+                Oop nm = memory_.fetchPointer(6, cls);
+                if (nm.isObject()) {
+                    ObjectHeader* nh = nm.asObjectPtr();
+                    if (nh->isBytesObject() && nh->byteSize() < 80) {
+                        std::string cn((char*)nh->bytes(), nh->byteSize());
+                        fprintf(stderr, "[RESUME-TRACE step=%llu] resume on %s (0x%llx)\n",
+                                g_stepNum, cn.c_str(), rcvr.rawBits());
+                    }
+                }
+            }
         }
-        // Crash tracing disabled - bug was fixed
-        // extern bool g_crashTraceEnabled;
-        // g_crashTraceEnabled = true;
-        // Pop the argument and receiver, push receiver (return self)
-        popN(argCount);  // Pop argument(s)
-        // Top of stack is now the receiver, leave it there (return self)
-        return;
+    }
+    if (selEquals("startUp") && argCount == 0) {
+        Oop rcvr = stackValue(0);
+        if (rcvr.isObject()) {
+            Oop cls = memory_.classOf(rcvr);
+            if (cls.isObject()) {
+                Oop nm = memory_.fetchPointer(6, cls);
+                if (nm.isObject()) {
+                    ObjectHeader* nh = nm.asObjectPtr();
+                    if (nh->isBytesObject() && nh->byteSize() < 80) {
+                        std::string cn((char*)nh->bytes(), nh->byteSize());
+                        if (cn.find("Delay") != std::string::npos || cn.find("Scheduler") != std::string::npos) {
+                            fprintf(stderr, "[DELAY-STARTUP step=%llu] startUp on %s (0x%llx)\n",
+                                    g_stepNum, cn.c_str(), rcvr.rawBits());
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // Trace startupList and runList:do: to see what's being passed
@@ -10801,27 +10903,8 @@ extern int g_traceSendsAfterPrim264;
                 }
             }
 
-            // ===== INTERCEPT WorldState >> runStepMethodsIn: =====
-            // Skip the entire method to avoid getting stuck in deferredUIMessages loop
-            // This allows displayWorldSafely: to be called
-            if (selStr == "runStepMethodsIn:" && argCount == 1) {
-                Oop rcvrClass = memory_.classOf(rcvr);
-                if (rcvrClass.isObject()) {
-                    Oop className = memory_.fetchPointer(6, rcvrClass);
-                    if (className.isObject()) {
-                        ObjectHeader* nameHdr = className.asObjectPtr();
-                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
-                            std::string rcvrClassName((char*)nameHdr->bytes(), nameHdr->byteSize());
-                            if (rcvrClassName == "WorldState") {
-                                // Pop args and receiver, push receiver (return self)
-                                popN(argCount + 1);
-                                push(rcvr);
-                                return;
-                            }
-                        }
-                    }
-                }
-            }
+            // runStepMethodsIn: skip removed - let Pharo handle step methods normally.
+            // The skip was preventing normal Morphic cycle operation.
 
             // ===== INTERCEPT WorldState >> checkIfUpdateNeeded =====
             // Force it to return true so Morphic actually renders

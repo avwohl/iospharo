@@ -4560,6 +4560,10 @@ PrimitiveResult Interpreter::primitiveSignalAtMilliseconds(int argCount) {
     // The milliseconds value comes from Smalltalk as `ioMSecs + delayMs`,
     // which is a 30-bit wrapping value. Timer comparison uses wrap-around handling.
 
+    static int p136count = 0;
+    p136count++;
+    fprintf(stderr, "[PRIM136] #%d called argCount=%d\n", p136count, argCount);
+
     if (argCount != 1) {
         return PrimitiveResult::Failure;
     }
@@ -13962,6 +13966,10 @@ static constexpr int64_t SmalltalkEpochOffsetMicroseconds = SmalltalkEpochOffset
 // Signals the timer semaphore when UTC clock reaches usecs. Value 0 disables.
 // Stack: receiver ticker, arg1 sema, arg2 usecs
 PrimitiveResult Interpreter::primitiveSignalAtUTCMicroseconds(int argCount) {
+    static int p242entry = 0;
+    if (p242entry++ < 10) {
+        fprintf(stderr, "[PRIM242-ENTRY] #%d argCount=%d\n", p242entry, argCount);
+    }
     if (argCount != 2) return PrimitiveResult::Failure;
 
     Oop usecsOop = stackTop();        // usecs is 2nd argument (stackValue(0))
@@ -14001,6 +14009,14 @@ PrimitiveResult Interpreter::primitiveSignalAtUTCMicroseconds(int argCount) {
         // Schedule the timer
         timerSemaphore_ = sema;
         nextWakeupUsec_ = usecs;
+        static int p242count = 0;
+        if (p242count++ < 10) {
+            auto now = std::chrono::system_clock::now();
+            int64_t nowUsec = std::chrono::duration_cast<std::chrono::microseconds>(
+                now.time_since_epoch()).count();
+            fprintf(stderr, "[PRIM242] #%d this=%p scheduled at usec=%lld (now=%lld, delta=%lldms) &nextWakeupUsec_=%p\n",
+                    p242count, (void*)this, usecs, nowUsec, (usecs - nowUsec) / 1000, (void*)&nextWakeupUsec_);
+        }
     }
 
     popN(2);  // Pop both arguments, leave receiver
