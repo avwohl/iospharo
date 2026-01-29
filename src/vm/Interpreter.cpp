@@ -2334,6 +2334,56 @@ bool Interpreter::step() {
         return false;
     }
 
+    // If DNU handler requested process suspension (e.g., stuck error loop),
+    // terminate the active process and switch to the next runnable one
+    if (suspendActiveProcess_) {
+        suspendActiveProcess_ = false;
+        Oop activeProcess = getActiveProcess();
+        if (!activeProcess.isNil()) {
+            Oop nextProcess = wakeHighestPriority();
+            if (!nextProcess.isNil() && nextProcess.rawBits() != memory_.nil().rawBits()) {
+                // Remove stuck process from its priority queue first
+                Oop nilObj = memory_.nil();
+                Oop myList = memory_.fetchPointer(ProcessMyListIndex, activeProcess);
+                if (myList.isObject() && myList.rawBits() != nilObj.rawBits()) {
+                    removeProcessFromList(activeProcess, myList);
+                }
+                // Also scan all priority queues to ensure it's not in any
+                Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
+                Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
+                Oop processLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
+                ObjectHeader* listsHdr = processLists.asObjectPtr();
+                for (size_t p = 0; p < listsHdr->slotCount(); p++) {
+                    Oop list = memory_.fetchPointer(p, processLists);
+                    Oop link = memory_.fetchPointer(LinkedListFirstLinkIndex, list);
+                    while (link.isObject() && link.rawBits() != nilObj.rawBits()) {
+                        if (link.rawBits() == activeProcess.rawBits()) {
+                            removeProcessFromList(activeProcess, list);
+                            break;
+                        }
+                        link = memory_.fetchPointer(0, link);  // nextLink
+                    }
+                }
+                // Mark old process as terminated
+                memory_.storePointer(ProcessSuspendedContextIndex, activeProcess, nilObj);
+                memory_.storePointer(0, activeProcess, nilObj);  // nextLink
+                memory_.storePointer(ProcessMyListIndex, activeProcess, nilObj);
+                // Now find next process
+                nextProcess = wakeHighestPriority();
+                if (nextProcess.isNil() || nextProcess.rawBits() == nilObj.rawBits()) {
+                    std::cerr << "[TERMINATE-STUCK] No runnable process after cleanup!\n";
+                    return true;
+                }
+                std::cerr << "[TERMINATE-STUCK] Terminated 0x" << std::hex
+                          << activeProcess.rawBits() << ", switching to 0x"
+                          << nextProcess.rawBits() << std::dec << "\n";
+                // Switch to next process
+                transferTo(nextProcess);
+                return true;
+            }
+        }
+    }
+
     // One-time: Install OSiOSDriver after image has started running (around 100K steps)
     // This ensures the SessionManager and other startup handlers have had a chance to run
     static bool osDriverInstallAttempted = false;
@@ -8770,7 +8820,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     }
 
     // TRACE: Log ALL sends in a window around driver startUp:
-    if (g_stepNum >= 479000 && g_stepNum <= 6000000 && frameDepth_ <= 3) {
+    if (false) { // Step trace disabled
         std::string tSel(selBytes, selBytes + selLen);
         std::string tRcvr = "?";
         Oop rcv = stackValue(argCount);
@@ -15740,13 +15790,18 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         return;
     }
 
-    // Fallback for #freeze on nil - called during error handling on nil receiver
-    // Just return self (nil) as a no-op
+    // Fallback for #freeze on nil - error object is nil during startup error handling
+    // The error cascade creates an infinite loop at high priority, starving all other processes.
+    // After a few attempts, suspend this process to let others (event loop) run.
     if (origStr == "freeze" && rcvrClassName == "UndefinedObject" && argCount == 0) {
         static int freezeCount = 0;
         freezeCount++;
-        if (freezeCount <= 5) {
-            std::cerr << "[DNU-FALLBACK] freeze on nil #" << freezeCount << " - returning nil\n";
+        if (freezeCount <= 3) {
+            std::cerr << "[DNU-FALLBACK] freeze on nil #" << freezeCount << "\n";
+        }
+        if (freezeCount >= 3) {
+            // Suspend this process to break the infinite error loop
+            suspendActiveProcess_ = true;
         }
         // Leave receiver on stack (return self = nil)
         dnuDepth--;
@@ -22455,7 +22510,7 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
     primCallCount++;
 
     // Trace primitives around driver startup
-    if (g_stepNum >= 479000 && g_stepNum <= 6000000 && frameDepth_ <= 3) {
+    if (false) { // Step trace disabled
         fprintf(stderr, "[PRIM-AT-STEP step=%llu] primitive=%d argCount=%d\n",
                 g_stepNum, primitiveIndex, argCount);
     }

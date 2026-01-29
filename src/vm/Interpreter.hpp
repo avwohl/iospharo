@@ -405,6 +405,7 @@ private:
     Oop pendingDriverSetupReceiver_ = Oop::nil();
     bool hasPendingDriverSetup_ = false;
     bool enableDirectInputSignaling_ = false;  // True when VM should signal input semaphore directly
+    bool suspendActiveProcess_ = false;  // Set by DNU handler to force process switch
 
     // NOTE: Event injection workaround member variables REMOVED
     // Events must go through proper Smalltalk InputEventSensor process, not C++ workarounds
