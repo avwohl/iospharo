@@ -17530,15 +17530,19 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
             }
         }
 
-        std::cerr << "  This would cause infinite DNU recursion. Stopping VM.\n";
+        std::cerr << "  Cannot resolve class - unwinding DNU frame.\n";
         std::cerr << "  (This is a bug - the receiver should have a valid class)\n\n";
         if (dnuTraceLog) {
-            fprintf(dnuTraceLog, "[FATAL] Cannot resolve class for DNU - selector=%s receiver=0x%lx\n",
-                    origStr.c_str(), (unsigned long)failedReceiver.rawBits());
+            fprintf(dnuTraceLog, "[UNRESOLVABLE] Cannot resolve class for DNU - selector=%s receiver=0x%lx classIdx=%u\n",
+                    origStr.c_str(), (unsigned long)failedReceiver.rawBits(),
+                    (failedReceiver.isObject() && failedReceiver.rawBits() > 0x10000) ?
+                        failedReceiver.asObjectPtr()->classIndex() : 0);
             fflush(dnuTraceLog);
         }
-        running_ = false;
-        dnuDepth = 0;
+        // Don't halt the VM - unwind this frame and return nil
+        for (int i = 0; i < argCount + 1; i++) pop();
+        push(memory_.nil());
+        dnuDepth--;
         return;
     }
 
