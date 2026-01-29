@@ -3780,7 +3780,7 @@ PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
         // Return array of all parameters
         Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
         uint32_t classIndex = memory_.indexOfClass(arrayClass);
-        Oop result = memory_.allocateSlots(classIndex, paramsArraySize);
+        Oop result = memory_.allocateSlots(classIndex, paramsArraySize, ObjectFormat::Indexable);
         if (result.isNil()) {
             return PrimitiveResult::Failure;
         }
@@ -6434,7 +6434,7 @@ PrimitiveResult Interpreter::primDigitDivNegative(int argCount) {
     Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
     uint32_t arrayClassIdx = memory_.indexOfClass(arrayClass);
     if (arrayClassIdx == 0) arrayClassIdx = memory_.registerClass(arrayClass);
-    Oop resultArray = memory_.allocateSlots(arrayClassIdx, 2);
+    Oop resultArray = memory_.allocateSlots(arrayClassIdx, 2, ObjectFormat::Indexable);
     if (resultArray.isNil()) return PrimitiveResult::Failure;
 
     memory_.storePointer(0, resultArray, quotient);
@@ -12765,7 +12765,7 @@ PrimitiveResult Interpreter::primitiveFindRoots(int argCount) {
         ? static_cast<uint32_t>(memory_.specialObject(SpecialObjectIndex::ClassArray).asSmallInteger())
         : memory_.indexOfClass(memory_.specialObject(SpecialObjectIndex::ClassArray));
 
-    Oop result = memory_.allocateSlots(arrayClassIndex, roots.size());
+    Oop result = memory_.allocateSlots(arrayClassIndex, roots.size(), ObjectFormat::Indexable);
     if (result.isNil()) {
         return PrimitiveResult::Failure;
     }
@@ -13101,7 +13101,7 @@ PrimitiveResult Interpreter::primitiveAllObjectsInMemory(int argCount) {
     uint32_t arrayClassIndex = memory_.indexOfClass(
         memory_.specialObject(SpecialObjectIndex::ClassArray));
 
-    Oop result = memory_.allocateSlots(arrayClassIndex, allObjects.size());
+    Oop result = memory_.allocateSlots(arrayClassIndex, allObjects.size(), ObjectFormat::Indexable);
     if (result.isNil()) {
         return PrimitiveResult::Failure;
     }
@@ -14030,7 +14030,7 @@ PrimitiveResult Interpreter::primitiveUtcAndTimezoneOffset(int argCount) {
         // Allocate new 2-element array
         uint32_t arrayClassIndex = memory_.indexOfClass(
             memory_.specialObject(SpecialObjectIndex::ClassArray));
-        resultArray = memory_.allocateSlots(arrayClassIndex, 2);
+        resultArray = memory_.allocateSlots(arrayClassIndex, 2, ObjectFormat::Indexable);
         if (resultArray.isNil()) {
             return PrimitiveResult::Failure;
         }
@@ -14124,7 +14124,7 @@ PrimitiveResult Interpreter::primitiveUtcWithOffset(int argCount) {
             arrayClassIndex = memory_.registerClass(
                 memory_.specialObject(SpecialObjectIndex::ClassArray));
         }
-        resultArray = memory_.allocateSlots(arrayClassIndex, 2);
+        resultArray = memory_.allocateSlots(arrayClassIndex, 2, ObjectFormat::Indexable);
         if (resultArray.isNil() || resultArray.rawBits() == memory_.nil().rawBits()) {
             return PrimitiveResult::Failure;
         }
