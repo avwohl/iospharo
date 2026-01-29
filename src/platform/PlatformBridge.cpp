@@ -220,6 +220,7 @@ bool vm_loadImage(const char* imagePath) {
     }
 
     gInterpreter = new pharo::Interpreter(*gMemory);
+    gInterpreter->setImageName(imagePath);
     if (!gInterpreter->initialize()) {
         return false;
     }

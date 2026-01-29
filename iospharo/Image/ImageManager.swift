@@ -241,11 +241,13 @@ class ImageManager: ObservableObject {
         // Use ZIPFoundation for extraction on iOS
         try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
 
-        // Remove existing image-related files to avoid "file exists" errors
+        // Remove existing Pharo-related files to avoid "file exists" errors during extraction
         let contents = try? fileManager.contentsOfDirectory(at: destination, includingPropertiesForKeys: nil)
         for file in contents ?? [] {
+            let name = file.lastPathComponent.lowercased()
             let ext = file.pathExtension.lowercased()
-            if ext == "image" || ext == "changes" || ext == "sources" {
+            if ext == "image" || ext == "changes" || ext == "sources" ||
+               ext == "version" || name.hasPrefix("pharo") || name == "workingimage" {
                 try? fileManager.removeItem(at: file)
                 NSLog("[ImageManager] Removed existing file: %@", file.lastPathComponent)
             }

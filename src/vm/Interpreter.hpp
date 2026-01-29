@@ -715,6 +715,7 @@ private:
     PrimitiveResult primitiveDirectoryLookup(int argCount);        // 124
     PrimitiveResult primitiveDirectoryDelete(int argCount);        // 126
     PrimitiveResult primitiveDirectoryGetMacTypeAndCreator(int argCount); // 127
+    PrimitiveResult primitiveGetCurrentWorkingDirectory(int argCount);  // named primitive
 
     // Additional file primitives (161-164)
     PrimitiveResult primitiveFileStdioHandles(int argCount);       // 161

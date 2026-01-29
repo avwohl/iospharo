@@ -10679,6 +10679,25 @@ PrimitiveResult Interpreter::primitiveDirectoryGetMacTypeAndCreator(int argCount
     return PrimitiveResult::Success;
 }
 
+// primitiveGetCurrentWorkingDirectory - named primitive (no module)
+// Takes 1 arg: a ByteArray buffer. Fills it with getcwd() result and returns a String.
+PrimitiveResult Interpreter::primitiveGetCurrentWorkingDirectory(int argCount) {
+    char buf[1024];
+    if (!getcwd(buf, sizeof(buf))) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop result = createStringObject(memory_, std::string(buf));
+    if (result.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Pop args + receiver, push result
+    popN(static_cast<size_t>(argCount + 1));
+    push(result);
+    return PrimitiveResult::Success;
+}
+
 // ===== ADDITIONAL FILE PRIMITIVES =====
 
 // Primitive 161: Get standard I/O file handles
@@ -11741,6 +11760,88 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
 
     if (ffiCalloutLog && calloutCount <= 100) {
         fprintf(ffiCalloutLog, "[FFI-CALLOUT] #%d argCount=%d\n", calloutCount, argCount);
+        // Dump method literals for debugging
+        Oop method = newMethod_.isObject() ? newMethod_ : method_;
+        if (method.isObject()) {
+            Oop mhdr = memory_.fetchPointer(0, method);
+            if (mhdr.isSmallInteger()) {
+                size_t nLits = mhdr.asSmallInteger() & 0x7FFF;
+                // Get selector from second-to-last literal
+                if (nLits >= 2) {
+                    Oop sel = memory_.fetchPointer(nLits - 1, method);
+                    if (sel.isObject() && memory_.isValidPointer(sel)) {
+                        ObjectHeader* selH = sel.asObjectPtr();
+                        if (selH->isBytesObject() && selH->byteSize() < 100) {
+                            fprintf(ffiCalloutLog, "[FFI-CALLOUT] #%d selector='%.*s'\n",
+                                    calloutCount, (int)selH->byteSize(), (char*)selH->bytes());
+                        }
+                    }
+                }
+                fprintf(ffiCalloutLog, "[FFI-CALLOUT] #%d numLiterals=%zu\n", calloutCount, nLits);
+                for (size_t i = 1; i <= nLits && i < 20; i++) {
+                    Oop lit = memory_.fetchPointer(i, method);
+                    if (lit.isSmallInteger()) {
+                        fprintf(ffiCalloutLog, "[FFI-CALLOUT] #%d  lit[%zu]=SmallInt(%lld)\n",
+                                calloutCount, i, lit.asSmallInteger());
+                    } else if (lit.isObject() && memory_.isValidPointer(lit)) {
+                        ObjectHeader* lh = lit.asObjectPtr();
+                        Oop cls = memory_.classOf(lit);
+                        std::string clsName = "?";
+                        if (cls.isObject() && memory_.isValidPointer(cls)) {
+                            ObjectHeader* ch = cls.asObjectPtr();
+                            if (ch->slotCount() > 6) {
+                                Oop cn = memory_.fetchPointer(6, cls);
+                                if (cn.isObject() && memory_.isValidPointer(cn)) {
+                                    ObjectHeader* cnh = cn.asObjectPtr();
+                                    if (cnh->isBytesObject() && cnh->byteSize() < 100)
+                                        clsName = std::string((char*)cnh->bytes(), cnh->byteSize());
+                                }
+                            }
+                        }
+                        if (lh->isBytesObject() && lh->byteSize() < 100) {
+                            fprintf(ffiCalloutLog, "[FFI-CALLOUT] #%d  lit[%zu]=%s('%.*s')\n",
+                                    calloutCount, i, clsName.c_str(), (int)lh->byteSize(), (char*)lh->bytes());
+                        } else {
+                            fprintf(ffiCalloutLog, "[FFI-CALLOUT] #%d  lit[%zu]=%s(slots=%zu fmt=%u)\n",
+                                    calloutCount, i, clsName.c_str(), lh->slotCount(), (unsigned)lh->format());
+                            // Dump Array contents
+                            if (lh->format() == ObjectFormat::Indexable && lh->slotCount() <= 10) {
+                                for (size_t j = 0; j < lh->slotCount(); j++) {
+                                    Oop sub = memory_.fetchPointer(j, lit);
+                                    if (sub.isSmallInteger()) {
+                                        fprintf(ffiCalloutLog, "[FFI-CALLOUT] #%d    [%zu]=SmallInt(%lld)\n",
+                                                calloutCount, j, sub.asSmallInteger());
+                                    } else if (sub.isNil()) {
+                                        fprintf(ffiCalloutLog, "[FFI-CALLOUT] #%d    [%zu]=nil\n", calloutCount, j);
+                                    } else if (sub.isObject() && memory_.isValidPointer(sub)) {
+                                        ObjectHeader* sh = sub.asObjectPtr();
+                                        if (sh->isBytesObject() && sh->byteSize() < 100) {
+                                            fprintf(ffiCalloutLog, "[FFI-CALLOUT] #%d    [%zu]='%.*s'\n",
+                                                    calloutCount, j, (int)sh->byteSize(), (char*)sh->bytes());
+                                        } else {
+                                            Oop sc = memory_.classOf(sub);
+                                            std::string scn = "?";
+                                            if (sc.isObject() && memory_.isValidPointer(sc)) {
+                                                ObjectHeader* sch = sc.asObjectPtr();
+                                                if (sch->slotCount() > 6) {
+                                                    Oop scname = memory_.fetchPointer(6, sc);
+                                                    if (scname.isObject() && memory_.isValidPointer(scname)) {
+                                                        ObjectHeader* scnh = scname.asObjectPtr();
+                                                        if (scnh->isBytesObject() && scnh->byteSize() < 100)
+                                                            scn = std::string((char*)scnh->bytes(), scnh->byteSize());
+                                                    }
+                                                }
+                                            }
+                                            fprintf(ffiCalloutLog, "[FFI-CALLOUT] #%d    [%zu]=%s\n", calloutCount, j, scn.c_str());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         fflush(ffiCalloutLog);
     }
 
@@ -12494,6 +12595,16 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
                     }
                 }
             }
+        }
+    }
+
+    // Last resort: try FFI callout (for Threaded FFI / UFFI methods)
+    // This handles SDL2 and other FFI calls where the method literal contains
+    // a TFExternalFunction or similar FFI spec object
+    {
+        PrimitiveResult ffiResult = primitiveCalloutToFFI(argCount);
+        if (ffiResult == PrimitiveResult::Success) {
+            return ffiResult;
         }
     }
 
