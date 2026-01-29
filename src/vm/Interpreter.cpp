@@ -11226,45 +11226,12 @@ extern int g_traceSendsAfterPrim264;
 
         // Cache hit
         if (cached->primitiveIndex > 0) {
-            // Check for quick primitives (256-519) - these are handled specially
-            // and should NOT go through the regular primitive table
-            int primIdx = cached->primitiveIndex;
-            if (primIdx >= 256 && primIdx <= 519) {
-                // Quick primitive - handle directly here
-                if (primIdx >= 264) {
-                    // Return instance variable at (primIdx - 264)
-                    if (rcvr.isObject()) {
-                        size_t instVarIndex = static_cast<size_t>(primIdx - 264);
-                        size_t slotCount = memory_.slotCountOf(rcvr);
-                        if (instVarIndex < slotCount) {
-                            Oop value = memory_.fetchPointer(instVarIndex, rcvr);
-                            // Pop receiver, push result
-                            pop();
-                            push(value);
-                            return;
-                        }
-                    }
-                    // Quick primitive failed - fall through to method activation
-                } else {
-                    // Quick constant primitives (256-263)
-                    Oop result;
-                    switch (primIdx) {
-                        case 256: result = rcvr; break;  // return self
-                        case 257: result = memory_.trueObject(); break;
-                        case 258: result = memory_.falseObject(); break;
-                        case 259: result = memory_.nil(); break;
-                        case 260: result = Oop::fromSmallInteger(-1); break;
-                        case 261: result = Oop::fromSmallInteger(0); break;
-                        case 262: result = Oop::fromSmallInteger(1); break;
-                        case 263: result = Oop::fromSmallInteger(2); break;
-                        default: goto tryRegularPrimitive;
-                    }
-                    pop();
-                    push(result);
-                    return;
-                }
-            } else {
-tryRegularPrimitive:
+            // All primitive indices go through the regular primitive table.
+            // Note: In Spur, "quick return" primitives (return self, return inst var)
+            // are encoded in bytecodes, NOT via primitive indices 256-519.
+            // Primitive indices 256+ are named/plugin primitives (e.g., 264 = getNextEvent).
+            {
+                int primIdx = cached->primitiveIndex;
                 // DEBUG: Log cached primitiveResume calls
                 if (primIdx == 87) {
                     static FILE* cachedResLog = nullptr;
@@ -11502,6 +11469,13 @@ tryRegularPrimitive:
                 selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
             }
         }
+        if (selStr == "primGetNextEvent:") {
+            static int pgneCount = 0;
+            if (pgneCount++ < 10) {
+                fprintf(stderr, "[PRIM-GET-NEXT-EVENT] primIndex=%d step=%llu\n",
+                        primIndex, (unsigned long long)g_stepNum);
+            }
+        }
         if (selStr == "digitDiv:neg:") {
             static int ddnCount = 0;
             if (ddnCount++ < 10) {
@@ -11571,43 +11545,9 @@ tryRegularPrimitive:
     }
 
     if (primIndex > 0) {
-        // Check for quick primitives (256-519) - handle directly, don't use primitive table
-        if (primIndex >= 256 && primIndex <= 519) {
-            if (primIndex >= 264) {
-                // Return instance variable at (primIndex - 264)
-                if (rcvr.isObject()) {
-                    size_t instVarIndex = static_cast<size_t>(primIndex - 264);
-                    size_t slotCount = memory_.slotCountOf(rcvr);
-                    if (instVarIndex < slotCount) {
-                        Oop value = memory_.fetchPointer(instVarIndex, rcvr);
-                        pop();
-                        push(value);
-                        return;
-                    }
-                }
-                // Quick primitive failed - fall through to method activation
-            } else {
-                // Quick constant primitives (256-263)
-                Oop result;
-                bool handled = true;
-                switch (primIndex) {
-                    case 256: result = rcvr; break;
-                    case 257: result = memory_.trueObject(); break;
-                    case 258: result = memory_.falseObject(); break;
-                    case 259: result = memory_.nil(); break;
-                    case 260: result = Oop::fromSmallInteger(-1); break;
-                    case 261: result = Oop::fromSmallInteger(0); break;
-                    case 262: result = Oop::fromSmallInteger(1); break;
-                    case 263: result = Oop::fromSmallInteger(2); break;
-                    default: handled = false;
-                }
-                if (handled) {
-                    pop();
-                    push(result);
-                    return;
-                }
-            }
-        } else {
+        // All primitive indices go through the regular primitive table.
+        // In Spur, quick return primitives are encoded in bytecodes, not indices 256-519.
+        {
             // DEBUG: Log non-cached primitive 87 calls
             if (primIndex == 87) {
                 static FILE* ncResLog = nullptr;
@@ -18273,6 +18213,12 @@ void Interpreter::initializePrimitives() {
     // Load primitive table from VMMaker-generated source
     // This ensures the table matches what the Pharo image expects
     #include "../ios/generated_primitives.inc"
+
+    // Override: The generated file incorrectly marks 264+ as "quick return" primitives.
+    // In Spur, quick returns are handled by bytecodes, not primitive indices.
+    // Primitive 264 = getNextEvent, 265 = inputSemaphore2 (these are real primitives).
+    primitiveTable_[264] = &Interpreter::primitiveGetNextEvent;
+    primitiveTable_[265] = &Interpreter::primitiveInputSemaphore2;
 
     // Debug: Verify event primitives are registered
     if constexpr (ENABLE_DEBUG_LOGGING) {
