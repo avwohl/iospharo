@@ -18638,15 +18638,21 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
         PrimitiveResult result = (this->*prim)(argCount);
         if (result == PrimitiveResult::Success) {
             lastPrimitiveIndex_ = primitiveIndex;
+            return result;
         }
-        return result;
+        // For indices 256-519, a table entry failure should fall through to
+        // quick primitive handling (e.g., instVar accessor on BlockClosure uses
+        // prim 264 which is also getNextEvent in the table).
+        if (primitiveIndex < 256 || primitiveIndex > 519) {
+            return result;  // Not in quick range, just return failure
+        }
+        // Fall through to quick primitive handling below
     }
 
-    // Quick primitives (256-519): return constants or instance variables
-    // These are encoded via callPrimitive bytecodes in Sista V1 / Spur methods.
-    // 256 = return self, 257 = return true, 258 = false, 259 = nil
-    // 260-263 = return constants (-1, 0, 1, 2)
-    // 264+ = return instance variable at index (primIndex - 264)
+    // Quick primitives (256-519): return constants or instance variables.
+    // These are encoded via callPrimitive bytecodes in accessor methods.
+    // If the primitive table had an entry, it was tried above and failed,
+    // so we try the quick return as fallback.
     if (primitiveIndex >= 256 && primitiveIndex <= 519) {
         Oop receiver = stackTop();
 
