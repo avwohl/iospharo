@@ -18440,13 +18440,12 @@ void Interpreter::initializePrimitives() {
     // This ensures the table matches what the Pharo image expects
     #include "../ios/generated_primitives.inc"
 
-    // Primitives 256-519 are ALL external/named primitives in the standard Pharo VM.
-    // They should be dispatched via primitiveExternalCall (primitive 117), which reads
-    // the method's first literal to determine the plugin function name.
-    // Do NOT hardcode specific functions at these indices - the dispatch is by name.
-    for (int i = 256; i < 520; i++) {
-        primitiveTable_[i] = &Interpreter::primitiveExternalCall;
-    }
+    // Primitives 256-519: In Sista V1 / Spur, the callPrimitive bytecode encodes
+    // "quick primitives" that return constants (256-263) or instance variables (264+).
+    // These are NOT external/named primitives.
+    // External/named primitives use primitive 117 (primitiveExternalCall) which is
+    // in the primitive table and reads the method's literals for the plugin spec.
+    // Do NOT override 256-519 in the table - they're handled by quick primitive code.
 
     // NOTE: The generated file maps VMMaker primitive names to C++ method names.
     // If a primitive method doesn't exist, it will cause a compile error here,
@@ -18472,9 +18471,13 @@ void Interpreter::initializeNamedPrimitives() {
     // Register iOS-specific primitives by name
     // These can be called via <primitive: 'name' module: 'iOSPlugin'>
 
-    // Event primitives
+    // Event primitives - register under all module names the image might use
     registerNamedPrimitive("iOSPlugin", "primitiveGetNextEvent", &Interpreter::primitiveGetNextEvent);
     registerNamedPrimitive("iOSPlugin", "primitiveInputSemaphore", &Interpreter::primitiveInputSemaphore2);
+    registerNamedPrimitive("SecurityPlugin", "primitiveGetNextEvent", &Interpreter::primitiveGetNextEvent);
+    registerNamedPrimitive("SecurityPlugin", "primitiveInputSemaphore", &Interpreter::primitiveInputSemaphore2);
+    registerNamedPrimitive("", "primitiveGetNextEvent", &Interpreter::primitiveGetNextEvent);
+    registerNamedPrimitive("", "primitiveInputSemaphore", &Interpreter::primitiveInputSemaphore2);
 
     // Display primitives
     registerNamedPrimitive("iOSPlugin", "primitiveShowDisplayRect", &Interpreter::primitiveShowDisplayRect);
@@ -18625,8 +18628,57 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
         return result;
     }
 
-    // Primitives 256-519 are all external/named primitives, handled by
-    // primitiveExternalCall via the primitive table. No fallback needed.
+    // Quick primitives (256-519): return constants or instance variables
+    // These are encoded via callPrimitive bytecodes in Sista V1 / Spur methods.
+    // 256 = return self, 257 = return true, 258 = false, 259 = nil
+    // 260-263 = return constants (-1, 0, 1, 2)
+    // 264+ = return instance variable at index (primIndex - 264)
+    if (primitiveIndex >= 256 && primitiveIndex <= 519) {
+        Oop receiver = stackTop();
+
+        if (primitiveIndex >= 264) {
+            // Return instance variable at index (primitiveIndex - 264)
+            if (!receiver.isObject()) {
+                return PrimitiveResult::Failure;
+            }
+            size_t instVarIndex = static_cast<size_t>(primitiveIndex - 264);
+            size_t slotCount = memory_.slotCountOf(receiver);
+            if (instVarIndex >= slotCount) {
+                return PrimitiveResult::Failure;
+            }
+            Oop value = memory_.fetchPointer(instVarIndex, receiver);
+            *(stackPointer_ - 1) = value;  // Replace stack top
+            return PrimitiveResult::Success;
+        }
+
+        switch (primitiveIndex) {
+            case 256:  // return self
+                return PrimitiveResult::Success;
+            case 257:  // return true
+                *(stackPointer_ - 1) = memory_.trueObject();
+                return PrimitiveResult::Success;
+            case 258:  // return false
+                *(stackPointer_ - 1) = memory_.falseObject();
+                return PrimitiveResult::Success;
+            case 259:  // return nil
+                *(stackPointer_ - 1) = memory_.nil();
+                return PrimitiveResult::Success;
+            case 260:  // return -1
+                *(stackPointer_ - 1) = Oop::fromSmallInteger(-1);
+                return PrimitiveResult::Success;
+            case 261:  // return 0
+                *(stackPointer_ - 1) = Oop::fromSmallInteger(0);
+                return PrimitiveResult::Success;
+            case 262:  // return 1
+                *(stackPointer_ - 1) = Oop::fromSmallInteger(1);
+                return PrimitiveResult::Success;
+            case 263:  // return 2
+                *(stackPointer_ - 1) = Oop::fromSmallInteger(2);
+                return PrimitiveResult::Success;
+            default:
+                return PrimitiveResult::Failure;
+        }
+    }
 
     // No primitive function and not a quick primitive
     // Log interesting unimplemented primitives

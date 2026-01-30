@@ -12297,11 +12297,26 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
             }
         }
     }
+    // Log literal strings found for first N calls
+    static FILE* namedLog = fopen("/tmp/named_prim_lookup.log", "w");
+    static int namedLogCount = 0;
+    namedLogCount++;
+    if (namedLog && namedLogCount <= 200) {
+        fprintf(namedLog, "[NAMED #%d] argCount=%d literals(%zu):", namedLogCount, argCount, literalStrings.size());
+        for (auto& s : literalStrings) fprintf(namedLog, " '%s'", s.c_str());
+        fprintf(namedLog, "\n");
+        fflush(namedLog);
+    }
+
     // Try all combinations of module:name from literal strings
     for (size_t a = 0; a < literalStrings.size(); a++) {
         // Try as direct name with empty module
         auto it = namedPrimitives_.find(":" + literalStrings[a]);
         if (it != namedPrimitives_.end()) {
+            if (namedLog && namedLogCount <= 200) {
+                fprintf(namedLog, "[NAMED #%d] FOUND :%s\n", namedLogCount, literalStrings[a].c_str());
+                fflush(namedLog);
+            }
             return (this->*(it->second))(argCount);
         }
         // Try as module:name with other literals as names
@@ -12310,6 +12325,10 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
             std::string key = literalStrings[a] + ":" + literalStrings[b];
             auto it2 = namedPrimitives_.find(key);
             if (it2 != namedPrimitives_.end()) {
+                if (namedLog && namedLogCount <= 200) {
+                    fprintf(namedLog, "[NAMED #%d] FOUND %s\n", namedLogCount, key.c_str());
+                    fflush(namedLog);
+                }
                 return (this->*(it2->second))(argCount);
             }
         }
@@ -12350,7 +12369,7 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
         }
     }
 
-    static FILE* extLog = nullptr;  // Set to fopen() to enable debug logging
+    static FILE* extLog = fopen("/tmp/ext_prim_calls.log", "w");
     static int extCallCount = 0;
     extCallCount++;
 
