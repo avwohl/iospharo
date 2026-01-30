@@ -6212,6 +6212,112 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 }
 
 void Interpreter::sendSelector(Oop selector, int argCount) {
+    // Trace startup exception: log signal, handleError:, startUp: sends
+    {
+        static FILE* startupTraceLog = nullptr;
+        static int startupTraceCount = 0;
+        if (startupTraceCount < 500) {
+            std::string selName;
+            if (selector.isObject() && selector.rawBits() > 0x10000) {
+                ObjectHeader* sh = selector.asObjectPtr();
+                if (sh->isBytesObject() && sh->byteSize() < 100)
+                    selName = std::string((char*)sh->bytes(), sh->byteSize());
+            }
+            if (selName == "signal" || selName == "signal:" ||
+                selName == "handleError:log:" || selName == "handleError:" ||
+                selName == "startUp:" || selName == "startUp" ||
+                selName == "processStartUpList:" ||
+                selName == "messageText" || selName == "signalerContext" ||
+                selName == "defaultAction" || selName == "pass" ||
+                selName == "error:" || selName == "error" ||
+                selName == "primitiveFailed:" || selName == "primitiveFailed") {
+                if (!startupTraceLog) startupTraceLog = fopen("/tmp/startup_exception.log", "w");
+                if (startupTraceLog) {
+                    startupTraceCount++;
+                    // Get receiver class
+                    Oop rcvr = stackValue(argCount);
+                    std::string rcvrCls = "?";
+                    if (rcvr.isNil()) { rcvrCls = "nil"; }
+                    else if (rcvr.isSmallInteger()) { rcvrCls = "SmallInt"; }
+                    else if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                        Oop cls = memory_.classOf(rcvr);
+                        if (cls.isObject() && cls.rawBits() > 0x10000) {
+                            Oop nm = memory_.fetchPointer(6, cls);
+                            if (nm.isObject() && nm.rawBits() > 0x10000) {
+                                ObjectHeader* nH = nm.asObjectPtr();
+                                if (nH->isBytesObject() && nH->byteSize() < 80)
+                                    rcvrCls = std::string((char*)nH->bytes(), nH->byteSize());
+                            }
+                        }
+                    }
+                    fprintf(startupTraceLog, "[STARTUP #%d step=%llu] #%s -> %s (0x%llx)\n",
+                            startupTraceCount, (unsigned long long)g_stepNum,
+                            selName.c_str(), rcvrCls.c_str(), (unsigned long long)rcvr.rawBits());
+                    // For signal/error, dump first arg if string
+                    // For MessageNotUnderstood, dump message details
+            if (selName == "signal" && rcvrCls == "MessageNotUnderstood") {
+                // MNU layout: slot 0 = message, slot 1 = receiver, slot 2 = reachedDefaultHandler
+                // Message layout: slot 0 = selector, slot 1 = args, slot 2 = lookupClass
+                if (rcvr.isObject()) {
+                    Oop msg = memory_.fetchPointer(0, rcvr);  // message
+                    Oop mnuReceiver = memory_.fetchPointer(1, rcvr);  // receiver
+                    if (msg.isObject() && msg.rawBits() > 0x10000) {
+                        Oop sel = memory_.fetchPointer(0, msg);  // selector
+                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                            ObjectHeader* sH = sel.asObjectPtr();
+                            if (sH->isBytesObject() && sH->byteSize() < 100) {
+                                std::string mnuSel((char*)sH->bytes(), sH->byteSize());
+                                // Get receiver class name
+                                std::string mnuRcvrCls = "?";
+                                if (mnuReceiver.isNil()) { mnuRcvrCls = "nil"; }
+                                else if (mnuReceiver.isSmallInteger()) { mnuRcvrCls = "SmallInt(" + std::to_string(mnuReceiver.asSmallInteger()) + ")"; }
+                                else if (mnuReceiver.isObject() && mnuReceiver.rawBits() > 0x10000) {
+                                    Oop rcls = memory_.classOf(mnuReceiver);
+                                    if (rcls.isObject() && rcls.rawBits() > 0x10000) {
+                                        Oop rnm = memory_.fetchPointer(6, rcls);
+                                        if (rnm.isObject() && rnm.rawBits() > 0x10000) {
+                                            ObjectHeader* rnH = rnm.asObjectPtr();
+                                            if (rnH->isBytesObject() && rnH->byteSize() < 80)
+                                                mnuRcvrCls = std::string((char*)rnH->bytes(), rnH->byteSize());
+                                        }
+                                    }
+                                }
+                                fprintf(startupTraceLog, "  MNU: #%s not understood by %s\n", mnuSel.c_str(), mnuRcvrCls.c_str());
+                            }
+                        }
+                    }
+                }
+            }
+            if (argCount >= 1 && (selName == "signal:" || selName == "error:" || selName == "handleError:log:" || selName == "primitiveFailed:")) {
+                        Oop arg = stackValue(0);
+                        if (arg.isObject() && arg.rawBits() > 0x10000) {
+                            ObjectHeader* aH = arg.asObjectPtr();
+                            if (aH->isBytesObject() && aH->byteSize() < 200) {
+                                std::string argStr((char*)aH->bytes(), aH->byteSize());
+                                fprintf(startupTraceLog, "  arg='%s'\n", argStr.c_str());
+                            } else {
+                                // Get class of arg
+                                Oop acls = memory_.classOf(arg);
+                                std::string aclsName = "?";
+                                if (acls.isObject() && acls.rawBits() > 0x10000) {
+                                    Oop anm = memory_.fetchPointer(6, acls);
+                                    if (anm.isObject() && anm.rawBits() > 0x10000) {
+                                        ObjectHeader* anH = anm.asObjectPtr();
+                                        if (anH->isBytesObject() && anH->byteSize() < 80)
+                                            aclsName = std::string((char*)anH->bytes(), anH->byteSize());
+                                    }
+                                }
+                                fprintf(startupTraceLog, "  arg=(%s @ 0x%llx)\n", aclsName.c_str(), (unsigned long long)arg.rawBits());
+                            }
+                        } else if (arg.isSmallInteger()) {
+                            fprintf(startupTraceLog, "  arg=%lld\n", (long long)arg.asSmallInteger());
+                        }
+                    }
+                    fflush(startupTraceLog);
+                }
+            }
+        }
+    }
     // Unconditional test log to verify sendSelector is being called
     static FILE* sendTestLog = nullptr;
     static int sendTestCount = 0;

@@ -2375,10 +2375,60 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
                         }
                     }
                 }
-                fprintf(f, "[basicNew: #%d] FAIL %s class=%s size=0x%llx sizeIsSmallInt=%d sizeIsObj=%d argCount=%d\n",
-                        newArgCallCount, reason, className.c_str(),
+                // Get class name of size arg
+                std::string sizeClassName = "?";
+                if (sizeOop.isNil()) { sizeClassName = "nil"; }
+                else if (sizeOop.isSmallInteger()) { sizeClassName = "SmallInt(" + std::to_string(sizeOop.asSmallInteger()) + ")"; }
+                else if (sizeOop.isObject() && sizeOop.rawBits() > 0x10000) {
+                    Oop scls = memory_.classOf(sizeOop);
+                    if (scls.isObject() && scls.rawBits() > 0x10000) {
+                        Oop snm = memory_.fetchPointer(6, scls);
+                        if (snm.isObject() && snm.rawBits() > 0x10000) {
+                            ObjectHeader* snH = snm.asObjectPtr();
+                            if (snH->isBytesObject() && snH->byteSize() < 80)
+                                sizeClassName = std::string((char*)snH->bytes(), snH->byteSize());
+                        }
+                    }
+                }
+                fprintf(f, "[basicNew: #%d] FAIL %s class=%s sizeArg=%s(0x%llx) sizeIsSmallInt=%d sizeIsObj=%d argCount=%d step=%llu\n",
+                        newArgCallCount, reason, className.c_str(), sizeClassName.c_str(),
                         (unsigned long long)sizeOop.rawBits(), sizeOop.isSmallInteger() ? 1 : 0,
-                        sizeOop.isObject() ? 1 : 0, argCount);
+                        sizeOop.isObject() ? 1 : 0, argCount, (unsigned long long)g_stepNum);
+                // Dump current method selector
+                {
+                    std::string curSel = "?";
+                    if (method_.isObject() && memory_.isValidPointer(method_)) {
+                        Oop hdrOop = memory_.fetchPointer(0, method_);
+                        if (hdrOop.isSmallInteger()) {
+                            int64_t hbits = hdrOop.asSmallInteger();
+                            int nLit = hbits & 0x7FFF;
+                            // Try penultimate literal (selector in some layouts)
+                            for (int li = nLit; li >= std::max(1, nLit-1); li--) {
+                                Oop lit = memory_.fetchPointer(li, method_);
+                                if (lit.isObject() && memory_.isValidPointer(lit)) {
+                                    ObjectHeader* lh = lit.asObjectPtr();
+                                    if (lh->isBytesObject() && lh->byteSize() < 100 && lh->byteSize() > 0) {
+                                        curSel = std::string((char*)lh->bytes(), lh->byteSize());
+                                        break;
+                                    }
+                                    // Association: slot 0 = key (Symbol), slot 1 = value
+                                    if (lh->slotCount() >= 2) {
+                                        Oop key = memory_.fetchPointer(0, lit);
+                                        if (key.isObject() && memory_.isValidPointer(key)) {
+                                            ObjectHeader* kh = key.asObjectPtr();
+                                            if (kh->isBytesObject() && kh->byteSize() < 100) {
+                                                curSel = std::string((char*)kh->bytes(), kh->byteSize());
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    fprintf(f, "[basicNew: #%d] current method selector: #%s frameDepth=%zu\n",
+                            newArgCallCount, curSel.c_str(), frameDepth_);
+                }
                 fclose(f);
             }
         }
@@ -8965,6 +9015,18 @@ PrimitiveResult Interpreter::primitiveFindHandlerContext(int argCount) {
             int primIdx = primitiveIndexOf(method);
             if (primIdx == 199) {
                 // Found a handler context
+                {
+                    static int foundCount = 0;
+                    if (foundCount++ < 50) {
+                        static FILE* fhLog = fopen("/tmp/find_handler.log", "w");
+                        if (fhLog) {
+                            fprintf(fhLog, "[FIND-HANDLER #%d step=%llu] FOUND handler ctx=0x%llx after %d contexts\n",
+                                    foundCount, (unsigned long long)g_stepNum,
+                                    (unsigned long long)ctx.rawBits(), 10000 - limit);
+                            fflush(fhLog);
+                        }
+                    }
+                }
                 pop();
                 push(ctx);
                 return PrimitiveResult::Success;
@@ -8974,6 +9036,18 @@ PrimitiveResult Interpreter::primitiveFindHandlerContext(int argCount) {
     }
 
     // Not found - return nil
+    {
+        static int findHandlerLogCount = 0;
+        if (findHandlerLogCount++ < 50) {
+            static FILE* fhLog = fopen("/tmp/find_handler.log", "w");
+            if (fhLog) {
+                fprintf(fhLog, "[FIND-HANDLER #%d step=%llu] NO handler found from ctx=0x%llx, walked %d contexts\n",
+                        findHandlerLogCount, (unsigned long long)g_stepNum,
+                        (unsigned long long)startContext.rawBits(), 10000 - limit);
+                fflush(fhLog);
+            }
+        }
+    }
     pop();
     push(memory_.nil());
     return PrimitiveResult::Success;
