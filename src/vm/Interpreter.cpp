@@ -1905,50 +1905,8 @@ void Interpreter::syncDisplayToSurface() {
     // NO WORKAROUNDS: Removed processPendingWorldMenu, processPendingMenuAction, updateActiveHandPosition
     // Events must be handled by Smalltalk's InputEventSensor, not C++ workarounds
 
-    // Sync Display Form to surface if we have one
-    // Auto-discover Display global if displayForm_ not set
-    if (displayForm_.isNil()) {
-        // First try direct Display global
-        Oop display = memory_.findGlobal("Display");
-
-        // If not found, try to get Display from World
-        if (display.isNil()) {
-            Oop world = memory_.findGlobal("World");
-            if (!world.isNil() && world.isObject()) {
-                ObjectHeader* worldHdr = world.asObjectPtr();
-                size_t worldSlots = worldHdr->slotCount();
-
-                // Try to find a Form by scanning all slots
-                for (size_t i = 0; i < worldSlots && display.isNil(); i++) {
-                    Oop slot = memory_.fetchPointer(i, world);
-                    if (!slot.isNil() && slot.isObject()) {
-                        ObjectHeader* slotHdr = slot.asObjectPtr();
-                        // Check if it looks like a Form (4+ slots, slot1 and slot2 are SmallIntegers)
-                        if (slotHdr->slotCount() >= 4) {
-                            Oop s1 = memory_.fetchPointer(1, slot);
-                            Oop s2 = memory_.fetchPointer(2, slot);
-                            if (s1.isSmallInteger() && s2.isSmallInteger()) {
-                                int w = s1.asSmallInteger();
-                                int h = s2.asSmallInteger();
-                                if (w > 0 && w < 10000 && h > 0 && h < 10000) {
-                                    Oop bits = memory_.fetchPointer(0, slot);
-                                    if (bits.isObject()) {
-                                        display = slot;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        if (!display.isNil() && display.isObject()) {
-            displayForm_ = display;
-        }
-    }
-
-    // If no display form found, try direct morph rendering
+    // displayForm_ is set by primitiveBeDisplay (prim 102) from the interpreter thread.
+    // Do NOT access object memory from the heartbeat thread to discover it.
     if (displayForm_.isNil()) {
         renderWorldMorphs();
         return;
@@ -1974,17 +1932,17 @@ void Interpreter::syncDisplayToSurface() {
     int dstWidth = pharo::gDisplaySurface->width();
     int dstHeight = pharo::gDisplaySurface->height();
 
-    // Debug log Form dimensions (first 5 times only)
+    // Debug log Form dimensions periodically
     static int formCopyCount = 0;
     formCopyCount++;
-    if (formCopyCount <= 5) {
+    if (formCopyCount <= 5 || (formCopyCount % 300 == 0 && formCopyCount <= 3000)) {
         static FILE* formLog = fopen("/tmp/form_copy.log", "w");
         if (formLog) {
-            fprintf(formLog, "[FORM #%d] src=%dx%d depth=%d, dst=%dx%d, bitsSize=%zu\n",
-                    formCopyCount, srcWidth, srcHeight, srcDepth, dstWidth, dstHeight, bitsHdr->byteSize());
-            // Sample a few source pixels
-            fprintf(formLog, "[FORM #%d] first src pixels: %08x %08x %08x %08x\n",
-                    formCopyCount, srcPixels[0], srcPixels[1], srcPixels[2], srcPixels[3]);
+            // Sample pixels at various positions
+            int mid = (srcWidth * srcHeight) / 2;
+            fprintf(formLog, "[FORM #%d] src=%dx%d depth=%d, pixels[0]=%08x [100]=%08x [mid]=%08x\n",
+                    formCopyCount, srcWidth, srcHeight, srcDepth,
+                    srcPixels[0], srcPixels[100], srcPixels[mid]);
             fflush(formLog);
         }
     }
@@ -2032,6 +1990,10 @@ void Interpreter::interpret() {
     int loopCount = 0;
     while (running_) {
         loopCount++;
+        if (loopCount <= 3 || (loopCount % 100000 == 0 && loopCount <= 500000)) {
+            FILE* lf = fopen("/tmp/interpret_loop.log", "a");
+            if (lf) { fprintf(lf, "[LOOP] count=%d displayForm_.isNil=%d\n", loopCount, displayForm_.isNil() ? 1 : 0); fclose(lf); }
+        }
 
         // Process any pending external semaphore signals
         if (hasPendingSignals()) {
@@ -2044,6 +2006,62 @@ void Interpreter::interpret() {
         // Periodically process input events (queued for Smalltalk to poll via primitive 264)
         if (loopCount % 100 == 0) {
             processInputEvents();
+        }
+
+        // Periodically check Display Form from interpreter thread
+        if (loopCount % 100000 == 0) {
+            static int searchCount = 0;
+            searchCount++;
+            Oop display = memory_.findGlobal("Display");
+            if (searchCount <= 20) {
+                FILE* df = fopen("/tmp/display_search.log", "a");
+                if (df) {
+                    Oop bits = Oop::nil();
+                    uint32_t px0 = 0, pxMid = 0;
+                    if (!display.isNil() && display.isObject()) {
+                        bits = memory_.fetchPointer(0, display);
+                        if (!bits.isNil() && bits.isObject()) {
+                            ObjectHeader* bh = bits.asObjectPtr();
+                            uint32_t* p = reinterpret_cast<uint32_t*>(bh->bytes());
+                            px0 = p[0];
+                            pxMid = p[(1024*768)/2];
+                        }
+                    }
+                    fprintf(df, "[SEARCH #%d] loop=%d Display=0x%llx displayForm_=0x%llx match=%d px[0]=%08x px[mid]=%08x\n",
+                            searchCount, loopCount,
+                            (unsigned long long)display.rawBits(),
+                            (unsigned long long)displayForm_.rawBits(),
+                            display.rawBits() == displayForm_.rawBits() ? 1 : 0,
+                            px0, pxMid);
+                    fclose(df);
+                }
+            }
+        }
+        if (displayForm_.isNil() && (loopCount % 10000 == 0)) {
+            Oop display = memory_.findGlobal("Display");
+            if (!display.isNil() && display.isObject()) {
+                // Verify it looks like a Form (has bits, width, height, depth)
+                ObjectHeader* hdr = display.asObjectPtr();
+                if (hdr->slotCount() >= 4) {
+                    Oop w = memory_.fetchPointer(1, display);
+                    Oop h = memory_.fetchPointer(2, display);
+                    if (w.isSmallInteger() && h.isSmallInteger() &&
+                        w.asSmallInteger() > 0 && h.asSmallInteger() > 0) {
+                        setDisplayForm(display);
+                        setScreenSize(w.asSmallInteger(), h.asSmallInteger());
+                        Oop d = memory_.fetchPointer(3, display);
+                        if (d.isSmallInteger()) setScreenDepth(d.asSmallInteger());
+                        {
+                            FILE* df = fopen("/tmp/display_found.log", "w");
+                            if (df) {
+                                fprintf(df, "[DISPLAY] Found Display Form %dx%d from interpreter thread\n",
+                                        (int)w.asSmallInteger(), (int)h.asSmallInteger());
+                                fclose(df);
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         step();
@@ -13602,6 +13620,22 @@ void Interpreter::setReceiverInstVar(size_t index, Oop value) {
 // ===== SPECIAL SENDS =====
 
 void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
+    static int dnuCount = 0;
+    dnuCount++;
+    if (dnuCount <= 100 || dnuCount % 1000 == 0) {
+        static FILE* dnuLog = fopen("/tmp/dnu_messages.log", "a");
+        if (dnuLog) {
+            std::string selStr = "???";
+            if (selector.isObject() && selector.rawBits() > 0x10000) {
+                ObjectHeader* sh = selector.asObjectPtr();
+                if (sh->isBytesObject() && sh->byteSize() < 200) {
+                    selStr = std::string((char*)sh->bytes(), sh->byteSize());
+                }
+            }
+            fprintf(dnuLog, "[DNU #%d] selector='%s' argCount=%d\n", dnuCount, selStr.c_str(), argCount);
+            fflush(dnuLog);
+        }
+    }
     static int dnuDepth = 0;
     const int MAX_DNU_DEPTH = 10;
 
@@ -18481,6 +18515,14 @@ void Interpreter::initializeNamedPrimitives() {
     // Also register under SqueakPlugin/SurfacePlugin for compatibility
     registerNamedPrimitive("SqueakPlugin", "primitiveGetNextEvent", &Interpreter::primitiveGetNextEvent);
     registerNamedPrimitive("SurfacePlugin", "primitiveShowDisplayRect", &Interpreter::primitiveShowDisplayRect);
+
+    // Display primitives (called with empty module name)
+    registerNamedPrimitive("", "primitiveForceDisplayUpdate", &Interpreter::primitiveForceDisplayUpdate);
+    registerNamedPrimitive("", "primitiveShowDisplayRect", &Interpreter::primitiveShowDisplayRect);
+
+    // BitBlt plugin
+    registerNamedPrimitive("BitBltPlugin", "primitiveCopyBits", &Interpreter::primitiveCopyBits);
+    registerNamedPrimitive("BitBltPlugin", "primitiveDrawLoop", &Interpreter::primitiveDrawLoop);
 
     // MiscPrimitivePlugin
     registerNamedPrimitive("MiscPrimitivePlugin", "primitiveStringHash", &Interpreter::primitiveStringHashInitialHash);

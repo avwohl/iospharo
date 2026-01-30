@@ -4143,6 +4143,10 @@ PrimitiveResult Interpreter::primitiveKeyboardNext(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveBeDisplay(int argCount) {
+    {
+        static FILE* f = fopen("/tmp/prim102_beDisplay.log", "w");
+        if (f) { fprintf(f, "[PRIM102] called argCount=%d\n", argCount); fflush(f); }
+    }
     if (argCount != 0) return PrimitiveResult::Failure;
 
     // Get the receiver (a Form object)
@@ -4153,6 +4157,17 @@ PrimitiveResult Interpreter::primitiveBeDisplay(int argCount) {
 
     // Store as the display form
     setDisplayForm(form);
+    {
+        static FILE* f = fopen("/tmp/prim102_beDisplay.log", "a");
+        if (f) {
+            Oop w = memory_.fetchPointer(1, form);
+            Oop h = memory_.fetchPointer(2, form);
+            fprintf(f, "[PRIM102] setDisplayForm OK, width=%lld height=%lld\n",
+                    w.isSmallInteger() ? (long long)w.asSmallInteger() : -1LL,
+                    h.isSmallInteger() ? (long long)h.asSmallInteger() : -1LL);
+            fflush(f);
+        }
+    }
 
     // Extract form dimensions to update screen size
     // Form slots: 0=bits, 1=width, 2=height, 3=depth
@@ -4175,6 +4190,15 @@ PrimitiveResult Interpreter::primitiveBeDisplay(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveForceDisplayUpdate(int argCount) {
+    {
+        static int callCount = 0;
+        callCount++;
+        if (callCount <= 10) {
+            FILE* f = fopen("/tmp/forceDisplayUpdate.log", "a");
+            if (f) { fprintf(f, "[FORCE-UPDATE #%d] argCount=%d displayForm_.isNil=%d\n",
+                             callCount, argCount, displayForm_.isNil() ? 1 : 0); fclose(f); }
+        }
+    }
     if (argCount != 0) return PrimitiveResult::Failure;
 
     // If no display surface, nothing to do
@@ -15495,8 +15519,12 @@ enum FormFields {
 PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     static int copyBitsCallCount = 0;
     copyBitsCallCount++;
-    if (copyBitsCallCount <= 10 || copyBitsCallCount % 1000 == 0) {
-        std::cerr << "[COPYBITS #" << copyBitsCallCount << "] primitiveCopyBits called with " << argCount << " args\n";
+    if (copyBitsCallCount <= 20 || copyBitsCallCount % 10000 == 0) {
+        static FILE* cbLog = fopen("/tmp/copybits.log", "a");
+        if (cbLog) {
+            fprintf(cbLog, "[COPYBITS #%d] argCount=%d\n", copyBitsCallCount, argCount);
+            fflush(cbLog);
+        }
     }
     if (argCount != 0) return PrimitiveResult::Failure;
 
