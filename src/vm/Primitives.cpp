@@ -21147,4 +21147,98 @@ PrimitiveResult Interpreter::primitiveLoadModule(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// primitiveInterpreterSourceVersion
+// Returns a string with the interpreter source version
+PrimitiveResult Interpreter::primitiveInterpreterSourceVersion(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop result = createStringObject(memory_, "iOSPharo VM 1.0");
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    popN(1);  // pop receiver
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// primitiveFileMasks
+// FileAttributesPlugin>>primitiveFileMasks
+// Returns an array of file mask constants used by FileAttributesPlugin
+PrimitiveResult Interpreter::primitiveFileMasks(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Get Array class from special objects
+    Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
+    if (arrayClass.isNil()) return PrimitiveResult::Failure;
+
+    uint32_t classIndex = memory_.indexOfClass(arrayClass);
+    if (classIndex == 0) return PrimitiveResult::Failure;
+
+    // Allocate 8-slot array (pointer object, format 2)
+    Oop result = memory_.allocateSlots(classIndex, 8, ObjectFormat::Indexable);
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    // S_IFMT, S_IFSOCK, S_IFLNK, S_IFREG, S_IFBLK, S_IFDIR, S_IFCHR, S_IFIFO
+    memory_.storePointer(0, result, Oop::fromSmallInteger(0170000));
+    memory_.storePointer(1, result, Oop::fromSmallInteger(0140000));
+    memory_.storePointer(2, result, Oop::fromSmallInteger(0120000));
+    memory_.storePointer(3, result, Oop::fromSmallInteger(0100000));
+    memory_.storePointer(4, result, Oop::fromSmallInteger(0060000));
+    memory_.storePointer(5, result, Oop::fromSmallInteger(0040000));
+    memory_.storePointer(6, result, Oop::fromSmallInteger(0020000));
+    memory_.storePointer(7, result, Oop::fromSmallInteger(0010000));
+
+    popN(1);  // pop receiver
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// primitiveFileExists
+// FileAttributesPlugin>>primitiveFileExists
+// Stack: receiver, pathString -> boolean
+PrimitiveResult Interpreter::primitiveFileExists(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop pathOop = stackTop();
+    if (!pathOop.isObject()) return PrimitiveResult::Failure;
+
+    ObjectHeader* pathHdr = pathOop.asObjectPtr();
+    if (!pathHdr->isBytesObject()) return PrimitiveResult::Failure;
+
+    size_t len = memory_.byteSizeOf(pathOop);
+    std::string path(reinterpret_cast<const char*>(pathHdr->bytes()), len);
+
+    struct stat st;
+    bool exists = (stat(path.c_str(), &st) == 0);
+
+    popN(2);  // pop arg + receiver
+    push(exists ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// primitiveGetenv
+// Stack: receiver, nameString -> valueString or nil
+PrimitiveResult Interpreter::primitiveGetenv(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop nameOop = stackTop();
+    if (!nameOop.isObject()) return PrimitiveResult::Failure;
+
+    ObjectHeader* nameHdr = nameOop.asObjectPtr();
+    if (!nameHdr->isBytesObject()) return PrimitiveResult::Failure;
+
+    size_t len = memory_.byteSizeOf(nameOop);
+    std::string name(reinterpret_cast<const char*>(nameHdr->bytes()), len);
+
+    const char* value = getenv(name.c_str());
+
+    popN(2);  // pop arg + receiver
+    if (value) {
+        Oop result = createStringObject(memory_, value);
+        push(result.isNil() ? memory_.nil() : result);
+    } else {
+        push(memory_.nil());
+    }
+    return PrimitiveResult::Success;
+}
+
 } // namespace pharo

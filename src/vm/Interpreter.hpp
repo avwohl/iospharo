@@ -1521,6 +1521,12 @@ private:
     PrimitiveResult primitiveLoadSymbolFromModule(int argCount);  // Named: load symbol address
     PrimitiveResult primitiveLoadModule(int argCount);            // Named: load module handle
 
+    // VM info named primitives
+    PrimitiveResult primitiveInterpreterSourceVersion(int argCount);  // Named: interpreter source version
+    PrimitiveResult primitiveFileMasks(int argCount);                 // Named: FileAttributesPlugin file masks
+    PrimitiveResult primitiveFileExists(int argCount);                // Named: FileAttributesPlugin file exists
+    PrimitiveResult primitiveGetenv(int argCount);                    // Named: get environment variable
+
     // SmallFloat primitives (541-559)
     // These are optimized versions of Float primitives for SmallFloat immediates
     // Our Float primitives already handle SmallFloat via extractFloat(), so these delegate
