@@ -11683,20 +11683,66 @@ PrimitiveResult Interpreter::primitiveDrawLoop(int argCount) {
 // left top right bottom primitiveShowDisplayRect -> self
 // Updates the specified rectangle of the display
 PrimitiveResult Interpreter::primitiveShowDisplayRect(int argCount) {
-    // In headless mode, display updates are no-ops
-    // A full implementation would:
-    // 1. Get the display form
-    // 2. Copy the specified rectangle to the screen
-    // 3. Flush the display
-
-    // Pop all arguments (left, top, right, bottom)
+    // Pop all arguments (left, top, right, bottom) but use them for partial update
+    int left = 0, top = 0, right = 0, bottom = 0;
     if (argCount >= 4) {
+        Oop bOop = stackTop();
+        Oop rOop = stackValue(1);
+        Oop tOop = stackValue(2);
+        Oop lOop = stackValue(3);
+        if (lOop.isSmallInteger()) left = lOop.asSmallInteger();
+        if (tOop.isSmallInteger()) top = tOop.asSmallInteger();
+        if (rOop.isSmallInteger()) right = rOop.asSmallInteger();
+        if (bOop.isSmallInteger()) bottom = bOop.asSmallInteger();
         popN(4);
     } else if (argCount > 0) {
         popN(argCount);
     }
 
-    // Leave receiver on stack, return success (no-op in headless)
+    if (!pharo::gDisplaySurface) return PrimitiveResult::Success;
+
+    // Auto-discover Display form
+    if (displayForm_.isNil()) {
+        Oop display = memory_.findGlobal("Display");
+        if (!display.isNil() && display.isObject()) {
+            displayForm_ = display;
+        }
+    }
+    if (displayForm_.isNil() || !displayForm_.isObject()) return PrimitiveResult::Success;
+
+    // Get Form fields: 0=bits, 1=width, 2=height, 3=depth
+    Oop bits = memory_.fetchPointer(0, displayForm_);
+    if (bits.isNil() || !bits.isObject()) return PrimitiveResult::Success;
+
+    ObjectHeader* bitsHdr = bits.asObjectPtr();
+    uint32_t* srcPixels = reinterpret_cast<uint32_t*>(bitsHdr->bytes());
+
+    Oop widthOop = memory_.fetchPointer(1, displayForm_);
+    Oop heightOop = memory_.fetchPointer(2, displayForm_);
+    int srcWidth = widthOop.isSmallInteger() ? widthOop.asSmallInteger() : screenWidth_;
+    int srcHeight = heightOop.isSmallInteger() ? heightOop.asSmallInteger() : screenHeight_;
+
+    uint32_t* dstPixels = pharo::gDisplaySurface->pixels();
+    int dstWidth = pharo::gDisplaySurface->width();
+    int dstHeight = pharo::gDisplaySurface->height();
+
+    // Clamp rect to valid range
+    if (right <= 0 && bottom <= 0) { right = srcWidth; bottom = srcHeight; }
+    if (left < 0) left = 0;
+    if (top < 0) top = 0;
+    if (right > srcWidth) right = srcWidth;
+    if (bottom > srcHeight) bottom = srcHeight;
+    if (right > dstWidth) right = dstWidth;
+    if (bottom > dstHeight) bottom = dstHeight;
+
+    // Copy the rectangle from Form bits to display surface
+    for (int y = top; y < bottom; y++) {
+        for (int x = left; x < right; x++) {
+            dstPixels[y * dstWidth + x] = srcPixels[y * srcWidth + x];
+        }
+    }
+
+    pharo::gDisplaySurface->update();
     return PrimitiveResult::Success;
 }
 
