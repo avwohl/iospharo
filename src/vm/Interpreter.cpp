@@ -18494,6 +18494,7 @@ void Interpreter::initializeNamedPrimitives() {
     registerNamedPrimitive("MiscPrimitivePlugin", "primitiveIndexOfAsciiInString", &Interpreter::primitiveIndexOfAscii);
     registerNamedPrimitive("MiscPrimitivePlugin", "primitiveTranslateStringWithTable", &Interpreter::primitiveTranslateStringWithTable);
     registerNamedPrimitive("MiscPrimitivePlugin", "primitiveCompareString", &Interpreter::primitiveCompareStringCollated);
+    registerNamedPrimitive("MiscPrimitivePlugin", "primitiveFindFirstInString", &Interpreter::primitiveFindFirstInString);
 
     // FFI Module/Symbol Loading - these are VM built-in primitives used by UFFI
     // They are called without a module (empty module name) because they're VM internals
