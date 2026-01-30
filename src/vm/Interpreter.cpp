@@ -1905,12 +1905,6 @@ void Interpreter::syncDisplayToSurface() {
     // NO WORKAROUNDS: Removed processPendingWorldMenu, processPendingMenuAction, updateActiveHandPosition
     // Events must be handled by Smalltalk's InputEventSensor, not C++ workarounds
 
-    // WORKAROUND: BitBlt isn't rendering morphs to Display Form correctly.
-    // Use direct morph rendering until BitBlt primitives are fixed.
-    // TODO: Remove this once BitBlt is working
-    renderWorldMorphs();
-    return;
-
     // Sync Display Form to surface if we have one
     // Auto-discover Display global if displayForm_ not set
     if (displayForm_.isNil()) {
