@@ -1905,12 +1905,14 @@ void Interpreter::syncDisplayToSurface() {
     // NO WORKAROUNDS: Removed processPendingWorldMenu, processPendingMenuAction, updateActiveHandPosition
     // Events must be handled by Smalltalk's InputEventSensor, not C++ workarounds
 
-    // displayForm_ is set by primitiveBeDisplay (prim 102) from the interpreter thread.
-    // Do NOT access object memory from the heartbeat thread to discover it.
+    // displayForm_ is set during startup or by primitiveBeDisplay (prim 102).
     if (displayForm_.isNil()) {
         renderWorldMorphs();
         return;
     }
+
+    // Re-fetch bits pointer every time in case GC moved the bitmap
+    // Also check if Display global changed (Pharo might replace it)
 
     // Get the Form's bits (slot 0)
     Oop bits = memory_.fetchPointer(0, displayForm_);
@@ -2102,9 +2104,11 @@ void Interpreter::checkTimerSemaphore() {
         }
         if (currentUsec >= nextWakeupUsec_) {
             static int usecTimerLog = 0;
-            if (usecTimerLog++ < 10) {
-                fprintf(stderr, "[TIMER-USEC #%d] fired! current=%lld target=%lld\n",
-                        usecTimerLog, currentUsec, nextWakeupUsec_);
+            usecTimerLog++;
+            if (usecTimerLog <= 20) {
+                static FILE* tlog = fopen("/tmp/timer_fired.log", "a");
+                if (tlog) { fprintf(tlog, "[TIMER #%d] fired! delta=%lldms\n", usecTimerLog,
+                                    (currentUsec - nextWakeupUsec_) / 1000); fflush(tlog); }
             }
             Oop semaphore = timerSemaphore_;
             timerSemaphore_ = Oop::nil();
@@ -14088,6 +14092,21 @@ int Interpreter::primitiveIndexOf(Oop method) const {
     bool hasPrimitive = (bits >> 16) & 1;
     if (!hasPrimitive) return 0;
 
+    // Debug: log which methods are detected as having primitives
+    static int primDetectCount = 0;
+    primDetectCount++;
+    if (primDetectCount <= 200 || (primDetectCount % 1000 == 0 && primDetectCount <= 10000)) {
+        static FILE* pdLog = fopen("/tmp/prim_detect.log", "a");
+        if (pdLog) {
+            ObjectHeader* methodObj2 = method.asObjectPtr();
+            int numLiterals2 = bits & 0x7FFF;
+            uint8_t* bc = methodObj2->bytes() + (1 + numLiterals2) * 8;
+            fprintf(pdLog, "[PRIM-DETECT #%d] bits=0x%llx numLits=%d bc[0]=%d bc[1]=%d bc[2]=%d\n",
+                    primDetectCount, (long long)bits, numLiterals2, bc[0], bc[1], bc[2]);
+            fflush(pdLog);
+        }
+    }
+
     ObjectHeader* methodObj = method.asObjectPtr();
     int numLiterals = bits & 0x7FFF;  // bits 0-14 are numLiterals
     uint8_t* bytecodes = methodObj->bytes() + (1 + numLiterals) * 8;
@@ -14100,8 +14119,22 @@ int Interpreter::primitiveIndexOf(Oop method) const {
         return primIndex;
     }
 
-    // hasPrimitive is set but first bytecode isn't callPrimitive - shouldn't happen
-    // in well-formed methods, but return 0 to be safe
+    // hasPrimitive is set but first bytecode isn't callPrimitive
+    {
+        static int noCallPrimCount = 0;
+        noCallPrimCount++;
+        if (noCallPrimCount <= 20) {
+            static FILE* ncLog = fopen("/tmp/no_callprim.log", "a");
+            if (ncLog) {
+                ObjectHeader* mo = method.asObjectPtr();
+                int nl = bits & 0x7FFF;
+                uint8_t* bc = mo->bytes() + (1 + nl) * 8;
+                fprintf(ncLog, "[NO-CALLPRIM #%d] bits=0x%llx numLits=%d bc[0]=%d bc[1]=%d bc[2]=%d\n",
+                        noCallPrimCount, (long long)bits, nl, bc[0], bc[1], bc[2]);
+                fflush(ncLog);
+            }
+        }
+    }
     return 0;
 }
 

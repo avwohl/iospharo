@@ -3737,6 +3737,14 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
         fprintf(waitLog, "[WAIT #%d] sem=0x%llx excess=0 -> BLOCKING process 0x%llx (priority %d)\n",
                 waitCallCount, (unsigned long long)semaphore.rawBits(),
                 (unsigned long long)activeProcess.rawBits(), activePriority);
+        // Log method info
+        fprintf(waitLog, "  method=0x%llx\n", (unsigned long long)method_.rawBits());
+        // Check: is the semaphore the delay semaphore?
+        Oop timerSema = timerSemaphore_;
+        fprintf(waitLog, "  sem==timerSema? %d  nextWakeupUsec=%lld nextWakeupTime=%lld\n",
+                semaphore.rawBits() == timerSema.rawBits() ? 1 : 0,
+                nextWakeupUsec_ == INT64_MAX ? -1LL : nextWakeupUsec_,
+                nextWakeupTime_);
         fflush(waitLog);
     }
 
@@ -12371,7 +12379,7 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
     static FILE* namedLog = fopen("/tmp/named_prim_lookup.log", "w");
     static int namedLogCount = 0;
     namedLogCount++;
-    if (namedLog && namedLogCount <= 200) {
+    if (namedLog && namedLogCount <= 5000) {
         fprintf(namedLog, "[NAMED #%d] argCount=%d literals(%zu):", namedLogCount, argCount, literalStrings.size());
         for (auto& s : literalStrings) fprintf(namedLog, " '%s'", s.c_str());
         fprintf(namedLog, "\n");
@@ -12383,7 +12391,7 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
         // Try as direct name with empty module
         auto it = namedPrimitives_.find(":" + literalStrings[a]);
         if (it != namedPrimitives_.end()) {
-            if (namedLog && namedLogCount <= 200) {
+            if (namedLog && namedLogCount <= 5000) {
                 fprintf(namedLog, "[NAMED #%d] FOUND :%s\n", namedLogCount, literalStrings[a].c_str());
                 fflush(namedLog);
             }
@@ -12395,7 +12403,7 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
             std::string key = literalStrings[a] + ":" + literalStrings[b];
             auto it2 = namedPrimitives_.find(key);
             if (it2 != namedPrimitives_.end()) {
-                if (namedLog && namedLogCount <= 200) {
+                if (namedLog && namedLogCount <= 5000) {
                     fprintf(namedLog, "[NAMED #%d] FOUND %s\n", namedLogCount, key.c_str());
                     fflush(namedLog);
                 }
@@ -14156,8 +14164,10 @@ static constexpr int64_t SmalltalkEpochOffsetMicroseconds = SmalltalkEpochOffset
 // Stack: receiver ticker, arg1 sema, arg2 usecs
 PrimitiveResult Interpreter::primitiveSignalAtUTCMicroseconds(int argCount) {
     static int p242entry = 0;
-    if (p242entry++ < 10) {
-        fprintf(stderr, "[PRIM242-ENTRY] #%d argCount=%d\n", p242entry, argCount);
+    p242entry++;
+    if (p242entry <= 20) {
+        static FILE* tlog = fopen("/tmp/prim242_timer.log", "a");
+        if (tlog) { fprintf(tlog, "[PRIM242-ENTRY #%d] argCount=%d\n", p242entry, argCount); fflush(tlog); }
     }
     if (argCount != 2) return PrimitiveResult::Failure;
 
