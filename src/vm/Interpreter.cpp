@@ -4872,40 +4872,36 @@ terminate_process:
             return;
         }
 
-        // No runnable processes - enter idle mode
-        // This is a good time to update the display since a doOneCycle just completed
+        // No runnable processes - idle loop until one becomes available.
+        // We must NOT return to the bytecode loop here because the current
+        // process has been terminated and its method/IP are no longer valid.
+        {
+            int idleCycles = 0;
+            const int maxIdleCycles = 500;  // ~5 seconds
+            while (running_ && idleCycles < maxIdleCycles) {
+                // Process input events - may signal semaphores that wake processes
+                processInputEvents();
 
-        // Process input events - all events queued for Smalltalk via primitive 264
-        processInputEvents();
+                // Render display while idle
+                renderWorldMorphs();
 
-        // NO WORKAROUNDS: Removed processPendingWorldMenu and processPendingMenuAction calls
-        // Events must be handled by Smalltalk's InputEventSensor, not C++ workarounds
+                // Sleep briefly to avoid busy-waiting
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
-        // Render World's morphs directly
-        renderWorldMorphs();
+                // Try to find a runnable process
+                if (tryReschedule()) {
+                    return;
+                }
 
-        // Sleep briefly to avoid busy-waiting, then try to reschedule
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                idleCycles++;
+            }
 
-        // Try to find a runnable process again (events might have signaled semaphores)
-        if (tryReschedule()) {
-            return;
-        }
-
-        // After multiple idle cycles with no work, finally stop
-        static int idleCount = 0;
-        static int maxIdleCycles = 500;  // ~5 seconds of idle
-        idleCount++;
-        if (idleCount >= maxIdleCycles) {
-            std::cerr << "[VM-STOP] Idle timeout in scheduler\n";
+            if (idleCycles >= maxIdleCycles) {
+                std::cerr << "[VM-STOP] Idle timeout in scheduler after process termination\n";
+            }
             running_ = false;
-            push(value);
             return;
         }
-
-        // Still idle - push a placeholder and let step() be called again
-        push(value);
-        return;
     }
 
     // Check if we're returning from fullCheck - reset tracking flag
@@ -13737,8 +13733,97 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         if (dnuLog) {
             std::string selStr = "???";
             std::string selHex = "";
+            // Compute receiver class early for nil-selector diagnostic
+            Oop rcvrForLog = stackValue(argCount);
+            std::string rcvrClsEarly = "?";
+            if (rcvrForLog.isNil()) { rcvrClsEarly = "nil"; }
+            else if (rcvrForLog.isSmallInteger()) { rcvrClsEarly = "SmallInt(" + std::to_string(rcvrForLog.asSmallInteger()) + ")"; }
+            else if (rcvrForLog.isObject() && rcvrForLog.rawBits() > 0x10000) {
+                Oop cls = memory_.classOf(rcvrForLog);
+                if (cls.isObject() && cls.rawBits() > 0x10000) {
+                    Oop nm = memory_.fetchPointer(6, cls);
+                    if (nm.isObject() && nm.rawBits() > 0x10000) {
+                        ObjectHeader* nH = nm.asObjectPtr();
+                        if (nH->isBytesObject() && nH->byteSize() < 80)
+                            rcvrClsEarly = std::string((char*)nH->bytes(), nH->byteSize());
+                    }
+                }
+            }
             if (selector.isNil()) {
                 selStr = "<nil>";
+                // CRITICAL: nil selector - dump full state to understand what went wrong
+                fprintf(dnuLog, "[DNU-NIL #%d step=%llu] NIL SELECTOR sent to %s, argCount=%d\n",
+                        dnuCount, (unsigned long long)g_stepNum, rcvrClsEarly.c_str(), argCount);
+                fprintf(dnuLog, "  method_=0x%llx frameDepth=%zu\n",
+                        (unsigned long long)method_.rawBits(), frameDepth_);
+                // Show current method info
+                if (method_.isObject() && memory_.isValidPointer(method_)) {
+                    Oop hdr = memory_.fetchPointer(0, method_);
+                    if (hdr.isSmallInteger()) {
+                        int64_t bits = hdr.asSmallInteger();
+                        int nLit = bits & 0x7FFF;
+                        bool hasPrim = (bits >> 16) & 1;
+                        fprintf(dnuLog, "  method header: nLit=%d hasPrim=%d numTemps=%d numArgs=%d\n",
+                                nLit, hasPrim ? 1 : 0, (int)((bits >> 8) & 0xFF) & 0xFF,  // numTemps at bits 8-15? no...
+                                (int)((bits >> 24) & 0xF));
+                        // Show the literal that was used as selector
+                        for (int li = 0; li <= std::min(nLit, 10); li++) {
+                            Oop lit = memory_.fetchPointer(li + 1, method_);  // +1 because slot 0 is header
+                            std::string litStr = "?";
+                            if (lit.isNil()) litStr = "nil";
+                            else if (lit.isSmallInteger()) litStr = "SI(" + std::to_string(lit.asSmallInteger()) + ")";
+                            else if (lit.isObject() && memory_.isValidPointer(lit)) {
+                                ObjectHeader* lh = lit.asObjectPtr();
+                                if (lh->isBytesObject() && lh->byteSize() < 100)
+                                    litStr = "'" + std::string((char*)lh->bytes(), lh->byteSize()) + "'";
+                                else
+                                    litStr = "obj(ci=" + std::to_string(lh->classIndex()) + " slots=" + std::to_string(lh->slotCount()) + ")";
+                            }
+                            fprintf(dnuLog, "  literal[%d] = %s\n", li, litStr.c_str());
+                        }
+                    }
+                }
+                // Show recent bytecodes (ip relative to method start)
+                if (method_.isObject() && instructionPointer_) {
+                    ObjectHeader* mObj = method_.asObjectPtr();
+                    Oop hdr = memory_.fetchPointer(0, method_);
+                    if (hdr.isSmallInteger()) {
+                        int nLit = hdr.asSmallInteger() & 0x7FFF;
+                        uint8_t* bcStart = mObj->bytes() + (1 + nLit) * 8;
+                        ptrdiff_t pcOffset = instructionPointer_ - bcStart;
+                        fprintf(dnuLog, "  pc=%td, bytecodes around pc: ", pcOffset);
+                        for (int bi = std::max((int)pcOffset - 6, 0); bi < pcOffset + 4; bi++) {
+                            fprintf(dnuLog, "%s%02x", (bi == pcOffset) ? "[" : " ", bcStart[bi]);
+                            if (bi == pcOffset) fprintf(dnuLog, "]");
+                        }
+                        fprintf(dnuLog, "\n");
+                    }
+                }
+                // Show stack values
+                fprintf(dnuLog, "  stack (top 8 values):\n");
+                for (int si = 0; si < 8; si++) {
+                    Oop sv = stackValue(si);
+                    if (sv.isSmallInteger()) {
+                        fprintf(dnuLog, "    [%d] SI(%lld)\n", si, (long long)sv.asSmallInteger());
+                    } else if (sv.isNil()) {
+                        fprintf(dnuLog, "    [%d] nil\n", si);
+                    } else if (sv.isObject() && sv.rawBits() > 0x10000) {
+                        Oop scls = memory_.classOf(sv);
+                        std::string sclsName = "?";
+                        if (scls.isObject() && scls.rawBits() > 0x10000) {
+                            Oop snm = memory_.fetchPointer(6, scls);
+                            if (snm.isObject() && snm.rawBits() > 0x10000) {
+                                ObjectHeader* snH = snm.asObjectPtr();
+                                if (snH->isBytesObject() && snH->byteSize() < 80)
+                                    sclsName = std::string((char*)snH->bytes(), snH->byteSize());
+                            }
+                        }
+                        fprintf(dnuLog, "    [%d] %s(0x%llx)\n", si, sclsName.c_str(), (unsigned long long)sv.rawBits());
+                    } else {
+                        fprintf(dnuLog, "    [%d] 0x%llx\n", si, (unsigned long long)sv.rawBits());
+                    }
+                }
+                fflush(dnuLog);
             } else if (selector.isSmallInteger()) {
                 selStr = "<SmallInt:" + std::to_string(selector.asSmallInteger()) + ">";
             } else if (selector.isObject() && selector.rawBits() > 0x10000) {
