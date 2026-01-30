@@ -269,11 +269,11 @@ primitiveTable_[260] = nullptr;  // Quick Primitives (256-519) - Push constants 
 primitiveTable_[261] = nullptr;  // Quick Primitives (256-519) - Push constants and inst vars
 primitiveTable_[262] = nullptr;  // Quick Primitives (256-519) - Push constants and inst vars
 primitiveTable_[263] = nullptr;  // Quick Primitives (256-519) - Push constants and inst vars
-// Primitives 264-268: I/O primitives (also used as quick return instVar indices).
-// When the table function fails, executePrimitive falls through to quick return.
-// This allows both <primitive: 264> (getNextEvent) and instVar accessor methods to work.
-primitiveTable_[264] = &Interpreter::primitiveGetNextEvent;      // I/O: get next event
-primitiveTable_[265] = &Interpreter::primitiveInputSemaphore2;   // I/O: input semaphore
+// Primitives 264+: Quick return instVar (primIndex - 264).
+// getNextEvent and inputSemaphore are invoked via named primitives (prim 117),
+// NOT via these indices. The standard VM uses 256-519 exclusively for quick returns.
+primitiveTable_[264] = nullptr;  // Quick: return instVar 0
+primitiveTable_[265] = nullptr;  // Quick: return instVar 1
 primitiveTable_[266] = nullptr;  // Quick: return instVar 2 (numArgs)
 primitiveTable_[267] = nullptr;  // Quick: return instVar 3
 primitiveTable_[268] = nullptr;  // Quick: return instVar 4

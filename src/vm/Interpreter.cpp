@@ -11533,10 +11533,8 @@ extern int g_traceSendsAfterPrim264;
 
         // Cache hit
         if (cached->primitiveIndex > 0) {
-            // All primitive indices go through the regular primitive table.
-            // Note: In Spur, "quick return" primitives (return self, return inst var)
-            // are encoded in bytecodes, NOT via primitive indices 256-519.
-            // Primitive indices 256+ are named/plugin primitives (e.g., 264 = getNextEvent).
+            // Dispatch primitive via executePrimitive, which handles both
+            // quick primitives (256-519) and regular primitives (0-255).
             {
                 int primIdx = cached->primitiveIndex;
                 // DEBUG: Log cached primitiveResume calls
@@ -11879,8 +11877,8 @@ extern int g_traceSendsAfterPrim264;
     }
 
     if (primIndex > 0) {
-        // All primitive indices go through the regular primitive table.
-        // In Spur, quick return primitives are encoded in bytecodes, not indices 256-519.
+        // Dispatch primitive via executePrimitive, which handles both
+        // quick primitives (256-519) and regular primitives (0-255).
         {
             // DEBUG: Log non-cached primitive 87 calls
             if (primIndex == 87) {
@@ -12194,6 +12192,48 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
                 if (traceSizeLookup) {
                     fprintf(g_sendTraceFile, "[LOOKUP-DICT step=%lld] IDENTITY match #size at i=%zu method=0x%llx\n",
                             (long long)g_stepCount, i, (unsigned long long)method.rawBits());
+                    // Dump method's literal frame to identify what method this really is
+                    if (method.isObject() && method.rawBits() > 0x10000) {
+                        Oop mhdr = memory_.fetchPointer(0, method);
+                        if (mhdr.isSmallInteger()) {
+                            int64_t hbits = mhdr.asSmallInteger();
+                            int nLits = hbits & 0x7FFF;
+                            fprintf(g_sendTraceFile, "[LOOKUP-DICT] method header=0x%llx decoded=0x%llx numLits=%d hasPrim=%d\n",
+                                    (unsigned long long)mhdr.rawBits(), (long long)hbits, nLits, (int)((hbits >> 16) & 1));
+                            for (int li = 0; li < nLits && li < 10; li++) {
+                                Oop lit = memory_.fetchPointer(li + 1, method);
+                                std::string litStr = "";
+                                if (lit.isSmallInteger()) {
+                                    litStr = "SmallInt=" + std::to_string(lit.asSmallInteger());
+                                } else if (lit.isObject() && lit.rawBits() > 0x10000) {
+                                    ObjectHeader* lh = lit.asObjectPtr();
+                                    if (lh->isBytesObject() && lh->byteSize() < 100) {
+                                        litStr = "\"" + std::string((char*)lh->bytes(), lh->byteSize()) + "\"";
+                                    } else {
+                                        // Check if it's an Association (2 slots, fixed)
+                                        if (lh->slotCount() >= 2 && lh->format() == ObjectFormat::FixedSize) {
+                                            Oop assocKey = memory_.fetchPointer(0, lit);
+                                            if (assocKey.isObject() && assocKey.rawBits() > 0x10000) {
+                                                ObjectHeader* kh = assocKey.asObjectPtr();
+                                                if (kh->isBytesObject() && kh->byteSize() < 100)
+                                                    litStr = "Assoc(key=\"" + std::string((char*)kh->bytes(), kh->byteSize()) + "\")";
+                                            }
+                                        }
+                                        if (litStr.empty()) {
+                                            litStr = "obj(slots=" + std::to_string(lh->slotCount()) + " fmt=" + std::to_string((int)lh->format()) + ")";
+                                        }
+                                    }
+                                }
+                                fprintf(g_sendTraceFile, "[LOOKUP-DICT]   literal[%d] = 0x%llx %s\n",
+                                        li, (unsigned long long)lit.rawBits(), litStr.c_str());
+                            }
+                            // Dump first 6 bytecodes
+                            ObjectHeader* mobj = method.asObjectPtr();
+                            uint8_t* bc = mobj->bytes() + (1 + nLits) * 8;
+                            fprintf(g_sendTraceFile, "[LOOKUP-DICT]   bytecodes: %02X %02X %02X %02X %02X %02X\n",
+                                    bc[0], bc[1], bc[2], bc[3], bc[4], bc[5]);
+                        }
+                    }
                     fflush(g_sendTraceFile);
                 }
                 if (method.isObject() && method.rawBits() > 0x10000) {
@@ -13237,6 +13277,12 @@ Oop Interpreter::literal(size_t index) const {
                     if (instructionPointer_ > methodBytes + i) {
                         fprintf(litOobLog, "%02X ", *(instructionPointer_ - i));
                     }
+                }
+                fprintf(litOobLog, "\n");
+                // Dump ALL bytecodes of this method
+                fprintf(litOobLog, "    ALL bytecodes (offset %zu to %zu): ", bytecodeStart, methodSize);
+                for (size_t b = bytecodeStart; b < methodSize; b++) {
+                    fprintf(litOobLog, "%02X ", methodBytes[b]);
                 }
                 fprintf(litOobLog, "\n");
                 // Call stack
@@ -18932,53 +18978,9 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
         return PrimitiveResult::Failure;
     }
 
-    // IMPORTANT: Check primitive table FIRST before falling back to quick primitives
-    // This allows real primitives (like 264-269 for events) to be registered in the
-    // 256-519 range without being hijacked by quick primitive handling.
-    PrimitiveFunc prim = primitiveTable_[primitiveIndex];
-
-    if (prim) {
-        // Real primitive function exists - call it
-        PrimitiveResult result = (this->*prim)(argCount);
-        if (result == PrimitiveResult::Success) {
-            lastPrimitiveIndex_ = primitiveIndex;
-            return result;
-        }
-        // Log failures for non-trivial primitives
-        failCount++;
-        if (failCount <= 100) {
-            static FILE* failLog = fopen("/tmp/prim_failures.log", "a");
-            if (failLog) {
-                fprintf(failLog, "[FAIL #%d] primitive=%d argCount=%d\n", failCount, primitiveIndex, argCount);
-                fflush(failLog);
-            }
-        }
-        // For indices 256-519, a table entry failure should fall through to
-        // quick primitive handling (e.g., instVar accessor on BlockClosure uses
-        // prim 264 which is also getNextEvent in the table).
-        if (primitiveIndex < 256 || primitiveIndex > 519) {
-            return result;  // Not in quick range, just return failure
-        }
-        // Fall through to quick primitive handling below
-    }
-
-    // Log null table entries for non-quick primitives
-    if (!prim && primitiveIndex < 256) {
-        static int nullCount = 0;
-        nullCount++;
-        if (nullCount <= 100) {
-            static FILE* nullLog = fopen("/tmp/prim_null.log", "a");
-            if (nullLog) {
-                fprintf(nullLog, "[NULL #%d] primitive=%d argCount=%d (no implementation)\n", nullCount, primitiveIndex, argCount);
-                fflush(nullLog);
-            }
-        }
-    }
-
     // Quick primitives (256-519): return constants or instance variables.
-    // These are encoded via callPrimitive bytecodes in accessor methods.
-    // If the primitive table had an entry, it was tried above and failed,
-    // so we try the quick return as fallback.
+    // In the standard VM, indices 256-519 are ALWAYS quick primitives, never
+    // dispatched through the primitive table. Handle them first.
     if (primitiveIndex >= 256 && primitiveIndex <= 519) {
         Oop receiver = stackTop();
 
@@ -19023,6 +19025,18 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
                 return PrimitiveResult::Success;
             default:
                 return PrimitiveResult::Failure;
+        }
+    }
+
+    // Regular primitives (0-255): dispatch through primitive table
+    {
+        PrimitiveFunc prim = primitiveTable_[primitiveIndex];
+        if (prim) {
+            PrimitiveResult result = (this->*prim)(argCount);
+            if (result == PrimitiveResult::Success) {
+                lastPrimitiveIndex_ = primitiveIndex;
+            }
+            return result;
         }
     }
 
