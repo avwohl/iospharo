@@ -13626,17 +13626,61 @@ void Interpreter::setReceiverInstVar(size_t index, Oop value) {
 void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     static int dnuCount = 0;
     dnuCount++;
-    if (dnuCount <= 100 || dnuCount % 1000 == 0) {
+    if (dnuCount <= 200 || dnuCount % 1000 == 0) {
         static FILE* dnuLog = fopen("/tmp/dnu_messages.log", "a");
         if (dnuLog) {
             std::string selStr = "???";
-            if (selector.isObject() && selector.rawBits() > 0x10000) {
+            std::string selHex = "";
+            if (selector.isNil()) {
+                selStr = "<nil>";
+            } else if (selector.isSmallInteger()) {
+                selStr = "<SmallInt:" + std::to_string(selector.asSmallInteger()) + ">";
+            } else if (selector.isObject() && selector.rawBits() > 0x10000) {
                 ObjectHeader* sh = selector.asObjectPtr();
                 if (sh->isBytesObject() && sh->byteSize() < 200) {
-                    selStr = std::string((char*)sh->bytes(), sh->byteSize());
+                    size_t len = sh->byteSize();
+                    bool printable = true;
+                    for (size_t i = 0; i < len; i++) {
+                        if (sh->bytes()[i] < 32 || sh->bytes()[i] > 126) { printable = false; break; }
+                    }
+                    if (printable) {
+                        selStr = std::string((char*)sh->bytes(), len);
+                    } else {
+                        selStr = "<nonprintable>";
+                        char buf[16];
+                        for (size_t i = 0; i < std::min(len, (size_t)20); i++) {
+                            snprintf(buf, sizeof(buf), "%02x ", sh->bytes()[i]);
+                            selHex += buf;
+                        }
+                    }
+                } else {
+                    // Not a bytes object - show class index
+                    selStr = "<notBytes:classIdx=" + std::to_string(sh->classIndex()) + " fmt=" + std::to_string((int)sh->format()) + ">";
+                }
+            } else {
+                selStr = "<other:0x" + std::to_string(selector.rawBits()) + ">";
+            }
+            // Get receiver class name
+            std::string rcvrCls = "?";
+            Oop rcvr = stackValue(argCount);
+            if (rcvr.isNil()) {
+                rcvrCls = "nil";
+            } else if (rcvr.isSmallInteger()) {
+                rcvrCls = "SmallInt(" + std::to_string(rcvr.asSmallInteger()) + ")";
+            } else if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                Oop cls = memory_.classOf(rcvr);
+                if (cls.isObject() && cls.rawBits() > 0x10000) {
+                    Oop nm = memory_.fetchPointer(6, cls);
+                    if (nm.isObject() && nm.rawBits() > 0x10000) {
+                        ObjectHeader* nH = nm.asObjectPtr();
+                        if (nH->isBytesObject() && nH->byteSize() < 80)
+                            rcvrCls = std::string((char*)nH->bytes(), nH->byteSize());
+                    }
                 }
             }
-            fprintf(dnuLog, "[DNU #%d] selector='%s' argCount=%d\n", dnuCount, selStr.c_str(), argCount);
+            fprintf(dnuLog, "[DNU #%d] receiver=%s selector='%s'%s%s argCount=%d\n",
+                    dnuCount, rcvrCls.c_str(), selStr.c_str(),
+                    selHex.empty() ? "" : " hex=", selHex.c_str(), argCount);
             fflush(dnuLog);
         }
     }
@@ -18709,6 +18753,15 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
             lastPrimitiveIndex_ = primitiveIndex;
             return result;
         }
+        // Log failures for non-trivial primitives
+        failCount++;
+        if (failCount <= 100) {
+            static FILE* failLog = fopen("/tmp/prim_failures.log", "a");
+            if (failLog) {
+                fprintf(failLog, "[FAIL #%d] primitive=%d argCount=%d\n", failCount, primitiveIndex, argCount);
+                fflush(failLog);
+            }
+        }
         // For indices 256-519, a table entry failure should fall through to
         // quick primitive handling (e.g., instVar accessor on BlockClosure uses
         // prim 264 which is also getNextEvent in the table).
@@ -18716,6 +18769,19 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
             return result;  // Not in quick range, just return failure
         }
         // Fall through to quick primitive handling below
+    }
+
+    // Log null table entries for non-quick primitives
+    if (!prim && primitiveIndex < 256) {
+        static int nullCount = 0;
+        nullCount++;
+        if (nullCount <= 100) {
+            static FILE* nullLog = fopen("/tmp/prim_null.log", "a");
+            if (nullLog) {
+                fprintf(nullLog, "[NULL #%d] primitive=%d argCount=%d (no implementation)\n", nullCount, primitiveIndex, argCount);
+                fflush(nullLog);
+            }
+        }
     }
 
     // Quick primitives (256-519): return constants or instance variables.

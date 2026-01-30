@@ -8942,29 +8942,89 @@ PrimitiveResult Interpreter::primitiveMarkUnwindMethod(int argCount) {
     return PrimitiveResult::Success;
 }
 
-// Primitive 197: Find handler/signaling context
-// Searches up the sender chain for the next context marked as a handler
-// The reference implementation searches for methods with primitive 199 (mark handler)
+// Primitive 197: Find handler context
+// Receiver is a context. Walk sender chain from receiver's sender looking for
+// the first context whose method has primitive 199 (handler marker).
+// Returns that context, or nil if not found.
 PrimitiveResult Interpreter::primitiveFindHandlerContext(int argCount) {
     (void)argCount;
-    // This primitive requires walking the context chain and checking for
-    // contexts that were marked as handlers (via primitive 199).
-    // For now, return failure to let the Smalltalk fallback code execute.
-    // The Smalltalk implementation will walk the sender chain itself.
-    return PrimitiveResult::Failure;
+    // Stack: receiver (a context)
+    Oop startContext = stackTop();
+    if (!startContext.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Walk the sender chain from startContext's sender
+    Oop ctx = memory_.fetchPointer(0, startContext);  // sender = slot 0
+    int limit = 10000;  // safety limit
+
+    while (ctx.isObject() && !ctx.isNil() && limit-- > 0) {
+        // Check if this context's method has primitive 199 (handler marker)
+        Oop method = memory_.fetchPointer(3, ctx);  // method = slot 3
+        if (method.isObject() && !method.isNil()) {
+            int primIdx = primitiveIndexOf(method);
+            if (primIdx == 199) {
+                // Found a handler context
+                pop();
+                push(ctx);
+                return PrimitiveResult::Success;
+            }
+        }
+        ctx = memory_.fetchPointer(0, ctx);  // sender = slot 0
+    }
+
+    // Not found - return nil
+    pop();
+    push(memory_.nil());
+    return PrimitiveResult::Success;
 }
 
-// Primitive 189: Find the next unwind context up to a limit
-// Walks the sender chain looking for ensure: or similar unwind-protect contexts
+// Primitive 195: Find the next unwind context up to a limit
+// Receiver is a context (callee). Argument is stop context (or nil).
+// Walk sender chain from receiver's sender, looking for method with primitive 198
+// (unwind marker). Return that context, or nil if not found before stop context.
 PrimitiveResult Interpreter::primitiveFindNextUnwindContext(int argCount) {
-    // Primitive 195: Find the next unwind context up to a limit
-    // This primitive requires tracking which methods were marked as unwind methods
-    // via primitiveMarkUnwindMethod (210). Since we don't have that infrastructure,
-    // return failure to let the Smalltalk fallback code handle unwinding.
-    // The Smalltalk implementation will walk the sender chain itself and check
-    // for ensure: methods by examining method literals.
     (void)argCount;
-    return PrimitiveResult::Failure;
+    // Stack: receiver (callee context), arg (stop context or nil)
+    Oop stopContext = stackValue(0);
+    Oop calleeContext = stackValue(1);
+
+    if (!calleeContext.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Validate stop context if not nil
+    if (!stopContext.isNil() && !stopContext.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Walk from callee's sender
+    Oop ctx = memory_.fetchPointer(0, calleeContext);  // sender = slot 0
+    int limit = 10000;  // safety limit
+
+    while (ctx.isObject() && !ctx.isNil() && limit-- > 0) {
+        // If we reached the stop context, not found
+        if (ctx.rawBits() == stopContext.rawBits()) {
+            break;
+        }
+        // Check if this context's method has primitive 198 (unwind marker)
+        Oop method = memory_.fetchPointer(3, ctx);  // method = slot 3
+        if (method.isObject() && !method.isNil()) {
+            int primIdx = primitiveIndexOf(method);
+            if (primIdx == 198) {
+                // Found an unwind context
+                popN(2);
+                push(ctx);
+                return PrimitiveResult::Success;
+            }
+        }
+        ctx = memory_.fetchPointer(0, ctx);  // sender = slot 0
+    }
+
+    // Not found - return nil
+    popN(2);
+    push(memory_.nil());
+    return PrimitiveResult::Success;
 }
 
 // ===== CONTEXT INSPECTION PRIMITIVES =====
