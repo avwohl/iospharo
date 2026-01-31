@@ -2007,6 +2007,18 @@ void Interpreter::interpret() {
         // Check timer and signal delay semaphore if time has elapsed
         checkTimerSemaphore();
 
+        // Detect FP corruption after timer check
+        if (framePointer_ != nullptr && framePointer_ < stackBase_) {
+            static int fpPostTimerCount = 0;
+            if (++fpPostTimerCount <= 10) {
+                std::cerr << "[FP-CORRUPT-TIMER #" << fpPostTimerCount
+                          << "] FP=" << (void*)framePointer_
+                          << " base=" << (void*)stackBase_
+                          << " fd=" << frameDepth_
+                          << " step=" << g_stepNum << "\n";
+            }
+        }
+
         // Periodically process input events (queued for Smalltalk to poll via primitive 264)
         if (loopCount % 100 == 0) {
             processInputEvents();
@@ -2806,7 +2818,35 @@ bool Interpreter::step() {
 
     // forceYield check moved BEFORE fetchByte() above to prevent bytecode skipping
 
+    Oop* fpBeforeDispatch = framePointer_;
+    size_t fdBeforeDispatch = frameDepth_;
     dispatchBytecode(bytecode);
+
+    // Detect FP corruption: compare before/after dispatch
+    if (framePointer_ != nullptr && framePointer_ < stackBase_ && fpBeforeDispatch >= stackBase_) {
+        static int fpFlipCount = 0;
+        if (++fpFlipCount <= 10) {
+            std::cerr << "[FP-FLIP #" << fpFlipCount
+                      << "] FP went from " << (void*)fpBeforeDispatch
+                      << " to " << (void*)framePointer_
+                      << " base=" << (void*)stackBase_
+                      << " fd " << fdBeforeDispatch << "->" << frameDepth_
+                      << " step=" << g_stepNum
+                      << " bc=0x" << std::hex << (int)bytecode << std::dec << "\n";
+            // Show what's at the corrupted FP address
+            std::cerr << "[FP-FLIP]   corrupted FP points to savedFrames_ offset="
+                      << (stackBase_ - framePointer_) << " Oops below base\n";
+            // Check if the corrupted value matches any savedFrame's savedFP address
+            for (size_t fi = 0; fi < frameDepth_ && fi < 10; fi++) {
+                if (framePointer_ == (Oop*)&savedFrames_[fi]) {
+                    std::cerr << "[FP-FLIP]   FP == &savedFrames_[" << fi << "]!\n";
+                }
+                if (framePointer_ == savedFrames_[fi].savedFP) {
+                    std::cerr << "[FP-FLIP]   FP == savedFrames_[" << fi << "].savedFP\n";
+                }
+            }
+        }
+    }
 
     // Crash trace: after dispatch
     if (g_crashTraceEnabled && g_crashTraceCount <= 70 && bytecode == 0x5E) {
@@ -2819,6 +2859,57 @@ bool Interpreter::step() {
     if (bcLog && g_stepNum >= 162000 && g_stepNum <= 163000) {
         fprintf(bcLog, "[BC %llu] AFTER dispatch running=%d\n", g_stepNum, running_ ? 1 : 0);
         fflush(bcLog);
+    }
+
+    // Detect FP corruption after bytecode dispatch
+    if (framePointer_ != nullptr && framePointer_ < stackBase_) {
+        static int fpPostDispatchCount = 0;
+        if (++fpPostDispatchCount <= 10) {
+            std::string mName = "?";
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                Oop hdr = memory_.fetchPointer(0, method_);
+                if (hdr.isSmallInteger()) {
+                    int nLits = hdr.asSmallInteger() & 0x7FFF;
+                    if (nLits >= 2 && nLits < 100) {
+                        Oop sel = memory_.fetchPointer(nLits - 1, method_);
+                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                            ObjectHeader* selH = sel.asObjectPtr();
+                            if (selH->isBytesObject() && selH->byteSize() < 80)
+                                mName = std::string((char*)selH->bytes(), selH->byteSize());
+                        }
+                    }
+                }
+            }
+            std::cerr << "[FP-CORRUPT-POST #" << fpPostDispatchCount
+                      << "] FP=" << (void*)framePointer_
+                      << " SP=" << (void*)stackPointer_
+                      << " base=" << (void*)stackBase_
+                      << " fd=" << frameDepth_
+                      << " step=" << g_stepNum
+                      << " bytecode=0x" << std::hex << (int)bytecode << std::dec
+                      << " method=#" << mName << "\n";
+            // Dump saved frames
+            for (size_t fi = 0; fi < frameDepth_ && fi < 5; fi++) {
+                std::string fSel = "?";
+                Oop fm = savedFrames_[fi].savedMethod;
+                if (fm.isObject() && fm.rawBits() > 0x10000) {
+                    Oop fhdr = memory_.fetchPointer(0, fm);
+                    if (fhdr.isSmallInteger()) {
+                        int fnl = fhdr.asSmallInteger() & 0x7FFF;
+                        if (fnl >= 2 && fnl < 100) {
+                            Oop fsel = memory_.fetchPointer(fnl - 1, fm);
+                            if (fsel.isObject() && fsel.rawBits() > 0x10000) {
+                                ObjectHeader* fsh = fsel.asObjectPtr();
+                                if (fsh->isBytesObject() && fsh->byteSize() < 80)
+                                    fSel = std::string((char*)fsh->bytes(), fsh->byteSize());
+                            }
+                        }
+                    }
+                }
+                std::cerr << "[FP-CORRUPT-POST]   frame[" << fi << "] #" << fSel
+                          << " savedFP=" << (void*)savedFrames_[fi].savedFP << "\n";
+            }
+        }
     }
 
     return running_;
@@ -18634,6 +18725,14 @@ bool Interpreter::executeFromContext(Oop context) {
     // The context object stores the Smalltalk stack state, which we'll restore below
     stackPointer_ = stackBase_;
     frameDepth_ = 0;
+
+    // Reset bytecode extension registers - they are per-bytecode-sequence state
+    // and must not leak between processes during a process switch.
+    // Without this, a process switch after an extension byte (0xE0/0xE1)
+    // leaves stale extA_/extB_ values that corrupt the next process's
+    // argument counts and selector indices.
+    extA_ = 0;
+    extB_ = 0;
 
     // Execution context tracing (limited)
     static int execCtxCount = 0;
