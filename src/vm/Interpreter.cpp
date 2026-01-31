@@ -14207,9 +14207,95 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                       << " (args=" << argCount << ") step=" << g_stepNum
                       << " in #" << getSelName(method_) << " fd=" << frameDepth_ << "\n";
             // Print frame stack for all DNUs
-            for (size_t fi = 0; fi < frameDepth_ && fi < 8; fi++) {
+            size_t maxFrames = (selStr == "handleClassChange:" || selStr == "printStringHex") ? 50 : 8;
+            for (size_t fi = 0; fi < frameDepth_ && fi < maxFrames; fi++) {
                 Oop savedMethod = savedFrames_[fi].savedMethod;
-                std::cerr << "[DNU]   frame[" << fi << "] #" << getSelName(savedMethod) << "\n";
+                std::cerr << "[DNU]   frame[" << fi << "] #" << getSelName(savedMethod);
+                // For the handleClassChange DNU, show receiver of each frame
+                if (selStr == "handleClassChange:" && fi < 5) {
+                    Oop frcvr = savedFrames_[fi].savedReceiver;
+                    std::cerr << " rcvr=0x" << std::hex << frcvr.rawBits() << std::dec;
+                    if (frcvr.isObject() && frcvr.rawBits() > 0x10000) {
+                        Oop frc = memory_.classOf(frcvr);
+                        if (frc.isObject()) {
+                            Oop cn = memory_.fetchPointer(6, frc);
+                            if (cn.isObject() && cn.rawBits() > 0x10000) {
+                                ObjectHeader* cnh = cn.asObjectPtr();
+                                if (cnh->isBytesObject() && cnh->byteSize() < 50)
+                                    std::cerr << " (" << std::string((char*)cnh->bytes(), cnh->byteSize()) << ")";
+                            }
+                        }
+                    }
+                }
+                std::cerr << "\n";
+            }
+            // For handleClassChange, show the DNU receiver value (the ByteSymbol)
+            if (selStr == "handleClassChange:") {
+                std::cerr << "[DNU]   DNU receiver=0x" << std::hex << receiver_.rawBits() << std::dec;
+                if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+                    ObjectHeader* rh = receiver_.asObjectPtr();
+                    std::cerr << " cls=" << rh->classIndex() << " fmt=" << (int)rh->format()
+                              << " slots=" << rh->slotCount() << " byteSize=" << rh->byteSize();
+                    if (rh->isBytesObject() && rh->byteSize() < 100)
+                        std::cerr << " = '" << std::string((char*)rh->bytes(), rh->byteSize()) << "'";
+                    else {
+                        // Dump pointer slots
+                        for (size_t si = 0; si < std::min(rh->slotCount(), (size_t)6); si++) {
+                            Oop slot = rh->slotAt(si);
+                            std::cerr << "\n[DNU]     slot[" << si << "]=0x" << std::hex << slot.rawBits() << std::dec;
+                            if (slot.isSmallInteger()) std::cerr << " SI(" << slot.asSmallInteger() << ")";
+                            else if (slot.rawBits() == memory_.nil().rawBits()) std::cerr << " nil";
+                            else if (slot.isObject() && slot.rawBits() > 0x10000) {
+                                ObjectHeader* sh = slot.asObjectPtr();
+                                if (sh->isBytesObject() && sh->byteSize() < 50)
+                                    std::cerr << " '" << std::string((char*)sh->bytes(), sh->byteSize()) << "'";
+                                else {
+                                    Oop sc = memory_.classOf(slot);
+                                    if (sc.isObject()) {
+                                        Oop cn = memory_.fetchPointer(6, sc);
+                                        if (cn.isObject() && cn.rawBits() > 0x10000) {
+                                            ObjectHeader* cnh = cn.asObjectPtr();
+                                            if (cnh->isBytesObject() && cnh->byteSize() < 50)
+                                                std::cerr << " (" << std::string((char*)cnh->bytes(), cnh->byteSize()) << ")";
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                std::cerr << "\n";
+                // Show current method bytecodes around the send
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    ObjectHeader* mh = method_.asObjectPtr();
+                    Oop mhdr = memory_.fetchPointer(0, method_);
+                    if (mhdr.isSmallInteger()) {
+                        int64_t hv = mhdr.asSmallInteger();
+                        int nLits = hv & 0x7FFF;
+                        int nTemps = (hv >> 16) & 0xFF;
+                        int nArgs = (hv >> 24) & 0xF;
+                        std::cerr << "[DNU]   method header: nLits=" << nLits << " nTemps=" << nTemps << " nArgs=" << nArgs << "\n";
+                        // Show temps on stack
+                        for (int t = 0; t < nTemps && t < 10; t++) {
+                            Oop temp = *(framePointer_ + 1 + t);
+                            std::cerr << "[DNU]   temp[" << t << "]=0x" << std::hex << temp.rawBits() << std::dec;
+                            if (temp.isSmallInteger()) std::cerr << " SI(" << temp.asSmallInteger() << ")";
+                            else if (temp.rawBits() == memory_.nil().rawBits()) std::cerr << " nil";
+                            else if (temp.isObject() && temp.rawBits() > 0x10000) {
+                                Oop tc = memory_.classOf(temp);
+                                if (tc.isObject()) {
+                                    Oop tcn = memory_.fetchPointer(6, tc);
+                                    if (tcn.isObject() && tcn.rawBits() > 0x10000) {
+                                        ObjectHeader* tcnh = tcn.asObjectPtr();
+                                        if (tcnh->isBytesObject() && tcnh->byteSize() < 50)
+                                            std::cerr << " (" << std::string((char*)tcnh->bytes(), tcnh->byteSize()) << ")";
+                                    }
+                                }
+                            }
+                            std::cerr << "\n";
+                        }
+                    }
+                }
             }
             // At fd=0, dump sender chain and receiver details to diagnose process switch corruption
             if (frameDepth_ == 0 && dnuLogCount <= 20) {
@@ -15657,7 +15743,34 @@ void Interpreter::putToSleep(Oop process) {
 // Returns the topmost context (current execution point)
 Oop Interpreter::materializeFrameStack() {
     if (frameDepth_ == 0) {
-        // No inline frames, activeContext_ is already correct
+        // No inline frames — but we must sync the interpreter's current state
+        // (IP, stack) back into activeContext_ before returning it.
+        // The context's stored PC and stackp may be stale if bytecodes have
+        // executed since the context was restored via executeFromContext.
+        if (activeContext_.isObject() && activeContext_.rawBits() > 0x10000 &&
+            method_.isObject() && method_.rawBits() > 0x10000) {
+            ObjectHeader* methodObj = method_.asObjectPtr();
+            uint8_t* methodBytes = methodObj->bytes();
+
+            // Save current IP as 1-based byte offset into method bytes
+            int64_t pc = (instructionPointer_ - methodBytes) + 1;
+            memory_.storePointer(1, activeContext_, Oop::fromSmallInteger(pc));
+
+            // Save stack items back to context slots 6+
+            // framePointer_[0] = receiver, framePointer_[1..N] = temps/stack
+            int numItems = static_cast<int>(stackPointer_ - framePointer_) - 1;
+            if (numItems < 0) numItems = 0;
+            if (numItems > 200) numItems = 200;  // Sanity limit
+            memory_.storePointer(2, activeContext_, Oop::fromSmallInteger(numItems));
+
+            static const int ContextFixedFields = 6;
+            ObjectHeader* ctxHdr = activeContext_.asObjectPtr();
+            size_t ctxSlots = ctxHdr->slotCount();
+            for (int i = 0; i < numItems && (ContextFixedFields + i) < static_cast<int>(ctxSlots); i++) {
+                Oop item = *(framePointer_ + 1 + i);
+                memory_.storePointer(ContextFixedFields + i, activeContext_, item);
+            }
+        }
         return activeContext_;
     }
 
