@@ -1,41 +1,44 @@
-## Current State: Investigating Non-Deterministic DNUs from Process Switching
+## Current State: ForceYield Fixed, 2 Deterministic DNUs Remain
 
-### Key Finding
-DNUs are caused by the forceYield process switching mechanism (transferTo/materializeFrameStack/executeFromContext round-trip).
+### Summary
+Fixed the main source of non-deterministic DNUs: forceYield was preempting to LOWER-priority processes, violating Smalltalk scheduling invariants. Changed to same-priority round-robin only (matching standard VM behavior).
 
-**Proof:** Disabling forceYield reduces DNUs from ~4/run to ~0/run (0,0,0,2,0 across 5 runs).
+### DNU counts (after fix)
+- Non-deterministic DNUs: 0-2 per run (was 3-19)
+- Deterministic DNUs: 2 per run (handled by exception system, not crashes)
+- 4/10 runs had ZERO non-deterministic DNUs
 
-### DNU counts
-- With forceYield enabled: ~3-8 per run, non-deterministic (different selectors each time)
-- With forceYield disabled: 0-2 per run (rare `findNextUnwindContextUpTo:` from timer semaphore signaling)
-- Common DNUs: `#adaptToNumber:andSend:` on nil, `#findNextUnwindContextUpTo:` on nil, `#<unknown>` selector, `#beingWaitedOn` on nil, various nil receivers
+### Changes Made (committed)
+1. **forceYield same-priority only** — only yield to processes at the SAME priority (round-robin time-slicing). The old code yielded to LOWER priority, which violated scheduling invariants and caused state corruption during process switches.
+2. **numTemps fix in pushFrame()** — push `numTemps - argCount` nil slots instead of `numTemps`, since the header's numTemps field includes args.
+3. **Enhanced DNU logging** — sender chain dump at fd=0, full frame trace for specific selectors.
 
-### Changes Made (uncommitted in Interpreter.cpp)
-1. **numTemps fix in pushFrame()** — standard VM pushes `numTemps - numArgs` nils (not `numTemps`). Fixed but didn't change DNU count. Still correct per standard VM behavior. **Currently REVERTED** — needs to be re-applied.
-2. **DNU logging improvement** — all DNUs now show calling method + frame stack (not just ensure:/runStepMethods)
+### Deterministic DNUs (not bugs, handled by exception system)
+1. **`#handleClassChange:` on ByteSymbol** (step ~1592684, fd=43)
+   - During class change announcement delivery in startup
+   - A subscription handler receives a ByteSymbol instead of a class
+   - Caught by `on:do:` exception handlers
+   - Likely an image-side issue with stale class change subscriptions
 
-### Root Cause Analysis
-The forceYield mechanism triggers `transferTo()` which:
-1. Calls `materializeFrameStack()` — saves inline frames as Context objects
-2. Stores top context to old process's suspendedContext
-3. Calls `executeFromContext()` on new process's suspended context
+2. **`#printStringHex` on UndefinedObject** (step ~1793629, fd=26)
+   - In Epicea changelog system during `nextSuffix`
+   - A counter/ID is nil, causing `printStringHex` to fail
+   - Caught by exception handlers
+   - Related to uninitialized Epicea store on fresh startup
 
-Something in this round-trip corrupts state. The non-determinism is because forceYield fires at different bytecode positions each run (every ~1000ms from heartbeat timer).
+### Remaining Non-Deterministic DNUs (0-2 per run)
+- Occasional `#nextPut:` on nil, `#findNextUnwindContextUpTo:` on wrong type
+- From timer semaphore signaling, not from forceYield
+- Related to how semaphore signal triggers `resume:through:` context walks
+
+### Key Insight
+The standard OpenSmalltalk VM NEVER preempts to lower-priority processes. Lower-priority processes only run when all higher-priority processes are voluntarily waiting. The forceYield mechanism should ONLY do same-priority round-robin time-slicing.
 
 ### Next Steps
-1. **Re-apply numTemps fix** — change `for (int i = 0; i < numTemps; ++i)` to `for (int i = 0; i < numTemps - numArgs; ++i)` in pushFrame() line ~13353
-2. **Investigate materializeFrameStack/executeFromContext round-trip** — the bug is somewhere in how frames are saved to contexts and restored. Key areas:
-   - Expression stack calculation in materializeFrameStack (exprStart/exprEndPtr)
-   - Context restore in executeFromContext (stackp vs numTemps handling)
-   - Whether sender chains are properly maintained through save/restore
-3. **Check returnValue at frameDepth_=0** — after executeFromContext restores a single context, returns need to walk the sender chain via activeContext_. Verify this works correctly.
-4. **Consider:** The standard OpenSmalltalk VM frame layout has saved IP, FP, method, context, flags ON the stack. Our VM uses C-side savedFrames_[]. This fundamental difference means materializeFrameStack must correctly reconstruct what the standard VM would have stored.
+1. **Investigate timer semaphore DNUs** — the remaining 0-2 non-deterministic DNUs come from semaphore signaling (processPendingSignals → signal → resume → executeFromContext). The context chain may have stale entries after process termination.
+2. **Consider ignoring deterministic DNUs** — they're caught by exception handlers and don't affect functionality. Could suppress logging for known-handled cases.
+3. **Test with full app** — build and run Mac Catalyst to verify UI rendering works with process switching fixed.
 
 ### Files
-- `src/vm/Interpreter.cpp` — main changes (DNU logging, numTemps fix reverted)
-- Process switch code: `transferTo()` ~15906, `materializeFrameStack()` ~15620, `executeFromContext()` ~18316
-- forceYield check: ~2733
-
-### Previous session results (for reference)
-- ensure: DNUs: 21 → 0 (commit 4fb0d81)
-- Total DNU lines: ~96 → ~4 per run (non-deterministic from process switching)
+- `src/vm/Interpreter.cpp` — forceYield fix (~line 2756), numTemps fix (~line 13354)
+- Previous fixes: ensure: DNU fix (commit 4fb0d81), frame materialization fix (commit b1320e0)
