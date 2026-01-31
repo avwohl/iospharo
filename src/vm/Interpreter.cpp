@@ -12987,6 +12987,9 @@ void Interpreter::activateBlock(Oop block, int argCount) {
         return;
     }
 
+    // Save the closure in the frame for context materialization
+    savedFrames_[frameDepth_ - 1].savedClosure = block;
+
     // For blocks: set the home frame depth for non-local returns
     // The home frame is where the block was LEXICALLY created, not just the
     // first non-block frame on the call stack.
@@ -13297,6 +13300,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     frame.savedActiveContext = activeContext_;  // Save active context for proper return chain
     frame.savedFP = framePointer_;
     frame.savedArgCount = argCount_;
+    frame.savedClosure = memory_.nil();  // Default: not a block (set by activateBlock if needed)
     frame.homeFrameDepth = 0;  // Default: not a block (will be set by activateBlock if needed)
 
     if (frameLog && frameDepth_ > 400) {
@@ -15851,7 +15855,7 @@ Oop Interpreter::materializeFrameStack() {
         memory_.storePointer(1, context, Oop::fromSmallInteger(pc));        // pc
         // stackp is set below after we know how many items we saved
         memory_.storePointer(3, context, frame.savedMethod);                // method
-        memory_.storePointer(4, context, memory_.nil());                    // closureOrNil
+        memory_.storePointer(4, context, frame.savedClosure);                // closureOrNil
         memory_.storePointer(5, context, frame.savedReceiver);              // receiver
 
         // Copy temps AND expression stack items from the inline stack.

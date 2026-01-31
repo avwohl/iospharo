@@ -290,6 +290,7 @@ private:
         Oop savedMethod;
         Oop savedHomeMethod;  // Home method for literal access
         Oop savedReceiver;
+        Oop savedClosure;     // FullBlockClosure for block frames, nil for method frames
         Oop savedActiveContext;  // Active context at time of call (for proper return chain)
         Oop* savedFP;
         int savedArgCount;
