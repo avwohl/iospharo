@@ -2261,29 +2261,10 @@ void Interpreter::startHeartbeat() {
 
             tickCount++;
 
-            // Check timer semaphore and signal if expired
-            if (nextWakeupTime_ != 0 && !timerSemaphore_.isNil()) {
-                // Use ioMSecs() with wrap-around handling (same as checkTimerSemaphore)
-                int64_t currentMs = ioMSecs();
-                int64_t targetMs = nextWakeupTime_;
-                int64_t diff = (currentMs - targetMs) & 0x3FFFFFFF;
-                bool timerElapsed = (diff > 0) && (diff < 0x20000000);
-
-                if (timerElapsed) {
-                    // Signal the timer semaphore by incrementing its excessSignals
-                    Oop semaphore = timerSemaphore_;
-                    timerSemaphore_ = Oop::nil();
-                    nextWakeupTime_ = 0;
-
-                    // Increment excessSignals - this will wake up waiting processes
-                    if (semaphore.isObject()) {
-                        Oop excessOop = memory_.fetchPointer(SemaphoreExcessSignalsIndex, semaphore);
-                        int64_t excess = excessOop.isSmallInteger() ? excessOop.asSmallInteger() : 0;
-                        memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
-                                            Oop::fromSmallInteger(excess + 1));
-                    }
-                }
-            }
+            // Timer semaphore signaling is handled by the main thread in
+            // checkTimerSemaphore(). DO NOT manipulate Smalltalk heap objects
+            // from this thread — memory_.fetchPointer/storePointer are not
+            // thread-safe and cause data races that corrupt process state.
 
             // Every ~33ms (30fps), sync Display Form to platform surface AND push a timer event
             if (tickCount % 33 == 0) {
