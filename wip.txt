@@ -1,144 +1,41 @@
-⏺ Wait. The header comment says bit 30, but my fix changed it to bit 16. Let me verify once more with the cointerp.              
-                                                                                                                                 
-  The Pharo VM header format for 64-bit Spur:                                                                                    
-  - Raw SmallInteger oop format: tag (3 bits) + value                                                                            
-  - AlternateHeaderHasPrimFlag = 0x80000 → bit 19 of raw oop → bit 16 of decoded integer                                         
-                                                                                                                                 
-  But wait - the comments in my code say:                                                                                        
-  bits 16-23: numTemps (8 bits)                                                                                                  
-                                                                                                                                 
-  If bit 16 is the START of numTemps, then hasPrimitive at bit 16 overlaps with numTemps! That's wrong. Let me recalculate.      
-                                                                                                                                 
-  In cointerp: MethodHeaderTempCountShift = 21, MethodHeaderArgCountShift = 27. These are shifts applied to the RAW oop. After   
-  SmallInteger decoding (>> 3):                                                                                                  
-  - numTemps starts at bit 21-3 = 18 (decoded)                                                                                   
-  - numArgs starts at bit 27-3 = 24 (decoded)                                                                                    
-  - hasPrimitive is at bit 19 (raw) = bit 16 (decoded)                                                                           
-                                                                                                                                 
-  So decoded layout:                                                                                                             
-  - bits 0-14: numLiterals                                                                                                       
-  - bit 15: needsLargeFrame                                                                                                      
-  - bit 16: hasPrimitive ← THIS IS CORRECT                                                                                       
-  - bit 17: unused?                                                                                                              
-  - bits 18-23: numTemps (6 bits)                                                                                                
-  - bits 24-27: numArgs (4 bits)                                                                                                 
-                                                                                                                                 
-  So bit 16 IS hasPrimitive and doesn't overlap with numTemps (which starts at bit 18). The comments in my code were wrong about 
-  numTemps being at bits 16-23, but the actual bit check is correct.                                                             
-                                                                                                                                 
-  So why are methods like Object >> not showing hasPrimitive = true? Let me trace a specific case. Let me check the method that  
-  has literal 'not' 'True':                                                                                                      
-                                                                                                                                 
-  Actually, the issue might be that these methods are called from executePrimitive when their prim index is >= 256, and ALL 256+ 
-  now route to primitiveExternalCall. But these might be methods that the old quick primitive fallback was handling (returning   
-  instVars or constants). Since I removed that fallback, they now fail in primitiveExternalCall.                                 
-                                                                                                                                 
-  Wait, but primitiveExternalCall is looking at the WRONG method! These methods with callPrimitive 264 (or similar) are using the
-   bytecode encoding for quick return. In the old Smalltalk encoding:                                                            
-  - callPrimitive 256 = return self                                                                                              
-  - callPrimitive 257 = return true                                                                                              
-  - callPrimitive 258 = return false                                                                                             
-  - callPrimitive 259 = return nil                                                                                               
-  - callPrimitive 260-263 = return constants (-1, 0, 1, 2)                                                                       
-  - callPrimitive 264+ = return instance variable at index prim - 264                                                            
-                                                                                                                                 
-  So Object >> not might have callPrimitive 257 (return true) - the method literally just returns true. And HashedCollection >>  
-  size has callPrimitive 264 which means "return instVar 0" (which is tally).                                                    
-                                                                                                                                 
-  These ARE legitimate quick primitives! I shouldn't have removed the quick primitive fallback. The issue is that I also mapped  
-  256-519 to primitiveExternalCall in the primitive table, which intercepts them before the quick primitive code runs.           
-                                                                                                                                 
-  The fix: Keep the quick primitive handling but DON'T map 256-519 to primitiveExternalCall in the primitive table. External     
-  primitives with indices 256+ should go through primitiveExternalCall only when the method's literals indicate it's an external 
-  call (i.e., has an ExternalFunction spec). The primitive table for 256-519 should be NULL, and the quick primitive code should 
-  handle them.                                                                                                                   
-                                                                                                                                 
-⏺ Update(src/vm/Interpreter.cpp)                                                                                                 
-  ⎿  Added 6 lines, removed 7 lines                                                                                              
-      18440      // This ensures the table matches what the Pharo image expects                                                  
-      18441      #include "../ios/generated_primitives.inc"                                                                      
-      18442                                                                                                                      
-      18443 -    // Primitives 256-519 are ALL external/named primitives in the standard Pharo VM.                               
-      18444 -    // They should be dispatched via primitiveExternalCall (primitive 117), which reads                             
-      18445 -    // the method's first literal to determine the plugin function name.                                            
-      18446 -    // Do NOT hardcode specific functions at these indices - the dispatch is by name.                               
-      18447 -    for (int i = 256; i < 520; i++) {                                                                               
-      18448 -        primitiveTable_[i] = &Interpreter::primitiveExternalCall;                                                   
-      18449 -    }                                                                                                               
-      18443 +    // Primitives 256-519: In Sista V1 / Spur, the callPrimitive bytecode encodes                                   
-      18444 +    // "quick primitives" that return constants (256-263) or instance variables (264+).                             
-      18445 +    // These are NOT external/named primitives.                                                                     
-      18446 +    // External/named primitives use primitive 117 (primitiveExternalCall) which is                                 
-      18447 +    // in the primitive table and reads the method's literals for the plugin spec.                                  
-      18448 +    // Do NOT override 256-519 in the table - they're handled by quick primitive code.                              
-      18449                                                                                                                      
-      18450      // NOTE: The generated file maps VMMaker primitive names to C++ method names.                                   
-      18451      // If a primitive method doesn't exist, it will cause a compile error here,                                     
-                                                                                                                                 
-⏺ Now restore the quick primitive handling that I removed:                                                                       
-                                                                                                                                 
-⏺ Update(src/vm/Interpreter.cpp)                                                                                                 
-  ⎿  Added 51 lines, removed 2 lines                                                                                             
-      18628          return result;                                                                                              
-      18629      }                                                                                                               
-      18630                                                                                                                      
-      18631 -    // Primitives 256-519 are all external/named primitives, handled by                                             
-      18632 -    // primitiveExternalCall via the primitive table. No fallback needed.                                           
-      18631 +    // Quick primitives (256-519): return constants or instance variables                                           
-      18632 +    // These are encoded via callPrimitive bytecodes in Sista V1 / Spur methods.                                    
-      18633 +    // 256 = return self, 257 = return true, 258 = false, 259 = nil                                                 
-      18634 +    // 260-263 = return constants (-1, 0, 1, 2)                                                                     
-      18635 +    // 264+ = return instance variable at index (primIndex - 264)                                                   
-      18636 +    if (primitiveIndex >= 256 && primitiveIndex <= 519) {                                                           
-      18637 +        Oop receiver = stackTop();                                                                                  
-      18638                                                                                                                      
-      18639 +        if (primitiveIndex >= 264) {                                                                                
-      18640 +            // Return instance variable at index (primitiveIndex - 264)                                             
-      18641 +            if (!receiver.isObject()) {                                                                             
-      18642 +                return PrimitiveResult::Failure;                                                                    
-      18643 +            }                                                                                                       
-      18644 +            size_t instVarIndex = static_cast<size_t>(primitiveIndex - 264);                                        
-      18645 +            size_t slotCount = memory_.slotCountOf(receiver);                                                       
-      18646 +            if (instVarIndex >= slotCount) {                                                                        
-      18647 +                return PrimitiveResult::Failure;                                                                    
-      18648 +            }                                                                                                       
-      18649 +            Oop value = memory_.fetchPointer(instVarIndex, receiver);                                               
-      18650 +            *(stackPointer_ - 1) = value;  // Replace stack top                                                     
-      18651 +            return PrimitiveResult::Success;                                                                        
-      18652 +        }                                                                                                           
-      18653 +                                                                                                                    
-      18654 +        switch (primitiveIndex) {                                                                                   
-      18655 +            case 256:  // return self                                                                               
-      18656 +                return PrimitiveResult::Success;                                                                    
-      18657 +            case 257:  // return true                                                                               
-      18658 +                *(stackPointer_ - 1) = memory_.trueObject();                                                        
-      18659 +                return PrimitiveResult::Success;                                                                    
-      18660 +            case 258:  // return false                                                                              
-      18661 +                *(stackPointer_ - 1) = memory_.falseObject();                                                       
-      18662 +                return PrimitiveResult::Success;                                                                    
-      18663 +            case 259:  // return nil                                                                                
-      18664 +                *(stackPointer_ - 1) = memory_.nil();                                                               
-      18665 +                return PrimitiveResult::Success;                                                                    
-      18666 +            case 260:  // return -1                                                                                 
-      18667 +                *(stackPointer_ - 1) = Oop::fromSmallInteger(-1);                                                   
-      18668 +                return PrimitiveResult::Success;                                                                    
-      18669 +            case 261:  // return 0                                                                                  
-      18670 +                *(stackPointer_ - 1) = Oop::fromSmallInteger(0);                                                    
-      18671 +                return PrimitiveResult::Success;                                                                    
-      18672 +            case 262:  // return 1                                                                                  
-      18673 +                *(stackPointer_ - 1) = Oop::fromSmallInteger(1);                                                    
-      18674 +                return PrimitiveResult::Success;                                                                    
-      18675 +            case 263:  // return 2                                                                                  
-      18676 +                *(stackPointer_ - 1) = Oop::fromSmallInteger(2);                                                    
-      18677 +                return PrimitiveResult::Success;                                                                    
-      18678 +            default:                                                                                                
-      18679 +                return PrimitiveResult::Failure;                                                                    
-      18680 +        }                                                                                                           
-      18681 +    }                                                                                                               
-      18682 +                                                                                                                    
-      18683      // No primitive function and not a quick primitive                                                              
-      18684      // Log interesting unimplemented primitives                                                                     
-      18685      static FILE* unimplPrimLog = nullptr;                                                                           
-                                                                                                                                 
-✢ Compacting conversation… (9m 4s · ↑ 9.3k tokens)                                                                               
-                                                                                                                                 
+## Current State: Investigating Non-Deterministic DNUs from Process Switching
+
+### Key Finding
+DNUs are caused by the forceYield process switching mechanism (transferTo/materializeFrameStack/executeFromContext round-trip).
+
+**Proof:** Disabling forceYield reduces DNUs from ~4/run to ~0/run (0,0,0,2,0 across 5 runs).
+
+### DNU counts
+- With forceYield enabled: ~3-8 per run, non-deterministic (different selectors each time)
+- With forceYield disabled: 0-2 per run (rare `findNextUnwindContextUpTo:` from timer semaphore signaling)
+- Common DNUs: `#adaptToNumber:andSend:` on nil, `#findNextUnwindContextUpTo:` on nil, `#<unknown>` selector, `#beingWaitedOn` on nil, various nil receivers
+
+### Changes Made (uncommitted in Interpreter.cpp)
+1. **numTemps fix in pushFrame()** — standard VM pushes `numTemps - numArgs` nils (not `numTemps`). Fixed but didn't change DNU count. Still correct per standard VM behavior. **Currently REVERTED** — needs to be re-applied.
+2. **DNU logging improvement** — all DNUs now show calling method + frame stack (not just ensure:/runStepMethods)
+
+### Root Cause Analysis
+The forceYield mechanism triggers `transferTo()` which:
+1. Calls `materializeFrameStack()` — saves inline frames as Context objects
+2. Stores top context to old process's suspendedContext
+3. Calls `executeFromContext()` on new process's suspended context
+
+Something in this round-trip corrupts state. The non-determinism is because forceYield fires at different bytecode positions each run (every ~1000ms from heartbeat timer).
+
+### Next Steps
+1. **Re-apply numTemps fix** — change `for (int i = 0; i < numTemps; ++i)` to `for (int i = 0; i < numTemps - numArgs; ++i)` in pushFrame() line ~13353
+2. **Investigate materializeFrameStack/executeFromContext round-trip** — the bug is somewhere in how frames are saved to contexts and restored. Key areas:
+   - Expression stack calculation in materializeFrameStack (exprStart/exprEndPtr)
+   - Context restore in executeFromContext (stackp vs numTemps handling)
+   - Whether sender chains are properly maintained through save/restore
+3. **Check returnValue at frameDepth_=0** — after executeFromContext restores a single context, returns need to walk the sender chain via activeContext_. Verify this works correctly.
+4. **Consider:** The standard OpenSmalltalk VM frame layout has saved IP, FP, method, context, flags ON the stack. Our VM uses C-side savedFrames_[]. This fundamental difference means materializeFrameStack must correctly reconstruct what the standard VM would have stored.
+
+### Files
+- `src/vm/Interpreter.cpp` — main changes (DNU logging, numTemps fix reverted)
+- Process switch code: `transferTo()` ~15906, `materializeFrameStack()` ~15620, `executeFromContext()` ~18316
+- forceYield check: ~2733
+
+### Previous session results (for reference)
+- ensure: DNUs: 21 → 0 (commit 4fb0d81)
+- Total DNU lines: ~96 → ~4 per run (non-deterministic from process switching)

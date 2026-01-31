@@ -14160,12 +14160,8 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
         static int dnuLogCount = 0;
         if (dnuLogCount++ < 200) {
-            std::cerr << "[DNU] Selector '#" << selStr << "' not found on " << rcvrClassName
-                      << " (args=" << argCount << ") step=" << g_stepNum << "\n";
-            // Dump sender chain for ensure: on nil
-            if ((selStr == "ensure:" || selStr == "runStepMethods") && rcvrClassName == "UndefinedObject") {
-                // Print current method name
-                auto getSelName = [&](Oop meth) -> std::string {
+            // Helper to get selector name from a compiled method
+            auto getSelName = [&](Oop meth) -> std::string {
                     if (!meth.isObject() || meth.rawBits() < 0x10000) return "?";
                     ObjectHeader* mh = meth.asObjectPtr();
                     if (!mh->isCompiledMethod()) return "?";
@@ -14190,68 +14186,13 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                     }
                     return "?";
                 };
-                std::cerr << "[DNU-CHAIN] " << selStr << " on nil in #" << getSelName(method_)
-                          << " fd=" << frameDepth_
-                          << " method=0x" << std::hex << method_.rawBits()
-                          << " receiver=0x" << receiver_.rawBits() << std::dec << "\n";
-                // Also dump activeContext_ sender chain
-                if (frameDepth_ == 0 && !activeContext_.isNil()) {
-                    Oop ctx = activeContext_;
-                    for (int d = 0; d < 10 && ctx.isObject() && ctx.rawBits() != memory_.nil().rawBits(); d++) {
-                        Oop meth = memory_.fetchPointer(3, ctx);
-                        Oop sender = memory_.fetchPointer(0, ctx);
-                        Oop rcvr = memory_.fetchPointer(5, ctx);
-                        std::cerr << "[DNU-CHAIN]   ctx[" << d << "] method=#" << getSelName(meth)
-                                  << " rcvr=0x" << std::hex << rcvr.rawBits()
-                                  << " sender=0x" << sender.rawBits() << std::dec << "\n";
-                        ctx = sender;
-                    }
-                }
-                for (size_t fi = 0; fi < frameDepth_ && fi < 10; fi++) {
-                    Oop savedMethod = savedFrames_[fi].savedMethod;
-                    std::cerr << "[DNU-CHAIN]   frame[" << fi << "] #" << getSelName(savedMethod) << "\n";
-                }
-            }
-            if (selStr == "printStringHex" && rcvrClassName == "UndefinedObject") {
-                Oop ctx = activeContext_;
-                for (int d = 0; d < 10 && ctx.isObject() && ctx.rawBits() != memory_.nil().rawBits(); d++) {
-                    if (!memory_.isValidPointer(ctx)) break;
-                    ObjectHeader* ch = ctx.asObjectPtr();
-                    if (ch->slotCount() < 4) break;
-                    Oop meth = memory_.fetchPointer(3, ctx);
-                    if (meth.isObject() && memory_.isValidPointer(meth)) {
-                        ObjectHeader* mh = meth.asObjectPtr();
-                        uint64_t hdrBits = memory_.fetchPointer(0, meth).rawBits() >> 3;
-                        int nLit = hdrBits & 0x7FFF;
-                        if (nLit >= 2) {
-                            Oop lastLit = memory_.fetchPointer(nLit, meth);
-                            std::string mSel = "?";
-                            if (lastLit.isObject() && memory_.isValidPointer(lastLit)) {
-                                ObjectHeader* lh = lastLit.asObjectPtr();
-                                if (lh->isBytesObject() && lh->byteSize() < 100)
-                                    mSel = std::string((char*)lh->bytes(), lh->byteSize());
-                                else if (lh->slotCount() >= 2) {
-                                    Oop v = memory_.fetchPointer(1, lastLit);
-                                    if (v.isObject() && memory_.isValidPointer(v)) {
-                                        ObjectHeader* vh = v.asObjectPtr();
-                                        if (vh->isBytesObject() && vh->byteSize() < 100)
-                                            mSel = std::string((char*)vh->bytes(), vh->byteSize());
-                                    }
-                                }
-                            }
-                            Oop selLit = memory_.fetchPointer(nLit - 1, meth);
-                            std::string s2 = "?";
-                            if (selLit.isObject() && memory_.isValidPointer(selLit)) {
-                                ObjectHeader* sh = selLit.asObjectPtr();
-                                if (sh->isBytesObject() && sh->byteSize() < 100)
-                                    s2 = std::string((char*)sh->bytes(), sh->byteSize());
-                            }
-                            std::cerr << "  [" << d << "] " << mSel << " / " << s2 << "\n";
-                        }
-                    }
-                    Oop sender = memory_.fetchPointer(0, ctx);
-                    ctx = sender;
-                }
+            std::cerr << "[DNU] Selector '#" << selStr << "' not found on " << rcvrClassName
+                      << " (args=" << argCount << ") step=" << g_stepNum
+                      << " in #" << getSelName(method_) << " fd=" << frameDepth_ << "\n";
+            // Print frame stack for all DNUs
+            for (size_t fi = 0; fi < frameDepth_ && fi < 8; fi++) {
+                Oop savedMethod = savedFrames_[fi].savedMethod;
+                std::cerr << "[DNU]   frame[" << fi << "] #" << getSelName(savedMethod) << "\n";
             }
         }
     }
