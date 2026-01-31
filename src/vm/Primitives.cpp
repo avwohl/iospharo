@@ -11705,6 +11705,12 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
     const int64_t MAX_SLEEP_US = 10000;  // 10ms in microseconds
     int64_t sleepUs = std::min(microSeconds, MAX_SLEEP_US);
 
+    // Pop microseconds argument FIRST, before any process switch can happen.
+    // processPendingSignals/checkTimerSemaphore can call transferTo() which
+    // materializes and switches stacks. If we pop after, we'd corrupt the
+    // new process's stack.
+    pop();  // pop microseconds argument, leave receiver
+
     // Process any pending events first
     processInputEvents();
     processPendingSignals();
@@ -11789,11 +11795,12 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
                         // Remove the process from queue
                         Oop nextProcess = removeFirstLinkOfList(queue);
                         if (nextProcess.isObject() && nextProcess.rawBits() != nilObj.rawBits()) {
+                            // Arg already popped above before signal processing.
                             // Put current process back in its queue
                             putToSleep(activeProcess);
                             // Switch to the new process
                             transferTo(nextProcess);
-                            break;
+                            return PrimitiveResult::Success;  // Don't pop again below
                         }
                     }
                 }
@@ -11801,7 +11808,7 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
         }
     }
 
-    pop();  // pop microseconds argument, leave receiver
+    // Arg already popped above before signal processing
     return PrimitiveResult::Success;
 }
 

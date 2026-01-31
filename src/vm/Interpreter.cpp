@@ -2503,6 +2503,18 @@ bool Interpreter::step() {
         return false;
     }
 
+    // Detect FP corruption between steps
+    if (framePointer_ != nullptr && framePointer_ < stackBase_) {
+        static int fpCorruptCount = 0;
+        if (++fpCorruptCount <= 10) {
+            std::cerr << "[FP-CORRUPT-STEP #" << fpCorruptCount
+                      << "] FP=" << (void*)framePointer_
+                      << " base=" << (void*)stackBase_
+                      << " fd=" << frameDepth_
+                      << " step=" << g_stepNum << "\n";
+        }
+    }
+
     g_stepCount++;
     if (g_stepCount == 1) {
         g_sendTraceFile = fopen("/tmp/send_trace.log", "w");
@@ -2689,6 +2701,68 @@ bool Interpreter::step() {
         }
     }
 
+    // Check for forced process yield BEFORE fetching the next bytecode.
+    // CRITICAL: Must happen before fetchByte() because fetchByte() advances
+    // instructionPointer_. If we yield after fetching, the saved PC will point
+    // past the fetched bytecode, causing it to be SKIPPED when the process
+    // is later restored — leading to expression stack corruption and DNUs.
+    bool shouldYield = forceYield_.load(std::memory_order_acquire);
+    if (shouldYield) {
+        forceYield_.store(false, std::memory_order_release);
+        static int forceYieldCount = 0;
+        static int yieldPriorityOffset = 0;
+        forceYieldCount++;
+
+        static FILE* yieldCheckLog = nullptr;
+        if (!yieldCheckLog) yieldCheckLog = fopen("/tmp/yield_check.log", "w");
+        if (yieldCheckLog && forceYieldCount <= 50) {
+            fprintf(yieldCheckLog, "[YIELD-CHECK #%d] step=%llu processing forceYield (BEFORE fetchByte)\n",
+                    forceYieldCount, g_stepNum);
+            fflush(yieldCheckLog);
+        }
+
+        Oop activeProcess = getActiveProcess();
+        Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
+        int activePriority = activePriorityOop.isSmallInteger() ?
+                            static_cast<int>(activePriorityOop.asSmallInteger()) : 0;
+
+        Oop nilObj = memory_.nil();
+        Oop nextProcess = nilObj;
+
+        {
+            Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
+            Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
+            Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
+            if (activePriority > 0 && activePriority <= static_cast<int>(schedLists.asObjectPtr()->slotCount())) {
+                Oop processList = memory_.fetchPointer(activePriority - 1, schedLists);
+                Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, processList);
+                if (first.isObject() && first.rawBits() != nilObj.rawBits() &&
+                    first.rawBits() != activeProcess.rawBits()) {
+                    nextProcess = removeFirstLinkOfList(processList);
+                }
+            }
+        }
+
+        bool foundProcess = nextProcess.isObject() &&
+                           nextProcess.rawBits() != nilObj.rawBits() &&
+                           nextProcess.rawBits() != activeProcess.rawBits();
+
+        if (forceYieldCount <= 10 || forceYieldCount % 100 == 0) {
+            std::cerr << "[FORCE-YIELD #" << forceYieldCount << "] Current priority " << activePriority
+                      << " yielding to same priority process: " << (foundProcess ? "found" : "none") << "\n";
+        }
+
+        if (foundProcess) {
+            putToSleep(activeProcess);
+            transferTo(nextProcess);
+        }
+
+        if (hasPendingDriverInstall_) {
+            executePendingDriverInstall();
+            return running_;
+        }
+    }
+
     uint8_t bytecode = fetchByte();
 
     // Log bytecode at hang point
@@ -2730,75 +2804,7 @@ bool Interpreter::step() {
         }
     }
 
-    // Check for forced process yield (set by heartbeat to allow lower-priority processes to run)
-    bool shouldYield = forceYield_.load(std::memory_order_acquire);
-    if (shouldYield) {
-        forceYield_.store(false, std::memory_order_release);
-        static int forceYieldCount = 0;
-        static int yieldPriorityOffset = 0;  // Rotate through priorities to give everyone a chance
-        forceYieldCount++;
-
-        // Log that we're processing a force yield
-        static FILE* yieldCheckLog = nullptr;
-        if (!yieldCheckLog) yieldCheckLog = fopen("/tmp/yield_check.log", "w");
-        if (yieldCheckLog && forceYieldCount <= 50) {
-            fprintf(yieldCheckLog, "[YIELD-CHECK #%d] step=%llu processing forceYield\n",
-                    forceYieldCount, g_stepNum);
-            fflush(yieldCheckLog);
-        }
-
-        // Get current process's priority
-        Oop activeProcess = getActiveProcess();
-        Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
-        int activePriority = activePriorityOop.isSmallInteger() ?
-                            static_cast<int>(activePriorityOop.asSmallInteger()) : 0;
-
-        // Standard VM behavior: yield to same-priority process (round-robin time-slicing)
-        // NEVER preempt to a lower-priority process — that violates scheduling invariants
-        Oop nilObj = memory_.nil();
-        Oop nextProcess = nilObj;
-
-        // Check if there's another process at the SAME priority
-        {
-            Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
-            Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
-            Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
-            if (activePriority > 0 && activePriority <= static_cast<int>(schedLists.asObjectPtr()->slotCount())) {
-                Oop processList = memory_.fetchPointer(activePriority - 1, schedLists);
-                Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, processList);
-                if (first.isObject() && first.rawBits() != nilObj.rawBits() &&
-                    first.rawBits() != activeProcess.rawBits()) {
-                    nextProcess = removeFirstLinkOfList(processList);
-                }
-            }
-        }
-
-        bool foundProcess = nextProcess.isObject() &&
-                           nextProcess.rawBits() != nilObj.rawBits() &&
-                           nextProcess.rawBits() != activeProcess.rawBits();
-
-        if (forceYieldCount <= 10 || forceYieldCount % 100 == 0) {
-            std::cerr << "[FORCE-YIELD #" << forceYieldCount << "] Current priority " << activePriority
-                      << " yielding to lower priority process: " << (foundProcess ? "found" : "none") << "\n";
-        }
-
-        if (foundProcess) {
-            putToSleep(activeProcess);
-            transferTo(nextProcess);
-        }
-
-        // Execute any pending driver install during yield
-        if (hasPendingDriverInstall_) {
-            executePendingDriverInstall();
-            // CRITICAL: Return early so next step() fetches correct bytecode from new context.
-            // The driver install changed activeContext_ and instructionPointer_, so we must
-            // NOT dispatch the stale bytecode that was fetched from the old context.
-            return running_;
-        }
-
-        // NO WORKAROUNDS: Removed pendingEventContext_ execution.
-        // Events must be processed by the Smalltalk InputEventSensor process.
-    }
+    // forceYield check moved BEFORE fetchByte() above to prevent bytecode skipping
 
     dispatchBytecode(bytecode);
 
@@ -13368,6 +13374,16 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
 
     // New frame pointer is at current position minus args (receiver is first "arg")
     Oop* newFP = stackPointer_ - argCount - 1;  // -1 for receiver position
+    if (newFP < stackBase_) {
+        static int fpBelowBaseCount = 0;
+        if (++fpBelowBaseCount <= 10) {
+            std::cerr << "[FP-BELOW-BASE #" << fpBelowBaseCount
+                      << "] newFP=" << (void*)newFP << " stackBase_=" << (void*)stackBase_
+                      << " SP=" << (void*)stackPointer_ << " argCount=" << argCount
+                      << " fd=" << frameDepth_ << " step=" << g_stepNum
+                      << " method=" << methodName << "\n";
+        }
+    }
     framePointer_ = newFP;
 
     // Initialize temporaries to nil (numTemps includes args, which are already on stack)
@@ -13402,6 +13418,17 @@ void Interpreter::popFrame() {
     activeContext_ = frame.savedActiveContext;  // Restore active context for proper return chain
     framePointer_ = frame.savedFP;
     argCount_ = frame.savedArgCount;
+
+    if (framePointer_ < stackBase_) {
+        static int popFpBelowCount = 0;
+        if (++popFpBelowCount <= 10) {
+            std::cerr << "[POP-FP-BELOW #" << popFpBelowCount
+                      << "] restored FP=" << (void*)framePointer_
+                      << " stackBase_=" << (void*)stackBase_
+                      << " fd=" << frameDepth_
+                      << " step=" << g_stepNum << "\n";
+        }
+    }
 
     // If this was the last frame, we're done
     if (frameDepth_ == 0 && frame.savedIP == nullptr) {
@@ -14116,9 +14143,105 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                     }
                 }
             }
-            fprintf(dnuLog, "[DNU #%d step=%llu] receiver=%s selector='%s'%s%s argCount=%d\n",
+            fprintf(dnuLog, "[DNU #%d step=%llu] receiver=%s selector='%s'%s%s argCount=%d frameDepth=%zu\n",
                     dnuCount, (unsigned long long)g_stepNum, rcvrCls.c_str(), selStr.c_str(),
-                    selHex.empty() ? "" : " hex=", selHex.c_str(), argCount);
+                    selHex.empty() ? "" : " hex=", selHex.c_str(), argCount, frameDepth_);
+            // Enhanced logging for sporadic DNUs (Array/nil receivers)
+            if (rcvrCls == "Array" || (rcvrCls == "nil" && selStr != "printStringHex") || rcvrCls == "?") {
+                // Dump current method
+                std::string curMethod = "?";
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    Oop mh = memory_.fetchPointer(0, method_);
+                    if (mh.isSmallInteger()) {
+                        int nl = mh.asSmallInteger() & 0x7FFF;
+                        if (nl >= 2 && nl < 100) {
+                            Oop s = memory_.fetchPointer(nl - 1, method_);
+                            if (s.isObject() && s.rawBits() > 0x10000) {
+                                ObjectHeader* sH = s.asObjectPtr();
+                                if (sH->isBytesObject() && sH->byteSize() < 80)
+                                    curMethod = std::string((char*)sH->bytes(), sH->byteSize());
+                            }
+                        }
+                    }
+                }
+                fprintf(dnuLog, "  method=#%s FP=%p SP=%p stackItems=%ld\n",
+                        curMethod.c_str(), (void*)framePointer_, (void*)stackPointer_,
+                        (long)(stackPointer_ - framePointer_ - 1));
+                // Dump inline stack around the receiver
+                for (int si = argCount + 2; si >= 0; si--) {
+                    if (stackPointer_ - 1 - si >= stackBase_) {
+                        Oop v = *(stackPointer_ - 1 - si);
+                        std::string desc = "?";
+                        if (v.rawBits() == memory_.nil().rawBits()) desc = "nil";
+                        else if (v.isSmallInteger()) desc = "SI(" + std::to_string(v.asSmallInteger()) + ")";
+                        else if (v.isObject() && v.rawBits() > 0x10000) {
+                            Oop vc = memory_.classOf(v);
+                            if (vc.isObject()) {
+                                Oop vn = memory_.fetchPointer(6, vc);
+                                if (vn.isObject() && vn.rawBits() > 0x10000) {
+                                    ObjectHeader* vnH = vn.asObjectPtr();
+                                    if (vnH->isBytesObject() && vnH->byteSize() < 80)
+                                        desc = std::string((char*)vnH->bytes(), vnH->byteSize());
+                                }
+                            }
+                        }
+                        fprintf(dnuLog, "  stack[SP-%d] = 0x%llx (%s)%s\n",
+                                si, (unsigned long long)v.rawBits(), desc.c_str(),
+                                si == argCount ? " <-- receiver" : "");
+                    }
+                }
+                // Dump sender chain from activeContext_
+                fprintf(dnuLog, "  SENDER CHAIN:\n");
+                Oop ctx = activeContext_;
+                for (int cd = 0; cd < 5 && ctx.isObject() && ctx.rawBits() > 0x10000; cd++) {
+                    Oop cm = memory_.fetchPointer(3, ctx);
+                    std::string cs = "?";
+                    if (cm.isObject() && cm.rawBits() > 0x10000) {
+                        Oop ch = memory_.fetchPointer(0, cm);
+                        if (ch.isSmallInteger()) {
+                            int cnl = ch.asSmallInteger() & 0x7FFF;
+                            if (cnl >= 2 && cnl < 100) {
+                                Oop csl = memory_.fetchPointer(cnl - 1, cm);
+                                if (csl.isObject() && csl.rawBits() > 0x10000) {
+                                    ObjectHeader* csH = csl.asObjectPtr();
+                                    if (csH->isBytesObject() && csH->byteSize() < 80)
+                                        cs = std::string((char*)csH->bytes(), csH->byteSize());
+                                }
+                            }
+                        }
+                    }
+                    Oop cpc = memory_.fetchPointer(1, ctx);
+                    Oop csp = memory_.fetchPointer(2, ctx);
+                    fprintf(dnuLog, "    [%d] ctx=0x%llx method=#%s pc=%lld stackp=%lld\n",
+                            cd, (unsigned long long)ctx.rawBits(), cs.c_str(),
+                            cpc.isSmallInteger() ? cpc.asSmallInteger() : -1,
+                            csp.isSmallInteger() ? csp.asSmallInteger() : -1);
+                    ctx = memory_.fetchPointer(0, ctx);
+                }
+                // Dump saved frames
+                fprintf(dnuLog, "  INLINE FRAMES (frameDepth=%zu):\n", frameDepth_);
+                for (size_t fi = 0; fi < frameDepth_ && fi < 10; fi++) {
+                    const auto& sf = savedFrames_[fi];
+                    std::string sfm = "?";
+                    if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                        Oop sfh = memory_.fetchPointer(0, sf.savedMethod);
+                        if (sfh.isSmallInteger()) {
+                            int sfnl = sfh.asSmallInteger() & 0x7FFF;
+                            if (sfnl >= 2 && sfnl < 100) {
+                                Oop sfs = memory_.fetchPointer(sfnl - 1, sf.savedMethod);
+                                if (sfs.isObject() && sfs.rawBits() > 0x10000) {
+                                    ObjectHeader* sfH = sfs.asObjectPtr();
+                                    if (sfH->isBytesObject() && sfH->byteSize() < 80)
+                                        sfm = std::string((char*)sfH->bytes(), sfH->byteSize());
+                                }
+                            }
+                        }
+                    }
+                    fprintf(dnuLog, "    frame[%zu]: method=#%s FP=%p argCount=%d\n",
+                            fi, sfm.c_str(), (void*)sf.savedFP, sf.savedArgCount);
+                }
+                fprintf(dnuLog, "  stackBase=%p\n", (void*)stackBase_);
+            }
             fflush(dnuLog);
         }
     }
@@ -14210,6 +14333,38 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
             std::cerr << "[DNU] Selector '#" << selStr << "' not found on " << rcvrClassName
                       << " (args=" << argCount << ") step=" << g_stepNum
                       << " in #" << getSelName(method_) << " fd=" << frameDepth_ << "\n";
+            // For sporadic DNUs, show stack info
+            if (selStr != "handleClassChange:" && selStr != "printStringHex") {
+                std::cerr << "[DNU]   FP=" << (void*)framePointer_ << " SP=" << (void*)stackPointer_
+                          << " base=" << (void*)stackBase_
+                          << " stackItems=" << (stackPointer_ - framePointer_ - 1) << "\n";
+                // Show expression stack around receiver
+                Oop rcvrOnStack = stackValue(argCount);
+                std::cerr << "[DNU]   rcvr on stack=0x" << std::hex << rcvrOnStack.rawBits() << std::dec;
+                if (rcvrOnStack.isNil()) std::cerr << " (nil)";
+                else if (rcvrOnStack.isObject() && rcvrOnStack.rawBits() > 0x10000) {
+                    Oop rc = memory_.classOf(rcvrOnStack);
+                    if (rc.isObject()) {
+                        Oop rn = memory_.fetchPointer(6, rc);
+                        if (rn.isObject() && rn.rawBits() > 0x10000) {
+                            ObjectHeader* rnH = rn.asObjectPtr();
+                            if (rnH->isBytesObject() && rnH->byteSize() < 80)
+                                std::cerr << " (" << std::string((char*)rnH->bytes(), rnH->byteSize()) << ")";
+                        }
+                    }
+                }
+                std::cerr << "\n";
+                // Show activeContext_ info
+                if (activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
+                    ObjectHeader* acH = activeContext_.asObjectPtr();
+                    Oop acStackp = memory_.fetchPointer(2, activeContext_);
+                    Oop acMethod = memory_.fetchPointer(3, activeContext_);
+                    std::cerr << "[DNU]   activeCtx=0x" << std::hex << activeContext_.rawBits() << std::dec
+                              << " slots=" << acH->slotCount()
+                              << " stackp=" << (acStackp.isSmallInteger() ? acStackp.asSmallInteger() : -1)
+                              << " method=#" << getSelName(acMethod) << "\n";
+                }
+            }
             // Print frame stack for all DNUs
             size_t maxFrames = (selStr == "handleClassChange:" || selStr == "printStringHex") ? 50 : 8;
             for (size_t fi = 0; fi < frameDepth_ && fi < maxFrames; fi++) {
@@ -19053,6 +19208,17 @@ bool Interpreter::executeFromContext(Oop context) {
     // Push receiver first - this establishes our frame
     push(receiver_);
     framePointer_ = stackPointer_ - 1;
+
+    if (framePointer_ < stackBase_) {
+        static int execFpBelowCount = 0;
+        if (++execFpBelowCount <= 10) {
+            std::cerr << "[EXEC-FP-BELOW #" << execFpBelowCount
+                      << "] FP=" << (void*)framePointer_
+                      << " stackBase_=" << (void*)stackBase_
+                      << " SP=" << (void*)stackPointer_
+                      << " step=" << g_stepNum << "\n";
+        }
+    }
 
     // Now restore the context's saved stack
     // stackp indicates how many slots are valid in the temp/stack area (1-based count)
