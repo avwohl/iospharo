@@ -7,8 +7,6 @@
 #include <algorithm>
 #include <iostream>
 #include <iomanip>
-#include <map>
-#include <set>
 
 namespace pharo {
 
@@ -495,74 +493,94 @@ bool ImageLoader::setupSpecialObjects(ObjectMemory& memory, LoadResult& result) 
 // ===== CLASS TABLE =====
 
 bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
-    // In Pharo 12 Spur 64-bit, the class table is stored as follows:
+    // In Spur 64-bit, the first five objects in old space are:
+    //   1. nil (format 0, 0 slots)
+    //   2. false (format 0, 0 slots)
+    //   3. true (format 0, 0 slots)
+    //   4. freeListsObj (format 9, 64 slots — free list heads)
+    //   5. hiddenRootsObj / classTableRootObj (4096 page slots + 8 extra roots)
     //
-    // Layout at start of old space:
-    //   offset 0x0:   nil object (format 0, 0 slots, 16 bytes)
-    //   offset 0x10:  false object (format 0, 0 slots, 16 bytes)
-    //   offset 0x20:  true object (format 0, 0 slots, 16 bytes)
-    //   offset 0x30:  hiddenRoots (format 9, 64 slots with nil, 520 bytes)
-    //   offset 0x238: classTablePages array (format 2, holds page pointers)
-    //
-    // NOTE: In Pharo 12, hiddenRoots slots are all nil. The class table
-    // pages array is stored RIGHT AFTER hiddenRoots, not pointed to by slot 0.
-    //
-    // Each class table page is an Array of up to 1024 class object pointers.
-    // Class index N is found at: classTablePages[N / 1024][N % 1024]
+    // hiddenRootsObj slots 0..4095 are class table page pointers (nil if unused).
+    // Each page is an Array of 1024 class object pointers.
+    // Class index N = page[N / 1024][N % 1024].
+    // Slots 4096..4103 are extra roots (special objects, not class pages).
 
     uint8_t* heapStart = memory.oldSpaceStart();
     Oop nilObj = memory.specialObject(SpecialObjectIndex::NilObject);
     constexpr size_t PageSize = 1024;
+    constexpr size_t MaxClassTablePages = 4096;
     size_t totalClasses = 0;
 
-    // In Pharo 12, hiddenRoots is at offset 0x30 with 64 slots (all nil)
-    // hiddenRoots size = 8 (header) + 64*8 (slots) = 520 bytes
-    // So class table pages array starts at 0x30 + 520 = 0x238
-    constexpr size_t hiddenRootsOffset = 0x30;
-    constexpr size_t hiddenRootsSize = 8 + 64 * 8;  // header + slots
-    constexpr size_t classTablePagesOffset = hiddenRootsOffset + hiddenRootsSize;  // 0x238
-
-    // The structure at 0x238 has two 8-byte headers, then the page pointers start at 0x248
-    // Skip the two headers and read page pointers directly
-    constexpr size_t pagePointersOffset = classTablePagesOffset + 16;  // 0x248
-
-    // Read page pointers (they are old-space addresses that need relocation)
-    uint64_t* pagePointers = reinterpret_cast<uint64_t*>(heapStart + pagePointersOffset);
-
-    // Count how many non-zero page pointers we have
-    size_t numPages = 0;
-    for (size_t i = 0; i < 100; i++) {  // Max 100 pages
-        uint64_t ptr = pagePointers[i];
-        if (ptr == 0 || (ptr & 7) != 0) {  // Zero or not aligned = end of pages
-            break;
+    // Walk objects from start of old space to find the 5th object (hiddenRootsObj).
+    // In Spur 64-bit, minimum object size is 16 bytes (8 header + 8 body).
+    // Objects with >254 slots have an overflow word before the header.
+    auto objectAfter = [&](uint8_t* objPtr) -> uint8_t* {
+        ObjectHeader* hdr = reinterpret_cast<ObjectHeader*>(objPtr);
+        size_t size = hdr->totalSize();
+        // Spur minimum object size is 16 bytes (header + at least 1 slot for forwarding)
+        if (size < 16) size = 16;
+        uint8_t* next = objPtr + size;
+        // Check if the next position is an overflow word (the word after it has numSlots=255)
+        if (next + 16 <= heapStart + loadedSize_) {
+            uint64_t followingWord = *reinterpret_cast<uint64_t*>(next + 8);
+            if (extractNumSlots(followingWord) == 255) {
+                // next points to the overflow word; the real header is at next+8
+                next += 8;
+            }
         }
-        numPages++;
-    }
-    std::cerr << "[CLASS-TABLE] Found " << numPages << " class table pages\n";
+        return next;
+    };
 
-    // Iterate through each page
-    for (size_t pageNum = 0; pageNum < numPages; pageNum++) {
-        uint64_t pageAddr = pagePointers[pageNum];
+    // Find hiddenRootsObj: 5th object from start of old space
+    // Objects: nil(1), false(2), true(3), freeListsObj(4), hiddenRootsObj(5)
+    uint8_t* obj = heapStart;  // nil
+    for (int i = 0; i < 4; i++) {
+        obj = objectAfter(obj);
+        if (obj >= heapStart + loadedSize_) {
+            std::cerr << "[CLASS-TABLE] ERROR: Ran off end of heap walking to object " << (i+2) << "\n";
+            return false;
+        }
+    }
+
+    ObjectHeader* hiddenRoots = reinterpret_cast<ObjectHeader*>(obj);
+    size_t hrSlots = hiddenRoots->slotCount();
+
+    std::cerr << "[CLASS-TABLE] hiddenRootsObj at offset 0x" << std::hex << (obj - heapStart) << std::dec
+              << " fmt=" << (int)hiddenRoots->format() << " slots=" << hrSlots << "\n";
+
+    if (hrSlots < MaxClassTablePages) {
+        std::cerr << "[CLASS-TABLE] ERROR: hiddenRoots has only " << hrSlots
+                  << " slots, expected >= " << MaxClassTablePages << "\n";
+        return false;
+    }
+
+    // Read class table pages from hiddenRoots slots 0..4095
+    size_t numPages = 0;
+    for (size_t pageNum = 0; pageNum < MaxClassTablePages; pageNum++) {
+        Oop pageOop = hiddenRoots->slotAt(pageNum);
+
+        // Skip nil page entries
+        if (pageOop.rawBits() == 0 || pageOop.rawBits() == nilObj.rawBits() || !pageOop.isObject()) {
+            continue;
+        }
 
         // Validate the pointer is within our heap
+        uint64_t pageAddr = pageOop.rawBits();
         if (pageAddr < newBase_ || pageAddr >= newBase_ + loadedSize_) {
             continue;
         }
 
-        // Get the page array header
-        ObjectHeader* pageHdr = reinterpret_cast<ObjectHeader*>(pageAddr);
+        ObjectHeader* pageHdr = pageOop.asObjectPtr();
         size_t pageSlots = pageHdr->slotCount();
+        numPages++;
 
         // Each slot in the page is a class object pointer
         for (size_t i = 0; i < pageSlots && i < PageSize; i++) {
             Oop classOop = pageHdr->slotAt(i);
 
-            // Skip nil entries (both raw 0 and the actual nil object)
             if (classOop.rawBits() == 0 || classOop.rawBits() == nilObj.rawBits()) {
                 continue;
             }
-
-            // Skip non-object entries (SmallIntegers shouldn't be in class table)
             if (!classOop.isObject()) {
                 continue;
             }
@@ -570,350 +588,12 @@ bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
             uint32_t classIndex = static_cast<uint32_t>(pageNum * PageSize + i);
             memory.setClassAtIndex(classIndex, classOop);
             totalClasses++;
-
-            // Debug: log class 3075 (UndefinedObject) registration
-            if (classIndex == 3075) {
-                std::cerr << "[CLASS-TABLE] Registered UndefinedObject at index 3075: 0x"
-                          << std::hex << classOop.rawBits() << std::dec << "\n";
-            }
         }
     }
 
-    std::cerr << "[CLASS-TABLE] Registered " << totalClasses << " classes from pages\n";
-
-    // Debug: check if key classes are registered
-    Oop class3075 = memory.classAtIndex(3075);
-    std::cerr << "[CLASS-TABLE] Class 3075 (UndefinedObject): "
-              << (class3075.isNil() ? "NIL" : "registered")
-              << " 0x" << std::hex << class3075.rawBits() << std::dec << "\n";
-
-    // Check class 1 (Association)
-    Oop class1 = memory.classAtIndex(1);
-    std::cerr << "[CLASS-TABLE] Class 1: "
-              << (class1.isNil() ? "NIL" : (class1.rawBits() == memory.nil().rawBits() ? "NIL-OBJ" : "registered"))
-              << " 0x" << std::hex << class1.rawBits() << std::dec << "\n";
-
-    if (totalClasses > 0) {
-        return true;
-    }
-
-fallback_scan:
-    // In Spur, the layout at start of old space is:
-    //   offset 0x0:  nil object (format 0, 0 slots)
-    //   offset 0x10: false object (format 0, 0 slots)
-    //   offset 0x20: true object (format 0, 0 slots)
-    //   offset 0x30: hiddenRoots array (format 9 = Indexable64)
-    //
-    // hiddenRoots slot 0 -> classTableFirstPage array
-    // classTableFirstPage[N] -> page N (array of ~1024 class pointers)
-
-    // Find the hiddenRoots object at offset 0x30
-    {
-        ObjectHeader* hrHdr = reinterpret_cast<ObjectHeader*>(heapStart + 0x30);
-        auto hrFmt = hrHdr->format();
-        size_t hrSlots = hrHdr->slotCount();
-
-        // hiddenRoots should be format 9 (Indexable64) with slots
-        if (hrFmt != ObjectFormat::Indexable64 || hrSlots < 1) {
-            goto direct_scan;
-        }
-
-        Oop classTableFirstPageOop = hrHdr->slotAt(0);
-
-        // Check for both raw 0 and the actual nil object
-        if (classTableFirstPageOop.rawBits() == 0 || classTableFirstPageOop.rawBits() == nilObj.rawBits() || !classTableFirstPageOop.isObject()) {
-            // Try using hiddenRoots itself as the class table first page
-            for (size_t i = 0; i < hrSlots; i++) {
-                Oop classOop = hrHdr->slotAt(i);
-                // Skip both raw 0 and the actual nil object
-                if (classOop.rawBits() != 0 && classOop.rawBits() != nilObj.rawBits() && classOop.isObject()) {
-                    memory.setClassAtIndex(static_cast<uint32_t>(i), classOop);
-                    totalClasses++;
-                }
-            }
-
-            if (totalClasses > 0) {
-                return true;
-            }
-
-            goto direct_scan;
-        }
-
-        ObjectHeader* classTableFirstPageHdr = classTableFirstPageOop.asObjectPtr();
-        size_t numPages = classTableFirstPageHdr->slotCount();
-
-        // Iterate through each page pointer
-        for (size_t pageNum = 0; pageNum < numPages && pageNum < 20; pageNum++) {
-            Oop pageOop = classTableFirstPageHdr->slotAt(pageNum);
-
-            // Skip both raw 0 and the actual nil object
-            if (pageOop.rawBits() == 0 || pageOop.rawBits() == nilObj.rawBits() || !pageOop.isObject()) {
-                continue;
-            }
-
-            ObjectHeader* pageHdr = pageOop.asObjectPtr();
-            size_t pageSlots = pageHdr->slotCount();
-
-            // Each slot in the page is a class object pointer
-            for (size_t i = 0; i < pageSlots; i++) {
-                Oop classOop = pageHdr->slotAt(i);
-
-                if (classOop.isNil() || classOop.rawBits() == nilObj.rawBits()) {
-                    continue;
-                }
-
-                if (classOop.isObject()) {
-                    uint32_t classIndex = static_cast<uint32_t>(pageNum * PageSize + i);
-                    memory.setClassAtIndex(classIndex, classOop);
-                    totalClasses++;
-                }
-            }
-        }
-
-        return true;
-    }
-
-direct_scan:
-
-    // Alternative approach: For each object in the heap, register its class
-    // if we can find the actual class object. This builds the class table
-    // incrementally by finding all class objects.
-    //
-    // In Spur, classes are objects with:
-    //   - Format 1 (FixedSize)
-    //   - 12-16 slots typically
-    //   - Their metaclass index is in range 3000-5000
-
-    // First, let's find all objects that LOOK like classes
-    std::map<uint32_t, Oop> foundClasses;
-
-    uint8_t* scanPtr = heapStart;
-    uint8_t* scanEnd = memory.oldSpaceEnd();
-    size_t scanned = 0;
-    size_t classesFound = 0;
-
-    // std::cerr << "[DEBUG] Scanning heap for class objects..." << std::endl;
-
-    while (scanPtr < scanEnd && scanned < 2000000) {
-        ObjectHeader* hdr = reinterpret_cast<ObjectHeader*>(scanPtr);
-        uint64_t rawHeader = hdr->rawHeader();
-
-        // Skip zeros
-        if (rawHeader == 0) {
-            scanPtr += 8;
-            continue;
-        }
-
-        auto fmt = hdr->format();
-        size_t slots = hdr->slotCount();
-        uint32_t classIdx = hdr->classIndex();
-        size_t objSize = hdr->totalSize();
-
-        // Skip invalid sizes
-        if (objSize == 0 || objSize > 100 * 1024 * 1024) {
-            scanPtr += 8;
-            continue;
-        }
-
-        // Classes in Pharo have:
-        // - Format 1 (FixedSize) with 12-16 slots
-        // - Metaclass index in range 3000-5000
-        bool looksLikeClass = false;
-        if (fmt == ObjectFormat::FixedSize && slots >= 10 && slots <= 20) {
-            // Check metaclass range
-            if (classIdx >= 3000 && classIdx < 6000) {
-                looksLikeClass = true;
-            }
-        }
-
-        if (looksLikeClass) {
-            // This looks like a class object!
-            // Now we need to find what classIndex this class represents
-            // In Spur, each class stores its class index in a special field
-            //
-            // Typically, slot 0 is superclass, slot 1 is methodDict,
-            // slot 2 is format (which encodes instance format + class index hint)
-
-            // For now, we'll use a different approach:
-            // Find objects that reference this class and see what classIndex they use
-            // Or, find the class in the special objects array
-
-            classesFound++;
-            if (classesFound <= 10) {
-                Oop classOop = memory.oopFromPointer(hdr);
-                // std::cerr << "[DEBUG] Found class-like object at 0x" << std::hex
-                          // << (scanPtr - heapStart) << std::dec
-                          // << " metaclass=" << classIdx << " slots=" << slots << std::endl;
-            }
-        }
-
-        scanPtr += objSize;
-        scanned++;
-    }
-
-    // std::cerr << "[DEBUG] Found " << classesFound << " class-like objects in "
-              // << scanned << " scanned objects" << std::endl;
-
-    // Build class table from special objects and heap scan
-    // Many special objects ARE classes (like SmallInteger class at SO 5)
-    // We need to find what classIndex instances of each class use
-
-    // std::cerr << "[DEBUG] Building class table from special objects and heap..." << std::endl;
-
-    // In Spur, each class object has a "format" field that encodes the instance format
-    // AND the class index for instances of this class.
-    //
-    // Class layout in Pharo:
-    //   slot 0: superclass
-    //   slot 1: methodDict
-    //   slot 2: format (SmallInteger encoding instSpec + class index)
-    //
-    // The class index is stored in the class's identityHash (hash field in header)!
-    // This is how Spur implements the class table - each class's hash = its classIndex
-
-    // Scan all class-like objects and register them using their identity hash
-    // In Spur, each class's identityHash field IS its class table index
-    scanPtr = heapStart;
-    scanned = 0;
-    size_t registeredClasses = 0;
-
-    // Classes in Pharo/Spur typically have:
-    // - Format 0-1 (Fixed size pointer objects)
-    // - At least 8 slots (superclass, methodDict, format, etc.)
-    // - A metaclass as their classIndex (also a class, so typically > 1000)
-    // - An identityHash that becomes their class table index
-    //
-    // We cast a wide net and register anything that looks like a class
-
-    while (scanPtr < scanEnd && scanned < 2000000) {
-        ObjectHeader* hdr = reinterpret_cast<ObjectHeader*>(scanPtr);
-        uint64_t rawHeader = hdr->rawHeader();
-
-        if (rawHeader == 0) {
-            scanPtr += 8;
-            continue;
-        }
-
-        auto fmt = hdr->format();
-        size_t slots = hdr->slotCount();
-        uint32_t metaclassIdx = hdr->classIndex();
-        size_t objSize = hdr->totalSize();
-
-        if (objSize == 0 || objSize > 100 * 1024 * 1024) {
-            scanPtr += 8;
-            continue;
-        }
-
-        // Get identity hash - this is the class table index for class objects
-        uint32_t identHash = hdr->identityHash();
-
-        // Very inclusive class detection:
-        // - Format 0-5 (all pointer object types)
-        // - At least 6 slots (metaclasses have ~6 slots, regular classes have 12+)
-        // - identityHash > 0 and < 100000 (valid class index range)
-        // - classIndex (metaclass) > 0 (non-nil class)
-        bool looksLikeClass = (fmt <= ObjectFormat::WeakWithFixed);  // Format 0-5
-        looksLikeClass = looksLikeClass && (slots >= 6);  // No upper limit
-        looksLikeClass = looksLikeClass && (identHash > 0 && identHash < 100000);
-        looksLikeClass = looksLikeClass && (metaclassIdx > 0);
-
-        if (looksLikeClass) {
-            // Only register if not already registered (first occurrence wins)
-            if (memory.classAtIndex(identHash).isNil()) {
-                Oop classOop = memory.oopFromPointer(hdr);
-                memory.setClassAtIndex(identHash, classOop);
-                registeredClasses++;
-            }
-        }
-
-        scanPtr += objSize;
-        scanned++;
-    }
-
-    // Classes registered via heap scan: registeredClasses
-
-    // Try special approach: check special objects that ARE classes
-    // SO 5, 6, 7, 9, etc. should be class objects
-    // std::cerr << "[DEBUG] Checking special objects for classes..." << std::endl;
-    for (int soIdx = 5; soIdx < 20; soIdx++) {
-        Oop specialObj = memory.specialObject(static_cast<SpecialObjectIndex>(soIdx));
-        // Skip both raw 0 and the actual nil object
-        if (specialObj.rawBits() == 0 || specialObj.rawBits() == nilObj.rawBits() || !specialObj.isObject()) continue;
-
-        ObjectHeader* objHdr = specialObj.asObjectPtr();
-        auto soFmt = objHdr->format();
-        size_t soSlots = objHdr->slotCount();
-        uint32_t soMetaclass = objHdr->classIndex();
-        uint32_t soHash = objHdr->identityHash();
-
-        // std::cerr << "[DEBUG] SO " << soIdx << ": fmt=" << static_cast<int>(soFmt)
-                  // << " slots=" << soSlots << " metaclass=" << soMetaclass
-                  // << " identHash=" << soHash << std::endl;
-
-        // If this looks like a class with a reasonable identHash, register it
-        if (soFmt == ObjectFormat::FixedSize && soSlots >= 10 && soHash > 0 && soHash < 10000) {
-            if (memory.classAtIndex(soHash).isNil()) {
-                memory.setClassAtIndex(soHash, specialObj);
-                registeredClasses++;
-                // std::cerr << "[DEBUG] Registered SO " << soIdx << " class at index " << soHash << std::endl;
-            }
-        }
-    }
-
-    // Final fallback: just scan heap and register ALL objects by their classIndex
-    // This gives us at least some class resolution capability
-    // std::cerr << "[DEBUG] Registering class indices from heap objects..." << std::endl;
-
-    scanPtr = heapStart;
-    scanned = 0;
-    std::set<uint32_t> seenClassIndices;
-
-    while (scanPtr < scanEnd && scanned < 100000) {
-        ObjectHeader* hdr = reinterpret_cast<ObjectHeader*>(scanPtr);
-        uint64_t rawHeader = hdr->rawHeader();
-
-        if (rawHeader == 0) {
-            scanPtr += 8;
-            continue;
-        }
-
-        size_t objSize = hdr->totalSize();
-        if (objSize == 0 || objSize > 100 * 1024 * 1024) {
-            scanPtr += 8;
-            continue;
-        }
-
-        uint32_t classIdx = hdr->classIndex();
-        auto fmt = hdr->format();
-        size_t slots = hdr->slotCount();
-
-        // If this object looks like a class, use IT as the class for its metaclass index
-        if (fmt == ObjectFormat::FixedSize && slots >= 10 && slots <= 20 &&
-            classIdx >= 3000 && classIdx < 6000) {
-            // This is a class object. Its classIndex is the METACLASS index.
-            // We need to find what regular class index this class represents.
-
-            // In Spur, each class has a field that stores its hash/index
-            // Slot 5 or so might contain the class identity hash which maps to class index
-            // For now, just record that this classIdx (metaclass) exists
-            seenClassIndices.insert(classIdx);
-        }
-
-        seenClassIndices.insert(classIdx);
-        scanPtr += objSize;
-        scanned++;
-    }
-
-    // std::cerr << "[DEBUG] Found " << seenClassIndices.size() << " unique class indices" << std::endl;
-
-    // Report some statistics about class indices
-    uint32_t minIdx = *seenClassIndices.begin();
-    uint32_t maxIdx = *seenClassIndices.rbegin();
-    // std::cerr << "[DEBUG] Class index range: " << minIdx << " - " << maxIdx << std::endl;
-
-    // DEBUG: Check the test offset after class table setup
-    (void)registeredClasses;  // Suppress unused warning
-    return true;
+    std::cerr << "[CLASS-TABLE] Registered " << totalClasses << " classes from "
+              << numPages << " pages\n";
+    return totalClasses > 0;
 }
 
 // ===== POINTER UTILITIES =====
