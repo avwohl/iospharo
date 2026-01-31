@@ -9532,7 +9532,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                                 int64_t headerBits = headerOop.asSmallInteger();
                                 // needsLargeFrame at bit 15, numTemps at bits 16-23
                                 bool needsLarge = (headerBits >> 15) & 1;
-                                int numTemps = (headerBits >> 16) & 0xFF;
+                                int numTemps = (headerBits >> 18) & 0x3F;
                                 int numArgs = (headerBits >> 24) & 0xF;
                                 frameSize = numTemps + numArgs + (needsLarge ? 60 : 20);
                             }
@@ -13442,7 +13442,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     // Calculate number of temporaries for the new method
     Oop newMethodHeader = memory_.fetchPointer(0, method);
     int64_t headerBits = newMethodHeader.asSmallInteger();
-    int numTemps = (headerBits >> 16) & 0xFF;
+    int numTemps = (headerBits >> 18) & 0x3F;
 
     // New frame pointer is at current position minus args (receiver is first "arg")
     Oop* newFP = stackPointer_ - argCount - 1;  // -1 for receiver position
@@ -14503,7 +14503,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                     if (mhdr.isSmallInteger()) {
                         int64_t hv = mhdr.asSmallInteger();
                         int nLits = hv & 0x7FFF;
-                        int nTemps = (hv >> 16) & 0xFF;
+                        int nTemps = (hv >> 18) & 0x3F;
                         int nArgs = (hv >> 24) & 0xF;
                         std::cerr << "[DNU]   method header: nLits=" << nLits << " nTemps=" << nTemps << " nArgs=" << nArgs << "\n";
                         // Show temps on stack
@@ -16044,7 +16044,7 @@ Oop Interpreter::materializeFrameStack() {
         }
         int64_t headerValue = methodHeader.asSmallInteger();
         int numLiterals = headerValue & 0x7FFF;
-        int numTemps = (headerValue >> 16) & 0xFF;  // Fixed: was using wrong bit offset
+        int numTemps = (headerValue >> 18) & 0x3F;  // Fixed: was using wrong bit offset
         int numArgs = (headerValue >> 24) & 0xF;
 
         // Calculate context size (6 fixed + temps + some stack)
@@ -16209,7 +16209,7 @@ Oop Interpreter::materializeFrameStack() {
         Oop methodHeader = memory_.fetchPointer(0, method_);
         if (methodHeader.isSmallInteger()) {
             int64_t headerValue = methodHeader.asSmallInteger();
-            int numTemps = (headerValue >> 16) & 0xFF;  // Fixed: was using wrong bit offset
+            int numTemps = (headerValue >> 18) & 0x3F;  // Fixed: was using wrong bit offset
 
             size_t contextSize = 6 + numTemps + 32;
             Oop contextClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
@@ -17196,7 +17196,7 @@ void Interpreter::installOSiOSDriver() {
                                                                             if (methHeader.isSmallInteger()) {
                                                                                 int64_t hBits = methHeader.asSmallInteger();
                                                                                 int numLits = hBits & 0x7FFF;
-                                                                                int numTemps = (hBits >> 16) & 0xFF;
+                                                                                int numTemps = (hBits >> 18) & 0x3F;
                                                                                 int numArgs = (hBits >> 24) & 0xF;
                                                                                 int primIdx = (hBits >> 28) & 0x3FF;
                                                                                 fprintf(driverLog, "[DRIVER] setupEventLoop method: lits=%d temps=%d args=%d prim=%d\n",
@@ -19150,7 +19150,7 @@ bool Interpreter::executeFromContext(Oop context) {
 
     int64_t headerBits = methodHeader.asSmallInteger();
     int numLiterals = headerBits & 0x7FFF;  // bits 0-14 are numLiterals
-    int numTemps = (headerBits >> 16) & 0xFF;
+    int numTemps = (headerBits >> 18) & 0x3F;
 
     // Detect bytecode set: sign bit (bit 63) = 0 for V3PlusClosures, 1 for SistaV1
     // In 64-bit Spur, negative header means alternate bytecode set (SistaV1)
