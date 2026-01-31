@@ -2429,6 +2429,40 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
                     fprintf(f, "[basicNew: #%d] current method selector: #%s frameDepth=%zu\n",
                             newArgCallCount, curSel.c_str(), frameDepth_);
                 }
+                // Dump call stack from savedFrames
+                fprintf(f, "[basicNew: #%d] Call stack:\n", newArgCallCount);
+                for (size_t fi = 0; fi < frameDepth_ && fi < 25; fi++) {
+                    size_t idx = frameDepth_ - 1 - fi;
+                    const auto& sf = savedFrames_[idx];
+                    std::string frameSel = "?";
+                    if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                        Oop sfHdr = memory_.fetchPointer(0, sf.savedMethod);
+                        if (sfHdr.isSmallInteger()) {
+                            int64_t hv = sfHdr.asSmallInteger();
+                            int nl = hv & 0x7FFF;
+                            if (nl >= 2 && nl < 100) {
+                                Oop sel = memory_.fetchPointer(nl - 1, sf.savedMethod);
+                                if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                    ObjectHeader* sh = sel.asObjectPtr();
+                                    if (sh->isBytesObject() && sh->byteSize() < 80) {
+                                        frameSel = std::string((char*)sh->bytes(), sh->byteSize());
+                                    }
+                                    // Check if it's an Association (slot 0 = key)
+                                    else if (sh->slotCount() >= 2) {
+                                        Oop key = memory_.fetchPointer(0, sel);
+                                        if (key.isObject() && key.rawBits() > 0x10000) {
+                                            ObjectHeader* kh = key.asObjectPtr();
+                                            if (kh->isBytesObject() && kh->byteSize() < 80) {
+                                                frameSel = std::string((char*)kh->bytes(), kh->byteSize());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    fprintf(f, "  [%zu] #%s\n", fi, frameSel.c_str());
+                }
                 fclose(f);
             }
         }
@@ -14299,9 +14333,20 @@ static constexpr int64_t SmalltalkEpochOffsetMicroseconds = SmalltalkEpochOffset
 PrimitiveResult Interpreter::primitiveSignalAtUTCMicroseconds(int argCount) {
     static int p242entry = 0;
     p242entry++;
-    if (p242entry <= 20) {
+    {
         static FILE* tlog = fopen("/tmp/prim242_timer.log", "a");
-        if (tlog) { fprintf(tlog, "[PRIM242-ENTRY #%d] argCount=%d\n", p242entry, argCount); fflush(tlog); }
+        if (tlog) {
+            fprintf(tlog, "[PRIM242-ENTRY #%d] argCount=%d", p242entry, argCount);
+            if (argCount >= 2) {
+                Oop u = stackTop();
+                Oop s = stackValue(1);
+                fprintf(tlog, " usecs=%s sema=0x%llx",
+                        u.isSmallInteger() ? std::to_string(u.asSmallInteger()).c_str() : "large",
+                        (unsigned long long)s.rawBits());
+            }
+            fprintf(tlog, "\n");
+            fflush(tlog);
+        }
     }
     if (argCount != 2) return PrimitiveResult::Failure;
 

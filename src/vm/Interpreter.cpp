@@ -2072,9 +2072,16 @@ void Interpreter::interpret() {
 
 void Interpreter::checkTimerSemaphore() {
     static int callCount242 = 0;
-    if (callCount242++ == 0) {
+    callCount242++;
+    if (callCount242 == 1) {
         fprintf(stderr, "[TIMER-FUNC] checkTimerSemaphore first call, this=%p &usec=%p usec=%lld\n",
                 (void*)this, (void*)&nextWakeupUsec_, nextWakeupUsec_);
+    }
+    // Periodic check: is the timer still armed?
+    if (callCount242 == 50000 || callCount242 == 100000 || callCount242 == 500000 || callCount242 == 1000000) {
+        fprintf(stderr, "[TIMER-PERIODIC calls=%d] usec=%lld isMax=%d semaIsNil=%d\n",
+                callCount242, nextWakeupUsec_, nextWakeupUsec_ == INT64_MAX ? 1 : 0,
+                timerSemaphore_.isNil() ? 1 : 0);
     }
     // Check microsecond timer (primitive 242 - used by DelaySemaphoreScheduler)
     // Trace when usec timer is set
@@ -2097,7 +2104,8 @@ void Interpreter::checkTimerSemaphore() {
         int64_t currentUsec = unixUsec + kSmalltalkEpochOffset;
 
         static int usecCheckCount = 0;
-        if (usecCheckCount++ < 5) {
+        usecCheckCount++;
+        if (usecCheckCount <= 50 || usecCheckCount % 1000 == 0) {
             fprintf(stderr, "[TIMER-USEC-CHK #%d] current=%lld target=%lld delta=%lldms\n",
                     usecCheckCount, currentUsec, nextWakeupUsec_,
                     (nextWakeupUsec_ - currentUsec) / 1000);
@@ -5485,22 +5493,51 @@ void Interpreter::shortJumpIfTrue(int offset) {
 void Interpreter::shortJumpIfFalse(int offset) {
     Oop value = pop();
 
-    // TRACE: Conditional jumps for detect:ifNone: investigation
-    // Use global flag triggered by IS-ACTIVE returning TRUE
+    // Log non-boolean values in conditional jumps (these cause silent loop exits)
     {
-        static int jifTraceCount = 0;
-        extern bool g_traceDetectJumps;  // Set when isActivePlatform returns TRUE
-        if (g_traceDetectJumps && jifTraceCount < 30) {
-            bool isT = (value.rawBits() == memory_.trueObject().rawBits());
-            bool isF = (value.rawBits() == memory_.falseObject().rawBits());
-            jifTraceCount++;
-            if (isT) {
-                std::cerr << "[JIF-DETECT #" << jifTraceCount << "] shortJumpIfFalse: TRUE, NOT jumping (offset=" << offset << ") frame=" << frameDepth_ << "\n";
-            } else if (isF) {
-                std::cerr << "[JIF-DETECT #" << jifTraceCount << "] shortJumpIfFalse: FALSE, jumping (offset=" << offset << ") frame=" << frameDepth_ << "\n";
-            } else {
-                std::cerr << "[JIF-DETECT #" << jifTraceCount << "] shortJumpIfFalse: UNKNOWN 0x" << std::hex << value.rawBits() << std::dec << ", treating as false, frame=" << frameDepth_ << "\n";
+        static FILE* condLog = nullptr;
+        static int condLogCount = 0;
+        if constexpr (ENABLE_DEBUG_LOGGING) {
+            if (!condLog) condLog = fopen("/tmp/conditional_jumps.log", "w");
+        }
+        bool isT = (value.rawBits() == memory_.trueObject().rawBits());
+        bool isF = (value.rawBits() == memory_.falseObject().rawBits());
+        if (condLog && !isT && !isF && condLogCount < 200) {
+            condLogCount++;
+            std::string valDesc = "?";
+            if (value.isSmallInteger()) valDesc = "SI(" + std::to_string(value.asSmallInteger()) + ")";
+            else if (value.rawBits() == memory_.nil().rawBits()) valDesc = "nil";
+            else if (value.isObject() && value.rawBits() > 0x10000) {
+                Oop cls = memory_.classOf(value);
+                if (cls.isObject()) {
+                    Oop cn = memory_.fetchPointer(6, cls);
+                    if (cn.isObject() && cn.rawBits() > 0x10000) {
+                        ObjectHeader* cnH = cn.asObjectPtr();
+                        if (cnH->isBytesObject() && cnH->byteSize() < 50)
+                            valDesc = std::string((char*)cnH->bytes(), cnH->byteSize());
+                    }
+                }
             }
+            // Get current method selector
+            std::string mSel = "?";
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                Oop mh = memory_.fetchPointer(0, method_);
+                if (mh.isSmallInteger()) {
+                    int nl = mh.asSmallInteger() & 0x7FFF;
+                    if (nl >= 2 && nl < 100) {
+                        Oop s = memory_.fetchPointer(nl - 1, method_);
+                        if (s.isObject() && s.rawBits() > 0x10000) {
+                            ObjectHeader* sH = s.asObjectPtr();
+                            if (sH->isBytesObject() && sH->byteSize() < 100)
+                                mSel = std::string((char*)sH->bytes(), sH->byteSize());
+                        }
+                    }
+                }
+            }
+            fprintf(condLog, "[JIF-NONBOOL #%d step=%lld] value=0x%llx (%s) in #%s offset=%d\n",
+                    condLogCount, (long long)g_stepNum, (unsigned long long)value.rawBits(),
+                    valDesc.c_str(), mSel.c_str(), offset);
+            fflush(condLog);
         }
     }
 
@@ -5527,8 +5564,55 @@ void Interpreter::longJumpIfTrue() {
 void Interpreter::longJumpIfFalse() {
     int16_t offset = static_cast<int16_t>(fetchTwoBytes());
     Oop value = pop();
+
+    // Log non-boolean values in long conditional jumps
+    {
+        static FILE* condLog = nullptr;
+        static int condLogCount = 0;
+        if constexpr (ENABLE_DEBUG_LOGGING) {
+            if (!condLog) condLog = fopen("/tmp/long_conditional_jumps.log", "w");
+        }
+        bool isT = (value.rawBits() == memory_.trueObject().rawBits());
+        bool isF = (value.rawBits() == memory_.falseObject().rawBits());
+        if (condLog && !isT && !isF && condLogCount < 200) {
+            condLogCount++;
+            std::string valDesc = "?";
+            if (value.isSmallInteger()) valDesc = "SI(" + std::to_string(value.asSmallInteger()) + ")";
+            else if (value.rawBits() == memory_.nil().rawBits()) valDesc = "nil";
+            else if (value.isObject() && value.rawBits() > 0x10000) {
+                Oop cls = memory_.classOf(value);
+                if (cls.isObject()) {
+                    Oop cn = memory_.fetchPointer(6, cls);
+                    if (cn.isObject() && cn.rawBits() > 0x10000) {
+                        ObjectHeader* cnH = cn.asObjectPtr();
+                        if (cnH->isBytesObject() && cnH->byteSize() < 50)
+                            valDesc = std::string((char*)cnH->bytes(), cnH->byteSize());
+                    }
+                }
+            }
+            std::string mSel = "?";
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                Oop mh = memory_.fetchPointer(0, method_);
+                if (mh.isSmallInteger()) {
+                    int nl = mh.asSmallInteger() & 0x7FFF;
+                    if (nl >= 2 && nl < 100) {
+                        Oop s = memory_.fetchPointer(nl - 1, method_);
+                        if (s.isObject() && s.rawBits() > 0x10000) {
+                            ObjectHeader* sH = s.asObjectPtr();
+                            if (sH->isBytesObject() && sH->byteSize() < 100)
+                                mSel = std::string((char*)sH->bytes(), sH->byteSize());
+                        }
+                    }
+                }
+            }
+            fprintf(condLog, "[LJIF-NONBOOL #%d step=%lld] value=0x%llx (%s) in #%s offset=%d\n",
+                    condLogCount, (long long)g_stepNum, (unsigned long long)value.rawBits(),
+                    valDesc.c_str(), mSel.c_str(), offset);
+            fflush(condLog);
+        }
+    }
+
     if (!isTrue(value)) {
-        // Jump if false OR if non-boolean (treat non-booleans as false)
         instructionPointer_ += offset;
     }
 }
@@ -6934,7 +7018,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     static FILE* sendTraceLog = nullptr;
     static FILE* driverSendLog = nullptr;
     // Trace sends during driver install (steps 100K-500K) to a separate log
-    bool traceDriverSend = (g_stepNum >= 100000 && g_stepNum <= 500000);
+    bool traceDriverSend = (g_stepNum >= 100000 && g_stepNum <= 1000000);
     if (traceDriverSend && !driverSendLog) {
         driverSendLog = fopen("/tmp/driver_sends.log", "w");
     }
@@ -6962,8 +7046,38 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 }
             }
         }
-        fprintf(driverSendLog, "[step %llu] %s >> #%s (args=%d)\n",
-                g_stepNum, dbgRcvrClass.c_str(), selStr.c_str(), argCount);
+        // For steps around UIProcess termination, also log active process
+        if (g_stepNum >= 350400 && g_stepNum <= 350600) {
+            Oop ap = getActiveProcess();
+            fprintf(driverSendLog, "[step %llu proc=0x%llx] %s >> #%s (args=%d)\n",
+                    g_stepNum, (unsigned long long)ap.rawBits(), dbgRcvrClass.c_str(), selStr.c_str(), argCount);
+            // If sending #value to ProcessorScheduler, dump context details
+            if (selStr == "value" && dbgRcvrClass == "ProcessorScheduler") {
+                fprintf(driverSendLog, "  *** SUSPICIOUS: #value sent to ProcessorScheduler! ***\n");
+                fprintf(driverSendLog, "  receiver oop=0x%llx\n", (unsigned long long)dbgRcvr.rawBits());
+                // Dump the current method's context
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    Oop mhdr = memory_.fetchPointer(0, method_);
+                    if (mhdr.isSmallInteger()) {
+                        int64_t hv = mhdr.asSmallInteger();
+                        int nLits = hv & 0x7FFF;
+                        if (nLits >= 2 && nLits < 100) {
+                            Oop selLit = memory_.fetchPointer(nLits, method_);
+                            if (selLit.isObject() && selLit.rawBits() > 0x10000) {
+                                ObjectHeader* slH = selLit.asObjectPtr();
+                                if (slH->isBytesObject() && slH->byteSize() < 200) {
+                                    std::string ms((char*)slH->bytes(), slH->byteSize());
+                                    fprintf(driverSendLog, "  currentMethod selector: #%s\n", ms.c_str());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            fprintf(driverSendLog, "[step %llu] %s >> #%s (args=%d)\n",
+                    g_stepNum, dbgRcvrClass.c_str(), selStr.c_str(), argCount);
+        }
         fflush(driverSendLog);
     }
     bool traceThisSend = (g_stepNum >= 162000 && g_stepNum <= 163000);
@@ -13915,8 +14029,8 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                     }
                 }
             }
-            fprintf(dnuLog, "[DNU #%d] receiver=%s selector='%s'%s%s argCount=%d\n",
-                    dnuCount, rcvrCls.c_str(), selStr.c_str(),
+            fprintf(dnuLog, "[DNU #%d step=%llu] receiver=%s selector='%s'%s%s argCount=%d\n",
+                    dnuCount, (unsigned long long)g_stepNum, rcvrCls.c_str(), selStr.c_str(),
                     selHex.empty() ? "" : " hex=", selHex.c_str(), argCount);
             fflush(dnuLog);
         }
@@ -15151,8 +15265,8 @@ void Interpreter::terminateCurrentProcess() {
         // Get priority
         Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
         int prio = prioOop.isSmallInteger() ? static_cast<int>(prioOop.asSmallInteger()) : -1;
-        fprintf(termLog, "[TERMINATE #%d] process=0x%llx priority=%d oldSuspendedContext=0x%llx\n",
-                termCount, (unsigned long long)activeProcess.rawBits(), prio,
+        fprintf(termLog, "[TERMINATE #%d step=%lld] process=0x%llx priority=%d oldSuspendedContext=0x%llx\n",
+                termCount, (long long)g_stepNum, (unsigned long long)activeProcess.rawBits(), prio,
                 (unsigned long long)suspendedCtx.rawBits());
         fflush(termLog);
     }
@@ -15672,8 +15786,8 @@ void Interpreter::transferTo(Oop newProcess) {
     }
 
     if (xferLog && xferCount <= 100) {
-        fprintf(xferLog, "[XFER #%d] old=0x%llx new=0x%llx\n",
-                xferCount, (unsigned long long)oldProcess.rawBits(),
+        fprintf(xferLog, "[XFER #%d step=%lld] old=0x%llx new=0x%llx\n",
+                xferCount, (long long)g_stepNum, (unsigned long long)oldProcess.rawBits(),
                 (unsigned long long)newProcess.rawBits());
         // Get the method selector from newProcess's suspendedContext
         Oop newContext = memory_.fetchPointer(ProcessSuspendedContextIndex, newProcess);
@@ -18674,6 +18788,116 @@ bool Interpreter::executeFromContext(Oop context) {
     }
 
     argCount_ = 0;  // We're resuming a context, not calling a method
+
+    // Debug: dump context restore for doOneCycleWhile: to investigate UIProcess termination
+    {
+        static FILE* docwLog = nullptr;
+        if constexpr (ENABLE_DEBUG_LOGGING) {
+            if (!docwLog) docwLog = fopen("/tmp/doOneCycleWhile_restore.log", "w");
+        }
+        if (docwLog && numLiterals >= 2 && numLiterals < 100) {
+            Oop sel = memory_.fetchPointer(numLiterals - 1, method_);
+            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                ObjectHeader* selH = sel.asObjectPtr();
+                if (selH->isBytesObject() && selH->byteSize() < 50) {
+                    std::string selName((char*)selH->bytes(), selH->byteSize());
+                    if (selName == "doOneCycleWhile:") {
+                        fprintf(docwLog, "[DOCW step=%lld] Restoring context 0x%llx, stackp=%d numTemps=%d header=0x%llx numLits=%d\n",
+                                (long long)g_stepNum, (unsigned long long)context.rawBits(), stackp, numTemps,
+                                (unsigned long long)headerBits, numLiterals);
+                        // Dump the restored frame: FP[0]=receiver, FP[1+t]=temps
+                        for (int t = 0; t < std::min(stackp, 10); t++) {
+                            Oop item = *(framePointer_ + 1 + t);
+                            std::string itemDesc = "?";
+                            if (item.rawBits() == memory_.trueObject().rawBits()) itemDesc = "TRUE";
+                            else if (item.rawBits() == memory_.falseObject().rawBits()) itemDesc = "FALSE";
+                            else if (item.rawBits() == memory_.nil().rawBits()) itemDesc = "nil";
+                            else if (item.isSmallInteger()) itemDesc = "SI(" + std::to_string(item.asSmallInteger()) + ")";
+                            else if (item.isObject() && item.rawBits() > 0x10000) {
+                                Oop cls = memory_.classOf(item);
+                                if (cls.isObject()) {
+                                    Oop cn = memory_.fetchPointer(6, cls);
+                                    if (cn.isObject() && cn.rawBits() > 0x10000) {
+                                        ObjectHeader* cnH = cn.asObjectPtr();
+                                        if (cnH->isBytesObject() && cnH->byteSize() < 50) {
+                                            itemDesc = std::string((char*)cnH->bytes(), cnH->byteSize());
+                                        }
+                                    }
+                                }
+                            }
+                            fprintf(docwLog, "  temp[%d] = 0x%llx (%s)\n", t,
+                                    (unsigned long long)item.rawBits(), itemDesc.c_str());
+                        }
+                        // Also dump context slot 6 directly
+                        Oop slot6 = memory_.fetchPointer(6, context);
+                        std::string s6Desc = "?";
+                        if (slot6.rawBits() == memory_.trueObject().rawBits()) s6Desc = "TRUE";
+                        else if (slot6.isObject() && slot6.rawBits() > 0x10000) {
+                            Oop cls = memory_.classOf(slot6);
+                            if (cls.isObject()) {
+                                Oop cn = memory_.fetchPointer(6, cls);
+                                if (cn.isObject() && cn.rawBits() > 0x10000) {
+                                    ObjectHeader* cnH = cn.asObjectPtr();
+                                    if (cnH->isBytesObject() && cnH->byteSize() < 50) {
+                                        s6Desc = std::string((char*)cnH->bytes(), cnH->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                        fprintf(docwLog, "  context.slot[6] = 0x%llx (%s)\n",
+                                (unsigned long long)slot6.rawBits(), s6Desc.c_str());
+                        fprintf(docwLog, "  PC=%lld bytecodeStart=%zu method_=0x%llx\n",
+                                savedPC.isSmallInteger() ? savedPC.asSmallInteger() : -1, bytecodeStart,
+                                (unsigned long long)method_.rawBits());
+                        // Dump all bytecodes
+                        {
+                            ObjectHeader* mObj = method_.asObjectPtr();
+                            uint8_t* mBytes = mObj->bytes();
+                            size_t mSize = mObj->byteSize();
+                            fprintf(docwLog, "  bytecodes:");
+                            for (size_t b = bytecodeStart; b < std::min(bytecodeStart + 30, mSize); b++) {
+                                fprintf(docwLog, " %02x", mBytes[b]);
+                            }
+                            fprintf(docwLog, "\n");
+                        }
+                        // Dump all literals
+                        for (int l = 0; l < numLiterals && l < 8; l++) {
+                            Oop lit = memory_.fetchPointer(1 + l, method_);
+                            std::string litDesc = "?";
+                            if (lit.rawBits() == memory_.trueObject().rawBits()) litDesc = "true";
+                            else if (lit.rawBits() == memory_.falseObject().rawBits()) litDesc = "false";
+                            else if (lit.rawBits() == memory_.nil().rawBits()) litDesc = "nil";
+                            else if (lit.isSmallInteger()) litDesc = "SI(" + std::to_string(lit.asSmallInteger()) + ")";
+                            else if (lit.isObject() && lit.rawBits() > 0x10000) {
+                                ObjectHeader* lH = lit.asObjectPtr();
+                                if (lH->isBytesObject() && lH->byteSize() < 100) {
+                                    litDesc = "'" + std::string((char*)lH->bytes(), lH->byteSize()) + "'";
+                                } else {
+                                    Oop cls = memory_.classOf(lit);
+                                    if (cls.isObject()) {
+                                        Oop cn = memory_.fetchPointer(6, cls);
+                                        if (cn.isObject() && cn.rawBits() > 0x10000) {
+                                            ObjectHeader* cnH = cn.asObjectPtr();
+                                            if (cnH->isBytesObject() && cnH->byteSize() < 50)
+                                                litDesc = std::string((char*)cnH->bytes(), cnH->byteSize());
+                                        }
+                                    }
+                                }
+                            }
+                            fprintf(docwLog, "  literal[%d] = 0x%llx (%s)\n", l,
+                                    (unsigned long long)lit.rawBits(), litDesc.c_str());
+                        }
+                        // Dump closure slot
+                        Oop closureSlot = memory_.fetchPointer(4, context);
+                        fprintf(docwLog, "  context.closure(slot4) = 0x%llx (%s)\n",
+                                (unsigned long long)closureSlot.rawBits(),
+                                (closureSlot.rawBits() == memory_.nil().rawBits()) ? "nil" : "non-nil");
+                        fflush(docwLog);
+                    }
+                }
+            }
+        }
+    }
 
     // If resuming from snapshot, we need to configure the return value correctly.
     // Pharo SnapshotOperation checks:
