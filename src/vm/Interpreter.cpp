@@ -15695,15 +15695,62 @@ Oop Interpreter::materializeFrameStack() {
         memory_.storePointer(4, context, memory_.nil());                    // closureOrNil
         memory_.storePointer(5, context, frame.savedReceiver);              // receiver
 
-        // Copy temps from stack
-        // The saved FP points to the receiver; temps start at savedFP + 1
-        // (same layout as framePointer_: FP[0]=receiver, FP[1]=temp0, etc.)
+        // Copy temps AND expression stack items from the inline stack.
+        // The saved FP points to the receiver; temps start at savedFP + 1.
+        // Expression stack items sit above the temps, ending just before the
+        // next frame's receiver (or the current frame's FP for the last saved frame).
         int savedCount = 0;
-        if (frame.savedFP != nullptr && numTemps > 0) {
+        if (frame.savedFP != nullptr) {
+            // Save temps
             for (int t = 0; t < numTemps && t < 32; t++) {
-                Oop temp = *(frame.savedFP + 1 + t);  // +1 to skip receiver
+                Oop temp = *(frame.savedFP + 1 + t);
                 memory_.storePointer(6 + t, context, temp);
                 savedCount++;
+            }
+
+            // Save expression stack items above the temps.
+            // The expression stack ends where the next frame's receiver starts.
+            // For frame i, the next frame's FP (savedFrames[i+1].savedFP for i < frameDepth_-1,
+            // or the current framePointer_ for the last saved frame) points to the next frame's
+            // receiver. But the receiver and args of the next call were pushed BY this frame,
+            // so they should NOT be saved (they're consumed by the send).
+            // The next frame has numArgs_next arguments, so the receiver+args occupy
+            // (numArgs_next + 1) slots. Expression items = everything between our temps
+            // and those receiver+args.
+            Oop* exprStart = frame.savedFP + 1 + numTemps;
+            Oop* nextFrameStart;
+            int nextArgCount;
+            if (i + 1 < frameDepth_) {
+                nextFrameStart = savedFrames_[i + 1].savedFP;
+                // The next frame's argCount is savedFrames[i+1].savedArgCount?
+                // No, savedArgCount stores the CALLER's argCount. We need the callee's argCount.
+                // The callee's argCount is encoded in the next frame's method header.
+                Oop nextMethodHdr = memory_.fetchPointer(0, savedFrames_[i + 1].savedMethod);
+                nextArgCount = nextMethodHdr.isSmallInteger()
+                    ? static_cast<int>((nextMethodHdr.asSmallInteger() >> 24) & 0xF) : 0;
+            } else {
+                // Last saved frame: the "next frame" is the current executing frame
+                nextFrameStart = framePointer_;
+                nextArgCount = argCount_;
+            }
+            // The callee's receiver + args occupy (nextArgCount + 1) slots ending at nextFrameStart
+            // Expression items are from exprStart to (nextFrameStart - nextArgCount - 1)
+            Oop* exprEnd = nextFrameStart - nextArgCount - 1;  // -1 for receiver
+            // Actually, nextFrameStart IS the receiver position, so items from
+            // nextFrameStart-nextArgCount to nextFrameStart are the args.
+            // Wait: receiver is at nextFrameStart[0], args at nextFrameStart[1..argCount].
+            // No — the stack grows UP: receiver is pushed first, then args.
+            // So receiver is at the LOWEST address, args above.
+            // nextFrameStart = receiver position = stackPointer_old - argCount - 1
+            // The receiver+args start at nextFrameStart and span (argCount+1) slots.
+            // Expression items are BELOW the receiver: from exprStart to nextFrameStart.
+            Oop* exprEndPtr = nextFrameStart;  // expression ends before callee receiver
+            if (exprEndPtr > exprStart && (exprEndPtr - exprStart) < 100) {
+                ptrdiff_t exprCount = exprEndPtr - exprStart;
+                for (ptrdiff_t e = 0; e < exprCount; e++) {
+                    memory_.storePointer(6 + numTemps + e, context, *(exprStart + e));
+                    savedCount++;
+                }
             }
         } else {
             // Initialize temps to nil
@@ -15713,7 +15760,7 @@ Oop Interpreter::materializeFrameStack() {
             }
         }
 
-        // Set stackp to actual number of items saved (not numTemps + 5!)
+        // Set stackp to actual number of items saved
         memory_.storePointer(2, context, Oop::fromSmallInteger(savedCount)); // stackp
 
         // This context becomes the sender for the next frame
