@@ -2753,10 +2753,26 @@ bool Interpreter::step() {
         int activePriority = activePriorityOop.isSmallInteger() ?
                             static_cast<int>(activePriorityOop.asSmallInteger()) : 0;
 
-        // Try to find a process at a LOWER priority to give it a chance
-        // This implements cooperative time-slicing
-        Oop nextProcess = wakeLowerPriorityProcess(activePriority);
+        // Standard VM behavior: yield to same-priority process (round-robin time-slicing)
+        // NEVER preempt to a lower-priority process — that violates scheduling invariants
         Oop nilObj = memory_.nil();
+        Oop nextProcess = nilObj;
+
+        // Check if there's another process at the SAME priority
+        {
+            Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
+            Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
+            Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
+            if (activePriority > 0 && activePriority <= static_cast<int>(schedLists.asObjectPtr()->slotCount())) {
+                Oop processList = memory_.fetchPointer(activePriority - 1, schedLists);
+                Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, processList);
+                if (first.isObject() && first.rawBits() != nilObj.rawBits() &&
+                    first.rawBits() != activeProcess.rawBits()) {
+                    nextProcess = removeFirstLinkOfList(processList);
+                }
+            }
+        }
+
         bool foundProcess = nextProcess.isObject() &&
                            nextProcess.rawBits() != nilObj.rawBits() &&
                            nextProcess.rawBits() != activeProcess.rawBits();
@@ -13350,8 +13366,9 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     Oop* newFP = stackPointer_ - argCount - 1;  // -1 for receiver position
     framePointer_ = newFP;
 
-    // Initialize temporaries to nil
-    for (int i = 0; i < numTemps; ++i) {
+    // Initialize temporaries to nil (numTemps includes args, which are already on stack)
+    int numExtraTemps = numTemps - argCount;
+    for (int i = 0; i < numExtraTemps; ++i) {
         push(memory_.nil());
     }
 
@@ -14193,6 +14210,27 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
             for (size_t fi = 0; fi < frameDepth_ && fi < 8; fi++) {
                 Oop savedMethod = savedFrames_[fi].savedMethod;
                 std::cerr << "[DNU]   frame[" << fi << "] #" << getSelName(savedMethod) << "\n";
+            }
+            // At fd=0, dump sender chain and receiver details to diagnose process switch corruption
+            if (frameDepth_ == 0 && dnuLogCount <= 20) {
+                std::cerr << "[DNU]   receiver=0x" << std::hex << receiver_.rawBits()
+                          << " method=0x" << method_.rawBits() << std::dec << "\n";
+                std::cerr << "[DNU]   activeContext=0x" << std::hex << activeContext_.rawBits() << std::dec << "\n";
+                // Walk sender chain
+                Oop ctx = activeContext_;
+                for (int ci = 0; ci < 5 && ctx.isObject() && ctx.rawBits() > 0x10000; ci++) {
+                    ObjectHeader* ch = ctx.asObjectPtr();
+                    if (ch->slotCount() < 6) break;
+                    Oop ctxRcvr = memory_.fetchPointer(5, ctx);
+                    Oop ctxSender = memory_.fetchPointer(0, ctx);
+                    Oop ctxStackp = memory_.fetchPointer(2, ctx);
+                    std::cerr << "[DNU]   sender[" << ci << "] ctx=0x" << std::hex << ctx.rawBits()
+                              << " method=#" << getSelName(memory_.fetchPointer(3, ctx))
+                              << " rcvr=0x" << ctxRcvr.rawBits()
+                              << " stackp=" << std::dec << (ctxStackp.isSmallInteger() ? ctxStackp.asSmallInteger() : -1)
+                              << " sender=0x" << std::hex << ctxSender.rawBits() << std::dec << "\n";
+                    ctx = ctxSender;
+                }
             }
         }
     }
