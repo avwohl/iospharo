@@ -4205,6 +4205,7 @@ void Interpreter::pushReceiverVariable(int index) {
 
 void Interpreter::pushTemporary(int index) {
     Oop temp = temporary(index);
+
     // Trace nil temp pushes to understand value: with nil args
     if constexpr (ENABLE_DEBUG_LOGGING) {
         static FILE* nilTempLog = nullptr;
@@ -12544,6 +12545,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         fprintf(activateLog, "[ACTIVATE step=%llu] Before pushFrame\n", g_stepNum);
         fflush(activateLog);
     }
+
     if (!pushFrame(method, argCount)) {
         // pushFrame detected recursion and already handled it
         if (traceActivate && activateLog) {
@@ -12552,6 +12554,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         }
         return;
     }
+
     if (traceActivate && activateLog) {
         fprintf(activateLog, "[ACTIVATE step=%llu] After pushFrame\n", g_stepNum);
         fflush(activateLog);
@@ -12818,16 +12821,13 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     }
     } // end if constexpr (ENABLE_DEBUG_LOGGING)
 
-    // FIX: Create a context for this method activation so blocks can capture correct receiver
-    // Without this, activeContext_ stays stale and blocks get wrong 'self'
-    Oop newContext = memory_.createStartupContext(method, receiver_);
-    if (!newContext.isNil()) {
-        // Link to previous context
-        if (activeContext_.isObject() && !activeContext_.isNil()) {
-            memory_.storePointer(0, newContext, activeContext_);  // sender
-        }
-        activeContext_ = newContext;
-    }
+    // NOTE: Previously had a createStartupContext() call here that created a FAKE
+    // context for the caller's method with all-nil temps. This caused the ensure: DNU
+    // on nil in doDrawCycleWith: because when a process switch materialized frames,
+    // this fake context (with nil args/temps) ended up in the sender chain. When restored
+    // via executeFromContext, temp[0] (aBlock) was nil.
+    // The activeContext_ should remain as-is; it's maintained by the normal
+    // materializeFrameStack/executeFromContext path.
 
     // Set instruction pointer to start of bytecodes
     ObjectHeader* methodObj = method_.asObjectPtr();
@@ -15767,10 +15767,28 @@ Oop Interpreter::materializeFrameStack() {
         // Expression stack items sit above the temps, ending just before the
         // next frame's receiver (or the current frame's FP for the last saved frame).
         int savedCount = 0;
+        // Check if this is doDrawCycleWith: for debugging
+        bool isDrawCycle = false;
+        if (numLiterals >= 3) {
+            Oop sel = memory_.fetchPointer(numLiterals - 1, frame.savedMethod);
+            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                ObjectHeader* selH = sel.asObjectPtr();
+                if (selH->isBytesObject() && selH->byteSize() == 18) {
+                    std::string sn((char*)selH->bytes(), 18);
+                    if (sn == "doDrawCycleWith:") isDrawCycle = true;
+                }
+            }
+        }
         if (frame.savedFP != nullptr) {
             // Save temps
             for (int t = 0; t < numTemps && t < 32; t++) {
                 Oop temp = *(frame.savedFP + 1 + t);
+                if (isDrawCycle && matLog) {
+                    fprintf(matLog, "[MAT-DRAW] Frame %zu temp[%d] = 0x%llx%s\n",
+                            i, t, (unsigned long long)temp.rawBits(),
+                            temp.rawBits() == memory_.nil().rawBits() ? " (NIL!)" : "");
+                    fflush(matLog);
+                }
                 memory_.storePointer(6 + t, context, temp);
                 savedCount++;
             }
@@ -15812,6 +15830,12 @@ Oop Interpreter::materializeFrameStack() {
             // The receiver+args start at nextFrameStart and span (argCount+1) slots.
             // Expression items are BELOW the receiver: from exprStart to nextFrameStart.
             Oop* exprEndPtr = nextFrameStart;  // expression ends before callee receiver
+            if (isDrawCycle && matLog) {
+                fprintf(matLog, "[MAT-DRAW] Frame %zu: savedFP=%p numTemps=%d exprStart=%p exprEnd=%p count=%ld\n",
+                        i, (void*)frame.savedFP, numTemps, (void*)exprStart, (void*)exprEndPtr,
+                        (long)(exprEndPtr - exprStart));
+                fflush(matLog);
+            }
             if (exprEndPtr > exprStart && (exprEndPtr - exprStart) < 100) {
                 ptrdiff_t exprCount = exprEndPtr - exprStart;
                 for (ptrdiff_t e = 0; e < exprCount; e++) {
