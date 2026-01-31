@@ -51,6 +51,8 @@ static bool g_bytecodeTraceEnabled = false;
 static int g_bytecodeTraceCount = 0;
 static FILE* g_bytecodeTraceLog = nullptr;
 uint64_t g_stepNum = 0;  // Global step counter for hang debugging (non-static for use in Primitives.cpp)
+uint64_t g_docwMethodOop = 0;  // Method OID for doOneCycleWhile: (set by executeFromContext)
+int g_docwRestoreCount = 0;     // How many times doOneCycleWhile: has been restored
 
 // Crash trace: enabled after restoreResumptionTimes: is skipped
 // Disabled now that the crash is fixed
@@ -2889,6 +2891,52 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
     static bool loggedBaseDump = false;
     if constexpr (ENABLE_DEBUG_LOGGING) {
         if (!baseFrameBcLog) baseFrameBcLog = fopen("/tmp/base_fullcheck.log", "w");
+    }
+
+    // Trace doOneCycleWhile: bytecodes to understand loop exit
+    // Uses g_docwMethodOop set by executeFromContext when restoring doOneCycleWhile:
+    {
+        extern uint64_t g_docwMethodOop;
+        extern int g_docwRestoreCount;
+        static FILE* docwBcLog = nullptr;
+        static int docwBcCount = 0;
+        static bool docwTracing = false;
+        if constexpr (ENABLE_DEBUG_LOGGING) {
+            if (!docwBcLog) docwBcLog = fopen("/tmp/doOneCycleWhile_bytecodes.log", "w");
+        }
+        // Start tracing on the second restore of doOneCycleWhile:
+        if (!docwTracing && g_docwRestoreCount >= 2 && g_docwMethodOop != 0 && docwBcLog) {
+            docwTracing = true;
+            g_docwRestoreCount = 0;  // reset so we don't re-trigger
+            fprintf(docwBcLog, "[DOCW-BC step=%lld] === Start tracing ===\n", (long long)g_stepNum);
+            fflush(docwBcLog);
+        }
+        if (docwTracing && docwBcLog && docwBcCount < 500) {
+            docwBcCount++;
+            Oop stackTop = (stackPointer_ > stackBase_) ? *(stackPointer_ - 1) : Oop();
+            std::string topDesc = "empty";
+            if (stackPointer_ > stackBase_) {
+                if (stackTop.rawBits() == memory_.trueObject().rawBits()) topDesc = "TRUE";
+                else if (stackTop.rawBits() == memory_.falseObject().rawBits()) topDesc = "FALSE";
+                else if (stackTop.rawBits() == memory_.nil().rawBits()) topDesc = "nil";
+                else if (stackTop.isSmallInteger()) topDesc = "SI(" + std::to_string(stackTop.asSmallInteger()) + ")";
+                else {
+                    char buf[64]; snprintf(buf, sizeof(buf), "obj:0x%llx", (unsigned long long)stackTop.rawBits());
+                    topDesc = buf;
+                }
+            }
+            bool inDocw = (method_.rawBits() == g_docwMethodOop);
+            fprintf(docwBcLog, "[%d step=%lld fd=%zu %s] bc=0x%02x top=%s sp=%ld\n",
+                    docwBcCount, (long long)g_stepNum, frameDepth_,
+                    inDocw ? "DOCW" : "other", bytecode, topDesc.c_str(),
+                    (long)(stackPointer_ - framePointer_));
+            fflush(docwBcLog);
+            if (inDocw && frameDepth_ == 0 && (bytecode == 0x58 || bytecode == 0x5C)) {
+                fprintf(docwBcLog, "[DOCW-BC] === Method returning, stop trace ===\n");
+                fflush(docwBcLog);
+                docwTracing = false;
+            }
+        }
     }
 
     // Log bytecodes when at frame depth 0
@@ -18776,14 +18824,24 @@ bool Interpreter::executeFromContext(Oop context) {
     // stackp indicates how many slots are valid in the temp/stack area (1-based count)
     // So if stackp=1, there's 1 valid item at slot 6
     // If stackp=5, there are 5 valid items at slots 6,7,8,9,10
-
-    if (stackp > 0) {
-        int numStackItems = stackp;
-        if (numStackItems > 0 && numStackItems < 1000) {
-            for (int i = 0; i < numStackItems; i++) {
-                Oop item = memory_.fetchPointer(ContextFixedFields + i, context);
-                push(item);
-            }
+    //
+    // CRITICAL: We must ensure at least numTemps slots are on the inline stack.
+    // The method's temp area (args + locals) occupies FP[1..numTemps].
+    // The expression stack sits ABOVE the temps at FP[numTemps+1..].
+    // If stackp < numTemps, the context only stored the "live" portion,
+    // but we must still reserve space for all temps so that pops from the
+    // expression stack don't underflow into the temp area.
+    {
+        // First, push the saved items from the context
+        int numSaved = (stackp > 0 && stackp < 1000) ? stackp : 0;
+        for (int i = 0; i < numSaved; i++) {
+            Oop item = memory_.fetchPointer(ContextFixedFields + i, context);
+            push(item);
+        }
+        // If fewer items were saved than numTemps, pad with nil
+        // so that the temp area is fully allocated on the inline stack
+        for (int i = numSaved; i < numTemps; i++) {
+            push(memory_.nil());
         }
     }
 
@@ -18801,7 +18859,12 @@ bool Interpreter::executeFromContext(Oop context) {
                 ObjectHeader* selH = sel.asObjectPtr();
                 if (selH->isBytesObject() && selH->byteSize() < 50) {
                     std::string selName((char*)selH->bytes(), selH->byteSize());
-                    if (selName == "doOneCycleWhile:") {
+                    if (selName == "doOneCycleWhile:" && numTemps == 4) {
+                        // Track for bytecode tracing
+                        extern uint64_t g_docwMethodOop;
+                        extern int g_docwRestoreCount;
+                        g_docwMethodOop = method_.rawBits();
+                        g_docwRestoreCount++;
                         fprintf(docwLog, "[DOCW step=%lld] Restoring context 0x%llx, stackp=%d numTemps=%d header=0x%llx numLits=%d\n",
                                 (long long)g_stepNum, (unsigned long long)context.rawBits(), stackp, numTemps,
                                 (unsigned long long)headerBits, numLiterals);
@@ -18892,6 +18955,21 @@ bool Interpreter::executeFromContext(Oop context) {
                         fprintf(docwLog, "  context.closure(slot4) = 0x%llx (%s)\n",
                                 (unsigned long long)closureSlot.rawBits(),
                                 (closureSlot.rawBits() == memory_.nil().rawBits()) ? "nil" : "non-nil");
+                        // Dump the ConstantBlockClosure (aBlock) slots
+                        Oop aBlock = memory_.fetchPointer(6, context);  // context slot 6 = temp[0]
+                        if (aBlock.isObject() && aBlock.rawBits() > 0x10000) {
+                            ObjectHeader* abH = aBlock.asObjectPtr();
+                            fprintf(docwLog, "  aBlock slots (%zu total):", abH->slotCount());
+                            for (size_t s = 0; s < std::min(abH->slotCount(), (size_t)8); s++) {
+                                Oop sv = abH->slotAt(s);
+                                if (sv.rawBits() == memory_.trueObject().rawBits()) fprintf(docwLog, " [%zu]=TRUE", s);
+                                else if (sv.rawBits() == memory_.falseObject().rawBits()) fprintf(docwLog, " [%zu]=FALSE", s);
+                                else if (sv.rawBits() == memory_.nil().rawBits()) fprintf(docwLog, " [%zu]=nil", s);
+                                else if (sv.isSmallInteger()) fprintf(docwLog, " [%zu]=SI(%lld)", s, (long long)sv.asSmallInteger());
+                                else fprintf(docwLog, " [%zu]=0x%llx", s, (unsigned long long)sv.rawBits());
+                            }
+                            fprintf(docwLog, "\n");
+                        }
                         fflush(docwLog);
                     }
                 }
