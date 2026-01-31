@@ -2124,14 +2124,19 @@ void Interpreter::checkTimerSemaphore() {
             timerSemaphore_ = Oop::nil();
             nextWakeupUsec_ = INT64_MAX;
 
-            // Signal the semaphore (same logic as ms timer below)
+            // Signal the semaphore
             Oop nilObj = memory_.nil();
             Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, semaphore);
+            static int timerSignalLog = 0;
+            timerSignalLog++;
             if (firstLink.isNil() || firstLink.rawBits() == nilObj.rawBits()) {
                 Oop excessOop = memory_.fetchPointer(SemaphoreExcessSignalsIndex, semaphore);
                 int64_t excess = excessOop.isSmallInteger() ? excessOop.asSmallInteger() : 0;
                 memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
                                     Oop::fromSmallInteger(excess + 1));
+                if (timerSignalLog <= 30) {
+                    fprintf(stderr, "[TIMER-SIGNAL #%d] no waiter, excess now %lld\n", timerSignalLog, excess + 1);
+                }
             } else {
                 Oop process = removeFirstLinkOfList(semaphore);
                 Oop processPriorityOop = memory_.fetchPointer(ProcessPriorityIndex, process);
@@ -2139,6 +2144,10 @@ void Interpreter::checkTimerSemaphore() {
                 Oop activeProcess = getActiveProcess();
                 Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
                 int activePriority = static_cast<int>(activePriorityOop.asSmallInteger());
+                if (timerSignalLog <= 30) {
+                    fprintf(stderr, "[TIMER-SIGNAL #%d] waking process pri=%d active=%d preempt=%d\n",
+                            timerSignalLog, processPriority, activePriority, processPriority > activePriority ? 1 : 0);
+                }
                 if (processPriority > activePriority) {
                     putToSleep(activeProcess);
                     transferTo(process);
@@ -2529,12 +2538,21 @@ bool Interpreter::step() {
 
     // Check timer and process pending signals every step
     // (needed when step() is called directly, not via run())
+    {
     static int stepCheckCounter = 0;
-    if (++stepCheckCounter % 100 == 0) {
+    stepCheckCounter++;
+    if (stepCheckCounter == 1) {
+        fprintf(stderr, "[STEP-TIMER-REACHED] first time, counter=%d\n", stepCheckCounter);
+    }
+    if (stepCheckCounter % 100 == 0) {
+        if (stepCheckCounter <= 500) {
+            fprintf(stderr, "[STEP-TIMER] counter=%d calling checkTimerSemaphore\n", stepCheckCounter);
+        }
         checkTimerSemaphore();
         if (hasPendingSignals()) {
             processPendingSignals();
         }
+    }
     }
 
     // If the previous step slept in relinquishProcessor, report as idle
@@ -14144,7 +14162,56 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         if (dnuLogCount++ < 200) {
             std::cerr << "[DNU] Selector '#" << selStr << "' not found on " << rcvrClassName
                       << " (args=" << argCount << ") step=" << g_stepNum << "\n";
-            // Dump sender chain for printStringHex on nil
+            // Dump sender chain for ensure: on nil
+            if ((selStr == "ensure:" || selStr == "runStepMethods") && rcvrClassName == "UndefinedObject") {
+                // Print current method name
+                auto getSelName = [&](Oop meth) -> std::string {
+                    if (!meth.isObject() || meth.rawBits() < 0x10000) return "?";
+                    ObjectHeader* mh = meth.asObjectPtr();
+                    if (!mh->isCompiledMethod()) return "?";
+                    Oop hdr = memory_.fetchPointer(0, meth);
+                    if (!hdr.isSmallInteger()) return "?";
+                    size_t nLit = hdr.asSmallInteger() & 0x7FFF;
+                    if (nLit < 2 || nLit > 200) return "?";
+                    // Selector is at nLit-1 (penultimate literal), last literal is class binding
+                    Oop selLit = memory_.fetchPointer(nLit - 1, meth);
+                    if (!selLit.isObject() || selLit.rawBits() < 0x10000) return "?";
+                    ObjectHeader* lh = selLit.asObjectPtr();
+                    if (lh->isBytesObject() && lh->byteSize() < 100)
+                        return std::string((char*)lh->bytes(), lh->byteSize());
+                    // Might be an AdditionalMethodState
+                    if (lh->slotCount() >= 2) {
+                        Oop v = memory_.fetchPointer(1, selLit);
+                        if (v.isObject() && v.rawBits() > 0x10000) {
+                            ObjectHeader* vh = v.asObjectPtr();
+                            if (vh->isBytesObject() && vh->byteSize() < 100)
+                                return std::string((char*)vh->bytes(), vh->byteSize());
+                        }
+                    }
+                    return "?";
+                };
+                std::cerr << "[DNU-CHAIN] " << selStr << " on nil in #" << getSelName(method_)
+                          << " fd=" << frameDepth_
+                          << " method=0x" << std::hex << method_.rawBits()
+                          << " receiver=0x" << receiver_.rawBits() << std::dec << "\n";
+                // Also dump activeContext_ sender chain
+                if (frameDepth_ == 0 && !activeContext_.isNil()) {
+                    Oop ctx = activeContext_;
+                    for (int d = 0; d < 10 && ctx.isObject() && ctx.rawBits() != memory_.nil().rawBits(); d++) {
+                        Oop meth = memory_.fetchPointer(3, ctx);
+                        Oop sender = memory_.fetchPointer(0, ctx);
+                        Oop rcvr = memory_.fetchPointer(5, ctx);
+                        std::cerr << "[DNU-CHAIN]   ctx[" << d << "] method=#" << getSelName(meth)
+                                  << " rcvr=0x" << std::hex << rcvr.rawBits()
+                                  << " sender=0x" << sender.rawBits() << std::dec << "\n";
+                        ctx = sender;
+                    }
+                }
+                for (size_t fi = 0; fi < frameDepth_ && fi < 10; fi++) {
+                    Oop savedMethod = savedFrames_[fi].savedMethod;
+                    std::cerr << "[DNU-CHAIN]   frame[" << fi << "] #" << getSelName(savedMethod) << "\n";
+                }
+            }
             if (selStr == "printStringHex" && rcvrClassName == "UndefinedObject") {
                 Oop ctx = activeContext_;
                 for (int d = 0; d < 10 && ctx.isObject() && ctx.rawBits() != memory_.nil().rawBits(); d++) {
@@ -18906,7 +18973,7 @@ bool Interpreter::executeFromContext(Oop context) {
                 ObjectHeader* selH = sel.asObjectPtr();
                 if (selH->isBytesObject() && selH->byteSize() < 50) {
                     std::string selName((char*)selH->bytes(), selH->byteSize());
-                    if (selName == "doOneCycleWhile:" && numTemps == 4) {
+                    if (selName == "doOneCycleWhile:" || selName == "doDrawCycleWith:" || selName == "doOneCycle") {
                         // Track for bytecode tracing
                         extern uint64_t g_docwMethodOop;
                         extern int g_docwRestoreCount;

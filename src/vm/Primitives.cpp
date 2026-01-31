@@ -11722,6 +11722,7 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
     // Process events again after sleep
     processInputEvents();
     processPendingSignals();
+    checkTimerSemaphore();
 
     // Debug: Log large delay requests
     if (relinquishLog && microSeconds > 100000) {  // > 100ms
