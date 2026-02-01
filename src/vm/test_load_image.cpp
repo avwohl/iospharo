@@ -648,8 +648,8 @@ int main(int argc, char* argv[]) {
                 if (idleSteps == 1 && totalIdleSteps <= 10) {
                     std::cout << "[IDLE] Started at step " << i << " after " << activeSteps << " active steps" << std::endl;
                 }
-                // If we have 500000+ total idle steps and step count > 5M, we're truly idle
-                if (totalIdleSteps > 500000 && i > 5000000) {
+                // If we have 50M+ total idle steps and step count > 50M, we're truly idle
+                if (totalIdleSteps > 50000000 && i > 50000000) {
                     std::cout << "[IDLE] Detected relinquish-based idle at step " << i
                               << " (" << totalIdleSteps << " total idle steps, " << activeSteps << " active)" << std::endl;
                     // Dump process scheduler queues

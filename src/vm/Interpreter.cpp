@@ -3534,9 +3534,6 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                     case 0x5A: // return false
                     case 0x5B: // return nil
                     {
-                        // All return bytecodes must be NLR-aware when inside a block.
-                        // The reference VM routes all returns through commonReturn which
-                        // checks for block frames and does NLR when needed.
                         Oop val;
                         switch (bytecode) {
                             case 0x58: val = receiver_; break;
@@ -3544,11 +3541,24 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                             case 0x5A: val = memory_.falseObject(); break;
                             default:   val = memory_.nil(); break;
                         }
-                        // Check if we're inside a block frame that needs NLR
-                        if (frameDepth_ > 0 && savedFrames_[frameDepth_ - 1].homeFrameDepth > 0) {
-                            // NLR: push the value and use returnFromMethod() which handles unwinding
-                            push(val);
-                            returnFromMethod();
+                        size_t hfd = (frameDepth_ > 0) ? savedFrames_[frameDepth_ - 1].homeFrameDepth : 0;
+                        if (hfd > 0 && hfd < frameDepth_) {
+                            // NLR from block
+                            {
+                                static FILE* nlrBcLog = nullptr;
+                                static int nlrBcCount = 0;
+                                if (!nlrBcLog) nlrBcLog = fopen("/tmp/nlr_bc_trace.log", "w");
+                                if (nlrBcLog && nlrBcCount++ < 1000) {
+                                    fprintf(nlrBcLog, "[NLR-BC #%d] bc=0x%02x fd=%zu hfd=%zu step=%llu\n",
+                                            nlrBcCount, bytecode, frameDepth_, hfd,
+                                            (unsigned long long)g_stepNum);
+                                    fflush(nlrBcLog);
+                                }
+                            }
+                            while (frameDepth_ > hfd) {
+                                popFrame();
+                            }
+                            returnValue(val);
                         } else {
                             returnValue(val);
                         }
@@ -3698,32 +3708,19 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
             bool handled = false;
             if (which == 9 || which == 10) {
                 // 0x79 = value (0 args), 0x7A = value: (1 arg)
-                int numArgs = which - 9;  // 0 for value, 1 for value:
+                // Optimized: directly activate FullBlockClosures via primitiveFullClosureValue
+                // which calls activateBlock() and sets homeFrameDepth for NLR.
+                int numArgs = which - 9;
                 Oop rcvr = stackValue(numArgs);
-                bool isBlock = false;
                 if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
                     ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
-                    isBlock = (rcvrHdr->classIndex() == 38);  // ClassFullBlockClosureCompactIndex
-                    if (isBlock) {
+                    if (rcvrHdr->classIndex() == 38) {  // ClassFullBlockClosureCompactIndex
                         argCount_ = numArgs;
                         primitiveFailed_ = false;
                         PrimitiveResult result = primitiveFullClosureValue(numArgs);
                         if (result == PrimitiveResult::Success) {
                             handled = true;
                         }
-                    }
-                }
-                {
-                    static FILE* bpvLog = nullptr;
-                    static int bpvCount = 0;
-                    if (!bpvLog) bpvLog = fopen("/tmp/bpv_trace.log", "w");
-                    if (bpvLog && bpvCount++ < 200) {
-                        fprintf(bpvLog, "[BPV #%d] bc=0x%02x which=%d isBlock=%d handled=%d rcvr=0x%llx ci=%u fd=%zu\n",
-                                bpvCount, bytecode, which, isBlock, handled,
-                                (unsigned long long)rcvr.rawBits(),
-                                rcvr.isObject() && rcvr.rawBits() > 0x10000 ? rcvr.asObjectPtr()->classIndex() : 0,
-                                frameDepth_);
-                        fflush(bpvLog);
                     }
                 }
             }
