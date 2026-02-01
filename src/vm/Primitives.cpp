@@ -1328,6 +1328,25 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
         return PrimitiveResult::Success;
     }
 
+    // Handle SmallFloat64 immediates: basicAt: returns 32-bit word halves
+    if (rcvr.isSmallFloat() && index.isSmallInteger()) {
+        int64_t idx = index.asSmallInteger();
+        if (idx < 1 || idx > 2) {
+            return PrimitiveResult::Failure;
+        }
+        double dval = rcvr.asSmallFloat();
+        uint64_t bits;
+        std::memcpy(&bits, &dval, sizeof(double));
+        uint32_t word;
+        if (idx == 1) {
+            word = static_cast<uint32_t>(bits >> 32);  // high word
+        } else {
+            word = static_cast<uint32_t>(bits & 0xFFFFFFFF);  // low word
+        }
+        primitiveSuccess(Oop::fromSmallInteger(static_cast<int64_t>(word)));
+        return PrimitiveResult::Success;
+    }
+
     // Official VM behavior: fail if index is not SmallInteger (PrimErrBadArgument)
     // or if receiver is not an object (PrimErrInappropriate)
     if (!index.isSmallInteger() || !rcvr.isObject()) {
@@ -1609,6 +1628,52 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
 
     ObjectHeader* header = rcvr.asObjectPtr();
     size_t arrayIndex = static_cast<size_t>(idx - 1);
+
+    // Handle 64-bit indexable objects (format 9, e.g. BoxedFloat64)
+    // basicAt: returns 32-bit word halves: index 1 = high word, index 2 = low word
+    ObjectFormat fmt = header->format();
+    if (fmt == ObjectFormat::Indexable64) {
+        // Each 64-bit slot provides 2 indices (32-bit words)
+        size_t numSlots = header->slotCount();
+        size_t numWords = numSlots * 2;
+        if (arrayIndex >= numWords) {
+            return PrimitiveResult::Failure;
+        }
+        size_t slotIdx = arrayIndex / 2;
+        uint64_t bits = memory_.fetchWord64(slotIdx, rcvr);
+        uint32_t word;
+        if (arrayIndex % 2 == 0) {
+            word = static_cast<uint32_t>(bits >> 32);  // high word at odd index (1-based: 1)
+        } else {
+            word = static_cast<uint32_t>(bits & 0xFFFFFFFF);  // low word (1-based: 2)
+        }
+        primitiveSuccess(Oop::fromSmallInteger(static_cast<int64_t>(word)));
+        return PrimitiveResult::Success;
+    }
+
+    // Handle byte-format BoxedFloat64 (formats 10-15 with 8 bytes)
+    // These should also return 32-bit word halves like format 9
+    uint8_t fmtVal = static_cast<uint8_t>(fmt);
+    if (fmtVal >= 10 && fmtVal <= 15 && header->byteSize() == 8) {
+        // Check if this is a BoxedFloat64
+        Oop floatClass = memory_.specialObject(SpecialObjectIndex::ClassFloat);
+        Oop objClass = memory_.classOf(rcvr);
+        if (objClass.rawBits() == floatClass.rawBits()) {
+            if (arrayIndex >= 2) {
+                return PrimitiveResult::Failure;
+            }
+            uint64_t bits;
+            std::memcpy(&bits, header->bytes(), 8);
+            uint32_t word;
+            if (arrayIndex == 0) {
+                word = static_cast<uint32_t>(bits >> 32);  // high word
+            } else {
+                word = static_cast<uint32_t>(bits & 0xFFFFFFFF);  // low word
+            }
+            primitiveSuccess(Oop::fromSmallInteger(static_cast<int64_t>(word)));
+            return PrimitiveResult::Success;
+        }
+    }
 
     if (header->isBytesObject()) {
         if (arrayIndex >= header->byteSize()) {
@@ -1962,8 +2027,8 @@ PrimitiveResult Interpreter::primitiveSize(int argCount) {
         }
         size = (totalSlots > fixedFields) ? totalSlots - fixedFields : 0;
     } else if (fmt == ObjectFormat::Indexable64) {
-        // 64-bit word array
-        size = totalSlots;
+        // 64-bit word array: each 64-bit slot = 2 indexable 32-bit words
+        size = totalSlots * 2;
     } else if (fmt >= ObjectFormat::Indexable32 && fmt <= ObjectFormat::Indexable32Odd) {
         // 32-bit word arrays
         size = totalSlots * 2 - (fmt == ObjectFormat::Indexable32Odd ? 1 : 0);
@@ -8820,16 +8885,10 @@ PrimitiveResult Interpreter::primitiveTerminateTo(int argCount) {
 PrimitiveResult Interpreter::primitiveFloatAt(int argCount) {
     // Primitive 38: Read 32-bit word from Float at index (1 or 2)
     // Per official VM: index 1 = most significant word, index 2 = least significant
-    // On little-endian systems, must swap indices to maintain this semantic
     Oop indexOop = stackValue(0);
     Oop rcvr = stackValue(1);
 
-    if (!rcvr.isObject() || !indexOop.isSmallInteger()) {
-        return PrimitiveResult::Failure;
-    }
-
-    // Reject immediate floats (SmallFloat64)
-    if (rcvr.isSmallFloat()) {
+    if (!indexOop.isSmallInteger()) {
         return PrimitiveResult::Failure;
     }
 
@@ -8838,24 +8897,39 @@ PrimitiveResult Interpreter::primitiveFloatAt(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    ObjectHeader* header = rcvr.asObjectPtr();
-    ObjectFormat format = header->format();
+    uint64_t doubleBits;
 
-    // Must be a Float (64-bit word format)
-    if (format != ObjectFormat::Indexable64) {
+    if (rcvr.isSmallFloat()) {
+        // SmallFloat64 immediate: decode the double value
+        double dval = rcvr.asSmallFloat();
+        std::memcpy(&doubleBits, &dval, sizeof(double));
+    } else if (rcvr.isObject()) {
+        ObjectHeader* header = rcvr.asObjectPtr();
+        ObjectFormat format = header->format();
+
+        if (format == ObjectFormat::Indexable64) {
+            // Standard BoxedFloat64 (format 9): read 64-bit word
+            doubleBits = memory_.fetchWord64(0, rcvr);
+        } else {
+            // Byte-format BoxedFloat64 (formats 10-15 with 8 bytes)
+            uint8_t fmtVal = static_cast<uint8_t>(format);
+            if (fmtVal >= 10 && fmtVal <= 15 && header->byteSize() == 8) {
+                std::memcpy(&doubleBits, header->bytes(), 8);
+            } else {
+                return PrimitiveResult::Failure;
+            }
+        }
+    } else {
         return PrimitiveResult::Failure;
     }
 
-    // Per official VM: on little-endian, swap indices so index 1 = high word
-    // Memory layout on little-endian: [low word][high word]
-    // Semantic: index 1 = high word, index 2 = low word
-    size_t accessIndex = static_cast<size_t>(index - 1);
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-    accessIndex = 1 - accessIndex;  // Swap: 0 -> 1, 1 -> 0
-#endif
-
-    uint32_t* words = reinterpret_cast<uint32_t*>(header + 1);
-    uint32_t value = words[accessIndex];
+    // Return 32-bit word: index 1 = high word, index 2 = low word
+    uint32_t value;
+    if (index == 1) {
+        value = static_cast<uint32_t>(doubleBits >> 32);
+    } else {
+        value = static_cast<uint32_t>(doubleBits & 0xFFFFFFFF);
+    }
 
     popN(2);
     push(Oop::fromSmallInteger(value));
@@ -8911,27 +8985,40 @@ PrimitiveResult Interpreter::primitiveFloatAtPut(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    if (!rcvr.isObject()) {
+        return PrimitiveResult::Failure;  // Can't write to immediates
+    }
+
     ObjectHeader* header = rcvr.asObjectPtr();
     ObjectFormat format = header->format();
-
-    // Must be a Float (64-bit word format)
-    if (format != ObjectFormat::Indexable64) {
-        return PrimitiveResult::Failure;
-    }
 
     // Check immutability
     if (header->isImmutable()) {
         return PrimitiveResult::Failure;
     }
 
-    // Per official VM: on little-endian, swap indices so index 1 = high word
+    // Read current 64-bit value, modify the requested 32-bit word, write back
+    uint64_t doubleBits;
+    uint32_t* dataPtr = nullptr;
+
+    if (format == ObjectFormat::Indexable64) {
+        dataPtr = reinterpret_cast<uint32_t*>(header + 1);
+    } else {
+        uint8_t fmtVal = static_cast<uint8_t>(format);
+        if (fmtVal >= 10 && fmtVal <= 15 && header->byteSize() == 8) {
+            dataPtr = reinterpret_cast<uint32_t*>(header->bytes());
+        } else {
+            return PrimitiveResult::Failure;
+        }
+    }
+
+    // index 1 = high word, index 2 = low word
+    // On little-endian: memory is [low][high], so index 1 -> offset 1, index 2 -> offset 0
     size_t accessIndex = static_cast<size_t>(index - 1);
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-    accessIndex = 1 - accessIndex;  // Swap: 0 -> 1, 1 -> 0
+    accessIndex = 1 - accessIndex;
 #endif
-
-    uint32_t* words = reinterpret_cast<uint32_t*>(header + 1);
-    words[accessIndex] = value;
+    dataPtr[accessIndex] = value;
 
     popN(3);
     push(valueOop);
