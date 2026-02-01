@@ -16161,6 +16161,39 @@ Oop Interpreter::materializeFrameStack() {
     Oop sender = activeContext_;
     size_t startFrame = 0;
 
+    // Debug: log whether the dedup fix applies
+    {
+        static FILE* dedupLog = nullptr;
+        static int dedupLogCount = 0;
+        if (!dedupLog) dedupLog = fopen("/tmp/dedup_fix.log", "w");
+        if (dedupLog && dedupLogCount < 100) {
+            dedupLogCount++;
+            bool matches = (frameDepth_ > 0 &&
+                savedFrames_[0].savedActiveContext.rawBits() == activeContext_.rawBits() &&
+                activeContext_.isObject() && activeContext_.rawBits() > 0x10000);
+            fprintf(dedupLog, "[DEDUP #%d step=%llu] fd=%zu activeCtx=0x%llx frame0.savedAC=0x%llx match=%d\n",
+                    dedupLogCount, g_stepNum, frameDepth_,
+                    (unsigned long long)activeContext_.rawBits(),
+                    frameDepth_ > 0 ? (unsigned long long)savedFrames_[0].savedActiveContext.rawBits() : 0ULL,
+                    matches ? 1 : 0);
+            if (matches) {
+                // Show what temps will be written
+                auto& f0 = savedFrames_[0];
+                if (f0.savedFP) {
+                    Oop methodHeader = memory_.fetchPointer(0, f0.savedMethod);
+                    int nTemps = methodHeader.isSmallInteger() ? ((methodHeader.asSmallInteger() >> 18) & 0x3F) : 0;
+                    fprintf(dedupLog, "  Will update: nTemps=%d", nTemps);
+                    for (int t = 0; t < std::min(nTemps, 5); t++) {
+                        Oop v = *(f0.savedFP + 1 + t);
+                        fprintf(dedupLog, " t%d=0x%llx", t, (unsigned long long)v.rawBits());
+                    }
+                    fprintf(dedupLog, "\n");
+                }
+            }
+            fflush(dedupLog);
+        }
+    }
+
     if (frameDepth_ > 0 && savedFrames_[0].savedActiveContext.rawBits() == activeContext_.rawBits() &&
         activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
         // frame[0] IS activeContext_'s inline continuation. Update the heap context
@@ -19566,7 +19599,7 @@ bool Interpreter::executeFromContext(Oop context) {
         recentRestores[restoreIdx] = {ctxBits, pcVal};
         restoreIdx = (restoreIdx + 1) & 15;
 
-        if (repeatCount >= 3 && loopDetectCount < 5) {
+        if (repeatCount >= 8 && loopDetectCount < 5) {
             loopDetectCount++;
             fprintf(loopLog, "\n=== LOOP DETECTED #%d (step=%llu) ===\n", loopDetectCount, g_stepNum);
             fprintf(loopLog, "Context 0x%llx restored with PC=%lld (%d times in last 16)\n",
