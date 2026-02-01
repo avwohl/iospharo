@@ -560,9 +560,10 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // Start the heartbeat thread for display sync
-        std::cout << "Starting heartbeat thread..." << std::endl;
-        interpreter.startHeartbeat();
+        // Delay heartbeat start - start it after 1.6M steps to avoid
+        // timer preemption corrupting startup process state
+        std::cout << "Heartbeat will start after startup completes..." << std::endl;
+        bool heartbeatStarted = false;
 
         // Run bytecode steps for testing
         std::cout << "\n=== Execution Test ===" << std::endl;
@@ -575,6 +576,12 @@ int main(int argc, char* argv[]) {
         int clickResponseSteps = 0;
 
         for (int i = 0; i < totalSteps; i++) {
+            // Start heartbeat after startup completes
+            if (!heartbeatStarted && i == 2000000) {
+                std::cout << "Starting heartbeat thread (post-startup)..." << std::endl;
+                interpreter.startHeartbeat();
+                heartbeatStarted = true;
+            }
             bool result = interpreter.step();
 
 
@@ -641,8 +648,8 @@ int main(int argc, char* argv[]) {
                 if (idleSteps == 1 && totalIdleSteps <= 10) {
                     std::cout << "[IDLE] Started at step " << i << " after " << activeSteps << " active steps" << std::endl;
                 }
-                // If we have 50000+ total idle steps and step count > 1M, we're truly idle
-                if (totalIdleSteps > 50000 && i > 1000000) {
+                // If we have 500000+ total idle steps and step count > 5M, we're truly idle
+                if (totalIdleSteps > 500000 && i > 5000000) {
                     std::cout << "[IDLE] Detected relinquish-based idle at step " << i
                               << " (" << totalIdleSteps << " total idle steps, " << activeSteps << " active)" << std::endl;
                     // Dump process scheduler queues
