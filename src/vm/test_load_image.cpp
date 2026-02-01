@@ -567,7 +567,7 @@ int main(int argc, char* argv[]) {
         // Run bytecode steps for testing
         std::cout << "\n=== Execution Test ===" << std::endl;
         auto execStart = std::chrono::steady_clock::now();
-        int totalSteps = 50000000;  // Run 50M steps to see if startup completes
+        int totalSteps = 50000000;  // Run 50M steps
         std::cout << "Running up to " << totalSteps << " bytecode steps..." << std::endl;
         int activeSteps = 0;
         int idleSteps = 0;
@@ -596,6 +596,12 @@ int main(int argc, char* argv[]) {
             if (result) {
                 activeSteps++;
                 idleSteps = 0;  // Reset consecutive idle count
+
+                // Process dump at step 40M to analyze state after startup
+                if (activeSteps == 40000000) {
+                    std::cerr << "\n=== PROCESS DUMP AT 40M STEPS ===" << std::endl;
+                    interpreter.dumpProcessQueues();
+                }
 
                 // After 5k active steps, inject a right-click to trigger world menu
                 // (Injecting earlier so the render loop is still active)
@@ -644,6 +650,8 @@ int main(int argc, char* argv[]) {
                 if (totalIdleSteps > 200 && i > 300000) {
                     std::cout << "[IDLE] Detected relinquish-based idle at step " << i
                               << " (" << totalIdleSteps << " total idle steps, " << activeSteps << " active)" << std::endl;
+                    // Dump process scheduler queues
+                    interpreter.dumpProcessQueues();
                     break;
                 }
             }

@@ -160,6 +160,8 @@ public:
 
     /// Run the interpreter main loop
     void interpret();
+    void stopVM(const char* reason);
+    void dumpProcessQueues();
 
     /// Execute a single bytecode (for debugging)
     bool step();
@@ -309,6 +311,7 @@ private:
     Oop* framePointer_;
     uint8_t* instructionPointer_;
     uint8_t* bytecodeEnd_;  // End of bytecodes in current method
+    uint8_t lastBytecode_ = 0;  // Last bytecode dispatched (for stack overflow diagnosis)
     Oop method_;            // Current method or CompiledBlock being executed
     Oop newMethod_;         // Method about to be activated (for primitive 117 to read literals)
     Oop homeMethod_;        // Home CompiledMethod (for literal access in blocks)

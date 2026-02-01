@@ -1970,6 +1970,84 @@ void Interpreter::syncDisplayToSurface() {
 
 // ===== MAIN LOOP =====
 
+void Interpreter::stopVM(const char* reason) {
+    static FILE* stopLog = nullptr;
+    if (!stopLog) stopLog = fopen("/tmp/vm_stop.log", "a");
+    if (stopLog) {
+        fprintf(stopLog, "[VM-STOP step=%llu fd=%zu] %s\n",
+                (unsigned long long)g_stepNum, frameDepth_, reason);
+        fflush(stopLog);
+    }
+    fprintf(stderr, "[VM-STOP step=%llu] %s\n", (unsigned long long)g_stepNum, reason);
+    running_ = false;
+}
+
+void Interpreter::dumpProcessQueues() {
+    fprintf(stderr, "\n=== Process Scheduler Dump ===\n");
+    Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
+    Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
+    if (!schedulerAssoc.isObject()) { fprintf(stderr, "No scheduler\n"); return; }
+    Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
+    if (!scheduler.isObject()) { fprintf(stderr, "No scheduler value\n"); return; }
+    Oop activeProc = memory_.fetchPointer(1, scheduler);
+    fprintf(stderr, "Active process: 0x%llx\n", (unsigned long long)activeProc.rawBits());
+    if (activeProc.isObject() && activeProc.rawBits() > 0x10000) {
+        Oop prio = memory_.fetchPointer(2, activeProc);
+        Oop ctx = memory_.fetchPointer(1, activeProc);
+        fprintf(stderr, "  priority=%lld suspCtx=0x%llx\n",
+                prio.isSmallInteger() ? prio.asSmallInteger() : -1,
+                (unsigned long long)ctx.rawBits());
+    }
+    Oop queues = memory_.fetchPointer(0, scheduler);
+    if (!queues.isObject()) return;
+    ObjectHeader* qH = queues.asObjectPtr();
+    size_t numQ = qH->slotCount();
+    fprintf(stderr, "Priority queues: %zu\n", numQ);
+    for (size_t i = 0; i < numQ; i++) {
+        Oop queue = qH->slotAt(i);
+        if (queue.rawBits() == nilObj.rawBits() || !queue.isObject()) continue;
+        Oop first = memory_.fetchPointer(0, queue);
+        if (first.rawBits() == nilObj.rawBits() || !first.isObject()) continue;
+        fprintf(stderr, "Queue at priority %zu:\n", i + 1);
+        Oop proc = first;
+        for (int j = 0; j < 10 && proc.isObject() && proc.rawBits() != nilObj.rawBits(); j++) {
+            Oop prio = memory_.fetchPointer(2, proc);
+            Oop ctx = memory_.fetchPointer(1, proc);
+            // Get method name from context
+            std::string mname = "?";
+            if (ctx.isObject() && ctx.rawBits() > 0x10000) {
+                ObjectHeader* ch = ctx.asObjectPtr();
+                if (ch->slotCount() >= 6) {
+                    Oop meth = memory_.fetchPointer(3, ctx);
+                    if (meth.isObject() && meth.rawBits() > 0x10000) {
+                        Oop hdr = memory_.fetchPointer(0, meth);
+                        if (hdr.isSmallInteger()) {
+                            int nl = hdr.asSmallInteger() & 0x7FFF;
+                            if (nl >= 2 && nl < 100) {
+                                Oop sel = memory_.fetchPointer(nl - 1, meth);
+                                if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                    ObjectHeader* sh = sel.asObjectPtr();
+                                    if (sh->isBytesObject() && sh->byteSize() < 50)
+                                        mname = std::string((char*)sh->bytes(), sh->byteSize());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            fprintf(stderr, "  proc=0x%llx pri=%lld ctx=#%s\n",
+                    (unsigned long long)proc.rawBits(),
+                    prio.isSmallInteger() ? prio.asSmallInteger() : -1,
+                    mname.c_str());
+            // Follow nextLink (slot 0)
+            Oop next = memory_.fetchPointer(0, proc);
+            if (next.rawBits() == proc.rawBits()) break;
+            proc = next;
+        }
+    }
+    fprintf(stderr, "=== End Process Dump ===\n\n");
+}
+
 void Interpreter::interpret() {
     { FILE* f = fopen("/tmp/interpret_trace.log", "w"); if (f) { fprintf(f, "[INTERPRET] entered interpret() running_=%d\n", running_ ? 1 : 0); fclose(f); } }
     // Debug: Log special object addresses once at start
@@ -2011,6 +2089,12 @@ void Interpreter::interpret() {
         // Process input events every 10K bytecodes
         if (loopCount % 10000 == 0) {
             processInputEvents();
+        }
+
+        // Yield CPU periodically to prevent macOS from killing us for excessive CPU
+        // macOS enforces 50% CPU over 180s for Mac Catalyst apps
+        if (loopCount % 100000 == 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
 
         // Periodically look for Display Form
@@ -2609,7 +2693,9 @@ bool Interpreter::step() {
     // Log step progress periodically to detect hangs
     static FILE* stepProgressLog = nullptr;
     // Log more frequently near the hang point (steps 15000-16000)
-    bool shouldLog = (g_stepNum % 1000000 == 0);  // Reduced: log every 1M steps for performance
+    size_t currentSD = static_cast<size_t>(stackPointer_ - stackBase_);
+    bool shouldLog = (g_stepNum % 1000000 == 0) ||
+                     (currentSD > 1000 && g_stepNum % 100000 == 0);  // More frequent when stack is deep
     if (shouldLog) {
         if (!stepProgressLog) {
             stepProgressLog = fopen("/tmp/step_progress.log", "w");
@@ -2635,8 +2721,14 @@ bool Interpreter::step() {
                     }
                 }
             }
-            fprintf(stepProgressLog, "[STEP %llu] method=#%s frameDepth=%zu running=%d\n",
-                    g_stepNum, methodName.c_str(), frameDepth_, running_ ? 1 : 0);
+            size_t stackDepth = static_cast<size_t>(stackPointer_ - stackBase_);
+            fprintf(stepProgressLog, "[STEP %llu] method=#%s fd=%zu sd=%zu running=%d\n",
+                    g_stepNum, methodName.c_str(), frameDepth_, stackDepth, running_ ? 1 : 0);
+            // Log more frequently when stack is getting deep
+            if (stackDepth > 4096) {
+                fprintf(stepProgressLog, "[STACK-WARN] sd=%zu at fd=%zu step=%llu\n",
+                        stackDepth, frameDepth_, g_stepNum);
+            }
             fflush(stepProgressLog);
         }
     }
@@ -2719,6 +2811,7 @@ bool Interpreter::step() {
 skip_yield:
 
     uint8_t bytecode = fetchByte();
+    lastBytecode_ = bytecode;
 
     // Clear inExtension_ flag for non-extension bytecodes.
     // Extension bytes (0xE0/0xE1) re-set the flag in their handler.
@@ -3455,7 +3548,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
     }
     else if (bytecode == 0xD9) {
         // Sista V1: 0xD9 (217): Unconditional trap (debugging)
-        running_ = false;
+        stopVM("Unconditional trap bytecode 0xD9");
     }
     else if (bytecode <= 0xDF) {
         // Sista V1: 0xDA-0xDF (218-223): Various extended operations
@@ -3942,6 +4035,38 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
 // ===== STACK OPERATIONS =====
 
 void Interpreter::push(Oop value) {
+    // Stack growth diagnostic: log when stack is abnormally large
+    {
+        size_t sd = static_cast<size_t>(stackPointer_ - stackBase_);
+        if (sd > 500) {
+            static FILE* stackGrowLog = nullptr;
+            static int stackGrowLogCount = 0;
+            if (!stackGrowLog) stackGrowLog = fopen("/tmp/stack_growth.log", "w");
+            if (stackGrowLog && stackGrowLogCount < 500) {
+                stackGrowLogCount++;
+                // Get method name
+                std::string mname = "?";
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    Oop hdr = memory_.fetchPointer(0, method_);
+                    if (hdr.isSmallInteger()) {
+                        int nl = hdr.asSmallInteger() & 0x7FFF;
+                        if (nl >= 2 && nl < 100) {
+                            Oop sel = memory_.fetchPointer(nl - 1, method_);
+                            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                ObjectHeader* sh = sel.asObjectPtr();
+                                if (sh->isBytesObject() && sh->byteSize() < 50)
+                                    mname = std::string((char*)sh->bytes(), sh->byteSize());
+                            }
+                        }
+                    }
+                }
+                fprintf(stackGrowLog, "[PUSH sd=%zu fd=%zu bc=0x%02x step=%llu] method=#%s val=0x%llx\n",
+                        sd, frameDepth_, lastBytecode_, (unsigned long long)g_stepNum,
+                        mname.c_str(), (unsigned long long)value.rawBits());
+                if (stackGrowLogCount % 50 == 0) fflush(stackGrowLog);
+            }
+        }
+    }
     if (stackPointer_ >= stack_.data() + MaxStackDepth) {
         static int overflowCount = 0;
         overflowCount++;
@@ -3991,7 +4116,7 @@ void Interpreter::push(Oop value) {
                 }
             }
         }
-        running_ = false;
+        stopVM("Stack overflow in push()");
         return;
     }
     *stackPointer_++ = value;
@@ -11108,8 +11233,7 @@ extern int g_traceSendsAfterPrim264;
 
                 if (shouldQuit) {
                     // Quit requested - stop VM loop gracefully
-                    std::cerr << "[VM] Intercepted snapshot:andQuit: - stopping VM (save disabled)\n";
-                    running_ = false;
+                    stopVM("snapshot:andQuit: quit requested");
                     popN(argCount + 1);
                     push(memory_.nil());
                     return;
@@ -13027,7 +13151,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     // Save current execution state before switching to new method
     if (frameDepth_ >= MaxFrameDepth) {
         std::cerr << "[VM-STOP] Frame depth overflow in pushFrame(): " << frameDepth_ << " >= " << MaxFrameDepth << "\n";
-        running_ = false;
+        stopVM("Frame depth overflow in pushFrame()");
         return false;
     }
 
@@ -13133,7 +13257,7 @@ void Interpreter::popFrame() {
     // Restore previous execution state
     if (frameDepth_ == 0) {
         std::cerr << "[VM-STOP] popFrame at frameDepth 0\n";
-        running_ = false;
+        stopVM("popFrame at frameDepth 0");
         return;
     }
 
@@ -13167,7 +13291,7 @@ void Interpreter::popFrame() {
     // If this was the last frame, we're done
     if (frameDepth_ == 0 && frame.savedIP == nullptr) {
         std::cerr << "[VM-STOP] Last frame popped in popFrame()\n";
-        running_ = false;
+        stopVM("Last frame popped in popFrame()");
     }
 }
 
@@ -14273,7 +14397,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         std::cerr << "[DNU-FATAL] Failed to allocate Message object\n";
         for (int i = 0; i < argCount + 1; i++) pop();
         dnuDepth--;
-        running_ = false;
+        stopVM("DNU: Failed to allocate Message object");
         return;
     }
 
@@ -14290,7 +14414,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         std::cerr << "[DNU-FATAL] Failed to allocate Array for DNU args\n";
         for (int i = 0; i < argCount + 1; i++) pop();
         dnuDepth--;
-        running_ = false;
+        stopVM("DNU: Failed to allocate args Array");
         return;
     }
 
@@ -17716,7 +17840,7 @@ bool Interpreter::bootstrapStartup() {
     // If we've already tried many startup attempts, eventually give up.
     // But allow many more attempts for the UI loop to run.
     if (startupAttempt > 1000) {
-        running_ = false;
+        stopVM("bootstrapStartup: exceeded 1000 attempts");
         return false;
     }
 
