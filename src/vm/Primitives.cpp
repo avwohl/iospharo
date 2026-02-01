@@ -5101,10 +5101,26 @@ static bool extractFloat(ObjectMemory& memory, Oop oop, double& result) {
     }
     if (oop.isObject()) {
         ObjectHeader* header = oop.asObjectPtr();
-        if (header->format() == ObjectFormat::Indexable64) {
+        auto fmt = header->format();
+        if (fmt == ObjectFormat::Indexable64) {
             uint64_t bits = memory.fetchWord64(0, oop);
             std::memcpy(&result, &bits, sizeof(double));
             return true;
+        }
+        // BoxedFloat64 might use byte format (10-15) with 8 bytes of data
+        uint8_t fmtVal = static_cast<uint8_t>(fmt);
+        if (fmtVal >= 10 && fmtVal <= 15) {
+            size_t byteSize = header->byteSize();
+            if (byteSize == 8) {
+                std::memcpy(&result, header->bytes(), 8);
+                return true;
+            }
+        }
+        // Log unexpected format for debugging
+        static int extractFailCount = 0;
+        if (extractFailCount++ < 10) {
+            fprintf(stderr, "[EXTRACT-FLOAT-FAIL] oop=0x%llx fmt=%d byteSize=%zu\n",
+                    (unsigned long long)oop.rawBits(), (int)fmtVal, header->byteSize());
         }
     }
     return false;
