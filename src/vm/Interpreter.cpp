@@ -2820,7 +2820,7 @@ skip_yield:
 
     // Log bytecode at hang point
     static FILE* bcLog = nullptr;
-    if (g_stepNum >= 162000 && g_stepNum <= 163000) {
+    if (g_stepNum >= 23900 && g_stepNum <= 24520) {
         if (!bcLog) bcLog = fopen("/tmp/bytecode_hang.log", "w");
         if (bcLog) {
             // Get selector name for send bytecodes
@@ -2851,8 +2851,81 @@ skip_yield:
                 if (bytecode <= 0x6F && idx < 16) selName = arithNames[idx];
                 else if (idx < 16) selName = specNames[idx];
             }
+            // Track method changes
+            static Oop lastMethod = Oop::nil();
+            if (method_ != lastMethod) {
+                // Show class index to distinguish CompiledMethod vs CompiledBlock
+                uint32_t mci = 0;
+                if (method_.isObject() && method_.rawBits() > 0x10000)
+                    mci = method_.asObjectPtr()->classIndex();
+                // Print method selector from last literal (class binding)
+                Oop mhdr = memory_.fetchPointer(0, method_);
+                size_t mLits = mhdr.isSmallInteger() ? (mhdr.asSmallInteger() & 0x7FFF) : 0;
+                std::string mName = "?";
+                // Try to find method name from literals
+                if (mLits > 0) {
+                    // Last literal is often the method selector or class association
+                    // Penultimate literal is often the selector for Pharo methods
+                    for (size_t li = mLits; li > 0; li--) {
+                        Oop lit = literal(li - 1);
+                        if (lit.isObject() && lit.rawBits() > 0x10000) {
+                            ObjectHeader* lh = lit.asObjectPtr();
+                            if (lh->isBytesObject() && lh->byteSize() < 80 && lh->byteSize() > 0) {
+                                mName = std::string((char*)lh->bytes(), lh->byteSize());
+                                break;
+                            }
+                        }
+                    }
+                }
+                fprintf(bcLog, "  >>> METHOD CHANGE to 0x%llx (%s) numLits=%zu ci=%u%s FP[1]=0x%llx\n",
+                        (unsigned long long)method_.rawBits(), mName.c_str(), mLits, mci,
+                        mci == 3117 ? " [BLOCK]" : "",
+                        (unsigned long long)(framePointer_ ? (*(framePointer_ + 1)).rawBits() : 0));
+                lastMethod = method_;
+            }
             fprintf(bcLog, "[BC %llu] BEFORE dispatch bytecode=0x%02X sel=%s\n",
                     g_stepNum, bytecode, selName.c_str());
+            // Log temp stores (0xD0-0xD2)
+            if (bytecode >= 0xD0 && bytecode <= 0xD2) {
+                // The value being stored is on top of stack
+                Oop val = *stackPointer_;
+                fprintf(bcLog, "  STORE temp%d <- 0x%llx%s\n",
+                        bytecode - 0xD0, (unsigned long long)val.rawBits(),
+                        val.isNil() ? " (nil)" : "");
+            }
+            // At DNU step, dump method info and stack
+            if (g_stepNum == 24505 || g_stepNum == 24504 || g_stepNum == 24503) {
+                // Print method selector
+                Oop methodSel = memory_.fetchPointer(1, method_); // selector is usually literal 1 or in method header
+                // Actually, get the method's selector from its class association
+                // Better: print the method oop and its literal frame
+                Oop hdr = memory_.fetchPointer(0, method_);
+                size_t numLits = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+                fprintf(bcLog, "  method_=0x%llx numLits=%zu ip=%lld\n",
+                        (unsigned long long)method_.rawBits(), numLits,
+                        (long long)(instructionPointer_ - (uint8_t*)method_.asObjectPtr()->bytes()));
+                // Print all literals
+                for (size_t li = 0; li < numLits && li < 10; li++) {
+                    Oop lit = literal(li);
+                    if (lit.isObject() && lit.rawBits() > 0x10000) {
+                        ObjectHeader* lhdr = lit.asObjectPtr();
+                        if (lhdr->isBytesObject() && lhdr->byteSize() < 100) {
+                            std::string s((char*)lhdr->bytes(), lhdr->byteSize());
+                            fprintf(bcLog, "  literal[%zu] = 0x%llx '%s'\n", li, (unsigned long long)lit.rawBits(), s.c_str());
+                        } else {
+                            fprintf(bcLog, "  literal[%zu] = 0x%llx (obj slots=%zu)\n", li, (unsigned long long)lit.rawBits(), lhdr->slotCount());
+                        }
+                    } else {
+                        fprintf(bcLog, "  literal[%zu] = 0x%llx\n", li, (unsigned long long)lit.rawBits());
+                    }
+                }
+                // Print stack items
+                fprintf(bcLog, "  SP=0x%llx FP=0x%llx\n", (unsigned long long)stackPointer_, (unsigned long long)framePointer_);
+                for (int si = 0; si < 5; si++) {
+                    Oop item = *(stackPointer_ + si);
+                    fprintf(bcLog, "  stack[SP+%d] = 0x%llx\n", si, (unsigned long long)item.rawBits());
+                }
+            }
             fflush(bcLog);
         }
     }
@@ -3363,6 +3436,20 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                                 std::cerr << "[THISCTX-NIL #" << thisCtxNilCount
                                           << "] Pushing nil activeContext (no inline frames)\n";
                             }
+                        }
+
+                        // Trace: log ALL thisContext pushes near step 24505
+                        if (g_stepNum >= 23900 && g_stepNum <= 25000) {
+                            Oop senderSlot = memory_.nil();
+                            if (contextToPush.isObject() && contextToPush.rawBits() > 0x10000) {
+                                senderSlot = memory_.fetchPointer(0, contextToPush);
+                            }
+                            std::cerr << "[THISCTX-TRACE step=" << g_stepNum
+                                      << " fd=" << frameDepth_
+                                      << "] ctx=0x" << std::hex << contextToPush.rawBits()
+                                      << " sender=0x" << senderSlot.rawBits() << std::dec
+                                      << (senderSlot.rawBits() == memory_.nil().rawBits() ? " (NIL!)" : "")
+                                      << "\n";
                         }
 
                         push(contextToPush);
@@ -13083,6 +13170,32 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     int firstCopiedSlot = slot1.isObject() ? 4 : 3;  // FullBlockClosure has receiver at slot 3
     int numCopied = static_cast<int>(blockSlots) - firstCopiedSlot;
     if (numCopied < 0) numCopied = 0;
+
+    // Log block activation details around the DNU step
+    if (g_stepNum >= 23000 && g_stepNum <= 25000) {
+        static FILE* blkActLog = nullptr;
+        if (!blkActLog) blkActLog = fopen("/tmp/block_activate.log", "w");
+        if (blkActLog) {
+            fprintf(blkActLog, "[BLK-ACT step=%llu] block=0x%llx blockSlots=%zu numCopied=%d argCount=%d\n",
+                    (unsigned long long)g_stepNum, (unsigned long long)block.rawBits(),
+                    blockSlots, numCopied, argCount);
+            fprintf(blkActLog, "  receiver_=0x%llx method_=0x%llx FP=%p SP=%p\n",
+                    (unsigned long long)receiver_.rawBits(),
+                    (unsigned long long)methodToExecute.rawBits(),
+                    (void*)framePointer_, (void*)stackPointer_);
+            // Dump block slots
+            for (size_t s = 0; s < blockSlots && s < 8; s++) {
+                Oop sv = memory_.fetchPointer(s, block);
+                fprintf(blkActLog, "  block[%zu] = 0x%llx%s\n", s, (unsigned long long)sv.rawBits(),
+                        sv.isNil() ? " (nil)" : "");
+            }
+            // Dump FP area
+            for (int f = 0; f < 5; f++) {
+                fprintf(blkActLog, "  FP[%d] = 0x%llx\n", f, (unsigned long long)(*(framePointer_ + f)).rawBits());
+            }
+            fflush(blkActLog);
+        }
+    }
 
     for (int i = 0; i < numCopied; i++) {
         Oop copiedValue = memory_.fetchPointer(firstCopiedSlot + i, block);
