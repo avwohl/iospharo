@@ -2,22 +2,44 @@
 
 ## Date: 2026-01-08
 
-## Current Status (2026-01-28)
+## Current Status (2026-02-01)
+Running SUnit test suites on fresh Pharo 13 images. Basic tests pass; exception handling
+has bugs that cause infinite loops on tests that trigger unhandled errors.
+
+### SUnit Test Results
+```
+SmallIntegerTest: 20 passed, 4 failed, 1 error (25 total)
+  FAILED: testInferiorWithFloat, testSuperiorWithFloat, testSuperiorOrEqualsWithFloat, testInferiorOrEqualsWithFloat
+  ERROR: testPrintString
+BooleanTest: 1 passed (1 total)
+AssociationTest: 6 passed (6 total, excluding compiler-dependent Roundtrip tests)
+PointTest: not yet tested (blocked by exception handling bugs)
+```
+
+### Key Issues Being Investigated
+1. **Exception handler not found (primitiveFindHandlerContext bug)**: Primitive 197
+   (`findNextHandlerOrSignalingContext`) started search from sender instead of self,
+   causing `on:do:` handlers to be missed. Fixed but not yet verified.
+2. **primitiveTerminateTo no-op on unreachable target**: When target context was not
+   in sender chain, primitive succeeded without setting sender. Fixed to always set
+   sender (matching Smalltalk fallback behavior).
+3. **copyTo: storm**: When exception handling can't find a handler, it enters an infinite
+   cycle: unhandled error → freeze → copyTo: (copies entire sender chain) →
+   terminateTo: → nil>>unwindTo: DNU → another unhandled error. The chain grows each cycle.
+4. **Compiler-dependent tests hang**: Tests calling `Smalltalk compiler evaluate:` trigger
+   errors deep in the compiler that cascade into the copyTo: storm.
+5. **SmallInteger float comparison failures**: 4 tests comparing SmallIntegers with Floats fail.
+
+### Previous Status (2026-01-28)
 VM runs 50M bytecode steps to completion with 0 crashes. 260K objects loaded, 20842 classes.
-Display renders (menubar visible). Events injected but don't reach Smalltalk (input semaphore index = 0).
+Display renders (menubar visible).
 
-Key remaining issue: OSSDL2Driver fails to initialize due to FFI type resolution returning nil,
-which causes an error cascade (freeze/privSender: DNUs). No event loop process is created,
-so events sit in the VM queue unread.
-
-## Test Results
+## Test Results (old)
 ```
 ./test_load_image Pharo.image
 - Image: 51 MB Spur 64-bit (format 68021), 260460 objects, 20842 classes
 - Interpreter: 50M steps, exit 0, no SIGSEGV
 - Display: 1024x768, menubar renders
-- DNUs: 500 total (285 freeze, 180 privSender:, 15 findNextUnwind, misc FFI)
-- Events: injected but sdl2Active=0, input semaphore index=0
 ```
 
 ## Completed Work

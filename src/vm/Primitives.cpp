@@ -9091,9 +9091,9 @@ PrimitiveResult Interpreter::primitiveMarkUnwindMethod(int argCount) {
     return PrimitiveResult::Failure;
 }
 
-// Primitive 197: Find handler context
-// Receiver is a context. Walk sender chain from receiver's sender looking for
-// the first context whose method has primitive 199 (handler marker).
+// Primitive 197: findNextHandlerOrSignalingContext
+// Receiver is a context. Walk from self (not sender!) looking for
+// the first context whose method has primitive 199 (handler/signaling marker).
 // Returns that context, or nil if not found.
 PrimitiveResult Interpreter::primitiveFindHandlerContext(int argCount) {
     (void)argCount;
@@ -9103,29 +9103,17 @@ PrimitiveResult Interpreter::primitiveFindHandlerContext(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Walk the sender chain from startContext's sender
-    Oop ctx = memory_.fetchPointer(0, startContext);  // sender = slot 0
+    // Walk from self (the Smalltalk fallback does: context := self)
+    Oop ctx = startContext;
     int limit = 10000;  // safety limit
 
     while (ctx.isObject() && !ctx.isNil() && limit-- > 0) {
-        // Check if this context's method has primitive 199 (handler marker)
+        // Check if this context's method has primitive 199 (handler/signaling marker)
         Oop method = memory_.fetchPointer(3, ctx);  // method = slot 3
         if (method.isObject() && !method.isNil()) {
             int primIdx = primitiveIndexOf(method);
             if (primIdx == 199) {
-                // Found a handler context
-                {
-                    static int foundCount = 0;
-                    if (foundCount++ < 50) {
-                        static FILE* fhLog = fopen("/tmp/find_handler.log", "w");
-                        if (fhLog) {
-                            fprintf(fhLog, "[FIND-HANDLER #%d step=%llu] FOUND handler ctx=0x%llx after %d contexts\n",
-                                    foundCount, (unsigned long long)g_stepNum,
-                                    (unsigned long long)ctx.rawBits(), 10000 - limit);
-                            fflush(fhLog);
-                        }
-                    }
-                }
+                // Found a handler or signaling context
                 pop();
                 push(ctx);
                 return PrimitiveResult::Success;
@@ -9135,18 +9123,6 @@ PrimitiveResult Interpreter::primitiveFindHandlerContext(int argCount) {
     }
 
     // Not found - return nil
-    {
-        static int findHandlerLogCount = 0;
-        if (findHandlerLogCount++ < 50) {
-            static FILE* fhLog = fopen("/tmp/find_handler.log", "w");
-            if (fhLog) {
-                fprintf(fhLog, "[FIND-HANDLER #%d step=%llu] NO handler found from ctx=0x%llx, walked %d contexts\n",
-                        findHandlerLogCount, (unsigned long long)g_stepNum,
-                        (unsigned long long)startContext.rawBits(), 10000 - limit);
-                fflush(fhLog);
-            }
-        }
-    }
     pop();
     push(memory_.nil());
     return PrimitiveResult::Success;
