@@ -4917,6 +4917,20 @@ terminate_process:
         }
         terminateCurrentProcess();
 
+        // Log all process terminations to understand why VM exits
+        {
+            static int termLogCount = 0;
+            termLogCount++;
+            Oop ap = getActiveProcess();
+            Oop prioOop = memory_.fetchPointer(2, ap);
+            int prio = prioOop.isSmallInteger() ? static_cast<int>(prioOop.asSmallInteger()) : -1;
+            if (termLogCount <= 20) {
+                fprintf(stderr, "[PROC-TERM #%d step=%llu] priority=%d process=0x%llx\n",
+                        termLogCount, (unsigned long long)g_stepNum, prio,
+                        (unsigned long long)ap.rawBits());
+            }
+        }
+
         // Check if we need to call setupEventLoop after install completed
         if (hasPendingDriverSetup_ && pendingDriverSetupMethod_.isObject()) {
             static FILE* driverLog = fopen("/tmp/osdriver_install.log", "a");
@@ -5014,15 +5028,15 @@ terminate_process:
         // No runnable processes - idle loop until one becomes available.
         // We must NOT return to the bytecode loop here because the current
         // process has been terminated and its method/IP are no longer valid.
+        // Keep trying to find a runnable process - never give up in a GUI app
         {
-            int idleCycles = 0;
-            const int maxIdleCycles = 500;  // ~5 seconds
-            while (running_ && idleCycles < maxIdleCycles) {
+            static int idleDumpCount = 0;
+            while (running_) {
                 // Process input events - may signal semaphores that wake processes
                 processInputEvents();
 
-                // Render display while idle
-                renderWorldMorphs();
+                // Check timer semaphore - may wake delay processes
+                checkTimerSemaphore();
 
                 // Sleep briefly to avoid busy-waiting
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -5032,13 +5046,11 @@ terminate_process:
                     return;
                 }
 
-                idleCycles++;
+                // Periodically log that we're stuck (every 5 seconds)
+                if (++idleDumpCount % 500 == 0) {
+                    fprintf(stderr, "[VM-IDLE] Still no runnable process after %d idle cycles\n", idleDumpCount);
+                }
             }
-
-            if (idleCycles >= maxIdleCycles) {
-                std::cerr << "[VM-STOP] Idle timeout in scheduler after process termination\n";
-            }
-            running_ = false;
             return;
         }
     }
@@ -11023,186 +11035,12 @@ extern int g_traceSendsAfterPrim264;
                 fflush(stderr);
                 // Don't abort - let error: propagate normally
 
-                // INTERCEPT: FFI type resolution errors - these prevent OSWindow from initializing
-                // When FFICallout can't resolve types like "Char5" or "Byte10", return nil instead of raising error
-                if (rcvrClassName == "FFICallout" && errorMsg.find("Unable to resolve external type") != std::string::npos) {
-                    static int ffiTypeErrCount = 0;
-                    ffiTypeErrCount++;
-                    if (ffiTypeErrCount <= 5) {
-                        std::cerr << "[FFI-INTERCEPT #" << ffiTypeErrCount << "] Suppressing type error: " << errorMsg << "\n";
-                    }
-                    // Pop the error: argument and receiver, return nil to suppress error
-                    popN(argCount + 1);
-                    push(memory_.nil());
-                    return;  // Skip error propagation
-                }
+                // FFI type and WordArray error intercepts REMOVED - let errors propagate normally
 
-                // INTERCEPT: WordArray index errors - these happen during display initialization
-                if (rcvrClassName == "WordArray" && errorMsg.find("only integers should be used as indices") != std::string::npos) {
-                    static int wordArrayErrCount = 0;
-                    wordArrayErrCount++;
-                    if (wordArrayErrCount <= 3) {
-                        std::cerr << "[WORDARRAY-INTERCEPT #" << wordArrayErrCount << "] Suppressing index error\n";
-                    }
-                    // Pop the error: argument and receiver, return nil
-                    popN(argCount + 1);
-                    push(memory_.nil());
-                    return;  // Skip error propagation
-                }
-
-                // INTERCEPT: If the error is "No tool named: browser", investigate what tools exist
-                if (rcvrClassName == "PharoCommonTools" && errorMsg.find("No tool named") != std::string::npos) {
-                    static FILE* browserLog = nullptr;
-                    if constexpr (ENABLE_DEBUG_LOGGING) {
-                        if (!browserLog) browserLog = fopen("/tmp/browser_fallback.log", "a");
-                    }
-
-                    // Dump the contents of PharoCommonTools >> tools dictionary
-                    if (browserLog && rcvr.isObject()) {
-                        ObjectHeader* toolsHdr = rcvr.asObjectPtr();
-                        fprintf(browserLog, "[TOOLS] PharoCommonTools receiver=0x%llx has %zu slots\n",
-                                (unsigned long long)rcvr.rawBits(), toolsHdr->slotCount());
-
-                        // Slot 0 is the tools IdentityDictionary
-                        Oop toolsDict = memory_.fetchPointer(0, rcvr);
-                        if (!toolsDict.isNil() && toolsDict.isObject()) {
-                            ObjectHeader* dictHdr = toolsDict.asObjectPtr();
-                            fprintf(browserLog, "[TOOLS] Tools dictionary has %zu slots\n", dictHdr->slotCount());
-
-                            // IdentityDictionary has 'array' at slot 1 containing associations
-                            if (dictHdr->slotCount() > 1) {
-                                Oop arraySlot = memory_.fetchPointer(1, toolsDict);
-                                if (!arraySlot.isNil() && arraySlot.isObject()) {
-                                    ObjectHeader* arrayHdr = arraySlot.asObjectPtr();
-                                    fprintf(browserLog, "[TOOLS] Dictionary array has %zu slots\n", arrayHdr->slotCount());
-
-                                    int foundCount = 0;
-                                    for (size_t i = 0; i < arrayHdr->slotCount() && foundCount < 20; i++) {
-                                        Oop assoc = arrayHdr->slotAt(i);
-                                        if (!assoc.isNil() && assoc.isObject()) {
-                                            // This should be an Association with key and value
-                                            ObjectHeader* assocHdr = assoc.asObjectPtr();
-                                            if (assocHdr->slotCount() >= 2) {
-                                                Oop key = memory_.fetchPointer(0, assoc);
-                                                Oop value = memory_.fetchPointer(1, assoc);
-
-                                                std::string keyStr = "?";
-                                                if (key.isObject()) {
-                                                    ObjectHeader* keyHdr = key.asObjectPtr();
-                                                    if (keyHdr->isBytesObject() && keyHdr->byteSize() < 50) {
-                                                        keyStr = std::string((char*)keyHdr->bytes(), keyHdr->byteSize());
-                                                    }
-                                                }
-
-                                                std::string valueStr;
-                                                char valueBuf[64];
-                                                if (value.isNil()) {
-                                                    valueStr = "nil";
-                                                } else if (!value.isObject()) {
-                                                    snprintf(valueBuf, sizeof(valueBuf), "imm=0x%llx", (unsigned long long)value.rawBits());
-                                                    valueStr = valueBuf;
-                                                } else {
-                                                    // It's an object - try to get its class name
-                                                    Oop valueCls = memory_.classOf(value);
-                                                    if (valueCls.isObject()) {
-                                                        ObjectHeader* vcHdr = valueCls.asObjectPtr();
-                                                        if (vcHdr->slotCount() > 6) {
-                                                            Oop vcName = memory_.fetchPointer(6, valueCls);
-                                                            if (vcName.isObject()) {
-                                                                ObjectHeader* vcnHdr = vcName.asObjectPtr();
-                                                                if (vcnHdr->isBytesObject() && vcnHdr->byteSize() < 50) {
-                                                                    valueStr = std::string((char*)vcnHdr->bytes(), vcnHdr->byteSize());
-                                                                } else {
-                                                                    snprintf(valueBuf, sizeof(valueBuf), "obj=0x%llx (cls name bad)", (unsigned long long)value.rawBits());
-                                                                    valueStr = valueBuf;
-                                                                }
-                                                            } else {
-                                                                snprintf(valueBuf, sizeof(valueBuf), "obj=0x%llx (cls name nil)", (unsigned long long)value.rawBits());
-                                                                valueStr = valueBuf;
-                                                            }
-                                                        } else {
-                                                            snprintf(valueBuf, sizeof(valueBuf), "obj=0x%llx (cls slots=%zu)", (unsigned long long)value.rawBits(), vcHdr->slotCount());
-                                                            valueStr = valueBuf;
-                                                        }
-                                                    } else {
-                                                        snprintf(valueBuf, sizeof(valueBuf), "obj=0x%llx (cls bad)", (unsigned long long)value.rawBits());
-                                                        valueStr = valueBuf;
-                                                    }
-                                                }
-
-                                                fprintf(browserLog, "[TOOLS]   #%s -> %s\n", keyStr.c_str(), valueStr.c_str());
-                                                foundCount++;
-                                            }
-                                        }
-                                    }
-                                    if (foundCount == 0) {
-                                        fprintf(browserLog, "[TOOLS]   (dictionary appears empty)\n");
-                                    }
-                                }
-                            }
-                        }
-                        fflush(browserLog);
-                    }
-
-                    // Look for Calypso browser (ClyFullBrowserMorph registers as #browser), then others
-                    const char* browserClasses[] = {"ClyFullBrowserMorph", "ClyFullBrowser", "StSystemBrowser", "SystemBrowser", nullptr};
-                    if (browserLog) {
-                        fprintf(browserLog, "[BROWSER] Searching for browser classes...\n");
-                        fflush(browserLog);
-                    }
-                    for (int i = 0; browserClasses[i] != nullptr; i++) {
-                        Oop browserClass = memory_.findGlobal(browserClasses[i]);
-                        if (browserLog) {
-                            fprintf(browserLog, "[BROWSER]   %s: %s\n", browserClasses[i],
-                                    browserClass.isNil() ? "not found" : "FOUND");
-                            fflush(browserLog);
-                        }
-                        if (!browserClass.isNil()) {
-                            if (browserLog) {
-                                fprintf(browserLog, "[BROWSER] Opening %s...\n", browserClasses[i]);
-                                fflush(browserLog);
-                            }
-
-                            // Pop the error: argument and receiver from stack
-                            popN(argCount + 1);
-
-                            // Send 'open' to the browser class
-                            push(browserClass);
-                            Oop openSel = findSelector("open");
-                            if (openSel.isNil()) {
-                                // Try to find open in class methods
-                                // For now, just push nil result
-                                if (browserLog) {
-                                    fprintf(browserLog, "[BROWSER] 'open' selector not found in SpecialSelectors\n");
-                                    fflush(browserLog);
-                                }
-                                pop();
-                                push(memory_.nil());
-                            } else {
-                                sendSelector(openSel, 0);
-                                if (browserLog) {
-                                    fprintf(browserLog, "[BROWSER] Sent 'open' to %s\n", browserClasses[i]);
-                                    fflush(browserLog);
-                                }
-                            }
-                            return;  // Skip the normal error handling
-                        }
-                    }
-                    if (browserLog) {
-                        fprintf(browserLog, "[BROWSER] No browser class found\n");
-                        fflush(browserLog);
-                    }
-                }
+                // PharoCommonTools browser intercept REMOVED - let error propagate normally
             }
 
-            // ===== INTERCEPT unprotectedExternalObjects: =====
-            // This message is sent during session startup but may not exist in all images.
-            // Just return self to prevent DNU cascade that corrupts the stack.
-            if (selStr == "unprotectedExternalObjects:" && argCount == 1) {
-                popN(argCount + 1);  // Pop arg and receiver
-                push(rcvr);          // Return receiver (self)
-                return;
-            }
+            // unprotectedExternalObjects: intercept REMOVED - let normal dispatch handle it
 
             // doInterCycleWait intercept REMOVED - Smalltalk handles all event dispatch
 
@@ -11249,87 +11087,9 @@ extern int g_traceSendsAfterPrim264;
                 // Let relinquish proceed normally
             }
 
-            // ===== Termination intercept - prevent app exit on menu actions =====
-            // Menu actions like Quit try to terminate the process, which would exit the app.
-            // Instead, return self to allow the app to continue running.
-            if (selStr == "terminateRealActive" || selStr == "terminateActive" ||
-                selStr == "doTerminationFromYourself" || selStr == "terminate") {
-                static FILE* termLog = nullptr;
-                if constexpr (ENABLE_DEBUG_LOGGING) {
-                    if (!termLog) {
-                        termLog = fopen("/tmp/terminate_intercept.log", "a");
-                    }
-                }
-                if (termLog) {
-                    fprintf(termLog, "[TERMINATE] Intercepted %s - returning self to prevent exit\n",
-                            selStr.c_str());
-                    fflush(termLog);
-                }
-                popN(argCount + 1);
-                push(rcvr);  // Return self
-                return;
-            }
+            // Termination intercept REMOVED - processes must terminate normally
 
-            // ===== INTERCEPT Form class >> extent:depth: =====
-            // When NullWorldRenderer creates a temp Form for drawing, we return Display instead.
-            // This causes all drawing to go to Display, which we sync to native surface.
-            if (selStr == "extent:depth:" && argCount == 2) {
-                // Check if receiver is a class object with name
-                if (rcvr.isObject()) {
-                    // For class-side method: rcvr is the class (e.g., Form)
-                    // Slot 6 of a class is its name (a Symbol)
-                    Oop maybeName = memory_.fetchPointer(6, rcvr);
-                    std::string name;
-                    if (maybeName.isObject()) {
-                        ObjectHeader* nameHdr = maybeName.asObjectPtr();
-                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
-                            name = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                        }
-                    }
-
-                    if (name == "Form") {
-                        // This is Form class receiving extent:depth:
-                        // Return our Display Form instead of creating new one
-                        Oop display = memory_.findGlobal("Display");
-                        if (!display.isNil() && display.isObject()) {
-                            // Pop args and receiver, push Display
-                            popN(argCount + 1);
-                            push(display);
-                            return;
-                        }
-                    }
-                }
-            }
-
-            // ===== INTERCEPT MorphicRenderLoop >> wait =====
-            // MorphicRenderLoop's wait blocks on a semaphore for next frame.
-            // Since we don't have proper delay/semaphore integration yet, just return self.
-            if ((selStr == "wait" || selStr == "extraWorldList") && argCount == 0) {
-                Oop rcvrClass = memory_.classOf(rcvr);
-                if (rcvrClass.isObject()) {
-                    Oop className = memory_.fetchPointer(6, rcvrClass);
-                    if (className.isObject()) {
-                        ObjectHeader* nameHdr = className.asObjectPtr();
-                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
-                            std::string rcvrClassName((char*)nameHdr->bytes(), nameHdr->byteSize());
-                            if (rcvrClassName == "MorphicRenderLoop") {
-                                popN(argCount + 1);
-                                if (selStr == "extraWorldList") {
-                                    // Return empty Array
-                                    Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
-                                    Oop emptyArray = memory_.allocateSlots(
-                                        memory_.indexOfClass(arrayClass), 0, ObjectFormat::Indexable);
-                                    push(emptyArray);
-                                } else {
-                                    // Return self for #wait
-                                    push(rcvr);
-                                }
-                                return;
-                            }
-                        }
-                    }
-                }
-            }
+            // Form extent:depth: and MorphicRenderLoop intercepts REMOVED - let Morphic manage its own rendering
 
             // ===== INTERCEPT snapshot:andQuit: - SAVE IS DISABLED =====
             // Per CLAUDE.md: Save is disabled for now to ensure consistent testing from fresh state.
@@ -11404,88 +11164,8 @@ extern int g_traceSendsAfterPrim264;
                 }
             }
 
-            // doOneCycle intercept for pending action dispatch REMOVED - Smalltalk handles all event dispatch
-
-            // ===== INTERCEPT WorldState >> doOneCycleFor: =====
-            // Process events and render, but LET SMALLTALK CONTINUE to handle event dispatch
-            if (selStr == "doOneCycleFor:" && argCount == 1) {
-                static int cycleInterceptCount = 0;
-                cycleInterceptCount++;
-                if (cycleInterceptCount <= 5) {
-                    std::cerr << "[CYCLE-INTERCEPT] doOneCycleFor: called #" << cycleInterceptCount << "\n";
-                }
-                Oop rcvrClass = memory_.classOf(rcvr);
-                if (rcvrClass.isObject()) {
-                    Oop className = memory_.fetchPointer(6, rcvrClass);
-                    if (className.isObject()) {
-                        ObjectHeader* nameHdr = className.asObjectPtr();
-                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
-                            std::string rcvrClassName((char*)nameHdr->bytes(), nameHdr->byteSize());
-                            if (rcvrClassName == "WorldState") {
-                                // Process any pending input events (queue for Smalltalk)
-                                processInputEvents();
-
-                                // Render World's morphs directly to the display surface
-                                renderWorldMorphs();
-
-                                // DON'T return early - let Smalltalk's doOneCycleFor: run
-                                // so that event processing and other cycle work happens normally.
-                                // The method will proceed to be looked up and executed.
-                            }
-                        }
-                    }
-                }
-            }
-
-            // runStepMethodsIn: skip removed - let Pharo handle step methods normally.
-            // The skip was preventing normal Morphic cycle operation.
-
-            // ===== INTERCEPT WorldState >> checkIfUpdateNeeded =====
-            // Force it to return true so Morphic actually renders
-            if (selStr == "checkIfUpdateNeeded" && argCount == 0) {
-                Oop rcvrClass = memory_.classOf(rcvr);
-                if (rcvrClass.isObject()) {
-                    Oop className = memory_.fetchPointer(6, rcvrClass);
-                    if (className.isObject()) {
-                        ObjectHeader* nameHdr = className.asObjectPtr();
-                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
-                            std::string rcvrClassName((char*)nameHdr->bytes(), nameHdr->byteSize());
-                            if (rcvrClassName == "WorldState") {
-                                // Pop receiver, push true (force update)
-                                popN(1);  // no args
-                                push(memory_.trueObject());
-                                return;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Intercept checkForNewScreenSize to set up display
-            if (selStr == "checkForNewScreenSize" && argCount == 0) {
-                Oop rcvrClass = memory_.classOf(rcvr);
-                if (rcvrClass.isObject()) {
-                    Oop className = memory_.fetchPointer(6, rcvrClass);
-                    if (className.isObject()) {
-                        ObjectHeader* nameHdr = className.asObjectPtr();
-                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
-                            std::string rcvrClassName((char*)nameHdr->bytes(), nameHdr->byteSize());
-                            if (rcvrClassName == "NullWorldRenderer") {
-                                static bool firstCheck = true;
-                                if (firstCheck) {
-                                    firstCheck = false;
-                                    // Try to create/initialize display Form
-                                    initializeDisplayForm();
-                                }
-                                // Return self (screen size unchanged)
-                                popN(argCount + 1);
-                                push(rcvr);
-                                return;
-                            }
-                        }
-                    }
-                }
-            }
+            // doOneCycleFor:, checkIfUpdateNeeded, checkForNewScreenSize intercepts REMOVED
+            // Let Morphic handle its own rendering cycle without C++ interference
         }
     }
 
