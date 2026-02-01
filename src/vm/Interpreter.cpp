@@ -16153,10 +16153,83 @@ Oop Interpreter::materializeFrameStack() {
     }
 
     // Build contexts from bottom to top (oldest to newest)
-    // The sender of the first frame is activeContext_
+    // CRITICAL: frame[0] represents the same activation as activeContext_ when
+    // frame[0].savedActiveContext == activeContext_. In that case, we must UPDATE
+    // activeContext_ with frame[0]'s data instead of creating a duplicate context.
+    // Without this, the sender chain has two contexts for the same method activation,
+    // causing loops to execute extra iterations after exception handling returns.
     Oop sender = activeContext_;
+    size_t startFrame = 0;
 
-    for (size_t i = 0; i < frameDepth_; i++) {
+    if (frameDepth_ > 0 && savedFrames_[0].savedActiveContext.rawBits() == activeContext_.rawBits() &&
+        activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
+        // frame[0] IS activeContext_'s inline continuation. Update the heap context
+        // with frame[0]'s saved state instead of creating a new context.
+        const auto& frame0 = savedFrames_[0];
+        ObjectHeader* acHdr = activeContext_.asObjectPtr();
+        if (acHdr->slotCount() >= 6 && acHdr->format() == ObjectFormat::IndexableWithFixed &&
+            frame0.savedMethod.isObject()) {
+            // Update PC
+            ObjectHeader* mHdr = frame0.savedMethod.asObjectPtr();
+            uint8_t* mBytes = mHdr->bytes();
+            int pc = 1;
+            if (frame0.savedIP >= mBytes && frame0.savedIP < mBytes + mHdr->byteSize()) {
+                pc = static_cast<int>(frame0.savedIP - mBytes) + 1;
+            }
+            memory_.storePointer(1, activeContext_, Oop::fromSmallInteger(pc));
+
+            // Update method, closure, receiver
+            memory_.storePointer(3, activeContext_, frame0.savedMethod);
+            memory_.storePointer(4, activeContext_, frame0.savedClosure);
+            memory_.storePointer(5, activeContext_, frame0.savedReceiver);
+
+            // Update temps from inline stack
+            Oop methodHeader = memory_.fetchPointer(0, frame0.savedMethod);
+            int numTemps = 0;
+            if (methodHeader.isSmallInteger()) {
+                numTemps = (methodHeader.asSmallInteger() >> 18) & 0x3F;
+            }
+
+            int savedCount = 0;
+            static const int CtxFixed = 6;
+            if (frame0.savedFP != nullptr) {
+                for (int t = 0; t < numTemps && t < 32; t++) {
+                    memory_.storePointer(CtxFixed + t, activeContext_, *(frame0.savedFP + 1 + t));
+                    savedCount++;
+                }
+                // Save expression stack items
+                Oop* exprStart = frame0.savedFP + 1 + numTemps;
+                Oop* exprEnd;
+                if (1 < frameDepth_) {
+                    exprEnd = savedFrames_[1].savedFP;
+                } else {
+                    exprEnd = framePointer_;
+                }
+                if (exprEnd > exprStart && (exprEnd - exprStart) < 100) {
+                    int nextArgCount;
+                    if (1 < frameDepth_) {
+                        Oop nextMH = memory_.fetchPointer(0, savedFrames_[1].savedMethod);
+                        nextArgCount = nextMH.isSmallInteger() ? ((nextMH.asSmallInteger() >> 24) & 0xF) : 0;
+                    } else {
+                        nextArgCount = argCount_;
+                    }
+                    Oop* exprEndPtr = exprEnd;  // expression ends before callee receiver
+                    ptrdiff_t exprCount = exprEndPtr - exprStart;
+                    for (ptrdiff_t e = 0; e < exprCount && e < 100; e++) {
+                        memory_.storePointer(CtxFixed + numTemps + e, activeContext_, *(exprStart + e));
+                        savedCount++;
+                    }
+                }
+            }
+            memory_.storePointer(2, activeContext_, Oop::fromSmallInteger(savedCount));
+
+            // Use activeContext_ as the context for frame[0], skip creating a new one
+            sender = activeContext_;
+            startFrame = 1;
+        }
+    }
+
+    for (size_t i = startFrame; i < frameDepth_; i++) {
         const auto& frame = savedFrames_[i];
 
         if (matLog) {
