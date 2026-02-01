@@ -6187,15 +6187,8 @@ void Interpreter::arithmeticSend(int which) {
     // receivers to avoid DNU spirals. This allows the VM to continue executing even if
     // arithmetic methods are missing on some objects.
 
-    // Fallback for arithmetic operations on non-SmallInteger receivers
-    if (which == 0 || which == 1 || which == 8 || which == 9) {  // + - * /
-        if (!rcvr.isSmallInteger()) {
-            // std::cerr << "[ARITH] Arithmetic fallback for " << rcvrClassName
-                      // << " which=" << which << " - returning receiver";
-            pop();  // Pop argument, leave receiver on stack
-            return;
-        }
-    }
+    // Note: arithmetic operations (+, -, *, /) on non-SmallInteger receivers
+    // (e.g., Float) must go through normal method lookup to find Float>>+, etc.
 
     // For ordering comparisons (< > <= >=), provide fallback for non-numeric types
     // NOTE: = and ~= MUST go through method lookup to handle String comparisons, etc.
@@ -6203,17 +6196,8 @@ void Interpreter::arithmeticSend(int which) {
     }
     // Don't short-circuit = and ~= (which 6 and 7) - objects define their own equality!
 
-    // For bit operations (\\, @, bitShift:, //, bitAnd:, bitOr:), provide fallback for non-integers
-    // These ops are 10-15 and only make sense on SmallIntegers
-    if (which >= 10 && which <= 15) {
-        if (!rcvr.isSmallInteger()) {
-            // std::cerr << "[ARITH] Bit operation fallback for " << rcvrClassName << " which=" << which;
-            popN(2);  // Pop receiver and argument
-            // Return 0 for bit operations on non-integers
-            push(Oop::fromSmallInteger(0));
-            return;
-        }
-    }
+    // Note: @ (which=11) must go through method lookup to find Number>>@.
+    // Bit operations on non-integers should also go through method lookup.
 
     // Try to get cached well-known selector
     Oop selector;
