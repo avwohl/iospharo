@@ -1530,6 +1530,7 @@ private:
     // VM info named primitives
     PrimitiveResult primitiveInterpreterSourceVersion(int argCount);  // Named: interpreter source version
     PrimitiveResult primitiveFileMasks(int argCount);                 // Named: FileAttributesPlugin file masks
+    PrimitiveResult primitiveFileAttribute(int argCount);             // Named: FileAttributesPlugin file attribute
     PrimitiveResult primitiveFileExists(int argCount);                // Named: FileAttributesPlugin file exists
     PrimitiveResult primitiveGetenv(int argCount);                    // Named: get environment variable
 

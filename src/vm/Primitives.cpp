@@ -10608,6 +10608,7 @@ PrimitiveResult Interpreter::primitiveFileOpen(int argCount) {
     // Assign a file ID and store the handle
     int fileId = nextFileId_++;
     openFiles_[fileId] = file;
+    fprintf(stderr, "[FILE-OPEN] '%s' writable=%d fileId=%d\n", filename.c_str(), writable, fileId);
 
     popN(argCount);
     push(Oop::fromSmallInteger(fileId));
@@ -10704,11 +10705,13 @@ PrimitiveResult Interpreter::primitiveFileDelete(int argCount) {
     Oop filenameOop = stackTop();
 
     std::string filename = extractString(memory_, filenameOop);
+    fprintf(stderr, "[FILE-DELETE] argCount=%d filename='%s' empty=%d\n", argCount, filename.c_str(), filename.empty());
     if (filename.empty()) {
         return PrimitiveResult::Failure;
     }
 
     int result = remove(filename.c_str());
+    fprintf(stderr, "[FILE-DELETE] remove('%s') result=%d errno=%d\n", filename.c_str(), result, errno);
 
     pop();
     push(result == 0 ? memory_.trueObject() : memory_.falseObject());
@@ -10760,7 +10763,9 @@ PrimitiveResult Interpreter::primitiveFileSize(int argCount) {
 // Primitive 98: Write to file
 // fileHandle buffer startIndex count primitiveFileWrite -> bytesWritten
 PrimitiveResult Interpreter::primitiveFileWrite(int argCount) {
+    fprintf(stderr, "[FILE-WRITE] argCount=%d\n", argCount);
     if (argCount < 4) {
+        fprintf(stderr, "[FILE-WRITE] FAIL: argCount < 4\n");
         return PrimitiveResult::Failure;
     }
 
@@ -21525,6 +21530,76 @@ PrimitiveResult Interpreter::primitiveFileMasks(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// primitiveFileAttribute
+// FileAttributesPlugin>>primitiveFileAttribute
+// Stack: receiver, pathString, attributeNumber -> value
+// Attribute numbers: 1=fileName(nil), 2=mode, 3=ino, 4=dev, 5=nlink, 6=uid, 7=gid,
+// 8=size, 9=accessDate, 10=modifiedDate, 11=changeDate, 12=creationDate(nil),
+// 13=isReadable, 14=isWritable, 15=isExecutable, 16=isSymlink
+PrimitiveResult Interpreter::primitiveFileAttribute(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop attrNumOop = stackTop();
+    Oop pathOop = stackValue(1);
+
+    if (!attrNumOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int attrNum = static_cast<int>(attrNumOop.asSmallInteger());
+
+    if (!pathOop.isObject()) return PrimitiveResult::Failure;
+    ObjectHeader* pathHdr = pathOop.asObjectPtr();
+    if (!pathHdr->isBytesObject()) return PrimitiveResult::Failure;
+    size_t len = memory_.byteSizeOf(pathOop);
+    std::string path(reinterpret_cast<const char*>(pathHdr->bytes()), len);
+
+    // Attributes 13-15 use access()
+    if (attrNum >= 13 && attrNum <= 15) {
+        int mode = (attrNum == 13) ? R_OK : (attrNum == 14) ? W_OK : X_OK;
+        bool ok = (access(path.c_str(), mode) == 0);
+        popN(3);
+        push(ok ? memory_.trueObject() : memory_.falseObject());
+        return PrimitiveResult::Success;
+    }
+
+    // Attribute 16 uses lstat for symlink check
+    if (attrNum == 16) {
+        struct stat st;
+        bool isSymlink = (lstat(path.c_str(), &st) == 0) && S_ISLNK(st.st_mode);
+        popN(3);
+        push(isSymlink ? memory_.trueObject() : memory_.falseObject());
+        return PrimitiveResult::Success;
+    }
+
+    // Attributes 1-12 use stat()
+    struct stat st;
+    if (stat(path.c_str(), &st) != 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop result;
+    // Squeak epoch offset: seconds from Jan 1 1901 to Jan 1 1970
+    static const int64_t squeakEpochDelta = (int64_t)(52*365 + 17*366) * 24 * 60 * 60;
+
+    switch (attrNum) {
+        case 1: result = Oop::nil(); break; // fileName - nil for non-symlinks
+        case 2: result = Oop::fromSmallInteger(static_cast<int64_t>(st.st_mode)); break;
+        case 3: result = Oop::fromSmallInteger(static_cast<int64_t>(st.st_ino)); break;
+        case 4: result = Oop::fromSmallInteger(static_cast<int64_t>(st.st_dev)); break;
+        case 5: result = Oop::fromSmallInteger(static_cast<int64_t>(st.st_nlink)); break;
+        case 6: result = Oop::fromSmallInteger(static_cast<int64_t>(st.st_uid)); break;
+        case 7: result = Oop::fromSmallInteger(static_cast<int64_t>(st.st_gid)); break;
+        case 8: result = Oop::fromSmallInteger(static_cast<int64_t>(st.st_size)); break;
+        case 9: result = Oop::fromSmallInteger(static_cast<int64_t>(st.st_atime) + squeakEpochDelta); break;
+        case 10: result = Oop::fromSmallInteger(static_cast<int64_t>(st.st_mtime) + squeakEpochDelta); break;
+        case 11: result = Oop::fromSmallInteger(static_cast<int64_t>(st.st_ctime) + squeakEpochDelta); break;
+        case 12: result = Oop::nil(); break; // creationDate - not available on Unix
+        default: return PrimitiveResult::Failure;
+    }
+
+    popN(3);
+    push(result);
+    return PrimitiveResult::Success;
+}
+
 // primitiveFileExists
 // FileAttributesPlugin>>primitiveFileExists
 // Stack: receiver, pathString -> boolean
@@ -21542,6 +21617,7 @@ PrimitiveResult Interpreter::primitiveFileExists(int argCount) {
 
     struct stat st;
     bool exists = (stat(path.c_str(), &st) == 0);
+    fprintf(stderr, "[FILE-EXISTS] path='%s' exists=%d\n", path.c_str(), exists);
 
     popN(2);  // pop arg + receiver
     push(exists ? memory_.trueObject() : memory_.falseObject());

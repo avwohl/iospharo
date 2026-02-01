@@ -2594,6 +2594,32 @@ bool Interpreter::step() {
     }
     }
 
+    // Track process switches
+    {
+        static FILE* procLog = nullptr;
+        static Oop lastProc = Oop::nil();
+        static int procSwitchCount = 0;
+        Oop curProc = getActiveProcess();
+        if (curProc.rawBits() != lastProc.rawBits()) {
+            if (!procLog) procLog = fopen("/tmp/proc_switch.log", "w");
+            if (procLog && procSwitchCount < 200) {
+                procSwitchCount++;
+                int priority = -1;
+                if (curProc.isObject()) {
+                    Oop priOop = memory_.fetchPointer(ProcessPriorityIndex, curProc);
+                    if (priOop.isSmallInteger()) priority = (int)priOop.asSmallInteger();
+                }
+                fprintf(procLog, "[PROC-SWITCH #%d step=%llu] 0x%llx (pri=%d) -> 0x%llx (pri=",
+                        procSwitchCount, (unsigned long long)g_stepNum,
+                        (unsigned long long)lastProc.rawBits(), -1,
+                        (unsigned long long)curProc.rawBits());
+                fprintf(procLog, "%d)\n", priority);
+                fflush(procLog);
+            }
+            lastProc = curProc;
+        }
+    }
+
     // If the previous step slept in relinquishProcessor, report as idle
     if (relinquishSlept_) {
         relinquishSlept_ = false;
@@ -3768,7 +3794,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
             case 0xE8: // 232: Push Integer #iiiiiiii (+ extB * 256, signed)
             {
                 uint8_t intByte = fetchByte();
-                int value = (extB_ << 8) | intByte;
+                int value = intByte + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
                 extB_ = 0;
                 push(Oop::fromSmallInteger(value));
                 break;
@@ -3776,7 +3802,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
             case 0xE9: // 233: Push Character #iiiiiiii (+ extB * 256)
             {
                 uint8_t charByte = fetchByte();
-                int codePoint = (extB_ << 8) | charByte;
+                int codePoint = charByte + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
                 extB_ = 0;
                 // Create Character object - character is stored as immediate
                 push(Oop::fromCharacter(codePoint));
@@ -3830,15 +3856,23 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
             case 0xED: // 237: Jump #iiiiiiii (+ extB * 256, signed)
             {
                 uint8_t offsetByte = fetchByte();
-                int offset = (extB_ << 8) | offsetByte;
+                // Match Cog VM: cast to unsigned before shift to avoid UB on negative extB_
+                int offset = offsetByte + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
                 extB_ = 0;
+                if (false && offset < 0 && g_stepNum >= 10000 && g_stepNum <= 25000) {
+                    static FILE* bjLog = nullptr;
+                    if (!bjLog) bjLog = fopen("/tmp/backward_jump.log", "w");
+                    if (bjLog) { fprintf(bjLog, "[BJ #%llu] 0xED offset=%d IP=%p\n", g_stepNum, offset, (void*)instructionPointer_); fflush(bjLog); }
+                }
                 instructionPointer_ += offset;
                 break;
             }
             case 0xEE: // 238: Pop and Jump On True #iiiiiiii (+ extB * 256)
             {
                 uint8_t offsetByte = fetchByte();
-                int offset = (extB_ << 8) | offsetByte;
+                // Match Cog VM: unsigned shift + reset both extA_ and extB_
+                int offset = offsetByte + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
+                extA_ = 0;
                 extB_ = 0;
                 Oop value = pop();
                 bool isT = isTrue(value);
@@ -3857,6 +3891,11 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                     }
                 }
 
+                if (false && offset < 0 && g_stepNum >= 10000 && g_stepNum <= 25000) {
+                    static FILE* bjLog = nullptr;
+                    if (!bjLog) bjLog = fopen("/tmp/backward_jump.log", "a");
+                    if (bjLog) { fprintf(bjLog, "[BJ #%llu] 0xEE offset=%d isT=%d\n", g_stepNum, offset, isT); fflush(bjLog); }
+                }
                 if (isT) {
                     instructionPointer_ += offset;
                 }
@@ -3865,7 +3904,9 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
             case 0xEF: // 239: Pop and Jump On False #iiiiiiii (+ extB * 256)
             {
                 uint8_t offsetByte = fetchByte();
-                int offset = (extB_ << 8) | offsetByte;
+                // Match Cog VM: unsigned shift + reset both extA_ and extB_
+                int offset = offsetByte + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
+                extA_ = 0;
                 extB_ = 0;
                 Oop value = pop();
                 bool isT = isTrue(value);
@@ -3885,6 +3926,11 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                     }
                 }
 
+                if (false && offset < 0 && g_stepNum >= 10000 && g_stepNum <= 25000) {
+                    static FILE* bjLog = nullptr;
+                    if (!bjLog) bjLog = fopen("/tmp/backward_jump.log", "a");
+                    if (bjLog) { fprintf(bjLog, "[BJ #%llu] 0xEF offset=%d willJump=%d\n", g_stepNum, offset, willJump); fflush(bjLog); }
+                }
                 if (willJump) {
                     instructionPointer_ += offset;
                 }
@@ -3998,7 +4044,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 uint8_t blockSizeLow = fetchByte();
                 int numCopied = ((desc >> 3) & 0x07) | ((extA_ >> 4) << 3);
                 int numArgs = (desc & 0x07) | ((extA_ & 0x0F) << 3);
-                int blockSize = (extB_ << 8) | blockSizeLow;
+                int blockSize = blockSizeLow + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
                 extA_ = 0;
                 extB_ = 0;
                 createBlockWithArgs(numArgs, numCopied, blockSize);
@@ -6646,11 +6692,80 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 }
 
 void Interpreter::sendSelector(Oop selector, int argCount) {
-    // Trace startup exception: log signal, handleError:, startUp: sends
+    // Trace startup-related sends only - DISABLED
+    if (false && g_stepNum <= 5000000) {
+        static FILE* allSendLog = nullptr;
+        static int allSendCount = 0;
+        std::string selName;
+        if (selector.isObject() && selector.rawBits() > 0x10000) {
+            ObjectHeader* sh = selector.asObjectPtr();
+            if (sh->isBytesObject() && sh->byteSize() < 100)
+                selName = std::string((char*)sh->bytes(), sh->byteSize());
+        }
+        if (selName == "startUp:" || selName == "startUp" || selName == "doOneCycle" ||
+            selName == "worldRenderer" || selName == "runStartup:" || selName == "doesNotUnderstand:" ||
+            (g_stepNum >= 10806 && g_stepNum <= 27000)) {
+            if (!allSendLog) allSendLog = fopen("/tmp/all_sends.log", "w");
+            if (allSendLog && allSendCount < 10000) {
+                allSendCount++;
+                Oop rcvr = stackValue(argCount);
+                std::string rcvrCls = "?";
+                if (rcvr.isNil()) rcvrCls = "nil";
+                else if (rcvr.isSmallInteger()) rcvrCls = "SmallInt(" + std::to_string(rcvr.asSmallInteger()) + ")";
+                else if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                    Oop cls = memory_.classOf(rcvr);
+                    if (cls.isObject() && cls.rawBits() > 0x10000) {
+                        Oop nm = memory_.fetchPointer(6, cls);
+                        if (nm.isObject() && nm.rawBits() > 0x10000) {
+                            ObjectHeader* nH = nm.asObjectPtr();
+                            if (nH->isBytesObject() && nH->byteSize() < 80)
+                                rcvrCls = std::string((char*)nH->bytes(), nH->byteSize());
+                        }
+                        // If name not found, try thisClass (slot 5) for metaclasses
+                        if (rcvrCls == "?") {
+                            Oop thisClass = memory_.fetchPointer(5, cls);
+                            if (thisClass.isObject() && thisClass.rawBits() > 0x10000) {
+                                Oop nm2 = memory_.fetchPointer(6, thisClass);
+                                if (nm2.isObject() && nm2.rawBits() > 0x10000) {
+                                    ObjectHeader* nH2 = nm2.asObjectPtr();
+                                    if (nH2->isBytesObject() && nH2->byteSize() < 80)
+                                        rcvrCls = std::string((char*)nH2->bytes(), nH2->byteSize()) + " class";
+                                }
+                            }
+                        }
+                    }
+                }
+                fprintf(allSendLog, "[%llu] #%s -> %s\n", (unsigned long long)g_stepNum, selName.c_str(), rcvrCls.c_str());
+                fflush(allSendLog);
+            }
+        }
+    }
+
+    // Count on:do: sends during startup - DISABLED for test run
+    if (false && g_stepNum < 2000000) {
+        static FILE* onDoLog = nullptr;
+        static int onDoCount = 0;
+        std::string sel2;
+        if (selector.isObject() && selector.rawBits() > 0x10000) {
+            ObjectHeader* sh = selector.asObjectPtr();
+            if (sh->isBytesObject() && sh->byteSize() < 30)
+                sel2 = std::string((char*)sh->bytes(), sh->byteSize());
+        }
+        if (sel2 == "on:do:" && argCount == 2) {
+            onDoCount++;
+            if (!onDoLog) onDoLog = fopen("/tmp/on_do_trace.log", "w");
+            if (onDoLog && onDoCount <= 200) {
+                fprintf(onDoLog, "[ON:DO: #%d step=%llu]\n", onDoCount, (unsigned long long)g_stepNum);
+                fflush(onDoLog);
+            }
+        }
+    }
+
+    // Trace startup exception - DISABLED for test run
     {
         static FILE* startupTraceLog = nullptr;
         static int startupTraceCount = 0;
-        if (startupTraceCount < 2000) {
+        if (false && startupTraceCount < 2000) {
             std::string selName;
             if (selector.isObject() && selector.rawBits() > 0x10000) {
                 ObjectHeader* sh = selector.asObjectPtr();
@@ -19658,6 +19773,7 @@ void Interpreter::initializeNamedPrimitives() {
 
     // FileAttributesPlugin
     registerNamedPrimitive("FileAttributesPlugin", "primitiveFileMasks", &Interpreter::primitiveFileMasks);
+    registerNamedPrimitive("FileAttributesPlugin", "primitiveFileAttribute", &Interpreter::primitiveFileAttribute);
     registerNamedPrimitive("FileAttributesPlugin", "primitiveFileExists", &Interpreter::primitiveFileExists);
 
     // VM info
