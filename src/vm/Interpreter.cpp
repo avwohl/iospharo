@@ -2721,7 +2721,7 @@ bool Interpreter::step() {
     // Log more frequently near the hang point (steps 15000-16000)
     size_t currentSD = static_cast<size_t>(stackPointer_ - stackBase_);
     bool shouldLog = (g_stepNum % 1000000 == 0) ||
-                     (g_stepNum > 80000 && g_stepNum % 10000 == 0);  // More frequent after startup
+                     (g_stepNum > 10000 && g_stepNum % 10000 == 0);  // More frequent after startup
     if (shouldLog) {
         if (!stepProgressLog) {
             stepProgressLog = fopen("/tmp/step_progress.log", "w");
@@ -6753,192 +6753,43 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
     }
 
-    // Trace startup exception - DISABLED for test run
+    // Deep stack trace: log all sends when frame depth > 30 (copyTo: storm detection)
     {
-        static FILE* startupTraceLog = nullptr;
-        static int startupTraceCount = 0;
-        if (false && startupTraceCount < 2000) {
+        static FILE* deepLog = nullptr;
+        static int deepLogCount = 0;
+        if (g_stepNum >= 78000 && g_stepNum <= 84000 && deepLogCount < 20000) {
             std::string selName;
             if (selector.isObject() && selector.rawBits() > 0x10000) {
                 ObjectHeader* sh = selector.asObjectPtr();
                 if (sh->isBytesObject() && sh->byteSize() < 100)
                     selName = std::string((char*)sh->bytes(), sh->byteSize());
             }
-            if (selName == "signal" || selName == "signal:" ||
-                selName == "handleError:log:" || selName == "handleError:" ||
-                selName == "startUp:" || selName == "startUp" || selName == "startup:" || selName == "shutdown:" ||
-                selName == "registeredClass" || selName == "runList:do:" ||
-                selName == "processStartUpList:" ||
-                selName == "messageText" || selName == "signalerContext" ||
-                selName == "defaultAction" || selName == "pass" ||
-                selName == "error:" || selName == "error" ||
-                selName == "primitiveFailed:" || selName == "primitiveFailed" ||
-                selName == "isApplicableFor:" || selName == "selectWorldRenderer" ||
-                selName == "openWorld" || selName == "doOneCycle" ||
-                selName == "doOneCycleWhile:" || selName == "hasOption:" ||
-                selName == "worldRenderer" || selName == "worldRenderer:" ||
-                selName == "restartMethods" || selName == "runStartup:" ||
-                selName == "runCategory:" || selName == "categoryList" ||
-                selName == "displayWorldSafely:" || selName == "displayWorld" ||
-                selName == "drawOnDisplay" || selName == "fullDrawOn:" ||
-                selName == "drawOn:" || selName == "displayWorldOn:" ||
-                selName == "updateDisplay" || selName == "forceToScreen:" ||
-                selName == "activateCursor:" || selName == "deferUpdates:" ||
-                selName == "displayWorldState:ofWorld:" || selName == "doActivate" ||
-                selName == "checkForNewScreenSize" || selName == "canRender" ||
-                selName == "drawWorld:submorphs:invalidAreasOn:" ||
-                selName == "damageRecorder" || selName == "drawDuring:" ||
-                selName == "getCanvas" || selName == "finish" ||
-                selName == "updateDamage:" || selName == "forceDisplayUpdate" ||
-                selName == "beDisplay" || selName == "primForceDisplayUpdate" ||
-                selName == "detectCorrectOneForWorld:" || selName == "activate" ||
-                selName == "deactivate" || selName == "openWorld" ||
-                selName == "restoreMorphicDisplay" || selName == "pickMostSuitableWindowDriver" ||
-                selName == "isSuitable" || selName == "driverClass" ||
-                selName == "createWithAttributes:eventHandler:" ||
-                selName == "isValidForCurrentSystemConfiguration" ||
-                selName == "isInteractive" || selName == "forCurrentSystemConfiguration" ||
-                selName == "isHeadless" || selName == "default:" ||
-                selName == "beDefault") {
-                if (!startupTraceLog) startupTraceLog = fopen("/tmp/startup_exception.log", "w");
-                if (startupTraceLog) {
-                    startupTraceCount++;
-                    // Get receiver class
-                    Oop rcvr = stackValue(argCount);
-                    std::string rcvrCls = "?";
-                    if (rcvr.isNil()) { rcvrCls = "nil"; }
-                    else if (rcvr.isSmallInteger()) { rcvrCls = "SmallInt"; }
-                    else if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-                        Oop cls = memory_.classOf(rcvr);
-                        if (cls.isObject() && cls.rawBits() > 0x10000) {
-                            Oop nm = memory_.fetchPointer(6, cls);
-                            if (nm.isObject() && nm.rawBits() > 0x10000) {
-                                ObjectHeader* nH = nm.asObjectPtr();
-                                if (nH->isBytesObject() && nH->byteSize() < 80)
-                                    rcvrCls = std::string((char*)nH->bytes(), nH->byteSize());
-                            }
-                        }
-                        // Fallback: if receiver IS a class, slot 6 has the name directly
-                        if (rcvrCls == "?") {
-                            ObjectHeader* rH = rcvr.asObjectPtr();
-                            if (rH->slotCount() > 6) {
-                                Oop nm = memory_.fetchPointer(6, rcvr);
-                                if (nm.isObject() && nm.rawBits() > 0x10000) {
-                                    ObjectHeader* nH = nm.asObjectPtr();
-                                    if (nH->isBytesObject() && nH->byteSize() < 80)
-                                        rcvrCls = std::string((char*)nH->bytes(), nH->byteSize()) + " class";
-                                }
-                            }
+            if (!deepLog) deepLog = fopen("/tmp/deep_stack_trace.log", "w");
+            if (deepLog) {
+                deepLogCount++;
+                Oop rcvr = stackValue(argCount);
+                std::string rcvrCls = "?";
+                if (rcvr.isNil()) rcvrCls = "nil";
+                else if (rcvr.isSmallInteger()) rcvrCls = "SmallInt(" + std::to_string(rcvr.asSmallInteger()) + ")";
+                else if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                    Oop cls = memory_.classOf(rcvr);
+                    if (cls.isObject() && cls.rawBits() > 0x10000) {
+                        Oop nm = memory_.fetchPointer(6, cls);
+                        if (nm.isObject() && nm.rawBits() > 0x10000) {
+                            ObjectHeader* nH = nm.asObjectPtr();
+                            if (nH->isBytesObject() && nH->byteSize() < 80)
+                                rcvrCls = std::string((char*)nH->bytes(), nH->byteSize());
                         }
                     }
-                    fprintf(startupTraceLog, "[STARTUP #%d step=%llu] #%s -> %s (0x%llx)\n",
-                            startupTraceCount, (unsigned long long)g_stepNum,
-                            selName.c_str(), rcvrCls.c_str(), (unsigned long long)rcvr.rawBits());
-                    // For signal/error, dump first arg if string
-                    // For MessageNotUnderstood, dump message details
-            if (selName == "signal" && rcvrCls == "MessageNotUnderstood") {
-                if (rcvr.isObject()) {
-                    Oop msg = memory_.fetchPointer(0, rcvr);
-                    Oop mnuReceiver = memory_.fetchPointer(1, rcvr);
-                    std::string mnuSel = "?", mnuRcvrCls = "?";
-                    if (msg.isObject() && msg.rawBits() > 0x10000) {
-                        Oop sel = memory_.fetchPointer(0, msg);
-                        if (sel.isObject() && sel.rawBits() > 0x10000) {
-                            ObjectHeader* sH = sel.asObjectPtr();
-                            if (sH->isBytesObject() && sH->byteSize() < 100)
-                                mnuSel = std::string((char*)sH->bytes(), sH->byteSize());
-                        }
-                    }
-                    if (mnuReceiver.isNil()) mnuRcvrCls = "nil";
-                    else if (mnuReceiver.isSmallInteger()) mnuRcvrCls = "SmallInt(" + std::to_string(mnuReceiver.asSmallInteger()) + ")";
-                    else if (mnuReceiver.isObject() && mnuReceiver.rawBits() > 0x10000) {
-                        Oop rcls = memory_.classOf(mnuReceiver);
-                        if (rcls.isObject() && rcls.rawBits() > 0x10000) {
-                            Oop rnm = memory_.fetchPointer(6, rcls);
-                            if (rnm.isObject() && rnm.rawBits() > 0x10000) {
-                                ObjectHeader* rnH = rnm.asObjectPtr();
-                                if (rnH->isBytesObject() && rnH->byteSize() < 80)
-                                    mnuRcvrCls = std::string((char*)rnH->bytes(), rnH->byteSize());
-                            }
-                        }
-                    }
-                    fprintf(startupTraceLog, "  MNU: #%s not understood by %s (msg=0x%llx rcvr=0x%llx)\n",
-                            mnuSel.c_str(), mnuRcvrCls.c_str(),
-                            (unsigned long long)msg.rawBits(), (unsigned long long)mnuReceiver.rawBits());
                 }
-            }
-            if (argCount >= 1 && selName == "startUp:") {
-                        Oop arg = stackValue(0);
-                        if (arg.rawBits() == memory_.trueObject().rawBits())
-                            fprintf(startupTraceLog, "  arg=(True)\n");
-                        else if (arg.rawBits() == memory_.falseObject().rawBits())
-                            fprintf(startupTraceLog, "  arg=(False)\n");
-                        else
-                            fprintf(startupTraceLog, "  arg=0x%llx\n", (unsigned long long)arg.rawBits());
-                    }
-            if (argCount >= 1 && (selName == "worldRenderer:" || selName == "isApplicableFor:")) {
-                        Oop arg = stackValue(0);
-                        std::string argCls = "?";
-                        if (arg.isNil()) argCls = "nil";
-                        else if (arg.isSmallInteger()) argCls = "SmallInt";
-                        else if (arg.isObject() && arg.rawBits() > 0x10000) {
-                            Oop ac = memory_.classOf(arg);
-                            if (ac.isObject() && ac.rawBits() > 0x10000) {
-                                Oop an = memory_.fetchPointer(6, ac);
-                                if (an.isObject() && an.rawBits() > 0x10000) {
-                                    ObjectHeader* anh = an.asObjectPtr();
-                                    if (anh->isBytesObject() && anh->byteSize() < 80)
-                                        argCls = std::string((char*)anh->bytes(), anh->byteSize());
-                                }
-                            }
-                        }
-                        fprintf(startupTraceLog, "  arg=(%s @ 0x%llx)\n", argCls.c_str(), (unsigned long long)arg.rawBits());
-                    }
-            if (argCount >= 1 && (selName == "signal:" || selName == "error:" || selName == "handleError:log:" || selName == "primitiveFailed:")) {
-                        Oop arg = stackValue(0);
-                        if (arg.isObject() && arg.rawBits() > 0x10000) {
-                            ObjectHeader* aH = arg.asObjectPtr();
-                            if (aH->isBytesObject() && aH->byteSize() < 200) {
-                                std::string argStr((char*)aH->bytes(), aH->byteSize());
-                                fprintf(startupTraceLog, "  arg='%s'\n", argStr.c_str());
-                            } else {
-                                // Get class of arg
-                                Oop acls = memory_.classOf(arg);
-                                std::string aclsName = "?";
-                                if (acls.isObject() && acls.rawBits() > 0x10000) {
-                                    Oop anm = memory_.fetchPointer(6, acls);
-                                    if (anm.isObject() && anm.rawBits() > 0x10000) {
-                                        ObjectHeader* anH = anm.asObjectPtr();
-                                        if (anH->isBytesObject() && anH->byteSize() < 80)
-                                            aclsName = std::string((char*)anH->bytes(), anH->byteSize());
-                                    }
-                                }
-                                fprintf(startupTraceLog, "  arg=(%s @ 0x%llx)\n", aclsName.c_str(), (unsigned long long)arg.rawBits());
-                            }
-                        } else if (arg.isSmallInteger()) {
-                            fprintf(startupTraceLog, "  arg=%lld\n", (long long)arg.asSmallInteger());
-                        }
-                    }
-                    fflush(startupTraceLog);
-                }
+                fprintf(deepLog, "[%llu fd=%d] %s >> #%s\n",
+                        (unsigned long long)g_stepNum, frameDepth_,
+                        rcvrCls.c_str(), selName.c_str());
+                fflush(deepLog);
             }
         }
     }
-    // Unconditional test log to verify sendSelector is being called
-    static FILE* sendTestLog = nullptr;
-    static int sendTestCount = 0;
-    if (!sendTestLog) {
-        sendTestLog = fopen("/tmp/send_test.log", "w");
-        if (sendTestLog) {
-            fprintf(sendTestLog, "[SEND-TEST] sendSelector called\n");
-            fflush(sendTestLog);
-        }
-    }
-    if (sendTestLog && ++sendTestCount <= 10) {
-        fprintf(sendTestLog, "[SEND-TEST #%d] selector=0x%llx argCount=%d\n",
-                sendTestCount, (unsigned long long)selector.rawBits(), argCount);
-        fflush(sendTestLog);
-    }
+
     // Debug send tracing (disabled for performance - was constructing std::string on every send)
     if constexpr (ENABLE_DEBUG_LOGGING) {
         static FILE* symLog = nullptr;

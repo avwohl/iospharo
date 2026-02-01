@@ -8744,12 +8744,13 @@ PrimitiveResult Interpreter::primitiveTerminateTo(int argCount) {
     }
 
     if (!targetReachable) {
-        // Target not in sender chain - don't corrupt the chain
-        // Just succeed without doing anything
+        // Target not in sender chain - still set sender to target (matches Smalltalk fallback)
+        // The Smalltalk code always does: sender := previousContext
         static int unreachableCount = 0;
         if (unreachableCount++ < 5) {
-            std::cerr << "[PRIM-TERMINATE-TO] Target unreachable - succeeding as no-op\n";
+            std::cerr << "[PRIM-TERMINATE-TO] Target unreachable - setting sender to target anyway\n";
         }
+        memory_.storePointer(SenderIndex, rcvr, targetContext);
         popN(2);
         push(rcvr);
         return PrimitiveResult::Success;
