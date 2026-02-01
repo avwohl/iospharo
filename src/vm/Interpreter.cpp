@@ -27,7 +27,7 @@
 namespace pharo {
 
 // Set to false to disable all debug file logging for performance
-constexpr bool ENABLE_DEBUG_LOGGING = true;  // Enabled to trace startup
+constexpr bool ENABLE_DEBUG_LOGGING = false;  // Disabled for performance
 
 // Global flag to trace sends after primitive 264 completes
 int g_traceSendsAfterPrim264 = 0;
@@ -1993,11 +1993,12 @@ void Interpreter::interpret() {
 
     int loopCount = 0;
     while (running_) {
-        loopCount++;
-        if (loopCount <= 3 || (loopCount % 100000 == 0 && loopCount <= 500000)) {
-            FILE* lf = fopen("/tmp/interpret_loop.log", "a");
-            if (lf) { fprintf(lf, "[LOOP] count=%d displayForm_.isNil=%d\n", loopCount, displayForm_.isNil() ? 1 : 0); fclose(lf); }
+        // Execute a batch of bytecodes before checking overhead
+        // This dramatically reduces the per-bytecode cost of timer/event checks
+        for (int batch = 0; batch < 1000 && running_; batch++) {
+            step();
         }
+        loopCount += 1000;
 
         // Process any pending external semaphore signals
         if (hasPendingSignals()) {
@@ -2007,56 +2008,15 @@ void Interpreter::interpret() {
         // Check timer and signal delay semaphore if time has elapsed
         checkTimerSemaphore();
 
-        // Detect FP corruption after timer check
-        if (framePointer_ != nullptr && framePointer_ < stackBase_) {
-            static int fpPostTimerCount = 0;
-            if (++fpPostTimerCount <= 10) {
-                std::cerr << "[FP-CORRUPT-TIMER #" << fpPostTimerCount
-                          << "] FP=" << (void*)framePointer_
-                          << " base=" << (void*)stackBase_
-                          << " fd=" << frameDepth_
-                          << " step=" << g_stepNum << "\n";
-            }
-        }
-
-        // Periodically process input events (queued for Smalltalk to poll via primitive 264)
-        if (loopCount % 100 == 0) {
+        // Process input events every 10K bytecodes
+        if (loopCount % 10000 == 0) {
             processInputEvents();
         }
 
-        // Periodically check Display Form from interpreter thread
-        if (loopCount % 100000 == 0) {
-            static int searchCount = 0;
-            searchCount++;
-            Oop display = memory_.findGlobal("Display");
-            if (searchCount <= 20) {
-                FILE* df = fopen("/tmp/display_search.log", "a");
-                if (df) {
-                    Oop bits = Oop::nil();
-                    uint32_t px0 = 0, pxMid = 0;
-                    if (!display.isNil() && display.isObject()) {
-                        bits = memory_.fetchPointer(0, display);
-                        if (!bits.isNil() && bits.isObject()) {
-                            ObjectHeader* bh = bits.asObjectPtr();
-                            uint32_t* p = reinterpret_cast<uint32_t*>(bh->bytes());
-                            px0 = p[0];
-                            pxMid = p[(1024*768)/2];
-                        }
-                    }
-                    fprintf(df, "[SEARCH #%d] loop=%d Display=0x%llx displayForm_=0x%llx match=%d px[0]=%08x px[mid]=%08x\n",
-                            searchCount, loopCount,
-                            (unsigned long long)display.rawBits(),
-                            (unsigned long long)displayForm_.rawBits(),
-                            display.rawBits() == displayForm_.rawBits() ? 1 : 0,
-                            px0, pxMid);
-                    fclose(df);
-                }
-            }
-        }
-        if (displayForm_.isNil() && (loopCount % 10000 == 0)) {
+        // Periodically look for Display Form
+        if (displayForm_.isNil() && (loopCount % 100000 == 0)) {
             Oop display = memory_.findGlobal("Display");
             if (!display.isNil() && display.isObject()) {
-                // Verify it looks like a Form (has bits, width, height, depth)
                 ObjectHeader* hdr = display.asObjectPtr();
                 if (hdr->slotCount() >= 4) {
                     Oop w = memory_.fetchPointer(1, display);
@@ -2067,20 +2027,10 @@ void Interpreter::interpret() {
                         setScreenSize(w.asSmallInteger(), h.asSmallInteger());
                         Oop d = memory_.fetchPointer(3, display);
                         if (d.isSmallInteger()) setScreenDepth(d.asSmallInteger());
-                        {
-                            FILE* df = fopen("/tmp/display_found.log", "w");
-                            if (df) {
-                                fprintf(df, "[DISPLAY] Found Display Form %dx%d from interpreter thread\n",
-                                        (int)w.asSmallInteger(), (int)h.asSmallInteger());
-                                fclose(df);
-                            }
-                        }
                     }
                 }
             }
         }
-
-        step();
     }
 }
 
@@ -2659,10 +2609,7 @@ bool Interpreter::step() {
     // Log step progress periodically to detect hangs
     static FILE* stepProgressLog = nullptr;
     // Log more frequently near the hang point (steps 15000-16000)
-    bool shouldLog = (g_stepNum % 5000 == 0) ||
-                     (g_stepNum >= 15550 && g_stepNum <= 15570) ||  // Log EVERY step in hang range
-                     (g_stepNum >= 15500 && g_stepNum <= 15700 && g_stepNum % 10 == 0) ||
-                     (g_stepNum >= 15000 && g_stepNum <= 16000 && g_stepNum % 100 == 0);
+    bool shouldLog = (g_stepNum % 1000000 == 0);  // Reduced: log every 1M steps for performance
     if (shouldLog) {
         if (!stepProgressLog) {
             stepProgressLog = fopen("/tmp/step_progress.log", "w");
@@ -2699,9 +2646,9 @@ bool Interpreter::step() {
     // instructionPointer_. If we yield after fetching, the saved PC will point
     // past the fetched bytecode, causing it to be SKIPPED when the process
     // is later restored — leading to expression stack corruption and DNUs.
-    bool shouldYield = forceYield_.load(std::memory_order_acquire);
+    bool shouldYield = forceYield_.load(std::memory_order_relaxed);
     if (shouldYield) {
-        forceYield_.store(false, std::memory_order_release);
+        forceYield_.store(false, std::memory_order_relaxed);
 
         // Per Cog VM: suppress context switch after activating methods with
         // primitive 198 (ensure:/ifCurtailed:). These methods must run their
