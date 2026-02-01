@@ -2702,6 +2702,20 @@ bool Interpreter::step() {
     bool shouldYield = forceYield_.load(std::memory_order_acquire);
     if (shouldYield) {
         forceYield_.store(false, std::memory_order_release);
+
+        // Per Cog VM: suppress context switch after activating methods with
+        // primitive 198 (ensure:/ifCurtailed:). These methods must run their
+        // setup bytecodes atomically to establish unwind protection.
+        if (suppressContextSwitch_) {
+            suppressContextSwitch_ = false;
+            goto skip_yield;
+        }
+        // Don't yield between extension bytes (0xE0/0xE1) and their target bytecode.
+        // Extension bytes set extA_/extB_ which the next bytecode consumes.
+        // A context switch here would lose these values (executeFromContext resets them).
+        if (inExtension_) {
+            goto skip_yield;
+        }
         static int forceYieldCount = 0;
         static int yieldPriorityOffset = 0;
         forceYieldCount++;
@@ -2755,8 +2769,15 @@ bool Interpreter::step() {
             return running_;
         }
     }
+skip_yield:
 
     uint8_t bytecode = fetchByte();
+
+    // Clear inExtension_ flag for non-extension bytecodes.
+    // Extension bytes (0xE0/0xE1) re-set the flag in their handler.
+    // This must be cleared BEFORE we process the bytecode so that
+    // the next iteration's forceYield check knows we're not mid-extension.
+    inExtension_ = false;
 
     // Log bytecode at hang point
     static FILE* bcLog = nullptr;
@@ -3508,6 +3529,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 {
                     uint8_t extByte = fetchByte();
                     extA_ = (extA_ << 8) | extByte;
+                    inExtension_ = true;  // Prevent forceYield before target bytecode
                     break;
                 }
                 case 0xE1: // 225: Extend B (signed) - modifies next bytecode's numArgs/offset
@@ -3519,6 +3541,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                     } else {
                         extB_ = (extB_ << 8) | extByte;
                     }
+                    inExtension_ = true;  // Prevent forceYield before target bytecode
                     break;
                 }
                 case 0xE2: // 226: Push Receiver Variable #iiiiiiii (+ extA * 256)
@@ -11842,6 +11865,13 @@ extern int g_traceSendsAfterPrim264;
             }
         }
 
+        // Suppress context switch for primitive 198 (ensure:/ifCurtailed:)
+        // Per Cog VM: "there is no suspension point on primitive failure
+        // which methods such as ensure: and ifCurtailed: rely on."
+        if (cached->primitiveIndex == 198) {
+            suppressContextSwitch_ = true;
+        }
+
         if constexpr (ENABLE_DEBUG_LOGGING) if (hangDebugEnabled && sendCount <= 4590) {
             fprintf(stderr, "[SEND-DEBUG #%d] cache hit, about to activateMethod (cached)\n", sendCount);
             fflush(stderr);
@@ -12188,6 +12218,11 @@ extern int g_traceSendsAfterPrim264;
             }
             // Primitive failed - fall through to method activation
         }
+    }
+
+    // Suppress context switch for primitive 198 (ensure:/ifCurtailed:)
+    if (primIndex == 198) {
+        suppressContextSwitch_ = true;
     }
 
     // TRACE: activateMethod at hang point
@@ -14431,10 +14466,46 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                     ObjectHeader* acH = activeContext_.asObjectPtr();
                     Oop acStackp = memory_.fetchPointer(2, activeContext_);
                     Oop acMethod = memory_.fetchPointer(3, activeContext_);
+                    Oop acReceiver = memory_.fetchPointer(5, activeContext_);
                     std::cerr << "[DNU]   activeCtx=0x" << std::hex << activeContext_.rawBits() << std::dec
                               << " slots=" << acH->slotCount()
                               << " stackp=" << (acStackp.isSmallInteger() ? acStackp.asSmallInteger() : -1)
                               << " method=#" << getSelName(acMethod) << "\n";
+                    // At fd=0, dump inline stack items with types
+                    if (frameDepth_ == 0) {
+                        int sp = acStackp.isSmallInteger() ? (int)acStackp.asSmallInteger() : 0;
+                        int inlineItems = (int)(stackPointer_ - framePointer_) - 1;
+                        // Get numTemps from method header
+                        Oop mhdr = memory_.fetchPointer(0, acMethod);
+                        int numTemps = mhdr.isSmallInteger() ? (int)((mhdr.asSmallInteger() >> 18) & 0x3F) : 0;
+                        std::cerr << "[DNU]   ctx stackp=" << sp << " inline=" << inlineItems
+                                  << " numTemps=" << numTemps << "\n";
+                        // Dump ALL inline stack items
+                        for (int ci = 0; ci < std::min(inlineItems, 10); ci++) {
+                            Oop stkItem = *(framePointer_ + 1 + ci);
+                            std::string itemDesc;
+                            if (stkItem.isNil() || stkItem.rawBits() == memory_.nil().rawBits()) itemDesc = "nil";
+                            else if (stkItem.isSmallInteger()) itemDesc = "SI(" + std::to_string(stkItem.asSmallInteger()) + ")";
+                            else if (stkItem.isObject() && stkItem.rawBits() > 0x10000) {
+                                Oop ic = memory_.classOf(stkItem);
+                                if (ic.isObject()) {
+                                    Oop in = memory_.fetchPointer(6, ic);
+                                    if (in.isObject() && in.rawBits() > 0x10000) {
+                                        ObjectHeader* inh = in.asObjectPtr();
+                                        if (inh->isBytesObject() && inh->byteSize() < 50)
+                                            itemDesc = std::string((char*)inh->bytes(), inh->byteSize());
+                                    }
+                                }
+                            }
+                            if (itemDesc.empty()) itemDesc = "?";
+                            // Compare with context slot
+                            Oop ctxItem = (ci < sp) ? memory_.fetchPointer(6 + ci, activeContext_) : Oop::nil();
+                            bool match = (ci < sp) && (ctxItem.rawBits() == stkItem.rawBits());
+                            std::cerr << "[DNU]   FP[" << (ci+1) << "]="
+                                      << (ci < numTemps ? "temp" : "expr") << " " << itemDesc
+                                      << (match ? "" : (ci < sp ? " MISMATCH" : " (new)")) << "\n";
+                        }
+                    }
                 }
             }
             // Print frame stack for all DNUs

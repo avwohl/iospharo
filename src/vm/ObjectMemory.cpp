@@ -952,7 +952,7 @@ Oop ObjectMemory::createStartupContext(Oop method, Oop receiver) {
     }
 
     int64_t headerBits = methodHeader.asSmallInteger();
-    int numTemps = (headerBits >> 16) & 0xFF;
+    int numTemps = (headerBits >> 18) & 0x3F;  // VMMaker: MethodHeaderTempCountShift=21, untagged=18, 6 bits
     // In Spur 64-bit, numLiterals is in bits 0-14 (no shift needed)
     int numLiterals = headerBits & 0x7FFF;
 
@@ -1032,7 +1032,7 @@ Oop ObjectMemory::createStartupContextWithArg(Oop method, Oop receiver, Oop arg)
     }
 
     int64_t headerBits = methodHeader.asSmallInteger();
-    int numTemps = (headerBits >> 16) & 0xFF;
+    int numTemps = (headerBits >> 18) & 0x3F;  // VMMaker: MethodHeaderTempCountShift=21, untagged=18, 6 bits
     int numArgs = (headerBits >> 24) & 0xF;  // Arguments are in bits 24-27
     int numLiterals = headerBits & 0x7FFF;
 

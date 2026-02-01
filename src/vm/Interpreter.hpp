@@ -326,6 +326,8 @@ private:
     // Execution control
     bool running_;
     bool primitiveFailed_;
+    bool suppressContextSwitch_ = false;  // Suppress forceYield after prim 198 (ensure:) activation
+    bool inExtension_ = false;  // True after extension byte (0xE0/0xE1), prevents forceYield from splitting extension+target
     int lastPrimitiveIndex_ = 0;  // For stepDetailed() tracking
 
     // System paths
