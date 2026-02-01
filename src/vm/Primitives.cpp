@@ -1209,7 +1209,22 @@ PrimitiveResult Interpreter::primitiveLessOrEqual(int argCount) {
 
     // Fast path: both are SmallIntegers
     if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
-        bool result = rcvr.asSmallInteger() <= arg.asSmallInteger();
+        int64_t rcvrVal = rcvr.asSmallInteger();
+        int64_t argVal = arg.asSmallInteger();
+        // Trace: log when comparing against 55 (startupList size)
+        if (argVal == 55 && g_stepNum < 2000000) {
+            static FILE* leLog = nullptr;
+            static int leCount = 0;
+            if (!leLog) leLog = fopen("/tmp/le_55_trace.log", "w");
+            if (leLog && leCount < 500) {
+                leCount++;
+                fprintf(leLog, "[LE55 #%d step=%llu] %lld <= 55 = %s\n",
+                        leCount, (unsigned long long)g_stepNum,
+                        (long long)rcvrVal, rcvrVal <= 55 ? "true" : "FALSE!");
+                fflush(leLog);
+            }
+        }
+        bool result = rcvrVal <= argVal;
         primitiveSuccess(result ? memory_.trueObject() : memory_.falseObject());
         return PrimitiveResult::Success;
     }
@@ -3725,8 +3740,8 @@ PrimitiveResult Interpreter::primitiveSignal(int argCount) {
         int64_t excess = excessOop.isSmallInteger() ? excessOop.asSmallInteger() : 0;
         memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
                             Oop::fromSmallInteger(excess + 1));
-        if (signalLog && signalCallCount <= 100) {
-            fprintf(signalLog, "[SIGNAL #%d] sem=0x%llx no waiters -> excess=%lld\n",
+        if (signalLog && signalCallCount <= 200) {
+            fprintf(signalLog, "[SIGNAL #%d step=%llu] sem=0x%llx no waiters -> excess=%lld\n",
                     signalCallCount, (unsigned long long)semaphore.rawBits(), (long long)(excess + 1));
             fflush(signalLog);
         }
@@ -3745,8 +3760,8 @@ PrimitiveResult Interpreter::primitiveSignal(int argCount) {
     Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
     int activePriority = static_cast<int>(activePriorityOop.asSmallInteger());
 
-    if (signalLog && signalCallCount <= 100) {
-        fprintf(signalLog, "[SIGNAL #%d] sem=0x%llx waking process 0x%llx (pri=%d) active_pri=%d -> %s\n",
+    if (signalLog && signalCallCount <= 200) {
+        fprintf(signalLog, "[SIGNAL #%d step=%llu] sem=0x%llx waking process 0x%llx (pri=%d) active_pri=%d -> %s\n",
                 signalCallCount, (unsigned long long)semaphore.rawBits(),
                 (unsigned long long)process.rawBits(), processPriority, activePriority,
                 processPriority > activePriority ? "PREEMPT" : "enqueue");
@@ -3776,6 +3791,11 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
 
     if (!waitLog) {
         waitLog = fopen("/tmp/prim_wait.log", "w");
+        if (waitLog) {
+            fprintf(waitLog, "[INIT] g_stepNum=%llu &g_stepNum=%p\n",
+                    (unsigned long long)g_stepNum, (void*)&g_stepNum);
+            fflush(waitLog);
+        }
     }
 
     if (stackPointer_ < stackBase_ + argCount + 1) {
@@ -3804,8 +3824,8 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
         if (excess > 0) {
             // Semaphore is signaled - decrement and return immediately
             if (waitLog && waitCallCount <= 500) {
-                fprintf(waitLog, "[WAIT #%d] sem=0x%llx excess=%lld -> immediate return\n",
-                        waitCallCount, (unsigned long long)semaphore.rawBits(), (long long)excess);
+                fprintf(waitLog, "[WAIT #%d step=%llu] sem=0x%llx excess=%lld -> immediate return\n",
+                        waitCallCount, (unsigned long long)g_stepNum, (unsigned long long)semaphore.rawBits(), (long long)excess);
                 fflush(waitLog);
             }
             memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
@@ -3829,7 +3849,7 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
                          static_cast<int>(activePriorityOop.asSmallInteger()) : -1;
 
     if (waitLog && waitCallCount <= 500) {
-        fprintf(waitLog, "[WAIT #%d] sem=0x%llx excess=0 -> BLOCKING process 0x%llx (priority %d)\n",
+        fprintf(waitLog, "[WAIT #%d step=%llu] sem=0x%llx excess=0 -> BLOCKING process 0x%llx (priority %d)\n",
                 waitCallCount, (unsigned long long)semaphore.rawBits(),
                 (unsigned long long)activeProcess.rawBits(), activePriority);
         // Log method info
@@ -9049,12 +9069,10 @@ PrimitiveResult Interpreter::primitiveMarkHandlerMethod(int argCount) {
 
     Oop rcvr = stackTop();
 
-    // In a full implementation, we'd set a flag on the context
-    // For now, just return the receiver (typically thisContext)
-
-    pop();
-    push(rcvr);
-    return PrimitiveResult::Success;
+    // Marker primitives MUST FAIL so the method body executes.
+    // The primitive index (199) in the method header marks the context
+    // as an exception handler for on:do: lookup purposes.
+    return PrimitiveResult::Failure;
 }
 
 // Primitive 187: Mark a method context as an unwind protect method
@@ -9065,12 +9083,11 @@ PrimitiveResult Interpreter::primitiveMarkUnwindMethod(int argCount) {
 
     Oop rcvr = stackTop();
 
-    // In a full implementation, we'd set an unwind flag on the context
-    // For now, just return the receiver
-
-    pop();
-    push(rcvr);
-    return PrimitiveResult::Success;
+    // Marker primitives MUST FAIL so the method body executes.
+    // The primitive index (198) in the method header is what matters —
+    // it tells the VM to suppress context switching during this activation.
+    // Returning Success would skip the ensure: body entirely!
+    return PrimitiveResult::Failure;
 }
 
 // Primitive 197: Find handler context
