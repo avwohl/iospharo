@@ -8125,7 +8125,7 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
     if (attrTraceCount <= 20) {
         std::cerr << "[ATTR-149 #" << attrTraceCount << "] primitiveGetAttribute(" << index << ")\n";
     }
-    if (attrLog && attrTraceCount <= 5000) {
+    if (attrLog && attrTraceCount <= 50000) {
         fprintf(attrLog, "[ATTR #%d] index=%lld\n", attrTraceCount, (long long)index);
         fflush(attrLog);
     }
@@ -8151,24 +8151,17 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
                 push(str);
                 return PrimitiveResult::Success;
             }
-        case 2:  // First command line argument - --headless
+        case 2:  // First command line argument - --interactive
             {
-                // isHeadless checks attributes -1000..1000 for --headless
-                Oop str = memory_.createString("--headless");
-                pop();
-                push(str);
-                return PrimitiveResult::Success;
-            }
-        case 3:  // Second command line argument - --interactive
-            {
-                // CommandLineArguments collects from index 2 until nil
                 // This triggers OSWorldRenderer.isApplicableFor: to return true
+                // Do NOT include --headless: Pharo scans all args for it and
+                // selects NullWorldRenderer if found, ignoring --interactive.
                 Oop str = memory_.createString("--interactive");
                 pop();
                 push(str);
                 return PrimitiveResult::Success;
             }
-        case 4:  // No more arguments
+        case 3:  // No more arguments
             pop();
             push(memory_.nil());
             return PrimitiveResult::Success;

@@ -655,6 +655,38 @@ int main(int argc, char* argv[]) {
         std::cout << "Active bytecode steps: " << activeSteps << std::endl;
         std::cout << "Steps after click: " << clickResponseSteps << std::endl;
 
+        // Check if Display form bits were modified
+        {
+            Oop display = interpreter.displayForm();
+            if (display.isObject() && display.rawBits() > 0x10000) {
+                Oop bits = memory.fetchPointer(0, display);
+                if (bits.isObject() && bits.rawBits() > 0x10000) {
+                    ObjectHeader* bitsHdr = bits.asObjectPtr();
+                    uint32_t* pixels = (uint32_t*)bitsHdr->bytes();
+                    size_t pixelCount = bitsHdr->byteSize() / 4;
+                    // Sample some pixels to check if display was updated
+                    std::cout << "\n=== Display Check ===" << std::endl;
+                    std::cout << "Pixel count: " << pixelCount << std::endl;
+                    // Check first row, middle, and bottom
+                    if (pixelCount > 1024*384) {
+                        std::cout << "pixel[0,0]   = 0x" << std::hex << pixels[0] << std::dec << std::endl;
+                        std::cout << "pixel[512,0] = 0x" << std::hex << pixels[512] << std::dec << std::endl;
+                        std::cout << "pixel[0,384] = 0x" << std::hex << pixels[1024*384] << std::dec << std::endl;
+                        std::cout << "pixel[512,384]= 0x" << std::hex << pixels[1024*384+512] << std::dec << std::endl;
+                    }
+                    // Count non-gradient pixels (gradient was R=x%256, G=y%256, B=128)
+                    int modified = 0;
+                    for (size_t i = 0; i < pixelCount && i < 100; i++) {
+                        int x = i % 1024;
+                        int y = i / 1024;
+                        uint32_t expected = 0xFF000000 | ((x & 0xFF) << 16) | ((y & 0xFF) << 8) | 128;
+                        if (pixels[i] != expected) modified++;
+                    }
+                    std::cout << "First 100 pixels: " << modified << " modified from gradient" << std::endl;
+                }
+            }
+        }
+
         // Stop the heartbeat thread
         std::cout << "Stopping heartbeat thread..." << std::endl;
         interpreter.stopHeartbeat();

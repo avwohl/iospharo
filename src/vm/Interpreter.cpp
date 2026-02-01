@@ -6650,7 +6650,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     {
         static FILE* startupTraceLog = nullptr;
         static int startupTraceCount = 0;
-        if (startupTraceCount < 500) {
+        if (startupTraceCount < 2000) {
             std::string selName;
             if (selector.isObject() && selector.rawBits() > 0x10000) {
                 ObjectHeader* sh = selector.asObjectPtr();
@@ -6664,7 +6664,34 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 selName == "messageText" || selName == "signalerContext" ||
                 selName == "defaultAction" || selName == "pass" ||
                 selName == "error:" || selName == "error" ||
-                selName == "primitiveFailed:" || selName == "primitiveFailed") {
+                selName == "primitiveFailed:" || selName == "primitiveFailed" ||
+                selName == "isApplicableFor:" || selName == "selectWorldRenderer" ||
+                selName == "openWorld" || selName == "doOneCycle" ||
+                selName == "doOneCycleWhile:" || selName == "hasOption:" ||
+                selName == "worldRenderer" || selName == "worldRenderer:" ||
+                selName == "restartMethods" || selName == "runStartup:" ||
+                selName == "runCategory:" || selName == "categoryList" ||
+                selName == "displayWorldSafely:" || selName == "displayWorld" ||
+                selName == "drawOnDisplay" || selName == "fullDrawOn:" ||
+                selName == "drawOn:" || selName == "displayWorldOn:" ||
+                selName == "updateDisplay" || selName == "forceToScreen:" ||
+                selName == "activateCursor:" || selName == "deferUpdates:" ||
+                selName == "displayWorldState:ofWorld:" || selName == "doActivate" ||
+                selName == "checkForNewScreenSize" || selName == "canRender" ||
+                selName == "drawWorld:submorphs:invalidAreasOn:" ||
+                selName == "damageRecorder" || selName == "drawDuring:" ||
+                selName == "getCanvas" || selName == "finish" ||
+                selName == "updateDamage:" || selName == "forceDisplayUpdate" ||
+                selName == "beDisplay" || selName == "primForceDisplayUpdate" ||
+                selName == "detectCorrectOneForWorld:" || selName == "activate" ||
+                selName == "deactivate" || selName == "openWorld" ||
+                selName == "restoreMorphicDisplay" || selName == "pickMostSuitableWindowDriver" ||
+                selName == "isSuitable" || selName == "driverClass" ||
+                selName == "createWithAttributes:eventHandler:" ||
+                selName == "isValidForCurrentSystemConfiguration" ||
+                selName == "isInteractive" || selName == "forCurrentSystemConfiguration" ||
+                selName == "isHeadless" || selName == "default:" ||
+                selName == "beDefault") {
                 if (!startupTraceLog) startupTraceLog = fopen("/tmp/startup_exception.log", "w");
                 if (startupTraceLog) {
                     startupTraceCount++;
@@ -6683,6 +6710,18 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                                     rcvrCls = std::string((char*)nH->bytes(), nH->byteSize());
                             }
                         }
+                        // Fallback: if receiver IS a class, slot 6 has the name directly
+                        if (rcvrCls == "?") {
+                            ObjectHeader* rH = rcvr.asObjectPtr();
+                            if (rH->slotCount() > 6) {
+                                Oop nm = memory_.fetchPointer(6, rcvr);
+                                if (nm.isObject() && nm.rawBits() > 0x10000) {
+                                    ObjectHeader* nH = nm.asObjectPtr();
+                                    if (nH->isBytesObject() && nH->byteSize() < 80)
+                                        rcvrCls = std::string((char*)nH->bytes(), nH->byteSize()) + " class";
+                                }
+                            }
+                        }
                     }
                     fprintf(startupTraceLog, "[STARTUP #%d step=%llu] #%s -> %s (0x%llx)\n",
                             startupTraceCount, (unsigned long long)g_stepNum,
@@ -6690,38 +6729,63 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                     // For signal/error, dump first arg if string
                     // For MessageNotUnderstood, dump message details
             if (selName == "signal" && rcvrCls == "MessageNotUnderstood") {
-                // MNU layout: slot 0 = message, slot 1 = receiver, slot 2 = reachedDefaultHandler
-                // Message layout: slot 0 = selector, slot 1 = args, slot 2 = lookupClass
                 if (rcvr.isObject()) {
-                    Oop msg = memory_.fetchPointer(0, rcvr);  // message
-                    Oop mnuReceiver = memory_.fetchPointer(1, rcvr);  // receiver
+                    Oop msg = memory_.fetchPointer(0, rcvr);
+                    Oop mnuReceiver = memory_.fetchPointer(1, rcvr);
+                    std::string mnuSel = "?", mnuRcvrCls = "?";
                     if (msg.isObject() && msg.rawBits() > 0x10000) {
-                        Oop sel = memory_.fetchPointer(0, msg);  // selector
+                        Oop sel = memory_.fetchPointer(0, msg);
                         if (sel.isObject() && sel.rawBits() > 0x10000) {
                             ObjectHeader* sH = sel.asObjectPtr();
-                            if (sH->isBytesObject() && sH->byteSize() < 100) {
-                                std::string mnuSel((char*)sH->bytes(), sH->byteSize());
-                                // Get receiver class name
-                                std::string mnuRcvrCls = "?";
-                                if (mnuReceiver.isNil()) { mnuRcvrCls = "nil"; }
-                                else if (mnuReceiver.isSmallInteger()) { mnuRcvrCls = "SmallInt(" + std::to_string(mnuReceiver.asSmallInteger()) + ")"; }
-                                else if (mnuReceiver.isObject() && mnuReceiver.rawBits() > 0x10000) {
-                                    Oop rcls = memory_.classOf(mnuReceiver);
-                                    if (rcls.isObject() && rcls.rawBits() > 0x10000) {
-                                        Oop rnm = memory_.fetchPointer(6, rcls);
-                                        if (rnm.isObject() && rnm.rawBits() > 0x10000) {
-                                            ObjectHeader* rnH = rnm.asObjectPtr();
-                                            if (rnH->isBytesObject() && rnH->byteSize() < 80)
-                                                mnuRcvrCls = std::string((char*)rnH->bytes(), rnH->byteSize());
-                                        }
-                                    }
-                                }
-                                fprintf(startupTraceLog, "  MNU: #%s not understood by %s\n", mnuSel.c_str(), mnuRcvrCls.c_str());
+                            if (sH->isBytesObject() && sH->byteSize() < 100)
+                                mnuSel = std::string((char*)sH->bytes(), sH->byteSize());
+                        }
+                    }
+                    if (mnuReceiver.isNil()) mnuRcvrCls = "nil";
+                    else if (mnuReceiver.isSmallInteger()) mnuRcvrCls = "SmallInt(" + std::to_string(mnuReceiver.asSmallInteger()) + ")";
+                    else if (mnuReceiver.isObject() && mnuReceiver.rawBits() > 0x10000) {
+                        Oop rcls = memory_.classOf(mnuReceiver);
+                        if (rcls.isObject() && rcls.rawBits() > 0x10000) {
+                            Oop rnm = memory_.fetchPointer(6, rcls);
+                            if (rnm.isObject() && rnm.rawBits() > 0x10000) {
+                                ObjectHeader* rnH = rnm.asObjectPtr();
+                                if (rnH->isBytesObject() && rnH->byteSize() < 80)
+                                    mnuRcvrCls = std::string((char*)rnH->bytes(), rnH->byteSize());
                             }
                         }
                     }
+                    fprintf(startupTraceLog, "  MNU: #%s not understood by %s (msg=0x%llx rcvr=0x%llx)\n",
+                            mnuSel.c_str(), mnuRcvrCls.c_str(),
+                            (unsigned long long)msg.rawBits(), (unsigned long long)mnuReceiver.rawBits());
                 }
             }
+            if (argCount >= 1 && selName == "startUp:") {
+                        Oop arg = stackValue(0);
+                        if (arg.rawBits() == memory_.trueObject().rawBits())
+                            fprintf(startupTraceLog, "  arg=(True)\n");
+                        else if (arg.rawBits() == memory_.falseObject().rawBits())
+                            fprintf(startupTraceLog, "  arg=(False)\n");
+                        else
+                            fprintf(startupTraceLog, "  arg=0x%llx\n", (unsigned long long)arg.rawBits());
+                    }
+            if (argCount >= 1 && (selName == "worldRenderer:" || selName == "isApplicableFor:")) {
+                        Oop arg = stackValue(0);
+                        std::string argCls = "?";
+                        if (arg.isNil()) argCls = "nil";
+                        else if (arg.isSmallInteger()) argCls = "SmallInt";
+                        else if (arg.isObject() && arg.rawBits() > 0x10000) {
+                            Oop ac = memory_.classOf(arg);
+                            if (ac.isObject() && ac.rawBits() > 0x10000) {
+                                Oop an = memory_.fetchPointer(6, ac);
+                                if (an.isObject() && an.rawBits() > 0x10000) {
+                                    ObjectHeader* anh = an.asObjectPtr();
+                                    if (anh->isBytesObject() && anh->byteSize() < 80)
+                                        argCls = std::string((char*)anh->bytes(), anh->byteSize());
+                                }
+                            }
+                        }
+                        fprintf(startupTraceLog, "  arg=(%s @ 0x%llx)\n", argCls.c_str(), (unsigned long long)arg.rawBits());
+                    }
             if (argCount >= 1 && (selName == "signal:" || selName == "error:" || selName == "handleError:log:" || selName == "primitiveFailed:")) {
                         Oop arg = stackValue(0);
                         if (arg.isObject() && arg.rawBits() > 0x10000) {
