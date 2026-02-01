@@ -13447,6 +13447,34 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
         return false;
     }
 
+    // CRITICAL FIX: When leaving a context that was restored from the heap
+    // (frameDepth_ == 0), sync the current inline state back to activeContext_.
+    // Without this, the heap context's temps/PC become stale, causing infinite
+    // loops when exception handling materializes frames and follows the stale
+    // activeContext_ sender chain.
+    if (frameDepth_ == 0 && activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
+        ObjectHeader* ctxHdr = activeContext_.asObjectPtr();
+        if (ctxHdr->slotCount() >= 6 && ctxHdr->format() == ObjectFormat::IndexableWithFixed) {
+            // Sync PC (1-based byte offset into method bytes)
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                ObjectHeader* methodObj = method_.asObjectPtr();
+                uint8_t* methodBytes = methodObj->bytes();
+                int64_t pc = (instructionPointer_ - methodBytes) + 1;
+                memory_.storePointer(1, activeContext_, Oop::fromSmallInteger(pc));
+            }
+
+            // Sync temps and expression stack from inline stack to context slots
+            static const int ContextFixedFields = 6;
+            int numItems = static_cast<int>(stackPointer_ - framePointer_) - 1;
+            if (numItems < 0) numItems = 0;
+            if (numItems > 200) numItems = 200;
+            memory_.storePointer(2, activeContext_, Oop::fromSmallInteger(numItems));
+            for (int i = 0; i < numItems && (ContextFixedFields + i) < static_cast<int>(ctxHdr->slotCount()); i++) {
+                memory_.storePointer(ContextFixedFields + i, activeContext_, *(framePointer_ + 1 + i));
+            }
+        }
+    }
+
     SavedFrame& frame = savedFrames_[frameDepth_++];
     frame.savedIP = instructionPointer_;
     frame.savedBytecodeEnd = bytecodeEnd_;
@@ -19440,6 +19468,137 @@ bool Interpreter::executeFromContext(Oop context) {
     }
 
     argCount_ = 0;  // We're resuming a context, not calling a method
+
+    // INFINITE LOOP DETECTOR: Track context+PC pairs to detect when same context
+    // is restored with the same PC repeatedly (indicates exception handling loop)
+    {
+        static struct { uint64_t ctx; int64_t pc; } recentRestores[16] = {};
+        static int restoreIdx = 0;
+        static int loopDetectCount = 0;
+        static FILE* loopLog = nullptr;
+        if (!loopLog) loopLog = fopen("/tmp/exception_loop.log", "w");
+
+        uint64_t ctxBits = context.rawBits();
+        int64_t pcVal = savedPC.isSmallInteger() ? savedPC.asSmallInteger() : 0;
+
+        // Check if this context+PC was recently restored
+        int repeatCount = 0;
+        for (int r = 0; r < 16; r++) {
+            if (recentRestores[r].ctx == ctxBits && recentRestores[r].pc == pcVal) {
+                repeatCount++;
+            }
+        }
+
+        // Store this restore
+        recentRestores[restoreIdx] = {ctxBits, pcVal};
+        restoreIdx = (restoreIdx + 1) & 15;
+
+        if (repeatCount >= 3 && loopDetectCount < 5) {
+            loopDetectCount++;
+            fprintf(loopLog, "\n=== LOOP DETECTED #%d (step=%llu) ===\n", loopDetectCount, g_stepNum);
+            fprintf(loopLog, "Context 0x%llx restored with PC=%lld (%d times in last 16)\n",
+                    (unsigned long long)ctxBits, (long long)pcVal, repeatCount);
+
+            // Get method selector
+            std::string selName = "?";
+            if (numLiterals >= 2 && numLiterals < 100) {
+                Oop sel = memory_.fetchPointer(numLiterals - 1, method_);
+                if (sel.isObject() && sel.rawBits() > 0x10000) {
+                    ObjectHeader* selH = sel.asObjectPtr();
+                    if (selH->isBytesObject() && selH->byteSize() < 50) {
+                        selName = std::string((char*)selH->bytes(), selH->byteSize());
+                    }
+                }
+            }
+            // Get receiver class
+            std::string rcvrCls = "?";
+            if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+                Oop cls = memory_.classOf(receiver_);
+                if (cls.isObject()) {
+                    Oop cn = memory_.fetchPointer(6, cls);
+                    if (cn.isObject() && cn.rawBits() > 0x10000) {
+                        ObjectHeader* cnH = cn.asObjectPtr();
+                        if (cnH->isBytesObject() && cnH->byteSize() < 50) {
+                            rcvrCls = std::string((char*)cnH->bytes(), cnH->byteSize());
+                        }
+                    }
+                }
+            }
+
+            fprintf(loopLog, "Method: #%s on %s\n", selName.c_str(), rcvrCls.c_str());
+            fprintf(loopLog, "numTemps=%d stackp=%d numLiterals=%d\n", numTemps, stackp, numLiterals);
+
+            // Dump bytecodes around the PC
+            if (pcVal > 0 && pcVal <= static_cast<int64_t>(totalBytes)) {
+                size_t startOff = static_cast<size_t>(pcVal - 1);
+                // Show bytecodes starting a bit before PC for context
+                size_t dumpStart = startOff > 10 ? startOff - 10 : bytecodeStart;
+                fprintf(loopLog, "Bytecodes around PC=%lld (bcStart=%zu):\n  ", (long long)pcVal, bytecodeStart);
+                for (size_t j = dumpStart; j < std::min(startOff + 30, totalBytes); j++) {
+                    if (j == startOff) fprintf(loopLog, "[");
+                    fprintf(loopLog, "%02x", methodBytes[j]);
+                    if (j == startOff) fprintf(loopLog, "]");
+                    fprintf(loopLog, " ");
+                }
+                fprintf(loopLog, "\n");
+            }
+
+            // Dump the context's temp/stack values
+            fprintf(loopLog, "Context temps/stack (stackp=%d):\n", stackp);
+            ObjectHeader* ctxH = context.asObjectPtr();
+            for (int s = 0; s < std::min(stackp, 20); s++) {
+                Oop item = memory_.fetchPointer(6 + s, context);
+                fprintf(loopLog, "  [%d] = 0x%llx", s, (unsigned long long)item.rawBits());
+                if (item.isSmallInteger()) {
+                    fprintf(loopLog, " (SmallInt=%lld)", (long long)item.asSmallInteger());
+                } else if (item.isObject() && item.rawBits() > 0x10000) {
+                    Oop cls = memory_.classOf(item);
+                    if (cls.isObject()) {
+                        Oop cn = memory_.fetchPointer(6, cls);
+                        if (cn.isObject() && cn.rawBits() > 0x10000) {
+                            ObjectHeader* cnH = cn.asObjectPtr();
+                            if (cnH->isBytesObject() && cnH->byteSize() < 50) {
+                                fprintf(loopLog, " (%s)", std::string((char*)cnH->bytes(), cnH->byteSize()).c_str());
+                            }
+                        }
+                    }
+                }
+                fprintf(loopLog, "\n");
+            }
+
+            // Dump sender chain
+            fprintf(loopLog, "Sender chain:\n");
+            Oop sCtx = memory_.fetchPointer(0, context);
+            for (int sc = 0; sc < 10 && sCtx.isObject() && sCtx.rawBits() > 0x10000; sc++) {
+                ObjectHeader* sH = sCtx.asObjectPtr();
+                if (sH->slotCount() < 6) break;
+                Oop sMeth = memory_.fetchPointer(3, sCtx);
+                std::string sSel = "?";
+                if (sMeth.isObject() && sMeth.rawBits() > 0x10000) {
+                    Oop mh = memory_.fetchPointer(0, sMeth);
+                    if (mh.isSmallInteger()) {
+                        int nl = mh.asSmallInteger() & 0x7FFF;
+                        if (nl >= 2 && nl < 100) {
+                            Oop ss = memory_.fetchPointer(nl - 1, sMeth);
+                            if (ss.isObject() && ss.rawBits() > 0x10000) {
+                                ObjectHeader* ssH = ss.asObjectPtr();
+                                if (ssH->isBytesObject() && ssH->byteSize() < 50) {
+                                    sSel = std::string((char*)ssH->bytes(), ssH->byteSize());
+                                }
+                            }
+                        }
+                    }
+                }
+                Oop sPC = memory_.fetchPointer(1, sCtx);
+                fprintf(loopLog, "  [%d] ctx=0x%llx #%s pc=%lld\n", sc,
+                        (unsigned long long)sCtx.rawBits(), sSel.c_str(),
+                        sPC.isSmallInteger() ? (long long)sPC.asSmallInteger() : -1LL);
+                sCtx = memory_.fetchPointer(0, sCtx);
+            }
+
+            fflush(loopLog);
+        }
+    }
 
     // Debug: dump context restore for doOneCycleWhile: to investigate UIProcess termination
     {
