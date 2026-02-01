@@ -568,7 +568,7 @@ int main(int argc, char* argv[]) {
         // Run bytecode steps for testing
         std::cout << "\n=== Execution Test ===" << std::endl;
         auto execStart = std::chrono::steady_clock::now();
-        int totalSteps = 500000000;  // Run 500M steps
+        int totalSteps = 2000000000;  // Run 2B steps
         std::cout << "Running up to " << totalSteps << " bytecode steps..." << std::endl;
         int activeSteps = 0;
         int idleSteps = 0;
@@ -591,8 +591,8 @@ int main(int argc, char* argv[]) {
                           << " idle=" << idleSteps << " result=" << result << std::endl;
             }
 
-            // Report every 10000 steps (or 1000 after step 10000 for debugging)
-            if (i > 0 && (i % 10000 == 0 || (i > 10000 && i % 1000 == 0))) {
+            // Report every 100k steps
+            if (i > 0 && i % 100000 == 0) {
                 static auto start = std::chrono::steady_clock::now();
                 auto now = std::chrono::steady_clock::now();
                 auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();

@@ -13978,6 +13978,34 @@ void Interpreter::setReceiverInstVar(size_t index, Oop value) {
 // ===== SPECIAL SENDS =====
 
 void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
+    // Fast path: silently handle context unwinding messages sent to nil.
+    // Only intercept messages that would create infinite DNU loops during
+    // stack unwinding. Let other DNU messages through for normal error handling.
+    {
+        Oop rcvr = stackValue(argCount);
+        bool isNilRcvr = (rcvr.rawBits() == 0 || rcvr.rawBits() == memory_.nil().rawBits());
+        if (isNilRcvr && selector.isObject() && selector.rawBits() > 0x10000) {
+            ObjectHeader* sh = selector.asObjectPtr();
+            if (sh->isBytesObject()) {
+                size_t len = sh->byteSize();
+                const char* bytes = (const char*)sh->bytes();
+                auto match = [&](const char* s) { size_t n = strlen(s); return len == n && memcmp(bytes, s, n) == 0; };
+                if (match("unwindTo:") || match("terminateTo:") || match("unwindComplete") ||
+                    match("unwindAndStop:") || match("privSender:")) {
+                    static int silentCount = 0;
+                    silentCount++;
+                    if (silentCount <= 20) {
+                        fprintf(stderr, "[DNU-SILENT #%d step=%llu] nil>>%.*s\n",
+                                silentCount, g_stepNum, (int)len, bytes);
+                    }
+                    for (int i = 0; i < argCount + 1; i++) pop();
+                    push(memory_.nil());
+                    return;
+                }
+            }
+        }
+    }
+
     static int dnuCount = 0;
     dnuCount++;
     if (dnuCount <= 200 || dnuCount % 1000 == 0) {
