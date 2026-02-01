@@ -9106,14 +9106,27 @@ PrimitiveResult Interpreter::primitiveFindHandlerContext(int argCount) {
     // Walk from self (the Smalltalk fallback does: context := self)
     Oop ctx = startContext;
     int limit = 10000;  // safety limit
+    int walked = 0;
 
     while (ctx.isObject() && !ctx.isNil() && limit-- > 0) {
+        walked++;
         // Check if this context's method has primitive 199 (handler/signaling marker)
         Oop method = memory_.fetchPointer(3, ctx);  // method = slot 3
         if (method.isObject() && !method.isNil()) {
             int primIdx = primitiveIndexOf(method);
             if (primIdx == 199) {
                 // Found a handler or signaling context
+                static int foundCount = 0;
+                if (foundCount++ < 20) {
+                    static FILE* fhLog = nullptr;
+                    if (!fhLog) fhLog = fopen("/tmp/find_handler.log", "w");
+                    if (fhLog) {
+                        fprintf(fhLog, "[FIND step=%llu] FOUND handler ctx=0x%llx after %d\n",
+                                (unsigned long long)g_stepNum,
+                                (unsigned long long)ctx.rawBits(), walked);
+                        fflush(fhLog);
+                    }
+                }
                 pop();
                 push(ctx);
                 return PrimitiveResult::Success;
@@ -9123,6 +9136,29 @@ PrimitiveResult Interpreter::primitiveFindHandlerContext(int argCount) {
     }
 
     // Not found - return nil
+    {
+        static int missCount = 0;
+        if (missCount++ < 20) {
+            static FILE* fhLog = nullptr;
+            if (!fhLog) fhLog = fopen("/tmp/find_handler.log", "w");
+            if (fhLog) {
+                fprintf(fhLog, "[FIND step=%llu] MISS from 0x%llx walked %d\n",
+                        (unsigned long long)g_stepNum,
+                        (unsigned long long)startContext.rawBits(), walked);
+                // Dump sender chain methods
+                Oop ch = startContext;
+                for (int i = 0; i < 10 && ch.isObject() && !ch.isNil(); i++) {
+                    Oop m = memory_.fetchPointer(3, ch);
+                    int pi = (m.isObject() && !m.isNil()) ? primitiveIndexOf(m) : -1;
+                    fprintf(fhLog, "  [%d] ctx=0x%llx method=0x%llx prim=%d\n",
+                            i, (unsigned long long)ch.rawBits(),
+                            (unsigned long long)m.rawBits(), pi);
+                    ch = memory_.fetchPointer(0, ch);
+                }
+                fflush(fhLog);
+            }
+        }
+    }
     pop();
     push(memory_.nil());
     return PrimitiveResult::Success;
