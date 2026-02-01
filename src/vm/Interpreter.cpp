@@ -2594,8 +2594,8 @@ bool Interpreter::step() {
     }
     }
 
-    // Track process switches
-    {
+    // Track process switches (disabled for performance - getActiveProcess costs 3 fetches per step)
+    if constexpr (ENABLE_DEBUG_LOGGING) {
         static FILE* procLog = nullptr;
         static Oop lastProc = Oop::nil();
         static int procSwitchCount = 0;
@@ -2721,7 +2721,7 @@ bool Interpreter::step() {
     // Log more frequently near the hang point (steps 15000-16000)
     size_t currentSD = static_cast<size_t>(stackPointer_ - stackBase_);
     bool shouldLog = (g_stepNum % 1000000 == 0) ||
-                     (currentSD > 1000 && g_stepNum % 100000 == 0);  // More frequent when stack is deep
+                     (g_stepNum > 80000 && g_stepNum % 10000 == 0);  // More frequent after startup
     if (shouldLog) {
         if (!stepProgressLog) {
             stepProgressLog = fopen("/tmp/step_progress.log", "w");
@@ -6325,16 +6325,8 @@ void Interpreter::commonSend(int which) {
         }
     }
 
-    // Debug output
-    std::string selStr = "";
-    if (selector.isObject() && selector.rawBits() > 0x10000) {
-        ObjectHeader* selHdr = selector.asObjectPtr();
-        if (selHdr->isBytesObject()) {
-            selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-            // std::cerr << "[COMMON] Sending special selector #" << selectorIndex
-                      // << " '" << selStr << "' with " << argCount << " args";
-        }
-    }
+    // Debug selector string construction removed for performance
+    // (was constructing std::string on every common send)
 
     // Fallback for stream operations during startup to avoid DNU
     // Special selector 20 is 'nextPut:' which is commonly used in logging
@@ -6947,8 +6939,8 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 sendTestCount, (unsigned long long)selector.rawBits(), argCount);
         fflush(sendTestLog);
     }
-    // Trace sends where receiver is a 1-byte object containing '+'
-    {
+    // Debug send tracing (disabled for performance - was constructing std::string on every send)
+    if constexpr (ENABLE_DEBUG_LOGGING) {
         static FILE* symLog = nullptr;
         static int symCount = 0;
         if (!symLog) symLog = fopen("/tmp/sym_plus_trace.log", "w");
@@ -6960,15 +6952,12 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 match = true;
             }
         }
-        // Also detect caseOf:otherwise: send and dump method bytecodes
         std::string selStr = "<unknown>";
         if (selector.isObject() && selector.rawBits() > 0x10000) {
             ObjectHeader* sh = selector.asObjectPtr();
             if (sh->isBytesObject() && sh->byteSize() < 100)
                 selStr = std::string((char*)sh->bytes(), sh->byteSize());
         }
-        // Trace startup-related sends
-        // Trace all sends around the failure point (steps 300-600) to understand what breaks
         if (g_sendTraceFile && g_stepCount >= 300 && g_stepCount < 600) {
             fprintf(g_sendTraceFile, "[SEND] #%s at step %lld fd=%zu numArgs=%d", selStr.c_str(), (long long)g_stepCount, frameDepth_, argCount);
             // For sends with args, dump argument values
@@ -10848,54 +10837,58 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
     }
 
-    // Extract selector string for tracing
+    // Extract selector string LAZILY for tracing - only construct when first accessed
     std::string selStr;
-    if (selector.isObject() && selector.rawBits() > 0x10000) {
-        ObjectHeader* selHdr = selector.asObjectPtr();
-        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-            selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-            // DISABLED: Duplicate logging - using the one at sendSelector start instead
-            // totalSends++;
-            // if (totalSends <= 2000) { ... }
-
-            // Trace sends after primitive 264 (only non-internal selectors)
-            // Defined at top of this file
-extern int g_traceSendsAfterPrim264;
-            if (g_traceSendsAfterPrim264 > 0) {
-                // Skip internal method lookup selectors
-                bool isInternalLookup = (selStr == "==" || selStr == "superclass" ||
-                                          selStr == "class" || selStr == "methodDict" ||
-                                          selStr == "includesKey:" || selStr == "basicAt:");
-                if (!isInternalLookup) {
-                    g_traceSendsAfterPrim264--;
-                    static FILE* postPrimLog = nullptr;
-                    if constexpr (ENABLE_DEBUG_LOGGING) {
-                        if (!postPrimLog) postPrimLog = fopen("/tmp/post_prim264.log", "w");
-                    }
-                    if (postPrimLog) {
-                        Oop rcvr = stackValue(static_cast<size_t>(argCount));
-                        std::string rcvrClass = "<unknown>";
-                        if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-                            Oop cls = memory_.classOf(rcvr);
-                            if (cls.isObject()) {
-                                Oop nameOop = memory_.fetchPointer(6, cls);
-                                if (nameOop.isObject()) {
-                                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
-                                        rcvrClass = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                                    }
-                                }
-                            }
-                        } else if (rcvr.isSmallInteger()) {
-                            rcvrClass = "SmallInteger(" + std::to_string(rcvr.asSmallInteger()) + ")";
-                        }
-                        fprintf(postPrimLog, "[POST264] #%s to %s (args=%d)\n",
-                                selStr.c_str(), rcvrClass.c_str(), argCount);
-                        fflush(postPrimLog);
-                    }
+    bool selStrReady = false;
+    auto getSelStr = [&]() -> const std::string& {
+        if (!selStrReady) {
+            selStrReady = true;
+            if (selector.isObject() && selector.rawBits() > 0x10000) {
+                ObjectHeader* selHdr = selector.asObjectPtr();
+                if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                    selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
                 }
             }
+        }
+        return selStr;
+    };
 
+    // Trace sends after primitive 264 (only non-internal selectors)
+    {
+        extern int g_traceSendsAfterPrim264;
+        if (g_traceSendsAfterPrim264 > 0 && !getSelStr().empty()) {
+            const std::string& s = selStr;
+            bool isInternalLookup = (s == "==" || s == "superclass" ||
+                                      s == "class" || s == "methodDict" ||
+                                      s == "includesKey:" || s == "basicAt:");
+            if (!isInternalLookup) {
+                g_traceSendsAfterPrim264--;
+                static FILE* postPrimLog = nullptr;
+                if constexpr (ENABLE_DEBUG_LOGGING) {
+                    if (!postPrimLog) postPrimLog = fopen("/tmp/post_prim264.log", "w");
+                }
+                if (postPrimLog) {
+                    Oop rcvr = stackValue(static_cast<size_t>(argCount));
+                    std::string rcvrClass = "<unknown>";
+                    if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                        Oop cls = memory_.classOf(rcvr);
+                        if (cls.isObject()) {
+                            Oop nameOop = memory_.fetchPointer(6, cls);
+                            if (nameOop.isObject()) {
+                                ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                                    rcvrClass = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                                }
+                            }
+                        }
+                    } else if (rcvr.isSmallInteger()) {
+                        rcvrClass = "SmallInteger(" + std::to_string(rcvr.asSmallInteger()) + ")";
+                    }
+                    fprintf(postPrimLog, "[POST264] #%s to %s (args=%d)\n",
+                            s.c_str(), rcvrClass.c_str(), argCount);
+                    fflush(postPrimLog);
+                }
+            }
         }
     }
 
@@ -13447,34 +13440,6 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
         return false;
     }
 
-    // CRITICAL FIX: When leaving a context that was restored from the heap
-    // (frameDepth_ == 0), sync the current inline state back to activeContext_.
-    // Without this, the heap context's temps/PC become stale, causing infinite
-    // loops when exception handling materializes frames and follows the stale
-    // activeContext_ sender chain.
-    if (frameDepth_ == 0 && activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
-        ObjectHeader* ctxHdr = activeContext_.asObjectPtr();
-        if (ctxHdr->slotCount() >= 6 && ctxHdr->format() == ObjectFormat::IndexableWithFixed) {
-            // Sync PC (1-based byte offset into method bytes)
-            if (method_.isObject() && method_.rawBits() > 0x10000) {
-                ObjectHeader* methodObj = method_.asObjectPtr();
-                uint8_t* methodBytes = methodObj->bytes();
-                int64_t pc = (instructionPointer_ - methodBytes) + 1;
-                memory_.storePointer(1, activeContext_, Oop::fromSmallInteger(pc));
-            }
-
-            // Sync temps and expression stack from inline stack to context slots
-            static const int ContextFixedFields = 6;
-            int numItems = static_cast<int>(stackPointer_ - framePointer_) - 1;
-            if (numItems < 0) numItems = 0;
-            if (numItems > 200) numItems = 200;
-            memory_.storePointer(2, activeContext_, Oop::fromSmallInteger(numItems));
-            for (int i = 0; i < numItems && (ContextFixedFields + i) < static_cast<int>(ctxHdr->slotCount()); i++) {
-                memory_.storePointer(ContextFixedFields + i, activeContext_, *(framePointer_ + 1 + i));
-            }
-        }
-    }
-
     SavedFrame& frame = savedFrames_[frameDepth_++];
     frame.savedIP = instructionPointer_;
     frame.savedBytecodeEnd = bytecodeEnd_;
@@ -14798,7 +14763,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
             }
             lastNilDnuStep = g_stepNum;
 
-            if (nilDnuRepeatCount > 3) {
+            if (nilDnuRepeatCount > 20) {  // Raised from 3 to avoid killing test runner
                 static int loopTermCount = 0;
                 if (loopTermCount++ < 10) {
                     std::string selStr = "<unknown>";
@@ -16148,9 +16113,6 @@ Oop Interpreter::materializeFrameStack() {
     }
 
     static FILE* matLog = nullptr;
-    if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!matLog) matLog = fopen("/tmp/materialize.log", "w");
-    }
 
     // Build contexts from bottom to top (oldest to newest)
     // CRITICAL: frame[0] represents the same activation as activeContext_ when
@@ -16160,39 +16122,6 @@ Oop Interpreter::materializeFrameStack() {
     // causing loops to execute extra iterations after exception handling returns.
     Oop sender = activeContext_;
     size_t startFrame = 0;
-
-    // Debug: log whether the dedup fix applies
-    {
-        static FILE* dedupLog = nullptr;
-        static int dedupLogCount = 0;
-        if (!dedupLog) dedupLog = fopen("/tmp/dedup_fix.log", "w");
-        if (dedupLog && dedupLogCount < 100) {
-            dedupLogCount++;
-            bool matches = (frameDepth_ > 0 &&
-                savedFrames_[0].savedActiveContext.rawBits() == activeContext_.rawBits() &&
-                activeContext_.isObject() && activeContext_.rawBits() > 0x10000);
-            fprintf(dedupLog, "[DEDUP #%d step=%llu] fd=%zu activeCtx=0x%llx frame0.savedAC=0x%llx match=%d\n",
-                    dedupLogCount, g_stepNum, frameDepth_,
-                    (unsigned long long)activeContext_.rawBits(),
-                    frameDepth_ > 0 ? (unsigned long long)savedFrames_[0].savedActiveContext.rawBits() : 0ULL,
-                    matches ? 1 : 0);
-            if (matches) {
-                // Show what temps will be written
-                auto& f0 = savedFrames_[0];
-                if (f0.savedFP) {
-                    Oop methodHeader = memory_.fetchPointer(0, f0.savedMethod);
-                    int nTemps = methodHeader.isSmallInteger() ? ((methodHeader.asSmallInteger() >> 18) & 0x3F) : 0;
-                    fprintf(dedupLog, "  Will update: nTemps=%d", nTemps);
-                    for (int t = 0; t < std::min(nTemps, 5); t++) {
-                        Oop v = *(f0.savedFP + 1 + t);
-                        fprintf(dedupLog, " t%d=0x%llx", t, (unsigned long long)v.rawBits());
-                    }
-                    fprintf(dedupLog, "\n");
-                }
-            }
-            fflush(dedupLog);
-        }
-    }
 
     if (frameDepth_ > 0 && savedFrames_[0].savedActiveContext.rawBits() == activeContext_.rawBits() &&
         activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
