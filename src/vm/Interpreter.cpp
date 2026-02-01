@@ -6659,7 +6659,8 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             }
             if (selName == "signal" || selName == "signal:" ||
                 selName == "handleError:log:" || selName == "handleError:" ||
-                selName == "startUp:" || selName == "startUp" ||
+                selName == "startUp:" || selName == "startUp" || selName == "startup:" || selName == "shutdown:" ||
+                selName == "registeredClass" || selName == "runList:do:" ||
                 selName == "processStartUpList:" ||
                 selName == "messageText" || selName == "signalerContext" ||
                 selName == "defaultAction" || selName == "pass" ||
