@@ -2838,6 +2838,46 @@ skip_yield:
     uint8_t bytecode = fetchByte();
     lastBytecode_ = bytecode;
 
+    // TRACE: log bytecodes for anySatisfy: method - write to file
+    {
+        static FILE* anyBcLog = nullptr;
+        static bool traceAnySatisfy = false;
+        static int anyCount = 0;
+        if (!anyBcLog) anyBcLog = fopen("/tmp/any_bytecodes.log", "w");
+        if (!traceAnySatisfy && method_.isObject() && method_.rawBits() > 0x10000) {
+            Oop h = memory_.fetchPointer(0, method_);
+            if (h.isSmallInteger()) {
+                int nl = h.asSmallInteger() & 0x7FFF;
+                if (nl >= 1 && nl < 200) {
+                    ObjectHeader* mh = method_.asObjectPtr();
+                    size_t bcStart = (1 + nl) * 8;
+                    if (bcStart + 8 <= mh->byteSize()) {
+                        uint8_t* bc = mh->bytes() + bcStart;
+                        if (bc[0] == 0xF8) bc += 3;
+                        if (bc[0] == 76 && bc[1] == 64 && bc[2] == 249 && bc[5] == 123 && bc[7] == 90) {
+                            traceAnySatisfy = true;
+                            if (anyBcLog) {
+                                fprintf(anyBcLog, "[ANY-START] method=0x%llx sista=%d fd=%zu\n",
+                                        (unsigned long long)method_.rawBits(), usesSistaV1_ ? 1 : 0, frameDepth_);
+                                fflush(anyBcLog);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (traceAnySatisfy && anyBcLog && anyCount < 100) {
+            anyCount++;
+            fprintf(anyBcLog, "[ANY-BC #%d] bc=0x%02x sista=%d fd=%zu method=0x%llx\n",
+                    anyCount, bytecode, usesSistaV1_ ? 1 : 0, frameDepth_,
+                    (unsigned long long)method_.rawBits());
+            fflush(anyBcLog);
+            if (bytecode == 0x5A || bytecode == 0x5C) {
+                traceAnySatisfy = false;
+            }
+        }
+    }
+
     // Clear inExtension_ flag for non-extension bytecodes.
     // Extension bytes (0xE0/0xE1) re-set the flag in their handler.
     // This must be cleared BEFORE we process the bytecode so that
@@ -3489,10 +3529,31 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
             } else {
                 // 0x58-0x5F: Returns and special operations
                 switch (bytecode) {
-                    case 0x58: returnValue(receiver_); break;              // return self
-                    case 0x59: returnValue(memory_.trueObject()); break;   // return true
-                    case 0x5A: returnValue(memory_.falseObject()); break;  // return false
-                    case 0x5B: returnValue(memory_.nil()); break;          // return nil
+                    case 0x58: // return self
+                    case 0x59: // return true
+                    case 0x5A: // return false
+                    case 0x5B: // return nil
+                    {
+                        // All return bytecodes must be NLR-aware when inside a block.
+                        // The reference VM routes all returns through commonReturn which
+                        // checks for block frames and does NLR when needed.
+                        Oop val;
+                        switch (bytecode) {
+                            case 0x58: val = receiver_; break;
+                            case 0x59: val = memory_.trueObject(); break;
+                            case 0x5A: val = memory_.falseObject(); break;
+                            default:   val = memory_.nil(); break;
+                        }
+                        // Check if we're inside a block frame that needs NLR
+                        if (frameDepth_ > 0 && savedFrames_[frameDepth_ - 1].homeFrameDepth > 0) {
+                            // NLR: push the value and use returnFromMethod() which handles unwinding
+                            push(val);
+                            returnFromMethod();
+                        } else {
+                            returnValue(val);
+                        }
+                        break;
+                    }
                     case 0x5C: {
                         // TRACE: Method return for detect investigation
                         extern bool g_traceDetectJumps;
@@ -3574,6 +3635,29 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
     }
     else if (bytecode <= 0x7F) {
         // 0x70-0x7F: Differs between V3 and Sista
+        // TRACE: bytecodes 0x79-0x7B in V3 mode
+        if (bytecode >= 0x79 && bytecode <= 0x7B && !usesSistaV1_) {
+            static int v3WrongCount = 0;
+            if (v3WrongCount++ < 10) {
+                std::string mSel = "?";
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    Oop h = memory_.fetchPointer(0, method_);
+                    if (h.isSmallInteger()) {
+                        int nl = h.asSmallInteger() & 0x7FFF;
+                        if (nl >= 2) {
+                            Oop s = memory_.fetchPointer(nl - 1, method_);
+                            if (s.isObject() && s.rawBits() > 0x10000) {
+                                ObjectHeader* sh = s.asObjectPtr();
+                                if (sh->isBytesObject() && sh->byteSize() < 80)
+                                    mSel = std::string((char*)sh->bytes(), sh->byteSize());
+                            }
+                        }
+                    }
+                }
+                std::cerr << "[V3-WRONG] bc=0x" << std::hex << bytecode << std::dec
+                          << " usesSistaV1=false in method=" << mSel << "\n";
+            }
+        }
         if (!usesSistaV1_) {
             // V3PlusClosures:
             // 0x70-0x77: push specials (self, true, false, nil, -1, 0, 1, 2)
@@ -3605,8 +3689,47 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         } else {
             // Sista V1: 0x70-0x7F = Send Special Message 16-31
             // (at:, at:put:, size, next, nextPut:, atEnd, ==, class, ~~, value, value:, do:, new, new:, x, y)
-            // These map to special selectors 16-31, NOT 0-15 (arithmetic)
-            commonSend(bytecode - 0x70);
+
+            // Bytecodes 0x79 (value), 0x7A (value:), 0x7B (do:) are optimized:
+            // If receiver is a FullBlockClosure, directly call primitiveFullClosureValue
+            // to activate the block (which sets up homeFrameDepth for NLR).
+            // This matches the reference VM's bytecodePrimValue/bytecodePrimValueWithArg.
+            int which = bytecode - 0x70;
+            bool handled = false;
+            if (which == 9 || which == 10) {
+                // 0x79 = value (0 args), 0x7A = value: (1 arg)
+                int numArgs = which - 9;  // 0 for value, 1 for value:
+                Oop rcvr = stackValue(numArgs);
+                bool isBlock = false;
+                if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                    ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
+                    isBlock = (rcvrHdr->classIndex() == 38);  // ClassFullBlockClosureCompactIndex
+                    if (isBlock) {
+                        argCount_ = numArgs;
+                        primitiveFailed_ = false;
+                        PrimitiveResult result = primitiveFullClosureValue(numArgs);
+                        if (result == PrimitiveResult::Success) {
+                            handled = true;
+                        }
+                    }
+                }
+                {
+                    static FILE* bpvLog = nullptr;
+                    static int bpvCount = 0;
+                    if (!bpvLog) bpvLog = fopen("/tmp/bpv_trace.log", "w");
+                    if (bpvLog && bpvCount++ < 200) {
+                        fprintf(bpvLog, "[BPV #%d] bc=0x%02x which=%d isBlock=%d handled=%d rcvr=0x%llx ci=%u fd=%zu\n",
+                                bpvCount, bytecode, which, isBlock, handled,
+                                (unsigned long long)rcvr.rawBits(),
+                                rcvr.isObject() && rcvr.rawBits() > 0x10000 ? rcvr.asObjectPtr()->classIndex() : 0,
+                                frameDepth_);
+                        fflush(bpvLog);
+                    }
+                }
+            }
+            if (!handled) {
+                commonSend(which);
+            }
         }
     }
     else if (bytecode <= 0x8F) {
@@ -5606,9 +5729,19 @@ void Interpreter::returnFromMethod() {
 
     // Check if we're executing inside a block (CompiledBlock)
     // If so, a "return from method" (^) should actually return from the HOME method,
-    // not just from this block. This handles inlined ^ in blocks like:
-    //   [:each | condition ifTrue: [^ value]]
-    // where the ^ is inlined but should still escape the entire block.
+    // not just from this block.
+    {
+        static FILE* nlrLog = nullptr;
+        static int nlrLogCount = 0;
+        if (!nlrLog) nlrLog = fopen("/tmp/nlr_return.log", "w");
+        if (nlrLog && nlrLogCount++ < 500) {
+            size_t hfd = (frameDepth_ > 0) ? savedFrames_[frameDepth_ - 1].homeFrameDepth : 999;
+            fprintf(nlrLog, "[RFM #%d] fd=%zu homeFrameDepth=%zu val=0x%llx\n",
+                    nlrLogCount, frameDepth_, hfd,
+                    (unsigned long long)value.rawBits());
+            fflush(nlrLog);
+        }
+    }
     if (frameDepth_ > 0) {
         size_t homeFrame = savedFrames_[frameDepth_ - 1].homeFrameDepth;
         if (homeFrame > 0) {
@@ -5616,7 +5749,7 @@ void Interpreter::returnFromMethod() {
             {
                 extern bool g_traceDetectJumps;
                 static int nlr5cTraceCount = 0;
-                if (g_traceDetectJumps && nlr5cTraceCount++ < 10) {
+                if (nlr5cTraceCount++ < 200) {
                     std::cerr << "[NLR-5C #" << nlr5cTraceCount << "] returnFromMethod in block, doing non-local return from frame " << frameDepth_ << " to home " << homeFrame;
                     // TRACE THE VALUE BEING RETURNED
                     std::cerr << "\n  NLR VALUE=0x" << std::hex << value.rawBits() << std::dec;
@@ -6249,11 +6382,12 @@ void Interpreter::commonSend(int which) {
 
     int selectorIndex = which + 16;  // Offset by 16 from the arithmetic sends
 
-    // TRACE: Log commonSend entry for the critical step range
-    if (g_sendTraceFile && g_stepCount >= 420 && g_stepCount <= 440) {
-        fprintf(g_sendTraceFile, "[COMMON-SEND step=%lld] which=%d selectorIndex=%d\n",
-                (long long)g_stepCount, which, selectorIndex);
-        fflush(g_sendTraceFile);
+    // TRACE: value: sends (which=10)
+    if (which == 10 || which == 9 || which == 11) {
+        static int csValCount = 0;
+        if (csValCount++ < 20) {
+            std::cerr << "[COMMON-SEND] which=" << which << " (value/value:/do:) #" << csValCount << "\n";
+        }
     }
 
     // Get special selectors array
@@ -12502,6 +12636,44 @@ size_t Interpreter::cacheHash(Oop selector, Oop classOop) const {
 // ===== METHOD ACTIVATION =====
 
 void Interpreter::activateMethod(Oop method, int argCount) {
+    // TRACE: find anySatisfy: in activateMethod
+    {
+        static FILE* amLog = nullptr;
+        if (!amLog) amLog = fopen("/tmp/activate_method.log", "w");
+        static int amTotal = 0;
+        amTotal++;
+        // Check every method for anySatisfy: bytecode pattern
+        if (method.isObject() && method.rawBits() > 0x10000) {
+            // Don't check isCompiledMethod - just read bytes directly
+            Oop h = memory_.fetchPointer(0, method);
+            if (h.isSmallInteger()) {
+                int64_t bits = h.asSmallInteger();
+                int nl = bits & 0x7FFF;
+                if (nl >= 1 && nl < 200) {
+                    ObjectHeader* mh = method.asObjectPtr();
+                    size_t totalBytes = mh->byteSize();
+                    size_t bcStart = (1 + nl) * 8;
+                    if (bcStart + 8 <= totalBytes) {
+                        uint8_t* bc = mh->bytes() + bcStart;
+                        uint8_t* checkBc = bc;
+                        if (checkBc[0] == 0xF8) checkBc += 3;
+                        if (checkBc[0] == 76 && checkBc[1] == 64 && checkBc[2] == 249) {
+                            static int anyMatch = 0;
+                            anyMatch++;
+                            if (amLog) {
+                                fprintf(amLog, "[ANY-MATCH #%d] amTotal=%d method=0x%llx nl=%d bits=0x%llx neg=%d fmt=%d bc:",
+                                        anyMatch, amTotal, (unsigned long long)method.rawBits(), nl,
+                                        (long long)bits, bits < 0 ? 1 : 0, (int)mh->format());
+                                for (int i = 0; i < 8; i++) fprintf(amLog, " %d", checkBc[i]);
+                                fprintf(amLog, "\n");
+                                fflush(amLog);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     // TRACE: activateMethod entry
     bool traceActivate = (g_stepNum >= 162000 && g_stepNum <= 163000);
     static FILE* activateLog = nullptr;
@@ -12890,6 +13062,19 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     // 2: numArgs (SmallInteger)
     // 3+: copied values
 
+    // TRACE: every activateBlock call
+    {
+        static int abTotal = 0;
+        abTotal++;
+        if (abTotal <= 20) {
+            Oop s1 = memory_.fetchPointer(1, block);
+            std::cerr << "[ACTIVATE-BLOCK] #" << abTotal
+                      << " slot1isSmallInt=" << s1.isSmallInteger()
+                      << " slot1isObj=" << s1.isObject()
+                      << " argCount=" << argCount << "\n";
+        }
+    }
+
     Oop slot1 = memory_.fetchPointer(1, block);
     Oop outerContext = memory_.fetchPointer(0, block);
 
@@ -12905,6 +13090,10 @@ void Interpreter::activateBlock(Oop block, int argCount) {
         methodToExecute = outerMethod;
         ObjectHeader* methodObj = outerMethod.asObjectPtr();
         startAddress = methodObj->bytes() + startPC;
+        // For old-style blocks, the outerMethod IS the home method for NLR
+        // The block's bytecodes live inside outerMethod, so ^value should
+        // return from outerMethod's frame
+        homeMethodForNLR = outerMethod;
     } else if (slot1.isObject()) {
         // FullBlockClosure: slot 1 is compiledBlock (the actual method to execute)
         Oop compiledBlock = slot1;
@@ -12932,6 +13121,23 @@ void Interpreter::activateBlock(Oop block, int argCount) {
                 ObjectHeader* lastLitHdr = lastLit.asObjectPtr();
                 if (lastLitHdr->isCompiledMethod()) {
                     homeMethodForNLR = lastLit;  // Store for later use in home frame detection
+                } else {
+                    // TRACE: last literal is NOT a CompiledMethod
+                    static int notCMCount = 0;
+                    if (notCMCount++ < 20) {
+                        std::cerr << "[NLR-NOTCM] CompiledBlock 0x" << std::hex << compiledBlock.rawBits()
+                                  << " lastLit=0x" << lastLit.rawBits() << std::dec
+                                  << " format=" << (int)lastLitHdr->format()
+                                  << " numLits=" << numLiterals << "\n";
+                    }
+                }
+            } else {
+                // TRACE: last literal is not an object or too small
+                static int notObjCount = 0;
+                if (notObjCount++ < 20) {
+                    std::cerr << "[NLR-NOTOBJ] CompiledBlock 0x" << std::hex << compiledBlock.rawBits()
+                              << " lastLit=0x" << lastLit.rawBits() << std::dec
+                              << " isObj=" << lastLit.isObject() << " numLits=" << numLiterals << "\n";
                 }
             }
         }
@@ -12956,6 +13162,27 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     // that lexically contains this block. We do this by:
     // 1. Getting the home method from the CompiledBlock (the last literal is the enclosing method)
     // 2. Walking up the frame stack to find a frame executing that home method
+    {
+        static FILE* abLog = nullptr;
+        static int abLogCount = 0;
+        if (!abLog) abLog = fopen("/tmp/activateblock_trace.log", "w");
+        if (abLog && abLogCount++ < 200) {
+            fprintf(abLog, "[AB #%d] fd=%zu homeMethodForNLR=0x%llx isObj=%d isNil=%d\n",
+                    abLogCount, frameDepth_,
+                    (unsigned long long)homeMethodForNLR.rawBits(),
+                    homeMethodForNLR.isObject(), homeMethodForNLR.isNil());
+            if (frameDepth_ > 1) {
+                // Show method_ (current active method)
+                fprintf(abLog, "  method_=0x%llx\n", (unsigned long long)method_.rawBits());
+                // Show saved methods on stack
+                for (size_t i = 0; i < frameDepth_ && i < 10; i++) {
+                    fprintf(abLog, "  savedFrames_[%zu].savedMethod=0x%llx\n",
+                            i, (unsigned long long)savedFrames_[i].savedMethod.rawBits());
+                }
+            }
+            fflush(abLog);
+        }
+    }
     if (frameDepth_ > 1 && homeMethodForNLR.isObject() && !homeMethodForNLR.isNil()) {
         size_t homeFrame = 0;  // Default to returning from bottom
 
@@ -13048,11 +13275,29 @@ void Interpreter::activateBlock(Oop block, int argCount) {
 
         savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
 
-        // TRACE: Home frame detection
+        // Log result of home frame search
         {
-            static int homeFrameTraceCount = 0;
-            // Always trace for detect-related methods, or conditionally for others
-            bool shouldTrace = false;
+            static FILE* abResLog = nullptr;
+            static int abResCount = 0;
+            if (!abResLog) abResLog = fopen("/tmp/ab_result.log", "w");
+            if (abResLog && abResCount++ < 500) {
+                fprintf(abResLog, "[AB-RES #%d] fd=%zu homeMethodOop=0x%llx homeFrame=%zu\n",
+                        abResCount, frameDepth_,
+                        (unsigned long long)homeMethodForNLR.rawBits(), homeFrame);
+                // Show ALL saved frames
+                for (size_t i = 0; i < frameDepth_ && i < 30; i++) {
+                    bool match = (savedFrames_[i].savedMethod.rawBits() == homeMethodForNLR.rawBits());
+                    fprintf(abResLog, "  [%zu] 0x%llx%s\n", i,
+                            (unsigned long long)savedFrames_[i].savedMethod.rawBits(),
+                            match ? " *** MATCH ***" : "");
+                }
+                fflush(abResLog);
+            }
+        }
+
+        // TARGETED TRACE: dump full frame stack for anySatisfy-related NLR
+        {
+            // Extract selector from home method
             std::string homeMethodName;
             if (homeMethodOop.isObject() && homeMethodOop.rawBits() > 0x10000) {
                 Oop hdr = memory_.fetchPointer(0, homeMethodOop);
@@ -13062,28 +13307,47 @@ void Interpreter::activateBlock(Oop block, int argCount) {
                         Oop sel = memory_.fetchPointer(numLits - 1, homeMethodOop);
                         if (sel.isObject() && sel.rawBits() > 0x10000) {
                             ObjectHeader* selHdr = sel.asObjectPtr();
-                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                            if (selHdr->isBytesObject() && selHdr->byteSize() < 80) {
                                 homeMethodName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                                // Trace for detect-related methods
-                                if (homeMethodName.find("detect") != std::string::npos ||
-                                    homeMethodName.find("ifFound") != std::string::npos ||
-                                    homeMethodName.find("ifNone") != std::string::npos ||
-                                    homeMethodName.find("Platform") != std::string::npos ||
-                                    homeMethodName == "do:") {
-                                    shouldTrace = true;
-                                }
                             }
                         }
                     }
                 }
             }
-            extern bool g_traceDetectJumps;
-            if ((shouldTrace && homeFrameTraceCount++ < 20) || (g_traceDetectJumps && homeFrameTraceCount++ < 30)) {
-                std::cerr << "[HOME-FRAME-SET] frame=" << frameDepth_ << " homeFrame=" << homeFrame;
-                if (!homeMethodName.empty()) {
-                    std::cerr << " homeMethod=" << homeMethodName;
+            // No counter limit - only fires for specific methods
+            if (homeMethodName.find("anySatisfy") != std::string::npos ||
+                homeMethodName.find("allSatisfy") != std::string::npos ||
+                homeMethodName.find("noneSatisfy") != std::string::npos ||
+                homeMethodName.find("identityIncludes") != std::string::npos) {
+                std::cerr << "[NLR-TRACE] activateBlock for " << homeMethodName
+                          << " frame=" << frameDepth_ << " homeFrame=" << homeFrame
+                          << " homeMethodOop=0x" << std::hex << homeMethodOop.rawBits() << std::dec << "\n";
+                // Dump all savedMethods on frame stack
+                for (size_t i = 0; i < frameDepth_; i++) {
+                    Oop sm = (i > 0) ? savedFrames_[i - 1].savedMethod : method_;
+                    std::string smName = "?";
+                    if (sm.isObject() && sm.rawBits() > 0x10000) {
+                        ObjectHeader* smHdr = sm.asObjectPtr();
+                        if (smHdr->isCompiledMethod()) {
+                            Oop smH = memory_.fetchPointer(0, sm);
+                            if (smH.isSmallInteger()) {
+                                size_t smNL = smH.asSmallInteger() & 0x7FFF;
+                                if (smNL >= 2) {
+                                    Oop smSel = memory_.fetchPointer(smNL - 1, sm);
+                                    if (smSel.isObject() && smSel.rawBits() > 0x10000) {
+                                        ObjectHeader* smSelH = smSel.asObjectPtr();
+                                        if (smSelH->isBytesObject() && smSelH->byteSize() < 80) {
+                                            smName = std::string((char*)smSelH->bytes(), smSelH->byteSize());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    std::cerr << "  [" << i << "] savedMethod=0x" << std::hex << sm.rawBits() << std::dec
+                              << " sel=" << smName
+                              << (sm.rawBits() == homeMethodOop.rawBits() ? " <<MATCH>>" : "") << "\n";
                 }
-                std::cerr << "\n";
             }
         }
     }
@@ -19985,6 +20249,15 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
     // Regular primitives (0-255): dispatch through primitive table
     {
         PrimitiveFunc prim = primitiveTable_[primitiveIndex];
+        // TRACE: primitive 207 dispatch
+        if (primitiveIndex == 207 || primitiveIndex == 201 || primitiveIndex == 202) {
+            static int p207Count = 0;
+            if (p207Count++ < 20) {
+                std::cerr << "[PRIM-" << primitiveIndex << "] dispatch #" << p207Count
+                          << " prim=" << (prim ? "set" : "NULL")
+                          << " argCount=" << argCount << "\n";
+            }
+        }
         if (prim) {
             PrimitiveResult result = (this->*prim)(argCount);
             if (result == PrimitiveResult::Success) {
