@@ -567,7 +567,7 @@ int main(int argc, char* argv[]) {
         // Run bytecode steps for testing
         std::cout << "\n=== Execution Test ===" << std::endl;
         auto execStart = std::chrono::steady_clock::now();
-        int totalSteps = 50000000;  // Run 50M steps
+        int totalSteps = 500000000;  // Run 500M steps
         std::cout << "Running up to " << totalSteps << " bytecode steps..." << std::endl;
         int activeSteps = 0;
         int idleSteps = 0;
@@ -597,9 +597,9 @@ int main(int argc, char* argv[]) {
                 activeSteps++;
                 idleSteps = 0;  // Reset consecutive idle count
 
-                // Process dump at step 40M to analyze state after startup
-                if (activeSteps == 40000000) {
-                    std::cerr << "\n=== PROCESS DUMP AT 40M STEPS ===" << std::endl;
+                // Process dumps at key intervals to track MorphicRenderLoop
+                if (activeSteps % 20000000 == 0) {
+                    std::cerr << "\n=== PROCESS DUMP AT " << (activeSteps/1000000) << "M STEPS ===" << std::endl;
                     interpreter.dumpProcessQueues();
                 }
 
@@ -641,13 +641,8 @@ int main(int argc, char* argv[]) {
                 if (idleSteps == 1 && totalIdleSteps <= 10) {
                     std::cout << "[IDLE] Started at step " << i << " after " << activeSteps << " active steps" << std::endl;
                 }
-                // Stop if 1000 consecutive idle OR if mostly idle (>50% of recent steps)
-                if (idleSteps > 1000) {
-                    std::cout << "Interpreter stopped (1000 consecutive idle steps) at step " << i << std::endl;
-                    break;
-                }
-                // If we have 200+ total idle steps and step count > 300K, we're in the idle loop
-                if (totalIdleSteps > 200 && i > 300000) {
+                // If we have 50000+ total idle steps and step count > 1M, we're truly idle
+                if (totalIdleSteps > 50000 && i > 1000000) {
                     std::cout << "[IDLE] Detected relinquish-based idle at step " << i
                               << " (" << totalIdleSteps << " total idle steps, " << activeSteps << " active)" << std::endl;
                     // Dump process scheduler queues

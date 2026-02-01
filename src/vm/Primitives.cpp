@@ -3779,17 +3779,20 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
     }
 
     if (stackPointer_ < stackBase_ + argCount + 1) {
+        if (waitLog) { fprintf(waitLog, "[WAIT #%d] FAIL: stack underflow\n", waitCallCount); fflush(waitLog); }
         return PrimitiveResult::Failure;
     }
 
     Oop semaphore = stackValue(argCount);  // Receiver is under args
 
     if (!semaphore.isObject()) {
+        if (waitLog) { fprintf(waitLog, "[WAIT #%d] FAIL: receiver not object (0x%llx)\n", waitCallCount, (unsigned long long)semaphore.rawBits()); fflush(waitLog); }
         return PrimitiveResult::Failure;
     }
 
     ObjectHeader* semHdr = semaphore.asObjectPtr();
     if (!semHdr || semHdr->slotCount() < 3) {
+        if (waitLog) { fprintf(waitLog, "[WAIT #%d] FAIL: bad slot count (%zu)\n", waitCallCount, semHdr ? semHdr->slotCount() : 0); fflush(waitLog); }
         return PrimitiveResult::Failure;
     }
 
@@ -3800,7 +3803,7 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
         int64_t excess = excessOop.asSmallInteger();
         if (excess > 0) {
             // Semaphore is signaled - decrement and return immediately
-            if (waitLog && waitCallCount <= 100) {
+            if (waitLog && waitCallCount <= 500) {
                 fprintf(waitLog, "[WAIT #%d] sem=0x%llx excess=%lld -> immediate return\n",
                         waitCallCount, (unsigned long long)semaphore.rawBits(), (long long)excess);
                 fflush(waitLog);
@@ -3809,6 +3812,14 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
                                 Oop::fromSmallInteger(excess - 1));
             return PrimitiveResult::Success;
         }
+    } else {
+        // excessSignals is NOT a SmallInteger - corrupted semaphore
+        if (waitLog) {
+            fprintf(waitLog, "[WAIT #%d] FAIL: excessSignals not SmallInt! sem=0x%llx excess=0x%llx\n",
+                    waitCallCount, (unsigned long long)semaphore.rawBits(), (unsigned long long)excessOop.rawBits());
+            fflush(waitLog);
+        }
+        return PrimitiveResult::Failure;
     }
 
     // No signal available - must wait
@@ -3817,7 +3828,7 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
     int activePriority = activePriorityOop.isSmallInteger() ?
                          static_cast<int>(activePriorityOop.asSmallInteger()) : -1;
 
-    if (waitLog && waitCallCount <= 100) {
+    if (waitLog && waitCallCount <= 500) {
         fprintf(waitLog, "[WAIT #%d] sem=0x%llx excess=0 -> BLOCKING process 0x%llx (priority %d)\n",
                 waitCallCount, (unsigned long long)semaphore.rawBits(),
                 (unsigned long long)activeProcess.rawBits(), activePriority);
@@ -3849,7 +3860,7 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
     Oop nextPriorityOop = memory_.fetchPointer(ProcessPriorityIndex, nextProcess);
     int nextPriority = nextPriorityOop.isSmallInteger() ?
                        static_cast<int>(nextPriorityOop.asSmallInteger()) : -1;
-    if (waitLog && waitCallCount <= 100) {
+    if (waitLog && waitCallCount <= 500) {
         fprintf(waitLog, "[WAIT #%d] -> Switching to process 0x%llx (priority %d)\n",
                 waitCallCount, (unsigned long long)nextProcess.rawBits(), nextPriority);
         fflush(waitLog);
@@ -8133,32 +8144,31 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
                 push(str);
                 return PrimitiveResult::Success;
             }
-        case 1:  // Image path (document path)
-            pop();
-            push(memory_.nil());
-            return PrimitiveResult::Success;
-        case 2:  // Image path (second form)
-            pop();
-            push(memory_.nil());
-            return PrimitiveResult::Success;
-        case 3:  // First command line argument - --headless
+        case 1:  // Image path
+            {
+                Oop str = memory_.createString("Pharo.image");
+                pop();
+                push(str);
+                return PrimitiveResult::Success;
+            }
+        case 2:  // First command line argument - --headless
             {
                 // isHeadless checks attributes -1000..1000 for --headless
-                // OSWorldRenderer.isApplicableFor: requires isHeadless AND --interactive
                 Oop str = memory_.createString("--headless");
                 pop();
                 push(str);
                 return PrimitiveResult::Success;
             }
-        case 4:  // Second command line argument - --interactive
+        case 3:  // Second command line argument - --interactive
             {
+                // CommandLineArguments collects from index 2 until nil
                 // This triggers OSWorldRenderer.isApplicableFor: to return true
                 Oop str = memory_.createString("--interactive");
                 pop();
                 push(str);
                 return PrimitiveResult::Success;
             }
-        case 5:  // No more arguments
+        case 4:  // No more arguments
             pop();
             push(memory_.nil());
             return PrimitiveResult::Success;
@@ -11816,12 +11826,10 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
                     fflush(relinquishLog);
                 }
 
-                // Search from highest priority down to and INCLUDING current priority
+                // Search from highest priority down to priority 1 (include ALL priorities)
+                // relinquishProcessor means "give up CPU" - any runnable process should get a turn
                 // NOTE: Priority is 1-based, but array indices are 0-based
-                // Priority N is at index N-1
-                // IMPORTANT: We must include same priority (>=, not >) for round-robin
-                // scheduling to work. Pharo's doc says "at least that of the active Process".
-                for (int pri = static_cast<int>(numQueues); pri >= activePriority; pri--) {
+                for (int pri = static_cast<int>(numQueues); pri >= 1; pri--) {
                     int index = pri - 1;  // Convert 1-based priority to 0-based index
                     Oop queue = memory_.fetchPointer(index, schedLists);
                     if (!queue.isObject() || queue.rawBits() == nilObj.rawBits()) continue;

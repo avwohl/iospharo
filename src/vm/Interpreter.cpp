@@ -2740,21 +2740,20 @@ bool Interpreter::step() {
     // is later restored — leading to expression stack corruption and DNUs.
     bool shouldYield = forceYield_.load(std::memory_order_relaxed);
     if (shouldYield) {
-        forceYield_.store(false, std::memory_order_relaxed);
-
         // Per Cog VM: suppress context switch after activating methods with
         // primitive 198 (ensure:/ifCurtailed:). These methods must run their
         // setup bytecodes atomically to establish unwind protection.
         if (suppressContextSwitch_) {
             suppressContextSwitch_ = false;
+            // Don't consume forceYield - retry on next step
             goto skip_yield;
         }
         // Don't yield between extension bytes (0xE0/0xE1) and their target bytecode.
-        // Extension bytes set extA_/extB_ which the next bytecode consumes.
-        // A context switch here would lose these values (executeFromContext resets them).
         if (inExtension_) {
+            // Don't consume forceYield - retry on next step
             goto skip_yield;
         }
+        forceYield_.store(false, std::memory_order_relaxed);
         static int forceYieldCount = 0;
         static int yieldPriorityOffset = 0;
         forceYieldCount++;
