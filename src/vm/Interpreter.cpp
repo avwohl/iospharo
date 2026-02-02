@@ -2695,7 +2695,8 @@ bool Interpreter::step() {
     // Log more frequently near the hang point (steps 15000-16000)
     size_t currentSD = static_cast<size_t>(stackPointer_ - stackBase_);
     bool shouldLog = (g_stepNum % 1000000 == 0) ||
-                     (g_stepNum > 10000 && g_stepNum % 10000 == 0);  // More frequent after startup
+                     (g_stepNum > 10000 && g_stepNum % 10000 == 0) ||
+                     (g_stepNum >= 25490000 && g_stepNum <= 25510000 && g_stepNum % 100 == 0);
     if (shouldLog) {
         if (!stepProgressLog) {
             stepProgressLog = fopen("/tmp/step_progress.log", "w");
@@ -6762,6 +6763,38 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 }
 
 void Interpreter::sendSelector(Oop selector, int argCount) {
+    // Trace asSymbol/error handling sends
+    if (g_stepNum >= 25485000 && g_stepNum <= 25495000) {
+        static FILE* asSymLog = nullptr;
+        if (!asSymLog) asSymLog = fopen("/tmp/asym_trace.log", "w");
+        if (asSymLog && selector.isObject() && selector.rawBits() > 0x10000) {
+            ObjectHeader* sh = selector.asObjectPtr();
+            if (sh->isBytesObject() && sh->byteSize() < 100) {
+                std::string sn((char*)sh->bytes(), sh->byteSize());
+                // Log ALL sends in this range
+                Oop rcvr = stackValue(argCount);
+                std::string rcvrClass = "?";
+                if (rcvr.isNil() || rcvr.rawBits() == memory_.nil().rawBits()) {
+                    rcvrClass = "nil";
+                } else if (rcvr.isSmallInteger()) {
+                    rcvrClass = "SmallInt";
+                } else if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                    Oop cls = memory_.classOf(rcvr);
+                    if (cls.isObject()) {
+                        Oop cn = memory_.fetchPointer(6, cls);
+                        if (cn.isObject() && cn.rawBits() > 0x10000) {
+                            ObjectHeader* cnH = cn.asObjectPtr();
+                            if (cnH->isBytesObject() && cnH->byteSize() < 50)
+                                rcvrClass = std::string((char*)cnH->bytes(), cnH->byteSize());
+                        }
+                    }
+                }
+                fprintf(asSymLog, "[%llu fd=%zu] %s >> #%s (%d)\n",
+                        g_stepNum, frameDepth_, rcvrClass.c_str(), sn.c_str(), argCount);
+                fflush(asSymLog);
+            }
+        }
+    }
     // Trace startup-related sends only - DISABLED
     if (false && g_stepNum <= 5000000) {
         static FILE* allSendLog = nullptr;
@@ -7532,7 +7565,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
         fflush(driverSendLog);
     }
-    bool traceThisSend = (g_stepNum >= 162000 && g_stepNum <= 163000);
+    bool traceThisSend = false;  // Disabled for now
     if (traceThisSend) {
         if (!sendTraceLog) sendTraceLog = fopen("/tmp/send_trace_hang.log", "w");
         if (sendTraceLog) {
@@ -20041,8 +20074,8 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
     static int primCounts[1000] = {0};  // Track calls per primitive
     primCallCount++;
 
-    // Trace primitives around driver startup
-    if (false) { // Step trace disabled
+    // Trace primitives in the range where second asSymbol hangs
+    if (g_stepNum >= 22900000) {
         fprintf(stderr, "[PRIM-AT-STEP step=%llu] primitive=%d argCount=%d\n",
                 g_stepNum, primitiveIndex, argCount);
     }

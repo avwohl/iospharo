@@ -3813,7 +3813,7 @@ PrimitiveResult Interpreter::primitiveSignal(int argCount) {
         int64_t excess = excessOop.isSmallInteger() ? excessOop.asSmallInteger() : 0;
         memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
                             Oop::fromSmallInteger(excess + 1));
-        if (signalLog && signalCallCount <= 200) {
+        if (signalLog) {
             fprintf(signalLog, "[SIGNAL #%d] sem=0x%llx no waiters -> excess=%lld\n",
                     signalCallCount, (unsigned long long)semaphore.rawBits(), (long long)(excess + 1));
             fflush(signalLog);
@@ -3833,7 +3833,7 @@ PrimitiveResult Interpreter::primitiveSignal(int argCount) {
     Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
     int activePriority = static_cast<int>(activePriorityOop.asSmallInteger());
 
-    if (signalLog && signalCallCount <= 200) {
+    if (signalLog) {
         fprintf(signalLog, "[SIGNAL #%d] sem=0x%llx waking process 0x%llx (pri=%d) active_pri=%d -> %s\n",
                 signalCallCount, (unsigned long long)semaphore.rawBits(),
                 (unsigned long long)process.rawBits(), processPriority, activePriority,
@@ -3896,7 +3896,7 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
         int64_t excess = excessOop.asSmallInteger();
         if (excess > 0) {
             // Semaphore is signaled - decrement and return immediately
-            if (waitLog && waitCallCount <= 500) {
+            if (waitLog) {
                 fprintf(waitLog, "[WAIT #%d step=%llu] sem=0x%llx excess=%lld -> immediate return\n",
                         waitCallCount, (unsigned long long)g_stepNum, (unsigned long long)semaphore.rawBits(), (long long)excess);
                 fflush(waitLog);
