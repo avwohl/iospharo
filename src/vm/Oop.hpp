@@ -12,8 +12,8 @@
  *     - Range: -2^60 to 2^60-1
  *
  *   Bits 2-1 = 01: Character (tag 011)
- *     - Bits 31-3: 29-bit Unicode codepoint
- *     - Supports full Unicode range (0 to 0x10FFFF)
+ *     - Bits 32-3: 30-bit Unicode codepoint
+ *     - Supports full Unicode range (0 to 0x3FFFFFFF)
  *
  *   Bits 2-1 = 10: SmallFloat (tag 101)
  *     - Bits 63-3: 61-bit rotated double representation
@@ -86,8 +86,8 @@ private:
     // Before that, remains 0 which is correct for pre-relocation nil.
     static inline uint64_t s_nilBits = 0;
 
-    // Character max (29-bit codepoint)
-    static constexpr uint32_t CharacterMax = 0x1FFFFFFF;
+    // Character max (30-bit codepoint, matches Pharo's (2**30)-1)
+    static constexpr uint32_t CharacterMax = 0x3FFFFFFF;
 
     // Private constructor from raw bits
     explicit constexpr Oop(uint64_t bits) : bits_(bits) {}
@@ -134,7 +134,7 @@ public:
     /// Extract Character codepoint. Caller must verify isCharacter() first.
     uint32_t asCharacter() const {
         assert(isCharacter());
-        return static_cast<uint32_t>((bits_ >> 3) & 0x1FFFFFFF);
+        return static_cast<uint32_t>((bits_ >> 3) & 0x3FFFFFFF);
     }
 
     /// Extract SmallFloat value. Caller must verify isSmallFloat() first.

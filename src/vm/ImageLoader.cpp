@@ -677,7 +677,7 @@ Oop ImageLoader::rawToOop(uint64_t raw, ObjectMemory& memory) const {
                 return Oop::fromSmallInteger(value);
             } else if (tag == 3) {
                 // Our Character encoding (011)
-                uint32_t codepoint = static_cast<uint32_t>((raw >> 3) & 0x1FFFFFFF);
+                uint32_t codepoint = static_cast<uint32_t>((raw >> 3) & 0x3FFFFFFF);
                 return Oop::fromCharacter(codepoint);
             } else if (tag == 5) {
                 // Our SmallFloat encoding (101)
@@ -696,7 +696,7 @@ Oop ImageLoader::rawToOop(uint64_t raw, ObjectMemory& memory) const {
             return Oop::fromSmallInteger(value);
         } else if (tag == 2) {
             // Spur Character (010) - convert to our format
-            uint32_t codepoint = static_cast<uint32_t>((raw >> 3) & 0x1FFFFFFF);
+            uint32_t codepoint = static_cast<uint32_t>((raw >> 3) & 0x3FFFFFFF);
             return Oop::fromCharacter(codepoint);
         } else if (tag == 4) {
             // Spur SmallFloat (100) - convert to our format

@@ -48,6 +48,10 @@ bool ObjectMemory::initialize(const MemoryConfig& config) {
     }
     oldSpaceEnd_ = oldSpaceStart_ + config.oldSpaceSize;
     oldSpaceFree_ = oldSpaceStart_;
+    fprintf(stderr, "[HEAP] permSpace: %p - %p\n", permSpaceStart_, permSpaceEnd_);
+    fprintf(stderr, "[HEAP] oldSpace: %p - %p (%.1f GB)\n",
+            oldSpaceStart_, oldSpaceEnd_, config.oldSpaceSize / (1024.0*1024.0*1024.0));
+    fprintf(stderr, "[HEAP] newSpace: %p - %p\n", newSpaceStart_, newSpaceEnd_);
 
     newSpaceStart_ = static_cast<uint8_t*>(
         std::aligned_alloc(8, config.newSpaceSize));
@@ -1207,7 +1211,7 @@ bool ObjectMemory::isRemembered(Oop obj) const {
 bool ObjectMemory::isValidHeapAddress(void* addr) const {
     uint8_t* p = static_cast<uint8_t*>(addr);
     return (p >= permSpaceStart_ && p < permSpaceEnd_) ||
-           (p >= oldSpaceStart_ && p < oldSpaceEnd_) ||
+           (p >= oldSpaceStart_ && p < oldSpaceFree_) ||
            (p >= newSpaceStart_ && p < newSpaceEnd_);
 }
 

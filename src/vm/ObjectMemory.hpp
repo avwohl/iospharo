@@ -389,6 +389,7 @@ public:
     /// Get raw memory pointers (use with caution)
     uint8_t* oldSpaceStart() const { return oldSpaceStart_; }
     uint8_t* oldSpaceEnd() const { return oldSpaceEnd_; }
+    uint8_t* oldSpaceFree() const { return oldSpaceFree_; }
     uint8_t* newSpaceStart() const { return newSpaceStart_; }
     uint8_t* permSpaceStart() const { return permSpaceStart_; }
 

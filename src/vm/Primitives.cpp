@@ -1631,12 +1631,33 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
         return PrimitiveResult::Failure;  // 1-based indexing
     }
 
+    // Validate receiver pointer is within heap bounds (perm + old space)
+    {
+        uint8_t* ptr = reinterpret_cast<uint8_t*>(rcvr.rawBits());
+        if (ptr < memory_.permSpaceStart() || ptr >= memory_.oldSpaceEnd()) {
+            static int invalidCount = 0;
+            if (++invalidCount <= 5) {
+                fprintf(stderr, "[AT-INVALID #%d] rcvr=0x%llx NOT in heap (%p..%p)\n",
+                        invalidCount, (unsigned long long)rcvr.rawBits(),
+                        memory_.permSpaceStart(), memory_.oldSpaceEnd());
+            }
+            return PrimitiveResult::Failure;
+        }
+    }
+
     ObjectHeader* header = rcvr.asObjectPtr();
     size_t arrayIndex = static_cast<size_t>(idx - 1);
 
-    // Handle 64-bit indexable objects (format 9, e.g. BoxedFloat64)
-    // basicAt: returns 32-bit word halves: index 1 = high word, index 2 = low word
+    // Sanity check header before accessing object data
     ObjectFormat fmt = header->format();
+    size_t slots = header->slotCount();
+    // Check that the object's data doesn't extend past the heap
+    {
+        uint8_t* objEnd = reinterpret_cast<uint8_t*>(header) + sizeof(ObjectHeader) + slots * sizeof(Oop);
+        if (objEnd > memory_.oldSpaceEnd() && objEnd > reinterpret_cast<uint8_t*>(memory_.permSpaceStart()) + 8*1024*1024) {
+            return PrimitiveResult::Failure;
+        }
+    }
     if (fmt == ObjectFormat::Indexable64) {
         // Each 64-bit slot provides 2 indices (32-bit words)
         size_t numSlots = header->slotCount();
@@ -1907,6 +1928,11 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
     }
 
     if (!index.isSmallInteger() || !rcvr.isObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Validate receiver pointer is within heap bounds
+    if (!memory_.isValidObject(rcvr)) {
         return PrimitiveResult::Failure;
     }
 
@@ -5302,18 +5328,49 @@ PrimitiveResult Interpreter::primitiveReplaceFromTo(int argCount) {
     }
 
     // Handle pointer objects
+    // Both must be pointer objects, and we must account for fixed fields
     if (rcvrHeader->isPointersObject() && replHeader->isPointersObject()) {
+        ObjectFormat rcvrFmt = rcvrHeader->format();
+        ObjectFormat replFmt = replHeader->format();
+
+        // Get fixed field counts
+        size_t rcvrFixed = 0, replFixed = 0;
+
+        if (rcvrFmt == ObjectFormat::IndexableWithFixed || rcvrFmt == ObjectFormat::WeakWithFixed) {
+            Oop rcvrClass = memory_.classOf(rcvr);
+            if (rcvrClass.isObject()) {
+                Oop instSpec = memory_.fetchPointer(2, rcvrClass);
+                if (instSpec.isSmallInteger()) rcvrFixed = instSpec.asSmallInteger() & 0xFFFF;
+            }
+        } else if (rcvrFmt == ObjectFormat::FixedSize || rcvrFmt == ObjectFormat::ZeroSized) {
+            // Non-indexable receiver: primitive should fail
+            return PrimitiveResult::Failure;
+        }
+
+        if (replFmt == ObjectFormat::IndexableWithFixed || replFmt == ObjectFormat::WeakWithFixed) {
+            Oop replClass = memory_.classOf(replacement);
+            if (replClass.isObject()) {
+                Oop instSpec = memory_.fetchPointer(2, replClass);
+                if (instSpec.isSmallInteger()) replFixed = instSpec.asSmallInteger() & 0xFFFF;
+            }
+        } else if (replFmt == ObjectFormat::FixedSize || replFmt == ObjectFormat::ZeroSized) {
+            // Non-indexable replacement: primitive should fail
+            return PrimitiveResult::Failure;
+        }
+
         size_t rcvrSize = rcvrHeader->slotCount();
         size_t replSize = replHeader->slotCount();
+        size_t rcvrIndexable = rcvrSize > rcvrFixed ? rcvrSize - rcvrFixed : 0;
+        size_t replIndexable = replSize > replFixed ? replSize - replFixed : 0;
 
-        if (static_cast<size_t>(stopIdx) > rcvrSize ||
-            static_cast<size_t>(repStartIdx + count - 1) > replSize) {
+        if (static_cast<size_t>(stopIdx) > rcvrIndexable ||
+            static_cast<size_t>(repStartIdx + count - 1) > replIndexable) {
             return PrimitiveResult::Failure;
         }
 
         for (int64_t i = 0; i < count; ++i) {
-            Oop value = replHeader->slotAt(repStartIdx - 1 + i);
-            rcvrHeader->slotAtPut(startIdx - 1 + i, value);
+            Oop value = replHeader->slotAt(replFixed + repStartIdx - 1 + i);
+            rcvrHeader->slotAtPut(rcvrFixed + startIdx - 1 + i, value);
         }
 
         primitiveSuccess(rcvr);
@@ -15162,18 +15219,47 @@ PrimitiveResult Interpreter::primitiveStringReplace(int argCount) {
 
     // Handle POINTER objects (Arrays, etc.)
     if (destHdr->isPointersObject() && srcHdr->isPointersObject()) {
-        size_t destSlots = destHdr->slotCount();
-        size_t srcSlots = srcHdr->slotCount();
+        ObjectFormat destFmt = destHdr->format();
+        ObjectFormat srcFmt = srcHdr->format();
 
-        // Bounds check
-        if (dstStartIdx + count > destSlots || srcIdx + count > srcSlots) {
+        // Non-indexable objects (like Interval with FixedSize format) must not be
+        // accessed by raw slot — fail so the Smalltalk fallback uses at: instead
+        if (destFmt == ObjectFormat::FixedSize || destFmt == ObjectFormat::ZeroSized ||
+            srcFmt == ObjectFormat::FixedSize || srcFmt == ObjectFormat::ZeroSized) {
             return PrimitiveResult::Failure;
         }
 
-        // Copy slots
+        // Account for fixed fields in IndexableWithFixed / WeakWithFixed objects
+        size_t destFixed = 0, srcFixed = 0;
+        if (destFmt == ObjectFormat::IndexableWithFixed || destFmt == ObjectFormat::WeakWithFixed) {
+            Oop destClass = memory_.classOf(destOop);
+            if (destClass.isObject()) {
+                Oop instSpec = memory_.fetchPointer(2, destClass);
+                if (instSpec.isSmallInteger()) destFixed = instSpec.asSmallInteger() & 0xFFFF;
+            }
+        }
+        if (srcFmt == ObjectFormat::IndexableWithFixed || srcFmt == ObjectFormat::WeakWithFixed) {
+            Oop srcClass = memory_.classOf(sourceOop);
+            if (srcClass.isObject()) {
+                Oop instSpec = memory_.fetchPointer(2, srcClass);
+                if (instSpec.isSmallInteger()) srcFixed = instSpec.asSmallInteger() & 0xFFFF;
+            }
+        }
+
+        size_t destSlots = destHdr->slotCount();
+        size_t srcSlots = srcHdr->slotCount();
+        size_t destIndexable = destSlots > destFixed ? destSlots - destFixed : 0;
+        size_t srcIndexable = srcSlots > srcFixed ? srcSlots - srcFixed : 0;
+
+        // Bounds check against indexable portion
+        if (dstStartIdx + count > destIndexable || srcIdx + count > srcIndexable) {
+            return PrimitiveResult::Failure;
+        }
+
+        // Copy slots (offset by fixed fields)
         for (size_t i = 0; i < count; i++) {
-            Oop value = srcHdr->slotAt(srcIdx + i);
-            destHdr->slotAtPut(dstStartIdx + i, value);
+            Oop value = srcHdr->slotAt(srcFixed + srcIdx + i);
+            destHdr->slotAtPut(destFixed + dstStartIdx + i, value);
         }
 
         popN(4);  // Pop 4 args, leave dest
