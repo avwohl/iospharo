@@ -572,7 +572,7 @@ int main(int argc, char* argv[]) {
         // Run bytecode steps for testing
         std::cout << "\n=== Execution Test ===" << std::endl;
         auto execStart = std::chrono::steady_clock::now();
-        int totalSteps = 2000000000;  // Run 2B steps
+        int totalSteps = 50000000;  // Run 50M steps (diagnostic mode)
         std::cout << "Running up to " << totalSteps << " bytecode steps..." << std::endl;
         int activeSteps = 0;
         int idleSteps = 0;
@@ -604,18 +604,16 @@ int main(int argc, char* argv[]) {
             }
 
             static int totalIdleSteps = 0;
+            static bool wasActive = false;
             if (result) {
                 activeSteps++;
                 idleSteps = 0;  // Reset consecutive idle count
+                wasActive = true;
 
                 // Process dumps at key intervals to track MorphicRenderLoop
                 if (activeSteps % 20000000 == 0) {
                     std::cerr << "\n=== PROCESS DUMP AT " << (activeSteps/1000000) << "M STEPS ===" << std::endl;
                     interpreter.dumpProcessQueues();
-                }
-                // Detailed method trace at specific intervals during test execution
-                if (activeSteps >= 100000000 && activeSteps % 50000000 == 0) {
-                    interpreter.dumpCurrentMethod();
                 }
 
                 // After 5k active steps, inject a right-click to trigger world menu
@@ -650,6 +648,12 @@ int main(int argc, char* argv[]) {
                     }
                 }
             } else {
+                // Detect transition from active to idle
+                if (wasActive) {
+                    std::cerr << "[WENT-IDLE step=" << i << " active=" << activeSteps << "]\n";
+                    interpreter.dumpProcessQueues();
+                }
+                wasActive = false;
                 idleSteps++;
                 totalIdleSteps++;
                 // Report when we first go idle
@@ -659,7 +663,8 @@ int main(int argc, char* argv[]) {
                 }
                 // Check for test results file periodically
                 if (totalIdleSteps % 1000000 == 0) {
-                    FILE* rf = fopen("/tmp/inline_results.txt", "r");
+                    FILE* rf = fopen("/tmp/diag_trace.txt", "r");
+                    if (!rf) rf = fopen("/tmp/inline_results.txt", "r");
                     if (rf) {
                         char buf[64] = {0};
                         fseek(rf, -20, SEEK_END);
