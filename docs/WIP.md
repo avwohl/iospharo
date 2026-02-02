@@ -2,33 +2,36 @@
 
 ## Date: 2026-01-08
 
-## Current Status (2026-02-01)
-Running SUnit test suites on fresh Pharo 13 images. Basic tests pass; exception handling
-has bugs that cause infinite loops on tests that trigger unhandled errors.
+## Current Status (2026-02-02)
+Running SUnit test suites on fresh Pharo 13 images with custom inline test runner
+(bypasses SUnit framework, calls setUp + perform: directly, catches Exception).
 
-### SUnit Test Results
+### SUnit Test Results (6 classes verified, 11 more in progress)
 ```
-SmallIntegerTest: 20 passed, 4 failed, 1 error (25 total)
-  FAILED: testInferiorWithFloat, testSuperiorWithFloat, testSuperiorOrEqualsWithFloat, testInferiorOrEqualsWithFloat
-  ERROR: testPrintString
-BooleanTest: 1 passed (1 total)
-AssociationTest: 6 passed (6 total, excluding compiler-dependent Roundtrip tests)
-PointTest: not yet tested (blocked by exception handling bugs)
+SmallIntegerTest (25 tests): 25P 0F 0E   -- ALL PASS
+IntegerTest     (83 tests): 77P 5F 1E   -- 1E: nil>>adaptToNumber:andSend:
+FloatTest       (70 tests): 66P 1F 3E   -- 3E: nil>>asIEEE32BitWord, binaryLiteral, storeOnRoundTrip
+FractionTest    (27 tests): 27P 0F 0E   -- ALL PASS
+PointTest       (31 tests): 31P 0F 0E   -- ALL PASS
+CharacterTest   (13 tests): 12P 1F 0E   -- 1F: testMaxVal; 2 skipped (compiler-heavy)
 ```
+Total verified: 238P, 7F, 4E across 6 classes (249 tests)
 
-### Key Issues Being Investigated
-1. **Exception handler not found (primitiveFindHandlerContext bug)**: Primitive 197
-   (`findNextHandlerOrSignalingContext`) started search from sender instead of self,
-   causing `on:do:` handlers to be missed. Fixed but not yet verified.
-2. **primitiveTerminateTo no-op on unreachable target**: When target context was not
-   in sender chain, primitive succeeded without setting sender. Fixed to always set
-   sender (matching Smalltalk fallback behavior).
-3. **copyTo: storm**: When exception handling can't find a handler, it enters an infinite
-   cycle: unhandled error → freeze → copyTo: (copies entire sender chain) →
-   terminateTo: → nil>>unwindTo: DNU → another unhandled error. The chain grows each cycle.
-4. **Compiler-dependent tests hang**: Tests calling `Smalltalk compiler evaluate:` trigger
-   errors deep in the compiler that cascade into the copyTo: storm.
-5. **SmallInteger float comparison failures**: 4 tests comparing SmallIntegers with Floats fail.
+### Known Hanging Tests
+- `CharacterTest>>testPrintStringAll` — calls `compiler evaluate:` 256 times
+- `CharacterTest>>testStoreStringAll` — same pattern
+- `IntervalTest` fixture tests — setUp doesn't initialize all ivars
+- Any test using `self class compiler evaluate:` hangs
+
+### Key Bugs Fixed (2026-02-02)
+1. **primitiveFindSubstring key/body args swapped**: `stackValue(2)` was body,
+   `stackValue(3)` was key, but named opposite. Broke `beginsWith:`, `findString:`.
+2. **Nil receiver DNU guard in wrong location**: Was in `sendSelector()`, needed
+   to be in `sendDoesNotUnderstand()` fast-path.
+3. **fprintf format mismatches**: primitiveSignal/primitiveWait had `step=%llu`
+   without matching args, causing SIGSEGV and garbage scheduler values.
+4. **TestFailure not caught**: TestFailure extends Exception (not Error), so
+   `on: Error do:` missed assertion failures, causing hangs.
 
 ### Previous Status (2026-01-28)
 VM runs 50M bytecode steps to completion with 0 crashes. 260K objects loaded, 20842 classes.
