@@ -13488,9 +13488,9 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
                 Oop selOop = memory_.fetchPointer(numLits - 1, method);
                 if (selOop.isObject() && selOop.rawBits() > 0x10000) {
                     ObjectHeader* selHdr = selOop.asObjectPtr();
-                    if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+                    if (selHdr->isBytesObject() && selHdr->byteSize() < 200) {
                         methodName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                    } else if (selHdr->slotCount() >= 2) {
+                    } else if (!selHdr->isBytesObject() && selHdr->slotCount() >= 2) {
                         // AdditionalMethodState - selector at slot 1
                         Oop innerSel = memory_.fetchPointer(1, selOop);
                         if (innerSel.isObject() && innerSel.rawBits() > 0x10000) {
