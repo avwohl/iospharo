@@ -2515,34 +2515,11 @@ void Interpreter::processPendingSignals() {
         int activePriority = static_cast<int>(activePriorityOop.asSmallInteger());
 
         if (processPriority > activePriority) {
-            // Higher priority - check if we should preempt
-            // Rate-limit switches to prevent thrashing during expensive operations
-            static auto lastSwitchTime = std::chrono::steady_clock::now();
-            auto now = std::chrono::steady_clock::now();
-            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastSwitchTime).count();
-
-            // Only switch if:
-            // 1. Priority difference is large (urgent), OR
-            // 2. Enough time has passed since last switch, OR
-            // 3. Stack is shallow (cheap to switch)
-            int priorityDiff = processPriority - activePriority;
-            bool urgentSwitch = priorityDiff >= 20;  // Very high priority jump
-            bool timeElapsed = elapsed >= 50;  // 50ms since last switch
-            bool shallowStack = frameDepth_ < 50;  // Stack is manageable
-
-            if (urgentSwitch || timeElapsed || shallowStack) {
-                lastSwitchTime = now;
-                putToSleep(activeProcess);
-                transferTo(process);
-            } else {
-                // Defer the switch - add to ready queue for later
-                if (sigLog && sigCount <= 50) {
-                    fprintf(sigLog, "[SIGNAL] #%d DEFERRING switch (elapsed=%lldms, frameDepth=%zu, priorityDiff=%d)\n",
-                            sigCount, elapsed, frameDepth_, priorityDiff);
-                    fflush(sigLog);
-                }
-                putToSleep(process);
-            }
+            // Higher priority ALWAYS preempts - this is standard Pharo scheduling.
+            // No rate limiting: the process scheduler guarantees that the highest
+            // priority runnable process always runs.
+            putToSleep(activeProcess);
+            transferTo(process);
         } else {
             // Same or lower priority - just add to ready queue
             putToSleep(process);
@@ -2701,7 +2678,7 @@ bool Interpreter::step() {
     // Log more frequently near the hang point (steps 15000-16000)
     size_t currentSD = static_cast<size_t>(stackPointer_ - stackBase_);
     bool shouldLog = (g_stepNum > 0 && g_stepNum % 2000000 == 0) ||
-                     (g_stepNum > 34000000 && g_stepNum % 100000 == 0);
+                     (g_stepNum > 3100000 && g_stepNum <= 3200000 && g_stepNum % 1000 == 0);
     if (g_stepNum == 100) {
         if (!stepProgressLog) stepProgressLog = fopen("/tmp/step_progress.log", "w");
         if (stepProgressLog) {
@@ -2824,6 +2801,41 @@ skip_yield:
 
     uint8_t bytecode = fetchByte();
     lastBytecode_ = bytecode;
+
+    // TRACE: detailed bytecode tracing around ensure: return point
+    if (g_stepNum >= 22100 && g_stepNum <= 22160) {
+        static FILE* ensureBcLog = nullptr;
+        if (!ensureBcLog) ensureBcLog = fopen("/tmp/ensure_bytecodes.log", "w");
+        if (ensureBcLog) {
+            // Get method selector
+            std::string sel = "?";
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                Oop h = memory_.fetchPointer(0, method_);
+                if (h.isSmallInteger()) {
+                    int nl = h.asSmallInteger() & 0x7FFF;
+                    if (nl >= 2) {
+                        Oop s = memory_.fetchPointer(nl - 1, method_);
+                        if (s.isObject() && s.rawBits() > 0x10000) {
+                            ObjectHeader* sh = s.asObjectPtr();
+                            if (sh->isBytesObject() && sh->byteSize() < 60)
+                                sel = std::string((char*)sh->bytes(), sh->byteSize());
+                        }
+                    }
+                }
+            }
+            // Get IP offset in method
+            int ipOff = -1;
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                ObjectHeader* mh = method_.asObjectPtr();
+                ipOff = (int)(instructionPointer_ - 1 - mh->bytes());  // -1 because fetchByte already advanced
+            }
+            fprintf(ensureBcLog, "[%llu fd=%zu] bc=0x%02X ip=%d method=#%s SP=%d FP=%d top=0x%llx\n",
+                    g_stepNum, frameDepth_, bytecode, ipOff, sel.c_str(),
+                    (int)(stackPointer_ - stackBase_), (int)(framePointer_ - stackBase_),
+                    stackPointer_ > stackBase_ ? (unsigned long long)(*(stackPointer_ - 1)).rawBits() : 0ULL);
+            fflush(ensureBcLog);
+        }
+    }
 
     // TRACE: log bytecodes for anySatisfy: method - write to file
     {
@@ -5717,13 +5729,48 @@ void Interpreter::returnFromMethod() {
     }
     if (frameDepth_ > 0) {
         size_t homeFrame = savedFrames_[frameDepth_ - 1].homeFrameDepth;
+
+        // TARGETED TRACE: log every returnFromMethod near step 22138
+        if (g_stepNum >= 22130 && g_stepNum <= 22145) {
+            static FILE* rfmDetailLog = nullptr;
+            if (!rfmDetailLog) rfmDetailLog = fopen("/tmp/rfm_detail.log", "w");
+            if (rfmDetailLog) {
+                // Get method selector
+                std::string sel = "?";
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    Oop h = memory_.fetchPointer(0, method_);
+                    if (h.isSmallInteger()) {
+                        int nl = h.asSmallInteger() & 0x7FFF;
+                        if (nl >= 2) {
+                            Oop s = memory_.fetchPointer(nl - 1, method_);
+                            if (s.isObject() && s.rawBits() > 0x10000) {
+                                ObjectHeader* sh = s.asObjectPtr();
+                                if (sh->isBytesObject() && sh->byteSize() < 60)
+                                    sel = std::string((char*)sh->bytes(), sh->byteSize());
+                            }
+                        }
+                    }
+                }
+                fprintf(rfmDetailLog, "[RFM step=%llu fd=%zu] homeFrame=%zu method=#%s val=0x%llx\n",
+                        g_stepNum, frameDepth_, homeFrame, sel.c_str(),
+                        (unsigned long long)value.rawBits());
+                // Also show savedFrames_ chain
+                for (size_t i = 0; i < frameDepth_ && i < 10; i++) {
+                    fprintf(rfmDetailLog, "  savedFrames_[%zu] homeFrameDepth=%zu savedMethod=0x%llx\n",
+                            i, savedFrames_[i].homeFrameDepth,
+                            (unsigned long long)savedFrames_[i].savedMethod.rawBits());
+                }
+                fflush(rfmDetailLog);
+            }
+        }
+
         if (homeFrame > 0) {
             // TRACE: Non-local return from block via 0x5C
             {
                 extern bool g_traceDetectJumps;
                 static int nlr5cTraceCount = 0;
                 if (nlr5cTraceCount++ < 200) {
-                    std::cerr << "[NLR-5C #" << nlr5cTraceCount << "] returnFromMethod in block, doing non-local return from frame " << frameDepth_ << " to home " << homeFrame;
+                    std::cerr << "[NLR-5C #" << nlr5cTraceCount << " step=" << g_stepNum << "] returnFromMethod in block, doing non-local return from frame " << frameDepth_ << " to home " << homeFrame;
                     // TRACE THE VALUE BEING RETURNED
                     std::cerr << "\n  NLR VALUE=0x" << std::hex << value.rawBits() << std::dec;
                     if (value.rawBits() == memory_.trueObject().rawBits()) {
@@ -6791,7 +6838,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             allSendLog2 = fopen("/tmp/all_sends.log", "w");
             if (allSendLog2) { fprintf(allSendLog2, "[INIT] send log opened at step %llu\n", g_stepNum); fflush(allSendLog2); }
         }
-    if (allSendLog2 && g_stepNum >= 36500000 && g_stepNum <= 36600000) {
+    if (allSendLog2 && g_stepNum >= 21500 && g_stepNum <= 35000) {
         if (allSendLog2 && selector.isObject() && selector.rawBits() > 0x10000) {
             ObjectHeader* sh2 = selector.asObjectPtr();
             if (sh2->isBytesObject() && sh2->byteSize() < 200) {

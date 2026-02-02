@@ -10905,7 +10905,7 @@ PrimitiveResult Interpreter::primitiveFileOpen(int argCount) {
     // Assign a file ID and store the handle
     int fileId = nextFileId_++;
     openFiles_[fileId] = file;
-    fprintf(stderr, "[FILE-OPEN] '%s' writable=%d fileId=%d\n", filename.c_str(), writable, fileId);
+    fprintf(stderr, "[FILE-OPEN step=%llu] '%s' writable=%d fileId=%d\n", g_stepNum, filename.c_str(), writable, fileId);
 
     popN(argCount);
     push(Oop::fromSmallInteger(fileId));
