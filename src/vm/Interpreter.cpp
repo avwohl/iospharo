@@ -3543,18 +3543,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                         }
                         size_t hfd = (frameDepth_ > 0) ? savedFrames_[frameDepth_ - 1].homeFrameDepth : 0;
                         if (hfd > 0 && hfd < frameDepth_) {
-                            // NLR from block
-                            {
-                                static FILE* nlrBcLog = nullptr;
-                                static int nlrBcCount = 0;
-                                if (!nlrBcLog) nlrBcLog = fopen("/tmp/nlr_bc_trace.log", "w");
-                                if (nlrBcLog && nlrBcCount++ < 1000) {
-                                    fprintf(nlrBcLog, "[NLR-BC #%d] bc=0x%02x fd=%zu hfd=%zu step=%llu\n",
-                                            nlrBcCount, bytecode, frameDepth_, hfd,
-                                            (unsigned long long)g_stepNum);
-                                    fflush(nlrBcLog);
-                                }
-                            }
+                            // NLR from block: unwind to home frame
                             while (frameDepth_ > hfd) {
                                 popFrame();
                             }

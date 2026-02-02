@@ -3388,17 +3388,20 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
     Oop closure = stackValue(static_cast<size_t>(argCount));
 
     if (!closure.isObject()) {
+        static int f1 = 0; if (f1++ < 5) std::cerr << "[P207-FAIL] not object\n";
         return PrimitiveResult::Failure;
     }
 
     // Get numArgs from the closure (slot 2)
     Oop numArgsOop = memory_.fetchPointer(2, closure);
     if (!numArgsOop.isSmallInteger()) {
+        static int f2 = 0; if (f2++ < 5) std::cerr << "[P207-FAIL] numArgs not SmallInt: 0x" << std::hex << numArgsOop.rawBits() << std::dec << "\n";
         return PrimitiveResult::Failure;
     }
 
     int closureNumArgs = static_cast<int>(numArgsOop.asSmallInteger());
     if (closureNumArgs != argCount) {
+        static int f3 = 0; if (f3++ < 5) std::cerr << "[P207-FAIL] argMismatch closureArgs=" << closureNumArgs << " argCount=" << argCount << "\n";
         return PrimitiveResult::Failure;
     }
 
