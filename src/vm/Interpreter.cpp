@@ -6459,8 +6459,8 @@ void Interpreter::commonSend(int which) {
         }
     }
 
-    // DEBUG: Trace value: (selectorIndex=26) to see if receiver is OrderedCollection BEFORE sendSelector
-    if (selectorIndex == 26) {  // value:
+    // DEBUG: Trace value: (selectorIndex=26) - DISABLED for performance
+    if (false && selectorIndex == 26) {  // value:
         Oop rcvr = stackValue(argCount);
         std::string rcvrClass = "?";
         int rcvrSlots = -1;
@@ -7047,8 +7047,8 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         if (sendCount >= 4575) hangDebugEnabled = true;
     }
 
-    // TRACE: Log EVERY primitiveResume send with step number
-    if (selector.isObject() && selector.rawBits() > 0x10000) {
+    // TRACE: Log EVERY primitiveResume send with step number - DISABLED for performance
+    if (false && selector.isObject() && selector.rawBits() > 0x10000) {
         ObjectHeader* selHdr = selector.asObjectPtr();
         if (selHdr->isBytesObject() && selHdr->byteSize() == 15) {
             const char* selBytes = (const char*)selHdr->bytes();
@@ -12211,21 +12211,14 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
     Oop currentClass = classOop;
     int depth = 0;
 
-    // Debug: trace lookups for specific selectors
+    // Debug: trace lookups for specific selectors - DISABLED for performance
+    // (was constructing std::string on every lookupMethod call)
     std::string selStr;
-    if (selector.isObject() && selector.rawBits() > 0x10000) {
-        ObjectHeader* selHdr = selector.asObjectPtr();
-        if (selHdr->isBytesObject() && selHdr->byteSize() <= 50) {
-            selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-        }
-    }
-
-    // Debug: trace specific method lookups
+    bool traceThis = false;
     static int traceCount = 0;
     static int foundCount = 0;
     static int notFoundCount = 0;
-    bool traceThis = (selStr == "isHandlerOrSignalingContext");
-    if (traceThis) {
+    if (false && traceThis) {
         traceCount++;
     }
 
@@ -12244,12 +12237,11 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
 
 
 
-    // Debug: trace #new lookup to understand why it fails
+    // Debug: trace #new lookup - DISABLED for performance
     static int newLookupCount = 0;
-    bool traceNew = (selStr == "new");
-    // Trace #new lookups - show first 15 and any that fail
-    std::string startClassName = getClassName(classOop);
-    bool shouldTraceNew = (traceNew && newLookupCount < 15);
+    bool traceNew = false;  // was: (selStr == "new")
+    std::string startClassName;
+    bool shouldTraceNew = false;
     if (shouldTraceNew) {
         newLookupCount++;
         std::cerr << "[NEW-LOOKUP #" << newLookupCount << "] Looking for new\n";
@@ -13475,48 +13467,9 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
         if (!frameLog) frameLog = fopen("/tmp/iospharo-frame.log", "a");
     }
 
-    // Get method name/selector for recursion detection
-    // IMPORTANT: Use the actual selector (penultimate literal), NOT lit1
-    // lit1 might be a symbol used BY the method, not the method's selector
-    std::string methodName = "";
-    if (method.isObject() && method.rawBits() > 0x10000) {
-        Oop hdr = memory_.fetchPointer(0, method);
-        if (hdr.isSmallInteger()) {
-            int numLits = hdr.asSmallInteger() & 0x7FFF;
-            // Selector is at penultimate literal position (numLits - 1)
-            if (numLits >= 2) {
-                Oop selOop = memory_.fetchPointer(numLits - 1, method);
-                if (selOop.isObject() && selOop.rawBits() > 0x10000) {
-                    ObjectHeader* selHdr = selOop.asObjectPtr();
-                    if (selHdr->isBytesObject() && selHdr->byteSize() < 200) {
-                        methodName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                    } else if (!selHdr->isBytesObject() && selHdr->slotCount() >= 2) {
-                        // AdditionalMethodState - selector at slot 1
-                        Oop innerSel = memory_.fetchPointer(1, selOop);
-                        if (innerSel.isObject() && innerSel.rawBits() > 0x10000) {
-                            ObjectHeader* innerHdr = innerSel.asObjectPtr();
-                            if (innerHdr->isBytesObject() && innerHdr->byteSize() < 50) {
-                                methodName = std::string((char*)innerHdr->bytes(), innerHdr->byteSize());
-                            }
-                        }
-                    }
-                }
-            }
-            // Fallback: try lit1 if selector extraction failed (for small methods)
-            if (methodName.empty() && numLits >= 1) {
-                ObjectHeader* mHdr = method.asObjectPtr();
-                if (mHdr->slotCount() > 1) {
-                    Oop lit1 = mHdr->slotAt(1);
-                    if (lit1.isObject() && lit1.rawBits() > 0x10000) {
-                        ObjectHeader* litHdr = lit1.asObjectPtr();
-                        if (litHdr->isBytesObject() && litHdr->byteSize() < 50) {
-                            methodName = std::string((char*)litHdr->bytes(), litHdr->byteSize());
-                        }
-                    }
-                }
-            }
-        }
-    }
+    // Method name extraction - only done lazily when needed for debug logging
+    // (was causing huge overhead by constructing std::string on every pushFrame)
+    std::string methodName;
 
     // Save current execution state before switching to new method
     if (frameDepth_ >= MaxFrameDepth) {
