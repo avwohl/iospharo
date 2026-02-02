@@ -2400,13 +2400,10 @@ PrimitiveResult Interpreter::primitiveNew(int argCount) {
     int64_t instSpec = formatObj.asSmallInteger();
     size_t instSize = instSpec & 0xFFFF;  // Low 16 bits are instance size
 
-    // Per official VM: validate this is a fixed-size class (format < 2)
     // Bits 16-20 encode the object format: 0=zero-sized, 1=fixed, 2+=variable
+    // For variable-size classes, basicNew creates an instance with 0 indexed slots
+    // (only the fixed fields). The official VM allows this.
     int instFormat = (instSpec >> 16) & 0x1F;
-    if (instFormat >= 2) {
-        // Variable-sized class (Array, String, etc.) - use new: instead
-        return PrimitiveResult::Failure;
-    }
 
     uint32_t classIndex = memory_.indexOfClass(rcvr);
     if (classIndex == 0) {
@@ -10935,6 +10932,7 @@ PrimitiveResult Interpreter::primitiveFileWrite(int argCount) {
     }
 
     size_t bytesWritten = fwrite(tempBuffer.data(), 1, count, it->second);
+    fflush(it->second);
 
     popN(argCount);
     push(Oop::fromSmallInteger(static_cast<int64_t>(bytesWritten)));
