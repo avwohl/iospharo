@@ -337,7 +337,9 @@ Oop ObjectMemory::classOf(Oop obj) const {
         return specialObject(SpecialObjectIndex::ClassCharacter);
     }
     if (obj.isSmallFloat()) {
-        return specialObject(SpecialObjectIndex::ClassFloat);
+        // SmallFloat64's class is at class table index 4 (Cog VM's smallFloatTag)
+        // NOT ClassFloat (special object index 9) which is BoxedFloat64
+        return classAtIndex(4);
     }
     if (!obj.isObject()) {
         return nilObject_;  // Return proper nil, not raw 0

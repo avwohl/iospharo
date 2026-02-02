@@ -13579,11 +13579,15 @@ PrimitiveResult Interpreter::primitiveImmediateAsInteger(int argCount) {
     }
 
     if (receiver.isSmallFloat()) {
-        // Return the bits of the float encoding
-        // This gives access to the IEEE representation
-        pop();
-        // For floats, return the raw bits as large integer if needed
-        // For simplicity, fail to Smalltalk for non-small values
+        // Return the SmallFloat encoding as a signed integer
+        // In our low-bit tag scheme: value = oop >> 3 (arithmetic shift)
+        int64_t value = static_cast<int64_t>(receiver.rawBits()) >> 3;
+        if (Oop::canBeSmallInteger(value)) {
+            pop();
+            push(Oop::fromSmallInteger(value));
+            return PrimitiveResult::Success;
+        }
+        // Extremely large/small SmallFloat encodings - fail to Smalltalk
         return PrimitiveResult::Failure;
     }
 
