@@ -16196,6 +16196,16 @@ PrimitiveResult Interpreter::primitiveTranslateStringWithTable(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    // Both string and table must be byte objects (format 16-23)
+    // Match official VM: isBytes() check — fail for WideString tables
+    ObjectHeader* strHdr = stringOop.asObjectPtr();
+    ObjectHeader* tblHdr = tableOop.asObjectPtr();
+    int strFmt = static_cast<int>(strHdr->format());
+    int tblFmt = static_cast<int>(tblHdr->format());
+    if (strFmt < 16 || strFmt > 23 || tblFmt < 16 || tblFmt > 23) {
+        return PrimitiveResult::Failure;
+    }
+
     intptr_t startIndex = startIndexOop.asSmallInteger();
     intptr_t stopIndex = stopIndexOop.asSmallInteger();
     size_t stringSize = memory_.byteSizeOf(stringOop);
@@ -16206,10 +16216,11 @@ PrimitiveResult Interpreter::primitiveTranslateStringWithTable(int argCount) {
     }
 
     // Smalltalk uses 1-based indexing
-    if (startIndex < 1) startIndex = 1;
-    if (stopIndex > static_cast<intptr_t>(stringSize)) stopIndex = static_cast<intptr_t>(stringSize);
+    if (startIndex < 1 || stopIndex > static_cast<intptr_t>(stringSize)) {
+        return PrimitiveResult::Failure;
+    }
 
-    // Translate each character
+    // Translate each character using byte-indexed table
     for (intptr_t i = startIndex - 1; i < stopIndex; i++) {
         uint8_t ch = memory_.fetchByte(static_cast<size_t>(i), stringOop);
         uint8_t translated = memory_.fetchByte(ch, tableOop);
