@@ -2153,7 +2153,7 @@ void Interpreter::checkTimerSemaphore() {
 
         static int usecCheckCount = 0;
         usecCheckCount++;
-        if (usecCheckCount <= 50 || usecCheckCount % 1000 == 0) {
+        if (false && (usecCheckCount <= 50 || usecCheckCount % 1000 == 0)) {
             fprintf(stderr, "[TIMER-USEC-CHK #%d] current=%lld target=%lld delta=%lldms\n",
                     usecCheckCount, currentUsec, nextWakeupUsec_,
                     (nextWakeupUsec_ - currentUsec) / 1000);
@@ -2161,7 +2161,7 @@ void Interpreter::checkTimerSemaphore() {
         if (currentUsec >= nextWakeupUsec_) {
             static int usecTimerLog = 0;
             usecTimerLog++;
-            if (usecTimerLog <= 20) {
+            if (false && usecTimerLog <= 20) {
                 static FILE* tlog = fopen("/tmp/timer_fired.log", "a");
                 if (tlog) { fprintf(tlog, "[TIMER #%d] fired! delta=%lldms\n", usecTimerLog,
                                     (currentUsec - nextWakeupUsec_) / 1000); fflush(tlog); }
@@ -2180,7 +2180,7 @@ void Interpreter::checkTimerSemaphore() {
                 int64_t excess = excessOop.isSmallInteger() ? excessOop.asSmallInteger() : 0;
                 memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
                                     Oop::fromSmallInteger(excess + 1));
-                if (timerSignalLog <= 30) {
+                if (false && timerSignalLog <= 30) {
                     fprintf(stderr, "[TIMER-SIGNAL #%d] no waiter, excess now %lld\n", timerSignalLog, excess + 1);
                 }
             } else {
@@ -2190,7 +2190,7 @@ void Interpreter::checkTimerSemaphore() {
                 Oop activeProcess = getActiveProcess();
                 Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
                 int activePriority = static_cast<int>(activePriorityOop.asSmallInteger());
-                if (timerSignalLog <= 30) {
+                if (false && timerSignalLog <= 30) {
                     fprintf(stderr, "[TIMER-SIGNAL #%d] waking process pri=%d active=%d preempt=%d\n",
                             timerSignalLog, processPriority, activePriority, processPriority > activePriority ? 1 : 0);
                 }
@@ -2530,63 +2530,12 @@ bool Interpreter::step() {
         return false;
     }
 
-    // Detect FP corruption between steps
-    if (framePointer_ != nullptr && framePointer_ < stackBase_) {
-        static int fpCorruptCount = 0;
-        if (++fpCorruptCount <= 10) {
-            std::cerr << "[FP-CORRUPT-STEP #" << fpCorruptCount
-                      << "] FP=" << (void*)framePointer_
-                      << " base=" << (void*)stackBase_
-                      << " fd=" << frameDepth_
-                      << " step=" << g_stepNum << "\n";
-        }
-    }
-
     g_stepCount++;
-    if (g_stepCount == 1) {
-        g_sendTraceFile = fopen("/tmp/send_trace.log", "w");
-    }
-    if (g_sendTraceFile && (g_stepCount <= 10 || g_stepCount % 1000000 == 0)) {
-        fprintf(g_sendTraceFile, "[STEP] %lld running=%d\n", (long long)g_stepCount, running_ ? 1 : 0);
-        fflush(g_sendTraceFile);
-    }
-    // Targeted stack dump around size/new:streamContents: corruption
-    if (g_sendTraceFile && g_stepCount >= 420 && g_stepCount <= 440) {
-        fprintf(g_sendTraceFile, "[STACK step=%lld fd=%zu sp-base=%ld] top5:",
-                (long long)g_stepCount, frameDepth_, (long)(stackPointer_ - stackBase_));
-        for (int si = 0; si < 5 && si < (stackPointer_ - stackBase_); si++) {
-            Oop sv = stackValue(si);
-            if (sv.isSmallInteger()) {
-                fprintf(g_sendTraceFile, " SI(%lld)", (long long)sv.asSmallInteger());
-            } else if (sv.rawBits() == memory_.nil().rawBits()) {
-                fprintf(g_sendTraceFile, " nil");
-            } else if (sv.isObject() && sv.rawBits() > 0x10000) {
-                ObjectHeader* h = sv.asObjectPtr();
-                fprintf(g_sendTraceFile, " obj(ci=%u)", h->classIndex());
-            } else {
-                fprintf(g_sendTraceFile, " 0x%llx", (unsigned long long)sv.rawBits());
-            }
-        }
-        // Also show current bytecode
-        if (instructionPointer_) {
-            fprintf(g_sendTraceFile, " bc=0x%02x", *instructionPointer_);
-        }
-        fprintf(g_sendTraceFile, "\n");
-        fflush(g_sendTraceFile);
-    }
-
-    // Check timer and process pending signals every step
-    // (needed when step() is called directly, not via run())
+    // Check timer and process pending signals periodically
     {
     static int stepCheckCounter = 0;
     stepCheckCounter++;
-    if (stepCheckCounter == 1) {
-        fprintf(stderr, "[STEP-TIMER-REACHED] first time, counter=%d\n", stepCheckCounter);
-    }
     if (stepCheckCounter % 100 == 0) {
-        if (stepCheckCounter <= 500) {
-            fprintf(stderr, "[STEP-TIMER] counter=%d calling checkTimerSemaphore\n", stepCheckCounter);
-        }
         checkTimerSemaphore();
         if (hasPendingSignals()) {
             processPendingSignals();
@@ -2818,7 +2767,7 @@ bool Interpreter::step() {
                            nextProcess.rawBits() != nilObj.rawBits() &&
                            nextProcess.rawBits() != activeProcess.rawBits();
 
-        if (forceYieldCount <= 10 || forceYieldCount % 100 == 0) {
+        if (false && (forceYieldCount <= 10 || forceYieldCount % 100 == 0)) {
             std::cerr << "[FORCE-YIELD #" << forceYieldCount << "] Current priority " << activePriority
                       << " yielding to same priority process: " << (foundProcess ? "found" : "none") << "\n";
         }
@@ -4197,7 +4146,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                     memory_.storePointer(tempIndex, tempVector, value);
                     // Trace small temp vector stores
                     static int tv252Count = 0;
-                    if (tv252Count < 100) {
+                    if (false && tv252Count < 100) {
                         ObjectHeader* tvHdr = tempVector.asObjectPtr();
                         if (tvHdr->slotCount() <= 3) {
                             tv252Count++;
@@ -4222,7 +4171,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                     memory_.storePointer(tempIndex, tempVector, value);
                     // Trace: log stores to small temp vectors (likely shared vars)
                     static int tvStoreCount = 0;
-                    if (tvStoreCount < 100) {
+                    if (false && tvStoreCount < 100) {
                         ObjectHeader* tvHdr = tempVector.asObjectPtr();
                         if (tvHdr->slotCount() <= 3) {
                             tvStoreCount++;
@@ -4251,7 +4200,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                     // CRITICAL: temp vector is NOT an object - store is SILENTLY LOST!
                     static int tvFailCount = 0;
                     tvFailCount++;
-                    if (tvFailCount <= 20) {
+                    if (false && tvFailCount <= 20) {
                         fprintf(stderr, "[TV-STORE-FAIL #%d step=%llu] tempVector=0x%llx NOT object! "
                                 "tempIdx=%d vecIdx=%d value=0x%llx block=%d fd=%zu\n",
                                 tvFailCount, g_stepNum,
@@ -9878,7 +9827,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                                         }
                                     }
                                 }
-                                std::cerr << "[CONTEXT-ALLOC #" << ctxAllocCount << "] Created Context 0x"
+                                if (false) std::cerr << "[CONTEXT-ALLOC #" << ctxAllocCount << "] Created Context 0x"
                                           << std::hex << context.rawBits() << std::dec
                                           << " for method: #" << methodName << "\n";
                             }
@@ -14197,7 +14146,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                     match("unwindAndStop:") || match("privSender:")) {
                     static int silentCount = 0;
                     silentCount++;
-                    if (silentCount <= 20) {
+                    if (false && silentCount <= 20) {
                         fprintf(stderr, "[DNU-SILENT #%d step=%llu] nil>>%.*s\n",
                                 silentCount, g_stepNum, (int)len, bytes);
                     }

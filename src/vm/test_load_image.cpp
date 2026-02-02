@@ -448,7 +448,7 @@ int main(int argc, char* argv[]) {
     // Initialize memory (256 MB should be enough for most images)
     ObjectMemory memory;
     MemoryConfig config;
-    config.oldSpaceSize = 4ULL * 1024 * 1024 * 1024;  // 4 GB (GC is disabled, need space for startup without collection)
+    config.oldSpaceSize = 16ULL * 1024 * 1024 * 1024;  // 16 GB (GC is disabled, need space for full test suite)
     config.newSpaceSize = 32 * 1024 * 1024;   // 32 MB
     config.permSpaceSize = 8 * 1024 * 1024;   // 8 MB
 
@@ -589,14 +589,14 @@ int main(int argc, char* argv[]) {
             bool result = interpreter.step();
 
 
-            // Progress report every 100k steps
-            if (i > 0 && i % 100000 == 0) {
+            // Progress report every 10M steps
+            if (i > 0 && i % 10000000 == 0) {
                 std::cout << "[PROGRESS] Step " << i << ": active=" << activeSteps
                           << " idle=" << idleSteps << " result=" << result << std::endl;
             }
 
-            // Report every 100k steps
-            if (i > 0 && i % 100000 == 0) {
+            // Report every 10M steps
+            if (i > 0 && i % 10000000 == 0) {
                 static auto start = std::chrono::steady_clock::now();
                 auto now = std::chrono::steady_clock::now();
                 auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();
@@ -649,7 +649,7 @@ int main(int argc, char* argv[]) {
                 idleSteps++;
                 totalIdleSteps++;
                 // Report when we start getting idle
-                if (idleSteps == 1 && totalIdleSteps <= 10) {
+                if (false && idleSteps == 1 && totalIdleSteps <= 10) {
                     std::cout << "[IDLE] Started at step " << i << " after " << activeSteps << " active steps" << std::endl;
                 }
                 // If we have 50M+ total idle steps and step count > 50M, we're truly idle
