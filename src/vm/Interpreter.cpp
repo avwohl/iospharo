@@ -5828,33 +5828,40 @@ void Interpreter::returnFromMethod() {
                 }
             }
             while (frameDepth_ > homeFrame) {
-                // TRACE: What method is at each frame during NLR unwind
-                {
-                    extern bool g_traceDetectJumps;
-                    static int nlrUnwindDetailCount = 0;
-                    if (g_traceDetectJumps && nlrUnwindDetailCount++ < 10) {
-                        std::cerr << "[NLR-FRAME-POP] frame " << frameDepth_ << " -> " << (frameDepth_ - 1);
-                        // Get savedMethod from the frame we're about to pop to
-                        if (frameDepth_ > 0) {
-                            Oop savedM = savedFrames_[frameDepth_ - 1].savedMethod;
-                            if (savedM.isObject() && savedM.rawBits() > 0x10000) {
-                                Oop hdr = memory_.fetchPointer(0, savedM);
-                                if (hdr.isSmallInteger()) {
-                                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                                    if (numLits >= 2) {
-                                        Oop sel = memory_.fetchPointer(numLits - 1, savedM);
-                                        if (sel.isObject() && sel.rawBits() > 0x10000) {
-                                            ObjectHeader* selHdr = sel.asObjectPtr();
-                                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                                                std::cerr << " (savedMethod=" << std::string((char*)selHdr->bytes(), selHdr->byteSize()) << ")";
-                                            }
-                                        }
+                // Check if the frame we're about to restore has primitive 198 (ensure:/ifCurtailed:).
+                // If so, we must fire its termination block before continuing the NLR.
+                if (frameDepth_ > 1) {
+                    Oop restoringMethod = savedFrames_[frameDepth_ - 1].savedMethod;
+                    if (restoringMethod.isObject() && restoringMethod.rawBits() > 0x10000) {
+                        Oop mHeader = memory_.fetchPointer(0, restoringMethod);
+                        if (mHeader.isSmallInteger()) {
+                            int64_t bits = mHeader.asSmallInteger();
+                            bool hasPrim = (bits >> 16) & 1;
+                            if (hasPrim) {
+                                int numLits = bits & 0x7FFF;
+                                ObjectHeader* mObj = restoringMethod.asObjectPtr();
+                                uint8_t* bc = mObj->bytes() + (1 + numLits) * 8;
+                                int primIndex = 0;
+                                if (bc[0] == 0xF8) {
+                                    primIndex = bc[1] | (bc[2] << 8);
+                                }
+                                if (primIndex == 198) {
+                                    // Found an ensure: frame! Stop the NLR here.
+                                    // Pop down to this frame (restore ensure:'s state).
+                                    popFrame();
+                                    // Now method_ = ensure:, IP = after valueNoContextSwitch
+                                    // Push the NLR return value as the result of valueNoContextSwitch
+                                    // (ensure: expects: returnValue := self valueNoContextSwitch)
+                                    push(value);
+                                    // Set this frame's homeFrameDepth so that when ensure: does
+                                    // ^returnValue (0x5C), the NLR continues to the original target.
+                                    if (frameDepth_ > 0) {
+                                        savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
                                     }
+                                    return;  // Let interpreter run ensure:'s continuation
                                 }
                             }
                         }
-                        std::cerr << " sp_before=" << (stackPointer_ - stackBase_);
-                        std::cerr << "\n";
                     }
                 }
                 popFrame();
