@@ -415,8 +415,8 @@ void testOopTagging() {
     std::cout << "  Character tag:    " << (ch.rawBits() & 7) << " (expected 3)" << std::endl;
 }
 
-static void sigsegvHandler(int sig) {
-    fprintf(stderr, "\n[SIGSEGV] Signal %d caught!\n", sig);
+static void sigsegvAction(int sig, siginfo_t* info, void* ctx) {
+    fprintf(stderr, "\n[SIGSEGV] Signal %d caught! Fault addr=%p\n", sig, info->si_addr);
     void* callstack[128];
     int frames = backtrace(callstack, 128);
     backtrace_symbols_fd(callstack, frames, 2);
@@ -424,8 +424,12 @@ static void sigsegvHandler(int sig) {
 }
 
 int main(int argc, char* argv[]) {
-    signal(SIGSEGV, sigsegvHandler);
-    signal(SIGBUS, sigsegvHandler);
+    struct sigaction sa;
+    sa.sa_sigaction = sigsegvAction;
+    sa.sa_flags = SA_SIGINFO;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGSEGV, &sa, nullptr);
+    sigaction(SIGBUS, &sa, nullptr);
     std::cout << "Pharo Clean VM - Image Loader Test" << std::endl;
     std::cout << "===================================" << std::endl;
 

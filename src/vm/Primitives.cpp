@@ -1699,7 +1699,11 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
                 }
             }
         }
-        size_t indexableSize = header->slotCount() - fixedFields;
+        size_t slotCount = header->slotCount();
+        if (fixedFields > slotCount) {
+            return PrimitiveResult::Failure;
+        }
+        size_t indexableSize = slotCount - fixedFields;
         if (arrayIndex >= indexableSize) {
             return PrimitiveResult::Failure;
         }
@@ -1940,7 +1944,11 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
                 }
             }
         }
-        size_t indexableSize = header->slotCount() - fixedFields;
+        size_t slotCount = header->slotCount();
+        if (fixedFields > slotCount) {
+            return PrimitiveResult::Failure;
+        }
+        size_t indexableSize = slotCount - fixedFields;
         if (arrayIndex >= indexableSize) {
             return PrimitiveResult::Failure;
         }
