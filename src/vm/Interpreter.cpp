@@ -2551,6 +2551,12 @@ void Interpreter::processPendingSignals() {
 }
 
 bool Interpreter::step() {
+    static bool stepEntryLogged = false;
+    if (!stepEntryLogged) {
+        FILE* f = fopen("/tmp/step_entry.log", "w");
+        if (f) { fprintf(f, "step() called for the first time\n"); fclose(f); }
+        stepEntryLogged = true;
+    }
     if (!running_) {
         return false;
     }
@@ -2694,9 +2700,15 @@ bool Interpreter::step() {
     static FILE* stepProgressLog = nullptr;
     // Log more frequently near the hang point (steps 15000-16000)
     size_t currentSD = static_cast<size_t>(stackPointer_ - stackBase_);
-    bool shouldLog = (g_stepNum % 1000000 == 0) ||
-                     (g_stepNum > 10000 && g_stepNum % 10000 == 0) ||
-                     (g_stepNum >= 25490000 && g_stepNum <= 25510000 && g_stepNum % 100 == 0);
+    bool shouldLog = (g_stepNum > 0 && g_stepNum % 2000000 == 0) ||
+                     (g_stepNum > 34000000 && g_stepNum % 100000 == 0);
+    if (g_stepNum == 100) {
+        if (!stepProgressLog) stepProgressLog = fopen("/tmp/step_progress.log", "w");
+        if (stepProgressLog) {
+            fprintf(stepProgressLog, "[INIT] step=100 - logger works\n");
+            fflush(stepProgressLog);
+        }
+    }
     if (shouldLog) {
         if (!stepProgressLog) {
             stepProgressLog = fopen("/tmp/step_progress.log", "w");
@@ -6763,35 +6775,166 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 }
 
 void Interpreter::sendSelector(Oop selector, int argCount) {
-    // Trace asSymbol/error handling sends
-    if (g_stepNum >= 25485000 && g_stepNum <= 25495000) {
-        static FILE* asSymLog = nullptr;
-        if (!asSymLog) asSymLog = fopen("/tmp/asym_trace.log", "w");
-        if (asSymLog && selector.isObject() && selector.rawBits() > 0x10000) {
-            ObjectHeader* sh = selector.asObjectPtr();
-            if (sh->isBytesObject() && sh->byteSize() < 100) {
-                std::string sn((char*)sh->bytes(), sh->byteSize());
-                // Log ALL sends in this range
+    // First-ever call detection
+    {
+        static bool firstCall = true;
+        if (firstCall) {
+            firstCall = false;
+            FILE* f = fopen("/tmp/sendselector_first.log", "w");
+            if (f) { fprintf(f, "sendSelector called first at step %llu\n", g_stepNum); fclose(f); }
+        }
+    }
+    // Trace ALL sends in a specific step range
+    {
+        static FILE* allSendLog2 = nullptr;
+        if (!allSendLog2) {
+            allSendLog2 = fopen("/tmp/all_sends.log", "w");
+            if (allSendLog2) { fprintf(allSendLog2, "[INIT] send log opened at step %llu\n", g_stepNum); fflush(allSendLog2); }
+        }
+    if (allSendLog2 && g_stepNum >= 36500000 && g_stepNum <= 36600000) {
+        if (allSendLog2 && selector.isObject() && selector.rawBits() > 0x10000) {
+            ObjectHeader* sh2 = selector.asObjectPtr();
+            if (sh2->isBytesObject() && sh2->byteSize() < 200) {
+                std::string sn2((char*)sh2->bytes(), sh2->byteSize());
                 Oop rcvr = stackValue(argCount);
-                std::string rcvrClass = "?";
-                if (rcvr.isNil() || rcvr.rawBits() == memory_.nil().rawBits()) {
-                    rcvrClass = "nil";
-                } else if (rcvr.isSmallInteger()) {
-                    rcvrClass = "SmallInt";
-                } else if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                std::string rc = "?";
+                if (rcvr.rawBits() == memory_.nil().rawBits()) rc = "nil";
+                else if (rcvr.isSmallInteger()) rc = "SmallInt(" + std::to_string(rcvr.asSmallInteger()) + ")";
+                else if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
                     Oop cls = memory_.classOf(rcvr);
                     if (cls.isObject()) {
                         Oop cn = memory_.fetchPointer(6, cls);
                         if (cn.isObject() && cn.rawBits() > 0x10000) {
                             ObjectHeader* cnH = cn.asObjectPtr();
-                            if (cnH->isBytesObject() && cnH->byteSize() < 50)
-                                rcvrClass = std::string((char*)cnH->bytes(), cnH->byteSize());
+                            if (cnH->isBytesObject() && cnH->byteSize() < 100)
+                                rc = std::string((char*)cnH->bytes(), cnH->byteSize());
                         }
                     }
                 }
-                fprintf(asSymLog, "[%llu fd=%zu] %s >> #%s (%d)\n",
-                        g_stepNum, frameDepth_, rcvrClass.c_str(), sn.c_str(), argCount);
-                fflush(asSymLog);
+                fprintf(allSendLog2, "[%llu fd=%zu] %s >> #%s (%d)\n",
+                        g_stepNum, frameDepth_, rc.c_str(), sn2.c_str(), argCount);
+                fflush(allSendLog2);
+            }
+        }
+    }
+    }
+    // Detect error: sends and log error message + call stack
+    if (selector.isObject() && selector.rawBits() > 0x10000) {
+        ObjectHeader* sh = selector.asObjectPtr();
+        if (sh->isBytesObject() && sh->byteSize() < 100) {
+            std::string sn((char*)sh->bytes(), sh->byteSize());
+            if (sn == "error:" || sn == "errorNoFreeSpace" || sn == "errorNoModification") {
+                static FILE* errLog = nullptr;
+                static int errCount = 0;
+                if (!errLog) errLog = fopen("/tmp/error_sends.log", "w");
+                if (errLog && errCount++ < 100) {
+                    fprintf(errLog, "=== #%s at step %llu (err #%d) ===\n", sn.c_str(), g_stepNum, errCount);
+                    // Get error message argument
+                    if (argCount >= 1) {
+                        Oop arg = stackValue(0);
+                        if (arg.isObject() && arg.rawBits() > 0x10000) {
+                            ObjectHeader* argH = arg.asObjectPtr();
+                            if (argH->isBytesObject() && argH->byteSize() < 200) {
+                                fprintf(errLog, "  message: '%.*s'\n", (int)argH->byteSize(), (char*)argH->bytes());
+                            }
+                        }
+                    }
+                    // Receiver class
+                    Oop rcvr = stackValue(argCount);
+                    if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                        Oop cls = memory_.classOf(rcvr);
+                        if (cls.isObject()) {
+                            Oop cn = memory_.fetchPointer(6, cls);
+                            if (cn.isObject() && cn.rawBits() > 0x10000) {
+                                ObjectHeader* cnH = cn.asObjectPtr();
+                                if (cnH->isBytesObject() && cnH->byteSize() < 100)
+                                    fprintf(errLog, "  receiver class: %.*s\n", (int)cnH->byteSize(), (char*)cnH->bytes());
+                            }
+                        }
+                        // If receiver is a string, show its content
+                        ObjectHeader* rh = rcvr.asObjectPtr();
+                        if (rh->isBytesObject() && rh->byteSize() <= 200) {
+                            size_t len = std::min(rh->byteSize(), (size_t)80);
+                            fprintf(errLog, "  receiver bytes: '%.*s'\n", (int)len, (char*)rh->bytes());
+                        }
+                    }
+                    // Call stack
+                    fprintf(errLog, "  call stack (frameDepth=%zu):\n", frameDepth_);
+                    for (size_t fi = 0; fi < frameDepth_ && fi < 15; fi++) {
+                        size_t idx = frameDepth_ - 1 - fi;
+                        const auto& sf = savedFrames_[idx];
+                        std::string frameSel = "?";
+                        if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                            Oop sfHdr = memory_.fetchPointer(0, sf.savedMethod);
+                            if (sfHdr.isSmallInteger()) {
+                                int nl = sfHdr.asSmallInteger() & 0x7FFF;
+                                if (nl >= 2 && nl < 100) {
+                                    Oop sel = memory_.fetchPointer(nl - 1, sf.savedMethod);
+                                    if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                        ObjectHeader* selH = sel.asObjectPtr();
+                                        if (selH->isBytesObject() && selH->byteSize() < 80)
+                                            frameSel = std::string((char*)selH->bytes(), selH->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                        fprintf(errLog, "    [%zu] #%s\n", fi, frameSel.c_str());
+                    }
+                    fflush(errLog);
+                }
+                // KEEP the old WeakSet dump logic below for errorNoFreeSpace
+                static FILE* dumpLog = nullptr;
+                if (!dumpLog) dumpLog = fopen("/tmp/weakset_dump.log", "w");
+                if (dumpLog && sn == "errorNoFreeSpace") {
+                    Oop rcvr = stackValue(argCount);
+                    fprintf(dumpLog, "=== errorNoFreeSpace at step %llu ===\n", g_stepNum);
+                    fprintf(dumpLog, "receiver oop: 0x%llx\n", (unsigned long long)rcvr.rawBits());
+                    if (rcvr.isObject()) {
+                        ObjectHeader* rh = rcvr.asObjectPtr();
+                        fprintf(dumpLog, "receiver format: %d classIdx: %u slots: %zu\n",
+                                (int)rh->format(), rh->classIndex(), rh->slotCount());
+                        // Dump instVars: tally (slot 0), array (slot 1), flag (slot 2 for WeakSet)
+                        if (rh->slotCount() >= 3) {
+                            Oop tally = memory_.fetchPointer(0, rcvr);
+                            Oop arr = memory_.fetchPointer(1, rcvr);
+                            Oop flag = memory_.fetchPointer(2, rcvr);
+                            fprintf(dumpLog, "tally oop: 0x%llx", (unsigned long long)tally.rawBits());
+                            if (tally.isSmallInteger()) fprintf(dumpLog, " (int=%lld)", (long long)(tally.rawBits() >> 3));
+                            fprintf(dumpLog, "\narray oop: 0x%llx\n", (unsigned long long)arr.rawBits());
+                            fprintf(dumpLog, "flag oop: 0x%llx\n", (unsigned long long)flag.rawBits());
+                            // Dump array contents summary
+                            if (arr.isObject()) {
+                                ObjectHeader* ah = arr.asObjectPtr();
+                                size_t arrSize = ah->slotCount();
+                                fprintf(dumpLog, "array format: %d classIdx: %u size: %zu\n",
+                                        (int)ah->format(), ah->classIndex(), arrSize);
+                                int nilCount = 0, flagCount = 0, otherCount = 0;
+                                Oop nilOop = memory_.nil();
+                                for (size_t i = 0; i < arrSize && i < 300000; i++) {
+                                    Oop elem = memory_.fetchPointer(i, arr);
+                                    if (elem.rawBits() == nilOop.rawBits()) nilCount++;
+                                    else if (elem.rawBits() == flag.rawBits()) flagCount++;
+                                    else otherCount++;
+                                }
+                                fprintf(dumpLog, "nil slots: %d, flag slots: %d, other: %d\n",
+                                        nilCount, flagCount, otherCount);
+                                // Sample first 20 slots
+                                fprintf(dumpLog, "First 20 slots:\n");
+                                for (size_t i = 0; i < 20 && i < arrSize; i++) {
+                                    Oop elem = memory_.fetchPointer(i, arr);
+                                    const char* kind = "other";
+                                    if (elem.rawBits() == nilOop.rawBits()) kind = "nil";
+                                    else if (elem.rawBits() == flag.rawBits()) kind = "flag";
+                                    fprintf(dumpLog, "  [%zu] 0x%llx (%s)\n", i,
+                                            (unsigned long long)elem.rawBits(), kind);
+                                }
+                            }
+                        }
+                    }
+                    fflush(dumpLog);
+                }
+            }
+            if (false) {  // Keep old code block structure
             }
         }
     }

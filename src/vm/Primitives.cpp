@@ -298,7 +298,12 @@ PrimitiveResult Interpreter::primitiveDoPrimitiveWithArgs(int argCount) {
 
 PrimitiveResult Interpreter::primitiveFetchNextMourner(int argCount) {
     (void)argCount;
-    return PrimitiveResult::Failure;  // GC mourner queue - let Smalltalk handle
+    // GC finalization queue is always empty (no GC yet).
+    // Return nil = "no mourner in queue".
+    // If we return Failure with no error code, the Smalltalk fallback sees ec=nil
+    // and raises "primitive is missing" error, causing an infinite loop.
+    primitiveSuccess(memory_.nil());
+    return PrimitiveResult::Success;
 }
 
 // Primitive 185: Exit critical section
@@ -2760,6 +2765,17 @@ PrimitiveResult Interpreter::primitiveClass(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveIdentical(int argCount) {
+    static uint64_t identTotalCount = 0;
+    identTotalCount++;
+    if (identTotalCount % 1000000 == 0) {
+        static FILE* identCountLog = nullptr;
+        if (!identCountLog) identCountLog = fopen("/tmp/ident_count.log", "w");
+        if (identCountLog) {
+            fprintf(identCountLog, "[IDENT] total=%llu at step %llu\n",
+                    (unsigned long long)identTotalCount, g_stepNum);
+            fflush(identCountLog);
+        }
+    }
     Oop arg = stackValue(0);   // otherObject
     Oop rcvr = stackValue(1);  // thisObject
 
@@ -2780,6 +2796,60 @@ PrimitiveResult Interpreter::primitiveIdentical(int argCount) {
     }
 
     bool result = (rcvr == arg);
+
+    // Detect scanFor: spinning - track consecutive == calls with same arg
+    {
+        static uint64_t identCallCount = 0;
+        static uint64_t lastArgBits = 0;
+        static uint64_t sameArgRun = 0;
+        identCallCount++;
+        if (arg.rawBits() == lastArgBits) {
+            sameArgRun++;
+            if (sameArgRun == 10000) {
+                static FILE* idLog = nullptr;
+                if (!idLog) idLog = fopen("/tmp/ident_spin.log", "w");
+                if (idLog) {
+                    fprintf(idLog, "=== 10K consecutive == with same arg at step %llu ===\n", g_stepNum);
+                    fprintf(idLog, "arg (rhs): 0x%llx isObj=%d isSmallInt=%d isNil=%d\n",
+                            (unsigned long long)arg.rawBits(), arg.isObject(), arg.isSmallInteger(),
+                            arg.rawBits() == memory_.nil().rawBits());
+                    if (arg.isObject() && arg.rawBits() > 0x10000) {
+                        ObjectHeader* ah = arg.asObjectPtr();
+                        fprintf(idLog, "arg format=%d classIdx=%u slots=%zu\n",
+                                (int)ah->format(), ah->classIndex(), ah->slotCount());
+                        Oop cls = memory_.classOf(arg);
+                        if (cls.isObject()) {
+                            Oop cn = memory_.fetchPointer(6, cls);
+                            if (cn.isObject() && cn.rawBits() > 0x10000) {
+                                ObjectHeader* cnH = cn.asObjectPtr();
+                                if (cnH->isBytesObject() && cnH->byteSize() < 100)
+                                    fprintf(idLog, "arg class: %.*s\n", (int)cnH->byteSize(), (char*)cnH->bytes());
+                            }
+                        }
+                    }
+                    // Also log some sample receivers (what's being compared)
+                    fprintf(idLog, "Current rcvr (lhs): 0x%llx isObj=%d isSmallInt=%d isNil=%d\n",
+                            (unsigned long long)rcvr.rawBits(), rcvr.isObject(), rcvr.isSmallInteger(),
+                            rcvr.rawBits() == memory_.nil().rawBits());
+                    fprintf(idLog, "result: %s\n", result ? "true" : "false");
+                    fflush(idLog);
+                }
+            }
+            if (sameArgRun == 200000) {
+                static FILE* idLog = fopen("/tmp/ident_spin.log", "a");
+                if (idLog) {
+                    fprintf(idLog, "=== 200K consecutive == with same arg - likely infinite loop ===\n");
+                    fprintf(idLog, "Last rcvr: 0x%llx result=%s\n",
+                            (unsigned long long)rcvr.rawBits(), result ? "true" : "false");
+                    fflush(idLog);
+                }
+            }
+        } else {
+            lastArgBits = arg.rawBits();
+            sameArgRun = 1;
+        }
+    }
+
     pop();
     pop();
     push(result ? memory_.trueObject() : memory_.falseObject());
@@ -5082,6 +5152,17 @@ PrimitiveResult Interpreter::primitiveReplaceFromTo(int argCount) {
     // replaceFrom:to:with:startingAt:
     // rcvr[start..stop] := replacement[repStart..]
 
+    static int replaceCallCount = 0;
+    replaceCallCount++;
+    {
+        static FILE* replCallLog = nullptr;
+        if (!replCallLog) replCallLog = fopen("/tmp/replace_called.log", "w");
+        if (replCallLog && replaceCallCount <= 50) {
+            fprintf(replCallLog, "[REPLACE-CALL #%d step=%llu]\n", replaceCallCount, g_stepNum);
+            fflush(replCallLog);
+        }
+    }
+
     Oop repStart = stackValue(0);
     Oop replacement = stackValue(1);
     Oop stop = stackValue(2);
@@ -5109,6 +5190,32 @@ PrimitiveResult Interpreter::primitiveReplaceFromTo(int argCount) {
     ObjectHeader* replHeader = replacement.asObjectPtr();
 
     if (rcvrHeader->isImmutable()) {
+        static FILE* replLog = nullptr;
+        static int immFailCount = 0;
+        if (!replLog) replLog = fopen("/tmp/replace_fail.log", "w");
+        if (replLog && immFailCount++ < 50) {
+            fprintf(replLog, "[REPLACE-IMMUTABLE #%d step=%llu] rcvr=0x%llx fmt=%d classIdx=%u byteSize=%zu\n",
+                    immFailCount, g_stepNum, (unsigned long long)rcvr.rawBits(),
+                    (int)rcvrHeader->format(), rcvrHeader->classIndex(), rcvrHeader->byteSize());
+            fprintf(replLog, "  start=%lld stop=%lld repStart=%lld\n",
+                    (long long)startIdx, (long long)stopIdx, (long long)repStartIdx);
+            // Get class name
+            Oop cls = memory_.classOf(rcvr);
+            if (cls.isObject()) {
+                Oop cn = memory_.fetchPointer(6, cls);
+                if (cn.isObject() && cn.rawBits() > 0x10000) {
+                    ObjectHeader* cnH = cn.asObjectPtr();
+                    if (cnH->isBytesObject() && cnH->byteSize() < 100)
+                        fprintf(replLog, "  rcvr class: %.*s\n", (int)cnH->byteSize(), (char*)cnH->bytes());
+                }
+            }
+            // Show rcvr content (first 50 bytes)
+            if (rcvrHeader->isBytesObject() && rcvrHeader->byteSize() <= 200) {
+                size_t len = std::min(rcvrHeader->byteSize(), (size_t)50);
+                fprintf(replLog, "  rcvr bytes: '%.*s'\n", (int)len, (char*)rcvrHeader->bytes());
+            }
+            fflush(replLog);
+        }
         return PrimitiveResult::Failure;
     }
 
@@ -5125,6 +5232,32 @@ PrimitiveResult Interpreter::primitiveReplaceFromTo(int argCount) {
 
         if (static_cast<size_t>(stopIdx) > rcvrSize ||
             static_cast<size_t>(repStartIdx + count - 1) > replSize) {
+            static FILE* bndLog = nullptr;
+            static int bndCount = 0;
+            if (!bndLog) bndLog = fopen("/tmp/replace_bounds_fail.log", "w");
+            if (bndLog && bndCount++ < 50) {
+                fprintf(bndLog, "[REPLACE-BOUNDS #%d step=%llu] rcvrSize=%zu replSize=%zu start=%lld stop=%lld repStart=%lld count=%lld\n",
+                        bndCount, g_stepNum, rcvrSize, replSize, (long long)startIdx, (long long)stopIdx, (long long)repStartIdx, (long long)count);
+                // Class names
+                Oop cls = memory_.classOf(rcvr);
+                if (cls.isObject()) {
+                    Oop cn = memory_.fetchPointer(6, cls);
+                    if (cn.isObject() && cn.rawBits() > 0x10000) {
+                        ObjectHeader* cnH = cn.asObjectPtr();
+                        if (cnH->isBytesObject() && cnH->byteSize() < 100)
+                            fprintf(bndLog, "  rcvr class: %.*s\n", (int)cnH->byteSize(), (char*)cnH->bytes());
+                    }
+                }
+                if (rcvrHeader->byteSize() <= 200) {
+                    size_t len = std::min(rcvrHeader->byteSize(), (size_t)80);
+                    fprintf(bndLog, "  rcvr bytes: '%.*s'\n", (int)len, (char*)rcvrHeader->bytes());
+                }
+                if (replHeader->byteSize() <= 200) {
+                    size_t len = std::min(replHeader->byteSize(), (size_t)80);
+                    fprintf(bndLog, "  repl bytes: '%.*s'\n", (int)len, (char*)replHeader->bytes());
+                }
+                fflush(bndLog);
+            }
             return PrimitiveResult::Failure;
         }
 
@@ -5135,6 +5268,37 @@ PrimitiveResult Interpreter::primitiveReplaceFromTo(int argCount) {
 
         primitiveSuccess(rcvr);
         return PrimitiveResult::Success;
+    }
+
+    // Log format mismatch failures
+    if (!rcvrHeader->isPointersObject() || !replHeader->isPointersObject()) {
+        // If we got here, bytes path didn't match - log why
+        static FILE* replFmtLog = nullptr;
+        static int fmtFailCount = 0;
+        if (!replFmtLog) replFmtLog = fopen("/tmp/replace_fmt_fail.log", "w");
+        if (replFmtLog && fmtFailCount++ < 50) {
+            fprintf(replFmtLog, "[REPLACE-FMT #%d step=%llu] rcvr: fmt=%d isByte=%d isPtr=%d cls=%u sz=%zu | repl: fmt=%d isByte=%d isPtr=%d cls=%u sz=%zu\n",
+                    fmtFailCount, g_stepNum,
+                    (int)rcvrHeader->format(), rcvrHeader->isBytesObject(), rcvrHeader->isPointersObject(), rcvrHeader->classIndex(), rcvrHeader->byteSize(),
+                    (int)replHeader->format(), replHeader->isBytesObject(), replHeader->isPointersObject(), replHeader->classIndex(), replHeader->byteSize());
+            fprintf(replFmtLog, "  start=%lld stop=%lld repStart=%lld\n",
+                    (long long)startIdx, (long long)stopIdx, (long long)repStartIdx);
+            // Class names
+            auto logClassName = [&](const char* label, Oop obj) {
+                Oop cls = memory_.classOf(obj);
+                if (cls.isObject()) {
+                    Oop cn = memory_.fetchPointer(6, cls);
+                    if (cn.isObject() && cn.rawBits() > 0x10000) {
+                        ObjectHeader* cnH = cn.asObjectPtr();
+                        if (cnH->isBytesObject() && cnH->byteSize() < 100)
+                            fprintf(replFmtLog, "  %s class: %.*s\n", label, (int)cnH->byteSize(), (char*)cnH->bytes());
+                    }
+                }
+            };
+            logClassName("rcvr", rcvr);
+            logClassName("repl", replacement);
+            fflush(replFmtLog);
+        }
     }
 
     // Handle pointer objects
