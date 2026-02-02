@@ -448,7 +448,7 @@ int main(int argc, char* argv[]) {
     // Initialize memory (256 MB should be enough for most images)
     ObjectMemory memory;
     MemoryConfig config;
-    config.oldSpaceSize = 16ULL * 1024 * 1024 * 1024;  // 16 GB (GC is disabled, need space for full test suite)
+    config.oldSpaceSize = 8ULL * 1024 * 1024 * 1024;  // 8 GB (GC is disabled)
     config.newSpaceSize = 32 * 1024 * 1024;   // 32 MB
     config.permSpaceSize = 8 * 1024 * 1024;   // 8 MB
 
@@ -648,12 +648,27 @@ int main(int argc, char* argv[]) {
             } else {
                 idleSteps++;
                 totalIdleSteps++;
-                // Report when we start getting idle
-                if (false && idleSteps == 1 && totalIdleSteps <= 10) {
-                    std::cout << "[IDLE] Started at step " << i << " after " << activeSteps << " active steps" << std::endl;
+                // Report when we first go idle
+                if (totalIdleSteps == 1) {
+                    std::cout << "[IDLE] First idle at step " << i << " after " << activeSteps << " active steps" << std::endl;
+                    interpreter.dumpProcessQueues();
                 }
-                // If we have 50M+ total idle steps and step count > 50M, we're truly idle
-                if (totalIdleSteps > 50000000 && i > 50000000) {
+                // Check for test results file periodically
+                if (totalIdleSteps % 1000000 == 0) {
+                    FILE* rf = fopen("/tmp/inline_results.txt", "r");
+                    if (rf) {
+                        char buf[64] = {0};
+                        fseek(rf, -20, SEEK_END);
+                        fread(buf, 1, 20, rf);
+                        fclose(rf);
+                        if (strstr(buf, "DONE")) {
+                            std::cout << "[TEST] Results file complete! Breaking." << std::endl;
+                            break;
+                        }
+                    }
+                }
+                // If we have 500M+ total idle steps and step count > 500M, we're truly idle
+                if (totalIdleSteps > 500000000 && i > 500000000) {
                     std::cout << "[IDLE] Detected relinquish-based idle at step " << i
                               << " (" << totalIdleSteps << " total idle steps, " << activeSteps << " active)" << std::endl;
                     // Dump process scheduler queues
