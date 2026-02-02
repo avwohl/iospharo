@@ -3922,7 +3922,7 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
                          static_cast<int>(activePriorityOop.asSmallInteger()) : -1;
 
     if (waitLog && waitCallCount <= 500) {
-        fprintf(waitLog, "[WAIT #%d step=%llu] sem=0x%llx excess=0 -> BLOCKING process 0x%llx (priority %d)\n",
+        fprintf(waitLog, "[WAIT #%d] sem=0x%llx excess=0 -> BLOCKING process 0x%llx (priority %d)\n",
                 waitCallCount, (unsigned long long)semaphore.rawBits(),
                 (unsigned long long)activeProcess.rawBits(), activePriority);
         // Log method info
@@ -16246,10 +16246,10 @@ PrimitiveResult Interpreter::primitiveTranslateStringWithTable(int argCount) {
 PrimitiveResult Interpreter::primitiveFindSubstring(int argCount) {
     if (argCount != 4) return PrimitiveResult::Failure;
 
-    Oop matchTableOop = stackTop();
-    Oop startIndexOop = stackValue(1);
-    Oop keyOop = stackValue(2);
-    Oop stringOop = stackValue(3);
+    Oop matchTableOop = stackTop();        // arg4: matchTable
+    Oop startIndexOop = stackValue(1);     // arg3: startIndex
+    Oop stringOop = stackValue(2);         // arg2: body (string to search in)
+    Oop keyOop = stackValue(3);            // arg1: key (substring to find)
 
     if (!startIndexOop.isSmallInteger()) {
         return PrimitiveResult::Failure;
