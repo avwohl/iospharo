@@ -613,6 +613,10 @@ int main(int argc, char* argv[]) {
                     std::cerr << "\n=== PROCESS DUMP AT " << (activeSteps/1000000) << "M STEPS ===" << std::endl;
                     interpreter.dumpProcessQueues();
                 }
+                // Detailed method trace at specific intervals during test execution
+                if (activeSteps >= 100000000 && activeSteps % 50000000 == 0) {
+                    interpreter.dumpCurrentMethod();
+                }
 
                 // After 5k active steps, inject a right-click to trigger world menu
                 // (Injecting earlier so the render loop is still active)

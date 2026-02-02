@@ -3814,7 +3814,7 @@ PrimitiveResult Interpreter::primitiveSignal(int argCount) {
         memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
                             Oop::fromSmallInteger(excess + 1));
         if (signalLog && signalCallCount <= 200) {
-            fprintf(signalLog, "[SIGNAL #%d step=%llu] sem=0x%llx no waiters -> excess=%lld\n",
+            fprintf(signalLog, "[SIGNAL #%d] sem=0x%llx no waiters -> excess=%lld\n",
                     signalCallCount, (unsigned long long)semaphore.rawBits(), (long long)(excess + 1));
             fflush(signalLog);
         }
@@ -3834,7 +3834,7 @@ PrimitiveResult Interpreter::primitiveSignal(int argCount) {
     int activePriority = static_cast<int>(activePriorityOop.asSmallInteger());
 
     if (signalLog && signalCallCount <= 200) {
-        fprintf(signalLog, "[SIGNAL #%d step=%llu] sem=0x%llx waking process 0x%llx (pri=%d) active_pri=%d -> %s\n",
+        fprintf(signalLog, "[SIGNAL #%d] sem=0x%llx waking process 0x%llx (pri=%d) active_pri=%d -> %s\n",
                 signalCallCount, (unsigned long long)semaphore.rawBits(),
                 (unsigned long long)process.rawBits(), processPriority, activePriority,
                 processPriority > activePriority ? "PREEMPT" : "enqueue");
@@ -9210,6 +9210,15 @@ PrimitiveResult Interpreter::primitiveFindHandlerContext(int argCount) {
     (void)argCount;
     // Stack: receiver (a context)
     Oop startContext = stackTop();
+
+    static int prim197Count = 0;
+    prim197Count++;
+    if (prim197Count <= 50) {
+        fprintf(stderr, "[PRIM197 #%d] startContext=0x%llx isObj=%d isNil=%d\n",
+                prim197Count, (unsigned long long)startContext.rawBits(),
+                startContext.isObject() ? 1 : 0, startContext.isNil() ? 1 : 0);
+    }
+
     if (!startContext.isObject()) {
         return PrimitiveResult::Failure;
     }

@@ -1982,6 +1982,31 @@ void Interpreter::stopVM(const char* reason) {
     running_ = false;
 }
 
+void Interpreter::dumpCurrentMethod() {
+    fprintf(stderr, "\n=== CURRENT METHOD (frameDepth=%zu) ===\n", frameDepth_);
+    auto getSel = [&](Oop method) -> std::string {
+        if (!method.isObject() || method.rawBits() < 0x10000) return "?";
+        ObjectHeader* mHdr = method.asObjectPtr();
+        if (!mHdr->isCompiledMethod()) return "?";
+        Oop hdr = memory_.fetchPointer(0, method);
+        if (!hdr.isSmallInteger()) return "?";
+        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+        if (numLits < 2 || numLits >= 100) return "?";
+        Oop sel = memory_.fetchPointer(numLits - 1, method);
+        if (!sel.isObject() || sel.rawBits() < 0x10000) return "?";
+        ObjectHeader* selHdr = sel.asObjectPtr();
+        if (!selHdr->isBytesObject() || selHdr->byteSize() >= 100) return "?";
+        return std::string((char*)selHdr->bytes(), selHdr->byteSize());
+    };
+    // Current method
+    fprintf(stderr, "  [current] #%s\n", getSel(method_).c_str());
+    int count = 0;
+    for (int f = static_cast<int>(frameDepth_); f >= 0 && count < 10; f--, count++) {
+        fprintf(stderr, "  [%d] #%s\n", f, getSel(savedFrames_[f].savedMethod).c_str());
+    }
+    fprintf(stderr, "=== END ===\n\n");
+}
+
 void Interpreter::dumpProcessQueues() {
     fprintf(stderr, "\n=== Process Scheduler Dump ===\n");
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
@@ -11611,28 +11636,14 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         return;
     }
 
-    // Handle exception handler chain methods sent to nil
-    // When walking the sender chain, we eventually reach nil (top of stack).
-    // These methods should return nil when sent to nil to terminate the search.
-    if (!selStr.empty() && rcvr.rawBits() == nilObj.rawBits()) {
-        if (selStr == "findNextHandlerContext" ||
-            selStr == "findNextHandlerOrSignalingContext" ||
-            selStr == "nextHandlerContext" ||
-            selStr == "sender" ||
-            selStr == "receiver" ||
-            selStr == "signalerContext" ||
-            selStr == "contextTag") {
-            // At top of stack or nil context - return nil to terminate search
-            popN(argCount + 1);
-            push(nilObj);
-            return;
-        }
-    }
+    // NOTE: nil context guard for exception handler chain methods
+    // (findNextHandlerContext etc.) has been moved to handleDNU() for performance.
+    // These methods don't exist on UndefinedObject, so they'll DNU and get caught there.
 
     // Handle deprecation transform check - if thisContext isn't working,
     // the rule evaluation may return wrong values. Handle various deprecation messages.
     // When these are sent to a block instead of a transform rule, return appropriate defaults.
-    if (!selStr.empty() && rcvr.isObject()) {
+    if (rcvr.isObject() && !getSelStr().empty()) {
         Oop rcvrClass = memory_.classOf(rcvr);
         std::string className;
         if (rcvrClass.isObject()) {
@@ -14143,7 +14154,10 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                 const char* bytes = (const char*)sh->bytes();
                 auto match = [&](const char* s) { size_t n = strlen(s); return len == n && memcmp(bytes, s, n) == 0; };
                 if (match("unwindTo:") || match("terminateTo:") || match("unwindComplete") ||
-                    match("unwindAndStop:") || match("privSender:")) {
+                    match("unwindAndStop:") || match("privSender:") ||
+                    match("findNextHandlerContext") || match("findNextHandlerOrSignalingContext") ||
+                    match("nextHandlerContext") || match("sender") || match("signalerContext") ||
+                    match("contextTag")) {
                     static int silentCount = 0;
                     silentCount++;
                     if (false && silentCount <= 20) {

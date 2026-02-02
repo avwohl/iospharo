@@ -162,6 +162,7 @@ public:
     void interpret();
     void stopVM(const char* reason);
     void dumpProcessQueues();
+    void dumpCurrentMethod();
 
     /// Execute a single bytecode (for debugging)
     bool step();
