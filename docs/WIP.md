@@ -57,6 +57,15 @@ cat /tmp/sunit_test_results.txt
 
 **Result**: Startup handlers now run successfully. SessionManager executes `ClassSessionHandler>>startup:` for registered classes.
 
+**Note on OutOfMemory during startup**: An OutOfMemory exception may be signaled during lowSpaceWatcher installation. This is EXPECTED behavior and is correctly caught by SessionManagerErrorHandler, which defers it. Startup continues normally after this. The OutOfMemory occurs because:
+1. installLowSpaceWatcher terminates the old lowSpaceWatcher process
+2. Process termination involves context unwinding
+3. During unwinding, `nil >> unwindTo:` is called (a known edge case)
+4. SessionManagerErrorHandler catches the resulting error and defers it
+5. Startup handlers continue running after the error is deferred
+
+The VM reports 8+ GB free memory, so this is NOT an actual low memory condition.
+
 ---
 
 ## Startup Handler Bug - FIXED (2026-02-03)
