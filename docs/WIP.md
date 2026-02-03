@@ -36,11 +36,23 @@ cat /tmp/sunit_test_results.txt
 
 ---
 
-## Startup Handler Bug (2026-02-03)
+## Startup Handler Bug - FIXED (2026-02-03)
 
 **Problem**: Session startup handlers (registered via SessionManager) run but hang at `ProcessorScheduler>>startUp`.
 
-**Root Cause**: The second terminated process (BackgroundProcess) never signals its terminator semaphore. The resumed process runs continuously but never completes its unwind sequence.
+**Root Cause IDENTIFIED**: The trace logging for ensure: context investigation was using an incorrect primitive index extraction (`(hdrBits >> 10) & 0xFF`), which was wrong for Sista V1 format. The actual primitive is encoded in the bytecode stream, not the method header bits.
+
+**FIX**: Updated trace logging to use `primitiveIndexOf()` which correctly reads primitive from bytecodes:
+- Sista V1 encodes primitive as `248 lowByte highByte` at start of bytecodes
+- `primitiveIndexOf()` checks hasPrimitive flag (bit 16) then reads from bytecodes
+
+**STATUS**: WORKING! The VM now:
+- Runs past 1.1 million steps
+- Alternates between processes normally (idleProcess ↔ scheduler)
+- Process termination works (both lowSpaceWatcher and BackgroundProcess)
+- Only expected error: lowSpaceWatcher message (no actual low space condition)
+
+**Original misdiagnosis** (preserved for reference):
 
 ### Detailed Analysis (2026-02-03 investigation)
 

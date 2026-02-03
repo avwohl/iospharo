@@ -9637,8 +9637,9 @@ PrimitiveResult Interpreter::primitiveFindNextUnwindContext(int argCount) {
 
 static constexpr size_t ContextFixedSlots = 6;  // Fixed fields before temps/stack
 
-// Primitive 211: Read a temp/stack slot from a context at 1-based index
+// Primitive 210: Read a temp/stack slot from a context at 1-based index
 // Index 1 is the first temp, after the fixed context fields
+// Used by Context >> tempAt: for accessing temporary variables
 PrimitiveResult Interpreter::primitiveContextAt(int argCount) {
     Oop indexOop = stackValue(0);
     Oop context = stackValue(1);
@@ -9664,6 +9665,93 @@ PrimitiveResult Interpreter::primitiveContextAt(int argCount) {
     }
 
     Oop value = memory_.fetchPointer(actualSlot, context);
+
+    // TRACE: Log tempAt: reads during termination investigation
+    // Index 3 is what unwindComplete reads for ensure: contexts (numArgs=1 + 2 = 3)
+    static FILE* tempAtLog = nullptr;
+    static int tempAtCount = 0;
+    if (!tempAtLog) tempAtLog = fopen("/tmp/tempat_trace.log", "w");
+    if (tempAtLog && tempAtCount < 500) {
+        tempAtCount++;
+
+        // Get context's method to determine if this is an ensure: context
+        Oop ctxMethod = memory_.fetchPointer(3, context);  // slot 3 = method
+        std::string methodSel = "?";
+        int primIdx = 0;
+        if (ctxMethod.isObject() && ctxMethod.rawBits() > 0x10000) {
+            // Use primitiveIndexOf to correctly extract primitive from bytecodes
+            primIdx = primitiveIndexOf(ctxMethod);
+
+            Oop mHdr = memory_.fetchPointer(0, ctxMethod);
+            if (mHdr.isSmallInteger()) {
+                int64_t hdrBits = mHdr.asSmallInteger();
+                size_t numLits = hdrBits & 0x7FFF;
+                if (numLits >= 2 && numLits < 100) {
+                    Oop sel = memory_.fetchPointer(numLits - 1, ctxMethod);
+                    if (sel.isObject() && sel.rawBits() > 0x10000) {
+                        ObjectHeader* selH = sel.asObjectPtr();
+                        if (selH->isBytesObject() && selH->byteSize() < 50) {
+                            methodSel = std::string((char*)selH->bytes(), selH->byteSize());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Determine value's class
+        std::string valClass = "?";
+        if (value.rawBits() == memory_.nil().rawBits()) {
+            valClass = "nil";
+        } else if (value.rawBits() == memory_.trueObject().rawBits()) {
+            valClass = "true";
+        } else if (value.rawBits() == memory_.falseObject().rawBits()) {
+            valClass = "false";
+        } else if (value.isSmallInteger()) {
+            valClass = "SmallInt(" + std::to_string(value.asSmallInteger()) + ")";
+        } else if (value.isObject() && value.rawBits() > 0x10000) {
+            Oop vCls = memory_.classOf(value);
+            if (vCls.isObject()) {
+                Oop vClsName = memory_.fetchPointer(6, vCls);
+                if (vClsName.isObject() && vClsName.rawBits() > 0x10000) {
+                    ObjectHeader* vcnHdr = vClsName.asObjectPtr();
+                    if (vcnHdr->isBytesObject() && vcnHdr->byteSize() < 50) {
+                        valClass = std::string((char*)vcnHdr->bytes(), vcnHdr->byteSize());
+                    }
+                }
+            }
+        }
+
+        fprintf(tempAtLog, "[TEMPAT #%d step=%llu] ctx=0x%llx idx=%lld slot=%zu method=#%s prim=%d value=%s(0x%llx)\n",
+                tempAtCount, (unsigned long long)g_stepNum,
+                (unsigned long long)context.rawBits(), index, actualSlot,
+                methodSel.c_str(), primIdx,
+                valClass.c_str(), (unsigned long long)value.rawBits());
+
+        // If this is an ensure: context (prim 198) and index 3, dump all slots
+        if (primIdx == 198 && index == 3) {
+            fprintf(tempAtLog, "  ENSURE CONTEXT DUMP:\n");
+            for (size_t s = 0; s < slotCount && s < 15; s++) {
+                Oop sv = memory_.fetchPointer(s, context);
+                std::string slotClass = "?";
+                if (sv.rawBits() == memory_.nil().rawBits()) slotClass = "nil";
+                else if (sv.isSmallInteger()) slotClass = "SmallInt(" + std::to_string(sv.asSmallInteger()) + ")";
+                else if (sv.isObject() && sv.rawBits() > 0x10000) {
+                    Oop sc = memory_.classOf(sv);
+                    if (sc.isObject()) {
+                        Oop scn = memory_.fetchPointer(6, sc);
+                        if (scn.isObject() && scn.rawBits() > 0x10000) {
+                            ObjectHeader* scnH = scn.asObjectPtr();
+                            if (scnH->isBytesObject() && scnH->byteSize() < 50) {
+                                slotClass = std::string((char*)scnH->bytes(), scnH->byteSize());
+                            }
+                        }
+                    }
+                }
+                fprintf(tempAtLog, "    slot[%zu] = %s (0x%llx)\n", s, slotClass.c_str(), (unsigned long long)sv.rawBits());
+            }
+        }
+        fflush(tempAtLog);
+    }
 
     popN(2);
     push(value);
