@@ -174,6 +174,18 @@ evaluation and hang/timeout.
 - `IntervalTest` fixture tests — setUp doesn't initialize all ivars
 - Any test using `self class compiler evaluate:` hangs
 
+### Key Bugs Fixed (2026-02-03)
+5. **BlockClosure outerContext identity**: When blocks were created during inline
+   execution (frameDepth_ > 0), they stored a stale activeContext_ as outerContext.
+   When thisContext was later materialized, it returned a new context object that
+   didn't `==` the block's outerContext. Fixed by materializing frame stack when
+   creating blocks during inline execution. This should fix `testSetUp` and related
+   BlockClosureTest failures that compare `aBlock home` with `thisContext`.
+
+6. **createBlock() stored nil outerContext**: The old createBlock() function (for
+   legacy inline blocks) was storing nil as outerContext. Fixed to properly
+   materialize and store the actual context.
+
 ### Key Bugs Fixed (2026-02-02)
 1. **primitiveFindSubstring key/body args swapped**: `stackValue(2)` was body,
    `stackValue(3)` was key, but named opposite. Broke `beginsWith:`, `findString:`.
