@@ -3967,6 +3967,36 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 }
                 Oop method = lookupMethod(selector, superclass);
                 if (method.isNil()) {
+                    // TRACE: super send DNU for visitNode:
+                    {
+                        static int superDnuTrace = 0;
+                        if (superDnuTrace < 5 && selector.isObject() && selector.rawBits() > 0x10000) {
+                            ObjectHeader* sh = selector.asObjectPtr();
+                            if (sh->isBytesObject() && sh->byteSize() == 10 && memcmp(sh->bytes(), "visitNode:", 10) == 0) {
+                                superDnuTrace++;
+                                std::string superName = "?", methodClassName = "?";
+                                if (superclass.isObject() && superclass.rawBits() > 0x10000) {
+                                    Oop n = memory_.fetchPointer(6, superclass);
+                                    if (n.isObject() && n.rawBits() > 0x10000) {
+                                        ObjectHeader* nh = n.asObjectPtr();
+                                        if (nh->isBytesObject() && nh->byteSize() < 50)
+                                            superName = std::string((char*)nh->bytes(), nh->byteSize());
+                                    }
+                                }
+                                if (methodClass.isObject() && methodClass.rawBits() > 0x10000) {
+                                    Oop n = memory_.fetchPointer(6, methodClass);
+                                    if (n.isObject() && n.rawBits() > 0x10000) {
+                                        ObjectHeader* nh = n.asObjectPtr();
+                                        if (nh->isBytesObject() && nh->byteSize() < 50)
+                                            methodClassName = std::string((char*)nh->bytes(), nh->byteSize());
+                                    }
+                                }
+                                fprintf(stderr, "[VN-SUPER-DNU #%d step=%llu] super visitNode: DNU! "
+                                        "methodClass=%s lookupFrom=%s\n",
+                                        superDnuTrace, g_stepNum, methodClassName.c_str(), superName.c_str());
+                            }
+                        }
+                    }
                     sendDoesNotUnderstand(selector, numArgs);
                 } else {
                     activateMethod(method, numArgs);
@@ -11941,6 +11971,47 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         fflush(sendTraceLog);
     }
 
+    // TARGETED TRACE: visitNode: sends to OCMethodNode
+    static int visitNodeSendTraceCount = 0;
+    bool traceVisitNodeSend = false;
+    if (visitNodeSendTraceCount < 10 && selLen == 10 && selBytes && memcmp(selBytes, "visitNode:", 10) == 0) {
+        // Check if receiver class is OCMethodNode
+        if (rcvrClass.isObject() && rcvrClass.rawBits() > 0x10000) {
+            Oop nameOop = memory_.fetchPointer(6, rcvrClass);
+            if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                ObjectHeader* nh = nameOop.asObjectPtr();
+                if (nh->isBytesObject() && nh->byteSize() == 12 && memcmp(nh->bytes(), "OCMethodNode", 12) == 0) {
+                    traceVisitNodeSend = true;
+                    visitNodeSendTraceCount++;
+                    fprintf(stderr, "[VN-SEND #%d step=%llu] visitNode: -> OCMethodNode "
+                            "selector=0x%llx rcvrClass=0x%llx rcvr=0x%llx fd=%zu\n",
+                            visitNodeSendTraceCount, g_stepNum,
+                            (unsigned long long)selector.rawBits(),
+                            (unsigned long long)rcvrClass.rawBits(),
+                            (unsigned long long)rcvr.rawBits(),
+                            frameDepth_);
+                    // Show the calling method
+                    if (method_.isObject() && method_.rawBits() > 0x10000) {
+                        Oop hdr = memory_.fetchPointer(0, method_);
+                        if (hdr.isSmallInteger()) {
+                            size_t nLits = hdr.asSmallInteger() & 0x7FFF;
+                            if (nLits >= 2) {
+                                Oop lastLit = memory_.fetchPointer(nLits - 1, method_);
+                                if (lastLit.isObject() && lastLit.rawBits() > 0x10000) {
+                                    ObjectHeader* llh = lastLit.asObjectPtr();
+                                    if (llh->isBytesObject() && llh->byteSize() < 50) {
+                                        fprintf(stderr, "[VN-SEND]   called from method #%.*s\n",
+                                                (int)llh->byteSize(), (char*)llh->bytes());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Check method cache (with statistics)
     static int cacheHits = 0, cacheMisses = 0;
     static int lastReport = 0;
@@ -11957,6 +12028,17 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             }
         }
     }
+    // TRACE: visitNode: cache probe result
+    if (traceVisitNodeSend) {
+        if (cached) {
+            fprintf(stderr, "[VN-SEND]   probeCache: HIT method=0x%llx primIdx=%d method_nil=%d\n",
+                    (unsigned long long)cached->method.rawBits(), cached->primitiveIndex,
+                    (cached->method.isNil() || cached->method.rawBits() == 0) ? 1 : 0);
+        } else {
+            fprintf(stderr, "[VN-SEND]   probeCache: MISS (will call lookupMethod)\n");
+        }
+    }
+
     if (cached && cached->method != Oop::nil()) {
         cacheHits++;
 
@@ -12087,6 +12169,15 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     }
 
     Oop method = lookupMethod(selector, rcvrClass);
+    // TRACE: visitNode: lookup result
+    if (traceVisitNodeSend) {
+        fprintf(stderr, "[VN-SEND]   lookupMethod result: 0x%llx isNil=%d\n",
+                (unsigned long long)method.rawBits(), method.isNil() ? 1 : 0);
+        if (method.isObject() && method.rawBits() > 0x10000) {
+            int primIdx = primitiveIndexOf(method);
+            fprintf(stderr, "[VN-SEND]   method found! primIdx=%d\n", primIdx);
+        }
+    }
     // TRACE: Log lookup result for critical steps
     if (g_sendTraceFile && g_stepCount >= 420 && g_stepCount <= 440) {
         fprintf(g_sendTraceFile, "[LOOKUP step=%lld] method=0x%llx isNil=%d rcvrClass=0x%llx\n",
@@ -12432,6 +12523,28 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
         traceCount++;
     }
 
+    // TARGETED: Trace visitNode: lookups on OCMethodNode
+    static int visitNodeLookupTraceCount = 0;
+    bool traceVisitNode = false;
+    if (visitNodeLookupTraceCount < 3 && selector.isObject() && selector.rawBits() > 0x10000) {
+        ObjectHeader* sh = selector.asObjectPtr();
+        if (sh->isBytesObject() && sh->byteSize() == 10 && memcmp(sh->bytes(), "visitNode:", 10) == 0) {
+            // Check if classOop is OCMethodNode
+            Oop nameOop = memory_.fetchPointer(6, classOop);
+            if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                ObjectHeader* nh = nameOop.asObjectPtr();
+                if (nh->isBytesObject() && nh->byteSize() == 12 && memcmp(nh->bytes(), "OCMethodNode", 12) == 0) {
+                    traceVisitNode = true;
+                    visitNodeLookupTraceCount++;
+                    std::cerr << "[LOOKUP-TRACE] visitNode: lookup #" << visitNodeLookupTraceCount
+                              << " on OCMethodNode step=" << g_stepNum
+                              << " selector=0x" << std::hex << selector.rawBits()
+                              << " classOop=0x" << classOop.rawBits() << std::dec << "\n";
+                }
+            }
+        }
+    }
+
     // Helper to get class name
     auto getClassName = [this](Oop cls) -> std::string {
         if (!cls.isObject() || cls.rawBits() < 0x10000) return "?";
@@ -12485,6 +12598,12 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
 
             if (!skipThisClass) {
                 Oop method = lookupInMethodDict(methodDict, selector);
+                if (traceVisitNode) {
+                    std::cerr << "  [" << depth << "] " << getClassName(currentClass)
+                              << " dict=0x" << std::hex << methodDict.rawBits() << std::dec
+                              << " result=" << (method.isNil() ? "nil" : (method.isObject() ? "FOUND" : "other"))
+                              << " (0x" << std::hex << method.rawBits() << std::dec << ")\n";
+                }
                 if (!isNilOrEnd(method) && method.isObject()) {
                     if (traceThis) {
                         foundCount++;
@@ -14936,6 +15055,48 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                 }
             }
         }
+
+        // Trace class hierarchy for visitNode: DNU to diagnose why method isn't found
+        if (selStr == "visitNode:" && rcvrClassName == "OCMethodNode") {
+            static int visitNodeTraceCount = 0;
+            if (visitNodeTraceCount++ < 3) {
+                Oop rcvr2 = stackValue(argCount);
+                Oop cls = memory_.classOf(rcvr2);
+                std::cerr << "[DNU-HIERARCHY] visitNode: on OCMethodNode — superclass chain:\n";
+                Oop nilObj2 = memory_.specialObject(SpecialObjectIndex::NilObject);
+                int depth2 = 0;
+                Oop c = cls;
+                while (c.isObject() && !c.isNil() && c.rawBits() != nilObj2.rawBits() && c.rawBits() > 0x10000 && depth2 < 30) {
+                    std::string cn2 = "?";
+                    Oop nameOop2 = memory_.fetchPointer(6, c);
+                    if (nameOop2.isObject() && nameOop2.rawBits() > 0x10000) {
+                        ObjectHeader* nh2 = nameOop2.asObjectPtr();
+                        if (nh2->isBytesObject() && nh2->byteSize() < 50)
+                            cn2 = std::string((char*)nh2->bytes(), nh2->byteSize());
+                    }
+                    Oop md = memory_.fetchPointer(1, c);
+                    if (md.isObject() && md.rawBits() > 0x10000) {
+                        ObjectHeader* mdh = md.asObjectPtr();
+                        size_t mdSize = mdh->slotCount();
+                        Oop found = lookupInMethodDict(md, selector);
+                        if (found.isObject() && found.rawBits() > 0x10000) {
+                            std::cerr << "  [" << depth2 << "] " << cn2 << " (dict=" << mdSize << " slots) ** visitNode: FOUND HERE **\n";
+                        } else {
+                            std::cerr << "  [" << depth2 << "] " << cn2 << " (dict=" << mdSize << " slots)\n";
+                        }
+                    } else {
+                        std::cerr << "  [" << depth2 << "] " << cn2 << " (NO method dict!)\n";
+                    }
+                    c = memory_.fetchPointer(0, c);
+                    depth2++;
+                }
+                if (c.isNil() || c.rawBits() == nilObj2.rawBits()) {
+                    std::cerr << "  [" << depth2 << "] (nil — end of chain)\n";
+                } else {
+                    std::cerr << "  [" << depth2 << "] (terminated — c=0x" << std::hex << c.rawBits() << std::dec << ")\n";
+                }
+            }
+        }
     }
 
     // Depth limit — terminate process if stuck in DNU recursion
@@ -15207,10 +15368,14 @@ Oop Interpreter::methodClassOf(Oop method) const {
     int64_t headerBits = methodHeader.asSmallInteger();
     size_t numLiterals = headerBits & 0x7FFF;  // bits 0-14
 
-    if (numLiterals == 0) return memory_.nil();
+    if (numLiterals < 2) return memory_.nil();
 
-    // Last literal is at index (numLiterals - 1), stored at slot numLiterals
-    Oop lastLiteral = memory_.fetchPointer(numLiterals, method);
+    // In Pharo, the literal layout is:
+    //   slot 1: literal[0]  ...  slot N: literal[N-1]
+    // The LAST literal (slot numLiterals = literal[numLiterals-1]) is the selector.
+    // The PENULTIMATE literal (slot numLiterals-1 = literal[numLiterals-2]) is the class binding.
+    // The class binding is an Association whose value (slot 1) is the defining class.
+    Oop lastLiteral = memory_.fetchPointer(numLiterals - 1, method);
 
     // The last literal can be:
     // 1. An Association (classBinding) - extract value (slot 1)
@@ -20312,11 +20477,11 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
     static int primCounts[1000] = {0};  // Track calls per primitive
     primCallCount++;
 
-    // Trace primitives in the range where second asSymbol hangs
-    if (g_stepNum >= 22900000) {
-        fprintf(stderr, "[PRIM-AT-STEP step=%llu] primitive=%d argCount=%d\n",
-                g_stepNum, primitiveIndex, argCount);
-    }
+    // DISABLED: was producing 88M lines of output
+    // if (g_stepNum >= 22900000) {
+    //     fprintf(stderr, "[PRIM-AT-STEP step=%llu] primitive=%d argCount=%d\n",
+    //             g_stepNum, primitiveIndex, argCount);
+    // }
 
     // Log all primitive calls for debugging
     static FILE* allPrimLog = nullptr;
