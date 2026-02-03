@@ -36,6 +36,29 @@ cat /tmp/sunit_test_results.txt
 
 ---
 
+## Startup Initialization Fixes - FIXED (2026-02-03)
+
+**Problem 1: lowSpaceWatcher error**
+- Error: "We have a lowSpaceWatcher signal, but there is no ctx... how we arrive here"
+- Happened at step ~21575, very early in startup
+- Blocked all startup handlers from running
+
+**Root Cause**: Pharo's lowSpaceWatcher reads `ProcessSignalingLowSpace` (special object 22) and expects a valid process/context. Our VM never set this value, so it was nil.
+
+**Fix**: Initialize `ProcessSignalingLowSpace` to the active process at VM startup (in `Interpreter::initialize()`). Also set it when the lowSpaceSemaphore is signaled/waited.
+
+**Problem 2: External objects array error**
+- Error: "Not enough space for external objects, set a larger size at startup!"
+- Happened at step ~1616464, during session startup
+
+**Root Cause**: Pharo's `clearExternalObjects` creates an empty array, then queries VM parameter 49 (external objects size). If size=0, Pharo errors before attempting resize.
+
+**Fix**: Auto-create the ExternalObjectsArray (256 slots) when VM parameter 49 is queried and the current size is 0. This ensures Pharo always sees a usable array.
+
+**Result**: Startup handlers now run successfully. SessionManager executes `ClassSessionHandler>>startup:` for registered classes.
+
+---
+
 ## Startup Handler Bug - FIXED (2026-02-03)
 
 **Problem**: Session startup handlers (registered via SessionManager) run but hang at `ProcessorScheduler>>startUp`.
