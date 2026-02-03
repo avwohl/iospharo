@@ -259,6 +259,26 @@ bool Interpreter::initialize() {
         return false;
     }
 
+    // Initialize ProcessSignalingLowSpace to active process before execution.
+    // This ensures the lowSpaceWatcher has a valid context if it wakes up early.
+    // Pharo's lowSpaceWatcher reads ProcessSignalingLowSpace and expects a valid
+    // process/context there. Without this, it gets nil and errors.
+    Oop currentPSLS = memory_.specialObject(SpecialObjectIndex::ProcessSignalingLowSpace);
+    if (currentPSLS.isNil() || currentPSLS.rawBits() == memory_.nil().rawBits()) {
+        memory_.setSpecialObject(SpecialObjectIndex::ProcessSignalingLowSpace, activeProcess);
+        FILE* initLog = fopen("/tmp/init_trace.log", "a");
+        if (initLog) {
+            fprintf(initLog, "[INIT] Set ProcessSignalingLowSpace to active process 0x%llx\n",
+                    (unsigned long long)activeProcess.rawBits());
+            fclose(initLog);
+        }
+    }
+
+    // Note: ExternalObjectsArray is managed by Pharo's VirtualMachine class.
+    // Pharo calls clearExternalObjects during startup which creates a fresh array.
+    // The VM should NOT pre-initialize this array as Pharo will replace it.
+    // Instead, the VM's parameter 49 set operation handles resizing when needed.
+
     // Debug: dump active process slots
     // DEBUG: "[DEBUG] Active Process slots:"
     if (activeProcess.isObject()) {

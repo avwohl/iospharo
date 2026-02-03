@@ -3971,6 +3971,27 @@ PrimitiveResult Interpreter::primitiveSignal(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    // If this is the lowSpaceSemaphore, set ProcessSignalingLowSpace to current process
+    // so the lowSpaceWatcher has valid context information
+    Oop lowSpaceSem = memory_.specialObject(SpecialObjectIndex::TheLowSpaceSemaphore);
+    if (signalLog && signalCallCount <= 10) {
+        fprintf(signalLog, "[SIGNAL #%d] sem=0x%llx lowSpaceSem=0x%llx match=%d isNil=%d\n",
+                signalCallCount, (unsigned long long)semaphore.rawBits(),
+                (unsigned long long)lowSpaceSem.rawBits(),
+                semaphore.rawBits() == lowSpaceSem.rawBits() ? 1 : 0,
+                lowSpaceSem.isNil() ? 1 : 0);
+        fflush(signalLog);
+    }
+    if (semaphore.rawBits() == lowSpaceSem.rawBits() && !lowSpaceSem.isNil()) {
+        Oop activeProcess = getActiveProcess();
+        memory_.setSpecialObject(SpecialObjectIndex::ProcessSignalingLowSpace, activeProcess);
+        if (signalLog) {
+            fprintf(signalLog, "[SIGNAL #%d] Set ProcessSignalingLowSpace to active process 0x%llx\n",
+                    signalCallCount, (unsigned long long)activeProcess.rawBits());
+            fflush(signalLog);
+        }
+    }
+
     Oop nilObj = memory_.nil();
     Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, semaphore);
 
@@ -4068,6 +4089,32 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
                         waitCallCount, (unsigned long long)g_stepNum, (unsigned long long)semaphore.rawBits(), (long long)excess);
                 fflush(waitLog);
             }
+
+            // If this is the lowSpaceSemaphore and ProcessSignalingLowSpace is nil,
+            // set it to the current process so the lowSpaceWatcher has valid context.
+            // This handles the case where the semaphore had excess signals from a previous session.
+            Oop lowSpaceSem = memory_.specialObject(SpecialObjectIndex::TheLowSpaceSemaphore);
+            if (waitLog && waitCallCount <= 10) {
+                fprintf(waitLog, "[WAIT #%d] sem=0x%llx lowSpaceSem=0x%llx match=%d isNil=%d\n",
+                        waitCallCount, (unsigned long long)semaphore.rawBits(),
+                        (unsigned long long)lowSpaceSem.rawBits(),
+                        semaphore.rawBits() == lowSpaceSem.rawBits() ? 1 : 0,
+                        lowSpaceSem.isNil() ? 1 : 0);
+                fflush(waitLog);
+            }
+            if (semaphore.rawBits() == lowSpaceSem.rawBits() && !lowSpaceSem.isNil()) {
+                Oop currentProcess = getActiveProcess();
+                Oop procSignalingLowSpace = memory_.specialObject(SpecialObjectIndex::ProcessSignalingLowSpace);
+                if (procSignalingLowSpace.isNil() || procSignalingLowSpace.rawBits() == memory_.nil().rawBits()) {
+                    memory_.setSpecialObject(SpecialObjectIndex::ProcessSignalingLowSpace, currentProcess);
+                    if (waitLog) {
+                        fprintf(waitLog, "[WAIT #%d] Set ProcessSignalingLowSpace to process 0x%llx (was nil)\n",
+                                waitCallCount, (unsigned long long)currentProcess.rawBits());
+                        fflush(waitLog);
+                    }
+                }
+            }
+
             memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
                                 Oop::fromSmallInteger(excess - 1));
             return PrimitiveResult::Success;
@@ -4233,11 +4280,43 @@ PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
             case 48: // VM flags
                 return Oop::fromSmallInteger(0);
             case 49: { // Max external semaphores table size
+                static int param49Count = 0;
+                param49Count++;
                 Oop semTable = memory_.specialObject(SpecialObjectIndex::ExternalObjectsArray);
+                size_t size = 0;
                 if (!semTable.isNil() && semTable.isObject()) {
-                    return Oop::fromSmallInteger(memory_.slotCountOf(semTable));
+                    size = memory_.slotCountOf(semTable);
                 }
-                return Oop::fromSmallInteger(0);
+                // Auto-resize if table is empty or missing - Pharo expects at least some slots
+                if (size == 0) {
+                    constexpr size_t AUTO_EXT_OBJ_SIZE = 256;
+                    Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
+                    uint32_t classIndex = memory_.indexOfClass(arrayClass);
+                    Oop newTable = memory_.allocateSlots(classIndex, AUTO_EXT_OBJ_SIZE, ObjectFormat::Indexable);
+                    if (!newTable.isNil()) {
+                        for (size_t i = 0; i < AUTO_EXT_OBJ_SIZE; i++) {
+                            memory_.storePointer(i, newTable, memory_.nil());
+                        }
+                        memory_.setSpecialObject(SpecialObjectIndex::ExternalObjectsArray, newTable);
+                        size = AUTO_EXT_OBJ_SIZE;
+                        FILE* logFile = fopen("/tmp/vm_param49.log", "a");
+                        if (logFile) {
+                            fprintf(logFile, "[PARAM49 #%d step=%llu] AUTO-CREATED %zu slots\n",
+                                    param49Count, (unsigned long long)g_stepNum, AUTO_EXT_OBJ_SIZE);
+                            fclose(logFile);
+                        }
+                    }
+                }
+                if (param49Count <= 20) {
+                    FILE* logFile = fopen("/tmp/vm_param49.log", "a");
+                    if (logFile) {
+                        fprintf(logFile, "[PARAM49 #%d step=%llu] semTable=0x%llx size=%zu\n",
+                                param49Count, (unsigned long long)g_stepNum,
+                                (unsigned long long)semTable.rawBits(), size);
+                        fclose(logFile);
+                    }
+                }
+                return Oop::fromSmallInteger(size);
             }
             case 65: // VM features (immutability support, etc.)
                 return Oop::fromSmallInteger(2);  // Immutability supported
@@ -4299,7 +4378,17 @@ PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
         if (index == 49 && newValueOop.isSmallInteger()) {
             // Resize external semaphore table
             int64_t newSize = newValueOop.asSmallInteger();
+            static int resize49Count = 0;
+            resize49Count++;
+            FILE* logFile = fopen("/tmp/vm_resize49.log", "a");
+            if (logFile) {
+                fprintf(logFile, "[RESIZE49 #%d step=%llu] requested newSize=%lld\n",
+                        resize49Count, (unsigned long long)g_stepNum, (long long)newSize);
+                fclose(logFile);
+            }
             if (newSize < 0 || newSize > 65535) {
+                logFile = fopen("/tmp/vm_resize49.log", "a");
+                if (logFile) { fprintf(logFile, "[RESIZE49 #%d] FAIL: size out of range\n", resize49Count); fclose(logFile); }
                 return PrimitiveResult::Failure;
             }
             Oop oldTable = memory_.specialObject(SpecialObjectIndex::ExternalObjectsArray);
@@ -4307,12 +4396,20 @@ PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
             if (!oldTable.isNil() && oldTable.isObject()) {
                 oldSize = memory_.slotCountOf(oldTable);
             }
+            logFile = fopen("/tmp/vm_resize49.log", "a");
+            if (logFile) {
+                fprintf(logFile, "[RESIZE49 #%d] oldTable=0x%llx oldSize=%zu\n",
+                        resize49Count, (unsigned long long)oldTable.rawBits(), oldSize);
+                fclose(logFile);
+            }
             if ((size_t)newSize > oldSize) {
                 // Allocate new larger array
                 Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
                 uint32_t classIndex = memory_.indexOfClass(arrayClass);
                 Oop newTable = memory_.allocateSlots(classIndex, (size_t)newSize, ObjectFormat::Indexable);
                 if (newTable.isNil()) {
+                    logFile = fopen("/tmp/vm_resize49.log", "a");
+                    if (logFile) { fprintf(logFile, "[RESIZE49 #%d] FAIL: allocation failed\n", resize49Count); fclose(logFile); }
                     return PrimitiveResult::Failure;
                 }
                 // Initialize with nil
@@ -4329,6 +4426,11 @@ PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
                 // Replace in special objects array
                 memory_.setSpecialObject(SpecialObjectIndex::ExternalObjectsArray, newTable);
                 fprintf(stderr, "[VM] Resized ExternalObjectsArray from %zu to %lld\n", oldSize, newSize);
+                logFile = fopen("/tmp/vm_resize49.log", "a");
+                if (logFile) { fprintf(logFile, "[RESIZE49 #%d] SUCCESS: resized to %lld\n", resize49Count, (long long)newSize); fclose(logFile); }
+            } else {
+                logFile = fopen("/tmp/vm_resize49.log", "a");
+                if (logFile) { fprintf(logFile, "[RESIZE49 #%d] NOOP: newSize <= oldSize\n", resize49Count); fclose(logFile); }
             }
         }
 
