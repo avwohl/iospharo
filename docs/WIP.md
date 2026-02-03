@@ -139,6 +139,35 @@ Note: The "6 errors" pattern affects collection tests that inherit from a common
 class with tests like `testPrintStringAll`, `testStoreStringAll` that use compiler
 evaluation and hang/timeout.
 
+### Remaining Test Failures (2026-02-03)
+
+**IntegerTest (3 failures):**
+- Related to Integer<->Float coercion via `adaptToNumber:andSend:` mechanism
+- Primitive arithmetic fails, falls through to Smalltalk double dispatch
+- Some edge case in coercion returns nil where number expected
+
+**FloatTest (1 failure):**
+- Likely IEEE format conversion or Float formatting edge case
+- Core Float operations pass (sin, cos, sqrt, etc.)
+
+**BlockClosureTest (14 failures, 5 errors):**
+- `testSetUp` - tests `home`, `receiver`, `method` accessors on FullBlockClosure
+- `testValueWithExit*` - requires non-local return from passed exit block
+- `testHasNonLocalReturn` - requires `compiledBlock` and `hasMethodReturn`
+- `testSupplyAnswer*` - exception-based answer supplying
+- Errors (5): `testMemoizedLRUCache`, `testSourceNodeOptimized`, `testTally*`, `testRunSimulated` - need compiler/debugger tools
+
+**60 Collection Test Errors:**
+- All inherit from common base class with tests like `testPrintStringAll`
+- These tests use `self class compiler evaluate:` which hangs
+- Not VM bugs, just unsupported compiler evaluation during testing
+
+### What's Needed to Fix Remaining Issues
+
+1. **Interactive debugging** - Need to capture actual error messages from failing tests
+2. **Step-through execution** - Trace specific failing operations
+3. **Startup handler issue** - SessionManager handlers don't run reliably in test images
+
 ### Known Hanging Tests
 - `CharacterTest>>testPrintStringAll` — calls `compiler evaluate:` 256 times
 - `CharacterTest>>testStoreStringAll` — same pattern
