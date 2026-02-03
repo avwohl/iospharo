@@ -15332,8 +15332,13 @@ void Interpreter::createBlock() {
         memory_.indexOfClass(blockClass), slots, ObjectFormat::Indexable);
 
     // Set fields
-    // Note: We'd need a proper context object here
-    memory_.storePointer(0, block, memory_.nil());  // outerContext - simplified
+    // Ensure proper context identity by materializing if running inline
+    Oop outerContextForBlock = activeContext_;
+    if (frameDepth_ > 0) {
+        outerContextForBlock = materializeFrameStack();
+        activeContext_ = outerContextForBlock;
+    }
+    memory_.storePointer(0, block, outerContextForBlock);  // outerContext
     memory_.storePointer(1, block, Oop::fromSmallInteger(
         instructionPointer_ - method_.asObjectPtr()->bytes()));
     memory_.storePointer(2, block, Oop::fromSmallInteger(numArgs));
@@ -15659,7 +15664,17 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
     }
 
     // Set fields
-    memory_.storePointer(0, block, activeContext_);  // outerContext
+    // IMPORTANT: When running inline (frameDepth_ > 0), we must ensure the outerContext
+    // is a proper context object that will match when compared with thisContext later.
+    // If we're running inline, materialize the frame stack first so the context identity
+    // is preserved when the block's home method is accessed via thisContext.
+    Oop outerContextForBlock = activeContext_;
+    if (frameDepth_ > 0) {
+        // Materialize inline frames to ensure proper context identity
+        outerContextForBlock = materializeFrameStack();
+        activeContext_ = outerContextForBlock;
+    }
+    memory_.storePointer(0, block, outerContextForBlock);  // outerContext
     memory_.storePointer(1, block, compiledBlock);   // compiledBlock (instead of startPC)
 
     // Get numArgs from the CompiledBlock's header (first slot)
@@ -15819,7 +15834,13 @@ void Interpreter::createBlockWithArgs(int numArgs, int numCopied, int blockSize)
         memory_.indexOfClass(blockClass), slots, ObjectFormat::Indexable);
 
     // Set fields
-    memory_.storePointer(0, block, activeContext_);  // outerContext
+    // Ensure proper context identity by materializing if running inline
+    Oop outerContextForBlock = activeContext_;
+    if (frameDepth_ > 0) {
+        outerContextForBlock = materializeFrameStack();
+        activeContext_ = outerContextForBlock;
+    }
+    memory_.storePointer(0, block, outerContextForBlock);  // outerContext
     memory_.storePointer(1, block, Oop::fromSmallInteger(
         instructionPointer_ - method_.asObjectPtr()->bytes()));  // startPC
     memory_.storePointer(2, block, Oop::fromSmallInteger(numArgs));
