@@ -150,6 +150,10 @@ public:
     /// Returns nil if allocation fails.
     Oop allocateWords(uint32_t classIndex, size_t wordCount);
 
+    /// Allocate a CompiledMethod with slots for header+literals and bytes for bytecodes.
+    /// Returns nil if allocation fails.
+    Oop allocateCompiledMethod(uint32_t classIndex, size_t numSlots, size_t bytecodeSize);
+
     /// Clone an existing object
     Oop shallowCopy(Oop original);
 

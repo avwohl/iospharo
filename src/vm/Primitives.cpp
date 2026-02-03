@@ -2469,8 +2469,22 @@ PrimitiveResult Interpreter::primitiveNew(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
-    Oop sizeOop = stackValue(0);
-    Oop rcvr = stackValue(1);  // Class
+    // Handle two variants:
+    // argCount=1: basicNew: size   -> stackValue(0)=size, stackValue(1)=class
+    // argCount=2: basicNew: size header: header -> stackValue(0)=header, stackValue(1)=size, stackValue(2)=class
+    Oop headerOop = Oop::nil();
+    Oop sizeOop;
+    Oop rcvr;
+
+    if (argCount == 2) {
+        // basicNew:header: for CompiledMethod
+        headerOop = stackValue(0);
+        sizeOop = stackValue(1);
+        rcvr = stackValue(2);  // Class
+    } else {
+        sizeOop = stackValue(0);
+        rcvr = stackValue(1);  // Class
+    }
 
     // Debug: trace all calls during startup
     static int newArgCallCount = 0;
@@ -2716,7 +2730,28 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
 
     Oop newObj;
 
-    if (isBytes) {
+    // CompiledMethod (instSpec 24) is special: it has pointer slots for literals
+    // followed by bytecode bytes. The header encodes numLiterals.
+    // basicNew: size header: header allocates (1+numLiterals)*8 + size bytes
+    if (instSpec == 24 && !headerOop.isNil() && headerOop.isSmallInteger()) {
+        int64_t headerBits = headerOop.asSmallInteger();
+        int numLiterals = headerBits & 0x7FFF;  // bits 0-14
+        size_t bytecodeSize = static_cast<size_t>(indexableSize);
+
+        // Total slots = 1 (header slot) + numLiterals
+        // Total bytes = slots*8 + bytecodeSize
+        size_t numSlots = 1 + numLiterals;
+        size_t totalBytes = numSlots * 8 + bytecodeSize;
+
+        // CompiledMethod uses format 24 (Indexable bytes with 0 odd)
+        // But we store as CompiledMethod format which includes both slots and bytes
+        newObj = memory_.allocateCompiledMethod(classIndex, numSlots, bytecodeSize);
+
+        if (!newObj.isNil()) {
+            // Store the header in slot 0
+            memory_.storePointer(0, newObj, headerOop);
+        }
+    } else if (isBytes) {
         newObj = memory_.allocateBytes(classIndex, static_cast<size_t>(indexableSize));
     } else {
         size_t totalSlots = fixedSize + static_cast<size_t>(indexableSize);

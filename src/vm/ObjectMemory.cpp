@@ -305,6 +305,51 @@ Oop ObjectMemory::allocateWords(uint32_t classIndex, size_t wordCount) {
     return oopFromPointer(obj);
 }
 
+Oop ObjectMemory::allocateCompiledMethod(uint32_t classIndex, size_t numSlots, size_t bytecodeSize) {
+    // CompiledMethod: numSlots pointer slots followed by bytecodeSize bytes
+    // The slot area holds header (slot 0) and literals
+    // The byte area holds the bytecodes
+    // Calculate total byte size
+    size_t slotBytes = numSlots * 8;
+    size_t totalBytes = slotBytes + bytecodeSize;
+
+    // Round up to slot alignment for the slot count field
+    size_t totalSlots = (totalBytes + 7) / 8;
+
+    // Determine padding for the byte portion
+    size_t padding = (totalSlots * 8) - totalBytes;
+    // Format 24-27 = CompiledMethod (bytes with 0-3 odd bytes unused)
+    // This maps to ObjectFormat enum values for CompiledMethod
+    ObjectFormat format = static_cast<ObjectFormat>(24 + padding);
+
+    size_t headerSize = sizeof(ObjectHeader);
+    bool hasOverflow = totalSlots >= 255;
+    if (hasOverflow) {
+        headerSize += sizeof(uint64_t);
+    }
+
+    size_t totalSize = headerSize + totalSlots * 8;
+    totalSize = (totalSize + 7) & ~7ULL;
+
+    // Allocate in old space
+    ObjectHeader* obj = allocateRaw(totalSize, Space::Old);
+    if (!obj) return nilObject_;
+
+    if (hasOverflow) {
+        uint64_t* overflow = reinterpret_cast<uint64_t*>(obj);
+        *overflow = totalSlots;
+        obj = reinterpret_cast<ObjectHeader*>(overflow + 1);
+    }
+
+    initializeHeader(obj, classIndex, totalSlots, format);
+
+    // Zero all content (slots will be nil, bytecodes will be 0)
+    std::memset(obj->slots(), 0, totalSlots * 8);
+
+    bytesAllocated_ += totalSize;
+    return oopFromPointer(obj);
+}
+
 Oop ObjectMemory::shallowCopy(Oop original) {
     if (!original.isObject()) {
         return original;  // Immediates are their own copies
