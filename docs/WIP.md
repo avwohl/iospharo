@@ -36,6 +36,38 @@ cat /tmp/sunit_test_results.txt
 
 ---
 
+## Startup Handler Bug (2026-02-03)
+
+**Problem**: Session startup handlers (registered via SessionManager) run but hang at `ProcessorScheduler>>startUp`.
+
+**Root Cause**: Process termination hangs when the terminating process gets blocked on another semaphore during its unwind sequence.
+
+**Investigation Log**:
+1. `SessionManager>>runStartup:` is called correctly with `true`
+2. First ~5 handlers complete: SmallInteger, SessionAccessModeResolver, Delay, GlobalIdentifier
+3. `ProcessorScheduler>>startUp` calls `BackgroundProcess terminate`
+4. `terminate` suspends the process, modifies context for unwind, resumes at priority 79
+5. Terminator calls `wait` on a new semaphore, switches to the resumed process
+6. The resumed process immediately blocks on a DIFFERENT semaphore (critical section?)
+7. Original terminator semaphore never gets signaled → hang
+
+**Key Insight**: The first termination (from `installLowSpaceWatcher`) completes successfully. The second (BackgroundProcess) hangs because the unwinding process encounters blocking synchronization.
+
+**Logs to check**:
+- `/tmp/startup_trace.txt` - startup handler progress
+- `/tmp/prim_resume.log` - process resume calls
+- `/tmp/prim_wait.log` - semaphore waits
+- `/tmp/prim_signal.log` - semaphore signals
+
+**Workaround** (for testing): Skip `BackgroundProcess terminate` in ProcessorScheduler>>startUp. This allows remaining 50+ handlers to run.
+
+**Real Fix Needed**: Investigate why the unwind context gets blocked. May be:
+- Critical section release during termination not handled correctly
+- Race condition between terminator and terminated process
+- Missing handling for `handleProcessTerminationOfWaitingContext:`
+
+---
+
 ## Current Status (2026-02-02)
 Running SUnit test suites on fresh Pharo 13 images with custom inline test runner
 (bypasses SUnit framework, calls setUp + perform: directly, catches Exception).
