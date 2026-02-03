@@ -2,6 +2,40 @@
 
 ## Date: 2026-01-08
 
+---
+## How to Run SUnit Tests
+
+### Quick Start
+```bash
+# 1. Download fresh Pharo 13 image
+cd /tmp && curl -sL https://get.pharo.org/64/130 | bash
+
+# 2. Load test runner into image (using standard Pharo VM)
+cp /tmp/Pharo.image /tmp/test.image && cp /tmp/Pharo.changes /tmp/test.changes
+/Users/wohl/Downloads/pharo /tmp/test.image eval --save \
+  "'/Users/wohl/src/iospharo/scripts/run_sunit_tests.st' asFileReference fileIn"
+
+# 3. Run with custom VM
+./build/test_load_image /tmp/test.image
+
+# 4. View results
+cat /tmp/sunit_test_results.txt
+```
+
+### Files
+- **Test runner script**: `scripts/run_sunit_tests.st`
+- **Results output**: `/tmp/sunit_test_results.txt`
+- **Fresh image**: `/tmp/Pharo.image` (download with zeroconf)
+- **Standard Pharo VM**: `/Users/wohl/Downloads/pharo`
+
+### Notes
+- Always use fresh images (don't reuse saved images)
+- Test runner bypasses SUnit framework (calls setUp/perform:/tearDown directly)
+- Catches `Exception` (not just `Error`) to catch `TestFailure`
+- Some tests skipped: `testPrintStringAll`, `testStoreStringAll` (hang on compiler evaluate:)
+
+---
+
 ## Current Status (2026-02-02)
 Running SUnit test suites on fresh Pharo 13 images with custom inline test runner
 (bypasses SUnit framework, calls setUp + perform: directly, catches Exception).

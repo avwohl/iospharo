@@ -85,6 +85,41 @@ The bytecode ranges 0xE0-0xFF are completely different between the two sets.
 - Build with `cmake --build build` from the project root
 - Full build cycle: `cmake --build build-app && ./build-xcframework.sh && xcodebuild -project iospharo.xcodeproj -scheme iospharo -configuration Debug -destination 'platform=macOS,variant=Mac Catalyst' build`
 
+---
+## Running Official Pharo Test Suite
+
+### Standard Pharo VM (reference)
+```bash
+# Download fresh image
+cd /tmp && curl -sL https://get.pharo.org/64/130 | bash
+
+# Run Kernel-Tests package (SmallIntegerTest, IntegerTest, FloatTest, etc.)
+/Users/wohl/Downloads/pharo /tmp/Pharo.image test "Kernel-Tests"
+```
+
+### Custom VM Testing
+Our VM doesn't support command-line args to the image yet. Inject a test runner:
+
+```bash
+# 1. Fresh image
+cd /tmp && curl -sL https://get.pharo.org/64/130 | bash
+
+# 2. Inject test runner (uses chunk format for fileIn)
+/Users/wohl/Downloads/pharo /tmp/Pharo.image eval --save \
+  "'/Users/wohl/src/iospharo/scripts/run_sunit_tests.st' asFileReference fileIn"
+
+# 3. Run with custom VM
+./build/test_load_image /tmp/Pharo.image
+
+# 4. Results
+cat /tmp/sunit_test_results.txt
+```
+
+### Files
+- `scripts/run_sunit_tests.st` - Test runner (chunk format .st file)
+- `/tmp/sunit_test_results.txt` - Output file
+- `docs/WIP.md` - Last known test results and status
+
 ## Primitive Table Reference
 The **one true source** for the primitive table is in VMMaker:
 `~/src/pharo-vm/smalltalksrc/VMMaker/StackInterpreter.class.st`
