@@ -40,31 +40,60 @@ cat /tmp/sunit_test_results.txt
 
 **Problem**: Session startup handlers (registered via SessionManager) run but hang at `ProcessorScheduler>>startUp`.
 
-**Root Cause**: Process termination hangs when the terminating process gets blocked on another semaphore during its unwind sequence.
+**Root Cause**: The second terminated process (BackgroundProcess) never signals its terminator semaphore. The resumed process runs continuously but never completes its unwind sequence.
 
-**Investigation Log**:
-1. `SessionManager>>runStartup:` is called correctly with `true`
-2. First ~5 handlers complete: SmallInteger, SessionAccessModeResolver, Delay, GlobalIdentifier
-3. `ProcessorScheduler>>startUp` calls `BackgroundProcess terminate`
-4. `terminate` suspends the process, modifies context for unwind, resumes at priority 79
-5. Terminator calls `wait` on a new semaphore, switches to the resumed process
-6. The resumed process immediately blocks on a DIFFERENT semaphore (critical section?)
-7. Original terminator semaphore never gets signaled → hang
+### Detailed Analysis (2026-02-03 investigation)
 
-**Key Insight**: The first termination (from `installLowSpaceWatcher`) completes successfully. The second (BackgroundProcess) hangs because the unwinding process encounters blocking synchronization.
+**Two process terminations happen during startup:**
+1. **First (lowSpaceWatcher)**: Works correctly
+   - Resume at step 20399
+   - Terminator signaled at step 21985 (1586 steps later)
+   - Process was waiting on Semaphore (oldList=Semaphore)
 
-**Logs to check**:
-- `/tmp/startup_trace.txt` - startup handler progress
-- `/tmp/prim_resume.log` - process resume calls
-- `/tmp/prim_wait.log` - semaphore waits
-- `/tmp/prim_signal.log` - semaphore signals
+2. **Second (BackgroundProcess)**: HANGS
+   - Resume at step 26439
+   - Terminator NEVER signaled (semaphore 0x6d02269f0)
+   - Process was on ProcessList (ready queue, never ran)
 
-**Workaround** (for testing): Skip `BackgroundProcess terminate` in ProcessorScheduler>>startUp. This allows remaining 50+ handlers to run.
+**Key Observations from logs:**
+- Both resumed processes have identical context chain structure:
+  - [0] ctx with prim=17 (contextEnsure: context)
+  - [1] ctx with method=#endProcess
+- First process completes in ~1586 steps after resume
+- Second process runs 244+ times (switched to repeatedly) but never signals
 
-**Real Fix Needed**: Investigate why the unwind context gets blocked. May be:
-- Critical section release during termination not handled correctly
-- Race condition between terminator and terminated process
-- Missing handling for `handleProcessTerminationOfWaitingContext:`
+**Process 0x6cfbf3760 (second terminated) behavior:**
+- Constantly switched to (appears 244 times in wait log)
+- Never blocks on any semaphore
+- Never signals any semaphore
+- Appears to be in an infinite loop without any I/O
+
+**Termination flow:**
+1. `doTerminationFromAnotherProcess` suspends target, modifies context chain
+2. Inserts `ensure:[terminator signal]` at bottom of context
+3. Creates unwind context: `contextEnsure:[context unwindTo: nil]` → `[endProcess]`
+4. Resumes target, waits on terminator semaphore
+5. Target should unwind, find inserted ensure:, signal terminator
+
+**Hypothesis for root cause:**
+The `unwindTo:` traversal isn't finding or executing the inserted ensure: block for the second process. Possible reasons:
+- Block context from `[self idleProcess] newProcess` has minimal sender chain
+- Context chain differs structurally from a normal method activation
+- `findNextUnwindContextUpTo:` fails to traverse the modified chain
+
+**Files modified with tracing:**
+- `src/vm/Primitives.cpp`: Added step numbers to signal/wait logs, context chain dump in resume log
+
+**Logs to check:**
+- `/tmp/prim_resume.log` - shows context chain at resume time
+- `/tmp/prim_wait.log` - shows BLOCKING waits and switches
+- `/tmp/prim_signal.log` - shows signal operations with step numbers
+
+**Next Steps:**
+1. Add tracing to see what `unwindTo:` actually does
+2. Compare the context structure of first vs second process
+3. Check if `insertSender:` works correctly on block contexts
+4. Verify `findNextUnwindContextUpTo:` finds the inserted ensure:
 
 ---
 

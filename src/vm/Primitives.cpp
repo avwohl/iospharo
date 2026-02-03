@@ -3898,6 +3898,42 @@ PrimitiveResult Interpreter::primitiveResume(int argCount) {
         }
         fprintf(resumeLog, "[RESUME #%d]   context=0x%llx will run method: #%s\n",
                 resumeCallCount, (unsigned long long)context.rawBits(), ctxMethod.c_str());
+
+        // Trace the entire context chain to debug termination issues
+        fprintf(resumeLog, "[RESUME #%d]   CONTEXT CHAIN:\n", resumeCallCount);
+        Oop chainCtx = context;
+        int chainDepth = 0;
+        while (chainCtx.isObject() && chainCtx.rawBits() > 0x10000 && chainDepth < 20) {
+            // Get method and its primitive index
+            Oop chainMethod = memory_.fetchPointer(3, chainCtx);  // MethodIndex = 3
+            std::string chainSel = "?";
+            int primIndex = 0;
+            if (chainMethod.isObject() && chainMethod.rawBits() > 0x10000) {
+                Oop mhdr = memory_.fetchPointer(0, chainMethod);
+                if (mhdr.isSmallInteger()) {
+                    int64_t hv = mhdr.asSmallInteger();
+                    primIndex = (hv >> 16) & 0xFF;  // Get primitive index from header
+                    int nLits = hv & 0x7FFF;
+                    if (nLits >= 2 && nLits < 100) {
+                        Oop sel = memory_.fetchPointer(nLits - 1, chainMethod);
+                        if (sel.isObject()) {
+                            ObjectHeader* selH = sel.asObjectPtr();
+                            if (selH->isBytesObject() && selH->byteSize() < 100) {
+                                chainSel = std::string((char*)selH->bytes(), selH->byteSize());
+                            }
+                        }
+                    }
+                }
+            }
+            fprintf(resumeLog, "[RESUME #%d]     [%d] ctx=0x%llx method=#%s prim=%d\n",
+                    resumeCallCount, chainDepth, (unsigned long long)chainCtx.rawBits(),
+                    chainSel.c_str(), primIndex);
+            // Get sender
+            Oop sender = memory_.fetchPointer(0, chainCtx);  // SenderIndex = 0
+            if (sender.isNil() || !sender.isObject()) break;
+            chainCtx = sender;
+            chainDepth++;
+        }
         fflush(resumeLog);
     }
 
@@ -3945,8 +3981,8 @@ PrimitiveResult Interpreter::primitiveSignal(int argCount) {
         memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
                             Oop::fromSmallInteger(excess + 1));
         if (signalLog) {
-            fprintf(signalLog, "[SIGNAL #%d] sem=0x%llx no waiters -> excess=%lld\n",
-                    signalCallCount, (unsigned long long)semaphore.rawBits(), (long long)(excess + 1));
+            fprintf(signalLog, "[SIGNAL #%d step=%llu] sem=0x%llx no waiters -> excess=%lld\n",
+                    signalCallCount, (unsigned long long)g_stepNum, (unsigned long long)semaphore.rawBits(), (long long)(excess + 1));
             fflush(signalLog);
         }
         // Return receiver (semaphore stays on stack)
@@ -3965,8 +4001,8 @@ PrimitiveResult Interpreter::primitiveSignal(int argCount) {
     int activePriority = static_cast<int>(activePriorityOop.asSmallInteger());
 
     if (signalLog) {
-        fprintf(signalLog, "[SIGNAL #%d] sem=0x%llx waking process 0x%llx (pri=%d) active_pri=%d -> %s\n",
-                signalCallCount, (unsigned long long)semaphore.rawBits(),
+        fprintf(signalLog, "[SIGNAL #%d step=%llu] sem=0x%llx waking process 0x%llx (pri=%d) active_pri=%d -> %s\n",
+                signalCallCount, (unsigned long long)g_stepNum, (unsigned long long)semaphore.rawBits(),
                 (unsigned long long)process.rawBits(), processPriority, activePriority,
                 processPriority > activePriority ? "PREEMPT" : "enqueue");
         fflush(signalLog);
