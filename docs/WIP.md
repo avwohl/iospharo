@@ -109,20 +109,35 @@ The `unwindTo:` traversal isn't finding or executing the inserted ensure: block 
 
 ---
 
-## Current Status (2026-02-02)
+## Current Status (2026-02-03)
 Running SUnit test suites on fresh Pharo 13 images with custom inline test runner
 (bypasses SUnit framework, calls setUp + perform: directly, catches Exception).
 
-### SUnit Test Results (6 classes verified, 11 more in progress)
+### SUnit Test Results (17 classes, 2495 total tests)
 ```
-SmallIntegerTest (25 tests): 25P 0F 0E   -- ALL PASS
-IntegerTest     (83 tests): 77P 5F 1E   -- 1E: nil>>adaptToNumber:andSend:
-FloatTest       (70 tests): 66P 1F 3E   -- 3E: nil>>asIEEE32BitWord, binaryLiteral, storeOnRoundTrip
-FractionTest    (27 tests): 27P 0F 0E   -- ALL PASS
-PointTest       (31 tests): 31P 0F 0E   -- ALL PASS
-CharacterTest   (13 tests): 12P 1F 0E   -- 1F: testMaxVal; 2 skipped (compiler-heavy)
+SmallIntegerTest    (25 tests):  25P 0F 0E   -- ALL PASS
+IntegerTest         (83 tests):  80P 3F 0E   -- 3 failures (down from 5)
+FloatTest           (70 tests):  69P 1F 0E   -- 1 failure (down from 3)
+FractionTest        (27 tests):  27P 0F 0E   -- ALL PASS
+PointTest           (31 tests):  31P 0F 0E   -- ALL PASS
+CharacterTest       (13 tests):  13P 0F 0E   -- ALL PASS (was 12P)
+SymbolTest         (213 tests): 207P 0F 6E   -- 6 errors (inherited tests)
+StringTest         (383 tests): 377P 0F 6E   -- 6 errors (inherited tests)
+ArrayTest          (270 tests): 264P 0F 6E   -- 6 errors (inherited tests)
+OrderedCollectionTest (296 tests): 290P 0F 6E
+SetTest            (119 tests): 113P 0F 6E
+BagTest            (113 tests): 107P 0F 6E
+DictionaryTest     (151 tests): 145P 0F 6E
+AssociationTest      (8 tests):   8P 0F 0E   -- ALL PASS
+LinkedListTest     (255 tests): 249P 0F 6E
+SortedCollectionTest (233 tests): 227P 0F 6E
+IntervalTest       (205 tests): 199P 0F 6E
 ```
-Total verified: 238P, 7F, 4E across 6 classes (249 tests)
+**Total: 2431P, 4F, 60E (97.4% pass rate)**
+
+Note: The "6 errors" pattern affects collection tests that inherit from a common base
+class with tests like `testPrintStringAll`, `testStoreStringAll` that use compiler
+evaluation and hang/timeout.
 
 ### Known Hanging Tests
 - `CharacterTest>>testPrintStringAll` — calls `compiler evaluate:` 256 times
