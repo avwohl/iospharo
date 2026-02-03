@@ -16569,6 +16569,7 @@ Oop Interpreter::materializeFrameStack() {
             static const int ContextFixedFields = 6;
             ObjectHeader* ctxHdr = activeContext_.asObjectPtr();
             size_t ctxSlots = ctxHdr->slotCount();
+
             for (int i = 0; i < numItems && (ContextFixedFields + i) < static_cast<int>(ctxSlots); i++) {
                 Oop item = *(framePointer_ + 1 + i);
                 memory_.storePointer(ContextFixedFields + i, activeContext_, item);
@@ -16619,6 +16620,7 @@ Oop Interpreter::materializeFrameStack() {
 
             int savedCount = 0;
             static const int CtxFixed = 6;
+
             if (frame0.savedFP != nullptr) {
                 for (int t = 0; t < numTemps && t < 32; t++) {
                     memory_.storePointer(CtxFixed + t, activeContext_, *(frame0.savedFP + 1 + t));
