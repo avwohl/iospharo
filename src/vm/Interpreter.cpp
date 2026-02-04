@@ -71,6 +71,7 @@ Interpreter::Interpreter(ObjectMemory& memory)
     , instructionPointer_(nullptr)
     , bytecodeEnd_(nullptr)
     , activeContext_(Oop::nil())
+    , closure_(Oop::nil())
     , argCount_(0)
     , extA_(0)
     , extB_(0)
@@ -10281,9 +10282,9 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             }
         }
     }
-    if (false) {
+    if (g_stepNum >= 184000 && g_stepNum <= 190000) {
         static int windowCount = 0;
-        if (windowCount++ < 1000) {
+        if (windowCount++ < 2000) {
             std::string rcvrCls = "?";
             Oop rcvr = stackValue(argCount);
             if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
@@ -13135,6 +13136,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     }
     method_ = method;
     argCount_ = argCount;
+    closure_ = memory_.nil();  // Method activations have no closure
 
     if (traceActivate && activateLog) {
         fprintf(activateLog, "[ACTIVATE step=%llu] Determining homeMethod_\n", g_stepNum);
@@ -13573,8 +13575,9 @@ void Interpreter::activateBlock(Oop block, int argCount) {
         return;
     }
 
-    // Save the closure in the frame for context materialization
-    savedFrames_[frameDepth_ - 1].savedClosure = block;
+    // Set current closure for this block activation
+    // (pushFrame already saved the caller's closure_ in the saved frame)
+    closure_ = block;
 
     // For blocks: set the home frame depth for non-local returns
     // The home frame is where the block was LEXICALLY created, not just the
@@ -13922,7 +13925,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     frame.savedActiveContext = activeContext_;  // Save active context for proper return chain
     frame.savedFP = framePointer_;
     frame.savedArgCount = argCount_;
-    frame.savedClosure = memory_.nil();  // Default: not a block (set by activateBlock if needed)
+    frame.savedClosure = closure_;  // Save current frame's closure (nil for methods, block for block activations)
     frame.homeFrameDepth = 0;  // Default: not a block (will be set by activateBlock if needed)
 
 
@@ -13975,6 +13978,7 @@ void Interpreter::popFrame() {
     method_ = frame.savedMethod;
     homeMethod_ = frame.savedHomeMethod;
     receiver_ = frame.savedReceiver;
+    closure_ = frame.savedClosure;  // Restore caller's closure (nil for methods, block for block activations)
     activeContext_ = frame.savedActiveContext;  // Restore active context for proper return chain
     framePointer_ = frame.savedFP;
     argCount_ = frame.savedArgCount;
@@ -16929,7 +16933,7 @@ Oop Interpreter::materializeFrameStack() {
                 memory_.storePointer(1, context, Oop::fromSmallInteger(pc));    // pc
                 // stackp is set below after we know how many items we saved
                 memory_.storePointer(3, context, method_);                      // method
-                memory_.storePointer(4, context, memory_.nil());                // closureOrNil
+                memory_.storePointer(4, context, closure_);                      // closureOrNil
                 memory_.storePointer(5, context, receiver_);                    // receiver
 
                 // Copy current temps from frame
@@ -16991,6 +16995,19 @@ void Interpreter::transferTo(Oop newProcess) {
         return;  // Already running this process
     }
 
+    // Always log process switches to stderr for critical window
+    if (g_stepNum >= 180000 && g_stepNum <= 200000) {
+        // Get old process priority
+        int64_t oldPri = 0, newPri = 0;
+        Oop oldPriOop = memory_.fetchPointer(ProcessPriorityIndex, oldProcess);
+        if (oldPriOop.isSmallInteger()) oldPri = oldPriOop.asSmallInteger();
+        Oop newPriOop = memory_.fetchPointer(ProcessPriorityIndex, newProcess);
+        if (newPriOop.isSmallInteger()) newPri = newPriOop.asSmallInteger();
+        fprintf(stderr, "[PROC-SWITCH step=%llu] old=0x%llx(pri=%lld) -> new=0x%llx(pri=%lld)\n",
+                (unsigned long long)g_stepNum,
+                (unsigned long long)oldProcess.rawBits(), (long long)oldPri,
+                (unsigned long long)newProcess.rawBits(), (long long)newPri);
+    }
     if (xferLog && xferCount <= 100) {
         fprintf(xferLog, "[XFER #%d step=%lld] old=0x%llx new=0x%llx\n",
                 xferCount, (long long)g_stepNum, (unsigned long long)oldProcess.rawBits(),
@@ -19480,6 +19497,7 @@ bool Interpreter::executeFromContext(Oop context) {
         fprintf(stderr, "[EXEC-CTX-TRACE] method=0x%llx\n", (unsigned long long)method_.rawBits());
         fflush(stderr);
     }
+    closure_ = memory_.fetchPointer(4, context);  // closureOrNil
     receiver_ = memory_.fetchPointer(5, context);
 
     // CRITICAL: Check if receiver is raw 0 - this indicates corruption

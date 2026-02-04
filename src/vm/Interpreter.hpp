@@ -317,6 +317,7 @@ private:
     Oop newMethod_;         // Method about to be activated (for primitive 117 to read literals)
     Oop homeMethod_;        // Home CompiledMethod (for literal access in blocks)
     Oop receiver_;
+    Oop closure_;        // Current FullBlockClosure if executing a block, nil for methods
     Oop activeContext_;  // Current Smalltalk context (for sender chain)
     int argCount_;
 
