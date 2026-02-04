@@ -4894,8 +4894,7 @@ void Interpreter::returnValue(Oop value) {
                               << " with nil sender - going to terminate_process\n";
                 }
                 // Fall through to terminate current process
-            } else if (sender.isObject() && sender.rawBits() != nilObj.rawBits()
-                       && memory_.isValidPointer(sender)) {
+            } else if (sender.isObject() && sender.rawBits() != nilObj.rawBits()) {
                 ObjectHeader* senderHdr = sender.asObjectPtr();
                 if (g_crashTraceEnabled) {
                     fprintf(stderr, "[RETVAL-TRACE] senderHdr=%p slots=%zu fmt=%d\n",
@@ -17704,8 +17703,16 @@ bool Interpreter::executeFromContext(Oop context) {
         return false;
     }
 
-    // Get the raw pointer and validate it before dereferencing
-    uintptr_t rawPtr = context.rawBits();
+    // Fix unrelocated context pointer if needed
+    {
+        const uint64_t OLD_IMAGE_BASE = 0x10000000000ULL;
+        uint64_t ctxAddr = context.rawBits() & ~7ULL;
+        if (ctxAddr >= OLD_IMAGE_BASE && ctxAddr < OLD_IMAGE_BASE * 2) {
+            uint64_t offset = ctxAddr - OLD_IMAGE_BASE;
+            uint64_t newAddr = reinterpret_cast<uint64_t>(memory_.oldSpaceStart()) + offset;
+            context = memory_.oopFromPointer(reinterpret_cast<ObjectHeader*>(newAddr));
+        }
+    }
 
     // Validate the context pointer is in valid heap memory
     if (!memory_.isValidPointer(context)) {
@@ -17751,11 +17758,6 @@ bool Interpreter::executeFromContext(Oop context) {
     }
     closure_ = memory_.fetchPointer(4, context);  // closureOrNil
     receiver_ = memory_.fetchPointer(5, context);
-
-    // Validate method pointer before any access
-    if (!method_.isObject() || !memory_.isValidPointer(method_)) {
-        return false;
-    }
 
     // Check for and fix unrelocated pointers (old image base 0x10000000000+)
     // The old Spur 64-bit image base is 0x10000000000 (1TB)

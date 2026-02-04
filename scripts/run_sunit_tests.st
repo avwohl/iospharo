@@ -8,20 +8,23 @@ Object subclass: #SUnitRunner
 
 !SUnitRunner class methodsFor: 'running'!
 runAllTests
-  "Run all tests and write results to /tmp/sunit_test_results.txt"
-  | result testClasses |
+  "Run all tests and write results incrementally to /tmp/sunit_test_results.txt"
+  | testClasses stream |
   testClasses := {
     SmallIntegerTest. IntegerTest. FloatTest. FractionTest.
-    PointTest. CharacterTest. ArrayTest. OrderedCollectionTest.
-    StringTest. SymbolTest. DictionaryTest. SetTest. BagTest. IntervalTest }.
+    PointTest. CharacterTest. OrderedCollectionTest.
+    StringTest. SymbolTest. DictionaryTest. SetTest. BagTest. IntervalTest.
+    ArrayTest "last - known to crash test process" }.
 
-  result := String streamContents: [:s |
-    s nextPutAll: '=== SUnit Test Run ==='; cr; cr.
-    testClasses do: [:tc | self runTestClass: tc on: s].
-    s nextPutAll: '=== ALL TESTS COMPLETE ==='; cr].
-
-  '/tmp/sunit_test_results.txt' asFileReference
-    writeStreamDo: [:ws | ws nextPutAll: result].
+  stream := '/tmp/sunit_test_results.txt' asFileReference writeStream.
+  [stream nextPutAll: '=== SUnit Test Run ==='; cr; cr.
+   stream flush.
+   testClasses do: [:tc |
+     self runTestClass: tc on: stream.
+     stream flush].
+   stream nextPutAll: '=== ALL TESTS COMPLETE ==='; cr.
+   stream flush]
+  ensure: [stream close].
   Smalltalk exitSuccess! !
 
 !SUnitRunner class methodsFor: 'running'!
@@ -32,7 +35,7 @@ runTestClass: testClass on: s
   sels := testClass allTestSelectors asArray sorted.
 
   sels do: [:sel |
-    "Skip tests known to hang"
+    "Skip tests known to hang or cause VM-level crashes"
     (#(testPrintStringAll testStoreStringAll) includes: sel) ifFalse: [
       [[testClass new setUp; perform: sel; tearDown. p := p + 1]
         on: TestFailure do: [:ex |
