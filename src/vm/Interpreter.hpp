@@ -900,6 +900,7 @@ private:
     PrimitiveResult primNormalizeNegative(int argCount);
     PrimitiveResult primDigitDivNegative(int argCount);
     PrimitiveResult primDigitSubtractLargeIntegers(int argCount);
+    PrimitiveResult primDigitCompare(int argCount);
 
     // Time/Timezone primitives (242-246)
     PrimitiveResult primitiveSignalAtUTCMicroseconds(int argCount);  // 242

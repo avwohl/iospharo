@@ -18734,6 +18734,11 @@ void Interpreter::initializeNamedPrimitives() {
     registerNamedPrimitive("LargeIntegers", "primNormalizeNegative", &Interpreter::primNormalizeNegative);
     registerNamedPrimitive("LargeIntegers", "primDigitDivNegative", &Interpreter::primDigitDivNegative);
     registerNamedPrimitive("LargeIntegers", "primDigitSubtract", &Interpreter::primDigitSubtractLargeIntegers);
+    registerNamedPrimitive("LargeIntegers", "primDigitBitAnd", &Interpreter::primitiveBitAndLargeIntegers);
+    registerNamedPrimitive("LargeIntegers", "primDigitBitOr", &Interpreter::primitiveBitOrLargeIntegers);
+    registerNamedPrimitive("LargeIntegers", "primDigitBitXor", &Interpreter::primitiveBitXorLargeIntegers);
+    registerNamedPrimitive("LargeIntegers", "primDigitBitShiftMagnitude", &Interpreter::primitiveBitShiftLargeIntegers);
+    registerNamedPrimitive("LargeIntegers", "primDigitCompare", &Interpreter::primDigitCompare);
 
     // SDL2 input semaphore - enables SDL2 event polling
     // The image calls this to register a semaphore for SDL2 event notification

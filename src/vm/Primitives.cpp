@@ -7072,13 +7072,13 @@ PrimitiveResult Interpreter::primitiveBitShiftLargeIntegers(int argCount) {
                 result[i - byteShift] = aMag[i];
             }
 
-            // Apply bit shift within bytes
+            // Apply bit shift within bytes (from high to low, carry flows downward)
             if (bitShift > 0) {
                 uint8_t carry = 0;
                 for (size_t i = result.size(); i > 0; i--) {
-                    uint16_t val = (static_cast<uint16_t>(result[i-1]) << (8 - bitShift)) | (carry << 8);
-                    carry = result[i-1] & ((1 << bitShift) - 1);
-                    result[i-1] = val >> 8;
+                    uint8_t byte = result[i-1];
+                    result[i-1] = (byte >> bitShift) | (carry << (8 - bitShift));
+                    carry = byte & ((1 << bitShift) - 1);
                 }
             }
         }
@@ -7319,6 +7319,29 @@ PrimitiveResult Interpreter::primDigitSubtractLargeIntegers(int argCount) {
 
     popN(2);
     push(result);
+    return PrimitiveResult::Success;
+}
+
+// primDigitCompare: compare magnitudes of two integers
+// Returns SmallInteger: -1 if receiver < arg, 0 if equal, 1 if receiver > arg
+PrimitiveResult Interpreter::primDigitCompare(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    std::vector<uint8_t> aMag, bMag;
+    bool aNeg, bNeg;
+
+    if (!extractInteger(memory_, rcvr, aMag, aNeg) ||
+        !extractInteger(memory_, arg, bMag, bNeg)) {
+        return PrimitiveResult::Failure;
+    }
+
+    int cmp = compareMagnitudes(aMag, bMag);
+
+    popN(2);
+    push(Oop::fromSmallInteger(cmp));
     return PrimitiveResult::Success;
 }
 

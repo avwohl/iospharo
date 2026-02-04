@@ -229,7 +229,23 @@ Oop ObjectMemory::allocateBytes(uint32_t classIndex, size_t byteCount) {
 
     // TEMPORARY FIX: Allocate directly in old space (see allocateSlots comment)
     ObjectHeader* obj = allocateRaw(totalSize, Space::Old);
-    if (!obj) return nilObject_;
+
+    if (!obj) {
+        // Old space is full - try a full GC and retry
+        static int gcRetryCount = 0;
+        if (gcRetryCount < 10) {
+            gcRetryCount++;
+            if (gcRetryCount <= 3) {
+                std::cerr << "[ALLOC-BYTES-GC #" << gcRetryCount << "] Old space full, triggering GC and retry...\n";
+            }
+            fullGC();
+            obj = allocateRaw(totalSize, Space::Old);
+            if (obj && gcRetryCount <= 3) {
+                std::cerr << "[ALLOC-BYTES-GC #" << gcRetryCount << "] GC freed space, allocation succeeded\n";
+            }
+        }
+        if (!obj) return nilObject_;
+    }
 
     // Handle overflow
     if (hasOverflow) {
@@ -292,7 +308,23 @@ Oop ObjectMemory::allocateWords(uint32_t classIndex, size_t wordCount) {
 
     // TEMPORARY FIX: Allocate directly in old space (see allocateSlots comment)
     ObjectHeader* obj = allocateRaw(totalSize, Space::Old);
-    if (!obj) return nilObject_;
+
+    if (!obj) {
+        // Old space is full - try a full GC and retry
+        static int gcRetryCount = 0;
+        if (gcRetryCount < 10) {
+            gcRetryCount++;
+            if (gcRetryCount <= 3) {
+                std::cerr << "[ALLOC-WORDS-GC #" << gcRetryCount << "] Old space full, triggering GC and retry...\n";
+            }
+            fullGC();
+            obj = allocateRaw(totalSize, Space::Old);
+            if (obj && gcRetryCount <= 3) {
+                std::cerr << "[ALLOC-WORDS-GC #" << gcRetryCount << "] GC freed space, allocation succeeded\n";
+            }
+        }
+        if (!obj) return nilObject_;
+    }
 
     if (hasOverflow) {
         uint64_t* overflow = reinterpret_cast<uint64_t*>(obj);

@@ -145,26 +145,26 @@ The `unwindTo:` traversal isn't finding or executing the inserted ensure: block 
 
 ### Custom VM Test Results (13/14 classes complete, StringTest times out)
 
-Run on custom C++ VM via `./build/test_load_image /tmp/test.image test`
+Run on custom C++ VM via `./build/test_load_image /tmp/Pharo.image test`
 with 10B step limit. Test runner: `scripts/run_sunit_tests.st`
 
 ```
 SmallIntegerTest      (29 tests):  29P  0F  0E  -- ALL PASS
-IntegerTest           (83 tests):  79P  1F  3E  -- 1 fail (testLowBit), 3 TestSkipped
-FloatTest             (75 tests):  70P  0F  5E  -- 4 errors + 1 TestSkipped
+IntegerTest           (83 tests):  80P  0F  3E  -- 3 TestSkipped only
+FloatTest             (75 tests):  71P  0F  4E  -- 3 errors + 1 TestSkipped
 FractionTest          (32 tests):  32P  0F  0E  -- ALL PASS
 PointTest             (36 tests):  36P  0F  0E  -- ALL PASS
 CharacterTest         (19 tests):  17P  0F  0E  -- ALL PASS (2 skipped by runner)
 DictionaryTest       (205 tests): 205P  0F  0E  -- ALL PASS
 SetTest              (174 tests): 174P  0F  0E  -- ALL PASS
 BagTest              (168 tests): 168P  0F  0E  -- ALL PASS
-IntervalTest         (260 tests): 258P  0F  2E  -- 2 errors
-SymbolTest           (268 tests): 267P  0F  1E  -- 1 error
-OrderedCollectionTest(351 tests): 350P  0F  1E  -- 1 error
-ArrayTest            (324 tests): 320P  1F  3E  -- 1 fail, 3 errors
+IntervalTest         (260 tests): 259P  0F  1E  -- 1 stream error
+SymbolTest           (268 tests): 268P  0F  0E  -- ALL PASS
+OrderedCollectionTest(351 tests): 351P  0F  0E  -- ALL PASS
+ArrayTest            (324 tests): 321P  1F  2E  -- 1 fail, 2 errors
 StringTest           (438 tests):  ---  --  --  -- TIMES OUT (too slow)
 -----------------------------------------------------------------
-Totals (13 classes):  2005P  2F 15E  (99.2% pass rate)
+Totals (13 classes):  2043P  1F 10E  (99.5% pass rate)
 ```
 
 ### Remaining Failures
@@ -173,20 +173,11 @@ Totals (13 classes):  2005P  2F 15E  (99.2% pass rate)
 - IntegerTest: `testCreationFromBytes1/2/3` — test explicitly skips
 - FloatTest: `testNaNCompare` — test explicitly skips
 
-**testAtRandom (4 errors) — SharedRandom not initialized:**
-- IntervalTest, SymbolTest, OrderedCollectionTest, ArrayTest
-- Error: `nil >> #strictlyPositive` — global random generator is nil
-- Root cause: SharedRandom startup handler not running
-
-**Stream position errors (4 errors) — PositionableStream issue:**
+**Stream position errors (3 errors) — PositionableStream issue:**
 - FloatTest: `testStoreOnRoundTrip`
 - IntervalTest: `testIntervalStoreOn`
 - ArrayTest: `testSelfEvaluating`, `testSelfEvaluatingComplexCase`
 - Error: `Attempt to set the position of a PositionableStream out of bounds`
-
-**testLowBit (1 fail) — non-deterministic, LargeInteger issue:**
-- IntegerTest: testLowBit — wrong result for `(large raisedTo: 20) lowBit`
-- Values vary between runs (41, 81, 161) — suggests Smalltalk fallback issue
 
 **testPrintingRecursive (1 fail) — recursion depth:**
 - ArrayTest: `Got 24520 instead of 50000` — recursion limit too low
@@ -194,9 +185,6 @@ Totals (13 classes):  2005P  2F 15E  (99.2% pass rate)
 **Float-specific errors (2 errors):**
 - FloatTest: `test32bitConversion` — `nil >> #asIEEE32BitWord`
 - FloatTest: `testBinaryLiteralString` — Float nan handling
-
-**Intermittent (may not appear in every run):**
-- FloatTest: `testFloatRounded` — LargePositiveInteger basicNew: fails
 
 ### Key Bugs Fixed This Session
 
@@ -212,6 +200,30 @@ Totals (13 classes):  2005P  2F 15E  (99.2% pass rate)
    - generated_primitives.inc had them as `nullptr` (Reserved)
    - Fixed by registering them in the table
    - Result: testHighBit, testHighBitOfMagnitude, testPrintStringBase all fixed
+
+3. **Directed super sends (bytecode 0xEB with ExtB >= 64)** — MAJOR FIX
+   - FullBlockClosures use directed super sends where the defining class is pushed
+     onto the stack. Our VM didn't handle this form, computing numArgs as 512+
+   - Fixed by properly popping the class and looking up from its superclass
+   - Result: testAtRandom fixed in IntervalTest, SymbolTest, OrderedCollectionTest, ArrayTest
+
+4. **LargeInteger named primitives not registered** — MAJOR FIX
+   - Pharo 13 LargePositiveInteger methods use named primitives from 'LargeIntegers'
+     module (primDigitBitAnd, primDigitBitOr, primDigitBitXor, primDigitBitShiftMagnitude)
+   - These were NOT registered, so all LargeInteger bitwise ops fell back to Smalltalk
+   - The Smalltalk fallback code produced non-deterministic wrong results
+   - Fixed by registering named primitives pointing to existing implementations
+   - Also added primDigitCompare named primitive
+   - Result: testLowBit, testHighBit, testHighBitOfMagnitude all fixed (deterministic)
+
+5. **GC retry for byte/word allocations** — ROBUSTNESS FIX
+   - allocateBytes() and allocateWords() returned nil when old space was full
+   - allocateSlots() had GC retry logic but these didn't
+   - Added GC retry to both functions matching allocateSlots() pattern
+
+6. **Right shift formula in primitiveBitShiftLargeIntegers** — BUG FIX
+   - Old formula `(byte << (8-bitShift)) | (carry << 8) >> 8` was incorrect
+   - Fixed to `(byte >> bitShift) | (carry << (8-bitShift))`
 
 ### Sort issue - RESOLVED
 The default `sorted` method was astronomically slow because the Pharo image's
