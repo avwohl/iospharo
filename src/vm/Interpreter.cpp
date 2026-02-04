@@ -5706,6 +5706,80 @@ void Interpreter::returnFromMethod() {
             return;
         }
     }
+
+    // DIAG: Detect missed NLR — we're about to do a regular return, but if we're
+    // in a CompiledBlock (not a CompiledMethod), this was a ^ inside a block that
+    // SHOULD have been an NLR. Log this case.
+    {
+        static FILE* missedNlrLog = nullptr;
+        static int missedNlrCount = 0;
+        bool isCompiledBlock = false;
+        std::string homeMethodSel = "?";
+        if (method_.isObject() && method_.rawBits() > 0x10000) {
+            ObjectHeader* mObj = method_.asObjectPtr();
+            if (mObj->isCompiledMethod()) {
+                Oop hdr = memory_.fetchPointer(0, method_);
+                if (hdr.isSmallInteger()) {
+                    int numLits = hdr.asSmallInteger() & 0x7FFF;
+                    if (numLits >= 1) {
+                        Oop lastLit = memory_.fetchPointer(numLits, method_);
+                        if (lastLit.isObject() && lastLit.rawBits() > 0x10000) {
+                            ObjectHeader* llHdr = lastLit.asObjectPtr();
+                            if (llHdr->isCompiledMethod()) {
+                                isCompiledBlock = true;
+                                // Get home method's selector (penultimate literal of home method)
+                                Oop homeHdr = memory_.fetchPointer(0, lastLit);
+                                if (homeHdr.isSmallInteger()) {
+                                    int homeNumLits = homeHdr.asSmallInteger() & 0x7FFF;
+                                    if (homeNumLits >= 2) {
+                                        Oop homeSel = memory_.fetchPointer(homeNumLits - 1, lastLit);
+                                        if (homeSel.isObject() && homeSel.rawBits() > 0x10000) {
+                                            ObjectHeader* hsHdr = homeSel.asObjectPtr();
+                                            if (hsHdr->isBytesObject() && hsHdr->byteSize() < 80)
+                                                homeMethodSel = std::string((char*)hsHdr->bytes(), hsHdr->byteSize());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (isCompiledBlock && missedNlrCount < 50) {
+            if (!missedNlrLog) missedNlrLog = fopen("/tmp/missed_nlr.log", "w");
+            if (missedNlrLog) {
+                missedNlrCount++;
+                size_t hfd = (frameDepth_ > 0) ? savedFrames_[frameDepth_ - 1].homeFrameDepth : SIZE_MAX;
+                fprintf(missedNlrLog, "[MISSED-NLR #%d step=%llu] fd=%zu hfd=%zu homeMethod=#%s\n",
+                        missedNlrCount, (unsigned long long)g_stepNum, frameDepth_, hfd,
+                        homeMethodSel.c_str());
+                // Show frame stack
+                for (size_t i = 0; i < frameDepth_ && i < 15; i++) {
+                    std::string sm = "?";
+                    Oop smOop = savedFrames_[i].savedMethod;
+                    if (smOop.isObject() && smOop.rawBits() > 0x10000) {
+                        Oop smHdr = memory_.fetchPointer(0, smOop);
+                        if (smHdr.isSmallInteger()) {
+                            int smNumLits = smHdr.asSmallInteger() & 0x7FFF;
+                            if (smNumLits >= 2) {
+                                Oop smSel = memory_.fetchPointer(smNumLits - 1, smOop);
+                                if (smSel.isObject() && smSel.rawBits() > 0x10000) {
+                                    ObjectHeader* ssHdr = smSel.asObjectPtr();
+                                    if (ssHdr->isBytesObject() && ssHdr->byteSize() < 80)
+                                        sm = std::string((char*)ssHdr->bytes(), ssHdr->byteSize());
+                                }
+                            }
+                        }
+                    }
+                    fprintf(missedNlrLog, "  [%zu] #%s hfd=%zu\n",
+                            i, sm.c_str(), savedFrames_[i].homeFrameDepth);
+                }
+                fflush(missedNlrLog);
+            }
+        }
+    }
+
     returnValue(value);
 }
 
@@ -13996,22 +14070,20 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
     // so blocks created inside other blocks will capture the correct context chain
 
     // Set fields
-    // IMPORTANT: When running inline (frameDepth_ > 0), we must ensure the outerContext
-    // is a proper context object that will match when compared with thisContext later.
-    // If we're running inline, materialize the frame stack first so the context identity
-    // is preserved when the block's home method is accessed via thisContext.
+    // For FullBlockClosure, the outerContext is used only for debugging/introspection
+    // (e.g., thisContext, stack traces). All captured variables are in the copied slots,
+    // NOT accessed via outerContext. So we do NOT need to materialize the frame stack here.
+    //
+    // CRITICAL: Previously we called materializeFrameStack() here, which reset frameDepth_
+    // to 0 and destroyed all inline frame information. This broke non-local returns (NLR)
+    // from blocks because activateBlock() could no longer find the home frame in savedFrames_.
+    //
+    // Instead, we use activeContext_ as-is. It may be nil (if we've never materialized) or
+    // a context from a previous materialization. This is fine because:
+    // 1. FullBlockClosure execution doesn't access outerContext
+    // 2. NLR uses the CompiledBlock's home method + inline frame stack, not outerContext
+    // 3. If Smalltalk code needs thisContext, it will trigger materialization at that point
     Oop outerContextForBlock = activeContext_;
-    if (frameDepth_ > 0) {
-        // Materialize inline frames to ensure proper context identity
-        outerContextForBlock = materializeFrameStack();
-        activeContext_ = outerContextForBlock;
-        // CRITICAL: Reset frameDepth_ after materialization, just like pushThisContext does.
-        // Without this, stale savedFrames_ data causes duplicate contexts to be created
-        // on subsequent materializations (e.g., when contextEnsure: calls thisContext),
-        // resulting in incorrect sender chains where handler blocks point to stale
-        // unwindAndStop: contexts instead of the outer ensure: context.
-        frameDepth_ = 0;
-    }
     memory_.storePointer(0, block, outerContextForBlock);  // outerContext
     memory_.storePointer(1, block, compiledBlock);   // compiledBlock (instead of startPC)
 
