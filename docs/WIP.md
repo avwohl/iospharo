@@ -145,26 +145,26 @@ The `unwindTo:` traversal isn't finding or executing the inserted ensure: block 
 
 ### Custom VM Test Results (14 classes)
 
-Run on custom C++ VM via `./build/test_load_image /tmp/test.image test`
+Run on custom C++ VM via `./build/test_load_image /tmp/Pharo.image test`
 with 10B step limit. Test runner: `scripts/run_sunit_tests.st`
 
 ```
-SmallIntegerTest    (29 tests):  29P  0F  0E  -- ALL PASS
-IntegerTest         (83 tests):  76P  4F  3E  -- testHighBit, testLowBit, testReciprocalModulo, testSlowFactorial fail; 3 TestSkipped errors
-FloatTest           (75 tests):  71P  0F  4E  -- test32bitConversion (MNU), testBinaryLiteralString (SubscriptOutOfBounds), testNaNCompare (TestSkipped), testStoreOnRoundTrip (Error)
-FractionTest        (32 tests):  32P  0F  0E  -- ALL PASS
-PointTest           (36 tests):  36P  0F  0E  -- ALL PASS
-CharacterTest       (19 tests):  17P  0F  0E  -- ALL PASS (2 tests skipped by runner)
-DictionaryTest     (205 tests): 195P  3F  7E  -- 6 Deprecation errors, 1 KeyNotFound; 3 failures
-SetTest            (174 tests): 164P  4F  6E  -- 6 Deprecation errors; 4 failures
-BagTest            (168 tests): 161P  1F  6E  -- 6 Deprecation errors; 1 failure
-IntervalTest             ---:  SUSPENDED      -- process suspends during allTestSelectors asArray sorted
-SymbolTest               ---:  SUSPENDED      -- process suspends during first test
-StringTest               ---:  SUSPENDED      -- process suspends during first test
-OrderedCollectionTest    ---:  NOT REACHED
-ArrayTest                ---:  NOT REACHED
+SmallIntegerTest      (29 tests):  29P  0F  0E  -- ALL PASS
+IntegerTest           (83 tests):  78P  2F  3E  -- testLowBit, testReciprocalModulo fail; 3 TestSkipped
+FloatTest             (75 tests):  71P  0F  4E  -- 4 errors (see below)
+FractionTest          (32 tests):  32P  0F  0E  -- ALL PASS
+PointTest             (36 tests):  36P  0F  0E  -- ALL PASS
+CharacterTest         (19 tests):  17P  0F  0E  -- ALL PASS (2 skipped by runner)
+DictionaryTest       (205 tests): 195P  3F  7E  -- 6 Deprecation, 1 KeyNotFound; 3 failures
+SetTest              (174 tests): 164P  4F  6E  -- 6 Deprecation; 4 failures
+BagTest              (168 tests): 161P  1F  6E  -- 6 Deprecation; 1 failure
+IntervalTest         (260 tests): 252P  0F  8E  -- 6 Deprecation, testAtRandom (MNU), testIntervalStoreOn (Error)
+SymbolTest           (268 tests): 261P  0F  7E  -- 6 Deprecation, testAtRandom (MNU)
+OrderedCollectionTest(351 tests): 343P  1F  7E  -- 6 Deprecation, testAtRandom (MNU); testAtIfAbsentPut fails
+ArrayTest            (324 tests): 314P  1F  9E  -- 6 Deprecation, testAtRandom (MNU), 2 eval errors; testPrintingRecursive fails
+StringTest           (438 tests): TIMEOUT        -- sort completes but 438 tests exceed step limit
 ```
-**9 of 14 classes completed: 781P, 12F, 26E (95.4% pass rate)**
+**13 of 14 classes completed: 1953P, 12F, 57E (96.5% pass rate)**
 
 ### Comparison: Standard Pharo VM (reference)
 ```
@@ -193,18 +193,15 @@ selectors (different Pharo versions / test trait inheritance).
 
 ### Key Issues
 
-**1. Process suspension (IntervalTest, SymbolTest, StringTest)**
-- IntervalTest suspends during `allTestSelectors asArray sorted` (before any test runs)
-- SymbolTest/StringTest suspend during first test execution
-- VM goes idle (not infinite loop) — the test process gets suspended
-- This is the #1 blocker for getting results on remaining 5 classes
-- Root cause unknown — likely a missing primitive or broken message send path
+**1. StringTest timeout**
+- 438 tests exceed the 10B step limit
+- Sort completes fine (2013 comparisons) but individual tests are slow
+- Interpreter overhead per test is high without JIT compilation
+- Not a correctness issue — just interpreter speed
 
-**2. IntegerTest failures (4 failures, 3 errors)**
+**2. IntegerTest failures (2 failures, 3 errors)**
 - `testLowBit` — consistently fails (primitiveLowBit implementation issue?)
-- `testHighBit` — flaky, sometimes passes
-- `testReciprocalModulo` — flaky
-- `testSlowFactorial` — flaky
+- `testReciprocalModulo` — fails
 - 3 `TestSkipped` errors (testCreationFromBytes1/2/3)
 
 **3. FloatTest errors (4 errors)**
@@ -213,15 +210,25 @@ selectors (different Pharo versions / test trait inheritance).
 - `testNaNCompare` — TestSkipped
 - `testStoreOnRoundTrip` — Error
 
-**4. Collection test failures (8 failures across 3 classes)**
+**4. Collection test failures (9 failures across 5 classes)**
 - DictionaryTest: testKeyAtIdentityValueIfAbsent, testNilHashCollision, testOccurrencesOf
 - SetTest: testAllowInclusionOfNils, testIsHealthy, testMaxIfNil, testSetWithNilItemsIsHealthy
 - BagTest: testOccurrencesOf
+- OrderedCollectionTest: testAtIfAbsentPut
+- ArrayTest: testPrintingRecursive
 - Pattern: nil-handling and identity-related tests fail → possible hash or identity comparison issue
 
-**5. Collection test errors (18 Deprecation + 1 KeyNotFound)**
-- 18 `testAsStringOnDelimiter*` tests throw Deprecation (not caught by `on: Exception do:`)
+**5. Common errors across all collection classes**
+- 42 `testAsStringOnDelimiter*` errors (Deprecation exception not caught)
+- 5 `testAtRandom` errors (MessageNotUnderstood — Random not available?)
 - DictionaryTest `testAtPutNil` throws KeyNotFound
+- ArrayTest testSelfEvaluating/testSelfEvaluatingComplexCase (eval errors)
+
+### Sort issue - RESOLVED
+The default `sorted` method was astronomically slow because the Pharo image's
+sort path triggers many failed primitive 117 dispatches per comparison. Fixed by
+using explicit `sort: [:a :b | a <= b]` block in test runner, which bypasses the
+slow path. Sort completes with O(n log n) comparisons (e.g., 1056 for 260 items).
 
 ### Key Bugs Fixed (2026-02-03)
 5. **BlockClosure outerContext identity**: When blocks were created during inline
