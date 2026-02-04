@@ -6201,63 +6201,9 @@ void Interpreter::arithmeticSend(int which) {
         }
     }
 
-    // Get receiver and check for nil early to prevent crashes
-    Oop arg = stackValue(0);
-    Oop rcvr = stackValue(1);
-
-    // std::cerr << "[ARITH-DEBUG] arg=0x" << std::hex << arg.rawBits()
-              // << " rcvr=0x" << rcvr.rawBits() << std::dec;
-
-    Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
-    // std::cerr << "[ARITH-DEBUG] nilObj=0x" << std::hex << nilObj.rawBits() << std::dec; // DEBUG
-
-    // If receiver is nil, handle gracefully based on operation type
-    if (rcvr.rawBits() == 0 || rcvr.rawBits() == nilObj.rawBits()) {
-        // std::cerr << "[ARITH] Nil receiver for operation " << which << " - returning nil/false"; // DEBUG
-        popN(2);  // Pop receiver and argument
-        // For comparisons, return false; for arithmetic, return nil
-        if (which >= 2 && which <= 7) {
-            if (which == 7) {  // ~= (not equal)
-                push(memory_.trueObject());  // nil ~= anything is true
-            } else {
-                push(memory_.falseObject());  // nil < > = anything is false
-            }
-        } else {
-            push(nilObj);  // Arithmetic on nil returns nil
-        }
-        return;
-    }
-
-    // Get receiver class name for fallback handling
-    std::string rcvrClassName = "<unknown>";
-    if (!rcvr.isSmallInteger() && rcvr.isObject()) {
-        Oop rcvrClass = memory_.classOf(rcvr);
-        if (rcvrClass.isObject()) {
-            ObjectHeader* clsHdr = rcvrClass.asObjectPtr();
-            if (clsHdr->slotCount() > 6) {
-                Oop nameOop = memory_.fetchPointer(6, rcvrClass);
-                if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
-                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                    if (nameHdr->isBytesObject() && nameHdr->byteSize() <= 50) {
-                        rcvrClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                    }
-                }
-            }
-        }
-    }
-
-    // For startup/snapshot resume, provide aggressive fallbacks for ALL non-SmallInteger
-    // receivers to avoid DNU spirals. This allows the VM to continue executing even if
-    // arithmetic methods are missing on some objects.
-
-    // Note: arithmetic operations (+, -, *, /) on non-SmallInteger receivers
-    // (e.g., Float) must go through normal method lookup to find Float>>+, etc.
-
-    // For ordering comparisons (< > <= >=), provide fallback for non-numeric types
-    // NOTE: = and ~= MUST go through method lookup to handle String comparisons, etc.
-    if (which >= 2 && which <= 5) {
-    }
-    // Don't short-circuit = and ~= (which 6 and 7) - objects define their own equality!
+    // Nil is a valid Smalltalk object (UndefinedObject). All sends to nil must go
+    // through normal method dispatch. Object>>#= does ^ self == anObject, which
+    // correctly handles nil = nil → true via primitiveIdentical.
 
     // Note: @ (which=11) must go through method lookup to find Number>>@.
     // Bit operations on non-integers should also go through method lookup.

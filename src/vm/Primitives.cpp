@@ -2847,17 +2847,6 @@ PrimitiveResult Interpreter::primitiveClass(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveIdentical(int argCount) {
-    static uint64_t identTotalCount = 0;
-    identTotalCount++;
-    if (identTotalCount % 1000000 == 0) {
-        static FILE* identCountLog = nullptr;
-        if (!identCountLog) identCountLog = nullptr;
-        if (identCountLog) {
-            fprintf(identCountLog, "[IDENT] total=%llu at step %llu\n",
-                    (unsigned long long)identTotalCount, g_stepNum);
-            fflush(identCountLog);
-        }
-    }
     Oop arg = stackValue(0);   // otherObject
     Oop rcvr = stackValue(1);  // thisObject
 
