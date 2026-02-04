@@ -2721,8 +2721,8 @@ bool Interpreter::step() {
     // Track step count (for debugging if needed)
     g_stepNum++;
 
-    // DETAILED BYTECODE TRACE for step range around nil>>signal bug
-    if (g_stepNum >= 21610 && g_stepNum <= 21690) {
+    // DETAILED BYTECODE TRACE for step range around suspendedContext set-back
+    if (g_stepNum >= 21770 && g_stepNum <= 22210) {
         static FILE* bcTraceLog = nullptr;
         if (!bcTraceLog) bcTraceLog = fopen("/tmp/bytecode_detail.log", "w");
         if (bcTraceLog) {
@@ -2767,11 +2767,16 @@ bool Interpreter::step() {
                     }
                 }
             }
-            fprintf(bcTraceLog, "[%llu] bc=0x%02X fd=%zu %s#%s rcvr=%s actx=0x%llx sp=%lld\n",
+            // Also get sender for context chain tracing
+            Oop ctxSender = (activeContext_.isObject() && activeContext_.rawBits() > 0x10000)
+                ? memory_.fetchPointer(0, activeContext_) : Oop::fromSmallInteger(-1);
+            fprintf(bcTraceLog, "[%llu] bc=0x%02X fd=%zu %s#%s rcvr=%s actx=0x%llx sender=0x%llx sp=%lld\n",
                     g_stepNum, bc, frameDepth_,
                     isBlock ? "BLOCK/" : "",
                     methodSel.c_str(), rcvrCls.c_str(),
-                    (unsigned long long)activeContext_.rawBits(), (long long)ctxStackp);
+                    (unsigned long long)activeContext_.rawBits(),
+                    (unsigned long long)ctxSender.rawBits(),
+                    (long long)ctxStackp);
             // Log inline stack contents
             ptrdiff_t stackItems = stackPointer_ - framePointer_;
             fprintf(bcTraceLog, "  FP=%p SP=%p items=%td", (void*)framePointer_, (void*)stackPointer_, stackItems);
@@ -17421,6 +17426,22 @@ void Interpreter::transferTo(Oop newProcess) {
         return;  // Already running this process
     }
 
+    // Log early process switches to understand termination flow
+    {
+        static int earlyXferLog = 0;
+        earlyXferLog++;
+        if (earlyXferLog <= 30) {
+            Oop oldPri2 = memory_.fetchPointer(ProcessPriorityIndex, oldProcess);
+            Oop newPri2 = memory_.fetchPointer(ProcessPriorityIndex, newProcess);
+            fprintf(stderr, "[XFER #%d step=%llu] old=0x%llx(p%lld) new=0x%llx(p%lld)\n",
+                    earlyXferLog, (unsigned long long)g_stepNum,
+                    (unsigned long long)oldProcess.rawBits(),
+                    oldPri2.isSmallInteger() ? oldPri2.asSmallInteger() : -1,
+                    (unsigned long long)newProcess.rawBits(),
+                    newPri2.isSmallInteger() ? newPri2.asSmallInteger() : -1);
+        }
+    }
+
     // Always log process switches to stderr for critical window
     if (g_stepNum >= 180000 && g_stepNum <= 200000) {
         // Get old process priority
@@ -17566,20 +17587,27 @@ void Interpreter::transferTo(Oop newProcess) {
         fflush(xferLog);
     }
 
-    // Don't save context for terminated processes (suspendedContext already set to nil)
-    Oop oldSuspCtx = memory_.fetchPointer(ProcessSuspendedContextIndex, oldProcess);
-    bool oldProcessTerminated = (oldSuspCtx.rawBits() == memory_.nil().rawBits());
-    if (!oldProcessTerminated && !contextToSave.isNil() && contextToSave.isObject()) {
-        memory_.storePointer(ProcessSuspendedContextIndex, oldProcess, contextToSave);
-        if (xferLog && xferCount <= 100) {
-            // Verify the save
-            Oop verify = memory_.fetchPointer(ProcessSuspendedContextIndex, oldProcess);
-            fprintf(xferLog, "  VERIFIED: saved context 0x%llx, read back 0x%llx (%s)\n",
-                    (unsigned long long)contextToSave.rawBits(),
-                    (unsigned long long)verify.rawBits(),
-                    (verify.rawBits() == contextToSave.rawBits()) ? "MATCH" : "MISMATCH");
-            fflush(xferLog);
+    // Save context unconditionally (matches official Pharo VM behavior).
+    // The official VM does NOT check for nil sender — it always saves the
+    // context. Process termination state is detected by Smalltalk code via
+    // suspendedContext method == Process>>#endProcess, not via nil.
+    if (!contextToSave.isNil() && contextToSave.isObject()) {
+        {
+            static int xferSaveLog = 0;
+            xferSaveLog++;
+            if (xferSaveLog <= 30) {
+                Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, oldProcess);
+                int prio = prioOop.isSmallInteger() ? static_cast<int>(prioOop.asSmallInteger()) : -1;
+                Oop senderOfSaved = memory_.fetchPointer(0, contextToSave);
+                fprintf(stderr, "[XFER-SAVE #%d step=%llu] proc=0x%llx(p%d) ctx=0x%llx sender=0x%llx (nil=%d)\n",
+                        xferSaveLog, (unsigned long long)g_stepNum,
+                        (unsigned long long)oldProcess.rawBits(), prio,
+                        (unsigned long long)contextToSave.rawBits(),
+                        (unsigned long long)senderOfSaved.rawBits(),
+                        (int)(senderOfSaved.rawBits() == memory_.nil().rawBits()));
+            }
         }
+        memory_.storePointer(ProcessSuspendedContextIndex, oldProcess, contextToSave);
     }
 
     // Switch to new process
@@ -20488,6 +20516,34 @@ bool Interpreter::executeFromContext(Oop context) {
                 Oop numArgsOop = memory_.fetchPointer(2, closureOop);
                 int closureNumArgs = numArgsOop.isSmallInteger()
                     ? static_cast<int>(numArgsOop.asSmallInteger()) : 0;
+
+                // Log closure restoration for debugging
+                static FILE* closureRestoreLog = nullptr;
+                static int closureRestoreCount = 0;
+                if (!closureRestoreLog) closureRestoreLog = fopen("/tmp/closure_restore.log", "w");
+                closureRestoreCount++;
+                if (closureRestoreLog && closureRestoreCount <= 200) {
+                    fprintf(closureRestoreLog, "[CLOSURE-RESTORE #%d step=%llu] ctx=0x%llx closure=0x%llx stackp=%d numTemps=%d numArgs=%d numCopied=%d\n",
+                            closureRestoreCount, (unsigned long long)g_stepNum,
+                            (unsigned long long)context.rawBits(),
+                            (unsigned long long)closureOop.rawBits(),
+                            stackp, numTemps, closureNumArgs, numCopied);
+                    for (int i = 0; i < numCopied; i++) {
+                        Oop val = memory_.fetchPointer(firstCopiedSlot + i, closureOop);
+                        fprintf(closureRestoreLog, "  copied[%d] = 0x%llx (isSmi=%d isObj=%d isNil=%d)\n",
+                                i, (unsigned long long)val.rawBits(),
+                                val.isSmallInteger() ? 1 : 0,
+                                val.isObject() ? 1 : 0,
+                                val.isNil() ? 1 : 0);
+                        // If it's a Semaphore, show excess signals
+                        if (val.isObject() && !val.isNil() && val.rawBits() > 0x10000) {
+                            ObjectHeader* vh = val.asObjectPtr();
+                            uint32_t ci = vh->classIndex();
+                            fprintf(closureRestoreLog, "    classIdx=%u slots=%zu\n", ci, vh->slotCount());
+                        }
+                    }
+                    fflush(closureRestoreLog);
+                }
 
                 // Restore copied values at temp positions numArgs..numArgs+numCopied-1
                 // On the inline stack: FP[0]=receiver, FP[1]=temp0, FP[2]=temp1, ...

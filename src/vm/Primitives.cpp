@@ -9835,9 +9835,23 @@ PrimitiveResult Interpreter::primitiveFindNextUnwindContext(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    // Log calls to help debug unwind mechanism
+    static int unwindSearchCount = 0;
+    static FILE* unwindLog = nullptr;
+    unwindSearchCount++;
+    if (!unwindLog) unwindLog = fopen("/tmp/unwind_search.log", "w");
+
+    if (unwindLog && unwindSearchCount <= 200) {
+        fprintf(unwindLog, "[UNWIND-SEARCH #%d step=%llu] from=0x%llx stop=0x%llx\n",
+                unwindSearchCount, (unsigned long long)g_stepNum,
+                (unsigned long long)calleeContext.rawBits(),
+                (unsigned long long)stopContext.rawBits());
+    }
+
     // Walk from callee's sender
     Oop ctx = memory_.fetchPointer(0, calleeContext);  // sender = slot 0
     int limit = 10000;  // safety limit
+    int depth = 0;
 
     while (ctx.isObject() && !ctx.isNil() && limit-- > 0) {
         // If we reached the stop context, not found
@@ -9848,17 +9862,48 @@ PrimitiveResult Interpreter::primitiveFindNextUnwindContext(int argCount) {
         Oop method = memory_.fetchPointer(3, ctx);  // method = slot 3
         if (method.isObject() && !method.isNil()) {
             int primIdx = primitiveIndexOf(method);
+
+            if (unwindLog && unwindSearchCount <= 200 && depth < 20) {
+                // Get method selector for logging
+                std::string sel = "?";
+                Oop mhdr = memory_.fetchPointer(0, method);
+                if (mhdr.isSmallInteger()) {
+                    int nLits = mhdr.asSmallInteger() & 0x7FFF;
+                    if (nLits >= 2 && nLits < 100) {
+                        Oop selOop = memory_.fetchPointer(nLits - 1, method);
+                        if (selOop.isObject() && selOop.rawBits() > 0x10000) {
+                            ObjectHeader* selH = selOop.asObjectPtr();
+                            if (selH->isBytesObject() && selH->byteSize() < 80) {
+                                sel = std::string((char*)selH->bytes(), selH->byteSize());
+                            }
+                        }
+                    }
+                }
+                fprintf(unwindLog, "  [%d] ctx=0x%llx method=#%s prim=%d%s\n",
+                        depth, (unsigned long long)ctx.rawBits(), sel.c_str(), primIdx,
+                        primIdx == 198 ? " *** UNWIND ***" : "");
+            }
+
             if (primIdx == 198) {
                 // Found an unwind context
+                if (unwindLog && unwindSearchCount <= 200) {
+                    fprintf(unwindLog, "  -> FOUND unwind at depth %d\n", depth);
+                    fflush(unwindLog);
+                }
                 popN(2);
                 push(ctx);
                 return PrimitiveResult::Success;
             }
         }
         ctx = memory_.fetchPointer(0, ctx);  // sender = slot 0
+        depth++;
     }
 
     // Not found - return nil
+    if (unwindLog && unwindSearchCount <= 200) {
+        fprintf(unwindLog, "  -> NOT FOUND (depth=%d)\n", depth);
+        fflush(unwindLog);
+    }
     popN(2);
     push(memory_.nil());
     return PrimitiveResult::Success;

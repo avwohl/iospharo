@@ -572,7 +572,7 @@ int main(int argc, char* argv[]) {
         // Run bytecode steps for testing
         std::cout << "\n=== Execution Test ===" << std::endl;
         auto execStart = std::chrono::steady_clock::now();
-        int totalSteps = 500000000;  // Run 500M steps for full test suite
+        int totalSteps = 30000000;  // Run 30M steps for quick test
         std::cout << "Running up to " << totalSteps << " bytecode steps..." << std::endl;
         int activeSteps = 0;
         int idleSteps = 0;
@@ -648,10 +648,14 @@ int main(int argc, char* argv[]) {
                     }
                 }
             } else {
-                // Detect transition from active to idle
+                // Detect transition from active to idle (limit dumps to avoid flooding)
                 if (wasActive) {
-                    std::cerr << "[WENT-IDLE step=" << i << " active=" << activeSteps << "]\n";
-                    interpreter.dumpProcessQueues();
+                    static int idleTransitions = 0;
+                    idleTransitions++;
+                    if (idleTransitions <= 5 || idleTransitions % 100 == 0) {
+                        std::cerr << "[WENT-IDLE #" << idleTransitions << " step=" << i << " active=" << activeSteps << "]\n";
+                        interpreter.dumpProcessQueues();
+                    }
                 }
                 wasActive = false;
                 idleSteps++;

@@ -13,6 +13,8 @@
 
 namespace pharo {
 
+extern uint64_t g_stepNum;
+
 // ===== CONSTRUCTION / INITIALIZATION =====
 
 ObjectMemory::ObjectMemory() = default;
