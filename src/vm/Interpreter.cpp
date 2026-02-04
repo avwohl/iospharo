@@ -2573,45 +2573,6 @@ bool Interpreter::step() {
         stepEntryLogged = true;
     }
     if (!running_) {
-        // In test mode, when VM has stopped (usually from frame depth overflow),
-        // restart it. First time: trigger the test runner. Subsequent times:
-        // just find a runnable process and continue.
-        if (testMode_) {
-            static int restartCount = 0;
-            restartCount++;
-            if (restartCount <= 20) {  // Allow up to 20 restarts
-                if (restartCount <= 5) {
-                    fprintf(stderr, "[TEST-MODE] VM stopped (restart #%d) at step %lld. Restarting.\n",
-                            restartCount, (long long)g_stepCount);
-                }
-                // Restart the VM with fresh state
-                running_ = true;
-                stackPointer_ = stackBase_;
-                frameDepth_ = 0;
-
-                if (!testRunnerTriggered_) {
-                    // First restart: trigger the test runner
-                    // Find a runnable process to resume
-                    Oop nextProcess = wakeHighestPriority();
-                    if (nextProcess.isObject() && !nextProcess.isNil() &&
-                        nextProcess.rawBits() != memory_.nil().rawBits()) {
-                        transferTo(nextProcess);
-                    }
-                    triggerTestRunner();
-                    if (testRunnerTriggered_) {
-                        return true;
-                    }
-                } else {
-                    // Subsequent restarts: just resume any runnable process
-                    Oop nextProcess = wakeHighestPriority();
-                    if (nextProcess.isObject() && !nextProcess.isNil() &&
-                        nextProcess.rawBits() != memory_.nil().rawBits()) {
-                        transferTo(nextProcess);
-                        return true;
-                    }
-                }
-            }
-        }
         return false;
     }
 
@@ -2657,27 +2618,6 @@ bool Interpreter::step() {
     // If the previous step slept in relinquishProcessor, report as idle
     if (relinquishSlept_) {
         relinquishSlept_ = false;
-
-        // Count idle cycles for deferred actions
-        static int relinquishIdleCycles = 0;
-        ++relinquishIdleCycles;
-
-        // Always log first few relinquish idle cycles
-        if (relinquishIdleCycles <= 5) {
-            fprintf(stderr, "[RELINQUISH-IDLE #%d] step=%lld frameDepth=%zu testMode=%d\n",
-                    relinquishIdleCycles, (long long)g_stepCount, frameDepth_, testMode_ ? 1 : 0);
-        }
-
-        if (testMode_ && !testRunnerTriggered_ && relinquishIdleCycles == 20) {
-            fprintf(stderr, "[RELINQUISH-IDLE] Triggering test runner at cycle %d, frameDepth=%zu\n",
-                    relinquishIdleCycles, frameDepth_);
-            triggerTestRunner();
-            // Don't return idle this time - let the test code execute
-            if (testRunnerTriggered_) {
-                return true;
-            }
-        }
-
         return false;  // Signal idle to caller
     }
 
@@ -9505,17 +9445,13 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             std::string selStr((char*)selHdr->bytes(), selHdr->byteSize());
 
             // ===== INTERCEPT relinquishProcessorForMicroseconds: =====
-            // This is called during idle loop. Use it to auto-load the display driver
-            // and trigger the test runner in test mode.
+            // This is called during idle loop. Use it to auto-load the display driver.
             if (selStr == "relinquishProcessorForMicroseconds:" && argCount == 1) {
                 static int idleCycles = 0;
                 ++idleCycles;
 
                 if (idleCycles == 10) {  // After 10 idle cycles, auto-load driver
                     autoLoadDriver();
-                }
-                if (testMode_ && idleCycles == 20) {
-                    triggerTestRunner();
                 }
                 // Let relinquish proceed normally
             }
@@ -11474,6 +11410,78 @@ void Interpreter::activateBlock(Oop block, int argCount) {
 // ===== FRAME MANAGEMENT =====
 
 bool Interpreter::pushFrame(Oop method, int argCount) {
+    // DIAG: Log methods being activated at high frame depths to find recursion
+    if (frameDepth_ >= 64000) {
+        static FILE* deepFrameLog = nullptr;
+        static int deepFrameLogCount = 0;
+        if (!deepFrameLog) deepFrameLog = fopen("/tmp/deep_frame.log", "w");
+        if (deepFrameLog && deepFrameLogCount < 50) {
+            deepFrameLogCount++;
+            // Extract selector from the method being activated (penultimate literal)
+            std::string selName = "?";
+            if (method.isObject() && method.rawBits() > 0x10000) {
+                Oop hdr = memory_.fetchPointer(0, method);
+                if (hdr.isSmallInteger()) {
+                    int nLits = hdr.asSmallInteger() & 0x7FFF;
+                    if (nLits >= 2 && nLits < 200) {
+                        Oop sel = memory_.fetchPointer(nLits - 1, method);
+                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                            ObjectHeader* selH = sel.asObjectPtr();
+                            if (selH->isBytesObject() && selH->byteSize() < 200)
+                                selName = std::string((char*)selH->bytes(), selH->byteSize());
+                        }
+                    }
+                }
+            }
+            // Extract receiver class name from the stack (receiver is below args)
+            std::string rcvClassName = "?";
+            Oop* rcvSlot = stackPointer_ - argCount;
+            if (rcvSlot >= stackBase_ && rcvSlot <= stackPointer_) {
+                Oop rcv = *rcvSlot;
+                if (rcv.isNil()) rcvClassName = "nil";
+                else if (rcv.isSmallInteger()) rcvClassName = "SmallInteger";
+                else if (rcv.isObject() && rcv.rawBits() > 0x10000) {
+                    Oop cls = memory_.classOf(rcv);
+                    if (cls.isObject()) {
+                        Oop cn = memory_.fetchPointer(6, cls);
+                        if (cn.isObject() && cn.rawBits() > 0x10000) {
+                            ObjectHeader* cnH = cn.asObjectPtr();
+                            if (cnH->isBytesObject() && cnH->byteSize() < 100)
+                                rcvClassName = std::string((char*)cnH->bytes(), cnH->byteSize());
+                        }
+                    }
+                }
+            }
+            fprintf(deepFrameLog, "[DEEP #%d] fd=%zu step=%llu %s >> #%s (args=%d)\n",
+                    deepFrameLogCount, frameDepth_, g_stepNum, rcvClassName.c_str(), selName.c_str(), argCount);
+            // On the first deep log entry, dump a portion of the call stack to see the pattern
+            if (deepFrameLogCount == 1) {
+                fprintf(deepFrameLog, "  --- Call stack (last 50 frames) ---\n");
+                size_t start = (frameDepth_ > 50) ? frameDepth_ - 50 : 0;
+                for (size_t fi = start; fi < frameDepth_; fi++) {
+                    const auto& sf = savedFrames_[fi];
+                    std::string frameSel = "?";
+                    if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                        Oop sfHdr = memory_.fetchPointer(0, sf.savedMethod);
+                        if (sfHdr.isSmallInteger()) {
+                            int nl = sfHdr.asSmallInteger() & 0x7FFF;
+                            if (nl >= 2 && nl < 200) {
+                                Oop s = memory_.fetchPointer(nl - 1, sf.savedMethod);
+                                if (s.isObject() && s.rawBits() > 0x10000) {
+                                    ObjectHeader* sH = s.asObjectPtr();
+                                    if (sH->isBytesObject() && sH->byteSize() < 200)
+                                        frameSel = std::string((char*)sH->bytes(), sH->byteSize());
+                                }
+                            }
+                        }
+                    }
+                    fprintf(deepFrameLog, "    [%zu] #%s\n", fi, frameSel.c_str());
+                }
+                fprintf(deepFrameLog, "  --- End call stack ---\n");
+            }
+            fflush(deepFrameLog);
+        }
+    }
     // Save current execution state before switching to new method
     if (frameDepth_ >= MaxFrameDepth) {
         std::cerr << "[VM-STOP] Frame depth overflow in pushFrame(): " << frameDepth_ << " >= " << MaxFrameDepth << "\n";
@@ -16032,79 +16040,6 @@ bool Interpreter::autoLoadDriver() {
     // Auto-load disabled - OSiOSDriver must be loaded from Pharo image side
     // (Pending action dispatch mechanism has been removed)
     return false;
-}
-
-void Interpreter::triggerTestRunner() {
-    if (testRunnerTriggered_) return;
-    testRunnerTriggered_ = true;
-
-    fprintf(stderr, "[TEST-RUNNER] Triggering SUnit test runner via OpalCompiler evaluate:\n");
-
-    // Find OpalCompiler class
-    Oop compilerClass = memory_.findGlobal("OpalCompiler");
-    if (compilerClass.isNil()) {
-        fprintf(stderr, "[TEST-RUNNER] ERROR: OpalCompiler class not found!\n");
-        return;
-    }
-    fprintf(stderr, "[TEST-RUNNER] Found OpalCompiler: 0x%llx\n",
-            (unsigned long long)compilerClass.rawBits());
-
-    // Create the test runner Smalltalk code as a String
-    std::string testCode =
-        "| testClasses results stream |\n"
-        "testClasses := #(\n"
-        "  SmallIntegerTest IntegerTest FloatTest FractionTest\n"
-        "  PointTest CharacterTest ArrayTest OrderedCollectionTest\n"
-        "  StringTest SymbolTest DictionaryTest SetTest BagTest IntervalTest\n"
-        ").\n"
-        "stream := WriteStream on: String new.\n"
-        "stream nextPutAll: 'SUnit Test Results'; cr.\n"
-        "stream nextPutAll: '================='; cr.\n"
-        "testClasses do: [:className |\n"
-        "  | cls suite result |\n"
-        "  cls := Smalltalk globals at: className ifAbsent: [nil].\n"
-        "  cls ifNotNil: [\n"
-        "    suite := cls buildSuite.\n"
-        "    result := suite run.\n"
-        "    stream nextPutAll: className asString.\n"
-        "    stream nextPutAll: ': '.\n"
-        "    stream nextPutAll: result printString.\n"
-        "    stream cr.\n"
-        "  ] ifNil: [\n"
-        "    stream nextPutAll: className asString.\n"
-        "    stream nextPutAll: ': CLASS NOT FOUND'.\n"
-        "    stream cr.\n"
-        "  ]\n"
-        "].\n"
-        "stream nextPutAll: 'ALL TESTS COMPLETE'; cr.\n"
-        "'/tmp/sunit_test_results.txt' asFileReference\n"
-        "  writeStreamDo: [:ws | ws nextPutAll: stream contents].\n"
-        "stream contents\n";
-
-    Oop codeString = memory_.createString(testCode);
-    if (codeString.isNil()) {
-        fprintf(stderr, "[TEST-RUNNER] ERROR: Failed to create test code string!\n");
-        return;
-    }
-    fprintf(stderr, "[TEST-RUNNER] Created test code string (%zu bytes)\n", testCode.size());
-
-    // Find the 'evaluate:' selector symbol
-    Oop evaluateSelector = memory_.lookupSymbol("evaluate:");
-    if (evaluateSelector.isNil()) {
-        fprintf(stderr, "[TEST-RUNNER] ERROR: Could not find #evaluate: symbol!\n");
-        return;
-    }
-    fprintf(stderr, "[TEST-RUNNER] Found #evaluate: selector\n");
-
-    // Push receiver (OpalCompiler class) and argument (code string) onto stack
-    // sendSelector expects: stack = [..., receiver, arg0, arg1, ...] with argCount args
-    push(compilerClass);  // receiver
-    push(codeString);     // argument
-
-    // Send evaluate: to OpalCompiler class (1 argument)
-    fprintf(stderr, "[TEST-RUNNER] Sending OpalCompiler evaluate: ...\n");
-    sendSelector(evaluateSelector, 1);
-    fprintf(stderr, "[TEST-RUNNER] evaluate: send dispatched (will execute in subsequent steps)\n");
 }
 
 bool Interpreter::bootstrapStartup() {
