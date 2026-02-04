@@ -4560,6 +4560,47 @@ void Interpreter::pushLiteralVariable(int index) {
     // Normal case: Association with key in slot 0, value in slot 1
     Oop value = memory_.fetchPointer(1, assoc);  // Association>>value
 
+    // TRACE: Log when pushing false from a literal variable (wrong value in global)
+    if (value.rawBits() == memory_.falseObject().rawBits()) {
+        static FILE* falseLitLog = nullptr;
+        static int falseLitCount = 0;
+        if (!falseLitLog) falseLitLog = fopen("/tmp/false_literal.log", "w");
+        if (falseLitLog && falseLitCount < 100) {
+            falseLitCount++;
+            Oop key = memory_.fetchPointer(0, assoc);
+            std::string keyStr = "<unknown>";
+            if (key.isObject() && key.rawBits() > 0x10000) {
+                ObjectHeader* keyHdr = key.asObjectPtr();
+                if (keyHdr->isBytesObject() && keyHdr->byteSize() < 100) {
+                    keyStr = std::string((char*)keyHdr->bytes(), keyHdr->byteSize());
+                }
+            }
+            std::string methodSel = "<unknown>";
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                ObjectHeader* mHdr = method_.asObjectPtr();
+                if (mHdr->isCompiledMethod()) {
+                    Oop hdr = memory_.fetchPointer(0, method_);
+                    if (hdr.isSmallInteger()) {
+                        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                        if (numLits >= 2) {
+                            Oop selLit = memory_.fetchPointer(numLits - 1, method_);
+                            if (selLit.isObject() && selLit.rawBits() > 0x10000) {
+                                ObjectHeader* slHdr = selLit.asObjectPtr();
+                                if (slHdr->isBytesObject() && slHdr->byteSize() < 100) {
+                                    methodSel = std::string((char*)slHdr->bytes(), slHdr->byteSize());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            fprintf(falseLitLog, "[FALSE-LIT #%d] Global '%s' = false in method #%s (assoc=0x%llx fd=%zu step=%llu)\n",
+                    falseLitCount, keyStr.c_str(), methodSel.c_str(),
+                    (unsigned long long)assoc.rawBits(), frameDepth_, (unsigned long long)g_stepNum);
+            fflush(falseLitLog);
+        }
+    }
+
     // TRACE: Log when pushing nil from a literal variable (class lookup failure)
     if (value.isNil() || value.rawBits() == memory_.nil().rawBits()) {
         static FILE* nilLitLog = nullptr;
@@ -9782,6 +9823,381 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     }
 
     Oop method = lookupMethod(selector, rcvrClass);
+
+    // DIAGNOSTIC: Dump DiskStore >> #delimiter compiled method bytecodes
+    if (selLen == 9 && selBytes && memcmp(selBytes, "delimiter", 9) == 0 &&
+        frameDepth_ < 20 && method.isObject() && method.rawBits() > 0x10000) {
+        // Check if receiver class is DiskStore
+        std::string delimRcvrClass = "";
+        if (rcvrClass.isObject() && rcvrClass.rawBits() > 0x10000) {
+            Oop nm = memory_.fetchPointer(6, rcvrClass);
+            if (nm.isObject() && nm.rawBits() > 0x10000) {
+                ObjectHeader* nmH = nm.asObjectPtr();
+                if (nmH->isBytesObject() && nmH->byteSize() < 100)
+                    delimRcvrClass = std::string((char*)nmH->bytes(), nmH->byteSize());
+            }
+        }
+        if (delimRcvrClass == "DiskStore") {
+            static bool delimDumped = false;
+            if (!delimDumped) {
+                delimDumped = true;
+                FILE* delimLog = fopen("/tmp/delimiter_method.log", "w");
+                if (delimLog) {
+                    fprintf(delimLog, "=== DiskStore >> #delimiter method dump ===\n");
+                    fprintf(delimLog, "Method Oop: 0x%llx\n", (unsigned long long)method.rawBits());
+                    fprintf(delimLog, "Receiver class: %s\n", delimRcvrClass.c_str());
+                    fprintf(delimLog, "frameDepth: %zu, step: %llu\n\n", frameDepth_, (unsigned long long)g_stepNum);
+
+                    // Read method header
+                    Oop hdr = memory_.fetchPointer(0, method);
+                    fprintf(delimLog, "Header slot 0 (raw Oop): 0x%llx\n", (unsigned long long)hdr.rawBits());
+                    if (hdr.isSmallInteger()) {
+                        int64_t bits = hdr.asSmallInteger();
+                        fprintf(delimLog, "Header decoded SmallInt: 0x%llx (%lld)\n", (unsigned long long)bits, (long long)bits);
+                        int numLiterals = bits & 0x7FFF;
+                        bool needsLargeFrame = (bits >> 15) & 1;
+                        bool hasPrimitive = (bits >> 16) & 1;
+                        int numTemps = (bits >> 17) & 0x3F;  // 6 bits for numTemps
+                        int numArgs = (bits >> 24) & 0xF;
+                        fprintf(delimLog, "numLiterals: %d\n", numLiterals);
+                        fprintf(delimLog, "needsLargeFrame: %d\n", needsLargeFrame ? 1 : 0);
+                        fprintf(delimLog, "hasPrimitive: %d\n", hasPrimitive ? 1 : 0);
+                        fprintf(delimLog, "numTemps: %d\n", numTemps);
+                        fprintf(delimLog, "numArgs: %d\n", numArgs);
+
+                        // Dump all literals
+                        fprintf(delimLog, "\n--- Literals (1..%d) ---\n", numLiterals);
+                        for (int li = 1; li <= numLiterals; li++) {
+                            Oop lit = memory_.fetchPointer(li, method);
+                            fprintf(delimLog, "  Literal[%d]: Oop=0x%llx", li, (unsigned long long)lit.rawBits());
+                            if (lit.isSmallInteger()) {
+                                fprintf(delimLog, " (SmallInt=%lld)", (long long)lit.asSmallInteger());
+                            } else if (lit.rawBits() == memory_.nil().rawBits()) {
+                                fprintf(delimLog, " (nil)");
+                            } else if (lit.rawBits() == memory_.trueObject().rawBits()) {
+                                fprintf(delimLog, " (true)");
+                            } else if (lit.rawBits() == memory_.falseObject().rawBits()) {
+                                fprintf(delimLog, " (false)");
+                            } else if (lit.isObject() && lit.rawBits() > 0x10000) {
+                                ObjectHeader* litH = lit.asObjectPtr();
+                                Oop litCls = memory_.classOf(lit);
+                                std::string litClsName = "?";
+                                if (litCls.isObject() && litCls.rawBits() > 0x10000) {
+                                    Oop lcn = memory_.fetchPointer(6, litCls);
+                                    if (lcn.isObject() && lcn.rawBits() > 0x10000) {
+                                        ObjectHeader* lcnH = lcn.asObjectPtr();
+                                        if (lcnH->isBytesObject() && lcnH->byteSize() < 100)
+                                            litClsName = std::string((char*)lcnH->bytes(), lcnH->byteSize());
+                                    }
+                                }
+                                fprintf(delimLog, " (%s", litClsName.c_str());
+                                // If it's a bytes object (String/Symbol/Character), show content
+                                if (litH->isBytesObject() && litH->byteSize() < 200) {
+                                    size_t blen = litH->byteSize();
+                                    fprintf(delimLog, " bytes[%zu]='", blen);
+                                    for (size_t bi = 0; bi < blen && bi < 50; bi++) {
+                                        uint8_t b = litH->bytes()[bi];
+                                        if (b >= 32 && b < 127) fprintf(delimLog, "%c", (char)b);
+                                        else fprintf(delimLog, "\\x%02x", b);
+                                    }
+                                    fprintf(delimLog, "'");
+                                }
+                                fprintf(delimLog, " format=%d slots=%zu)", (int)litH->format(), litH->slotCount());
+                                // If Character, check if it has a value slot
+                                if (litClsName == "Character") {
+                                    if (litH->slotCount() >= 1) {
+                                        Oop charVal = memory_.fetchPointer(0, lit);
+                                        if (charVal.isSmallInteger())
+                                            fprintf(delimLog, " value=%lld (char='%c')",
+                                                    (long long)charVal.asSmallInteger(),
+                                                    (char)charVal.asSmallInteger());
+                                    }
+                                }
+                                // If it's an Association, show key/value
+                                if (litClsName == "Association" && litH->slotCount() >= 2) {
+                                    Oop key = memory_.fetchPointer(0, lit);
+                                    Oop val = memory_.fetchPointer(1, lit);
+                                    fprintf(delimLog, "\n    key=0x%llx", (unsigned long long)key.rawBits());
+                                    if (key.isObject() && key.rawBits() > 0x10000) {
+                                        ObjectHeader* kH = key.asObjectPtr();
+                                        if (kH->isBytesObject() && kH->byteSize() < 50)
+                                            fprintf(delimLog, "('%.*s')", (int)kH->byteSize(), (char*)kH->bytes());
+                                    }
+                                    fprintf(delimLog, " val=0x%llx", (unsigned long long)val.rawBits());
+                                    if (val.isObject() && val.rawBits() > 0x10000) {
+                                        ObjectHeader* vH = val.asObjectPtr();
+                                        if (vH->isBytesObject() && vH->byteSize() < 50)
+                                            fprintf(delimLog, "('%.*s')", (int)vH->byteSize(), (char*)vH->bytes());
+                                    }
+                                }
+                            }
+                            fprintf(delimLog, "\n");
+                        }
+
+                        // Dump bytecodes
+                        ObjectHeader* mObj = method.asObjectPtr();
+                        size_t totalBytes = mObj->byteSize();
+                        size_t bcStart = (1 + numLiterals) * 8;
+                        size_t bcLen = (totalBytes > bcStart) ? (totalBytes - bcStart) : 0;
+                        fprintf(delimLog, "\n--- Bytecodes (%zu bytes, starting at offset %zu) ---\n", bcLen, bcStart);
+                        uint8_t* bc = mObj->bytes() + bcStart;
+                        // Hex dump
+                        for (size_t bi = 0; bi < bcLen; bi++) {
+                            fprintf(delimLog, "%02x ", bc[bi]);
+                            if ((bi + 1) % 16 == 0) fprintf(delimLog, "\n");
+                        }
+                        if (bcLen % 16 != 0) fprintf(delimLog, "\n");
+
+                        // Annotated disassembly (basic Sista V1)
+                        fprintf(delimLog, "\n--- Disassembly (Sista V1) ---\n");
+                        size_t pc = 0;
+                        while (pc < bcLen) {
+                            fprintf(delimLog, "  %3zu: ", pc);
+                            uint8_t b0 = bc[pc];
+
+                            if (b0 <= 15) {
+                                fprintf(delimLog, "%02x       pushReceiverVariable %d\n", b0, b0);
+                                pc += 1;
+                            } else if (b0 <= 31) {
+                                fprintf(delimLog, "%02x       pushLiteralVariable %d\n", b0, b0 - 16);
+                                pc += 1;
+                            } else if (b0 <= 63) {
+                                fprintf(delimLog, "%02x       pushLiteralConstant %d\n", b0, b0 - 32);
+                                pc += 1;
+                            } else if (b0 <= 71) {
+                                fprintf(delimLog, "%02x       pushTemp %d\n", b0, b0 - 64);
+                                pc += 1;
+                            } else if (b0 <= 75) {
+                                fprintf(delimLog, "%02x       pushTemp %d\n", b0, b0 - 64);
+                                pc += 1;
+                            } else if (b0 == 76) {
+                                fprintf(delimLog, "%02x       pushReceiver (self)\n", b0);
+                                pc += 1;
+                            } else if (b0 >= 77 && b0 <= 79) {
+                                const char* names[] = {"true", "false", "nil"};
+                                fprintf(delimLog, "%02x       push %s\n", b0, names[b0 - 77]);
+                                pc += 1;
+                            } else if (b0 == 80) {
+                                fprintf(delimLog, "%02x       pushSmallInt 0\n", b0);
+                                pc += 1;
+                            } else if (b0 == 81) {
+                                fprintf(delimLog, "%02x       pushSmallInt 1\n", b0);
+                                pc += 1;
+                            } else if (b0 >= 82 && b0 <= 95) {
+                                fprintf(delimLog, "%02x       (unused/extended) %d\n", b0, b0);
+                                pc += 1;
+                            } else if (b0 >= 96 && b0 <= 103) {
+                                fprintf(delimLog, "%02x       popIntoReceiverVar %d\n", b0, b0 - 96);
+                                pc += 1;
+                            } else if (b0 >= 104 && b0 <= 111) {
+                                fprintf(delimLog, "%02x       popIntoTemp %d\n", b0, b0 - 104);
+                                pc += 1;
+                            } else if (b0 == 120) {
+                                fprintf(delimLog, "%02x       returnReceiver\n", b0);
+                                pc += 1;
+                            } else if (b0 == 121) {
+                                fprintf(delimLog, "%02x       returnTrue\n", b0);
+                                pc += 1;
+                            } else if (b0 == 122) {
+                                fprintf(delimLog, "%02x       returnFalse\n", b0);
+                                pc += 1;
+                            } else if (b0 == 123) {
+                                fprintf(delimLog, "%02x       returnNil\n", b0);
+                                pc += 1;
+                            } else if (b0 == 124) {
+                                fprintf(delimLog, "%02x       returnTop\n", b0);
+                                pc += 1;
+                            } else if (b0 >= 176 && b0 <= 191) {
+                                const char* specials[] = {
+                                    "+","-","<",">","<=",">=","=","~=","*","/","\\\\",
+                                    "@","bitShift:","//","bitAnd:","bitOr:"
+                                };
+                                fprintf(delimLog, "%02x       send special #%s\n", b0, specials[b0 - 176]);
+                                pc += 1;
+                            } else if (b0 >= 192 && b0 <= 207) {
+                                const char* specials2[] = {
+                                    "at:","at:put:","size","next","nextPut:","atEnd",
+                                    "==","class","blockCopy:","value","value:","do:",
+                                    "new","new:","x","y"
+                                };
+                                fprintf(delimLog, "%02x       send special #%s\n", b0, specials2[b0 - 192]);
+                                pc += 1;
+                            } else if (b0 >= 208 && b0 <= 223) {
+                                fprintf(delimLog, "%02x       send literal %d (0 args)\n", b0, b0 - 208);
+                                pc += 1;
+                            } else if (b0 >= 224 && b0 <= 225) {
+                                if (pc + 1 < bcLen) {
+                                    uint8_t b1 = bc[pc + 1];
+                                    if (b0 == 224)
+                                        fprintf(delimLog, "%02x %02x    extA = %d\n", b0, b1, b1);
+                                    else
+                                        fprintf(delimLog, "%02x %02x    extB = %d\n", b0, b1, b1);
+                                    pc += 2;
+                                } else { pc += 1; }
+                            } else if (b0 >= 226 && b0 <= 227) {
+                                if (pc + 1 < bcLen) {
+                                    uint8_t b1 = bc[pc + 1];
+                                    if (b0 == 226)
+                                        fprintf(delimLog, "%02x %02x    pushReceiverVar %d (extended)\n", b0, b1, b1);
+                                    else
+                                        fprintf(delimLog, "%02x %02x    pushLiteralVar %d (extended)\n", b0, b1, b1);
+                                    pc += 2;
+                                } else { pc += 1; }
+                            } else if (b0 == 228) {
+                                if (pc + 1 < bcLen) {
+                                    uint8_t b1 = bc[pc + 1];
+                                    fprintf(delimLog, "%02x %02x    pushLiteralConst %d (extended)\n", b0, b1, b1);
+                                    pc += 2;
+                                } else { pc += 1; }
+                            } else if (b0 == 229) {
+                                if (pc + 1 < bcLen) {
+                                    uint8_t b1 = bc[pc + 1];
+                                    fprintf(delimLog, "%02x %02x    pushTemp %d (extended)\n", b0, b1, b1);
+                                    pc += 2;
+                                } else { pc += 1; }
+                            } else if (b0 >= 230 && b0 <= 231) {
+                                fprintf(delimLog, "%02x       (extended push/store)\n", b0);
+                                pc += 2;
+                            } else if (b0 >= 232 && b0 <= 235) {
+                                if (pc + 1 < bcLen) {
+                                    uint8_t b1 = bc[pc + 1];
+                                    fprintf(delimLog, "%02x %02x    (extended op %d, arg %d)\n", b0, b1, b0, b1);
+                                    pc += 2;
+                                } else { pc += 1; }
+                            } else if (b0 >= 236 && b0 <= 237) {
+                                if (pc + 1 < bcLen) {
+                                    uint8_t b1 = bc[pc + 1];
+                                    int numArgs2 = (b1 >> 5) & 0x7;
+                                    int litIdx = b1 & 0x1F;
+                                    fprintf(delimLog, "%02x %02x    send literal %d (%d args)%s\n",
+                                            b0, b1, litIdx, numArgs2, (b0 == 237) ? " (super)" : "");
+                                    pc += 2;
+                                } else { pc += 1; }
+                            } else if (b0 >= 238 && b0 <= 239) {
+                                if (pc + 1 < bcLen) {
+                                    uint8_t b1 = bc[pc + 1];
+                                    fprintf(delimLog, "%02x %02x    (238/239 ext op, arg %d)\n", b0, b1, b1);
+                                    pc += 2;
+                                } else { pc += 1; }
+                            } else if (b0 >= 240 && b0 <= 247) {
+                                fprintf(delimLog, "%02x       (240-247 group)\n", b0);
+                                pc += 1;
+                            } else if (b0 == 248) {
+                                if (pc + 2 < bcLen) {
+                                    uint8_t b1 = bc[pc + 1];
+                                    uint8_t b2 = bc[pc + 2];
+                                    int primNum = b1 | (b2 << 8);
+                                    fprintf(delimLog, "%02x %02x %02x callPrimitive %d\n", b0, b1, b2, primNum);
+                                    pc += 3;
+                                } else { pc += 1; }
+                            } else if (b0 == 249) {
+                                if (pc + 2 < bcLen) {
+                                    uint8_t b1 = bc[pc + 1];
+                                    uint8_t b2 = bc[pc + 2];
+                                    int litIdx2 = b1 + (b2 >> 3);
+                                    int nArgs2 = b2 & 0x7;
+                                    fprintf(delimLog, "%02x %02x %02x pushFullClosure litIdx=%d nArgs=%d\n", b0, b1, b2, litIdx2, nArgs2);
+                                    pc += 3;
+                                } else { pc += 1; }
+                            } else if (b0 >= 176 && b0 <= 255) {
+                                fprintf(delimLog, "%02x       (high bytecode %d)\n", b0, b0);
+                                pc += 1;
+                            } else {
+                                fprintf(delimLog, "%02x       ??? (unknown bytecode)\n", b0);
+                                pc += 1;
+                            }
+                        }
+
+                        // Also check: is there a Character literal with value 47 ($/) ?
+                        fprintf(delimLog, "\n--- Character literal scan ---\n");
+                        for (int li = 1; li <= numLiterals; li++) {
+                            Oop lit = memory_.fetchPointer(li, method);
+                            if (lit.isObject() && lit.rawBits() > 0x10000) {
+                                ObjectHeader* litH = lit.asObjectPtr();
+                                Oop litCls = memory_.classOf(lit);
+                                if (litCls.isObject() && litCls.rawBits() > 0x10000) {
+                                    Oop lcn = memory_.fetchPointer(6, litCls);
+                                    if (lcn.isObject() && lcn.rawBits() > 0x10000) {
+                                        ObjectHeader* lcnH = lcn.asObjectPtr();
+                                        if (lcnH->isBytesObject() && lcnH->byteSize() == 9 &&
+                                            memcmp(lcnH->bytes(), "Character", 9) == 0) {
+                                            fprintf(delimLog, "Literal[%d] IS a Character!\n", li);
+                                            // In Pharo, Character is an immediate object.
+                                            // But if it's in the literal frame as an object, check slots
+                                            if (litH->slotCount() >= 1) {
+                                                Oop cv = memory_.fetchPointer(0, lit);
+                                                fprintf(delimLog, "  value slot: 0x%llx", (unsigned long long)cv.rawBits());
+                                                if (cv.isSmallInteger())
+                                                    fprintf(delimLog, " = %lld (char '%c')",
+                                                            (long long)cv.asSmallInteger(),
+                                                            (char)(cv.asSmallInteger() & 0x7F));
+                                                fprintf(delimLog, "\n");
+                                            }
+                                        }
+                                    }
+                                }
+                                // Also check if it IS a Character by checking the immediate tag
+                                // In Spur 64-bit, Character is tag 2 in our encoding (low bits)
+                                // Actually check: is the literal a SmallInteger encoding a character?
+                            }
+                            // Check for immediate character (tag check)
+                            // In our VM, characters may be encoded as immediates
+                            uint64_t rawBits = lit.rawBits();
+                            // Check if it could be an immediate character
+                            // Standard Spur: tag = 2 for Characters in low 3 bits
+                            if ((rawBits & 0x7) == 2) {
+                                int charValue = (int)(rawBits >> 3);
+                                fprintf(delimLog, "Literal[%d] is IMMEDIATE Character value=%d (char '%c')\n",
+                                        li, charValue, (charValue >= 32 && charValue < 127) ? (char)charValue : '?');
+                            }
+                        }
+
+                        // Also check receiver variables of receiver
+                        fprintf(delimLog, "\n--- Receiver (DiskStore) instance variables ---\n");
+                        if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                            ObjectHeader* rcvrH = rcvr.asObjectPtr();
+                            fprintf(delimLog, "Receiver slots: %zu format: %d\n", rcvrH->slotCount(), (int)rcvrH->format());
+                            for (size_t si = 0; si < rcvrH->slotCount() && si < 10; si++) {
+                                Oop sv = memory_.fetchPointer(si, rcvr);
+                                fprintf(delimLog, "  ivar[%zu]: 0x%llx", si, (unsigned long long)sv.rawBits());
+                                if (sv.isSmallInteger()) fprintf(delimLog, " (SI=%lld)", (long long)sv.asSmallInteger());
+                                else if (sv.rawBits() == memory_.nil().rawBits()) fprintf(delimLog, " (nil)");
+                                else if (sv.isObject() && sv.rawBits() > 0x10000) {
+                                    ObjectHeader* svH = sv.asObjectPtr();
+                                    if (svH->isBytesObject() && svH->byteSize() < 100)
+                                        fprintf(delimLog, " ('%.*s')", (int)svH->byteSize(), (char*)svH->bytes());
+                                    else {
+                                        Oop svCls = memory_.classOf(sv);
+                                        if (svCls.isObject() && svCls.rawBits() > 0x10000) {
+                                            Oop svn = memory_.fetchPointer(6, svCls);
+                                            if (svn.isObject() && svn.rawBits() > 0x10000) {
+                                                ObjectHeader* svnH = svn.asObjectPtr();
+                                                if (svnH->isBytesObject() && svnH->byteSize() < 100)
+                                                    fprintf(delimLog, " (%.*s)", (int)svnH->byteSize(), (char*)svnH->bytes());
+                                            }
+                                        }
+                                    }
+                                }
+                                // Check for immediate character
+                                if ((sv.rawBits() & 0x7) == 2) {
+                                    int cv = (int)(sv.rawBits() >> 3);
+                                    fprintf(delimLog, " [IMMCHAR=%d '%c']", cv,
+                                            (cv >= 32 && cv < 127) ? (char)cv : '?');
+                                }
+                                fprintf(delimLog, "\n");
+                            }
+                        }
+                    } else {
+                        fprintf(delimLog, "Header is NOT a SmallInteger! raw=0x%llx\n", (unsigned long long)hdr.rawBits());
+                    }
+
+                    fclose(delimLog);
+                    fprintf(stderr, "[DIAGNOSTIC] DiskStore >> #delimiter method dumped to /tmp/delimiter_method.log\n");
+                }
+            }
+        }
+    }
+
     // TRACE: visitNode: lookup result
     if (traceVisitNodeSend) {
         fprintf(stderr, "[VN-SEND]   lookupMethod result: 0x%llx isNil=%d\n",

@@ -8696,46 +8696,54 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
         fflush(attrLog);
     }
 
-    // VM attributes (simplified set)
-    // Indices 0-2 are VM/image paths
-    // Index 3+ are command line arguments (Smalltalk argumentAt: i uses index 2+i)
-    //
-    // We fake --interactive at index 3 so OSWorldRenderer gets selected
-    // instead of NullWorldRenderer. This enables the standard Pharo GUI.
-    switch (index) {
-        case 0:  // VM path
-            {
-                Oop str = memory_.createString("iospharo");
+    // Index 0: VM path
+    // Index 1: Image path
+    // Index 2+: Command-line arguments passed after the image path
+    //   If no arguments were provided, default to "--interactive" so the GUI starts.
+    // Index 1000+: VM info attributes
+    if (index == 0) {
+        Oop str = memory_.createString("iospharo");
+        pop();
+        push(str);
+        return PrimitiveResult::Success;
+    }
+    if (index == 1) {
+        Oop str = memory_.createString(imageName_.empty() ? "Pharo.image" : imageName_);
+        pop();
+        push(str);
+        return PrimitiveResult::Success;
+    }
+    if (index >= 2 && index < 1000) {
+        int argIdx = static_cast<int>(index) - 2;
+        const auto& args = imageArguments_;
+        if (args.empty()) {
+            // No explicit args — default to --interactive for GUI startup
+            if (argIdx == 0) {
                 pop();
-                push(str);
+                push(memory_.createString("--interactive"));
                 return PrimitiveResult::Success;
             }
-        case 1:  // Image path
-            {
-                Oop str = memory_.createString(imageName_.empty() ? "Pharo.image" : imageName_);
-                pop();
-                push(str);
-                return PrimitiveResult::Success;
-            }
-        case 2:  // First command line argument - --interactive
-            {
-                // This triggers OSWorldRenderer.isApplicableFor: to return true
-                // Do NOT include --headless: Pharo scans all args for it and
-                // selects NullWorldRenderer if found, ignoring --interactive.
-                Oop str = memory_.createString("--interactive");
-                pop();
-                push(str);
-                return PrimitiveResult::Success;
-            }
-        case 3:  // No more arguments
+            // No more args
             pop();
             push(memory_.nil());
             return PrimitiveResult::Success;
+        }
+        if (argIdx < static_cast<int>(args.size())) {
+            pop();
+            push(memory_.createString(args[argIdx]));
+            return PrimitiveResult::Success;
+        }
+        // Past end of args
+        pop();
+        push(memory_.nil());
+        return PrimitiveResult::Success;
+    }
+
+    // VM info attributes (index 1000+)
+    switch (index) {
         case 1001:  // Operating system name
             pop();
 #if TARGET_OS_MACCATALYST
-            // Mac Catalyst - return "Mac OS" to match MacOSPlatform
-            // Mac Catalyst has TARGET_OS_IOS=1 but should report as Mac for platform detection
             {
                 static int platformCallCount = 0;
                 if (platformCallCount++ < 3) {
@@ -8744,47 +8752,41 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
             }
             push(memory_.createString("Mac OS"));
 #elif TARGET_OS_IOS || TARGET_OS_IPHONE
-            // Pure iOS - return "iOS"
             push(memory_.createString("iOS"));
 #else
-            // Other platforms (macOS desktop, Linux, etc.)
             push(memory_.createString("Mac OS"));
 #endif
             return PrimitiveResult::Success;
-        case 1002:  // VM build string
+        case 1002:
             pop();
             push(memory_.createString("iospharo VM 0.1"));
             return PrimitiveResult::Success;
-        case 1003:  // Interpreter class name
+        case 1003:
             pop();
             push(memory_.createString("StackInterpreter"));
             return PrimitiveResult::Success;
-        case 1004:  // VM type (1=stack, 2=cog, 3=sista)
+        case 1004:
             pop();
-            push(Oop::fromSmallInteger(1));  // Stack VM
+            push(Oop::fromSmallInteger(1));
             return PrimitiveResult::Success;
-        case 1005:  // Window system name
+        case 1005:
             pop();
             push(memory_.createString("Quartz"));
             return PrimitiveResult::Success;
-        case 1006:  // VM build date
-        case 1007:  // Compiler used
-        case 1008:  // Platform source version
+        case 1006:
+        case 1007:
+        case 1008:
             pop();
             push(memory_.createString("iospharo 2025-01-28"));
             return PrimitiveResult::Success;
-        case 1009: { // Interpreter source version (needs "Date: " prefix for parsing)
+        case 1009: {
             pop();
             Oop str = memory_.createString("iospharo Date: 2025-01-28T00:00:00+00:00");
             push(str);
             return PrimitiveResult::Success;
         }
-        case 1201:  // Max filename length (macOS)
-            // Return nil so VirtualMachine>>maxFilenameLength returns nil,
-            // and DiskStore>>initialize uses default 255.
-            // Failing here causes infinite recursion: primitive failure triggers
-            // error handling that touches file system, which creates MacStore,
-            // which calls initialize, which calls getSystemAttribute:1201 again.
+        case 1201:
+            // Return nil so VirtualMachine>>maxFilenameLength returns nil
             pop();
             push(memory_.nil());
             return PrimitiveResult::Success;

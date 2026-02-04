@@ -437,30 +437,21 @@ int main(int argc, char* argv[]) {
     testOopTagging();
 
     if (argc < 2) {
-        std::cout << "\nUsage: " << argv[0] << " [--test] <path-to-image>" << std::endl;
+        std::cout << "\nUsage: " << argv[0] << " <path-to-image> [image-args...]" << std::endl;
+        std::cout << "Example: " << argv[0] << " Pharo.image test \"Kernel-Tests\"" << std::endl;
         std::cout << "\nNo image specified, skipping image load test." << std::endl;
         return 0;
     }
 
-    // Parse --test flag
-    bool testMode = false;
-    const char* imagePath = nullptr;
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--test") == 0) {
-            testMode = true;
-        } else {
-            imagePath = argv[i];
-        }
+    // First arg is the image path, rest are image arguments
+    const char* imagePath = argv[1];
+    std::vector<std::string> imageArgs;
+    for (int i = 2; i < argc; i++) {
+        imageArgs.push_back(argv[i]);
     }
-    if (!imagePath) {
-        std::cerr << "ERROR: No image path specified" << std::endl;
-        return 1;
-    }
-    if (testMode) {
-        std::cout << "\n*** TEST MODE: Will run SUnit tests and write results to /tmp/sunit_test_results.txt ***" << std::endl;
-        // Remove stale results file
-        std::remove("/tmp/sunit_test_results.txt");
-    }
+
+    // Detect test mode: first image arg is "test"
+    bool testMode = (!imageArgs.empty() && imageArgs[0] == "test");
     std::cout << "\nLoading image: " << imagePath << std::endl;
 
     // Initialize memory (256 MB should be enough for most images)
@@ -515,7 +506,7 @@ int main(int argc, char* argv[]) {
     Interpreter interpreter(memory);
     interpreter.setImageName(imagePath);
     interpreter.setVMPath(argv[0]);
-    interpreter.setTestMode(testMode);
+    interpreter.setImageArguments(imageArgs);
 
     // Set up event callback BEFORE initialization
     gTestInterpreter = &interpreter;
@@ -593,196 +584,80 @@ int main(int argc, char* argv[]) {
         // Run bytecode steps for testing
         std::cout << "\n=== Execution Test ===" << std::endl;
         auto execStart = std::chrono::steady_clock::now();
-        int totalSteps = testMode ? 500000000 : 30000000;  // 500M for tests, 30M for quick test
+        int totalSteps = testMode ? 500000000 : 30000000;
         std::cout << "Running up to " << totalSteps << " bytecode steps..." << std::endl;
         if (testMode) {
-            std::cout << "Test mode: will stop when /tmp/sunit_test_results.txt contains ALL TESTS COMPLETE" << std::endl;
+            std::cout << "Image args:";
+            for (const auto& a : imageArgs) std::cout << " " << a;
+            std::cout << std::endl;
         }
         int activeSteps = 0;
-        int idleSteps = 0;
+        int consecutiveIdle = 0;
         bool clickInjected = false;
-        int clickResponseSteps = 0;
 
         for (int i = 0; i < totalSteps; i++) {
             // Start heartbeat after startup completes
             if (!heartbeatStarted && i == 2000000) {
-                std::cout << "Starting heartbeat thread (post-startup)..." << std::endl;
                 interpreter.startHeartbeat();
                 heartbeatStarted = true;
             }
             bool result = interpreter.step();
 
-
             // Progress report every 10M steps
             if (i > 0 && i % 10000000 == 0) {
                 std::cout << "[PROGRESS] Step " << i << ": active=" << activeSteps
-                          << " idle=" << idleSteps << " result=" << result << std::endl;
+                          << " idle=" << consecutiveIdle << " result=" << result << std::endl;
             }
 
-            // Report every 10M steps
-            if (i > 0 && i % 10000000 == 0) {
-                static auto start = std::chrono::steady_clock::now();
-                auto now = std::chrono::steady_clock::now();
-                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();
-                fprintf(stderr, "[STEP %d] active=%d total_time=%lldms\n", i, activeSteps, elapsed);
-            }
-
-            static int totalIdleSteps = 0;
-            static bool wasActive = false;
             if (result) {
                 activeSteps++;
-                idleSteps = 0;  // Reset consecutive idle count
-                wasActive = true;
+                consecutiveIdle = 0;
 
-                // In test mode, check for test completion during active steps too
-                if (testMode && activeSteps % 1000000 == 0) {
-                    FILE* rf = fopen("/tmp/sunit_test_results.txt", "r");
-                    if (rf) {
-                        fseek(rf, 0, SEEK_END);
-                        long fsize = ftell(rf);
-                        if (fsize > 18) {  // "ALL TESTS COMPLETE" is 18 chars
-                            fseek(rf, fsize - 30, SEEK_SET);
-                            char buf[64] = {0};
-                            fread(buf, 1, 30, rf);
-                            fclose(rf);
-                            if (strstr(buf, "ALL TESTS COMPLETE")) {
-                                std::cout << "\n[TEST] SUnit test results complete!" << std::endl;
-                                FILE* results = fopen("/tmp/sunit_test_results.txt", "r");
-                                if (results) {
-                                    std::cout << "\n=== SUnit Test Results ===" << std::endl;
-                                    char line[256];
-                                    while (fgets(line, sizeof(line), results)) {
-                                        std::cout << line;
-                                    }
-                                    fclose(results);
-                                    std::cout << "=========================" << std::endl;
-                                }
-                                goto done;
-                            }
-                        } else {
-                            fclose(rf);
-                        }
-                    }
-                }
-
-                // Process dumps at key intervals to track MorphicRenderLoop
-                if (activeSteps % 20000000 == 0) {
-                    std::cerr << "\n=== PROCESS DUMP AT " << (activeSteps/1000000) << "M STEPS ===" << std::endl;
-                    interpreter.dumpProcessQueues();
-                }
-
-                // After 5k active steps, inject a right-click to trigger world menu
-                // (Injecting earlier so the render loop is still active)
-                if (!clickInjected && activeSteps == 5000) {
+                // In non-test mode, inject clicks for GUI testing
+                if (!testMode && !clickInjected && activeSteps == 5000) {
                     std::cout << "\n=== Injecting Right-Click (World Menu) ===" << std::endl;
-                    // Clear the DNU trace file first
-                    FILE* dnu = fopen("/tmp/dnu_trace.log", "w");
-                    if (dnu) {
-                        fprintf(dnu, "=== DNU Trace for Right-Click Test ===\n");
-                        fclose(dnu);
-                    }
-                    // Right-click (yellow button = 2) on World BACKGROUND
-                    // The Welcome window is at bounds [138,57,838,607], so click outside it
-                    // Click at (50, 300) which is to the LEFT of the window
                     injectMouseClick(50, 300, 2);
                     clickInjected = true;
-                    clickResponseSteps = 0;
-                }
-
-                // Count steps after click injection
-                if (clickInjected) {
-                    clickResponseSteps++;
-                    // After processing click for a while, print status
-                    if (clickResponseSteps == 100000) {
-                        std::cout << "\n=== Click Response Complete (100k steps) ===" << std::endl;
-                    }
-                    // After 200k steps of click processing, inject a left click
-                    if (clickResponseSteps == 200000) {
-                        std::cout << "\n=== Injecting Left-Click ===" << std::endl;
-                        injectMouseClick(512, 384, 4);  // Left click (red button = 4)
-                    }
                 }
             } else {
-                // Detect transition from active to idle (limit dumps to avoid flooding)
-                if (wasActive) {
-                    static int idleTransitions = 0;
-                    idleTransitions++;
-                    if (idleTransitions <= 5 || idleTransitions % 100 == 0) {
-                        std::cerr << "[WENT-IDLE #" << idleTransitions << " step=" << i << " active=" << activeSteps << "]\n";
-                        interpreter.dumpProcessQueues();
-                    }
-                }
-                wasActive = false;
-                idleSteps++;
-                totalIdleSteps++;
-                // Report when we first go idle
-                if (totalIdleSteps == 1) {
+                consecutiveIdle++;
+                // Report first idle transition
+                if (consecutiveIdle == 1) {
                     std::cout << "[IDLE] First idle at step " << i << " after " << activeSteps << " active steps" << std::endl;
-                    interpreter.dumpProcessQueues();
                 }
-                // Check for test results file periodically
-                if (totalIdleSteps % 1000000 == 0) {
-                    // Check for SUnit test results (test mode)
-                    if (testMode) {
-                        FILE* rf = fopen("/tmp/sunit_test_results.txt", "r");
-                        if (rf) {
-                            // Read last 30 bytes to check for completion marker
-                            fseek(rf, 0, SEEK_END);
-                            long fsize = ftell(rf);
-                            if (fsize > 0) {
-                                long readFrom = (fsize > 30) ? fsize - 30 : 0;
-                                fseek(rf, readFrom, SEEK_SET);
-                                char buf[64] = {0};
-                                fread(buf, 1, 30, rf);
-                                fclose(rf);
-                                if (strstr(buf, "ALL TESTS COMPLETE")) {
-                                    std::cout << "\n[TEST] SUnit test results complete!" << std::endl;
-                                    // Print the full results
-                                    FILE* results = fopen("/tmp/sunit_test_results.txt", "r");
-                                    if (results) {
-                                        std::cout << "\n=== SUnit Test Results ===" << std::endl;
-                                        char line[256];
-                                        while (fgets(line, sizeof(line), results)) {
-                                            std::cout << line;
-                                        }
-                                        fclose(results);
-                                        std::cout << "=========================" << std::endl;
-                                    }
-                                    break;
-                                }
-                            } else {
-                                fclose(rf);
-                            }
-                        }
-                    }
-                    // Check for other diagnostic results
-                    FILE* rf = fopen("/tmp/diag_trace.txt", "r");
-                    if (!rf) rf = fopen("/tmp/inline_results.txt", "r");
-                    if (rf) {
-                        char buf[64] = {0};
-                        fseek(rf, -20, SEEK_END);
-                        fread(buf, 1, 20, rf);
-                        fclose(rf);
-                        if (strstr(buf, "DONE")) {
-                            std::cout << "[TEST] Results file complete! Breaking." << std::endl;
-                            break;
-                        }
-                    }
+                // In test mode, if idle for 10M consecutive steps, the image is done
+                // (test handler calls Smalltalk exitSuccess which stops the VM,
+                //  or something went wrong and we're stuck)
+                if (testMode && consecutiveIdle > 10000000) {
+                    std::cout << "[TEST] Idle for 10M steps, stopping." << std::endl;
+                    break;
                 }
-                // If we have 500M+ total idle steps and step count > 500M, we're truly idle
-                if (totalIdleSteps > 500000000 && i > 500000000) {
-                    std::cout << "[IDLE] Detected relinquish-based idle at step " << i
-                              << " (" << totalIdleSteps << " total idle steps, " << activeSteps << " active)" << std::endl;
-                    // Dump process scheduler queues
-                    interpreter.dumpProcessQueues();
+                // In non-test mode, stop after extended idle
+                if (!testMode && consecutiveIdle > 20000000) {
                     break;
                 }
             }
         }
-        done:
+
         std::cout << "\n=== Execution Summary ===" << std::endl;
         std::cout << "Active bytecode steps: " << activeSteps << std::endl;
-        std::cout << "Steps after click: " << clickResponseSteps << std::endl;
+
+        // In test mode, print results file if it exists
+        if (testMode) {
+            FILE* rf = fopen("/tmp/sunit_test_results.txt", "r");
+            if (rf) {
+                std::cout << "\n=== SUnit Test Results ===" << std::endl;
+                char line[256];
+                while (fgets(line, sizeof(line), rf)) {
+                    std::cout << line;
+                }
+                fclose(rf);
+                std::cout << "=========================" << std::endl;
+            } else {
+                std::cout << "\n[TEST] No results file at /tmp/sunit_test_results.txt" << std::endl;
+                std::cout << "The image may not have completed test execution." << std::endl;
+            }
+        }
 
         // Check if Display form bits were modified
         {

@@ -62,11 +62,12 @@
 #include <string>
 #include <unordered_map>
 #include <thread>
+#include <vector>
 
 namespace pharo {
 
 /// Maximum stack depth
-constexpr size_t MaxStackDepth = 32768;  // Must be large enough for MaxFrameDepth (4096) frames
+constexpr size_t MaxStackDepth = 131072;  // Must be large enough for MaxFrameDepth frames
 
 /// Method cache size (must be power of 2)
 constexpr size_t MethodCacheSize = 2048;
@@ -196,9 +197,9 @@ public:
     const std::string& imageName() const { return imageName_; }
     const std::string& vmPath() const { return vmPath_; }
 
-    /// Enable test mode (triggers SUnit test runner during idle loop)
-    void setTestMode(bool enabled) { testMode_ = enabled; }
-    bool testMode() const { return testMode_; }
+    /// Set/get image arguments (passed to image via primitiveGetAttribute index 2+)
+    void setImageArguments(const std::vector<std::string>& args) { imageArguments_ = args; }
+    const std::vector<std::string>& imageArguments() const { return imageArguments_; }
 
     /// Set/get screen dimensions
     void setScreenSize(int width, int height) { screenWidth_ = width; screenHeight_ = height; }
@@ -303,7 +304,7 @@ private:
         int savedArgCount;
         size_t homeFrameDepth;  // For non-local block returns: the frame to return to (0 = not a block)
     };
-    static constexpr size_t MaxFrameDepth = 4096;
+    static constexpr size_t MaxFrameDepth = 65536;
     std::array<SavedFrame, MaxFrameDepth> savedFrames_;
     size_t frameDepth_;
 
@@ -339,9 +340,10 @@ private:
     bool inExtension_ = false;  // True after extension byte (0xE0/0xE1), prevents forceYield from splitting extension+target
     int lastPrimitiveIndex_ = 0;  // For stepDetailed() tracking
 
-    // System paths
+    // System paths and arguments
     std::string imageName_;
     std::string vmPath_;
+    std::vector<std::string> imageArguments_;  // Command-line args for the image (index 2+)
 
     // Screen dimensions (configurable, defaults for headless)
     int screenWidth_ = 1024;
@@ -419,8 +421,6 @@ private:
     bool enableDirectInputSignaling_ = false;  // True when VM should signal input semaphore directly
     bool suspendActiveProcess_ = false;  // Set by DNU handler to force process switch
     bool relinquishSlept_ = false;       // Set by primitiveRelinquishProcessor when it sleeps
-    bool testMode_ = false;              // When true, trigger SUnit test runner during idle
-    bool testRunnerTriggered_ = false;   // Ensures test runner only fires once
 
     // NOTE: Event injection workaround member variables REMOVED
     // Events must go through proper Smalltalk InputEventSensor process, not C++ workarounds
@@ -1582,10 +1582,6 @@ private:
     /// Auto-load OSiOSDriver.st by evaluating Smalltalk code
     /// Called once at startup to enable the event system
     bool autoLoadDriver();
-
-    /// Trigger SUnit test runner via OpalCompiler evaluate:
-    /// Called once during idle loop when test mode is enabled
-    void triggerTestRunner();
 
     /// Try to reschedule to another runnable process.
     /// Returns true if a process was found and execution continues.
