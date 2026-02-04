@@ -30,14 +30,20 @@ When something doesn't work:
 
 **If you find yourself writing code that "works around" something, STOP and investigate the root cause instead.**
 
-### Current Priority: Load OSiOSDriver Event Loop Methods
-The image's OSiOSDriver is a STUB without event loop methods. This is THE problem to fix:
-- Primitive 264 (getNextEvent) works but nothing calls it
-- OSiOSDriver needs `setupEventLoop` method to create event loop process
-- OSSDL2Driver can't be used (FFI type resolution broken)
-- Solution: Load `scripts/load_ios_driver.st` into the image
+### Current Priority: Run Pharo Test Suite and Fix Failures
+Run the official Pharo SUnit test suite on our VM. Report current pass/fail counts, then systematically fix failures.
 
-**Next Step:** Use standard Pharo VM to load load_ios_driver.st, then test with our custom VM.
+**Workflow:**
+1. Run the test suite (see "Running Official Pharo Test Suite" section below)
+2. Record baseline pass/fail/error counts in `docs/WIP.md`
+3. Categorize failures by root cause (missing primitives, broken bytecodes, etc.)
+4. Fix the root causes one at a time, re-running tests after each fix
+5. Track progress in `docs/WIP.md`
+
+**Known issues from earlier runs:**
+- `#on:do:` DNU on Array - exception handling chain problem
+- `#asArray` on UndefinedObject - nil where an object is expected
+- These suggest fundamental issues in method lookup or context handling
 
 ---
 

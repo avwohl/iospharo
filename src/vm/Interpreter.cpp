@@ -5615,6 +5615,50 @@ void Interpreter::returnFromMethod() {
         size_t homeFrame = savedFrames_[frameDepth_ - 1].homeFrameDepth;
 
         if (homeFrame != SIZE_MAX) {
+            // DIAG: Log NLR in critical step range
+            if (g_stepNum >= 1769500 && g_stepNum <= 1770700) {
+                static FILE* nlrLog = nullptr;
+                if (!nlrLog) nlrLog = fopen("/tmp/nlr_trace.log", "w");
+                if (nlrLog) {
+                    // Get current method's selector
+                    std::string msel = "?";
+                    Oop hdr = memory_.fetchPointer(0, method_);
+                    if (hdr.isSmallInteger()) {
+                        size_t nLits = hdr.asSmallInteger() & 0x7FFF;
+                        if (nLits >= 2) {
+                            Oop penLit = memory_.fetchPointer(nLits - 1, method_);
+                            if (penLit.isObject() && penLit.rawBits() > 0x10000) {
+                                ObjectHeader* plh = penLit.asObjectPtr();
+                                if (plh->isBytesObject() && plh->byteSize() < 80)
+                                    msel = std::string((char*)plh->bytes(), plh->byteSize());
+                            }
+                        }
+                    }
+                    fprintf(nlrLog, "[NLR step=%llu fd=%zu→%zu] in method #%s homeFrame=%zu\n",
+                            (unsigned long long)g_stepNum, frameDepth_, homeFrame, msel.c_str(), homeFrame);
+                    // Show what's being unwound
+                    for (size_t fi = frameDepth_ - 1; fi >= homeFrame && fi < frameDepth_; fi--) {
+                        std::string fsm = "?";
+                        if (savedFrames_[fi].savedMethod.isObject() && savedFrames_[fi].savedMethod.rawBits() > 0x10000) {
+                            Oop fhdr = memory_.fetchPointer(0, savedFrames_[fi].savedMethod);
+                            if (fhdr.isSmallInteger()) {
+                                size_t fnl = fhdr.asSmallInteger() & 0x7FFF;
+                                if (fnl >= 2) {
+                                    Oop fpl = memory_.fetchPointer(fnl - 1, savedFrames_[fi].savedMethod);
+                                    if (fpl.isObject() && fpl.rawBits() > 0x10000) {
+                                        ObjectHeader* fph = fpl.asObjectPtr();
+                                        if (fph->isBytesObject() && fph->byteSize() < 80)
+                                            fsm = std::string((char*)fph->bytes(), fph->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                        fprintf(nlrLog, "  unwind frame %zu: #%s hfd=%zu\n",
+                                fi, fsm.c_str(), savedFrames_[fi].homeFrameDepth);
+                    }
+                    fflush(nlrLog);
+                }
+            }
             // Non-local return: unwind frames from current down to homeFrame
             // We want to return FROM the home method, so we pop down to homeFrame,
             // then returnValue pops one more and pushes the value to the caller
@@ -6629,7 +6673,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             allSendLog2 = fopen("/tmp/all_sends.log", "w");
             if (allSendLog2) { fprintf(allSendLog2, "[INIT] send log opened at step %llu\n", g_stepNum); fflush(allSendLog2); }
         }
-    if (allSendLog2 && g_stepNum >= 1523900 && g_stepNum <= 1524200) {
+    if (allSendLog2 && g_stepNum >= 1769554 && g_stepNum <= 1776840) {
         if (allSendLog2 && selector.isObject() && selector.rawBits() > 0x10000) {
             ObjectHeader* sh2 = selector.asObjectPtr();
             if (sh2->isBytesObject() && sh2->byteSize() < 200) {
@@ -6649,8 +6693,23 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                         }
                     }
                 }
-                fprintf(allSendLog2, "[%llu fd=%zu] %s >> #%s (%d)\n",
-                        g_stepNum, frameDepth_, rc.c_str(), sn2.c_str(), argCount);
+                // Try metaclass resolution for class names
+                if (rc == "?" && rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                    Oop cls = memory_.classOf(rcvr);
+                    if (cls.isObject() && cls.rawBits() > 0x10000) {
+                        Oop tc = memory_.fetchPointer(5, cls);
+                        if (tc.isObject() && tc.rawBits() > 0x10000) {
+                            Oop nm2 = memory_.fetchPointer(6, tc);
+                            if (nm2.isObject() && nm2.rawBits() > 0x10000) {
+                                ObjectHeader* nmH = nm2.asObjectPtr();
+                                if (nmH->isBytesObject() && nmH->byteSize() < 100)
+                                    rc = std::string((char*)nmH->bytes(), nmH->byteSize()) + " class";
+                            }
+                        }
+                    }
+                }
+                fprintf(allSendLog2, "[%llu fd=%zu] %s(0x%llx) >> #%s (%d)\n",
+                        g_stepNum, frameDepth_, rc.c_str(), (unsigned long long)rcvr.rawBits(), sn2.c_str(), argCount);
                 fflush(allSendLog2);
             }
         }
@@ -9736,7 +9795,145 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     static int cacheHits = 0, cacheMisses = 0;
     static int lastReport = 0;
 
+    // DIAG: Trace newForEncoding: BEFORE cache probe
+    bool traceNFE = false;
+    // Helper to get class name from a class Oop
+    auto nfeClassName = [this](Oop cls) -> std::string {
+        if (cls.isNil()) return "nil";
+        if (!cls.isObject() || cls.rawBits() < 0x10000) return "?";
+        // Try slot 6 (name) directly
+        ObjectHeader* ch = cls.asObjectPtr();
+        if (ch->slotCount() > 6) {
+            Oop nameSlot = memory_.fetchPointer(6, cls);
+            if (nameSlot.isObject() && nameSlot.rawBits() > 0x10000) {
+                ObjectHeader* nh = nameSlot.asObjectPtr();
+                if (nh->isBytesObject() && nh->byteSize() < 100) {
+                    return std::string((char*)nh->bytes(), nh->byteSize());
+                }
+            }
+        }
+        return "?";
+    };
+    {
+        static int nfePreCount = 0;
+        if (nfePreCount < 10 && selLen == 15 && selBytes && memcmp(selBytes, "newForEncoding:", 15) == 0) {
+            nfePreCount++;
+            traceNFE = true;
+            // Show the encoding argument (arg 0 on stack = stackValue(0))
+            Oop encArg = stackValue(0);
+            if (encArg.isObject() && encArg.rawBits() > 0x10000) {
+                ObjectHeader* eah = encArg.asObjectPtr();
+                if (eah->isBytesObject() && eah->byteSize() < 100) {
+                    fprintf(stderr, "[NFE-PRE #%d] encoding arg: '%.*s' (len=%zu) bytes:",
+                            nfePreCount, (int)eah->byteSize(), (char*)eah->bytes(), eah->byteSize());
+                    for (size_t bi = 0; bi < eah->byteSize(); bi++)
+                        fprintf(stderr, " %02x", ((uint8_t*)eah->bytes())[bi]);
+                    fprintf(stderr, "\n");
+                }
+            }
+            std::string rcvrClassName = nfeClassName(rcvrClass);
+            // Try to get metaclass thisClass name for metaclass classes
+            if (rcvrClassName == "?" && rcvrClass.isObject() && rcvrClass.rawBits() > 0x10000) {
+                Oop tc = memory_.fetchPointer(5, rcvrClass);
+                if (tc.isObject() && tc.rawBits() > 0x10000) rcvrClassName = nfeClassName(tc) + " class";
+            }
+            fprintf(stderr, "[NFE-PRE #%d step=%llu fd=%zu] newForEncoding: on rcvrClass=0x%llx (%s)\n",
+                    nfePreCount, (unsigned long long)g_stepNum, frameDepth_,
+                    (unsigned long long)rcvrClass.rawBits(), rcvrClassName.c_str());
+            // Show receiver details
+            fprintf(stderr, "  rcvr=0x%llx isSmallInt=%d isObj=%d\n",
+                    (unsigned long long)rcvr.rawBits(), rcvr.isSmallInteger(), rcvr.isObject());
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                ObjectHeader* rh = rcvr.asObjectPtr();
+                fprintf(stderr, "  rcvr classIndex=%u format=%d slots=%zu\n",
+                        rh->classIndex(), (int)rh->format(), rh->slotCount());
+                // Walk the metaclass chain
+                fprintf(stderr, "  metaclass chain:\n");
+                Oop cls = rcvrClass;
+                for (int i = 0; i < 8 && cls.isObject() && cls.rawBits() > 0x10000; i++) {
+                    std::string cn = nfeClassName(cls);
+                    if (cn == "?") {
+                        Oop tc2 = memory_.fetchPointer(5, cls);
+                        if (tc2.isObject() && tc2.rawBits() > 0x10000) cn = nfeClassName(tc2) + " class";
+                    }
+                    // Check if newForEncoding: exists in this class's method dictionary
+                    Oop md = methodDictOf(cls);
+                    bool hasMD = !md.isNil() && md.isObject() && md.rawBits() > 0x10000;
+                    fprintf(stderr, "    [%d] 0x%llx (%s) hasMethodDict=%d\n",
+                            i, (unsigned long long)cls.rawBits(), cn.c_str(), hasMD);
+                    // Get superclass (slot 0)
+                    Oop sup = memory_.fetchPointer(0, cls);
+                    cls = sup;
+                }
+            }
+            // Show call stack (method at each frame)
+            fprintf(stderr, "  call stack:\n");
+            for (size_t fi = 0; fi <= frameDepth_ && fi < 10; fi++) {
+                auto& sf = savedFrames_[fi];
+                if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                    // Get selector from penultimate literal
+                    Oop hdr = memory_.fetchPointer(0, sf.savedMethod);
+                    std::string msel = "?";
+                    std::string mrcv = "?";
+                    if (hdr.isSmallInteger()) {
+                        size_t nLits = hdr.asSmallInteger() & 0x7FFF;
+                        if (nLits >= 2) {
+                            Oop penLit = memory_.fetchPointer(nLits - 1, sf.savedMethod);
+                            if (penLit.isObject() && penLit.rawBits() > 0x10000) {
+                                ObjectHeader* plh = penLit.asObjectPtr();
+                                if (plh->isBytesObject() && plh->byteSize() < 80)
+                                    msel = std::string((char*)plh->bytes(), plh->byteSize());
+                            }
+                        }
+                    }
+                    // Get receiver class name
+                    if (sf.savedReceiver.isNil()) mrcv = "nil";
+                    else if (sf.savedReceiver.isSmallInteger()) mrcv = "SmallInt";
+                    else if (sf.savedReceiver.isObject() && sf.savedReceiver.rawBits() > 0x10000) {
+                        Oop rc = memory_.classOf(sf.savedReceiver);
+                        mrcv = nfeClassName(rc);
+                        if (mrcv == "?") {
+                            Oop tc3 = memory_.fetchPointer(5, rc);
+                            if (tc3.isObject() && tc3.rawBits() > 0x10000) mrcv = nfeClassName(tc3) + " class";
+                        }
+                    }
+                    fprintf(stderr, "    fd=%zu: %s >> #%s\n", fi, mrcv.c_str(), msel.c_str());
+                }
+            }
+        }
+    }
+
     MethodCacheEntry* cached = probeCache(selector, rcvrClass);
+
+    // DIAG: Continue NFE trace after cache probe
+    if (traceNFE) {
+        if (cached) {
+            fprintf(stderr, "  cache HIT: method=0x%llx primIdx=%d isNil=%d\n",
+                    (unsigned long long)cached->method.rawBits(), cached->primitiveIndex,
+                    (cached->method.isNil() || cached->method.rawBits() == 0) ? 1 : 0);
+            // Show what the cached method's selector is
+            if (cached->method.isObject() && cached->method.rawBits() > 0x10000) {
+                ObjectHeader* mh = cached->method.asObjectPtr();
+                Oop hdr = memory_.fetchPointer(0, cached->method);
+                if (hdr.isSmallInteger()) {
+                    size_t nLits = hdr.asSmallInteger() & 0x7FFF;
+                    if (nLits >= 2) {
+                        Oop penLit = memory_.fetchPointer(nLits - 1, cached->method);
+                        if (penLit.isObject() && penLit.rawBits() > 0x10000) {
+                            ObjectHeader* plh = penLit.asObjectPtr();
+                            if (plh->isBytesObject() && plh->byteSize() < 80) {
+                                fprintf(stderr, "  cached method selector: #%.*s\n",
+                                        (int)plh->byteSize(), (char*)plh->bytes());
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            fprintf(stderr, "  cache MISS (will call lookupMethod)\n");
+        }
+    }
+
     if (cached) {
         // Debug: check for cached nil method (shouldn't happen but might explain issues)
         if (cached->method.isNil() || cached->method.rawBits() == 0) {
@@ -10694,8 +10891,42 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
         }
     }
 
+    // DIAG: Trace newForEncoding: lookup (first 3 occurrences)
+    bool traceNewForEncoding = false;
+    {
+        static int nfeCount = 0;
+        if (nfeCount < 3 && selStr == "newForEncoding:") {
+            nfeCount++;
+            traceNewForEncoding = true;
+            fprintf(stderr, "[NFE-LOOKUP #%d step=%llu] newForEncoding: lookup starting at class 0x%llx (%s)\n",
+                    nfeCount, (unsigned long long)g_stepNum,
+                    (unsigned long long)classOop.rawBits(), getClassName(classOop).c_str());
+            // Show receiver info
+            Oop rcvr = stackValue(1);  // 1 arg for newForEncoding:
+            fprintf(stderr, "  receiver=0x%llx isObj=%d\n",
+                    (unsigned long long)rcvr.rawBits(), rcvr.isObject());
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                ObjectHeader* rh = rcvr.asObjectPtr();
+                fprintf(stderr, "  rcvr classIndex=%u format=%d slots=%zu\n",
+                        rh->classIndex(), (int)rh->format(), rh->slotCount());
+            }
+        }
+    }
+
     while (!isNilOrEnd(currentClass) && currentClass.isObject() && depth < 100) {
         Oop methodDict = methodDictOf(currentClass);
+
+        if (traceNewForEncoding) {
+            std::string cn = getClassName(currentClass);
+            if (cn == "?") {
+                // Try to get metaclass thisClass name
+                Oop tc = memory_.fetchPointer(5, currentClass);
+                if (tc.isObject() && tc.rawBits() > 0x10000) cn = getClassName(tc) + " class";
+            }
+            fprintf(stderr, "  [%d] class=0x%llx (%s) dict=%s\n",
+                    depth, (unsigned long long)currentClass.rawBits(), cn.c_str(),
+                    isNilOrEnd(methodDict) ? "nil" : "ok");
+        }
 
         // Trace #new lookup path
         if (shouldTraceNew) {
