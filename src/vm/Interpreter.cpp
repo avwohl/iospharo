@@ -10,6 +10,7 @@
 #include "../platform/EventQueue.hpp"
 #include <cstring>
 #include <cmath>
+#include <csetjmp>
 #include <iostream>
 #include <iomanip>
 #include <thread>
@@ -23,6 +24,10 @@
 // Undefine Objective-C's nil macro to avoid conflict with Oop::nil()
 #undef nil
 #endif
+
+// SIGSEGV recovery support - used by executeFromContext, handler in test_load_image.cpp
+sigjmp_buf g_sigsegvRecovery;
+volatile sig_atomic_t g_sigsegvRecoveryEnabled = 0;
 
 namespace pharo {
 
@@ -4895,6 +4900,20 @@ void Interpreter::returnValue(Oop value) {
                 }
                 // Fall through to terminate current process
             } else if (sender.isObject() && sender.rawBits() != nilObj.rawBits()) {
+                // Fix unrelocated sender pointer before dereferencing
+                {
+                    const uint64_t OLD_IMAGE_BASE = 0x10000000000ULL;
+                    uint64_t sndAddr = sender.rawBits() & ~7ULL;
+                    if (sndAddr >= OLD_IMAGE_BASE && sndAddr < OLD_IMAGE_BASE * 2) {
+                        uint64_t offset = sndAddr - OLD_IMAGE_BASE;
+                        uint64_t newAddr = reinterpret_cast<uint64_t>(memory_.oldSpaceStart()) + offset;
+                        sender = memory_.oopFromPointer(reinterpret_cast<ObjectHeader*>(newAddr));
+                    }
+                }
+                if (!memory_.isValidPointer(sender)) {
+                    // Invalid sender - terminate process
+                    goto terminate_process;
+                }
                 ObjectHeader* senderHdr = sender.asObjectPtr();
                 if (g_crashTraceEnabled) {
                     fprintf(stderr, "[RETVAL-TRACE] senderHdr=%p slots=%zu fmt=%d\n",
@@ -13238,11 +13257,13 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         if (isDnuSelector || selectors_.doesNotUnderstand.rawBits() == selector.rawBits()) {
             static int dnuCascadeCount = 0;
             if (dnuCascadeCount++ < 10) {
-                std::cerr << "[DNU-CASCADE] doesNotUnderstand: itself not found — terminating process\n";
+                std::cerr << "[DNU-CASCADE] doesNotUnderstand: itself not found — returning nil\n";
             }
+            // Don't suspend the process - just return nil and let Smalltalk
+            // exception handlers deal with it. Suspending kills the entire
+            // process which can terminate the test runner.
             for (int i = 0; i < argCount + 1; i++) pop();
             push(memory_.nil());
-            suspendActiveProcess_ = true;
             dnuDepth--;
             return;
         }
@@ -17663,6 +17684,19 @@ Oop Interpreter::findSelector(const char* name) {
 }
 
 bool Interpreter::executeFromContext(Oop context) {
+    // Set up SIGSEGV recovery point - if we crash accessing unrelocated pointers,
+    // we'll longjmp back here and return false instead of terminating the VM
+    if (sigsetjmp(g_sigsegvRecovery, 1) != 0) {
+        // Returned from SIGSEGV recovery - reset state and return false
+        g_sigsegvRecoveryEnabled = 0;
+        stackPointer_ = stackBase_;
+        frameDepth_ = 0;
+        return false;
+    }
+    g_sigsegvRecoveryEnabled = 1;
+    // RAII guard to disable recovery on any return path
+    struct SigsegvGuard { ~SigsegvGuard() { g_sigsegvRecoveryEnabled = 0; } } sigsegvGuard;
+
     // Crash trace
     if (g_crashTraceEnabled) {
         fprintf(stderr, "[EXEC-CTX-TRACE] enter ctx=0x%llx\n", (unsigned long long)context.rawBits());

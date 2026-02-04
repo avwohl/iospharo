@@ -12,8 +12,9 @@ runAllTests
   | testClasses stream |
   testClasses := {
     SmallIntegerTest. IntegerTest. FloatTest. FractionTest.
-    PointTest. CharacterTest. OrderedCollectionTest.
+    PointTest. CharacterTest.
     StringTest. SymbolTest. DictionaryTest. SetTest. BagTest. IntervalTest.
+    OrderedCollectionTest "slow - runs last".
     ArrayTest "last - known to crash test process" }.
 
   stream := '/tmp/sunit_test_results.txt' asFileReference writeStream.

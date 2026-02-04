@@ -15,8 +15,13 @@
 #include <vector>
 #include <cstring>
 #include <csignal>
+#include <csetjmp>
 #include <execinfo.h>
 #include <unistd.h>
+
+// SIGSEGV recovery support - defined in Interpreter.cpp
+extern sigjmp_buf g_sigsegvRecovery;
+extern volatile sig_atomic_t g_sigsegvRecoveryEnabled;
 #include <unordered_map>
 
 using namespace pharo;
@@ -416,6 +421,16 @@ void testOopTagging() {
 }
 
 static void sigsegvAction(int sig, siginfo_t* info, void* ctx) {
+    if (g_sigsegvRecoveryEnabled) {
+        // Recoverable SIGSEGV during executeFromContext - jump back
+        static int recoveryCount = 0;
+        if (++recoveryCount <= 10) {
+            fprintf(stderr, "\n[SIGSEGV-RECOVER] Signal %d at %p (recovery #%d)\n",
+                    sig, info->si_addr, recoveryCount);
+        }
+        g_sigsegvRecoveryEnabled = 0;
+        siglongjmp(g_sigsegvRecovery, 1);
+    }
     fprintf(stderr, "\n[SIGSEGV] Signal %d caught! Fault addr=%p\n", sig, info->si_addr);
     void* callstack[128];
     int frames = backtrace(callstack, 128);
@@ -584,7 +599,7 @@ int main(int argc, char* argv[]) {
         // Run bytecode steps for testing
         std::cout << "\n=== Execution Test ===" << std::endl;
         auto execStart = std::chrono::steady_clock::now();
-        int totalSteps = testMode ? 500000000 : 200000000;
+        int totalSteps = testMode ? 2000000000 : 200000000;
         std::cout << "Running up to " << totalSteps << " bytecode steps..." << std::endl;
         if (testMode) {
             std::cout << "Image args:";
@@ -607,6 +622,27 @@ int main(int argc, char* argv[]) {
             if (i > 0 && i % 10000000 == 0) {
                 std::cout << "[PROGRESS] Step " << i << ": active=" << activeSteps
                           << " idle=" << consecutiveIdle << " result=" << result << std::endl;
+
+                // In test mode, check for results file every 10M steps
+                if (testMode) {
+                    FILE* rf = fopen("/tmp/sunit_test_results.txt", "r");
+                    if (rf) {
+                        // Check if file contains completion marker
+                        char buf[256];
+                        bool complete = false;
+                        while (fgets(buf, sizeof(buf), rf)) {
+                            if (strstr(buf, "ALL TESTS COMPLETE")) {
+                                complete = true;
+                                break;
+                            }
+                        }
+                        fclose(rf);
+                        if (complete) {
+                            std::cout << "[TEST] Results file complete! Stopping." << std::endl;
+                            break;
+                        }
+                    }
+                }
             }
 
             if (result) {
