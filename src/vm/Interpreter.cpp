@@ -3740,59 +3740,45 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 sendSelector(selector, numArgs);
                 break;
             }
-            case 0xEB: // 235: Send To Superclass (same encoding as 0xEA)
+            case 0xEB: // 235: Send To Superclass
             {
                 uint8_t desc = fetchByte();
                 int selectorIndex = ((extA_ << 5) | (desc >> 3)) & 0xFFFF;
-                int numArgs = ((extB_ << 3) | (desc & 0x07)) & 0xFF;
+                int effectiveExtB = extB_;
                 extA_ = 0;
                 extB_ = 0;
                 Oop selector = literal(selectorIndex);
-                // Super send: lookup from superclass of METHOD's defining class (not receiver's class)
-                // This is critical: super means "start lookup from my defining class's superclass"
-                Oop methodClass = methodClassOf(method_);
-                Oop superclass;
-                if (methodClass.isNil() || !methodClass.isObject()) {
-                    // Fallback to receiver's class superclass if we can't find method class
-                    superclass = superclassOf(memory_.classOf(receiver_));
-                } else {
-                    superclass = superclassOf(methodClass);
-                }
-                Oop method = lookupMethod(selector, superclass);
-                if (method.isNil()) {
-                    // TRACE: super send DNU for visitNode:
-                    {
-                        static int superDnuTrace = 0;
-                        if (superDnuTrace < 5 && selector.isObject() && selector.rawBits() > 0x10000) {
-                            ObjectHeader* sh = selector.asObjectPtr();
-                            if (sh->isBytesObject() && sh->byteSize() == 10 && memcmp(sh->bytes(), "visitNode:", 10) == 0) {
-                                superDnuTrace++;
-                                std::string superName = "?", methodClassName = "?";
-                                if (superclass.isObject() && superclass.rawBits() > 0x10000) {
-                                    Oop n = memory_.fetchPointer(6, superclass);
-                                    if (n.isObject() && n.rawBits() > 0x10000) {
-                                        ObjectHeader* nh = n.asObjectPtr();
-                                        if (nh->isBytesObject() && nh->byteSize() < 50)
-                                            superName = std::string((char*)nh->bytes(), nh->byteSize());
-                                    }
-                                }
-                                if (methodClass.isObject() && methodClass.rawBits() > 0x10000) {
-                                    Oop n = memory_.fetchPointer(6, methodClass);
-                                    if (n.isObject() && n.rawBits() > 0x10000) {
-                                        ObjectHeader* nh = n.asObjectPtr();
-                                        if (nh->isBytesObject() && nh->byteSize() < 50)
-                                            methodClassName = std::string((char*)nh->bytes(), nh->byteSize());
-                                    }
-                                }
-                                fprintf(stderr, "[VN-SUPER-DNU #%d step=%llu] super visitNode: DNU! "
-                                        "methodClass=%s lookupFrom=%s\n",
-                                        superDnuTrace, g_stepNum, methodClassName.c_str(), superName.c_str());
-                            }
-                        }
+                Oop lookupClass;
+
+                if (effectiveExtB >= 64) {
+                    // Directed super send (used by FullBlockClosures):
+                    // Stack layout (top to bottom): definingClass, argN, ..., arg1, receiver
+                    // The defining class is on top of stack. Lookup starts from its SUPERCLASS.
+                    // numArgs uses (extB - 64) instead of extB.
+                    int numArgs = (((effectiveExtB - 64) << 3) | (desc & 0x07)) & 0xFF;
+                    Oop definingClass = pop();  // Pop the defining class from top of stack
+                    lookupClass = superclassOf(definingClass);
+                    Oop method = lookupMethod(selector, lookupClass);
+                    if (method.isNil()) {
+                        sendDoesNotUnderstand(selector, numArgs);
+                    } else {
+                        activateMethod(method, numArgs);
                     }
-                    sendDoesNotUnderstand(selector, numArgs);
                 } else {
-                    activateMethod(method, numArgs);
+                    // Normal super send: lookup from superclass of method's defining class
+                    int numArgs = ((effectiveExtB << 3) | (desc & 0x07)) & 0xFF;
+                    Oop methodClass = methodClassOf(method_);
+                    if (methodClass.isNil() || !methodClass.isObject()) {
+                        lookupClass = superclassOf(memory_.classOf(receiver_));
+                    } else {
+                        lookupClass = superclassOf(methodClass);
+                    }
+                    Oop method = lookupMethod(selector, lookupClass);
+                    if (method.isNil()) {
+                        sendDoesNotUnderstand(selector, numArgs);
+                    } else {
+                        activateMethod(method, numArgs);
+                    }
                 }
                 break;
             }

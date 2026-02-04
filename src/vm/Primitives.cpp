@@ -6241,14 +6241,16 @@ static std::vector<uint8_t> multiplyMagnitudes(const std::vector<uint8_t>& a, co
     std::vector<uint8_t> result(a.size() + b.size(), 0);
 
     for (size_t i = 0; i < a.size(); i++) {
-        uint16_t carry = 0;
+        uint32_t carry = 0;
         for (size_t j = 0; j < b.size() || carry; j++) {
-            uint32_t prod = result[i + j] + carry;
+            size_t pos = i + j;
+            if (pos >= result.size()) break;  // Safety bound
+            uint32_t prod = result[pos] + carry;
             if (j < b.size()) {
                 prod += static_cast<uint32_t>(a[i]) * b[j];
             }
-            result[i + j] = static_cast<uint8_t>(prod & 0xFF);
-            carry = static_cast<uint16_t>(prod >> 8);
+            result[pos] = static_cast<uint8_t>(prod & 0xFF);
+            carry = prod >> 8;
         }
     }
 

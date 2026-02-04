@@ -9,7 +9,7 @@ Object subclass: #SUnitRunner
 !SUnitRunner class methodsFor: 'running'!
 runAllTests
   "Run all tests and write results incrementally to /tmp/sunit_test_results.txt"
-  | testClasses stream diagSet |
+  | testClasses stream |
   testClasses := {
     SmallIntegerTest. IntegerTest. FloatTest. FractionTest.
     PointTest. CharacterTest.
@@ -19,30 +19,6 @@ runAllTests
 
   stream := '/tmp/sunit_test_results.txt' asFileReference writeStream.
   [stream nextPutAll: '=== SUnit Test Run ==='; cr; cr.
-   "Diagnostic: test nil equality"
-   stream nextPutAll: 'DIAG nil == nil: '; nextPutAll: (nil == nil) printString; cr.
-   stream nextPutAll: 'DIAG nil = nil: '; nextPutAll: (nil = nil) printString; cr.
-   stream nextPutAll: 'DIAG nil hash: '; nextPutAll: nil hash printString; cr.
-   stream nextPutAll: 'DIAG nil hash again: '; nextPutAll: nil hash printString; cr.
-   stream nextPutAll: 'DIAG nil identityHash: '; nextPutAll: nil identityHash printString; cr.
-   stream nextPutAll: 'DIAG nil identityHash again: '; nextPutAll: nil identityHash printString; cr.
-   stream nextPutAll: 'DIAG nil class: '; nextPutAll: nil class name; cr.
-   stream nextPutAll: 'DIAG lookup =: '; nextPutAll: (nil class lookupSelector: #=) printString; cr.
-   stream nextPutAll: 'DIAG lookup == : '; nextPutAll: (nil class lookupSelector: #==) printString; cr.
-   stream nextPutAll: 'DIAG Object>>= src: '; nextPutAll: (Object >> #=) sourceCode; cr.
-   stream nextPutAll: 'DIAG 1 = 1: '; nextPutAll: (1 = 1) printString; cr.
-   stream nextPutAll: 'DIAG true = true: '; nextPutAll: (true = true) printString; cr.
-   stream nextPutAll: 'DIAG false = false: '; nextPutAll: (false = false) printString; cr.
-   stream nextPutAll: 'DIAG nil perform:#= with:nil: '; nextPutAll: (nil perform: #= with: nil) printString; cr.
-   stream nextPutAll: 'DIAG (nil=nil) class: '; nextPutAll: (nil = nil) class name; cr.
-   stream nextPutAll: 'DIAG (nil=nil) == false: '; nextPutAll: ((nil = nil) == false) printString; cr.
-   stream nextPutAll: 'DIAG (nil=nil) == true: '; nextPutAll: ((nil = nil) == true) printString; cr.
-   stream nextPutAll: 'DIAG (Set new max: [:e|e]) = nil: '; nextPutAll: ((Set new max: [:e|e]) = nil) printString; cr.
-   stream nextPutAll: 'DIAG Set new includes: nil: '; nextPutAll: (Set new includes: nil) printString; cr.
-   diagSet := Set new. diagSet add: nil.
-   stream nextPutAll: 'DIAG Set-with-nil includes nil: '; nextPutAll: (diagSet includes: nil) printString; cr.
-   stream nextPutAll: 'DIAG Set-with-nil size: '; nextPutAll: diagSet size printString; cr.
-   stream cr. stream flush.
    testClasses do: [:tc |
      self runTestClass: tc on: stream.
      stream flush].
