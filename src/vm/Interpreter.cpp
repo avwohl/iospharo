@@ -2721,76 +2721,6 @@ bool Interpreter::step() {
     // Track step count (for debugging if needed)
     g_stepNum++;
 
-    // DETAILED BYTECODE TRACE for step range around suspendedContext set-back
-    if (g_stepNum >= 20650 && g_stepNum <= 21230) {
-        static FILE* bcTraceLog = nullptr;
-        if (!bcTraceLog) bcTraceLog = fopen("/tmp/bytecode_detail.log", "w");
-        if (bcTraceLog) {
-            uint8_t bc = *instructionPointer_;
-            // Get method selector
-            std::string methodSel = "?";
-            bool isBlock = false;
-            if (method_.isObject() && method_.rawBits() > 0x10000) {
-                ObjectHeader* mh = method_.asObjectPtr();
-                isBlock = (mh->classIndex() == 3117);
-                Oop hdr = memory_.fetchPointer(0, method_);
-                if (hdr.isSmallInteger()) {
-                    int nl = hdr.asSmallInteger() & 0x7FFF;
-                    if (nl >= 2 && nl < 100) {
-                        Oop sel = memory_.fetchPointer(nl - 1, method_);
-                        if (sel.isObject() && sel.rawBits() > 0x10000) {
-                            ObjectHeader* sh = sel.asObjectPtr();
-                            if (sh->isBytesObject() && sh->byteSize() < 50)
-                                methodSel = std::string((char*)sh->bytes(), sh->byteSize());
-                        }
-                    }
-                }
-            }
-            // Get activeContext_ stackp
-            int64_t ctxStackp = -1;
-            if (activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
-                Oop sp = memory_.fetchPointer(2, activeContext_);
-                if (sp.isSmallInteger()) ctxStackp = sp.asSmallInteger();
-            }
-            // Get receiver class
-            std::string rcvrCls = "?";
-            if (receiver_.isNil()) rcvrCls = "nil";
-            else if (receiver_.isSmallInteger()) rcvrCls = "SmI";
-            else if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-                Oop cls = memory_.classOf(receiver_);
-                if (cls.isObject()) {
-                    Oop cn = memory_.fetchPointer(6, cls);
-                    if (cn.isObject() && cn.rawBits() > 0x10000) {
-                        ObjectHeader* cnh = cn.asObjectPtr();
-                        if (cnh->isBytesObject() && cnh->byteSize() < 50)
-                            rcvrCls = std::string((char*)cnh->bytes(), cnh->byteSize());
-                    }
-                }
-            }
-            // Also get sender for context chain tracing
-            Oop ctxSender = (activeContext_.isObject() && activeContext_.rawBits() > 0x10000)
-                ? memory_.fetchPointer(0, activeContext_) : Oop::fromSmallInteger(-1);
-            fprintf(bcTraceLog, "[%llu] bc=0x%02X fd=%zu %s#%s rcvr=%s actx=0x%llx sender=0x%llx sp=%lld\n",
-                    g_stepNum, bc, frameDepth_,
-                    isBlock ? "BLOCK/" : "",
-                    methodSel.c_str(), rcvrCls.c_str(),
-                    (unsigned long long)activeContext_.rawBits(),
-                    (unsigned long long)ctxSender.rawBits(),
-                    (long long)ctxStackp);
-            // Log inline stack contents
-            ptrdiff_t stackItems = stackPointer_ - framePointer_;
-            fprintf(bcTraceLog, "  FP=%p SP=%p items=%td", (void*)framePointer_, (void*)stackPointer_, stackItems);
-            for (ptrdiff_t si = 0; si < stackItems && si < 8; si++) {
-                Oop v = *(framePointer_ + si);
-                if (v.isSmallInteger()) fprintf(bcTraceLog, " [%td]=SI(%lld)", si, v.asSmallInteger());
-                else if (v.rawBits() == memory_.nil().rawBits()) fprintf(bcTraceLog, " [%td]=nil", si);
-                else fprintf(bcTraceLog, " [%td]=0x%llx", si, (unsigned long long)v.rawBits());
-            }
-            fprintf(bcTraceLog, "\n");
-            fflush(bcTraceLog);
-        }
-    }
-
     // Log step progress periodically to detect hangs
     static FILE* stepProgressLog = nullptr;
     // Log more frequently near the hang point (steps 15000-16000)
@@ -16259,6 +16189,7 @@ void Interpreter::createBlock() {
     if (frameDepth_ > 0) {
         outerContextForBlock = materializeFrameStack();
         activeContext_ = outerContextForBlock;
+        frameDepth_ = 0;  // Reset after materialization to prevent duplicate contexts
     }
     memory_.storePointer(0, block, outerContextForBlock);  // outerContext
     memory_.storePointer(1, block, Oop::fromSmallInteger(
@@ -16595,6 +16526,12 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
         // Materialize inline frames to ensure proper context identity
         outerContextForBlock = materializeFrameStack();
         activeContext_ = outerContextForBlock;
+        // CRITICAL: Reset frameDepth_ after materialization, just like pushThisContext does.
+        // Without this, stale savedFrames_ data causes duplicate contexts to be created
+        // on subsequent materializations (e.g., when contextEnsure: calls thisContext),
+        // resulting in incorrect sender chains where handler blocks point to stale
+        // unwindAndStop: contexts instead of the outer ensure: context.
+        frameDepth_ = 0;
     }
     memory_.storePointer(0, block, outerContextForBlock);  // outerContext
     memory_.storePointer(1, block, compiledBlock);   // compiledBlock (instead of startPC)
@@ -16761,6 +16698,7 @@ void Interpreter::createBlockWithArgs(int numArgs, int numCopied, int blockSize)
     if (frameDepth_ > 0) {
         outerContextForBlock = materializeFrameStack();
         activeContext_ = outerContextForBlock;
+        frameDepth_ = 0;  // Reset after materialization to prevent duplicate contexts
     }
     memory_.storePointer(0, block, outerContextForBlock);  // outerContext
     memory_.storePointer(1, block, Oop::fromSmallInteger(
