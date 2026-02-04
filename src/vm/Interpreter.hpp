@@ -67,7 +67,7 @@
 namespace pharo {
 
 /// Maximum stack depth
-constexpr size_t MaxStackDepth = 131072;  // Must be large enough for MaxFrameDepth frames
+constexpr size_t MaxStackDepth = 524288;  // Must be large enough for MaxFrameDepth frames
 
 /// Method cache size (must be power of 2)
 constexpr size_t MethodCacheSize = 2048;
@@ -305,7 +305,7 @@ private:
         size_t homeFrameDepth;  // For non-local block returns: the frame to return to (SIZE_MAX = not a block)
     };
     static constexpr size_t MaxFrameDepth = 65536;
-    static constexpr size_t StackOverflowLimit = 8192;  // Graceful overflow limit (MaxFrameDepth is hard array bound)
+    static constexpr size_t StackOverflowLimit = 32768;  // Graceful overflow limit (MaxFrameDepth is hard array bound)
     std::array<SavedFrame, MaxFrameDepth> savedFrames_;
     size_t frameDepth_;
 
