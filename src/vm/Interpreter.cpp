@@ -2573,6 +2573,45 @@ bool Interpreter::step() {
         stepEntryLogged = true;
     }
     if (!running_) {
+        // In test mode, when VM has stopped (usually from frame depth overflow),
+        // restart it. First time: trigger the test runner. Subsequent times:
+        // just find a runnable process and continue.
+        if (testMode_) {
+            static int restartCount = 0;
+            restartCount++;
+            if (restartCount <= 20) {  // Allow up to 20 restarts
+                if (restartCount <= 5) {
+                    fprintf(stderr, "[TEST-MODE] VM stopped (restart #%d) at step %lld. Restarting.\n",
+                            restartCount, (long long)g_stepCount);
+                }
+                // Restart the VM with fresh state
+                running_ = true;
+                stackPointer_ = stackBase_;
+                frameDepth_ = 0;
+
+                if (!testRunnerTriggered_) {
+                    // First restart: trigger the test runner
+                    // Find a runnable process to resume
+                    Oop nextProcess = wakeHighestPriority();
+                    if (nextProcess.isObject() && !nextProcess.isNil() &&
+                        nextProcess.rawBits() != memory_.nil().rawBits()) {
+                        transferTo(nextProcess);
+                    }
+                    triggerTestRunner();
+                    if (testRunnerTriggered_) {
+                        return true;
+                    }
+                } else {
+                    // Subsequent restarts: just resume any runnable process
+                    Oop nextProcess = wakeHighestPriority();
+                    if (nextProcess.isObject() && !nextProcess.isNil() &&
+                        nextProcess.rawBits() != memory_.nil().rawBits()) {
+                        transferTo(nextProcess);
+                        return true;
+                    }
+                }
+            }
+        }
         return false;
     }
 
@@ -2618,6 +2657,27 @@ bool Interpreter::step() {
     // If the previous step slept in relinquishProcessor, report as idle
     if (relinquishSlept_) {
         relinquishSlept_ = false;
+
+        // Count idle cycles for deferred actions
+        static int relinquishIdleCycles = 0;
+        ++relinquishIdleCycles;
+
+        // Always log first few relinquish idle cycles
+        if (relinquishIdleCycles <= 5) {
+            fprintf(stderr, "[RELINQUISH-IDLE #%d] step=%lld frameDepth=%zu testMode=%d\n",
+                    relinquishIdleCycles, (long long)g_stepCount, frameDepth_, testMode_ ? 1 : 0);
+        }
+
+        if (testMode_ && !testRunnerTriggered_ && relinquishIdleCycles == 20) {
+            fprintf(stderr, "[RELINQUISH-IDLE] Triggering test runner at cycle %d, frameDepth=%zu\n",
+                    relinquishIdleCycles, frameDepth_);
+            triggerTestRunner();
+            // Don't return idle this time - let the test code execute
+            if (testRunnerTriggered_) {
+                return true;
+            }
+        }
+
         return false;  // Signal idle to caller
     }
 

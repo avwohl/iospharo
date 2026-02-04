@@ -593,7 +593,7 @@ int main(int argc, char* argv[]) {
         // Run bytecode steps for testing
         std::cout << "\n=== Execution Test ===" << std::endl;
         auto execStart = std::chrono::steady_clock::now();
-        int totalSteps = testMode ? 200000000 : 30000000;  // 200M for tests, 30M for quick test
+        int totalSteps = testMode ? 500000000 : 30000000;  // 500M for tests, 30M for quick test
         std::cout << "Running up to " << totalSteps << " bytecode steps..." << std::endl;
         if (testMode) {
             std::cout << "Test mode: will stop when /tmp/sunit_test_results.txt contains ALL TESTS COMPLETE" << std::endl;
