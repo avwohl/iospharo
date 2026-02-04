@@ -437,12 +437,30 @@ int main(int argc, char* argv[]) {
     testOopTagging();
 
     if (argc < 2) {
-        std::cout << "\nUsage: " << argv[0] << " <path-to-image>" << std::endl;
+        std::cout << "\nUsage: " << argv[0] << " [--test] <path-to-image>" << std::endl;
         std::cout << "\nNo image specified, skipping image load test." << std::endl;
         return 0;
     }
 
-    const char* imagePath = argv[1];
+    // Parse --test flag
+    bool testMode = false;
+    const char* imagePath = nullptr;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--test") == 0) {
+            testMode = true;
+        } else {
+            imagePath = argv[i];
+        }
+    }
+    if (!imagePath) {
+        std::cerr << "ERROR: No image path specified" << std::endl;
+        return 1;
+    }
+    if (testMode) {
+        std::cout << "\n*** TEST MODE: Will run SUnit tests and write results to /tmp/sunit_test_results.txt ***" << std::endl;
+        // Remove stale results file
+        std::remove("/tmp/sunit_test_results.txt");
+    }
     std::cout << "\nLoading image: " << imagePath << std::endl;
 
     // Initialize memory (256 MB should be enough for most images)
@@ -497,6 +515,7 @@ int main(int argc, char* argv[]) {
     Interpreter interpreter(memory);
     interpreter.setImageName(imagePath);
     interpreter.setVMPath(argv[0]);
+    interpreter.setTestMode(testMode);
 
     // Set up event callback BEFORE initialization
     gTestInterpreter = &interpreter;
@@ -574,8 +593,11 @@ int main(int argc, char* argv[]) {
         // Run bytecode steps for testing
         std::cout << "\n=== Execution Test ===" << std::endl;
         auto execStart = std::chrono::steady_clock::now();
-        int totalSteps = 30000000;  // Run 30M steps for quick test
+        int totalSteps = testMode ? 200000000 : 30000000;  // 200M for tests, 30M for quick test
         std::cout << "Running up to " << totalSteps << " bytecode steps..." << std::endl;
+        if (testMode) {
+            std::cout << "Test mode: will stop when /tmp/sunit_test_results.txt contains ALL TESTS COMPLETE" << std::endl;
+        }
         int activeSteps = 0;
         int idleSteps = 0;
         bool clickInjected = false;
@@ -611,6 +633,37 @@ int main(int argc, char* argv[]) {
                 activeSteps++;
                 idleSteps = 0;  // Reset consecutive idle count
                 wasActive = true;
+
+                // In test mode, check for test completion during active steps too
+                if (testMode && activeSteps % 1000000 == 0) {
+                    FILE* rf = fopen("/tmp/sunit_test_results.txt", "r");
+                    if (rf) {
+                        fseek(rf, 0, SEEK_END);
+                        long fsize = ftell(rf);
+                        if (fsize > 18) {  // "ALL TESTS COMPLETE" is 18 chars
+                            fseek(rf, fsize - 30, SEEK_SET);
+                            char buf[64] = {0};
+                            fread(buf, 1, 30, rf);
+                            fclose(rf);
+                            if (strstr(buf, "ALL TESTS COMPLETE")) {
+                                std::cout << "\n[TEST] SUnit test results complete!" << std::endl;
+                                FILE* results = fopen("/tmp/sunit_test_results.txt", "r");
+                                if (results) {
+                                    std::cout << "\n=== SUnit Test Results ===" << std::endl;
+                                    char line[256];
+                                    while (fgets(line, sizeof(line), results)) {
+                                        std::cout << line;
+                                    }
+                                    fclose(results);
+                                    std::cout << "=========================" << std::endl;
+                                }
+                                goto done;
+                            }
+                        } else {
+                            fclose(rf);
+                        }
+                    }
+                }
 
                 // Process dumps at key intervals to track MorphicRenderLoop
                 if (activeSteps % 20000000 == 0) {
@@ -669,6 +722,40 @@ int main(int argc, char* argv[]) {
                 }
                 // Check for test results file periodically
                 if (totalIdleSteps % 1000000 == 0) {
+                    // Check for SUnit test results (test mode)
+                    if (testMode) {
+                        FILE* rf = fopen("/tmp/sunit_test_results.txt", "r");
+                        if (rf) {
+                            // Read last 30 bytes to check for completion marker
+                            fseek(rf, 0, SEEK_END);
+                            long fsize = ftell(rf);
+                            if (fsize > 0) {
+                                long readFrom = (fsize > 30) ? fsize - 30 : 0;
+                                fseek(rf, readFrom, SEEK_SET);
+                                char buf[64] = {0};
+                                fread(buf, 1, 30, rf);
+                                fclose(rf);
+                                if (strstr(buf, "ALL TESTS COMPLETE")) {
+                                    std::cout << "\n[TEST] SUnit test results complete!" << std::endl;
+                                    // Print the full results
+                                    FILE* results = fopen("/tmp/sunit_test_results.txt", "r");
+                                    if (results) {
+                                        std::cout << "\n=== SUnit Test Results ===" << std::endl;
+                                        char line[256];
+                                        while (fgets(line, sizeof(line), results)) {
+                                            std::cout << line;
+                                        }
+                                        fclose(results);
+                                        std::cout << "=========================" << std::endl;
+                                    }
+                                    break;
+                                }
+                            } else {
+                                fclose(rf);
+                            }
+                        }
+                    }
+                    // Check for other diagnostic results
                     FILE* rf = fopen("/tmp/diag_trace.txt", "r");
                     if (!rf) rf = fopen("/tmp/inline_results.txt", "r");
                     if (rf) {
@@ -692,6 +779,7 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
+        done:
         std::cout << "\n=== Execution Summary ===" << std::endl;
         std::cout << "Active bytecode steps: " << activeSteps << std::endl;
         std::cout << "Steps after click: " << clickResponseSteps << std::endl;

@@ -196,6 +196,10 @@ public:
     const std::string& imageName() const { return imageName_; }
     const std::string& vmPath() const { return vmPath_; }
 
+    /// Enable test mode (triggers SUnit test runner during idle loop)
+    void setTestMode(bool enabled) { testMode_ = enabled; }
+    bool testMode() const { return testMode_; }
+
     /// Set/get screen dimensions
     void setScreenSize(int width, int height) { screenWidth_ = width; screenHeight_ = height; }
     void setScreenDepth(int depth) { screenDepth_ = depth; }
@@ -415,6 +419,8 @@ private:
     bool enableDirectInputSignaling_ = false;  // True when VM should signal input semaphore directly
     bool suspendActiveProcess_ = false;  // Set by DNU handler to force process switch
     bool relinquishSlept_ = false;       // Set by primitiveRelinquishProcessor when it sleeps
+    bool testMode_ = false;              // When true, trigger SUnit test runner during idle
+    bool testRunnerTriggered_ = false;   // Ensures test runner only fires once
 
     // NOTE: Event injection workaround member variables REMOVED
     // Events must go through proper Smalltalk InputEventSensor process, not C++ workarounds
@@ -1576,6 +1582,10 @@ private:
     /// Auto-load OSiOSDriver.st by evaluating Smalltalk code
     /// Called once at startup to enable the event system
     bool autoLoadDriver();
+
+    /// Trigger SUnit test runner via OpalCompiler evaluate:
+    /// Called once during idle loop when test mode is enabled
+    void triggerTestRunner();
 
     /// Try to reschedule to another runnable process.
     /// Returns true if a process was found and execution continues.
