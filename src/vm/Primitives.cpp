@@ -12151,7 +12151,7 @@ PrimitiveResult Interpreter::primitiveCompareString(int argCount) {
         }
     }
 
-    popN(argCount);
+    popN(argCount + 1);  // pop args + receiver
     push(Oop::fromSmallInteger(result));
     return PrimitiveResult::Success;
 }
@@ -12221,7 +12221,7 @@ PrimitiveResult Interpreter::primitiveCompareStringCollated(int argCount) {
         }
     }
 
-    popN(argCount);
+    popN(argCount + 1);  // pop args + receiver
     push(Oop::fromSmallInteger(result));
     return PrimitiveResult::Success;
 }
@@ -12268,7 +12268,7 @@ PrimitiveResult Interpreter::primitiveCompareStringNoCase(int argCount) {
         }
     }
 
-    popN(argCount);
+    popN(argCount + 1);  // pop args + receiver
     push(Oop::fromSmallInteger(result));
     return PrimitiveResult::Success;
 }

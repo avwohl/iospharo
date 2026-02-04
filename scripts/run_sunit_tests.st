@@ -14,10 +14,8 @@ runAllTests
     SmallIntegerTest. IntegerTest. FloatTest. FractionTest.
     PointTest. CharacterTest.
     DictionaryTest. SetTest. BagTest. IntervalTest.
-    SymbolTest "suspends test process".
-    StringTest "suspends test process".
-    OrderedCollectionTest "slow - runs last".
-    ArrayTest "last - known to crash test process" }.
+    SymbolTest. OrderedCollectionTest. ArrayTest.
+    StringTest "last - 438 tests, very slow" }.
 
   stream := '/tmp/sunit_test_results.txt' asFileReference writeStream.
   [stream nextPutAll: '=== SUnit Test Run ==='; cr; cr.
@@ -34,8 +32,22 @@ runAllTests
 runTestClass: testClass on: s
   | sels p f e |
   s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' ==='; cr.
+  s flush.
   p := 0. f := 0. e := 0.
-  sels := testClass allTestSelectors asArray sorted.
+  sels := testClass allTestSelectors asArray.
+  "Sort with comparison counter to detect infinite loops"
+  [| count |
+   count := 0.
+   sels := sels sort: [:a :b |
+     count := count + 1.
+     count > 200000 ifTrue: [
+       s nextPutAll: '  SORT-ABORT: '; print: count; nextPutAll: ' comparisons exceeded limit'; cr. s flush.
+       Error signal: 'Sort infinite loop detected'].
+     a <= b].
+   s nextPutAll: '  SORT-OK: '; print: count; nextPutAll: ' comparisons for '; print: sels size; nextPutAll: ' items'; cr. s flush]
+  on: Error do: [:ex |
+    s nextPutAll: '  SORT-ERROR: '; nextPutAll: ex class name; nextPutAll: ' - '; nextPutAll: ex messageText; cr. s flush.
+    sels := testClass allTestSelectors asArray "use unsorted on error"].
 
   sels do: [:sel |
     "Skip tests known to hang or cause VM-level crashes"
