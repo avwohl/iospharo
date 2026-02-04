@@ -8500,7 +8500,10 @@ PrimitiveResult Interpreter::primitiveBecome(int argCount) {
     return PrimitiveResult::Success;
 }
 
-// Primitive 128: Forward all references from rcvr to arg (one-way become)
+// primitiveBecomeForward: Forward all references from rcvr to arg (one-way become)
+// Note: Not wired to a primitive number. In Pharo, becomeForward: is implemented
+// via Object>>becomeForward: which wraps in arrays and calls elementsForwardIdentityTo:
+// (primitive 72). This code is kept for reference but is not called.
 PrimitiveResult Interpreter::primitiveBecomeForward(int argCount) {
     // Can take 1 arg (simple forward) or 2 args (with copyHash flag)
     Oop arg = stackValue(0);
@@ -8517,30 +8520,16 @@ PrimitiveResult Interpreter::primitiveBecomeForward(int argCount) {
     }
 
     // Perform one-way become: replace all references to rcvr with arg in heap
-    memory_.allObjectsDo([&](Oop obj) {
-        if (!obj.isObject()) return;
-
-        ObjectHeader* header = obj.asObjectPtr();
-        ObjectFormat format = header->format();
-
-        // Skip non-pointer objects (byte/word arrays)
-        if (format >= ObjectFormat::Indexable8 && format <= ObjectFormat::Indexable8_7) return;
-        if (format >= ObjectFormat::Indexable32 && format <= ObjectFormat::Indexable64) return;
-
-        size_t slotCount = header->slotCount();
-        for (size_t i = 0; i < slotCount; i++) {
-            Oop slot = memory_.fetchPointer(i, obj);
-            if (slot.rawBits() == rcvr.rawBits()) {
-                memory_.storePointer(i, obj, arg);
-            }
-        }
-    });
+    memory_.becomeForward(rcvr, arg);
 
     // Also scan C++ execution stack
     scanStackReplace(rcvr, arg);
 
+    // Flush method cache (critical after become)
+    flushMethodCache();
+
     popN(argCount + 1);
-    push(rcvr);
+    push(arg);  // After become, rcvr's identity IS arg
     return PrimitiveResult::Success;
 }
 
@@ -12592,6 +12581,10 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWay(int argCount) {
 
         // Perform one-way become: all references to fromObj become toObj
         memory_.becomeForward(fromObj, toObj);
+
+        // Also scan C++ execution stack - critical for stack-based VM
+        // Without this, local variables (temps) on the stack still point to old objects
+        scanStackReplace(fromObj, toObj);
     }
 
     // Flush method cache (critical after become)
@@ -12662,7 +12655,13 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWayCopyHash(int argCount) {
 
         // Perform one-way become: all references to fromObj become toObj
         memory_.becomeForward(fromObj, toObj);
+
+        // Also scan C++ execution stack - critical for stack-based VM
+        scanStackReplace(fromObj, toObj);
     }
+
+    // Flush method cache (critical after become)
+    flushMethodCache();
 
     popN(argCount);
     push(fromArrayOop);
@@ -12709,6 +12708,9 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWayNoCopyHash(int argCount) 
 
         // Perform one-way become: all references to fromObj become toObj
         memory_.becomeForward(fromObj, toObj);
+
+        // Also scan C++ execution stack - critical for stack-based VM
+        scanStackReplace(fromObj, toObj);
     }
 
     // Flush method cache (critical after become)
