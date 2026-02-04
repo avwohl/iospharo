@@ -11934,70 +11934,32 @@ void Interpreter::activateBlock(Oop block, int argCount) {
             fflush(abLog);
         }
     }
-    if (frameDepth_ > 1 && homeMethodForNLR.isObject() && !homeMethodForNLR.isNil()) {
+    if (frameDepth_ >= 1 && homeMethodForNLR.isObject() && !homeMethodForNLR.isNil()) {
         size_t homeFrame = SIZE_MAX;  // Default: not found
 
         // Use the home method we extracted from the CompiledBlock's last literal
         Oop homeMethodOop = homeMethodForNLR;
 
-        // Walk up the frame stack looking for the frame executing our home method
-        // Note on frame indexing:
-        //   savedFrames_[i] contains the state saved when entering frame i+1
-        //   So savedFrames_[i].savedMethod is the method that was executing at frame i
-        //   When we find a match at savedFrames_[i].savedMethod, the home frame is i+1
-        //   (because frame i+1 is where the method continued after pushing)
+        // Walk up the frame stack looking for the frame executing our home method.
         //
-        // Actually, wait - when we call pushFrame, we save the CURRENT state before
-        // incrementing frameDepth_. So savedFrames_[frameDepth_-1] after push contains
-        // the state of the CALLER frame. If savedFrames_[X].savedMethod = M, then
-        // the frame at depth X+1 was pushed WHILE M was executing, meaning M was
-        // the caller. So if we want to return FROM M, we need homeFrame = X+1.
+        // Frame indexing:
+        //   pushFrame saves current state to savedFrames_[old_fd], then increments fd.
+        //   So savedFrames_[X].savedMethod is the method at depth X (saved when entering X+1).
         //
-        // NO WAIT - let's think again. When detect:ifFound:ifNone: calls do:,
-        // pushFrame saves state to savedFrames_[frameDepth_] (let's say 10), then
-        // increments to frameDepth_=11. So savedFrames_[10].savedMethod =
-        // detect:ifFound:ifNone:. Frame 11 executes do:.
+        // We search ALL saved frames (0 to fd-1). The topmost (savedFrames_[fd-1]) was just
+        // saved by pushFrame in activateBlock — it's the CALLER's state, not the block's.
         //
-        // When do: calls the block, pushFrame saves state to savedFrames_[11]
-        // (with method_=do:), then increments to frameDepth_=12. The block executes.
-        //
-        // So savedFrames_[10].savedMethod = detect:ifFound:ifNone: represents
-        // the state when frame 10 was active. The NLR should return FROM frame 10
-        // (detect:ifFound:ifNone:), not to frame 10.
-        //
-        // When we unwind to homeFrame=10, then call returnValue, we pop frame 10
-        // and return to frame 9.
-        for (size_t i = frameDepth_ - 1; i > 0; i--) {
-            // savedFrames_[i - 1].savedMethod is the method at frame i-1+1 = frame i
-            // NO - savedFrames_[i - 1] contains state saved when entering frame i
-            // savedFrames_[i - 1].savedMethod is method_ BEFORE entering frame i
-            // So it's the method that was executing at frame i-1
+        // When savedFrames_[X].savedMethod matches homeMethod:
+        //   homeFrame = X
+        //   NLR unwinds: while (fd > X) popFrame → fd = X
+        //   returnValue: if X > 0, popFrame restores savedFrames_[X-1] (caller's caller), fd = X-1
+        //                if X == 0, context-based return via activeContext_ sender chain
+        for (size_t i = frameDepth_; i > 0; i--) {
             Oop savedMethod = savedFrames_[i - 1].savedMethod;
 
             // Check if this saved method matches our home method
             if (savedMethod.rawBits() == homeMethodOop.rawBits()) {
-                // savedFrames_[i-1].savedMethod = homeMethod means frame i-1 was executing homeMethod
-                // We want to return FROM that frame, so homeFrame should be i-1+1 = i
-                // NO - we want to return FROM the frame executing homeMethod, which is i-1
-                // Then returnValue pops that frame and returns to i-2
-                // Actually, let's verify: if savedFrames_[10].savedMethod = detect:ifFound:ifNone:
-                // That means when we pushed frame 11, method_ was detect:ifFound:ifNone:
-                // So frame 10 was executing detect:ifFound:ifNone:
-                // To return FROM frame 10, homeFrame should be 10
-                homeFrame = i - 1 + 1;  // = i, keep the original behavior but document why
-                // WAIT, that's wrong. Let me trace through example:
-                // - Frame 10 executes detect:ifFound:ifNone:
-                // - It calls do:, pushFrame saves state (method_=detect:ifFound:ifNone:) to savedFrames_[10]
-                // - frameDepth_ becomes 11, frame 11 executes do:
-                // - do: activates block, pushFrame saves state (method_=do:) to savedFrames_[11]
-                // - frameDepth_ becomes 12, frame 12 executes block
-                //
-                // When block wants NLR to detect:ifFound:ifNone:, we search:
-                // - i=11: savedFrames_[10].savedMethod = detect:ifFound:ifNone: ✓ MATCH
-                // - homeFrame = i = 11? No, that's wrong. Frame 11 executes do:.
-                // - The frame executing detect:ifFound:ifNone: is frame 10.
-                // - So homeFrame should be i - 1 = 10
-                homeFrame = i - 1;  // FIX: The frame executing savedMethod is at depth i-1
+                homeFrame = i - 1;
                 break;
             }
 
