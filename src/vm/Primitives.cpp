@@ -5269,10 +5269,6 @@ PrimitiveResult Interpreter::primitiveSignalAtMilliseconds(int argCount) {
     // The milliseconds value comes from Smalltalk as `ioMSecs + delayMs`,
     // which is a 30-bit wrapping value. Timer comparison uses wrap-around handling.
 
-    static int p136count = 0;
-    p136count++;
-    fprintf(stderr, "[PRIM136] #%d called argCount=%d\n", p136count, argCount);
-
     if (argCount != 1) {
         return PrimitiveResult::Failure;
     }
@@ -11453,7 +11449,6 @@ PrimitiveResult Interpreter::primitiveFileOpen(int argCount) {
     // Assign a file ID and store the handle
     int fileId = nextFileId_++;
     openFiles_[fileId] = file;
-    fprintf(stderr, "[FILE-OPEN step=%llu] '%s' writable=%d fileId=%d\n", g_stepNum, filename.c_str(), writable, fileId);
 
     popN(argCount);
     push(Oop::fromSmallInteger(fileId));
@@ -11550,13 +11545,11 @@ PrimitiveResult Interpreter::primitiveFileDelete(int argCount) {
     Oop filenameOop = stackTop();
 
     std::string filename = extractString(memory_, filenameOop);
-    fprintf(stderr, "[FILE-DELETE] argCount=%d filename='%s' empty=%d\n", argCount, filename.c_str(), filename.empty());
     if (filename.empty()) {
         return PrimitiveResult::Failure;
     }
 
     int result = remove(filename.c_str());
-    fprintf(stderr, "[FILE-DELETE] remove('%s') result=%d errno=%d\n", filename.c_str(), result, errno);
 
     pop();
     push(result == 0 ? memory_.trueObject() : memory_.falseObject());
@@ -11608,9 +11601,7 @@ PrimitiveResult Interpreter::primitiveFileSize(int argCount) {
 // Primitive 98: Write to file
 // fileHandle buffer startIndex count primitiveFileWrite -> bytesWritten
 PrimitiveResult Interpreter::primitiveFileWrite(int argCount) {
-    fprintf(stderr, "[FILE-WRITE] argCount=%d\n", argCount);
     if (argCount < 4) {
-        fprintf(stderr, "[FILE-WRITE] FAIL: argCount < 4\n");
         return PrimitiveResult::Failure;
     }
 
@@ -22501,7 +22492,6 @@ PrimitiveResult Interpreter::primitiveFileExists(int argCount) {
 
     struct stat st;
     bool exists = (stat(path.c_str(), &st) == 0);
-    fprintf(stderr, "[FILE-EXISTS] path='%s' exists=%d\n", path.c_str(), exists);
 
     popN(2);  // pop arg + receiver
     push(exists ? memory_.trueObject() : memory_.falseObject());
