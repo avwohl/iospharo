@@ -599,18 +599,18 @@ int main(int argc, char* argv[]) {
         // Run bytecode steps for testing
         std::cout << "\n=== Execution Test ===" << std::endl;
         auto execStart = std::chrono::steady_clock::now();
-        int totalSteps = testMode ? 2000000000 : 200000000;
+        long long totalSteps = testMode ? 10000000000LL : 200000000LL;
         std::cout << "Running up to " << totalSteps << " bytecode steps..." << std::endl;
         if (testMode) {
             std::cout << "Image args:";
             for (const auto& a : imageArgs) std::cout << " " << a;
             std::cout << std::endl;
         }
-        int activeSteps = 0;
-        int consecutiveIdle = 0;
+        long long activeSteps = 0;
+        long long consecutiveIdle = 0;
         bool clickInjected = false;
 
-        for (int i = 0; i < totalSteps; i++) {
+        for (long long i = 0; i < totalSteps; i++) {
             // Start heartbeat after startup completes
             if (!heartbeatStarted && i == 2000000) {
                 interpreter.startHeartbeat();

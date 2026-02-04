@@ -141,70 +141,87 @@ The `unwindTo:` traversal isn't finding or executing the inserted ensure: block 
 
 ---
 
-## Current Status (2026-02-03)
-Running SUnit test suites on fresh Pharo 13 images with custom inline test runner
-(bypasses SUnit framework, calls setUp + perform: directly, catches Exception).
+## Current Status (2026-02-04)
 
-### SUnit Test Results (17 classes, 2495 total tests)
+### Custom VM Test Results (14 classes)
+
+Run on custom C++ VM via `./build/test_load_image /tmp/test.image test`
+with 10B step limit. Test runner: `scripts/run_sunit_tests.st`
+
 ```
-SmallIntegerTest    (25 tests):  25P 0F 0E   -- ALL PASS
-IntegerTest         (83 tests):  80P 3F 0E   -- 3 failures (down from 5)
-FloatTest           (70 tests):  69P 1F 0E   -- 1 failure (down from 3)
-FractionTest        (27 tests):  27P 0F 0E   -- ALL PASS
-PointTest           (31 tests):  31P 0F 0E   -- ALL PASS
-CharacterTest       (13 tests):  13P 0F 0E   -- ALL PASS (was 12P)
-SymbolTest         (213 tests): 207P 0F 6E   -- 6 errors (inherited tests)
-StringTest         (383 tests): 377P 0F 6E   -- 6 errors (inherited tests)
-ArrayTest          (270 tests): 264P 0F 6E   -- 6 errors (inherited tests)
+SmallIntegerTest    (29 tests):  29P  0F  0E  -- ALL PASS
+IntegerTest         (83 tests):  76P  4F  3E  -- testHighBit, testLowBit, testReciprocalModulo, testSlowFactorial fail; 3 TestSkipped errors
+FloatTest           (75 tests):  71P  0F  4E  -- test32bitConversion (MNU), testBinaryLiteralString (SubscriptOutOfBounds), testNaNCompare (TestSkipped), testStoreOnRoundTrip (Error)
+FractionTest        (32 tests):  32P  0F  0E  -- ALL PASS
+PointTest           (36 tests):  36P  0F  0E  -- ALL PASS
+CharacterTest       (19 tests):  17P  0F  0E  -- ALL PASS (2 tests skipped by runner)
+DictionaryTest     (205 tests): 195P  3F  7E  -- 6 Deprecation errors, 1 KeyNotFound; 3 failures
+SetTest            (174 tests): 164P  4F  6E  -- 6 Deprecation errors; 4 failures
+BagTest            (168 tests): 161P  1F  6E  -- 6 Deprecation errors; 1 failure
+IntervalTest             ---:  SUSPENDED      -- process suspends during allTestSelectors asArray sorted
+SymbolTest               ---:  SUSPENDED      -- process suspends during first test
+StringTest               ---:  SUSPENDED      -- process suspends during first test
+OrderedCollectionTest    ---:  NOT REACHED
+ArrayTest                ---:  NOT REACHED
+```
+**9 of 14 classes completed: 781P, 12F, 26E (95.4% pass rate)**
+
+### Comparison: Standard Pharo VM (reference)
+```
+SmallIntegerTest    (25 tests):  25P 0F 0E
+IntegerTest         (83 tests):  80P 3F 0E
+FloatTest           (70 tests):  69P 1F 0E
+FractionTest        (27 tests):  27P 0F 0E
+PointTest           (31 tests):  31P 0F 0E
+CharacterTest       (13 tests):  13P 0F 0E
+SymbolTest         (213 tests): 207P 0F 6E
+StringTest         (383 tests): 377P 0F 6E
+ArrayTest          (270 tests): 264P 0F 6E
 OrderedCollectionTest (296 tests): 290P 0F 6E
 SetTest            (119 tests): 113P 0F 6E
 BagTest            (113 tests): 107P 0F 6E
 DictionaryTest     (151 tests): 145P 0F 6E
-AssociationTest      (8 tests):   8P 0F 0E   -- ALL PASS
+AssociationTest      (8 tests):   8P 0F 0E
 LinkedListTest     (255 tests): 249P 0F 6E
 SortedCollectionTest (233 tests): 227P 0F 6E
 IntervalTest       (205 tests): 199P 0F 6E
+Total: 2431P, 4F, 60E (97.4% pass rate)
 ```
-**Total: 2431P, 4F, 60E (97.4% pass rate)**
 
-Note: The "6 errors" pattern affects collection tests that inherit from a common base
-class with tests like `testPrintStringAll`, `testStoreStringAll` that use compiler
-evaluation and hang/timeout.
+Note: Test counts differ between VMs because the test runner discovers different test
+selectors (different Pharo versions / test trait inheritance).
 
-### Remaining Test Failures (2026-02-03)
+### Key Issues
 
-**IntegerTest (3 failures):**
-- Related to Integer<->Float coercion via `adaptToNumber:andSend:` mechanism
-- Primitive arithmetic fails, falls through to Smalltalk double dispatch
-- Some edge case in coercion returns nil where number expected
+**1. Process suspension (IntervalTest, SymbolTest, StringTest)**
+- IntervalTest suspends during `allTestSelectors asArray sorted` (before any test runs)
+- SymbolTest/StringTest suspend during first test execution
+- VM goes idle (not infinite loop) — the test process gets suspended
+- This is the #1 blocker for getting results on remaining 5 classes
+- Root cause unknown — likely a missing primitive or broken message send path
 
-**FloatTest (1 failure):**
-- Likely IEEE format conversion or Float formatting edge case
-- Core Float operations pass (sin, cos, sqrt, etc.)
+**2. IntegerTest failures (4 failures, 3 errors)**
+- `testLowBit` — consistently fails (primitiveLowBit implementation issue?)
+- `testHighBit` — flaky, sometimes passes
+- `testReciprocalModulo` — flaky
+- `testSlowFactorial` — flaky
+- 3 `TestSkipped` errors (testCreationFromBytes1/2/3)
 
-**BlockClosureTest (14 failures, 5 errors):**
-- `testSetUp` - tests `home`, `receiver`, `method` accessors on FullBlockClosure
-- `testValueWithExit*` - requires non-local return from passed exit block
-- `testHasNonLocalReturn` - requires `compiledBlock` and `hasMethodReturn`
-- `testSupplyAnswer*` - exception-based answer supplying
-- Errors (5): `testMemoizedLRUCache`, `testSourceNodeOptimized`, `testTally*`, `testRunSimulated` - need compiler/debugger tools
+**3. FloatTest errors (4 errors)**
+- `test32bitConversion` — MessageNotUnderstood (missing method)
+- `testBinaryLiteralString` — SubscriptOutOfBounds
+- `testNaNCompare` — TestSkipped
+- `testStoreOnRoundTrip` — Error
 
-**60 Collection Test Errors:**
-- All inherit from common base class with tests like `testPrintStringAll`
-- These tests use `self class compiler evaluate:` which hangs
-- Not VM bugs, just unsupported compiler evaluation during testing
+**4. Collection test failures (8 failures across 3 classes)**
+- DictionaryTest: testKeyAtIdentityValueIfAbsent, testNilHashCollision, testOccurrencesOf
+- SetTest: testAllowInclusionOfNils, testIsHealthy, testMaxIfNil, testSetWithNilItemsIsHealthy
+- BagTest: testOccurrencesOf
+- Pattern: nil-handling and identity-related tests fail → possible hash or identity comparison issue
 
-### What's Needed to Fix Remaining Issues
-
-1. **Interactive debugging** - Need to capture actual error messages from failing tests
-2. **Step-through execution** - Trace specific failing operations
-3. **Startup handler issue** - SessionManager handlers don't run reliably in test images
-
-### Known Hanging Tests
-- `CharacterTest>>testPrintStringAll` — calls `compiler evaluate:` 256 times
-- `CharacterTest>>testStoreStringAll` — same pattern
-- `IntervalTest` fixture tests — setUp doesn't initialize all ivars
-- Any test using `self class compiler evaluate:` hangs
+**5. Collection test errors (18 Deprecation + 1 KeyNotFound)**
+- 18 `testAsStringOnDelimiter*` tests throw Deprecation (not caught by `on: Exception do:`)
+- DictionaryTest `testAtPutNil` throws KeyNotFound
 
 ### Key Bugs Fixed (2026-02-03)
 5. **BlockClosure outerContext identity**: When blocks were created during inline
