@@ -2665,17 +2665,17 @@ bool Interpreter::step() {
         checkForPreemption();
     }
 
-    // Stack depth safeguard - prevent runaway stack growth
-    if (frameDepth_ > 500) {
+    // Stack depth safeguard - warn but don't destructively unwind.
+    // Normal Pharo startup (FFI init, DiskStore, etc.) can reach 500+ frames.
+    // The previous handler returned nil from hundreds of methods, which
+    // corrupted execution state and prevented startup handlers from completing.
+    if (frameDepth_ >= MaxFrameDepth - 10) {
         static int overflowCount = 0;
         overflowCount++;
         if (overflowCount <= 5) {
             std::cerr << "[STACK-OVERFLOW] frameDepth=" << frameDepth_
-                      << " - unwinding to recover\n";
-        }
-        // Unwind stack to a reasonable depth
-        while (frameDepth_ > 50 && running_) {
-            returnValue(memory_.nil());
+                      << " approaching MaxFrameDepth=" << MaxFrameDepth
+                      << " - execution may fail\n";
         }
     }
 
@@ -3507,7 +3507,13 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                             // Update activeContext_ to the materialized chain
                             activeContext_ = contextToPush;
 
-                            // Reset inline frame state since we've materialized
+                            // Reset inline frame state since we've materialized.
+                            // This ensures context identity is preserved: subsequent
+                            // thisContext pushes return the SAME activeContext_ object
+                            // (since frameDepth_==0, we skip materialization and return
+                            // activeContext_ directly). Context identity is critical for
+                            // exception handler matching (on:do: captures thisContext
+                            // and later searches for it by identity in the sender chain).
                             frameDepth_ = 0;
 
                             if (thisCtxCount <= 20) {
@@ -10168,23 +10174,132 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             }
         }
     }
-    if (selEquals("startUp") && argCount == 0) {
-        Oop rcvr = stackValue(0);
-        if (rcvr.isObject()) {
-            Oop cls = memory_.classOf(rcvr);
-            if (cls.isObject()) {
-                Oop nm = memory_.fetchPointer(6, cls);
-                if (nm.isObject()) {
-                    ObjectHeader* nh = nm.asObjectPtr();
-                    if (nh->isBytesObject() && nh->byteSize() < 80) {
-                        std::string cn((char*)nh->bytes(), nh->byteSize());
-                        if (cn.find("Delay") != std::string::npos || cn.find("Scheduler") != std::string::npos) {
-                            fprintf(stderr, "[DELAY-STARTUP step=%llu] startUp on %s (0x%llx)\n",
-                                    g_stepNum, cn.c_str(), rcvr.rawBits());
+    if ((selEquals("startUp") && argCount == 0) || (selEquals("startUp:") && argCount == 1)) {
+        static int startUpTraceCount = 0;
+        if (startUpTraceCount++ < 200) {
+            Oop rcvr = stackValue(argCount);  // receiver is below args
+            std::string cn = "?";
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                Oop cls = memory_.classOf(rcvr);
+                if (cls.isObject()) {
+                    Oop nm = memory_.fetchPointer(6, cls);
+                    if (nm.isObject() && nm.rawBits() > 0x10000) {
+                        ObjectHeader* nh = nm.asObjectPtr();
+                        if (nh->isBytesObject() && nh->byteSize() < 80)
+                            cn = std::string((char*)nh->bytes(), nh->byteSize());
+                    }
+                }
+            }
+            // Also try to get handler class name (for ClassSessionHandler)
+            std::string handlerInfo = "";
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                ObjectHeader* rh = rcvr.asObjectPtr();
+                if (rh->slotCount() >= 1) {
+                    Oop slot0 = memory_.fetchPointer(0, rcvr);
+                    // ClassSessionHandler stores the class (or class name symbol) in slot 0
+                    if (slot0.isObject() && slot0.rawBits() > 0x10000) {
+                        ObjectHeader* s0h = slot0.asObjectPtr();
+                        if (s0h->isBytesObject() && s0h->byteSize() < 80) {
+                            handlerInfo = " handler=" + std::string((char*)s0h->bytes(), s0h->byteSize());
+                        } else {
+                            // Might be a class - get its name
+                            Oop s0name = memory_.fetchPointer(6, slot0);
+                            if (s0name.isObject() && s0name.rawBits() > 0x10000) {
+                                ObjectHeader* s0nh = s0name.asObjectPtr();
+                                if (s0nh->isBytesObject() && s0nh->byteSize() < 80)
+                                    handlerInfo = " handler=" + std::string((char*)s0nh->bytes(), s0nh->byteSize());
+                            }
                         }
                     }
                 }
             }
+            fprintf(stderr, "[STARTUP-TRACE #%d step=%llu] startUp%s on %s (0x%llx)%s\n",
+                    startUpTraceCount, (unsigned long long)g_stepNum,
+                    argCount == 1 ? ":" : "", cn.c_str(),
+                    (unsigned long long)rcvr.rawBits(), handlerInfo.c_str());
+        }
+    }
+    // Trace runAllTests
+    if (selEquals("runAllTests") && argCount == 0) {
+        fprintf(stderr, "[TEST-TRACE step=%llu] runAllTests called!\n", (unsigned long long)g_stepNum);
+    }
+    // Trace when SessionManager >> #startUp: or runList:do: is called
+    if (selEquals("runList:do:") || selEquals("startupList") || selEquals("stopStartup:") ||
+        selEquals("categoriesInStartOrder") || selEquals("handlerSubscriptions") ||
+        selEquals("startUpCategory:") || selEquals("installNewSession") ||
+        selEquals("guiList") || selEquals("userList")) {
+        static int rlCount = 0;
+        if (rlCount++ < 50) {
+            std::string extra = "";
+            if (selEquals("runList:do:") && argCount == 2) {
+                // arg1 = the list (at stackValue(1)), arg2 = the block (at stackValue(0))
+                Oop list = stackValue(1);
+                if (list.isObject() && list.rawBits() > 0x10000) {
+                    ObjectHeader* lh = list.asObjectPtr();
+                    size_t slots = lh->slotCount();
+                    extra = " listSlots=" + std::to_string(slots);
+                    // Also get class name
+                    std::string lcls = "?";
+                    Oop cls = memory_.classOf(list);
+                    if (cls.isObject()) {
+                        Oop nm = memory_.fetchPointer(6, cls);
+                        if (nm.isObject() && nm.rawBits() > 0x10000) {
+                            ObjectHeader* nh = nm.asObjectPtr();
+                            if (nh->isBytesObject() && nh->byteSize() < 80)
+                                lcls = std::string((char*)nh->bytes(), nh->byteSize());
+                        }
+                    }
+                    extra += " listClass=" + lcls;
+                }
+            }
+            fprintf(stderr, "[SESSION-TRACE #%d step=%llu] %.*s argCount=%d%s\n",
+                    rlCount, (unsigned long long)g_stepNum, (int)selLen, selBytes, argCount, extra.c_str());
+        }
+    }
+    // Trace all sends in the narrow window between last handler and idle
+    // Track the do: iteration on the startup list (55-element Array)
+    // Monitor when startUp: is called and what the last index accessed was
+    if (selEquals("at:") && argCount == 1) {
+        Oop rcvr = stackValue(1);
+        if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+            ObjectHeader* rh = rcvr.asObjectPtr();
+            if (rh->slotCount() == 55) {  // Only track the 55-element startup array
+                Oop idx = stackValue(0);
+                if (idx.isSmallInteger()) {
+                    static int atCount55 = 0;
+                    static int64_t lastIdx55 = 0;
+                    int64_t curIdx = idx.asSmallInteger();
+                    // Only log the second pass (runList:do: iteration, starts at step > 10600)
+                    if (g_stepNum > 10600) {
+                        lastIdx55 = curIdx;
+                        if (atCount55++ < 200) {
+                            fprintf(stderr, "[AT55 #%d step=%llu] at: %lld on 55-slot Array\n",
+                                    atCount55, (unsigned long long)g_stepNum, (long long)lastIdx55);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (false) {
+        static int windowCount = 0;
+        if (windowCount++ < 1000) {
+            std::string rcvrCls = "?";
+            Oop rcvr = stackValue(argCount);
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                Oop cls = memory_.classOf(rcvr);
+                if (cls.isObject()) {
+                    Oop nm = memory_.fetchPointer(6, cls);
+                    if (nm.isObject() && nm.rawBits() > 0x10000) {
+                        ObjectHeader* nh = nm.asObjectPtr();
+                        if (nh->isBytesObject() && nh->byteSize() < 80)
+                            rcvrCls = std::string((char*)nh->bytes(), nh->byteSize());
+                    }
+                }
+            }
+            fprintf(stderr, "[WINDOW step=%llu fd=%zu] %.*s on %s\n",
+                    (unsigned long long)g_stepNum, frameDepth_,
+                    (int)selLen, selBytes, rcvrCls.c_str());
         }
     }
 
@@ -13791,15 +13906,6 @@ void Interpreter::activateBlock(Oop block, int argCount) {
 // ===== FRAME MANAGEMENT =====
 
 bool Interpreter::pushFrame(Oop method, int argCount) {
-    static FILE* frameLog = nullptr;
-    if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!frameLog) frameLog = fopen("/tmp/iospharo-frame.log", "a");
-    }
-
-    // Method name extraction - only done lazily when needed for debug logging
-    // (was causing huge overhead by constructing std::string on every pushFrame)
-    std::string methodName;
-
     // Save current execution state before switching to new method
     if (frameDepth_ >= MaxFrameDepth) {
         std::cerr << "[VM-STOP] Frame depth overflow in pushFrame(): " << frameDepth_ << " >= " << MaxFrameDepth << "\n";
@@ -13819,63 +13925,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     frame.savedClosure = memory_.nil();  // Default: not a block (set by activateBlock if needed)
     frame.homeFrameDepth = 0;  // Default: not a block (will be set by activateBlock if needed)
 
-    if (frameLog && frameDepth_ > 400) {
-        // Only log deep frames to identify recursion
-        fprintf(frameLog, "[PUSH_FRAME] depth=%zu method=%s\n", frameDepth_,
-                methodName.empty() ? "unknown" : methodName.c_str());
-        fflush(frameLog);
-    }
 
-    // Log fullCheck entries and dump its bytecodes
-    static FILE* fcEntryLog = nullptr;
-    static int fcEntryCount = 0;
-    if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!fcEntryLog) fcEntryLog = fopen("/tmp/fullcheck_entries.log", "w");
-    }
-    if (fcEntryLog && methodName == "fullCheck" && fcEntryCount < 1000) {
-        fcEntryCount++;
-        // Get the caller method (saved in frame we just created)
-        std::string callerMethod = "<unknown>";
-        if (frame.savedMethod.isObject() && frame.savedMethod.rawBits() > 0x10000) {
-            Oop hdr = memory_.fetchPointer(0, frame.savedMethod);
-            if (hdr.isSmallInteger()) {
-                size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                if (numLits >= 2) {
-                    Oop sel = memory_.fetchPointer(numLits - 1, frame.savedMethod);
-                    if (sel.isObject() && sel.rawBits() > 0x10000) {
-                        ObjectHeader* selHdr = sel.asObjectPtr();
-                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                            callerMethod = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                        }
-                    }
-                }
-            }
-        }
-        fprintf(fcEntryLog, "[fullCheck ENTRY #%d] depth=%zu caller=%s\n",
-                fcEntryCount, frameDepth_, callerMethod.c_str());
-
-        // Dump fullCheck's bytecodes
-        if (method.isObject() && method.rawBits() > 0x10000) {
-            ObjectHeader* mHdr = method.asObjectPtr();
-            Oop hdr = memory_.fetchPointer(0, method);
-            if (hdr.isSmallInteger()) {
-                size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                size_t bcStart = (1 + numLits) * 8;
-                size_t bcEnd = mHdr->byteSize();
-                fprintf(fcEntryLog, "  fullCheck bytecodes (start=%zu, totalSize=%zu):\n", bcStart, bcEnd);
-                for (size_t i = bcStart; i < bcEnd && i < bcStart + 100; i++) {
-                    if ((i - bcStart) % 16 == 0) {
-                        fprintf(fcEntryLog, "    [%3zu]: ", i);
-                    }
-                    fprintf(fcEntryLog, "%02x ", mHdr->bytes()[i]);
-                    if ((i - bcStart) % 16 == 15 || i == bcEnd - 1) {
-                        fprintf(fcEntryLog, "\n");
-                    }
-                }
-            }
-        }
-        fflush(fcEntryLog);
-    }
 
     // Calculate number of temporaries for the new method
     Oop newMethodHeader = memory_.fetchPointer(0, method);
@@ -13891,7 +13941,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
                       << "] newFP=" << (void*)newFP << " stackBase_=" << (void*)stackBase_
                       << " SP=" << (void*)stackPointer_ << " argCount=" << argCount
                       << " fd=" << frameDepth_ << " step=" << g_stepNum
-                      << " method=" << methodName << "\n";
+                      << "\n";
         }
     }
     framePointer_ = newFP;
@@ -15371,11 +15421,13 @@ Oop Interpreter::methodClassOf(Oop method) const {
     if (numLiterals < 2) return memory_.nil();
 
     // In Pharo, the literal layout is:
+    //   slot 0: method header
     //   slot 1: literal[0]  ...  slot N: literal[N-1]
-    // The LAST literal (slot numLiterals = literal[numLiterals-1]) is the selector.
-    // The PENULTIMATE literal (slot numLiterals-1 = literal[numLiterals-2]) is the class binding.
-    // The class binding is an Association whose value (slot 1) is the defining class.
-    Oop lastLiteral = memory_.fetchPointer(numLiterals - 1, method);
+    // The LAST literal (slot numLiterals) is the class binding (Association/GlobalVariable).
+    // The PENULTIMATE literal (slot numLiterals-1) is the selector (Symbol).
+    // The class binding's value (slot 1) is the defining class.
+    // This matches VMMaker's lastLiteralOf: which does fetchPointer(literalCount, method).
+    Oop lastLiteral = memory_.fetchPointer(numLiterals, method);
 
     // The last literal can be:
     // 1. An Association (classBinding) - extract value (slot 1)
@@ -16593,6 +16645,7 @@ Oop Interpreter::materializeFrameStack() {
         activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
         // frame[0] IS activeContext_'s inline continuation. Update the heap context
         // with frame[0]'s saved state instead of creating a new context.
+        // This is the first materialization: activeContext_ matches what was saved when frame 0 was pushed.
         const auto& frame0 = savedFrames_[0];
         ObjectHeader* acHdr = activeContext_.asObjectPtr();
         if (acHdr->slotCount() >= 6 && acHdr->format() == ObjectFormat::IndexableWithFixed &&

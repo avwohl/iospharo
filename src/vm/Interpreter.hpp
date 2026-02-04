@@ -66,7 +66,7 @@
 namespace pharo {
 
 /// Maximum stack depth
-constexpr size_t MaxStackDepth = 8192;  // Increased from 4096 for deep context chains
+constexpr size_t MaxStackDepth = 32768;  // Must be large enough for MaxFrameDepth (4096) frames
 
 /// Method cache size (must be power of 2)
 constexpr size_t MethodCacheSize = 2048;
@@ -299,7 +299,7 @@ private:
         int savedArgCount;
         size_t homeFrameDepth;  // For non-local block returns: the frame to return to (0 = not a block)
     };
-    static constexpr size_t MaxFrameDepth = 512;
+    static constexpr size_t MaxFrameDepth = 4096;
     std::array<SavedFrame, MaxFrameDepth> savedFrames_;
     size_t frameDepth_;
 

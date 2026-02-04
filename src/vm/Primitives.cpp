@@ -8737,6 +8737,15 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
             push(str);
             return PrimitiveResult::Success;
         }
+        case 1201:  // Max filename length (macOS)
+            // Return nil so VirtualMachine>>maxFilenameLength returns nil,
+            // and DiskStore>>initialize uses default 255.
+            // Failing here causes infinite recursion: primitive failure triggers
+            // error handling that touches file system, which creates MacStore,
+            // which calls initialize, which calls getSystemAttribute:1201 again.
+            pop();
+            push(memory_.nil());
+            return PrimitiveResult::Success;
         default:
             return PrimitiveResult::Failure;
     }
@@ -9215,6 +9224,62 @@ PrimitiveResult Interpreter::primitiveTerminateTo(int argCount) {
     // This is used by endProcess (thisContext terminateTo: nil) and unwindAndStop:.
     bool targetIsNil = (targetContext.isNil() || targetContext.rawBits() == memory_.nil().rawBits());
     if (targetIsNil) {
+        // Trace the nil-target case to understand what's calling terminateTo: nil
+        static int nilTermCount = 0;
+        nilTermCount++;
+        if (nilTermCount <= 10) {
+            std::cerr << "[TERMINATE-NIL #" << nilTermCount << " step=" << g_stepNum
+                      << " fd=" << frameDepth_ << "] rcvr=0x" << std::hex << rcvr.rawBits()
+                      << " activeCtx=0x" << activeContext_.rawBits() << std::dec;
+            bool rcvrIsActive = (rcvr.rawBits() == activeContext_.rawBits());
+            std::cerr << (rcvrIsActive ? " (IS activeContext!)" : "");
+
+            // Show current method and sender chain methods
+            std::cerr << "\n  Current method: ";
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                Oop mHdr = memory_.fetchPointer(0, method_);
+                if (mHdr.isSmallInteger()) {
+                    int nLits = mHdr.asSmallInteger() & 0x7FFF;
+                    if (nLits >= 2) {
+                        Oop sel = memory_.fetchPointer(nLits - 1, method_);
+                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                            ObjectHeader* selH = sel.asObjectPtr();
+                            if (selH->isBytesObject() && selH->byteSize() < 80)
+                                std::cerr << "#" << std::string((char*)selH->bytes(), selH->byteSize());
+                        }
+                    }
+                }
+            }
+
+            // Show rcvr's sender chain methods
+            std::cerr << "\n  Rcvr sender chain: ";
+            Oop ch = rcvr;
+            Oop nil2 = memory_.nil();
+            for (int i = 0; i < 8 && ch.isObject() && ch.rawBits() != nil2.rawBits() && ch.rawBits() > 0x10000; i++) {
+                ObjectHeader* chH = ch.asObjectPtr();
+                if (chH->slotCount() < 4) break;
+                Oop cm = memory_.fetchPointer(3, ch);
+                if (cm.isObject() && cm.rawBits() > 0x10000) {
+                    Oop mh = memory_.fetchPointer(0, cm);
+                    if (mh.isSmallInteger()) {
+                        int nl = mh.asSmallInteger() & 0x7FFF;
+                        if (nl >= 2) {
+                            Oop sel = memory_.fetchPointer(nl - 1, cm);
+                            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                ObjectHeader* sH = sel.asObjectPtr();
+                                if (sH->isBytesObject() && sH->byteSize() < 80) {
+                                    std::cerr << "#" << std::string((char*)sH->bytes(), sH->byteSize());
+                                }
+                            }
+                        }
+                    }
+                }
+                ch = memory_.fetchPointer(0, ch);
+                if (ch.isObject() && ch.rawBits() != nil2.rawBits()) std::cerr << " -> ";
+            }
+            std::cerr << "\n";
+        }
+
         // Nil all senders in the chain
         Oop current = rcvr;
         int iterations = 0;
@@ -9225,6 +9290,11 @@ PrimitiveResult Interpreter::primitiveTerminateTo(int argCount) {
             current = sender;
             iterations++;
         }
+
+        if (nilTermCount <= 10) {
+            std::cerr << "  Nilled " << iterations << " senders\n";
+        }
+
         // Set receiver's sender to nil (the target)
         memory_.storePointer(SenderIndex, rcvr, memory_.nil());
         popN(2);
@@ -9248,13 +9318,24 @@ PrimitiveResult Interpreter::primitiveTerminateTo(int argCount) {
     }
 
     if (!targetReachable) {
-        // Target not in sender chain - still set sender to target (matches Smalltalk fallback)
-        // The Smalltalk code always does: sender := previousContext
+        // Target not in sender chain. In the Cog VM, terminateTo: on a context
+        // whose target is unreachable modifies only the heap context's sender slot,
+        // which does NOT affect the machine frame's return address. Returns still
+        // follow the machine stack. In our VM, after thisContext materialization
+        // (frameDepth_=0), returns follow the heap sender chain. If we modify the
+        // sender here, the return path gets corrupted (e.g., returns to a context
+        // in a terminated process instead of the original caller).
+        //
+        // Fix: DON'T modify the sender when the target is unreachable. This matches
+        // the Cog VM's effective behavior for normal returns. The sender modification
+        // is only needed for NLR handling from ensure blocks, which is rare and can
+        // be handled separately if needed.
         static int unreachableCount = 0;
-        if (unreachableCount++ < 5) {
-            std::cerr << "[PRIM-TERMINATE-TO] Target unreachable - setting sender to target anyway\n";
+        if (unreachableCount++ < 10) {
+            std::cerr << "[PRIM-TERMINATE-TO] Target unreachable - skipping sender modification (preserving return path)\n";
         }
-        memory_.storePointer(SenderIndex, rcvr, targetContext);
+        // Return success without modifying sender - the primitive "handled" the request
+        // but the actual sender chain is preserved for correct returns.
         popN(2);
         push(rcvr);
         return PrimitiveResult::Success;
