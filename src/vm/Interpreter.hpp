@@ -1315,6 +1315,7 @@ private:
     // Become primitives
     PrimitiveResult primitiveBecome(int argCount);           // 72
     PrimitiveResult primitiveBecomeForward(int argCount);    // 128
+    void scanStackReplace(Oop oldOop, Oop newOop);          // Helper for become
 
     // Bit operation primitives
     PrimitiveResult primitiveHighBit(int argCount);          // 575

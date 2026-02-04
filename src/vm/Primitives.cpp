@@ -2727,6 +2727,9 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
     }
 
     bool isBytes = instSpec >= 16;
+    bool isWords32 = (instSpec >= 10 && instSpec <= 11);
+    bool isWords16 = (instSpec >= 12 && instSpec <= 15);
+    bool isWords64 = (instSpec == 9);
 
     uint32_t classIndex = memory_.indexOfClass(rcvr);
 
@@ -2774,6 +2777,41 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
         }
     } else if (isBytes) {
         newObj = memory_.allocateBytes(classIndex, static_cast<size_t>(indexableSize));
+    } else if (isWords32) {
+        // 32-bit word objects (WideString, WordArray) - instSpec 10-11
+        size_t numElements = static_cast<size_t>(indexableSize);
+        size_t byteCount = numElements * 4;
+        // Allocate as bytes then fix the format
+        newObj = memory_.allocateBytes(classIndex, byteCount);
+        if (!newObj.isNil()) {
+            ObjectHeader* hdr = newObj.asObjectPtr();
+            // Set correct 32-bit format: 10 (even count) or 11 (odd count)
+            size_t padding32 = (hdr->slotCount() * 2) - numElements;
+            ObjectFormat fmt = static_cast<ObjectFormat>(
+                static_cast<int>(ObjectFormat::Indexable32) + padding32);
+            hdr->setFormat(fmt);
+        }
+    } else if (isWords16) {
+        // 16-bit word objects (DoubleByteArray) - instSpec 12-15
+        size_t numElements = static_cast<size_t>(indexableSize);
+        size_t byteCount = numElements * 2;
+        newObj = memory_.allocateBytes(classIndex, byteCount);
+        if (!newObj.isNil()) {
+            ObjectHeader* hdr = newObj.asObjectPtr();
+            size_t padding16 = (hdr->slotCount() * 4) - numElements;
+            ObjectFormat fmt = static_cast<ObjectFormat>(
+                static_cast<int>(ObjectFormat::Indexable16) + padding16);
+            hdr->setFormat(fmt);
+        }
+    } else if (isWords64) {
+        // 64-bit word objects - instSpec 9
+        size_t numElements = static_cast<size_t>(indexableSize);
+        size_t byteCount = numElements * 8;
+        newObj = memory_.allocateBytes(classIndex, byteCount);
+        if (!newObj.isNil()) {
+            ObjectHeader* hdr = newObj.asObjectPtr();
+            hdr->setFormat(ObjectFormat::Indexable64);
+        }
     } else {
         size_t totalSlots = fixedSize + static_cast<size_t>(indexableSize);
         // Choose correct format based on instSpec:
@@ -8279,6 +8317,32 @@ PrimitiveResult Interpreter::primitiveObjectPointsTo(int argCount) {
 
 // ===== BECOME PRIMITIVES =====
 
+// Helper: scan C++ execution stack and replace Oop references
+// This is essential because our VM uses a C++ stack, not Smalltalk contexts.
+// Without this, becomeForward:/become: would miss references on the active stack.
+void Interpreter::scanStackReplace(Oop oldOop, Oop newOop) {
+    uint64_t oldBits = oldOop.rawBits();
+
+    // Scan current frame state
+    if (receiver_.rawBits() == oldBits) receiver_ = newOop;
+    if (method_.rawBits() == oldBits) method_ = newOop;
+
+    // Scan the entire operand stack
+    for (Oop* p = stackBase_; p <= stackPointer_; p++) {
+        if (p->rawBits() == oldBits) *p = newOop;
+    }
+
+    // Scan saved frames
+    for (size_t i = 0; i < frameDepth_; i++) {
+        auto& f = savedFrames_[i];
+        if (f.savedReceiver.rawBits() == oldBits) f.savedReceiver = newOop;
+        if (f.savedMethod.rawBits() == oldBits) f.savedMethod = newOop;
+        if (f.savedHomeMethod.rawBits() == oldBits) f.savedHomeMethod = newOop;
+        if (f.savedClosure.rawBits() == oldBits) f.savedClosure = newOop;
+        if (f.savedActiveContext.rawBits() == oldBits) f.savedActiveContext = newOop;
+    }
+}
+
 // Primitive 72: Swap identities of two objects (two-way become)
 PrimitiveResult Interpreter::primitiveBecome(int argCount) {
     Oop arg = stackValue(0);
@@ -8288,15 +8352,13 @@ PrimitiveResult Interpreter::primitiveBecome(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Both must be regular objects (not immediates)
     if (rcvr.rawBits() == arg.rawBits()) {
-        // Same object - nothing to do
         popN(2);
         push(rcvr);
         return PrimitiveResult::Success;
     }
 
-    // Perform two-way become by swapping all references
+    // Perform two-way become by swapping all references in heap
     memory_.allObjectsDo([&](Oop obj) {
         if (!obj.isObject()) return;
 
@@ -8318,6 +8380,37 @@ PrimitiveResult Interpreter::primitiveBecome(int argCount) {
         }
     });
 
+    // Also scan C++ execution stack (two-way: swap both directions)
+    // Need a temp to avoid double-swapping
+    uint64_t rcvrBits = rcvr.rawBits();
+    uint64_t argBits = arg.rawBits();
+    // First pass: rcvr -> sentinel, arg -> rcvr
+    // Second pass: sentinel -> arg
+    // Simpler: scan once and swap
+    if (receiver_.rawBits() == rcvrBits) receiver_ = arg;
+    else if (receiver_.rawBits() == argBits) receiver_ = rcvr;
+    if (method_.rawBits() == rcvrBits) method_ = arg;
+    else if (method_.rawBits() == argBits) method_ = rcvr;
+
+    for (Oop* p = stackBase_; p <= stackPointer_; p++) {
+        if (p->rawBits() == rcvrBits) *p = arg;
+        else if (p->rawBits() == argBits) *p = rcvr;
+    }
+
+    for (size_t i = 0; i < frameDepth_; i++) {
+        auto& f = savedFrames_[i];
+        if (f.savedReceiver.rawBits() == rcvrBits) f.savedReceiver = arg;
+        else if (f.savedReceiver.rawBits() == argBits) f.savedReceiver = rcvr;
+        if (f.savedMethod.rawBits() == rcvrBits) f.savedMethod = arg;
+        else if (f.savedMethod.rawBits() == argBits) f.savedMethod = rcvr;
+        if (f.savedHomeMethod.rawBits() == rcvrBits) f.savedHomeMethod = arg;
+        else if (f.savedHomeMethod.rawBits() == argBits) f.savedHomeMethod = rcvr;
+        if (f.savedClosure.rawBits() == rcvrBits) f.savedClosure = arg;
+        else if (f.savedClosure.rawBits() == argBits) f.savedClosure = rcvr;
+        if (f.savedActiveContext.rawBits() == rcvrBits) f.savedActiveContext = arg;
+        else if (f.savedActiveContext.rawBits() == argBits) f.savedActiveContext = rcvr;
+    }
+
     popN(2);
     push(rcvr);
     return PrimitiveResult::Success;
@@ -8334,13 +8427,12 @@ PrimitiveResult Interpreter::primitiveBecomeForward(int argCount) {
     }
 
     if (rcvr.rawBits() == arg.rawBits()) {
-        // Same object - nothing to do
         popN(argCount + 1);
         push(rcvr);
         return PrimitiveResult::Success;
     }
 
-    // Perform one-way become: replace all references to rcvr with arg
+    // Perform one-way become: replace all references to rcvr with arg in heap
     memory_.allObjectsDo([&](Oop obj) {
         if (!obj.isObject()) return;
 
@@ -8359,6 +8451,9 @@ PrimitiveResult Interpreter::primitiveBecomeForward(int argCount) {
             }
         }
     });
+
+    // Also scan C++ execution stack
+    scanStackReplace(rcvr, arg);
 
     popN(argCount + 1);
     push(rcvr);
@@ -20543,11 +20638,38 @@ PrimitiveResult Interpreter::primitiveNewWithArgOldSpace(int argCount) {
     }
 
     bool isBytes = instSpec >= 16;
+    bool isWords32 = (instSpec >= 10 && instSpec <= 11);
+    bool isWords16 = (instSpec >= 12 && instSpec <= 15);
+    bool isWords64 = (instSpec == 9);
     uint32_t classIndex = memory_.indexOfClass(rcvr);
 
     Oop newObj;
     if (isBytes) {
         newObj = memory_.allocateBytes(classIndex, static_cast<size_t>(indexableSize));
+    } else if (isWords32) {
+        size_t byteCount = static_cast<size_t>(indexableSize) * 4;
+        newObj = memory_.allocateBytes(classIndex, byteCount);
+        if (!newObj.isNil()) {
+            ObjectHeader* hdr = newObj.asObjectPtr();
+            size_t padding32 = (hdr->slotCount() * 2) - static_cast<size_t>(indexableSize);
+            hdr->setFormat(static_cast<ObjectFormat>(
+                static_cast<int>(ObjectFormat::Indexable32) + padding32));
+        }
+    } else if (isWords16) {
+        size_t byteCount = static_cast<size_t>(indexableSize) * 2;
+        newObj = memory_.allocateBytes(classIndex, byteCount);
+        if (!newObj.isNil()) {
+            ObjectHeader* hdr = newObj.asObjectPtr();
+            size_t padding16 = (hdr->slotCount() * 4) - static_cast<size_t>(indexableSize);
+            hdr->setFormat(static_cast<ObjectFormat>(
+                static_cast<int>(ObjectFormat::Indexable16) + padding16));
+        }
+    } else if (isWords64) {
+        size_t byteCount = static_cast<size_t>(indexableSize) * 8;
+        newObj = memory_.allocateBytes(classIndex, byteCount);
+        if (!newObj.isNil()) {
+            newObj.asObjectPtr()->setFormat(ObjectFormat::Indexable64);
+        }
     } else {
         size_t totalSlots = fixedSize + static_cast<size_t>(indexableSize);
         ObjectFormat objFormat = (instSpec == 3) ? ObjectFormat::IndexableWithFixed : ObjectFormat::Indexable;
@@ -20558,7 +20680,6 @@ PrimitiveResult Interpreter::primitiveNewWithArgOldSpace(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Note: Object is allocated in eden but will be promoted to old space by GC
     primitiveSuccess(newObj);
     return PrimitiveResult::Success;
 }
@@ -20634,11 +20755,38 @@ PrimitiveResult Interpreter::primitiveNewWithArgPinned(int argCount) {
     }
 
     bool isBytes = instSpec >= 16;
+    bool isWords32 = (instSpec >= 10 && instSpec <= 11);
+    bool isWords16 = (instSpec >= 12 && instSpec <= 15);
+    bool isWords64 = (instSpec == 9);
     uint32_t classIndex = memory_.indexOfClass(rcvr);
 
     Oop newObj;
     if (isBytes) {
         newObj = memory_.allocateBytes(classIndex, static_cast<size_t>(indexableSize));
+    } else if (isWords32) {
+        size_t byteCount = static_cast<size_t>(indexableSize) * 4;
+        newObj = memory_.allocateBytes(classIndex, byteCount);
+        if (!newObj.isNil()) {
+            ObjectHeader* hdr = newObj.asObjectPtr();
+            size_t padding32 = (hdr->slotCount() * 2) - static_cast<size_t>(indexableSize);
+            hdr->setFormat(static_cast<ObjectFormat>(
+                static_cast<int>(ObjectFormat::Indexable32) + padding32));
+        }
+    } else if (isWords16) {
+        size_t byteCount = static_cast<size_t>(indexableSize) * 2;
+        newObj = memory_.allocateBytes(classIndex, byteCount);
+        if (!newObj.isNil()) {
+            ObjectHeader* hdr = newObj.asObjectPtr();
+            size_t padding16 = (hdr->slotCount() * 4) - static_cast<size_t>(indexableSize);
+            hdr->setFormat(static_cast<ObjectFormat>(
+                static_cast<int>(ObjectFormat::Indexable16) + padding16));
+        }
+    } else if (isWords64) {
+        size_t byteCount = static_cast<size_t>(indexableSize) * 8;
+        newObj = memory_.allocateBytes(classIndex, byteCount);
+        if (!newObj.isNil()) {
+            newObj.asObjectPtr()->setFormat(ObjectFormat::Indexable64);
+        }
     } else {
         size_t totalSlots = fixedSize + static_cast<size_t>(indexableSize);
         ObjectFormat objFormat = (instSpec == 3) ? ObjectFormat::IndexableWithFixed : ObjectFormat::Indexable;
