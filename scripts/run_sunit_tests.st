@@ -52,10 +52,11 @@ runTestClass: testClass on: s
   sels do: [:sel |
     "Skip tests known to hang or cause VM-level crashes"
     (#(testPrintStringAll testStoreStringAll) includes: sel) ifFalse: [
-      [[testClass new setUp; perform: sel; tearDown. p := p + 1]
+      [[[testClass new setUp; perform: sel; tearDown. p := p + 1]
         on: TestFailure do: [:ex |
           f := f + 1.
           s nextPutAll: '  FAIL: '; nextPutAll: sel; cr]]
+        on: Deprecation do: [:ex | ex resume]]
         on: Exception do: [:ex |
           e := e + 1.
           s nextPutAll: '  ERROR: '; nextPutAll: sel;

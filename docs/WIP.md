@@ -143,28 +143,35 @@ The `unwindTo:` traversal isn't finding or executing the inserted ensure: block 
 
 ## Current Status (2026-02-04)
 
-### Custom VM Test Results (14 classes)
+### Custom VM Test Results (14 classes) — ALL COMPLETE
 
-Run on custom C++ VM via `./build/test_load_image /tmp/Pharo.image test`
+Run on custom C++ VM via `./build/test_load_image /tmp/test.image`
 with 10B step limit. Test runner: `scripts/run_sunit_tests.st`
 
 ```
 SmallIntegerTest      (29 tests):  29P  0F  0E  -- ALL PASS
-IntegerTest           (83 tests):  78P  2F  3E  -- testLowBit, testReciprocalModulo fail; 3 TestSkipped
-FloatTest             (75 tests):  71P  0F  4E  -- 4 errors (see below)
+IntegerTest           (83 tests):  80P  0F  3E  -- 3 TestSkipped
+FloatTest             (75 tests):  74P  0F  1E  -- 1 TestSkipped
 FractionTest          (32 tests):  32P  0F  0E  -- ALL PASS
 PointTest             (36 tests):  36P  0F  0E  -- ALL PASS
 CharacterTest         (19 tests):  17P  0F  0E  -- ALL PASS (2 skipped by runner)
-DictionaryTest       (205 tests): 195P  3F  7E  -- 6 Deprecation, 1 KeyNotFound; 3 failures
-SetTest              (174 tests): 164P  4F  6E  -- 6 Deprecation; 4 failures
-BagTest              (168 tests): 161P  1F  6E  -- 6 Deprecation; 1 failure
-IntervalTest         (260 tests): 252P  0F  8E  -- 6 Deprecation, testAtRandom (MNU), testIntervalStoreOn (Error)
-SymbolTest           (268 tests): 261P  0F  7E  -- 6 Deprecation, testAtRandom (MNU)
-OrderedCollectionTest(351 tests): 343P  1F  7E  -- 6 Deprecation, testAtRandom (MNU); testAtIfAbsentPut fails
-ArrayTest            (324 tests): 314P  1F  9E  -- 6 Deprecation, testAtRandom (MNU), 2 eval errors; testPrintingRecursive fails
-StringTest           (438 tests): TIMEOUT        -- sort completes but 438 tests exceed step limit
+DictionaryTest       (205 tests): 199P  0F  6E  -- 6 Deprecation
+SetTest              (174 tests): 168P  0F  6E  -- 6 Deprecation
+BagTest              (168 tests): 162P  0F  6E  -- 6 Deprecation
+IntervalTest         (260 tests): 254P  0F  6E  -- 6 Deprecation
+SymbolTest           (268 tests): 262P  0F  6E  -- 6 Deprecation
+OrderedCollectionTest(351 tests): 345P  0F  6E  -- 6 Deprecation
+ArrayTest            (324 tests): 318P  0F  6E  -- 6 Deprecation
+StringTest           (438 tests): 432P  0F  6E  -- 6 Deprecation
 ```
-**13 of 14 classes completed: 1953P, 12F, 57E (96.5% pass rate)**
+**All 14 classes complete: 2408P, 0F, 52E (97.9% pass rate, 100% of non-benign tests pass)**
+
+All 52 errors are benign:
+- 48 Deprecation errors: `testAsStringOnDelimiter*` uses deprecated API → signals Deprecation (a resumable Warning)
+- 3 TestSkipped: IntegerTest `testCreationFromBytes1/2/3`
+- 1 TestSkipped: FloatTest `testNaNCompare`
+
+Test runner updated to resume Deprecation signals (like standard SUnit), which should eliminate the 48 Deprecation "errors".
 
 ### Comparison: Standard Pharo VM (reference)
 ```
@@ -189,40 +196,20 @@ Total: 2431P, 4F, 60E (97.4% pass rate)
 ```
 
 Note: Test counts differ between VMs because the test runner discovers different test
-selectors (different Pharo versions / test trait inheritance).
+selectors (different Pharo versions / test trait inheritance). Standard VM also has 60
+errors (all Deprecation/TestSkipped).
 
-### Key Issues
+### Remaining Errors (all benign)
 
-**1. StringTest timeout**
-- 438 tests exceed the 10B step limit
-- Sort completes fine (2013 comparisons) but individual tests are slow
-- Interpreter overhead per test is high without JIT compilation
-- Not a correctness issue — just interpreter speed
+**Deprecation (48 errors, 8 collection classes × 6)**
+- `testAsStringOnDelimiter*` tests call deprecated `asStringOnDelimiter:` method
+- Deprecation is a resumable Warning — standard SUnit resumes it
+- Our test runner catches it as Exception → counts as error
+- Fix: Updated test runner to `on: Deprecation do: [:ex | ex resume]`
 
-**2. IntegerTest failures (2 failures, 3 errors)**
-- `testLowBit` — consistently fails (primitiveLowBit implementation issue?)
-- `testReciprocalModulo` — fails
-- 3 `TestSkipped` errors (testCreationFromBytes1/2/3)
-
-**3. FloatTest errors (4 errors)**
-- `test32bitConversion` — MessageNotUnderstood (missing method)
-- `testBinaryLiteralString` — SubscriptOutOfBounds
-- `testNaNCompare` — TestSkipped
-- `testStoreOnRoundTrip` — Error
-
-**4. Collection test failures (9 failures across 5 classes)**
-- DictionaryTest: testKeyAtIdentityValueIfAbsent, testNilHashCollision, testOccurrencesOf
-- SetTest: testAllowInclusionOfNils, testIsHealthy, testMaxIfNil, testSetWithNilItemsIsHealthy
-- BagTest: testOccurrencesOf
-- OrderedCollectionTest: testAtIfAbsentPut
-- ArrayTest: testPrintingRecursive
-- Pattern: nil-handling and identity-related tests fail → possible hash or identity comparison issue
-
-**5. Common errors across all collection classes**
-- 42 `testAsStringOnDelimiter*` errors (Deprecation exception not caught)
-- 5 `testAtRandom` errors (MessageNotUnderstood — Random not available?)
-- DictionaryTest `testAtPutNil` throws KeyNotFound
-- ArrayTest testSelfEvaluating/testSelfEvaluatingComplexCase (eval errors)
+**TestSkipped (4 errors)**
+- IntegerTest: `testCreationFromBytes1/2/3` — requires `Integer readFrom:` with byte arrays
+- FloatTest: `testNaNCompare` — test explicitly skips itself
 
 ### Sort issue - RESOLVED
 The default `sorted` method was astronomically slow because the Pharo image's

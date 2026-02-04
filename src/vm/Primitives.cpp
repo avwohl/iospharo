@@ -8322,10 +8322,6 @@ PrimitiveResult Interpreter::primitiveLowBit(int argCount) {
 
     int64_t value = rcvr.asSmallInteger();
 
-    if (value < 0) {
-        return PrimitiveResult::Failure;  // Undefined for negative
-    }
-
     if (value == 0) {
         pop();
         push(Oop::fromSmallInteger(0));
@@ -8333,6 +8329,7 @@ PrimitiveResult Interpreter::primitiveLowBit(int argCount) {
     }
 
     // Count trailing zeros and add 1 for 1-based index
+    // Works for negative values too: 2's complement preserves trailing zeros
     int lowBit = __builtin_ctzll(static_cast<uint64_t>(value)) + 1;
 
     pop();
