@@ -294,7 +294,7 @@ int stub_SDL_PollEvent(void* event) {
     sdlCallCount++;
 
     if (!sdlLog) {
-        sdlLog = fopen("/tmp/sdl_pollevent.log", "w");
+        sdlLog = nullptr;
     }
 
     // Mark SDL2 event polling as active - this prevents processInputEvents
@@ -770,7 +770,7 @@ FFIResult callFunction(
     const std::vector<uint64_t>& argValues,
     FFIType returnType
 ) {
-    static FILE* ffiLog = fopen("/tmp/ffi_calls.log", "w");
+    static FILE* ffiLog = nullptr;
     static int ffiCallCount = 0;
     ffiCallCount++;
 

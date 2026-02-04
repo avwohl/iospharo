@@ -91,7 +91,7 @@ bool Interpreter::initialize() {
     // Find the startup process from special objects
 
     {
-        FILE* initLog = fopen("/tmp/init_trace.log", "w");
+        FILE* initLog = nullptr;
         if (initLog) { fprintf(initLog, "[INIT] Starting interpreter initialize...\n"); fclose(initLog); }
     }
     Oop scheduler = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
@@ -111,7 +111,7 @@ bool Interpreter::initialize() {
 
     // Dump all processes in the scheduler to understand what's running
     if constexpr (ENABLE_DEBUG_LOGGING) {
-    static FILE* procLog = fopen("/tmp/process_dump.log", "w");
+    static FILE* procLog = nullptr;
     if (procLog) {
         fprintf(procLog, "[INIT] Dumping all processes in scheduler\n");
         Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
@@ -262,7 +262,7 @@ bool Interpreter::initialize() {
     Oop currentPSLS = memory_.specialObject(SpecialObjectIndex::ProcessSignalingLowSpace);
     if (currentPSLS.isNil() || currentPSLS.rawBits() == memory_.nil().rawBits()) {
         memory_.setSpecialObject(SpecialObjectIndex::ProcessSignalingLowSpace, activeProcess);
-        FILE* initLog = fopen("/tmp/init_trace.log", "a");
+        FILE* initLog = nullptr;
         if (initLog) {
             fprintf(initLog, "[INIT] Set ProcessSignalingLowSpace to active process 0x%llx\n",
                     (unsigned long long)activeProcess.rawBits());
@@ -389,7 +389,7 @@ bool Interpreter::initialize() {
 
         // Log the context chain to understand what we're resuming
         {
-            FILE* chainLog = fopen("/tmp/init_trace.log", "a");
+            FILE* chainLog = nullptr;
             if (chainLog) { fprintf(chainLog, "[CHAIN %d] %s >> %s\n", depth, rcvrClassName.c_str(), methodSelector.c_str()); fclose(chainLog); }
         }
 
@@ -400,12 +400,12 @@ bool Interpreter::initialize() {
             methodSelector == "snapshotPrimitive" || methodSelector == "primSnapshot" ||
             methodSelector == "primSnapshot:") {
             inSnapshotCode = true;
-            { FILE* f = fopen("/tmp/init_trace.log", "a"); if (f) { fprintf(f, "[CHAIN] -> snapshot code detected\n"); fclose(f); } }
+            { FILE* f = nullptr; if (f) { fprintf(f, "[CHAIN] -> snapshot code detected\n"); fclose(f); } }
         } else if (inSnapshotCode && snapshotEndDepth < 0) {
             // First context after snapshot code
             snapshotEndDepth = depth;
             resumeContext = currentCtx;
-            { FILE* f = fopen("/tmp/init_trace.log", "a"); if (f) { fprintf(f, "[CHAIN] First non-snapshot at depth %d\n", depth); fclose(f); } }
+            { FILE* f = nullptr; if (f) { fprintf(f, "[CHAIN] First non-snapshot at depth %d\n", depth); fclose(f); } }
         }
 
         // Move to sender
@@ -421,7 +421,7 @@ bool Interpreter::initialize() {
     // We need to modify the context to indicate "resuming" by ensuring the
     // snapshot primitive returns a non-nil value (true).
     {
-        FILE* f = fopen("/tmp/init_trace.log", "a");
+        FILE* f = nullptr;
         if (f) {
             fprintf(f, "[INIT] inSnapshotCode=%d snapshotEndDepth=%d\n", inSnapshotCode, snapshotEndDepth);
             fclose(f);
@@ -445,7 +445,7 @@ bool Interpreter::initialize() {
                     Oop trueObj = memory_.specialObject(SpecialObjectIndex::TrueObject);
                     Oop oldVal = memory_.fetchPointer(stackTopSlot, context);
                     memory_.storePointer(stackTopSlot, context, trueObj);
-                    FILE* f = fopen("/tmp/init_trace.log", "a");
+                    FILE* f = nullptr;
                     if (f) {
                         fprintf(f, "[INIT] Patched snapshot context stack top (slot %zu): 0x%llx -> true (0x%llx)\n",
                                 stackTopSlot, (unsigned long long)oldVal.rawBits(),
@@ -462,7 +462,7 @@ bool Interpreter::initialize() {
 
     // Log context details before executing
     {
-        FILE* f = fopen("/tmp/init_trace.log", "a");
+        FILE* f = nullptr;
         if (f) {
             ObjectHeader* ctxHdr = context.asObjectPtr();
             Oop pc = memory_.fetchPointer(1, context);
@@ -958,7 +958,7 @@ void Interpreter::renderWorldMorphs() {
     static FILE* logFile = nullptr;
     if constexpr (ENABLE_DEBUG_LOGGING) {
         if (!logFile) {
-            logFile = fopen("/tmp/iospharo-render.log", "w");
+            logFile = nullptr;
         }
     }
     if (logFile && renderCallCount <= 10) {
@@ -1721,7 +1721,7 @@ void Interpreter::renderWorldMorphs() {
     if constexpr (ENABLE_DEBUG_LOGGING) {
         static FILE* testLog = nullptr;
         if (!testLog) {
-            testLog = fopen("/tmp/doOneCycle_debug.log", "w");
+            testLog = nullptr;
         }
         if (testLog) {
             fprintf(testLog, "[RENDER-END #%d] renderWorldMorphs completed\n", renderCallCount);
@@ -1814,7 +1814,7 @@ void Interpreter::processInputEvents() {
     if constexpr (ENABLE_DEBUG_LOGGING) {
         if (!initialized) {
             initialized = true;
-            logFile = fopen("/tmp/iospharo-events.log", "a");
+            logFile = nullptr;
         }
 
         // Log periodically
@@ -1956,7 +1956,7 @@ void Interpreter::syncDisplayToSurface() {
     static int formCopyCount = 0;
     formCopyCount++;
     if (formCopyCount <= 5 || (formCopyCount % 300 == 0 && formCopyCount <= 3000)) {
-        static FILE* formLog = fopen("/tmp/form_copy.log", "w");
+        static FILE* formLog = nullptr;
         if (formLog) {
             // Sample pixels at various positions
             int mid = (srcWidth * srcHeight) / 2;
@@ -1988,7 +1988,7 @@ void Interpreter::syncDisplayToSurface() {
 
 void Interpreter::stopVM(const char* reason) {
     static FILE* stopLog = nullptr;
-    if (!stopLog) stopLog = fopen("/tmp/vm_stop.log", "a");
+    if (!stopLog) stopLog = nullptr;
     if (stopLog) {
         fprintf(stopLog, "[VM-STOP step=%llu fd=%zu] %s\n",
                 (unsigned long long)g_stepNum, frameDepth_, reason);
@@ -2117,13 +2117,13 @@ void Interpreter::dumpProcessQueues() {
 }
 
 void Interpreter::interpret() {
-    { FILE* f = fopen("/tmp/interpret_trace.log", "w"); if (f) { fprintf(f, "[INTERPRET] entered interpret() running_=%d\n", running_ ? 1 : 0); fclose(f); } }
+    { FILE* f = nullptr; if (f) { fprintf(f, "[INTERPRET] entered interpret() running_=%d\n", running_ ? 1 : 0); fclose(f); } }
     // Debug: Log special object addresses once at start
     if constexpr (ENABLE_DEBUG_LOGGING) {
         static bool loggedSpecialObjects = false;
         if (!loggedSpecialObjects) {
             loggedSpecialObjects = true;
-            FILE* soLog = fopen("/tmp/special_objects.log", "w");
+            FILE* soLog = nullptr;
             if (soLog) {
                 Oop trueObj = memory_.trueObject();
                 Oop falseObj = memory_.falseObject();
@@ -2230,7 +2230,7 @@ void Interpreter::checkTimerSemaphore() {
             static int usecTimerLog = 0;
             usecTimerLog++;
             if (false && usecTimerLog <= 20) {
-                static FILE* tlog = fopen("/tmp/timer_fired.log", "a");
+                static FILE* tlog = nullptr;
                 if (tlog) { fprintf(tlog, "[TIMER #%d] fired! delta=%lldms\n", usecTimerLog,
                                     (currentUsec - nextWakeupUsec_) / 1000); fflush(tlog); }
             }
@@ -2398,7 +2398,7 @@ void Interpreter::startHeartbeat() {
                 forceYield_.store(true, std::memory_order_release);
                 static FILE* yieldSetLog = nullptr;
                 static int yieldSetCount = 0;
-                if (!yieldSetLog) yieldSetLog = fopen("/tmp/yield_set.log", "w");
+                if (!yieldSetLog) yieldSetLog = nullptr;
                 if (yieldSetLog && yieldSetCount < 50) {
                     yieldSetCount++;
                     fprintf(yieldSetLog, "[YIELD-SET #%d] tickCount=%d setting forceYield=true\n",
@@ -2436,7 +2436,7 @@ void Interpreter::processPendingSignals() {
     static int sigCount = 0;
     sigCount++;
     if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!sigLog) sigLog = fopen("/tmp/signal_process.log", "a");
+        if (!sigLog) sigLog = nullptr;
         if (sigLog && sigCount <= 100) {
             fprintf(sigLog, "[SIGNAL] #%d Processing semaphore index %d\n", sigCount, index);
             fflush(sigLog);
@@ -2573,7 +2573,7 @@ void Interpreter::processPendingSignals() {
 bool Interpreter::step() {
     static bool stepEntryLogged = false;
     if (!stepEntryLogged) {
-        FILE* f = fopen("/tmp/step_entry.log", "w");
+        FILE* f = nullptr;
         if (f) { fprintf(f, "step() called for the first time\n"); fclose(f); }
         stepEntryLogged = true;
     }
@@ -2601,7 +2601,7 @@ bool Interpreter::step() {
         static int procSwitchCount = 0;
         Oop curProc = getActiveProcess();
         if (curProc.rawBits() != lastProc.rawBits()) {
-            if (!procLog) procLog = fopen("/tmp/proc_switch.log", "w");
+            if (!procLog) procLog = nullptr;
             if (procLog && procSwitchCount < 200) {
                 procSwitchCount++;
                 int priority = -1;
@@ -2728,7 +2728,7 @@ bool Interpreter::step() {
         forceYieldCount++;
 
         static FILE* yieldCheckLog = nullptr;
-        if (!yieldCheckLog) yieldCheckLog = fopen("/tmp/yield_check.log", "w");
+        if (!yieldCheckLog) yieldCheckLog = nullptr;
         if (yieldCheckLog && forceYieldCount <= 50) {
             fprintf(yieldCheckLog, "[YIELD-CHECK #%d] step=%llu processing forceYield (BEFORE fetchByte)\n",
                     forceYieldCount, g_stepNum);
@@ -2784,7 +2784,7 @@ skip_yield:
     // TRACE: detailed bytecode tracing around detect:ifNone: flow
     if (g_stepNum >= 1523980 && g_stepNum <= 1524200) {
         static FILE* ensureBcLog = nullptr;
-        if (!ensureBcLog) ensureBcLog = fopen("/tmp/detect_bytecodes.log", "w");
+        if (!ensureBcLog) ensureBcLog = nullptr;
         if (ensureBcLog) {
             // Get method selector
             std::string sel = "?";
@@ -2821,7 +2821,7 @@ skip_yield:
         static FILE* anyBcLog = nullptr;
         static bool traceAnySatisfy = false;
         static int anyCount = 0;
-        if (!anyBcLog) anyBcLog = fopen("/tmp/any_bytecodes.log", "w");
+        if (!anyBcLog) anyBcLog = nullptr;
         if (!traceAnySatisfy && method_.isObject() && method_.rawBits() > 0x10000) {
             Oop h = memory_.fetchPointer(0, method_);
             if (h.isSmallInteger()) {
@@ -2865,7 +2865,7 @@ skip_yield:
     // Log bytecode at hang point
     static FILE* bcLog = nullptr;
     if (g_stepNum >= 23900 && g_stepNum <= 24520) {
-        if (!bcLog) bcLog = fopen("/tmp/bytecode_hang.log", "w");
+        if (!bcLog) bcLog = nullptr;
         if (bcLog) {
             // Get selector name for send bytecodes
             // NOTE: 0x60-0x6F are arithmetic sends, 0x70-0x7F are special sends
@@ -3666,7 +3666,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                     if constexpr (ENABLE_DEBUG_LOGGING) {
                         static FILE* e7Log = nullptr;
                         static int e7Count = 0;
-                        if (!e7Log) e7Log = fopen("/tmp/temp_vector_create.log", "w");
+                        if (!e7Log) e7Log = nullptr;
                         if (e7Log && e7Count < 50) {
                             e7Count++;
                             std::string methodSel = "<unknown>";
@@ -3812,7 +3812,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 extB_ = 0;
                 if (false && offset < 0 && g_stepNum >= 10000 && g_stepNum <= 25000) {
                     static FILE* bjLog = nullptr;
-                    if (!bjLog) bjLog = fopen("/tmp/backward_jump.log", "w");
+                    if (!bjLog) bjLog = nullptr;
                     if (bjLog) { fprintf(bjLog, "[BJ #%llu] 0xED offset=%d IP=%p\n", g_stepNum, offset, (void*)instructionPointer_); fflush(bjLog); }
                 }
                 instructionPointer_ += offset;
@@ -3831,7 +3831,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 if constexpr (ENABLE_DEBUG_LOGGING) {
                     static int eeCount = 0;
                     static FILE* jumpLog = nullptr;
-                    if (!jumpLog) jumpLog = fopen("/tmp/cond_jump.log", "w");
+                    if (!jumpLog) jumpLog = nullptr;
                     bool isF = isFalse(value);
                     eeCount++;
                     if (jumpLog && eeCount <= 200) {
@@ -3844,7 +3844,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
 
                 if (false && offset < 0 && g_stepNum >= 10000 && g_stepNum <= 25000) {
                     static FILE* bjLog = nullptr;
-                    if (!bjLog) bjLog = fopen("/tmp/backward_jump.log", "a");
+                    if (!bjLog) bjLog = nullptr;
                     if (bjLog) { fprintf(bjLog, "[BJ #%llu] 0xEE offset=%d isT=%d\n", g_stepNum, offset, isT); fflush(bjLog); }
                 }
                 if (isT) {
@@ -3866,7 +3866,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 if constexpr (ENABLE_DEBUG_LOGGING) {
                     static int efCount = 0;
                     static FILE* jumpLog = nullptr;
-                    if (!jumpLog) jumpLog = fopen("/tmp/cond_jump.log", "a");
+                    if (!jumpLog) jumpLog = nullptr;
                     bool isF = isFalse(value);
                     efCount++;
                     if (jumpLog && efCount <= 200) {
@@ -3879,7 +3879,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
 
                 if (false && offset < 0 && g_stepNum >= 10000 && g_stepNum <= 25000) {
                     static FILE* bjLog = nullptr;
-                    if (!bjLog) bjLog = fopen("/tmp/backward_jump.log", "a");
+                    if (!bjLog) bjLog = nullptr;
                     if (bjLog) { fprintf(bjLog, "[BJ #%llu] 0xEF offset=%d willJump=%d\n", g_stepNum, offset, willJump); fflush(bjLog); }
                 }
                 if (willJump) {
@@ -4124,7 +4124,7 @@ void Interpreter::push(Oop value) {
         if (sd > 500) {
             static FILE* stackGrowLog = nullptr;
             static int stackGrowLogCount = 0;
-            if (!stackGrowLog) stackGrowLog = fopen("/tmp/stack_growth.log", "w");
+            if (!stackGrowLog) stackGrowLog = nullptr;
             if (stackGrowLog && stackGrowLogCount < 500) {
                 stackGrowLogCount++;
                 // Get method name
@@ -4240,7 +4240,7 @@ uint8_t Interpreter::fetchByte() {
     if (instructionPointer_ >= bytecodeEnd_) {
         static int ipOobCount = 0;
         static FILE* ipOobLog = nullptr;
-        if (!ipOobLog) ipOobLog = fopen("/tmp/ip_out_of_bounds.log", "w");
+        if (!ipOobLog) ipOobLog = nullptr;
         ipOobCount++;
         if (ipOobLog && ipOobCount <= 20) {
             fprintf(ipOobLog, "[IP-OOB #%d step=%llu] IP=%p bytecodeEnd_=%p method_=0x%llx\n",
@@ -4302,7 +4302,7 @@ void Interpreter::pushReceiverVariable(int index) {
             static int slot1Count = 0;
             slot1Count++;
             if (slot1Count <= 30) {
-                if (!slot1Log) slot1Log = fopen("/tmp/block_slot1_access.log", "w");
+                if (!slot1Log) slot1Log = nullptr;
                 if (slot1Log) {
                     Oop slot1Val = memory_.fetchPointer(1, receiver_);
                     std::string slot1Method = "?";
@@ -4356,7 +4356,7 @@ void Interpreter::pushReceiverVariable(int index) {
     if constexpr (ENABLE_DEBUG_LOGGING) {
         static FILE* civLog = nullptr;
         static int civCount = 0;
-        if (!civLog) civLog = fopen("/tmp/class_instvar_access.log", "w");
+        if (!civLog) civLog = nullptr;
 
         // Check if receiver is SessionManager - trace bytecodes
         if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
@@ -4370,7 +4370,7 @@ void Interpreter::pushReceiverVariable(int index) {
                         if (n == "SessionManager") {
                             static FILE* smLog = nullptr;
                             static int smCount = 0;
-                            if (!smLog) smLog = fopen("/tmp/session_manager_access.log", "w");
+                            if (!smLog) smLog = nullptr;
                             if (smLog && smCount < 20) {
                                 smCount++;
                                 // Show current method
@@ -4483,7 +4483,7 @@ void Interpreter::pushTemporary(int index) {
         static FILE* nilTempLog = nullptr;
         static int nilTempCount = 0;
         if (temp.rawBits() == memory_.nil().rawBits()) {
-            if (!nilTempLog) nilTempLog = fopen("/tmp/nil_temp_push.log", "w");
+            if (!nilTempLog) nilTempLog = nullptr;
             if (nilTempLog && nilTempCount < 100) {
                 nilTempCount++;
                 // Get method selector for context
@@ -4614,7 +4614,7 @@ void Interpreter::storeTemporary(int index) {
     if constexpr (ENABLE_DEBUG_LOGGING) {
         static FILE* snapStoreLog = nullptr;
         static int snapStoreCount = 0;
-        if (!snapStoreLog) snapStoreLog = fopen("/tmp/snap_stores.log", "w");
+        if (!snapStoreLog) snapStoreLog = nullptr;
         if (snapStoreLog && snapStoreCount < 100) {
             std::string methodSel = "<unknown>";
             if (method_.isObject() && method_.rawBits() > 0x10000) {
@@ -4667,7 +4667,7 @@ void Interpreter::returnValue(Oop value) {
     // CRITICAL TRACE: Track when frame depth drops significantly during startup
     static FILE* startupUnwindLog = nullptr;
     static bool startupUnwindLogged = false;
-    if (!startupUnwindLog) startupUnwindLog = fopen("/tmp/startup_unwind.log", "w");
+    if (!startupUnwindLog) startupUnwindLog = nullptr;
 
     // Log when we're at low frame depth and about to return further
     // Focus on the 350000-360000 step range where startup chain unwinds
@@ -4741,7 +4741,7 @@ void Interpreter::returnValue(Oop value) {
     if constexpr (ENABLE_DEBUG_LOGGING) {
     static FILE* retValLog = nullptr;
     static int retValCount = 0;
-    if (!retValLog) retValLog = fopen("/tmp/return_value_trace.log", "w");
+    if (!retValLog) retValLog = nullptr;
     if (retValLog && retValCount < 200) {
         // Check if returning an Array
         if (value.isObject() && value.rawBits() > 0x10000) {
@@ -4829,7 +4829,7 @@ void Interpreter::returnValue(Oop value) {
         static FILE* ctxChainLog = nullptr;
         static int ctxChainCount = 0;
         if constexpr (ENABLE_DEBUG_LOGGING) {
-            if (!ctxChainLog) ctxChainLog = fopen("/tmp/ctx_chain.log", "w");
+            if (!ctxChainLog) ctxChainLog = nullptr;
             if (ctxChainLog && ctxChainCount < 200) {
                 ctxChainCount++;
                 fprintf(ctxChainLog, "[CTX-CHAIN #%d] frameDepth_=0, activeContext_=0x%llx\n",
@@ -4928,7 +4928,7 @@ void Interpreter::returnValue(Oop value) {
                 static FILE* senderCheckLog = nullptr;
                 static int senderCheckCount = 0;
                 if constexpr (ENABLE_DEBUG_LOGGING) {
-                    if (!senderCheckLog) senderCheckLog = fopen("/tmp/sender_check.log", "w");
+                    if (!senderCheckLog) senderCheckLog = nullptr;
                     senderCheckCount++;
                 }
                 if (senderCheckLog && senderCheckCount <= 100) {
@@ -5006,7 +5006,7 @@ void Interpreter::returnValue(Oop value) {
                     // TRACE: Log return-via-sender for nil>>signal investigation
                     if (g_stepNum >= 21610 && g_stepNum <= 21690) {
                         static FILE* retSenderLog = nullptr;
-                        if (!retSenderLog) retSenderLog = fopen("/tmp/return_sender_detail.log", "w");
+                        if (!retSenderLog) retSenderLog = nullptr;
                         if (retSenderLog) {
                             // Get sender's method info
                             std::string sndMethodName = "?";
@@ -5109,7 +5109,7 @@ terminate_process:
         if constexpr (ENABLE_DEBUG_LOGGING) {
             static FILE* retTermLog = nullptr;
             static int retTermCount = 0;
-            if (!retTermLog) retTermLog = fopen("/tmp/return_terminate.log", "w");
+            if (!retTermLog) retTermLog = nullptr;
             retTermCount++;
             if (retTermLog && retTermCount <= 50) {
                 Oop ap = getActiveProcess();
@@ -5236,7 +5236,7 @@ terminate_process:
 
         // Check if we need to call setupEventLoop after install completed
         if (hasPendingDriverSetup_ && pendingDriverSetupMethod_.isObject()) {
-            static FILE* driverLog = fopen("/tmp/osdriver_install.log", "a");
+            static FILE* driverLog = nullptr;
             if (driverLog) {
                 fprintf(driverLog, "[DRIVER] Install completed - now calling setupEventLoop\n");
                 fflush(driverLog);
@@ -5363,7 +5363,7 @@ terminate_process:
     if constexpr (ENABLE_DEBUG_LOGGING) {
         static FILE* methodChangeLog = nullptr;
         static int methodChangeCount = 0;
-        if (!methodChangeLog) methodChangeLog = fopen("/tmp/method_change.log", "w");
+        if (!methodChangeLog) methodChangeLog = nullptr;
 
         // Get method name BEFORE popFrame
         std::string beforeMethod = "<unknown>";
@@ -5543,7 +5543,7 @@ void Interpreter::returnFromMethod() {
     if constexpr (ENABLE_DEBUG_LOGGING) {
         static FILE* retLog = nullptr;
         static int retCount = 0;
-        if (!retLog) retLog = fopen("/tmp/method_return_trace.log", "w");
+        if (!retLog) retLog = nullptr;
         if (retLog && retCount < 100) {
             // Get current method selector
             std::string methodSel = "<unknown>";
@@ -5619,7 +5619,7 @@ void Interpreter::returnFromMethod() {
             // DIAG: Log NLR in critical step range
             if (g_stepNum >= 1769500 && g_stepNum <= 1770700) {
                 static FILE* nlrLog = nullptr;
-                if (!nlrLog) nlrLog = fopen("/tmp/nlr_trace.log", "w");
+                if (!nlrLog) nlrLog = nullptr;
                 if (nlrLog) {
                     // Get current method's selector
                     std::string msel = "?";
@@ -5748,7 +5748,7 @@ void Interpreter::returnFromMethod() {
             }
         }
         if (isCompiledBlock && missedNlrCount < 50) {
-            if (!missedNlrLog) missedNlrLog = fopen("/tmp/missed_nlr.log", "w");
+            if (!missedNlrLog) missedNlrLog = nullptr;
             if (missedNlrLog) {
                 missedNlrCount++;
                 size_t hfd = (frameDepth_ > 0) ? savedFrames_[frameDepth_ - 1].homeFrameDepth : SIZE_MAX;
@@ -5886,7 +5886,7 @@ void Interpreter::shortJumpIfTrue(int offset) {
     if constexpr (ENABLE_DEBUG_LOGGING) {
         static FILE* jumpTLog = nullptr;
         static int jumpTCount = 0;
-        if (!jumpTLog) jumpTLog = fopen("/tmp/jump_true_trace.log", "w");
+        if (!jumpTLog) jumpTLog = nullptr;
         if (jumpTLog && jumpTCount < 200) {
             jumpTCount++;
             bool isTrueVal = isTrue(value);
@@ -5913,7 +5913,7 @@ void Interpreter::shortJumpIfFalse(int offset) {
     // Log ALL conditional jumps in critical step range for detect:ifNone: investigation
     if (g_stepNum >= 1523900 && g_stepNum <= 1524200) {
         static FILE* critJumpLog = nullptr;
-        if (!critJumpLog) critJumpLog = fopen("/tmp/crit_jumps.log", "w");
+        if (!critJumpLog) critJumpLog = nullptr;
         if (critJumpLog) {
             bool isT = (value.rawBits() == memory_.trueObject().rawBits());
             bool isF = (value.rawBits() == memory_.falseObject().rawBits());
@@ -5961,7 +5961,7 @@ void Interpreter::shortJumpIfFalse(int offset) {
         static FILE* condLog = nullptr;
         static int condLogCount = 0;
         if constexpr (ENABLE_DEBUG_LOGGING) {
-            if (!condLog) condLog = fopen("/tmp/conditional_jumps.log", "w");
+            if (!condLog) condLog = nullptr;
         }
         bool isT = (value.rawBits() == memory_.trueObject().rawBits());
         bool isF = (value.rawBits() == memory_.falseObject().rawBits());
@@ -6033,7 +6033,7 @@ void Interpreter::longJumpIfFalse() {
         static FILE* condLog = nullptr;
         static int condLogCount = 0;
         if constexpr (ENABLE_DEBUG_LOGGING) {
-            if (!condLog) condLog = fopen("/tmp/long_conditional_jumps.log", "w");
+            if (!condLog) condLog = nullptr;
         }
         bool isT = (value.rawBits() == memory_.trueObject().rawBits());
         bool isF = (value.rawBits() == memory_.falseObject().rawBits());
@@ -6091,7 +6091,7 @@ void Interpreter::arithmeticSend(int which) {
     if constexpr (ENABLE_DEBUG_LOGGING) {
         static FILE* arithLog2 = nullptr;
         static int arithCount2 = 0;
-        if (!arithLog2) arithLog2 = fopen("/tmp/arith_non_int.log", "w");
+        if (!arithLog2) arithLog2 = nullptr;
         if (arithLog2 && arithCount2 < 5000) {
             Oop rcvr = stackValue(1);
             Oop arg = stackValue(0);
@@ -6183,7 +6183,7 @@ void Interpreter::arithmeticSend(int which) {
         if (which == 4) {  // <=
             static FILE* arithLog = nullptr;
             static int arithCount = 0;
-            if (!arithLog) arithLog = fopen("/tmp/arith_le_trace.log", "w");
+            if (!arithLog) arithLog = nullptr;
             if (arithLog && arithCount < 500) {
                 arithCount++;
                 Oop rcvr = stackValue(1);
@@ -6480,7 +6480,7 @@ void Interpreter::sendSpecial(int which) {
         Oop nilObj = memory_.nil();
         static FILE* valueSendLog = nullptr;
         static int valueSendCount = 0;
-        if (!valueSendLog) valueSendLog = fopen("/tmp/value_send_trace.log", "w");
+        if (!valueSendLog) valueSendLog = nullptr;
         if (valueSendLog && valueSendCount < 200 && arg.rawBits() == nilObj.rawBits()) {
             valueSendCount++;
             std::string rcvrClass = "<unknown>";
@@ -6592,7 +6592,7 @@ void Interpreter::sendSpecial(int which) {
         Oop collection = stackValue(1);
         static FILE* doSendLog = nullptr;
         static int doSendCount = 0;
-        if (!doSendLog) doSendLog = fopen("/tmp/do_send_trace.log", "w");
+        if (!doSendLog) doSendLog = nullptr;
         if (doSendLog && doSendCount < 50) {
             doSendCount++;
             std::string collClass = "<unknown>";
@@ -6737,7 +6737,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         static bool firstCall = true;
         if (firstCall) {
             firstCall = false;
-            FILE* f = fopen("/tmp/sendselector_first.log", "w");
+            FILE* f = nullptr;
             if (f) { fprintf(f, "sendSelector called first at step %llu\n", g_stepNum); fclose(f); }
         }
     }
@@ -6745,7 +6745,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     {
         static FILE* allSendLog2 = nullptr;
         if (!allSendLog2) {
-            allSendLog2 = fopen("/tmp/all_sends.log", "w");
+            allSendLog2 = nullptr;
             if (allSendLog2) { fprintf(allSendLog2, "[INIT] send log opened at step %llu\n", g_stepNum); fflush(allSendLog2); }
         }
     if (allSendLog2 && g_stepNum >= 1769554 && g_stepNum <= 1776840) {
@@ -6798,7 +6798,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             if (sn == "error:" || sn == "errorNoFreeSpace" || sn == "errorNoModification") {
                 static FILE* errLog = nullptr;
                 static int errCount = 0;
-                if (!errLog) errLog = fopen("/tmp/error_sends.log", "w");
+                if (!errLog) errLog = nullptr;
                 if (errLog && errCount++ < 100) {
                     fprintf(errLog, "=== #%s at step %llu (err #%d) ===\n", sn.c_str(), g_stepNum, errCount);
                     // Get error message argument
@@ -6856,7 +6856,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 }
                 // KEEP the old WeakSet dump logic below for errorNoFreeSpace
                 static FILE* dumpLog = nullptr;
-                if (!dumpLog) dumpLog = fopen("/tmp/weakset_dump.log", "w");
+                if (!dumpLog) dumpLog = nullptr;
                 if (dumpLog && sn == "errorNoFreeSpace") {
                     Oop rcvr = stackValue(argCount);
                     fprintf(dumpLog, "=== errorNoFreeSpace at step %llu ===\n", g_stepNum);
@@ -6914,7 +6914,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 if (sigRcvr.isNil() || sigRcvr.rawBits() == memory_.nil().rawBits()) {
                     static FILE* nilSigLog = nullptr;
                     static int nilSigCount = 0;
-                    if (!nilSigLog) nilSigLog = fopen("/tmp/nil_signal.log", "w");
+                    if (!nilSigLog) nilSigLog = nullptr;
                     if (nilSigLog && nilSigCount++ < 20) {
                         fprintf(nilSigLog, "=== nil >> #signal at step %llu (#%d) ===\n", g_stepNum, nilSigCount);
                         fprintf(nilSigLog, "  frameDepth=%zu\n", frameDepth_);
@@ -7048,7 +7048,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 sn == "signalForException:" || sn == "signal") {
                 static FILE* unhandledLog = nullptr;
                 static int unhandledCount = 0;
-                if (!unhandledLog) unhandledLog = fopen("/tmp/unhandled_error.log", "w");
+                if (!unhandledLog) unhandledLog = nullptr;
                 if (unhandledLog && unhandledCount++ < 500) {
                     fprintf(unhandledLog, "=== #%s at step %llu (#%d) ===\n", sn.c_str(), g_stepNum, unhandledCount);
                     // Receiver info
@@ -7177,7 +7177,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         if (selName == "startUp:" || selName == "startUp" || selName == "doOneCycle" ||
             selName == "worldRenderer" || selName == "runStartup:" || selName == "doesNotUnderstand:" ||
             (g_stepNum >= 10806 && g_stepNum <= 27000)) {
-            if (!allSendLog) allSendLog = fopen("/tmp/all_sends.log", "w");
+            if (!allSendLog) allSendLog = nullptr;
             if (allSendLog && allSendCount < 10000) {
                 allSendCount++;
                 Oop rcvr = stackValue(argCount);
@@ -7225,7 +7225,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
         if (sel2 == "on:do:" && argCount == 2) {
             onDoCount++;
-            if (!onDoLog) onDoLog = fopen("/tmp/on_do_trace.log", "w");
+            if (!onDoLog) onDoLog = nullptr;
             if (onDoLog && onDoCount <= 200) {
                 fprintf(onDoLog, "[ON:DO: #%d step=%llu]\n", onDoCount, (unsigned long long)g_stepNum);
                 fflush(onDoLog);
@@ -7244,7 +7244,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 if (sh->isBytesObject() && sh->byteSize() < 100)
                     selName = std::string((char*)sh->bytes(), sh->byteSize());
             }
-            if (!deepLog) deepLog = fopen("/tmp/deep_stack_trace.log", "w");
+            if (!deepLog) deepLog = nullptr;
             if (deepLog) {
                 deepLogCount++;
                 Oop rcvr = stackValue(argCount);
@@ -7274,7 +7274,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     if constexpr (ENABLE_DEBUG_LOGGING) {
         static FILE* symLog = nullptr;
         static int symCount = 0;
-        if (!symLog) symLog = fopen("/tmp/sym_plus_trace.log", "w");
+        if (!symLog) symLog = nullptr;
         Oop rcvr = stackValue(argCount);
         bool match = false;
         if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
@@ -7431,7 +7431,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             if (memcmp(selBytes, "primitiveResume", 15) == 0) {
                 static FILE* primResSendLog = nullptr;
                 static int primResSendCount = 0;
-                if (!primResSendLog) primResSendLog = fopen("/tmp/primres_send.log", "w");
+                if (!primResSendLog) primResSendLog = nullptr;
                 if (primResSendLog && primResSendCount++ < 50) {
                     Oop rcvr = stackValue(argCount);
                     int pri = -1;
@@ -7472,7 +7472,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         static int cbCount = 0;
         cbCount++;
         if (cbCount <= 20) {
-            if (!cbLog) cbLog = fopen("/tmp/compiled_block_send.log", "w");
+            if (!cbLog) cbLog = nullptr;
             if (cbLog) {
                 Oop rcvr = stackValue(argCount);
                 std::string rcvrClass = "?";
@@ -8042,7 +8042,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         if (currentMethodName == "setupEventLoop") {
             if (!insideSetupEventLoop) {
                 insideSetupEventLoop = true;
-                if (!eventLoopLog) eventLoopLog = fopen("/tmp/setup_eventloop.log", "w");
+                if (!eventLoopLog) eventLoopLog = nullptr;
                 if (eventLoopLog) {
                     fprintf(eventLoopLog, "[SETUP-EVENT-LOOP] Entered setupEventLoop at step %llu\n", g_stepNum);
                     fflush(eventLoopLog);
@@ -8116,7 +8116,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         if (selStr == "resume" || selStr == "primitiveResume") {
             static FILE* resumeLog = nullptr;
             static int resumeLogCount = 0;
-            if (!resumeLog) resumeLog = fopen("/tmp/resume_sends.log", "w");
+            if (!resumeLog) resumeLog = nullptr;
             if (resumeLog && resumeLogCount++ < 100) {
                 Oop rcvr = stackValue(argCount);
                 std::string rcvrInfo = "?";
@@ -8169,7 +8169,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         static int fullTraceSinceSmallInteger = 0;
 
         if (!startupTraceLog) {
-            startupTraceLog = fopen("/tmp/startup_trace.log", "w");
+            startupTraceLog = nullptr;
             if (startupTraceLog) {
                 fprintf(startupTraceLog, "[TRACE] Startup trace initialized (sendCount=%d)\n", sendCount);
                 fflush(startupTraceLog);
@@ -8496,7 +8496,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 selMatch("handleException:") || selMatch("pass")) {
                 static FILE* procTermLog = nullptr;
                 static int procTermLogCount = 0;
-                if (!procTermLog) procTermLog = fopen("/tmp/proc_term_trace.log", "w");
+                if (!procTermLog) procTermLog = nullptr;
                 if (procTermLog && procTermLogCount++ < 200) {
                     Oop ap = getActiveProcess();
                     Oop prioOop = memory_.fetchPointer(2, ap);
@@ -10081,7 +10081,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             if (cacheSelStr == "primitiveResume" && cached->primitiveIndex == 0) {
                 static FILE* cacheZeroLog = nullptr;
                 static int cacheZeroCount = 0;
-                if (!cacheZeroLog) cacheZeroLog = fopen("/tmp/cache_prim0.log", "w");
+                if (!cacheZeroLog) cacheZeroLog = nullptr;
                 if (cacheZeroLog && cacheZeroCount++ < 50) {
                     fprintf(cacheZeroLog, "[CACHE-PRIMIDX-0 #%d] primitiveResume cache hit with primIdx=0!\n",
                             cacheZeroCount);
@@ -10105,7 +10105,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 if (primIdx == 87) {
                     static FILE* cachedResLog = nullptr;
                     static int cachedResCount = 0;
-                    if (!cachedResLog) cachedResLog = fopen("/tmp/cached_prim87.log", "w");
+                    if (!cachedResLog) cachedResLog = nullptr;
                     if (cachedResLog && cachedResCount++ < 50) {
                         Oop proc = stackValue(0);  // receiver
                         int pri = -1;
@@ -10160,7 +10160,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     if (selLen == 3 && selBytes && memcmp(selBytes, "new", 3) == 0) {
         static int newSendTraceCount = 0;
         if (newSendTraceCount++ < 10) {
-            static FILE* newSendLog = fopen("/tmp/new_send_trace.log", "w");
+            static FILE* newSendLog = nullptr;
             if (newSendLog) {
                 fprintf(newSendLog, "[#new SEND #%d] rcvr=0x%llx rcvrClass=0x%llx\n",
                         newSendTraceCount, (unsigned long long)rcvr.rawBits(),
@@ -10196,7 +10196,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             static bool delimDumped = false;
             if (!delimDumped) {
                 delimDumped = true;
-                FILE* delimLog = fopen("/tmp/delimiter_method.log", "w");
+                FILE* delimLog = nullptr;
                 if (delimLog) {
                     fprintf(delimLog, "=== DiskStore >> #delimiter method dump ===\n");
                     fprintf(delimLog, "Method Oop: 0x%llx\n", (unsigned long long)method.rawBits());
@@ -10812,7 +10812,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             if (primIndex == 87) {
                 static FILE* ncResLog = nullptr;
                 static int ncResCount = 0;
-                if (!ncResLog) ncResLog = fopen("/tmp/noncached_prim87.log", "w");
+                if (!ncResLog) ncResLog = nullptr;
                 if (ncResLog && ncResCount++ < 50) {
                     Oop proc = stackValue(0);  // receiver
                     int pri = -1;
@@ -11057,7 +11057,7 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
     if (traceNew) {
         static int newFailCount = 0;
         if (newFailCount++ < 20) {
-            static FILE* newLog = fopen("/tmp/new_lookup_fail.log", "w");
+            static FILE* newLog = nullptr;
             if (newLog) {
                 fprintf(newLog, "[#new FAIL #%d] NOT FOUND after %d levels (started from %s)\n",
                         newFailCount, depth, startClassName.c_str());
@@ -11332,7 +11332,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // TRACE: find anySatisfy: in activateMethod
     {
         static FILE* amLog = nullptr;
-        if (!amLog) amLog = fopen("/tmp/activate_method.log", "w");
+        if (!amLog) amLog = nullptr;
         static int amTotal = 0;
         amTotal++;
         // Check every method for anySatisfy: bytecode pattern
@@ -11628,7 +11628,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             static FILE* fcActivateLog = nullptr;
             static int fcActivateCount = 0;
             if constexpr (ENABLE_DEBUG_LOGGING) {
-                if (!fcActivateLog) fcActivateLog = fopen("/tmp/fc_activate.log", "w");
+                if (!fcActivateLog) fcActivateLog = nullptr;
             }
             if (fcActivateLog && fcActivateCount < 10) {
                 fcActivateCount++;
@@ -11664,7 +11664,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     [[maybe_unused]] static int actCount = 0;
     if constexpr (ENABLE_DEBUG_LOGGING) {
     // TRACE: Enter SessionManager section
-    if (!actLog) actLog = fopen("/tmp/method_activation.log", "w");
+    if (!actLog) actLog = nullptr;
     if (actLog && actCount < 200) {
         // TRACE: Inside actLog && actCount condition
         // Get method selector for logging
@@ -11778,7 +11778,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     static FILE* bcLog = nullptr;
     static int activationCount = 0;
     if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!bcLog) bcLog = fopen("/tmp/bytecode-dump.log", "w");
+        if (!bcLog) bcLog = nullptr;
     }
     activationCount++;
     if (bcLog && methodObj->slotCount() > 1 && activationCount < 100) {
@@ -11926,7 +11926,7 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     {
         static FILE* abLog = nullptr;
         static int abLogCount = 0;
-        if (!abLog) abLog = fopen("/tmp/activateblock_trace.log", "w");
+        if (!abLog) abLog = nullptr;
         if (abLog && abLogCount++ < 200) {
             fprintf(abLog, "[AB #%d] fd=%zu homeMethodForNLR=0x%llx isObj=%d isNil=%d\n",
                     abLogCount, frameDepth_,
@@ -12002,7 +12002,7 @@ void Interpreter::activateBlock(Oop block, int argCount) {
         {
             static FILE* abResLog = nullptr;
             static int abResCount = 0;
-            if (!abResLog) abResLog = fopen("/tmp/ab_result.log", "w");
+            if (!abResLog) abResLog = nullptr;
             if (abResLog && abResCount++ < 500) {
                 fprintf(abResLog, "[AB-RES #%d] fd=%zu homeMethodOop=0x%llx homeFrame=%zu\n",
                         abResCount, frameDepth_,
@@ -12113,7 +12113,7 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     if (receiver_.rawBits() == 0) {
         static FILE* blkRcvrZeroLog = nullptr;
         static int blkRcvrZeroCount = 0;
-        if (!blkRcvrZeroLog) blkRcvrZeroLog = fopen("/tmp/block_receiver_zero.log", "w");
+        if (!blkRcvrZeroLog) blkRcvrZeroLog = nullptr;
         if (blkRcvrZeroLog && blkRcvrZeroCount++ < 20) {
             fprintf(blkRcvrZeroLog, "[BLK-RCVR-ZERO #%d] In activateBlock! block=0x%llx\n",
                     blkRcvrZeroCount, (unsigned long long)block.rawBits());
@@ -12168,7 +12168,7 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     // Log block activation details around the DNU step
     if (g_stepNum >= 23000 && g_stepNum <= 25000) {
         static FILE* blkActLog = nullptr;
-        if (!blkActLog) blkActLog = fopen("/tmp/block_activate.log", "w");
+        if (!blkActLog) blkActLog = nullptr;
         if (blkActLog) {
             fprintf(blkActLog, "[BLK-ACT step=%llu] block=0x%llx blockSlots=%zu numCopied=%d argCount=%d\n",
                     (unsigned long long)g_stepNum, (unsigned long long)block.rawBits(),
@@ -12340,7 +12340,7 @@ Oop Interpreter::literal(size_t index) const {
             // Log details to help diagnose
             static int litOobCount = 0;
             static FILE* litOobLog = nullptr;
-            if (!litOobLog) litOobLog = fopen("/tmp/literal_out_of_bounds.log", "w");
+            if (!litOobLog) litOobLog = nullptr;
             litOobCount++;
             if (litOobLog && litOobCount <= 50) {
                 fprintf(litOobLog, "[LIT-OOB #%d step=%llu] index=%zu >= numLiterals=%zu\n",
@@ -12461,7 +12461,7 @@ Oop Interpreter::temporary(int index) const {
     static FILE* tempLog = nullptr;
     static int tempReadCount = 0;
     if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!tempLog) tempLog = fopen("/tmp/temp_access.log", "w");
+        if (!tempLog) tempLog = nullptr;
     }
     if (tempLog && tempReadCount < 100) {
         tempReadCount++;
@@ -12515,7 +12515,7 @@ void Interpreter::setTemporary(int index, Oop value) {
     static FILE* tempLog = nullptr;
     static int tempWriteCount = 0;
     if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!tempLog) tempLog = fopen("/tmp/temp_write.log", "w");
+        if (!tempLog) tempLog = nullptr;
     }
     if (tempLog && tempWriteCount < 100) {
         tempWriteCount++;
@@ -12551,7 +12551,7 @@ Oop Interpreter::receiverInstVar(size_t index) const {
     static FILE* instVarLog = nullptr;
     static int instVarCount = 0;
     if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!instVarLog) instVarLog = fopen("/tmp/instvar_access.log", "w");
+        if (!instVarLog) instVarLog = nullptr;
     }
     if (instVarLog && index == 0 && instVarCount < 100) {
         instVarCount++;
@@ -12576,7 +12576,7 @@ void Interpreter::setReceiverInstVar(size_t index, Oop value) {
                     memcmp(cnh->bytes(), "OSSDL2Driver", 12) == 0) {
                     static FILE* sdlStoreLog = nullptr;
                     static int sdlStoreCount = 0;
-                    if (!sdlStoreLog) sdlStoreLog = fopen("/tmp/ossdl2_stores.log", "w");
+                    if (!sdlStoreLog) sdlStoreLog = nullptr;
                     if (sdlStoreLog && sdlStoreCount++ < 50) {
                         bool isNil = (value.rawBits() == memory_.nil().rawBits());
                         fprintf(sdlStoreLog, "[SDL2-STORE #%d step=%llu] slot[%zu] := 0x%llx%s\n",
@@ -12621,7 +12621,7 @@ void Interpreter::setReceiverInstVar(size_t index, Oop value) {
                         ctxSenderCount++;
                         // Only log during driver install timeframe (expanded range)
                         if (g_stepNum >= 400000 && g_stepNum <= 450000 && ctxSenderCount <= 100) {
-                            if (!ctxSenderLog) ctxSenderLog = fopen("/tmp/context_sender_set.log", "w");
+                            if (!ctxSenderLog) ctxSenderLog = nullptr;
                             if (ctxSenderLog) {
                                 Oop nilObj = memory_.nil();
                                 bool senderIsNil = (value.rawBits() == nilObj.rawBits());
@@ -12692,7 +12692,7 @@ void Interpreter::setReceiverInstVar(size_t index, Oop value) {
                         static int ctxPcCount = 0;
                         ctxPcCount++;
                         if (ctxPcCount <= 30) {
-                            if (!ctxPcLog) ctxPcLog = fopen("/tmp/context_pc_set.log", "w");
+                            if (!ctxPcLog) ctxPcLog = nullptr;
                             if (ctxPcLog) {
                                 fprintf(ctxPcLog, "[CTX-PC #%d] Context 0x%llx pc := %lld\n",
                                         ctxPcCount, (unsigned long long)receiver_.rawBits(),
@@ -12756,7 +12756,7 @@ void Interpreter::setReceiverInstVar(size_t index, Oop value) {
                         static int procCtxCount = 0;
                         procCtxCount++;
                         if (procCtxCount <= 30) {
-                            if (!procCtxLog) procCtxLog = fopen("/tmp/process_suspendedctx_set.log", "w");
+                            if (!procCtxLog) procCtxLog = nullptr;
                             if (procCtxLog) {
                                 fprintf(procCtxLog, "[PROC-SLOT1 #%d] Process 0x%llx suspendedContext := 0x%llx\n",
                                         procCtxCount, (unsigned long long)receiver_.rawBits(),
@@ -12828,7 +12828,7 @@ void Interpreter::setReceiverInstVar(size_t index, Oop value) {
     static FILE* storeLog = nullptr;
     static int storeCount = 0;
     if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!storeLog) storeLog = fopen("/tmp/instvar_store.log", "w");
+        if (!storeLog) storeLog = nullptr;
     }
     if (storeLog && storeCount < 100) {
         std::string rcvrName = "<unknown>";
@@ -12909,7 +12909,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     static int dnuCount = 0;
     dnuCount++;
     if (dnuCount <= 200 || dnuCount % 1000 == 0) {
-        static FILE* dnuLog = fopen("/tmp/dnu_messages.log", "a");
+        static FILE* dnuLog = nullptr;
         if (dnuLog) {
             std::string selStr = "???";
             std::string selHex = "";
@@ -13921,7 +13921,7 @@ int Interpreter::primitiveIndexOf(Oop method) const {
         static int noCallPrimCount = 0;
         noCallPrimCount++;
         if (noCallPrimCount <= 20) {
-            static FILE* ncLog = fopen("/tmp/no_callprim.log", "a");
+            static FILE* ncLog = nullptr;
             if (ncLog) {
                 ObjectHeader* mo = method.asObjectPtr();
                 int nl = bits & 0x7FFF;
@@ -14103,7 +14103,7 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
     static FILE* copiedLog = nullptr;
     static int copiedCount = 0;
     if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!copiedLog) copiedLog = fopen("/tmp/copied_values.log", "w");
+        if (!copiedLog) copiedLog = nullptr;
     }
 
     // Log block creation params
@@ -14420,7 +14420,7 @@ void Interpreter::terminateCurrentProcess() {
     static FILE* termLog = nullptr;
     static int termCount = 0;
     if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!termLog) termLog = fopen("/tmp/process_terminate.log", "w");
+        if (!termLog) termLog = nullptr;
     }
     termCount++;
 
@@ -14603,7 +14603,7 @@ Oop Interpreter::wakeHighestPriority() {
 
     if constexpr (ENABLE_DEBUG_LOGGING) {
         if (!wakeLog) {
-            wakeLog = fopen("/tmp/wake_priority.log", "w");
+            wakeLog = nullptr;
         }
     }
 
@@ -14662,7 +14662,7 @@ Oop Interpreter::wakeLowerPriorityProcess(int currentPriority) {
 
     if constexpr (ENABLE_DEBUG_LOGGING) {
         if (!wakeLowerLog) {
-            wakeLowerLog = fopen("/tmp/wake_lower.log", "w");
+            wakeLowerLog = nullptr;
         }
     }
 
@@ -14732,7 +14732,7 @@ void Interpreter::putToSleep(Oop process) {
 
     if constexpr (ENABLE_DEBUG_LOGGING) {
         if (!sleepLog) {
-            sleepLog = fopen("/tmp/put_sleep.log", "w");
+            sleepLog = nullptr;
         }
     }
 
@@ -15161,7 +15161,7 @@ void Interpreter::transferTo(Oop newProcess) {
     static FILE* xferLog = nullptr;
     static int xferCount = 0;
     if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!xferLog) xferLog = fopen("/tmp/process_switch.log", "w");
+        if (!xferLog) xferLog = nullptr;
     }
     xferCount++;
 
@@ -15475,7 +15475,7 @@ bool Interpreter::tryReschedule() {
     static FILE* schedLog = nullptr;
     static int schedDump = 0;
     if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!schedLog) schedLog = fopen("/tmp/scheduler_dump.log", "w");
+        if (!schedLog) schedLog = nullptr;
     }
     schedDump++;
 
@@ -15587,7 +15587,7 @@ void Interpreter::checkForPreemption() {
     static FILE* preemptLog = nullptr;
     static int preemptCount = 0;
     if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!preemptLog) preemptLog = fopen("/tmp/preempt_check.log", "w");
+        if (!preemptLog) preemptLog = nullptr;
     }
     preemptCount++;
 
@@ -15678,7 +15678,7 @@ void Interpreter::installOSiOSDriver() {
     // Try to install OSiOSDriver to start the event loop
     // This is called from step() after the image has had time to initialize
 
-    static FILE* driverLog = fopen("/tmp/osdriver_install.log", "w");
+    static FILE* driverLog = nullptr;
     if (driverLog) {
         fprintf(driverLog, "[DRIVER] installOSiOSDriver called (step 100K)\n");
         fflush(driverLog);
@@ -16694,7 +16694,7 @@ bool Interpreter::executePendingDriverInstall() {
 
     hasPendingDriverInstall_ = false;  // Clear flag before executing
 
-    static FILE* driverLog = fopen("/tmp/osdriver_install.log", "a");
+    static FILE* driverLog = nullptr;
     if (driverLog) {
         fprintf(driverLog, "[DRIVER] executePendingDriverInstall: Creating context for install\n");
         fflush(driverLog);
@@ -16916,7 +16916,7 @@ bool Interpreter::bootstrapStartup() {
     // Log every startup attempt to verify the code is being reached
     if constexpr (ENABLE_DEBUG_LOGGING) {
         fprintf(stderr, "[BOOTSTRAP] Attempt #%d\n", startupAttempt);
-        static FILE* startupLog = fopen("/tmp/bootstrap_startup.log", "w");
+        static FILE* startupLog = nullptr;
         if (startupLog) {
             fprintf(startupLog, "[BOOTSTRAP] Attempt #%d\n", startupAttempt);
             fflush(startupLog);
@@ -17065,7 +17065,7 @@ bool Interpreter::bootstrapStartup() {
         // Debug logging
         static FILE* startupDebugLog = nullptr;
         if constexpr (ENABLE_DEBUG_LOGGING) {
-            if (!startupDebugLog) startupDebugLog = fopen("/tmp/startup_debug.log", "w");
+            if (!startupDebugLog) startupDebugLog = nullptr;
         }
         Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
         if (startupDebugLog) {
@@ -17154,7 +17154,7 @@ bool Interpreter::bootstrapStartup() {
 
         static FILE* startupDebugLog = nullptr;
         if constexpr (ENABLE_DEBUG_LOGGING) {
-            if (!startupDebugLog) startupDebugLog = fopen("/tmp/startup_debug.log", "a");
+            if (!startupDebugLog) startupDebugLog = nullptr;
             if (startupDebugLog) {
                 fprintf(startupDebugLog, "[STARTUP-2] Looking for restartMethods\n");
                 fflush(startupDebugLog);
@@ -17187,7 +17187,7 @@ bool Interpreter::bootstrapStartup() {
         static bool uiManagerStarted = false;
         static FILE* uiLog = nullptr;
         if constexpr (ENABLE_DEBUG_LOGGING) {
-            if (!uiLog) uiLog = fopen("/tmp/uimanager_startup.log", "w");
+            if (!uiLog) uiLog = nullptr;
         }
 
         if (!uiManagerStarted) {
@@ -17266,7 +17266,7 @@ bool Interpreter::bootstrapStartup() {
         static FILE* sensorLog = nullptr;
         if constexpr (ENABLE_DEBUG_LOGGING) {
             if (!sensorLog) {
-                sensorLog = fopen("/tmp/sensor_start.log", "w");
+                sensorLog = nullptr;
             }
         }
         if (!sensorStartAttempted) {
@@ -18043,7 +18043,7 @@ bool Interpreter::executeFromContext(Oop context) {
     // Log snapshot resume detection
     static FILE* snapLog = nullptr;
     if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!snapLog) snapLog = fopen("/tmp/snapshot_resume.log", "w");
+        if (!snapLog) snapLog = nullptr;
         if (snapLog && firstSnapshotResume) {
             fprintf(snapLog, "[SNAP] Checking for snapshot resume, primIdx=%d\n", primIdx);
             fflush(snapLog);
@@ -18142,7 +18142,7 @@ bool Interpreter::executeFromContext(Oop context) {
     static FILE* ctxRestoreLog = nullptr;
     static int ctxRestoreCount = 0;
     if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!ctxRestoreLog) ctxRestoreLog = fopen("/tmp/context_restore.log", "w");
+        if (!ctxRestoreLog) ctxRestoreLog = nullptr;
     }
     ctxRestoreCount++;
     if (ctxRestoreLog && ctxRestoreCount <= 50) {
@@ -18321,7 +18321,7 @@ bool Interpreter::executeFromContext(Oop context) {
                 // Log closure restoration for debugging
                 static FILE* closureRestoreLog = nullptr;
                 static int closureRestoreCount = 0;
-                if (!closureRestoreLog) closureRestoreLog = fopen("/tmp/closure_restore.log", "w");
+                if (!closureRestoreLog) closureRestoreLog = nullptr;
                 closureRestoreCount++;
                 if (closureRestoreLog && closureRestoreCount <= 200) {
                     fprintf(closureRestoreLog, "[CLOSURE-RESTORE #%d step=%llu] ctx=0x%llx closure=0x%llx stackp=%d numTemps=%d numArgs=%d numCopied=%d\n",
@@ -18368,7 +18368,7 @@ bool Interpreter::executeFromContext(Oop context) {
         static int restoreIdx = 0;
         static int loopDetectCount = 0;
         static FILE* loopLog = nullptr;
-        if (!loopLog) loopLog = fopen("/tmp/exception_loop.log", "w");
+        if (!loopLog) loopLog = nullptr;
 
         uint64_t ctxBits = context.rawBits();
         int64_t pcVal = savedPC.isSmallInteger() ? savedPC.asSmallInteger() : 0;
@@ -18496,7 +18496,7 @@ bool Interpreter::executeFromContext(Oop context) {
     {
         static FILE* docwLog = nullptr;
         if constexpr (ENABLE_DEBUG_LOGGING) {
-            if (!docwLog) docwLog = fopen("/tmp/doOneCycleWhile_restore.log", "w");
+            if (!docwLog) docwLog = nullptr;
         }
         if (docwLog && numLiterals >= 2 && numLiterals < 100) {
             Oop sel = memory_.fetchPointer(numLiterals - 1, method_);
@@ -18637,7 +18637,7 @@ bool Interpreter::executeFromContext(Oop context) {
     if (isSnapshotResume) {
         static FILE* snapStackLog = nullptr;
         if constexpr (ENABLE_DEBUG_LOGGING) {
-            if (!snapStackLog) snapStackLog = fopen("/tmp/snapshot_stack.log", "w");
+            if (!snapStackLog) snapStackLog = nullptr;
         }
         if (snapStackLog) {
             // Log the context's stack/temp area
@@ -18879,7 +18879,7 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
     static FILE* allPrimLog = nullptr;
     if constexpr (ENABLE_DEBUG_LOGGING) {
         if (!allPrimLog) {
-            allPrimLog = fopen("/tmp/prim_all_calls.log", "w");
+            allPrimLog = nullptr;
         }
     }
 
@@ -19006,7 +19006,7 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
     // Log interesting unimplemented primitives
     static FILE* unimplPrimLog = nullptr;
     static int unimplCount = 0;
-    if (!unimplPrimLog) unimplPrimLog = fopen("/tmp/unimpl_prim.log", "w");
+    if (!unimplPrimLog) unimplPrimLog = nullptr;
     if (unimplPrimLog && unimplCount < 200) {
         unimplCount++;
         fprintf(unimplPrimLog, "[UNIMPL-PRIM #%d step=%llu] primitive=%d argCount=%d\n",

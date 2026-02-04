@@ -1094,7 +1094,7 @@ PrimitiveResult Interpreter::primitiveMakePoint(int argCount) {
     callCount++;
 
     if (!pointLog) {
-        pointLog = fopen("/tmp/iospharo-point.log", "a");
+        pointLog = nullptr;
     }
 
     Oop yArg = stackValue(0);
@@ -1220,7 +1220,7 @@ PrimitiveResult Interpreter::primitiveLessOrEqual(int argCount) {
         if (argVal == 55 && g_stepNum < 2000000) {
             static FILE* leLog = nullptr;
             static int leCount = 0;
-            if (!leLog) leLog = fopen("/tmp/le_55_trace.log", "w");
+            if (!leLog) leLog = nullptr;
             if (leLog && leCount < 500) {
                 leCount++;
                 fprintf(leLog, "[LE55 #%d step=%llu] %lld <= 55 = %s\n",
@@ -1356,7 +1356,7 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
     // or if receiver is not an object (PrimErrInappropriate)
     if (!index.isSmallInteger() || !rcvr.isObject()) {
         // Log when at: is called with bad arguments (causes Smalltalk error)
-        static FILE* atLog = fopen("/tmp/at_fail.log", "a");
+        static FILE* atLog = nullptr;
         static int atFailCount = 0;
         atFailCount++;
         if (atLog && atFailCount <= 20) {
@@ -1739,7 +1739,7 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
         if (result.rawBits() == memory_.nil().rawBits()) {
             static FILE* atNilLog = nullptr;
             static int atNilCount = 0;
-            if (!atNilLog) atNilLog = fopen("/tmp/at_nil_trace.log", "w");
+            if (!atNilLog) atNilLog = nullptr;
             if (atNilLog && atNilCount < 100) {
                 atNilCount++;
                 std::string rcvrClass = "<unknown>";
@@ -1821,7 +1821,7 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
                         static int procCtxCount = 0;
                         procCtxCount++;
                         if (procCtxCount <= 20) {
-                            if (!procCtxLog) procCtxLog = fopen("/tmp/process_context_set.log", "w");
+                            if (!procCtxLog) procCtxLog = nullptr;
                             if (procCtxLog) {
                                 fprintf(procCtxLog, "[PROC-CTX #%d] Process 0x%llx suspendedContext := 0x%llx\n",
                                         procCtxCount, (unsigned long long)rcvr.rawBits(),
@@ -1882,7 +1882,7 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
     // TRACE: Log nil values being stored
     static FILE* atPutLog = nullptr;
     static int atPutNilCount = 0;
-    if (!atPutLog) atPutLog = fopen("/tmp/atput_nil.log", "w");
+    if (!atPutLog) atPutLog = nullptr;
     if (atPutLog && atPutNilCount < 50) {
         // Check if value is nil
         bool isNil = value.isObject() && value.rawBits() > 0x10000
@@ -2175,7 +2175,7 @@ PrimitiveResult Interpreter::primitiveInstVarAtPut(int argCount) {
     // TRACE: Log ALL instVarAtPut calls with Process receiver
     static FILE* allInstVarLog = nullptr;
     static int allInstVarCount = 0;
-    if (!allInstVarLog) allInstVarLog = fopen("/tmp/instvar_atput.log", "w");
+    if (!allInstVarLog) allInstVarLog = nullptr;
     if (allInstVarLog && rcvr.isObject() && rcvr.rawBits() > 0x10000) {
         Oop cls = memory_.classOf(rcvr);
         if (cls.isObject()) {
@@ -2211,7 +2211,7 @@ PrimitiveResult Interpreter::primitiveInstVarAtPut(int argCount) {
                         static int procCtxCount = 0;
                         procCtxCount++;
                         if (procCtxCount <= 20) {
-                            if (!procCtxLog) procCtxLog = fopen("/tmp/process_context_set.log", "w");
+                            if (!procCtxLog) procCtxLog = nullptr;
                             if (procCtxLog) {
                                 fprintf(procCtxLog, "[PROC-INSTVAR #%d] Process 0x%llx suspendedContext := 0x%llx\n",
                                         procCtxCount, (unsigned long long)rcvr.rawBits(),
@@ -2469,7 +2469,7 @@ PrimitiveResult Interpreter::primitiveNew(int argCount) {
             ObjectHeader* cnH = clsName.asObjectPtr();
             if (cnH->isBytesObject() && cnH->byteSize() == 12 &&
                 memcmp(cnH->bytes(), "OSSDL2Driver", 12) == 0) {
-                static FILE* sdlNewLog = fopen("/tmp/ossdl2_new.log", "w");
+                static FILE* sdlNewLog = nullptr;
                 if (sdlNewLog) {
                     fprintf(sdlNewLog, "[SDL2-NEW] Creating OSSDL2Driver instance! classIdx=%u instSize=%zu step=%llu\n",
                             classIndex, instSize, (unsigned long long)g_stepNum);
@@ -2512,7 +2512,7 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
     newArgCallCount++;
     auto logNewArgFail = [&](const char* reason) {
         if (newArgCallCount <= 10) {
-            FILE* f = fopen("/tmp/init_trace.log", "a");
+            FILE* f = nullptr;
             if (f) {
                 std::string className = "?";
                 if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
@@ -2640,7 +2640,7 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
         } else {
             // Log details about the non-integer argument object
             if (newArgCallCount <= 10) {
-                FILE* f = fopen("/tmp/init_trace.log", "a");
+                FILE* f = nullptr;
                 if (f) {
                     fprintf(f, "[basicNew:] arg byteSize=%zu isBytesObj=%d fmt=%d classIdx=%u slots=%zu\n",
                             hdr->byteSize(), hdr->isBytesObject() ? 1 : 0,
@@ -2851,7 +2851,7 @@ PrimitiveResult Interpreter::primitiveIdentical(int argCount) {
     identTotalCount++;
     if (identTotalCount % 1000000 == 0) {
         static FILE* identCountLog = nullptr;
-        if (!identCountLog) identCountLog = fopen("/tmp/ident_count.log", "w");
+        if (!identCountLog) identCountLog = nullptr;
         if (identCountLog) {
             fprintf(identCountLog, "[IDENT] total=%llu at step %llu\n",
                     (unsigned long long)identTotalCount, g_stepNum);
@@ -2902,7 +2902,7 @@ PrimitiveResult Interpreter::primitiveIdentical(int argCount) {
             sameArgRun++;
             if (sameArgRun == 10000) {
                 static FILE* idLog = nullptr;
-                if (!idLog) idLog = fopen("/tmp/ident_spin.log", "w");
+                if (!idLog) idLog = nullptr;
                 if (idLog) {
                     fprintf(idLog, "=== 10K consecutive == with same arg at step %llu ===\n", g_stepNum);
                     fprintf(idLog, "arg (rhs): 0x%llx isObj=%d isSmallInt=%d isNil=%d\n",
@@ -2931,7 +2931,7 @@ PrimitiveResult Interpreter::primitiveIdentical(int argCount) {
                 }
             }
             if (sameArgRun == 200000) {
-                static FILE* idLog = fopen("/tmp/ident_spin.log", "a");
+                static FILE* idLog = nullptr;
                 if (idLog) {
                     fprintf(idLog, "=== 200K consecutive == with same arg - likely infinite loop ===\n");
                     fprintf(idLog, "Last rcvr: 0x%llx result=%s\n",
@@ -3579,7 +3579,7 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
     static FILE* blockArgLog = nullptr;
     static int blockArgCount = 0;
     static int nilArgCount = 0;
-    if (!blockArgLog) blockArgLog = fopen("/tmp/block_args.log", "w");
+    if (!blockArgLog) blockArgLog = nullptr;
 
     // Check if any arg is nil
     bool hasNilArg = false;
@@ -3823,7 +3823,7 @@ PrimitiveResult Interpreter::primitiveResume(int argCount) {
     resumeCallCount++;
 
     if (!resumeLog) {
-        resumeLog = fopen("/tmp/prim_resume.log", "w");
+        resumeLog = nullptr;
     }
 
     // Log EVERY entry to primitiveResume
@@ -3996,7 +3996,7 @@ PrimitiveResult Interpreter::primitiveSignal(int argCount) {
     signalCallCount++;
 
     if (!signalLog) {
-        signalLog = fopen("/tmp/prim_signal.log", "w");
+        signalLog = nullptr;
     }
 
     Oop semaphore = stackTop();  // Receiver
@@ -4085,7 +4085,7 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
     waitCallCount++;
 
     if (!waitLog) {
-        waitLog = fopen("/tmp/prim_wait.log", "w");
+        waitLog = nullptr;
         if (waitLog) {
             fprintf(waitLog, "[INIT] g_stepNum=%llu &g_stepNum=%p\n",
                     (unsigned long long)g_stepNum, (void*)&g_stepNum);
@@ -4271,7 +4271,7 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
         }
     }
 
-    { FILE* f = fopen("/tmp/init_trace.log", "a"); if (f) { fprintf(f, "[VM] primitiveQuit called (call #%d) exit code %d\n", quitCallCount, exitCode); fclose(f); } }
+    { FILE* f = nullptr; if (f) { fprintf(f, "[VM] primitiveQuit called (call #%d) exit code %d\n", quitCallCount, exitCode); fclose(f); } }
 
     if (quitCallCount == 1) {
         // First quit - during startup. Try to reschedule to UI process.
@@ -4375,7 +4375,7 @@ PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
                         }
                         memory_.setSpecialObject(SpecialObjectIndex::ExternalObjectsArray, newTable);
                         size = AUTO_EXT_OBJ_SIZE;
-                        FILE* logFile = fopen("/tmp/vm_param49.log", "a");
+                        FILE* logFile = nullptr;
                         if (logFile) {
                             fprintf(logFile, "[PARAM49 #%d step=%llu] AUTO-CREATED %zu slots\n",
                                     param49Count, (unsigned long long)g_stepNum, AUTO_EXT_OBJ_SIZE);
@@ -4384,7 +4384,7 @@ PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
                     }
                 }
                 if (param49Count <= 20) {
-                    FILE* logFile = fopen("/tmp/vm_param49.log", "a");
+                    FILE* logFile = nullptr;
                     if (logFile) {
                         fprintf(logFile, "[PARAM49 #%d step=%llu] semTable=0x%llx size=%zu\n",
                                 param49Count, (unsigned long long)g_stepNum,
@@ -4456,14 +4456,14 @@ PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
             int64_t newSize = newValueOop.asSmallInteger();
             static int resize49Count = 0;
             resize49Count++;
-            FILE* logFile = fopen("/tmp/vm_resize49.log", "a");
+            FILE* logFile = nullptr;
             if (logFile) {
                 fprintf(logFile, "[RESIZE49 #%d step=%llu] requested newSize=%lld\n",
                         resize49Count, (unsigned long long)g_stepNum, (long long)newSize);
                 fclose(logFile);
             }
             if (newSize < 0 || newSize > 65535) {
-                logFile = fopen("/tmp/vm_resize49.log", "a");
+                logFile = nullptr;
                 if (logFile) { fprintf(logFile, "[RESIZE49 #%d] FAIL: size out of range\n", resize49Count); fclose(logFile); }
                 return PrimitiveResult::Failure;
             }
@@ -4472,7 +4472,7 @@ PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
             if (!oldTable.isNil() && oldTable.isObject()) {
                 oldSize = memory_.slotCountOf(oldTable);
             }
-            logFile = fopen("/tmp/vm_resize49.log", "a");
+            logFile = nullptr;
             if (logFile) {
                 fprintf(logFile, "[RESIZE49 #%d] oldTable=0x%llx oldSize=%zu\n",
                         resize49Count, (unsigned long long)oldTable.rawBits(), oldSize);
@@ -4484,7 +4484,7 @@ PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
                 uint32_t classIndex = memory_.indexOfClass(arrayClass);
                 Oop newTable = memory_.allocateSlots(classIndex, (size_t)newSize, ObjectFormat::Indexable);
                 if (newTable.isNil()) {
-                    logFile = fopen("/tmp/vm_resize49.log", "a");
+                    logFile = nullptr;
                     if (logFile) { fprintf(logFile, "[RESIZE49 #%d] FAIL: allocation failed\n", resize49Count); fclose(logFile); }
                     return PrimitiveResult::Failure;
                 }
@@ -4502,10 +4502,10 @@ PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
                 // Replace in special objects array
                 memory_.setSpecialObject(SpecialObjectIndex::ExternalObjectsArray, newTable);
                 fprintf(stderr, "[VM] Resized ExternalObjectsArray from %zu to %lld\n", oldSize, newSize);
-                logFile = fopen("/tmp/vm_resize49.log", "a");
+                logFile = nullptr;
                 if (logFile) { fprintf(logFile, "[RESIZE49 #%d] SUCCESS: resized to %lld\n", resize49Count, (long long)newSize); fclose(logFile); }
             } else {
-                logFile = fopen("/tmp/vm_resize49.log", "a");
+                logFile = nullptr;
                 if (logFile) { fprintf(logFile, "[RESIZE49 #%d] NOOP: newSize <= oldSize\n", resize49Count); fclose(logFile); }
             }
         }
@@ -4561,7 +4561,7 @@ PrimitiveResult Interpreter::primitiveSnapshot(int argCount) {
     // SnapshotOperation to set isImageStarting=true, which calls
     // SessionManager>>installNewSession to initialize currentSession.
     // Failing the primitive breaks the entire startup sequence.
-    { FILE* f = fopen("/tmp/init_trace.log", "a"); if (f) { fprintf(f, "[VM] primitiveSnapshot CALLED! argCount=%d\n", argCount); fclose(f); } }
+    { FILE* f = nullptr; if (f) { fprintf(f, "[VM] primitiveSnapshot CALLED! argCount=%d\n", argCount); fclose(f); } }
     if (argCount > 0) {
         popN(argCount);  // pop arguments
     }
@@ -4729,7 +4729,7 @@ PrimitiveResult Interpreter::primitiveKeyboardNext(int argCount) {
 
 PrimitiveResult Interpreter::primitiveBeDisplay(int argCount) {
     {
-        static FILE* f = fopen("/tmp/prim102_beDisplay.log", "w");
+        static FILE* f = nullptr;
         if (f) { fprintf(f, "[PRIM102] called argCount=%d\n", argCount); fflush(f); }
     }
     if (argCount != 0) return PrimitiveResult::Failure;
@@ -4743,7 +4743,7 @@ PrimitiveResult Interpreter::primitiveBeDisplay(int argCount) {
     // Store as the display form
     setDisplayForm(form);
     {
-        static FILE* f = fopen("/tmp/prim102_beDisplay.log", "a");
+        static FILE* f = nullptr;
         if (f) {
             Oop w = memory_.fetchPointer(1, form);
             Oop h = memory_.fetchPointer(2, form);
@@ -4779,7 +4779,7 @@ PrimitiveResult Interpreter::primitiveForceDisplayUpdate(int argCount) {
         static int callCount = 0;
         callCount++;
         if (callCount <= 10) {
-            FILE* f = fopen("/tmp/forceDisplayUpdate.log", "a");
+            FILE* f = nullptr;
             if (f) { fprintf(f, "[FORCE-UPDATE #%d] argCount=%d displayForm_.isNil=%d\n",
                              callCount, argCount, displayForm_.isNil() ? 1 : 0); fclose(f); }
         }
@@ -4983,7 +4983,7 @@ PrimitiveResult Interpreter::primitiveVMPath(int argCount) {
 PrimitiveResult Interpreter::primitiveScreenSize(int argCount) {
     static int callCount = 0;
     callCount++;
-    static FILE* log = fopen("/tmp/prim106_screensize.log", "a");
+    static FILE* log = nullptr;
     if (log && callCount <= 20) {
         fprintf(log, "[PRIM106] primitiveScreenSize called #%d -> %dx%d\n",
                 callCount, screenWidth_, screenHeight_);
@@ -5034,7 +5034,7 @@ PrimitiveResult Interpreter::primitiveScreenDepth(int argCount) {
 PrimitiveResult Interpreter::primitiveIsVMDisplayUsingSDL2(int argCount) {
     static bool logged = false;
     if (!logged) {
-        static FILE* sdlLog = fopen("/tmp/sdl2_detection.log", "w");
+        static FILE* sdlLog = nullptr;
         if (sdlLog) {
             fprintf(sdlLog, "[SDL2-DETECT] isVMDisplayUsingSDL2 called, returning true\n");
             fflush(sdlLog);
@@ -5057,7 +5057,7 @@ PrimitiveResult Interpreter::primitiveSetVMSDL2Input(int argCount) {
     callCount++;
 
     if (!sdlLog) {
-        sdlLog = fopen("/tmp/sdl2_input.log", "w");
+        sdlLog = nullptr;
     }
 
     if (sdlLog && callCount <= 20) {
@@ -5427,7 +5427,7 @@ PrimitiveResult Interpreter::primitiveReplaceFromTo(int argCount) {
     replaceCallCount++;
     {
         static FILE* replCallLog = nullptr;
-        if (!replCallLog) replCallLog = fopen("/tmp/replace_called.log", "w");
+        if (!replCallLog) replCallLog = nullptr;
         if (replCallLog && replaceCallCount <= 50) {
             fprintf(replCallLog, "[REPLACE-CALL #%d step=%llu]\n", replaceCallCount, g_stepNum);
             fflush(replCallLog);
@@ -5463,7 +5463,7 @@ PrimitiveResult Interpreter::primitiveReplaceFromTo(int argCount) {
     if (rcvrHeader->isImmutable()) {
         static FILE* replLog = nullptr;
         static int immFailCount = 0;
-        if (!replLog) replLog = fopen("/tmp/replace_fail.log", "w");
+        if (!replLog) replLog = nullptr;
         if (replLog && immFailCount++ < 50) {
             fprintf(replLog, "[REPLACE-IMMUTABLE #%d step=%llu] rcvr=0x%llx fmt=%d classIdx=%u byteSize=%zu\n",
                     immFailCount, g_stepNum, (unsigned long long)rcvr.rawBits(),
@@ -5505,7 +5505,7 @@ PrimitiveResult Interpreter::primitiveReplaceFromTo(int argCount) {
             static_cast<size_t>(repStartIdx + count - 1) > replSize) {
             static FILE* bndLog = nullptr;
             static int bndCount = 0;
-            if (!bndLog) bndLog = fopen("/tmp/replace_bounds_fail.log", "w");
+            if (!bndLog) bndLog = nullptr;
             if (bndLog && bndCount++ < 50) {
                 fprintf(bndLog, "[REPLACE-BOUNDS #%d step=%llu] rcvrSize=%zu replSize=%zu start=%lld stop=%lld repStart=%lld count=%lld\n",
                         bndCount, g_stepNum, rcvrSize, replSize, (long long)startIdx, (long long)stopIdx, (long long)repStartIdx, (long long)count);
@@ -5546,7 +5546,7 @@ PrimitiveResult Interpreter::primitiveReplaceFromTo(int argCount) {
         // If we got here, bytes path didn't match - log why
         static FILE* replFmtLog = nullptr;
         static int fmtFailCount = 0;
-        if (!replFmtLog) replFmtLog = fopen("/tmp/replace_fmt_fail.log", "w");
+        if (!replFmtLog) replFmtLog = nullptr;
         if (replFmtLog && fmtFailCount++ < 50) {
             fprintf(replFmtLog, "[REPLACE-FMT #%d step=%llu] rcvr: fmt=%d isByte=%d isPtr=%d cls=%u sz=%zu | repl: fmt=%d isByte=%d isPtr=%d cls=%u sz=%zu\n",
                     fmtFailCount, g_stepNum,
@@ -7693,7 +7693,7 @@ PrimitiveResult Interpreter::primitiveYield(int argCount) {
 
         // Debug: log what we're saving
         static FILE* yieldSaveLog = nullptr;
-        if (!yieldSaveLog) yieldSaveLog = fopen("/tmp/yield_save.log", "w");
+        if (!yieldSaveLog) yieldSaveLog = nullptr;
         if (yieldSaveLog) {
             std::string ctxMethod = "?";
             if (currentContext.isObject() && currentContext.rawBits() > 0x10000) {
@@ -7737,7 +7737,7 @@ PrimitiveResult Interpreter::primitiveYield(int argCount) {
         // Otherwise the process will be left with nil context and can't be resumed
         static FILE* yieldCtxLog = nullptr;
         static int yieldCtxCount = 0;
-        if (!yieldCtxLog) yieldCtxLog = fopen("/tmp/yield_context.log", "w");
+        if (!yieldCtxLog) yieldCtxLog = nullptr;
         yieldCtxCount++;
         if (yieldCtxLog && yieldCtxCount <= 50) {
             fprintf(yieldCtxLog, "[YIELD-CTX #%d] nextProcess=0x%llx context=0x%llx isNil=%d\n",
@@ -8695,7 +8695,7 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
     // Trace what attribute indices are being requested
     static int attrTraceCount = 0;
     static FILE* attrLog = nullptr;
-    if (!attrLog) attrLog = fopen("/tmp/attr_trace.log", "w");
+    if (!attrLog) attrLog = nullptr;
     attrTraceCount++;
     if (attrTraceCount <= 20) {
         std::cerr << "[ATTR-149 #" << attrTraceCount << "] primitiveGetAttribute(" << index << ")\n";
@@ -9776,7 +9776,7 @@ PrimitiveResult Interpreter::primitiveFindHandlerContext(int argCount) {
                 static int foundCount = 0;
                 if (foundCount++ < 20) {
                     static FILE* fhLog = nullptr;
-                    if (!fhLog) fhLog = fopen("/tmp/find_handler.log", "w");
+                    if (!fhLog) fhLog = nullptr;
                     if (fhLog) {
                         fprintf(fhLog, "[FIND step=%llu] FOUND handler ctx=0x%llx after %d\n",
                                 (unsigned long long)g_stepNum,
@@ -9797,7 +9797,7 @@ PrimitiveResult Interpreter::primitiveFindHandlerContext(int argCount) {
         static int missCount = 0;
         if (missCount++ < 20) {
             static FILE* fhLog = nullptr;
-            if (!fhLog) fhLog = fopen("/tmp/find_handler.log", "w");
+            if (!fhLog) fhLog = nullptr;
             if (fhLog) {
                 fprintf(fhLog, "[FIND step=%llu] MISS from 0x%llx walked %d\n",
                         (unsigned long long)g_stepNum,
@@ -9844,7 +9844,7 @@ PrimitiveResult Interpreter::primitiveFindNextUnwindContext(int argCount) {
     static int unwindSearchCount = 0;
     static FILE* unwindLog = nullptr;
     unwindSearchCount++;
-    if (!unwindLog) unwindLog = fopen("/tmp/unwind_search.log", "w");
+    if (!unwindLog) unwindLog = nullptr;
 
     if (unwindLog && unwindSearchCount <= 200) {
         fprintf(unwindLog, "[UNWIND-SEARCH #%d step=%llu] from=0x%llx stop=0x%llx\n",
@@ -9960,7 +9960,7 @@ PrimitiveResult Interpreter::primitiveContextAt(int argCount) {
     {
         static FILE* tempAtLog = nullptr;
         static int ensureCount = 0;
-        if (!tempAtLog) tempAtLog = fopen("/tmp/tempat_trace.log", "w");
+        if (!tempAtLog) tempAtLog = nullptr;
 
         // Get context's method to check if ensure: context
         Oop ctxMethod = memory_.fetchPointer(3, context);
@@ -10874,7 +10874,7 @@ PrimitiveResult Interpreter::primitiveStringHash(int argCount) {
 PrimitiveResult Interpreter::primitiveStringHashInitialHash(int argCount) {
     static FILE* prim146Log = nullptr;
     static int callCount = 0;
-    if (!prim146Log) prim146Log = fopen("/tmp/prim146.log", "w");
+    if (!prim146Log) prim146Log = nullptr;
 
     callCount++;
     if (prim146Log && callCount <= 20) {
@@ -12069,7 +12069,7 @@ PrimitiveResult Interpreter::primitiveSetFullScreen(int argCount) {
 // semaphore primitiveInputSemaphore -> self
 PrimitiveResult Interpreter::primitiveInputSemaphore(int argCount) {
     // Debug: Log calls
-    static FILE* sem153Log = fopen("/tmp/prim153_input_sem.log", "a");
+    static FILE* sem153Log = nullptr;
     static int callCount153 = 0;
     callCount153++;
     if (sem153Log && callCount153 <= 20) {
@@ -12535,7 +12535,7 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
     relinquishCount++;
 
     if (!relinquishLog) {
-        relinquishLog = fopen("/tmp/prim_relinquish.log", "w");
+        relinquishLog = nullptr;
     }
     if (relinquishLog && relinquishCount <= 50) {
         fprintf(relinquishLog, "[RELINQUISH] #%d argCount=%d\n", relinquishCount, argCount);
@@ -13010,7 +13010,7 @@ PrimitiveResult Interpreter::primitiveFloat64ArrayAdd(int argCount) {
 // externalFunction args primitiveCalloutToFFI -> result
 // Calls a foreign function through FFI mechanism
 PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
-    static FILE* ffiCalloutLog = fopen("/tmp/ffi_callout.log", "w");
+    static FILE* ffiCalloutLog = nullptr;
     static int calloutCount = 0;
     calloutCount++;
 
@@ -13450,7 +13450,7 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
         }
     }
     // Log literal strings found for first N calls
-    static FILE* namedLog = fopen("/tmp/named_prim_lookup.log", "w");
+    static FILE* namedLog = nullptr;
     static int namedLogCount = 0;
     namedLogCount++;
     if (namedLog && namedLogCount <= 5000) {
@@ -13521,7 +13521,7 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
         }
     }
 
-    static FILE* extLog = fopen("/tmp/ext_prim_calls.log", "w");
+    static FILE* extLog = nullptr;
     static int extCallCount = 0;
     extCallCount++;
 
@@ -15244,7 +15244,7 @@ PrimitiveResult Interpreter::primitiveSignalAtUTCMicroseconds(int argCount) {
     static int p242entry = 0;
     p242entry++;
     {
-        static FILE* tlog = fopen("/tmp/prim242_timer.log", "a");
+        static FILE* tlog = nullptr;
         if (tlog) {
             fprintf(tlog, "[PRIM242-ENTRY #%d] argCount=%d", p242entry, argCount);
             if (argCount >= 2) {
@@ -15968,7 +15968,7 @@ PrimitiveResult Interpreter::primitiveStringCompareWith(int argCount) {
         static int p158_entry = 0;
         if (p158_entry < 20) {
             p158_entry++;
-            static FILE* f158e = fopen("/tmp/prim158_entry.log", "w");
+            static FILE* f158e = nullptr;
             if (f158e) { fprintf(f158e, "[P158-ENTRY #%d] argCount=%d\n", p158_entry, argCount); fflush(f158e); }
         }
     }
@@ -16000,7 +16000,7 @@ PrimitiveResult Interpreter::primitiveStringCompareWith(int argCount) {
     static int p158_count = 0;
     if (p158_count < 2000) {
         p158_count++;
-        static FILE* f158 = fopen("/tmp/prim158_trace.log", "w");
+        static FILE* f158 = nullptr;
         if (f158) {
             auto cn = [&](Oop o) -> std::string {
                 Oop cls = memory_.classOf(o);
@@ -16119,7 +16119,7 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
         // Debug: Log all slots to find the event buffer
         static FILE* slotLog = nullptr;
         static int slotLogCount = 0;
-        if (!slotLog) slotLog = fopen("/tmp/slot_scan.log", "w");
+        if (!slotLog) slotLog = nullptr;
         if (slotLog && slotLogCount < 5) {
             slotLogCount++;
             fprintf(slotLog, "[SCAN #%d] Receiver has %zu slots:\n", slotLogCount, rcvrHdr->slotCount());
@@ -16185,7 +16185,7 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
     }
 
     // Debug: Log buffer validation
-    static FILE* bufLog = fopen("/tmp/prim_buffer_check.log", "w");
+    static FILE* bufLog = nullptr;
     static int bufCount = 0;
     bufCount++;
 
@@ -16296,7 +16296,7 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
     callCount++;
 
     // Always log when passthrough has events or when buttons=2 (world menu)
-    static FILE* prim264Log = fopen("/tmp/prim264_trace.log", "a");
+    static FILE* prim264Log = nullptr;
     if (prim264Log && (callCount <= 50 || !passThroughEvents_.empty())) {
         fprintf(prim264Log, "[PRIM264] #%d passthrough=%zu queueEmpty=%d\n",
                 callCount, passThroughEvents_.size(), gEventQueue.isEmpty() ? 1 : 0);
@@ -16335,7 +16335,7 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
 
         // Log mouse events returned to Pharo
         if (event.type == 1) {
-            static FILE* mouseLog = fopen("/tmp/pharo_mouse_events.log", "a");
+            static FILE* mouseLog = nullptr;
             if (mouseLog) {
                 const char* subtype = (event.arg5 == 1) ? "down" : (event.arg5 == 2) ? "up" : "move";
                 fprintf(mouseLog, "[TO-PHARO] Mouse %s at (%d,%d) buttons=%d mods=%d\n",
@@ -16351,7 +16351,7 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
     // Debug: Verify what we stored in slot 0
     static FILE* slot0Log = nullptr;
     static int slot0Count = 0;
-    if (!slot0Log) slot0Log = fopen("/tmp/prim264_slot0.log", "w");
+    if (!slot0Log) slot0Log = nullptr;
     if (slot0Log && slot0Count < 100) {
         Oop storedType = memory_.fetchPointer(0, eventBuffer);
         slot0Count++;
@@ -16370,7 +16370,7 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
     // We do NOT modify the stack for argCount=0 - receiver stays as return value.
 
     // Debug: Log completion and what's on stack
-    static FILE* compLog = fopen("/tmp/prim_completion.log", "w");
+    static FILE* compLog = nullptr;
     static int compCount = 0;
     compCount++;
     if (compLog && compCount <= 50) {
@@ -16385,7 +16385,7 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
     // Debug: Check class hierarchy of receiver for circularity
     static FILE* hierLog = nullptr;
     static int hierCount = 0;
-    if (!hierLog) hierLog = fopen("/tmp/class_hierarchy.log", "w");
+    if (!hierLog) hierLog = nullptr;
     if (hierLog && hierCount < 3) {
         hierCount++;
         fprintf(hierLog, "[HIER #%d] Receiver class hierarchy:\n", hierCount);
@@ -16438,7 +16438,7 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
 // NOTE: In some images, this is a unary message where the receiver is the semaphore index
 PrimitiveResult Interpreter::primitiveInputSemaphore2(int argCount) {
     // Debug: Log calls to this primitive
-    static FILE* semLog = fopen("/tmp/prim_input_sem.log", "a");
+    static FILE* semLog = nullptr;
     static int semCallCount = 0;
     semCallCount++;
     if (semLog && semCallCount <= 20) {
@@ -16648,7 +16648,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     static int copyBitsCallCount = 0;
     copyBitsCallCount++;
     if (copyBitsCallCount <= 20 || copyBitsCallCount % 10000 == 0) {
-        static FILE* cbLog = fopen("/tmp/copybits.log", "a");
+        static FILE* cbLog = nullptr;
         if (cbLog) {
             fprintf(cbLog, "[COPYBITS #%d] argCount=%d\n", copyBitsCallCount, argCount);
             fflush(cbLog);
@@ -22102,7 +22102,7 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
     loadCount++;
 
     if (!ffiLog) {
-        ffiLog = fopen("/tmp/ffi_load_symbol.log", "w");
+        ffiLog = nullptr;
     }
 
     if (argCount != 2) {
@@ -22247,7 +22247,7 @@ PrimitiveResult Interpreter::primitiveLoadModule(int argCount) {
     loadCount++;
 
     if (!ffiLog) {
-        ffiLog = fopen("/tmp/ffi_load_module.log", "w");
+        ffiLog = nullptr;
     }
 
     if (argCount != 1) {

@@ -118,7 +118,7 @@ Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
     if (classIndex == 3143) {
         static FILE* dictAllocLog = nullptr;
         static int dictAllocLogCount = 0;
-        if (!dictAllocLog) dictAllocLog = fopen("/tmp/dict_alloc.log", "w");
+        if (!dictAllocLog) dictAllocLog = nullptr;
         if (dictAllocLog && dictAllocLogCount < 20) {
             dictAllocLogCount++;
             fprintf(dictAllocLog, "[DICT-ALLOC #%d] slots=%zu totalSize=%zu\n",
@@ -133,7 +133,7 @@ Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
     if (classIndex == 36) {  // Context class
         static FILE* ctxAllocLog = nullptr;
         static int ctxAllocLogCount = 0;
-        if (!ctxAllocLog) ctxAllocLog = fopen("/tmp/context_alloc.log", "w");
+        if (!ctxAllocLog) ctxAllocLog = nullptr;
         if (ctxAllocLog && ctxAllocLogCount < 20) {
             ctxAllocLogCount++;
             fprintf(ctxAllocLog, "[CTX-ALLOC #%d] slots=%zu totalSize=%zu\n",
@@ -437,7 +437,7 @@ Oop ObjectMemory::classOf(Oop obj) const {
     // Debug: trace classOf for classIndex 3156 (OrderedCollection's metaclass)
     static int oc3156Count = 0;
     if (classIdx == 3156 && oc3156Count++ < 10) {
-        static FILE* ocLog = fopen("/tmp/classof_3156.log", "w");
+        static FILE* ocLog = nullptr;
         if (ocLog) {
             fprintf(ocLog, "[CLASSOF-3156 #%d] obj=0x%llx classIdx=%u -> cls=0x%llx\n",
                     oc3156Count, (unsigned long long)obj.rawBits(), classIdx,
@@ -723,7 +723,7 @@ Oop ObjectMemory::lookupSymbol(const std::string& name) {
     static bool logInit = false;
     if (!logInit) {
         logInit = true;
-        symLog = fopen("/tmp/symbol_lookup.log", "w");
+        symLog = nullptr;
     }
 
     // Also find ByteSymbol class - Pharo uses ByteSymbol for most symbols
@@ -1092,7 +1092,7 @@ Oop ObjectMemory::createStartupContextWithArg(Oop method, Oop receiver, Oop arg)
     // Sanity check: we expect 1 argument for this method
     if (numArgs != 1) {
         static FILE* uiLog = nullptr;
-        if (!uiLog) uiLog = fopen("/tmp/uimanager_startup.log", "a");
+        if (!uiLog) uiLog = nullptr;
         if (uiLog) {
             fprintf(uiLog, "[UI] Warning: method has %d args, expected 1\n", numArgs);
             fflush(uiLog);
