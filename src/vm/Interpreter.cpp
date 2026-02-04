@@ -12018,60 +12018,6 @@ void Interpreter::activateBlock(Oop block, int argCount) {
             }
         }
 
-        // TARGETED TRACE: dump full frame stack for anySatisfy-related NLR
-        {
-            // Extract selector from home method
-            std::string homeMethodName;
-            if (homeMethodOop.isObject() && homeMethodOop.rawBits() > 0x10000) {
-                Oop hdr = memory_.fetchPointer(0, homeMethodOop);
-                if (hdr.isSmallInteger()) {
-                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                    if (numLits >= 2) {
-                        Oop sel = memory_.fetchPointer(numLits - 1, homeMethodOop);
-                        if (sel.isObject() && sel.rawBits() > 0x10000) {
-                            ObjectHeader* selHdr = sel.asObjectPtr();
-                            if (selHdr->isBytesObject() && selHdr->byteSize() < 80) {
-                                homeMethodName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                            }
-                        }
-                    }
-                }
-            }
-            if (homeMethodName.find("anySatisfy") != std::string::npos ||
-                homeMethodName.find("allSatisfy") != std::string::npos ||
-                homeMethodName.find("noneSatisfy") != std::string::npos ||
-                homeMethodName.find("identityIncludes") != std::string::npos) {
-                std::cerr << "[NLR-TRACE] activateBlock for " << homeMethodName
-                          << " frame=" << frameDepth_ << " homeFrame=" << homeFrame
-                          << " homeMethodOop=0x" << std::hex << homeMethodOop.rawBits() << std::dec << "\n";
-                // Dump all savedMethods on frame stack
-                for (size_t i = 0; i < frameDepth_; i++) {
-                    Oop sm = (i > 0) ? savedFrames_[i - 1].savedMethod : method_;
-                    std::string smName = "?";
-                    if (sm.isObject() && sm.rawBits() > 0x10000) {
-                        ObjectHeader* smHdr = sm.asObjectPtr();
-                        if (smHdr->isCompiledMethod()) {
-                            Oop smH = memory_.fetchPointer(0, sm);
-                            if (smH.isSmallInteger()) {
-                                size_t smNL = smH.asSmallInteger() & 0x7FFF;
-                                if (smNL >= 2) {
-                                    Oop smSel = memory_.fetchPointer(smNL - 1, sm);
-                                    if (smSel.isObject() && smSel.rawBits() > 0x10000) {
-                                        ObjectHeader* smSelH = smSel.asObjectPtr();
-                                        if (smSelH->isBytesObject() && smSelH->byteSize() < 80) {
-                                            smName = std::string((char*)smSelH->bytes(), smSelH->byteSize());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    std::cerr << "  [" << i << "] savedMethod=0x" << std::hex << sm.rawBits() << std::dec
-                              << " sel=" << smName
-                              << (sm.rawBits() == homeMethodOop.rawBits() ? " <<MATCH>>" : "") << "\n";
-                }
-            }
-        }
     }
 
     method_ = methodToExecute;

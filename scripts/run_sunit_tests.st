@@ -13,7 +13,8 @@ runAllTests
   testClasses := {
     SmallIntegerTest. IntegerTest. FloatTest. FractionTest.
     PointTest. CharacterTest.
-    StringTest. SymbolTest. DictionaryTest. SetTest. BagTest. IntervalTest.
+    SymbolTest. DictionaryTest. SetTest. BagTest. IntervalTest.
+    StringTest "suspends test process - run near end".
     OrderedCollectionTest "slow - runs last".
     ArrayTest "last - known to crash test process" }.
 
