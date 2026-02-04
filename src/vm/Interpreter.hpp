@@ -305,6 +305,7 @@ private:
         size_t homeFrameDepth;  // For non-local block returns: the frame to return to (SIZE_MAX = not a block)
     };
     static constexpr size_t MaxFrameDepth = 65536;
+    static constexpr size_t StackOverflowLimit = 8192;  // Graceful overflow limit (MaxFrameDepth is hard array bound)
     std::array<SavedFrame, MaxFrameDepth> savedFrames_;
     size_t frameDepth_;
 

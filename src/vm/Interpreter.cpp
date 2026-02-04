@@ -2683,20 +2683,6 @@ bool Interpreter::step() {
         checkForPreemption();
     }
 
-    // Stack depth safeguard - warn but don't destructively unwind.
-    // Normal Pharo startup (FFI init, DiskStore, etc.) can reach 500+ frames.
-    // The previous handler returned nil from hundreds of methods, which
-    // corrupted execution state and prevented startup handlers from completing.
-    if (frameDepth_ >= MaxFrameDepth - 10) {
-        static int overflowCount = 0;
-        overflowCount++;
-        if (overflowCount <= 5) {
-            std::cerr << "[STACK-OVERFLOW] frameDepth=" << frameDepth_
-                      << " approaching MaxFrameDepth=" << MaxFrameDepth
-                      << " - execution may fail\n";
-        }
-    }
-
     // Check if we've run past the end of bytecodes
     if (instructionPointer_ >= bytecodeEnd_) {
         returnValue(receiver_);
@@ -11371,7 +11357,12 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // Save current state
 
     if (!pushFrame(method, argCount)) {
-        // pushFrame detected recursion and already handled it
+        // Stack overflow: clean up the operand stack.
+        // The send bytecode pushed receiver + argCount args. Remove them and
+        // push nil as if the method returned nil, so execution can continue.
+        for (int i = 0; i < argCount; i++) pop();
+        pop();  // pop receiver
+        push(memory_.nil());  // push nil as "return value"
         return;
     }
 
@@ -11897,7 +11888,11 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     }
 
     if (!pushFrame(methodToExecute, argCount)) {
-        // pushFrame detected recursion and already handled it
+        // Stack overflow: clean up the operand stack.
+        // Block activation pushed receiver (block) + argCount args.
+        for (int i = 0; i < argCount; i++) pop();
+        pop();  // pop receiver (block)
+        push(memory_.nil());  // push nil as "return value"
         return;
     }
 
@@ -12200,6 +12195,20 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     if (frameDepth_ >= MaxFrameDepth) {
         std::cerr << "[VM-STOP] Frame depth overflow in pushFrame(): " << frameDepth_ << " >= " << MaxFrameDepth << "\n";
         stopVM("Frame depth overflow in pushFrame()");
+        return false;
+    }
+
+    // Graceful stack overflow: refuse to go deeper than StackOverflowLimit.
+    // The caller is responsible for cleaning up the operand stack (popping args,
+    // pushing nil as a return value). This allows the Smalltalk code to unwind
+    // naturally as each method returns nil to its caller.
+    if (frameDepth_ >= StackOverflowLimit) {
+        static int soCount = 0;
+        if (++soCount <= 5) {
+            std::cerr << "[STACK-OVERFLOW] frameDepth=" << frameDepth_
+                      << " at limit " << StackOverflowLimit
+                      << " step=" << g_stepNum << "\n";
+        }
         return false;
     }
 
