@@ -16219,75 +16219,81 @@ PrimitiveResult Interpreter::primitiveBitmapDecompress(int argCount) {
     return PrimitiveResult::Failure;
 }
 
-// Primitive 158: String compare with collation
+// Primitive 158: String compare
 // ByteString >> compareWith: anotherString (argCount=1)
 // ByteString >> compareWith: anotherString collated: order (argCount=2)
-// Returns -1, 0, or 1
+// Always returns -1/0/1 (negative=less, 0=equal, positive=greater).
+// Callers convert to 1/2/3 via `sign + 2` when needed.
 PrimitiveResult Interpreter::primitiveStringCompareWith(int argCount) {
-    {
-        static int p158_entry = 0;
-        if (p158_entry < 20) {
-            p158_entry++;
-            static FILE* f158e = nullptr;
-            if (f158e) { fprintf(f158e, "[P158-ENTRY #%d] argCount=%d\n", p158_entry, argCount); fflush(f158e); }
-        }
-    }
     if (argCount < 1 || argCount > 2) return PrimitiveResult::Failure;
 
-    Oop string2Oop;
-    Oop string1Oop;  // receiver
+    Oop string2Oop, string1Oop;
+    const uint8_t* order = nullptr;
 
     if (argCount == 1) {
-        // compareWith: - Stack: receiver, anotherString
         string2Oop = stackTop();
         string1Oop = stackValue(1);
     } else {
-        // compareWith:collated: - Stack: receiver, anotherString, order
-        // Oop orderOop = stackTop();  // We ignore order for now
+        Oop orderOop = stackTop();
         string2Oop = stackValue(1);
         string1Oop = stackValue(2);
+
+        if (!orderOop.isObject()) return PrimitiveResult::Failure;
+        ObjectHeader* orderHdr = orderOop.asObjectPtr();
+        if (!orderHdr->isBytesObject() || orderHdr->byteSize() < 256) {
+            return PrimitiveResult::Failure;
+        }
+        order = orderHdr->bytes();
     }
 
-    if (string1Oop.isImmediate() || string2Oop.isImmediate()) {
+    if (!string1Oop.isObject() || !string2Oop.isObject()) {
         return PrimitiveResult::Failure;
     }
 
-    // Extract strings
-    std::string str1 = extractString(memory_, string1Oop);
-    std::string str2 = extractString(memory_, string2Oop);
+    ObjectHeader* hdr1 = string1Oop.asObjectPtr();
+    ObjectHeader* hdr2 = string2Oop.asObjectPtr();
 
-    // Debug: trace string comparisons
-    static int p158_count = 0;
-    if (p158_count < 2000) {
-        p158_count++;
-        static FILE* f158 = nullptr;
-        if (f158) {
-            auto cn = [&](Oop o) -> std::string {
-                Oop cls = memory_.classOf(o);
-                if (cls.isNil()) return "nil";
-                Oop name = memory_.fetchPointer(5, cls);
-                if (name.isNil() || name.isImmediate()) return "?";
-                return extractString(memory_, name);
-            };
-            fprintf(f158, "[P158 #%d] '%s'(%s) vs '%s'(%s) argCount=%d result=%d\n",
-                    p158_count, str1.c_str(), cn(string1Oop).c_str(),
-                    str2.c_str(), cn(string2Oop).c_str(), argCount,
-                    str1 == str2 ? 0 : (str1 < str2 ? -1 : 1));
-            fflush(f158);
+    uint8_t fmt1 = static_cast<uint8_t>(hdr1->format());
+    uint8_t fmt2 = static_cast<uint8_t>(hdr2->format());
+
+    // Only handle ByteStrings (format 16-23); fail for WideString
+    if (fmt1 < 16 || fmt1 > 23 || fmt2 < 16 || fmt2 > 23) {
+        return PrimitiveResult::Failure;
+    }
+
+    const uint8_t* bytes1 = hdr1->bytes();
+    const uint8_t* bytes2 = hdr2->bytes();
+    size_t len1 = hdr1->byteSize();
+    size_t len2 = hdr2->byteSize();
+
+    // Compare character by character using optional collation order
+    size_t minLen = std::min(len1, len2);
+    for (size_t i = 0; i < minLen; i++) {
+        uint8_t c1 = order ? order[bytes1[i]] : bytes1[i];
+        uint8_t c2 = order ? order[bytes2[i]] : bytes2[i];
+        if (c1 < c2) {
+            popN(argCount + 1);
+            push(Oop::fromSmallInteger(-1));
+            return PrimitiveResult::Success;
+        }
+        if (c1 > c2) {
+            popN(argCount + 1);
+            push(Oop::fromSmallInteger(1));
+            return PrimitiveResult::Success;
         }
     }
 
-    // Basic comparison (ignoring collation order for now)
+    // All compared characters equal; shorter string is "less"
     int result;
-    if (str1 < str2) {
+    if (len1 < len2) {
         result = -1;
-    } else if (str1 > str2) {
+    } else if (len1 > len2) {
         result = 1;
     } else {
         result = 0;
     }
 
-    popN(argCount + 1);  // pop args and receiver
+    popN(argCount + 1);
     push(Oop::fromSmallInteger(result));
     return PrimitiveResult::Success;
 }
