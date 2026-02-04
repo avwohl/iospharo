@@ -143,50 +143,80 @@ The `unwindTo:` traversal isn't finding or executing the inserted ensure: block 
 
 ## Current Status (2026-02-04)
 
-### Custom VM Test Results (13/14 classes complete, StringTest times out)
+### Custom VM Test Results (ALL 14 classes complete)
 
 Run on custom C++ VM via `./build/test_load_image /tmp/Pharo.image test`
 with 10B step limit. Test runner: `scripts/run_sunit_tests.st`
 
 ```
-SmallIntegerTest      (29 tests):  29P  0F  0E  -- ALL PASS
-IntegerTest           (83 tests):  80P  0F  3E  -- 3 TestSkipped only
-FloatTest             (75 tests):  71P  0F  4E  -- 3 errors + 1 TestSkipped
-FractionTest          (32 tests):  32P  0F  0E  -- ALL PASS
-PointTest             (36 tests):  36P  0F  0E  -- ALL PASS
-CharacterTest         (19 tests):  17P  0F  0E  -- ALL PASS (2 skipped by runner)
-DictionaryTest       (205 tests): 205P  0F  0E  -- ALL PASS
-SetTest              (174 tests): 174P  0F  0E  -- ALL PASS
-BagTest              (168 tests): 168P  0F  0E  -- ALL PASS
-IntervalTest         (260 tests): 259P  0F  1E  -- 1 stream error
-SymbolTest           (268 tests): 268P  0F  0E  -- ALL PASS
-OrderedCollectionTest(351 tests): 351P  0F  0E  -- ALL PASS
-ArrayTest            (324 tests): 321P  1F  2E  -- 1 fail, 2 errors
-StringTest           (438 tests):  ---  --  --  -- TIMES OUT (too slow)
+SmallIntegerTest      (29 tests):  29P  0F  0E       -- ALL PASS
+IntegerTest           (83 tests):  80P  0F  3E       -- 3 TestSkipped only
+FloatTest             (75 tests):  74P  0F  1E       -- 1 TestSkipped only
+FractionTest          (32 tests):  32P  0F  0E       -- ALL PASS
+PointTest             (36 tests):  36P  0F  0E       -- ALL PASS
+CharacterTest         (19 tests):  17P  0F  0E       -- 2 skipped by runner
+DictionaryTest       (205 tests): 205P  0F  0E       -- ALL PASS
+SetTest              (174 tests): 174P  0F  0E       -- ALL PASS
+BagTest              (168 tests): 168P  0F  0E       -- ALL PASS
+IntervalTest         (260 tests): 260P  0F  0E       -- ALL PASS
+SymbolTest           (268 tests): 268P  0F  0E       -- ALL PASS
+OrderedCollectionTest(351 tests): 351P  0F  0E       -- ALL PASS
+ArrayTest            (324 tests): 322P  2F  0E       -- ALL PASS except 2
+StringTest           (438 tests): 438P  0F  0E       -- ALL PASS
 -----------------------------------------------------------------
-Totals (13 classes):  2043P  1F 10E  (99.5% pass rate)
+Totals (14 classes):  2454P  2F  4E  0T  (99.8% pass rate)
 ```
 
-### Remaining Failures
+### Remaining Issues
 
 **TestSkipped (4 errors) — expected, not real failures:**
 - IntegerTest: `testCreationFromBytes1/2/3` — test explicitly skips
 - FloatTest: `testNaNCompare` — test explicitly skips
 
-**Stream position errors (3 errors) — PositionableStream issue:**
-- FloatTest: `testStoreOnRoundTrip`
-- IntervalTest: `testIntervalStoreOn`
-- ArrayTest: `testSelfEvaluating`, `testSelfEvaluatingComplexCase`
-- Error: `Attempt to set the position of a PositionableStream out of bounds`
+**CharacterTest: 2 skipped by test runner:**
+- `testPrintStringAll` and `testStoreStringAll` — skipped in test runner
+  (iterate all 1.1M Unicode code points, known to hang). All 17 run tests pass.
 
 **testPrintingRecursive (1 fail) — recursion depth:**
-- ArrayTest: `Got 24520 instead of 50000` — recursion limit too low
+- ArrayTest: `Got 24520 instead of 50000` — C++ stack depth limit
 
-**Float-specific errors (2 errors):**
-- FloatTest: `test32bitConversion` — `nil >> #asIEEE32BitWord`
-- FloatTest: `testBinaryLiteralString` — Float nan handling
+**testShuffleBy (1 fail):**
+- ArrayTest: `Assertion failed` — randomness/shuffle issue
 
-### Key Bugs Fixed This Session
+### Key Bugs Fixed (2026-02-04 session 2)
+
+7. **`becomeForward:` not updating stack temps** — CRITICAL FIX
+   - Root cause: `primitiveArrayBecomeOneWay` only scanned the heap for references
+   - In our stack-based C++ VM, locals/temps live on the C++ stack, not the heap
+   - When ByteString did `self becomeForward: (WideString from: self)`, `self`
+     on the stack still pointed to the old ByteString, causing infinite retry
+   - Fixed by adding `scanStackReplace()` to all one-way become primitives (72, 248, 249)
+   - Also fixed `becomeForward()` to skip non-pointer objects and handle CM bytecodes
+   - Result: 3 StringTest timeouts fixed (testAsUppercase, testFindLastOccurrenceOfStringStartingAt, testWriteStreamConvertsToWideString)
+
+8. **`primitiveNewMethod` (prim 79) wrong literal count and missing bytecode space** — CRITICAL FIX
+   - Bug 1: Used `(header >> 1) & 0x7FFF` to extract literal count, but our VM uses
+     3-bit SmallInteger tags (>> 3). The `header` was already decoded by `asSmallInteger()`,
+     so the extra `>> 1` halved the literal count.
+   - Bug 2: Allocated only `1 + literalCount` slots (header + literals), ignoring
+     bytecode space entirely. Reference VM allocates `((literalCount+1)*8 + byteCount + 7) / 8`.
+   - Bug 3: Format was always CompiledMethod (24) without padding encoding.
+   - Fixed all three: correct literal count, include bytecodes, encode padding in format.
+   - Result: Opal compiler can now create and install methods at runtime.
+
+9. **`objectAt:/objectAtPut:` (prims 68/69) wrong SmallInteger tag decoding** — CRITICAL FIX
+   - Used `(rawBits >> 1) & 0x7FFF` instead of `asSmallInteger() & 0x7FFF`
+   - With 3-bit tags, `>> 1` gives 4x the actual literal count
+   - This caused the literal count mismatch check to reject valid `objectAt:put:` calls
+   - Fixed to use proper `asSmallInteger()` decoding
+   - Result: All 4 stream position / objectAt:put: errors fixed (testStoreOnRoundTrip,
+     testIntervalStoreOn, testSelfEvaluating, testSelfEvaluatingComplexCase)
+
+10. **`primitiveCompiledMethodPrimitive` (prim 559) wrong primitive index extraction**
+    - Extracted primitive index from header bits instead of reading from bytecodes
+    - Fixed to delegate to existing correct `primitiveIndexOf()` method
+
+### Key Bugs Fixed This Session (2026-02-04 session 1)
 
 1. **`nil = nil` returned false** — CRITICAL FIX
    - Root cause: `arithmeticSend()` had a workaround that short-circuited ALL
