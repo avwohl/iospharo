@@ -4894,11 +4894,8 @@ void Interpreter::returnValue(Oop value) {
                               << " with nil sender - going to terminate_process\n";
                 }
                 // Fall through to terminate current process
-            } else if (sender.isObject() && sender.rawBits() != nilObj.rawBits()) {
-                if (g_crashTraceEnabled) {
-                    fprintf(stderr, "[RETVAL-TRACE] sender valid, about to access senderHdr\n");
-                    fflush(stderr);
-                }
+            } else if (sender.isObject() && sender.rawBits() != nilObj.rawBits()
+                       && memory_.isValidPointer(sender)) {
                 ObjectHeader* senderHdr = sender.asObjectPtr();
                 if (g_crashTraceEnabled) {
                     fprintf(stderr, "[RETVAL-TRACE] senderHdr=%p slots=%zu fmt=%d\n",
@@ -17710,10 +17707,8 @@ bool Interpreter::executeFromContext(Oop context) {
     // Get the raw pointer and validate it before dereferencing
     uintptr_t rawPtr = context.rawBits();
 
-    // Quick sanity check - the ACTUAL object address (clearing low 3 bits for space tag) should be aligned
-    // In Spur, low 3 bits encode the memory space: 000=Old, 010=New, 100=Perm
-    uintptr_t actualAddr = rawPtr & ~0x7ULL;
-    if (actualAddr < 0x1000) {
+    // Validate the context pointer is in valid heap memory
+    if (!memory_.isValidPointer(context)) {
         return false;
     }
 
@@ -17757,41 +17752,9 @@ bool Interpreter::executeFromContext(Oop context) {
     closure_ = memory_.fetchPointer(4, context);  // closureOrNil
     receiver_ = memory_.fetchPointer(5, context);
 
-    // CRITICAL: Check if receiver is raw 0 - this indicates corruption
-    if (receiver_.rawBits() == 0) {
-        static FILE* rcvrZeroLog = nullptr;
-        static int rcvrZeroCount = 0;
-        if (!rcvrZeroLog) rcvrZeroLog = fopen("/tmp/receiver_zero.log", "w");
-        if (rcvrZeroLog && rcvrZeroCount++ < 20) {
-            fprintf(rcvrZeroLog, "[RCVR-ZERO #%d] In executeFromContext! context=0x%llx\n",
-                    rcvrZeroCount, (unsigned long long)context.rawBits());
-            // Dump context slots to understand the corruption
-            ObjectHeader* ctxHdr = context.asObjectPtr();
-            fprintf(rcvrZeroLog, "  context slots: ");
-            for (size_t i = 0; i < std::min(ctxHdr->slotCount(), (size_t)10); i++) {
-                fprintf(rcvrZeroLog, "[%zu]=0x%llx ", i, (unsigned long long)ctxHdr->slotAt(i).rawBits());
-            }
-            fprintf(rcvrZeroLog, "\n");
-            // Get method name
-            std::string methodName = "?";
-            if (method_.isObject() && method_.rawBits() > 0x10000) {
-                Oop hdr = memory_.fetchPointer(0, method_);
-                if (hdr.isSmallInteger()) {
-                    int numLits = hdr.asSmallInteger() & 0x7FFF;
-                    if (numLits >= 2) {
-                        Oop sel = memory_.fetchPointer(numLits - 1, method_);
-                        if (sel.isObject() && sel.rawBits() > 0x10000) {
-                            ObjectHeader* selHdr = sel.asObjectPtr();
-                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                                methodName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                            }
-                        }
-                    }
-                }
-            }
-            fprintf(rcvrZeroLog, "  method: #%s\n", methodName.c_str());
-            fflush(rcvrZeroLog);
-        }
+    // Validate method pointer before any access
+    if (!method_.isObject() || !memory_.isValidPointer(method_)) {
+        return false;
     }
 
     // Check for and fix unrelocated pointers (old image base 0x10000000000+)
@@ -17863,6 +17826,7 @@ bool Interpreter::executeFromContext(Oop context) {
             fprintf(stderr, "[EXEC-CTX-TRACE] method is object, getting methodHdr\n");
             fflush(stderr);
         }
+        if (!memory_.isValidPointer(method_)) return false;
         ObjectHeader* methodHdr = method_.asObjectPtr();
         if (g_crashTraceEnabled) {
             fprintf(stderr, "[EXEC-CTX-TRACE] methodHdr=%p\n", (void*)methodHdr);
@@ -17918,7 +17882,7 @@ bool Interpreter::executeFromContext(Oop context) {
             if (homeMethod_ == method_) {
                 Oop homeCandidate = memory_.fetchPointer(0, method_);
                 int maxHops = 10;
-                while (homeCandidate.isObject() && maxHops-- > 0) {
+                while (homeCandidate.isObject() && memory_.isValidPointer(homeCandidate) && maxHops-- > 0) {
                     ObjectHeader* candidateHdr = homeCandidate.asObjectPtr();
                     uint32_t candidateCls = candidateHdr->classIndex();
                     if (candidateCls == 3101) {
@@ -17937,7 +17901,7 @@ bool Interpreter::executeFromContext(Oop context) {
                 Oop closure = memory_.fetchPointer(4, context);
                 int maxHops = 10;
 
-                while (closure.isObject() && maxHops-- > 0) {
+                while (closure.isObject() && memory_.isValidPointer(closure) && maxHops-- > 0) {
                     ObjectHeader* closureHdr = closure.asObjectPtr();
                     uint32_t closureCls = closureHdr->classIndex();
 
@@ -17959,12 +17923,12 @@ bool Interpreter::executeFromContext(Oop context) {
                                           closureCls == 38 || closureCls == 3079 || closureCls == 3213;
                     if (isBlockClosure) {
                         Oop outerContext = memory_.fetchPointer(0, closure);
-                        if (outerContext.isNil() || !outerContext.isObject()) {
+                        if (outerContext.isNil() || !outerContext.isObject() || !memory_.isValidPointer(outerContext)) {
                             break;
                         }
 
                         Oop outerMethod = memory_.fetchPointer(3, outerContext);
-                        if (!outerMethod.isObject()) {
+                        if (!outerMethod.isObject() || !memory_.isValidPointer(outerMethod)) {
                             break;
                         }
 
@@ -18002,12 +17966,11 @@ bool Interpreter::executeFromContext(Oop context) {
 
     // If method is a CompiledBlock, we need to check if the context has a closure
     // In modern Pharo, BlockContext/FullBlockClosure contexts may need special handling
-    if (method_.isObject()) {
+    if (method_.isObject() && memory_.isValidPointer(method_)) {
         ObjectHeader* methodHdr = method_.asObjectPtr();
         if (methodHdr->classIndex() == 3117) {
-            // DEBUG: "[DEBUG] Context's method is a CompiledBlock - checking closure"
             Oop closure = memory_.fetchPointer(4, context);  // closureOrNil
-            if (closure.isObject() && closure.rawBits() > 0x10000) {
+            if (closure.isObject() && memory_.isValidPointer(closure)) {
                 ObjectHeader* closureHdr = closure.asObjectPtr();
                 // DEBUG_LOG("[DEBUG] Closure at slot 4: cls=" << closureHdr->classIndex()
                           // << " slots=" << closureHdr->slotCount();
@@ -18015,8 +17978,7 @@ bool Interpreter::executeFromContext(Oop context) {
         }
     }
 
-    if (method_.isNil() || !method_.isObject()) {
-        // ERROR: "[ERROR] executeFromContext: Invalid method in context"
+    if (method_.isNil() || !method_.isObject() || !memory_.isValidPointer(method_)) {
         return false;
     }
 
