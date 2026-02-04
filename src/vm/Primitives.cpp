@@ -1701,6 +1701,30 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
         }
     }
 
+    // Handle 32-bit word objects (format 10-11): WideString, WordArray
+    if (fmtVal >= 10 && fmtVal <= 11) {
+        size_t numElements = header->slotCount() * 2 - (fmtVal - 10);
+        if (arrayIndex >= numElements) {
+            return PrimitiveResult::Failure;
+        }
+        uint32_t word;
+        std::memcpy(&word, header->bytes() + arrayIndex * 4, 4);
+        primitiveSuccess(Oop::fromSmallInteger(static_cast<int64_t>(word)));
+        return PrimitiveResult::Success;
+    }
+
+    // Handle 16-bit word objects (format 12-15): DoubleByteArray
+    if (fmtVal >= 12 && fmtVal <= 15) {
+        size_t numElements = header->slotCount() * 4 - (fmtVal - 12);
+        if (arrayIndex >= numElements) {
+            return PrimitiveResult::Failure;
+        }
+        uint16_t word;
+        std::memcpy(&word, header->bytes() + arrayIndex * 2, 2);
+        primitiveSuccess(Oop::fromSmallInteger(static_cast<int64_t>(word)));
+        return PrimitiveResult::Success;
+    }
+
     if (header->isBytesObject()) {
         if (arrayIndex >= header->byteSize()) {
             return PrimitiveResult::Failure;
@@ -2027,6 +2051,66 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
         }
 
         header->bytes()[arrayIndex] = static_cast<uint8_t>(byteValue);
+        primitiveSuccess(value);
+        return PrimitiveResult::Success;
+    }
+
+    // Handle word-indexed objects (formats 9-15)
+    uint8_t fmtVal = static_cast<uint8_t>(header->format());
+
+    // 32-bit word objects (format 10-11): WideString, WordArray
+    if (fmtVal >= 10 && fmtVal <= 11) {
+        if (!value.isSmallInteger()) {
+            return PrimitiveResult::Failure;
+        }
+        int64_t wordValue = value.asSmallInteger();
+        if (wordValue < 0 || wordValue > 0xFFFFFFFF) {
+            return PrimitiveResult::Failure;
+        }
+        size_t numElements = header->slotCount() * 2 - (fmtVal - 10);
+        if (arrayIndex >= numElements) {
+            return PrimitiveResult::Failure;
+        }
+        uint32_t word = static_cast<uint32_t>(wordValue);
+        std::memcpy(header->bytes() + arrayIndex * 4, &word, 4);
+        primitiveSuccess(value);
+        return PrimitiveResult::Success;
+    }
+
+    // 16-bit word objects (format 12-15): DoubleByteArray
+    if (fmtVal >= 12 && fmtVal <= 15) {
+        if (!value.isSmallInteger()) {
+            return PrimitiveResult::Failure;
+        }
+        int64_t wordValue = value.asSmallInteger();
+        if (wordValue < 0 || wordValue > 0xFFFF) {
+            return PrimitiveResult::Failure;
+        }
+        size_t numElements = header->slotCount() * 4 - (fmtVal - 12);
+        if (arrayIndex >= numElements) {
+            return PrimitiveResult::Failure;
+        }
+        uint16_t word = static_cast<uint16_t>(wordValue);
+        std::memcpy(header->bytes() + arrayIndex * 2, &word, 2);
+        primitiveSuccess(value);
+        return PrimitiveResult::Success;
+    }
+
+    // 64-bit word objects (format 9)
+    if (fmtVal == 9) {
+        if (!value.isSmallInteger()) {
+            return PrimitiveResult::Failure;
+        }
+        int64_t wordValue = value.asSmallInteger();
+        if (wordValue < 0) {
+            return PrimitiveResult::Failure;
+        }
+        size_t numElements = header->slotCount();
+        if (arrayIndex >= numElements) {
+            return PrimitiveResult::Failure;
+        }
+        uint64_t word = static_cast<uint64_t>(wordValue);
+        std::memcpy(header->bytes() + arrayIndex * 8, &word, 8);
         primitiveSuccess(value);
         return PrimitiveResult::Success;
     }
