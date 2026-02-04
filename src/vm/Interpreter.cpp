@@ -2043,6 +2043,33 @@ void Interpreter::dumpProcessQueues() {
         fprintf(stderr, "  priority=%lld suspCtx=0x%llx\n",
                 prio.isSmallInteger() ? prio.asSmallInteger() : -1,
                 (unsigned long long)ctx.rawBits());
+        // Dump active process's context chain (first 40 contexts)
+        fprintf(stderr, "  Active process context chain:\n");
+        Oop chainCtx = activeContext_;
+        for (int ci = 0; ci < 40 && chainCtx.isObject() && chainCtx.rawBits() > 0x10000; ci++) {
+            ObjectHeader* chdr = chainCtx.asObjectPtr();
+            if (chdr->slotCount() < 6) break;
+            Oop chainMeth = memory_.fetchPointer(3, chainCtx);
+            std::string cmn = "?";
+            if (chainMeth.isObject() && chainMeth.rawBits() > 0x10000) {
+                Oop hdr = memory_.fetchPointer(0, chainMeth);
+                if (hdr.isSmallInteger()) {
+                    int nl = hdr.asSmallInteger() & 0x7FFF;
+                    if (nl >= 2 && nl < 100) {
+                        Oop sel = memory_.fetchPointer(nl - 1, chainMeth);
+                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                            ObjectHeader* sh = sel.asObjectPtr();
+                            if (sh->isBytesObject() && sh->byteSize() < 50)
+                                cmn = std::string((char*)sh->bytes(), sh->byteSize());
+                        }
+                    }
+                }
+            }
+            Oop sender = memory_.fetchPointer(0, chainCtx);
+            fprintf(stderr, "    [%d] ctx=0x%llx method=#%s\n", ci,
+                    (unsigned long long)chainCtx.rawBits(), cmn.c_str());
+            chainCtx = sender;
+        }
     }
     Oop queues = memory_.fetchPointer(0, scheduler);
     if (!queues.isObject()) return;
@@ -2693,6 +2720,71 @@ bool Interpreter::step() {
 
     // Track step count (for debugging if needed)
     g_stepNum++;
+
+    // DETAILED BYTECODE TRACE for step range around nil>>signal bug
+    if (g_stepNum >= 21610 && g_stepNum <= 21690) {
+        static FILE* bcTraceLog = nullptr;
+        if (!bcTraceLog) bcTraceLog = fopen("/tmp/bytecode_detail.log", "w");
+        if (bcTraceLog) {
+            uint8_t bc = *instructionPointer_;
+            // Get method selector
+            std::string methodSel = "?";
+            bool isBlock = false;
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                ObjectHeader* mh = method_.asObjectPtr();
+                isBlock = (mh->classIndex() == 3117);
+                Oop hdr = memory_.fetchPointer(0, method_);
+                if (hdr.isSmallInteger()) {
+                    int nl = hdr.asSmallInteger() & 0x7FFF;
+                    if (nl >= 2 && nl < 100) {
+                        Oop sel = memory_.fetchPointer(nl - 1, method_);
+                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                            ObjectHeader* sh = sel.asObjectPtr();
+                            if (sh->isBytesObject() && sh->byteSize() < 50)
+                                methodSel = std::string((char*)sh->bytes(), sh->byteSize());
+                        }
+                    }
+                }
+            }
+            // Get activeContext_ stackp
+            int64_t ctxStackp = -1;
+            if (activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
+                Oop sp = memory_.fetchPointer(2, activeContext_);
+                if (sp.isSmallInteger()) ctxStackp = sp.asSmallInteger();
+            }
+            // Get receiver class
+            std::string rcvrCls = "?";
+            if (receiver_.isNil()) rcvrCls = "nil";
+            else if (receiver_.isSmallInteger()) rcvrCls = "SmI";
+            else if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+                Oop cls = memory_.classOf(receiver_);
+                if (cls.isObject()) {
+                    Oop cn = memory_.fetchPointer(6, cls);
+                    if (cn.isObject() && cn.rawBits() > 0x10000) {
+                        ObjectHeader* cnh = cn.asObjectPtr();
+                        if (cnh->isBytesObject() && cnh->byteSize() < 50)
+                            rcvrCls = std::string((char*)cnh->bytes(), cnh->byteSize());
+                    }
+                }
+            }
+            fprintf(bcTraceLog, "[%llu] bc=0x%02X fd=%zu %s#%s rcvr=%s actx=0x%llx sp=%lld\n",
+                    g_stepNum, bc, frameDepth_,
+                    isBlock ? "BLOCK/" : "",
+                    methodSel.c_str(), rcvrCls.c_str(),
+                    (unsigned long long)activeContext_.rawBits(), (long long)ctxStackp);
+            // Log inline stack contents
+            ptrdiff_t stackItems = stackPointer_ - framePointer_;
+            fprintf(bcTraceLog, "  FP=%p SP=%p items=%td", (void*)framePointer_, (void*)stackPointer_, stackItems);
+            for (ptrdiff_t si = 0; si < stackItems && si < 8; si++) {
+                Oop v = *(framePointer_ + si);
+                if (v.isSmallInteger()) fprintf(bcTraceLog, " [%td]=SI(%lld)", si, v.asSmallInteger());
+                else if (v.rawBits() == memory_.nil().rawBits()) fprintf(bcTraceLog, " [%td]=nil", si);
+                else fprintf(bcTraceLog, " [%td]=0x%llx", si, (unsigned long long)v.rawBits());
+            }
+            fprintf(bcTraceLog, "\n");
+            fflush(bcTraceLog);
+        }
+    }
 
     // Log step progress periodically to detect hangs
     static FILE* stepProgressLog = nullptr;
@@ -5202,6 +5294,86 @@ void Interpreter::returnValue(Oop value) {
                     // Reset stack for new context
                     stackPointer_ = stackBase_;
 
+                    // TRACE: Log return-via-sender for nil>>signal investigation
+                    if (g_stepNum >= 21610 && g_stepNum <= 21690) {
+                        static FILE* retSenderLog = nullptr;
+                        if (!retSenderLog) retSenderLog = fopen("/tmp/return_sender_detail.log", "w");
+                        if (retSenderLog) {
+                            // Get sender's method info
+                            std::string sndMethodName = "?";
+                            bool sndIsBlock = false;
+                            Oop sndMethod = memory_.fetchPointer(3, sender);
+                            if (sndMethod.isObject() && sndMethod.rawBits() > 0x10000) {
+                                sndIsBlock = (sndMethod.asObjectPtr()->classIndex() == 3117);
+                                Oop mh = memory_.fetchPointer(0, sndMethod);
+                                if (mh.isSmallInteger()) {
+                                    int nl = mh.asSmallInteger() & 0x7FFF;
+                                    if (nl >= 2 && nl < 100) {
+                                        Oop sel = memory_.fetchPointer(nl - 1, sndMethod);
+                                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                            ObjectHeader* sh = sel.asObjectPtr();
+                                            if (sh->isBytesObject() && sh->byteSize() < 50)
+                                                sndMethodName = std::string((char*)sh->bytes(), sh->byteSize());
+                                        }
+                                    }
+                                }
+                            }
+                            Oop sndSp = memory_.fetchPointer(2, sender);
+                            Oop sndClosure = memory_.fetchPointer(4, sender);
+                            Oop sndRcvr = memory_.fetchPointer(5, sender);
+                            std::string sndRcvrCls = "?";
+                            if (sndRcvr.isObject() && sndRcvr.rawBits() > 0x10000) {
+                                Oop cls = memory_.classOf(sndRcvr);
+                                if (cls.isObject()) {
+                                    Oop cn = memory_.fetchPointer(6, cls);
+                                    if (cn.isObject() && cn.rawBits() > 0x10000) {
+                                        ObjectHeader* cnh = cn.asObjectPtr();
+                                        if (cnh->isBytesObject() && cnh->byteSize() < 50)
+                                            sndRcvrCls = std::string((char*)cnh->bytes(), cnh->byteSize());
+                                    }
+                                }
+                            }
+                            // Current method
+                            std::string curMethodName = "?";
+                            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                                Oop mh = memory_.fetchPointer(0, method_);
+                                if (mh.isSmallInteger()) {
+                                    int nl = mh.asSmallInteger() & 0x7FFF;
+                                    if (nl >= 2 && nl < 100) {
+                                        Oop sel = memory_.fetchPointer(nl - 1, method_);
+                                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                            ObjectHeader* sh = sel.asObjectPtr();
+                                            if (sh->isBytesObject() && sh->byteSize() < 50)
+                                                curMethodName = std::string((char*)sh->bytes(), sh->byteSize());
+                                        }
+                                    }
+                                }
+                            }
+                            fprintf(retSenderLog, "[RETURN step=%llu] from #%s returning to sender=0x%llx\n",
+                                    g_stepNum, curMethodName.c_str(), (unsigned long long)sender.rawBits());
+                            fprintf(retSenderLog, "  sender: %s#%s sp=%lld closure=0x%llx rcvr=%s\n",
+                                    sndIsBlock ? "BLOCK/" : "",
+                                    sndMethodName.c_str(),
+                                    sndSp.isSmallInteger() ? sndSp.asSmallInteger() : -1,
+                                    (unsigned long long)sndClosure.rawBits(),
+                                    sndRcvrCls.c_str());
+                            // Dump sender's variable area (first 10 slots)
+                            ObjectHeader* sndHdr = sender.asObjectPtr();
+                            fprintf(retSenderLog, "  sender slots:");
+                            for (size_t si = 0; si < std::min(sndHdr->slotCount(), (size_t)16); si++) {
+                                Oop sv = memory_.fetchPointer(si, sender);
+                                if (sv.isSmallInteger()) fprintf(retSenderLog, " [%zu]=SI(%lld)", si, sv.asSmallInteger());
+                                else if (sv.rawBits() == memory_.nil().rawBits()) fprintf(retSenderLog, " [%zu]=nil", si);
+                                else fprintf(retSenderLog, " [%zu]=0x%llx", si, (unsigned long long)sv.rawBits());
+                            }
+                            fprintf(retSenderLog, "\n");
+                            fprintf(retSenderLog, "  value=0x%llx%s\n",
+                                    (unsigned long long)value.rawBits(),
+                                    value.rawBits() == memory_.nil().rawBits() ? " (nil)" : "");
+                            fflush(retSenderLog);
+                        }
+                    }
+
                     // Execute from sender, which will push the return value appropriately
                     // First, set up the sender context
                     if (g_crashTraceEnabled) {
@@ -7046,6 +7218,260 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 }
             }
             if (false) {  // Keep old code block structure
+            }
+            // Trace nil >> #signal to debug ensure terminator bug
+            if (sn == "signal" && argCount == 0) {
+                Oop sigRcvr = stackValue(0);
+                if (sigRcvr.isNil() || sigRcvr.rawBits() == memory_.nil().rawBits()) {
+                    static FILE* nilSigLog = nullptr;
+                    static int nilSigCount = 0;
+                    if (!nilSigLog) nilSigLog = fopen("/tmp/nil_signal.log", "w");
+                    if (nilSigLog && nilSigCount++ < 20) {
+                        fprintf(nilSigLog, "=== nil >> #signal at step %llu (#%d) ===\n", g_stepNum, nilSigCount);
+                        fprintf(nilSigLog, "  frameDepth=%zu\n", frameDepth_);
+                        fprintf(nilSigLog, "  method_=0x%llx\n", (unsigned long long)method_.rawBits());
+                        fprintf(nilSigLog, "  receiver_=0x%llx isNil=%d\n",
+                                (unsigned long long)receiver_.rawBits(), receiver_.isNil());
+                        fprintf(nilSigLog, "  closure_=0x%llx isNil=%d\n",
+                                (unsigned long long)closure_.rawBits(), closure_.isNil());
+                        fprintf(nilSigLog, "  activeContext_=0x%llx\n",
+                                (unsigned long long)activeContext_.rawBits());
+                        // Dump method header and selector
+                        if (method_.isObject() && method_.rawBits() > 0x10000) {
+                            ObjectHeader* mHdr = method_.asObjectPtr();
+                            fprintf(nilSigLog, "  method format=%d classIdx=%u byteSize=%zu slotCount=%zu\n",
+                                    (int)mHdr->format(), mHdr->classIndex(), mHdr->byteSize(), mHdr->slotCount());
+                            if (mHdr->isCompiledMethod()) {
+                                Oop hdr = memory_.fetchPointer(0, method_);
+                                if (hdr.isSmallInteger()) {
+                                    int nl = hdr.asSmallInteger() & 0x7FFF;
+                                    fprintf(nilSigLog, "  numLiterals=%d\n", nl);
+                                    if (nl >= 2 && nl < 100) {
+                                        // Last literal = selector (or enclosing method for CompiledBlock)
+                                        Oop lastLit = memory_.fetchPointer(nl, method_);
+                                        fprintf(nilSigLog, "  lastLit=0x%llx isObj=%d\n",
+                                                (unsigned long long)lastLit.rawBits(), lastLit.isObject());
+                                        if (lastLit.isObject() && lastLit.rawBits() > 0x10000) {
+                                            ObjectHeader* llH = lastLit.asObjectPtr();
+                                            if (llH->isBytesObject() && llH->byteSize() < 100)
+                                                fprintf(nilSigLog, "  lastLit bytes: '%.*s'\n",
+                                                        (int)llH->byteSize(), (char*)llH->bytes());
+                                            else if (llH->isCompiledMethod()) {
+                                                // It's a CompiledBlock — last lit is enclosing method
+                                                fprintf(nilSigLog, "  lastLit is CompiledMethod (enclosing)\n");
+                                                // Get enclosing method's selector
+                                                Oop ehdr = memory_.fetchPointer(0, lastLit);
+                                                if (ehdr.isSmallInteger()) {
+                                                    int enl = ehdr.asSmallInteger() & 0x7FFF;
+                                                    if (enl >= 2 && enl < 100) {
+                                                        Oop esel = memory_.fetchPointer(enl, lastLit);
+                                                        if (esel.isObject() && esel.rawBits() > 0x10000) {
+                                                            ObjectHeader* esH = esel.asObjectPtr();
+                                                            if (esH->isBytesObject() && esH->byteSize() < 100)
+                                                                fprintf(nilSigLog, "  enclosing method: #%.*s\n",
+                                                                        (int)esH->byteSize(), (char*)esH->bytes());
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        // Selector (second-to-last literal)
+                                        Oop sel = memory_.fetchPointer(nl - 1, method_);
+                                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                            ObjectHeader* sH = sel.asObjectPtr();
+                                            if (sH->isBytesObject() && sH->byteSize() < 100)
+                                                fprintf(nilSigLog, "  selector: #%.*s\n",
+                                                        (int)sH->byteSize(), (char*)sH->bytes());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // If activeContext_ is set, dump its slots
+                        if (activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
+                            ObjectHeader* acH = activeContext_.asObjectPtr();
+                            fprintf(nilSigLog, "  activeContext slots=%zu:\n", acH->slotCount());
+                            for (size_t si = 0; si < std::min(acH->slotCount(), (size_t)15); si++) {
+                                Oop sv = memory_.fetchPointer(si, activeContext_);
+                                const char* label = "";
+                                if (si == 0) label = " (sender)";
+                                else if (si == 1) label = " (pc)";
+                                else if (si == 2) label = " (stackp)";
+                                else if (si == 3) label = " (method)";
+                                else if (si == 4) label = " (closureOrNil)";
+                                else if (si == 5) label = " (receiver)";
+                                else label = " (temp/stack)";
+                                fprintf(nilSigLog, "    [%zu]%s = 0x%llx", si, label,
+                                        (unsigned long long)sv.rawBits());
+                                if (sv.isNil()) fprintf(nilSigLog, " (nil)");
+                                else if (sv.isSmallInteger()) fprintf(nilSigLog, " (SI=%lld)", sv.asSmallInteger());
+                                else if (sv.isObject() && sv.rawBits() > 0x10000) {
+                                    Oop cls = memory_.classOf(sv);
+                                    if (cls.isObject()) {
+                                        Oop nm = memory_.fetchPointer(6, cls);
+                                        if (nm.isObject() && nm.rawBits() > 0x10000) {
+                                            ObjectHeader* nmH = nm.asObjectPtr();
+                                            if (nmH->isBytesObject() && nmH->byteSize() < 50)
+                                                fprintf(nilSigLog, " (%.*s)", (int)nmH->byteSize(), (char*)nmH->bytes());
+                                        }
+                                    }
+                                }
+                                fprintf(nilSigLog, "\n");
+                            }
+                        }
+                        // Dump stack values
+                        fprintf(nilSigLog, "  Stack (SP relative to FP):\n");
+                        for (int si = 0; si < 10 && (framePointer_ + si) <= stackPointer_; si++) {
+                            Oop sv = *(framePointer_ + si);
+                            fprintf(nilSigLog, "    FP[%d] = 0x%llx", si, (unsigned long long)sv.rawBits());
+                            if (sv.isNil()) fprintf(nilSigLog, " (nil)");
+                            else if (sv.isSmallInteger()) fprintf(nilSigLog, " (SI=%lld)", sv.asSmallInteger());
+                            fprintf(nilSigLog, "\n");
+                        }
+                        // Dump saved frames if any
+                        for (size_t fi = 0; fi < frameDepth_ && fi < 5; fi++) {
+                            const auto& sf = savedFrames_[fi];
+                            std::string fsn = "?";
+                            if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                                Oop h = memory_.fetchPointer(0, sf.savedMethod);
+                                if (h.isSmallInteger()) {
+                                    int n = h.asSmallInteger() & 0x7FFF;
+                                    if (n >= 2 && n < 100) {
+                                        Oop s = memory_.fetchPointer(n - 1, sf.savedMethod);
+                                        if (s.isObject() && s.rawBits() > 0x10000) {
+                                            ObjectHeader* sH = s.asObjectPtr();
+                                            if (sH->isBytesObject() && sH->byteSize() < 80)
+                                                fsn = std::string((char*)sH->bytes(), sH->byteSize());
+                                        }
+                                    }
+                                }
+                            }
+                            fprintf(nilSigLog, "  savedFrame[%zu]: #%s\n", fi, fsn.c_str());
+                        }
+                        fflush(nilSigLog);
+                    }
+                }
+            }
+            // Trace unhandled error chain: raiseUnhandledError, doesNotUnderstand:, freeze, handleError:log:
+            if (sn == "raiseUnhandledError" || sn == "doesNotUnderstand:" ||
+                sn == "freeze" || sn == "handleError:log:" || sn == "handleError:" ||
+                sn == "unhandledErrorAction" || sn == "defaultAction" || sn == "handleSignal:" ||
+                sn == "signalForException:" || sn == "signal") {
+                static FILE* unhandledLog = nullptr;
+                static int unhandledCount = 0;
+                if (!unhandledLog) unhandledLog = fopen("/tmp/unhandled_error.log", "w");
+                if (unhandledLog && unhandledCount++ < 500) {
+                    fprintf(unhandledLog, "=== #%s at step %llu (#%d) ===\n", sn.c_str(), g_stepNum, unhandledCount);
+                    // Receiver info
+                    Oop uRcvr = stackValue(argCount);
+                    std::string uRcvrClass = "?";
+                    if (uRcvr.isNil() || uRcvr.rawBits() == memory_.nil().rawBits()) {
+                        uRcvrClass = "nil";
+                    } else if (uRcvr.isSmallInteger()) {
+                        uRcvrClass = "SmallInt(" + std::to_string(uRcvr.asSmallInteger()) + ")";
+                    } else if (uRcvr.isObject() && uRcvr.rawBits() > 0x10000) {
+                        Oop cls = memory_.classOf(uRcvr);
+                        if (cls.isObject()) {
+                            Oop nm = memory_.fetchPointer(6, cls);
+                            if (nm.isObject() && nm.rawBits() > 0x10000) {
+                                ObjectHeader* nmH = nm.asObjectPtr();
+                                if (nmH->isBytesObject() && nmH->byteSize() < 100)
+                                    uRcvrClass = std::string((char*)nmH->bytes(), nmH->byteSize());
+                            }
+                            // Try metaclass if name not found
+                            if (uRcvrClass == "?") {
+                                Oop thisClass = memory_.fetchPointer(5, cls);
+                                if (thisClass.isObject() && thisClass.rawBits() > 0x10000) {
+                                    Oop nm2 = memory_.fetchPointer(6, thisClass);
+                                    if (nm2.isObject() && nm2.rawBits() > 0x10000) {
+                                        ObjectHeader* nm2H = nm2.asObjectPtr();
+                                        if (nm2H->isBytesObject() && nm2H->byteSize() < 100)
+                                            uRcvrClass = std::string((char*)nm2H->bytes(), nm2H->byteSize()) + " class";
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    fprintf(unhandledLog, "  receiver: %s (0x%llx)\n", uRcvrClass.c_str(), (unsigned long long)uRcvr.rawBits());
+                    // For doesNotUnderstand:, extract the message selector from the argument
+                    if (sn == "doesNotUnderstand:" && argCount >= 1) {
+                        Oop msgObj = stackValue(0);
+                        if (msgObj.isObject() && msgObj.rawBits() > 0x10000) {
+                            ObjectHeader* moh = msgObj.asObjectPtr();
+                            if (moh->slotCount() >= 1) {
+                                // Message object: slot 0 = selector, slot 1 = args, slot 2 = lookupClass
+                                Oop dnuSel = memory_.fetchPointer(0, msgObj);
+                                if (dnuSel.isObject() && dnuSel.rawBits() > 0x10000) {
+                                    ObjectHeader* dsH = dnuSel.asObjectPtr();
+                                    if (dsH->isBytesObject() && dsH->byteSize() < 100)
+                                        fprintf(unhandledLog, "  missing selector: #%.*s\n", (int)dsH->byteSize(), (char*)dsH->bytes());
+                                }
+                            }
+                        }
+                    }
+                    // For signal/handleSignal:/defaultAction, try to get exception class
+                    if (sn == "signal" || sn == "handleSignal:" || sn == "defaultAction" ||
+                        sn == "raiseUnhandledError" || sn == "unhandledErrorAction") {
+                        // For signal, receiver is the exception
+                        // For handleSignal:, arg is the exception
+                        Oop excObj = (sn == "handleSignal:" && argCount >= 1) ? stackValue(0) : uRcvr;
+                        if (excObj.isObject() && excObj.rawBits() > 0x10000) {
+                            Oop excCls = memory_.classOf(excObj);
+                            if (excCls.isObject()) {
+                                Oop excNm = memory_.fetchPointer(6, excCls);
+                                if (excNm.isObject() && excNm.rawBits() > 0x10000) {
+                                    ObjectHeader* enH = excNm.asObjectPtr();
+                                    if (enH->isBytesObject() && enH->byteSize() < 100)
+                                        fprintf(unhandledLog, "  exception class: %.*s\n", (int)enH->byteSize(), (char*)enH->bytes());
+                                }
+                            }
+                            // Try to get messageText from exception (slot varies by class)
+                            // Most exceptions store messageText in an instvar
+                            ObjectHeader* excHdr = excObj.asObjectPtr();
+                            if (excHdr->slotCount() >= 2) {
+                                // Try slot 1 (often messageText in Error subclasses)
+                                Oop mt = memory_.fetchPointer(1, excObj);
+                                if (mt.isObject() && mt.rawBits() > 0x10000) {
+                                    ObjectHeader* mtH = mt.asObjectPtr();
+                                    if (mtH->isBytesObject() && mtH->byteSize() < 200 && mtH->byteSize() > 0) {
+                                        fprintf(unhandledLog, "  exc slot1 (messageText?): '%.*s'\n", (int)mtH->byteSize(), (char*)mtH->bytes());
+                                    }
+                                }
+                            }
+                            if (excHdr->slotCount() >= 3) {
+                                Oop s2 = memory_.fetchPointer(2, excObj);
+                                if (s2.isObject() && s2.rawBits() > 0x10000) {
+                                    ObjectHeader* s2H = s2.asObjectPtr();
+                                    if (s2H->isBytesObject() && s2H->byteSize() < 200 && s2H->byteSize() > 0)
+                                        fprintf(unhandledLog, "  exc slot2: '%.*s'\n", (int)s2H->byteSize(), (char*)s2H->bytes());
+                                }
+                            }
+                        }
+                    }
+                    // Call stack
+                    fprintf(unhandledLog, "  call stack (frameDepth=%zu):\n", frameDepth_);
+                    for (size_t fi = 0; fi < frameDepth_ && fi < 20; fi++) {
+                        size_t idx = frameDepth_ - 1 - fi;
+                        const auto& sf = savedFrames_[idx];
+                        std::string frameSel = "?";
+                        if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                            Oop sfHdr = memory_.fetchPointer(0, sf.savedMethod);
+                            if (sfHdr.isSmallInteger()) {
+                                int nl = sfHdr.asSmallInteger() & 0x7FFF;
+                                if (nl >= 2 && nl < 100) {
+                                    Oop sel = memory_.fetchPointer(nl - 1, sf.savedMethod);
+                                    if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                        ObjectHeader* selH = sel.asObjectPtr();
+                                        if (selH->isBytesObject() && selH->byteSize() < 80)
+                                            frameSel = std::string((char*)selH->bytes(), selH->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                        fprintf(unhandledLog, "    [%zu] #%s\n", fi, frameSel.c_str());
+                    }
+                    fflush(unhandledLog);
+                }
             }
         }
     }
@@ -20037,6 +20463,42 @@ bool Interpreter::executeFromContext(Oop context) {
         // so that the temp area is fully allocated on the inline stack
         for (int i = numSaved; i < numTemps; i++) {
             push(memory_.nil());
+        }
+    }
+
+    // For block contexts with a closure, restore copied values from the closure.
+    // This is critical when the context's stackp was reduced (e.g., by Context>>jump
+    // popping from the block context) but the block's bytecodes still expect copied
+    // values in their temp positions. Copied values in FullBlockClosure are immutable
+    // captures, so the closure is the canonical source. This matches what
+    // Context>>privRefresh does in Smalltalk.
+    {
+        Oop closureOop = memory_.fetchPointer(4, context); // slot 4 = closureOrNil
+        if (closureOop.isObject() && !closureOop.isNil()) {
+            size_t closureSlots = memory_.slotCountOf(closureOop);
+
+            // FullBlockClosure: slot 0=outerContext, 1=compiledBlock(obj), 2=numArgs, 3=receiver, 4+=copied
+            // BlockClosure:     slot 0=outerContext, 1=startpc(smi),      2=numArgs, 3+=copied
+            Oop slot1 = memory_.fetchPointer(1, closureOop);
+            int firstCopiedSlot = slot1.isObject() ? 4 : 3;
+            int numCopied = static_cast<int>(closureSlots) - firstCopiedSlot;
+            if (numCopied < 0) numCopied = 0;
+
+            if (numCopied > 0) {
+                Oop numArgsOop = memory_.fetchPointer(2, closureOop);
+                int closureNumArgs = numArgsOop.isSmallInteger()
+                    ? static_cast<int>(numArgsOop.asSmallInteger()) : 0;
+
+                // Restore copied values at temp positions numArgs..numArgs+numCopied-1
+                // On the inline stack: FP[0]=receiver, FP[1]=temp0, FP[2]=temp1, ...
+                for (int i = 0; i < numCopied; i++) {
+                    int tempIndex = closureNumArgs + i;
+                    if (tempIndex < numTemps) {
+                        Oop copiedValue = memory_.fetchPointer(firstCopiedSlot + i, closureOop);
+                        framePointer_[1 + tempIndex] = copiedValue;
+                    }
+                }
+            }
         }
     }
 

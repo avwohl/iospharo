@@ -4157,11 +4157,53 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
                          static_cast<int>(activePriorityOop.asSmallInteger()) : -1;
 
     if (waitLog && waitCallCount <= 500) {
-        fprintf(waitLog, "[WAIT #%d] sem=0x%llx excess=0 -> BLOCKING process 0x%llx (priority %d)\n",
-                waitCallCount, (unsigned long long)semaphore.rawBits(),
+        fprintf(waitLog, "[WAIT #%d step=%llu] sem=0x%llx excess=0 -> BLOCKING process 0x%llx (priority %d)\n",
+                waitCallCount, (unsigned long long)g_stepNum, (unsigned long long)semaphore.rawBits(),
                 (unsigned long long)activeProcess.rawBits(), activePriority);
-        // Log method info
-        fprintf(waitLog, "  method=0x%llx\n", (unsigned long long)method_.rawBits());
+        // Log method selector
+        std::string waitMethodSel = "<unknown>";
+        if (method_.isObject() && method_.rawBits() > 0x10000) {
+            Oop mhdr = memory_.fetchPointer(0, method_);
+            if (mhdr.isSmallInteger()) {
+                int nLits = mhdr.asSmallInteger() & 0x7FFF;
+                if (nLits >= 2 && nLits < 200) {
+                    Oop sel = memory_.fetchPointer(nLits - 1, method_);
+                    if (sel.isObject() && sel.rawBits() > 0x10000) {
+                        ObjectHeader* selH = sel.asObjectPtr();
+                        if (selH->isBytesObject() && selH->byteSize() < 80)
+                            waitMethodSel = std::string((char*)selH->bytes(), selH->byteSize());
+                    }
+                }
+            }
+        }
+        fprintf(waitLog, "  method=#%s (0x%llx)\n", waitMethodSel.c_str(), (unsigned long long)method_.rawBits());
+        // Also dump the activeContext sender chain methods
+        fprintf(waitLog, "  sender chain: ");
+        Oop ctx = activeContext_;
+        Oop nilObj2 = memory_.nil();
+        for (int i = 0; i < 8 && ctx.isObject() && ctx.rawBits() != nilObj2.rawBits() && ctx.rawBits() > 0x10000; i++) {
+            ObjectHeader* ctxH = ctx.asObjectPtr();
+            if (ctxH->slotCount() < 4) break;
+            Oop cm = memory_.fetchPointer(3, ctx);
+            if (cm.isObject() && cm.rawBits() > 0x10000) {
+                Oop mh = memory_.fetchPointer(0, cm);
+                if (mh.isSmallInteger()) {
+                    int nl = mh.asSmallInteger() & 0x7FFF;
+                    if (nl >= 2 && nl < 200) {
+                        Oop sel = memory_.fetchPointer(nl - 1, cm);
+                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                            ObjectHeader* sH = sel.asObjectPtr();
+                            if (sH->isBytesObject() && sH->byteSize() < 80) {
+                                if (i > 0) fprintf(waitLog, " -> ");
+                                fprintf(waitLog, "#%.*s", (int)sH->byteSize(), (char*)sH->bytes());
+                            }
+                        }
+                    }
+                }
+            }
+            ctx = memory_.fetchPointer(0, ctx);
+        }
+        fprintf(waitLog, "\n");
         // Check: is the semaphore the delay semaphore?
         Oop timerSema = timerSemaphore_;
         fprintf(waitLog, "  sem==timerSema? %d  nextWakeupUsec=%lld nextWakeupTime=%lld\n",
@@ -9864,26 +9906,26 @@ PrimitiveResult Interpreter::primitiveContextAt(int argCount) {
 
     Oop value = memory_.fetchPointer(actualSlot, context);
 
-    // TRACE: Log tempAt: reads during termination investigation
-    // Index 3 is what unwindComplete reads for ensure: contexts (numArgs=1 + 2 = 3)
-    static FILE* tempAtLog = nullptr;
-    static int tempAtCount = 0;
-    if (!tempAtLog) tempAtLog = fopen("/tmp/tempat_trace.log", "w");
-    if (tempAtLog && tempAtCount < 2000) {
-        tempAtCount++;
+    // TRACE: Log tempAt: for ensure: contexts (prim 198) to debug unwindComplete
+    {
+        static FILE* tempAtLog = nullptr;
+        static int ensureCount = 0;
+        if (!tempAtLog) tempAtLog = fopen("/tmp/tempat_trace.log", "w");
 
-        // Get context's method to determine if this is an ensure: context
-        Oop ctxMethod = memory_.fetchPointer(3, context);  // slot 3 = method
-        std::string methodSel = "?";
+        // Get context's method to check if ensure: context
+        Oop ctxMethod = memory_.fetchPointer(3, context);
         int primIdx = 0;
+        int methodNumArgs = -1;
+        int methodNumTemps = -1;
+        std::string methodSel = "?";
         if (ctxMethod.isObject() && ctxMethod.rawBits() > 0x10000) {
-            // Use primitiveIndexOf to correctly extract primitive from bytecodes
             primIdx = primitiveIndexOf(ctxMethod);
-
             Oop mHdr = memory_.fetchPointer(0, ctxMethod);
             if (mHdr.isSmallInteger()) {
                 int64_t hdrBits = mHdr.asSmallInteger();
                 size_t numLits = hdrBits & 0x7FFF;
+                methodNumArgs = (hdrBits >> 24) & 0xF;
+                methodNumTemps = (hdrBits >> 18) & 0x3F;
                 if (numLits >= 2 && numLits < 100) {
                     Oop sel = memory_.fetchPointer(numLits - 1, ctxMethod);
                     if (sel.isObject() && sel.rawBits() > 0x10000) {
@@ -9896,44 +9938,69 @@ PrimitiveResult Interpreter::primitiveContextAt(int argCount) {
             }
         }
 
-        // Determine value's class
-        std::string valClass = "?";
-        if (value.rawBits() == memory_.nil().rawBits()) {
-            valClass = "nil";
-        } else if (value.rawBits() == memory_.trueObject().rawBits()) {
-            valClass = "true";
-        } else if (value.rawBits() == memory_.falseObject().rawBits()) {
-            valClass = "false";
-        } else if (value.isSmallInteger()) {
-            valClass = "SmallInt(" + std::to_string(value.asSmallInteger()) + ")";
-        } else if (value.isObject() && value.rawBits() > 0x10000) {
-            Oop vCls = memory_.classOf(value);
-            if (vCls.isObject()) {
-                Oop vClsName = memory_.fetchPointer(6, vCls);
-                if (vClsName.isObject() && vClsName.rawBits() > 0x10000) {
-                    ObjectHeader* vcnHdr = vClsName.asObjectPtr();
-                    if (vcnHdr->isBytesObject() && vcnHdr->byteSize() < 50) {
-                        valClass = std::string((char*)vcnHdr->bytes(), vcnHdr->byteSize());
+        // Only log for ensure:/ifCurtailed: contexts (prim 198) - the ones we care about
+        if (tempAtLog && primIdx == 198 && ensureCount < 500) {
+            ensureCount++;
+
+            // Get closureOrNil (slot 4) to determine how numArgs will be computed
+            Oop closureOrNil = memory_.fetchPointer(4, context);
+            std::string closureClass = "nil";
+            int closureNumArgs = -1;
+            if (closureOrNil.rawBits() != memory_.nil().rawBits()) {
+                if (closureOrNil.isObject() && closureOrNil.rawBits() > 0x10000) {
+                    Oop cc = memory_.classOf(closureOrNil);
+                    if (cc.isObject()) {
+                        Oop ccn = memory_.fetchPointer(6, cc);
+                        if (ccn.isObject() && ccn.rawBits() > 0x10000) {
+                            ObjectHeader* ccnH = ccn.asObjectPtr();
+                            if (ccnH->isBytesObject() && ccnH->byteSize() < 50)
+                                closureClass = std::string((char*)ccnH->bytes(), ccnH->byteSize());
+                        }
+                    }
+                    // Try to read closure's numArgs (slot 0 = outerContext, slot 1 = startPC, slot 2 = numArgs)
+                    ObjectHeader* clH = closureOrNil.asObjectPtr();
+                    if (clH->slotCount() >= 3) {
+                        Oop cna = memory_.fetchPointer(2, closureOrNil);
+                        if (cna.isSmallInteger()) closureNumArgs = (int)cna.asSmallInteger();
                     }
                 }
             }
-        }
 
-        fprintf(tempAtLog, "[TEMPAT #%d step=%llu] ctx=0x%llx idx=%lld slot=%zu method=#%s prim=%d value=%s(0x%llx)\n",
-                tempAtCount, (unsigned long long)g_stepNum,
-                (unsigned long long)context.rawBits(), index, actualSlot,
-                methodSel.c_str(), primIdx,
-                valClass.c_str(), (unsigned long long)value.rawBits());
+            // Determine value class
+            std::string valClass = "?";
+            if (value.rawBits() == memory_.nil().rawBits()) valClass = "nil";
+            else if (value.rawBits() == memory_.trueObject().rawBits()) valClass = "true";
+            else if (value.rawBits() == memory_.falseObject().rawBits()) valClass = "false";
+            else if (value.isSmallInteger()) valClass = "SmallInt(" + std::to_string(value.asSmallInteger()) + ")";
+            else if (value.isObject() && value.rawBits() > 0x10000) {
+                Oop vCls = memory_.classOf(value);
+                if (vCls.isObject()) {
+                    Oop vClsName = memory_.fetchPointer(6, vCls);
+                    if (vClsName.isObject() && vClsName.rawBits() > 0x10000) {
+                        ObjectHeader* vcnHdr = vClsName.asObjectPtr();
+                        if (vcnHdr->isBytesObject() && vcnHdr->byteSize() < 50)
+                            valClass = std::string((char*)vcnHdr->bytes(), vcnHdr->byteSize());
+                    }
+                }
+            }
 
-        // If this is an on:do: context (prim 199) and index 2 returns non-closure, dump everything
-        if (primIdx == 199 && index == 2 && valClass != "FullBlockClosure" &&
-            valClass != "ConstantBlockClosure" && valClass != "ConstantBlockClosure1Arg") {
-            fprintf(tempAtLog, "  *** BUG: on:do: handler is %s, not a closure! ***\n", valClass.c_str());
-            fprintf(tempAtLog, "  HANDLER CONTEXT DUMP (slotCount=%zu):\n", slotCount);
+            fprintf(tempAtLog, "[ENSURE-TEMPAT #%d step=%llu] ctx=0x%llx idx=%lld slot=%zu sel=#%s "
+                    "methodNumArgs=%d methodNumTemps=%d closureOrNil=%s(closureNumArgs=%d) "
+                    "value=%s(0x%llx)\n",
+                    ensureCount, (unsigned long long)g_stepNum,
+                    (unsigned long long)context.rawBits(), index, actualSlot,
+                    methodSel.c_str(), methodNumArgs, methodNumTemps,
+                    closureClass.c_str(), closureNumArgs,
+                    valClass.c_str(), (unsigned long long)value.rawBits());
+
+            // Dump ALL slots for ensure: contexts so we can see the full temp layout
+            fprintf(tempAtLog, "  CONTEXT SLOTS (slotCount=%zu):\n", slotCount);
             for (size_t s = 0; s < slotCount && s < 20; s++) {
                 Oop sv = memory_.fetchPointer(s, context);
                 std::string slotClass = "?";
                 if (sv.rawBits() == memory_.nil().rawBits()) slotClass = "nil";
+                else if (sv.rawBits() == memory_.trueObject().rawBits()) slotClass = "true";
+                else if (sv.rawBits() == memory_.falseObject().rawBits()) slotClass = "false";
                 else if (sv.isSmallInteger()) slotClass = "SmallInt(" + std::to_string(sv.asSmallInteger()) + ")";
                 else if (sv.isObject() && sv.rawBits() > 0x10000) {
                     Oop sc = memory_.classOf(sv);
@@ -9941,108 +10008,27 @@ PrimitiveResult Interpreter::primitiveContextAt(int argCount) {
                         Oop scn = memory_.fetchPointer(6, sc);
                         if (scn.isObject() && scn.rawBits() > 0x10000) {
                             ObjectHeader* scnH = scn.asObjectPtr();
-                            if (scnH->isBytesObject() && scnH->byteSize() < 50) {
+                            if (scnH->isBytesObject() && scnH->byteSize() < 50)
                                 slotClass = std::string((char*)scnH->bytes(), scnH->byteSize());
-                            }
                         }
                     }
                 }
-                fprintf(tempAtLog, "    slot[%zu] = %s (0x%llx)\n", s, slotClass.c_str(), (unsigned long long)sv.rawBits());
+                const char* slotName = "";
+                if (s == 0) slotName = " (sender)";
+                else if (s == 1) slotName = " (pc)";
+                else if (s == 2) slotName = " (stackp)";
+                else if (s == 3) slotName = " (method)";
+                else if (s == 4) slotName = " (closureOrNil)";
+                else if (s == 5) slotName = " (receiver)";
+                else if (s == 6) slotName = " (temp1/arg:aBlock)";
+                else if (s == 7) slotName = " (temp2/local:handler)";
+                else if (s == 8) slotName = " (temp3/local:complete)";
+                else if (s == 9) slotName = " (temp4/local:returnValue)";
+                fprintf(tempAtLog, "    slot[%zu]%s = %s (0x%llx)\n",
+                        s, slotName, slotClass.c_str(), (unsigned long long)sv.rawBits());
             }
-            // Also dump the method's primitive index and selector
-            if (ctxMethod.isObject() && ctxMethod.rawBits() > 0x10000) {
-                fprintf(tempAtLog, "  Method 0x%llx prim=%d selector=%s\n",
-                        (unsigned long long)ctxMethod.rawBits(), primIdx, methodSel.c_str());
-                // Dump method header
-                Oop mHdr = memory_.fetchPointer(0, ctxMethod);
-                if (mHdr.isSmallInteger()) {
-                    int64_t hdrBits = mHdr.asSmallInteger();
-                    size_t numLits = hdrBits & 0x7FFF;
-                    int numArgs = (hdrBits >> 24) & 0xF;
-                    int numTemps = (hdrBits >> 18) & 0x3F;
-                    fprintf(tempAtLog, "  Method header: numLits=%zu numArgs=%d numTemps=%d\n",
-                            numLits, numArgs, numTemps);
-                }
-            }
-            // Dump the Array contents
-            if (value.isObject() && value.rawBits() > 0x10000) {
-                ObjectHeader* arrHdr = value.asObjectPtr();
-                size_t arrSlots = arrHdr->slotCount();
-                fprintf(tempAtLog, "  Array contents (%zu slots):\n", arrSlots);
-                for (size_t as = 0; as < arrSlots && as < 10; as++) {
-                    Oop av = memory_.fetchPointer(as, value);
-                    std::string arrSlotClass = "?";
-                    if (av.rawBits() == memory_.nil().rawBits()) arrSlotClass = "nil";
-                    else if (av.isSmallInteger()) arrSlotClass = "SmallInt(" + std::to_string(av.asSmallInteger()) + ")";
-                    else if (av.isObject() && av.rawBits() > 0x10000) {
-                        Oop asc = memory_.classOf(av);
-                        if (asc.isObject()) {
-                            Oop ascn = memory_.fetchPointer(6, asc);
-                            if (ascn.isObject() && ascn.rawBits() > 0x10000) {
-                                ObjectHeader* ascnH = ascn.asObjectPtr();
-                                if (ascnH->isBytesObject() && ascnH->byteSize() < 50) {
-                                    arrSlotClass = std::string((char*)ascnH->bytes(), ascnH->byteSize());
-                                }
-                            }
-                        }
-                    }
-                    fprintf(tempAtLog, "    arr[%zu] = %s (0x%llx)\n", as, arrSlotClass.c_str(), (unsigned long long)av.rawBits());
-                }
-            }
-            // Walk sender chain to see where this context came from
-            fprintf(tempAtLog, "  Sender chain:\n");
-            Oop ch = memory_.fetchPointer(0, context);
-            for (int ci = 0; ci < 10 && ch.isObject() && !ch.isNil(); ci++) {
-                Oop cm = memory_.fetchPointer(3, ch);
-                std::string cmSel = "?";
-                int cmPrim = 0;
-                if (cm.isObject() && cm.rawBits() > 0x10000) {
-                    cmPrim = primitiveIndexOf(cm);
-                    Oop cmHdr = memory_.fetchPointer(0, cm);
-                    if (cmHdr.isSmallInteger()) {
-                        int64_t hb = cmHdr.asSmallInteger();
-                        size_t nl = hb & 0x7FFF;
-                        if (nl >= 2 && nl < 100) {
-                            Oop csel = memory_.fetchPointer(nl - 1, cm);
-                            if (csel.isObject() && csel.rawBits() > 0x10000) {
-                                ObjectHeader* cselH = csel.asObjectPtr();
-                                if (cselH->isBytesObject() && cselH->byteSize() < 50) {
-                                    cmSel = std::string((char*)cselH->bytes(), cselH->byteSize());
-                                }
-                            }
-                        }
-                    }
-                }
-                fprintf(tempAtLog, "    [%d] ctx=0x%llx method=#%s prim=%d\n",
-                        ci, (unsigned long long)ch.rawBits(), cmSel.c_str(), cmPrim);
-                ch = memory_.fetchPointer(0, ch);
-            }
+            fflush(tempAtLog);
         }
-
-        // If this is an ensure: context (prim 198) and index 3, dump all slots
-        if (primIdx == 198 && index == 3) {
-            fprintf(tempAtLog, "  ENSURE CONTEXT DUMP:\n");
-            for (size_t s = 0; s < slotCount && s < 15; s++) {
-                Oop sv = memory_.fetchPointer(s, context);
-                std::string slotClass = "?";
-                if (sv.rawBits() == memory_.nil().rawBits()) slotClass = "nil";
-                else if (sv.isSmallInteger()) slotClass = "SmallInt(" + std::to_string(sv.asSmallInteger()) + ")";
-                else if (sv.isObject() && sv.rawBits() > 0x10000) {
-                    Oop sc = memory_.classOf(sv);
-                    if (sc.isObject()) {
-                        Oop scn = memory_.fetchPointer(6, sc);
-                        if (scn.isObject() && scn.rawBits() > 0x10000) {
-                            ObjectHeader* scnH = scn.asObjectPtr();
-                            if (scnH->isBytesObject() && scnH->byteSize() < 50) {
-                                slotClass = std::string((char*)scnH->bytes(), scnH->byteSize());
-                            }
-                        }
-                    }
-                }
-                fprintf(tempAtLog, "    slot[%zu] = %s (0x%llx)\n", s, slotClass.c_str(), (unsigned long long)sv.rawBits());
-            }
-        }
-        fflush(tempAtLog);
     }
 
     popN(2);
