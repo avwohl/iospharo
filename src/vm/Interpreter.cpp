@@ -37,19 +37,16 @@ int64_t g_stepCount = 0;
 FILE* g_sendTraceFile = nullptr;
 
 // Global flag to trace jumps after isActivePlatform returns TRUE
-bool g_traceDetectJumps = false;
 
 // REMOVED: g_debugPendingFlag (was for workaround code)
 
 // File-scope variables for fullCheck bytecode tracing
 static bool g_inFullCheck = false;
 static int g_fullCheckBytecodeCount = 0;
-static FILE* g_fcBytecodeLog = nullptr;
 
 // Global flag to enable bytecode tracing after a certain send count
 static bool g_bytecodeTraceEnabled = false;
 static int g_bytecodeTraceCount = 0;
-static FILE* g_bytecodeTraceLog = nullptr;
 uint64_t g_stepNum = 0;  // Global step counter for hang debugging (non-static for use in Primitives.cpp)
 uint64_t g_docwMethodOop = 0;  // Method OID for doOneCycleWhile: (set by executeFromContext)
 int g_docwRestoreCount = 0;     // How many times doOneCycleWhile: has been restored
@@ -3300,7 +3297,6 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
     }
 
     // Trace bytecodes when inside fullCheck
-    if (g_inFullCheck && g_fcBytecodeLog && g_fullCheckBytecodeCount < 1000) {
         g_fullCheckBytecodeCount++;
         // Get bytecode name for clarity
         const char* bcName = "?";
@@ -3341,19 +3337,16 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
             ipOffset = (instructionPointer_ - 1) - mHdr->bytes();
         }
 
-        fprintf(g_fcBytecodeLog, "[BC #%d IP=%zu] 0x%02X (%s)\n",
                 g_fullCheckBytecodeCount, ipOffset, bytecode, bcName);
 
         // Log stack top for conditional jumps
         if ((bytecode >= 0xB8 && bytecode <= 0xC7) || bytecode == 0xEE || bytecode == 0xEF) {
             if (stackPointer_ > stackBase_) {
                 Oop top = *(stackPointer_ - 1);
-                fprintf(g_fcBytecodeLog, "    -> stack top: 0x%llx (isTrue=%d isFalse=%d)\n",
                         (unsigned long long)top.rawBits(),
                         isTrue(top) ? 1 : 0, isFalse(top) ? 1 : 0);
             }
         }
-        fflush(g_fcBytecodeLog);
     }
 
     // Sista V1 bytecode dispatch (used by Pharo 10+, format 68021 with modern compiler)
@@ -3558,11 +3551,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                     }
                     case 0x5C: {
                         // TRACE: Method return for detect investigation
-                        extern bool g_traceDetectJumps;
                         static int methodRetTraceCount = 0;
-                        if (g_traceDetectJumps && methodRetTraceCount++ < 10) {
-                            std::cerr << "[METHOD-RET #" << methodRetTraceCount << "] 0x5C (ReturnTop) frame=" << frameDepth_ << "\n";
-                        }
                         returnFromMethod();
                         break;
                     }
@@ -3583,11 +3572,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
 
                         // TRACE: Block return bytecode for detect investigation
                         {
-                            extern bool g_traceDetectJumps;
                             static int blockRetTraceCount = 0;
-                            if (g_traceDetectJumps && blockRetTraceCount++ < 10) {
-                                std::cerr << "[BLOCK-RET #" << blockRetTraceCount << "] 0x5E (BlockReturn) extA=" << enclosingLevels << " frame=" << frameDepth_ << "\n";
-                            }
                         }
 
                         if (enclosingLevels > 0) {
@@ -5553,9 +5538,6 @@ terminate_process:
             }
         }
         if (currentMethodSel == "fullCheck") {
-            if (g_fcBytecodeLog) {
-                fprintf(g_fcBytecodeLog, "[RETURNING FROM fullCheck after %d bytecodes]\n", g_fullCheckBytecodeCount);
-                fflush(g_fcBytecodeLog);
             }
             g_inFullCheck = false;
         }
@@ -5651,19 +5633,6 @@ terminate_process:
     // After popping, if execution is still running, push the result
     if (running_) {
         // TRACE: Return values for detect investigation
-        {
-            extern bool g_traceDetectJumps;
-            static int retPushTraceCount = 0;
-            if (g_traceDetectJumps && retPushTraceCount++ < 20) {
-                bool isT = (value.rawBits() == memory_.trueObject().rawBits());
-                bool isF = (value.rawBits() == memory_.falseObject().rawBits());
-                std::cerr << "[RET-PUSH #" << retPushTraceCount << "] pushing ";
-                if (isT) std::cerr << "TRUE";
-                else if (isF) std::cerr << "FALSE";
-                else std::cerr << "0x" << std::hex << value.rawBits() << std::dec;
-                std::cerr << " onto frame " << frameDepth_ << " stack (sp=" << (stackPointer_ - stackBase_) << ")\n";
-            }
-        }
         // Trace return values during critical startup sequence
         if (g_sendTraceFile && g_stepCount >= 300 && g_stepCount < 600) {
             fprintf(g_sendTraceFile, "[RET] step=%lld fd=%zu val=", (long long)g_stepCount, frameDepth_);
@@ -5721,8 +5690,6 @@ void Interpreter::returnFromMethod() {
                                     std::cerr << "TRUE";
                                     // Enable jump tracing when isActivePlatform returns TRUE
                                     if (selStr == "isActivePlatform") {
-                                        extern bool g_traceDetectJumps;
-                                        g_traceDetectJumps = true;
                                         std::cerr << " [ENABLING JUMP TRACE]";
                                     }
                                 } else if (value.rawBits() == memory_.falseObject().rawBits()) {
@@ -7485,542 +7452,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             }
         }
     }
-
-    // TRACE: Log priority:, forkAt:, and lowIOPriority calls to trace process priority issue
-    if (selector.isObject() && selector.rawBits() > 0x10000) {
-        ObjectHeader* selHdr = selector.asObjectPtr();
-        if (selHdr->isBytesObject()) {
-            size_t selLen = selHdr->byteSize();
-            const char* selBytes = (const char*)selHdr->bytes();
-            static FILE* priLog = nullptr;
-            static int priLogCount = 0;
-            static bool priLogSetup = false;
-            if (!priLogSetup) {
-                priLog = fopen("/tmp/priority_trace.log", "w");
-                priLogSetup = true;
-            }
-
-            // Track priority: with 1 argument
-            if (selLen == 9 && memcmp(selBytes, "priority:", 9) == 0 && argCount == 1) {
-                if (priLog && priLogCount++ < 500) {
-                    Oop arg = stackValue(0);  // The priority argument
-                    Oop rcvr = stackValue(1); // The Process receiver
-                    fprintf(priLog, "[PRI-SET #%d step=%llu] priority: arg=", priLogCount, (unsigned long long)g_stepNum);
-                    if (arg.isSmallInteger()) {
-                        fprintf(priLog, "%lld", (long long)arg.asSmallInteger());
-                    } else {
-                        fprintf(priLog, "0x%llx (not SmallInt)", (unsigned long long)arg.rawBits());
-                    }
-                    fprintf(priLog, " rcvr=0x%llx", (unsigned long long)rcvr.rawBits());
-                    // Show caller method - try to find selector
-                    if (method_.isObject() && method_.rawBits() > 0x10000) {
-                        ObjectHeader* mh = method_.asObjectPtr();
-                        if (mh->isCompiledMethod()) {
-                            Oop hdr = memory_.fetchPointer(0, method_);
-                            if (hdr.isSmallInteger()) {
-                                int numLits = (hdr.asSmallInteger() >> 1) & 0x7FFF;
-                                std::string callerSel = "?";
-                                // Try last few literals to find selector Symbol
-                                for (int i = numLits; i >= std::max(1, numLits - 3); i--) {
-                                    Oop lit = memory_.fetchPointer(i, method_);
-                                    if (lit.isObject() && lit.rawBits() > 0x10000) {
-                                        ObjectHeader* lh = lit.asObjectPtr();
-                                        // Check if it's a Symbol (bytes object)
-                                        if (lh->isBytesObject() && lh->byteSize() < 60 && lh->byteSize() > 0) {
-                                            callerSel = std::string((char*)lh->bytes(), lh->byteSize());
-                                            break;
-                                        }
-                                        // Check if it's an AdditionalMethodState - look for selector slot
-                                        if ((int)lh->format() >= 1 && (int)lh->format() <= 5 && lh->slotCount() > 0) {
-                                            // First slot of AdditionalMethodState is the selector
-                                            Oop selSlot = memory_.fetchPointer(0, lit);
-                                            if (selSlot.isObject() && selSlot.rawBits() > 0x10000) {
-                                                ObjectHeader* ssh = selSlot.asObjectPtr();
-                                                if (ssh->isBytesObject() && ssh->byteSize() < 60 && ssh->byteSize() > 0) {
-                                                    callerSel = std::string((char*)ssh->bytes(), ssh->byteSize());
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                fprintf(priLog, " caller=#%s", callerSel.c_str());
-                            }
-                        }
-                    }
-                    fprintf(priLog, "\n");
-                    fflush(priLog);
-                }
-            }
-            // Track forkAt: with 1 argument
-            else if (selLen == 7 && memcmp(selBytes, "forkAt:", 7) == 0 && argCount == 1) {
-                if (priLog && priLogCount++ < 500) {
-                    Oop arg = stackValue(0);  // The priority argument
-                    fprintf(priLog, "[FORK-AT #%d step=%llu] forkAt: priority=", priLogCount, (unsigned long long)g_stepNum);
-                    if (arg.isSmallInteger()) {
-                        fprintf(priLog, "%lld", (long long)arg.asSmallInteger());
-                    } else {
-                        fprintf(priLog, "0x%llx (not SmallInt)", (unsigned long long)arg.rawBits());
-                    }
-                    fprintf(priLog, "\n");
-                    fflush(priLog);
-                }
-            }
-            // Track newProcess: (which is used in block forking)
-            else if (selLen == 11 && memcmp(selBytes, "newProcess:", 11) == 0) {
-                if (priLog && priLogCount++ < 500) {
-                    fprintf(priLog, "[NEW-PROC #%d step=%llu] newProcess: called\n", priLogCount, (unsigned long long)g_stepNum);
-                    fflush(priLog);
-                }
-            }
-            // Track forkAt:named: (2 args)
-            else if (selLen == 13 && memcmp(selBytes, "forkAt:named:", 13) == 0 && argCount == 2) {
-                if (priLog && priLogCount++ < 500) {
-                    Oop nameArg = stackValue(0);  // name (top of stack)
-                    Oop priArg = stackValue(1);   // priority
-                    fprintf(priLog, "[FORK-AT-NAMED #%d step=%llu] forkAt:named: priority=", priLogCount, (unsigned long long)g_stepNum);
-                    if (priArg.isSmallInteger()) {
-                        fprintf(priLog, "%lld", (long long)priArg.asSmallInteger());
-                    } else {
-                        fprintf(priLog, "0x%llx (not SmallInt)", (unsigned long long)priArg.rawBits());
-                    }
-                    fprintf(priLog, "\n");
-                    fflush(priLog);
-                }
-            }
-            // Track lowIOPriority (0 args) - returns from ProcessorScheduler
-            else if (selLen == 13 && memcmp(selBytes, "lowIOPriority", 13) == 0 && argCount == 0) {
-                if (priLog && priLogCount++ < 500) {
-                    Oop rcvr = stackValue(0);
-                    std::string rcvrClass = "?";
-                    if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-                        Oop cls = memory_.classOf(rcvr);
-                        if (cls.isObject() && cls.rawBits() > 0x10000) {
-                            Oop clsName = memory_.fetchPointer(6, cls);
-                            if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                                ObjectHeader* nh = clsName.asObjectPtr();
-                                if (nh->isBytesObject() && nh->byteSize() < 60) {
-                                    rcvrClass = std::string((char*)nh->bytes(), nh->byteSize());
-                                }
-                            }
-                        }
-                    }
-                    // Get calling method
-                    std::string callerSel = "?";
-                    if (method_.isObject() && method_.rawBits() > 0x10000) {
-                        ObjectHeader* mh = method_.asObjectPtr();
-                        if (mh->isCompiledMethod()) {
-                            Oop hdr = memory_.fetchPointer(0, method_);
-                            if (hdr.isSmallInteger()) {
-                                int numLits = (hdr.asSmallInteger() >> 1) & 0x7FFF;
-                                for (int i = numLits; i >= std::max(1, numLits - 3); i--) {
-                                    Oop lit = memory_.fetchPointer(i, method_);
-                                    if (lit.isObject() && lit.rawBits() > 0x10000) {
-                                        ObjectHeader* lh = lit.asObjectPtr();
-                                        if (lh->isBytesObject() && lh->byteSize() < 60 && lh->byteSize() > 0) {
-                                            callerSel = std::string((char*)lh->bytes(), lh->byteSize());
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    fprintf(priLog, "[LO-IO-PRI #%d step=%llu] lowIOPriority called on %s (0x%llx) caller=#%s\n",
-                            priLogCount, (unsigned long long)g_stepNum, rcvrClass.c_str(),
-                            (unsigned long long)rcvr.rawBits(), callerSel.c_str());
-                    fflush(priLog);
-                }
-            }
-            // Track userBackgroundPriority too
-            else if (selLen == 22 && memcmp(selBytes, "userBackgroundPriority", 22) == 0 && argCount == 0) {
-                if (priLog && priLogCount++ < 500) {
-                    fprintf(priLog, "[USER-BG-PRI #%d step=%llu] userBackgroundPriority called\n", priLogCount, (unsigned long long)g_stepNum);
-                    fflush(priLog);
-                }
-            }
-            // Track forContext:priority: (2 args)
-            else if (selLen == 19 && memcmp(selBytes, "forContext:priority:", 19) == 0 && argCount == 2) {
-                if (priLog && priLogCount++ < 500) {
-                    Oop priArg = stackValue(0);  // priority argument (top of stack)
-                    Oop ctxArg = stackValue(1);  // context argument
-                    fprintf(priLog, "[FOR-CTX-PRI #%d step=%llu] forContext:priority: pri=", priLogCount, (unsigned long long)g_stepNum);
-                    if (priArg.isSmallInteger()) {
-                        fprintf(priLog, "%lld", (long long)priArg.asSmallInteger());
-                    } else {
-                        fprintf(priLog, "0x%llx (not SmallInt)", (unsigned long long)priArg.rawBits());
-                    }
-                    fprintf(priLog, " ctx=0x%llx\n", (unsigned long long)ctxArg.rawBits());
-                    fflush(priLog);
-                }
-            }
-
-            // TRACE: UIManager and WorldRenderer startup methods
-            static FILE* uiStartLog = nullptr;
-            static int uiStartCount = 0;
-            static int uiBytesCount = 0;
-            static bool uiLogInit = false;
-            if (!uiLogInit) {
-                uiStartLog = fopen("/tmp/ui_startup.log", "w");
-                if (uiStartLog) {
-                    fprintf(uiStartLog, "[UI-TRACE] Log initialized\n");
-                    fflush(uiStartLog);
-                }
-                uiLogInit = true;
-            }
-            // Log every 100000th bytes-object selector to verify this code runs
-            if (++uiBytesCount <= 10 || (uiBytesCount % 100000 == 0)) {
-                if (uiStartLog) {
-                    std::string sel(selBytes, std::min(selLen, (size_t)30));
-                    fprintf(uiStartLog, "[UI-BYTES #%d] selector len=%zu: %s\n",
-                            uiBytesCount, selLen, sel.c_str());
-                    fflush(uiStartLog);
-                }
-            }
-            // Log ALL selectors in the critical step range 17300-18600
-            static int criticalRangeCount = 0;
-            if (g_stepNum >= 17300 && g_stepNum <= 18600 && criticalRangeCount++ < 1000) {
-                if (uiStartLog) {
-                    std::string sel(selBytes, std::min(selLen, (size_t)50));
-                    fprintf(uiStartLog, "[CRITICAL step=%llu] len=%zu selector: %s\n",
-                            (unsigned long long)g_stepNum, selLen, sel.c_str());
-                    fflush(uiStartLog);
-                }
-            }
-            // Log any selectors with lengths matching our missing ones (13=isInteractive, 36=isValidForCurrentSystemConfiguration)
-            static int len36count = 0, len13count = 0, isValidCount = 0;
-            if (selLen == 36 && ++len36count <= 20) {
-                if (uiStartLog) {
-                    std::string sel(selBytes, 36);
-                    fprintf(uiStartLog, "[LEN36 #%d] selector: %s\n", len36count, sel.c_str());
-                    fflush(uiStartLog);
-                }
-            }
-            if (selLen == 13 && ++len13count <= 20) {
-                if (uiStartLog) {
-                    std::string sel(selBytes, 13);
-                    fprintf(uiStartLog, "[LEN13 #%d] selector: %s\n", len13count, sel.c_str());
-                    fflush(uiStartLog);
-                }
-            }
-            // Log all selectors starting with "isValid"
-            if (selLen >= 7 && memcmp(selBytes, "isValid", 7) == 0 && ++isValidCount <= 50) {
-                if (uiStartLog) {
-                    std::string sel(selBytes, std::min(selLen, (size_t)50));
-                    fprintf(uiStartLog, "[ISVALID #%d step=%llu len=%zu] selector: %s\n",
-                            isValidCount, (unsigned long long)g_stepNum, selLen, sel.c_str());
-                    fflush(uiStartLog);
-                }
-            }
-            auto getReceiverClassName = [this](int argCount) -> std::string {
-                Oop rcvr = stackValue(argCount);
-                if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-                    Oop cls = memory_.classOf(rcvr);
-                    if (cls.isObject() && cls.rawBits() > 0x10000) {
-                        Oop clsName = memory_.fetchPointer(6, cls);
-                        if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                            ObjectHeader* nh = clsName.asObjectPtr();
-                            if (nh->isBytesObject() && nh->byteSize() < 60) {
-                                return std::string((char*)nh->bytes(), nh->byteSize());
-                            }
-                        }
-                    }
-                }
-                return "?";
-            };
-
-            // Track UIManager and WorldRenderer key methods
-            bool isUIMethod = (selLen == 8 && memcmp(selBytes, "activate", 8) == 0) ||
-                              (selLen == 8 && memcmp(selBytes, "default:", 8) == 0) ||
-                              (selLen == 29 && memcmp(selBytes, "forCurrentSystemConfiguration", 29) == 0) ||
-                              (selLen == 36 && memcmp(selBytes, "isValidForCurrentSystemConfiguration", 36) == 0) ||
-                              (selLen == 25 && memcmp(selBytes, "detectCorrectOneForWorld:", 25) == 0) ||
-                              (selLen == 16 && memcmp(selBytes, "isApplicableFor:", 16) == 0) ||
-                              (selLen == 14 && memcmp(selBytes, "worldRenderer:", 14) == 0) ||
-                              (selLen == 13 && memcmp(selBytes, "worldRenderer", 13) == 0) ||
-                              (selLen == 10 && memcmp(selBytes, "hasOption:", 10) == 0) ||
-                              (selLen == 13 && memcmp(selBytes, "isInteractive", 13) == 0) ||
-                              (selLen == 19 && memcmp(selBytes, "getSystemAttribute:", 19) == 0) ||
-                              (selLen == 13 && memcmp(selBytes, "allSubclasses", 13) == 0) ||
-                              (selLen == 14 && memcmp(selBytes, "detect:ifNone:", 14) == 0) ||
-                              (selLen == 8 && memcmp(selBytes, "startUp:", 8) == 0);
-
-            if (isUIMethod && uiStartLog && uiStartCount++ < 200) {
-                std::string rcvrClass = getReceiverClassName(argCount);
-                std::string selName(selBytes, selLen);
-                fprintf(uiStartLog, "[UI-START #%d step=%llu] %s >> #%s argCount=%d\n",
-                        uiStartCount, (unsigned long long)g_stepNum, rcvrClass.c_str(), selName.c_str(), argCount);
-
-                // For isApplicableFor:, log the world argument
-                if (selLen == 16 && memcmp(selBytes, "isApplicableFor:", 16) == 0 && argCount == 1) {
-                    Oop worldArg = stackValue(0);
-                    std::string worldClass = "nil";
-                    if (worldArg.isObject() && worldArg.rawBits() > 0x10000) {
-                        Oop wCls = memory_.classOf(worldArg);
-                        if (wCls.isObject()) {
-                            Oop wcName = memory_.fetchPointer(6, wCls);
-                            if (wcName.isObject() && wcName.rawBits() > 0x10000) {
-                                ObjectHeader* wnh = wcName.asObjectPtr();
-                                if (wnh->isBytesObject() && wnh->byteSize() < 60) {
-                                    worldClass = std::string((char*)wnh->bytes(), wnh->byteSize());
-                                }
-                            }
-                        }
-                    }
-                    fprintf(uiStartLog, "  -> world arg class: %s\n", worldClass.c_str());
-                }
-
-                // For hasOption:, log the option string
-                if (selLen == 10 && memcmp(selBytes, "hasOption:", 10) == 0 && argCount == 1) {
-                    Oop optArg = stackValue(0);
-                    if (optArg.isObject() && optArg.rawBits() > 0x10000) {
-                        ObjectHeader* oh = optArg.asObjectPtr();
-                        if (oh->isBytesObject() && oh->byteSize() < 60) {
-                            std::string opt((char*)oh->bytes(), oh->byteSize());
-                            fprintf(uiStartLog, "  -> option: '%s'\n", opt.c_str());
-                        }
-                    }
-                }
-
-                fflush(uiStartLog);
-            }
-        }
-    }
-
-    // CRITICAL: Detect nil selector - this should NEVER happen
-    static FILE* nilSelLog = nullptr;
-    static int nilSelCount = 0;
-    bool selectorIsNil = selector.isNil() || selector.rawBits() == memory_.nil().rawBits() ||
-                         (selector.isObject() && selector.rawBits() > 0x10000 &&
-                          selector.asObjectPtr()->classIndex() == memory_.nil().asObjectPtr()->classIndex() &&
-                          selector.asObjectPtr()->slotCount() == 0);
-    if (selectorIsNil && nilSelCount < 5) {
-        nilSelCount++;
-        if (!nilSelLog) nilSelLog = fopen("/tmp/nil_selector.log", "w");
-        if (nilSelLog) {
-            fprintf(nilSelLog, "\n[NIL-SELECTOR #%d step=%llu]\n", nilSelCount, g_stepNum);
-            fprintf(nilSelLog, "  selector oop=0x%llx\n", (unsigned long long)selector.rawBits());
-            fprintf(nilSelLog, "  argCount=%d\n", argCount);
-
-            // Current method being executed
-            fprintf(nilSelLog, "  method_=0x%llx\n", (unsigned long long)method_.rawBits());
-            if (method_.isObject() && method_.rawBits() > 0x10000) {
-                ObjectHeader* mh = method_.asObjectPtr();
-                fprintf(nilSelLog, "  method format=%d isCompiledMethod=%d\n",
-                        (int)mh->format(), mh->isCompiledMethod() ? 1 : 0);
-                if (mh->isCompiledMethod()) {
-                    // Get method selector (literal 1 or 2 depending on format)
-                    // First, get header to find numLiterals
-                    Oop header = memory_.fetchPointer(0, method_);
-                    if (header.isSmallInteger()) {
-                        int64_t hdrVal = header.asSmallInteger();
-                        int numLits = (hdrVal >> 1) & 0x7FFF;
-                        fprintf(nilSelLog, "  method numLiterals=%d\n", numLits);
-                        // Selector is usually in literal slot (numLits - 1) or (numLits - 2)
-                        if (numLits > 0) {
-                            Oop lastLit = memory_.fetchPointer(numLits, method_);
-                            if (lastLit.isObject() && lastLit.rawBits() > 0x10000) {
-                                ObjectHeader* llh = lastLit.asObjectPtr();
-                                if (llh->isBytesObject() && llh->byteSize() < 100) {
-                                    std::string litStr((char*)llh->bytes(), llh->byteSize());
-                                    fprintf(nilSelLog, "  method lastLiteral='%s'\n", litStr.c_str());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Current IP and recent bytecodes
-            fprintf(nilSelLog, "  instructionPointer_=%llu\n", instructionPointer_);
-            if (method_.isObject() && method_.rawBits() > 0x10000) {
-                ObjectHeader* mh = method_.asObjectPtr();
-                if (mh->isCompiledMethod()) {
-                    size_t bcSize = mh->byteSize();
-                    uint8_t* bcStart = mh->bytes();
-                    // Show bytecodes around current IP
-                    int64_t bcOffset = (int64_t)(instructionPointer_ - bcStart);
-                    fprintf(nilSelLog, "  bytecode offset=%lld (method size=%zu)\n", bcOffset, bcSize);
-                    // Show 10 bytes before and after current position
-                    int start = std::max(0LL, bcOffset - 10);
-                    int end = std::min((int64_t)bcSize, bcOffset + 10);
-                    fprintf(nilSelLog, "  bytecodes around IP: ");
-                    for (int i = start; i < end; i++) {
-                        if (i == bcOffset) fprintf(nilSelLog, "[");
-                        fprintf(nilSelLog, "%02x", bcStart[i]);
-                        if (i == bcOffset) fprintf(nilSelLog, "]");
-                        fprintf(nilSelLog, " ");
-                    }
-                    fprintf(nilSelLog, "\n");
-                    // Identify the bytecode that triggered this send
-                    if (bcOffset > 0 && bcOffset <= (int64_t)bcSize) {
-                        uint8_t prevByte = bcStart[bcOffset - 1];
-                        fprintf(nilSelLog, "  previous bytecode=0x%02x\n", prevByte);
-                    }
-                }
-            }
-
-            // Receiver on stack
-            Oop rcvr = stackValue(argCount);
-            fprintf(nilSelLog, "  receiver=0x%llx", (unsigned long long)rcvr.rawBits());
-            if (rcvr.isNil() || rcvr.rawBits() == memory_.nil().rawBits()) {
-                fprintf(nilSelLog, " (nil)\n");
-            } else if (rcvr.isSmallInteger()) {
-                fprintf(nilSelLog, " (SmallInteger %lld)\n", (long long)rcvr.asSmallInteger());
-            } else if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-                Oop rcvrCls = memory_.classOf(rcvr);
-                if (rcvrCls.isObject()) {
-                    Oop clsName = memory_.fetchPointer(6, rcvrCls);
-                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                        ObjectHeader* cnHdr = clsName.asObjectPtr();
-                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 100) {
-                            std::string cn((char*)cnHdr->bytes(), cnHdr->byteSize());
-                            fprintf(nilSelLog, " (%s)\n", cn.c_str());
-                        } else {
-                            fprintf(nilSelLog, " (class name not bytes)\n");
-                        }
-                    } else {
-                        fprintf(nilSelLog, " (no class name)\n");
-                    }
-                } else {
-                    fprintf(nilSelLog, " (class not object)\n");
-                }
-            } else {
-                fprintf(nilSelLog, " (unknown format)\n");
-            }
-
-            // Stack dump
-            fprintf(nilSelLog, "  stack (top 5 values):\n");
-            for (int i = 0; i < 5 && i <= argCount + 2; i++) {
-                Oop sv = stackValue(i);
-                fprintf(nilSelLog, "    [%d] 0x%llx", i, (unsigned long long)sv.rawBits());
-                if (sv.isNil() || sv.rawBits() == memory_.nil().rawBits()) {
-                    fprintf(nilSelLog, " (nil)");
-                } else if (sv.isSmallInteger()) {
-                    fprintf(nilSelLog, " (SmallInt %lld)", (long long)sv.asSmallInteger());
-                }
-                fprintf(nilSelLog, "\n");
-            }
-
-            fflush(nilSelLog);
-        }
-    }
-
-    // TRACE: Log sendSelector entry/exit at hang point or during driver install
-    static FILE* sendTraceLog = nullptr;
-    static FILE* driverSendLog = nullptr;
-    // Trace sends during driver install (steps 100K-500K) to a separate log
-    bool traceDriverSend = (g_stepNum >= 100000 && g_stepNum <= 1000000);
-    if (traceDriverSend && !driverSendLog) {
-        driverSendLog = fopen("/tmp/driver_sends.log", "w");
-    }
-    if (traceDriverSend && driverSendLog) {
-        std::string selStr = "";
-        if (selector.isObject() && selector.rawBits() > 0x10000) {
-            ObjectHeader* sh = selector.asObjectPtr();
-            if (sh->isBytesObject() && sh->byteSize() < 100) {
-                selStr = std::string((char*)sh->bytes(), sh->byteSize());
-            }
-        }
-        Oop dbgRcvr = stackValue(argCount);
-        std::string dbgRcvrClass = "<unknown>";
-        if (dbgRcvr.isNil() || dbgRcvr.rawBits() == memory_.nil().rawBits()) {
-            dbgRcvrClass = "nil";
-        } else if (dbgRcvr.isObject() && dbgRcvr.rawBits() > 0x10000) {
-            Oop dbgCls = memory_.classOf(dbgRcvr);
-            if (dbgCls.isObject()) {
-                Oop dbgClsName = memory_.fetchPointer(6, dbgCls);
-                if (dbgClsName.isObject() && dbgClsName.rawBits() > 0x10000) {
-                    ObjectHeader* dcnHdr = dbgClsName.asObjectPtr();
-                    if (dcnHdr->isBytesObject() && dcnHdr->byteSize() < 100) {
-                        dbgRcvrClass = std::string((char*)dcnHdr->bytes(), dcnHdr->byteSize());
-                    }
-                }
-            }
-        }
-        // For steps around UIProcess termination, also log active process
-        if (g_stepNum >= 350400 && g_stepNum <= 350600) {
-            Oop ap = getActiveProcess();
-            fprintf(driverSendLog, "[step %llu proc=0x%llx] %s >> #%s (args=%d)\n",
-                    g_stepNum, (unsigned long long)ap.rawBits(), dbgRcvrClass.c_str(), selStr.c_str(), argCount);
-            // If sending #value to ProcessorScheduler, dump context details
-            if (selStr == "value" && dbgRcvrClass == "ProcessorScheduler") {
-                fprintf(driverSendLog, "  *** SUSPICIOUS: #value sent to ProcessorScheduler! ***\n");
-                fprintf(driverSendLog, "  receiver oop=0x%llx\n", (unsigned long long)dbgRcvr.rawBits());
-                // Dump the current method's context
-                if (method_.isObject() && method_.rawBits() > 0x10000) {
-                    Oop mhdr = memory_.fetchPointer(0, method_);
-                    if (mhdr.isSmallInteger()) {
-                        int64_t hv = mhdr.asSmallInteger();
-                        int nLits = hv & 0x7FFF;
-                        if (nLits >= 2 && nLits < 100) {
-                            Oop selLit = memory_.fetchPointer(nLits, method_);
-                            if (selLit.isObject() && selLit.rawBits() > 0x10000) {
-                                ObjectHeader* slH = selLit.asObjectPtr();
-                                if (slH->isBytesObject() && slH->byteSize() < 200) {
-                                    std::string ms((char*)slH->bytes(), slH->byteSize());
-                                    fprintf(driverSendLog, "  currentMethod selector: #%s\n", ms.c_str());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        } else {
-            fprintf(driverSendLog, "[step %llu] %s >> #%s (args=%d)\n",
-                    g_stepNum, dbgRcvrClass.c_str(), selStr.c_str(), argCount);
-        }
-        fflush(driverSendLog);
-    }
-    bool traceThisSend = false;  // Disabled for now
-    if (traceThisSend) {
-        if (!sendTraceLog) sendTraceLog = fopen("/tmp/send_trace_hang.log", "w");
-        if (sendTraceLog) {
-            std::string selStr = "";
-            if (selector.isObject() && selector.rawBits() > 0x10000) {
-                ObjectHeader* sh = selector.asObjectPtr();
-                if (sh->isBytesObject() && sh->byteSize() < 100) {
-                    selStr = std::string((char*)sh->bytes(), sh->byteSize());
-                }
-            }
-            fprintf(sendTraceLog, "[SEND-ENTER step=%llu] #%s argCount=%d\n",
-                    g_stepNum, selStr.c_str(), argCount);
-            // Add receiver info
-            Oop dbgRcvr = stackValue(argCount);
-            std::string dbgRcvrClass = "<unknown>";
-            if (dbgRcvr.isNil() || dbgRcvr.rawBits() == memory_.nil().rawBits()) {
-                dbgRcvrClass = "nil";
-            } else if (dbgRcvr.isObject() && dbgRcvr.rawBits() > 0x10000) {
-                Oop dbgCls = memory_.classOf(dbgRcvr);
-                if (dbgCls.isObject()) {
-                    Oop dbgClsName = memory_.fetchPointer(6, dbgCls);
-                    if (dbgClsName.isObject() && dbgClsName.rawBits() > 0x10000) {
-                        ObjectHeader* dcnHdr = dbgClsName.asObjectPtr();
-                        if (dcnHdr->isBytesObject() && dcnHdr->byteSize() < 100) {
-                            dbgRcvrClass = std::string((char*)dcnHdr->bytes(), dcnHdr->byteSize());
-                        }
-                    }
-                }
-            }
-            // More details about receiver
-            fprintf(sendTraceLog, "[SEND-ENTER step=%llu] receiver: 0x%llx class: %s\n",
-                    g_stepNum, (unsigned long long)dbgRcvr.rawBits(), dbgRcvrClass.c_str());
-            if (dbgRcvr.isObject() && dbgRcvr.rawBits() > 0x10000) {
-                ObjectHeader* dbgRcvrHdr = dbgRcvr.asObjectPtr();
-                fprintf(sendTraceLog, "[SEND-ENTER step=%llu] rcvr classIdx=%u slots=%zu format=%d\n",
-                        g_stepNum, dbgRcvrHdr->classIndex(), dbgRcvrHdr->slotCount(),
-                        (int)dbgRcvrHdr->format());
-            }
-            fflush(sendTraceLog);
-        }
-    }
-
-    // TRACE: After entry point
-    if (traceThisSend && sendTraceLog) {
-        fprintf(sendTraceLog, "[SEND step=%llu] Passed entry, about to process\n", g_stepNum);
-        fflush(sendTraceLog);
-    }
-
     // Fast path: Get selector bytes without creating std::string
     const char* selBytes = nullptr;
     size_t selLen = 0;
@@ -8124,10 +7555,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     }
 
     // TRACE: After selEquals setup
-    if (traceThisSend && sendTraceLog) {
-        fprintf(sendTraceLog, "[SEND step=%llu] After selEquals setup, selLen=%zu\n", g_stepNum, selLen);
-        fflush(sendTraceLog);
-    }
 
     // DEBUG: Trace EVERY value: send to see if the function is even being called
     if (selLen == 6 && selBytes && memcmp(selBytes, "value:", 6) == 0) {
@@ -8491,12 +7918,10 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
         // Trace cull: calls to see if foundBlock is evaluated
         if (selEquals("cull:")) {
-            extern bool g_traceDetectJumps;
             static int cullTraceCount = 0;
             if (cullTraceCount++ < 10) {
                 Oop rcvr = stackValue(argCount);  // The block
                 Oop arg = stackValue(0);          // The argument
-                std::cerr << "[CULL-TRACE #" << cullTraceCount << "] cull: called at frame " << frameDepth_;
                 std::cerr << " block=0x" << std::hex << rcvr.rawBits() << std::dec;
                 if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
                     ObjectHeader* blkHdr = rcvr.asObjectPtr();
@@ -8517,24 +7942,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
         // Trace ALL sends after detect tracing is enabled
         {
-            extern bool g_traceDetectJumps;
             static int detectSendCount = 0;
-            if (g_traceDetectJumps && detectSendCount++ < 30 && frameDepth_ >= 10 && frameDepth_ <= 16) {
-                std::string selStr(selBytes, selBytes + selLen);
-                std::cerr << "[SEND-DETECT #" << detectSendCount << "] " << selStr << " (argCount=" << argCount << ") frame=" << frameDepth_;
-                // For = comparisons, trace what's being compared
-                if (selStr == "=" && argCount == 1) {
-                    Oop rcvr = stackValue(1);
-                    Oop arg = stackValue(0);
-                    std::cerr << " rcvr=";
-                    if (rcvr.isSmallInteger()) std::cerr << rcvr.asSmallInteger();
-                    else std::cerr << "0x" << std::hex << rcvr.rawBits() << std::dec;
-                    std::cerr << " arg=";
-                    if (arg.isSmallInteger()) std::cerr << arg.asSmallInteger();
-                    else std::cerr << "0x" << std::hex << arg.rawBits() << std::dec;
-                }
-                std::cerr << "\n";
-            }
         }
         // Trace do: calls - check if block argument is nil
         if (selEquals("do:") && argCount == 1) {
@@ -8774,10 +8182,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
 
         // TRACE checkpoint: before startUp: logging
-        if (traceThisSend && sendTraceLog) {
-            fprintf(sendTraceLog, "[SEND step=%llu] Before startUp: logging section\n", g_stepNum);
-            fflush(sendTraceLog);
-        }
 
         // TRACE: Log session handler iteration to understand why it stops
         if (selEquals("startup:") && argCount == 1) {
@@ -8932,10 +8336,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 std::cerr << "[STARTUP-HANDLER] Starting: " << className << "\n";
             }
             // TRACE: After startUp: handler logging
-            if (traceThisSend && sendTraceLog) {
-                fprintf(sendTraceLog, "[SEND step=%llu] After startUp: handler logging\n", g_stepNum);
-                fflush(sendTraceLog);
-            }
         }
 
         // TRACE: Track iteration flow - log do: and value: calls in the startup step range
@@ -9043,10 +8443,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
 
         // TRACE: After startupTraceLog section
-        if (traceThisSend && sendTraceLog) {
-            fprintf(sendTraceLog, "[SEND step=%llu] After startupTraceLog section\n", g_stepNum);
-            fflush(sendTraceLog);
-        }
 
         // Trace all sends before #new failure to see what's happening
         static int preNewFailSendCount = 0;
@@ -9090,10 +8486,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
 
         // TRACE: After preNewFailSendCount section
-        if (traceThisSend && sendTraceLog) {
-            fprintf(sendTraceLog, "[SEND step=%llu] After preNewFailSendCount section\n", g_stepNum);
-            fflush(sendTraceLog);
-        }
 
         // Trace process termination: log when terminate/doTermination methods are sent
         {
@@ -9215,18 +8607,9 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                           selEquals("runCategory:") || selEquals("stopCategory:");
 
         // TRACE: After interesting check
-        if (traceThisSend && sendTraceLog) {
-            fprintf(sendTraceLog, "[SEND step=%llu] After interesting check, interesting=%s\n",
-                    g_stepNum, interesting ? "true" : "false");
-            fflush(sendTraceLog);
-        }
 
         if (interesting && startupTraceLog && startupTraceCount < 5000) {
             // TRACE: Inside interesting logging section
-            if (traceThisSend && sendTraceLog) {
-                fprintf(sendTraceLog, "[SEND step=%llu] INSIDE interesting logging section\n", g_stepNum);
-                fflush(sendTraceLog);
-            }
             startupTraceCount++;
             // Get receiver class name - handle both instances and class objects
             std::string rcvrClassName = "<unknown>";
@@ -9757,18 +9140,10 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             }
 
             // TRACE: Before startUp: detail section
-            if (traceThisSend && sendTraceLog) {
-                fprintf(sendTraceLog, "[SEND step=%llu] Before startUp: detail section\n", g_stepNum);
-                fflush(sendTraceLog);
-            }
 
             // Extra detail for startUp: - show the argument and receiver info
             if (selEquals("startUp:") && argCount == 1) {
                 // TRACE: Entering startUp: detail block
-                if (traceThisSend && sendTraceLog) {
-                    fprintf(sendTraceLog, "[SEND step=%llu] startUp: detail - getting args\n", g_stepNum);
-                    fflush(sendTraceLog);
-                }
                 Oop arg = stackValue(0);
                 Oop rcvr = stackValue(1);
                 if (arg.rawBits() == memory_.trueObject().rawBits()) {
@@ -9777,38 +9152,19 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                     fprintf(startupTraceLog, "  -> arg: false (isImageStarting)\n");
                 }
                 // TRACE: After arg comparison
-                if (traceThisSend && sendTraceLog) {
-                    fprintf(sendTraceLog, "[SEND step=%llu] startUp: detail - after arg compare, rcvr=0x%llx\n",
-                            g_stepNum, (unsigned long long)rcvr.rawBits());
-                    fflush(sendTraceLog);
-                }
                 // Dump receiver info for debugging class lookup
                 if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
                     ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
                     uint32_t classIdx = rcvrHdr->classIndex();
                     // TRACE: Before classAtIndex
-                    if (traceThisSend && sendTraceLog) {
-                        fprintf(sendTraceLog, "[SEND step=%llu] startUp: detail - calling classAtIndex(%u)\n",
-                                g_stepNum, classIdx);
-                        fflush(sendTraceLog);
-                    }
                     Oop cls = memory_.classAtIndex(classIdx);
                     // TRACE: After classAtIndex
-                    if (traceThisSend && sendTraceLog) {
-                        fprintf(sendTraceLog, "[SEND step=%llu] startUp: detail - classAtIndex returned 0x%llx\n",
-                                g_stepNum, (unsigned long long)cls.rawBits());
-                        fflush(sendTraceLog);
-                    }
                     fprintf(startupTraceLog, "  -> receiver classIdx=%u classOop=0x%llx\n",
                             classIdx, (unsigned long long)cls.rawBits());
                     // Try to get the actual class by following the object's classIndex
                     // The classAtIndex returns what's in the class table, but maybe
                     // the REAL class is found via classOf() which uses the object's header
                     // TRACE: Before classOf
-                    if (traceThisSend && sendTraceLog) {
-                        fprintf(sendTraceLog, "[SEND step=%llu] startUp: detail - calling classOf\n", g_stepNum);
-                        fflush(sendTraceLog);
-                    }
                     Oop realClass = memory_.classOf(rcvr);
                     fprintf(startupTraceLog, "  -> classOf(rcvr)=0x%llx (via header classIdx)\n",
                             (unsigned long long)realClass.rawBits());
@@ -9822,19 +9178,11 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                         // Dump first 10 slots to see what's there
                         fprintf(startupTraceLog, "  -> Dumping first 10 slots of class object:\n");
                         // TRACE: Before slot dump loop
-                        if (traceThisSend && sendTraceLog) {
-                            fprintf(sendTraceLog, "[SEND step=%llu] startUp: detail - before slot dump loop\n", g_stepNum);
-                            fflush(sendTraceLog);
-                        }
                         Oop* slots = reinterpret_cast<Oop*>(realClsHdr + 1);
                         size_t maxSlots = realClsHdr->slotCount();
                         if (maxSlots > 10) maxSlots = 10;  // Cap at 10 for debug output
                         for (size_t s = 0; s < maxSlots; s++) {
                             // TRACE: Each iteration
-                            if (traceThisSend && sendTraceLog) {
-                                fprintf(sendTraceLog, "[SEND step=%llu] slot dump iteration %zu\n", g_stepNum, s);
-                                fflush(sendTraceLog);
-                            }
                             Oop slot = slots[s];
                             std::string desc = "?";
                             if (slot.isNil()) {
@@ -9845,29 +9193,13 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                                 desc = buf;
                             } else if (slot.isObject() && slot.rawBits() > 0x10000) {
                                 // TRACE: Object branch
-                                if (traceThisSend && sendTraceLog) {
-                                    fprintf(sendTraceLog, "[SEND step=%llu] slot %zu is object 0x%llx\n", g_stepNum, s, (unsigned long long)slot.rawBits());
-                                    fflush(sendTraceLog);
-                                }
                                 ObjectHeader* sHdr = slot.asObjectPtr();
                                 // TRACE: Before slotCount
-                                if (traceThisSend && sendTraceLog) {
-                                    fprintf(sendTraceLog, "[SEND step=%llu] slot %zu getting slotCount\n", g_stepNum, s);
-                                    fflush(sendTraceLog);
-                                }
                                 desc = "<obj slots=" + std::to_string(sHdr->slotCount()) + ">";
                                 // Check if bytes object (likely a name)
                                 // TRACE: Before isBytesObject
-                                if (traceThisSend && sendTraceLog) {
-                                    fprintf(sendTraceLog, "[SEND step=%llu] slot %zu checking isBytesObject\n", g_stepNum, s);
-                                    fflush(sendTraceLog);
-                                }
                                 if (sHdr->isBytesObject() && sHdr->byteSize() < 80) {
                                     // TRACE: Before bytes()
-                                    if (traceThisSend && sendTraceLog) {
-                                        fprintf(sendTraceLog, "[SEND step=%llu] slot %zu reading bytes\n", g_stepNum, s);
-                                        fflush(sendTraceLog);
-                                    }
                                     desc = "'" + std::string((char*)sHdr->bytes(), sHdr->byteSize()) + "'";
                                 }
                             }
@@ -9875,10 +9207,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                                     s, (unsigned long long)slots[s].rawBits(), desc.c_str());
                         }
                         // TRACE: After slot dump loop
-                        if (traceThisSend && sendTraceLog) {
-                            fprintf(sendTraceLog, "[SEND step=%llu] startUp: detail - after slot dump loop\n", g_stepNum);
-                            fflush(sendTraceLog);
-                        }
                     }
                     // Also check what's in the class table
                     if (cls.isObject() && cls.rawBits() > 0x10000) {
@@ -9919,10 +9247,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             }
 
             // TRACE: After startUp: detail section
-            if (traceThisSend && sendTraceLog) {
-                fprintf(sendTraceLog, "[SEND step=%llu] After startUp: detail section\n", g_stepNum);
-                fflush(sendTraceLog);
-            }
 
             // Extra detail for flatCollect: - dump the receiver collection
             if (selEquals("flatCollect:") && argCount == 1) {
@@ -10118,10 +9442,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     }
 
     // TRACE: After interesting logging section
-    if (traceThisSend && sendTraceLog) {
-        fprintf(sendTraceLog, "[SEND step=%llu] After interesting logging section\n", g_stepNum);
-        fflush(sendTraceLog);
-    }
 
     // TRACE: Log ALL sends in a window around driver startUp:
     if (false) { // Step trace disabled
@@ -10234,11 +9554,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                     fprintf(stderr, "  -> resuming = 0x%llx (unknown)\n", arg.rawBits());
                 }
             }
-        }
-        if (traceThisSend && sendTraceLog) {
-            fprintf(sendTraceLog, "[SEND step=%llu] startUp: NOT skipped for class %s\n",
-                    g_stepNum, rcvrClassName.c_str());
-            fflush(sendTraceLog);
         }
     }
 
@@ -10388,21 +9703,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     // Note: The actual nil object (UndefinedObject) CAN receive messages!
     // Only reject raw 0 which indicates corrupted state
     if (rcvr.rawBits() == 0) {
-        static int corruptCount = 0;
-        if (++corruptCount <= 5) {
-            std::cerr << "[CORRUPT] Send #" << selStr << " to raw 0 - corrupted state\n";
-            // Show calling context
-            std::cerr << "  Stack depth=" << (stackPointer_ - stackBase_)
-                      << " frameDepth=" << frameDepth_ << "\n";
-            std::cerr << "  receiver_=0x" << std::hex << receiver_.rawBits() << std::dec << "\n";
-            // Check what's on the stack
-            for (int i = 0; i < 5 && stackPointer_ - i > stackBase_; i++) {
-                Oop val = *(stackPointer_ - i);
-                std::cerr << "  stack[-" << i << "]=0x" << std::hex << val.rawBits() << std::dec << "\n";
-            }
-        } else if (corruptCount == 6) {
-            std::cerr << "[CORRUPT] (suppressing further messages...)\n";
-        }
         Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
         popN(argCount + 1);
         push(nilObj);
@@ -10411,126 +9711,10 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
 
-    // TRACE: When sending to nil, log the calling context
-    if (rcvr.rawBits() == nilObj.rawBits() && selector.isObject()) {
-        static FILE* nilSendLog = nullptr;
-        static int nilSendCount = 0;
-        if constexpr (ENABLE_DEBUG_LOGGING) {
-            if (!nilSendLog) nilSendLog = fopen("/tmp/nil_send_trace.log", "w");
-        }
-        if (nilSendLog && nilSendCount < 30) {
-            ObjectHeader* selHdr = selector.asObjectPtr();
-            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                std::string selStr((char*)selHdr->bytes(), selHdr->byteSize());
-                // Log sends to nil with calling method info
-                nilSendCount++;
-                fprintf(nilSendLog, "\n[NIL-SEND #%d] #%s sent to nil\n", nilSendCount, selStr.c_str());
-                // Get calling method selector
-                std::string callerSel = "<unknown>";
-                if (method_.isObject() && method_.rawBits() > 0x10000) {
-                    ObjectHeader* mHdr = method_.asObjectPtr();
-                    Oop hdr = memory_.fetchPointer(0, method_);
-                    if (hdr.isSmallInteger()) {
-                        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                        if (numLits >= 2) {
-                            Oop penult = memory_.fetchPointer(numLits - 1, method_);
-                            if (penult.isObject() && penult.rawBits() > 0x10000) {
-                                ObjectHeader* penHdr = penult.asObjectPtr();
-                                if (penHdr->isBytesObject() && penHdr->byteSize() < 50) {
-                                    callerSel = std::string((char*)penHdr->bytes(), penHdr->byteSize());
-                                }
-                            }
-                        }
-                    }
-                }
-                fprintf(nilSendLog, "  Called from method: #%s\n", callerSel.c_str());
-                fprintf(nilSendLog, "  receiver_=0x%llx frameDepth=%zu\n",
-                        (unsigned long long)receiver_.rawBits(), frameDepth_);
-                // Show stack around the call
-                fprintf(nilSendLog, "  Stack (top 5): ");
-                for (int i = 0; i < 5 && stackPointer_ - i > stackBase_; i++) {
-                    Oop val = *(stackPointer_ - i);
-                    fprintf(nilSendLog, "0x%llx ", (unsigned long long)val.rawBits());
-                }
-                fprintf(nilSendLog, "\n");
-                // For startup: specifically, show more detailed call stack
-                if (selStr == "startup:") {
-                    fprintf(nilSendLog, "  Full call stack:\n");
-                    for (size_t d = 0; d < frameDepth_ && d < 15; d++) {
-                        SavedFrame& sf = savedFrames_[frameDepth_ - 1 - d];
-                        std::string frameSel = "<unknown>";
-                        if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
-                            ObjectHeader* fmHdr = sf.savedMethod.asObjectPtr();
-                            Oop fhdr = memory_.fetchPointer(0, sf.savedMethod);
-                            if (fhdr.isSmallInteger()) {
-                                size_t fnLits = fhdr.asSmallInteger() & 0x7FFF;
-                                if (fnLits >= 2) {
-                                    Oop fpenult = memory_.fetchPointer(fnLits - 1, sf.savedMethod);
-                                    if (fpenult.isObject()) {
-                                        ObjectHeader* fpH = fpenult.asObjectPtr();
-                                        if (fpH->isBytesObject() && fpH->byteSize() < 50) {
-                                            frameSel = std::string((char*)fpH->bytes(), fpH->byteSize());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        std::string frameRcvrClass = "<unknown>";
-                        if (sf.savedReceiver.isObject()) {
-                            Oop frc = memory_.classOf(sf.savedReceiver);
-                            if (frc.isObject()) {
-                                Oop frcName = memory_.fetchPointer(6, frc);
-                                if (frcName.isObject() && frcName.rawBits() > 0x10000) {
-                                    ObjectHeader* frnH = frcName.asObjectPtr();
-                                    if (frnH->isBytesObject() && frnH->byteSize() < 50) {
-                                        frameRcvrClass = std::string((char*)frnH->bytes(), frnH->byteSize());
-                                    }
-                                }
-                            }
-                        }
-                        fprintf(nilSendLog, "    [%zu] %s >> #%s\n", d, frameRcvrClass.c_str(), frameSel.c_str());
-                    }
-                    // Show temps of current frame
-                    fprintf(nilSendLog, "  Temps (0-5): ");
-                    for (int t = 0; t < 6; t++) {
-                        Oop temp = *(framePointer_ + 1 + t);
-                        fprintf(nilSendLog, "0x%llx ", (unsigned long long)temp.rawBits());
-                    }
-                    fprintf(nilSendLog, "\n");
-                }
-                fflush(nilSendLog);
-            }
-        }
-    }
 
     // Determine receiver's class
     Oop rcvrClass = memory_.classOf(rcvr);
 
-    // Debug: trace when rcvrClass is the nil object itself (wrong)
-    static int nilClassDebugCount = 0;
-    if (rcvrClass.rawBits() == nilObj.rawBits() && nilClassDebugCount++ < 5) {
-        uint32_t rcvrClassIdx = 0;
-        if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-            ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
-            rcvrClassIdx = rcvrHdr->classIndex();
-            std::cerr << "[SEND-NIL-CLASS #" << nilClassDebugCount << "] rcvr=0x" << std::hex << rcvr.rawBits()
-                      << " rcvrClass=0x" << rcvrClass.rawBits() << std::dec
-                      << " rcvr.classIdx=" << rcvrClassIdx
-                      << " fmt=" << static_cast<int>(rcvrHdr->format())
-                      << " slots=" << rcvrHdr->slotCount();
-
-            // Re-fetch class to verify class table
-            Oop directClass = memory_.classAtIndex(rcvrClassIdx);
-            std::cerr << " directLookup=0x" << std::hex << directClass.rawBits() << std::dec;
-            if (directClass.rawBits() != rcvrClass.rawBits()) {
-                std::cerr << " MISMATCH!";
-            }
-            std::cerr << "\n";
-        } else {
-            std::cerr << "[SEND-NIL-CLASS #" << nilClassDebugCount << "] rcvr=0x" << std::hex << rcvr.rawBits()
-                      << " NOT OBJECT\n";
-        }
-    }
 
     // Check for invalid class (can happen with corrupted state)
     if (rcvrClass.rawBits() == 0) {
@@ -10589,10 +9773,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     }
 
     // TRACE: Before cache check
-    if (traceThisSend && sendTraceLog) {
-        fprintf(sendTraceLog, "[SEND step=%llu] About to check method cache\n", g_stepNum);
-        fflush(sendTraceLog);
-    }
 
     // TARGETED TRACE: visitNode: sends to OCMethodNode
     static int visitNodeSendTraceCount = 0;
@@ -11024,50 +10204,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 fprintf(stderr, "[NORMALIZE] called step=%llu\n", (unsigned long long)g_stepNum);
             }
         }
-        if (selStr == "asSeconds") {
-            static int asSecCount = 0;
-            if (asSecCount++ < 10) {
-                Oop r = stackValue(argCount);
-                std::string rcvrCls = "?";
-                if (r.isSmallInteger()) rcvrCls = "SmallInteger";
-                else if (r.isObject() && memory_.isValidPointer(r)) {
-                    Oop cls = memory_.classOf(r);
-                    if (cls.isObject() && memory_.isValidPointer(cls)) {
-                        Oop nm = memory_.fetchPointer(6, cls);
-                        if (nm.isObject() && memory_.isValidPointer(nm)) {
-                            ObjectHeader* nh = nm.asObjectPtr();
-                            if (nh->isBytesObject() && nh->byteSize() < 50)
-                                rcvrCls = std::string((char*)nh->bytes(), nh->byteSize());
-                        }
-                    }
-                }
-                fprintf(stderr, "[AS-SECONDS] rcvrClass=%s rcvr=0x%llx step=%llu\n",
-                        rcvrCls.c_str(), (unsigned long long)r.rawBits(), (unsigned long long)g_stepNum);
-            }
-        }
-        if (selStr == "primitiveResume" || selStr == "resume") {
-            static FILE* primDetLog = nullptr;
-            static int primDetCount = 0;
-            if (!primDetLog) primDetLog = fopen("/tmp/prim_detect.log", "w");
-            if (primDetLog && primDetCount++ < 50) {
-                fprintf(primDetLog, "[PRIM-DETECT #%d] selector=%s primIndex=%d\n",
-                        primDetCount, selStr.c_str(), primIndex);
-                // Also dump method bytecodes
-                if (method.isObject() && method.rawBits() > 0x10000) {
-                    Oop hdr = memory_.fetchPointer(0, method);
-                    if (hdr.isSmallInteger()) {
-                        int64_t bits = hdr.asSmallInteger();
-                        int nLits = bits & 0x7FFF;
-                        bool hasPrim = (bits >> 30) & 1;
-                        ObjectHeader* mObj = method.asObjectPtr();
-                        uint8_t* bc = mObj->bytes() + (1 + nLits) * 8;
-                        fprintf(primDetLog, "  nLits=%d hasPrim=%d bc[0..5]=%02x %02x %02x %02x %02x %02x\n",
-                                nLits, hasPrim ? 1 : 0, bc[0], bc[1], bc[2], bc[3], bc[4], bc[5]);
-                    }
-                }
-                fflush(primDetLog);
-            }
-        }
     }
 
     if (primIndex > 0) {
@@ -11115,18 +10251,10 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     }
 
     // TRACE: activateMethod at hang point
-    if (traceThisSend && sendTraceLog) {
-        fprintf(sendTraceLog, "[SEND step=%llu] About to call activateMethod\n", g_stepNum);
-        fflush(sendTraceLog);
-    }
 
     activateMethod(method, argCount);
 
     // TRACE: After activateMethod (should always reach here unless something is very wrong)
-    if (traceThisSend && sendTraceLog) {
-        fprintf(sendTraceLog, "[SEND step=%llu] activateMethod returned\n", g_stepNum);
-        fflush(sendTraceLog);
-    }
 }
 
 // ===== METHOD LOOKUP =====
@@ -11605,29 +10733,11 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         }
     }
     // TRACE: activateMethod entry
-    bool traceActivate = (g_stepNum >= 162000 && g_stepNum <= 163000);
-    static FILE* activateLog = nullptr;
-    if (traceActivate && !activateLog) {
-        activateLog = fopen("/tmp/activate_trace.log", "w");
-    }
-    if (traceActivate && activateLog) {
-        fprintf(activateLog, "[ACTIVATE step=%llu] method=0x%llx argCount=%d\n",
-                g_stepNum, (unsigned long long)method.rawBits(), argCount);
-        fflush(activateLog);
-    }
 
     // Save current state
-    if (traceActivate && activateLog) {
-        fprintf(activateLog, "[ACTIVATE step=%llu] Before pushFrame\n", g_stepNum);
-        fflush(activateLog);
-    }
 
     if (!pushFrame(method, argCount)) {
         // pushFrame detected recursion and already handled it
-        if (traceActivate && activateLog) {
-            fprintf(activateLog, "[ACTIVATE step=%llu] pushFrame returned false\n", g_stepNum);
-            fflush(activateLog);
-        }
         return;
     }
 
@@ -11795,24 +10905,12 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         }
     }
 
-    if (traceActivate && activateLog) {
-        fprintf(activateLog, "[ACTIVATE step=%llu] After pushFrame\n", g_stepNum);
-        fflush(activateLog);
-    }
 
     // Set up new method
-    if (traceActivate && activateLog) {
-        fprintf(activateLog, "[ACTIVATE step=%llu] Setting method_\n", g_stepNum);
-        fflush(activateLog);
-    }
     method_ = method;
     argCount_ = argCount;
     closure_ = memory_.nil();  // Method activations have no closure
 
-    if (traceActivate && activateLog) {
-        fprintf(activateLog, "[ACTIVATE step=%llu] Determining homeMethod_\n", g_stepNum);
-        fflush(activateLog);
-    }
     // Determine homeMethod_ based on whether this is a CompiledMethod or CompiledBlock
     // CompiledMethod (class index 3101): homeMethod_ = method
     // CompiledBlock (class index 3117): homeMethod_ = slot 0 (the home method)
@@ -11859,31 +10957,15 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         homeMethod_ = method;
     }
 
-    if (traceActivate && activateLog) {
-        fprintf(activateLog, "[ACTIVATE step=%llu] After homeMethod_ setup\n", g_stepNum);
-        fflush(activateLog);
-    }
 
     // Get receiver from stack (now in the frame)
     receiver_ = argument(0);  // First "argument" slot is actually receiver
 
-    if (traceActivate && activateLog) {
-        fprintf(activateLog, "[ACTIVATE step=%llu] Got receiver, about to debug logging\n", g_stepNum);
-        fflush(activateLog);
-    }
 
     // Trace fullCheck activation specifically (disabled for performance)
     if constexpr (ENABLE_DEBUG_LOGGING) {
         // TRACE: Inside debug logging
-        if (traceActivate && activateLog) {
-            fprintf(activateLog, "[ACTIVATE step=%llu] Inside ENABLE_DEBUG_LOGGING\n", g_stepNum);
-            fflush(activateLog);
-        }
         std::string methodSelector = "";
-        if (traceActivate && activateLog) {
-            fprintf(activateLog, "[ACTIVATE step=%llu] About to get methodSelector\n", g_stepNum);
-            fflush(activateLog);
-        }
         if (method.isObject() && method.rawBits() > 0x10000) {
             Oop hdr = memory_.fetchPointer(0, method);
             if (hdr.isSmallInteger()) {
@@ -11901,10 +10983,6 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                     }
                 }
             }
-        }
-        if (traceActivate && activateLog) {
-            fprintf(activateLog, "[ACTIVATE step=%llu] Got methodSelector: %s\n", g_stepNum, methodSelector.c_str());
-            fflush(activateLog);
         }
         if (methodSelector == "fullCheck") {
             static FILE* fcActivateLog = nullptr;
@@ -11939,10 +11017,6 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             }
         }
         // TRACE: After fullCheck section
-        if (traceActivate && activateLog) {
-            fprintf(activateLog, "[ACTIVATE step=%llu] After fullCheck section\n", g_stepNum);
-            fflush(activateLog);
-        }
     }
 
     // Trace method activation to debug SessionManager default (disabled for performance)
@@ -11950,24 +11024,12 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     [[maybe_unused]] static int actCount = 0;
     if constexpr (ENABLE_DEBUG_LOGGING) {
     // TRACE: Enter SessionManager section
-    if (traceActivate && activateLog) {
-        fprintf(activateLog, "[ACTIVATE step=%llu] Enter SessionManager section\n", g_stepNum);
-        fflush(activateLog);
-    }
     if (!actLog) actLog = fopen("/tmp/method_activation.log", "w");
     if (actLog && actCount < 200) {
         // TRACE: Inside actLog && actCount condition
-        if (traceActivate && activateLog) {
-            fprintf(activateLog, "[ACTIVATE step=%llu] Inside actLog section\n", g_stepNum);
-            fflush(activateLog);
-        }
         // Get method selector for logging
         std::string selStr = "<unknown>";
         // TRACE: Getting selStr
-        if (traceActivate && activateLog) {
-            fprintf(activateLog, "[ACTIVATE step=%llu] Getting selStr\n", g_stepNum);
-            fflush(activateLog);
-        }
         if (method.isObject()) {
             ObjectHeader* mHdr = method.asObjectPtr();
             if (mHdr->slotCount() > 1) {
@@ -11981,36 +11043,16 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             }
         }
         // TRACE: Got selStr
-        if (traceActivate && activateLog) {
-            fprintf(activateLog, "[ACTIVATE step=%llu] Got selStr: %s\n", g_stepNum, selStr.c_str());
-            fflush(activateLog);
-        }
         // Check if receiver is SessionManager
         std::string rcvrName = "<unknown>";
         // TRACE: Getting rcvrName
-        if (traceActivate && activateLog) {
-            fprintf(activateLog, "[ACTIVATE step=%llu] Getting rcvrName\n", g_stepNum);
-            fflush(activateLog);
-        }
         if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
             ObjectHeader* rcvrHdr = receiver_.asObjectPtr();
             // TRACE: rcvrHdr info
-            if (traceActivate && activateLog) {
-                fprintf(activateLog, "[ACTIVATE step=%llu] rcvrHdr slotCount=%zu\n", g_stepNum, rcvrHdr->slotCount());
-                fflush(activateLog);
-            }
             if (rcvrHdr->slotCount() >= 7) {
                 // TRACE: Fetching slot 6
-                if (traceActivate && activateLog) {
-                    fprintf(activateLog, "[ACTIVATE step=%llu] Fetching slot 6 from receiver\n", g_stepNum);
-                    fflush(activateLog);
-                }
                 Oop nameOop = memory_.fetchPointer(6, receiver_);
                 // TRACE: Got slot 6
-                if (traceActivate && activateLog) {
-                    fprintf(activateLog, "[ACTIVATE step=%llu] Got slot 6: 0x%llx\n", g_stepNum, (unsigned long long)nameOop.rawBits());
-                    fflush(activateLog);
-                }
                 // Validate nameOop is in valid heap range before dereferencing
                 if (nameOop.isObject() && nameOop.rawBits() > 0x10000 &&
                     memory_.isValidObject(nameOop)) {
@@ -12023,10 +11065,6 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             // Also get class name for non-class receivers
             if (rcvrName == "<unknown>") {
                 // TRACE: Getting class name
-                if (traceActivate && activateLog) {
-                    fprintf(activateLog, "[ACTIVATE step=%llu] Getting class name\n", g_stepNum);
-                    fflush(activateLog);
-                }
                 Oop cls = memory_.classOf(receiver_);
                 if (cls.isObject()) {
                     Oop clsName = memory_.fetchPointer(6, cls);
@@ -12215,24 +11253,7 @@ void Interpreter::activateBlock(Oop block, int argCount) {
             if (lastLit.isObject() && lastLit.rawBits() > 0x10000) {
                 ObjectHeader* lastLitHdr = lastLit.asObjectPtr();
                 if (lastLitHdr->isCompiledMethod()) {
-                    homeMethodForNLR = lastLit;  // Store for later use in home frame detection
-                } else {
-                    // TRACE: last literal is NOT a CompiledMethod
-                    static int notCMCount = 0;
-                    if (notCMCount++ < 20) {
-                        std::cerr << "[NLR-NOTCM] CompiledBlock 0x" << std::hex << compiledBlock.rawBits()
-                                  << " lastLit=0x" << lastLit.rawBits() << std::dec
-                                  << " format=" << (int)lastLitHdr->format()
-                                  << " numLits=" << numLiterals << "\n";
-                    }
-                }
-            } else {
-                // TRACE: last literal is not an object or too small
-                static int notObjCount = 0;
-                if (notObjCount++ < 20) {
-                    std::cerr << "[NLR-NOTOBJ] CompiledBlock 0x" << std::hex << compiledBlock.rawBits()
-                              << " lastLit=0x" << lastLit.rawBits() << std::dec
-                              << " isObj=" << lastLit.isObject() << " numLits=" << numLiterals << "\n";
+                    homeMethodForNLR = lastLit;
                 }
             }
         }
@@ -12410,7 +11431,6 @@ void Interpreter::activateBlock(Oop block, int argCount) {
                     }
                 }
             }
-            // No counter limit - only fires for specific methods
             if (homeMethodName.find("anySatisfy") != std::string::npos ||
                 homeMethodName.find("allSatisfy") != std::string::npos ||
                 homeMethodName.find("noneSatisfy") != std::string::npos ||
@@ -15155,31 +14175,6 @@ Oop Interpreter::materializeFrameStack() {
                 if (matPrimIdx0 == 198) {
                     static int matEnsure0Count = 0;
                     matEnsure0Count++;
-                    if (matEnsure0Count <= 30) {
-                        auto getClassName0 = [&](Oop obj) -> std::string {
-                            if (obj.isNil()) return "nil";
-                            if (obj.isSmallInteger()) return "SmallInteger";
-                            if (!obj.isObject() || obj.rawBits() < 0x10000) return "???";
-                            Oop cls = memory_.classOf(obj);
-                            if (!cls.isObject()) return "?cls";
-                            Oop cn = memory_.fetchPointer(6, cls);
-                            if (cn.isObject() && cn.rawBits() > 0x10000) {
-                                ObjectHeader* cnH = cn.asObjectPtr();
-                                if (cnH->isBytesObject() && cnH->byteSize() < 80)
-                                    return std::string((char*)cnH->bytes(), cnH->byteSize());
-                            }
-                            return "?name";
-                        };
-                        fprintf(stderr, "[MAT-ENSURE-FD0 #%d step=%llu] numItems=%d\n",
-                                matEnsure0Count, (unsigned long long)g_stepNum, numItems);
-                        for (int i = 0; i < std::min(numItems, 6); i++) {
-                            Oop val = *(framePointer_ + 1 + i);
-                            fprintf(stderr, "  FP[%d]=%s(0x%llx)\n",
-                                    i+1, getClassName0(val).c_str(),
-                                    (unsigned long long)val.rawBits());
-                        }
-                        fflush(stderr);
-                    }
                 }
             }
         }
@@ -15375,35 +14370,6 @@ Oop Interpreter::materializeFrameStack() {
                 if (matPrimIdx == 198) {
                     static int matEnsureCount = 0;
                     matEnsureCount++;
-                    if (matEnsureCount <= 30) {
-                        fprintf(stderr, "[MAT-ENSURE #%d step=%llu] Frame %zu: numTemps=%d numArgs=%d\n",
-                                matEnsureCount, (unsigned long long)g_stepNum, i, numTemps, numArgs);
-                        auto getClassName2 = [&](Oop obj) -> std::string {
-                            if (obj.isNil()) return "nil";
-                            if (obj.isSmallInteger()) return "SmallInteger";
-                            if (!obj.isObject() || obj.rawBits() < 0x10000) return "???";
-                            Oop cls = memory_.classOf(obj);
-                            if (!cls.isObject()) return "?cls";
-                            Oop cn = memory_.fetchPointer(6, cls);
-                            if (cn.isObject() && cn.rawBits() > 0x10000) {
-                                ObjectHeader* cnH = cn.asObjectPtr();
-                                if (cnH->isBytesObject() && cnH->byteSize() < 80)
-                                    return std::string((char*)cnH->bytes(), cnH->byteSize());
-                            }
-                            return "?name";
-                        };
-                        // Dump receiver + first few temps from the C++ stack
-                        fprintf(stderr, "  savedFP[0](rcvr)=%s(0x%llx)\n",
-                                getClassName2(*(frame.savedFP)).c_str(),
-                                (unsigned long long)(*(frame.savedFP)).rawBits());
-                        for (int t = 0; t < std::min(numTemps, 6); t++) {
-                            Oop val = *(frame.savedFP + 1 + t);
-                            fprintf(stderr, "  savedFP[%d](temp%d)=%s(0x%llx)\n",
-                                    t+1, t, getClassName2(val).c_str(),
-                                    (unsigned long long)val.rawBits());
-                        }
-                        fflush(stderr);
-                    }
                 }
             }
 
