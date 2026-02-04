@@ -40,13 +40,6 @@ FILE* g_sendTraceFile = nullptr;
 
 // REMOVED: g_debugPendingFlag (was for workaround code)
 
-// File-scope variables for fullCheck bytecode tracing
-static bool g_inFullCheck = false;
-static int g_fullCheckBytecodeCount = 0;
-
-// Global flag to enable bytecode tracing after a certain send count
-static bool g_bytecodeTraceEnabled = false;
-static int g_bytecodeTraceCount = 0;
 uint64_t g_stepNum = 0;  // Global step counter for hang debugging (non-static for use in Primitives.cpp)
 uint64_t g_docwMethodOop = 0;  // Method OID for doOneCycleWhile: (set by executeFromContext)
 int g_docwRestoreCount = 0;     // How many times doOneCycleWhile: has been restored
@@ -3189,166 +3182,6 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
     // Record bytecode in history buffer for debugging
     recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode;
     recentBytecodeIdx_++;
-
-    // Trace base frame (depth 0) to see what method is running there
-    static FILE* baseFrameBcLog = nullptr;
-    static int baseBcCount = 0;
-    static bool loggedBaseDump = false;
-    if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!baseFrameBcLog) baseFrameBcLog = fopen("/tmp/base_fullcheck.log", "w");
-    }
-
-    // Trace doOneCycleWhile: bytecodes to understand loop exit
-    // Uses g_docwMethodOop set by executeFromContext when restoring doOneCycleWhile:
-    {
-        extern uint64_t g_docwMethodOop;
-        extern int g_docwRestoreCount;
-        static FILE* docwBcLog = nullptr;
-        static int docwBcCount = 0;
-        static bool docwTracing = false;
-        if constexpr (ENABLE_DEBUG_LOGGING) {
-            if (!docwBcLog) docwBcLog = fopen("/tmp/doOneCycleWhile_bytecodes.log", "w");
-        }
-        // Start tracing on the second restore of doOneCycleWhile:
-        if (!docwTracing && g_docwRestoreCount >= 2 && g_docwMethodOop != 0 && docwBcLog) {
-            docwTracing = true;
-            g_docwRestoreCount = 0;  // reset so we don't re-trigger
-            fprintf(docwBcLog, "[DOCW-BC step=%lld] === Start tracing ===\n", (long long)g_stepNum);
-            fflush(docwBcLog);
-        }
-        if (docwTracing && docwBcLog && docwBcCount < 500) {
-            docwBcCount++;
-            Oop stackTop = (stackPointer_ > stackBase_) ? *(stackPointer_ - 1) : Oop();
-            std::string topDesc = "empty";
-            if (stackPointer_ > stackBase_) {
-                if (stackTop.rawBits() == memory_.trueObject().rawBits()) topDesc = "TRUE";
-                else if (stackTop.rawBits() == memory_.falseObject().rawBits()) topDesc = "FALSE";
-                else if (stackTop.rawBits() == memory_.nil().rawBits()) topDesc = "nil";
-                else if (stackTop.isSmallInteger()) topDesc = "SI(" + std::to_string(stackTop.asSmallInteger()) + ")";
-                else {
-                    char buf[64]; snprintf(buf, sizeof(buf), "obj:0x%llx", (unsigned long long)stackTop.rawBits());
-                    topDesc = buf;
-                }
-            }
-            bool inDocw = (method_.rawBits() == g_docwMethodOop);
-            fprintf(docwBcLog, "[%d step=%lld fd=%zu %s] bc=0x%02x top=%s sp=%ld\n",
-                    docwBcCount, (long long)g_stepNum, frameDepth_,
-                    inDocw ? "DOCW" : "other", bytecode, topDesc.c_str(),
-                    (long)(stackPointer_ - framePointer_));
-            fflush(docwBcLog);
-            if (inDocw && frameDepth_ == 0 && (bytecode == 0x58 || bytecode == 0x5C)) {
-                fprintf(docwBcLog, "[DOCW-BC] === Method returning, stop trace ===\n");
-                fflush(docwBcLog);
-                docwTracing = false;
-            }
-        }
-    }
-
-    // Log bytecodes when at frame depth 0
-    if constexpr (ENABLE_DEBUG_LOGGING)
-    if (frameDepth_ == 0 && baseFrameBcLog && baseBcCount < 500) {
-        baseBcCount++;
-
-        // Get current method name
-        std::string methodName = "?";
-        if (method_.isObject() && method_.rawBits() > 0x10000) {
-            Oop mHdr = memory_.fetchPointer(0, method_);
-            if (mHdr.isSmallInteger()) {
-                size_t numLits = mHdr.asSmallInteger() & 0x7FFF;
-                if (numLits >= 2) {
-                    Oop sel = memory_.fetchPointer(numLits - 1, method_);
-                    if (sel.isObject() && sel.rawBits() > 0x10000) {
-                        ObjectHeader* selHdr = sel.asObjectPtr();
-                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                            methodName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                        }
-                    }
-                }
-            }
-        }
-
-        // Dump method bytecodes once when we first see fullCheck at depth 0
-        if (!loggedBaseDump && methodName == "fullCheck") {
-            loggedBaseDump = true;
-            fprintf(baseFrameBcLog, "[BASE] First fullCheck at depth 0, dumping bytecodes:\n");
-            if (method_.isObject()) {
-                ObjectHeader* mH = method_.asObjectPtr();
-                Oop hdr = memory_.fetchPointer(0, method_);
-                if (hdr.isSmallInteger()) {
-                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                    size_t bcStart = (1 + numLits) * 8;
-                    size_t bcEnd = mH->byteSize();
-                    for (size_t i = bcStart; i < bcEnd; i++) {
-                        fprintf(baseFrameBcLog, "  [%zu] %02x\n", i, mH->bytes()[i]);
-                    }
-                }
-            }
-            fprintf(baseFrameBcLog, "---\n");
-        }
-
-        size_t ipOffset = 0;
-        if (method_.isObject() && instructionPointer_) {
-            ObjectHeader* mHdr = method_.asObjectPtr();
-            ipOffset = (instructionPointer_ - 1) - mHdr->bytes();
-        }
-        fprintf(baseFrameBcLog, "[BASE BC #%d @%s] IP=%zu byte=0x%02x\n",
-                baseBcCount, methodName.c_str(), ipOffset, bytecode);
-        fflush(baseFrameBcLog);
-    }
-
-    // Trace bytecodes when inside fullCheck
-        g_fullCheckBytecodeCount++;
-        // Get bytecode name for clarity
-        const char* bcName = "?";
-        if (bytecode <= 0x0F) bcName = "PushRcvrVar";
-        else if (bytecode <= 0x1F) bcName = "PushLitVar";
-        else if (bytecode <= 0x3F) bcName = "PushLitConst";
-        else if (bytecode <= 0x47) bcName = "PushTemp";
-        else if (bytecode <= 0x4B) bcName = "PushTemp8+";
-        else if (bytecode == 0x4C) bcName = "PushSelf";
-        else if (bytecode == 0x4D) bcName = "PushTrue";
-        else if (bytecode == 0x4E) bcName = "PushFalse";
-        else if (bytecode == 0x4F) bcName = "PushNil";
-        else if (bytecode == 0x50) bcName = "Push0";
-        else if (bytecode == 0x51) bcName = "Push1";
-        else if (bytecode == 0x53) bcName = "Dup";
-        else if (bytecode == 0x5C) bcName = "ReturnTop";
-        else if (bytecode >= 0x60 && bytecode <= 0x6F) bcName = "ArithSend";
-        else if (bytecode >= 0x70 && bytecode <= 0x7F) bcName = "SpecialSend";
-        else if (bytecode >= 0x80 && bytecode <= 0x8F) bcName = "Send0Args";
-        else if (bytecode >= 0x90 && bytecode <= 0x9F) bcName = "Send1Arg";
-        else if (bytecode >= 0xA0 && bytecode <= 0xAF) bcName = "Send2Args";
-        else if (bytecode >= 0xB0 && bytecode <= 0xB7) bcName = "Jump";
-        else if (bytecode >= 0xB8 && bytecode <= 0xBF) bcName = "JumpIfTrue";
-        else if (bytecode >= 0xC0 && bytecode <= 0xC7) bcName = "JumpIfFalse";
-        else if (bytecode >= 0xC8 && bytecode <= 0xCF) bcName = "PopStoreRcvrVar";
-        else if (bytecode >= 0xD0 && bytecode <= 0xD7) bcName = "PopStoreTemp";
-        else if (bytecode == 0xD8) bcName = "Pop";
-        else if (bytecode == 0xE0) bcName = "ExtendA";
-        else if (bytecode == 0xE1) bcName = "ExtendB";
-        else if (bytecode >= 0xEA && bytecode <= 0xEB) bcName = "ExtSend";
-        else if (bytecode == 0xEF) bcName = "LongJumpIfFalse";
-        else if (bytecode == 0xEE) bcName = "LongJumpIfTrue";
-
-        // Log IP offset relative to method start
-        size_t ipOffset = 0;
-        if (method_.isObject() && instructionPointer_) {
-            ObjectHeader* mHdr = method_.asObjectPtr();
-            ipOffset = (instructionPointer_ - 1) - mHdr->bytes();
-        }
-
-                g_fullCheckBytecodeCount, ipOffset, bytecode, bcName);
-
-        // Log stack top for conditional jumps
-        if ((bytecode >= 0xB8 && bytecode <= 0xC7) || bytecode == 0xEE || bytecode == 0xEF) {
-            if (stackPointer_ > stackBase_) {
-                Oop top = *(stackPointer_ - 1);
-                        (unsigned long long)top.rawBits(),
-                        isTrue(top) ? 1 : 0, isFalse(top) ? 1 : 0);
-            }
-        }
-    }
-
     // Sista V1 bytecode dispatch (used by Pharo 10+, format 68021 with modern compiler)
     // Key differences from V3PlusClosures:
     // - 0x10-0x1F: push literal var (not temp)
@@ -5519,29 +5352,6 @@ terminate_process:
         }
     }
 
-    // Check if we're returning from fullCheck - reset tracking flag
-    if (g_inFullCheck) {
-        std::string currentMethodSel = "<unknown>";
-        if (method_.isObject() && method_.rawBits() > 0x10000) {
-            Oop hdr = memory_.fetchPointer(0, method_);
-            if (hdr.isSmallInteger()) {
-                size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                if (numLits >= 2) {
-                    Oop sel = memory_.fetchPointer(numLits - 1, method_);
-                    if (sel.isObject() && sel.rawBits() > 0x10000) {
-                        ObjectHeader* selHdr = sel.asObjectPtr();
-                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                            currentMethodSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                        }
-                    }
-                }
-            }
-        }
-        if (currentMethodSel == "fullCheck") {
-            }
-            g_inFullCheck = false;
-        }
-    }
 
     // Debug: track method_ changes through popFrame
     if constexpr (ENABLE_DEBUG_LOGGING) {
@@ -9730,44 +9540,44 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     // Handle deprecation transform check - if thisContext isn't working,
     // the rule evaluation may return wrong values. Handle various deprecation messages.
     // When these are sent to a block instead of a transform rule, return appropriate defaults.
-    if (rcvr.isObject() && !getSelStr().empty()) {
-        Oop rcvrClass = memory_.classOf(rcvr);
-        std::string className;
-        if (rcvrClass.isObject()) {
-            Oop nameOop = memory_.fetchPointer(6, rcvrClass);  // Slot 6 = name
-            if (nameOop.isObject()) {
-                ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
-                    className = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+    if (rcvr.isObject() && selBytes && selLen > 0) {
+        auto selIs = [selBytes, selLen](const char* s) {
+            size_t n = strlen(s);
+            return selLen == n && memcmp(selBytes, s, n) == 0;
+        };
+        if (selIs("shouldTransform") || selIs("deprecatedMethodName") ||
+            selIs("explanationString") || selIs("transformingSelector") ||
+            selIs("contextOfDeprecatedMethod") || selIs("sendingMethodName") ||
+            selIs("default") || selIs("transform:")) {
+            Oop rcvrClassLocal = memory_.classOf(rcvr);
+            std::string className;
+            if (rcvrClassLocal.isObject()) {
+                Oop nameOop = memory_.fetchPointer(6, rcvrClassLocal);
+                if (nameOop.isObject()) {
+                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
+                        className = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
+                    }
                 }
             }
-        }
-        if (className.find("Block") != std::string::npos ||
-            className.find("Closure") != std::string::npos) {
-            // Block received a message meant for a deprecation transform rule
-            // Return appropriate default values
-            if (selStr == "shouldTransform") {
-                Oop falseObj = memory_.specialObject(SpecialObjectIndex::FalseObject);
-                popN(argCount + 1);
-                push(falseObj);
-                return;
-            }
-            if (selStr == "deprecatedMethodName" || selStr == "explanationString" ||
-                selStr == "transformingSelector" || selStr == "contextOfDeprecatedMethod" ||
-                selStr == "sendingMethodName" || selStr == "default") {
-                // Return nil for string/context accessors
-                popN(argCount + 1);
-                push(nilObj);
-                return;
-            }
-            if (selStr == "transform:") {
-                // Don't transform - just return the argument unchanged
-                if (argCount >= 1) {
+            if (className.find("Block") != std::string::npos ||
+                className.find("Closure") != std::string::npos) {
+                if (selIs("shouldTransform")) {
+                    Oop falseObj = memory_.specialObject(SpecialObjectIndex::FalseObject);
+                    popN(argCount + 1);
+                    push(falseObj);
+                    return;
+                }
+                if (selIs("transform:") && argCount >= 1) {
                     Oop arg = stackValue(0);
                     popN(argCount + 1);
                     push(arg);
                     return;
                 }
+                // Other deprecation accessors - return nil
+                popN(argCount + 1);
+                push(nilObj);
+                return;
             }
         }
     }
