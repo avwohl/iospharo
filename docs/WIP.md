@@ -143,73 +143,75 @@ The `unwindTo:` traversal isn't finding or executing the inserted ensure: block 
 
 ## Current Status (2026-02-04)
 
-### Custom VM Test Results (14 classes) — ALL COMPLETE
+### Custom VM Test Results (13/14 classes complete, StringTest times out)
 
-Run on custom C++ VM via `./build/test_load_image /tmp/test.image`
+Run on custom C++ VM via `./build/test_load_image /tmp/test.image test`
 with 10B step limit. Test runner: `scripts/run_sunit_tests.st`
 
 ```
 SmallIntegerTest      (29 tests):  29P  0F  0E  -- ALL PASS
-IntegerTest           (83 tests):  80P  0F  3E  -- 3 TestSkipped
-FloatTest             (75 tests):  74P  0F  1E  -- 1 TestSkipped
+IntegerTest           (83 tests):  79P  1F  3E  -- 1 fail (testLowBit), 3 TestSkipped
+FloatTest             (75 tests):  70P  0F  5E  -- 4 errors + 1 TestSkipped
 FractionTest          (32 tests):  32P  0F  0E  -- ALL PASS
 PointTest             (36 tests):  36P  0F  0E  -- ALL PASS
 CharacterTest         (19 tests):  17P  0F  0E  -- ALL PASS (2 skipped by runner)
-DictionaryTest       (205 tests): 199P  0F  6E  -- 6 Deprecation
-SetTest              (174 tests): 168P  0F  6E  -- 6 Deprecation
-BagTest              (168 tests): 162P  0F  6E  -- 6 Deprecation
-IntervalTest         (260 tests): 254P  0F  6E  -- 6 Deprecation
-SymbolTest           (268 tests): 262P  0F  6E  -- 6 Deprecation
-OrderedCollectionTest(351 tests): 345P  0F  6E  -- 6 Deprecation
-ArrayTest            (324 tests): 318P  0F  6E  -- 6 Deprecation
-StringTest           (438 tests): 432P  0F  6E  -- 6 Deprecation
-```
-**All 14 classes complete: 2408P, 0F, 52E (97.9% pass rate, 100% of non-benign tests pass)**
-
-All 52 errors are benign:
-- 48 Deprecation errors: `testAsStringOnDelimiter*` uses deprecated API → signals Deprecation (a resumable Warning)
-- 3 TestSkipped: IntegerTest `testCreationFromBytes1/2/3`
-- 1 TestSkipped: FloatTest `testNaNCompare`
-
-Test runner updated to resume Deprecation signals (like standard SUnit), which should eliminate the 48 Deprecation "errors".
-
-### Comparison: Standard Pharo VM (reference)
-```
-SmallIntegerTest    (25 tests):  25P 0F 0E
-IntegerTest         (83 tests):  80P 3F 0E
-FloatTest           (70 tests):  69P 1F 0E
-FractionTest        (27 tests):  27P 0F 0E
-PointTest           (31 tests):  31P 0F 0E
-CharacterTest       (13 tests):  13P 0F 0E
-SymbolTest         (213 tests): 207P 0F 6E
-StringTest         (383 tests): 377P 0F 6E
-ArrayTest          (270 tests): 264P 0F 6E
-OrderedCollectionTest (296 tests): 290P 0F 6E
-SetTest            (119 tests): 113P 0F 6E
-BagTest            (113 tests): 107P 0F 6E
-DictionaryTest     (151 tests): 145P 0F 6E
-AssociationTest      (8 tests):   8P 0F 0E
-LinkedListTest     (255 tests): 249P 0F 6E
-SortedCollectionTest (233 tests): 227P 0F 6E
-IntervalTest       (205 tests): 199P 0F 6E
-Total: 2431P, 4F, 60E (97.4% pass rate)
+DictionaryTest       (205 tests): 205P  0F  0E  -- ALL PASS
+SetTest              (174 tests): 174P  0F  0E  -- ALL PASS
+BagTest              (168 tests): 168P  0F  0E  -- ALL PASS
+IntervalTest         (260 tests): 258P  0F  2E  -- 2 errors
+SymbolTest           (268 tests): 267P  0F  1E  -- 1 error
+OrderedCollectionTest(351 tests): 350P  0F  1E  -- 1 error
+ArrayTest            (324 tests): 320P  1F  3E  -- 1 fail, 3 errors
+StringTest           (438 tests):  ---  --  --  -- TIMES OUT (too slow)
+-----------------------------------------------------------------
+Totals (13 classes):  2005P  2F 15E  (99.2% pass rate)
 ```
 
-Note: Test counts differ between VMs because the test runner discovers different test
-selectors (different Pharo versions / test trait inheritance). Standard VM also has 60
-errors (all Deprecation/TestSkipped).
+### Remaining Failures
 
-### Remaining Errors (all benign)
+**TestSkipped (4 errors) — expected, not real failures:**
+- IntegerTest: `testCreationFromBytes1/2/3` — test explicitly skips
+- FloatTest: `testNaNCompare` — test explicitly skips
 
-**Deprecation (48 errors, 8 collection classes × 6)**
-- `testAsStringOnDelimiter*` tests call deprecated `asStringOnDelimiter:` method
-- Deprecation is a resumable Warning — standard SUnit resumes it
-- Our test runner catches it as Exception → counts as error
-- Fix: Updated test runner to `on: Deprecation do: [:ex | ex resume]`
+**testAtRandom (4 errors) — SharedRandom not initialized:**
+- IntervalTest, SymbolTest, OrderedCollectionTest, ArrayTest
+- Error: `nil >> #strictlyPositive` — global random generator is nil
+- Root cause: SharedRandom startup handler not running
 
-**TestSkipped (4 errors)**
-- IntegerTest: `testCreationFromBytes1/2/3` — requires `Integer readFrom:` with byte arrays
-- FloatTest: `testNaNCompare` — test explicitly skips itself
+**Stream position errors (4 errors) — PositionableStream issue:**
+- FloatTest: `testStoreOnRoundTrip`
+- IntervalTest: `testIntervalStoreOn`
+- ArrayTest: `testSelfEvaluating`, `testSelfEvaluatingComplexCase`
+- Error: `Attempt to set the position of a PositionableStream out of bounds`
+
+**testLowBit (1 fail) — non-deterministic, LargeInteger issue:**
+- IntegerTest: testLowBit — wrong result for `(large raisedTo: 20) lowBit`
+- Values vary between runs (41, 81, 161) — suggests Smalltalk fallback issue
+
+**testPrintingRecursive (1 fail) — recursion depth:**
+- ArrayTest: `Got 24520 instead of 50000` — recursion limit too low
+
+**Float-specific errors (2 errors):**
+- FloatTest: `test32bitConversion` — `nil >> #asIEEE32BitWord`
+- FloatTest: `testBinaryLiteralString` — Float nan handling
+
+**Intermittent (may not appear in every run):**
+- FloatTest: `testFloatRounded` — LargePositiveInteger basicNew: fails
+
+### Key Bugs Fixed This Session
+
+1. **`nil = nil` returned false** — CRITICAL FIX
+   - Root cause: `arithmeticSend()` had a workaround that short-circuited ALL
+     arithmetic/comparison sends when receiver was nil, returning false for `=`
+   - This was a WORKAROUND (violating CLAUDE.md policy) that hid the root cause
+   - Fixed by removing the nil-receiver fast path entirely
+   - Result: DictionaryTest, SetTest, BagTest all go from 3-4 failures to 0 failures
+
+2. **primitiveHighBit (575) and primitiveLowBit (576) not registered**
+   - Implementations existed in Primitives.cpp but were never added to primitive table
+   - generated_primitives.inc had them as `nullptr` (Reserved)
+   - Fixed by registering them in the table
+   - Result: testHighBit, testHighBitOfMagnitude, testPrintStringBase all fixed
 
 ### Sort issue - RESOLVED
 The default `sorted` method was astronomically slow because the Pharo image's
