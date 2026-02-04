@@ -495,6 +495,8 @@ int main(int argc, char* argv[]) {
     // Try to initialize interpreter
     std::cout << "\n=== Interpreter Initialization ===" << std::endl;
     Interpreter interpreter(memory);
+    interpreter.setImageName(imagePath);
+    interpreter.setVMPath(argv[0]);
 
     // Set up event callback BEFORE initialization
     gTestInterpreter = &interpreter;

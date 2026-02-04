@@ -2722,7 +2722,7 @@ bool Interpreter::step() {
     g_stepNum++;
 
     // DETAILED BYTECODE TRACE for step range around suspendedContext set-back
-    if (g_stepNum >= 21770 && g_stepNum <= 22210) {
+    if (g_stepNum >= 20650 && g_stepNum <= 21230) {
         static FILE* bcTraceLog = nullptr;
         if (!bcTraceLog) bcTraceLog = fopen("/tmp/bytecode_detail.log", "w");
         if (bcTraceLog) {
@@ -7079,7 +7079,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             allSendLog2 = fopen("/tmp/all_sends.log", "w");
             if (allSendLog2) { fprintf(allSendLog2, "[INIT] send log opened at step %llu\n", g_stepNum); fflush(allSendLog2); }
         }
-    if (allSendLog2 && g_stepNum >= 21500 && g_stepNum <= 35000) {
+    if (allSendLog2 && g_stepNum <= 25000) {
         if (allSendLog2 && selector.isObject() && selector.rawBits() > 0x10000) {
             ObjectHeader* sh2 = selector.asObjectPtr();
             if (sh2->isBytesObject() && sh2->byteSize() < 200) {
@@ -13555,6 +13555,170 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         return;
     }
 
+    // TRACE: Log ALL activations in the step range near the corruption (20800-21300)
+    // to catch the exact point where the Semaphore gets onto the stack
+    if (g_stepNum >= 20800 && g_stepNum <= 21300) {
+        auto getClassName_all = [&](Oop obj) -> std::string {
+            if (obj.isNil()) return "nil";
+            if (obj.isSmallInteger()) return "SmallInteger";
+            if (!obj.isObject() || obj.rawBits() < 0x10000) return "???";
+            Oop cls = memory_.classOf(obj);
+            if (!cls.isObject()) return "?cls";
+            Oop cn = memory_.fetchPointer(6, cls);
+            if (cn.isObject() && cn.rawBits() > 0x10000) {
+                ObjectHeader* cnH = cn.asObjectPtr();
+                if (cnH->isBytesObject() && cnH->byteSize() < 80)
+                    return std::string((char*)cnH->bytes(), cnH->byteSize());
+            }
+            return "?name";
+        };
+        // Get selector
+        std::string selAll = "?";
+        if (method.isObject() && method.rawBits() > 0x10000) {
+            Oop hdr2 = memory_.fetchPointer(0, method);
+            if (hdr2.isSmallInteger()) {
+                int nLits2 = hdr2.asSmallInteger() & 0x7FFF;
+                if (nLits2 >= 2 && nLits2 < 200) {
+                    Oop sel2 = memory_.fetchPointer(nLits2 - 1, method);
+                    if (sel2.isObject() && sel2.rawBits() > 0x10000) {
+                        ObjectHeader* selH2 = sel2.asObjectPtr();
+                        if (selH2->isBytesObject() && selH2->byteSize() < 80)
+                            selAll = std::string((char*)selH2->bytes(), selH2->byteSize());
+                    }
+                }
+            }
+        }
+        fprintf(stderr, "[ACT step=%llu fd=%zu] #%s argCount=%d rcvr=%s(0x%llx)",
+                (unsigned long long)g_stepNum, frameDepth_, selAll.c_str(), argCount,
+                getClassName_all(*(framePointer_)).c_str(), (unsigned long long)(*(framePointer_)).rawBits());
+        // Print args
+        for (int ai = 0; ai < argCount && ai < 3; ai++) {
+            Oop arg = *(framePointer_ + 1 + ai);
+            fprintf(stderr, " arg%d=%s(0x%llx)", ai,
+                    getClassName_all(arg).c_str(), (unsigned long long)arg.rawBits());
+        }
+        fprintf(stderr, "\n");
+        fflush(stderr);
+    }
+
+    // TRACE: Log ensure: (prim 198) activations to track handler slot corruption
+    {
+        int primIdx = primitiveIndexOf(method);
+        if (primIdx == 198) {
+            static int ensureActivateCount = 0;
+            ensureActivateCount++;
+            if (ensureActivateCount <= 30) {
+                // FP[0]=receiver, FP[1]=aBlock (handler), FP[2]=1st extra temp (should be nil initially)
+                Oop rcvr = *(framePointer_);
+                Oop handler = *(framePointer_ + 1);
+                Oop temp1 = *(framePointer_ + 2);
+
+                auto getClassName = [&](Oop obj) -> std::string {
+                    if (obj.isNil()) return "nil";
+                    if (obj.isSmallInteger()) return "SmallInteger";
+                    if (!obj.isObject() || obj.rawBits() < 0x10000) return "???";
+                    Oop cls = memory_.classOf(obj);
+                    if (!cls.isObject()) return "?cls";
+                    Oop cn = memory_.fetchPointer(6, cls);
+                    if (cn.isObject() && cn.rawBits() > 0x10000) {
+                        ObjectHeader* cnH = cn.asObjectPtr();
+                        if (cnH->isBytesObject() && cnH->byteSize() < 80)
+                            return std::string((char*)cnH->bytes(), cnH->byteSize());
+                    }
+                    return "?name";
+                };
+
+                fprintf(stderr, "[ENSURE-ACTIVATE #%d step=%llu] argCount=%d fd=%zu\n",
+                        ensureActivateCount, (unsigned long long)g_stepNum, argCount, frameDepth_);
+                fprintf(stderr, "  FP[0](rcvr)=%s(0x%llx) FP[1](handler)=%s(0x%llx) FP[2](temp1)=%s(0x%llx)\n",
+                        getClassName(rcvr).c_str(), (unsigned long long)rcvr.rawBits(),
+                        getClassName(handler).c_str(), (unsigned long long)handler.rawBits(),
+                        getClassName(temp1).c_str(), (unsigned long long)temp1.rawBits());
+
+                // Also log what's BELOW the frame (the caller's stack) for context
+                if (framePointer_ > stackBase_) {
+                    Oop below1 = *(framePointer_ - 1);
+                    fprintf(stderr, "  FP[-1](below)=%s(0x%llx)\n",
+                            getClassName(below1).c_str(), (unsigned long long)below1.rawBits());
+                }
+
+                // If handler is NOT a FullBlockClosure, dump the CALLER's frame to find corruption source
+                bool handlerIsBlock = false;
+                if (handler.isObject() && handler.rawBits() > 0x10000) {
+                    Oop hCls = memory_.classOf(handler);
+                    if (hCls.isObject()) {
+                        Oop hCn = memory_.fetchPointer(6, hCls);
+                        if (hCn.isObject() && hCn.rawBits() > 0x10000) {
+                            ObjectHeader* hCnH = hCn.asObjectPtr();
+                            if (hCnH->isBytesObject()) {
+                                std::string hName((char*)hCnH->bytes(), hCnH->byteSize());
+                                handlerIsBlock = (hName == "FullBlockClosure" || hName == "ConstantBlockClosure" || hName == "CleanBlockClosure");
+                            }
+                        }
+                    }
+                }
+                if (!handlerIsBlock) {
+                    fprintf(stderr, "  *** HANDLER IS NOT A BLOCK! Dumping caller frame ***\n");
+                    // The previous frame is savedFrames_[frameDepth_-1] (we just incremented in pushFrame)
+                    if (frameDepth_ >= 1) {
+                        const auto& callerFrame = savedFrames_[frameDepth_ - 1];
+                        fprintf(stderr, "  caller: savedFP=%p savedMethod=0x%llx savedReceiver=%s(0x%llx)\n",
+                                (void*)callerFrame.savedFP,
+                                (unsigned long long)callerFrame.savedMethod.rawBits(),
+                                getClassName(callerFrame.savedReceiver).c_str(),
+                                (unsigned long long)callerFrame.savedReceiver.rawBits());
+                        // Get caller method selector
+                        if (callerFrame.savedMethod.isObject() && callerFrame.savedMethod.rawBits() > 0x10000) {
+                            Oop chdr = memory_.fetchPointer(0, callerFrame.savedMethod);
+                            if (chdr.isSmallInteger()) {
+                                int cnl = chdr.asSmallInteger() & 0x7FFF;
+                                if (cnl >= 2 && cnl < 200) {
+                                    Oop csel = memory_.fetchPointer(cnl - 1, callerFrame.savedMethod);
+                                    if (csel.isObject() && csel.rawBits() > 0x10000) {
+                                        ObjectHeader* cselH = csel.asObjectPtr();
+                                        if (cselH->isBytesObject() && cselH->byteSize() < 80) {
+                                            std::string callerSel((char*)cselH->bytes(), cselH->byteSize());
+                                            fprintf(stderr, "  caller selector: #%s\n", callerSel.c_str());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // Dump caller's FP contents
+                        if (callerFrame.savedFP != nullptr) {
+                            fprintf(stderr, "  caller FP contents:");
+                            for (int ci = 0; ci <= 6 && callerFrame.savedFP + ci < stackPointer_; ci++) {
+                                Oop val = *(callerFrame.savedFP + ci);
+                                fprintf(stderr, " [%d]=%s(0x%llx)", ci,
+                                        getClassName(val).c_str(), (unsigned long long)val.rawBits());
+                            }
+                            fprintf(stderr, "\n");
+                        }
+                    }
+                    // Also dump the active context if frameDepth was 0 before this pushFrame
+                    // (meaning caller was executing from a context object)
+                    if (frameDepth_ == 1) {
+                        fprintf(stderr, "  caller was activeContext_=0x%llx (no inline frame)\n",
+                                (unsigned long long)activeContext_.rawBits());
+                        // Dump activeContext_ slots
+                        if (activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
+                            ObjectHeader* acHdr = activeContext_.asObjectPtr();
+                            size_t acSlots = acHdr->slotCount();
+                            fprintf(stderr, "  activeCtx slots(%zu):", acSlots);
+                            for (size_t s = 5; s < std::min(acSlots, (size_t)12); s++) {
+                                Oop val = acHdr->slotAt(s);
+                                fprintf(stderr, " [%zu]=%s(0x%llx)", s,
+                                        getClassName(val).c_str(), (unsigned long long)val.rawBits());
+                            }
+                            fprintf(stderr, "\n");
+                        }
+                    }
+                }
+                fflush(stderr);
+            }
+        }
+    }
+
     if (traceActivate && activateLog) {
         fprintf(activateLog, "[ACTIVATE step=%llu] After pushFrame\n", g_stepNum);
         fflush(activateLog);
@@ -15172,6 +15336,92 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
             fprintf(dnuLog, "[DNU #%d step=%llu] receiver=%s selector='%s'%s%s argCount=%d frameDepth=%zu\n",
                     dnuCount, (unsigned long long)g_stepNum, rcvrCls.c_str(), selStr.c_str(),
                     selHex.empty() ? "" : " hex=", selHex.c_str(), argCount, frameDepth_);
+            // Special diagnostic for endProcess DNU
+            if (selStr == "endProcess" && dnuCount <= 5) {
+                fprintf(dnuLog, "  === endProcess DNU diagnostic ===\n");
+                fprintf(dnuLog, "  receiver=0x%llx\n", (unsigned long long)rcvr.rawBits());
+                // Dump activeContext_ details
+                fprintf(dnuLog, "  activeContext_=0x%llx\n", (unsigned long long)activeContext_.rawBits());
+                if (activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
+                    ObjectHeader* acH = activeContext_.asObjectPtr();
+                    size_t acSlots = acH->slotCount();
+                    fprintf(dnuLog, "  activeCtx classIdx=%u slots=%zu\n", acH->classIndex(), acSlots);
+                    // Dump all context slots
+                    for (size_t si = 0; si < std::min(acSlots, (size_t)12); si++) {
+                        Oop sv = memory_.fetchPointer(si, activeContext_);
+                        std::string desc;
+                        if (sv.isSmallInteger()) desc = "SI(" + std::to_string(sv.asSmallInteger()) + ")";
+                        else if (sv.isNil()) desc = "nil";
+                        else if (sv.isObject() && sv.rawBits() > 0x10000) {
+                            Oop scls = memory_.classOf(sv);
+                            std::string sn = "?";
+                            if (scls.isObject() && scls.rawBits() > 0x10000) {
+                                Oop snm = memory_.fetchPointer(6, scls);
+                                if (snm.isObject() && snm.rawBits() > 0x10000) {
+                                    ObjectHeader* snH = snm.asObjectPtr();
+                                    if (snH->isBytesObject() && snH->byteSize() < 80)
+                                        sn = std::string((char*)snH->bytes(), snH->byteSize());
+                                }
+                            }
+                            desc = sn + "(0x" + std::to_string(sv.rawBits()) + ")";
+                        } else desc = "raw(0x" + std::to_string(sv.rawBits()) + ")";
+                        const char* slotNames[] = {"sender","pc","stackp","method","closureOrNil","receiver","temp0","temp1","temp2","temp3","temp4","temp5"};
+                        fprintf(dnuLog, "    slot[%zu] (%s) = %s\n", si, si < 12 ? slotNames[si] : "?", desc.c_str());
+                    }
+                    // If slot 4 has a closure, dump its contents
+                    Oop closureOop = memory_.fetchPointer(4, activeContext_);
+                    if (closureOop.isObject() && !closureOop.isNil() && closureOop.rawBits() > 0x10000) {
+                        ObjectHeader* clH = closureOop.asObjectPtr();
+                        size_t clSlots = clH->slotCount();
+                        fprintf(dnuLog, "  CLOSURE 0x%llx classIdx=%u slots=%zu:\n",
+                                (unsigned long long)closureOop.rawBits(), clH->classIndex(), clSlots);
+                        for (size_t ci = 0; ci < std::min(clSlots, (size_t)8); ci++) {
+                            Oop cv = memory_.fetchPointer(ci, closureOop);
+                            std::string cdesc;
+                            if (cv.isSmallInteger()) cdesc = "SI(" + std::to_string(cv.asSmallInteger()) + ")";
+                            else if (cv.isNil()) cdesc = "nil";
+                            else if (cv.isObject() && cv.rawBits() > 0x10000) {
+                                Oop ccls = memory_.classOf(cv);
+                                std::string cn = "?";
+                                if (ccls.isObject() && ccls.rawBits() > 0x10000) {
+                                    Oop cnm = memory_.fetchPointer(6, ccls);
+                                    if (cnm.isObject() && cnm.rawBits() > 0x10000) {
+                                        ObjectHeader* cnH = cnm.asObjectPtr();
+                                        if (cnH->isBytesObject() && cnH->byteSize() < 80)
+                                            cn = std::string((char*)cnH->bytes(), cnH->byteSize());
+                                    }
+                                }
+                                cdesc = cn + "(0x" + std::to_string(cv.rawBits()) + ")";
+                            } else cdesc = "raw(0x" + std::to_string(cv.rawBits()) + ")";
+                            const char* clSlotNames[] = {"outerCtx","startpc/block","numArgs","rcvr/copied0","copied0/1","copied1/2","copied2/3","copied3/4"};
+                            fprintf(dnuLog, "      cl[%zu] (%s) = %s\n", ci, ci < 8 ? clSlotNames[ci] : "?", cdesc.c_str());
+                        }
+                    }
+                    // Also dump inline stack
+                    fprintf(dnuLog, "  INLINE STACK (FP=%p SP=%p):\n", (void*)framePointer_, (void*)stackPointer_);
+                    for (int si = 0; framePointer_ && si < 8 && (framePointer_ + 1 + si) < stackPointer_; si++) {
+                        Oop iv = framePointer_[1 + si];
+                        std::string idesc;
+                        if (iv.isSmallInteger()) idesc = "SI(" + std::to_string(iv.asSmallInteger()) + ")";
+                        else if (iv.isNil()) idesc = "nil";
+                        else if (iv.isObject() && iv.rawBits() > 0x10000) {
+                            Oop icls = memory_.classOf(iv);
+                            std::string isn = "?";
+                            if (icls.isObject() && icls.rawBits() > 0x10000) {
+                                Oop inm = memory_.fetchPointer(6, icls);
+                                if (inm.isObject() && inm.rawBits() > 0x10000) {
+                                    ObjectHeader* inH = inm.asObjectPtr();
+                                    if (inH->isBytesObject() && inH->byteSize() < 80)
+                                        isn = std::string((char*)inH->bytes(), inH->byteSize());
+                                }
+                            }
+                            idesc = isn + "(0x" + std::to_string(iv.rawBits()) + ")";
+                        } else idesc = "raw(0x" + std::to_string(iv.rawBits()) + ")";
+                        fprintf(dnuLog, "    FP[%d] = %s\n", si + 1, idesc.c_str());
+                    }
+                }
+                fflush(dnuLog);
+            }
             // Enhanced logging for sporadic DNUs (Array/nil receivers)
             if (rcvrCls == "Array" || (rcvrCls == "nil" && selStr != "printStringHex") || rcvrCls == "?") {
                 // Dump current method
@@ -17061,6 +17311,40 @@ Oop Interpreter::materializeFrameStack() {
                 Oop item = *(framePointer_ + 1 + i);
                 memory_.storePointer(ContextFixedFields + i, activeContext_, item);
             }
+
+            // TRACE: If this is an ensure: context (prim 198), log what we wrote
+            {
+                int matPrimIdx0 = primitiveIndexOf(method_);
+                if (matPrimIdx0 == 198) {
+                    static int matEnsure0Count = 0;
+                    matEnsure0Count++;
+                    if (matEnsure0Count <= 30) {
+                        auto getClassName0 = [&](Oop obj) -> std::string {
+                            if (obj.isNil()) return "nil";
+                            if (obj.isSmallInteger()) return "SmallInteger";
+                            if (!obj.isObject() || obj.rawBits() < 0x10000) return "???";
+                            Oop cls = memory_.classOf(obj);
+                            if (!cls.isObject()) return "?cls";
+                            Oop cn = memory_.fetchPointer(6, cls);
+                            if (cn.isObject() && cn.rawBits() > 0x10000) {
+                                ObjectHeader* cnH = cn.asObjectPtr();
+                                if (cnH->isBytesObject() && cnH->byteSize() < 80)
+                                    return std::string((char*)cnH->bytes(), cnH->byteSize());
+                            }
+                            return "?name";
+                        };
+                        fprintf(stderr, "[MAT-ENSURE-FD0 #%d step=%llu] numItems=%d\n",
+                                matEnsure0Count, (unsigned long long)g_stepNum, numItems);
+                        for (int i = 0; i < std::min(numItems, 6); i++) {
+                            Oop val = *(framePointer_ + 1 + i);
+                            fprintf(stderr, "  FP[%d]=%s(0x%llx)\n",
+                                    i+1, getClassName0(val).c_str(),
+                                    (unsigned long long)val.rawBits());
+                        }
+                        fflush(stderr);
+                    }
+                }
+            }
         }
         return activeContext_;
     }
@@ -17246,6 +17530,44 @@ Oop Interpreter::materializeFrameStack() {
                 }
                 memory_.storePointer(6 + t, context, temp);
                 savedCount++;
+            }
+
+            // TRACE: Log ensure: context materialization (prim 198)
+            {
+                int matPrimIdx = primitiveIndexOf(frame.savedMethod);
+                if (matPrimIdx == 198) {
+                    static int matEnsureCount = 0;
+                    matEnsureCount++;
+                    if (matEnsureCount <= 30) {
+                        fprintf(stderr, "[MAT-ENSURE #%d step=%llu] Frame %zu: numTemps=%d numArgs=%d\n",
+                                matEnsureCount, (unsigned long long)g_stepNum, i, numTemps, numArgs);
+                        auto getClassName2 = [&](Oop obj) -> std::string {
+                            if (obj.isNil()) return "nil";
+                            if (obj.isSmallInteger()) return "SmallInteger";
+                            if (!obj.isObject() || obj.rawBits() < 0x10000) return "???";
+                            Oop cls = memory_.classOf(obj);
+                            if (!cls.isObject()) return "?cls";
+                            Oop cn = memory_.fetchPointer(6, cls);
+                            if (cn.isObject() && cn.rawBits() > 0x10000) {
+                                ObjectHeader* cnH = cn.asObjectPtr();
+                                if (cnH->isBytesObject() && cnH->byteSize() < 80)
+                                    return std::string((char*)cnH->bytes(), cnH->byteSize());
+                            }
+                            return "?name";
+                        };
+                        // Dump receiver + first few temps from the C++ stack
+                        fprintf(stderr, "  savedFP[0](rcvr)=%s(0x%llx)\n",
+                                getClassName2(*(frame.savedFP)).c_str(),
+                                (unsigned long long)(*(frame.savedFP)).rawBits());
+                        for (int t = 0; t < std::min(numTemps, 6); t++) {
+                            Oop val = *(frame.savedFP + 1 + t);
+                            fprintf(stderr, "  savedFP[%d](temp%d)=%s(0x%llx)\n",
+                                    t+1, t, getClassName2(val).c_str(),
+                                    (unsigned long long)val.rawBits());
+                        }
+                        fflush(stderr);
+                    }
+                }
             }
 
             // Save expression stack items above the temps.
@@ -17439,6 +17761,96 @@ void Interpreter::transferTo(Oop newProcess) {
                     oldPri2.isSmallInteger() ? oldPri2.asSmallInteger() : -1,
                     (unsigned long long)newProcess.rawBits(),
                     newPri2.isSmallInteger() ? newPri2.asSmallInteger() : -1);
+
+            // Dump the new process's suspendedContext details
+            Oop newCtx = memory_.fetchPointer(ProcessSuspendedContextIndex, newProcess);
+            if (newCtx.isObject() && newCtx.rawBits() > 0x10000) {
+                // Get method selector
+                Oop ctxMethod = memory_.fetchPointer(3, newCtx);
+                std::string selName = "?";
+                int ctxPrimIdx = 0;
+                int numLits = 0;
+                if (ctxMethod.isObject() && ctxMethod.rawBits() > 0x10000) {
+                    ctxPrimIdx = primitiveIndexOf(ctxMethod);
+                    Oop cmhdr = memory_.fetchPointer(0, ctxMethod);
+                    if (cmhdr.isSmallInteger()) {
+                        numLits = cmhdr.asSmallInteger() & 0x7FFF;
+                        if (numLits >= 2 && numLits < 100) {
+                            Oop csel = memory_.fetchPointer(numLits - 1, ctxMethod);
+                            if (csel.isObject() && csel.rawBits() > 0x10000) {
+                                ObjectHeader* cselH = csel.asObjectPtr();
+                                if (cselH->isBytesObject() && cselH->byteSize() < 100) {
+                                    selName = std::string((char*)cselH->bytes(), cselH->byteSize());
+                                }
+                            }
+                        }
+                    }
+                }
+                // Get PC, stackp
+                Oop ctxPC = memory_.fetchPointer(1, newCtx);
+                Oop ctxSP = memory_.fetchPointer(2, newCtx);
+                Oop ctxSender = memory_.fetchPointer(0, newCtx);
+                fprintf(stderr, "  ctx=0x%llx method=#%s prim=%d pc=%lld sp=%lld sender=0x%llx\n",
+                        (unsigned long long)newCtx.rawBits(), selName.c_str(), ctxPrimIdx,
+                        ctxPC.isSmallInteger() ? ctxPC.asSmallInteger() : -1,
+                        ctxSP.isSmallInteger() ? ctxSP.asSmallInteger() : -1,
+                        (unsigned long long)ctxSender.rawBits());
+
+                // If this is an ensure: context (prim 198), dump temps
+                if (ctxPrimIdx == 198) {
+                    // Dump temps: slot 6=aBlock(arg), 7=handler, 8=complete, 9=returnValue
+                    ObjectHeader* ctxHdr = newCtx.asObjectPtr();
+                    size_t ctxSlots = ctxHdr->slotCount();
+                    fprintf(stderr, "  ENSURE ctx temps (slots=%zu):", ctxSlots);
+                    for (size_t i = 6; i < std::min(ctxSlots, (size_t)12); i++) {
+                        Oop tmp = ctxHdr->slotAt(i);
+                        if (tmp.isSmallInteger()) {
+                            fprintf(stderr, " [%zu]=smi(%lld)", i, tmp.asSmallInteger());
+                        } else if (tmp.isNil()) {
+                            fprintf(stderr, " [%zu]=nil", i);
+                        } else if (tmp.isObject()) {
+                            Oop tmpCls = memory_.classOf(tmp);
+                            std::string tmpClsName = "?";
+                            if (tmpCls.isObject()) {
+                                Oop cn = memory_.fetchPointer(6, tmpCls);
+                                if (cn.isObject() && cn.rawBits() > 0x10000) {
+                                    ObjectHeader* cnH = cn.asObjectPtr();
+                                    if (cnH->isBytesObject() && cnH->byteSize() < 50) {
+                                        tmpClsName = std::string((char*)cnH->bytes(), cnH->byteSize());
+                                    }
+                                }
+                            }
+                            fprintf(stderr, " [%zu]=%s(0x%llx)", i, tmpClsName.c_str(),
+                                    (unsigned long long)tmp.rawBits());
+                        }
+                    }
+                    fprintf(stderr, "\n");
+                }
+
+                // Also dump sender context
+                if (ctxSender.isObject() && ctxSender.rawBits() > 0x10000) {
+                    Oop senderMethod = memory_.fetchPointer(3, ctxSender);
+                    std::string senderSel = "?";
+                    if (senderMethod.isObject() && senderMethod.rawBits() > 0x10000) {
+                        Oop smhdr = memory_.fetchPointer(0, senderMethod);
+                        if (smhdr.isSmallInteger()) {
+                            int snLits = smhdr.asSmallInteger() & 0x7FFF;
+                            if (snLits >= 2 && snLits < 100) {
+                                Oop ssel = memory_.fetchPointer(snLits - 1, senderMethod);
+                                if (ssel.isObject() && ssel.rawBits() > 0x10000) {
+                                    ObjectHeader* sselH = ssel.asObjectPtr();
+                                    if (sselH->isBytesObject() && sselH->byteSize() < 100) {
+                                        senderSel = std::string((char*)sselH->bytes(), sselH->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Oop senderSender = memory_.fetchPointer(0, ctxSender);
+                    fprintf(stderr, "  sender: method=#%s sender=0x%llx\n",
+                            senderSel.c_str(), (unsigned long long)senderSender.rawBits());
+                }
+            }
         }
     }
 

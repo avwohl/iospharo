@@ -8712,7 +8712,7 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
             }
         case 1:  // Image path
             {
-                Oop str = memory_.createString("Pharo.image");
+                Oop str = memory_.createString(imageName_.empty() ? "Pharo.image" : imageName_);
                 pop();
                 push(str);
                 return PrimitiveResult::Success;
