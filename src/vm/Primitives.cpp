@@ -2420,9 +2420,10 @@ PrimitiveResult Interpreter::primitiveObjectAt(int argCount) {
     }
 
     // Get literal count from method header (slot 0)
-    // Method header format: bits 1-15 encode numLiterals
-    uint64_t methodHeader = header->slots()[0].rawBits();
-    size_t numLiterals = (methodHeader >> 1) & 0x7FFF;
+    Oop methodHeaderOop = header->slotAt(0);
+    if (!methodHeaderOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t headerBits = methodHeaderOop.asSmallInteger();
+    size_t numLiterals = headerBits & 0x7FFF;
 
     // LiteralStart is 1 (header at slot 0, literals start at slot 1)
     // Valid indices are 1 to (numLiterals + 1)
@@ -2471,11 +2472,11 @@ PrimitiveResult Interpreter::primitiveObjectAtPut(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Get literal count from current method header
-    uint64_t currentHeader = header->slots()[0].rawBits();
-    // Literal count is in bits 1-15 (after shifting out tag bit)
-    constexpr uint64_t LiteralCountMask = 0x7FFF;
-    size_t currentLiteralCount = (currentHeader >> 1) & LiteralCountMask;
+    // Get literal count from current method header (slot 0)
+    Oop currentHeaderOop = header->slotAt(0);
+    if (!currentHeaderOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t currentHeaderBits = currentHeaderOop.asSmallInteger();
+    size_t currentLiteralCount = currentHeaderBits & 0x7FFF;
     size_t maxIndex = currentLiteralCount + 1;
 
     // Per official VM: when storing at index 1 (method header):
@@ -2486,11 +2487,10 @@ PrimitiveResult Interpreter::primitiveObjectAtPut(int argCount) {
         if (!value.isSmallInteger()) {
             return PrimitiveResult::Failure;
         }
-        // Extract literal count from new value and verify it matches
-        uint64_t newHeader = static_cast<uint64_t>(value.asSmallInteger());
-        size_t newLiteralCount = newHeader & LiteralCountMask;
+        int64_t newHeaderBits = value.asSmallInteger();
+        size_t newLiteralCount = newHeaderBits & 0x7FFF;
         if (newLiteralCount != currentLiteralCount) {
-            return PrimitiveResult::Failure;  // Literal count must be preserved
+            return PrimitiveResult::Failure;
         }
     }
 
@@ -9189,15 +9189,25 @@ PrimitiveResult Interpreter::primitiveNewMethod(int argCount) {
     // Get class index
     uint32_t classIndex = memory_.indexOfClass(classOop);
 
-    // Extract literal count from header (bits 1-15 in standard format)
-    int literalCount = (header >> 1) & 0x7FFF;
+    // Extract literal count from header (low 15 bits)
+    // Note: asSmallInteger() already untags, so no extra shift needed
+    int literalCount = header & 0x7FFF;
 
-    // Total size: header word + literals + bytecodes (rounded to 8 bytes)
-    size_t totalSlots = 1 + literalCount;  // Header + literals
-    size_t byteSize = totalSlots * 8 + static_cast<size_t>(byteCount);
+    // Total bytes: (header slot + literals) * 8 + bytecodes
+    // Reference: cointerp-cpp.c line 34316
+    size_t totalBytes = (static_cast<size_t>(literalCount) + 1) * 8 + static_cast<size_t>(byteCount);
 
-    // Allocate as CompiledMethod format (24-31)
-    Oop method = memory_.allocateSlots(classIndex, totalSlots, ObjectFormat::CompiledMethod);
+    // Round up to 64-bit slots
+    size_t numSlots = (totalBytes + 7) / 8;
+
+    // Calculate format with padding: CompiledMethod (24) + unused trailing bytes
+    // Reference: cointerp-cpp.c line 34325
+    int padding = static_cast<int>((8 - totalBytes) & 7);
+    ObjectFormat format = static_cast<ObjectFormat>(
+        static_cast<int>(ObjectFormat::CompiledMethod) + padding);
+
+    // Allocate the CompiledMethod
+    Oop method = memory_.allocateSlots(classIndex, numSlots, format);
     if (method.isNil()) {
         return PrimitiveResult::Failure;
     }
@@ -9205,10 +9215,15 @@ PrimitiveResult Interpreter::primitiveNewMethod(int argCount) {
     // Store the header in slot 0
     memory_.storePointer(0, method, Oop::fromSmallInteger(header));
 
-    // Initialize literals to nil
+    // Initialize literal slots to nil (slots 1..literalCount)
     for (int i = 1; i <= literalCount; i++) {
         memory_.storePointer(i, method, memory_.nil());
     }
+
+    // Zero out the bytecode area (slots after literals)
+    ObjectHeader* hdr = method.asObjectPtr();
+    uint8_t* bytecodeStart = hdr->bytes() + (static_cast<size_t>(literalCount) + 1) * 8;
+    std::memset(bytecodeStart, 0, static_cast<size_t>(byteCount));
 
     popN(3);
     push(method);
@@ -15220,22 +15235,8 @@ PrimitiveResult Interpreter::primitiveCompiledMethodPrimitive(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    Oop headerOop = memory_.fetchPointer(0, methodOop);
-    if (!headerOop.isSmallInteger()) {
-        return PrimitiveResult::Failure;
-    }
-
-    intptr_t header = headerOop.asSmallInteger();
-    // Primitive index is typically extracted from the header or first bytecodes
-    // For Spur, flag bit indicates if primitive
-    bool hasPrimitive = (header >> 16) & 1;
-
-    intptr_t primitiveIndex = 0;
-    if (hasPrimitive) {
-        // Primitive index encoded in first bytecodes after header
-        // This is a simplified extraction
-        primitiveIndex = (header >> 1) & 0x7FFF;
-    }
+    // Use the existing primitiveIndexOf() which correctly reads from bytecodes
+    int primitiveIndex = primitiveIndexOf(methodOop);
 
     pop();
     push(Oop::fromSmallInteger(primitiveIndex));
