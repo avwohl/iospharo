@@ -13,6 +13,7 @@
 #include <iomanip>
 #include <chrono>
 #include <vector>
+#include <memory>
 #include <cstring>
 #include <csignal>
 #include <csetjmp>
@@ -518,7 +519,8 @@ int main(int argc, char* argv[]) {
 
     // Try to initialize interpreter
     std::cout << "\n=== Interpreter Initialization ===" << std::endl;
-    Interpreter interpreter(memory);
+    auto interpreterPtr = std::make_unique<Interpreter>(memory);
+    Interpreter& interpreter = *interpreterPtr;
     interpreter.setImageName(imagePath);
     interpreter.setVMPath(argv[0]);
     interpreter.setImageArguments(imageArgs);
