@@ -2790,10 +2790,10 @@ skip_yield:
     uint8_t bytecode = fetchByte();
     lastBytecode_ = bytecode;
 
-    // TRACE: detailed bytecode tracing around ensure: return point
-    if (g_stepNum >= 22100 && g_stepNum <= 22160) {
+    // TRACE: detailed bytecode tracing around detect:ifNone: flow
+    if (g_stepNum >= 1523980 && g_stepNum <= 1524200) {
         static FILE* ensureBcLog = nullptr;
-        if (!ensureBcLog) ensureBcLog = fopen("/tmp/ensure_bytecodes.log", "w");
+        if (!ensureBcLog) ensureBcLog = fopen("/tmp/detect_bytecodes.log", "w");
         if (ensureBcLog) {
             // Get method selector
             std::string sel = "?";
@@ -3370,8 +3370,8 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                             case 0x5A: val = memory_.falseObject(); break;
                             default:   val = memory_.nil(); break;
                         }
-                        size_t hfd = (frameDepth_ > 0) ? savedFrames_[frameDepth_ - 1].homeFrameDepth : 0;
-                        if (hfd > 0 && hfd < frameDepth_) {
+                        size_t hfd = (frameDepth_ > 0) ? savedFrames_[frameDepth_ - 1].homeFrameDepth : SIZE_MAX;
+                        if (hfd != SIZE_MAX && hfd < frameDepth_) {
                             // NLR from block: unwind to home frame
                             while (frameDepth_ > hfd) {
                                 popFrame();
@@ -4533,7 +4533,18 @@ void Interpreter::pushLiteralConstant(int index) {
     // V3PlusClosures: Simple literal push, no extensions
     // The index is already the full literal index (0-31 from bytecode 0x20-0x3F,
     // or 0-63 from extended push bytecode 0x80)
-    push(literal(index));
+    Oop val = literal(index);
+    // DIAG: Log Character literal pushes near delimiter steps
+    if (val.isCharacter() && g_stepNum > 1520000 && g_stepNum < 1540000) {
+        uint32_t cp = val.asCharacter();
+        // Also read raw slot value for verification
+        Oop rawSlot = memory_.fetchPointer(index + 1, method_);
+        fprintf(stderr, "[PUSH-CHAR step=%llu fd=%zu] pushLiteralConstant(%d) -> 0x%llx (codepoint=%u '%c') rawSlot=0x%llx method=0x%llx\n",
+                (unsigned long long)g_stepNum, frameDepth_, index,
+                (unsigned long long)val.rawBits(), cp, (cp >= 32 && cp < 127) ? (char)cp : '?',
+                (unsigned long long)rawSlot.rawBits(), (unsigned long long)method_.rawBits());
+    }
+    push(val);
 }
 
 void Interpreter::pushLiteralVariable(int index) {
@@ -4560,87 +4571,40 @@ void Interpreter::pushLiteralVariable(int index) {
     // Normal case: Association with key in slot 0, value in slot 1
     Oop value = memory_.fetchPointer(1, assoc);  // Association>>value
 
-    // TRACE: Log when pushing false from a literal variable (wrong value in global)
-    if (value.rawBits() == memory_.falseObject().rawBits()) {
-        static FILE* falseLitLog = nullptr;
-        static int falseLitCount = 0;
-        if (!falseLitLog) falseLitLog = fopen("/tmp/false_literal.log", "w");
-        if (falseLitLog && falseLitCount < 100) {
-            falseLitCount++;
+    // DIAG: Log key globals to understand DiskStore recursion
+    {
+        static int diagCount = 0;
+        if (diagCount < 20) {
             Oop key = memory_.fetchPointer(0, assoc);
-            std::string keyStr = "<unknown>";
             if (key.isObject() && key.rawBits() > 0x10000) {
-                ObjectHeader* keyHdr = key.asObjectPtr();
-                if (keyHdr->isBytesObject() && keyHdr->byteSize() < 100) {
-                    keyStr = std::string((char*)keyHdr->bytes(), keyHdr->byteSize());
-                }
-            }
-            std::string methodSel = "<unknown>";
-            if (method_.isObject() && method_.rawBits() > 0x10000) {
-                ObjectHeader* mHdr = method_.asObjectPtr();
-                if (mHdr->isCompiledMethod()) {
-                    Oop hdr = memory_.fetchPointer(0, method_);
-                    if (hdr.isSmallInteger()) {
-                        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                        if (numLits >= 2) {
-                            Oop selLit = memory_.fetchPointer(numLits - 1, method_);
-                            if (selLit.isObject() && selLit.rawBits() > 0x10000) {
-                                ObjectHeader* slHdr = selLit.asObjectPtr();
-                                if (slHdr->isBytesObject() && slHdr->byteSize() < 100) {
-                                    methodSel = std::string((char*)slHdr->bytes(), slHdr->byteSize());
+                ObjectHeader* kHdr = key.asObjectPtr();
+                if (kHdr->isBytesObject() && kHdr->byteSize() < 50) {
+                    std::string keyStr((char*)kHdr->bytes(), kHdr->byteSize());
+                    if (keyStr == "Current" || keyStr == "CurrentFS") {
+                        diagCount++;
+                        std::string valDesc = "?";
+                        if (value.isNil() || value.rawBits() == memory_.nil().rawBits()) valDesc = "nil";
+                        else if (value.rawBits() == memory_.falseObject().rawBits()) valDesc = "false";
+                        else if (value.rawBits() == memory_.trueObject().rawBits()) valDesc = "true";
+                        else if (value.isSmallInteger()) valDesc = "SI(" + std::to_string(value.asSmallInteger()) + ")";
+                        else if (value.isObject() && value.rawBits() > 0x10000) {
+                            Oop cls = memory_.classOf(value);
+                            if (cls.isObject()) {
+                                Oop nm = memory_.fetchPointer(6, cls);
+                                if (nm.isObject() && nm.rawBits() > 0x10000) {
+                                    ObjectHeader* nmH = nm.asObjectPtr();
+                                    if (nmH->isBytesObject() && nmH->byteSize() < 100)
+                                        valDesc = std::string((char*)nmH->bytes(), nmH->byteSize());
                                 }
                             }
                         }
+                        fprintf(stderr, "[GLOBAL #%d step=%llu] %s = %s (0x%llx) fd=%zu\n",
+                                diagCount, (unsigned long long)g_stepNum,
+                                keyStr.c_str(), valDesc.c_str(),
+                                (unsigned long long)value.rawBits(), frameDepth_);
                     }
                 }
             }
-            fprintf(falseLitLog, "[FALSE-LIT #%d] Global '%s' = false in method #%s (assoc=0x%llx fd=%zu step=%llu)\n",
-                    falseLitCount, keyStr.c_str(), methodSel.c_str(),
-                    (unsigned long long)assoc.rawBits(), frameDepth_, (unsigned long long)g_stepNum);
-            fflush(falseLitLog);
-        }
-    }
-
-    // TRACE: Log when pushing nil from a literal variable (class lookup failure)
-    if (value.isNil() || value.rawBits() == memory_.nil().rawBits()) {
-        static FILE* nilLitLog = nullptr;
-        static int nilLitCount = 0;
-        if (!nilLitLog) nilLitLog = fopen("/tmp/nil_literal.log", "w");
-        if (nilLitLog && nilLitCount < 50) {
-            nilLitCount++;
-            // Get the key (slot 0) to see what global returned nil
-            Oop key = memory_.fetchPointer(0, assoc);
-            std::string keyStr = "<unknown>";
-            if (key.isObject() && key.rawBits() > 0x10000) {
-                ObjectHeader* keyHdr = key.asObjectPtr();
-                if (keyHdr->isBytesObject() && keyHdr->byteSize() < 100) {
-                    keyStr = std::string((char*)keyHdr->bytes(), keyHdr->byteSize());
-                }
-            }
-            // Get current method selector
-            std::string methodSel = "<unknown>";
-            if (method_.isObject() && method_.rawBits() > 0x10000) {
-                ObjectHeader* mHdr = method_.asObjectPtr();
-                if (mHdr->isCompiledMethod()) {
-                    Oop hdr = memory_.fetchPointer(0, method_);
-                    if (hdr.isSmallInteger()) {
-                        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                        if (numLits >= 2) {
-                            Oop selLit = memory_.fetchPointer(numLits - 1, method_);
-                            if (selLit.isObject() && selLit.rawBits() > 0x10000) {
-                                ObjectHeader* slHdr = selLit.asObjectPtr();
-                                if (slHdr->isBytesObject() && slHdr->byteSize() < 100) {
-                                    methodSel = std::string((char*)slHdr->bytes(), slHdr->byteSize());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            fprintf(nilLitLog, "[NIL-LIT #%d] Global '%s' is nil in method #%s (assoc=0x%llx)\n",
-                    nilLitCount, keyStr.c_str(), methodSel.c_str(),
-                    (unsigned long long)assoc.rawBits());
-            fflush(nilLitLog);
         }
     }
 
@@ -5650,8 +5614,8 @@ void Interpreter::returnFromMethod() {
     if (frameDepth_ > 0) {
         size_t homeFrame = savedFrames_[frameDepth_ - 1].homeFrameDepth;
 
-        if (homeFrame > 0) {
-            // Unwind frames from current down to homeFrame
+        if (homeFrame != SIZE_MAX) {
+            // Non-local return: unwind frames from current down to homeFrame
             // We want to return FROM the home method, so we pop down to homeFrame,
             // then returnValue pops one more and pushes the value to the caller
             while (frameDepth_ > homeFrame) {
@@ -5708,13 +5672,13 @@ void Interpreter::returnFromBlock() {
     Oop value = pop();
 
     // Get the home frame depth from the current frame
-    size_t homeFrame = 0;
+    size_t homeFrame = SIZE_MAX;
     if (frameDepth_ > 0) {
         homeFrame = savedFrames_[frameDepth_ - 1].homeFrameDepth;
     }
 
-    // If homeFrame is valid and greater than 0, unwind to it
-    if (homeFrame > 0 && homeFrame < frameDepth_) {
+    // If homeFrame is valid, unwind to it
+    if (homeFrame != SIZE_MAX && homeFrame < frameDepth_) {
         // Unwind frames from current down to homeFrame + 1
         // (homeFrame + 1 because we want to return FROM the home method)
         while (frameDepth_ > homeFrame + 1) {
@@ -5827,6 +5791,52 @@ void Interpreter::shortJumpIfTrue(int offset) {
 void Interpreter::shortJumpIfFalse(int offset) {
     Oop value = pop();
 
+    // Log ALL conditional jumps in critical step range for detect:ifNone: investigation
+    if (g_stepNum >= 1523900 && g_stepNum <= 1524200) {
+        static FILE* critJumpLog = nullptr;
+        if (!critJumpLog) critJumpLog = fopen("/tmp/crit_jumps.log", "w");
+        if (critJumpLog) {
+            bool isT = (value.rawBits() == memory_.trueObject().rawBits());
+            bool isF = (value.rawBits() == memory_.falseObject().rawBits());
+            std::string valDesc = isT ? "TRUE" : (isF ? "FALSE" : "???");
+            if (!isT && !isF) {
+                if (value.isSmallInteger()) valDesc = "SI(" + std::to_string(value.asSmallInteger()) + ")";
+                else if (value.rawBits() == memory_.nil().rawBits()) valDesc = "nil";
+                else if (value.isCharacter()) valDesc = "Char(" + std::to_string(value.asCharacter()) + ")";
+                else if (value.isObject() && value.rawBits() > 0x10000) {
+                    Oop cls = memory_.classOf(value);
+                    if (cls.isObject()) {
+                        Oop cn = memory_.fetchPointer(6, cls);
+                        if (cn.isObject() && cn.rawBits() > 0x10000) {
+                            ObjectHeader* cnH = cn.asObjectPtr();
+                            if (cnH->isBytesObject() && cnH->byteSize() < 50)
+                                valDesc = std::string((char*)cnH->bytes(), cnH->byteSize());
+                        }
+                    }
+                }
+            }
+            // Get current method selector
+            std::string mSel = "?";
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                Oop mh = memory_.fetchPointer(0, method_);
+                if (mh.isSmallInteger()) {
+                    int nl = mh.asSmallInteger() & 0x7FFF;
+                    if (nl >= 2 && nl < 100) {
+                        Oop s = memory_.fetchPointer(nl - 1, method_);
+                        if (s.isObject() && s.rawBits() > 0x10000) {
+                            ObjectHeader* sH = s.asObjectPtr();
+                            if (sH->isBytesObject() && sH->byteSize() < 100)
+                                mSel = std::string((char*)sH->bytes(), sH->byteSize());
+                        }
+                    }
+                }
+            }
+            fprintf(critJumpLog, "[JIF step=%llu fd=%zu] value=0x%llx (%s) in #%s offset=%d willJump=%d\n",
+                    (unsigned long long)g_stepNum, frameDepth_, (unsigned long long)value.rawBits(),
+                    valDesc.c_str(), mSel.c_str(), offset, !isT ? 1 : 0);
+            fflush(critJumpLog);
+        }
+    }
     // Log non-boolean values in conditional jumps (these cause silent loop exits)
     {
         static FILE* condLog = nullptr;
@@ -6619,7 +6629,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             allSendLog2 = fopen("/tmp/all_sends.log", "w");
             if (allSendLog2) { fprintf(allSendLog2, "[INIT] send log opened at step %llu\n", g_stepNum); fflush(allSendLog2); }
         }
-    if (allSendLog2 && g_stepNum <= 25000) {
+    if (allSendLog2 && g_stepNum >= 1523900 && g_stepNum <= 1524200) {
         if (allSendLog2 && selector.isObject() && selector.rawBits() > 0x10000) {
             ObjectHeader* sh2 = selector.asObjectPtr();
             if (sh2->isBytesObject() && sh2->byteSize() < 200) {
@@ -9666,6 +9676,62 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
     }
 
+    // DIAG: Trace key selectors for DiskStore recursion investigation
+    {
+        static int sendDiagCount = 0;
+        if (sendDiagCount < 80 && frameDepth_ < 30) {
+            auto selMatch = [&](const char* s) { size_t n = strlen(s); return selLen == n && memcmp(selBytes, s, n) == 0; };
+            if (selMatch("isActiveClass") || selMatch("isUnix") || selMatch("isMacOS") ||
+                selMatch("activeClass") || selMatch("allSubclasses") || selMatch("createDefault") ||
+                (selMatch("delimiter") && frameDepth_ < 10)) {
+                sendDiagCount++;
+                std::string rcvrClassName = "?";
+                if (rcvr.isNil()) rcvrClassName = "nil";
+                else if (rcvr.isSmallInteger()) rcvrClassName = "SmallInteger";
+                else if (rcvr.rawBits() == memory_.falseObject().rawBits()) rcvrClassName = "false";
+                else if (rcvr.rawBits() == memory_.trueObject().rawBits()) rcvrClassName = "true";
+                else if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                    Oop cls = memory_.classOf(rcvr);
+                    if (cls.isObject()) {
+                        Oop nm = memory_.fetchPointer(6, cls);
+                        if (nm.isObject() && nm.rawBits() > 0x10000) {
+                            ObjectHeader* nmH = nm.asObjectPtr();
+                            if (nmH->isBytesObject() && nmH->byteSize() < 100)
+                                rcvrClassName = std::string((char*)nmH->bytes(), nmH->byteSize());
+                        }
+                        // For metaclass (name slot might not work), try thisClass
+                        if (rcvrClassName == "?" || rcvrClassName.empty()) {
+                            Oop tc = memory_.fetchPointer(7, cls);
+                            if (tc.isObject() && tc.rawBits() > 0x10000) {
+                                Oop tcn = memory_.fetchPointer(6, tc);
+                                if (tcn.isObject() && tcn.rawBits() > 0x10000) {
+                                    ObjectHeader* tcnH = tcn.asObjectPtr();
+                                    if (tcnH->isBytesObject() && tcnH->byteSize() < 100)
+                                        rcvrClassName = std::string((char*)tcnH->bytes(), tcnH->byteSize()) + " class";
+                                }
+                            }
+                        }
+                    }
+                    // Also try getting name from receiver directly (if receiver IS a class)
+                    if (rcvrClassName == "?") {
+                        Oop nm = memory_.fetchPointer(6, rcvr);
+                        if (nm.isObject() && nm.rawBits() > 0x10000) {
+                            ObjectHeader* nmH = nm.asObjectPtr();
+                            if (nmH->isBytesObject() && nmH->byteSize() < 100) {
+                                rcvrClassName = std::string((char*)nmH->bytes(), nmH->byteSize());
+                                // Check if this is a class object (not a regular instance)
+                                rcvrClassName += " (class obj)";
+                            }
+                        }
+                    }
+                }
+                fprintf(stderr, "[SEND-DIAG #%d step=%llu fd=%zu] %.*s -> %s\n",
+                        sendDiagCount, (unsigned long long)g_stepNum, frameDepth_,
+                        (int)selLen, selBytes, rcvrClassName.c_str());
+            }
+        }
+    }
+
     // Check method cache (with statistics)
     static int cacheHits = 0, cacheMisses = 0;
     static int lastReport = 0;
@@ -9704,6 +9770,23 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 if (sHdr->isBytesObject() && sHdr->byteSize() < 50) {
                     cacheSelStr = std::string((char*)sHdr->bytes(), sHdr->byteSize());
                 }
+            }
+            // DIAG: Log delimiter cache hits near critical steps
+            if (cacheSelStr == "delimiter" && g_stepNum > 1500000 && g_stepNum < 1600000) {
+                // Get receiver class name
+                std::string delimRcvrName = "?";
+                if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                    // Try slot 6 (name) on receiver directly (if receiver IS a class)
+                    Oop nm = memory_.fetchPointer(6, rcvr);
+                    if (nm.isObject() && nm.rawBits() > 0x10000) {
+                        ObjectHeader* nmH = nm.asObjectPtr();
+                        if (nmH->isBytesObject() && nmH->byteSize() < 100)
+                            delimRcvrName = std::string((char*)nmH->bytes(), nmH->byteSize());
+                    }
+                }
+                fprintf(stderr, "[DELIM-CACHE step=%llu] #delimiter -> %s primIdx=%d method=0x%llx\n",
+                        (unsigned long long)g_stepNum, delimRcvrName.c_str(),
+                        cached->primitiveIndex, (unsigned long long)cached->method.rawBits());
             }
             // Trace startup sends via cached path
             if (g_sendTraceFile && g_stepCount >= 420 && g_stepCount <= 435) {
@@ -10198,6 +10281,23 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
     }
 
+    // DIAG: Log ALL delimiter sends at low frame depth (cache miss path)
+    if (selLen == 9 && selBytes && memcmp(selBytes, "delimiter", 9) == 0 && frameDepth_ < 20) {
+        std::string delimRcvName = "?";
+        if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+            Oop nm = memory_.fetchPointer(6, rcvr);
+            if (nm.isObject() && nm.rawBits() > 0x10000) {
+                ObjectHeader* nmH = nm.asObjectPtr();
+                if (nmH->isBytesObject() && nmH->byteSize() < 100)
+                    delimRcvName = std::string((char*)nmH->bytes(), nmH->byteSize());
+            }
+        }
+        int delimPrimIdx = method.isObject() ? primitiveIndexOf(method) : -1;
+        fprintf(stderr, "[DELIM-MISS step=%llu fd=%zu] #delimiter -> %s method=0x%llx primIdx=%d\n",
+                (unsigned long long)g_stepNum, frameDepth_, delimRcvName.c_str(),
+                (unsigned long long)method.rawBits(), delimPrimIdx);
+    }
+
     // TRACE: visitNode: lookup result
     if (traceVisitNodeSend) {
         fprintf(stderr, "[VN-SEND]   lookupMethod result: 0x%llx isNil=%d\n",
@@ -10557,6 +10657,43 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
         return o.isNil() || o.rawBits() == nilObj.rawBits() || o.rawBits() < 0x10000;
     };
 
+    // DIAG: Trace isActiveClass, delimiter, isUnix lookups at low frame depths
+    static int activeClassTraceCount = 0;
+    bool traceActiveClass = false;
+    if (activeClassTraceCount < 50 && frameDepth_ < 50) {
+        if (selStr == "isActiveClass" || selStr == "isUnix" || selStr == "isMacOS" || selStr == "isActivePlatform") {
+            traceActiveClass = true;
+            activeClassTraceCount++;
+            // Get metaclass name: try slot 6 (for Class), then slot 7 (thisClass for Metaclass) → slot 6
+            std::string rcvrClassName = getClassName(classOop);
+            if (rcvrClassName == "?") {
+                // Probably a metaclass - try thisClass slot (7) → name slot (6)
+                Oop thisClass = memory_.fetchPointer(7, classOop);
+                if (thisClass.isObject() && thisClass.rawBits() > 0x10000) {
+                    std::string tcn = getClassName(thisClass);
+                    rcvrClassName = tcn + " class";
+                }
+            }
+            fprintf(stderr, "[LOOKUP-DIAG #%d step=%llu] %s on %s fd=%zu\n",
+                    activeClassTraceCount, (unsigned long long)g_stepNum,
+                    selStr.c_str(), rcvrClassName.c_str(), frameDepth_);
+        }
+        if (selStr == "delimiter" && frameDepth_ < 20) {
+            traceActiveClass = true;
+            activeClassTraceCount++;
+            std::string rcvrClassName = getClassName(classOop);
+            if (rcvrClassName == "?") {
+                Oop thisClass = memory_.fetchPointer(7, classOop);
+                if (thisClass.isObject() && thisClass.rawBits() > 0x10000) {
+                    rcvrClassName = getClassName(thisClass) + " class";
+                }
+            }
+            fprintf(stderr, "[LOOKUP-DIAG #%d step=%llu] delimiter on %s fd=%zu\n",
+                    activeClassTraceCount, (unsigned long long)g_stepNum,
+                    rcvrClassName.c_str(), frameDepth_);
+        }
+    }
+
     while (!isNilOrEnd(currentClass) && currentClass.isObject() && depth < 100) {
         Oop methodDict = methodDictOf(currentClass);
 
@@ -10582,6 +10719,14 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
                               << " (0x" << std::hex << method.rawBits() << std::dec << ")\n";
                 }
                 if (!isNilOrEnd(method) && method.isObject()) {
+                    if (traceActiveClass) {
+                        std::string foundOnName = getClassName(currentClass);
+                        if (foundOnName == "?") {
+                            Oop tc = memory_.fetchPointer(7, currentClass);
+                            if (tc.isObject() && tc.rawBits() > 0x10000) foundOnName = getClassName(tc) + " class";
+                        }
+                        fprintf(stderr, "  -> FOUND %s on %s (depth=%d)\n", selStr.c_str(), foundOnName.c_str(), depth);
+                    }
                     if (traceThis) {
                         foundCount++;
                     }
@@ -10694,6 +10839,9 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
         }
     }
 
+    if (traceActiveClass) {
+        fprintf(stderr, "  -> NOT FOUND after %d levels\n", depth);
+    }
     return Oop::nil();  // Not found
 }
 
@@ -10864,51 +11012,6 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
     entry.method = method;
     entry.primitiveIndex = primitiveIndexOf(method);
     entry.primitive = nullptr;  // Will be set on first call
-
-    // DEBUG: Log when primitiveResume is cached
-    std::string selStr = "";
-    if (selector.isObject() && selector.rawBits() > 0x10000) {
-        ObjectHeader* sHdr = selector.asObjectPtr();
-        if (sHdr->isBytesObject() && sHdr->byteSize() < 50) {
-            selStr = std::string((char*)sHdr->bytes(), sHdr->byteSize());
-        }
-    }
-    if (selStr == "primitiveResume") {
-        static FILE* cacheStoreLog = nullptr;
-        static int cacheStoreCount = 0;
-        if (!cacheStoreLog) cacheStoreLog = fopen("/tmp/cache_store.log", "w");
-        if (cacheStoreLog && cacheStoreCount++ < 20) {
-            fprintf(cacheStoreLog, "[CACHE-STORE #%d] primitiveResume cached with primIdx=%d\n",
-                    cacheStoreCount, entry.primitiveIndex);
-            fflush(cacheStoreLog);
-        }
-    }
-    if (selStr == "digitAdd:" || selStr == "digitDiv:neg:" || selStr == "digitSubtract:") {
-        static FILE* digitCacheLog = nullptr;
-        static int digitCacheCount = 0;
-        if (!digitCacheLog) digitCacheLog = fopen("/tmp/digit_cache.log", "w");
-        if (digitCacheLog && digitCacheCount++ < 50) {
-            fprintf(digitCacheLog, "[DIGIT-CACHE #%d] '%s' cached primIdx=%d method=0x%llx class=0x%llx\n",
-                    digitCacheCount, selStr.c_str(), entry.primitiveIndex,
-                    (unsigned long long)method.rawBits(),
-                    (unsigned long long)classOop.rawBits());
-            // Dump method header
-            Oop mhdr = memory_.fetchPointer(0, method);
-            if (mhdr.isSmallInteger()) {
-                int64_t hbits = mhdr.asSmallInteger();
-                int nLit = hbits & 0x7FFF;
-                bool hasPrim = (hbits >> 30) & 1;
-                fprintf(digitCacheLog, "  header=0x%llx nLit=%d hasPrim=%d\n",
-                        (unsigned long long)hbits, nLit, hasPrim ? 1 : 0);
-                // Check first bytecodes
-                ObjectHeader* mo = method.asObjectPtr();
-                uint8_t* bc = mo->bytes() + (1 + nLit) * 8;
-                fprintf(digitCacheLog, "  bc[0..5]: %d %d %d %d %d %d\n",
-                        bc[0], bc[1], bc[2], bc[3], bc[4], bc[5]);
-            }
-            fflush(digitCacheLog);
-        }
-    }
 }
 
 size_t Interpreter::cacheHash(Oop selector, Oop classOop) const {
@@ -11527,7 +11630,7 @@ void Interpreter::activateBlock(Oop block, int argCount) {
         }
     }
     if (frameDepth_ > 1 && homeMethodForNLR.isObject() && !homeMethodForNLR.isNil()) {
-        size_t homeFrame = 0;  // Default to returning from bottom
+        size_t homeFrame = SIZE_MAX;  // Default: not found
 
         // Use the home method we extracted from the CompiledBlock's last literal
         Oop homeMethodOop = homeMethodForNLR;
@@ -11826,78 +11929,6 @@ void Interpreter::activateBlock(Oop block, int argCount) {
 // ===== FRAME MANAGEMENT =====
 
 bool Interpreter::pushFrame(Oop method, int argCount) {
-    // DIAG: Log methods being activated at high frame depths to find recursion
-    if (frameDepth_ >= 64000) {
-        static FILE* deepFrameLog = nullptr;
-        static int deepFrameLogCount = 0;
-        if (!deepFrameLog) deepFrameLog = fopen("/tmp/deep_frame.log", "w");
-        if (deepFrameLog && deepFrameLogCount < 50) {
-            deepFrameLogCount++;
-            // Extract selector from the method being activated (penultimate literal)
-            std::string selName = "?";
-            if (method.isObject() && method.rawBits() > 0x10000) {
-                Oop hdr = memory_.fetchPointer(0, method);
-                if (hdr.isSmallInteger()) {
-                    int nLits = hdr.asSmallInteger() & 0x7FFF;
-                    if (nLits >= 2 && nLits < 200) {
-                        Oop sel = memory_.fetchPointer(nLits - 1, method);
-                        if (sel.isObject() && sel.rawBits() > 0x10000) {
-                            ObjectHeader* selH = sel.asObjectPtr();
-                            if (selH->isBytesObject() && selH->byteSize() < 200)
-                                selName = std::string((char*)selH->bytes(), selH->byteSize());
-                        }
-                    }
-                }
-            }
-            // Extract receiver class name from the stack (receiver is below args)
-            std::string rcvClassName = "?";
-            Oop* rcvSlot = stackPointer_ - argCount;
-            if (rcvSlot >= stackBase_ && rcvSlot <= stackPointer_) {
-                Oop rcv = *rcvSlot;
-                if (rcv.isNil()) rcvClassName = "nil";
-                else if (rcv.isSmallInteger()) rcvClassName = "SmallInteger";
-                else if (rcv.isObject() && rcv.rawBits() > 0x10000) {
-                    Oop cls = memory_.classOf(rcv);
-                    if (cls.isObject()) {
-                        Oop cn = memory_.fetchPointer(6, cls);
-                        if (cn.isObject() && cn.rawBits() > 0x10000) {
-                            ObjectHeader* cnH = cn.asObjectPtr();
-                            if (cnH->isBytesObject() && cnH->byteSize() < 100)
-                                rcvClassName = std::string((char*)cnH->bytes(), cnH->byteSize());
-                        }
-                    }
-                }
-            }
-            fprintf(deepFrameLog, "[DEEP #%d] fd=%zu step=%llu %s >> #%s (args=%d)\n",
-                    deepFrameLogCount, frameDepth_, g_stepNum, rcvClassName.c_str(), selName.c_str(), argCount);
-            // On the first deep log entry, dump a portion of the call stack to see the pattern
-            if (deepFrameLogCount == 1) {
-                fprintf(deepFrameLog, "  --- Call stack (last 50 frames) ---\n");
-                size_t start = (frameDepth_ > 50) ? frameDepth_ - 50 : 0;
-                for (size_t fi = start; fi < frameDepth_; fi++) {
-                    const auto& sf = savedFrames_[fi];
-                    std::string frameSel = "?";
-                    if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
-                        Oop sfHdr = memory_.fetchPointer(0, sf.savedMethod);
-                        if (sfHdr.isSmallInteger()) {
-                            int nl = sfHdr.asSmallInteger() & 0x7FFF;
-                            if (nl >= 2 && nl < 200) {
-                                Oop s = memory_.fetchPointer(nl - 1, sf.savedMethod);
-                                if (s.isObject() && s.rawBits() > 0x10000) {
-                                    ObjectHeader* sH = s.asObjectPtr();
-                                    if (sH->isBytesObject() && sH->byteSize() < 200)
-                                        frameSel = std::string((char*)sH->bytes(), sH->byteSize());
-                                }
-                            }
-                        }
-                    }
-                    fprintf(deepFrameLog, "    [%zu] #%s\n", fi, frameSel.c_str());
-                }
-                fprintf(deepFrameLog, "  --- End call stack ---\n");
-            }
-            fflush(deepFrameLog);
-        }
-    }
     // Save current execution state before switching to new method
     if (frameDepth_ >= MaxFrameDepth) {
         std::cerr << "[VM-STOP] Frame depth overflow in pushFrame(): " << frameDepth_ << " >= " << MaxFrameDepth << "\n";
@@ -11915,7 +11946,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     frame.savedFP = framePointer_;
     frame.savedArgCount = argCount_;
     frame.savedClosure = closure_;  // Save current frame's closure (nil for methods, block for block activations)
-    frame.homeFrameDepth = 0;  // Default: not a block (will be set by activateBlock if needed)
+    frame.homeFrameDepth = SIZE_MAX;  // Default: not a block (will be set by activateBlock if needed)
 
 
 
@@ -18608,6 +18639,11 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
         fprintf(allPrimLog, "[PRIM-EXT] #%d primitive=%d (117=externalCall, 146/147=misc)\n",
                 primCallCount, primitiveIndex);
         fflush(allPrimLog);
+    }
+    // DIAG: Log primitive 117 calls near delimiter steps (1.53M)
+    if (primitiveIndex == 117 && g_stepNum > 1500000 && g_stepNum < 1600000) {
+        fprintf(stderr, "[PRIM117-DIAG step=%llu] primitiveExternalCall called, newMethod_=0x%llx\n",
+                (unsigned long long)g_stepNum, (unsigned long long)newMethod_.rawBits());
     }
     // Named primitives have high numbers (typically >= 32768)
     // They are looked up by name from method literals - not yet implemented

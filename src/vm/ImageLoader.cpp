@@ -616,36 +616,29 @@ bool ImageLoader::isObjectPointer(uint64_t bits) const {
 uint64_t ImageLoader::relocatePointer(uint64_t oldOop) const {
     if (oldOop == 0) return 0;  // nil stays nil
 
-    // Check for immediate values using SPUR's encoding (the image format)
-    // Standard Spur 64-bit immediate tags:
-    // - Object pointer: tag 000 (8-byte aligned address)
-    // - SmallInteger: bit 0 = 1 (any odd number)
-    // - Character: tag 010 (bit 0 = 0, but bits 2:1 = 01)
-    // - SmallFloat: tag 100 (bit 0 = 0, but bits 2:1 = 10)
-    //
-    // So immediates are: any value with (tag & 7) != 0
-    // Only tag == 0 (all low 3 bits zero) is an object pointer
-    uint64_t tag = oldOop & 7;
-    if (tag != 0) {
-        // This is an immediate value (SmallInteger, Character, or SmallFloat)
-        // Convert from Spur encoding to our encoding if needed
-        if (tag == 1 || tag == 3 || tag == 5 || tag == 7) {
-            // SmallInteger (odd): already compatible with our tag 001
-            return oldOop;
-        } else if (tag == 2) {
-            // Spur Character (010) -> our Character (011)
-            // Value is in bits 63:3, shift and re-tag
-            uint64_t value = oldOop >> 3;
-            return (value << 3) | 0x3;  // Our CharacterTag
-        } else if (tag == 4) {
-            // Spur SmallFloat (100) -> our SmallFloat (101)
-            uint64_t value = oldOop >> 3;
-            return (value << 3) | 0x5;  // Our SmallFloatTag
-        } else if (tag == 6) {
-            // Tag 110 - reserved/unused in Spur, treat as immediate
-            return oldOop;
-        }
-        // Any other tag - don't relocate
+    // Spur 64-bit immediate encoding: ALL immediates use 3-bit tags.
+    //   SmallInteger: tag = 001, encoding = (value << 3) | 1
+    //                 Same as our encoding - pass through unchanged.
+    //   Character:    tag = 010, encoding = (codepoint << 3) | 2
+    //                 Must convert to our encoding: (codepoint << 3) | 3
+    //   SmallFloat:   tag = 100, encoding = (bits << 3) | 4
+    //                 Must change tag from 100 to our 101.
+    //   Object ptr:   tag = 000, 8-byte aligned address
+    if (oldOop & 1) {
+        // SmallInteger: Spur 64-bit uses (value << 3) | 1, same as our encoding
+        return oldOop;
+    }
+    if ((oldOop & 7) == 2) {
+        // Spur Character (tag 010): codepoint = raw >> 3 (3-bit tag)
+        uint64_t codepoint = oldOop >> 3;
+        return (codepoint << 3) | 0x3;  // Our CharacterTag = 011
+    }
+    if ((oldOop & 7) == 4) {
+        // Spur SmallFloat (tag 100): change tag to our 101
+        return (oldOop & ~7ULL) | 0x5;  // Our SmallFloatTag = 101
+    }
+    if ((oldOop & 7) != 0) {
+        // Unknown immediate tag (6 = unused in Spur 64-bit)
         return oldOop;
     }
 
@@ -665,41 +658,22 @@ uint64_t ImageLoader::relocatePointer(uint64_t oldOop) const {
 Oop ImageLoader::rawToOop(uint64_t raw, ObjectMemory& memory) const {
     if (raw == 0) return Oop::nil();
 
-    // Check tag - handles both Spur and our encoding
-    uint64_t tag = raw & 7;
-    if (tag != 0) {
-        // Immediate value
-        if (tag == 1 || tag == 3 || tag == 5 || tag == 7) {
-            // Odd tags (SmallInteger variants or our Character/SmallFloat)
-            if (tag == 1) {
-                // SmallInteger (both Spur and ours use tag 001)
-                int64_t value = static_cast<int64_t>(raw) >> 3;
-                return Oop::fromSmallInteger(value);
-            } else if (tag == 3) {
-                // Our Character encoding (011)
-                uint32_t codepoint = static_cast<uint32_t>((raw >> 3) & 0x3FFFFFFF);
-                return Oop::fromCharacter(codepoint);
-            } else if (tag == 5) {
-                // Our SmallFloat encoding (101)
-                Oop result;
-                uint64_t rotated = raw >> 3;
-                uint64_t doubleBits = (rotated >> 61) | (rotated << 3);
-                double value;
-                std::memcpy(&value, &doubleBits, sizeof(double));
-                if (!Oop::tryFromSmallFloat(value, result)) {
-                    return Oop::fromSmallInteger(0);
-                }
-                return result;
-            }
-            // tag == 7: treat as SmallInteger
+    // After image loading, values should be in OUR encoding format
+    // (relocatePointer already converted from Spur to ours).
+    // Our encoding: SmallInteger = (value << 3) | 1, Character = (cp << 3) | 3,
+    //               SmallFloat = (...) | 5, Object pointer = ... | 0
+    if (raw & 1) {
+        // SmallInteger (tag 001) or other odd immediate
+        uint64_t tag3 = raw & 7;
+        if (tag3 == 1) {
             int64_t value = static_cast<int64_t>(raw) >> 3;
             return Oop::fromSmallInteger(value);
-        } else if (tag == 2) {
-            // Spur Character (010) - convert to our format
+        } else if (tag3 == 3) {
+            // Our Character encoding (011)
             uint32_t codepoint = static_cast<uint32_t>((raw >> 3) & 0x3FFFFFFF);
             return Oop::fromCharacter(codepoint);
-        } else if (tag == 4) {
-            // Spur SmallFloat (100) - convert to our format
+        } else if (tag3 == 5) {
+            // Our SmallFloat encoding (101)
             Oop result;
             uint64_t rotated = raw >> 3;
             uint64_t doubleBits = (rotated >> 61) | (rotated << 3);
@@ -710,8 +684,31 @@ Oop ImageLoader::rawToOop(uint64_t raw, ObjectMemory& memory) const {
             }
             return result;
         }
-        // tag == 6: reserved, treat as SmallInteger (best effort)
-        return Oop::fromSmallInteger(static_cast<int64_t>(raw) >> 3);
+        // tag 7: treat as SmallInteger
+        int64_t value = static_cast<int64_t>(raw) >> 3;
+        return Oop::fromSmallInteger(value);
+    }
+
+    if ((raw & 7) != 0) {
+        // Even non-zero tag that's not an object pointer
+        // Could be an unrelocated Spur Character (tag 010) or SmallFloat (tag 100)
+        if ((raw & 7) == 2) {
+            // Spur Character (tag 010) - extract codepoint with 3-bit shift
+            uint32_t codepoint = static_cast<uint32_t>(raw >> 3);
+            return Oop::fromCharacter(codepoint);
+        } else if ((raw & 7) == 4) {
+            // Spur SmallFloat
+            Oop result;
+            uint64_t rotated = raw >> 3;
+            uint64_t doubleBits = (rotated >> 61) | (rotated << 3);
+            double value;
+            std::memcpy(&value, &doubleBits, sizeof(double));
+            if (!Oop::tryFromSmallFloat(value, result)) {
+                return Oop::fromSmallInteger(0);
+            }
+            return result;
+        }
+        return Oop::fromSmallInteger(0);  // Unknown
     }
 
     // Object pointer (tag = 000)

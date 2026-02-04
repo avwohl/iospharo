@@ -2879,6 +2879,19 @@ PrimitiveResult Interpreter::primitiveIdentical(int argCount) {
 
     bool result = (rcvr == arg);
 
+    // DIAG: Log Character comparisons (first 50)
+    {
+        static int charCmpCount = 0;
+        if (charCmpCount < 50 && (rcvr.isCharacter() || arg.isCharacter())) {
+            charCmpCount++;
+            fprintf(stderr, "[CHAR-CMP #%d step=%llu] rcvr=0x%llx(char=%d) arg=0x%llx(char=%d) result=%d\n",
+                    charCmpCount, (unsigned long long)g_stepNum,
+                    (unsigned long long)rcvr.rawBits(), rcvr.isCharacter(),
+                    (unsigned long long)arg.rawBits(), arg.isCharacter(),
+                    result);
+        }
+    }
+
     // Detect scanFor: spinning - track consecutive == calls with same arg
     {
         static uint64_t identCallCount = 0;
@@ -8744,12 +8757,6 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
         case 1001:  // Operating system name
             pop();
 #if TARGET_OS_MACCATALYST
-            {
-                static int platformCallCount = 0;
-                if (platformCallCount++ < 3) {
-                    std::cerr << "[PLATFORM-NAME #" << platformCallCount << "] Returning 'Mac OS' (Mac Catalyst)\n";
-                }
-            }
             push(memory_.createString("Mac OS"));
 #elif TARGET_OS_IOS || TARGET_OS_IPHONE
             push(memory_.createString("iOS"));
@@ -11700,14 +11707,8 @@ PrimitiveResult Interpreter::primitiveDirectoryCreate(int argCount) {
 // Primitive 123: Get directory delimiter character
 // primitiveDirectoryDelimitor -> Character
 PrimitiveResult Interpreter::primitiveDirectoryDelimitor(int argCount) {
-    // On Unix/macOS, the delimiter is '/'
-    // Return it as a Character (immediate)
     pop();  // pop receiver
-
-    // Create a Character for '/'
-    // In Pharo, Character is an immediate with tag
-    // For now, return the ASCII value as a SmallInteger that Smalltalk can convert
-    push(Oop::fromSmallInteger('/'));
+    push(Oop::fromCharacter('/'));
     return PrimitiveResult::Success;
 }
 

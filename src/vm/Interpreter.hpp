@@ -302,7 +302,7 @@ private:
         Oop savedActiveContext;  // Active context at time of call (for proper return chain)
         Oop* savedFP;
         int savedArgCount;
-        size_t homeFrameDepth;  // For non-local block returns: the frame to return to (0 = not a block)
+        size_t homeFrameDepth;  // For non-local block returns: the frame to return to (SIZE_MAX = not a block)
     };
     static constexpr size_t MaxFrameDepth = 65536;
     std::array<SavedFrame, MaxFrameDepth> savedFrames_;
