@@ -5530,6 +5530,76 @@ PrimitiveResult Interpreter::primitiveReplaceFromTo(int argCount) {
         return PrimitiveResult::Success;
     }
 
+    // Handle 32-bit word objects (WideString, WordArray - format 10-11)
+    {
+        auto rcvrFmt = rcvrHeader->format();
+        auto replFmt = replHeader->format();
+        bool rcvrIs32 = (rcvrFmt == ObjectFormat::Indexable32 || rcvrFmt == ObjectFormat::Indexable32Odd);
+        bool replIs32 = (replFmt == ObjectFormat::Indexable32 || replFmt == ObjectFormat::Indexable32Odd);
+
+        if (rcvrIs32 && replIs32) {
+            size_t rcvrWords = rcvrHeader->byteSize() / 4;
+            size_t replWords = replHeader->byteSize() / 4;
+
+            if (static_cast<size_t>(stopIdx) > rcvrWords ||
+                static_cast<size_t>(repStartIdx + count - 1) > replWords) {
+                return PrimitiveResult::Failure;
+            }
+
+            uint8_t* rcvrBytes = const_cast<uint8_t*>(rcvrHeader->bytes());
+            const uint8_t* replBytes = replHeader->bytes();
+            size_t srcOffset = static_cast<size_t>(repStartIdx - 1) * 4;
+            size_t dstOffset = static_cast<size_t>(startIdx - 1) * 4;
+            memmove(rcvrBytes + dstOffset, replBytes + srcOffset, static_cast<size_t>(count) * 4);
+
+            primitiveSuccess(rcvr);
+            return PrimitiveResult::Success;
+        }
+
+        // Handle 16-bit word objects (format 12-15)
+        bool rcvrIs16 = (rcvrFmt >= ObjectFormat::Indexable16 && rcvrFmt <= ObjectFormat::Indexable16_3);
+        bool replIs16 = (replFmt >= ObjectFormat::Indexable16 && replFmt <= ObjectFormat::Indexable16_3);
+
+        if (rcvrIs16 && replIs16) {
+            size_t rcvrShorts = rcvrHeader->byteSize() / 2;
+            size_t replShorts = replHeader->byteSize() / 2;
+
+            if (static_cast<size_t>(stopIdx) > rcvrShorts ||
+                static_cast<size_t>(repStartIdx + count - 1) > replShorts) {
+                return PrimitiveResult::Failure;
+            }
+
+            uint8_t* rcvrBytes = const_cast<uint8_t*>(rcvrHeader->bytes());
+            const uint8_t* replBytes = replHeader->bytes();
+            size_t srcOffset = static_cast<size_t>(repStartIdx - 1) * 2;
+            size_t dstOffset = static_cast<size_t>(startIdx - 1) * 2;
+            memmove(rcvrBytes + dstOffset, replBytes + srcOffset, static_cast<size_t>(count) * 2);
+
+            primitiveSuccess(rcvr);
+            return PrimitiveResult::Success;
+        }
+
+        // Handle 64-bit word objects (format 9)
+        if (rcvrFmt == ObjectFormat::Indexable64 && replFmt == ObjectFormat::Indexable64) {
+            size_t rcvrQuads = rcvrHeader->byteSize() / 8;
+            size_t replQuads = replHeader->byteSize() / 8;
+
+            if (static_cast<size_t>(stopIdx) > rcvrQuads ||
+                static_cast<size_t>(repStartIdx + count - 1) > replQuads) {
+                return PrimitiveResult::Failure;
+            }
+
+            uint8_t* rcvrBytes = const_cast<uint8_t*>(rcvrHeader->bytes());
+            const uint8_t* replBytes = replHeader->bytes();
+            size_t srcOffset = static_cast<size_t>(repStartIdx - 1) * 8;
+            size_t dstOffset = static_cast<size_t>(startIdx - 1) * 8;
+            memmove(rcvrBytes + dstOffset, replBytes + srcOffset, static_cast<size_t>(count) * 8);
+
+            primitiveSuccess(rcvr);
+            return PrimitiveResult::Success;
+        }
+    }
+
     // Log format mismatch failures
     if (!rcvrHeader->isPointersObject() || !replHeader->isPointersObject()) {
         // If we got here, bytes path didn't match - log why
@@ -17000,9 +17070,11 @@ PrimitiveResult Interpreter::primitiveFindSubstring(int argCount) {
     size_t keySize = memory_.byteSizeOf(keyOop);
 
     if (keySize == 0) {
+        // Empty key: return 0 (not found) to prevent infinite loops in callers
+        // like allRangesOfSubstring: which loop until findString returns 0
         popN(4);
         pop();
-        push(Oop::fromSmallInteger(startIndex));
+        push(Oop::fromSmallInteger(0));
         return PrimitiveResult::Success;
     }
 

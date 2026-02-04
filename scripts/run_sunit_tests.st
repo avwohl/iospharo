@@ -29,10 +29,10 @@ runAllTests
 
 !SUnitRunner class methodsFor: 'running'!
 runTestClass: testClass on: s
-  | sels p f e |
+  | sels p f e t |
   s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' ==='; cr.
   s flush.
-  p := 0. f := 0. e := 0.
+  p := 0. f := 0. e := 0. t := 0.
   sels := testClass allTestSelectors asArray.
   "Sort with comparison counter to detect infinite loops"
   [| count |
@@ -51,22 +51,53 @@ runTestClass: testClass on: s
   sels do: [:sel |
     "Skip tests known to hang or cause VM-level crashes"
     (#(testPrintStringAll testStoreStringAll) includes: sel) ifFalse: [
-      [[[testClass new setUp; perform: sel; tearDown. p := p + 1]
-        on: TestFailure do: [:ex |
-          f := f + 1.
-          s nextPutAll: '  FAIL: '; nextPutAll: sel;
-            nextPutAll: ' ['; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 120)); nextPutAll: ']'; cr]]
-        on: Deprecation do: [:ex | ex resume]]
-        on: Exception do: [:ex |
-          e := e + 1.
-          s nextPutAll: '  ERROR: '; nextPutAll: sel;
-            nextPutAll: ' ('; nextPutAll: ex class name;
-            nextPutAll: ': '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 100)); nextPutAll: ')'; cr]]].
+      "Print progress for StringTest (438 tests)"
+      testClass name = 'StringTest' ifTrue: [
+        s nextPutAll: '  RUN: '; nextPutAll: sel; cr. s flush].
+      (self runSingleTest: testClass selector: sel timeout: 10 on: s)
+        ifNil: [p := p + 1]
+        ifNotNil: [:kind |
+          kind = #fail ifTrue: [f := f + 1].
+          kind = #error ifTrue: [e := e + 1].
+          kind = #timeout ifTrue: [t := t + 1]]]].
 
   s nextPutAll: 'Total: '; print: sels size;
     nextPutAll: ' P:'; print: p;
     nextPutAll: ' F:'; print: f;
-    nextPutAll: ' E:'; print: e; cr; cr! !
+    nextPutAll: ' E:'; print: e.
+  t > 0 ifTrue: [s nextPutAll: ' T:'; print: t].
+  s cr; cr! !
+
+!SUnitRunner class methodsFor: 'running'!
+runSingleTest: testClass selector: sel timeout: seconds on: s
+  "Run a single test with a timeout. Returns nil for pass, #fail, #error, or #timeout."
+  | sem result testProcess |
+  sem := Semaphore new.
+  result := nil. "nil means pass"
+
+  testProcess := [
+    [[[testClass new setUp; perform: sel; tearDown]
+      on: TestFailure do: [:ex |
+        result := #fail.
+        s nextPutAll: '  FAIL: '; nextPutAll: sel;
+          nextPutAll: ' ['; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 500)); nextPutAll: ']'; cr]]
+      on: Deprecation do: [:ex | ex resume]]
+      on: Exception do: [:ex |
+        result := #error.
+        s nextPutAll: '  ERROR: '; nextPutAll: sel;
+          nextPutAll: ' ('; nextPutAll: ex class name;
+          nextPutAll: ': '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 100)); nextPutAll: ')'; cr].
+    sem signal] forkAt: Processor activePriority - 1.
+
+  "Wait for test completion or timeout"
+  (sem waitTimeoutSeconds: seconds) ifTrue: [
+    "Timeout occurred - terminate the test process"
+    testProcess terminate.
+    result := #timeout.
+    s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
+      nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; cr.
+    s flush].
+  ^ result! !
 
 !SUnitRunner class methodsFor: 'startup'!
 startUp: resuming
