@@ -3977,10 +3977,9 @@ PrimitiveResult Interpreter::primitiveResume(int argCount) {
     Oop process = stackTop();  // Receiver is the process to resume
 
     if (!process.isObject()) {
-        if (resumeLog && resumeCallCount <= 50) {
-            fprintf(resumeLog, "[RESUME #%d] FAIL: process not object 0x%llx\n",
-                    resumeCallCount, (unsigned long long)process.rawBits());
-            fflush(resumeLog);
+        if (resumeCallCount <= 200) {
+            fprintf(stderr, "[RESUME-FAIL #%d step=%llu] process not object 0x%llx\n",
+                    resumeCallCount, (unsigned long long)g_stepNum, (unsigned long long)process.rawBits());
         }
         return PrimitiveResult::Failure;
     }
@@ -3988,10 +3987,9 @@ PrimitiveResult Interpreter::primitiveResume(int argCount) {
     // Check for forwarded process (official VM behavior)
     ObjectHeader* procHdr = process.asObjectPtr();
     if (procHdr->isForwarded()) {
-        if (resumeLog && resumeCallCount <= 50) {
-            fprintf(resumeLog, "[RESUME #%d] FAIL: forwarded process 0x%llx\n",
-                    resumeCallCount, (unsigned long long)process.rawBits());
-            fflush(resumeLog);
+        if (resumeCallCount <= 200) {
+            fprintf(stderr, "[RESUME-FAIL #%d step=%llu] forwarded process 0x%llx\n",
+                    resumeCallCount, (unsigned long long)g_stepNum, (unsigned long long)process.rawBits());
         }
         return PrimitiveResult::Failure;
     }
@@ -4001,11 +3999,10 @@ PrimitiveResult Interpreter::primitiveResume(int argCount) {
     Oop nilObj = memory_.nil();
 
     if (context.isNil() || context.rawBits() == nilObj.rawBits() || !context.isObject()) {
-        if (resumeLog && resumeCallCount <= 50) {
-            fprintf(resumeLog, "[RESUME #%d] FAIL: no valid context, proc=0x%llx ctx=0x%llx nil=0x%llx\n",
-                    resumeCallCount, (unsigned long long)process.rawBits(),
+        if (resumeCallCount <= 200) {
+            fprintf(stderr, "[RESUME-FAIL #%d step=%llu] no valid context, proc=0x%llx ctx=0x%llx nil=0x%llx\n",
+                    resumeCallCount, (unsigned long long)g_stepNum, (unsigned long long)process.rawBits(),
                     (unsigned long long)context.rawBits(), (unsigned long long)nilObj.rawBits());
-            fflush(resumeLog);
         }
         return PrimitiveResult::Failure;  // Can't resume without a valid context
     }
@@ -4014,18 +4011,17 @@ PrimitiveResult Interpreter::primitiveResume(int argCount) {
     // Check if context is forwarded and validate format
     ObjectHeader* ctxHdr = context.asObjectPtr();
     if (ctxHdr->isForwarded()) {
-        if (resumeLog && resumeCallCount <= 50) {
-            fprintf(resumeLog, "[RESUME #%d] FAIL: forwarded context\n", resumeCallCount);
-            fflush(resumeLog);
+        if (resumeCallCount <= 200) {
+            fprintf(stderr, "[RESUME-FAIL #%d step=%llu] forwarded context\n",
+                    resumeCallCount, (unsigned long long)g_stepNum);
         }
         return PrimitiveResult::Failure;
     }
     // Context objects have format 3 (IndexableWithFixed)
     if (ctxHdr->format() != ObjectFormat::IndexableWithFixed) {
-        if (resumeLog && resumeCallCount <= 50) {
-            fprintf(resumeLog, "[RESUME #%d] FAIL: context wrong format=%d (expected 3)\n",
-                    resumeCallCount, (int)ctxHdr->format());
-            fflush(resumeLog);
+        if (resumeCallCount <= 200) {
+            fprintf(stderr, "[RESUME-FAIL #%d step=%llu] context wrong format=%d (expected 3)\n",
+                    resumeCallCount, (unsigned long long)g_stepNum, (int)ctxHdr->format());
         }
         return PrimitiveResult::Failure;  // Not a valid Context
     }
@@ -4104,6 +4100,15 @@ PrimitiveResult Interpreter::primitiveResume(int argCount) {
             chainDepth++;
         }
         fflush(resumeLog);
+    }
+
+    // Log process resume to stderr for debugging scheduling issues
+    if (resumeCallCount <= 100) {
+        fprintf(stderr, "[RESUME #%d step=%llu] proc=0x%llx pri=%d active_pri=%d -> %s\n",
+                resumeCallCount, (unsigned long long)g_stepNum,
+                (unsigned long long)process.rawBits(),
+                processPriority, activePriority,
+                processPriority > activePriority ? "PREEMPT" : "enqueue");
     }
 
     if (processPriority > activePriority) {
@@ -4361,6 +4366,14 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
         fflush(waitLog);
     }
 
+    // Log blocking wait to stderr for scheduling debugging
+    if (waitCallCount <= 200) {
+        fprintf(stderr, "[WAIT-BLOCK #%d step=%llu] process=0x%llx pri=%d blocking on sem=0x%llx\n",
+                waitCallCount, (unsigned long long)g_stepNum,
+                (unsigned long long)activeProcess.rawBits(), activePriority,
+                (unsigned long long)semaphore.rawBits());
+    }
+
     // Add current process to semaphore wait list and switch to next runnable
     addLastLinkToList(activeProcess, semaphore);
 
@@ -4392,12 +4405,10 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
 
 PrimitiveResult Interpreter::primitiveQuit(int argCount) {
     // Smalltalk quitPrimitive / Smalltalk exit: exitCode
-    // First call during startup tries to reschedule; subsequent calls actually quit
+    // The standard Cog VM always exits on this primitive.
+    // The image's SnapshotOperation checks isImageStarting and only calls
+    // quitPrimitive when actually intended to quit (not during startup resume).
 
-    static int quitCallCount = 0;
-    quitCallCount++;
-
-    // Get exit code if provided
     int exitCode = 0;
     if (argCount > 0) {
         Oop arg = stackTop();
@@ -4406,27 +4417,32 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
         }
     }
 
-    { FILE* f = nullptr; if (f) { fprintf(f, "[VM] primitiveQuit called (call #%d) exit code %d\n", quitCallCount, exitCode); fclose(f); } }
+    std::cerr << "[VM] primitiveQuit: exit code " << exitCode << "\n";
 
-    if (quitCallCount == 1) {
-        // First quit - during startup. Try to reschedule to UI process.
-        popN(argCount + 1);
-
-        if (tryReschedule()) {
-            return PrimitiveResult::Success;
+    // On error exit, dump the context sender chain for debugging
+    if (exitCode != 0) {
+        std::cerr << "[VM] Context chain at exit:\n";
+        Oop ctx = activeContext_;
+        for (int i = 0; i < 30 && ctx.isObject() && !ctx.isNil(); i++) {
+            Oop method = memory_.fetchPointer(3, ctx);
+            std::string selStr = "<unknown>";
+            if (method.isObject() && !method.isNil()) {
+                ObjectHeader* mhdr = method.asObjectPtr();
+                if (mhdr->isCompiledMethod() && mhdr->slotCount() >= 2) {
+                    Oop sel = memory_.fetchPointer(1, method);
+                    if (sel.isObject() && !sel.isNil()) {
+                        ObjectHeader* shdr = sel.asObjectPtr();
+                        if (shdr->isBytesObject() && shdr->byteSize() <= 100) {
+                            selStr = std::string((char*)shdr->bytes(), shdr->byteSize());
+                        }
+                    }
+                }
+            }
+            std::cerr << "  [" << i << "] #" << selStr << "\n";
+            ctx = memory_.fetchPointer(0, ctx); // sender
         }
-
-        if (bootstrapStartup()) {
-            return PrimitiveResult::Success;
-        }
-
-        // Couldn't reschedule - don't exit, just return
-        std::cerr << "[VM] First quit: reschedule failed, continuing anyway\n";
-        return PrimitiveResult::Success;
     }
 
-    // Second+ quit - user explicitly asked to quit
-    std::cerr << "[VM] Second quit: exiting\n";
     running_ = false;
     std::exit(exitCode);
 
@@ -9007,15 +9023,35 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
 
     // Trace what attribute indices are being requested
     static int attrTraceCount = 0;
-    static FILE* attrLog = nullptr;
-    if (!attrLog) attrLog = nullptr;
     attrTraceCount++;
-    if (attrTraceCount <= 20) {
+    // Log non-negative indices (negative indices are called 2001 times per isHeadless check)
+    if (index >= 0 && attrTraceCount <= 100) {
         std::cerr << "[ATTR-149 #" << attrTraceCount << "] primitiveGetAttribute(" << index << ")\n";
     }
-    if (attrLog && attrTraceCount <= 50000) {
-        fprintf(attrLog, "[ATTR #%d] index=%lld\n", attrTraceCount, (long long)index);
-        fflush(attrLog);
+    // Log when --headless is found
+    if (index < 0) {
+        int paramIdx = static_cast<int>(-index) - 1;
+        const auto& params = vmParameters_;
+        if (paramIdx >= 0 && paramIdx < static_cast<int>(params.size())) {
+            std::cerr << "[ATTR-149] Found VM param at index " << index << ": " << params[paramIdx] << "\n";
+        }
+    }
+
+    // Negative indices: VM parameters (flags like --headless)
+    // In the standard Cog VM, VM flags before the image path are at negative indices.
+    // Index -1 = vmParameters_[0], -2 = vmParameters_[1], etc.
+    if (index < 0) {
+        int paramIdx = static_cast<int>(-index) - 1;  // -1 → 0, -2 → 1, etc.
+        const auto& params = vmParameters_;
+        if (paramIdx >= 0 && paramIdx < static_cast<int>(params.size())) {
+            pop();
+            push(memory_.createString(params[paramIdx]));
+            return PrimitiveResult::Success;
+        }
+        // No parameter at this index — return nil (consistent with standard VM)
+        pop();
+        push(memory_.nil());
+        return PrimitiveResult::Success;
     }
 
     // Index 0: VM path
@@ -11953,6 +11989,20 @@ PrimitiveResult Interpreter::primitiveFileWrite(int argCount) {
         tempBuffer[i] = memory_.fetchByte(start - 1 + i, bufferOop);
     }
 
+    // Trace writes to stdout/stderr for debugging CLI handlers
+    if (fileId == -2 || fileId == -3) {
+        static int stdioWriteCount = 0;
+        stdioWriteCount++;
+        if (stdioWriteCount <= 500) {
+            std::string preview(tempBuffer.begin(), tempBuffer.begin() + std::min((int64_t)80, count));
+            // Replace control chars for readability
+            for (char& c : preview) if (c < 32 && c != '\n') c = '.';
+            fprintf(stderr, "[FILE-WRITE #%d step=%llu] fd=%d count=%lld: \"%s\"\n",
+                    stdioWriteCount, (unsigned long long)g_stepNum, fileId, (long long)count,
+                    preview.c_str());
+        }
+    }
+
     size_t bytesWritten = fwrite(tempBuffer.data(), 1, count, it->second);
     fflush(it->second);
 
@@ -12255,8 +12305,9 @@ PrimitiveResult Interpreter::primitiveFileStdioHandles(int argCount) {
 
 // Primitive 162: Get file descriptor type
 // fileHandle primitiveFileDescriptorType -> integer
-// Returns: 0 = regular file, 1 = directory, 2 = character device, 3 = block device,
-//          4 = FIFO, 5 = socket, 6 = symbolic link, -1 = unknown/invalid
+// Returns values matching the Cog VM's sqFileDescriptorType():
+//   0 = regular file, 1 = pipe/FIFO, 2 = socket, 3 = character device, -1 = unknown/invalid
+// The Pharo image checks (type between: 1 and: 3) for "available" stdio handles.
 PrimitiveResult Interpreter::primitiveFileDescriptorType(int argCount) {
     Oop fileIdOop = stackTop();
 
@@ -12273,18 +12324,14 @@ PrimitiveResult Interpreter::primitiveFileDescriptorType(int argCount) {
         return PrimitiveResult::Success;
     }
 
+    // Use Cog VM numbering (not POSIX stat mode values)
     int type = -1;
-    if (S_ISREG(statBuf.st_mode)) type = 0;       // Regular file
-    else if (S_ISDIR(statBuf.st_mode)) type = 1;  // Directory
-    else if (S_ISCHR(statBuf.st_mode)) type = 2;  // Character device
-    else if (S_ISBLK(statBuf.st_mode)) type = 3;  // Block device
-    else if (S_ISFIFO(statBuf.st_mode)) type = 4; // FIFO
+    if (S_ISREG(statBuf.st_mode)) type = 0;        // Regular file
+    else if (S_ISFIFO(statBuf.st_mode)) type = 1;   // Pipe/FIFO
 #ifdef S_ISSOCK
-    else if (S_ISSOCK(statBuf.st_mode)) type = 5; // Socket
+    else if (S_ISSOCK(statBuf.st_mode)) type = 2;   // Socket
 #endif
-#ifdef S_ISLNK
-    else if (S_ISLNK(statBuf.st_mode)) type = 6;  // Symbolic link
-#endif
+    else if (S_ISCHR(statBuf.st_mode)) type = 3;    // Character device (terminal)
 
     pop();
     push(Oop::fromSmallInteger(type));
@@ -23005,11 +23052,12 @@ PrimitiveResult Interpreter::primitiveGetAddressOfOOP(int argCount) {
 }
 
 // primitiveInterpreterSourceVersion
-// Returns a string with the interpreter source version
+// Returns a string with the interpreter source version.
+// Format must contain "Date: <ISO8601>" for DiskStore >> checkVMVersion to parse.
 PrimitiveResult Interpreter::primitiveInterpreterSourceVersion(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    Oop result = createStringObject(memory_, "iOSPharo VM 1.0");
+    Oop result = createStringObject(memory_, "iOSPharo VM Date: 2026-02-05T00:00:00+00:00");
     if (result.isNil()) return PrimitiveResult::Failure;
 
     popN(1);  // pop receiver

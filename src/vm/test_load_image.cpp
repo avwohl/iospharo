@@ -525,6 +525,12 @@ int main(int argc, char* argv[]) {
     interpreter.setVMPath(argv[0]);
     interpreter.setImageArguments(imageArgs);
 
+    // Set VM parameters - when command-line args are present, run headless
+    // like the standard Pharo launcher does (pharo always passes --headless)
+    if (!imageArgs.empty()) {
+        interpreter.setVMParameters({"--headless"});
+    }
+
     // Set up event callback BEFORE initialization
     gTestInterpreter = &interpreter;
     gEventQueue.setEventCallback(testEventCallback, nullptr);
@@ -601,15 +607,17 @@ int main(int argc, char* argv[]) {
         // Run bytecode steps for testing
         std::cout << "\n=== Execution Test ===" << std::endl;
         auto execStart = std::chrono::steady_clock::now();
-        long long totalSteps = testMode ? 10000000000LL : 200000000LL;
+        // Use long execution for any command-line mode, short for GUI-only
+        long long totalSteps = !imageArgs.empty() ? 10000000000LL : 200000000LL;
         std::cout << "Running up to " << totalSteps << " bytecode steps..." << std::endl;
-        if (testMode) {
+        if (!imageArgs.empty()) {
             std::cout << "Image args:";
             for (const auto& a : imageArgs) std::cout << " " << a;
             std::cout << std::endl;
         }
         long long activeSteps = 0;
         long long consecutiveIdle = 0;
+        auto idleStartTime = std::chrono::steady_clock::now();
         bool clickInjected = false;
 
         for (long long i = 0; i < totalSteps; i++) {
@@ -651,28 +659,32 @@ int main(int argc, char* argv[]) {
                 activeSteps++;
                 consecutiveIdle = 0;
 
-                // In non-test mode, inject clicks for GUI testing
-                if (!testMode && !clickInjected && activeSteps == 5000) {
+                // In interactive (no CLI args) mode, inject clicks for GUI testing
+                if (imageArgs.empty() && !clickInjected && activeSteps == 5000) {
                     std::cout << "\n=== Injecting Right-Click (World Menu) ===" << std::endl;
                     injectMouseClick(50, 300, 2);
                     clickInjected = true;
                 }
             } else {
                 consecutiveIdle++;
-                // Report first idle transition
+                // Report first idle transition and record wall-clock time
                 if (consecutiveIdle == 1) {
                     std::cout << "[IDLE] First idle at step " << i << " after " << activeSteps << " active steps" << std::endl;
+                    idleStartTime = std::chrono::steady_clock::now();
                 }
-                // In test mode, if idle for 10M consecutive steps, the image is done
-                // (test handler calls Smalltalk exitSuccess which stops the VM,
-                //  or something went wrong and we're stuck)
-                if (testMode && consecutiveIdle > 10000000) {
-                    std::cout << "[TEST] Idle for 10M steps, stopping." << std::endl;
-                    break;
-                }
-                // In non-test mode, stop after extended idle
-                if (!testMode && consecutiveIdle > 20000000) {
-                    break;
+                // Check wall-clock idle duration periodically (every 100K steps to avoid clock overhead)
+                if (consecutiveIdle % 100000 == 0) {
+                    auto idleElapsed = std::chrono::steady_clock::now() - idleStartTime;
+                    auto idleSecs = std::chrono::duration_cast<std::chrono::seconds>(idleElapsed).count();
+                    // In CLI mode, allow 30s idle for timer/delay-based tests
+                    if (!imageArgs.empty() && idleSecs > 30) {
+                        std::cout << "[CLI] Idle for " << idleSecs << "s wall-clock, stopping." << std::endl;
+                        break;
+                    }
+                    // In interactive mode, stop after 5s idle
+                    if (imageArgs.empty() && idleSecs > 5) {
+                        break;
+                    }
                 }
             }
         }

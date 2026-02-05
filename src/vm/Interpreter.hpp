@@ -201,6 +201,12 @@ public:
     void setImageArguments(const std::vector<std::string>& args) { imageArguments_ = args; }
     const std::vector<std::string>& imageArguments() const { return imageArguments_; }
 
+    /// Set/get VM parameters (returned by primitiveGetAttribute at negative indices)
+    /// In the standard Cog VM, these are flags like --headless passed before the image path.
+    /// Index -1 returns vmParameters_[0], index -2 returns vmParameters_[1], etc.
+    void setVMParameters(const std::vector<std::string>& params) { vmParameters_ = params; }
+    const std::vector<std::string>& vmParameters() const { return vmParameters_; }
+
     /// Set/get screen dimensions
     void setScreenSize(int width, int height) { screenWidth_ = width; screenHeight_ = height; }
     void setScreenDepth(int depth) { screenDepth_ = depth; }
@@ -345,6 +351,7 @@ private:
     std::string imageName_;
     std::string vmPath_;
     std::vector<std::string> imageArguments_;  // Command-line args for the image (index 2+)
+    std::vector<std::string> vmParameters_;    // VM flags like --headless (negative indices)
 
     // Screen dimensions (configurable, defaults for headless)
     int screenWidth_ = 1024;

@@ -2721,6 +2721,13 @@ bool Interpreter::step() {
                       << " yielding to same priority process: " << (foundProcess ? "found" : "none") << "\n";
         }
 
+        // Log yield attempts to stderr for debugging scheduling
+        if (forceYieldCount <= 50) {
+            fprintf(stderr, "[YIELD #%d step=%llu] active_pri=%d found=%s\n",
+                    forceYieldCount, (unsigned long long)g_stepNum,
+                    activePriority, foundProcess ? "YES" : "no");
+        }
+
         if (foundProcess) {
             putToSleep(activeProcess);
             transferTo(nextProcess);
