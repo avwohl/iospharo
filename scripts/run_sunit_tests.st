@@ -50,7 +50,7 @@ runTestClass: testClass on: s
 
   sels do: [:sel |
     "Skip tests known to hang or cause VM-level crashes"
-    (#(testPrintStringAll testStoreStringAll testPrintingRecursive) includes: sel) ifFalse: [
+    (#(testPrintStringAll testStoreStringAll) includes: sel) ifFalse: [
       "Print progress for StringTest and ArrayTest"
       (#('StringTest' 'ArrayTest') includes: testClass name) ifTrue: [
         s nextPutAll: '  RUN: '; nextPutAll: sel; cr. s flush].

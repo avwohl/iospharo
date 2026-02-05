@@ -5330,7 +5330,7 @@ PrimitiveResult Interpreter::primitiveMillisecondClock(int argCount) {
     // Primitive 135: Return milliseconds since VM start
     // Official VM returns ioMSecs() masked to 30 bits for wrapping behavior
     // Timer calculations depend on this 30-bit wrapping semantics
-    constexpr int64_t MillisecondClockMask = 0x1FFFFFFF;  // 30-bit mask
+    constexpr int64_t MillisecondClockMask = 0x3FFFFFFF;  // 30-bit mask
     int64_t maskedMs = ioMSecs() & MillisecondClockMask;
     primitiveSuccess(Oop::fromSmallInteger(maskedMs));
     return PrimitiveResult::Success;
