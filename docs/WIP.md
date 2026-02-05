@@ -174,15 +174,23 @@ Standard VM: 2458P  0F  4E  (100% pass rate, ignoring TestSkipped)
 
 **testPrintingRecursive (ArrayTest):**
 - `Got ~42682 instead of 50000` — recursive printString produces shorter output
-- Root cause: The LimitedWriteStream's `limitBlock: [^ stream contents]` non-local
-  return doesn't fire properly during deep recursion. The test relies on this NLR
-  to stop at exactly 50000 chars.
-- VM stack depth limit (8192 frames) may contribute, but increasing it causes
-  the test to hang indefinitely (NLR still doesn't fire)
-- Fix requires investigating why NLR blocks don't work in deep recursion
+- Root cause: Our VM uses more stack frames per operation than other VMs (no
+  inlining, no context reuse). Printing 50000 chars from a recursive array
+  requires ~35000+ frames. With 8192 frame limit, we hit stack overflow before
+  reaching 50000 chars.
+- NLR itself works correctly — verified with tests at depths up to 5000 frames.
+  The LimitedWriteStream's `[^ stream contents]` fires correctly when limit is
+  reached, but we never reach 50000 chars because stack overflow truncates early.
+- Increasing stack limit to 35000+ works, but causes memory exhaustion (old space
+  fills up with context objects). The test passes but the VM runs out of memory.
+- This is a fundamental architectural limitation: our C++ stack-based VM allocates
+  heap contexts for deep recursion, unlike Cog which can spill to heap dynamically.
+- Possible fixes: (1) implement context reuse/inlining, (2) implement dynamic stack
+  growth, (3) accept as known limitation. Currently accepting as limitation.
 
 **TestSkipped (4 errors) — identical on both VMs, not real failures:**
-- IntegerTest: `testCreationFromBytes1/2/3` — test explicitly skips
+- IntegerTest: `testCreationFromBytes1/2/3` — test explicitly skips on 64-bit VMs
+  (`Smalltalk vm wordSize = 4 ifFalse: [^ self skip]`)
 - FloatTest: `testNaNCompare` — test explicitly skips
 
 **CharacterTest: 2 skipped by test runner (both VMs):**
