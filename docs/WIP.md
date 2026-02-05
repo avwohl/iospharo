@@ -24,14 +24,12 @@ cat /tmp/sunit_test_results.txt
 
 ---
 
-## Test Results (2026-02-05)
+## Test Results (2026-02-05, post-workaround-removal)
 
-15 test classes, 2461 tests run, 2457 pass, 0 fail, 4 errors (TestSkipped), 3 skipped by runner.
+Verified after removing all workarounds (commits b31cf2a, 695cb25, c1a6826).
+No silent process killing, no error swallowing. Honest results.
 
-**WARNING**: These results were obtained with workarounds that silently killed
-failing processes. The workarounds have been removed (commit b31cf2a, 695cb25).
-Results after workaround removal have NOT been re-verified. The real pass rate
-may be lower — that's expected and more honest.
+**12 of 15 test classes completed. VM killed by stack overflow on ArrayTest.**
 
 | Test Class | Pass | Fail | Error | Notes |
 |---|---|---|---|---|
@@ -40,16 +38,28 @@ may be lower — that's expected and more honest.
 | FloatTest | 74 | 0 | 1 | 1 TestSkipped |
 | FractionTest | 32 | 0 | 0 | |
 | PointTest | 36 | 0 | 0 | |
-| CharacterTest | 17 | 0 | 0 | 2 skipped by runner (slow) |
+| CharacterTest | 17 | 0 | 0 | 2 not run (slow Unicode iteration) |
 | DictionaryTest | 205 | 0 | 0 | |
 | SetTest | 174 | 0 | 0 | |
 | BagTest | 168 | 0 | 0 | |
 | IntervalTest | 260 | 0 | 0 | |
 | SymbolTest | 268 | 0 | 0 | |
 | OrderedCollectionTest | 351 | 0 | 0 | |
-| ArrayTest | 323 | 0 | 0 | 1 skipped by runner |
-| StringTest | 438 | 0 | 0 | |
-| HeapTest | 148 | 0 | 0 | |
+| ArrayTest | — | — | — | **stopVM at step 444M: stack overflow on testPrintingRecursive** |
+| StringTest | — | — | — | not reached |
+| HeapTest | — | — | — | not reached |
+
+**Completed: 2119 pass, 0 fail, 4 errors (all TestSkipped)**
+
+**Root cause of stopVM**: `testPrintingRecursive` creates infinite recursion
+(`(Array new: 1) at: 1 put: self; printString`). The test relies on
+`waitTimeoutSeconds:` to catch the timeout, but our timer doesn't fire
+(see missing feature #10 below). Without the timeout, recursion continues
+until `push()` hits the stack limit and calls `stopVM()`.
+
+**To fix**: Fix timer/semaphore signaling so timeouts work. Then
+`testPrintingRecursive` will be caught by the timeout and the remaining
+3 test classes (ArrayTest, StringTest, HeapTest) can run.
 
 ---
 
