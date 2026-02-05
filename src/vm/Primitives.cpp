@@ -22748,6 +22748,280 @@ PrimitiveResult Interpreter::primitiveLoadModule(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== FFI MEMORY ACCESS PRIMITIVES =====
+// These are required by TFFIBackend for FFI to work
+
+// primitiveFFIAllocate
+// Stack: receiver, size -> ExternalAddress
+// Allocates a block of external memory
+PrimitiveResult Interpreter::primitiveFFIAllocate(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop sizeOop = stackTop();
+    if (!sizeOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    int64_t size = sizeOop.asSmallInteger();
+    if (size <= 0) return PrimitiveResult::Failure;
+
+    // Allocate external memory
+    void* ptr = calloc(1, static_cast<size_t>(size));
+    if (!ptr) return PrimitiveResult::Failure;
+
+    // Create ExternalAddress object
+    Oop extAddrClass = memory_.specialObject(SpecialObjectIndex::ClassExternalAddress);
+    if (extAddrClass.isNil()) {
+        free(ptr);
+        return PrimitiveResult::Failure;
+    }
+
+    uint32_t classIndex = memory_.indexOfClass(extAddrClass);
+    if (classIndex == 0) {
+        free(ptr);
+        return PrimitiveResult::Failure;
+    }
+
+    Oop result = memory_.allocateBytes(classIndex, sizeof(void*));
+    if (result.isNil()) {
+        free(ptr);
+        return PrimitiveResult::Failure;
+    }
+
+    // Store pointer in ExternalAddress
+    ObjectHeader* resultHdr = result.asObjectPtr();
+    memcpy(resultHdr->bytes(), &ptr, sizeof(void*));
+
+    popN(2);  // pop size and receiver
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// primitiveFFIFree
+// Stack: receiver, externalAddress -> receiver
+// Frees a block of external memory
+PrimitiveResult Interpreter::primitiveFFIFree(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop addrOop = stackTop();
+    if (addrOop.isNil()) {
+        // Freeing nil is a no-op
+        popN(1);
+        return PrimitiveResult::Success;
+    }
+
+    if (!addrOop.isObject()) return PrimitiveResult::Failure;
+
+    ObjectHeader* addrHdr = addrOop.asObjectPtr();
+    if (!addrHdr->isBytesObject() || addrHdr->byteSize() < sizeof(void*)) {
+        return PrimitiveResult::Failure;
+    }
+
+    void* ptr = nullptr;
+    memcpy(&ptr, addrHdr->bytes(), sizeof(void*));
+
+    if (ptr) {
+        free(ptr);
+        // Zero out the external address to prevent double-free
+        memset(addrHdr->bytes(), 0, sizeof(void*));
+    }
+
+    popN(1);  // pop address, leave receiver
+    return PrimitiveResult::Success;
+}
+
+// primitiveFFIIntegerAt
+// Stack: receiver, anObject, byteOffset, nBytes, signed -> integer
+// Reads an integer of nBytes size from external memory at byteOffset
+PrimitiveResult Interpreter::primitiveFFIIntegerAt(int argCount) {
+    if (argCount != 4) return PrimitiveResult::Failure;
+
+    Oop signedOop = stackTop();
+    Oop nBytesOop = stackValue(1);
+    Oop offsetOop = stackValue(2);
+    Oop objectOop = stackValue(3);
+
+    // Parse signed flag
+    bool isSigned = (signedOop.rawBits() == memory_.trueObject().rawBits());
+
+    // Parse nBytes
+    if (!nBytesOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t nBytes = nBytesOop.asSmallInteger();
+    if (nBytes < 1 || nBytes > 8) return PrimitiveResult::Failure;
+
+    // Parse offset
+    if (!offsetOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t offset = offsetOop.asSmallInteger();
+    if (offset < 1) return PrimitiveResult::Failure;
+    offset -= 1;  // Convert 1-based to 0-based
+
+    // Get the base address from the object
+    void* basePtr = nullptr;
+    if (objectOop.isObject()) {
+        ObjectHeader* objHdr = objectOop.asObjectPtr();
+        if (objHdr->isBytesObject()) {
+            // For ExternalAddress or similar, the bytes contain the pointer
+            if (objHdr->byteSize() >= sizeof(void*)) {
+                memcpy(&basePtr, objHdr->bytes(), sizeof(void*));
+            }
+        }
+    }
+
+    if (!basePtr) return PrimitiveResult::Failure;
+
+    // Read the value from external memory
+    uint8_t* ptr = reinterpret_cast<uint8_t*>(basePtr) + offset;
+    int64_t value = 0;
+
+    switch (nBytes) {
+        case 1:
+            if (isSigned) {
+                value = *reinterpret_cast<int8_t*>(ptr);
+            } else {
+                value = *reinterpret_cast<uint8_t*>(ptr);
+            }
+            break;
+        case 2:
+            if (isSigned) {
+                value = *reinterpret_cast<int16_t*>(ptr);
+            } else {
+                value = *reinterpret_cast<uint16_t*>(ptr);
+            }
+            break;
+        case 4:
+            if (isSigned) {
+                value = *reinterpret_cast<int32_t*>(ptr);
+            } else {
+                value = *reinterpret_cast<uint32_t*>(ptr);
+            }
+            break;
+        case 8:
+            if (isSigned) {
+                value = *reinterpret_cast<int64_t*>(ptr);
+            } else {
+                // For unsigned 64-bit, we still read as signed since
+                // Smalltalk integers are signed, but very large values
+                // may not fit in SmallInteger
+                value = static_cast<int64_t>(*reinterpret_cast<uint64_t*>(ptr));
+            }
+            break;
+        default:
+            return PrimitiveResult::Failure;
+    }
+
+    // Return as SmallInteger if possible, otherwise need LargeInteger
+    if (value >= Oop::smallIntegerMin() && value <= Oop::smallIntegerMax()) {
+        popN(5);  // pop all args and receiver
+        push(Oop::fromSmallInteger(value));
+        return PrimitiveResult::Success;
+    }
+
+    // Need to create a LargeInteger - for now, fail for large values
+    // TODO: implement LargeInteger creation
+    return PrimitiveResult::Failure;
+}
+
+// primitiveFFIIntegerAtPut
+// Stack: receiver, anObject, byteOffset, value, nBytes, signed -> value
+// Writes an integer of nBytes size to external memory at byteOffset
+PrimitiveResult Interpreter::primitiveFFIIntegerAtPut(int argCount) {
+    if (argCount != 5) return PrimitiveResult::Failure;
+
+    Oop signedOop = stackTop();
+    Oop nBytesOop = stackValue(1);
+    Oop valueOop = stackValue(2);
+    Oop offsetOop = stackValue(3);
+    Oop objectOop = stackValue(4);
+
+    // Parse nBytes
+    if (!nBytesOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t nBytes = nBytesOop.asSmallInteger();
+    if (nBytes < 1 || nBytes > 8) return PrimitiveResult::Failure;
+
+    // Parse offset
+    if (!offsetOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t offset = offsetOop.asSmallInteger();
+    if (offset < 1) return PrimitiveResult::Failure;
+    offset -= 1;  // Convert 1-based to 0-based
+
+    // Parse value
+    if (!valueOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t value = valueOop.asSmallInteger();
+
+    // Get the base address from the object
+    void* basePtr = nullptr;
+    if (objectOop.isObject()) {
+        ObjectHeader* objHdr = objectOop.asObjectPtr();
+        if (objHdr->isBytesObject()) {
+            if (objHdr->byteSize() >= sizeof(void*)) {
+                memcpy(&basePtr, objHdr->bytes(), sizeof(void*));
+            }
+        }
+    }
+
+    if (!basePtr) return PrimitiveResult::Failure;
+
+    // Write the value to external memory
+    uint8_t* ptr = reinterpret_cast<uint8_t*>(basePtr) + offset;
+
+    switch (nBytes) {
+        case 1:
+            *reinterpret_cast<uint8_t*>(ptr) = static_cast<uint8_t>(value);
+            break;
+        case 2:
+            *reinterpret_cast<uint16_t*>(ptr) = static_cast<uint16_t>(value);
+            break;
+        case 4:
+            *reinterpret_cast<uint32_t*>(ptr) = static_cast<uint32_t>(value);
+            break;
+        case 8:
+            *reinterpret_cast<uint64_t*>(ptr) = static_cast<uint64_t>(value);
+            break;
+        default:
+            return PrimitiveResult::Failure;
+    }
+
+    popN(6);  // pop all args and receiver
+    push(valueOop);  // return the value
+    return PrimitiveResult::Success;
+}
+
+// primitiveGetAddressOfOOP
+// Stack: receiver, anObject -> ExternalAddress
+// Returns an ExternalAddress containing the oop (raw bits) of the object
+// Used by FFI to pass object addresses to C functions
+PrimitiveResult Interpreter::primitiveGetAddressOfOOP(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop objectOop = stackTop();
+
+    // Objects must be pinned for their address to be stable
+    // However, for now we don't enforce this - the caller should ensure pinning
+    if (objectOop.isImmediate()) {
+        // Immediates don't have stable addresses
+        return PrimitiveResult::Failure;
+    }
+
+    // Get the raw pointer to the object
+    void* objectPtr = objectOop.asObjectPtr();
+
+    // Create ExternalAddress object to hold the result
+    Oop extAddrClass = memory_.specialObject(SpecialObjectIndex::ClassExternalAddress);
+    if (extAddrClass.isNil()) return PrimitiveResult::Failure;
+
+    uint32_t classIndex = memory_.indexOfClass(extAddrClass);
+    if (classIndex == 0) return PrimitiveResult::Failure;
+
+    Oop result = memory_.allocateBytes(classIndex, sizeof(void*));
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    // Store the object pointer in the ExternalAddress
+    ObjectHeader* resultHdr = result.asObjectPtr();
+    memcpy(resultHdr->bytes(), &objectPtr, sizeof(void*));
+
+    popN(2);  // pop object and receiver
+    push(result);
+    return PrimitiveResult::Success;
+}
+
 // primitiveInterpreterSourceVersion
 // Returns a string with the interpreter source version
 PrimitiveResult Interpreter::primitiveInterpreterSourceVersion(int argCount) {

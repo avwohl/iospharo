@@ -635,6 +635,26 @@ SDL_EXPORT void SDL_GL_DeleteContext(void* c) { stub_SDL_GL_DeleteContext(c); }
 SDL_EXPORT int SDL_GL_MakeCurrent(void* w, void* c) { return stub_SDL_GL_MakeCurrent(w, c); }
 SDL_EXPORT void SDL_GL_SwapWindow(void* w) { stub_SDL_GL_SwapWindow(w); }
 
+// ==== VM FFI Primitives Export ====
+// These are exported so TFFIBackend can detect FFI availability via dlsym
+// TFFIBackend checks: loadSymbol: #primitiveLoadSymbolFromModule module: nil
+// The actual primitive implementations are in Primitives.cpp
+
+// Stub functions that TFFIBackend can find to confirm FFI is available
+// The actual functionality goes through the VM's primitive dispatch
+__attribute__((used, visibility("default")))
+void* primitiveLoadSymbolFromModule(void* symbol, void* module) {
+    // This is just a marker function so TFFIBackend can detect FFI support
+    // Actual primitive is implemented in Interpreter::primitiveLoadSymbolFromModule
+    return nullptr;
+}
+
+__attribute__((used, visibility("default")))
+void* primitiveLoadModule(void* moduleName) {
+    // Marker function for TFFIBackend
+    return nullptr;
+}
+
 #undef SDL_EXPORT
 
 } // extern "C"

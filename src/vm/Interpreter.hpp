@@ -1538,6 +1538,13 @@ private:
     PrimitiveResult primitiveLoadSymbolFromModule(int argCount);  // Named: load symbol address
     PrimitiveResult primitiveLoadModule(int argCount);            // Named: load module handle
 
+    // FFI Memory Access Primitives (required by TFFIBackend)
+    PrimitiveResult primitiveFFIAllocate(int argCount);           // Named: allocate external memory
+    PrimitiveResult primitiveFFIFree(int argCount);               // Named: free external memory
+    PrimitiveResult primitiveFFIIntegerAt(int argCount);          // Named: read integer at offset
+    PrimitiveResult primitiveFFIIntegerAtPut(int argCount);       // Named: write integer at offset
+    PrimitiveResult primitiveGetAddressOfOOP(int argCount);       // Named: get address of oop
+
     // VM info named primitives
     PrimitiveResult primitiveInterpreterSourceVersion(int argCount);  // Named: interpreter source version
     PrimitiveResult primitiveFileMasks(int argCount);                 // Named: FileAttributesPlugin file masks

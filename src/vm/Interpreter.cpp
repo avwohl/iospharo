@@ -16738,6 +16738,20 @@ void Interpreter::initializeNamedPrimitives() {
     registerNamedPrimitive("SqueakFFIPrims", "primitiveLoadSymbolFromModule", &Interpreter::primitiveLoadSymbolFromModule);
     registerNamedPrimitive("SqueakFFIPrims", "primitiveLoadModule", &Interpreter::primitiveLoadModule);
 
+    // FFI memory access primitives (required by TFFIBackend)
+    registerNamedPrimitive("", "primitiveFFIAllocate", &Interpreter::primitiveFFIAllocate);
+    registerNamedPrimitive("", "primitiveFFIFree", &Interpreter::primitiveFFIFree);
+    registerNamedPrimitive("", "primitiveFFIIntegerAt", &Interpreter::primitiveFFIIntegerAt);
+    registerNamedPrimitive("", "primitiveFFIIntegerAtPut", &Interpreter::primitiveFFIIntegerAtPut);
+    registerNamedPrimitive("SqueakFFIPrims", "primitiveFFIAllocate", &Interpreter::primitiveFFIAllocate);
+    registerNamedPrimitive("SqueakFFIPrims", "primitiveFFIFree", &Interpreter::primitiveFFIFree);
+    registerNamedPrimitive("SqueakFFIPrims", "primitiveFFIIntegerAt", &Interpreter::primitiveFFIIntegerAt);
+    registerNamedPrimitive("SqueakFFIPrims", "primitiveFFIIntegerAtPut", &Interpreter::primitiveFFIIntegerAtPut);
+
+    // FFI address primitives
+    registerNamedPrimitive("", "primitiveGetAddressOfOOP", &Interpreter::primitiveGetAddressOfOOP);
+    registerNamedPrimitive("SqueakFFIPrims", "primitiveGetAddressOfOOP", &Interpreter::primitiveGetAddressOfOOP);
+
     // FilePlugin - file I/O primitives
     registerNamedPrimitive("FilePlugin", "primitiveFileStdioHandles", &Interpreter::primitiveFileStdioHandles);
     registerNamedPrimitive("FilePlugin", "primitiveFileOpen", &Interpreter::primitiveFileOpen);

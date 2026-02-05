@@ -14,9 +14,14 @@ windowMap
   ^ WindowMap ifNil: [ WindowMap := WeakValueDictionary new ]! !
 
 !OSiOSDriver class methodsFor: 'testing'!
-isApplicableFor: aBackend
-  "iOS driver is never auto-selected; it must be explicitly chosen"
-  ^ false! !
+isSuitable
+  "iOS driver is suitable when SDL2 is NOT available (running on iOS or our custom VM)"
+  ^ SDL2 isAvailable not! !
+
+!OSiOSDriver class methodsFor: 'testing'!
+isSupported
+  "iOS driver is supported when SDL2 is NOT available"
+  ^ SDL2 isAvailable not! !
 
 !OSiOSDriver methodsFor: 'initialization'!
 initialize
@@ -138,5 +143,19 @@ dispatchEvent: osEvent toWindow: window
   osWindow := window osWindow.
   osWindow ifNil: [ ^ self ].
   osWindow eventHandler ifNotNil: [ :handler | handler handleEvent: osEvent ]! !
+
+!OSiOSDriver methodsFor: 'window creation'!
+createWindowWithAttributes: anOSWindowAttributes osWindow: osWindow
+  "Create a backend window for iOS. We use OSNullBackendWindow with our renderer."
+  | backend |
+  backend := OSNullBackendWindow fromAttributes: anOSWindowAttributes for: osWindow.
+  "Register this window in our map so events can be dispatched to it"
+  WindowMap at: 1 put: osWindow.
+  ^ backend! !
+
+!OSiOSDriver methodsFor: 'testing'!
+isNullDriver
+  "We are not a null driver - we handle events"
+  ^ false! !
 
 Transcript cr; show: 'OSiOSDriver loaded'; cr!
