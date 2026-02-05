@@ -15,7 +15,7 @@ runAllTests
     PointTest. CharacterTest.
     DictionaryTest. SetTest. BagTest. IntervalTest.
     SymbolTest. OrderedCollectionTest. ArrayTest.
-    StringTest "last - 438 tests, very slow" }.
+    StringTest. HeapTest "added for investigation" }.
 
   stream := '/tmp/sunit_test_results.txt' asFileReference writeStream.
   [stream nextPutAll: '=== SUnit Test Run ==='; cr; cr.

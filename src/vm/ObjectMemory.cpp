@@ -391,13 +391,26 @@ Oop ObjectMemory::shallowCopy(Oop original) {
 
     ObjectHeader* src = original.asObjectPtr();
     size_t size = src->totalSize();
+    bool hasOverflow = src->hasOverflowSlots();
 
     // TEMPORARY FIX: Allocate directly in old space (see allocateSlots comment)
     ObjectHeader* copy = allocateRaw(size, Space::Old);
     if (!copy) return nilObject_;
 
-    // Copy all bytes including header
-    std::memcpy(copy, src, size);
+    // For objects with overflow slot count, the memory layout is:
+    // [overflow_word][header][data...]
+    // We need to copy the overflow word too, not just from the header
+    if (hasOverflow) {
+        // Source starts at overflow word (8 bytes before header)
+        const uint8_t* srcStart = reinterpret_cast<const uint8_t*>(src) - 8;
+        // Copy the whole object including overflow word
+        std::memcpy(copy, srcStart, size);
+        // The actual header is 8 bytes into the allocated block
+        copy = reinterpret_cast<ObjectHeader*>(reinterpret_cast<uint8_t*>(copy) + 8);
+    } else {
+        // Copy all bytes including header
+        std::memcpy(copy, src, size);
+    }
 
     // Generate new identity hash
     copy->setIdentityHash(generateHash());
