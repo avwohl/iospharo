@@ -148,14 +148,14 @@ The `unwindTo:` traversal isn't finding or executing the inserted ensure: block 
 Run on custom C++ VM via `./build/test_load_image /tmp/test-pharo/Pharo.image test`
 with 10B step limit. Test runner: `scripts/run_sunit_tests.st`.
 
-**Summary: 2512 tests, 2454 pass, 2 fail, 4 errors (all TestSkipped), 2 skipped by runner**
-**Pass rate: 99.76%**
+**Summary: 2512 tests, 2455 pass, 1 fail, 4 errors (all TestSkipped), 2 skipped by runner**
+**Pass rate: 99.80%**
 
 ```
                       Custom VM        Standard VM
 --- Kernel-Tests: Numbers ---
 SmallIntegerTest      29P  0F  0E      29P  0F  0E      MATCH
-IntegerTest           79P  1F  3E      80P  0F  3E      1 FAILURE (testSlowFactorial)
+IntegerTest           80P  0F  3E      80P  0F  3E      MATCH (after shallowCopy fix)
 FloatTest             74P  0F  1E      74P  0F  1E      MATCH (1 TestSkipped)
 FractionTest          32P  0F  0E      32P  0F  0E      MATCH
 PointTest             36P  0F  0E      36P  0F  0E      MATCH
@@ -171,7 +171,7 @@ ArrayTest            323P  1F  0E     324P  0F  0E      1 FAILURE (testPrintingR
 StringTest           438P  0F  0E     438P  0F  0E      MATCH
 ```
 
-### Remaining Issues (2 failures vs standard VM)
+### Remaining Issues (1 failure vs standard VM)
 
 **testPrintingRecursive (ArrayTest):**
 - `Got 24520 instead of 50000` — recursive printString produces shorter output
@@ -189,12 +189,12 @@ StringTest           438P  0F  0E     438P  0F  0E      MATCH
 - Possible fixes: (1) implement context reuse/inlining, (2) implement dynamic stack
   growth, (3) accept as known limitation. Currently accepting as limitation.
 
-**testSlowFactorial (IntegerTest):**
-- Returns wrong large factorial result for very large factorials
-- The expected value was not shown in error message, only "Got <very large number>"
-- Root cause: Likely a bug in LargeInteger arithmetic (multiplication or addition)
-  that compounds for very large numbers
-- Needs investigation: compare intermediate factorial values against reference VM
+**testSlowFactorial (IntegerTest):** — FIXED
+- Was returning wrong large factorial result for very large factorials
+- Root cause: The shallowCopy bug for objects with >254 slots was corrupting
+  LargeInteger objects during factorial computation
+- After the shallowCopy fix (commit 088c7b1), all 1001 factorial comparisons
+  (0 to 1000) now pass correctly
 
 **TestSkipped (4 errors) — identical on both VMs, not real failures:**
 - IntegerTest: `testCreationFromBytes1/2/3` — test explicitly skips on 64-bit VMs
