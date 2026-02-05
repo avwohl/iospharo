@@ -5854,10 +5854,12 @@ static Oop makeFloat(ObjectMemory& memory, double value) {
         return result;
     }
 
-    // Allocate boxed Float
+    // Allocate boxed Float with format 10 (Indexable32)
+    // BoxedFloat64 has instSpec 10 (32-bit word indexable), NOT 9 (64-bit).
+    // With format 10, 1 slot = 2 x 32-bit words, so size = 2 (matching standard VM).
     Oop floatClass = memory.specialObject(SpecialObjectIndex::ClassFloat);
     uint32_t classIndex = memory.indexOfClass(floatClass);
-    Oop floatObj = memory.allocateWords(classIndex, 1);  // 1 word = 64 bits
+    Oop floatObj = memory.allocateSlots(classIndex, 1, ObjectFormat::Indexable32);
 
     if (!floatObj.isNil()) {
         uint64_t bits;
