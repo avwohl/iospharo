@@ -2614,6 +2614,7 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
         rcvr = stackValue(1);  // Class
     }
 
+
     // Debug: trace all calls during startup
     static int newArgCallCount = 0;
     newArgCallCount++;

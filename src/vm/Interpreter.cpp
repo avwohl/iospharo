@@ -3758,25 +3758,50 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                     int numArgs = (((effectiveExtB - 64) << 3) | (desc & 0x07)) & 0xFF;
                     Oop definingClass = pop();  // Pop the defining class from top of stack
                     lookupClass = superclassOf(definingClass);
+
                     Oop method = lookupMethod(selector, lookupClass);
                     if (method.isNil()) {
                         sendDoesNotUnderstand(selector, numArgs);
                     } else {
+                        // Check for primitive and execute it before activating the method
+                        int primIdx = primitiveIndexOf(method);
+                        if (primIdx > 0) {
+                            argCount_ = numArgs;
+                            primitiveFailed_ = false;
+                            newMethod_ = method;
+                            PrimitiveResult result = executePrimitive(primIdx, numArgs);
+                            if (result == PrimitiveResult::Success) {
+                                break;  // Primitive handled it
+                            }
+                        }
                         activateMethod(method, numArgs);
                     }
                 } else {
                     // Normal super send: lookup from superclass of method's defining class
                     int numArgs = ((effectiveExtB << 3) | (desc & 0x07)) & 0xFF;
                     Oop methodClass = methodClassOf(method_);
+
                     if (methodClass.isNil() || !methodClass.isObject()) {
                         lookupClass = superclassOf(memory_.classOf(receiver_));
                     } else {
                         lookupClass = superclassOf(methodClass);
                     }
                     Oop method = lookupMethod(selector, lookupClass);
+
                     if (method.isNil()) {
                         sendDoesNotUnderstand(selector, numArgs);
                     } else {
+                        // Check for primitive and execute it before activating the method
+                        int primIdx = primitiveIndexOf(method);
+                        if (primIdx > 0) {
+                            argCount_ = numArgs;
+                            primitiveFailed_ = false;
+                            newMethod_ = method;
+                            PrimitiveResult result = executePrimitive(primIdx, numArgs);
+                            if (result == PrimitiveResult::Success) {
+                                break;  // Primitive handled it
+                            }
+                        }
                         activateMethod(method, numArgs);
                     }
                 }
@@ -5844,11 +5869,74 @@ void Interpreter::extendedSuperSend() {
     Oop selector = literal(literalIndex);
     Oop methodClass = methodClassOf(method_);
     Oop superclass;
+
+    // Debug super sends - especially for Context newForMethod:
+    static int superSendDebug = 0;
+    bool traceThis = false;
+    std::string selectorStr;
+    if (selector.isObject() && memory_.isValidPointer(selector)) {
+        ObjectHeader* selHdr = selector.asObjectPtr();
+        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
+            selectorStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+            if (selectorStr == "basicNew:") {
+                traceThis = true;
+            }
+        }
+    }
+
+    if (traceThis && superSendDebug < 20) {
+        superSendDebug++;
+        FILE* f = fopen("/tmp/super_send_debug.txt", "a");
+        if (f) {
+            fprintf(f, "[SUPER #%d] selector=%s\n", superSendDebug, selectorStr.c_str());
+            fprintf(f, "  methodClass=0x%llx isNil=%d\n",
+                    (unsigned long long)methodClass.rawBits(), methodClass.isNil() ? 1 : 0);
+            if (methodClass.isObject() && memory_.isValidPointer(methodClass)) {
+                Oop mcName = memory_.fetchPointer(6, methodClass);
+                if (mcName.isObject() && mcName.rawBits() > 0x10000) {
+                    ObjectHeader* mcnHdr = mcName.asObjectPtr();
+                    if (mcnHdr->isBytesObject() && mcnHdr->byteSize() < 80) {
+                        fprintf(f, "  methodClass name=%.*s\n",
+                                (int)mcnHdr->byteSize(), (char*)mcnHdr->bytes());
+                    }
+                }
+            }
+            fprintf(f, "  receiver_ class=0x%llx\n",
+                    (unsigned long long)memory_.classOf(receiver_).rawBits());
+            fclose(f);
+        }
+    }
+
     if (methodClass.isNil() || !methodClass.isObject()) {
         // Fallback to receiver's class superclass
         superclass = superclassOf(memory_.classOf(receiver_));
+        if (traceThis && superSendDebug <= 20) {
+            FILE* f = fopen("/tmp/super_send_debug.txt", "a");
+            if (f) {
+                fprintf(f, "  FALLBACK: using receiver's class superclass\n");
+                fclose(f);
+            }
+        }
     } else {
         superclass = superclassOf(methodClass);
+    }
+
+    if (traceThis && superSendDebug <= 20) {
+        FILE* f = fopen("/tmp/super_send_debug.txt", "a");
+        if (f) {
+            fprintf(f, "  superclass for lookup=0x%llx\n", (unsigned long long)superclass.rawBits());
+            if (superclass.isObject() && memory_.isValidPointer(superclass)) {
+                Oop scName = memory_.fetchPointer(6, superclass);
+                if (scName.isObject() && scName.rawBits() > 0x10000) {
+                    ObjectHeader* scnHdr = scName.asObjectPtr();
+                    if (scnHdr->isBytesObject() && scnHdr->byteSize() < 80) {
+                        fprintf(f, "  superclass name=%.*s\n",
+                                (int)scnHdr->byteSize(), (char*)scnHdr->bytes());
+                    }
+                }
+            }
+            fclose(f);
+        }
     }
 
     Oop method = lookupMethod(selector, superclass);
