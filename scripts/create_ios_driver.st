@@ -23,6 +23,14 @@ isSupported
   "iOS driver is supported when SDL2 is NOT available"
   ^ SDL2 isAvailable not! !
 
+!OSiOSDriver class methodsFor: 'installation'!
+installIfNeeded
+  "Install this driver if SDL2 is not available.
+   This bypasses pickDriverClass which has issues with our VM."
+  SDL2 isAvailable ifFalse: [
+    OSWindowDriver classVarNamed: 'Current' put: self new.
+    Transcript cr; show: 'OSiOSDriver installed as current driver'; cr]! !
+
 !OSiOSDriver methodsFor: 'initialization'!
 initialize
   super initialize.

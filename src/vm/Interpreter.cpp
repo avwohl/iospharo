@@ -5623,8 +5623,76 @@ void Interpreter::returnFromMethod() {
     // Check if we're executing inside a block (CompiledBlock)
     // If so, a "return from method" (^) should actually return from the HOME method,
     // not just from this block.
+
     if (frameDepth_ > 0) {
         size_t homeFrame = savedFrames_[frameDepth_ - 1].homeFrameDepth;
+
+        // If homeFrame is SIZE_MAX but we're in a CompiledBlock, we need to do
+        // context-based NLR. This happens after exception handling when contexts
+        // were materialized - the home method is in the context chain, not savedFrames_.
+        if (homeFrame == SIZE_MAX) {
+            // Check if we're in a CompiledBlock by looking at the method's last literal
+            Oop homeMethodOop = Oop::nil();
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                Oop hdr = memory_.fetchPointer(0, method_);
+                if (hdr.isSmallInteger()) {
+                    int numLits = hdr.asSmallInteger() & 0x7FFF;
+                    if (numLits >= 1) {
+                        Oop lastLit = memory_.fetchPointer(numLits, method_);
+                        if (lastLit.isObject() && lastLit.rawBits() > 0x10000) {
+                            ObjectHeader* llHdr = lastLit.asObjectPtr();
+                            if (llHdr->isCompiledMethod()) {
+                                // This is a CompiledBlock - lastLit is the home method
+                                homeMethodOop = lastLit;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // If we found a home method, search context chain and do context-based NLR
+            if (homeMethodOop.isObject() && !homeMethodOop.isNil()) {
+                // First check if home method is in context chain
+                Oop ctx = activeContext_;
+                int searchDepth = 0;
+                Oop homeCtx = Oop::nil();
+                while (ctx.isObject() && !ctx.isNil() && searchDepth < 200) {
+                    Oop ctxMethod = memory_.fetchPointer(3, ctx);
+                    if (ctxMethod.rawBits() == homeMethodOop.rawBits()) {
+                        homeCtx = ctx;
+                        break;
+                    }
+                    ctx = memory_.fetchPointer(0, ctx);
+                    searchDepth++;
+                }
+
+                if (homeCtx.isObject() && !homeCtx.isNil()) {
+                    // Found home context! Do context-based NLR
+                    // Materialize all inline frames first
+                    if (frameDepth_ > 0) {
+                        Oop materializedCtx = materializeFrameStack();
+                        activeContext_ = materializedCtx;
+                        frameDepth_ = 0;
+                    }
+
+                    // Return FROM the home context by executing from its sender
+                    Oop sender = memory_.fetchPointer(0, homeCtx);
+                    if (sender.isObject() && !sender.isNil()) {
+                        // Store the return value on sender's stack
+                        Oop stackpOop = memory_.fetchPointer(2, sender);
+                        if (stackpOop.isSmallInteger()) {
+                            int stackp = stackpOop.asSmallInteger();
+                            stackp++;
+                            memory_.storePointer(2, sender, Oop::fromSmallInteger(stackp));
+                            memory_.storePointer(5 + stackp, sender, value);
+                        }
+                        // Execute from the sender context
+                        executeFromContext(sender);
+                        return;
+                    }
+                }
+            }
+        }
 
         if (homeFrame != SIZE_MAX) {
             // DIAG: Log NLR in critical step range
@@ -5719,14 +5787,13 @@ void Interpreter::returnFromMethod() {
         }
     }
 
-    // DIAG: Detect missed NLR — we're about to do a regular return, but if we're
-    // in a CompiledBlock (not a CompiledMethod), this was a ^ inside a block that
-    // SHOULD have been an NLR. Log this case.
+    // CONTEXT-BASED NLR: When frameDepth_ == 0 and we're in a CompiledBlock,
+    // we need to use the context chain to find the home method and unwind to it.
+    // This happens when exception handling (on:do:) caused context materialization.
     {
-        static FILE* missedNlrLog = nullptr;
-        static int missedNlrCount = 0;
+        Oop homeMethod = Oop::nil();
         bool isCompiledBlock = false;
-        std::string homeMethodSel = "?";
+
         if (method_.isObject() && method_.rawBits() > 0x10000) {
             ObjectHeader* mObj = method_.asObjectPtr();
             if (mObj->isCompiledMethod()) {
@@ -5739,55 +5806,47 @@ void Interpreter::returnFromMethod() {
                             ObjectHeader* llHdr = lastLit.asObjectPtr();
                             if (llHdr->isCompiledMethod()) {
                                 isCompiledBlock = true;
-                                // Get home method's selector (penultimate literal of home method)
-                                Oop homeHdr = memory_.fetchPointer(0, lastLit);
-                                if (homeHdr.isSmallInteger()) {
-                                    int homeNumLits = homeHdr.asSmallInteger() & 0x7FFF;
-                                    if (homeNumLits >= 2) {
-                                        Oop homeSel = memory_.fetchPointer(homeNumLits - 1, lastLit);
-                                        if (homeSel.isObject() && homeSel.rawBits() > 0x10000) {
-                                            ObjectHeader* hsHdr = homeSel.asObjectPtr();
-                                            if (hsHdr->isBytesObject() && hsHdr->byteSize() < 80)
-                                                homeMethodSel = std::string((char*)hsHdr->bytes(), hsHdr->byteSize());
-                                        }
-                                    }
-                                }
+                                homeMethod = lastLit;  // Last literal of CompiledBlock is home method
                             }
                         }
                     }
                 }
             }
         }
-        if (isCompiledBlock && missedNlrCount < 50) {
-            if (!missedNlrLog) missedNlrLog = nullptr;
-            if (missedNlrLog) {
-                missedNlrCount++;
-                size_t hfd = (frameDepth_ > 0) ? savedFrames_[frameDepth_ - 1].homeFrameDepth : SIZE_MAX;
-                fprintf(missedNlrLog, "[MISSED-NLR #%d step=%llu] fd=%zu hfd=%zu homeMethod=#%s\n",
-                        missedNlrCount, (unsigned long long)g_stepNum, frameDepth_, hfd,
-                        homeMethodSel.c_str());
-                // Show frame stack
-                for (size_t i = 0; i < frameDepth_ && i < 15; i++) {
-                    std::string sm = "?";
-                    Oop smOop = savedFrames_[i].savedMethod;
-                    if (smOop.isObject() && smOop.rawBits() > 0x10000) {
-                        Oop smHdr = memory_.fetchPointer(0, smOop);
-                        if (smHdr.isSmallInteger()) {
-                            int smNumLits = smHdr.asSmallInteger() & 0x7FFF;
-                            if (smNumLits >= 2) {
-                                Oop smSel = memory_.fetchPointer(smNumLits - 1, smOop);
-                                if (smSel.isObject() && smSel.rawBits() > 0x10000) {
-                                    ObjectHeader* ssHdr = smSel.asObjectPtr();
-                                    if (ssHdr->isBytesObject() && ssHdr->byteSize() < 80)
-                                        sm = std::string((char*)ssHdr->bytes(), ssHdr->byteSize());
-                                }
-                            }
+
+        // If we're in a CompiledBlock and frameDepth_ == 0, do context-based NLR
+        if (isCompiledBlock && frameDepth_ == 0 && homeMethod.isObject() && !homeMethod.isNil()) {
+            // Walk up the context chain to find the context executing homeMethod
+            Oop ctx = activeContext_;
+            int depth = 0;
+            while (ctx.isObject() && !ctx.isNil() && depth < 200) {
+                // Context layout: slot 3 = method (for MethodContext)
+                Oop ctxMethod = memory_.fetchPointer(3, ctx);
+                if (ctxMethod.rawBits() == homeMethod.rawBits()) {
+                    // Found the home context! Return FROM this context
+                    // by setting activeContext to its sender and pushing value there
+                    Oop sender = memory_.fetchPointer(0, ctx);
+                    if (sender.isObject() && !sender.isNil()) {
+                        // Store the return value on sender's stack
+                        // Context layout: slot 2 = stackp (index of top in context)
+                        Oop stackpOop = memory_.fetchPointer(2, sender);
+                        if (stackpOop.isSmallInteger()) {
+                            int stackp = stackpOop.asSmallInteger();
+                            // Push value onto sender's stack: increment stackp and store
+                            stackp++;
+                            memory_.storePointer(2, sender, Oop::fromSmallInteger(stackp));
+                            // Context temps/stack start at slot 6, so slot 6 + stackp - 1 = value position
+                            // stackp is 1-based index
+                            memory_.storePointer(5 + stackp, sender, value);
                         }
+                        // Execute from the sender context
+                        executeFromContext(sender);
+                        return;
                     }
-                    fprintf(missedNlrLog, "  [%zu] #%s hfd=%zu\n",
-                            i, sm.c_str(), savedFrames_[i].homeFrameDepth);
                 }
-                fflush(missedNlrLog);
+                // Move to sender
+                ctx = memory_.fetchPointer(0, ctx);
+                depth++;
             }
         }
     }
@@ -5807,17 +5866,80 @@ void Interpreter::returnFromBlock() {
         homeFrame = savedFrames_[frameDepth_ - 1].homeFrameDepth;
     }
 
-
-    // If homeFrame is valid, unwind to it
+    // If homeFrame is valid and we have inline frames, unwind via inline frame stack
     if (homeFrame != SIZE_MAX && homeFrame < frameDepth_) {
         // Unwind frames from current down to homeFrame + 1
         // (homeFrame + 1 because we want to return FROM the home method)
         while (frameDepth_ > homeFrame + 1) {
             popFrame();
         }
+        // Now do a regular return which pops one more frame and pushes the value
+        returnValue(value);
+        return;
     }
 
-    // Now do a regular return which pops one more frame and pushes the value
+    // CONTEXT-BASED NLR: When frameDepth_ == 0 (after thisContext materialization),
+    // we need to use the context chain to find the home method and unwind to it.
+    // This happens when exception handling (on:do:) caused context materialization.
+    if (frameDepth_ == 0 && closure_.isObject() && !closure_.isNil()) {
+        // Get the home method from the closure's CompiledBlock
+        // FullBlockClosure: slot 1 = CompiledBlock
+        // CompiledBlock: last literal = home CompiledMethod
+        Oop compiledBlock = memory_.fetchPointer(1, closure_);
+        Oop homeMethod = Oop::nil();
+
+        if (compiledBlock.isObject() && !compiledBlock.isNil() && compiledBlock.rawBits() > 0x10000) {
+            ObjectHeader* cbHdr = compiledBlock.asObjectPtr();
+            if (cbHdr->isCompiledMethod()) {
+                Oop header = memory_.fetchPointer(0, compiledBlock);
+                if (header.isSmallInteger()) {
+                    int numLits = header.asSmallInteger() & 0x7FFF;
+                    if (numLits >= 1) {
+                        // Last literal of CompiledBlock is the home method
+                        homeMethod = memory_.fetchPointer(numLits, compiledBlock);
+                    }
+                }
+            }
+        }
+
+        // Walk up the context chain to find the context executing homeMethod
+        if (homeMethod.isObject() && !homeMethod.isNil()) {
+            Oop ctx = activeContext_;
+            int depth = 0;
+            while (ctx.isObject() && !ctx.isNil() && depth < 200) {
+                // Context layout: slot 3 = method (for MethodContext)
+                Oop ctxMethod = memory_.fetchPointer(3, ctx);
+                if (ctxMethod.rawBits() == homeMethod.rawBits()) {
+                    // Found the home context! Return FROM this context
+                    // by setting activeContext to its sender and executing from there
+                    Oop sender = memory_.fetchPointer(0, ctx);
+                    if (sender.isObject() && !sender.isNil()) {
+                        // Use executeFromContext to restore interpreter state from sender
+                        // First, store the return value on sender's stack
+                        // Context layout: slot 2 = stackp (index of top in context)
+                        Oop stackpOop = memory_.fetchPointer(2, sender);
+                        if (stackpOop.isSmallInteger()) {
+                            int stackp = stackpOop.asSmallInteger();
+                            // Push value onto sender's stack: increment stackp and store
+                            stackp++;
+                            memory_.storePointer(2, sender, Oop::fromSmallInteger(stackp));
+                            // Context temps/stack start at slot 6, so slot 6 + stackp - 1 = value position
+                            // stackp is 1-based index
+                            memory_.storePointer(5 + stackp, sender, value);
+                        }
+                        // Now execute from the sender context
+                        executeFromContext(sender);
+                        return;
+                    }
+                }
+                // Move to sender
+                ctx = memory_.fetchPointer(0, ctx);
+                depth++;
+            }
+        }
+    }
+
+    // Fallback: just do a regular return (may not be correct for NLR, but avoids crash)
     returnValue(value);
 }
 
@@ -9987,6 +10109,40 @@ void Interpreter::activateBlock(Oop block, int argCount) {
                         }
                     }
                 }
+            }
+        }
+
+        // If we couldn't find the home method in savedFrames_, also search the context chain.
+        // This happens after exception handling: contexts were materialized and savedFrames_
+        // doesn't contain the home method anymore - it's in the context chain.
+        if (homeFrame == SIZE_MAX && activeContext_.isObject() && !activeContext_.isNil()) {
+            // Search context chain for home method
+            // If found, NLR will need to use context-based unwinding (frameDepth_=0 path)
+            // We signal this by setting homeFrame to 0 and ensuring the NLR code handles it
+            Oop ctx = activeContext_;
+            int searchDepth = 0;
+            while (ctx.isObject() && !ctx.isNil() && searchDepth < 200) {
+                Oop ctxMethod = memory_.fetchPointer(3, ctx);
+                if (ctxMethod.rawBits() == homeMethodOop.rawBits()) {
+                    // Found! Set homeFrame to 0 - NLR will use context-based return
+                    // Actually, we can't use inline NLR because the home is in context chain.
+                    // The safest approach: leave homeFrame as SIZE_MAX but ensure returnValue
+                    // handles this case via context-based NLR (which we already implemented).
+                    // But that only works when frameDepth_==0. Here frameDepth_>0.
+                    //
+                    // Alternative: when we detect home method is in context chain,
+                    // materialize the current frames and switch to context-based execution.
+                    // This ensures all future NLRs work correctly.
+
+                    // IMPORTANT: Don't materialize here - it would be expensive.
+                    // Instead, leave homeFrame as SIZE_MAX. When NLR happens and
+                    // homeFrame is SIZE_MAX, the code should fall through to check
+                    // if current method is a CompiledBlock and use context-based NLR.
+                    // This is already implemented in returnValue().
+                    break;
+                }
+                ctx = memory_.fetchPointer(0, ctx);
+                searchDepth++;
             }
         }
 
