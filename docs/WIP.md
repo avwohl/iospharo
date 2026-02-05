@@ -146,42 +146,47 @@ The `unwindTo:` traversal isn't finding or executing the inserted ensure: block 
 ### Custom VM Test Results (ALL 14 classes complete)
 
 Run on custom C++ VM via `./build/test_load_image /tmp/Pharo.image test`
-with 10B step limit. Test runner: `scripts/run_sunit_tests.st`
+with 10B step limit. Test runner: `scripts/run_sunit_simple.st` (no forking,
+no semaphore timeouts — runs tests directly in main process).
 
 ```
-SmallIntegerTest      (29 tests):  29P  0F  0E       -- ALL PASS
-IntegerTest           (83 tests):  80P  0F  3E       -- 3 TestSkipped only
-FloatTest             (75 tests):  74P  0F  1E       -- 1 TestSkipped only
-FractionTest          (32 tests):  32P  0F  0E       -- ALL PASS
-PointTest             (36 tests):  36P  0F  0E       -- ALL PASS
-CharacterTest         (19 tests):  17P  0F  0E       -- 2 skipped by runner
-DictionaryTest       (205 tests): 205P  0F  0E       -- ALL PASS
-SetTest              (174 tests): 174P  0F  0E       -- ALL PASS
-BagTest              (168 tests): 168P  0F  0E       -- ALL PASS
-IntervalTest         (260 tests): 260P  0F  0E       -- ALL PASS
-SymbolTest           (268 tests): 268P  0F  0E       -- ALL PASS
-OrderedCollectionTest(351 tests): 351P  0F  0E       -- ALL PASS
-ArrayTest            (324 tests): 322P  2F  0E       -- ALL PASS except 2
-StringTest           (438 tests): 438P  0F  0E       -- ALL PASS
+                      Custom VM        Standard VM
+SmallIntegerTest      29P  0F  0E      29P  0F  0E      MATCH
+IntegerTest           80P  0F  3E      80P  0F  3E      MATCH (3 TestSkipped)
+FloatTest             74P  0F  1E      74P  0F  1E      MATCH (1 TestSkipped)
+FractionTest          32P  0F  0E      32P  0F  0E      MATCH
+PointTest             36P  0F  0E      36P  0F  0E      MATCH
+CharacterTest         17P  0F  0E      17P  0F  0E      MATCH (2 skipped by runner)
+DictionaryTest       205P  0F  0E     205P  0F  0E      MATCH
+SetTest              174P  0F  0E     174P  0F  0E      MATCH
+BagTest              168P  0F  0E     168P  0F  0E      MATCH
+IntervalTest         260P  0F  0E     260P  0F  0E      MATCH
+SymbolTest           268P  0F  0E     268P  0F  0E      MATCH
+OrderedCollectionTest 351P  0F  0E    351P  0F  0E      MATCH
+ArrayTest            322P  2F  0E     324P  0F  0E      2 FAILURES
+StringTest           438P  0F  0E     438P  0F  0E      MATCH
 -----------------------------------------------------------------
-Totals (14 classes):  2454P  2F  4E  0T  (99.8% pass rate)
+Custom VM:   2454P  2F  4E  (99.8% pass rate)
+Standard VM: 2458P  0F  4E  (100% pass rate, ignoring TestSkipped)
 ```
 
-### Remaining Issues
+### Remaining Issues (2 failures vs standard VM)
 
-**TestSkipped (4 errors) — expected, not real failures:**
+**testPrintingRecursive (ArrayTest):**
+- `Got 24520 instead of 50000` — recursive printString produces shorter output
+- Likely due to C++ stack depth limit being smaller than standard VM
+
+**testShuffleBy (ArrayTest):**
+- `Assertion failed` — shuffleBy: with seeded Random(42) produces different result
+- Standard VM passes this test; may be a subtle numeric difference
+
+**TestSkipped (4 errors) — identical on both VMs, not real failures:**
 - IntegerTest: `testCreationFromBytes1/2/3` — test explicitly skips
 - FloatTest: `testNaNCompare` — test explicitly skips
 
-**CharacterTest: 2 skipped by test runner:**
+**CharacterTest: 2 skipped by test runner (both VMs):**
 - `testPrintStringAll` and `testStoreStringAll` — skipped in test runner
-  (iterate all 1.1M Unicode code points, known to hang). All 17 run tests pass.
-
-**testPrintingRecursive (1 fail) — recursion depth:**
-- ArrayTest: `Got 24520 instead of 50000` — C++ stack depth limit
-
-**testShuffleBy (1 fail):**
-- ArrayTest: `Assertion failed` — randomness/shuffle issue
+  (iterate all 1.1M Unicode code points, very slow). All 17 run tests pass.
 
 ### Key Bugs Fixed (2026-02-04 session 2)
 
