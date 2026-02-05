@@ -207,6 +207,20 @@ StringTest           438P  0F  0E     438P  0F  0E      MATCH
 
 ### Key Bugs Fixed (2026-02-05)
 
+13. **shallowCopy (primitive 148) corrupted large objects (>254 slots)** — CRITICAL FIX
+    - Root cause: In Spur format, objects with >254 slots store their actual slot count
+      in a word BEFORE the header: `[overflow_word][header][data...]`. But `shallowCopy`
+      was copying from the header position, missing the overflow word entirely.
+    - When the copy's `slotCount()` method read the overflow marker (255), it looked at
+      `(copy - 8)` for the actual count, but that memory was garbage (whatever was
+      allocated before the copy).
+    - Symptom: Array of 5000 elements showed size `808464437` (0x30313035 = ASCII garbage)
+      after `copy`. This caused `shuffled` and `Heap withAll:` to fail with
+      `SubscriptOutOfBounds` or `nil >> #>>` errors for large collections.
+    - Fix: When `hasOverflowSlots()` is true, copy from `(src - 8)` to include the
+      overflow word, then return `(copy + 8)` as the new object's header pointer.
+    - Result: HeapTest >> testExamples (n=5000) now passes. All shuffle operations work.
+
 12. **Super sends (bytecode 0xEB) not dispatching primitives** — CRITICAL FIX
     - Root cause: Super send bytecode called `activateMethod()` directly without
       first checking for primitives. Normal sends correctly check `primitiveIndex > 0`
