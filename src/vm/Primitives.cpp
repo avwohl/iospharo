@@ -9693,27 +9693,9 @@ PrimitiveResult Interpreter::primitiveTerminateTo(int argCount) {
     }
 
     if (!targetReachable) {
-        // Target not in sender chain. In the Cog VM, terminateTo: on a context
-        // whose target is unreachable modifies only the heap context's sender slot,
-        // which does NOT affect the machine frame's return address. Returns still
-        // follow the machine stack. In our VM, after thisContext materialization
-        // (frameDepth_=0), returns follow the heap sender chain. If we modify the
-        // sender here, the return path gets corrupted (e.g., returns to a context
-        // in a terminated process instead of the original caller).
-        //
-        // Fix: DON'T modify the sender when the target is unreachable. This matches
-        // the Cog VM's effective behavior for normal returns. The sender modification
-        // is only needed for NLR handling from ensure blocks, which is rare and can
-        // be handled separately if needed.
-        static int unreachableCount = 0;
-        if (unreachableCount++ < 10) {
-            std::cerr << "[PRIM-TERMINATE-TO] Target unreachable - skipping sender modification (preserving return path)\n";
-        }
-        // Return success without modifying sender - the primitive "handled" the request
-        // but the actual sender chain is preserved for correct returns.
-        popN(2);
-        push(rcvr);
-        return PrimitiveResult::Success;
+        // Target not in sender chain — primitive fails, let Smalltalk handle it.
+        std::cerr << "[PRIM-TERMINATE-TO] Target unreachable in sender chain\n";
+        return PrimitiveResult::Failure;
     }
 
     // Now we know target is reachable - nil out senders up to but not including target

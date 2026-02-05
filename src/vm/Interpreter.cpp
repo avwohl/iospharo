@@ -9237,12 +9237,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // Save current state
 
     if (!pushFrame(method, argCount)) {
-        // Stack overflow: clean up the operand stack.
-        // The send bytecode pushed receiver + argCount args. Remove them and
-        // push nil as if the method returned nil, so execution can continue.
-        for (int i = 0; i < argCount; i++) pop();
-        pop();  // pop receiver
-        push(memory_.nil());  // push nil as "return value"
+        stopVM("Frame stack overflow in activateMethod");
         return;
     }
 
@@ -9812,11 +9807,7 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     }
 
     if (!pushFrame(methodToExecute, argCount)) {
-        // Stack overflow: clean up the operand stack.
-        // Block activation pushed receiver (block) + argCount args.
-        for (int i = 0; i < argCount; i++) pop();
-        pop();  // pop receiver (block)
-        push(memory_.nil());  // push nil as "return value"
+        stopVM("Frame stack overflow in block activation");
         return;
     }
 
