@@ -5807,6 +5807,7 @@ void Interpreter::returnFromBlock() {
         homeFrame = savedFrames_[frameDepth_ - 1].homeFrameDepth;
     }
 
+
     // If homeFrame is valid, unwind to it
     if (homeFrame != SIZE_MAX && homeFrame < frameDepth_) {
         // Unwind frames from current down to homeFrame + 1
@@ -9836,13 +9837,57 @@ void Interpreter::activateBlock(Oop block, int argCount) {
         startAddress = blockObj->bytes() + bytecodeOffset;
 
         // For FullBlockClosure, get the home method (the enclosing CompiledMethod)
-        // The last literal of a CompiledBlock is the enclosing method
+        // The last literal of a CompiledBlock is the enclosing method/block (outerCode).
+        // For NESTED blocks, this might be another CompiledBlock, so we need to
+        // follow the chain until we reach the actual CompiledMethod (not a block).
+        //
+        // We identify a CompiledBlock vs CompiledMethod by checking if its last literal
+        // is also a CompiledMethod/Block. If so, it's a block (with outerCode).
+        // If not, it's the home method.
         if (numLiterals >= 1) {
-            Oop lastLit = memory_.fetchPointer(numLiterals, compiledBlock);  // literals at slots 1 to numLits
-            if (lastLit.isObject() && lastLit.rawBits() > 0x10000) {
-                ObjectHeader* lastLitHdr = lastLit.asObjectPtr();
-                if (lastLitHdr->isCompiledMethod()) {
-                    homeMethodForNLR = lastLit;
+            Oop enclosingCode = memory_.fetchPointer(numLiterals, compiledBlock);
+            // Follow the chain of enclosing blocks until we reach the home method
+            int chainDepth = 0;
+            while (enclosingCode.isObject() && enclosingCode.rawBits() > 0x10000 && chainDepth < 20) {
+                ObjectHeader* ecHdr = enclosingCode.asObjectPtr();
+                if (!ecHdr->isCompiledMethod()) break;
+
+                // Get this code's header and last literal
+                Oop ecHeader = memory_.fetchPointer(0, enclosingCode);
+                if (!ecHeader.isSmallInteger()) break;
+                int ecNumLits = ecHeader.asSmallInteger() & 0xFFFF;
+                if (ecNumLits < 1) {
+                    // No literals - this is the home method
+                    homeMethodForNLR = enclosingCode;
+                    break;
+                }
+
+                Oop ecLastLit = memory_.fetchPointer(ecNumLits, enclosingCode);
+
+                // Check if last literal is a CompiledMethod/Block
+                bool lastLitIsCode = false;
+                if (ecLastLit.isObject() && ecLastLit.rawBits() > 0x10000) {
+                    ObjectHeader* llHdr = ecLastLit.asObjectPtr();
+                    lastLitIsCode = llHdr->isCompiledMethod();
+                }
+
+                if (!lastLitIsCode) {
+                    // Last literal is not compiled code - this is the home method
+                    homeMethodForNLR = enclosingCode;
+                    break;
+                }
+
+                // Last literal is compiled code - this is a CompiledBlock
+                // Continue following the chain to find the home method
+                enclosingCode = ecLastLit;
+                chainDepth++;
+            }
+
+            // If we ran out of chain or hit an error, use whatever we have
+            if (homeMethodForNLR.isNil() && enclosingCode.isObject() && enclosingCode.rawBits() > 0x10000) {
+                ObjectHeader* ecHdr = enclosingCode.asObjectPtr();
+                if (ecHdr->isCompiledMethod()) {
+                    homeMethodForNLR = enclosingCode;
                 }
             }
         }
@@ -9951,7 +9996,7 @@ void Interpreter::activateBlock(Oop block, int argCount) {
         {
             static FILE* abResLog = nullptr;
             static int abResCount = 0;
-            if (!abResLog) abResLog = nullptr;
+            if (!abResLog) abResLog = nullptr;  // Disabled
             if (abResLog && abResCount++ < 500) {
                 fprintf(abResLog, "[AB-RES #%d] fd=%zu homeMethodOop=0x%llx homeFrame=%zu\n",
                         abResCount, frameDepth_,

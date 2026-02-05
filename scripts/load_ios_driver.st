@@ -36,4 +36,4 @@ OSiOSDriver compile: 'buttonFromBits: buttonBits (buttonBits bitAnd: 1) ~= 0 ifT
 
 OSiOSDriver compile: 'dispatchEvent: osEvent toWindow: window | osWindow | osWindow := window osWindow. osWindow ifNil: [^ self]. osWindow eventHandler ifNotNil: [:handler | handler handleEvent: osEvent]'.
 
-Transcript cr; show: 'Done loading OSiOSDriver methods!'.
+Transcript cr; show: 'Done loading OSiOSDriver methods.'.
