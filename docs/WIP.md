@@ -143,7 +143,7 @@ The `unwindTo:` traversal isn't finding or executing the inserted ensure: block 
 
 ## Current Status (2026-02-04)
 
-### Custom VM Test Results (ALL 14 classes complete)
+### Custom VM Test Results (19 test classes)
 
 Run on custom C++ VM via `./build/test_load_image /tmp/Pharo.image test`
 with 10B step limit. Test runner: `scripts/run_sunit_simple.st` (no forking,
@@ -151,23 +151,29 @@ no semaphore timeouts — runs tests directly in main process).
 
 ```
                       Custom VM        Standard VM
+--- Kernel-Tests: Numbers ---
 SmallIntegerTest      29P  0F  0E      29P  0F  0E      MATCH
 IntegerTest           80P  0F  3E      80P  0F  3E      MATCH (3 TestSkipped)
 FloatTest             74P  0F  1E      74P  0F  1E      MATCH (1 TestSkipped)
 FractionTest          32P  0F  0E      32P  0F  0E      MATCH
 PointTest             36P  0F  0E      36P  0F  0E      MATCH
 CharacterTest         17P  0F  0E      17P  0F  0E      MATCH (2 skipped by runner)
+--- Kernel-Tests: Collections ---
 DictionaryTest       205P  0F  0E     205P  0F  0E      MATCH
 SetTest              174P  0F  0E     174P  0F  0E      MATCH
 BagTest              168P  0F  0E     168P  0F  0E      MATCH
 IntervalTest         260P  0F  0E     260P  0F  0E      MATCH
 SymbolTest           268P  0F  0E     268P  0F  0E      MATCH
 OrderedCollectionTest 351P  0F  0E    351P  0F  0E      MATCH
-ArrayTest            323P  1F  0E     324P  0F  0E      1 FAILURE
+ArrayTest            323P  1F  0E     324P  0F  0E      1 FAILURE (testPrintingRecursive)
 StringTest           438P  0F  0E     438P  0F  0E      MATCH
------------------------------------------------------------------
-Custom VM:   2455P  1F  4E  (99.96% pass rate)
-Standard VM: 2458P  0F  4E  (100% pass rate, ignoring TestSkipped)
+--- Collections-Tests ---
+LinkedListTest       254P  1F  0E     255P  0F  0E      1 FAILURE (test14removeIfAbsent)
+HeapTest             (incomplete - hangs on testExamples)
+SortedCollectionTest (not yet run)
+WeakSetTest          (not yet run)
+--- Compiler-Tests ---
+OpalCompilerTest     (not yet run)
 ```
 
 ### Remaining Issues (1 failure vs standard VM)
