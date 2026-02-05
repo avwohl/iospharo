@@ -207,6 +207,26 @@ StringTest           438P  0F  0E     438P  0F  0E      MATCH
 
 ### Key Bugs Fixed (2026-02-05)
 
+14. **Non-local returns from nested blocks failed (canUnderstand: bug)** — CRITICAL FIX
+    - Root cause: For nested blocks like `[:v | ^ v]` inside `[:sym | ...]`, the inner
+      block's CompiledBlock has its last literal pointing to the outer CompiledBlock,
+      not the home CompiledMethod. The NLR code was only checking one level of nesting.
+    - This caused `canUnderstand:` to incorrectly return `false` for methods that exist.
+      `canUnderstand:` uses `classAndMethodFor:do:ifAbsent:` which has this pattern:
+      ```smalltalk
+      self withAllSuperclassesDo: [:class |
+        class compiledMethodAt: aSymbol ifPresent: [:method |
+          ^ binaryBlock value: class value: method]].  "<-- nested NLR"
+      ^ absentBlock value
+      ```
+      The `^` inside `ifPresent:` block should return from `classAndMethodFor:do:ifAbsent:`,
+      but without following the chain, it returned to the wrong frame.
+    - Fix: When a FullBlockClosure is activated, follow the chain of enclosing blocks
+      by repeatedly checking each code's last literal. If it's a CompiledMethod/Block,
+      continue to it; if it's not (e.g., an Association or literal value), we've found
+      the home method. This correctly handles arbitrary nesting depths.
+    - Result: `canUnderstand:` now works correctly. OSiOSDriver methods are detected.
+
 13. **shallowCopy (primitive 148) corrupted large objects (>254 slots)** — CRITICAL FIX
     - Root cause: In Spur format, objects with >254 slots store their actual slot count
       in a word BEFORE the header: `[overflow_word][header][data...]`. But `shallowCopy`
