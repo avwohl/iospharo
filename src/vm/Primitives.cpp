@@ -35,6 +35,8 @@ static std::vector<uint8_t> addMagnitudes(const std::vector<uint8_t>& a, const s
 static std::vector<uint8_t> subtractMagnitudes(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b);
 static int compareMagnitudes(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b);
 static Oop makeLargeInteger(ObjectMemory& memory, const std::vector<uint8_t>& magnitude, bool isNegative);
+static bool isLargeInteger(ObjectMemory& memory, Oop oop, bool& isNegative);
+static std::vector<uint8_t> extractMagnitude(ObjectMemory& memory, Oop largeInt);
 
 // External step counter from Interpreter.cpp for debugging
 extern uint64_t g_stepNum;
@@ -1659,21 +1661,28 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
         }
     }
     if (fmt == ObjectFormat::Indexable64) {
-        // Each 64-bit slot provides 2 indices (32-bit words)
-        size_t numSlots = header->slotCount();
-        size_t numWords = numSlots * 2;
-        if (arrayIndex >= numWords) {
+        // 64-bit word array (DoubleWordArray): each slot is one 64-bit element
+        size_t numElements = header->slotCount();
+        if (arrayIndex >= numElements) {
             return PrimitiveResult::Failure;
         }
-        size_t slotIdx = arrayIndex / 2;
-        uint64_t bits = memory_.fetchWord64(slotIdx, rcvr);
-        uint32_t word;
-        if (arrayIndex % 2 == 0) {
-            word = static_cast<uint32_t>(bits >> 32);  // high word at odd index (1-based: 1)
+        uint64_t bits = memory_.fetchWord64(arrayIndex, rcvr);
+        // Return as SmallInteger if it fits, otherwise as LargePositiveInteger
+        if (bits <= static_cast<uint64_t>(Oop::smallIntegerMax())) {
+            primitiveSuccess(Oop::fromSmallInteger(static_cast<int64_t>(bits)));
         } else {
-            word = static_cast<uint32_t>(bits & 0xFFFFFFFF);  // low word (1-based: 2)
+            // Create LargePositiveInteger from 64-bit value (little-endian bytes)
+            std::vector<uint8_t> mag;
+            uint64_t tmp = bits;
+            while (tmp > 0) {
+                mag.push_back(static_cast<uint8_t>(tmp & 0xFF));
+                tmp >>= 8;
+            }
+            if (mag.empty()) mag.push_back(0);
+            Oop result = makeLargeInteger(memory_, mag, false);
+            if (result.isNil()) return PrimitiveResult::Failure;
+            primitiveSuccess(result);
         }
-        primitiveSuccess(Oop::fromSmallInteger(static_cast<int64_t>(word)));
         return PrimitiveResult::Success;
     }
 
@@ -2096,20 +2105,34 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
         return PrimitiveResult::Success;
     }
 
-    // 64-bit word objects (format 9)
+    // 64-bit word objects (format 9 = DoubleWordArray)
     if (fmtVal == 9) {
-        if (!value.isSmallInteger()) {
-            return PrimitiveResult::Failure;
-        }
-        int64_t wordValue = value.asSmallInteger();
-        if (wordValue < 0) {
-            return PrimitiveResult::Failure;
-        }
         size_t numElements = header->slotCount();
         if (arrayIndex >= numElements) {
             return PrimitiveResult::Failure;
         }
-        uint64_t word = static_cast<uint64_t>(wordValue);
+        uint64_t word;
+        if (value.isSmallInteger()) {
+            int64_t wordValue = value.asSmallInteger();
+            if (wordValue < 0) {
+                return PrimitiveResult::Failure;
+            }
+            word = static_cast<uint64_t>(wordValue);
+        } else {
+            // Accept LargePositiveInteger values
+            bool isNeg = false;
+            if (!isLargeInteger(memory_, value, isNeg) || isNeg) {
+                return PrimitiveResult::Failure;
+            }
+            std::vector<uint8_t> mag = extractMagnitude(memory_, value);
+            if (mag.size() > 8) {
+                return PrimitiveResult::Failure;  // Doesn't fit in 64 bits
+            }
+            word = 0;
+            for (size_t i = 0; i < mag.size(); i++) {
+                word |= static_cast<uint64_t>(mag[i]) << (i * 8);
+            }
+        }
         std::memcpy(header->bytes() + arrayIndex * 8, &word, 8);
         primitiveSuccess(value);
         return PrimitiveResult::Success;
@@ -2171,8 +2194,8 @@ PrimitiveResult Interpreter::primitiveSize(int argCount) {
         }
         size = (totalSlots > fixedFields) ? totalSlots - fixedFields : 0;
     } else if (fmt == ObjectFormat::Indexable64) {
-        // 64-bit word array: each 64-bit slot = 2 indexable 32-bit words
-        size = totalSlots * 2;
+        // 64-bit word array: each 64-bit slot = 1 indexable element
+        size = totalSlots;
     } else if (fmt >= ObjectFormat::Indexable32 && fmt <= ObjectFormat::Indexable32Odd) {
         // 32-bit word arrays
         size = totalSlots * 2 - (fmt == ObjectFormat::Indexable32Odd ? 1 : 0);
@@ -7727,15 +7750,28 @@ PrimitiveResult Interpreter::primitiveConstantFill(int argCount) {
         }
     } else if (format == ObjectFormat::Indexable64) {
         // 64-bit word array
-        if (!value.isSmallInteger()) {
-            return PrimitiveResult::Failure;
+        uint64_t word;
+        if (value.isSmallInteger()) {
+            int64_t quadVal = value.asSmallInteger();
+            if (quadVal < 0) return PrimitiveResult::Failure;
+            word = static_cast<uint64_t>(quadVal);
+        } else {
+            bool isNeg = false;
+            if (!isLargeInteger(memory_, value, isNeg) || isNeg) {
+                return PrimitiveResult::Failure;
+            }
+            std::vector<uint8_t> mag = extractMagnitude(memory_, value);
+            if (mag.size() > 8) return PrimitiveResult::Failure;
+            word = 0;
+            for (size_t i = 0; i < mag.size(); i++) {
+                word |= static_cast<uint64_t>(mag[i]) << (i * 8);
+            }
         }
-        int64_t quadVal = value.asSmallInteger();
 
         uint64_t* quads = reinterpret_cast<uint64_t*>(header + 1);
         size_t quadCount = size / 8;
         for (size_t i = 0; i < quadCount; i++) {
-            quads[i] = static_cast<uint64_t>(quadVal);
+            quads[i] = word;
         }
     } else if (format <= ObjectFormat::IndexableWithFixed) {
         // Pointer array - fill slots with the value
@@ -8105,7 +8141,7 @@ PrimitiveResult Interpreter::primitiveSlotAt(int argCount) {
         return PrimitiveResult::Success;
     }
 
-    // Handle 64-bit word objects
+    // Handle 64-bit word objects (DoubleWordArray)
     if (fmt == ObjectFormat::Indexable64) {
         size_t slotCount = header->slotCount();
         if (zeroIndex >= slotCount) {
@@ -8113,13 +8149,24 @@ PrimitiveResult Interpreter::primitiveSlotAt(int argCount) {
         }
         uint64_t* words = reinterpret_cast<uint64_t*>(header + 1);
         uint64_t val = words[zeroIndex];
-        // Return as SmallInteger if it fits, otherwise fail
-        if (Oop::canBeSmallInteger(static_cast<int64_t>(val))) {
+        if (val <= static_cast<uint64_t>(Oop::smallIntegerMax())) {
             popN(2);
             push(Oop::fromSmallInteger(static_cast<int64_t>(val)));
-            return PrimitiveResult::Success;
+        } else {
+            // Create LargePositiveInteger from 64-bit value
+            std::vector<uint8_t> mag;
+            uint64_t tmp = val;
+            while (tmp > 0) {
+                mag.push_back(static_cast<uint8_t>(tmp & 0xFF));
+                tmp >>= 8;
+            }
+            if (mag.empty()) mag.push_back(0);
+            Oop result = makeLargeInteger(memory_, mag, false);
+            if (result.isNil()) return PrimitiveResult::Failure;
+            popN(2);
+            push(result);
         }
-        return PrimitiveResult::Failure;
+        return PrimitiveResult::Success;
     }
 
     // Pointer objects
@@ -8229,21 +8276,35 @@ PrimitiveResult Interpreter::primitiveSlotAtPut(int argCount) {
         return PrimitiveResult::Success;
     }
 
-    // Handle 64-bit word objects
+    // Handle 64-bit word objects (DoubleWordArray)
     if (fmt == ObjectFormat::Indexable64) {
-        if (!value.isSmallInteger()) {
-            return PrimitiveResult::Failure;
-        }
-        int64_t wordVal = value.asSmallInteger();
-        if (wordVal < 0) {
-            return PrimitiveResult::Failure;
-        }
         size_t slotCount = header->slotCount();
         if (zeroIndex >= slotCount) {
             return PrimitiveResult::Failure;
         }
+        uint64_t word;
+        if (value.isSmallInteger()) {
+            int64_t wordVal = value.asSmallInteger();
+            if (wordVal < 0) {
+                return PrimitiveResult::Failure;
+            }
+            word = static_cast<uint64_t>(wordVal);
+        } else {
+            bool isNeg = false;
+            if (!isLargeInteger(memory_, value, isNeg) || isNeg) {
+                return PrimitiveResult::Failure;
+            }
+            std::vector<uint8_t> mag = extractMagnitude(memory_, value);
+            if (mag.size() > 8) {
+                return PrimitiveResult::Failure;
+            }
+            word = 0;
+            for (size_t i = 0; i < mag.size(); i++) {
+                word |= static_cast<uint64_t>(mag[i]) << (i * 8);
+            }
+        }
         uint64_t* words = reinterpret_cast<uint64_t*>(header + 1);
-        words[zeroIndex] = static_cast<uint64_t>(wordVal);
+        words[zeroIndex] = word;
         popN(3);
         push(value);
         return PrimitiveResult::Success;

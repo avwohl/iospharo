@@ -163,22 +163,22 @@ BagTest              168P  0F  0E     168P  0F  0E      MATCH
 IntervalTest         260P  0F  0E     260P  0F  0E      MATCH
 SymbolTest           268P  0F  0E     268P  0F  0E      MATCH
 OrderedCollectionTest 351P  0F  0E    351P  0F  0E      MATCH
-ArrayTest            322P  2F  0E     324P  0F  0E      2 FAILURES
+ArrayTest            323P  1F  0E     324P  0F  0E      1 FAILURE
 StringTest           438P  0F  0E     438P  0F  0E      MATCH
 -----------------------------------------------------------------
-Custom VM:   2454P  2F  4E  (99.8% pass rate)
+Custom VM:   2455P  1F  4E  (99.96% pass rate)
 Standard VM: 2458P  0F  4E  (100% pass rate, ignoring TestSkipped)
 ```
 
-### Remaining Issues (2 failures vs standard VM)
+### Remaining Issues (1 failure vs standard VM)
 
 **testPrintingRecursive (ArrayTest):**
 - `Got 24520 instead of 50000` — recursive printString produces shorter output
-- Likely due to C++ stack depth limit being smaller than standard VM
-
-**testShuffleBy (ArrayTest):**
-- `Assertion failed` — shuffleBy: with seeded Random(42) produces different result
-- Standard VM passes this test; may be a subtle numeric difference
+- Root cause: VM's fixed frame stack (8192 frame limit) truncates recursion
+  before the LimitedWriteStream 50000-char limit is reached
+- Increasing the frame limit causes the test to hang because the
+  LimitedWriteStream Notification exception isn't properly caught
+- Fix requires implementing proper exception/Notification handling in deep recursion
 
 **TestSkipped (4 errors) — identical on both VMs, not real failures:**
 - IntegerTest: `testCreationFromBytes1/2/3` — test explicitly skips
@@ -187,6 +187,19 @@ Standard VM: 2458P  0F  4E  (100% pass rate, ignoring TestSkipped)
 **CharacterTest: 2 skipped by test runner (both VMs):**
 - `testPrintStringAll` and `testStoreStringAll` — skipped in test runner
   (iterate all 1.1M Unicode code points, very slow). All 17 run tests pass.
+
+### Key Bugs Fixed (2026-02-04 session 3)
+
+11. **64-bit word array (DoubleWordArray) at:/at:put:/size all wrong** — CRITICAL FIX
+    - `at:` treated each 64-bit slot as 2 indexable 32-bit words (wrong)
+    - `size` returned slotCount*2 instead of slotCount (wrong)
+    - `at:put:` only accepted SmallIntegers, not LargePositiveIntegers (wrong)
+    - Same bugs in basicAt:/basicAt:put: and atAllPut:
+    - Random class stores state in DoubleWordArray, so this corrupted all
+      seeded random number generation
+    - Fixed: each 64-bit slot is one element, at: returns LargePositiveInteger
+      for values > SmallInteger max, at:put: accepts LargePositiveIntegers
+    - Result: testShuffleBy fixed (Random with seed 42 now produces correct sequence)
 
 ### Key Bugs Fixed (2026-02-04 session 2)
 
