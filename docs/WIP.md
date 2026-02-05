@@ -173,12 +173,13 @@ Standard VM: 2458P  0F  4E  (100% pass rate, ignoring TestSkipped)
 ### Remaining Issues (1 failure vs standard VM)
 
 **testPrintingRecursive (ArrayTest):**
-- `Got 24520 instead of 50000` — recursive printString produces shorter output
-- Root cause: VM's fixed frame stack (8192 frame limit) truncates recursion
-  before the LimitedWriteStream 50000-char limit is reached
-- Increasing the frame limit causes the test to hang because the
-  LimitedWriteStream Notification exception isn't properly caught
-- Fix requires implementing proper exception/Notification handling in deep recursion
+- `Got ~42682 instead of 50000` — recursive printString produces shorter output
+- Root cause: The LimitedWriteStream's `limitBlock: [^ stream contents]` non-local
+  return doesn't fire properly during deep recursion. The test relies on this NLR
+  to stop at exactly 50000 chars.
+- VM stack depth limit (8192 frames) may contribute, but increasing it causes
+  the test to hang indefinitely (NLR still doesn't fire)
+- Fix requires investigating why NLR blocks don't work in deep recursion
 
 **TestSkipped (4 errors) — identical on both VMs, not real failures:**
 - IntegerTest: `testCreationFromBytes1/2/3` — test explicitly skips
