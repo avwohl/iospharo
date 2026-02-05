@@ -11,11 +11,17 @@ runAllTests
   "Run all tests and write results to /tmp/sunit_test_results.txt"
   | testClasses stream |
   testClasses := {
+    "Kernel-Tests: Numbers"
     SmallIntegerTest. IntegerTest. FloatTest. FractionTest.
     PointTest. CharacterTest.
+    "Kernel-Tests: Collections"
     DictionaryTest. SetTest. BagTest. IntervalTest.
     SymbolTest. OrderedCollectionTest. ArrayTest.
-    StringTest }.
+    StringTest.
+    "Collections-Tests"
+    LinkedListTest. HeapTest. SortedCollectionTest. WeakSetTest.
+    "Compiler-Tests"
+    OpalCompilerTest }.
 
   stream := '/tmp/sunit_test_results.txt' asFileReference writeStream.
   [stream nextPutAll: '=== SUnit Test Run ==='; lf; lf.
