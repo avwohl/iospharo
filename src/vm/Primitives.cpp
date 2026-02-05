@@ -11990,15 +11990,25 @@ PrimitiveResult Interpreter::primitiveFileWrite(int argCount) {
     }
 
     // Trace writes to stdout/stderr for debugging CLI handlers
-    if (fileId == -2 || fileId == -3) {
-        static int stdioWriteCount = 0;
-        stdioWriteCount++;
-        if (stdioWriteCount <= 500) {
+    if (fileId == -2) {
+        static int stdoutWriteCount = 0;
+        stdoutWriteCount++;
+        if (stdoutWriteCount <= 50) {
             std::string preview(tempBuffer.begin(), tempBuffer.begin() + std::min((int64_t)80, count));
-            // Replace control chars for readability
             for (char& c : preview) if (c < 32 && c != '\n') c = '.';
-            fprintf(stderr, "[FILE-WRITE #%d step=%llu] fd=%d count=%lld: \"%s\"\n",
-                    stdioWriteCount, (unsigned long long)g_stepNum, fileId, (long long)count,
+            fprintf(stderr, "[STDOUT-WRITE #%d step=%llu] count=%lld: \"%s\"\n",
+                    stdoutWriteCount, (unsigned long long)g_stepNum, (long long)count,
+                    preview.c_str());
+        }
+    } else if (fileId == -3) {
+        static int stderrWriteCount = 0;
+        stderrWriteCount++;
+        // Only log first and every 100th stderr write to avoid spam
+        if (stderrWriteCount <= 3 || stderrWriteCount % 100 == 0) {
+            std::string preview(tempBuffer.begin(), tempBuffer.begin() + std::min((int64_t)80, count));
+            for (char& c : preview) if (c < 32 && c != '\n') c = '.';
+            fprintf(stderr, "[STDERR-WRITE #%d step=%llu] count=%lld: \"%s\"\n",
+                    stderrWriteCount, (unsigned long long)g_stepNum, (long long)count,
                     preview.c_str());
         }
     }
@@ -23187,6 +23197,136 @@ PrimitiveResult Interpreter::primitiveFileExists(int argCount) {
 
     popN(2);  // pop arg + receiver
     push(exists ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// FileAttributesPlugin>>primitiveOpendir
+// Stack: receiver, pathString -> ExternalAddress (DIR* wrapped in bytes object) or nil
+PrimitiveResult Interpreter::primitiveOpendir(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop pathOop = stackTop();
+    if (!pathOop.isObject()) return PrimitiveResult::Failure;
+
+    ObjectHeader* pathHdr = pathOop.asObjectPtr();
+    if (!pathHdr->isBytesObject()) return PrimitiveResult::Failure;
+
+    size_t len = memory_.byteSizeOf(pathOop);
+    std::string path(reinterpret_cast<const char*>(pathHdr->bytes()), len);
+
+    DIR* dir = opendir(path.c_str());
+    if (!dir) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Create a ByteArray-like object to hold the DIR* pointer
+    // ExternalAddress is a subclass of ByteArray, format 16 (Bytes_0 for 8 bytes aligned)
+    Oop byteArrayClass = memory_.specialObject(SpecialObjectIndex::ClassByteArray);
+    if (byteArrayClass.isNil()) {
+        closedir(dir);
+        return PrimitiveResult::Failure;
+    }
+
+    uint32_t classIndex = memory_.indexOfClass(byteArrayClass);
+    // Allocate 8 bytes to hold a pointer
+    Oop result = memory_.allocateBytes(classIndex, sizeof(void*));
+    if (result.isNil()) {
+        closedir(dir);
+        return PrimitiveResult::Failure;
+    }
+
+    // Store the DIR* pointer in the bytes
+    ObjectHeader* resultHdr = result.asObjectPtr();
+    memcpy(resultHdr->bytes(), &dir, sizeof(void*));
+
+    popN(2);  // pop arg + receiver
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// FileAttributesPlugin>>primitiveReaddir
+// Stack: receiver, dirPointerBytes -> String (entry name) or nil (end of dir)
+PrimitiveResult Interpreter::primitiveReaddir(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop dirOop = stackTop();
+    if (!dirOop.isObject()) return PrimitiveResult::Failure;
+
+    ObjectHeader* dirHdr = dirOop.asObjectPtr();
+    if (!dirHdr->isBytesObject() || memory_.byteSizeOf(dirOop) < sizeof(void*)) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Extract the DIR* pointer
+    DIR* dir = nullptr;
+    memcpy(&dir, dirHdr->bytes(), sizeof(void*));
+    if (!dir) return PrimitiveResult::Failure;
+
+    errno = 0;
+    struct dirent* entry = readdir(dir);
+    if (!entry) {
+        // End of directory (or error)
+        popN(2);  // pop arg + receiver
+        push(memory_.nil());
+        return PrimitiveResult::Success;
+    }
+
+    // Create string for the entry name
+    Oop nameStr = createStringObject(memory_, entry->d_name);
+    if (nameStr.isNil()) return PrimitiveResult::Failure;
+
+    popN(2);  // pop arg + receiver
+    push(nameStr);
+    return PrimitiveResult::Success;
+}
+
+// FileAttributesPlugin>>primitiveClosedir
+// Stack: receiver, dirPointerBytes -> receiver
+PrimitiveResult Interpreter::primitiveClosedir(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop dirOop = stackTop();
+    if (!dirOop.isObject()) return PrimitiveResult::Failure;
+
+    ObjectHeader* dirHdr = dirOop.asObjectPtr();
+    if (!dirHdr->isBytesObject() || memory_.byteSizeOf(dirOop) < sizeof(void*)) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Extract and close the DIR* pointer
+    DIR* dir = nullptr;
+    memcpy(&dir, dirHdr->bytes(), sizeof(void*));
+    if (dir) {
+        closedir(dir);
+        // Zero out the pointer to prevent double-close
+        void* null = nullptr;
+        memcpy(dirHdr->bytes(), &null, sizeof(void*));
+    }
+
+    pop();  // pop arg, leave receiver
+    return PrimitiveResult::Success;
+}
+
+// FileAttributesPlugin>>primitiveRewinddir
+// Stack: receiver, dirPointerBytes -> dirPointerBytes
+PrimitiveResult Interpreter::primitiveRewinddir(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop dirOop = stackTop();
+    if (!dirOop.isObject()) return PrimitiveResult::Failure;
+
+    ObjectHeader* dirHdr = dirOop.asObjectPtr();
+    if (!dirHdr->isBytesObject() || memory_.byteSizeOf(dirOop) < sizeof(void*)) {
+        return PrimitiveResult::Failure;
+    }
+
+    DIR* dir = nullptr;
+    memcpy(&dir, dirHdr->bytes(), sizeof(void*));
+    if (!dir) return PrimitiveResult::Failure;
+
+    rewinddir(dir);
+
+    pop();  // pop arg, leave receiver
     return PrimitiveResult::Success;
 }
 

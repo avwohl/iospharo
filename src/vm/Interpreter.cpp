@@ -16535,6 +16535,10 @@ void Interpreter::initializeNamedPrimitives() {
     registerNamedPrimitive("FileAttributesPlugin", "primitiveFileMasks", &Interpreter::primitiveFileMasks);
     registerNamedPrimitive("FileAttributesPlugin", "primitiveFileAttribute", &Interpreter::primitiveFileAttribute);
     registerNamedPrimitive("FileAttributesPlugin", "primitiveFileExists", &Interpreter::primitiveFileExists);
+    registerNamedPrimitive("FileAttributesPlugin", "primitiveOpendir", &Interpreter::primitiveOpendir);
+    registerNamedPrimitive("FileAttributesPlugin", "primitiveReaddir", &Interpreter::primitiveReaddir);
+    registerNamedPrimitive("FileAttributesPlugin", "primitiveClosedir", &Interpreter::primitiveClosedir);
+    registerNamedPrimitive("FileAttributesPlugin", "primitiveRewinddir", &Interpreter::primitiveRewinddir);
 
     // VM info
     registerNamedPrimitive("", "primitiveInterpreterSourceVersion", &Interpreter::primitiveInterpreterSourceVersion);

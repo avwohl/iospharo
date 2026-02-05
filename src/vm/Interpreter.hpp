@@ -1556,6 +1556,10 @@ private:
     PrimitiveResult primitiveFileMasks(int argCount);                 // Named: FileAttributesPlugin file masks
     PrimitiveResult primitiveFileAttribute(int argCount);             // Named: FileAttributesPlugin file attribute
     PrimitiveResult primitiveFileExists(int argCount);                // Named: FileAttributesPlugin file exists
+    PrimitiveResult primitiveOpendir(int argCount);                   // Named: FileAttributesPlugin opendir
+    PrimitiveResult primitiveReaddir(int argCount);                   // Named: FileAttributesPlugin readdir
+    PrimitiveResult primitiveClosedir(int argCount);                  // Named: FileAttributesPlugin closedir
+    PrimitiveResult primitiveRewinddir(int argCount);                 // Named: FileAttributesPlugin rewinddir
     PrimitiveResult primitiveGetenv(int argCount);                    // Named: get environment variable
 
     // SmallFloat primitives (541-559)
