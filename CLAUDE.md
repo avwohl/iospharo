@@ -180,30 +180,6 @@ With 577 manual primitive table entries, even 1% error rate = 5-6 wrong primitiv
    - Registered in namedPrimitives_ under both "" and "SqueakFFIPrims" modules
    - Would work IF it were ever called
 
-3. **Event injection to HandMorph works** (but is a WORKAROUND)
-   - Events appear in /tmp/iospharo-events.log
-   - Input semaphore is signaled
-   - HandMorph's lastMouseEvent is updated
-
-### Known Problems (need root cause fix)
-1. **OrderedCollection >> #new causes DNU** (~99 times at startup)
-   - This is FIRST thing that fails
-   - If basic class instantiation doesn't work, nothing will work
-   - TODO: Check metaclass lookup, check if Behavior>>new is found
-
-2. **UndefinedObject >> #platformName** (~194 times)
-   - Something returns nil when it should return a platform object
-   - primitiveGetAttribute(1001) returns "iOS" or "Mac OS" - so that's working
-   - TODO: Find what code calls platformName and why receiver is nil
-
-3. **UndefinedObject >> #privSender:** (hundreds)
-   - Context chains are broken - contexts have nil senders
-   - This breaks process scheduling
-
-4. **Cascade of exception handling failures**
-   - #signal, #message:, #receiver:, #reachedDefaultHandler all on nil
-   - Exception objects are nil because earlier failures corrupted state
-
 ### NOT the problem
 - SDL2 availability (verified working)
 - primitiveGetAttribute (returns correct values)
@@ -234,9 +210,5 @@ With 577 manual primitive table entries, even 1% error rate = 5-6 wrong primitiv
 - Primitive 264 is implemented and works
 - BUT: Nothing calls primitive 264!
 
-**Solution:**
-Load `scripts/load_ios_driver.st` into the image to add the missing methods to OSiOSDriver:
-- `setupEventLoop` - creates event loop process at priority 60
-- `eventLoop` - loops calling primitive 264
-- `processMouseEvent:` / `processKeyboardEvent:` - event dispatch
-This bypasses FFI entirely and uses primitive 264 directly.
+**TODO:** Fix FFI type resolution so OSSDL2Driver works natively. Do NOT inject
+Smalltalk code to bypass FFI — that's a workaround.
