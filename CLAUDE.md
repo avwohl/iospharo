@@ -11,10 +11,13 @@ When something doesn't work:
 2. **Find the root cause** - trace the problem to its source
 3. **Fix the actual bug** - not the symptom
 
-### Examples of BAD workarounds we've added:
-- C++ `showWorldMenu()` call because InputEventSensor isn't running → **FIX**: Figure out why InputEventSensor isn't starting
-- SwiftUI contextMenu overlay because clicks don't reach UIKit → **FIX**: Understand Mac Catalyst event routing properly
-- Direct slot manipulation because primitives fail → **FIX**: Implement the primitives correctly
+### Specific patterns that are ALWAYS wrong:
+- **Silently swallowing errors**: pushing nil and returning instead of stopVM() or letting Smalltalk handle it
+- **Silently terminating processes**: `suspendActiveProcess_` or removing processes from scheduler queues to hide bugs
+- **Skipping method lookup**: hardcoded class/selector checks to avoid calling methods that "cause problems"
+- **Treating non-booleans as false**: conditional jumps must send `mustBeBoolean` per the spec
+- **Loop/depth detectors that silently recover**: if DNU recurses infinitely, stopVM() — don't silently push nil
+- **C++ code doing Smalltalk's job**: direct HandMorph/InputEventSensor manipulation, C++ event dispatch, etc.
 
 ### Why this matters:
 - Workarounds **hide bugs** that will bite us later
@@ -200,12 +203,6 @@ With 577 manual primitive table entries, even 1% error rate = 5-6 wrong primitiv
 4. **Cascade of exception handling failures**
    - #signal, #message:, #receiver:, #reachedDefaultHandler all on nil
    - Exception objects are nil because earlier failures corrupted state
-
-### Workarounds We've Added (need to be removed)
-1. `installOSiOSDriver()` - creates raw driver instance, bypasses normal initialization
-2. `updateMouseEvent()` / `processInputEvents()` - direct HandMorph manipulation
-3. Direct semaphore signaling - bypasses normal event flow
-4. DNU handlers for privSender:, copyTo:, resume:through: on nil - hide root cause
 
 ### NOT the problem
 - SDL2 availability (verified working)

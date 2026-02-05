@@ -2626,51 +2626,6 @@ bool Interpreter::step() {
         return false;  // Signal idle to caller
     }
 
-    // If DNU handler requested process suspension (e.g., stuck error loop),
-    // terminate the active process and switch to the next runnable one
-    if (suspendActiveProcess_) {
-        suspendActiveProcess_ = false;
-        Oop activeProcess = getActiveProcess();
-        Oop nilObj = memory_.nil();
-        if (!activeProcess.isNil() && activeProcess.rawBits() != nilObj.rawBits()) {
-            // First: remove stuck process from ALL priority queues
-            Oop myList = memory_.fetchPointer(ProcessMyListIndex, activeProcess);
-            if (myList.isObject() && myList.rawBits() != nilObj.rawBits()) {
-                removeProcessFromList(activeProcess, myList);
-            }
-            Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
-            Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
-            Oop processLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
-            ObjectHeader* listsHdr = processLists.asObjectPtr();
-            for (size_t p = 0; p < listsHdr->slotCount(); p++) {
-                Oop list = memory_.fetchPointer(p, processLists);
-                Oop link = memory_.fetchPointer(LinkedListFirstLinkIndex, list);
-                while (link.isObject() && link.rawBits() != nilObj.rawBits()) {
-                    if (link.rawBits() == activeProcess.rawBits()) {
-                        removeProcessFromList(activeProcess, list);
-                        break;
-                    }
-                    link = memory_.fetchPointer(0, link);  // nextLink
-                }
-            }
-            // Mark process as terminated
-            memory_.storePointer(ProcessSuspendedContextIndex, activeProcess, nilObj);
-            memory_.storePointer(0, activeProcess, nilObj);  // nextLink
-            memory_.storePointer(ProcessMyListIndex, activeProcess, nilObj);
-
-            // Now find next runnable process
-            Oop nextProcess = wakeHighestPriority();
-            if (nextProcess.isNil() || nextProcess.rawBits() == nilObj.rawBits()) {
-                std::cerr << "[TERMINATE-STUCK] No runnable process after cleanup!\n";
-                return true;
-            }
-            std::cerr << "[TERMINATE-STUCK] Terminated 0x" << std::hex
-                      << activeProcess.rawBits() << ", switching to 0x"
-                      << nextProcess.rawBits() << std::dec << "\n";
-            transferTo(nextProcess);
-            return true;
-        }
-    }
 
     static uint64_t stepCountForDriver = 0;
     stepCountForDriver++;
@@ -6078,132 +6033,21 @@ void Interpreter::shortJump(int offset) {
 
 void Interpreter::shortJumpIfTrue(int offset) {
     Oop value = pop();
-
-    // TRACE: Log conditional jumps for nil filtering debugging
-    if constexpr (ENABLE_DEBUG_LOGGING) {
-        static FILE* jumpTLog = nullptr;
-        static int jumpTCount = 0;
-        if (!jumpTLog) jumpTLog = nullptr;
-        if (jumpTLog && jumpTCount < 200) {
-            jumpTCount++;
-            bool isTrueVal = isTrue(value);
-            bool isFalseVal = isFalse(value);
-            bool willJump = isTrueVal;
-            fprintf(jumpTLog, "[JUMP-IF-TRUE #%d] value=0x%llx isTrue=%d isFalse=%d willJump=%d\n",
-                    jumpTCount, (unsigned long long)value.rawBits(),
-                    isTrueVal ? 1 : 0, isFalseVal ? 1 : 0, willJump ? 1 : 0);
-            fflush(jumpTLog);
-        }
-    }
-
     if (isTrue(value)) {
         instructionPointer_ += offset;
+    } else if (!isFalse(value)) {
+        push(value);
+        sendMustBeBoolean(value);
     }
-    // Non-booleans treated as false (don't jump)
-    // Note: sendMustBeBoolean causes infinite recursion because the
-    // Smalltalk mustBeBoolean method itself has conditionals
 }
 
 void Interpreter::shortJumpIfFalse(int offset) {
     Oop value = pop();
-
-    // Log ALL conditional jumps in critical step range for detect:ifNone: investigation
-    if (g_stepNum >= 1523900 && g_stepNum <= 1524200) {
-        static FILE* critJumpLog = nullptr;
-        if (!critJumpLog) critJumpLog = nullptr;
-        if (critJumpLog) {
-            bool isT = (value.rawBits() == memory_.trueObject().rawBits());
-            bool isF = (value.rawBits() == memory_.falseObject().rawBits());
-            std::string valDesc = isT ? "TRUE" : (isF ? "FALSE" : "???");
-            if (!isT && !isF) {
-                if (value.isSmallInteger()) valDesc = "SI(" + std::to_string(value.asSmallInteger()) + ")";
-                else if (value.rawBits() == memory_.nil().rawBits()) valDesc = "nil";
-                else if (value.isCharacter()) valDesc = "Char(" + std::to_string(value.asCharacter()) + ")";
-                else if (value.isObject() && value.rawBits() > 0x10000) {
-                    Oop cls = memory_.classOf(value);
-                    if (cls.isObject()) {
-                        Oop cn = memory_.fetchPointer(6, cls);
-                        if (cn.isObject() && cn.rawBits() > 0x10000) {
-                            ObjectHeader* cnH = cn.asObjectPtr();
-                            if (cnH->isBytesObject() && cnH->byteSize() < 50)
-                                valDesc = std::string((char*)cnH->bytes(), cnH->byteSize());
-                        }
-                    }
-                }
-            }
-            // Get current method selector
-            std::string mSel = "?";
-            if (method_.isObject() && method_.rawBits() > 0x10000) {
-                Oop mh = memory_.fetchPointer(0, method_);
-                if (mh.isSmallInteger()) {
-                    int nl = mh.asSmallInteger() & 0x7FFF;
-                    if (nl >= 2 && nl < 100) {
-                        Oop s = memory_.fetchPointer(nl - 1, method_);
-                        if (s.isObject() && s.rawBits() > 0x10000) {
-                            ObjectHeader* sH = s.asObjectPtr();
-                            if (sH->isBytesObject() && sH->byteSize() < 100)
-                                mSel = std::string((char*)sH->bytes(), sH->byteSize());
-                        }
-                    }
-                }
-            }
-            fprintf(critJumpLog, "[JIF step=%llu fd=%zu] value=0x%llx (%s) in #%s offset=%d willJump=%d\n",
-                    (unsigned long long)g_stepNum, frameDepth_, (unsigned long long)value.rawBits(),
-                    valDesc.c_str(), mSel.c_str(), offset, !isT ? 1 : 0);
-            fflush(critJumpLog);
-        }
-    }
-    // Log non-boolean values in conditional jumps (these cause silent loop exits)
-    {
-        static FILE* condLog = nullptr;
-        static int condLogCount = 0;
-        if constexpr (ENABLE_DEBUG_LOGGING) {
-            if (!condLog) condLog = nullptr;
-        }
-        bool isT = (value.rawBits() == memory_.trueObject().rawBits());
-        bool isF = (value.rawBits() == memory_.falseObject().rawBits());
-        if (condLog && !isT && !isF && condLogCount < 200) {
-            condLogCount++;
-            std::string valDesc = "?";
-            if (value.isSmallInteger()) valDesc = "SI(" + std::to_string(value.asSmallInteger()) + ")";
-            else if (value.rawBits() == memory_.nil().rawBits()) valDesc = "nil";
-            else if (value.isObject() && value.rawBits() > 0x10000) {
-                Oop cls = memory_.classOf(value);
-                if (cls.isObject()) {
-                    Oop cn = memory_.fetchPointer(6, cls);
-                    if (cn.isObject() && cn.rawBits() > 0x10000) {
-                        ObjectHeader* cnH = cn.asObjectPtr();
-                        if (cnH->isBytesObject() && cnH->byteSize() < 50)
-                            valDesc = std::string((char*)cnH->bytes(), cnH->byteSize());
-                    }
-                }
-            }
-            // Get current method selector
-            std::string mSel = "?";
-            if (method_.isObject() && method_.rawBits() > 0x10000) {
-                Oop mh = memory_.fetchPointer(0, method_);
-                if (mh.isSmallInteger()) {
-                    int nl = mh.asSmallInteger() & 0x7FFF;
-                    if (nl >= 2 && nl < 100) {
-                        Oop s = memory_.fetchPointer(nl - 1, method_);
-                        if (s.isObject() && s.rawBits() > 0x10000) {
-                            ObjectHeader* sH = s.asObjectPtr();
-                            if (sH->isBytesObject() && sH->byteSize() < 100)
-                                mSel = std::string((char*)sH->bytes(), sH->byteSize());
-                        }
-                    }
-                }
-            }
-            fprintf(condLog, "[JIF-NONBOOL #%d step=%lld] value=0x%llx (%s) in #%s offset=%d\n",
-                    condLogCount, (long long)g_stepNum, (unsigned long long)value.rawBits(),
-                    valDesc.c_str(), mSel.c_str(), offset);
-            fflush(condLog);
-        }
-    }
-
-    if (!isTrue(value)) {
-        // Jump if false OR if non-boolean (treat non-booleans as false)
+    if (isFalse(value)) {
         instructionPointer_ += offset;
+    } else if (!isTrue(value)) {
+        push(value);
+        sendMustBeBoolean(value);
     }
 }
 
@@ -6217,63 +6061,20 @@ void Interpreter::longJumpIfTrue() {
     Oop value = pop();
     if (isTrue(value)) {
         instructionPointer_ += offset;
+    } else if (!isFalse(value)) {
+        push(value);
+        sendMustBeBoolean(value);
     }
-    // Non-booleans treated as false (don't jump)
 }
 
 void Interpreter::longJumpIfFalse() {
     int16_t offset = static_cast<int16_t>(fetchTwoBytes());
     Oop value = pop();
-
-    // Log non-boolean values in long conditional jumps
-    {
-        static FILE* condLog = nullptr;
-        static int condLogCount = 0;
-        if constexpr (ENABLE_DEBUG_LOGGING) {
-            if (!condLog) condLog = nullptr;
-        }
-        bool isT = (value.rawBits() == memory_.trueObject().rawBits());
-        bool isF = (value.rawBits() == memory_.falseObject().rawBits());
-        if (condLog && !isT && !isF && condLogCount < 200) {
-            condLogCount++;
-            std::string valDesc = "?";
-            if (value.isSmallInteger()) valDesc = "SI(" + std::to_string(value.asSmallInteger()) + ")";
-            else if (value.rawBits() == memory_.nil().rawBits()) valDesc = "nil";
-            else if (value.isObject() && value.rawBits() > 0x10000) {
-                Oop cls = memory_.classOf(value);
-                if (cls.isObject()) {
-                    Oop cn = memory_.fetchPointer(6, cls);
-                    if (cn.isObject() && cn.rawBits() > 0x10000) {
-                        ObjectHeader* cnH = cn.asObjectPtr();
-                        if (cnH->isBytesObject() && cnH->byteSize() < 50)
-                            valDesc = std::string((char*)cnH->bytes(), cnH->byteSize());
-                    }
-                }
-            }
-            std::string mSel = "?";
-            if (method_.isObject() && method_.rawBits() > 0x10000) {
-                Oop mh = memory_.fetchPointer(0, method_);
-                if (mh.isSmallInteger()) {
-                    int nl = mh.asSmallInteger() & 0x7FFF;
-                    if (nl >= 2 && nl < 100) {
-                        Oop s = memory_.fetchPointer(nl - 1, method_);
-                        if (s.isObject() && s.rawBits() > 0x10000) {
-                            ObjectHeader* sH = s.asObjectPtr();
-                            if (sH->isBytesObject() && sH->byteSize() < 100)
-                                mSel = std::string((char*)sH->bytes(), sH->byteSize());
-                        }
-                    }
-                }
-            }
-            fprintf(condLog, "[LJIF-NONBOOL #%d step=%lld] value=0x%llx (%s) in #%s offset=%d\n",
-                    condLogCount, (long long)g_stepNum, (unsigned long long)value.rawBits(),
-                    valDesc.c_str(), mSel.c_str(), offset);
-            fflush(condLog);
-        }
-    }
-
-    if (!isTrue(value)) {
+    if (isFalse(value)) {
         instructionPointer_ += offset;
+    } else if (!isTrue(value)) {
+        push(value);
+        sendMustBeBoolean(value);
     }
 }
 
@@ -9082,44 +8883,36 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
         }
 
         if (!isNilOrEnd(methodDict) && methodDict.isObject()) {
-            // WORKAROUND: Skip Deprecation's broken signal method
-            bool skipThisClass = false;
-            if (selStr == "signal" && getClassName(currentClass) == "Deprecation") {
-                skipThisClass = true;
+            Oop method = lookupInMethodDict(methodDict, selector);
+            if (traceVisitNode) {
+                std::cerr << "  [" << depth << "] " << getClassName(currentClass)
+                          << " dict=0x" << std::hex << methodDict.rawBits() << std::dec
+                          << " result=" << (method.isNil() ? "nil" : (method.isObject() ? "FOUND" : "other"))
+                          << " (0x" << std::hex << method.rawBits() << std::dec << ")\n";
             }
-
-            if (!skipThisClass) {
-                Oop method = lookupInMethodDict(methodDict, selector);
-                if (traceVisitNode) {
-                    std::cerr << "  [" << depth << "] " << getClassName(currentClass)
-                              << " dict=0x" << std::hex << methodDict.rawBits() << std::dec
-                              << " result=" << (method.isNil() ? "nil" : (method.isObject() ? "FOUND" : "other"))
-                              << " (0x" << std::hex << method.rawBits() << std::dec << ")\n";
+            if (!isNilOrEnd(method) && method.isObject()) {
+                if (traceActiveClass) {
+                    std::string foundOnName = getClassName(currentClass);
+                    if (foundOnName == "?") {
+                        Oop tc = memory_.fetchPointer(7, currentClass);
+                        if (tc.isObject() && tc.rawBits() > 0x10000) foundOnName = getClassName(tc) + " class";
+                    }
+                    fprintf(stderr, "  -> FOUND %s on %s (depth=%d)\n", selStr.c_str(), foundOnName.c_str(), depth);
                 }
-                if (!isNilOrEnd(method) && method.isObject()) {
-                    if (traceActiveClass) {
-                        std::string foundOnName = getClassName(currentClass);
-                        if (foundOnName == "?") {
-                            Oop tc = memory_.fetchPointer(7, currentClass);
-                            if (tc.isObject() && tc.rawBits() > 0x10000) foundOnName = getClassName(tc) + " class";
-                        }
-                        fprintf(stderr, "  -> FOUND %s on %s (depth=%d)\n", selStr.c_str(), foundOnName.c_str(), depth);
-                    }
-                    if (traceThis) {
-                        foundCount++;
-                    }
-                    if (shouldTraceNew) {
-                        std::cerr << "  FOUND #new in " << getClassName(currentClass) << "!\n";
-                    }
-                    // TRACE: Log which class #size is found in during critical steps
-                    if (g_sendTraceFile && g_stepCount >= 420 && g_stepCount <= 440 && selStr == "size") {
-                        fprintf(g_sendTraceFile, "[LOOKUP step=%lld] #size found in %s (depth=%d) method=0x%llx\n",
-                                (long long)g_stepCount, getClassName(currentClass).c_str(), depth,
-                                (unsigned long long)method.rawBits());
-                        fflush(g_sendTraceFile);
-                    }
-                    return method;
+                if (traceThis) {
+                    foundCount++;
                 }
+                if (shouldTraceNew) {
+                    std::cerr << "  FOUND #new in " << getClassName(currentClass) << "!\n";
+                }
+                // TRACE: Log which class #size is found in during critical steps
+                if (g_sendTraceFile && g_stepCount >= 420 && g_stepCount <= 440 && selStr == "size") {
+                    fprintf(g_sendTraceFile, "[LOOKUP step=%lld] #size found in %s (depth=%d) method=0x%llx\n",
+                            (long long)g_stepCount, getClassName(currentClass).c_str(), depth,
+                            (unsigned long long)method.rawBits());
+                    fflush(g_sendTraceFile);
+                }
+                return method;
             }
         }
         currentClass = superclassOf(currentClass);
@@ -10971,36 +10764,6 @@ void Interpreter::setReceiverInstVar(size_t index, Oop value) {
 // ===== SPECIAL SENDS =====
 
 void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
-    // Fast path: silently handle context unwinding messages sent to nil.
-    // Only intercept messages that would create infinite DNU loops during
-    // stack unwinding. Let other DNU messages through for normal error handling.
-    {
-        Oop rcvr = stackValue(argCount);
-        bool isNilRcvr = (rcvr.rawBits() == 0 || rcvr.rawBits() == memory_.nil().rawBits());
-        if (isNilRcvr && selector.isObject() && selector.rawBits() > 0x10000) {
-            ObjectHeader* sh = selector.asObjectPtr();
-            if (sh->isBytesObject()) {
-                size_t len = sh->byteSize();
-                const char* bytes = (const char*)sh->bytes();
-                auto match = [&](const char* s) { size_t n = strlen(s); return len == n && memcmp(bytes, s, n) == 0; };
-                if (match("unwindTo:") || match("terminateTo:") || match("unwindComplete") ||
-                    match("unwindAndStop:") || match("privSender:") ||
-                    match("findNextHandlerContext") || match("findNextHandlerOrSignalingContext") ||
-                    match("nextHandlerContext") || match("sender") || match("signalerContext") ||
-                    match("contextTag")) {
-                    static int silentCount = 0;
-                    silentCount++;
-                    if (false && silentCount <= 20) {
-                        fprintf(stderr, "[DNU-SILENT #%d step=%llu] nil>>%.*s\n",
-                                silentCount, g_stepNum, (int)len, bytes);
-                    }
-                    for (int i = 0; i < argCount + 1; i++) pop();
-                    push(memory_.nil());
-                    return;
-                }
-            }
-        }
-    }
 
     static int dnuCount = 0;
     dnuCount++;
@@ -11351,16 +11114,9 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
             }
         }
         if (isDnuSelector || selectors_.doesNotUnderstand.rawBits() == selector.rawBits()) {
-            static int dnuCascadeCount = 0;
-            if (dnuCascadeCount++ < 10) {
-                std::cerr << "[DNU-CASCADE] doesNotUnderstand: itself not found — returning nil\n";
-            }
-            // Don't suspend the process - just return nil and let Smalltalk
-            // exception handlers deal with it. Suspending kills the entire
-            // process which can terminate the test runner.
-            for (int i = 0; i < argCount + 1; i++) pop();
-            push(memory_.nil());
+            std::cerr << "[DNU-CASCADE] doesNotUnderstand: itself not found on receiver\n";
             dnuDepth--;
+            stopVM("Recursive doesNotUnderstand: — class missing doesNotUnderstand:");
             return;
         }
     }
@@ -11648,15 +11404,11 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         }
     }
 
-    // Depth limit — terminate process if stuck in DNU recursion
+    // Depth limit — stop VM if stuck in DNU recursion
     if (dnuDepth > MAX_DNU_DEPTH) {
-        static int depthTermCount = 0;
-        if (depthTermCount++ < 5) {
-            std::cerr << "[DNU-DEPTH] DNU depth " << dnuDepth << " exceeded limit, terminating process\n";
-        }
-        for (int i = 0; i < argCount + 1; i++) pop();
-        push(memory_.nil());
+        std::cerr << "[DNU-DEPTH] DNU depth " << dnuDepth << " exceeded limit\n";
         dnuDepth--;
+        stopVM("DNU recursion depth exceeded — infinite doesNotUnderstand: loop");
         return;
     }
 
@@ -11699,82 +11451,6 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
     Oop originalReceiver = pop();
 
-    // Context method on nil detector: if a Context method (resumeUnchecked:,
-    // findNextUnwindContextUpTo:, etc.) is sent to nil, the sender chain is broken.
-    // No amount of exception handling can fix this — terminate the process.
-    {
-        bool isNilReceiver = (originalReceiver.rawBits() == 0 || originalReceiver.rawBits() == memory_.nil().rawBits());
-        if (isNilReceiver) {
-            bool isContextMethod = false;
-            if (selector.isObject() && selector.rawBits() > 0x10000) {
-                ObjectHeader* sh = selector.asObjectPtr();
-                if (sh->isBytesObject() && sh->byteSize() <= 40) {
-                    std::string selStr((char*)sh->bytes(), sh->byteSize());
-                    isContextMethod = (selStr == "resumeUnchecked:" ||
-                                       selStr == "findNextUnwindContextUpTo:" ||
-                                       selStr == "privSender:" ||
-                                       selStr == "resume:" ||
-                                       selStr == "resume:through:");
-                }
-            }
-            if (isContextMethod) {
-                static int ctxNilCount = 0;
-                if (ctxNilCount++ < 5) {
-                    std::string selStr = "<unknown>";
-                    if (selector.isObject() && selector.rawBits() > 0x10000) {
-                        ObjectHeader* sh = selector.asObjectPtr();
-                        if (sh->isBytesObject() && sh->byteSize() < 80)
-                            selStr = std::string((char*)sh->bytes(), sh->byteSize());
-                    }
-                    std::cerr << "[DNU-CTXNIL] Context method #" << selStr
-                              << " on nil — broken sender chain, terminating process (step="
-                              << g_stepNum << ")\n";
-                }
-                push(memory_.nil());
-                suspendActiveProcess_ = true;
-                dnuDepth--;
-                return;
-            }
-        }
-    }
-
-    // DNU loop detector: if DNU on nil repeats rapidly, terminate process
-    {
-        static uint64_t lastNilDnuStep = 0;
-        static int nilDnuRepeatCount = 0;
-
-        bool isNilReceiver = (originalReceiver.rawBits() == 0 || originalReceiver.rawBits() == memory_.nil().rawBits());
-        if (isNilReceiver) {
-            if ((g_stepNum - lastNilDnuStep) < 1000) {
-                nilDnuRepeatCount++;
-            } else {
-                nilDnuRepeatCount = 1;
-            }
-            lastNilDnuStep = g_stepNum;
-
-            if (nilDnuRepeatCount > 20) {  // Raised from 3 to avoid killing test runner
-                static int loopTermCount = 0;
-                if (loopTermCount++ < 10) {
-                    std::string selStr = "<unknown>";
-                    if (selector.isObject() && selector.rawBits() > 0x10000) {
-                        ObjectHeader* sh = selector.asObjectPtr();
-                        if (sh->isBytesObject() && sh->byteSize() < 80)
-                            selStr = std::string((char*)sh->bytes(), sh->byteSize());
-                    }
-                    std::cerr << "[DNU-LOOP] Breaking infinite DNU loop: nil>>#" << selStr
-                              << " repeated " << nilDnuRepeatCount << " times, terminating process\n";
-                }
-                nilDnuRepeatCount = 0;
-                // Args+receiver already popped (for Message creation).
-                // Push nil as return value and suspend the process.
-                push(memory_.nil());
-                suspendActiveProcess_ = true;
-                dnuDepth--;
-                return;
-            }
-        }
-    }
-
     // Send doesNotUnderstand: to the original receiver
     push(originalReceiver);
     push(message);
@@ -11783,80 +11459,9 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     dnuDepth--;
 }
 
-// Old sendDoesNotUnderstand workarounds removed — all DNU handling now goes through
-// the standard Smalltalk doesNotUnderstand: mechanism.
-// If the image's exception handling works correctly (which depends on correct
-// string hashing for Dictionary lookups), these workarounds are unnecessary.
-
-
 void Interpreter::sendMustBeBoolean(Oop value) {
-    // Prevent infinite loop: track last non-boolean value that triggered mustBeBoolean
-    // If we see the same value multiple times, we're in a loop
-    static Oop lastMustBeBooleanValue = Oop::nil();
-    static int mbCount = 0;
-    static int totalMbCount = 0;  // Total across entire execution
-    static int loggedCount = 0;
-
-    totalMbCount++;
-
-    // Log first 20 mustBeBoolean errors to stderr
-    if (loggedCount < 20) {
-        loggedCount++;
-        std::string valDesc;
-        if (value.isNil()) valDesc = "nil";
-        else if (value.isSmallInteger()) { char b[32]; snprintf(b,32,"SmallInt(%lld)",value.asSmallInteger()); valDesc=b; }
-        else if (value == memory_.trueObject()) valDesc = "true";
-        else if (value == memory_.falseObject()) valDesc = "false";
-        else { char b[32]; snprintf(b,32,"0x%llx",value.rawBits()); valDesc=b; }
-        fprintf(stderr, "[MUSTBEBOOL step=%llu fd=%zu #%d] value=%s\n",
-                g_stepNum, frameDepth_, totalMbCount, valDesc.c_str());
-    }
-
-    // Hard limit: if we've had too many mustBeBoolean errors total, something is wrong
-    if (totalMbCount > 50) {
-        // DEBUG_LOG("[MUSTBEBOOLEAN] Too many mustBeBoolean errors (" << totalMbCount
-                  // << ") - popping frames to recover";
-        // Pop frames until we're at a reasonable depth
-        while (frameDepth_ > 0 && frameDepth_ > 10) {
-            popFrame();
-        }
-        totalMbCount = 0;
-        lastMustBeBooleanValue = Oop::nil();
-        mbCount = 0;
-        return;
-    }
-
-    // Check if this is the same value we saw before (infinite loop)
-    if (value.rawBits() == lastMustBeBooleanValue.rawBits() && value.rawBits() != 0) {
-        mbCount++;
-        if (mbCount > 3) {
-            // DEBUG_LOG("[MUSTBEBOOLEAN] Detected loop on value 0x" << std::hex << value.rawBits()
-                      // << std::dec << " (count=" << mbCount << ") - popping frame";
-            lastMustBeBooleanValue = Oop::nil();
-            mbCount = 0;
-            // Pop current frame and return false - this exits the mustBeBoolean path
-            if (frameDepth_ > 0) {
-                popFrame();
-                push(memory_.falseObject());
-            }
-            return;
-        }
-    } else {
-        // New value - reset counter
-        lastMustBeBooleanValue = value;
-        mbCount = 1;
-    }
-
-    // For SmallIntegers, just skip (they can never be booleans)
-    if (value.isSmallInteger()) {
-        // DEBUG_LOG("[MUSTBEBOOLEAN] SmallInteger value " << value.asSmallInteger()
-                  // << " - skipping mustBeBoolean";
-        lastMustBeBooleanValue = Oop::nil();
-        mbCount = 0;
-        return;
-    }
-
-    // Send mustBeBoolean: selector
+    // Send mustBeBoolean to the non-boolean value, let Smalltalk handle it.
+    // If this causes infinite recursion, the DNU depth limit will stopVM().
     sendSelector(selectors_.mustBeBoolean, 0);
 }
 

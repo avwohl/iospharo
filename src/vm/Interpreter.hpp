@@ -420,7 +420,6 @@ private:
     Oop pendingDriverSetupReceiver_ = Oop::nil();
     bool hasPendingDriverSetup_ = false;
     bool enableDirectInputSignaling_ = false;  // True when VM should signal input semaphore directly
-    bool suspendActiveProcess_ = false;  // Set by DNU handler to force process switch
     bool relinquishSlept_ = false;       // Set by primitiveRelinquishProcessor when it sleeps
 
     // NOTE: Event injection workaround member variables REMOVED
