@@ -15,6 +15,14 @@ cointerp.c
 
 # Test images (large, downloaded)
 test-images/
+test_images/
+images/
+
+# Pharo runtime data
+pharo-local/
+
+# Stray files
+stdbuf
 
 # Xcode derived data
 DerivedData/
