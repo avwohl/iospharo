@@ -473,7 +473,7 @@ int main(int argc, char* argv[]) {
     // Initialize memory (256 MB should be enough for most images)
     ObjectMemory memory;
     MemoryConfig config;
-    config.oldSpaceSize = 48ULL * 1024 * 1024 * 1024;  // 48 GB (GC is disabled, need extra for 4400+ tests)
+    config.oldSpaceSize = 512ULL * 1024 * 1024;  // 512 MB (GC enabled)
     config.newSpaceSize = 32 * 1024 * 1024;   // 32 MB
     config.permSpaceSize = 8 * 1024 * 1024;   // 8 MB
 
@@ -604,6 +604,20 @@ int main(int argc, char* argv[]) {
         // timer preemption corrupting startup process state
         std::cout << "Heartbeat will start after startup completes..." << std::endl;
         bool heartbeatStarted = false;
+
+        // Force a GC cycle before tests to verify compactor works
+        {
+            std::cout << "\n=== Forced GC Test ===" << std::endl;
+            size_t usedBefore = (memory.oldSpaceFree() - memory.oldSpaceStart());
+            size_t freeBefore = memory.freeOldSpaceBytes();
+            std::cout << "Before GC: used=" << (usedBefore / (1024*1024)) << "MB free=" << (freeBefore / (1024*1024)) << "MB" << std::endl;
+            auto gcResult = memory.fullGC();
+            size_t usedAfter = (memory.oldSpaceFree() - memory.oldSpaceStart());
+            size_t freeAfter = memory.freeOldSpaceBytes();
+            std::cout << "After GC: used=" << (usedAfter / (1024*1024)) << "MB free=" << (freeAfter / (1024*1024)) << "MB" << std::endl;
+            std::cout << "Freed: " << ((freeAfter > freeBefore) ? (freeAfter - freeBefore) / 1024 : 0) << "KB" << std::endl;
+            std::cout << "GC reclaimed: " << gcResult.bytesReclaimed << " bytes, moved: " << gcResult.objectsMoved << " objects, took: " << gcResult.milliseconds << "ms" << std::endl;
+        }
 
         // Run bytecode steps for testing
         std::cout << "\n=== Execution Test ===" << std::endl;
