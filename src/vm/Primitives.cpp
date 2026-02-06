@@ -13487,13 +13487,7 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
     // and new TFFI primitives (via <primitive: 'name'>).
     // Check named primitives FIRST so TFFI primitives get dispatched properly.
     {
-        static int p117count = 0;
-        p117count++;
         Oop method = newMethod_.isObject() ? newMethod_ : method_;
-        if (p117count <= 30) {
-            fprintf(stderr, "[PRIM117] call #%d argCount=%d method=%s\n",
-                    p117count, argCount, method.isObject() ? "obj" : "not-obj");
-        }
         if (method.isObject()) {
             Oop methodHeader = memory_.fetchPointer(0, method);
             if (methodHeader.isSmallInteger()) {
@@ -13505,15 +13499,9 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
                     ObjectHeader* litHdr = lit.asObjectPtr();
                     if (!litHdr->isBytesObject() || litHdr->byteSize() > 100) continue;
                     std::string name((char*)litHdr->bytes(), litHdr->byteSize());
-                    if (p117count <= 30) {
-                        fprintf(stderr, "[PRIM117] #%d  literal[%zu]='%s'\n", p117count, i, name.c_str());
-                    }
                     // Try as named primitive with empty module
                     auto it = namedPrimitives_.find(":" + name);
                     if (it != namedPrimitives_.end()) {
-                        if (p117count <= 30) {
-                            fprintf(stderr, "[PRIM117] #%d  MATCHED '%s' -> dispatching\n", p117count, name.c_str());
-                        }
                         return (this->*(it->second))(argCount);
                     }
                 }
@@ -13890,18 +13878,6 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
             }
         }
     }
-    // Log literal strings containing "primitive" (for TFFI debugging)
-    static int tffiDebugCount = 0;
-    for (auto& s : literalStrings) {
-        if (s.find("primitive") != std::string::npos || s.find("Primitive") != std::string::npos) {
-            tffiDebugCount++;
-            if (tffiDebugCount <= 50) {
-                fprintf(stderr, "[EXTCALL #%d] found literal '%s' argCount=%d nLits=%zu\n",
-                        tffiDebugCount, s.c_str(), argCount, literalStrings.size());
-            }
-            break;
-        }
-    }
     // Log literal strings found for first N calls
     static FILE* namedLog = nullptr;
     static int namedLogCount = 0;
@@ -13918,11 +13894,6 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
         // Try as direct name with empty module
         auto it = namedPrimitives_.find(":" + literalStrings[a]);
         if (it != namedPrimitives_.end()) {
-            static int matchCount = 0;
-            matchCount++;
-            if (matchCount <= 50) {
-                fprintf(stderr, "[NAMED-MATCH #%d] :%s argCount=%d\n", matchCount, literalStrings[a].c_str(), argCount);
-            }
             return (this->*(it->second))(argCount);
         }
         // Try as module:name with other literals as names
@@ -23509,11 +23480,6 @@ void* Interpreter::tffi_getAddressFromExternalAddressOrByteArray(Oop obj) {
 // Receiver: TFBasicType. Read slot 2 as SmallInteger typeCode (1-20),
 // map to static ffi_type*, write into receiver.slot[0] ExternalAddress.
 PrimitiveResult Interpreter::primitiveFillBasicType(int argCount) {
-    static int callCount = 0;
-    callCount++;
-    if (callCount <= 30) {
-        fprintf(stderr, "[TFFI] primitiveFillBasicType call #%d argCount=%d\n", callCount, argCount);
-    }
     if (argCount != 0) return PrimitiveResult::Failure;
 
     Oop receiver = stackTop();
@@ -23577,11 +23543,6 @@ PrimitiveResult Interpreter::primitiveTypeByteSize(int argCount) {
 // Stack: receiver, paramsArray, returnType [, abi]
 // Creates ffi_cif via ffi_prep_cif, stores in receiver's handler
 PrimitiveResult Interpreter::primitiveDefineFunction(int argCount) {
-    static int callCount = 0;
-    callCount++;
-    if (callCount <= 30) {
-        fprintf(stderr, "[TFFI] primitiveDefineFunction call #%d argCount=%d\n", callCount, argCount);
-    }
     if (argCount < 2 || argCount > 3) return PrimitiveResult::Failure;
 
     ffi_abi abiToUse = FFI_DEFAULT_ABI;
@@ -23747,11 +23708,6 @@ PrimitiveResult Interpreter::primitiveDefineVariadicFunction(int argCount) {
 // Return new ExternalAddress pointing to a static Runner struct.
 // The struct just needs to be non-null; the image only stores the pointer.
 PrimitiveResult Interpreter::primitiveGetSameThreadRunnerAddress(int argCount) {
-    static int callCount = 0;
-    callCount++;
-    if (callCount <= 10) {
-        fprintf(stderr, "[TFFI] primitiveGetSameThreadRunnerAddress call #%d argCount=%d\n", callCount, argCount);
-    }
     if (argCount != 0) return PrimitiveResult::Failure;
 
     // Static runner - just needs to be a non-null unique address
@@ -23768,11 +23724,6 @@ PrimitiveResult Interpreter::primitiveGetSameThreadRunnerAddress(int argCount) {
 // Stack: receiver, externalFunction, argumentsArray
 // This is the core FFI call primitive.
 PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
-    static int callCount = 0;
-    callCount++;
-    if (callCount <= 50) {
-        fprintf(stderr, "[TFFI] primitiveSameThreadCallout call #%d argCount=%d\n", callCount, argCount);
-    }
     if (argCount != 2) return PrimitiveResult::Failure;
 
     Oop argsArrayOop = stackValue(0);       // arguments array
