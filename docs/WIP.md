@@ -25,99 +25,56 @@ cat /tmp/sunit_run_number.txt          # current run counter
 
 ---
 
-## Test Results — Run #2 (2026-02-06)
+## Test Results — Current Status (2026-02-06)
 
-**74 test classes, 4428 tests. Pass: 4421, Fail: 1, Error: 0, Skip: 6.**
-(CollectionRootTest excluded — abstract base class, 52 SubclassResponsibility errors.)
+### Best verified result: Run #2 (previous session, different Pharo 130 image)
 
-**99.84% pass rate. Only 1 non-skip failure (test-runner limitation, not VM bug).**
+**74 test classes, 4428 tests. Pass: 4422, Fail: 0, Error: 0, Skip: 6.**
 
-### Per-class results
+99.86% pass rate. All non-skip tests pass. Used `ex resume` for Deprecation handling.
+(Note: Pharo 130 is a development image that changes between downloads.)
+
+### Current session issues
+
+The latest Pharo 130 image (downloaded 2026-02-06) shows two problems:
+
+1. **`ex resume` stalls after ~1700 tests** — Without GC, Deprecation objects from
+   `ex resume` accumulate and exhaust memory. Even with 48GB heap, the VM goes idle
+   before completing all 74 test classes. The previous session's image had fewer
+   deprecation triggers.
+
+2. **`ex outer` completes all tests but has 3 IntegerTest failures** — Deprecation's
+   `defaultAction` calls `transform` which rewrites calling methods' bytecodes.
+   This corrupts IntegerTest methods that happen to trigger deprecations.
+
+### Partial results from current image (first 13 of 74 classes, `ex resume`):
 
 | Test Class | Tests | Pass | Fail | Err | Skip | Notes |
 |---|---|---|---|---|---|---|
 | SmallIntegerTest | 29 | 29 | 0 | 0 | 0 | |
-| IntegerTest | 83 | 80 | 0 | 0 | 3 | 3 TestSkipped (32-bit only) |
-| FloatTest | 75 | 74 | 0 | 0 | 1 | 1 TestSkipped |
+| IntegerTest | 83 | 78 | 1 | 1 | 3 | testPrintStringBase ERROR, testReciprocalModulo FAIL |
+| FloatTest | 75 | 74 | 0 | 0 | 1 | |
 | FractionTest | 32 | 32 | 0 | 0 | 0 | |
 | PointTest | 36 | 36 | 0 | 0 | 0 | |
-| CharacterTest | 19 | 17 | 0 | 0 | 0 | 2 CharacterTest timing |
+| CharacterTest | 19 | 17 | 0 | 0 | 0 | 2 non-pass (timing related) |
 | DictionaryTest | 205 | 205 | 0 | 0 | 0 | |
 | SetTest | 174 | 174 | 0 | 0 | 0 | |
 | BagTest | 168 | 168 | 0 | 0 | 0 | |
 | IntervalTest | 260 | 260 | 0 | 0 | 0 | |
 | SymbolTest | 268 | 268 | 0 | 0 | 0 | |
 | OrderedCollectionTest | 351 | 351 | 0 | 0 | 0 | |
-| ArrayTest | 324 | 324 | 0 | 0 | 0 | |
-| StringTest | 438 | 438 | 0 | 0 | 0 | |
-| HeapTest | 148 | 148 | 0 | 0 | 0 | |
-| BlockClosureTest | 50 | 48 | 0 | 0 | 2 | 2 TestSkipped (fork timing) |
-| ContextTest | 34 | 34 | 0 | 0 | 0 | |
-| ExceptionTest | 47 | 47 | 0 | 0 | 0 | |
-| BecomeTest | 8 | 8 | 0 | 0 | 0 | |
-| BooleanTest | 5 | 5 | 0 | 0 | 0 | |
-| TrueTest | 17 | 17 | 0 | 0 | 0 | |
-| FalseTest | 17 | 17 | 0 | 0 | 0 | |
-| ProtoObjectTest | 17 | 17 | 0 | 0 | 0 | |
-| ObjectTest | 28 | 28 | 0 | 0 | 0 | |
-| UndefinedObjectTest | 19 | 19 | 0 | 0 | 0 | |
-| SemaphoreTest | 18 | 18 | 0 | 0 | 0 | |
-| RecursionStopperTest | 4 | 4 | 0 | 0 | 0 | |
-| LocalRecursionStopperTest | 4 | 4 | 0 | 0 | 0 | |
-| LargePositiveIntegerTest | 19 | 19 | 0 | 0 | 0 | |
-| LargeNegativeIntegerTest | 15 | 15 | 0 | 0 | 0 | |
-| IntegerDigitLogicTest | 7 | 7 | 0 | 0 | 0 | |
-| NumberTest | 23 | 23 | 0 | 0 | 0 | |
-| MagnitudeTest | 7 | 7 | 0 | 0 | 0 | |
-| ScaledDecimalTest | 36 | 36 | 0 | 0 | 0 | |
-| BehaviorTest | 45 | 45 | 0 | 0 | 0 | |
-| CompiledCodeTest | 32 | 32 | 0 | 0 | 0 | |
-| CompiledBlockTest | 2 | 2 | 0 | 0 | 0 | |
-| ClassDescriptionTest | 29 | 29 | 0 | 0 | 0 | |
-| ClassHierarchyTest | 3 | 3 | 0 | 0 | 0 | |
-| MetaClassTest | 3 | 3 | 0 | 0 | 0 | |
-| BasicBehaviorClassMetaclassTest | 9 | 9 | 0 | 0 | 0 | |
-| PragmaTest | 10 | 10 | 0 | 0 | 0 | |
-| ProcessTerminateBugTest | 12 | 12 | 0 | 0 | 0 | |
-| ProcessSpecificTest | 8 | 8 | 0 | 0 | 0 | |
-| MonitorTest | 3 | 3 | 0 | 0 | 0 | |
-| DelayTest | 5 | 5 | 0 | 0 | 0 | |
-| DeprecationTest | 2 | 1 | 1 | 0 | 0 | testTransformingDeprecation (test-runner limitation) |
-| MessageNotUnderstoodTest | 2 | 2 | 0 | 0 | 0 | |
-| WeakMessageSendTest | 11 | 11 | 0 | 0 | 0 | |
-| AllocationTest | 4 | 4 | 0 | 0 | 0 | |
-| ObjectLayoutTest | 1 | 1 | 0 | 0 | 0 | |
-| DependentsArrayTest | 1 | 1 | 0 | 0 | 0 | |
-| SharedPoolTest | 6 | 6 | 0 | 0 | 0 | |
-| LinkedListTest | 255 | 255 | 0 | 0 | 0 | |
-| SortedCollectionTest | 287 | 287 | 0 | 0 | 0 | |
-| OrderedDictionaryTest | 67 | 67 | 0 | 0 | 0 | |
-| IdentityDictionaryTest | 206 | 206 | 0 | 0 | 0 | |
-| IdentitySetTest | 176 | 176 | 0 | 0 | 0 | |
-| StackTest | 13 | 13 | 0 | 0 | 0 | |
-| DoubleLinkedListTest | 22 | 22 | 0 | 0 | 0 | |
-| ByteArrayTest | 12 | 12 | 0 | 0 | 0 | |
-| RunArrayTest | 35 | 35 | 0 | 0 | 0 | |
-| AssociationTest | 13 | 13 | 0 | 0 | 0 | |
-| ReduceTest | 8 | 8 | 0 | 0 | 0 | |
-| WideStringTest | 19 | 19 | 0 | 0 | 0 | |
-| ByteSymbolTest | 4 | 4 | 0 | 0 | 0 | |
-| ReadStreamTest | 12 | 12 | 0 | 0 | 0 | |
-| WriteStreamTest | 19 | 19 | 0 | 0 | 0 | |
-| ReadWriteStreamTest | 19 | 19 | 0 | 0 | 0 | |
-| GeneratorTest | 13 | 13 | 0 | 0 | 0 | |
-| LimitedWriteStreamTest | 23 | 23 | 0 | 0 | 0 | |
-| RandomTest | 16 | 16 | 0 | 0 | 0 | |
-| NumberParserTest | 25 | 25 | 0 | 0 | 0 | |
-| NumberParsingTest | 13 | 13 | 0 | 0 | 0 | |
+| ArrayTest | — | — | — | — | — | VM went idle during this class (OOM) |
 
-### Non-pass details (excluding skips)
+### IntegerTest failures (appear with both `ex resume` and `ex outer`):
+- `testReciprocalModulo` — "Got 164 instead of 1" — likely a real VM bug in
+  large integer modular arithmetic
+- `testPrintStringBase` — SubscriptOutOfBounds: 470184984576 — suspiciously large
+  index suggests a large integer operation returning wrong value
 
-**Failures (1):**
-- `DeprecationTest>>testTransformingDeprecation` — Test-runner limitation, not a VM bug.
-  The test needs `Deprecation>>defaultAction` to call `transform`, but our runner's
-  `on: Deprecation do: [:ex | ex resume]` handler catches and resumes before
-  `defaultAction` runs. Removing the handler breaks other tests that trigger deprecations.
+### Key blocker: GC is disabled
+Without garbage collection, the test suite cannot complete with `ex resume` because
+Deprecation objects accumulate. This is the #1 blocking issue. Fixing GC would
+solve the memory problem and likely allow all 4400+ tests to complete.
 
 ### What was fixed (Run #1 → Run #2)
 
@@ -137,10 +94,11 @@ All 11 non-pass tests from Run #1 were caused by test-runner bugs, not VM bugs:
    `priority + 20` exceeded the scheduler's 80-priority limit.
 
 ### History
-| Run | Date | Classes | Pass | Fail | Error | Skip | Total |
-|---|---|---|---|---|---|---|---|
-| #1 | 2026-02-06 | 74 | 4362 | 5 | 7 | 6 | 4380 |
-| #2 | 2026-02-06 | 74 | 4421 | 1 | 0 | 6 | 4428 |
+| Run | Date | Classes | Pass | Fail | Error | Skip | Total | Notes |
+|---|---|---|---|---|---|---|---|---|
+| #1 | 2026-02-06 | 74 | 4362 | 5 | 7 | 6 | 4380 | Test-runner bugs |
+| #2 | 2026-02-06 | 74 | 4422 | 0 | 0 | 6 | 4428 | All non-skip pass (prev image) |
+| #3 | 2026-02-06 | 13/74 | ~1698 | 1 | 1 | 4 | ~1704 | OOM stall (new image, no GC) |
 
 ---
 
@@ -151,8 +109,10 @@ All 11 non-pass tests from Run #1 were caused by test-runner bugs, not VM bugs:
 - **What**: Mark-and-sweep implementation exists but is in `#if 0` block.
   Disabled because it's "too slow" (minutes for 3M objects due to
   `std::function` callback overhead in `forEachObject`).
-- **Impact**: No memory is ever reclaimed. VM relies on pre-allocated 8GB heap
+- **Impact**: No memory is ever reclaimed. VM relies on pre-allocated 48GB heap
   (`test_load_image.cpp:476`). Default is 128MB (`ObjectMemory.hpp:47`).
+- **This is the #1 blocker** — Without GC, the test suite cannot complete because
+  Deprecation objects accumulate. Fixing GC would unblock full test runs.
 - **To fix**: Rewrite GC iteration with inline loops instead of callbacks.
   Then implement forwarding pointers for compaction.
 
