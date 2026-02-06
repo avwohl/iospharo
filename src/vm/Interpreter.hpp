@@ -191,6 +191,19 @@ public:
     /// Get the object memory
     ObjectMemory& memory() { return memory_; }
 
+    // ===== GC SUPPORT =====
+
+    /// Convert raw IP pointers to offsets before GC (methods may move)
+    void prepareForGC();
+
+    /// Convert IP offsets back to pointers after GC (methods may have moved)
+    void afterGC();
+
+    /// Visit every Oop root the interpreter holds.
+    /// Visitor signature: void(Oop&) — visitor may update the Oop in-place.
+    template<typename Visitor>
+    void forEachRoot(Visitor&& visitor);
+
     /// Set/get system paths
     void setImageName(const std::string& name) { imageName_ = name; }
     void setVMPath(const std::string& path) { vmPath_ = path; }
@@ -309,6 +322,9 @@ private:
         Oop* savedFP;
         int savedArgCount;
         size_t homeFrameDepth;  // For non-local block returns: the frame to return to (SIZE_MAX = not a block)
+        // GC: IP offsets (set by prepareForGC, read by afterGC)
+        ptrdiff_t savedIPOffset;
+        ptrdiff_t savedBytecodeEndOffset;
     };
     static constexpr size_t MaxFrameDepth = 65536;
     static constexpr size_t StackOverflowLimit = 35000;  // Graceful overflow limit (MaxFrameDepth is hard array bound)
@@ -325,6 +341,9 @@ private:
     uint8_t* instructionPointer_;
     uint8_t* bytecodeEnd_;  // End of bytecodes in current method
     uint8_t lastBytecode_ = 0;  // Last bytecode dispatched (for stack overflow diagnosis)
+    // GC: IP offsets for current frame (set by prepareForGC, read by afterGC)
+    ptrdiff_t ipOffset_ = 0;
+    ptrdiff_t bytecodeEndOffset_ = 0;
     Oop method_;            // Current method or CompiledBlock being executed
     Oop newMethod_;         // Method about to be activated (for primitive 117 to read literals)
     Oop homeMethod_;        // Home CompiledMethod (for literal access in blocks)
@@ -1706,6 +1725,94 @@ private:
     /// Context switch to a different process
     void transferTo(Oop newProcess);
 };
+
+// ===== TEMPLATE IMPLEMENTATIONS =====
+
+template<typename Visitor>
+void Interpreter::forEachRoot(Visitor&& visitor) {
+    // Current frame Oops
+    visitor(method_);
+    visitor(newMethod_);
+    visitor(homeMethod_);
+    visitor(receiver_);
+    visitor(closure_);
+    visitor(activeContext_);
+
+    // VM state Oops
+    visitor(displayForm_);
+    visitor(timerSemaphore_);
+    visitor(pendingWorldMenuMethod_);
+    visitor(pendingWorldMenuReceiver_);
+    visitor(pendingMenuActionMorph_);
+    visitor(pendingMenuActionMethod_);
+    visitor(pendingMenuActionArgs_);
+    visitor(pendingDriverInstallMethod_);
+    visitor(pendingDriverInstallReceiver_);
+    visitor(pendingDriverSetupMethod_);
+    visitor(pendingDriverSetupReceiver_);
+
+    // Menu bar item morphs
+    for (auto& morph : menuBarItemMorphs_) {
+        visitor(morph);
+    }
+
+    // Dropdown item morphs
+    for (auto& morph : dropdownState_.itemMorphs) {
+        visitor(morph);
+    }
+
+    // Operand stack (only the live portion)
+    for (Oop* p = stackBase_; p <= stackPointer_; ++p) {
+        visitor(*p);
+    }
+
+    // Saved frames
+    for (size_t i = 0; i < frameDepth_; ++i) {
+        SavedFrame& frame = savedFrames_[i];
+        visitor(frame.savedMethod);
+        visitor(frame.savedHomeMethod);
+        visitor(frame.savedReceiver);
+        visitor(frame.savedClosure);
+        visitor(frame.savedActiveContext);
+    }
+
+    // Method cache
+    for (auto& entry : methodCache_) {
+        visitor(entry.selector);
+        visitor(entry.classOop);
+        visitor(entry.method);
+    }
+
+    // Well-known selectors
+    visitor(selectors_.doesNotUnderstand);
+    visitor(selectors_.mustBeBoolean);
+    visitor(selectors_.cannotReturn);
+    visitor(selectors_.aboutToReturn);
+    visitor(selectors_.run);
+    visitor(selectors_.value);
+    visitor(selectors_.value_);
+    visitor(selectors_.valueValue);
+    visitor(selectors_.add);
+    visitor(selectors_.subtract);
+    visitor(selectors_.lessThan);
+    visitor(selectors_.greaterThan);
+    visitor(selectors_.lessEqual);
+    visitor(selectors_.greaterEqual);
+    visitor(selectors_.equal);
+    visitor(selectors_.notEqual);
+    visitor(selectors_.multiply);
+    visitor(selectors_.divide);
+    visitor(selectors_.at);
+    visitor(selectors_.atPut);
+    visitor(selectors_.size);
+    visitor(selectors_.next);
+    visitor(selectors_.nextPut);
+    visitor(selectors_.atEnd);
+    visitor(selectors_.eq);
+    visitor(selectors_.class_);
+    visitor(selectors_.new_);
+    visitor(selectors_.newSize);
+}
 
 } // namespace pharo
 

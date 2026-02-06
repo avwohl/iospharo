@@ -16757,4 +16757,58 @@ Oop Interpreter::activeContext() const {
     return Oop::nil();
 }
 
+// ===== GC SUPPORT =====
+
+void Interpreter::prepareForGC() {
+    // Convert current frame's raw IP pointers to offsets from method bytes start.
+    // This is needed because method objects may move during GC.
+    if (method_.isObject() && instructionPointer_) {
+        uint8_t* methodBytes = method_.asObjectPtr()->bytes();
+        ipOffset_ = instructionPointer_ - methodBytes;
+        bytecodeEndOffset_ = bytecodeEnd_ - methodBytes;
+    } else {
+        ipOffset_ = 0;
+        bytecodeEndOffset_ = 0;
+    }
+
+    // Convert saved frames' IPs to offsets
+    for (size_t i = 0; i < frameDepth_; ++i) {
+        SavedFrame& frame = savedFrames_[i];
+        if (frame.savedMethod.isObject() && frame.savedIP) {
+            uint8_t* methodBytes = frame.savedMethod.asObjectPtr()->bytes();
+            frame.savedIPOffset = frame.savedIP - methodBytes;
+            frame.savedBytecodeEndOffset = frame.savedBytecodeEnd - methodBytes;
+        } else {
+            frame.savedIPOffset = 0;
+            frame.savedBytecodeEndOffset = 0;
+        }
+    }
+}
+
+void Interpreter::afterGC() {
+    // Convert current frame's offsets back to pointers (method may have moved).
+    if (method_.isObject()) {
+        uint8_t* methodBytes = method_.asObjectPtr()->bytes();
+        instructionPointer_ = methodBytes + ipOffset_;
+        bytecodeEnd_ = methodBytes + bytecodeEndOffset_;
+    }
+
+    // Convert saved frames' offsets back to pointers
+    for (size_t i = 0; i < frameDepth_; ++i) {
+        SavedFrame& frame = savedFrames_[i];
+        if (frame.savedMethod.isObject()) {
+            uint8_t* methodBytes = frame.savedMethod.asObjectPtr()->bytes();
+            frame.savedIP = methodBytes + frame.savedIPOffset;
+            frame.savedBytecodeEnd = methodBytes + frame.savedBytecodeEndOffset;
+        }
+    }
+}
+
+// Explicit instantiation of forEachRoot is not needed since the template is in the header.
+// The implementation is below, but since it references private members,
+// it needs to be visible from the header. We'll put it here and include
+// this section from the header via a separate impl file pattern.
+// Actually, since the template must be in the header for the compiler to see it,
+// we implement it there. See Interpreter.hpp.
+
 } // namespace pharo

@@ -521,6 +521,7 @@ int main(int argc, char* argv[]) {
     std::cout << "\n=== Interpreter Initialization ===" << std::endl;
     auto interpreterPtr = std::make_unique<Interpreter>(memory);
     Interpreter& interpreter = *interpreterPtr;
+    memory.setInterpreter(&interpreter);
     interpreter.setImageName(imagePath);
     interpreter.setVMPath(argv[0]);
     interpreter.setImageArguments(imageArgs);

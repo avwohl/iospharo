@@ -40,6 +40,9 @@
 
 namespace pharo {
 
+// Forward declaration
+class Interpreter;
+
 /// Linear scanner for iterating objects in a heap region.
 /// Skips zero padding, reads totalSize(), advances.
 /// No virtual dispatch or std::function overhead.
@@ -424,6 +427,14 @@ public:
     void addRoot(Oop* root);
     void removeRoot(Oop* root);
 
+    /// Set the interpreter (for GC root enumeration)
+    void setInterpreter(Interpreter* interp) { interpreter_ = interp; }
+
+    /// Visit every Oop root in ObjectMemory (special objects, class table, etc.)
+    /// Visitor signature: void(Oop&)
+    template<typename Visitor>
+    void forEachMemoryRoot(Visitor&& visitor);
+
     /// Iterate over all objects in the heap
     void allObjectsDo(std::function<void(Oop)> callback);
 
@@ -515,6 +526,7 @@ private:
 
     // GC state
     bool forceGCFlag_ = false;
+    Interpreter* interpreter_ = nullptr;  // For root enumeration during GC
     std::vector<Oop*> roots_;
     std::vector<ObjectHeader*> rememberedSet_;  // Old-space objects with young pointers
 
@@ -575,6 +587,31 @@ private:
     /// Clear all free lists.
     void clearFreeLists();
 };
+
+// ===== TEMPLATE IMPLEMENTATIONS =====
+
+template<typename Visitor>
+void ObjectMemory::forEachMemoryRoot(Visitor&& visitor) {
+    // Special objects
+    visitor(specialObjectsArray_);
+    visitor(nilObject_);
+    visitor(trueObject_);
+    visitor(falseObject_);
+
+    // Class table entries (skip index 0 which is reserved for free chunks)
+    for (size_t i = 1; i < classTable_.size(); ++i) {
+        if (classTable_[i].isObject()) {
+            visitor(classTable_[i]);
+        }
+    }
+
+    // Registered roots (interpreter stack pointers, etc.)
+    for (Oop* root : roots_) {
+        if (root) {
+            visitor(*root);
+        }
+    }
+}
 
 } // namespace pharo
 
