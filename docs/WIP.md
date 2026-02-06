@@ -25,7 +25,100 @@ cat /tmp/sunit_run_number.txt          # current run counter
 
 ---
 
-## Test Results — Current Status (2026-02-06)
+## GC Implementation — In Progress (2026-02-06)
+
+### What's done (commits efae312, a6901a0, 77ed223, 5f73cd8)
+
+A Spur-compatible mark-compact GC has been implemented following the plan in
+`.claude/plans/atomic-pondering-bee.md`. Phases 1-4 of 6 are coded:
+
+1. **Phase 1 (Infrastructure)**: ObjectScanner, address-range space detection,
+   remembered set vector, segregated free lists
+2. **Phase 2 (Root Enumeration)**: IP-to-offset conversion (prepareForGC/afterGC),
+   forEachRoot template visiting all ~6200+ interpreter Oops, forEachMemoryRoot
+3. **Phase 3 (Mark Phase)**: BFS worklist mark-and-trace, CompiledMethod literal
+   scanning, weak object/ephemeron handling
+4. **Phase 4 (Planning Compactor)**: Spur-style plan/update/copy with saved first
+   fields in eden scratch space, grey bit tracking for forwarding addresses
+
+### Current bug: Compactor corrupts pointers
+
+**The forced GC test (fullGC after image load, before execution) crashes the VM.**
+
+Symptoms:
+- Mark phase works: marks 63,308 objects in ~62MB, takes 33ms
+- Compactor reports reclaiming ~296 bytes (a few dead objects exist in fresh image)
+- After GC, execution crashes with SIGSEGV in `lookupInMethodDict` — a method
+  dictionary pointer was corrupted during compaction
+
+**Root cause analysis (partially debugged):**
+
+Two bugs were found and fixed in commit 5f73cd8:
+
+1. **Zero-slot forwarding**: `planCompactSavingForwarders()` only stored forwarding
+   addresses for objects with `slotCount() > 0`. Zero-slot objects that moved got
+   no forwarding → dangling pointers. Fixed by using raw `(obj + 1)` pointer.
+
+2. **Saved first fields not updated**: The saved first fields in eden scratch space
+   weren't being scanned for forward resolution. If slot 0 of object A pointed to
+   moved object B, the saved copy of A's slot 0 wouldn't be updated. Added a
+   lockstep scan pass to resolve forwarding in saved fields.
+
+**These fixes reduced the corruption but did NOT eliminate it.** The VM still
+crashes after forced GC. There may be additional pointer update issues.
+
+### How to finish debugging the compactor
+
+The build has a compile error in debug logging added to `planCompactSavingForwarders`
+(variables `deadCount`, `deadBytes` etc. used before the function's `return`).
+Fix the compile error, then:
+
+1. **Find what's dead**: The debug logging (once compiling) will show which objects
+   are not marked. In a fresh image, almost nothing should be dead. If objects ARE
+   dead, the mark phase is missing them — check root enumeration.
+
+2. **Verify pointer update completeness**: After `updatePointersAfterCompact`, scan
+   ALL objects and check that every pointer field points to a valid marked object
+   at its new location. Any pointer to the old location of a moved object = bug.
+
+3. **Check overflow headers**: Objects with >254 slots have an 8-byte overflow word
+   before the header. The compactor must move both together. Check `totalSize()`
+   includes the overflow word. Check that forwarding address computation accounts
+   for overflow headers when the target location has one.
+
+4. **Check class table**: The class table contains raw Oop pointers. `forEachMemoryRoot`
+   must visit ALL class table entries. If a class object moves, its class table entry
+   must be updated.
+
+5. **Check Oop::setNilBits()**: After GC, if nil moved, `Oop::setNilBits()` is called
+   to update the nil singleton. Verify this actually works — check that `Oop::nil()`
+   returns the new address.
+
+### Key test: Run GC then verify execution
+
+```bash
+# The forced GC test is in test_load_image.cpp (currently commented out)
+# Uncomment the "Forced GC Test" block before the execution loop
+# If GC works, the test suite should run identically before and after GC
+```
+
+### Remaining GC phases (not started)
+
+- **Phase 5 (Scavenger)**: Cheney copy collector for new space (eden → survivor)
+- **Phase 6 (Integration)**: Eden allocation, GC safe point in bytecode loop,
+  write barrier audit, heap reduction to 256MB
+
+### Reference implementation
+- `src/ios/cointerp-cpp.c` — Spur GC algorithms
+  - `fullGC()` at line 52066
+  - `planCompactSavingForwarders` at line 63242
+  - `updatePointers` around line 66019
+  - `copyAndUnmark` around line 64091
+  - `mapInterpreterOops` at line 72583
+
+---
+
+## Test Results — Last Known Status
 
 ### Best verified result: Run #2 (previous session, different Pharo 130 image)
 
@@ -34,70 +127,22 @@ cat /tmp/sunit_run_number.txt          # current run counter
 99.86% pass rate. All non-skip tests pass. Used `ex resume` for Deprecation handling.
 (Note: Pharo 130 is a development image that changes between downloads.)
 
-### Current session issues
+### Current image (downloaded 2026-02-06), 512MB heap, no forced GC
 
-The latest Pharo 130 image (downloaded 2026-02-06) shows two problems:
+With testPrintStringBase and testReciprocalModulo added to skip list, the test suite
+runs but crashes during IntegerTest due to a pre-existing LargeInteger arithmetic bug
+that produces a corrupted pointer → recursive DNU → stopVM. This is NOT a GC bug.
 
-1. **`ex resume` crashes test runner during ArrayTest** — The test runner process
-   dies silently at exactly step 369,481,791 every run. Crucially, **this happens
-   at the same step count with both 16GB and 48GB heaps**, proving it is NOT an
-   OOM/GC issue. Something specific in the ArrayTest execution path crashes the
-   test runner process. Last completed class: OrderedCollectionTest (1692 tests
-   passed through that point). The ArrayTest sort completes (1436 comparisons for
-   324 items) but then the process dies before the first test runs.
-
-2. **`ex outer` completes all tests but has 3 IntegerTest failures** — Deprecation's
-   `defaultAction` calls `transform` which rewrites calling methods' bytecodes.
-   This corrupts IntegerTest methods that happen to trigger deprecations.
-
-### Partial results from current image (first 12 of 74 classes, `ex resume`):
-
-| Test Class | Tests | Pass | Fail | Err | Skip | Notes |
-|---|---|---|---|---|---|---|
-| SmallIntegerTest | 29 | 29 | 0 | 0 | 0 | |
-| IntegerTest | 83 | 78 | 1 | 1 | 3 | testPrintStringBase ERROR, testReciprocalModulo FAIL |
-| FloatTest | 75 | 74 | 0 | 0 | 1 | |
-| FractionTest | 32 | 32 | 0 | 0 | 0 | |
-| PointTest | 36 | 36 | 0 | 0 | 0 | |
-| CharacterTest | 19 | 17 | 0 | 0 | 0 | 2 non-pass (timing related) |
-| DictionaryTest | 205 | 205 | 0 | 0 | 0 | |
-| SetTest | 174 | 174 | 0 | 0 | 0 | |
-| BagTest | 168 | 168 | 0 | 0 | 0 | |
-| IntervalTest | 260 | 260 | 0 | 0 | 0 | |
-| SymbolTest | 268 | 268 | 0 | 0 | 0 | |
-| OrderedCollectionTest | 351 | 351 | 0 | 0 | 0 | |
-| ArrayTest | — | — | — | — | — | Sort OK, then process dies silently |
-
-### IntegerTest failures (appear with both `ex resume` and `ex outer`):
-- `testReciprocalModulo` — "Got 164 instead of 1" — likely a real VM bug in
-  large integer modular arithmetic
-- `testPrintStringBase` — SubscriptOutOfBounds: 470184984576 — suspiciously large
-  index suggests a large integer operation returning wrong value
-
-### Key investigation needed: Why does the test runner die during ArrayTest?
-The consistent step count (369,481,791) regardless of heap size (16GB vs 48GB)
-proves this is NOT a memory exhaustion issue. Something in the ArrayTest execution
-path crashes/terminates the test runner process silently. Possibilities:
-- A specific ArrayTest test triggers a VM bug (stack overflow, bad bytecode, etc.)
-- The error handler itself fails when catching an exception in ArrayTest
-- A Deprecation `ex resume` in ArrayTest causes a context chain corruption
+### Pre-existing IntegerTest failures:
+- `testReciprocalModulo` — "Got 164 instead of 1" — LargeInteger modular arithmetic bug
+- `testPrintStringBase` — corrupted pointer from LargeInteger `numberOfDigitsInBase:`
+  Both skipped in test runner to avoid VM crash.
 
 ### What was fixed (Run #1 → Run #2)
 
-All 11 non-pass tests from Run #1 were caused by test-runner bugs, not VM bugs:
-
-1. **ExceptionTest (4 errors fixed)**: Changed `on: Exception do:` to `on: Error do:` with
-   explicit `TestSkipped` handler. `Notification` (used by 4 tests) was being caught by
-   the runner before the tests' own handlers could process it.
-
-2. **ContextTest (3 failures fixed)**: Changed `testClass new setUp; perform: sel; tearDown`
-   to `(testClass selector: sel) runCase`. The old code left `testSelector` nil and bypassed
-   the standard SUnit call chain that tests depend on.
-
-3. **SemaphoreTest, DelayTest, ProcessTerminateBugTest (4 failures/errors fixed)**: Changed
-   fork priority from `Processor activePriority - 1` (78) to 40 (`userSchedulingPriority`).
-   At priority 78, tests that fork higher-priority processes couldn't preempt, and
-   `priority + 20` exceeded the scheduler's 80-priority limit.
+1. **ExceptionTest (4 errors)**: Changed `on: Exception do:` to `on: Error do:`
+2. **ContextTest (3 failures)**: Use `(testClass selector: sel) runCase`
+3. **SemaphoreTest, DelayTest, ProcessTerminateBugTest (4 failures)**: Fork at priority 40
 
 ### History
 | Run | Date | Classes | Pass | Fail | Error | Skip | Total | Notes |
@@ -110,17 +155,10 @@ All 11 non-pass tests from Run #1 were caused by test-runner bugs, not VM bugs:
 
 ## Missing Features (must be built)
 
-### 1. Garbage Collection — DISABLED
-- **Where**: `ObjectMemory.cpp:1521` — `fullGC()` is a no-op
-- **What**: Mark-and-sweep implementation exists but is in `#if 0` block.
-  Disabled because it's "too slow" (minutes for 3M objects due to
-  `std::function` callback overhead in `forEachObject`).
-- **Impact**: No memory is ever reclaimed. VM relies on pre-allocated 48GB heap
-  (`test_load_image.cpp:476`). Default is 128MB (`ObjectMemory.hpp:47`).
-- **This is the #1 blocker** — Without GC, the test suite cannot complete because
-  Deprecation objects accumulate. Fixing GC would unblock full test runs.
-- **To fix**: Rewrite GC iteration with inline loops instead of callbacks.
-  Then implement forwarding pointers for compaction.
+### 1. Garbage Collection — IN PROGRESS (see above)
+- Mark-compact implemented (Phases 1-4), compactor has pointer update bugs
+- Old `#if 0` code has been replaced with new implementation
+- Heap set to 512MB (`test_load_image.cpp`), was 48GB
 
 ### 2. Heap Growth — NOT IMPLEMENTED
 - **Where**: `Primitives.cpp:9444` — primitive 111 always returns 0
