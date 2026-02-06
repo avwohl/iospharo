@@ -2248,8 +2248,9 @@ void Interpreter::checkTimerSemaphore() {
                 int64_t excess = excessOop.isSmallInteger() ? excessOop.asSmallInteger() : 0;
                 memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
                                     Oop::fromSmallInteger(excess + 1));
-                if (false && timerSignalLog <= 30) {
-                    fprintf(stderr, "[TIMER-SIGNAL #%d] no waiter, excess now %lld\n", timerSignalLog, excess + 1);
+                if (false && timerSignalLog <= 50) {
+                    fprintf(stderr, "[TIMER-SIGNAL #%d step=%llu] no waiter, excess now %lld\n",
+                            timerSignalLog, (unsigned long long)g_stepNum, excess + 1);
                 }
             } else {
                 Oop process = removeFirstLinkOfList(semaphore);
@@ -2258,9 +2259,10 @@ void Interpreter::checkTimerSemaphore() {
                 Oop activeProcess = getActiveProcess();
                 Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
                 int activePriority = static_cast<int>(activePriorityOop.asSmallInteger());
-                if (false && timerSignalLog <= 30) {
-                    fprintf(stderr, "[TIMER-SIGNAL #%d] waking process pri=%d active=%d preempt=%d\n",
-                            timerSignalLog, processPriority, activePriority, processPriority > activePriority ? 1 : 0);
+                if (false && timerSignalLog <= 50) {
+                    fprintf(stderr, "[TIMER-SIGNAL #%d step=%llu] waking process pri=%d active=%d preempt=%d\n",
+                            timerSignalLog, (unsigned long long)g_stepNum,
+                            processPriority, activePriority, processPriority > activePriority ? 1 : 0);
                 }
                 if (processPriority > activePriority) {
                     putToSleep(activeProcess);
