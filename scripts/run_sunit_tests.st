@@ -65,7 +65,7 @@ runAllTests
   #(LinkedListTest SortedCollectionTest OrderedDictionaryTest
     IdentityDictionaryTest IdentitySetTest StackTest
     DoubleLinkedListTest ByteArrayTest RunArrayTest
-    AssociationTest CollectionRootTest ReduceTest
+    AssociationTest ReduceTest "CollectionRootTest is abstract"
     WideStringTest ByteSymbolTest) do: [:name |
       (Smalltalk globals at: name ifAbsent: [nil])
         ifNotNil: [:cls | testClasses add: cls]].

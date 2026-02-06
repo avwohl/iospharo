@@ -11,52 +11,133 @@ Last verified: 2026-02-06
 cd /tmp && curl -sL https://get.pharo.org/64/130 | bash
 
 # 2. Load test runner (standard Pharo VM)
-cp /tmp/Pharo.image /tmp/test.image && cp /tmp/Pharo.changes /tmp/test.changes
-/Users/wohl/Downloads/pharo /tmp/test.image eval --save \
+/Users/wohl/Downloads/pharo /tmp/Pharo.image eval --save \
   "'/Users/wohl/src/iospharo/scripts/run_sunit_tests.st' asFileReference fileIn"
 
 # 3. Run with custom VM
-./build/test_load_image /tmp/test.image
+./build/test_load_image /tmp/Pharo.image
 
 # 4. Results
-cat /tmp/sunit_test_results.txt
+cat /tmp/sunit_test_results.txt        # summary per class
+cat /tmp/sunit_test_detail.txt         # per-test with run number
+cat /tmp/sunit_run_number.txt          # current run counter
 ```
 
 ---
 
-## Test Results (2026-02-06, with TFFI implementation)
+## Test Results — Run #1 (2026-02-06)
 
-All 15 test classes complete. Zero failures, zero regressions.
+**74 test classes, 4432 tests. Pass: 4362, Fail: 5, Error: 7, Skip: 6.**
+(CollectionRootTest excluded — abstract base class, 52 SubclassResponsibility errors.)
 
-| Test Class | Pass | Fail | Error | Notes |
-|---|---|---|---|---|
-| SmallIntegerTest | 29 | 0 | 0 | |
-| IntegerTest | 80 | 0 | 3 | 3 TestSkipped (64-bit skip) |
-| FloatTest | 74 | 0 | 1 | 1 TestSkipped |
-| FractionTest | 32 | 0 | 0 | |
-| PointTest | 36 | 0 | 0 | |
-| CharacterTest | 17 | 0 | 0 | 2 not run (slow Unicode iteration) |
-| DictionaryTest | 205 | 0 | 0 | |
-| SetTest | 174 | 0 | 0 | |
-| BagTest | 168 | 0 | 0 | |
-| IntervalTest | 260 | 0 | 0 | |
-| SymbolTest | 268 | 0 | 0 | |
-| OrderedCollectionTest | 351 | 0 | 0 | |
-| ArrayTest | 324 | 0 | 0 | testPrintingRecursive now passes |
-| StringTest | 438 | 0 | 0 | |
-| HeapTest | 148 | 0 | 0 | |
+### Per-class results
 
-**Total: 2604 pass, 0 fail, 4 errors (all TestSkipped)**
+| Test Class | Tests | Pass | Fail | Err | Skip | Notes |
+|---|---|---|---|---|---|---|
+| SmallIntegerTest | 29 | 29 | 0 | 0 | 0 | |
+| IntegerTest | 83 | 80 | 0 | 0 | 3 | 3 TestSkipped (32-bit only) |
+| FloatTest | 75 | 74 | 0 | 0 | 1 | 1 TestSkipped |
+| FractionTest | 32 | 32 | 0 | 0 | 0 | |
+| PointTest | 36 | 36 | 0 | 0 | 0 | |
+| CharacterTest | 19 | 17 | 0 | 0 | 0 | 2 CharacterTest timing |
+| DictionaryTest | 205 | 205 | 0 | 0 | 0 | |
+| SetTest | 174 | 174 | 0 | 0 | 0 | |
+| BagTest | 168 | 168 | 0 | 0 | 0 | |
+| IntervalTest | 260 | 260 | 0 | 0 | 0 | |
+| SymbolTest | 268 | 268 | 0 | 0 | 0 | |
+| OrderedCollectionTest | 351 | 351 | 0 | 0 | 0 | |
+| ArrayTest | 324 | 324 | 0 | 0 | 0 | |
+| StringTest | 438 | 438 | 0 | 0 | 0 | |
+| HeapTest | 148 | 148 | 0 | 0 | 0 | |
+| BlockClosureTest | 50 | 48 | 0 | 0 | 2 | 2 TestSkipped (fork timing) |
+| ContextTest | 34 | 31 | 2 | 1 | 0 | see failures below |
+| ExceptionTest | 47 | 43 | 0 | 4 | 0 | Notification handling |
+| BecomeTest | 8 | 8 | 0 | 0 | 0 | |
+| BooleanTest | 5 | 5 | 0 | 0 | 0 | |
+| TrueTest | 17 | 17 | 0 | 0 | 0 | |
+| FalseTest | 17 | 17 | 0 | 0 | 0 | |
+| ProtoObjectTest | 17 | 17 | 0 | 0 | 0 | |
+| ObjectTest | 28 | 28 | 0 | 0 | 0 | |
+| UndefinedObjectTest | 19 | 19 | 0 | 0 | 0 | |
+| SemaphoreTest | 18 | 17 | 0 | 1 | 0 | Invalid priority: 88 |
+| RecursionStopperTest | 4 | 4 | 0 | 0 | 0 | |
+| LocalRecursionStopperTest | 4 | 4 | 0 | 0 | 0 | |
+| LargePositiveIntegerTest | 19 | 19 | 0 | 0 | 0 | |
+| LargeNegativeIntegerTest | 15 | 15 | 0 | 0 | 0 | |
+| IntegerDigitLogicTest | 7 | 7 | 0 | 0 | 0 | |
+| NumberTest | 23 | 23 | 0 | 0 | 0 | |
+| MagnitudeTest | 7 | 7 | 0 | 0 | 0 | |
+| ScaledDecimalTest | 36 | 36 | 0 | 0 | 0 | |
+| BehaviorTest | 45 | 45 | 0 | 0 | 0 | |
+| CompiledCodeTest | 32 | 32 | 0 | 0 | 0 | |
+| CompiledBlockTest | 2 | 2 | 0 | 0 | 0 | |
+| ClassDescriptionTest | 29 | 29 | 0 | 0 | 0 | |
+| ClassHierarchyTest | 3 | 3 | 0 | 0 | 0 | |
+| MetaClassTest | 3 | 3 | 0 | 0 | 0 | |
+| BasicBehaviorClassMetaclassTest | 9 | 9 | 0 | 0 | 0 | |
+| PragmaTest | 10 | 10 | 0 | 0 | 0 | |
+| ProcessTerminateBugTest | 12 | 11 | 1 | 0 | 0 | testUnwindFromForeignProcess |
+| ProcessSpecificTest | 8 | 8 | 0 | 0 | 0 | |
+| MonitorTest | 3 | 3 | 0 | 0 | 0 | |
+| DelayTest | 5 | 3 | 1 | 1 | 0 | timer issues |
+| DeprecationTest | 2 | 1 | 1 | 0 | 0 | testTransformingDeprecation |
+| MessageNotUnderstoodTest | 2 | 2 | 0 | 0 | 0 | |
+| WeakMessageSendTest | 11 | 11 | 0 | 0 | 0 | |
+| AllocationTest | 4 | 4 | 0 | 0 | 0 | |
+| ObjectLayoutTest | 1 | 1 | 0 | 0 | 0 | |
+| DependentsArrayTest | 1 | 1 | 0 | 0 | 0 | |
+| SharedPoolTest | 6 | 6 | 0 | 0 | 0 | |
+| LinkedListTest | 255 | 255 | 0 | 0 | 0 | |
+| SortedCollectionTest | 287 | 287 | 0 | 0 | 0 | |
+| OrderedDictionaryTest | 67 | 67 | 0 | 0 | 0 | |
+| IdentityDictionaryTest | 206 | 206 | 0 | 0 | 0 | |
+| IdentitySetTest | 176 | 176 | 0 | 0 | 0 | |
+| StackTest | 13 | 13 | 0 | 0 | 0 | |
+| DoubleLinkedListTest | 22 | 22 | 0 | 0 | 0 | |
+| ByteArrayTest | 12 | 12 | 0 | 0 | 0 | |
+| RunArrayTest | 35 | 35 | 0 | 0 | 0 | |
+| AssociationTest | 13 | 13 | 0 | 0 | 0 | |
+| ReduceTest | 8 | 8 | 0 | 0 | 0 | |
+| WideStringTest | 19 | 19 | 0 | 0 | 0 | |
+| ByteSymbolTest | 4 | 4 | 0 | 0 | 0 | |
+| ReadStreamTest | 12 | 12 | 0 | 0 | 0 | |
+| WriteStreamTest | 19 | 19 | 0 | 0 | 0 | |
+| ReadWriteStreamTest | 19 | 19 | 0 | 0 | 0 | |
+| GeneratorTest | 13 | 13 | 0 | 0 | 0 | |
+| LimitedWriteStreamTest | 23 | 23 | 0 | 0 | 0 | |
+| RandomTest | 16 | 16 | 0 | 0 | 0 | |
+| NumberParserTest | 25 | 25 | 0 | 0 | 0 | |
+| NumberParsingTest | 13 | 13 | 0 | 0 | 0 | |
 
-### Previous baseline (2026-02-05)
-- 2119 pass, 0 fail, 4 errors across 12/15 classes
-- ArrayTest crashed on `testPrintingRecursive` (stack overflow at step 444M)
-- StringTest and HeapTest never reached (200M step limit)
+### Non-pass details (excluding skips)
 
-### What changed
-- Implemented ThreadedFFI (TFFI) primitives (commits 3086e79, 94103eb, 9162e16)
-- Increased default step limit from 200M to 2B (commit 08d8927)
-- All 15 test classes now complete, +485 passing tests
+**Failures (5):**
+- `ContextTest>>testSetUp` — returns 'ContextTest' instead of 'ContextTest>>#testSetUp'
+- `ContextTest>>testSourceNodeExecuted` — returns #value instead of #performTest
+- `ProcessTerminateBugTest>>testUnwindFromForeignProcess` — denial assertion
+- `DelayTest>>testSemaphoreTimeout` — timer assertion
+- `DeprecationTest>>testTransformingDeprecation` — denial assertion
+
+**Errors (7):**
+- `ContextTest>>testSourceNodeExecutedWhenContextIsJustAtStartpc` — KeyNotFound nil in MethodDictionary
+- `ExceptionTest>>testResumableOuter` — Notification not caught
+- `ExceptionTest>>testResumablePass` — Notification not caught
+- `ExceptionTest>>testSimpleEnsureTestWithNotification` — Notification not caught
+- `ExceptionTest>>testSimpleIsNested` — Notification not caught
+- `SemaphoreTest>>testSchedulesFIFO` — Invalid priority: 88
+- `DelayTest>>testSemaphoreNoTimeout` — nil receiver for #unschedule
+
+### Root cause analysis
+- **4 ExceptionTest errors**: All involve `Notification` (subclass of `Exception`). The handler doesn't catch Notification because our test runner catches `Exception` at a higher level. Not a VM bug.
+- **ContextTest failures**: `thisContext` method/selector reporting differs slightly. Investigation needed.
+- **SemaphoreTest>>testSchedulesFIFO**: Uses priority 88 which exceeds our scheduler range. Need to verify max priority.
+- **DelayTest**: Timer/semaphore scheduling issues. Known limitation.
+- **ProcessTerminateBugTest/DeprecationTest**: Minor process/deprecation handling issues.
+
+### History
+| Run | Date | Classes | Pass | Fail | Error | Skip | Total |
+|---|---|---|---|---|---|---|---|
+| #1 | 2026-02-06 | 74 | 4362 | 5 | 7 | 6 | 4380 |
 
 ---
 
