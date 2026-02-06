@@ -22,11 +22,8 @@
  *   │   Survivor Space   │  Objects that survived 1 GC
  *   └────────────────────┘  ← newSpaceEnd_
  *
- * The Oop class encodes which space an object is in using bits 1-2:
- *   00 = Old space
- *   01 = New space
- *   10 = Permanent space
- *   11 = Reserved
+ * Memory space is determined by address range, not by Oop tag bits.
+ * ObjectMemory provides isYoung/isOld/isPerm based on address checks.
  */
 
 #ifndef PHARO_OBJECT_MEMORY_HPP
@@ -34,6 +31,7 @@
 
 #include "Oop.hpp"
 #include "ObjectHeader.hpp"
+#include <array>
 #include <vector>
 #include <cstdint>
 #include <string>
@@ -41,6 +39,51 @@
 #include <functional>
 
 namespace pharo {
+
+/// Linear scanner for iterating objects in a heap region.
+/// Skips zero padding, reads totalSize(), advances.
+/// No virtual dispatch or std::function overhead.
+class ObjectScanner {
+public:
+    ObjectScanner(uint8_t* start, uint8_t* end)
+        : scan_(start), end_(end) {}
+
+    /// Returns next object header, or nullptr when exhausted.
+    ObjectHeader* next() {
+        while (scan_ < end_) {
+            // Skip zero padding
+            while (scan_ < end_) {
+                uint64_t word = *reinterpret_cast<uint64_t*>(scan_);
+                if (word != 0) break;
+                scan_ += 8;
+            }
+            if (scan_ >= end_) return nullptr;
+
+            ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(scan_);
+            size_t size = obj->totalSize();
+
+            // Sanity check
+            if (size < 8 || size > static_cast<size_t>(end_ - scan_)) {
+                scan_ += 8;
+                continue;
+            }
+
+            scan_ += size;
+            return obj;
+        }
+        return nullptr;
+    }
+
+    /// Reset to scan a different region.
+    void reset(uint8_t* start, uint8_t* end) {
+        scan_ = start;
+        end_ = end;
+    }
+
+private:
+    uint8_t* scan_;
+    uint8_t* end_;
+};
 
 /// Configuration for memory allocation
 struct MemoryConfig {
@@ -300,11 +343,28 @@ public:
 
     // ===== OBJECT QUERIES =====
 
+    /// Address-range checks for GC (inline for performance)
+    inline bool isYoungObject(const void* ptr) const {
+        auto p = reinterpret_cast<const uint8_t*>(ptr);
+        return p >= newSpaceStart_ && p < newSpaceEnd_;
+    }
+    inline bool isOldObject(const void* ptr) const {
+        auto p = reinterpret_cast<const uint8_t*>(ptr);
+        return p >= oldSpaceStart_ && p < oldSpaceEnd_;
+    }
+    inline bool isPermObject(const void* ptr) const {
+        auto p = reinterpret_cast<const uint8_t*>(ptr);
+        return p >= permSpaceStart_ && p < permSpaceEnd_;
+    }
+
     /// Is this object in young (new) space?
     bool isYoung(Oop obj) const;
 
     /// Is this object in old space?
     bool isOld(Oop obj) const;
+
+    /// Is this object in permanent space?
+    bool isPerm(Oop obj) const;
 
     /// Is this object pinned (won't be moved by GC)?
     bool isPinned(Oop obj) const;
@@ -456,6 +516,14 @@ private:
     // GC state
     bool forceGCFlag_ = false;
     std::vector<Oop*> roots_;
+    std::vector<ObjectHeader*> rememberedSet_;  // Old-space objects with young pointers
+
+    // Segregated free lists for old space (Spur-style)
+    // Index 0: large free chunks (linked list)
+    // Index 1-63: exact-size free chunks (size in 8-byte units = index)
+    static constexpr size_t NumFreeLists = 64;
+    std::array<ObjectHeader*, NumFreeLists> freeLists_ = {};
+    uint64_t freeListsMask_ = 0;  // Bit i set if freeLists_[i] non-empty
 
     // Statistics
     size_t bytesAllocated_ = 0;
@@ -491,6 +559,21 @@ private:
 
     /// Mark an object as remembered
     void rememberObject(Oop obj);
+
+    // ===== FREE LIST HELPERS =====
+
+    /// Initialize a region as a free chunk (classIndex=0).
+    /// size includes header. Returns the chunk header.
+    ObjectHeader* makeFreeChunk(uint8_t* addr, size_t size);
+
+    /// Add a free chunk to the appropriate free list.
+    void addToFreeList(ObjectHeader* chunk, size_t size);
+
+    /// Try to allocate from free lists. Returns nullptr if no fit found.
+    ObjectHeader* allocateFromFreeList(size_t size);
+
+    /// Clear all free lists.
+    void clearFreeLists();
 };
 
 } // namespace pharo

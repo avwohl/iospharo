@@ -1277,12 +1277,20 @@ size_t ObjectMemory::totalSizeOf(Oop obj) const {
 
 bool ObjectMemory::isYoung(Oop obj) const {
     if (!obj.isObject()) return false;
-    return obj.space() == Space::New;
+    auto p = reinterpret_cast<const uint8_t*>(obj.asObjectPtr());
+    return p >= newSpaceStart_ && p < newSpaceEnd_;
 }
 
 bool ObjectMemory::isOld(Oop obj) const {
     if (!obj.isObject()) return false;
-    return obj.space() == Space::Old;
+    auto p = reinterpret_cast<const uint8_t*>(obj.asObjectPtr());
+    return p >= oldSpaceStart_ && p < oldSpaceEnd_;
+}
+
+bool ObjectMemory::isPerm(Oop obj) const {
+    if (!obj.isObject()) return false;
+    auto p = reinterpret_cast<const uint8_t*>(obj.asObjectPtr());
+    return p >= permSpaceStart_ && p < permSpaceEnd_;
 }
 
 bool ObjectMemory::isPinned(Oop obj) const {
@@ -1487,34 +1495,9 @@ GCResult ObjectMemory::incrementalGC() {
 
 // Helper to iterate over all objects in old space
 void ObjectMemory::forEachObjectInOldSpace(std::function<void(ObjectHeader*)> callback) {
-    uint8_t* scan = oldSpaceStart_;
-    size_t objCount = 0;
-    while (scan < oldSpaceFree_) {
-        // Skip zero padding
-        while (scan < oldSpaceFree_) {
-            uint64_t word = *reinterpret_cast<uint64_t*>(scan);
-            if (word != 0) break;
-            scan += 8;
-        }
-        if (scan >= oldSpaceFree_) break;
-
-        ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(scan);
-        size_t size = obj->totalSize();
-
-        // Sanity check to avoid infinite loops
-        if (size < 8 || size > 100 * 1024 * 1024) {
-            std::cerr << "[GC-ERROR] Invalid object size " << size << " at " << (void*)scan << "\n";
-            break;
-        }
-
+    ObjectScanner scanner(oldSpaceStart_, oldSpaceFree_);
+    while (ObjectHeader* obj = scanner.next()) {
         callback(obj);
-        objCount++;
-        if (objCount % 500000 == 0) {
-            std::cerr << "[GC-SCAN] Scanned " << objCount << " objects, at offset "
-                      << (scan - oldSpaceStart_) / (1024*1024) << "MB\n";
-            std::cerr.flush();
-        }
-        scan += size;
     }
 }
 
@@ -1936,7 +1919,11 @@ Oop ObjectMemory::oopFromPointer(ObjectHeader* ptr) const {
 
 void ObjectMemory::rememberObject(Oop obj) {
     if (obj.isObject()) {
-        obj.asObjectPtr()->setRemembered(true);
+        ObjectHeader* hdr = obj.asObjectPtr();
+        if (!hdr->isRemembered()) {
+            hdr->setRemembered(true);
+            rememberedSet_.push_back(hdr);
+        }
     }
 }
 
@@ -2146,6 +2133,129 @@ Oop ObjectMemory::nextInstanceAfter(Oop afterObject, uint32_t targetClassIndex) 
     }
 
     return nilObject_;  // Not found
+}
+
+// ===== FREE LIST HELPERS =====
+
+ObjectHeader* ObjectMemory::makeFreeChunk(uint8_t* addr, size_t size) {
+    // A free chunk has classIndex=0 and stores its size in slots.
+    // Minimum free chunk is 16 bytes (8-byte header + 8-byte next pointer).
+    if (size < 16) {
+        // Too small for a free chunk — just zero it
+        std::memset(addr, 0, size);
+        return nullptr;
+    }
+
+    ObjectHeader* chunk = reinterpret_cast<ObjectHeader*>(addr);
+    size_t slotCount = (size - sizeof(ObjectHeader)) / 8;
+
+    // Build header: classIndex=0, format=0, slotCount
+    uint8_t slots = (slotCount >= 255) ? 255 : static_cast<uint8_t>(slotCount);
+    uint64_t header = ObjectHeader::makeHeader(slots, 0, ObjectFormat::ZeroSized, 0);
+    chunk->setRawHeader(header);
+
+    // For overflow, write the overflow word before the header
+    if (slotCount >= 255) {
+        // This is more complex — for now, free chunks > 255 slots go to the
+        // large list at index 0. We'll set up the overflow word.
+        uint64_t* overflow = reinterpret_cast<uint64_t*>(addr);
+        *overflow = slotCount;
+        chunk = reinterpret_cast<ObjectHeader*>(addr + 8);
+        header = ObjectHeader::makeHeader(255, 0, ObjectFormat::ZeroSized, 0);
+        chunk->setRawHeader(header);
+    }
+
+    // Zero the body (next pointer in slot 0 will be set by addToFreeList)
+    std::memset(chunk->bytes(), 0, slotCount * 8);
+
+    return chunk;
+}
+
+void ObjectMemory::addToFreeList(ObjectHeader* chunk, size_t size) {
+    // Size in 8-byte units (including header)
+    size_t sizeInSlots = size / 8;
+
+    if (sizeInSlots > 0 && sizeInSlots < NumFreeLists) {
+        // Exact-size list: singly linked via slot 0
+        Oop next = (freeLists_[sizeInSlots] != nullptr)
+            ? Oop::fromObject(freeLists_[sizeInSlots])
+            : Oop::nil();
+        if (chunk->slotCount() > 0) {
+            chunk->slotAtPut(0, next);
+        }
+        freeLists_[sizeInSlots] = chunk;
+        freeListsMask_ |= (1ULL << sizeInSlots);
+    } else {
+        // Large chunk list (index 0): singly linked via slot 0
+        Oop next = (freeLists_[0] != nullptr)
+            ? Oop::fromObject(freeLists_[0])
+            : Oop::nil();
+        if (chunk->slotCount() > 0) {
+            chunk->slotAtPut(0, next);
+        }
+        freeLists_[0] = chunk;
+        freeListsMask_ |= 1ULL;
+    }
+}
+
+ObjectHeader* ObjectMemory::allocateFromFreeList(size_t size) {
+    size_t sizeInSlots = size / 8;
+
+    // Try exact-size list first
+    if (sizeInSlots > 0 && sizeInSlots < NumFreeLists) {
+        if (freeListsMask_ & (1ULL << sizeInSlots)) {
+            ObjectHeader* chunk = freeLists_[sizeInSlots];
+            if (chunk) {
+                // Pop from list
+                Oop next = chunk->slotCount() > 0 ? chunk->slotAt(0) : Oop::nil();
+                freeLists_[sizeInSlots] = next.isObject() ? next.asObjectPtr() : nullptr;
+                if (!freeLists_[sizeInSlots]) {
+                    freeListsMask_ &= ~(1ULL << sizeInSlots);
+                }
+                return chunk;
+            }
+        }
+    }
+
+    // Try large chunk list (first fit)
+    if (freeListsMask_ & 1ULL) {
+        ObjectHeader** prev = &freeLists_[0];
+        ObjectHeader* chunk = freeLists_[0];
+        while (chunk) {
+            size_t chunkSize = chunk->totalSize();
+            if (chunkSize >= size) {
+                // Unlink
+                Oop next = chunk->slotCount() > 0 ? chunk->slotAt(0) : Oop::nil();
+                *prev = next.isObject() ? next.asObjectPtr() : nullptr;
+                if (!freeLists_[0]) {
+                    freeListsMask_ &= ~1ULL;
+                }
+
+                // If leftover is big enough, put remainder back
+                size_t remainder = chunkSize - size;
+                if (remainder >= 16) {
+                    uint8_t* remainderAddr = reinterpret_cast<uint8_t*>(chunk) + size;
+                    ObjectHeader* remChunk = makeFreeChunk(remainderAddr, remainder);
+                    if (remChunk) {
+                        addToFreeList(remChunk, remainder);
+                    }
+                }
+
+                return chunk;
+            }
+            // Advance
+            Oop next = chunk->slotCount() > 0 ? chunk->slotAt(0) : Oop::nil();
+            prev = reinterpret_cast<ObjectHeader**>(&chunk->slots()[0]);
+            chunk = next.isObject() ? next.asObjectPtr() : nullptr;
+        }
+    }
+
+    return nullptr;  // No suitable free chunk found
+}
+
+void ObjectMemory::clearFreeLists() {
+    freeLists_.fill(nullptr);
+    freeListsMask_ = 0;
 }
 
 } // namespace pharo

@@ -20,12 +20,9 @@
  *     - Covers most common floating point values
  *
  * Bit 0 = 0: OBJECT POINTER (heap-allocated object)
- *   Bits 2-1: Memory space encoding
- *     00 = Old space (tenured objects)
- *     01 = New space (young objects)
- *     10 = Permanent space (system objects)
- *     11 = Reserved
- *   Bits 63-3: Object address (8-byte aligned)
+ *   Raw 8-byte aligned heap address (no space encoding in pointer bits).
+ *   Memory space (old/new/perm) is determined by address range checks
+ *   in ObjectMemory, not by tag bits.
  *
  * DESIGN PRINCIPLES:
  * 1. No implicit conversions to/from integers
@@ -63,9 +60,6 @@ private:
     // Tag constants
     static constexpr uint64_t TagMask = 0x7;          // Low 3 bits
     static constexpr uint64_t ImmediateBit = 0x1;     // Bit 0
-    static constexpr uint64_t SpaceMask = 0x6;        // Bits 2-1
-    static constexpr uint64_t SpaceShift = 1;
-
     // Immediate tags (bit 0 = 1)
     // Spur 64-bit immediate tags:
     // Tag 0 (000) = object pointer
@@ -172,14 +166,6 @@ public:
     }
 
     // ===== OBJECT POINTER ACCESS =====
-
-    /// Get the memory space of this object.
-    /// Note: In Spur 64-bit, space is not encoded in the pointer.
-    /// This always returns Old for now - proper space tracking requires address range checks.
-    Space space() const {
-        assert(isObject());
-        return Space::Old;  // TODO: Implement proper space detection by address range
-    }
 
     /// Get pointer to object header. Caller must verify isObject() first.
     ObjectHeader* asObjectPtr() const {
@@ -302,16 +288,6 @@ public:
     std::size_t hash() const {
         // Simple but effective hash
         return static_cast<std::size_t>(bits_ * 0x9E3779B97F4A7C15ULL);
-    }
-
-    // ===== SPACE MANAGEMENT =====
-
-    /// Create a new Oop with the same pointer but different space encoding.
-    /// Used during GC when promoting objects between spaces.
-    Oop withSpace(Space newSpace) const {
-        assert(isObject());
-        uint64_t addr = bits_ & ~SpaceMask;
-        return Oop(addr | (static_cast<uint64_t>(newSpace) << SpaceShift));
     }
 
     // ===== RANGE CHECKS =====
