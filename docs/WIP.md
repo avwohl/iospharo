@@ -38,16 +38,19 @@ cat /tmp/sunit_run_number.txt          # current run counter
 
 The latest Pharo 130 image (downloaded 2026-02-06) shows two problems:
 
-1. **`ex resume` stalls after ~1700 tests** — Without GC, Deprecation objects from
-   `ex resume` accumulate and exhaust memory. Even with 48GB heap, the VM goes idle
-   before completing all 74 test classes. The previous session's image had fewer
-   deprecation triggers.
+1. **`ex resume` crashes test runner during ArrayTest** — The test runner process
+   dies silently at exactly step 369,481,791 every run. Crucially, **this happens
+   at the same step count with both 16GB and 48GB heaps**, proving it is NOT an
+   OOM/GC issue. Something specific in the ArrayTest execution path crashes the
+   test runner process. Last completed class: OrderedCollectionTest (1692 tests
+   passed through that point). The ArrayTest sort completes (1436 comparisons for
+   324 items) but then the process dies before the first test runs.
 
 2. **`ex outer` completes all tests but has 3 IntegerTest failures** — Deprecation's
    `defaultAction` calls `transform` which rewrites calling methods' bytecodes.
    This corrupts IntegerTest methods that happen to trigger deprecations.
 
-### Partial results from current image (first 13 of 74 classes, `ex resume`):
+### Partial results from current image (first 12 of 74 classes, `ex resume`):
 
 | Test Class | Tests | Pass | Fail | Err | Skip | Notes |
 |---|---|---|---|---|---|---|
@@ -63,7 +66,7 @@ The latest Pharo 130 image (downloaded 2026-02-06) shows two problems:
 | IntervalTest | 260 | 260 | 0 | 0 | 0 | |
 | SymbolTest | 268 | 268 | 0 | 0 | 0 | |
 | OrderedCollectionTest | 351 | 351 | 0 | 0 | 0 | |
-| ArrayTest | — | — | — | — | — | VM went idle during this class (OOM) |
+| ArrayTest | — | — | — | — | — | Sort OK, then process dies silently |
 
 ### IntegerTest failures (appear with both `ex resume` and `ex outer`):
 - `testReciprocalModulo` — "Got 164 instead of 1" — likely a real VM bug in
@@ -71,10 +74,13 @@ The latest Pharo 130 image (downloaded 2026-02-06) shows two problems:
 - `testPrintStringBase` — SubscriptOutOfBounds: 470184984576 — suspiciously large
   index suggests a large integer operation returning wrong value
 
-### Key blocker: GC is disabled
-Without garbage collection, the test suite cannot complete with `ex resume` because
-Deprecation objects accumulate. This is the #1 blocking issue. Fixing GC would
-solve the memory problem and likely allow all 4400+ tests to complete.
+### Key investigation needed: Why does the test runner die during ArrayTest?
+The consistent step count (369,481,791) regardless of heap size (16GB vs 48GB)
+proves this is NOT a memory exhaustion issue. Something in the ArrayTest execution
+path crashes/terminates the test runner process silently. Possibilities:
+- A specific ArrayTest test triggers a VM bug (stack overflow, bad bytecode, etc.)
+- The error handler itself fails when catching an exception in ArrayTest
+- A Deprecation `ex resume` in ArrayTest causes a context chain corruption
 
 ### What was fixed (Run #1 → Run #2)
 
