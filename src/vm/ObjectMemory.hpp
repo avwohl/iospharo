@@ -537,6 +537,11 @@ private:
     std::array<ObjectHeader*, NumFreeLists> freeLists_ = {};
     uint64_t freeListsMask_ = 0;  // Bit i set if freeLists_[i] non-empty
 
+    // Mark phase data structures
+    std::vector<ObjectHeader*> markStack_;     // BFS worklist
+    std::vector<ObjectHeader*> weakList_;      // Deferred weak objects
+    std::vector<ObjectHeader*> ephemeronList_; // Deferred ephemerons
+
     // Statistics
     size_t bytesAllocated_ = 0;
     size_t gcCount_ = 0;
@@ -586,6 +591,51 @@ private:
 
     /// Clear all free lists.
     void clearFreeLists();
+
+    // ===== MARK PHASE =====
+
+    /// Mark an Oop as reachable. If unmarked non-immediate non-perm, set mark
+    /// and push onto markStack (or weakList/ephemeronList based on format).
+    void markAndTrace(Oop oop);
+
+    /// Process the mark stack until empty (BFS drain).
+    void processMarkStack();
+
+    /// Scan pointer fields of a marked object, calling markAndTrace on each.
+    void scanPointerFields(ObjectHeader* obj);
+
+    /// Return the number of pointer slots in an object (based on format).
+    size_t pointerSlotsOf(ObjectHeader* obj) const;
+
+    /// Process weak objects: nil out slots pointing to unmarked objects.
+    void processWeaklings();
+
+    /// Complete mark phase: mark from all roots, drain mark stack, process weaklings.
+    /// Returns the count of marked objects.
+    size_t markPhase();
+
+    // ===== COMPACT PHASE =====
+
+    /// Saved first fields space (uses eden as scratch during full GC).
+    struct SavedFirstFieldsSpace {
+        Oop* start = nullptr;
+        Oop* limit = nullptr;
+        Oop* top = nullptr;
+    };
+    SavedFirstFieldsSpace savedFirstFieldsSpace_;
+
+    /// Plan: compute forwarding addresses, save first fields.
+    /// Returns false if scratch space overflowed (need another pass).
+    bool planCompactSavingForwarders();
+
+    /// Update all pointer fields in all live objects + all roots.
+    void updatePointersAfterCompact();
+
+    /// Slide objects to forwarding addresses, restore first fields, clear marks.
+    void copyAndUnmark();
+
+    /// Rebuild the free list from the gap at the end of old space.
+    void rebuildFreeListAfterCompact();
 };
 
 // ===== TEMPLATE IMPLEMENTATIONS =====

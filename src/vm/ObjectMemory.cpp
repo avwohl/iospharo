@@ -3,6 +3,7 @@
  */
 
 #include "ObjectMemory.hpp"
+#include "Interpreter.hpp"
 #include <cstdlib>
 #include <cstring>
 #include <algorithm>
@@ -2256,6 +2257,295 @@ ObjectHeader* ObjectMemory::allocateFromFreeList(size_t size) {
 void ObjectMemory::clearFreeLists() {
     freeLists_.fill(nullptr);
     freeListsMask_ = 0;
+}
+
+// ===== MARK PHASE =====
+
+void ObjectMemory::markAndTrace(Oop oop) {
+    if (!oop.isObject()) return;
+
+    ObjectHeader* obj = oop.asObjectPtr();
+
+    // Don't mark permanent space objects (they never move/die)
+    if (isPermObject(obj)) return;
+
+    // Already marked?
+    if (obj->isMarked()) return;
+
+    // Mark it
+    obj->setMarked(true);
+
+    // Classify by format
+    ObjectFormat fmt = obj->format();
+    if (fmt == ObjectFormat::Weak || fmt == ObjectFormat::WeakWithFixed) {
+        weakList_.push_back(obj);
+    } else {
+        markStack_.push_back(obj);
+    }
+}
+
+void ObjectMemory::processMarkStack() {
+    while (!markStack_.empty()) {
+        ObjectHeader* obj = markStack_.back();
+        markStack_.pop_back();
+        scanPointerFields(obj);
+    }
+}
+
+void ObjectMemory::scanPointerFields(ObjectHeader* obj) {
+    size_t numPointers = pointerSlotsOf(obj);
+    Oop* slots = obj->slots();
+    for (size_t i = 0; i < numPointers; ++i) {
+        markAndTrace(slots[i]);
+    }
+}
+
+size_t ObjectMemory::pointerSlotsOf(ObjectHeader* obj) const {
+    ObjectFormat fmt = obj->format();
+
+    // Pointer objects (formats 0-5): all slots are pointers
+    if (fmt <= ObjectFormat::WeakWithFixed) {
+        return obj->slotCount();
+    }
+
+    // CompiledMethods (formats 24-31): only literal frame is pointers
+    if (obj->isCompiledMethod()) {
+        size_t totalSlots = obj->slotCount();
+        if (totalSlots == 0) return 0;
+
+        // Slot 0 is the method header (SmallInteger)
+        Oop methodHeader = obj->slotAt(0);
+        if (methodHeader.isSmallInteger()) {
+            size_t numLiterals = methodHeader.asSmallInteger() & 0x7FFF;
+            // Pointer slots = header + literals = numLiterals + 1
+            return std::min(numLiterals + 1, totalSlots);
+        }
+        return 1;  // At least the header slot
+    }
+
+    // Byte/word/short objects: no pointer slots
+    return 0;
+}
+
+void ObjectMemory::processWeaklings() {
+    for (ObjectHeader* obj : weakList_) {
+        size_t slots = obj->slotCount();
+        Oop* slotPtr = obj->slots();
+        for (size_t i = 0; i < slots; ++i) {
+            Oop ref = slotPtr[i];
+            if (ref.isObject() && !isPermObject(ref.asObjectPtr())) {
+                if (!ref.asObjectPtr()->isMarked()) {
+                    // Referent is dead — nil it out
+                    slotPtr[i] = nilObject_;
+                }
+            }
+        }
+    }
+}
+
+size_t ObjectMemory::markPhase() {
+    // Reserve space for mark stack to avoid frequent reallocations
+    markStack_.clear();
+    markStack_.reserve(100000);
+    weakList_.clear();
+    ephemeronList_.clear();
+
+    size_t markedCount = 0;
+
+    // 1. Mark from memory roots (special objects, class table)
+    forEachMemoryRoot([this](Oop& oop) {
+        markAndTrace(oop);
+    });
+
+    // 2. Mark from interpreter roots
+    if (interpreter_) {
+        interpreter_->forEachRoot([this](Oop& oop) {
+            markAndTrace(oop);
+        });
+    }
+
+    // 3. Drain mark stack
+    processMarkStack();
+
+    // 4. Process weak objects
+    processWeaklings();
+
+    // 5. Count marked objects
+    ObjectScanner scanner(oldSpaceStart_, oldSpaceFree_);
+    while (ObjectHeader* obj = scanner.next()) {
+        if (obj->isMarked()) markedCount++;
+    }
+
+    return markedCount;
+}
+
+// ===== COMPACT PHASE =====
+
+bool ObjectMemory::planCompactSavingForwarders() {
+    // Use eden as scratch space for saved first fields.
+    // Eden is unused during full GC.
+    savedFirstFieldsSpace_.start = reinterpret_cast<Oop*>(edenStart_);
+    savedFirstFieldsSpace_.limit = reinterpret_cast<Oop*>(edenStart_ +
+        (survivorStart_ - edenStart_));
+    savedFirstFieldsSpace_.top = savedFirstFieldsSpace_.start;
+
+    uint8_t* toFinger = oldSpaceStart_;  // Destination for next live object
+
+    ObjectScanner scanner(oldSpaceStart_, oldSpaceFree_);
+    while (ObjectHeader* obj = scanner.next()) {
+        if (!obj->isMarked()) continue;  // Dead — skip
+
+        size_t objSize = obj->totalSize();
+
+        // Pinned objects don't move
+        if (obj->isPinned()) {
+            // If there's a gap before the pinned object, make it a free chunk
+            uint8_t* objAddr = reinterpret_cast<uint8_t*>(obj);
+            if (toFinger < objAddr) {
+                size_t gapSize = objAddr - toFinger;
+                if (gapSize >= 16) {
+                    makeFreeChunk(toFinger, gapSize);
+                }
+            }
+            toFinger = objAddr + objSize;
+            continue;
+        }
+
+        // Mobile object: save first field, store forwarding address
+        if (obj->slotCount() > 0) {
+            // Check if we have scratch space
+            if (savedFirstFieldsSpace_.top >= savedFirstFieldsSpace_.limit) {
+                return false;  // Overflow — need another pass
+            }
+            // Save first field
+            *savedFirstFieldsSpace_.top = obj->slotAt(0);
+            savedFirstFieldsSpace_.top++;
+
+            // Store forwarding address in first slot
+            ObjectHeader* dest = reinterpret_cast<ObjectHeader*>(toFinger);
+            obj->slotAtPut(0, Oop::fromObject(dest));
+        }
+        // For zero-slot objects, no first field to save — they slide by position
+
+        toFinger += objSize;
+    }
+
+    return true;  // All objects planned in one pass
+}
+
+void ObjectMemory::updatePointersAfterCompact() {
+    // Update pointers in all marked objects
+    ObjectScanner scanner(oldSpaceStart_, oldSpaceFree_);
+    while (ObjectHeader* obj = scanner.next()) {
+        if (!obj->isMarked()) continue;
+
+        size_t numPointers = pointerSlotsOf(obj);
+        Oop* slots = obj->slots();
+
+        // For mobile objects, slot 0 contains the forwarding address, not original data.
+        // The update of slot 0 will happen during copyAndUnmark when first fields are restored.
+        // But we still need to update slots 1..N for the original pointer values.
+        // Actually, the Spur algorithm stores the forwarding address in slot 0,
+        // and for pointer updating, we skip slot 0 of mobile objects (it's a forwarding addr).
+        // We update references in OTHER objects to point to the new locations.
+
+        size_t startSlot = 0;
+        if (!obj->isPinned() && numPointers > 0) {
+            startSlot = 1;  // Skip slot 0 (forwarding address for this object)
+        }
+
+        for (size_t i = startSlot; i < numPointers; ++i) {
+            Oop ref = slots[i];
+            if (!ref.isObject()) continue;
+            if (isPermObject(ref.asObjectPtr())) continue;
+
+            ObjectHeader* refObj = ref.asObjectPtr();
+            if (!refObj->isMarked()) continue;  // Dead reference (weak already handled)
+
+            // If the referenced object is mobile and has a forwarding address
+            if (!refObj->isPinned() && refObj->slotCount() > 0) {
+                // The forwarding address is stored in slot 0
+                Oop forwardedOop = refObj->slotAt(0);
+                slots[i] = forwardedOop;
+            }
+        }
+    }
+
+    // Update memory roots
+    auto updateOop = [this](Oop& oop) {
+        if (!oop.isObject()) return;
+        if (isPermObject(oop.asObjectPtr())) return;
+        ObjectHeader* obj = oop.asObjectPtr();
+        if (!obj->isMarked()) return;
+        if (!obj->isPinned() && obj->slotCount() > 0) {
+            oop = obj->slotAt(0);  // Forwarding address
+        }
+    };
+
+    forEachMemoryRoot(updateOop);
+
+    if (interpreter_) {
+        interpreter_->forEachRoot(updateOop);
+    }
+}
+
+void ObjectMemory::copyAndUnmark() {
+    Oop* savedFieldPtr = savedFirstFieldsSpace_.start;
+    uint8_t* toFinger = oldSpaceStart_;
+
+    ObjectScanner scanner(oldSpaceStart_, oldSpaceFree_);
+    while (ObjectHeader* obj = scanner.next()) {
+        if (!obj->isMarked()) continue;
+
+        size_t objSize = obj->totalSize();
+
+        if (obj->isPinned()) {
+            // Pinned: don't move, just clear mark
+            uint8_t* objAddr = reinterpret_cast<uint8_t*>(obj);
+            if (toFinger < objAddr) {
+                toFinger = objAddr;
+            }
+            obj->setMarked(false);
+            toFinger += objSize;
+            continue;
+        }
+
+        // Restore first field from saved space
+        if (obj->slotCount() > 0 && savedFieldPtr < savedFirstFieldsSpace_.top) {
+            obj->slotAtPut(0, *savedFieldPtr);
+            savedFieldPtr++;
+        }
+
+        // Slide object to destination
+        uint8_t* dest = toFinger;
+        uint8_t* src = reinterpret_cast<uint8_t*>(obj);
+        if (dest != src) {
+            std::memmove(dest, src, objSize);
+        }
+
+        // Clear mark on the moved copy
+        ObjectHeader* movedObj = reinterpret_cast<ObjectHeader*>(dest);
+        movedObj->setMarked(false);
+
+        toFinger += objSize;
+    }
+
+    // Update oldSpaceFree_ to after the last live object
+    oldSpaceFree_ = toFinger;
+}
+
+void ObjectMemory::rebuildFreeListAfterCompact() {
+    clearFreeLists();
+
+    // The gap between oldSpaceFree_ and oldSpaceEnd_ is one big free chunk
+    size_t freeBytes = oldSpaceEnd_ - oldSpaceFree_;
+    if (freeBytes >= 16) {
+        // Zero the free area first (for clean scanning later)
+        std::memset(oldSpaceFree_, 0, freeBytes);
+    }
+    // We don't need to create a free list entry for the trailing gap —
+    // the bump pointer allocator already handles this via oldSpaceFree_.
+    // Free lists will be populated when we switch to free-list-based allocation.
 }
 
 } // namespace pharo
