@@ -188,25 +188,22 @@ runSingleTest: testClass selector: sel timeout: seconds on: s
   result := nil. "nil means pass"
 
   testProcess := [
-    [[[testClass new setUp; perform: sel; tearDown]
+    [[[[(testClass selector: sel) runCase]
       on: TestFailure do: [:ex |
         result := #fail.
         s nextPutAll: '  FAIL: '; nextPutAll: sel;
           nextPutAll: ' ['; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 500)); nextPutAll: ']'; cr]]
       on: Deprecation do: [:ex | ex resume]]
-      on: Exception do: [:ex |
-        "TestSkipped means intentional skip (e.g. 32-bit test on 64-bit VM)"
-        (ex class name = 'TestSkipped' or: [ex class name = #TestSkipped])
-          ifTrue: [
-            result := #skip.
-            s nextPutAll: '  SKIP: '; nextPutAll: sel;
-              nextPutAll: ' ('; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 100)); nextPutAll: ')'; cr]
-          ifFalse: [
-            result := #error.
-            s nextPutAll: '  ERROR: '; nextPutAll: sel;
-              nextPutAll: ' ('; nextPutAll: ex class name;
-              nextPutAll: ': '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 100)); nextPutAll: ')'; cr]].
-    sem signal] forkAt: Processor activePriority - 1.
+      on: TestSkipped do: [:ex |
+        result := #skip.
+        s nextPutAll: '  SKIP: '; nextPutAll: sel;
+          nextPutAll: ' ('; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 100)); nextPutAll: ')'; cr]]
+      on: Error do: [:ex |
+        result := #error.
+        s nextPutAll: '  ERROR: '; nextPutAll: sel;
+          nextPutAll: ' ('; nextPutAll: ex class name;
+          nextPutAll: ': '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 100)); nextPutAll: ')'; cr].
+    sem signal] forkAt: 40 "userSchedulingPriority - matches standard SUnit behavior".
 
   "Wait for test completion or timeout"
   (sem waitTimeoutSeconds: seconds) ifTrue: [
