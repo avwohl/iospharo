@@ -26,6 +26,7 @@
 #include <unistd.h>
 #include <vector>
 #include <set>
+#include <ffi.h>
 
 namespace pharo {
 
@@ -23353,6 +23354,750 @@ PrimitiveResult Interpreter::primitiveGetenv(int argCount) {
     } else {
         push(memory_.nil());
     }
+    return PrimitiveResult::Success;
+}
+
+// ===== THREADED FFI (TFFI) PRIMITIVES =====
+// These implement the VM-side support for Pharo 13's ThreadedFFI.
+// The image does all type resolution and marshalling metadata;
+// the VM just provides raw ffi_prep_cif / ffi_call wrappers.
+
+// ===== TFFI HELPERS =====
+
+// Read a void* from an ExternalAddress (bytes object containing a pointer)
+void* Interpreter::tffi_readAddress(Oop externalAddress) {
+    if (!externalAddress.isObject()) return nullptr;
+    ObjectHeader* hdr = externalAddress.asObjectPtr();
+    if (!hdr->isBytesObject()) return nullptr;
+    if (hdr->byteSize() < sizeof(void*)) return nullptr;
+    void* ptr = nullptr;
+    memcpy(&ptr, hdr->bytes(), sizeof(void*));
+    return ptr;
+}
+
+// Write a void* into an ExternalAddress (bytes object)
+void Interpreter::tffi_writeAddress(Oop externalAddress, void* value) {
+    if (!externalAddress.isObject()) return;
+    ObjectHeader* hdr = externalAddress.asObjectPtr();
+    if (!hdr->isBytesObject()) return;
+    if (hdr->byteSize() < sizeof(void*)) return;
+    memcpy(hdr->bytes(), &value, sizeof(void*));
+}
+
+// Read native pointer from slot 0's ExternalAddress
+// Used for TFBasicType, TFFunctionDefinition, TFExternalFunction, etc.
+void* Interpreter::tffi_getHandler(Oop obj) {
+    if (!obj.isObject()) return nullptr;
+    if (memory_.slotCountOf(obj) < 1) return nullptr;
+    Oop slot0 = memory_.fetchPointer(0, obj);
+    return tffi_readAddress(slot0);
+}
+
+// Write native pointer into slot 0's ExternalAddress
+void Interpreter::tffi_setHandler(Oop obj, void* value) {
+    if (!obj.isObject()) return;
+    if (memory_.slotCountOf(obj) < 1) return;
+    Oop slot0 = memory_.fetchPointer(0, obj);
+    tffi_writeAddress(slot0, value);
+}
+
+// Allocate a new ExternalAddress containing a pointer value
+Oop Interpreter::tffi_newExternalAddress(void* ptr) {
+    Oop extAddrClass = memory_.specialObject(SpecialObjectIndex::ClassExternalAddress);
+    if (extAddrClass.isNil()) return memory_.nil();
+    uint32_t classIndex = memory_.indexOfClass(extAddrClass);
+    if (classIndex == 0) return memory_.nil();
+    Oop result = memory_.allocateBytes(classIndex, sizeof(void*));
+    if (result.isNil()) return result;
+    ObjectHeader* hdr = result.asObjectPtr();
+    memcpy(hdr->bytes(), &ptr, sizeof(void*));
+    return result;
+}
+
+// Resolve an Oop to void* from either ExternalAddress or ByteArray
+void* Interpreter::tffi_getAddressFromExternalAddressOrByteArray(Oop obj) {
+    if (!obj.isObject()) return nullptr;
+    ObjectHeader* hdr = obj.asObjectPtr();
+    if (!hdr->isBytesObject()) return nullptr;
+
+    // Check if it's an ExternalAddress (contains a pointer to external memory)
+    Oop extAddrClass = memory_.specialObject(SpecialObjectIndex::ClassExternalAddress);
+    if (memory_.classOf(obj).rawBits() == extAddrClass.rawBits()) {
+        return tffi_readAddress(obj);
+    }
+
+    // Otherwise treat as ByteArray - return pointer to the bytes themselves
+    return hdr->bytes();
+}
+
+// ===== TIER 1 PRIMITIVES =====
+
+// primitiveFillBasicType (0 args)
+// Receiver: TFBasicType. Read slot 2 as SmallInteger typeCode (1-20),
+// map to static ffi_type*, write into receiver.slot[0] ExternalAddress.
+PrimitiveResult Interpreter::primitiveFillBasicType(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop receiver = stackTop();
+    if (!receiver.isObject()) return PrimitiveResult::Failure;
+    if (memory_.slotCountOf(receiver) < 3) return PrimitiveResult::Failure;
+
+    // Read typeCode from slot 2
+    Oop typeCodeOop = memory_.fetchPointer(2, receiver);
+    if (!typeCodeOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t typeCode = typeCodeOop.asSmallInteger();
+
+    // Map typeCode to ffi_type* (Pharo's numbering, NOT libffi's FFI_TYPE_*)
+    ffi_type* ffiType = nullptr;
+    switch (typeCode) {
+        case 1:  ffiType = &ffi_type_void;    break;
+        case 2:  ffiType = &ffi_type_float;   break;
+        case 3:  ffiType = &ffi_type_double;  break;
+        case 4:  ffiType = &ffi_type_uint8;   break;
+        case 5:  ffiType = &ffi_type_uint16;  break;
+        case 6:  ffiType = &ffi_type_uint32;  break;
+        case 7:  ffiType = &ffi_type_uint64;  break;
+        case 8:  ffiType = &ffi_type_sint8;   break;
+        case 9:  ffiType = &ffi_type_sint16;  break;
+        case 10: ffiType = &ffi_type_sint32;  break;
+        case 11: ffiType = &ffi_type_sint64;  break;
+        case 12: ffiType = &ffi_type_pointer; break;
+        case 13: ffiType = &ffi_type_uchar;   break;
+        case 14: ffiType = &ffi_type_schar;   break;
+        case 15: ffiType = &ffi_type_ushort;  break;
+        case 16: ffiType = &ffi_type_sshort;  break;
+        case 17: ffiType = &ffi_type_uint;    break;
+        case 18: ffiType = &ffi_type_sint;    break;
+        case 19: ffiType = &ffi_type_ulong;   break;
+        case 20: ffiType = &ffi_type_slong;   break;
+        default:
+            return PrimitiveResult::Failure;
+    }
+
+    // Store ffi_type* into receiver's handler (slot 0's ExternalAddress)
+    tffi_setHandler(receiver, ffiType);
+
+    // Leave receiver on stack (pop 0 args + receiver, push receiver back = noop)
+    return PrimitiveResult::Success;
+}
+
+// primitiveTypeByteSize (0 args)
+// Receiver has handler -> ffi_type*. Return type->size as SmallInteger.
+PrimitiveResult Interpreter::primitiveTypeByteSize(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop receiver = stackTop();
+    ffi_type* type = static_cast<ffi_type*>(tffi_getHandler(receiver));
+    if (!type) return PrimitiveResult::Failure;
+
+    int64_t size = static_cast<int64_t>(type->size);
+    primitiveSuccess(Oop::fromSmallInteger(size));
+    return PrimitiveResult::Success;
+}
+
+// primitiveDefineFunction (2-3 args)
+// Stack: receiver, paramsArray, returnType [, abi]
+// Creates ffi_cif via ffi_prep_cif, stores in receiver's handler
+PrimitiveResult Interpreter::primitiveDefineFunction(int argCount) {
+    if (argCount < 2 || argCount > 3) return PrimitiveResult::Failure;
+
+    ffi_abi abiToUse = FFI_DEFAULT_ABI;
+    int returnTypePos, paramsPos;
+
+    if (argCount == 3) {
+        // ABI at stack[0], returnType at stack[1], paramsArray at stack[2]
+        Oop abiOop = stackValue(0);
+        if (abiOop.isSmallInteger()) {
+            abiToUse = static_cast<ffi_abi>(abiOop.asSmallInteger());
+        }
+        returnTypePos = 1;
+        paramsPos = 2;
+    } else {
+        // returnType at stack[0], paramsArray at stack[1]
+        returnTypePos = 0;
+        paramsPos = 1;
+    }
+
+    Oop returnTypeOop = stackValue(returnTypePos);
+    Oop paramsArrayOop = stackValue(paramsPos);
+    Oop receiver = stackValue(argCount);
+
+    // Get return type: an ExternalAddress containing ffi_type*
+    ffi_type* returnType = static_cast<ffi_type*>(tffi_readAddress(returnTypeOop));
+    if (!returnType) return PrimitiveResult::Failure;
+
+    // Get parameter types from array
+    if (!paramsArrayOop.isObject()) return PrimitiveResult::Failure;
+    size_t paramCount = memory_.slotCountOf(paramsArrayOop);
+
+    // Allocate array of ffi_type* for parameters
+    ffi_type** paramTypes = nullptr;
+    if (paramCount > 0) {
+        paramTypes = static_cast<ffi_type**>(malloc(paramCount * sizeof(ffi_type*)));
+        if (!paramTypes) return PrimitiveResult::Failure;
+
+        for (size_t i = 0; i < paramCount; i++) {
+            Oop paramOop = memory_.fetchPointer(i, paramsArrayOop);
+            ffi_type* pt = static_cast<ffi_type*>(tffi_readAddress(paramOop));
+            if (!pt) {
+                free(paramTypes);
+                return PrimitiveResult::Failure;
+            }
+            paramTypes[i] = pt;
+        }
+    }
+
+    // Allocate and fill cif
+    ffi_cif* cif = static_cast<ffi_cif*>(malloc(sizeof(ffi_cif)));
+    if (!cif) {
+        free(paramTypes);
+        return PrimitiveResult::Failure;
+    }
+
+    ffi_status status = ffi_prep_cif(cif, abiToUse,
+                                     static_cast<unsigned int>(paramCount),
+                                     returnType, paramTypes);
+    if (status != FFI_OK) {
+        free(paramTypes);
+        free(cif);
+        return PrimitiveResult::Failure;
+    }
+
+    // Store cif in receiver's handler
+    tffi_setHandler(receiver, cif);
+
+    // Pop args, leave receiver
+    popN(argCount);
+    return PrimitiveResult::Success;
+}
+
+// primitiveFreeDefinition (0 args)
+// Free cif->arg_types then cif, null out handle
+PrimitiveResult Interpreter::primitiveFreeDefinition(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop receiver = stackTop();
+    ffi_cif* cif = static_cast<ffi_cif*>(tffi_getHandler(receiver));
+    if (!cif) return PrimitiveResult::Failure;
+
+    if (cif->arg_types) free(cif->arg_types);
+    free(cif);
+
+    tffi_setHandler(receiver, nullptr);
+    return PrimitiveResult::Success;
+}
+
+// primitiveDefineVariadicFunction (3-4 args)
+// Stack: receiver, paramsArray, returnType, fixedArgCount [, abi]
+// Like primitiveDefineFunction but uses ffi_prep_cif_var
+PrimitiveResult Interpreter::primitiveDefineVariadicFunction(int argCount) {
+    if (argCount < 3 || argCount > 4) return PrimitiveResult::Failure;
+
+    ffi_abi abiToUse = FFI_DEFAULT_ABI;
+    int fixedCountPos, returnTypePos, paramsPos;
+
+    if (argCount == 4) {
+        Oop abiOop = stackValue(0);
+        if (abiOop.isSmallInteger()) {
+            abiToUse = static_cast<ffi_abi>(abiOop.asSmallInteger());
+        }
+        fixedCountPos = 1;
+        returnTypePos = 2;
+        paramsPos = 3;
+    } else {
+        fixedCountPos = 0;
+        returnTypePos = 1;
+        paramsPos = 2;
+    }
+
+    Oop fixedCountOop = stackValue(fixedCountPos);
+    Oop returnTypeOop = stackValue(returnTypePos);
+    Oop paramsArrayOop = stackValue(paramsPos);
+    Oop receiver = stackValue(argCount);
+
+    if (!fixedCountOop.isSmallInteger()) return PrimitiveResult::Failure;
+    unsigned int fixedArgs = static_cast<unsigned int>(fixedCountOop.asSmallInteger());
+
+    ffi_type* returnType = static_cast<ffi_type*>(tffi_readAddress(returnTypeOop));
+    if (!returnType) return PrimitiveResult::Failure;
+
+    if (!paramsArrayOop.isObject()) return PrimitiveResult::Failure;
+    size_t paramCount = memory_.slotCountOf(paramsArrayOop);
+
+    ffi_type** paramTypes = nullptr;
+    if (paramCount > 0) {
+        paramTypes = static_cast<ffi_type**>(malloc(paramCount * sizeof(ffi_type*)));
+        if (!paramTypes) return PrimitiveResult::Failure;
+
+        for (size_t i = 0; i < paramCount; i++) {
+            Oop paramOop = memory_.fetchPointer(i, paramsArrayOop);
+            ffi_type* pt = static_cast<ffi_type*>(tffi_readAddress(paramOop));
+            if (!pt) {
+                free(paramTypes);
+                return PrimitiveResult::Failure;
+            }
+            paramTypes[i] = pt;
+        }
+    }
+
+    ffi_cif* cif = static_cast<ffi_cif*>(malloc(sizeof(ffi_cif)));
+    if (!cif) {
+        free(paramTypes);
+        return PrimitiveResult::Failure;
+    }
+
+    ffi_status status = ffi_prep_cif_var(cif, abiToUse, fixedArgs,
+                                         static_cast<unsigned int>(paramCount),
+                                         returnType, paramTypes);
+    if (status != FFI_OK) {
+        free(paramTypes);
+        free(cif);
+        return PrimitiveResult::Failure;
+    }
+
+    tffi_setHandler(receiver, cif);
+    popN(argCount);
+    return PrimitiveResult::Success;
+}
+
+// primitiveGetSameThreadRunnerAddress (0 args)
+// Return new ExternalAddress pointing to a static Runner struct.
+// The struct just needs to be non-null; the image only stores the pointer.
+PrimitiveResult Interpreter::primitiveGetSameThreadRunnerAddress(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Static runner - just needs to be a non-null unique address
+    static struct { void* a; void* b; void* c; void* d; } sameThreadRunner = {nullptr, nullptr, nullptr, nullptr};
+
+    Oop result = tffi_newExternalAddress(&sameThreadRunner);
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    primitiveSuccess(result);
+    return PrimitiveResult::Success;
+}
+
+// primitiveSameThreadCallout (2 args)
+// Stack: receiver, externalFunction, argumentsArray
+// This is the core FFI call primitive.
+PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop argsArrayOop = stackValue(0);       // arguments array
+    Oop externalFuncOop = stackValue(1);    // external function object
+    // receiver at stackValue(2) - the runner
+
+    if (!externalFuncOop.isObject()) return PrimitiveResult::Failure;
+    if (memory_.slotCountOf(externalFuncOop) < 2) return PrimitiveResult::Failure;
+
+    // Get function pointer from externalFunction.slot[0] (ExternalAddress)
+    Oop funcAddrOop = memory_.fetchPointer(0, externalFuncOop);
+    void* funcPtr = tffi_readAddress(funcAddrOop);
+    if (!funcPtr) return PrimitiveResult::Failure;
+
+    // Get cif from externalFunction.slot[1] (TFFunctionDefinition).slot[0] (ExternalAddress)
+    Oop funcDefOop = memory_.fetchPointer(1, externalFuncOop);
+    ffi_cif* cif = static_cast<ffi_cif*>(tffi_getHandler(funcDefOop));
+    if (!cif) return PrimitiveResult::Failure;
+
+    // Validate arguments array
+    if (!argsArrayOop.isObject()) return PrimitiveResult::Failure;
+    size_t nargs = memory_.slotCountOf(argsArrayOop);
+    if (nargs != cif->nargs) return PrimitiveResult::Failure;
+
+    // Marshall arguments
+    void** argPtrs = nullptr;
+    uint8_t* argStorage = nullptr;
+
+    if (nargs > 0) {
+        argPtrs = static_cast<void**>(alloca(nargs * sizeof(void*)));
+        // Allocate generous storage for each argument (max 16 bytes each for alignment)
+        argStorage = static_cast<uint8_t*>(alloca(nargs * 16));
+
+        for (size_t i = 0; i < nargs; i++) {
+            Oop argOop = memory_.fetchPointer(i, argsArrayOop);
+            uint8_t* argSlot = argStorage + (i * 16);
+            argPtrs[i] = argSlot;
+
+            unsigned short argTypeId = cif->arg_types[i]->type;
+
+            switch (argTypeId) {
+                case FFI_TYPE_POINTER: {
+                    void* ptrVal = nullptr;
+                    if (!argOop.isNil() && argOop.rawBits() != memory_.nil().rawBits()) {
+                        ptrVal = tffi_getAddressFromExternalAddressOrByteArray(argOop);
+                    }
+                    memcpy(argSlot, &ptrVal, sizeof(void*));
+                    break;
+                }
+                case FFI_TYPE_FLOAT: {
+                    double d = 0.0;
+                    if (!extractFloat(memory_, argOop, d)) return PrimitiveResult::Failure;
+                    float f = static_cast<float>(d);
+                    memcpy(argSlot, &f, sizeof(float));
+                    break;
+                }
+                case FFI_TYPE_DOUBLE: {
+                    double d = 0.0;
+                    if (!extractFloat(memory_, argOop, d)) return PrimitiveResult::Failure;
+                    memcpy(argSlot, &d, sizeof(double));
+                    break;
+                }
+                case FFI_TYPE_SINT8: {
+                    if (!argOop.isSmallInteger()) return PrimitiveResult::Failure;
+                    int8_t v = static_cast<int8_t>(argOop.asSmallInteger());
+                    memcpy(argSlot, &v, sizeof(int8_t));
+                    break;
+                }
+                case FFI_TYPE_UINT8: {
+                    if (argOop.isSmallInteger()) {
+                        uint8_t v = static_cast<uint8_t>(argOop.asSmallInteger());
+                        memcpy(argSlot, &v, sizeof(uint8_t));
+                    } else if (argOop.isCharacter()) {
+                        uint8_t v = static_cast<uint8_t>(argOop.asCharacter());
+                        memcpy(argSlot, &v, sizeof(uint8_t));
+                    } else {
+                        return PrimitiveResult::Failure;
+                    }
+                    break;
+                }
+                case FFI_TYPE_SINT16: {
+                    if (!argOop.isSmallInteger()) return PrimitiveResult::Failure;
+                    int16_t v = static_cast<int16_t>(argOop.asSmallInteger());
+                    memcpy(argSlot, &v, sizeof(int16_t));
+                    break;
+                }
+                case FFI_TYPE_UINT16: {
+                    if (!argOop.isSmallInteger()) return PrimitiveResult::Failure;
+                    uint16_t v = static_cast<uint16_t>(argOop.asSmallInteger());
+                    memcpy(argSlot, &v, sizeof(uint16_t));
+                    break;
+                }
+                case FFI_TYPE_SINT32: {
+                    int64_t val = 0;
+                    if (argOop.isSmallInteger()) {
+                        val = argOop.asSmallInteger();
+                    } else if (!trySigned64BitValueOf(memory_, argOop, val)) {
+                        return PrimitiveResult::Failure;
+                    }
+                    int32_t v = static_cast<int32_t>(val);
+                    memcpy(argSlot, &v, sizeof(int32_t));
+                    break;
+                }
+                case FFI_TYPE_UINT32: {
+                    int64_t val = 0;
+                    if (argOop.isSmallInteger()) {
+                        val = argOop.asSmallInteger();
+                    } else if (!trySigned64BitValueOf(memory_, argOop, val)) {
+                        return PrimitiveResult::Failure;
+                    }
+                    uint32_t v = static_cast<uint32_t>(val);
+                    memcpy(argSlot, &v, sizeof(uint32_t));
+                    break;
+                }
+                case FFI_TYPE_SINT64: {
+                    int64_t val = 0;
+                    if (argOop.isSmallInteger()) {
+                        val = argOop.asSmallInteger();
+                    } else if (!trySigned64BitValueOf(memory_, argOop, val)) {
+                        return PrimitiveResult::Failure;
+                    }
+                    memcpy(argSlot, &val, sizeof(int64_t));
+                    break;
+                }
+                case FFI_TYPE_UINT64: {
+                    int64_t val = 0;
+                    if (argOop.isSmallInteger()) {
+                        val = argOop.asSmallInteger();
+                    } else if (!trySigned64BitValueOf(memory_, argOop, val)) {
+                        return PrimitiveResult::Failure;
+                    }
+                    uint64_t uval = static_cast<uint64_t>(val);
+                    memcpy(argSlot, &uval, sizeof(uint64_t));
+                    break;
+                }
+                case FFI_TYPE_INT: {
+                    int64_t val = 0;
+                    if (argOop.isSmallInteger()) {
+                        val = argOop.asSmallInteger();
+                    } else if (!trySigned64BitValueOf(memory_, argOop, val)) {
+                        return PrimitiveResult::Failure;
+                    }
+                    int v = static_cast<int>(val);
+                    memcpy(argSlot, &v, sizeof(int));
+                    break;
+                }
+                case FFI_TYPE_STRUCT: {
+                    // Struct: memcpy from ExternalAddress or ByteArray
+                    void* src = tffi_getAddressFromExternalAddressOrByteArray(argOop);
+                    if (!src) return PrimitiveResult::Failure;
+                    size_t structSize = cif->arg_types[i]->size;
+                    // For structs larger than 16 bytes, allocate dynamically
+                    if (structSize > 16) {
+                        void* structBuf = alloca(structSize);
+                        memcpy(structBuf, src, structSize);
+                        argPtrs[i] = structBuf;
+                    } else {
+                        memcpy(argSlot, src, structSize);
+                    }
+                    break;
+                }
+                default:
+                    return PrimitiveResult::Failure;
+            }
+        }
+    }
+
+    // Allocate return value holder
+    size_t returnSize = cif->rtype->size;
+    if (returnSize < sizeof(ffi_arg)) returnSize = sizeof(ffi_arg);
+    void* returnHolder = alloca(returnSize);
+    memset(returnHolder, 0, returnSize);
+
+    // Perform the FFI call
+    ffi_call(cif, FFI_FN(funcPtr), returnHolder, argPtrs);
+
+    // Marshall return value back to Smalltalk
+    unsigned short returnTypeId = cif->rtype->type;
+    Oop resultOop;
+
+    switch (returnTypeId) {
+        case FFI_TYPE_VOID:
+            // For void, pop args + receiver, push receiver (the runner)
+            resultOop = stackValue(argCount);  // save receiver before popping
+            popN(argCount + 1);
+            push(resultOop);
+            return PrimitiveResult::Success;
+
+        case FFI_TYPE_SINT8: {
+            int8_t v; memcpy(&v, returnHolder, sizeof(int8_t));
+            resultOop = Oop::fromSmallInteger(v);
+            break;
+        }
+        case FFI_TYPE_UINT8: {
+            uint8_t v; memcpy(&v, returnHolder, sizeof(uint8_t));
+            resultOop = Oop::fromSmallInteger(v);
+            break;
+        }
+        case FFI_TYPE_SINT16: {
+            int16_t v; memcpy(&v, returnHolder, sizeof(int16_t));
+            resultOop = Oop::fromSmallInteger(v);
+            break;
+        }
+        case FFI_TYPE_UINT16: {
+            uint16_t v; memcpy(&v, returnHolder, sizeof(uint16_t));
+            resultOop = Oop::fromSmallInteger(v);
+            break;
+        }
+        case FFI_TYPE_SINT32: {
+            int32_t v; memcpy(&v, returnHolder, sizeof(int32_t));
+            resultOop = Oop::fromSmallInteger(v);
+            break;
+        }
+        case FFI_TYPE_UINT32: {
+            uint32_t v; memcpy(&v, returnHolder, sizeof(uint32_t));
+            resultOop = Oop::fromSmallInteger(static_cast<int64_t>(v));
+            break;
+        }
+        case FFI_TYPE_SINT64: {
+            int64_t v; memcpy(&v, returnHolder, sizeof(int64_t));
+            if (Oop::canBeSmallInteger(v)) {
+                resultOop = Oop::fromSmallInteger(v);
+            } else {
+                // Create LargeInteger
+                bool neg = v < 0;
+                uint64_t absVal = neg ? static_cast<uint64_t>(-v) : static_cast<uint64_t>(v);
+                std::vector<uint8_t> mag;
+                while (absVal > 0) { mag.push_back(absVal & 0xFF); absVal >>= 8; }
+                if (mag.empty()) mag.push_back(0);
+                resultOop = makeLargeInteger(memory_, mag, neg);
+                if (resultOop.isNil()) return PrimitiveResult::Failure;
+            }
+            break;
+        }
+        case FFI_TYPE_UINT64: {
+            uint64_t v; memcpy(&v, returnHolder, sizeof(uint64_t));
+            int64_t sv = static_cast<int64_t>(v);
+            if (v <= static_cast<uint64_t>(Oop::smallIntegerMax()) && Oop::canBeSmallInteger(sv)) {
+                resultOop = Oop::fromSmallInteger(sv);
+            } else {
+                std::vector<uint8_t> mag;
+                uint64_t tmp = v;
+                while (tmp > 0) { mag.push_back(tmp & 0xFF); tmp >>= 8; }
+                if (mag.empty()) mag.push_back(0);
+                resultOop = makeLargeInteger(memory_, mag, false);
+                if (resultOop.isNil()) return PrimitiveResult::Failure;
+            }
+            break;
+        }
+        case FFI_TYPE_INT: {
+            int v; memcpy(&v, returnHolder, sizeof(int));
+            resultOop = Oop::fromSmallInteger(v);
+            break;
+        }
+        case FFI_TYPE_POINTER: {
+            void* v; memcpy(&v, returnHolder, sizeof(void*));
+            resultOop = tffi_newExternalAddress(v);
+            if (resultOop.isNil()) return PrimitiveResult::Failure;
+            break;
+        }
+        case FFI_TYPE_FLOAT: {
+            float v; memcpy(&v, returnHolder, sizeof(float));
+            resultOop = makeFloat(memory_, static_cast<double>(v));
+            if (resultOop.isNil()) return PrimitiveResult::Failure;
+            break;
+        }
+        case FFI_TYPE_DOUBLE: {
+            double v; memcpy(&v, returnHolder, sizeof(double));
+            resultOop = makeFloat(memory_, v);
+            if (resultOop.isNil()) return PrimitiveResult::Failure;
+            break;
+        }
+        case FFI_TYPE_STRUCT: {
+            // Return struct as ByteArray
+            size_t structSize = cif->rtype->size;
+            Oop byteArrayClass = memory_.specialObject(SpecialObjectIndex::ClassByteArray);
+            uint32_t classIndex = memory_.indexOfClass(byteArrayClass);
+            if (classIndex == 0) return PrimitiveResult::Failure;
+            resultOop = memory_.allocateBytes(classIndex, structSize);
+            if (resultOop.isNil()) return PrimitiveResult::Failure;
+            ObjectHeader* hdr = resultOop.asObjectPtr();
+            memcpy(hdr->bytes(), returnHolder, structSize);
+            break;
+        }
+        default:
+            return PrimitiveResult::Failure;
+    }
+
+    // Pop args + receiver, push result
+    popN(argCount + 1);
+    push(resultOop);
+    return PrimitiveResult::Success;
+}
+
+// ===== TIER 2 PRIMITIVES =====
+
+// primitiveCopyFromTo (3 args: from, to, size)
+// Memcpy between ExternalAddress/ByteArray objects
+PrimitiveResult Interpreter::primitiveCopyFromTo(int argCount) {
+    if (argCount != 3) return PrimitiveResult::Failure;
+
+    Oop sizeOop = stackValue(0);
+    Oop toOop = stackValue(1);
+    Oop fromOop = stackValue(2);
+
+    if (!sizeOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t size = sizeOop.asSmallInteger();
+    if (size < 0) return PrimitiveResult::Failure;
+
+    void* from = tffi_getAddressFromExternalAddressOrByteArray(fromOop);
+    void* to = tffi_getAddressFromExternalAddressOrByteArray(toOop);
+
+    if (!from || !to) return PrimitiveResult::Failure;
+
+    memcpy(to, from, static_cast<size_t>(size));
+
+    popN(argCount);  // Pop args, leave receiver
+    return PrimitiveResult::Success;
+}
+
+// primitiveInitializeStructType (0 args)
+// Receiver: TFStructType. Build ffi_type for struct from member types.
+// Reads member types from slot 1 (array of TFBasicType).
+PrimitiveResult Interpreter::primitiveInitializeStructType(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop receiver = stackTop();
+    if (!receiver.isObject()) return PrimitiveResult::Failure;
+    if (memory_.slotCountOf(receiver) < 2) return PrimitiveResult::Failure;
+
+    // Slot 1 contains array of member types (each has handler -> ffi_type*)
+    Oop membersArrayOop = memory_.fetchPointer(1, receiver);
+    if (!membersArrayOop.isObject()) return PrimitiveResult::Failure;
+    size_t memberCount = memory_.slotCountOf(membersArrayOop);
+
+    // Allocate ffi_type for struct
+    ffi_type* structType = static_cast<ffi_type*>(calloc(1, sizeof(ffi_type)));
+    if (!structType) return PrimitiveResult::Failure;
+
+    structType->type = FFI_TYPE_STRUCT;
+    structType->size = 0;
+    structType->alignment = 0;
+
+    // Allocate elements array (null-terminated)
+    structType->elements = static_cast<ffi_type**>(calloc(memberCount + 1, sizeof(ffi_type*)));
+    if (!structType->elements) {
+        free(structType);
+        return PrimitiveResult::Failure;
+    }
+
+    for (size_t i = 0; i < memberCount; i++) {
+        Oop memberOop = memory_.fetchPointer(i, membersArrayOop);
+        ffi_type* memberType = static_cast<ffi_type*>(tffi_getHandler(memberOop));
+        if (!memberType) {
+            free(structType->elements);
+            free(structType);
+            return PrimitiveResult::Failure;
+        }
+        structType->elements[i] = memberType;
+    }
+    structType->elements[memberCount] = nullptr;
+
+    // Let libffi compute size and alignment
+    ffi_cif tmpCif;
+    ffi_status status = ffi_prep_cif(&tmpCif, FFI_DEFAULT_ABI, 0, structType, nullptr);
+    if (status != FFI_OK) {
+        free(structType->elements);
+        free(structType);
+        return PrimitiveResult::Failure;
+    }
+
+    tffi_setHandler(receiver, structType);
+    return PrimitiveResult::Success;
+}
+
+// primitiveFreeStruct (0 args)
+PrimitiveResult Interpreter::primitiveFreeStruct(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop receiver = stackTop();
+    ffi_type* structType = static_cast<ffi_type*>(tffi_getHandler(receiver));
+    if (!structType) return PrimitiveResult::Failure;
+
+    if (structType->elements) free(structType->elements);
+    free(structType);
+    tffi_setHandler(receiver, nullptr);
+
+    return PrimitiveResult::Success;
+}
+
+// primitiveStructByteSize (0 args)
+PrimitiveResult Interpreter::primitiveStructByteSize(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop receiver = stackTop();
+    ffi_type* structType = static_cast<ffi_type*>(tffi_getHandler(receiver));
+    if (!structType) return PrimitiveResult::Failure;
+
+    primitiveSuccess(Oop::fromSmallInteger(static_cast<int64_t>(structType->size)));
+    return PrimitiveResult::Success;
+}
+
+// ===== CALLBACK STUBS (Phase 5) =====
+
+// primitiveInitilizeCallbacks (sic - typo matches image)
+// Accept semaphore index, return success
+PrimitiveResult Interpreter::primitiveInitilizeCallbacks(int argCount) {
+    // Just accept the semaphore index and succeed
+    // We don't support callbacks yet but this prevents startup errors
+    popN(argCount);  // Pop args, leave receiver
+    return PrimitiveResult::Success;
+}
+
+// primitiveReadNextCallback
+// Return nil (no pending callbacks)
+PrimitiveResult Interpreter::primitiveReadNextCallback(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+    primitiveSuccess(memory_.nil());
     return PrimitiveResult::Success;
 }
 

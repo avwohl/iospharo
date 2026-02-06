@@ -16579,6 +16579,23 @@ void Interpreter::initializeNamedPrimitives() {
     // The image calls this to register a semaphore for SDL2 event notification
     registerNamedPrimitive("", "primitiveSetVMSDL2Input:", &Interpreter::primitiveSetVMSDL2Input);
     registerNamedPrimitive("SDL_Event", "primitiveSetVMSDL2Input:", &Interpreter::primitiveSetVMSDL2Input);
+
+    // ThreadedFFI (TFFI) primitives - used by TFFIBackend in Pharo 13+
+    // These must be registered under "" (empty module) because the image looks them up that way.
+    registerNamedPrimitive("", "primitiveFillBasicType", &Interpreter::primitiveFillBasicType);
+    registerNamedPrimitive("", "primitiveTypeByteSize", &Interpreter::primitiveTypeByteSize);
+    registerNamedPrimitive("", "primitiveDefineFunction", &Interpreter::primitiveDefineFunction);
+    registerNamedPrimitive("", "primitiveFreeDefinition", &Interpreter::primitiveFreeDefinition);
+    registerNamedPrimitive("", "primitiveDefineVariadicFunction", &Interpreter::primitiveDefineVariadicFunction);
+    registerNamedPrimitive("", "primitiveGetSameThreadRunnerAddress", &Interpreter::primitiveGetSameThreadRunnerAddress);
+    registerNamedPrimitive("", "primitiveSameThreadCallout", &Interpreter::primitiveSameThreadCallout);
+    registerNamedPrimitive("", "primitiveSameThreadCallbackInvoke", &Interpreter::primitiveSameThreadCallout);
+    registerNamedPrimitive("", "primitiveCopyFromTo", &Interpreter::primitiveCopyFromTo);
+    registerNamedPrimitive("", "primitiveInitializeStructType", &Interpreter::primitiveInitializeStructType);
+    registerNamedPrimitive("", "primitiveFreeStruct", &Interpreter::primitiveFreeStruct);
+    registerNamedPrimitive("", "primitiveStructByteSize", &Interpreter::primitiveStructByteSize);
+    registerNamedPrimitive("", "primitiveInitilizeCallbacks", &Interpreter::primitiveInitilizeCallbacks);
+    registerNamedPrimitive("", "primitiveReadNextCallback", &Interpreter::primitiveReadNextCallback);
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {

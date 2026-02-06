@@ -1551,6 +1551,29 @@ private:
     PrimitiveResult primitiveFFIIntegerAtPut(int argCount);       // Named: write integer at offset
     PrimitiveResult primitiveGetAddressOfOOP(int argCount);       // Named: get address of oop
 
+    // ThreadedFFI (TFFI) Primitives - used by TFFIBackend in Pharo 13+
+    PrimitiveResult primitiveFillBasicType(int argCount);            // Named: fill ffi_type* from typeCode
+    PrimitiveResult primitiveTypeByteSize(int argCount);             // Named: return ffi_type->size
+    PrimitiveResult primitiveDefineFunction(int argCount);           // Named: create ffi_cif via ffi_prep_cif
+    PrimitiveResult primitiveFreeDefinition(int argCount);           // Named: free ffi_cif
+    PrimitiveResult primitiveDefineVariadicFunction(int argCount);   // Named: create variadic ffi_cif
+    PrimitiveResult primitiveGetSameThreadRunnerAddress(int argCount); // Named: return runner address
+    PrimitiveResult primitiveSameThreadCallout(int argCount);        // Named: ffi_call via same-thread runner
+    PrimitiveResult primitiveCopyFromTo(int argCount);               // Named: memcpy between addr/bytearray
+    PrimitiveResult primitiveInitializeStructType(int argCount);     // Named: build ffi_type for struct
+    PrimitiveResult primitiveFreeStruct(int argCount);               // Named: free struct ffi_type
+    PrimitiveResult primitiveStructByteSize(int argCount);           // Named: struct ffi_type->size
+    PrimitiveResult primitiveInitilizeCallbacks(int argCount);       // Named: init callback support (sic)
+    PrimitiveResult primitiveReadNextCallback(int argCount);         // Named: read pending callback
+
+    // TFFI helpers (private)
+    void* tffi_readAddress(Oop externalAddress);
+    void  tffi_writeAddress(Oop externalAddress, void* value);
+    void* tffi_getHandler(Oop obj);
+    void  tffi_setHandler(Oop obj, void* value);
+    Oop   tffi_newExternalAddress(void* ptr);
+    void* tffi_getAddressFromExternalAddressOrByteArray(Oop obj);
+
     // VM info named primitives
     PrimitiveResult primitiveInterpreterSourceVersion(int argCount);  // Named: interpreter source version
     PrimitiveResult primitiveFileMasks(int argCount);                 // Named: FileAttributesPlugin file masks
