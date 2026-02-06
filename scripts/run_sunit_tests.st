@@ -110,7 +110,10 @@ runAllTests
     stream nextPutAll: '=== ALL TESTS COMPLETE ==='; cr.
     stream flush]
   ensure: [stream close. detail close].
-  Smalltalk exitSuccess! !
+  "exitSuccess goes through SessionManager shutdown which may not reach primitiveQuit.
+   Call quitPrimitive directly to ensure the VM terminates."
+  [Smalltalk exitSuccess] on: Error do: [:e |].
+  Smalltalk quitPrimitive! !
 
 !SUnitRunner class methodsFor: 'running'!
 runTestClass: testClass run: runNum on: s detail: d

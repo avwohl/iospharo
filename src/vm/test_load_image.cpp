@@ -473,7 +473,7 @@ int main(int argc, char* argv[]) {
     // Initialize memory (256 MB should be enough for most images)
     ObjectMemory memory;
     MemoryConfig config;
-    config.oldSpaceSize = 16ULL * 1024 * 1024 * 1024;  // 16 GB (GC is disabled)
+    config.oldSpaceSize = 48ULL * 1024 * 1024 * 1024;  // 48 GB (GC is disabled, need extra for 4400+ tests)
     config.newSpaceSize = 32 * 1024 * 1024;   // 32 MB
     config.permSpaceSize = 8 * 1024 * 1024;   // 8 MB
 
