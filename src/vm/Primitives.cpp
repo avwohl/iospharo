@@ -4205,11 +4205,11 @@ PrimitiveResult Interpreter::primitiveSignal(int argCount) {
     }
 
     if (processPriority > activePriority) {
-        // Higher priority - preempt current process
+        // Higher priority preempts (standard Spur behavior)
         putToSleep(activeProcess);
         transferTo(process);
     } else {
-        // Same or lower priority - just add to ready queue
+        // Lower priority - just add to ready queue
         putToSleep(process);
     }
 
@@ -9544,236 +9544,54 @@ PrimitiveResult Interpreter::primitiveInterruptSemaphore(int argCount) {
 
 // Primitive 196: Terminate context chain from receiver to argument
 PrimitiveResult Interpreter::primitiveTerminateTo(int argCount) {
-    Oop targetContext = stackValue(0);
-    Oop rcvr = stackValue(1);
+    // Primitive 196: aContext terminateTo: aContextOrNil
+    // Nil senders from receiver up to (not including) target, then set receiver's
+    // sender to target. Matches Cog VM behavior: always succeeds, never fails.
+    Oop aContextOrNil = stackValue(0);  // argument - target context (or nil)
+    Oop thisCtx = stackValue(1);        // receiver - context to terminate from
 
-    if (!rcvr.isObject()) {
+    if (!thisCtx.isObject()) {
         return PrimitiveResult::Failure;
     }
 
-    // Debug: trace what we're terminating
-    static int terminateToCount = 0;
-    terminateToCount++;
-    Oop apTT = getActiveProcess();
-    Oop prioTT = memory_.fetchPointer(2, apTT);
-    int prioValTT = prioTT.isSmallInteger() ? static_cast<int>(prioTT.asSmallInteger()) : -1;
-    bool shouldTrace = (terminateToCount < 50 && prioValTT >= 60);
-    if (shouldTrace) {
-        std::cerr << "[PRIM-TERMINATE-TO #" << terminateToCount << " p" << prioValTT << "] rcvr=0x" << std::hex << rcvr.rawBits()
-                  << " target=0x" << targetContext.rawBits() << std::dec;
-        if (targetContext.isNil() || targetContext.rawBits() == memory_.nil().rawBits()) {
-            std::cerr << " (target is NIL!)";
-        }
-        // Check if receiver is a context
-        uint32_t rcvrClassIdx = 0;
-        std::string rcvrClassName = "<unknown>";
-        if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-            ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
-            rcvrClassIdx = rcvrHdr->classIndex();
-            Oop rcvrCls = memory_.classAtIndex(rcvrClassIdx);
-            if (rcvrCls.isObject()) {
-                Oop nm = memory_.fetchPointer(6, rcvrCls);
-                if (nm.isObject() && nm.rawBits() > 0x10000) {
-                    ObjectHeader* nmH = nm.asObjectPtr();
-                    if (nmH->isBytesObject() && nmH->byteSize() < 50) {
-                        rcvrClassName = std::string((char*)nmH->bytes(), nmH->byteSize());
-                    }
-                }
-            }
-        }
-        std::cerr << " rcvrClass=" << rcvrClassName;
-
-        // Check if target is in sender chain
-        Oop check = rcvr;
-        bool foundTarget = false;
-        int checkCount = 0;
-        while (!check.isNil() && check.isObject() && checkCount < 20) {
-            if (check.rawBits() == targetContext.rawBits()) {
-                foundTarget = true;
-                break;
-            }
-            check = memory_.fetchPointer(0, check);  // sender
-            checkCount++;
-        }
-        if (!foundTarget) {
-            std::cerr << " (TARGET NOT IN FIRST 20!)";
-            // Check what the target IS
-            if (targetContext.isObject() && targetContext.rawBits() > 0x10000) {
-                ObjectHeader* tHdr = targetContext.asObjectPtr();
-                uint32_t tClassIdx = tHdr->classIndex();
-                Oop tCls = memory_.classAtIndex(tClassIdx);
-                std::string tClassName = "<unknown>";
-                if (tCls.isObject()) {
-                    Oop nm = memory_.fetchPointer(6, tCls);
-                    if (nm.isObject() && nm.rawBits() > 0x10000) {
-                        ObjectHeader* nmH = nm.asObjectPtr();
-                        if (nmH->isBytesObject() && nmH->byteSize() < 50) {
-                            tClassName = std::string((char*)nmH->bytes(), nmH->byteSize());
-                        }
-                    }
-                }
-                std::cerr << " targetClass=" << tClassName;
-                // Check target's sender
-                Oop tSender = memory_.fetchPointer(0, targetContext);
-                std::cerr << " targetSender=0x" << std::hex << tSender.rawBits() << std::dec;
-            }
-            // Show first few senders to debug
-            std::cerr << "\n  Sender chain: ";
-            Oop ch = rcvr;
-            for (int i = 0; i < 5 && ch.isObject() && ch.rawBits() > 0x10000; i++) {
-                std::cerr << "0x" << std::hex << ch.rawBits() << " -> ";
-                ch = memory_.fetchPointer(0, ch);
-            }
-            std::cerr << std::dec;
-        }
-        std::cerr << "\n";
-    }
-
-    // Context layout: sender is slot 0
+    Oop nilObj = memory_.nil();
     const size_t SenderIndex = 0;
 
-    // Target can be nil - this terminates the entire chain and sets sender to nil.
-    // This is used by endProcess (thisContext terminateTo: nil) and unwindAndStop:.
-    bool targetIsNil = (targetContext.isNil() || targetContext.rawBits() == memory_.nil().rawBits());
-    if (targetIsNil) {
-        // Trace the nil-target case to understand what's calling terminateTo: nil
-        static int nilTermCount = 0;
-        nilTermCount++;
-        if (nilTermCount <= 10) {
-            std::cerr << "[TERMINATE-NIL #" << nilTermCount << " step=" << g_stepNum
-                      << " fd=" << frameDepth_ << "] rcvr=0x" << std::hex << rcvr.rawBits()
-                      << " activeCtx=0x" << activeContext_.rawBits() << std::dec;
-            bool rcvrIsActive = (rcvr.rawBits() == activeContext_.rawBits());
-            std::cerr << (rcvrIsActive ? " (IS activeContext!)" : "");
-
-            // Show current method and sender chain methods
-            std::cerr << "\n  Current method: ";
-            if (method_.isObject() && method_.rawBits() > 0x10000) {
-                Oop mHdr = memory_.fetchPointer(0, method_);
-                if (mHdr.isSmallInteger()) {
-                    int nLits = mHdr.asSmallInteger() & 0x7FFF;
-                    if (nLits >= 2) {
-                        Oop sel = memory_.fetchPointer(nLits - 1, method_);
-                        if (sel.isObject() && sel.rawBits() > 0x10000) {
-                            ObjectHeader* selH = sel.asObjectPtr();
-                            if (selH->isBytesObject() && selH->byteSize() < 80)
-                                std::cerr << "#" << std::string((char*)selH->bytes(), selH->byteSize());
-                        }
-                    }
-                }
+    // Check if target is reachable from receiver via sender chain
+    bool reachable = false;
+    if (aContextOrNil.rawBits() == nilObj.rawBits() || aContextOrNil.isNil()) {
+        reachable = true;  // nil is always reachable (terminate entire chain)
+    } else {
+        Oop check = thisCtx;
+        for (int i = 0; i < 10000 && check.isObject() && check.rawBits() != nilObj.rawBits(); i++) {
+            if (check.rawBits() == aContextOrNil.rawBits()) {
+                reachable = true;
+                break;
             }
-
-            // Show rcvr's sender chain methods
-            std::cerr << "\n  Rcvr sender chain: ";
-            Oop ch = rcvr;
-            Oop nil2 = memory_.nil();
-            for (int i = 0; i < 8 && ch.isObject() && ch.rawBits() != nil2.rawBits() && ch.rawBits() > 0x10000; i++) {
-                ObjectHeader* chH = ch.asObjectPtr();
-                if (chH->slotCount() < 4) break;
-                Oop cm = memory_.fetchPointer(3, ch);
-                if (cm.isObject() && cm.rawBits() > 0x10000) {
-                    Oop mh = memory_.fetchPointer(0, cm);
-                    if (mh.isSmallInteger()) {
-                        int nl = mh.asSmallInteger() & 0x7FFF;
-                        if (nl >= 2) {
-                            Oop sel = memory_.fetchPointer(nl - 1, cm);
-                            if (sel.isObject() && sel.rawBits() > 0x10000) {
-                                ObjectHeader* sH = sel.asObjectPtr();
-                                if (sH->isBytesObject() && sH->byteSize() < 80) {
-                                    std::cerr << "#" << std::string((char*)sH->bytes(), sH->byteSize());
-                                }
-                            }
-                        }
-                    }
-                }
-                ch = memory_.fetchPointer(0, ch);
-                if (ch.isObject() && ch.rawBits() != nil2.rawBits()) std::cerr << " -> ";
-            }
-            std::cerr << "\n";
+            check = memory_.fetchPointer(SenderIndex, check);
         }
+    }
 
-        // Nil all senders in the chain
-        Oop current = rcvr;
-        int iterations = 0;
-        while (current.isObject() && current.rawBits() > 0x10000 && iterations < 200) {
+    // If reachable, walk sender chain and nil intermediate context senders
+    if (reachable) {
+        Oop current = thisCtx;
+        for (int i = 0; i < 10000; i++) {
+            if (current.rawBits() == aContextOrNil.rawBits()) break;
+            if (!current.isObject() || current.rawBits() == nilObj.rawBits()) break;
             Oop sender = memory_.fetchPointer(SenderIndex, current);
-            memory_.storePointer(SenderIndex, current, memory_.nil());
-            if (sender.isNil() || sender.rawBits() == memory_.nil().rawBits()) break;
+            memory_.storePointer(SenderIndex, current, nilObj);
             current = sender;
-            iterations++;
         }
-
-        if (nilTermCount <= 10) {
-            std::cerr << "  Nilled " << iterations << " senders\n";
-        }
-
-        // Set receiver's sender to nil (the target)
-        memory_.storePointer(SenderIndex, rcvr, memory_.nil());
-        popN(2);
-        push(rcvr);
-        return PrimitiveResult::Success;
     }
 
-    // First, check if target is reachable within a reasonable depth WITHOUT nilling
-    Oop check = rcvr;
-    bool targetReachable = false;
-    for (int i = 0; i < 100 && check.isObject() && check.rawBits() > 0x10000; i++) {
-        if (check.rawBits() == targetContext.rawBits()) {
-            targetReachable = true;
-            break;
-        }
-        Oop nextSender = memory_.fetchPointer(SenderIndex, check);
-        if (nextSender.isNil() || nextSender.rawBits() == memory_.nil().rawBits()) {
-            break;
-        }
-        check = nextSender;
+    // ALWAYS set receiver's sender to target (matches Cog VM - unconditional)
+    if (thisCtx.isObject() && thisCtx.rawBits() != nilObj.rawBits()) {
+        memory_.storePointer(SenderIndex, thisCtx, aContextOrNil);
     }
 
-    if (!targetReachable) {
-        // Target not in sender chain — primitive fails, let Smalltalk handle it.
-        std::cerr << "[PRIM-TERMINATE-TO] Target unreachable in sender chain\n";
-        return PrimitiveResult::Failure;
-    }
-
-    // Now we know target is reachable - nil out senders up to but not including target
-    // Then reconnect receiver's sender to the target so that method returns
-    // reach the target context. In the Cog VM, frame-based returns bypass
-    // reified context senders; our context-based VM needs this explicit reconnection.
-    Oop current = rcvr;
-    int iterations = 0;
-    while (!current.isNil() && current.isObject() && iterations < 100) {
-        iterations++;
-
-        // If we've reached the target, stop (don't nil target's sender)
-        if (current.rawBits() == targetContext.rawBits()) {
-            break;
-        }
-
-        Oop sender = memory_.fetchPointer(SenderIndex, current);
-
-        // Nil out this context's sender
-        memory_.storePointer(SenderIndex, current, memory_.nil());
-
-        current = sender;
-    }
-
-    // Reconnect: set receiver's sender to target so returns work
-    // This is equivalent to what the Cog VM's frame-based mechanism does implicitly
-    // Only reconnect if receiver != target (avoid self-loop)
-    if (rcvr.rawBits() != targetContext.rawBits()) {
-        memory_.storePointer(SenderIndex, rcvr, targetContext);
-    }
-
-    if (shouldTrace) {
-        // Check receiver's sender after nilling
-        Oop rcvrSenderAfter = memory_.fetchPointer(SenderIndex, rcvr);
-        std::cerr << "[PRIM-TERMINATE-TO] Completed after " << iterations << " iterations"
-                  << " rcvr.sender=0x" << std::hex << rcvrSenderAfter.rawBits() << std::dec
-                  << (rcvrSenderAfter.rawBits() == memory_.nil().rawBits() ? " (NIL!)" : "") << "\n";
-    }
-
+    // Pop argument, leave receiver
     popN(2);
-    push(rcvr);
+    push(thisCtx);
     return PrimitiveResult::Success;
 }
 

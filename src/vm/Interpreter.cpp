@@ -2322,26 +2322,10 @@ void Interpreter::checkTimerSemaphore() {
             int activePriority = static_cast<int>(activePriorityOop.asSmallInteger());
 
             if (processPriority > activePriority) {
-                // Higher priority - check if we should preempt (same logic as signalExternalSemaphoreWithIndex)
-                static auto lastTimerSwitchTime = std::chrono::steady_clock::now();
-                auto now = std::chrono::steady_clock::now();
-                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastTimerSwitchTime).count();
-
-                int priorityDiff = processPriority - activePriority;
-                bool urgentSwitch = priorityDiff >= 20;
-                bool timeElapsed = elapsed >= 50;
-                bool shallowStack = frameDepth_ < 50;
-
-                if (urgentSwitch || timeElapsed || shallowStack) {
-                    lastTimerSwitchTime = now;
-                    putToSleep(activeProcess);
-                    transferTo(process);
-                } else {
-                    // Defer the switch
-                    putToSleep(process);
-                }
+                // Higher priority preempts (standard Spur behavior)
+                putToSleep(activeProcess);
+                transferTo(process);
             } else {
-                // Same or lower priority - just add to ready queue
                 putToSleep(process);
             }
         }
@@ -2558,13 +2542,11 @@ void Interpreter::processPendingSignals() {
         int activePriority = static_cast<int>(activePriorityOop.asSmallInteger());
 
         if (processPriority > activePriority) {
-            // Higher priority ALWAYS preempts - this is standard Pharo scheduling.
-            // No rate limiting: the process scheduler guarantees that the highest
-            // priority runnable process always runs.
+            // Higher priority preempts (standard Spur behavior)
             putToSleep(activeProcess);
             transferTo(process);
         } else {
-            // Same or lower priority - just add to ready queue
+            // Lower priority - just add to ready queue
             putToSleep(process);
         }
     }

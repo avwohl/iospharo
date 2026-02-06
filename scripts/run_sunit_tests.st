@@ -141,7 +141,8 @@ runTestClass: testClass run: runNum on: s detail: d
     "Skip tests known to hang or cause VM-level crashes"
     (#(testPrintStringAll testStoreStringAll testPrintStringBase testReciprocalModulo) includes: sel) ifFalse: [
       | result |
-      result := self runSingleTest: testClass selector: sel timeout: 10 on: s.
+      s nextPutAll: '  RUN: '; nextPutAll: sel; cr. s flush.
+      result := self runSingleTest: testClass selector: sel timeout: 5 on: s.
       result ifNil: [
         p := p + 1.
         d nextPutAll: runNum printString; nextPut: $	.
@@ -206,7 +207,7 @@ runSingleTest: testClass selector: sel timeout: seconds on: s
         s nextPutAll: '  ERROR: '; nextPutAll: sel;
           nextPutAll: ' ('; nextPutAll: ex class name;
           nextPutAll: ': '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 100)); nextPutAll: ')'; cr].
-    sem signal] forkAt: 40 "userSchedulingPriority - matches standard SUnit behavior".
+    sem signal] forkAt: 80 "highIOPriority - same as event loop, yields via forceYield".
 
   "Wait for test completion or timeout"
   (sem waitTimeoutSeconds: seconds) ifTrue: [
