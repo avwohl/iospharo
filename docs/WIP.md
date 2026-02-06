@@ -25,10 +25,12 @@ cat /tmp/sunit_run_number.txt          # current run counter
 
 ---
 
-## Test Results — Run #1 (2026-02-06)
+## Test Results — Run #2 (2026-02-06)
 
-**74 test classes, 4432 tests. Pass: 4362, Fail: 5, Error: 7, Skip: 6.**
+**74 test classes, 4428 tests. Pass: 4421, Fail: 1, Error: 0, Skip: 6.**
 (CollectionRootTest excluded — abstract base class, 52 SubclassResponsibility errors.)
+
+**99.84% pass rate. Only 1 non-skip failure (test-runner limitation, not VM bug).**
 
 ### Per-class results
 
@@ -50,8 +52,8 @@ cat /tmp/sunit_run_number.txt          # current run counter
 | StringTest | 438 | 438 | 0 | 0 | 0 | |
 | HeapTest | 148 | 148 | 0 | 0 | 0 | |
 | BlockClosureTest | 50 | 48 | 0 | 0 | 2 | 2 TestSkipped (fork timing) |
-| ContextTest | 34 | 31 | 2 | 1 | 0 | see failures below |
-| ExceptionTest | 47 | 43 | 0 | 4 | 0 | Notification handling |
+| ContextTest | 34 | 34 | 0 | 0 | 0 | |
+| ExceptionTest | 47 | 47 | 0 | 0 | 0 | |
 | BecomeTest | 8 | 8 | 0 | 0 | 0 | |
 | BooleanTest | 5 | 5 | 0 | 0 | 0 | |
 | TrueTest | 17 | 17 | 0 | 0 | 0 | |
@@ -59,7 +61,7 @@ cat /tmp/sunit_run_number.txt          # current run counter
 | ProtoObjectTest | 17 | 17 | 0 | 0 | 0 | |
 | ObjectTest | 28 | 28 | 0 | 0 | 0 | |
 | UndefinedObjectTest | 19 | 19 | 0 | 0 | 0 | |
-| SemaphoreTest | 18 | 17 | 0 | 1 | 0 | Invalid priority: 88 |
+| SemaphoreTest | 18 | 18 | 0 | 0 | 0 | |
 | RecursionStopperTest | 4 | 4 | 0 | 0 | 0 | |
 | LocalRecursionStopperTest | 4 | 4 | 0 | 0 | 0 | |
 | LargePositiveIntegerTest | 19 | 19 | 0 | 0 | 0 | |
@@ -76,11 +78,11 @@ cat /tmp/sunit_run_number.txt          # current run counter
 | MetaClassTest | 3 | 3 | 0 | 0 | 0 | |
 | BasicBehaviorClassMetaclassTest | 9 | 9 | 0 | 0 | 0 | |
 | PragmaTest | 10 | 10 | 0 | 0 | 0 | |
-| ProcessTerminateBugTest | 12 | 11 | 1 | 0 | 0 | testUnwindFromForeignProcess |
+| ProcessTerminateBugTest | 12 | 12 | 0 | 0 | 0 | |
 | ProcessSpecificTest | 8 | 8 | 0 | 0 | 0 | |
 | MonitorTest | 3 | 3 | 0 | 0 | 0 | |
-| DelayTest | 5 | 3 | 1 | 1 | 0 | timer issues |
-| DeprecationTest | 2 | 1 | 1 | 0 | 0 | testTransformingDeprecation |
+| DelayTest | 5 | 5 | 0 | 0 | 0 | |
+| DeprecationTest | 2 | 1 | 1 | 0 | 0 | testTransformingDeprecation (test-runner limitation) |
 | MessageNotUnderstoodTest | 2 | 2 | 0 | 0 | 0 | |
 | WeakMessageSendTest | 11 | 11 | 0 | 0 | 0 | |
 | AllocationTest | 4 | 4 | 0 | 0 | 0 | |
@@ -111,33 +113,34 @@ cat /tmp/sunit_run_number.txt          # current run counter
 
 ### Non-pass details (excluding skips)
 
-**Failures (5):**
-- `ContextTest>>testSetUp` — returns 'ContextTest' instead of 'ContextTest>>#testSetUp'
-- `ContextTest>>testSourceNodeExecuted` — returns #value instead of #performTest
-- `ProcessTerminateBugTest>>testUnwindFromForeignProcess` — denial assertion
-- `DelayTest>>testSemaphoreTimeout` — timer assertion
-- `DeprecationTest>>testTransformingDeprecation` — denial assertion
+**Failures (1):**
+- `DeprecationTest>>testTransformingDeprecation` — Test-runner limitation, not a VM bug.
+  The test needs `Deprecation>>defaultAction` to call `transform`, but our runner's
+  `on: Deprecation do: [:ex | ex resume]` handler catches and resumes before
+  `defaultAction` runs. Removing the handler breaks other tests that trigger deprecations.
 
-**Errors (7):**
-- `ContextTest>>testSourceNodeExecutedWhenContextIsJustAtStartpc` — KeyNotFound nil in MethodDictionary
-- `ExceptionTest>>testResumableOuter` — Notification not caught
-- `ExceptionTest>>testResumablePass` — Notification not caught
-- `ExceptionTest>>testSimpleEnsureTestWithNotification` — Notification not caught
-- `ExceptionTest>>testSimpleIsNested` — Notification not caught
-- `SemaphoreTest>>testSchedulesFIFO` — Invalid priority: 88
-- `DelayTest>>testSemaphoreNoTimeout` — nil receiver for #unschedule
+### What was fixed (Run #1 → Run #2)
 
-### Root cause analysis
-- **4 ExceptionTest errors**: All involve `Notification` (subclass of `Exception`). The handler doesn't catch Notification because our test runner catches `Exception` at a higher level. Not a VM bug.
-- **ContextTest failures**: `thisContext` method/selector reporting differs slightly. Investigation needed.
-- **SemaphoreTest>>testSchedulesFIFO**: Uses priority 88 which exceeds our scheduler range. Need to verify max priority.
-- **DelayTest**: Timer/semaphore scheduling issues. Known limitation.
-- **ProcessTerminateBugTest/DeprecationTest**: Minor process/deprecation handling issues.
+All 11 non-pass tests from Run #1 were caused by test-runner bugs, not VM bugs:
+
+1. **ExceptionTest (4 errors fixed)**: Changed `on: Exception do:` to `on: Error do:` with
+   explicit `TestSkipped` handler. `Notification` (used by 4 tests) was being caught by
+   the runner before the tests' own handlers could process it.
+
+2. **ContextTest (3 failures fixed)**: Changed `testClass new setUp; perform: sel; tearDown`
+   to `(testClass selector: sel) runCase`. The old code left `testSelector` nil and bypassed
+   the standard SUnit call chain that tests depend on.
+
+3. **SemaphoreTest, DelayTest, ProcessTerminateBugTest (4 failures/errors fixed)**: Changed
+   fork priority from `Processor activePriority - 1` (78) to 40 (`userSchedulingPriority`).
+   At priority 78, tests that fork higher-priority processes couldn't preempt, and
+   `priority + 20` exceeded the scheduler's 80-priority limit.
 
 ### History
 | Run | Date | Classes | Pass | Fail | Error | Skip | Total |
 |---|---|---|---|---|---|---|---|
 | #1 | 2026-02-06 | 74 | 4362 | 5 | 7 | 6 | 4380 |
+| #2 | 2026-02-06 | 74 | 4421 | 1 | 0 | 6 | 4428 |
 
 ---
 
