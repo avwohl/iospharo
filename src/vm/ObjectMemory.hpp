@@ -44,8 +44,9 @@ namespace pharo {
 class Interpreter;
 
 /// Linear scanner for iterating objects in a heap region.
-/// Skips zero padding, reads totalSize(), advances.
-/// No virtual dispatch or std::function overhead.
+/// Follows the Spur reference implementation's two-step pattern:
+///   1. objectStartingAt_: if byte7==0xFF, skip 8 (overflow word → header)
+///   2. addressAfter_: advance from header by slot count (reading overflow word if needed)
 class ObjectScanner {
 public:
     ObjectScanner(uint8_t* start, uint8_t* end)
@@ -54,24 +55,39 @@ public:
     /// Returns next object header, or nullptr when exhausted.
     ObjectHeader* next() {
         while (scan_ < end_) {
-            // Skip zero padding
-            while (scan_ < end_) {
-                uint64_t word = *reinterpret_cast<uint64_t*>(scan_);
-                if (word != 0) break;
+            // Skip zero padding (free space / segment bridges)
+            while (scan_ < end_ && *reinterpret_cast<uint64_t*>(scan_) == 0)
                 scan_ += 8;
-            }
             if (scan_ >= end_) return nullptr;
 
-            ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(scan_);
-            size_t size = obj->totalSize();
-
-            // Sanity check
-            if (size < 8 || size > static_cast<size_t>(end_ - scan_)) {
+            // objectStartingAt_: if byte7 is 0xFF, this is an overflow word — skip it
+            // In Spur, both the overflow word and the real header have 0xFF in byte 7.
+            // The scan always arrives at the overflow word first (start of the object
+            // in memory), so one skip positions us at the real header.
+            if (scan_[7] == 0xFF) {
                 scan_ += 8;
-                continue;
+                if (scan_ >= end_) return nullptr;
             }
 
-            scan_ += size;
+            // Now scan_ points to the object header
+            ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(scan_);
+
+            // addressAfter_: compute advance from header position
+            uint8_t numSlots = scan_[7];  // slot count byte of the header
+            size_t advance;
+            if (numSlots == 0xFF) {
+                // Overflow header: real slot count is in the word before the header
+                uint64_t overflowWord = *reinterpret_cast<uint64_t*>(scan_ - 8);
+                size_t realSlots = static_cast<size_t>((overflowWord << 8) >> 8);
+                advance = 8 + realSlots * 8;
+            } else if (numSlots == 0) {
+                advance = 16;  // minimum Spur object size (header + 8 bytes padding)
+            } else {
+                advance = 8 + static_cast<size_t>(numSlots) * 8;
+            }
+
+            if (advance > static_cast<size_t>(end_ - scan_)) return nullptr;
+            scan_ += advance;
             return obj;
         }
         return nullptr;

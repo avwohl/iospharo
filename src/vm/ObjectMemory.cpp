@@ -1518,9 +1518,15 @@ GCResult ObjectMemory::fullGC() {
 
     // 2. Clear all marks
     {
+        size_t clearCount = 0;
         ObjectScanner scanner(oldSpaceStart_, oldSpaceFree_);
         while (ObjectHeader* obj = scanner.next()) {
             obj->setMarked(false);
+            clearCount++;
+        }
+        if (gcCallCount <= 3) {
+            std::cerr << "[GC] Cleared marks on " << clearCount << " objects"
+                      << " in " << ((oldSpaceFree_ - oldSpaceStart_) / (1024*1024)) << "MB\n";
         }
     }
 
@@ -2098,6 +2104,18 @@ void ObjectMemory::markAndTrace(Oop oop) {
     // Don't mark permanent space objects (they never move/die)
     if (isPermObject(obj)) return;
 
+    // Must be within old space bounds
+    if (!isOldObject(obj)) {
+        static int badPtrCount = 0;
+        if (badPtrCount++ < 10) {
+            std::cerr << "[GC-MARK] BAD pointer 0x" << std::hex
+                      << oop.rawBits() << " at obj " << (uintptr_t)obj
+                      << " (not in old space 0x" << (uintptr_t)oldSpaceStart_
+                      << "-0x" << (uintptr_t)oldSpaceFree_ << ")\n" << std::dec;
+        }
+        return;
+    }
+
     // Already marked?
     if (obj->isMarked()) return;
 
@@ -2228,14 +2246,6 @@ bool ObjectMemory::planCompactSavingForwarders() {
     ObjectScanner scanner(oldSpaceStart_, oldSpaceFree_);
     while (ObjectHeader* obj = scanner.next()) {
         if (!obj->isMarked()) {
-            // Dead object
-            if (deadCount < 5) {
-                uint8_t* objAddr = reinterpret_cast<uint8_t*>(obj);
-                std::cerr << "[GC-DEAD #" << (deadCount+1) << "] at 0x" << std::hex
-                          << (uintptr_t)objAddr << " size=" << std::dec << obj->totalSize()
-                          << " classIdx=" << obj->classIndex()
-                          << " fmt=" << obj->format() << " slots=" << obj->slotCount() << "\n";
-            }
             deadCount++;
             deadBytes += obj->totalSize();
             continue;  // Dead — skip
@@ -2243,12 +2253,17 @@ bool ObjectMemory::planCompactSavingForwarders() {
 
         size_t objSize = obj->totalSize();
         uint8_t* objAddr = reinterpret_cast<uint8_t*>(obj);
+        bool isOverflow = obj->hasOverflowSlots();
+        // Object start in memory (includes overflow word if present)
+        uint8_t* objStart = isOverflow ? (objAddr - 8) : objAddr;
+        // Where the header will be at the destination
+        uint8_t* destHeaderPos = isOverflow ? (toFinger + 8) : toFinger;
 
         // Pinned objects don't move
         if (obj->isPinned()) {
-            if (toFinger < objAddr) {
+            if (toFinger < objStart) {
                 // Gap before pinned object — skip over it
-                toFinger = objAddr;
+                toFinger = objStart;
             }
             toFinger += objSize;
             stayCount++;
@@ -2256,7 +2271,7 @@ bool ObjectMemory::planCompactSavingForwarders() {
         }
 
         // Does this object actually need to move?
-        if (reinterpret_cast<uint8_t*>(toFinger) == objAddr) {
+        if (destHeaderPos == objAddr) {
             // Already in place — no forwarding needed. Clear grey bit.
             obj->setGrey(false);
             toFinger += objSize;
@@ -2278,8 +2293,10 @@ bool ObjectMemory::planCompactSavingForwarders() {
             *savedFirstFieldsSpace_.top = *firstField;
             savedFirstFieldsSpace_.top++;
 
-            // Store forwarding address in first field
-            ObjectHeader* dest = reinterpret_cast<ObjectHeader*>(toFinger);
+            // Store forwarding address in first field.
+            // For overflow objects, forwarding points past the overflow word
+            // to where the header will be at the destination (per Spur spec).
+            ObjectHeader* dest = reinterpret_cast<ObjectHeader*>(destHeaderPos);
             *firstField = Oop::fromObject(dest);
 
             // Mark this object as having a forwarding address (grey bit)
@@ -2302,6 +2319,7 @@ void ObjectMemory::updatePointersAfterCompact() {
         if (!ref.isObject()) return ref;
         ObjectHeader* refObj = ref.asObjectPtr();
         if (isPermObject(refObj)) return ref;
+        if (!isOldObject(refObj)) return ref;  // Outside heap — leave as is
         if (!refObj->isMarked()) return ref;  // Dead — leave as is
         if (refObj->isGrey()) {
             // Grey = has forwarding address in first field (word after header)
@@ -2312,19 +2330,62 @@ void ObjectMemory::updatePointersAfterCompact() {
         return ref;
     };
 
-    // Update pointers in all marked objects
-    ObjectScanner scanner(oldSpaceStart_, oldSpaceFree_);
-    while (ObjectHeader* obj = scanner.next()) {
-        if (!obj->isMarked()) continue;
+    // Update pointers in all marked objects, maintaining a parallel pointer
+    // into savedFirstFieldsSpace for grey (mobile) objects.  This is critical
+    // because grey compiled methods have their slot 0 (method header) overwritten
+    // with a forwarding address; we must read the real header from the saved
+    // copy to know how many literal slots to scan.
+    {
+        Oop* savedFieldPtr = savedFirstFieldsSpace_.start;
+        ObjectScanner scanner(oldSpaceStart_, oldSpaceFree_);
+        while (ObjectHeader* obj = scanner.next()) {
+            if (!obj->isMarked()) continue;
 
-        size_t numPointers = pointerSlotsOf(obj);
-        Oop* slots = obj->slots();
+            Oop* slots = obj->slots();
 
-        // Skip slot 0 if this object itself has a forwarding address there
-        size_t startSlot = obj->isGrey() ? 1 : 0;
+            if (obj->isGrey()) {
+                // Mobile object: slot 0 has been overwritten with forwarding addr.
+                // The real slot 0 is in savedFirstFieldsSpace.
 
-        for (size_t i = startSlot; i < numPointers; ++i) {
-            slots[i] = resolveForward(slots[i]);
+                // Compute numPointers using saved first field for compiled methods
+                size_t numPointers;
+                if (obj->isCompiledMethod()) {
+                    size_t totalSlots = obj->slotCount();
+                    if (totalSlots == 0) {
+                        numPointers = 0;
+                    } else {
+                        Oop savedField = (savedFieldPtr < savedFirstFieldsSpace_.top)
+                            ? *savedFieldPtr : Oop::fromSmallInteger(0);
+                        if (savedField.isSmallInteger()) {
+                            size_t numLiterals = savedField.asSmallInteger() & 0x7FFF;
+                            numPointers = std::min(numLiterals + 1, totalSlots);
+                        } else {
+                            numPointers = 1;
+                        }
+                    }
+                } else {
+                    numPointers = pointerSlotsOf(obj);
+                }
+
+                // Update slots 1..numPointers (skip slot 0 which is forwarding addr)
+                for (size_t i = 1; i < numPointers; ++i) {
+                    slots[i] = resolveForward(slots[i]);
+                }
+
+                // Update the saved first field itself (it may point to a mobile object)
+                if (savedFieldPtr < savedFirstFieldsSpace_.top) {
+                    if (numPointers > 0) {
+                        *savedFieldPtr = resolveForward(*savedFieldPtr);
+                    }
+                    savedFieldPtr++;
+                }
+            } else {
+                // Non-mobile (pinned or in-place): slot 0 is valid, scan all slots
+                size_t numPointers = pointerSlotsOf(obj);
+                for (size_t i = 0; i < numPointers; ++i) {
+                    slots[i] = resolveForward(slots[i]);
+                }
+            }
         }
     }
 
@@ -2337,30 +2398,6 @@ void ObjectMemory::updatePointersAfterCompact() {
             for (size_t i = 0; i < numPointers; ++i) {
                 slots[i] = resolveForward(slots[i]);
             }
-        }
-    }
-
-    // Update pointers in saved first fields space.
-    // These saved fields may contain Oop references to objects that moved.
-    // We must match each saved first field to its original object to know
-    // whether the saved field was a pointer slot. Iterate in lockstep with
-    // the plan pass (same order as planCompactSavingForwarders).
-    {
-        Oop* savedFieldPtr = savedFirstFieldsSpace_.start;
-        ObjectScanner savedScanner(oldSpaceStart_, oldSpaceFree_);
-        while (ObjectHeader* obj = savedScanner.next()) {
-            if (!obj->isMarked()) continue;
-            if (obj->isPinned()) continue;
-            // Objects already in place have grey=false, no saved field
-            if (!obj->isGrey()) continue;
-            // This object has a saved first field
-            if (savedFieldPtr >= savedFirstFieldsSpace_.top) break;  // Safety check
-            size_t numPointers = pointerSlotsOf(obj);
-            if (numPointers > 0) {
-                // Slot 0 was a pointer — resolve it
-                *savedFieldPtr = resolveForward(*savedFieldPtr);
-            }
-            savedFieldPtr++;
         }
     }
 
@@ -2386,11 +2423,16 @@ void ObjectMemory::copyAndUnmark() {
 
         size_t objSize = obj->totalSize();
         uint8_t* objAddr = reinterpret_cast<uint8_t*>(obj);
+        bool isOverflow = obj->hasOverflowSlots();
+        // Object start in memory (includes overflow word if present)
+        uint8_t* objStart = isOverflow ? (objAddr - 8) : objAddr;
+        // Where the header will be at the destination
+        uint8_t* destHeaderPos = isOverflow ? (toFinger + 8) : toFinger;
 
         if (obj->isPinned()) {
             // Pinned: don't move, just clear mark and grey
-            if (toFinger < objAddr) {
-                toFinger = objAddr;
+            if (toFinger < objStart) {
+                toFinger = objStart;
             }
             obj->setMarked(false);
             obj->setGrey(false);
@@ -2406,14 +2448,15 @@ void ObjectMemory::copyAndUnmark() {
             savedFieldPtr++;
         }
 
-        // Slide object to destination
-        uint8_t* dest = toFinger;
-        if (dest != objAddr) {
-            std::memmove(dest, objAddr, objSize);
+        // Slide object to destination.
+        // For overflow objects, copy from the overflow word (before header).
+        // memmove handles overlapping regions correctly.
+        if (toFinger != objStart) {
+            std::memmove(toFinger, objStart, objSize);
         }
 
         // Clear mark and grey on the (possibly moved) copy
-        ObjectHeader* movedObj = reinterpret_cast<ObjectHeader*>(dest);
+        ObjectHeader* movedObj = reinterpret_cast<ObjectHeader*>(destHeaderPos);
         movedObj->setMarked(false);
         movedObj->setGrey(false);
 

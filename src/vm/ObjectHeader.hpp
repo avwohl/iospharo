@@ -323,13 +323,17 @@ public:
     }
 
     /// Get total size including header (and overflow if present).
+    /// Per Spur spec, every object occupies at least 16 bytes (2 words)
+    /// to guarantee space for a forwarding pointer during GC.
     size_t totalSize() const {
         size_t size = sizeof(ObjectHeader) + byteSize();
         if (hasOverflowSlots()) {
             size += sizeof(uint64_t);
         }
-        // Round up to 8-byte alignment
-        return (size + 7) & ~7ULL;
+        // Round up to 8-byte alignment, minimum 16 bytes
+        size = (size + 7) & ~7ULL;
+        if (size < 16) size = 16;
+        return size;
     }
 
     // ===== SLOT ACCESS =====
