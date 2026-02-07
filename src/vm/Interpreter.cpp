@@ -6748,24 +6748,8 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 return;
             }
 
-            // ===== error: intercept for known recoverable errors =====
-            if (selStr == "error:" && argCount >= 1) {
-                Oop errArg = stackValue(0);
-                if (errArg.isObject()) {
-                    ObjectHeader* errHdr = errArg.asObjectPtr();
-                    if (errHdr->isBytesObject() && errHdr->byteSize() < 100) {
-                        std::string errMsg((char*)errHdr->bytes(), errHdr->byteSize());
-                        bool isRecoverable = (errMsg.find("only integers") != std::string::npos ||
-                                             errMsg.find("Improper store") != std::string::npos ||
-                                             errMsg.find("no free space") != std::string::npos);
-                        if (isRecoverable) {
-                            popN(argCount + 1);
-                            push(memory_.nil());
-                            return;
-                        }
-                    }
-                }
-            }
+            // error: intercept REMOVED - was silently swallowing errors like
+            // "Improper store" instead of letting Smalltalk handle them properly
         }
     }
 
