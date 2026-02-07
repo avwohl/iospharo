@@ -593,6 +593,46 @@ bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
 
     std::cerr << "[CLASS-TABLE] Registered " << totalClasses << " classes from "
               << numPages << " pages\n";
+
+    // Diagnostic: check what's at index 4 (should be SmallFloat64)
+    {
+        Oop idx4 = memory.classAtIndex(4);
+        std::cerr << "[CLASS-TABLE] classAtIndex(4)=0x" << std::hex << idx4.rawBits() << std::dec;
+        if (idx4.isObject() && idx4.rawBits() > 0x10000) {
+            ObjectHeader* h = idx4.asObjectPtr();
+            std::cerr << " classIdx=" << h->classIndex() << " fmt=" << (int)h->format()
+                      << " slots=" << h->slotCount();
+            // Try to read name at slot 6 (for Class objects)
+            if (h->slotCount() > 6) {
+                Oop nm = h->slotAt(6);
+                if (nm.isObject() && nm.rawBits() > 0x10000) {
+                    ObjectHeader* nh = nm.asObjectPtr();
+                    if (nh->isBytesObject() && nh->byteSize() < 100) {
+                        std::cerr << " name='" << std::string((char*)nh->bytes(), nh->byteSize()) << "'";
+                    }
+                }
+            }
+            // Try to read name from slot 7 (different Pharo layout)
+            if (h->slotCount() > 7) {
+                Oop nm = h->slotAt(7);
+                if (nm.isObject() && nm.rawBits() > 0x10000) {
+                    ObjectHeader* nh = nm.asObjectPtr();
+                    if (nh->isBytesObject() && nh->byteSize() < 100) {
+                        std::cerr << " slot7='" << std::string((char*)nh->bytes(), nh->byteSize()) << "'";
+                    }
+                }
+            }
+            // Also dump first 10 slots
+            std::cerr << "\n[CLASS-TABLE]   slots:";
+            for (size_t si = 0; si < std::min(h->slotCount(), (size_t)10); si++) {
+                Oop sv = h->slotAt(si);
+                std::cerr << " [" << si << "]=0x" << std::hex << sv.rawBits() << std::dec;
+                if (sv.isSmallInteger()) std::cerr << "(SI=" << sv.asSmallInteger() << ")";
+            }
+        }
+        std::cerr << "\n";
+    }
+
     return totalClasses > 0;
 }
 

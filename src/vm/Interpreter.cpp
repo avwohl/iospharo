@@ -11161,6 +11161,10 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
             }
         } else if (rcvr.isSmallInteger()) {
             rcvrClassName = "SmallInteger";
+        } else if (rcvr.isSmallFloat()) {
+            rcvrClassName = "SmallFloat64";
+        } else if (rcvr.isCharacter()) {
+            rcvrClassName = "Character";
         } else {
             rcvrClassName = "UndefinedObject";
         }

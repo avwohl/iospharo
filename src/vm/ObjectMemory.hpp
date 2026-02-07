@@ -230,23 +230,10 @@ public:
     /// Set the class object at a given index
     void setClassAtIndex(uint32_t index, Oop classOop) {
         if (index < classTable_.size()) {
-            // Detect if class 1 is being overwritten with nil
-            if (index == 1) {
-                Oop oldValue = classTable_[1];
-                if (oldValue.rawBits() != 0 && classOop.rawBits() != oldValue.rawBits()) {
-                    fprintf(stderr, "[CLASS-OVERWRITE-1] old=0x%llx new=0x%llx\n",
-                            (unsigned long long)oldValue.rawBits(),
-                            (unsigned long long)classOop.rawBits());
-                }
-            }
             classTable_[index] = classOop;
-            // Verify for class 1
-            if (index == 1) {
-                Oop verify = classTable_[1];
-                fprintf(stderr, "[CLASS-SET-1] set=0x%llx verify=0x%llx match=%d\n",
-                        (unsigned long long)classOop.rawBits(),
-                        (unsigned long long)verify.rawBits(),
-                        classOop.rawBits() == verify.rawBits());
+            // Track highest used index so registerClass starts after it
+            if (index >= nextClassIndex_) {
+                nextClassIndex_ = index + 1;
             }
             // Log registration of low-numbered classes (these are often core classes)
             if (index < 100) {
@@ -529,7 +516,7 @@ private:
 
     // Class table
     std::vector<Oop> classTable_;
-    uint32_t nextClassIndex_ = 1;  // 0 is reserved
+    uint32_t nextClassIndex_ = 1;  // Updated during image loading to be past highest used index
 
     // Special objects
     Oop specialObjectsArray_;
