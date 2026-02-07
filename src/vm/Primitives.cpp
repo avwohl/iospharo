@@ -5179,14 +5179,10 @@ PrimitiveResult Interpreter::primitiveScreenDepth(int argCount) {
 // CRITICAL: OSSDL2Driver checks this to decide whether to start its event loop.
 // Without this returning true, the driver won't poll for SDL events.
 PrimitiveResult Interpreter::primitiveIsVMDisplayUsingSDL2(int argCount) {
-    static bool logged = false;
-    if (!logged) {
-        static FILE* sdlLog = nullptr;
-        if (sdlLog) {
-            fprintf(sdlLog, "[SDL2-DETECT] isVMDisplayUsingSDL2 called, returning true\n");
-            fflush(sdlLog);
-        }
-        logged = true;
+    static int callCount = 0;
+    callCount++;
+    if (callCount <= 5) {
+        fprintf(stderr, "[SDL2-DETECT] isVMDisplayUsingSDL2 called #%d, returning true\n", callCount);
     }
     // Return true - we're providing SDL2 stubs that will handle events
     pop();  // Pop receiver
@@ -22430,13 +22426,9 @@ PrimitiveResult Interpreter::primitiveStoreFloat64IntoExternalAddress(int argCou
 // Stack: receiver, symbolString, moduleStringOrNil
 // Returns: ExternalAddress containing the symbol address, or fails
 PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
-    static FILE* ffiLog = nullptr;
+    static FILE* ffiLog = stderr;
     static int loadCount = 0;
     loadCount++;
-
-    if (!ffiLog) {
-        ffiLog = nullptr;
-    }
 
     if (argCount != 2) {
         if (ffiLog) {
@@ -22575,13 +22567,9 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
 // Stack: receiver, moduleString
 // Returns: ExternalAddress containing the module handle, or fails
 PrimitiveResult Interpreter::primitiveLoadModule(int argCount) {
-    static FILE* ffiLog = nullptr;
+    static FILE* ffiLog = stderr;
     static int loadCount = 0;
     loadCount++;
-
-    if (!ffiLog) {
-        ffiLog = nullptr;
-    }
 
     if (argCount != 1) {
         if (ffiLog) {
@@ -22930,37 +22918,29 @@ PrimitiveResult Interpreter::primitiveFFIIntegerAtPut(int argCount) {
 }
 
 // primitiveGetAddressOfOOP
-// Stack: receiver, anObject -> ExternalAddress
-// Returns an ExternalAddress containing the oop (raw bits) of the object
-// Used by FFI to pass object addresses to C functions
+// Stack: receiver, anObject -> Integer
+// Returns the address of the object's first data byte as an Integer.
+// The reference VM (Cog) returns oop + BaseHeaderSize, so callers expect
+// a pointer PAST the 8-byte header to the first indexable/named field.
+// Used by PointerUtils >> oopForObject: which wraps the integer in an ExternalAddress.
 PrimitiveResult Interpreter::primitiveGetAddressOfOOP(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
     Oop objectOop = stackTop();
 
-    // Objects must be pinned for their address to be stable
-    // However, for now we don't enforce this - the caller should ensure pinning
     if (objectOop.isImmediate()) {
-        // Immediates don't have stable addresses
         return PrimitiveResult::Failure;
     }
 
-    // Get the raw pointer to the object
-    void* objectPtr = objectOop.asObjectPtr();
+    // Get the raw pointer to the object header
+    ObjectHeader* objectPtr = objectOop.asObjectPtr();
 
-    // Create ExternalAddress object to hold the result
-    Oop extAddrClass = memory_.specialObject(SpecialObjectIndex::ClassExternalAddress);
-    if (extAddrClass.isNil()) return PrimitiveResult::Failure;
+    // Return pointer to first data byte (past the 8-byte header),
+    // matching the reference VM's: oop + BaseHeaderSize
+    uintptr_t dataAddr = reinterpret_cast<uintptr_t>(objectPtr) + sizeof(ObjectHeader);
 
-    uint32_t classIndex = memory_.indexOfClass(extAddrClass);
-    if (classIndex == 0) return PrimitiveResult::Failure;
-
-    Oop result = memory_.allocateBytes(classIndex, sizeof(void*));
-    if (result.isNil()) return PrimitiveResult::Failure;
-
-    // Store the object pointer in the ExternalAddress
-    ObjectHeader* resultHdr = result.asObjectPtr();
-    memcpy(resultHdr->bytes(), &objectPtr, sizeof(void*));
+    // This fits in a SmallInteger (60-bit range, our addresses are ~34 bits)
+    Oop result = Oop::fromSmallInteger(static_cast<int64_t>(dataAddr));
 
     popN(2);  // pop object and receiver
     push(result);
@@ -23352,6 +23332,14 @@ PrimitiveResult Interpreter::primitiveFillBasicType(int argCount) {
     if (!typeCodeOop.isSmallInteger()) return PrimitiveResult::Failure;
     int64_t typeCode = typeCodeOop.asSmallInteger();
 
+    static int fillCount = 0;
+    fillCount++;
+    if (fillCount <= 30) {
+        std::cerr << "[TFFI] primitiveFillBasicType #" << fillCount
+                  << " typeCode=" << typeCode << " receiver=0x"
+                  << std::hex << receiver.rawBits() << std::dec << "\n";
+    }
+
     // Map typeCode to ffi_type* (Pharo's numbering, NOT libffi's FFI_TYPE_*)
     ffi_type* ffiType = nullptr;
     switch (typeCode) {
@@ -23404,6 +23392,11 @@ PrimitiveResult Interpreter::primitiveTypeByteSize(int argCount) {
 // Stack: receiver, paramsArray, returnType [, abi]
 // Creates ffi_cif via ffi_prep_cif, stores in receiver's handler
 PrimitiveResult Interpreter::primitiveDefineFunction(int argCount) {
+    static int defCount = 0;
+    defCount++;
+    if (defCount <= 10) {
+        fprintf(stderr, "[TFFI] primitiveDefineFunction #%d argCount=%d\n", defCount, argCount);
+    }
     if (argCount < 2 || argCount > 3) return PrimitiveResult::Failure;
 
     ffi_abi abiToUse = FFI_DEFAULT_ABI;
@@ -23585,6 +23578,11 @@ PrimitiveResult Interpreter::primitiveGetSameThreadRunnerAddress(int argCount) {
 // Stack: receiver, externalFunction, argumentsArray
 // This is the core FFI call primitive.
 PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
+    static int callCount = 0;
+    callCount++;
+    if (callCount <= 10) {
+        fprintf(stderr, "[TFFI] primitiveSameThreadCallout #%d argCount=%d\n", callCount, argCount);
+    }
     if (argCount != 2) return PrimitiveResult::Failure;
 
     Oop argsArrayOop = stackValue(0);       // arguments array

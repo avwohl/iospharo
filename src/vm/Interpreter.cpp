@@ -94,6 +94,38 @@ bool Interpreter::initialize() {
         FILE* initLog = nullptr;
         if (initLog) { fprintf(initLog, "[INIT] Starting interpreter initialize...\n"); fclose(initLog); }
     }
+
+    // Invalidate all ExternalAddress objects from the previous VM session.
+    // The image was saved by a different VM process whose ffi_type*, dlsym,
+    // and other C pointers are at different addresses. ExternalAddress objects
+    // store raw C pointers as bytes; all of them are stale after image load.
+    // Without this, TFBasicType>>validate sees non-null handles and skips
+    // primFillType, causing FFI to use garbage pointers.
+    {
+        Oop extAddrClass = memory_.specialObject(SpecialObjectIndex::ClassExternalAddress);
+        uint32_t extAddrClassIndex = 0;
+        if (!extAddrClass.isNil() && extAddrClass.isObject()) {
+            extAddrClassIndex = memory_.indexOfClass(extAddrClass);
+        }
+        if (extAddrClassIndex != 0) {
+            size_t invalidated = 0;
+            memory_.forEachObjectInOldSpace([&](ObjectHeader* obj) {
+                if (obj->classIndex() == extAddrClassIndex &&
+                    obj->isBytesObject() && obj->byteSize() >= sizeof(void*)) {
+                    // Check if non-null before zeroing (avoid touching already-null ones)
+                    void* ptr = nullptr;
+                    memcpy(&ptr, obj->bytes(), sizeof(void*));
+                    if (ptr != nullptr) {
+                        memset(obj->bytes(), 0, obj->byteSize());
+                        invalidated++;
+                    }
+                }
+            });
+            std::cerr << "[INIT] Invalidated " << invalidated
+                      << " stale ExternalAddress objects\n";
+        }
+    }
+
     Oop scheduler = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
     // DEBUG_LOG("[DEBUG] Scheduler: 0x" << std::hex << scheduler.rawBits() << std::dec;
     if (scheduler.isNil()) {
@@ -2354,9 +2386,12 @@ void Interpreter::startHeartbeat() {
             // from this thread — memory_.fetchPointer/storePointer are not
             // thread-safe and cause data races that corrupt process state.
 
-            // Every ~33ms (30fps), sync Display Form to platform surface AND push a timer event
+            // Every ~33ms (30fps), request display sync from main thread AND push a timer event
             if (tickCount % 33 == 0) {
-                syncDisplayToSurface();
+                // Do NOT call syncDisplayToSurface() here — it accesses the
+                // Smalltalk heap (memory_.fetchPointer) which is not thread-safe.
+                // Set flag for the main interpreter loop to handle it.
+                pendingDisplaySync_.store(true, std::memory_order_release);
 
                 // Push a timer/redraw event to wake up the UI process
                 // Event type 6 = WindowMetrics (triggers redraw)
@@ -2587,6 +2622,11 @@ bool Interpreter::step() {
         checkTimerSemaphore();
         if (hasPendingSignals()) {
             processPendingSignals();
+        }
+        // Display sync requested by heartbeat thread — safe to access heap here
+        if (pendingDisplaySync_.load(std::memory_order_acquire)) {
+            pendingDisplaySync_.store(false, std::memory_order_release);
+            syncDisplayToSurface();
         }
     }
     }
@@ -9277,7 +9317,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                 std::cerr << "[DNU]   activeContext=0x" << std::hex << activeContext_.rawBits() << std::dec << "\n";
                 // Walk sender chain
                 Oop ctx = activeContext_;
-                for (int ci = 0; ci < 5 && ctx.isObject() && ctx.rawBits() > 0x10000; ci++) {
+                for (int ci = 0; ci < 30 && ctx.isObject() && ctx.rawBits() > 0x10000; ci++) {
                     ObjectHeader* ch = ctx.asObjectPtr();
                     if (ch->slotCount() < 6) break;
                     Oop ctxRcvr = memory_.fetchPointer(5, ctx);
@@ -13353,8 +13393,31 @@ bool Interpreter::executeFromContext(Oop context) {
     // Set up SIGSEGV recovery point - if we crash accessing unrelocated pointers,
     // we'll longjmp back here and return false instead of terminating the VM
     if (sigsetjmp(g_sigsegvRecovery, 1) != 0) {
-        // Returned from SIGSEGV recovery - reset state and return false
+        // Returned from SIGSEGV recovery - log what was executing
         g_sigsegvRecoveryEnabled = 0;
+        static int recoverCount = 0;
+        recoverCount++;
+        if (recoverCount <= 10) {
+            // Try to identify the method that was executing
+            std::string methName = "?";
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                Oop hdr = memory_.fetchPointer(0, method_);
+                if (hdr.isSmallInteger()) {
+                    int nl = hdr.asSmallInteger() & 0x7FFF;
+                    if (nl >= 2 && nl < 200) {
+                        Oop sel = memory_.fetchPointer(nl - 1, method_);
+                        if (sel.isObject() && sel.rawBits() > 0x10000) {
+                            ObjectHeader* sh = sel.asObjectPtr();
+                            if (sh->isBytesObject() && sh->byteSize() < 100)
+                                methName = std::string((char*)sh->bytes(), sh->byteSize());
+                        }
+                    }
+                }
+            }
+            fprintf(stderr, "[SIGSEGV-RECOVER-CTX #%d] method=#%s activeCtx=0x%llx step=%llu\n",
+                    recoverCount, methName.c_str(),
+                    (unsigned long long)activeContext_.rawBits(), g_stepNum);
+        }
         stackPointer_ = stackBase_;
         frameDepth_ = 0;
         return false;

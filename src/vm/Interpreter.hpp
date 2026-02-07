@@ -486,6 +486,7 @@ private:
 
     // Heartbeat thread
     std::atomic<bool> heartbeatRunning_{false};
+    std::atomic<bool> pendingDisplaySync_{false};
     std::thread heartbeatThread_;
 
     // Clipboard (simple in-memory storage for headless mode)
