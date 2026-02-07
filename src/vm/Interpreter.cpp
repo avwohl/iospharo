@@ -2674,7 +2674,8 @@ bool Interpreter::step() {
     g_stepNum++;
 
     // DIAG: Periodic method trace to detect loops
-    if (g_stepNum % 10000000 == 0) {
+    // Log at early steps too to catch what happens before copyTo: storm
+    if (g_stepNum % 10000000 == 0 || (g_stepNum < 200000 && g_stepNum % 50000 == 0)) {
         std::string methName = "?";
         int nLitsFound = -1;
         if (method_.isObject()) {
@@ -6831,6 +6832,227 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
     }
     }
+    // DIAG: Detect #signal sends to find what exceptions trigger during startup
+    if (selector.isObject() && selector.rawBits() > 0x10000) {
+        ObjectHeader* sigH = selector.asObjectPtr();
+        if (sigH->isBytesObject() && sigH->byteSize() < 20) {
+            std::string sigName((char*)sigH->bytes(), sigH->byteSize());
+            if ((sigName == "signal" || sigName == "signal:") && g_stepNum < 500000) {
+                static int sigCount = 0;
+                if (sigCount++ < 50) {
+                    // Get receiver class
+                    Oop rcvr = stackValue(argCount);
+                    std::string rcvrCls = "?";
+                    if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                        Oop cls = memory_.classOf(rcvr);
+                        if (cls.isObject()) {
+                            Oop cn = memory_.fetchPointer(6, cls);
+                            if (cn.isObject() && !cn.isNil()) {
+                                ObjectHeader* cnH = cn.asObjectPtr();
+                                if (cnH->isBytesObject() && cnH->byteSize() < 100)
+                                    rcvrCls = std::string((char*)cnH->bytes(), cnH->byteSize());
+                            }
+                        }
+                    }
+                    FILE* sf = fopen("/tmp/step_diag.txt", "a");
+                    if (sf) {
+                        fprintf(sf, "[SIGNAL #%d step=%llu] %s >> #%s fd=%zu\n",
+                                sigCount, (unsigned long long)g_stepNum, rcvrCls.c_str(),
+                                sigName.c_str(), frameDepth_);
+                        // For SubscriptOutOfBounds, dump instance vars to understand what failed
+                        if (rcvrCls == "SubscriptOutOfBounds" && rcvr.isObject()) {
+                            ObjectHeader* excH = rcvr.asObjectPtr();
+                            fprintf(sf, "  SOB slots=%zu:\n", excH->slotCount());
+                            for (size_t si = 0; si < std::min(excH->slotCount(), (size_t)10); si++) {
+                                Oop sv = excH->slotAt(si);
+                                if (sv.isSmallInteger()) {
+                                    fprintf(sf, "    [%zu] SmallInt(%lld)\n", si, sv.asSmallInteger());
+                                } else if (sv.isNil()) {
+                                    fprintf(sf, "    [%zu] nil\n", si);
+                                } else if (sv.isObject() && sv.rawBits() > 0x10000) {
+                                    Oop svCls = memory_.classOf(sv);
+                                    std::string svClsName = "?";
+                                    if (svCls.isObject()) {
+                                        Oop svCn = memory_.fetchPointer(6, svCls);
+                                        if (svCn.isObject() && !svCn.isNil()) {
+                                            ObjectHeader* svCnH = svCn.asObjectPtr();
+                                            if (svCnH->isBytesObject() && svCnH->byteSize() < 100)
+                                                svClsName = std::string((char*)svCnH->bytes(), svCnH->byteSize());
+                                        }
+                                    }
+                                    ObjectHeader* svH = sv.asObjectPtr();
+                                    if (svH->isBytesObject() && svH->byteSize() < 100) {
+                                        fprintf(sf, "    [%zu] %s '%s'\n", si, svClsName.c_str(),
+                                                std::string((char*)svH->bytes(), svH->byteSize()).c_str());
+                                    } else {
+                                        fprintf(sf, "    [%zu] %s (0x%llx slots=%zu)\n", si, svClsName.c_str(),
+                                                (unsigned long long)sv.rawBits(), svH->slotCount());
+                                    }
+                                } else {
+                                    fprintf(sf, "    [%zu] 0x%llx\n", si, (unsigned long long)sv.rawBits());
+                                }
+                            }
+                        }
+                        // Show call stack from savedFrames_
+                        fprintf(sf, "  stack trace:\n");
+                        for (size_t fi = 0; fi < std::min(frameDepth_, (size_t)15); fi++) {
+                            size_t idx = frameDepth_ - 1 - fi;
+                            const auto& sf2 = savedFrames_[idx];
+                            std::string frameSel = "?";
+                            std::string frameRcvrCls = "?";
+                            if (sf2.savedMethod.isObject() && sf2.savedMethod.rawBits() > 0x10000) {
+                                Oop sfHdr = memory_.fetchPointer(0, sf2.savedMethod);
+                                if (sfHdr.isSmallInteger()) {
+                                    int nl = sfHdr.asSmallInteger() & 0x7FFF;
+                                    if (nl >= 1 && nl < 200) {
+                                        Oop sel = memory_.fetchPointer(nl, sf2.savedMethod);
+                                        if (sel.isObject() && !sel.isNil()) {
+                                            ObjectHeader* selH = sel.asObjectPtr();
+                                            if (selH->isBytesObject() && selH->byteSize() < 100)
+                                                frameSel = std::string((char*)selH->bytes(), selH->byteSize());
+                                            else if (selH->isPointersObject() && selH->slotCount() >= 2) {
+                                                Oop inner = selH->slotAt(1);
+                                                if (inner.isObject() && !inner.isNil()) {
+                                                    ObjectHeader* iH = inner.asObjectPtr();
+                                                    if (iH->isBytesObject() && iH->byteSize() < 100)
+                                                        frameSel = std::string((char*)iH->bytes(), iH->byteSize());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            // Get receiver class from saved frame
+                            if (sf2.savedReceiver.isObject() && sf2.savedReceiver.rawBits() > 0x10000) {
+                                Oop frc = memory_.classOf(sf2.savedReceiver);
+                                if (frc.isObject()) {
+                                    Oop frcn = memory_.fetchPointer(6, frc);
+                                    if (frcn.isObject() && !frcn.isNil()) {
+                                        ObjectHeader* frcnH = frcn.asObjectPtr();
+                                        if (frcnH->isBytesObject() && frcnH->byteSize() < 100)
+                                            frameRcvrCls = std::string((char*)frcnH->bytes(), frcnH->byteSize());
+                                    }
+                                }
+                            } else if (sf2.savedReceiver.isSmallInteger()) {
+                                frameRcvrCls = "SmallInteger";
+                            }
+                            fprintf(sf, "    [%zu] %s >> #%s\n", fi, frameRcvrCls.c_str(), frameSel.c_str());
+                        }
+                        fclose(sf);
+                    }
+                }
+            }
+        }
+    }
+
+    // DIAG: Detect #errorSubscriptBounds: and #signalFor:lowerBound:upperBound:in:
+    if (selector.isObject() && selector.rawBits() > 0x10000) {
+        ObjectHeader* esbH = selector.asObjectPtr();
+        if (esbH->isBytesObject() && esbH->byteSize() < 60) {
+            std::string esbName((char*)esbH->bytes(), esbH->byteSize());
+            if (esbName == "errorSubscriptBounds:" ||
+                esbName == "signalFor:lowerBound:upperBound:in:" ||
+                esbName == "subscriptOutOfBounds:" ||
+                (esbName.find("SubscriptBounds") != std::string::npos) ||
+                (esbName.find("subscriptBounds") != std::string::npos) ||
+                (esbName.find("OutOfBounds") != std::string::npos)) {
+                static int esbCount = 0;
+                if (esbCount++ < 50) {
+                    // receiver = the collection, arg = the index
+                    Oop collection = stackValue(1);  // receiver
+                    Oop badIndex = stackValue(0);     // argument
+                    std::string collClass = "?";
+                    size_t collSlots = 0;
+                    uint8_t collFmt = 0;
+                    if (collection.isObject() && collection.rawBits() > 0x10000) {
+                        ObjectHeader* ch = collection.asObjectPtr();
+                        collSlots = ch->slotCount();
+                        collFmt = static_cast<uint8_t>(ch->format());
+                        Oop cls = memory_.classOf(collection);
+                        if (cls.isObject()) {
+                            Oop cn = memory_.fetchPointer(6, cls);
+                            if (cn.isObject() && !cn.isNil()) {
+                                ObjectHeader* cnH = cn.asObjectPtr();
+                                if (cnH->isBytesObject() && cnH->byteSize() < 100)
+                                    collClass = std::string((char*)cnH->bytes(), cnH->byteSize());
+                            }
+                        }
+                    } else if (collection.isSmallInteger()) {
+                        collClass = "SmallInteger(" + std::to_string(collection.asSmallInteger()) + ")";
+                    } else if (collection.isNil()) {
+                        collClass = "nil";
+                    }
+                    // Get current method selector from saved frames
+                    std::string callerMethod = "?";
+                    if (frameDepth_ > 0) {
+                        const auto& sf = savedFrames_[frameDepth_ - 1];
+                        if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                            Oop mh = memory_.fetchPointer(0, sf.savedMethod);
+                            if (mh.isSmallInteger()) {
+                                int nL = mh.asSmallInteger() & 0x7FFF;
+                                if (nL >= 1 && nL < 200) {
+                                    Oop sel = memory_.fetchPointer(nL, sf.savedMethod);
+                                    if (sel.isObject() && !sel.isNil()) {
+                                        ObjectHeader* sH = sel.asObjectPtr();
+                                        if (sH->isBytesObject() && sH->byteSize() < 100) {
+                                            callerMethod = std::string((char*)sH->bytes(), sH->byteSize());
+                                        } else if (sH->isPointersObject() && sH->slotCount() >= 2) {
+                                            Oop inner = sH->slotAt(1);
+                                            if (inner.isObject() && !inner.isNil()) {
+                                                ObjectHeader* iH = inner.asObjectPtr();
+                                                if (iH->isBytesObject() && iH->byteSize() < 100)
+                                                    callerMethod = std::string((char*)iH->bytes(), iH->byteSize());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    FILE* esbf = fopen("/tmp/step_diag.txt", "a");
+                    if (esbf) {
+                        fprintf(esbf, "[ESB #%d step=%llu] %s(slots=%zu,fmt=%d) at: %s in #%s fd=%zu\n",
+                                esbCount, (unsigned long long)g_stepNum,
+                                collClass.c_str(), collSlots, collFmt,
+                                badIndex.isSmallInteger() ?
+                                    std::to_string(badIndex.asSmallInteger()).c_str() : "non-int",
+                                callerMethod.c_str(), frameDepth_);
+                        // Show call stack from savedFrames_
+                        for (size_t fi = 0; fi < std::min(frameDepth_, (size_t)10); fi++) {
+                            size_t idx = frameDepth_ - 1 - fi;
+                            const auto& sf2 = savedFrames_[idx];
+                            std::string frameSel = "?";
+                            if (sf2.savedMethod.isObject() && sf2.savedMethod.rawBits() > 0x10000) {
+                                Oop sfHdr = memory_.fetchPointer(0, sf2.savedMethod);
+                                if (sfHdr.isSmallInteger()) {
+                                    int nl = sfHdr.asSmallInteger() & 0x7FFF;
+                                    if (nl >= 1 && nl < 200) {
+                                        Oop sel = memory_.fetchPointer(nl, sf2.savedMethod);
+                                        if (sel.isObject() && !sel.isNil()) {
+                                            ObjectHeader* selH = sel.asObjectPtr();
+                                            if (selH->isBytesObject() && selH->byteSize() < 100)
+                                                frameSel = std::string((char*)selH->bytes(), selH->byteSize());
+                                            else if (selH->isPointersObject() && selH->slotCount() >= 2) {
+                                                Oop inner = selH->slotAt(1);
+                                                if (inner.isObject() && !inner.isNil()) {
+                                                    ObjectHeader* iH = inner.asObjectPtr();
+                                                    if (iH->isBytesObject() && iH->byteSize() < 100)
+                                                        frameSel = std::string((char*)iH->bytes(), iH->byteSize());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            fprintf(esbf, "  [%zu] #%s\n", fi, frameSel.c_str());
+                        }
+                        fclose(esbf);
+                    }
+                }
+            }
+        }
+    }
+
     // Detect error: sends and log error message + call stack
     if (selector.isObject() && selector.rawBits() > 0x10000) {
         ObjectHeader* sh = selector.asObjectPtr();

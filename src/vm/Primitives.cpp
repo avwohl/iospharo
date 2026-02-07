@@ -1330,6 +1330,16 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
     Oop index = stackValue(0);
     Oop rcvr = stackValue(1);
 
+    // DIAG: Track primitiveAt calls on CompiledMethod receivers
+    bool diagCM = false;
+    static int diagCMCount = 0;
+    if (rcvr.isObject() && rcvr.rawBits() > 0x10000 && index.isSmallInteger()) {
+        ObjectHeader* dh = rcvr.asObjectPtr();
+        if (dh->isCompiledMethod() && diagCMCount < 20) {
+            diagCM = true;
+        }
+    }
+
     // Special handling for nil receiver - return nil instead of failing
     // This prevents error cascades during FFI startup when struct refs are nil
     if (rcvr.isNil() || rcvr.rawBits() == memory_.nil().rawBits()) {
@@ -1640,15 +1650,14 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
         return PrimitiveResult::Failure;  // 1-based indexing
     }
 
-    // Validate receiver pointer is within heap bounds (perm + old space)
+    // Validate receiver pointer is within heap bounds (old, new, or perm space)
     {
         uint8_t* ptr = reinterpret_cast<uint8_t*>(rcvr.rawBits());
-        if (ptr < memory_.permSpaceStart() || ptr >= memory_.oldSpaceEnd()) {
+        if (!memory_.isOldObject(ptr) && !memory_.isYoungObject(ptr) && !memory_.isPermObject(ptr)) {
             static int invalidCount = 0;
             if (++invalidCount <= 5) {
-                fprintf(stderr, "[AT-INVALID #%d] rcvr=0x%llx NOT in heap (%p..%p)\n",
-                        invalidCount, (unsigned long long)rcvr.rawBits(),
-                        memory_.permSpaceStart(), memory_.oldSpaceEnd());
+                fprintf(stderr, "[AT-INVALID #%d] rcvr=0x%llx NOT in any heap space\n",
+                        invalidCount, (unsigned long long)rcvr.rawBits());
             }
             return PrimitiveResult::Failure;
         }
@@ -1660,13 +1669,8 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
     // Sanity check header before accessing object data
     ObjectFormat fmt = header->format();
     size_t slots = header->slotCount();
-    // Check that the object's data doesn't extend past the heap
-    {
-        uint8_t* objEnd = reinterpret_cast<uint8_t*>(header) + sizeof(ObjectHeader) + slots * sizeof(Oop);
-        if (objEnd > memory_.oldSpaceEnd() && objEnd > reinterpret_cast<uint8_t*>(memory_.permSpaceStart()) + 8*1024*1024) {
-            return PrimitiveResult::Failure;
-        }
-    }
+    // Note: objEnd check removed - was using incorrect memory layout assumptions
+    // The receiver pointer has already been validated to be in a valid heap space above
     if (fmt == ObjectFormat::Indexable64) {
         // 64-bit word array (DoubleWordArray): each slot is one 64-bit element
         size_t numElements = header->slotCount();
@@ -1743,6 +1747,27 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
 
     if (header->isBytesObject()) {
         if (arrayIndex >= header->byteSize()) {
+            // DIAG: Log byte object OOB access
+            static int byteOobCount = 0;
+            if (byteOobCount++ < 30) {
+                std::string rcvrCls = "?";
+                Oop cls = memory_.classOf(rcvr);
+                if (cls.isObject()) {
+                    Oop cn = memory_.fetchPointer(6, cls);
+                    if (cn.isObject() && cn.rawBits() > 0x10000) {
+                        ObjectHeader* cnH = cn.asObjectPtr();
+                        if (cnH->isBytesObject() && cnH->byteSize() < 100)
+                            rcvrCls = std::string((char*)cnH->bytes(), cnH->byteSize());
+                    }
+                }
+                FILE* oobf = fopen("/tmp/step_diag.txt", "a");
+                if (oobf) {
+                    fprintf(oobf, "[AT-BYTE-OOB #%d step=%llu] %s at: %lld (byteSize=%zu fmt=%d)\n",
+                            byteOobCount, (unsigned long long)g_stepNum,
+                            rcvrCls.c_str(), idx, header->byteSize(), fmtVal);
+                    fclose(oobf);
+                }
+            }
             return PrimitiveResult::Failure;
         }
         uint8_t byte = header->byteAt(arrayIndex);
@@ -1771,6 +1796,27 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
         }
         size_t indexableSize = slotCount - fixedFields;
         if (arrayIndex >= indexableSize) {
+            // DIAG: Log pointer object OOB access
+            static int ptrOobCount = 0;
+            if (ptrOobCount++ < 30) {
+                std::string rcvrCls = "?";
+                Oop cls = memory_.classOf(rcvr);
+                if (cls.isObject()) {
+                    Oop cn = memory_.fetchPointer(6, cls);
+                    if (cn.isObject() && cn.rawBits() > 0x10000) {
+                        ObjectHeader* cnH = cn.asObjectPtr();
+                        if (cnH->isBytesObject() && cnH->byteSize() < 100)
+                            rcvrCls = std::string((char*)cnH->bytes(), cnH->byteSize());
+                    }
+                }
+                FILE* oobf = fopen("/tmp/step_diag.txt", "a");
+                if (oobf) {
+                    fprintf(oobf, "[AT-OOB #%d step=%llu] %s at: %lld (indexableSize=%zu slots=%zu fixed=%zu fmt=%d)\n",
+                            ptrOobCount, (unsigned long long)g_stepNum,
+                            rcvrCls.c_str(), idx, indexableSize, slotCount, fixedFields, fmtVal);
+                    fclose(oobf);
+                }
+            }
             return PrimitiveResult::Failure;
         }
         size_t actualSlot = fixedFields + arrayIndex;
@@ -1826,10 +1872,31 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
         // Smalltalk calculates initialPC = (numLiterals+1)*wordSize+1 to find bytecodes
         // objectAt: (primitive 68) accesses the literal frame instead
 
+        if (diagCM) {
+            diagCMCount++;
+            FILE* cf = fopen("/tmp/step_diag.txt", "a");
+            if (cf) {
+                fprintf(cf, "[CM-AT #%d step=%llu] REACHED CM path: idx=%lld slots=%zu fmt=%d byteSize=%zu\n",
+                        diagCMCount, (unsigned long long)g_stepNum,
+                        idx, header->slotCount(), fmtVal, header->byteSize());
+                fclose(cf);
+            }
+        }
         size_t totalBytes = header->byteSize();
 
         // arrayIndex is (idx - 1), so byteIndex is 0-based
         if (arrayIndex >= totalBytes) {
+            // DIAG: Log CompiledMethod OOB
+            static int cmOobCount = 0;
+            if (cmOobCount++ < 20) {
+                FILE* cf = fopen("/tmp/step_diag.txt", "a");
+                if (cf) {
+                    fprintf(cf, "[CM-OOB #%d step=%llu] at: %lld arrayIndex=%zu totalBytes=%zu slots=%zu fmt=%d\n",
+                            cmOobCount, (unsigned long long)g_stepNum,
+                            idx, arrayIndex, totalBytes, header->slotCount(), fmtVal);
+                    fclose(cf);
+                }
+            }
             return PrimitiveResult::Failure;
         }
 
@@ -1838,6 +1905,32 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
         return PrimitiveResult::Success;
     }
 
+    // DIAG: Log fallthrough failures (format not handled by any path)
+    {
+        static int fallCount = 0;
+        if (fallCount++ < 20) {
+            std::string rcvrCls = "?";
+            Oop cls = memory_.classOf(rcvr);
+            if (cls.isObject()) {
+                Oop cn = memory_.fetchPointer(6, cls);
+                if (cn.isObject() && cn.rawBits() > 0x10000) {
+                    ObjectHeader* cnH = cn.asObjectPtr();
+                    if (cnH->isBytesObject() && cnH->byteSize() < 100)
+                        rcvrCls = std::string((char*)cnH->bytes(), cnH->byteSize());
+                }
+            }
+            FILE* ff = fopen("/tmp/step_diag.txt", "a");
+            if (ff) {
+                fprintf(ff, "[AT-FALL #%d step=%llu] %s at: %lld (fmt=%d slots=%zu isCM=%d isBytes=%d isPtr=%d)\n",
+                        fallCount, (unsigned long long)g_stepNum,
+                        rcvrCls.c_str(), idx, fmtVal, header->slotCount(),
+                        header->isCompiledMethod() ? 1 : 0,
+                        header->isBytesObject() ? 1 : 0,
+                        header->isPointersObject() ? 1 : 0);
+                fclose(ff);
+            }
+        }
+    }
     return PrimitiveResult::Failure;
 }
 
