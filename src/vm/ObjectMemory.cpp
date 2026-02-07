@@ -416,7 +416,7 @@ Oop ObjectMemory::shallowCopy(Oop original) {
     // Generate new identity hash
     copy->setIdentityHash(generateHash());
 
-    // Clear GC flags
+    // Clear GC flags - clones start clean
     copy->setMarked(false);
     copy->setRemembered(false);
 

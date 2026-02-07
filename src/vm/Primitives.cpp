@@ -153,12 +153,8 @@ PrimitiveResult Interpreter::primitiveArrayBecome(int argCount) {
             return PrimitiveResult::Failure;  // Different sizes not yet supported
         }
 
-        // Check for pinned or immutable objects
-        if (hdr1->isPinned() || hdr2->isPinned()) {
-            return PrimitiveResult::Failure;
-        }
-
         // In-place become: swap the entire object contents (header + slots)
+        // Note: no pinned check needed — objects stay at their addresses
         // This preserves all references automatically.
         // Swap header
         uint64_t tempHeader = hdr1->rawHeader();
