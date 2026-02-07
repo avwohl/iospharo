@@ -118,53 +118,46 @@ Fix the compile error, then:
 
 ---
 
-## Test Results — Run #55 (2026-02-07)
+## Test Results — Run #72 (2026-02-07)
 
-**73 test classes, 4291 tests. Pass: 4244, Fail: 22, Error: 19, Skip: 4, Timeout: 2.**
+**73 test classes, 4291 tests. Pass: 4270, Fail: 15, Error: 1, Skip: 4, Timeout: 1.**
 
-**98.9% pass rate** (4244/4291). Clean exit (no crashes). 11 classes skipped (process/timer-dependent).
+**99.5% pass rate** (4270/4291). Clean exit (no crashes). 11 classes skipped (process/timer-dependent).
 
-Note: Pharo image build changed between sessions, introducing new test failures
-in ContextTest (+9), ClassDescriptionTest (+10), ObjectTest (+4), and others.
-The ExceptionTest fix (commit 8887b84) recovered all 9 timeout errors.
+### Recent fixes
 
-### Key fixes this session
+**FullBlockClosure outerContext fix (commit 33caaca)**: Root cause of
+RecursionStopperTest failures. When creating a FullBlockClosure, outerContext
+was set to stale activeContext_ instead of the correct enclosing context.
+BlockClosure >> homeMethod follows outerContext to find the home method, so
+stale outerContext caused wrong keys in RecursionStopper. Fix: materialize
+frame stack when ignoreOuterContext=false to get correct enclosing context.
+Fixed 2 RecursionStopperTest failures.
 
-**ExceptionTest priority fix (commit 8887b84)**: Root cause identified for all 9
-ExceptionTest timeout errors. `ExceptionTest >> runWithNoHandlers:` forks at the
-caller's priority and calls `waitTimeoutSeconds: 2` internally. When tests ran at
-priority 80 (= timingPriority), `DelaySemaphoreScheduler >> schedule:` signaled the
-delay scheduler at the same priority, which queued it instead of preempting. The
-caller continued and found `beingWaitedOn` still false (scheduler hadn't run
-`scheduleAtTimingPriority` yet), causing immediate false timeout. Fix: run
-ExceptionTest at priority 79 (just below timingPriority) so the delay scheduler
-can preempt and properly register timeouts. All 9 errors resolved → 0 errors.
+**Remove error: intercept (commit f484bcf)**: Removed workaround in sendSelector
+that silently swallowed errors matching "Improper store", "only integers", and
+"no free space". This caused `errorImproperStore` to return normally instead of
+raising an error. Fixed WriteStreamTest and LimitedWriteStreamTest
+testLessThanLessThan (2 failures).
 
-### Remaining failures (22 fails + 19 errors + 2 timeouts)
+**cannotReturn fix (commit 88dbe8e)**: Send cannotReturn: instead of silent
+fallback in returnFromBlock.
 
-**New in this Pharo image build** (not VM regressions):
+**primitiveChangeClass + immutability (commit 467ed76)**: Fix validation and
+add immutability enforcement.
 
-| Class | Fails | Errors | Likely Cause |
-|---|---|---|---|
-| ContextTest | 7F+1E+1T | | Context inspection expectations changed |
-| ClassDescriptionTest | | 10E | Nil subscriber in system announcer |
-| ObjectTest | 4F | | Object mutation primitive expectations |
-| BehaviorTest | 2F+2E | | Package/extension method handling |
-| WeakMessageSendTest | 1F+5E | | Weak ref + argument handling |
-| PragmaTest | | 1E | Method recompilation announcements |
-
-**Persistent issues:**
+### Remaining failures (15F + 1E + 1T)
 
 | Class | Count | Issue |
 |---|---|---|
+| ContextTest | 8F | testActiveHome, testClosureRestart, testHome, testNoStepIntoQuickMethod, testStepIntoQuickMethod, testSteppingAQuickMethod, testTempNamed, testTempNamedPut |
 | ExceptionTest | 1F | `testSimpleEnsureTestWithUparrow` — ensure + non-local return |
-| DeprecationTest | 1F | `testTransformingDeprecation` — AST rewriting |
-| MessageNotUnderstoodTest | 1F | `testMessageText` — DNU receiver shown as nil |
-| RecursionStopperTest | 1F | `testMixedMethod` — recursion counter |
-| LocalRecursionStopperTest | 1F | `testMixedMethod` — recursion counter |
+| BehaviorTest | 2F | `testLocalMethods`, `testLocalSelectors` — extension method detection |
+| DeprecationTest | 1F | `testTransformingDeprecation` — AST rewriting (known limitation) |
+| WeakMessageSendTest | 2F | `testOneArgumentWithGC`, `testReceiverWithGC` — GC-dependent |
 | LinkedListTest | 1F | `test14removeIfAbsent` |
-| WriteStreamTest | 1F | `testLessThanLessThan` |
-| LimitedWriteStreamTest | 1F | `testLessThanLessThan` |
+| ContextTest | 1E | `testBlockCannotReturn` |
+| ContextTest | 1T | `testCannotReturn` |
 
 ### Per-class results (Run #55, forkAt: 80 baseline)
 
