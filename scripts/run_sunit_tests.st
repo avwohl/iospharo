@@ -135,6 +135,57 @@ runDiagnostic: stream
    factory cleanUp] on: Error do: [:e |
    stream nextPutAll: 'ClassFactory DIAG ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr].
   stream flush.
+  "Test Random (PCG generator)"
+  [| r state val result |
+   stream nextPutAll: 'Random DIAG:'; cr.
+   r := Random new.
+   state := r instVarAt: 1.
+   stream nextPutAll: '  state class: '; nextPutAll: state class name; cr.
+   stream nextPutAll: '  state size: '; nextPutAll: state size printString; cr.
+   val := state at: 1.
+   stream nextPutAll: '  state at:1 class: '; nextPutAll: val class name; cr.
+   stream nextPutAll: '  state at:1 value: '; nextPutAll: val printString; cr.
+   "Step through PCG computation"
+   [| mult sum masked |
+    mult := val * 6364136223846793005.
+    stream nextPutAll: '  val*const class: '; nextPutAll: mult class name; cr.
+    stream nextPutAll: '  val*const value: '; nextPutAll: mult printString; cr.
+    sum := mult + 1442695040888963407.
+    stream nextPutAll: '  +incr class: '; nextPutAll: sum class name; cr.
+    masked := sum bitAnd: 16rFFFFFFFFFFFFFFFF.
+    stream nextPutAll: '  bitAnd: class: '; nextPutAll: masked class name; cr.
+    stream nextPutAll: '  bitAnd: value: '; nextPutAll: masked printString; cr.
+    state at: 1 put: masked.
+    stream nextPutAll: '  stored back OK'; cr.
+    "Now test the output part"
+    | count shifted xored shifted2 anded rotA rotB rotResult |
+    count := val >> 59.
+    stream nextPutAll: '  count: '; nextPutAll: count printString; cr.
+    shifted := val >> 18.
+    xored := shifted bitXor: val.
+    shifted2 := xored >> 27.
+    anded := shifted2 bitAnd: 16rFFFFFFFF.
+    stream nextPutAll: '  anded: '; nextPutAll: anded printString; cr.
+    rotA := anded >> count.
+    rotB := anded << (count negated bitAnd: 31).
+    rotResult := (rotA bitOr: rotB) bitAnd: 16r7FFFFFFF.
+    stream nextPutAll: '  rotResult: '; nextPutAll: rotResult printString; cr.
+    "Now test Random>>next"
+    result := r next.
+    stream nextPutAll: '  r next: '; nextPutAll: result printString; cr.
+    stream nextPutAll: '  r next class: '; nextPutAll: result class name; cr.
+    stream nextPutAll: 'Random DIAG OK'; cr
+   ] on: Error do: [:e2 |
+    stream nextPutAll: '  PCG step ERROR: '; nextPutAll: e2 class name; nextPutAll: ' - '; nextPutAll: e2 messageText; cr.
+    e2 signalerContext ifNotNil: [:ctx |
+      | c count2 |
+      c := ctx. count2 := 0.
+      [c notNil and: [count2 < 15]] whileTrue: [
+        stream nextPutAll: '    '; nextPutAll: c printString; cr.
+        c := c sender. count2 := count2 + 1]]]]
+  on: Error do: [:e |
+   stream nextPutAll: 'Random DIAG ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr].
+  stream flush.
   stream nextPutAll: '=== END DIAGNOSTICS ==='; cr; cr.
   stream flush! !
 

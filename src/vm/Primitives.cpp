@@ -2143,39 +2143,6 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
         return PrimitiveResult::Success;
     }
 
-    // 64-bit word objects (format 9 = DoubleWordArray)
-    if (fmtVal == 9) {
-        size_t numElements = header->slotCount();
-        if (arrayIndex >= numElements) {
-            return PrimitiveResult::Failure;
-        }
-        uint64_t word;
-        if (value.isSmallInteger()) {
-            int64_t wordValue = value.asSmallInteger();
-            if (wordValue < 0) {
-                return PrimitiveResult::Failure;
-            }
-            word = static_cast<uint64_t>(wordValue);
-        } else {
-            // Accept LargePositiveInteger values
-            bool isNeg = false;
-            if (!isLargeInteger(memory_, value, isNeg) || isNeg) {
-                return PrimitiveResult::Failure;
-            }
-            std::vector<uint8_t> mag = extractMagnitude(memory_, value);
-            if (mag.size() > 8) {
-                return PrimitiveResult::Failure;  // Doesn't fit in 64 bits
-            }
-            word = 0;
-            for (size_t i = 0; i < mag.size(); i++) {
-                word |= static_cast<uint64_t>(mag[i]) << (i * 8);
-            }
-        }
-        std::memcpy(header->bytes() + arrayIndex * 8, &word, 8);
-        primitiveSuccess(value);
-        return PrimitiveResult::Success;
-    }
-
     return PrimitiveResult::Failure;
 }
 

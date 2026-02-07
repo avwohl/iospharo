@@ -11408,7 +11408,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     uint32_t messageClassIdx = memory_.indexOfClass(messageClass);
     if (messageClassIdx == 0)
         messageClassIdx = memory_.registerClass(messageClass);
-    Oop message = memory_.allocateSlots(messageClassIdx, 2, ObjectFormat::FixedSize);
+    Oop message = memory_.allocateSlots(messageClassIdx, 3, ObjectFormat::FixedSize);
 
     if (message.rawBits() == memory_.nil().rawBits()) {
         std::cerr << "[DNU-FATAL] Failed to allocate Message object\n";
@@ -11441,6 +11441,10 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     memory_.storePointer(1, message, args);
 
     Oop originalReceiver = pop();
+
+    // Store lookupClass (slot 2): the class of the receiver
+    Oop lookupClass = memory_.classOf(originalReceiver);
+    memory_.storePointer(2, message, lookupClass);
 
     // Send doesNotUnderstand: to the original receiver
     push(originalReceiver);
