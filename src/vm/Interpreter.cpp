@@ -13288,6 +13288,11 @@ bool Interpreter::tryReschedule() {
             fflush(schedLog);
         }
 
+        // Remove process from ready queue BEFORE making it active.
+        // Without this, the process stays in the queue AND runs as activeProcess,
+        // causing queue corruption after hundreds of fork/terminate cycles.
+        removeFirstLinkOfList(queue);
+
         // Update the active process in scheduler
         memory_.storePointer(1, scheduler, process);
 
@@ -13378,13 +13383,9 @@ void Interpreter::checkForPreemption() {
             fflush(preemptLog);
         }
 
-        // Remove process from ready queue
-        Oop nextLink = memory_.fetchPointer(ProcessNextLinkIndex, firstProcess);
-        memory_.storePointer(0, queue, nextLink);  // firstLink = nextLink
-        if (nextLink.isNil() || nextLink.rawBits() == nilObj.rawBits()) {
-            memory_.storePointer(1, queue, nilObj);  // lastLink = nil
-        }
-        memory_.storePointer(ProcessNextLinkIndex, firstProcess, nilObj);  // Clear nextLink
+        // Remove process from ready queue using the proper helper
+        // (removeFirstLinkOfList clears both nextLink and myList)
+        removeFirstLinkOfList(queue);
 
         // Put current process back on ready queue
         putToSleep(activeProcess);

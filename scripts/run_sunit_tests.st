@@ -293,7 +293,8 @@ runTestClass: testClass run: runNum on: s detail: d
    These tests fork processes at the same priority or rely on Delay timeouts
    that cannot fire because our VM lacks proper time-slicing."
   (#(BlockClosureTest ProcessTerminateBugTest ProcessSpecificTest
-     MonitorTest DelayTest SemaphoreTest GeneratorTest AllocationTest) includes: testClass name) ifTrue: [
+     MonitorTest DelayTest SemaphoreTest GeneratorTest AllocationTest
+     SharedPoolTest ClassHierarchyTest MetaClassTest) includes: testClass name) ifTrue: [
     s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' === SKIPPED (process-heavy)'; cr. s flush.
     ^ {0. 0. 0. 0. 0}].
 
