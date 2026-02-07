@@ -2074,6 +2074,37 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
     // Handle word-indexed objects (formats 9-15)
     uint8_t fmtVal = static_cast<uint8_t>(header->format());
 
+    // 64-bit word objects (format 9): DoubleWordArray
+    if (fmtVal == 9) {
+        size_t numElements = header->slotCount();
+        if (arrayIndex >= numElements) {
+            return PrimitiveResult::Failure;
+        }
+        uint64_t word;
+        if (value.isSmallInteger()) {
+            int64_t wordVal = value.asSmallInteger();
+            if (wordVal < 0) return PrimitiveResult::Failure;
+            word = static_cast<uint64_t>(wordVal);
+        } else if (value.isObject()) {
+            // Must be LargePositiveInteger
+            bool isNeg = false;
+            if (!isLargeInteger(memory_, value, isNeg) || isNeg) {
+                return PrimitiveResult::Failure;
+            }
+            std::vector<uint8_t> mag = extractMagnitude(memory_, value);
+            if (mag.size() > 8) return PrimitiveResult::Failure;
+            word = 0;
+            for (size_t i = 0; i < mag.size(); i++) {
+                word |= static_cast<uint64_t>(mag[i]) << (i * 8);
+            }
+        } else {
+            return PrimitiveResult::Failure;
+        }
+        memory_.storeWord64(arrayIndex, rcvr, word);
+        primitiveSuccess(value);
+        return PrimitiveResult::Success;
+    }
+
     // 32-bit word objects (format 10-11): WideString, WordArray
     if (fmtVal >= 10 && fmtVal <= 11) {
         if (!value.isSmallInteger()) {
