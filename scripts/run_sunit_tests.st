@@ -141,19 +141,21 @@ runDiagnostic: stream
 !SUnitRunner class methodsFor: 'running'!
 runAllTests
   "Run all tests and write results to /tmp/sunit_test_results.txt and /tmp/sunit_test_detail.txt"
-  | testClasses stream detail runNum totalP totalF totalE totalS totalT |
+  | testClasses stream detail runNum totalP totalF totalE totalS totalT seen addOnce |
   runNum := self nextRunNumber.
 
   testClasses := OrderedCollection new.
+  "Use a Set to track what we've already added - avoids duplicate iteration bug"
+  seen := IdentitySet new.
+  addOnce := [:cls | (seen includes: cls) ifFalse: [seen add: cls. testClasses add: cls]].
 
   "=== Original 15 (all passing) ==="
-  testClasses addAll: {
-    SortedCollectionTest. IdentitySetTest.
+  {SortedCollectionTest. IdentitySetTest.
     SmallIntegerTest. IntegerTest. FloatTest. FractionTest.
     PointTest. CharacterTest.
     DictionaryTest. SetTest. BagTest. IntervalTest.
     SymbolTest. OrderedCollectionTest. ArrayTest.
-    StringTest. HeapTest }.
+    StringTest. HeapTest} do: addOnce.
 
   "=== Tier 1: Core VM mechanics ==="
   #(BlockClosureTest ContextTest ExceptionTest BecomeTest
@@ -161,13 +163,13 @@ runAllTests
     UndefinedObjectTest SemaphoreTest RecursionStopperTest
     LocalRecursionStopperTest) do: [:name |
       (Smalltalk globals at: name ifAbsent: [nil])
-        ifNotNil: [:cls | testClasses add: cls]].
+        ifNotNil: [:cls | addOnce value: cls]].
 
   "=== Tier 2: Numbers and arithmetic ==="
   #(LargePositiveIntegerTest LargeNegativeIntegerTest IntegerDigitLogicTest
     NumberTest MagnitudeTest ScaledDecimalTest) do: [:name |
       (Smalltalk globals at: name ifAbsent: [nil])
-        ifNotNil: [:cls | testClasses add: cls]].
+        ifNotNil: [:cls | addOnce value: cls]].
 
   "=== Tier 3: Classes, methods, processes ==="
   #(BehaviorTest CompiledCodeTest CompiledBlockTest
@@ -179,7 +181,7 @@ runAllTests
     AllocationTest ObjectLayoutTest DependentsArrayTest
     SharedPoolTest) do: [:name |
       (Smalltalk globals at: name ifAbsent: [nil])
-        ifNotNil: [:cls | testClasses add: cls]].
+        ifNotNil: [:cls | addOnce value: cls]].
 
   "=== Tier 4: More collections ==="
   #(LinkedListTest OrderedDictionaryTest
@@ -188,17 +190,14 @@ runAllTests
     AssociationTest ReduceTest "CollectionRootTest is abstract"
     WideStringTest ByteSymbolTest) do: [:name |
       (Smalltalk globals at: name ifAbsent: [nil])
-        ifNotNil: [:cls | testClasses add: cls]].
+        ifNotNil: [:cls | addOnce value: cls]].
 
   "=== Tier 5: Streams, files, system ==="
   #(ReadStreamTest WriteStreamTest ReadWriteStreamTest
     GeneratorTest LimitedWriteStreamTest
     RandomTest NumberParserTest NumberParsingTest) do: [:name |
       (Smalltalk globals at: name ifAbsent: [nil])
-        ifNotNil: [:cls | testClasses add: cls]].
-
-  "Remove duplicates while preserving order"
-  testClasses := testClasses asOrderedCollection removeDuplicates.
+        ifNotNil: [:cls | addOnce value: cls]].
 
   "Open output files"
   stream := '/tmp/sunit_test_results.txt' asFileReference writeStream.
