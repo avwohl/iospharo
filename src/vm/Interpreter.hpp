@@ -563,7 +563,7 @@ private:
     void popStack();
     void createBlock();
     void createFullBlock();
-    void createFullBlockWithLiteral(int litIndex, int numCopied, bool receiverOnStack);
+    void createFullBlockWithLiteral(int litIndex, int numCopied, bool receiverOnStack, bool ignoreOuterContext);
     void createBlockWithArgs(int numArgs, int numCopied, int blockSize);
 
     // ===== MESSAGE SENDING =====

@@ -3955,8 +3955,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 int numCopied = flags & 0x3F;
                 bool receiverOnStack = (flags >> 7) & 1;
                 bool ignoreOuterContext = (flags >> 6) & 1;
-                (void)ignoreOuterContext;  // We always use activeContext_ for now
-                createFullBlockWithLiteral(fullLitIndex, numCopied, receiverOnStack);
+                createFullBlockWithLiteral(fullLitIndex, numCopied, receiverOnStack, ignoreOuterContext);
                 break;
             }
             case 0xFA: // 250: Push Closure
@@ -9614,7 +9613,7 @@ void Interpreter::createFullBlock() {
     createBlock();  // Simplified - treat same for now
 }
 
-void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool receiverOnStack) {
+void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool receiverOnStack, bool ignoreOuterContext) {
     // Sista V1 0xF9: Push FullBlockClosure
     // The closure's code is in a CompiledBlock literal at litIndex
     Oop compiledBlock = literal(litIndex);
@@ -9686,21 +9685,24 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
     // Note: activateBlock now updates activeContext_ when entering blocks,
     // so blocks created inside other blocks will capture the correct context chain
 
-    // Set fields
-    // For FullBlockClosure, the outerContext is used only for debugging/introspection
-    // (e.g., thisContext, stack traces). All captured variables are in the copied slots,
-    // NOT accessed via outerContext. So we do NOT need to materialize the frame stack here.
+    // Set outerContext field.
+    // BlockClosure >> homeMethod uses outerContext to trace back to the home method
+    // via the `home` chain. This is used by RecursionStopper and other code that
+    // identifies the enclosing method. If outerContext is stale (points to an old
+    // context from before the current inline frames were created), homeMethod will
+    // return the wrong method.
     //
-    // CRITICAL: Previously we called materializeFrameStack() here, which reset frameDepth_
-    // to 0 and destroyed all inline frame information. This broke non-local returns (NLR)
-    // from blocks because activateBlock() could no longer find the home frame in savedFrames_.
-    //
-    // Instead, we use activeContext_ as-is. It may be nil (if we've never materialized) or
-    // a context from a previous materialization. This is fine because:
-    // 1. FullBlockClosure execution doesn't access outerContext
-    // 2. NLR uses the CompiledBlock's home method + inline frame stack, not outerContext
-    // 3. If Smalltalk code needs thisContext, it will trigger materialization at that point
-    Oop outerContextForBlock = activeContext_;
+    // For blocks that need outerContext (ignoreOuterContext=false), we materialize
+    // the frame stack to create proper Context objects. We do NOT reset frameDepth_
+    // or update activeContext_ — the inline frames continue to work for execution.
+    // The materialized contexts are only referenced via the closure's outerContext
+    // for the home/homeMethod chain.
+    Oop outerContextForBlock;
+    if (!ignoreOuterContext && frameDepth_ > 0) {
+        outerContextForBlock = materializeFrameStack();
+    } else {
+        outerContextForBlock = activeContext_;
+    }
     memory_.storePointer(0, block, outerContextForBlock);  // outerContext
     memory_.storePointer(1, block, compiledBlock);   // compiledBlock (instead of startPC)
 
