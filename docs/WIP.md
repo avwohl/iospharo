@@ -269,7 +269,7 @@ ClassHierarchyTest, MetaClassTest, SharedPoolTest.
 | #43 | 2026-02-06 | 59 | 4119 | 26 | 39 | 4 | 4199 | 98.1% pass, GC corruption issue |
 | #44 | 2026-02-07 | 62 | 4236 | 22 | 29 | 4 | 4301 | **98.49%** Fix primitiveAt heap bounds |
 | #33 | 2026-02-07 | 73 | 4278 | 1 | 9 | 4 | 4292 | **99.67%** GC weak fix resolved ~40 failures |
-| #55 | 2026-02-07 | 73 | 4244 | 22 | 19 | 4 | 4291 | **98.9%** New image; ExceptionTest fix (+9), new regressions |
+| #57 | 2026-02-07 | 73 | 4246 | 21 | 19 | 4 | 4291 | **98.9%** ExceptionTest fix (+9), DNU lookupClass fix (+1) |
 
 ---
 
