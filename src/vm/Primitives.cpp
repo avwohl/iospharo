@@ -99,9 +99,11 @@ PrimitiveResult Interpreter::primitiveDeferDisplayUpdates(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveArrayBecome(int argCount) {
-    // Primitive 128: Two-way become - swaps ALL references bidirectionally
+    // Primitive 128: Two-way become - swaps object contents in place
     // receiver elementsExchange: anotherArray
-    // Per official VM: 1 argument, twoWay: true, copyHash: false
+    // Per official Spur VM: twoWay: true, copyHash: false
+    // The correct Spur approach is to swap object BODIES in place at the same
+    // addresses, so all existing references automatically see the other object.
     if (argCount != 1) {
         return PrimitiveResult::Failure;
     }
@@ -130,39 +132,47 @@ PrimitiveResult Interpreter::primitiveArrayBecome(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Perform two-way become: swap all references bidirectionally
-    // In a single pass, references to fromObj[i] become toObj[i] AND vice versa
     for (size_t i = 0; i < fromSize; i++) {
-        Oop fromObj = memory_.fetchPointer(i, fromArrayOop);
-        Oop toObj = memory_.fetchPointer(i, toArrayOop);
+        Oop obj1 = memory_.fetchPointer(i, fromArrayOop);
+        Oop obj2 = memory_.fetchPointer(i, toArrayOop);
 
-        // Skip if either is an immediate
-        if (!fromObj.isObject() || !toObj.isObject()) {
-            continue;
+        if (!obj1.isObject() || !obj2.isObject()) {
+            return PrimitiveResult::Failure;  // Can't become immediates
         }
-        if (fromObj.rawBits() == toObj.rawBits()) {
+        if (obj1.rawBits() == obj2.rawBits()) {
             continue;  // Same object, nothing to swap
         }
 
-        // Scan all objects and swap references
-        memory_.allObjectsDo([&](Oop obj) {
-            if (!obj.isObject()) return;
-            ObjectHeader* header = obj.asObjectPtr();
-            ObjectFormat fmt = header->format();
+        ObjectHeader* hdr1 = obj1.asObjectPtr();
+        ObjectHeader* hdr2 = obj2.asObjectPtr();
 
-            // Skip non-pointer objects
-            if (!header->isPointersObject() && !header->isCompiledMethod()) return;
+        // Both objects must be same size for in-place swap
+        size_t size1 = hdr1->slotCount();
+        size_t size2 = hdr2->slotCount();
+        if (size1 != size2) {
+            return PrimitiveResult::Failure;  // Different sizes not yet supported
+        }
 
-            size_t slots = header->slotCount();
-            for (size_t s = 0; s < slots; s++) {
-                Oop slot = header->slotAt(s);
-                if (slot.rawBits() == fromObj.rawBits()) {
-                    header->slotAtPut(s, toObj);
-                } else if (slot.rawBits() == toObj.rawBits()) {
-                    header->slotAtPut(s, fromObj);
-                }
-            }
-        });
+        // Check for pinned or immutable objects
+        if (hdr1->isPinned() || hdr2->isPinned()) {
+            return PrimitiveResult::Failure;
+        }
+
+        // In-place become: swap the entire object contents (header + slots)
+        // This preserves all references automatically.
+        // Swap header
+        uint64_t tempHeader = hdr1->rawHeader();
+        hdr1->setRawHeader(hdr2->rawHeader());
+        hdr2->setRawHeader(tempHeader);
+
+        // Swap all slot data
+        Oop* slots1 = hdr1->slots();
+        Oop* slots2 = hdr2->slots();
+        for (size_t s = 0; s < size1; s++) {
+            Oop temp = slots1[s];
+            slots1[s] = slots2[s];
+            slots2[s] = temp;
+        }
     }
 
     // Flush method cache (critical after become that may affect classes)
@@ -12595,12 +12605,11 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWayCopyHash(int argCount) {
             continue;
         }
 
-        // Copy hash if requested
+        // Copy identity hash from source to target if requested
         if (copyHash) {
-            uint32_t hash = memory_.identityHashOf(fromObj);
-            // The hash is stored in the object header; we'd need a setIdentityHash method
-            // For now, just ensure the target has a hash
-            memory_.ensureIdentityHash(toObj);
+            memory_.ensureIdentityHash(fromObj);
+            uint32_t hash = fromObj.asObjectPtr()->identityHash();
+            toObj.asObjectPtr()->setIdentityHash(hash);
         }
 
         // Perform one-way become: all references to fromObj become toObj
