@@ -73,6 +73,9 @@ LoadResult ImageLoader::load(const std::string& path, ObjectMemory& memory) {
         return result;
     }
 
+    // Step 6: Cache class indices that need special GC handling
+    memory.cacheGCClassIndices();
+
     result.success = true;
     return result;
 }

@@ -279,6 +279,10 @@ public:
     /// Set up special object cache (call after loading image)
     void cacheSpecialObjects();
 
+    /// Cache class indices that need special handling during GC
+    /// (call after class table is fully built)
+    void cacheGCClassIndices();
+
     // ===== SYMBOL AND GLOBAL LOOKUP =====
 
     /// Compare a Symbol object's content to a C string.
@@ -556,6 +560,10 @@ private:
     std::vector<ObjectHeader*> markStack_;     // BFS worklist
     std::vector<ObjectHeader*> weakList_;      // Deferred weak objects
     std::vector<ObjectHeader*> ephemeronList_; // Deferred ephemerons
+
+    // Context class index (cached for GC - Context objects need special
+    // handling to avoid tracing garbage in unused stack slots)
+    uint32_t contextClassIndex_ = 0;
 
     // Debug: track parent object during scanning (for BAD pointer diagnosis)
     ObjectHeader* currentScanParent_ = nullptr;

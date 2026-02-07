@@ -16861,6 +16861,9 @@ void Interpreter::afterGC() {
             frame.savedBytecodeEnd = methodBytes + frame.savedBytecodeEndOffset;
         }
     }
+
+    // GC may move method and class objects, invalidating cached lookups
+    flushMethodCache();
 }
 
 // Explicit instantiation of forEachRoot is not needed since the template is in the header.
