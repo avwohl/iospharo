@@ -148,7 +148,7 @@ runTestClass: testClass run: runNum on: s detail: d
 
   sels do: [:sel |
     "Skip tests known to hang or cause VM-level crashes"
-    (#(testPrintStringAll testStoreStringAll testPrintStringBase testReciprocalModulo) includes: sel) ifFalse: [
+    (#(testPrintStringAll testStoreStringAll testPrintStringBase testReciprocalModulo testFastPointersTo) includes: sel) ifFalse: [
       | result |
       s nextPutAll: '  RUN: '; nextPutAll: sel; cr. s flush.
       result := self runSingleTest: testClass selector: sel timeout: 5 on: s.

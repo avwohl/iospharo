@@ -8391,8 +8391,13 @@ PrimitiveResult Interpreter::primitiveAllObjects(int argCount) {
     memory_.allObjectsDo([&](Oop obj) {
         if (obj.isObject()) {
             ObjectHeader* hdr = obj.asObjectPtr();
-            if (hdr->classIndex() != 0) {
-                objects.push_back(obj);
+            uint32_t cls = hdr->classIndex();
+            if (cls != 0) {
+                // Also verify the class table has a valid entry
+                Oop classOop = memory_.classAtIndex(cls);
+                if (classOop.isObject() && !classOop.isNil()) {
+                    objects.push_back(obj);
+                }
             }
         }
     });
@@ -8949,22 +8954,24 @@ PrimitiveResult Interpreter::primitiveShortAtPut(int argCount) {
 
 // Primitive 138: Return the first object in memory
 PrimitiveResult Interpreter::primitiveSomeObject(int argCount) {
-    // Find the first object in old space
+    // Find the first visible object in old space
     uint8_t* ptr = memory_.oldSpaceStart();
-    uint8_t* end = memory_.oldSpaceStart() +
-                   (memory_.statistics().bytesAllocated > 0 ?
-                    memory_.statistics().bytesAllocated :
-                    memory_.freeOldSpaceBytes());
+    uint8_t* end = memory_.oldSpaceFree();  // Scan only the used portion
 
     while (ptr < end) {
         ObjectHeader* header = reinterpret_cast<ObjectHeader*>(ptr);
 
-        // Skip free chunks (class index 0)
-        if (header->classIndex() != 0) {
-            Oop obj = memory_.oopFromPointer(header);
-            pop();  // Pop receiver
-            push(obj);
-            return PrimitiveResult::Success;
+        // Skip hidden objects (classIndex 0 = free chunks, class table pages)
+        // Also skip objects whose class isn't in the class table
+        uint32_t cls = header->classIndex();
+        if (cls != 0) {
+            Oop classOop = memory_.classAtIndex(cls);
+            if (classOop.isObject() && !classOop.isNil()) {
+                Oop obj = memory_.oopFromPointer(header);
+                pop();  // Pop receiver
+                push(obj);
+                return PrimitiveResult::Success;
+            }
         }
 
         // Move to next object
@@ -8988,20 +8995,21 @@ PrimitiveResult Interpreter::primitiveNextObject(int argCount) {
     size_t currentSize = current->totalSize();
 
     uint8_t* ptr = reinterpret_cast<uint8_t*>(current) + currentSize;
-    uint8_t* end = memory_.oldSpaceStart() +
-                   (memory_.statistics().bytesAllocated > 0 ?
-                    memory_.statistics().bytesAllocated :
-                    memory_.freeOldSpaceBytes());
+    uint8_t* end = memory_.oldSpaceFree();  // Scan only the used portion
 
     while (ptr < end) {
         ObjectHeader* header = reinterpret_cast<ObjectHeader*>(ptr);
 
-        // Skip free chunks (class index 0)
-        if (header->classIndex() != 0) {
-            Oop obj = memory_.oopFromPointer(header);
-            pop();
-            push(obj);
-            return PrimitiveResult::Success;
+        // Skip hidden objects (classIndex 0) and objects with invalid class
+        uint32_t cls = header->classIndex();
+        if (cls != 0) {
+            Oop classOop = memory_.classAtIndex(cls);
+            if (classOop.isObject() && !classOop.isNil()) {
+                Oop obj = memory_.oopFromPointer(header);
+                pop();
+                push(obj);
+                return PrimitiveResult::Success;
+            }
         }
 
         size_t size = header->totalSize();
@@ -14273,9 +14281,12 @@ PrimitiveResult Interpreter::primitiveFindRoots(int argCount) {
         if (obj.isImmediate()) return;
         if (!obj.isObject()) return;
 
-        // Skip hidden objects (classIdx=0)
+        // Skip hidden objects (classIdx=0) and objects with invalid class
         ObjectHeader* hdr = obj.asObjectPtr();
-        if (hdr->classIndex() == 0) return;
+        uint32_t cls = hdr->classIndex();
+        if (cls == 0) return;
+        Oop classOop = memory_.classAtIndex(cls);
+        if (!classOop.isObject() || classOop.isNil()) return;
 
         // Check each slot
         size_t slotCount = memory_.slotCountOf(obj);
@@ -14626,8 +14637,12 @@ PrimitiveResult Interpreter::primitiveAllObjectsInMemory(int argCount) {
     memory_.allObjectsDo([&](Oop obj) {
         if (!obj.isImmediate() && obj.isObject()) {
             ObjectHeader* hdr = obj.asObjectPtr();
-            if (hdr->classIndex() != 0) {
-                allObjects.push_back(obj);
+            uint32_t cls = hdr->classIndex();
+            if (cls != 0) {
+                Oop classOop = memory_.classAtIndex(cls);
+                if (classOop.isObject() && !classOop.isNil()) {
+                    allObjects.push_back(obj);
+                }
             }
         }
     });

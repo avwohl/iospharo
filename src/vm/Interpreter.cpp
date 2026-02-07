@@ -9004,6 +9004,7 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
     if (traceActiveClass) {
         fprintf(stderr, "  -> NOT FOUND after %d levels\n", depth);
     }
+
     return Oop::nil();  // Not found
 }
 
@@ -11096,9 +11097,17 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
             }
         }
         if (isDnuSelector || selectors_.doesNotUnderstand.rawBits() == selector.rawBits()) {
-            std::cerr << "[DNU-CASCADE] doesNotUnderstand: itself not found on receiver\n";
+            std::cerr << "[DNU-CASCADE] doesNotUnderstand: itself not found on receiver — terminating active process\n";
             dnuDepth--;
-            stopVM("Recursive doesNotUnderstand: — class missing doesNotUnderstand:");
+            // Standard VM behavior: terminate the active process, not the whole VM.
+            // The process has an unrecoverable error (its receiver's class hierarchy
+            // doesn't include doesNotUnderstand:). Other processes should continue.
+            Oop nextProcess = wakeHighestPriority();
+            if (nextProcess.isNil() || !nextProcess.isObject()) {
+                stopVM("Recursive doesNotUnderstand: and no other runnable process");
+                return;
+            }
+            transferTo(nextProcess);
             return;
         }
     }
