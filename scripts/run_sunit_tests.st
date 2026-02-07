@@ -21,172 +21,116 @@ nextRunNumber
 
 !SUnitRunner class methodsFor: 'running'!
 runDiagnostic: stream
-  "Run diagnostics before tests"
-  stream nextPutAll: '=== DIAGNOSTICS ==='; cr.
-  "Test SortedCollection"
-  [| sc arr |
-   sc := SortedCollection new.
-   stream nextPutAll: 'SC new: '; nextPutAll: sc class name; cr.
-   stream nextPutAll: '  instVars: '; print: sc class allInstVarNames; cr.
-   "instVarAt: 1=array, 2=firstIndex, 3=lastIndex, 4=sortBlock"
-   arr := sc instVarAt: 1.
-   stream nextPutAll: '  array: '; nextPutAll: (arr ifNil: ['nil'] ifNotNil: [arr class name, ' size=', arr size printString]); cr.
-   stream nextPutAll: '  firstIndex: '; nextPutAll: (sc instVarAt: 2) printString; cr.
-   stream nextPutAll: '  lastIndex: '; nextPutAll: (sc instVarAt: 3) printString; cr.
-   stream nextPutAll: '  sortBlock: '; nextPutAll: (sc instVarAt: 4) printString; cr.
-   sc add: 2.
-   stream nextPutAll: 'After add:2'; cr.
-   arr := sc instVarAt: 1.
-   stream nextPutAll: '  fi: '; nextPutAll: (sc instVarAt: 2) printString;
-     nextPutAll: ' li: '; nextPutAll: (sc instVarAt: 3) printString;
-     nextPutAll: ' size: '; nextPutAll: sc size printString; cr.
-   arr ifNotNil: [1 to: (arr size min: 12) do: [:i |
-     stream nextPutAll: '  arr['; print: i; nextPutAll: ']='; nextPutAll: (arr at: i) printString; cr]].
-   sc add: 5.
-   stream nextPutAll: 'After add:5'; cr.
-   arr := sc instVarAt: 1.
-   stream nextPutAll: '  fi: '; nextPutAll: (sc instVarAt: 2) printString;
-     nextPutAll: ' li: '; nextPutAll: (sc instVarAt: 3) printString; cr.
-   arr ifNotNil: [1 to: (arr size min: 12) do: [:i |
-     stream nextPutAll: '  arr['; print: i; nextPutAll: ']='; nextPutAll: (arr at: i) printString; cr]].
-   sc add: 1.
-   stream nextPutAll: 'After add:1'; cr.
-   arr := sc instVarAt: 1.
-   stream nextPutAll: '  fi: '; nextPutAll: (sc instVarAt: 2) printString;
-     nextPutAll: ' li: '; nextPutAll: (sc instVarAt: 3) printString; cr.
-   arr ifNotNil: [1 to: (arr size min: 12) do: [:i |
-     stream nextPutAll: '  arr['; print: i; nextPutAll: ']='; nextPutAll: (arr at: i) printString; cr]].
-   "Now test SortedCollectionTest setUp"
-   [| test |
-    test := SortedCollectionTest selector: #test0CopyTest.
-    test setUp.
-    stream nextPutAll: 'SCTest setUp OK'; cr.
-    stream nextPutAll: '  nonEmpty: '; nextPutAll: test nonEmpty printString; cr.
-    stream nextPutAll: '  empty: '; nextPutAll: test empty printString; cr.
-    "Run actual test via performTest"
-    [test performTest.
-     stream nextPutAll: 'SCTest performTest: PASS'; cr]
-    on: Error do: [:ex2 |
-     stream nextPutAll: 'SCTest performTest ERROR: '; nextPutAll: ex2 class name;
-       nextPutAll: ' - '; nextPutAll: ex2 messageText; cr].
-    "Run via runCase (like the test runner)"
-    [| test2 |
-     test2 := SortedCollectionTest selector: #test0CopyTest.
-     test2 runCase.
-     stream nextPutAll: 'SCTest runCase: PASS'; cr]
-    on: Error do: [:ex3 |
-     stream nextPutAll: 'SCTest runCase ERROR: '; nextPutAll: ex3 class name;
-       nextPutAll: ' - '; nextPutAll: ex3 messageText; cr.
-     ex3 signalerContext ifNotNil: [:ctx |
-       | c count |
-       c := ctx.
-       count := 0.
-       [c notNil and: [count < 15]] whileTrue: [
-         stream nextPutAll: '  '; nextPutAll: c printString; cr.
-         c := c sender.
-         count := count + 1]]].
-    "Run via forkAt:80 like the actual test runner"
-    [| sem result test3 |
-     sem := Semaphore new.
-     result := nil.
-     [| t3 |
-      t3 := SortedCollectionTest selector: #test0CopyTest.
-      [t3 runCase] on: Error do: [:e | result := e messageText].
-      sem signal] forkAt: 80.
-     (Delay forSeconds: 3) wait.
-     sem isSignaled
-       ifTrue: [result ifNil: [stream nextPutAll: 'SCTest forkAt80: PASS'; cr]
-                       ifNotNil: [stream nextPutAll: 'SCTest forkAt80 ERROR: '; nextPutAll: result; cr]]
-       ifFalse: [stream nextPutAll: 'SCTest forkAt80: STALLED'; cr]]
-    on: Error do: [:ex4 |
-     stream nextPutAll: 'SCTest forkAt80 OUTER ERROR: '; nextPutAll: ex4 class name; nextPutAll: ' - '; nextPutAll: ex4 messageText; cr]] on: Error do: [:ex |
-    stream nextPutAll: 'SCTest setUp ERROR: '; nextPutAll: ex class name; nextPutAll: ' - '; nextPutAll: ex messageText; cr].
-   stream nextPutAll: 'SC DIAG OK'; cr] on: Error do: [:e |
-   stream nextPutAll: 'SC DIAG ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr].
-  stream flush.
-  "Test IdentitySet with basicIdentityHash"
-  [| obj hash |
-   obj := Object new.
-   hash := obj basicIdentityHash.
-   stream nextPutAll: 'Object new basicIdentityHash: '; nextPutAll: hash printString; cr.
-   stream nextPutAll: 'IDHash DIAG OK'; cr] on: Error do: [:e |
-   stream nextPutAll: 'IDHash DIAG ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr].
-  stream flush.
-  "Test IdentitySet"
-  [| is |
-   is := IdentitySet new.
-   is add: 1.
-   is add: 'hello'.
-   is add: Object new.
-   stream nextPutAll: 'IdentitySet size: '; nextPutAll: is size printString; cr.
-   stream nextPutAll: 'IdentitySet DIAG OK'; cr] on: Error do: [:e |
-   stream nextPutAll: 'IdentitySet DIAG ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr].
-  stream flush.
-  "Test ClassFactory"
-  [| factory cls inst |
-   factory := ClassFactoryForTestCase new.
-   cls := factory newClass.
-   stream nextPutAll: 'Factory class: '; nextPutAll: cls name; cr.
-   inst := cls new.
-   stream nextPutAll: 'Instance: '; nextPutAll: inst printString; cr.
-   stream nextPutAll: 'Instance hash: '; nextPutAll: inst basicIdentityHash printString; cr.
-   stream nextPutAll: 'Class hash: '; nextPutAll: cls basicIdentityHash printString; cr.
-   stream nextPutAll: 'ClassFactory DIAG OK'; cr.
-   factory cleanUp] on: Error do: [:e |
-   stream nextPutAll: 'ClassFactory DIAG ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr].
-  stream flush.
-  "Test Random (PCG generator)"
-  [| r state val result |
-   stream nextPutAll: 'Random DIAG:'; cr.
-   r := Random new.
-   state := r instVarAt: 1.
-   stream nextPutAll: '  state class: '; nextPutAll: state class name; cr.
-   stream nextPutAll: '  state size: '; nextPutAll: state size printString; cr.
-   val := state at: 1.
-   stream nextPutAll: '  state at:1 class: '; nextPutAll: val class name; cr.
-   stream nextPutAll: '  state at:1 value: '; nextPutAll: val printString; cr.
-   "Step through PCG computation"
-   [| mult sum masked count shifted xored shifted2 anded rotA rotB rotResult |
-    mult := val * 6364136223846793005.
-    stream nextPutAll: '  val*const class: '; nextPutAll: mult class name; cr.
-    stream nextPutAll: '  val*const value: '; nextPutAll: mult printString; cr.
-    sum := mult + 1442695040888963407.
-    stream nextPutAll: '  +incr class: '; nextPutAll: sum class name; cr.
-    masked := sum bitAnd: 16rFFFFFFFFFFFFFFFF.
-    stream nextPutAll: '  bitAnd: class: '; nextPutAll: masked class name; cr.
-    stream nextPutAll: '  bitAnd: value: '; nextPutAll: masked printString; cr.
-    state at: 1 put: masked.
-    stream nextPutAll: '  stored back OK'; cr.
-    "Now test the output part"
-    count := val >> 59.
-    stream nextPutAll: '  count: '; nextPutAll: count printString; cr.
-    shifted := val >> 18.
-    xored := shifted bitXor: val.
-    shifted2 := xored >> 27.
-    anded := shifted2 bitAnd: 16rFFFFFFFF.
-    stream nextPutAll: '  anded: '; nextPutAll: anded printString; cr.
-    rotA := anded >> count.
-    rotB := anded << (count negated bitAnd: 31).
-    rotResult := (rotA bitOr: rotB) bitAnd: 16r7FFFFFFF.
-    stream nextPutAll: '  rotResult: '; nextPutAll: rotResult printString; cr.
-    "Now test Random>>next"
-    result := r next.
-    stream nextPutAll: '  r next: '; nextPutAll: result printString; cr.
-    stream nextPutAll: '  r next class: '; nextPutAll: result class name; cr.
-    stream nextPutAll: 'Random DIAG OK'; cr
-   ] on: Error do: [:e2 |
-    stream nextPutAll: '  PCG step ERROR: '; nextPutAll: e2 class name; nextPutAll: ' - '; nextPutAll: e2 messageText; cr.
-    e2 signalerContext ifNotNil: [:ctx |
-      | c count2 |
-      c := ctx. count2 := 0.
-      [c notNil and: [count2 < 15]] whileTrue: [
-        stream nextPutAll: '    '; nextPutAll: c printString; cr.
-        c := c sender. count2 := count2 + 1]]]]
+  "Exception handling diagnostic - tests forked process exception chains"
+  stream nextPutAll: '=== EXCEPTION DIAGNOSTICS ==='; cr. stream flush.
+  "Test 1: ZeroDivide handler (no fork)"
+  [| x |
+   x := false.
+   [ 1/0 ] on: ZeroDivide do: [:e | x := true].
+   stream nextPutAll: 'T1 ZeroDivide (no fork): '; nextPutAll: x printString; cr. stream flush]
   on: Error do: [:e |
-   stream nextPutAll: 'Random DIAG ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr].
-  stream flush.
-  stream nextPutAll: '=== END DIAGNOSTICS ==='; cr; cr.
-  stream flush! !
+   stream nextPutAll: 'T1 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
+  "Test 2: UnhandledError in same process (with pass)"
+  [| x |
+   x := false.
+   [[ 1/0 ] on: UnhandledError do: [:e | x := true]] on: ZeroDivide do: [:e | e pass].
+   stream nextPutAll: 'T2 UnhandledError (no fork): '; nextPutAll: x printString; cr. stream flush]
+  on: Error do: [:e |
+   stream nextPutAll: 'T2 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
+  "Test 3: Simple fork"
+  [| sem done |
+   sem := Semaphore new. done := false.
+   [done := true. sem signal] fork.
+   (sem waitTimeoutSeconds: 2) ifTrue: [stream nextPutAll: 'T3 Fork TIMEOUT'; cr]
+   ifFalse: [stream nextPutAll: 'T3 Fork OK: '; nextPutAll: done printString; cr]. stream flush]
+  on: Error do: [:e |
+   stream nextPutAll: 'T3 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
+  "Test 4: ZeroDivide in fork"
+  [| sem x |
+   sem := Semaphore new. x := false.
+   [[ 1/0 ] on: ZeroDivide do: [:e | x := true]. sem signal] fork.
+   (sem waitTimeoutSeconds: 2) ifTrue: [stream nextPutAll: 'T4 Fork+ZeroDivide TIMEOUT'; cr]
+   ifFalse: [stream nextPutAll: 'T4 Fork+ZeroDivide OK: '; nextPutAll: x printString; cr]. stream flush]
+  on: Error do: [:e |
+   stream nextPutAll: 'T4 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
+  "Test 5: UnhandledError in fork (THE failing case)"
+  [| sem x |
+   sem := Semaphore new. x := false.
+   [[ 1/0 ] on: UnhandledError do: [:e | x := true]. sem signal] fork.
+   (sem waitTimeoutSeconds: 2) ifTrue: [stream nextPutAll: 'T5 Fork+UnhandledError TIMEOUT'; cr]
+   ifFalse: [stream nextPutAll: 'T5 Fork+UnhandledError OK: '; nextPutAll: x printString; cr]. stream flush]
+  on: Error do: [:e |
+   stream nextPutAll: 'T5 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
+  "Test 6: Error handler in fork"
+  [| sem x |
+   sem := Semaphore new. x := false.
+   [[ 1/0 ] on: Error do: [:e | x := true]. sem signal] fork.
+   (sem waitTimeoutSeconds: 2) ifTrue: [stream nextPutAll: 'T6 Fork+Error TIMEOUT'; cr]
+   ifFalse: [stream nextPutAll: 'T6 Fork+Error OK: '; nextPutAll: x printString; cr]. stream flush]
+  on: Error do: [:e |
+   stream nextPutAll: 'T6 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
+  "Test 7: ensure in fork"
+  [| sem ensured |
+   sem := Semaphore new. ensured := false.
+   [[1 + 1] ensure: [ensured := true. sem signal]] fork.
+   (sem waitTimeoutSeconds: 2) ifTrue: [stream nextPutAll: 'T7 Fork+ensure TIMEOUT'; cr]
+   ifFalse: [stream nextPutAll: 'T7 Fork+ensure OK: '; nextPutAll: ensured printString; cr]. stream flush]
+  on: Error do: [:e |
+   stream nextPutAll: 'T7 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
+  "Test 8: runWithNoHandlers pattern"
+  [| synchSemaphore result |
+   synchSemaphore := Semaphore new.
+   [result := [[ 1/0 ] on: UnhandledError do: [:ue | ue exception]]
+     ensure: [synchSemaphore signal]] forkNamed: 'Test process'.
+   (synchSemaphore waitTimeoutSeconds: 2) ifTrue: [stream nextPutAll: 'T8 runWithNoHandlers TIMEOUT'; cr]
+   ifFalse: [stream nextPutAll: 'T8 runWithNoHandlers OK: '; nextPutAll: result printString; cr]. stream flush]
+  on: Error do: [:e |
+   stream nextPutAll: 'T8 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
+  "Test 9: Fork at priority 80 then runWithNoHandlers inside (matches test runner)"
+  [| outerSem outerResult |
+   outerSem := Semaphore new.
+   outerResult := 'not set'.
+   [[| synchSemaphore result executed |
+     synchSemaphore := Semaphore new.
+     executed := false.
+     [result := [[ 1/0 ] on: UnhandledError do: [:e | executed := true]]
+       ensure: [synchSemaphore signal]] forkNamed: 'Test process'.
+     (synchSemaphore waitTimeoutSeconds: 2) ifTrue: [
+       outerResult := 'TIMEOUT']
+     ifFalse: [
+       outerResult := 'OK executed=', executed printString].
+     outerSem signal]
+   on: Error do: [:e |
+     outerResult := 'ERROR: ', e class name, ' - ', e messageText.
+     outerSem signal]] forkAt: 80.
+   (outerSem waitTimeoutSeconds: 5) ifTrue: [
+     stream nextPutAll: 'T9 ForkAt80+runWithNoHandlers OUTER_TIMEOUT'; cr]
+   ifFalse: [
+     stream nextPutAll: 'T9 ForkAt80+runWithNoHandlers: '; nextPutAll: outerResult; cr].
+   stream flush]
+  on: Error do: [:e |
+   stream nextPutAll: 'T9 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
+  "Test 10: Actually run ExceptionTest testUnhandledErrorWhenNoHandlers"
+  [| outerSem outerResult |
+   outerSem := Semaphore new.
+   outerResult := 'not set'.
+   [[| test |
+     test := ExceptionTest selector: #testUnhandledErrorWhenNoHandlers.
+     [test runCase.
+      outerResult := 'PASS']
+     on: TestFailure do: [:tf |
+       outerResult := 'FAIL: ', tf messageText]
+     on: Error do: [:e |
+       outerResult := 'ERROR: ', e class name, ' - ', e messageText].
+     outerSem signal] forkAt: 80.
+   (outerSem waitTimeoutSeconds: 5) ifTrue: [
+     stream nextPutAll: 'T10 ExceptionTest OUTER_TIMEOUT'; cr]
+   ifFalse: [
+     stream nextPutAll: 'T10 ExceptionTest: '; nextPutAll: outerResult; cr].
+   stream flush]
+  on: Error do: [:e |
+   stream nextPutAll: 'T10 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
+  stream nextPutAll: '=== END DIAGNOSTICS ==='; cr; cr. stream flush! !
 
 !SUnitRunner class methodsFor: 'running'!
 runAllTests
@@ -255,6 +199,7 @@ runAllTests
   totalP := 0. totalF := 0. totalE := 0. totalS := 0. totalT := 0.
   [
     stream nextPutAll: '=== SUnit Test Run #'; print: runNum; nextPutAll: ' ==='; cr; cr.
+    self runDiagnostic: stream.
     detail nextPutAll: 'RUN	CLASS	TEST	RESULT	INFO'; cr.
     detail flush.
     testClasses do: [:tc | | counts |
