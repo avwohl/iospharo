@@ -558,6 +558,10 @@ private:
     std::vector<ObjectHeader*> weakList_;      // Deferred weak objects
     std::vector<ObjectHeader*> ephemeronList_; // Deferred ephemerons
 
+    // Debug: track parent object during scanning (for BAD pointer diagnosis)
+    ObjectHeader* currentScanParent_ = nullptr;
+    size_t currentScanSlot_ = 0;
+
     // Statistics
     size_t bytesAllocated_ = 0;
     size_t gcCount_ = 0;

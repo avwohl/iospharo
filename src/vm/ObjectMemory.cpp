@@ -1538,6 +1538,35 @@ GCResult ObjectMemory::fullGC() {
     updatePointersAfterCompact();
     copyAndUnmark();
 
+    // 4b. Post-compact integrity check
+    if (gcCallCount <= 3) {
+        size_t zeroClassPost = 0;
+        ObjectScanner compactCheck(oldSpaceStart_, oldSpaceFree_);
+        while (ObjectHeader* obj = compactCheck.next()) {
+            if (obj->classIndex() == 0 && obj->slotCount() > 0) {
+                if (zeroClassPost < 5) {
+                    std::cerr << "[COMPACT-CHECK] classIdx=0 at 0x" << std::hex
+                              << (uintptr_t)obj << " offset=" << std::dec
+                              << ((uintptr_t)obj - (uintptr_t)oldSpaceStart_)
+                              << " fmt=" << (int)obj->format()
+                              << " slots=" << obj->slotCount() << "\n";
+                    // Dump the first 4 slot values
+                    Oop* slots = obj->slots();
+                    for (size_t s = 0; s < std::min(obj->slotCount(), (size_t)4); ++s) {
+                        std::cerr << "  slot[" << s << "]=0x" << std::hex
+                                  << slots[s].rawBits() << std::dec << "\n";
+                    }
+                }
+                zeroClassPost++;
+            }
+        }
+        if (zeroClassPost > 0) {
+            std::cerr << "[COMPACT-CHECK] " << zeroClassPost
+                      << " classIdx=0 objects right after compact in GC #"
+                      << gcCallCount << "\n";
+        }
+    }
+
     // 5. Rebuild free list from gap
     rebuildFreeListAfterCompact();
 
@@ -1565,6 +1594,31 @@ GCResult ObjectMemory::fullGC() {
                   << " reclaimed=" << (result.bytesReclaimed / 1024) << "KB"
                   << " time=" << result.milliseconds << "ms"
                   << " used=" << (usedAfter / (1024*1024)) << "MB\n";
+    }
+
+    // Post-GC integrity check: scan for classIdx=0 objects
+    if (gcCallCount <= 3) {
+        size_t zeroClassCount = 0;
+        ObjectScanner postScanner(oldSpaceStart_, oldSpaceFree_);
+        while (ObjectHeader* obj = postScanner.next()) {
+            if (obj->classIndex() == 0 && obj->slotCount() > 0) {
+                if (zeroClassCount < 5) {
+                    std::cerr << "[GC-CHECK] classIdx=0 at 0x" << std::hex
+                              << (uintptr_t)obj << " fmt=" << std::dec
+                              << (int)obj->format() << " slots=" << obj->slotCount()
+                              << " offset=" << ((uintptr_t)obj - (uintptr_t)oldSpaceStart_)
+                              << "\n";
+                }
+                zeroClassCount++;
+            }
+        }
+        if (zeroClassCount > 0) {
+            std::cerr << "[GC-CHECK] Total classIdx=0 objects after GC #"
+                      << gcCallCount << ": " << zeroClassCount << "\n";
+        } else {
+            std::cerr << "[GC-CHECK] No classIdx=0 corruption after GC #"
+                      << gcCallCount << "\n";
+        }
     }
 
     gcCount_++;
@@ -2111,7 +2165,15 @@ void ObjectMemory::markAndTrace(Oop oop) {
             std::cerr << "[GC-MARK] BAD pointer 0x" << std::hex
                       << oop.rawBits() << " at obj " << (uintptr_t)obj
                       << " (not in old space 0x" << (uintptr_t)oldSpaceStart_
-                      << "-0x" << (uintptr_t)oldSpaceFree_ << ")\n" << std::dec;
+                      << "-0x" << (uintptr_t)oldSpaceFree_ << ")" << std::dec;
+            if (currentScanParent_) {
+                std::cerr << " parent=0x" << std::hex << (uintptr_t)currentScanParent_
+                          << " cls=" << std::dec << currentScanParent_->classIndex()
+                          << " fmt=" << (int)currentScanParent_->format()
+                          << " slots=" << currentScanParent_->slotCount()
+                          << " slot#=" << currentScanSlot_;
+            }
+            std::cerr << "\n";
         }
         return;
     }
@@ -2142,9 +2204,12 @@ void ObjectMemory::processMarkStack() {
 void ObjectMemory::scanPointerFields(ObjectHeader* obj) {
     size_t numPointers = pointerSlotsOf(obj);
     Oop* slots = obj->slots();
+    currentScanParent_ = obj;
     for (size_t i = 0; i < numPointers; ++i) {
+        currentScanSlot_ = i;
         markAndTrace(slots[i]);
     }
+    currentScanParent_ = nullptr;
 }
 
 size_t ObjectMemory::pointerSlotsOf(ObjectHeader* obj) const {

@@ -8384,11 +8384,16 @@ PrimitiveResult Interpreter::primitiveAllInstances(int argCount) {
 
 // Primitive 178: Return all objects in the system
 PrimitiveResult Interpreter::primitiveAllObjects(int argCount) {
-    // Collect all objects using allObjectsDo
+    // Collect all visible objects using allObjectsDo
+    // Skip classIdx=0 objects — these are hidden VM objects (free chunks,
+    // class table pages) that should never be visible to Smalltalk code.
     std::vector<Oop> objects;
     memory_.allObjectsDo([&](Oop obj) {
         if (obj.isObject()) {
-            objects.push_back(obj);
+            ObjectHeader* hdr = obj.asObjectPtr();
+            if (hdr->classIndex() != 0) {
+                objects.push_back(obj);
+            }
         }
     });
 
@@ -14266,6 +14271,11 @@ PrimitiveResult Interpreter::primitiveFindRoots(int argCount) {
 
     memory_.allObjectsDo([&](Oop obj) {
         if (obj.isImmediate()) return;
+        if (!obj.isObject()) return;
+
+        // Skip hidden objects (classIdx=0)
+        ObjectHeader* hdr = obj.asObjectPtr();
+        if (hdr->classIndex() == 0) return;
 
         // Check each slot
         size_t slotCount = memory_.slotCountOf(obj);
@@ -14614,8 +14624,11 @@ PrimitiveResult Interpreter::primitiveAllObjectsInMemory(int argCount) {
     std::vector<Oop> allObjects;
 
     memory_.allObjectsDo([&](Oop obj) {
-        if (!obj.isImmediate()) {
-            allObjects.push_back(obj);
+        if (!obj.isImmediate() && obj.isObject()) {
+            ObjectHeader* hdr = obj.asObjectPtr();
+            if (hdr->classIndex() != 0) {
+                allObjects.push_back(obj);
+            }
         }
     });
 
