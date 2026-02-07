@@ -1750,7 +1750,13 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
         // For format 3 (IndexableWithFixed): add fixedFields to index
         ObjectFormat fmt = header->format();
         size_t fixedFields = 0;
-        if (fmt == ObjectFormat::IndexableWithFixed || fmt == ObjectFormat::WeakWithFixed) {
+        // Formats 3, 4, 5 all can have named (fixed) instVars before indexable slots:
+        //   3 = IndexableWithFixed (e.g. Context)
+        //   4 = Weak (weak variable, may have fixed fields e.g. WeakAnnouncementSubscription)
+        //   5 = WeakWithFixed/Ephemeron
+        if (fmt == ObjectFormat::IndexableWithFixed ||
+            fmt == ObjectFormat::Weak ||
+            fmt == ObjectFormat::WeakWithFixed) {
             Oop objClass = memory_.classOf(rcvr);
             if (objClass.isObject()) {
                 Oop instSpec = memory_.fetchPointer(2, objClass);
@@ -1976,9 +1982,12 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
         return PrimitiveResult::Success;
     } else if (header->isPointersObject()) {
         // Per official VM: at:put: accesses the INDEXABLE part, skipping fixed fields
+        // Formats 3, 4, 5 can have named (fixed) instVars before indexable slots
         ObjectFormat fmt = header->format();
         size_t fixedFields = 0;
-        if (fmt == ObjectFormat::IndexableWithFixed || fmt == ObjectFormat::WeakWithFixed) {
+        if (fmt == ObjectFormat::IndexableWithFixed ||
+            fmt == ObjectFormat::Weak ||
+            fmt == ObjectFormat::WeakWithFixed) {
             Oop objClass = memory_.classOf(rcvr);
             if (objClass.isObject()) {
                 Oop instSpec = memory_.fetchPointer(2, objClass);
