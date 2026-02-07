@@ -10509,8 +10509,14 @@ Oop Interpreter::materializeFrameStack() {
             static const int CtxFixed = 6;
 
             if (frame0.savedFP != nullptr) {
+                // Bidirectional sync for temps: context → C++ (preserves Smalltalk
+                // modifications like tempNamed:put:), expression stack: C++ → context.
+                size_t ctxSlots = acHdr->slotCount();
                 for (int t = 0; t < numTemps && t < 32; t++) {
-                    memory_.storePointer(CtxFixed + t, activeContext_, *(frame0.savedFP + 1 + t));
+                    if (static_cast<size_t>(CtxFixed + t) < ctxSlots) {
+                        Oop ctxVal = memory_.fetchPointer(CtxFixed + t, activeContext_);
+                        *(frame0.savedFP + 1 + t) = ctxVal;
+                    }
                     savedCount++;
                 }
                 // Save expression stack items
