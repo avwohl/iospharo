@@ -11,6 +11,7 @@
 #include <chrono>
 #include <dlfcn.h>
 #include <ffi.h>
+#include <unistd.h>
 
 // SDL2 event types
 #define SDL_QUIT            0x100
@@ -144,7 +145,7 @@ void* lookupFunction(const std::string& moduleName, const std::string& funcName)
     // Check cache first
     auto it = sFunctionCache.find(funcName);
     if (it != sFunctionCache.end()) {
-        if (lookupCount <= 50) {
+        if (lookupCount <= 200) {
             fprintf(stderr, "[FFI-LOOKUP] #%d '%s' in '%s' -> CACHED %p\n",
                     lookupCount, funcName.c_str(), moduleName.c_str(), it->second);
         }
@@ -153,7 +154,7 @@ void* lookupFunction(const std::string& moduleName, const std::string& funcName)
 
     // Look up the function
     void* func = dlsym(RTLD_DEFAULT, funcName.c_str());
-    if (lookupCount <= 50) {
+    if (lookupCount <= 200) {
         fprintf(stderr, "[FFI-LOOKUP] #%d '%s' in '%s' -> dlsym=%p\n",
                 lookupCount, funcName.c_str(), moduleName.c_str(), func);
     }

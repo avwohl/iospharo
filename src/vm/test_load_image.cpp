@@ -526,10 +526,12 @@ int main(int argc, char* argv[]) {
     interpreter.setVMPath(argv[0]);
     interpreter.setImageArguments(imageArgs);
 
-    // Do NOT set --headless: the image checks isHeadless to decide whether
-    // to use OSWorldRenderer (GUI) vs NullWorldRenderer (headless).
-    // We want the GUI path so the display driver starts via FFI/SDL2.
-    // The test runner script handles its own lifecycle (quit after tests).
+    // In Pharo 13, the standard VM is always "headless" by default.
+    // OSWorldRenderer >> isApplicableFor: requires BOTH:
+    //   1. Smalltalk isHeadless → true (checks VM params for --headless)
+    //   2. CommandLineArguments new hasOption: 'interactive' → true (image arg --interactive)
+    // The --interactive default is already set in primitiveGetAttribute when imageArgs is empty.
+    interpreter.setVMParameters({"--headless"});
 
     // Set up event callback BEFORE initialization
     gTestInterpreter = &interpreter;

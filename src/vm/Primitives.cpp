@@ -16572,7 +16572,7 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
 
     // Always log when passthrough has events or when buttons=2 (world menu)
     static FILE* prim264Log = nullptr;
-    if (prim264Log && (callCount <= 50 || !passThroughEvents_.empty())) {
+    if (prim264Log && (callCount <= 200 || !passThroughEvents_.empty())) {
         fprintf(prim264Log, "[PRIM264] #%d passthrough=%zu queueEmpty=%d\n",
                 callCount, passThroughEvents_.size(), gEventQueue.isEmpty() ? 1 : 0);
         fflush(prim264Log);
@@ -16586,7 +16586,7 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
         passThroughEvents_.erase(passThroughEvents_.begin());
         hasEvent = true;
         // Always log mouse events with buttons (especially buttons=2 for world menu)
-        if (prim264Log && (callCount <= 50 || event.arg3 != 0)) {
+        if (prim264Log && (callCount <= 200 || event.arg3 != 0)) {
             fprintf(prim264Log, "[PRIM264] #%d Got event: eventType=%d subtype=%d x=%d y=%d buttons=%d\n",
                     callCount, event.type, event.arg5, event.arg1, event.arg2, event.arg3);
             fflush(prim264Log);
@@ -22476,27 +22476,42 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
 
     std::string symbolName((char*)symbolHdr->bytes(), symbolHdr->byteSize());
 
-    // Module can be nil (search all loaded) or a string
+    // Module can be nil, a string name, or an ExternalAddress handle
     std::string moduleName;
     void* moduleHandle = nullptr;
 
     if (!moduleOop.isNil() && moduleOop.rawBits() != memory_.nil().rawBits()) {
         if (moduleOop.isObject()) {
             ObjectHeader* moduleHdr = moduleOop.asObjectPtr();
-            if (moduleHdr->isBytesObject()) {
+
+            // Check if it's an ExternalAddress (contains a dlopen handle from primitiveLoadModule)
+            Oop extAddrClass = memory_.specialObject(SpecialObjectIndex::ClassExternalAddress);
+            bool isExternalAddress = false;
+            if (!extAddrClass.isNil()) {
+                uint32_t moduleClassIdx = moduleHdr->classIndex();
+                uint32_t extAddrClassIdx = memory_.indexOfClass(extAddrClass);
+                isExternalAddress = (moduleClassIdx == extAddrClassIdx);
+            }
+
+            if (isExternalAddress) {
+                // ExternalAddress - read the dlopen handle
+                moduleHandle = tffi_readAddress(moduleOop);
+                moduleName = "<ExternalAddress>";
+                // Our fake SDL2 handle maps to RTLD_DEFAULT
+                if (moduleHandle == reinterpret_cast<void*>(0xDEADBEEF)) {
+                    moduleHandle = RTLD_DEFAULT;
+                    moduleName = "<SDL2-builtin>";
+                }
+            } else if (moduleHdr->isBytesObject()) {
                 moduleName = std::string((char*)moduleHdr->bytes(), moduleHdr->byteSize());
 
-                // Try to load the module
                 // For SDL2 or common libraries, use our FFI lookup
                 if (moduleName.find("SDL2") != std::string::npos ||
                     moduleName.find("SDL") != std::string::npos) {
-                    // SDL2 is "built-in" via our stubs
                     moduleHandle = RTLD_DEFAULT;
                 } else {
-                    // Try to load the library
                     moduleHandle = dlopen(moduleName.c_str(), RTLD_NOW | RTLD_GLOBAL);
                     if (!moduleHandle) {
-                        // Try with common prefixes/suffixes
                         std::string libName = "lib" + moduleName + ".dylib";
                         moduleHandle = dlopen(libName.c_str(), RTLD_NOW | RTLD_GLOBAL);
                     }
@@ -23593,32 +23608,60 @@ PrimitiveResult Interpreter::primitiveGetSameThreadRunnerAddress(int argCount) {
 PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
     static int callCount = 0;
     callCount++;
-    if (callCount <= 10) {
-        fprintf(stderr, "[TFFI] primitiveSameThreadCallout #%d argCount=%d\n", callCount, argCount);
+    if (callCount <= 260 || callCount % 10 == 0) {
+        fprintf(stderr, "[TFFI-CALL #%d step=%llu] primitiveSameThreadCallout argCount=%d\n",
+                callCount, g_stepNum, argCount);
     }
-    if (argCount != 2) return PrimitiveResult::Failure;
+    if (argCount != 2) {
+        fprintf(stderr, "[TFFI-CALL #%d] FAIL: argCount=%d (expected 2)\n", callCount, argCount);
+        return PrimitiveResult::Failure;
+    }
 
     Oop argsArrayOop = stackValue(0);       // arguments array
     Oop externalFuncOop = stackValue(1);    // external function object
     // receiver at stackValue(2) - the runner
 
-    if (!externalFuncOop.isObject()) return PrimitiveResult::Failure;
-    if (memory_.slotCountOf(externalFuncOop) < 2) return PrimitiveResult::Failure;
+    if (!externalFuncOop.isObject()) {
+        fprintf(stderr, "[TFFI-CALL #%d] FAIL: externalFunc not object\n", callCount);
+        return PrimitiveResult::Failure;
+    }
+    if (memory_.slotCountOf(externalFuncOop) < 2) {
+        fprintf(stderr, "[TFFI-CALL #%d] FAIL: externalFunc too few slots\n", callCount);
+        return PrimitiveResult::Failure;
+    }
 
     // Get function pointer from externalFunction.slot[0] (ExternalAddress)
     Oop funcAddrOop = memory_.fetchPointer(0, externalFuncOop);
     void* funcPtr = tffi_readAddress(funcAddrOop);
-    if (!funcPtr) return PrimitiveResult::Failure;
+    if (!funcPtr) {
+        fprintf(stderr, "[TFFI-CALL #%d] FAIL: funcPtr is null\n", callCount);
+        return PrimitiveResult::Failure;
+    }
 
     // Get cif from externalFunction.slot[1] (TFFunctionDefinition).slot[0] (ExternalAddress)
     Oop funcDefOop = memory_.fetchPointer(1, externalFuncOop);
     ffi_cif* cif = static_cast<ffi_cif*>(tffi_getHandler(funcDefOop));
-    if (!cif) return PrimitiveResult::Failure;
+    if (!cif) {
+        fprintf(stderr, "[TFFI-CALL #%d] FAIL: cif is null (funcPtr=%p)\n", callCount, funcPtr);
+        return PrimitiveResult::Failure;
+    }
+
+    if (callCount <= 260 || callCount % 10 == 0) {
+        fprintf(stderr, "[TFFI-CALL #%d] funcPtr=%p nargs=%u retType=%u\n",
+                callCount, funcPtr, cif->nargs, cif->rtype->type);
+    }
 
     // Validate arguments array
-    if (!argsArrayOop.isObject()) return PrimitiveResult::Failure;
+    if (!argsArrayOop.isObject()) {
+        fprintf(stderr, "[TFFI-CALL #%d] FAIL: argsArray not object (funcPtr=%p)\n", callCount, funcPtr);
+        return PrimitiveResult::Failure;
+    }
     size_t nargs = memory_.slotCountOf(argsArrayOop);
-    if (nargs != cif->nargs) return PrimitiveResult::Failure;
+    if (nargs != cif->nargs) {
+        fprintf(stderr, "[TFFI-CALL #%d] FAIL: nargs mismatch array=%zu cif=%u (funcPtr=%p)\n",
+                callCount, nargs, cif->nargs, funcPtr);
+        return PrimitiveResult::Failure;
+    }
 
     // Marshall arguments
     void** argPtrs = nullptr;
@@ -23647,14 +23690,22 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
                 }
                 case FFI_TYPE_FLOAT: {
                     double d = 0.0;
-                    if (!extractFloat(memory_, argOop, d)) return PrimitiveResult::Failure;
+                    if (!extractFloat(memory_, argOop, d)) {
+                        fprintf(stderr, "[TFFI-CALL #%d] FAIL: arg[%zu] extractFloat for FLOAT (funcPtr=%p oop=0x%llx)\n",
+                                callCount, i, funcPtr, (unsigned long long)argOop.rawBits());
+                        return PrimitiveResult::Failure;
+                    }
                     float f = static_cast<float>(d);
                     memcpy(argSlot, &f, sizeof(float));
                     break;
                 }
                 case FFI_TYPE_DOUBLE: {
                     double d = 0.0;
-                    if (!extractFloat(memory_, argOop, d)) return PrimitiveResult::Failure;
+                    if (!extractFloat(memory_, argOop, d)) {
+                        fprintf(stderr, "[TFFI-CALL #%d] FAIL: arg[%zu] extractFloat for DOUBLE (funcPtr=%p oop=0x%llx)\n",
+                                callCount, i, funcPtr, (unsigned long long)argOop.rawBits());
+                        return PrimitiveResult::Failure;
+                    }
                     memcpy(argSlot, &d, sizeof(double));
                     break;
                 }
@@ -23745,7 +23796,11 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
                 case FFI_TYPE_STRUCT: {
                     // Struct: memcpy from ExternalAddress or ByteArray
                     void* src = tffi_getAddressFromExternalAddressOrByteArray(argOop);
-                    if (!src) return PrimitiveResult::Failure;
+                    if (!src) {
+                        fprintf(stderr, "[TFFI-CALL #%d] FAIL: arg[%zu] struct src=null (funcPtr=%p)\n",
+                                callCount, i, funcPtr);
+                        return PrimitiveResult::Failure;
+                    }
                     size_t structSize = cif->arg_types[i]->size;
                     // For structs larger than 16 bytes, allocate dynamically
                     if (structSize > 16) {
@@ -23758,6 +23813,8 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
                     break;
                 }
                 default:
+                    fprintf(stderr, "[TFFI-CALL #%d] FAIL: arg[%zu] unknown type=%u (funcPtr=%p)\n",
+                            callCount, i, argTypeId, funcPtr);
                     return PrimitiveResult::Failure;
             }
         }
@@ -23771,6 +23828,12 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
 
     // Perform the FFI call
     ffi_call(cif, FFI_FN(funcPtr), returnHolder, argPtrs);
+
+    if (callCount <= 260 || callCount % 10 == 0) {
+        uint64_t rv = 0;
+        memcpy(&rv, returnHolder, std::min(sizeof(rv), (size_t)cif->rtype->size));
+        fprintf(stderr, "[TFFI-CALL #%d] returned: 0x%llx\n", callCount, rv);
+    }
 
     // Marshall return value back to Smalltalk
     unsigned short returnTypeId = cif->rtype->type;
@@ -23998,22 +24061,268 @@ PrimitiveResult Interpreter::primitiveStructByteSize(int argCount) {
     return PrimitiveResult::Success;
 }
 
-// ===== CALLBACK STUBS (Phase 5) =====
+// ===== FFI CALLBACK SUPPORT =====
+//
+// Implements libffi closures for FFI callbacks. When C code calls a registered
+// callback thunk, the closure handler signals the callback semaphore so the
+// Smalltalk side can process it. For same-thread callbacks (menu handlers, etc.),
+// the handler returns 0 immediately since we can't re-enter the interpreter
+// from within a C call without setjmp/longjmp (future improvement).
+//
+// TFCallback instance layout:
+//   slot 0: handler (ExternalAddress - the thunk address to pass to C)
+//   slot 1: callbackData (ExternalAddress - our CallbackInfo*)
+//   slot 2: parameterHandlers (Array of TFBasicType)
+//   slot 3: returnTypeHandler (TFBasicType)
+//   slot 4: runner
+
+struct CallbackInfo {
+    ffi_closure* closure;
+    ffi_cif cif;
+    void* functionAddress;    // The thunk address (executable code pointer)
+    ffi_type** parameterTypes;
+    void* userData;           // Debug string (or nullptr)
+};
+
+// Global callback semaphore index (set by primitiveInitilizeCallbacks)
+static int g_callbackSemaphoreIndex = 0;
+
+// Simple pending callback queue
+static constexpr int MAX_PENDING_CALLBACKS = 64;
+static struct {
+    CallbackInfo* callback;
+    void* returnHolder;
+    void** arguments;
+} g_pendingCallbacks[MAX_PENDING_CALLBACKS];
+static int g_pendingCallbackCount = 0;
+
+// The libffi closure handler - called when C code invokes a registered callback
+static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* userdata) {
+    CallbackInfo* cbInfo = static_cast<CallbackInfo*>(userdata);
+
+    static int cbCallCount = 0;
+    if (++cbCallCount <= 20) {
+        fprintf(stderr, "[CALLBACK #%d] Closure invoked: cbInfo=%p nargs=%u retType=%u userData=%s\n",
+                cbCallCount, cbInfo, cif->nargs, cif->rtype->type,
+                cbInfo->userData ? static_cast<char*>(cbInfo->userData) : "(null)");
+    }
+
+    // Queue the callback for Smalltalk processing
+    if (g_pendingCallbackCount < MAX_PENDING_CALLBACKS) {
+        g_pendingCallbacks[g_pendingCallbackCount].callback = cbInfo;
+        g_pendingCallbacks[g_pendingCallbackCount].returnHolder = ret;
+        g_pendingCallbacks[g_pendingCallbackCount].arguments = args;
+        g_pendingCallbackCount++;
+    }
+
+    // Zero the return value (safe default for void, int, pointer return types)
+    if (ret && cif->rtype->size > 0) {
+        memset(ret, 0, cif->rtype->size);
+    }
+
+    // TODO: For full callback support, we'd need setjmp/longjmp to re-enter
+    // the interpreter here. For now, we return 0 which is safe for void/int/pointer
+    // callbacks (like ObjC IMPs for menu handlers).
+}
 
 // primitiveInitilizeCallbacks (sic - typo matches image)
-// Accept semaphore index, return success
+// Stack: receiver, semaphoreIndex -> receiver
 PrimitiveResult Interpreter::primitiveInitilizeCallbacks(int argCount) {
-    // Just accept the semaphore index and succeed
-    // We don't support callbacks yet but this prevents startup errors
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop semIdxOop = stackValue(0);
+    if (!semIdxOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    g_callbackSemaphoreIndex = static_cast<int>(semIdxOop.asSmallInteger());
+    fprintf(stderr, "[CALLBACK] Initialized callback semaphore index: %d\n", g_callbackSemaphoreIndex);
+
     popN(argCount);  // Pop args, leave receiver
     return PrimitiveResult::Success;
 }
 
 // primitiveReadNextCallback
-// Return nil (no pending callbacks)
+// Returns nil (no pending callbacks) or an ExternalAddress wrapping the CallbackInfo*
 PrimitiveResult Interpreter::primitiveReadNextCallback(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
-    primitiveSuccess(memory_.nil());
+
+    if (g_pendingCallbackCount > 0) {
+        // Dequeue first pending callback
+        CallbackInfo* cb = g_pendingCallbacks[0].callback;
+
+        // Shift remaining
+        for (int i = 1; i < g_pendingCallbackCount; i++) {
+            g_pendingCallbacks[i-1] = g_pendingCallbacks[i];
+        }
+        g_pendingCallbackCount--;
+
+        // Return ExternalAddress wrapping the CallbackInfo*
+        Oop result = tffi_newExternalAddress(cb);
+        if (result.isNil()) return PrimitiveResult::Failure;
+        primitiveSuccess(result);
+    } else {
+        primitiveSuccess(memory_.nil());
+    }
+    return PrimitiveResult::Success;
+}
+
+// primitiveRegisterCallback
+// Receiver: TFCallback, optional arg: debug string
+// Creates a libffi closure and stores the thunk address in the receiver.
+PrimitiveResult Interpreter::primitiveRegisterCallback(int argCount) {
+    static int regCount = 0;
+    regCount++;
+
+    if (argCount > 1) return PrimitiveResult::Failure;
+
+    Oop receiver = stackValue(argCount); // TFCallback instance
+
+    if (!receiver.isObject()) return PrimitiveResult::Failure;
+
+    // Read TFCallback slots
+    if (memory_.slotCountOf(receiver) < 5) {
+        if (regCount <= 10) fprintf(stderr, "[CALLBACK-REG #%d] TFCallback has too few slots: %zu\n",
+                                    regCount, memory_.slotCountOf(receiver));
+        return PrimitiveResult::Failure;
+    }
+
+    Oop callbackDataOop = memory_.fetchPointer(1, receiver);  // slot 1: callbackData (ExternalAddress)
+    Oop paramArrayOop   = memory_.fetchPointer(2, receiver);  // slot 2: parameterHandlers (Array)
+    Oop returnTypeOop   = memory_.fetchPointer(3, receiver);  // slot 3: returnTypeHandler (TFBasicType)
+    Oop runnerOop       = memory_.fetchPointer(4, receiver);  // slot 4: runner
+
+    // Get the return ffi_type*
+    ffi_type* returnType = static_cast<ffi_type*>(tffi_getHandler(returnTypeOop));
+    if (!returnType) {
+        if (regCount <= 10) fprintf(stderr, "[CALLBACK-REG #%d] returnType is null\n", regCount);
+        return PrimitiveResult::Failure;
+    }
+
+    // Get Runner pointer (must be non-null)
+    void* runnerPtr = tffi_getHandler(runnerOop);
+    if (!runnerPtr) {
+        if (regCount <= 10) fprintf(stderr, "[CALLBACK-REG #%d] runner is null\n", regCount);
+        return PrimitiveResult::Failure;
+    }
+
+    // Get parameter types from the array
+    if (!paramArrayOop.isObject()) return PrimitiveResult::Failure;
+    size_t paramCount = memory_.slotCountOf(paramArrayOop);
+
+    ffi_type** paramTypes = static_cast<ffi_type**>(malloc(paramCount * sizeof(ffi_type*)));
+    if (!paramTypes) return PrimitiveResult::Failure;
+
+    for (size_t i = 0; i < paramCount; i++) {
+        Oop paramOop = memory_.fetchPointer(i, paramArrayOop);
+        ffi_type* pt = static_cast<ffi_type*>(tffi_getHandler(paramOop));
+        if (!pt) {
+            if (regCount <= 10) fprintf(stderr, "[CALLBACK-REG #%d] param %zu type is null\n", regCount, i);
+            free(paramTypes);
+            return PrimitiveResult::Failure;
+        }
+        paramTypes[i] = pt;
+    }
+
+    // Allocate CallbackInfo
+    CallbackInfo* cbInfo = new CallbackInfo();
+    cbInfo->parameterTypes = paramTypes;
+    cbInfo->userData = nullptr;
+
+    // Handle optional debug string argument
+    if (argCount == 1) {
+        Oop debugOop = stackValue(0);
+        if (debugOop.isObject() && !debugOop.isNil()) {
+            ObjectHeader* strHdr = debugOop.asObjectPtr();
+            if (strHdr->isBytesObject()) {
+                size_t len = strHdr->byteSize();
+                char* dbgStr = static_cast<char*>(malloc(len + 1));
+                memcpy(dbgStr, strHdr->bytes(), len);
+                dbgStr[len] = '\0';
+                cbInfo->userData = dbgStr;
+            }
+        }
+    }
+
+    // Allocate libffi closure
+    cbInfo->closure = static_cast<ffi_closure*>(
+        ffi_closure_alloc(sizeof(ffi_closure), &cbInfo->functionAddress));
+
+    if (!cbInfo->closure) {
+        if (regCount <= 10) fprintf(stderr, "[CALLBACK-REG #%d] ffi_closure_alloc failed\n", regCount);
+        free(paramTypes);
+        if (cbInfo->userData) free(cbInfo->userData);
+        delete cbInfo;
+        return PrimitiveResult::Failure;
+    }
+
+    // Prepare CIF
+    ffi_status status = ffi_prep_cif(&cbInfo->cif, FFI_DEFAULT_ABI,
+                                     static_cast<unsigned int>(paramCount),
+                                     returnType, paramTypes);
+    if (status != FFI_OK) {
+        if (regCount <= 10) fprintf(stderr, "[CALLBACK-REG #%d] ffi_prep_cif failed: %d\n", regCount, status);
+        ffi_closure_free(cbInfo->closure);
+        free(paramTypes);
+        if (cbInfo->userData) free(cbInfo->userData);
+        delete cbInfo;
+        return PrimitiveResult::Failure;
+    }
+
+    // Prepare closure - binds the handler to the closure
+    status = ffi_prep_closure_loc(cbInfo->closure, &cbInfo->cif,
+                                  callbackClosureHandler, cbInfo,
+                                  cbInfo->functionAddress);
+    if (status != FFI_OK) {
+        if (regCount <= 10) fprintf(stderr, "[CALLBACK-REG #%d] ffi_prep_closure_loc failed: %d\n", regCount, status);
+        ffi_closure_free(cbInfo->closure);
+        free(paramTypes);
+        if (cbInfo->userData) free(cbInfo->userData);
+        delete cbInfo;
+        return PrimitiveResult::Failure;
+    }
+
+    if (regCount <= 20) {
+        fprintf(stderr, "[CALLBACK-REG #%d] Registered callback: thunk=%p userData=%s nargs=%zu\n",
+                regCount, cbInfo->functionAddress,
+                cbInfo->userData ? static_cast<char*>(cbInfo->userData) : "(null)",
+                paramCount);
+    }
+
+    // Store thunk address in receiver.slot[0] (handler ExternalAddress)
+    tffi_setHandler(receiver, cbInfo->functionAddress);
+
+    // Store CallbackInfo* in receiver.slot[1] (callbackData ExternalAddress)
+    tffi_writeAddress(callbackDataOop, cbInfo);
+
+    popN(argCount); // Pop args, leave receiver
+    return PrimitiveResult::Success;
+}
+
+// primitiveUnregisterCallback
+// Stack: receiver, callbackHandle (ExternalAddress)
+PrimitiveResult Interpreter::primitiveUnregisterCallback(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop handleOop = stackValue(0);
+    CallbackInfo* cbInfo = static_cast<CallbackInfo*>(tffi_readAddress(handleOop));
+
+    if (cbInfo) {
+        if (cbInfo->closure) ffi_closure_free(cbInfo->closure);
+        if (cbInfo->parameterTypes) free(cbInfo->parameterTypes);
+        if (cbInfo->userData) free(cbInfo->userData);
+        delete cbInfo;
+    }
+
+    popN(argCount);
+    return PrimitiveResult::Success;
+}
+
+// primitiveCallbackReturn
+// Receiver: TFCallbackInvocation
+// For now, just succeeds (the callback already returned 0 from the handler)
+PrimitiveResult Interpreter::primitiveCallbackReturn(int argCount) {
+    // In a full implementation, this would use longjmp to return to the C callback
+    // with the computed return value. For now, callbacks return 0 immediately.
+    popN(argCount);
     return PrimitiveResult::Success;
 }
 

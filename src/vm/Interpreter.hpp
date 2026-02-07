@@ -1587,6 +1587,9 @@ private:
     PrimitiveResult primitiveStructByteSize(int argCount);           // Named: struct ffi_type->size
     PrimitiveResult primitiveInitilizeCallbacks(int argCount);       // Named: init callback support (sic)
     PrimitiveResult primitiveReadNextCallback(int argCount);         // Named: read pending callback
+    PrimitiveResult primitiveRegisterCallback(int argCount);         // Named: register FFI callback
+    PrimitiveResult primitiveUnregisterCallback(int argCount);       // Named: unregister FFI callback
+    PrimitiveResult primitiveCallbackReturn(int argCount);           // Named: callback return
 
     // TFFI helpers (private)
     void* tffi_readAddress(Oop externalAddress);

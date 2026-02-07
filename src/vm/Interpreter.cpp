@@ -14971,6 +14971,9 @@ void Interpreter::initializeNamedPrimitives() {
     registerNamedPrimitive("", "primitiveStructByteSize", &Interpreter::primitiveStructByteSize);
     registerNamedPrimitive("", "primitiveInitilizeCallbacks", &Interpreter::primitiveInitilizeCallbacks);
     registerNamedPrimitive("", "primitiveReadNextCallback", &Interpreter::primitiveReadNextCallback);
+    registerNamedPrimitive("", "primitiveRegisterCallback", &Interpreter::primitiveRegisterCallback);
+    registerNamedPrimitive("", "primitiveUnregisterCallback", &Interpreter::primitiveUnregisterCallback);
+    registerNamedPrimitive("", "primitiveCallbackReturn", &Interpreter::primitiveCallbackReturn);
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {
