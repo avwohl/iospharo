@@ -1319,6 +1319,20 @@ size_t ObjectMemory::slotCountOf(Oop obj) const {
     return obj.asObjectPtr()->slotCount();
 }
 
+size_t ObjectMemory::fixedFieldCountOf(ObjectHeader* obj) const {
+    uint32_t classIdx = obj->classIndex();
+    if (classIdx == 0 || classIdx >= classTable_.size()) return 0;
+    Oop classOop = classTable_[classIdx];
+    if (!classOop.isObject()) return 0;
+    ObjectHeader* classHdr = classOop.asObjectPtr();
+    if (classHdr->slotCount() < 3) return 0;
+    Oop instSpec = classHdr->slotAt(2);  // slot 2 = instance specification
+    if (instSpec.isSmallInteger()) {
+        return static_cast<size_t>(instSpec.asSmallInteger() & 0xFFFF);
+    }
+    return 0;
+}
+
 size_t ObjectMemory::byteSizeOf(Oop obj) const {
     if (!obj.isObject()) return 0;
     return obj.asObjectPtr()->byteSize();
@@ -2793,6 +2807,16 @@ void ObjectMemory::markAndTrace(Oop oop) {
     ObjectFormat fmt = obj->format();
     if (fmt == ObjectFormat::Weak || fmt == ObjectFormat::WeakWithFixed) {
         weakList_.push_back(obj);
+        // For WeakWithFixed: trace the fixed (strong) fields immediately.
+        // Only the variable (indexable) part is weak — fixed instVars are strong.
+        if (fmt == ObjectFormat::WeakWithFixed) {
+            size_t fixedFields = fixedFieldCountOf(obj);
+            Oop* slots = obj->slots();
+            size_t total = obj->slotCount();
+            for (size_t i = 0; i < fixedFields && i < total; ++i) {
+                markAndTrace(slots[i]);
+            }
+        }
     } else {
         markStack_.push_back(obj);
     }
@@ -2868,7 +2892,14 @@ void ObjectMemory::processWeaklings() {
     for (ObjectHeader* obj : weakList_) {
         size_t slots = obj->slotCount();
         Oop* slotPtr = obj->slots();
-        for (size_t i = 0; i < slots; ++i) {
+        // For WeakWithFixed (format 5), skip the fixed fields — they are
+        // strong references that were already traced during the mark phase.
+        // Only nil out the variable (weak) part.
+        size_t startSlot = 0;
+        if (obj->format() == ObjectFormat::WeakWithFixed) {
+            startSlot = fixedFieldCountOf(obj);
+        }
+        for (size_t i = startSlot; i < slots; ++i) {
             Oop ref = slotPtr[i];
             if (ref.isObject() && !isPermObject(ref.asObjectPtr())) {
                 if (!ref.asObjectPtr()->isMarked()) {

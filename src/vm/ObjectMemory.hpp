@@ -251,6 +251,11 @@ public:
     /// Get the class of an object (follows class index to class table)
     Oop classOf(Oop obj) const;
 
+    /// Get the number of fixed (strong) instance variable slots for an object.
+    /// For WeakWithFixed objects, these are the strong fields before the weak
+    /// variable part. Reads the instance specification from the object's class.
+    size_t fixedFieldCountOf(ObjectHeader* obj) const;
+
     /// Register a class in the class table, returns assigned index
     uint32_t registerClass(Oop classOop);
 
