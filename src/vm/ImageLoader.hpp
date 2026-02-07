@@ -225,246 +225,85 @@ private:
 
 template<typename Func>
 void ImageLoader::forEachObject(Func callback) {
+    // Sequential Spur object scanner.
+    // In Spur, objects are contiguous in memory. We step from object to object
+    // using the size computed from each header. No heuristic detection needed.
     uint8_t* scan = loadedData_;
     uint8_t* end = loadedData_ + loadedSize_;
     size_t objectNum = 0;
 
-    // std::cerr << "[DEBUG] forEachObject: oldBase=0x" << std::hex << oldBase_
-    //           << " size=" << std::dec << loadedSize_ << std::endl;
-
     while (scan < end) {
-        uint64_t* headerPtr = reinterpret_cast<uint64_t*>(scan);
-        uint64_t header = *headerPtr;
+        uint64_t* wordPtr = reinterpret_cast<uint64_t*>(scan);
+        uint64_t word = *wordPtr;
 
-        // Skip zero words (free space / segment bridges)
-        if (header == 0) {
-            size_t currentOffset = scan - loadedData_;
-            // if (currentOffset >= 0x6d600 && currentOffset < 0x6de00) {
-            //     std::cerr << "[SKIP-ZERO] @0x" << std::hex << currentOffset << std::dec << std::endl;
-            // }
+        // Skip zero words (padding / segment bridges)
+        if (word == 0) {
             scan += 8;
             continue;
         }
 
-        // Check for overflow header: current word is overflow count, next word has numSlots=255
-        // In standard Spur, large objects (>254 slots) have:
-        //   [overflow word (0xFF top byte + count in low 56 bits)] [header with numSlots=255] [slots...]
-        // The overflow word ALSO has 0xFF in the top byte (same as numSlots marker).
-        bool isOverflowObject = false;
-        uint64_t overflowSlotCount = 0;
-        if (scan + 8 < end) {
-            uint64_t nextWord = *(headerPtr + 1);
-            if (spurNumSlots(nextWord) == 255 && looksLikeValidHeader(nextWord)) {
-                // Current word is the overflow count. Both current and next have top byte 0xFF.
-                // The actual count is in the low 56 bits: (word << 8) >> 8
-                if (spurNumSlots(header) == 255) {
-                    overflowSlotCount = (header << 8) >> 8;
-                    size_t objectBytes = 8 + 8 + overflowSlotCount * 8;
-                    size_t remaining = end - scan;
-                    if (overflowSlotCount >= 255 && objectBytes <= remaining) {
-                        isOverflowObject = true;
-                        headerPtr = headerPtr + 1;
-                        header = *headerPtr;
-                        scan += 8;  // Account for the overflow word
-                    }
-                }
-            }
-        }
+        // Check for overflow header: in Spur, large objects (>254 slots) have:
+        //   [overflow word] [header with numSlots=255] [slots...]
+        // The overflow word has the actual slot count in the low 56 bits.
+        // We detect it by checking if the NEXT word has numSlots=255.
+        uint64_t* headerPtr = wordPtr;
+        uint64_t header = word;
+        size_t slotCount;
+        size_t totalHeaderSize = 8;  // Just the main header
 
-        // If current header has numSlots=255 but we didn't detect overflow from forward scan,
-        // the previous word is the overflow count (mask top byte per standard Spur)
-        if (!isOverflowObject && spurNumSlots(header) == 255) {
-            if (scan > loadedData_) {
-                uint64_t prevWord = *(headerPtr - 1);
-                overflowSlotCount = (prevWord << 8) >> 8;
-                isOverflowObject = true;
-            }
-            if (!isOverflowObject && !looksLikeValidHeader(header)) {
-                scan += 8;
-                continue;
-            }
-        }
+        uint8_t numSlotsField = spurNumSlots(header);
 
-        // Skip values that look like old-space pointers (not headers)
-        // Old-space pointers are in the range [oldBase_, oldBase_ + loadedSize_)
-        size_t currentOffset = scan - loadedData_;
-        uint64_t aligned = header & ~7ULL;
-        if (aligned >= oldBase_ && aligned < (oldBase_ + loadedSize_)) {
-            if (currentOffset >= 0x6d600 && currentOffset < 0x6de00) {
-                std::cerr << "[SKIP-PTR] @0x" << std::hex << currentOffset
-                          << " val=0x" << header << std::dec << std::endl;
-            }
-            scan += 8;
-            continue;
-        }
-
-        // Extract and validate class index and format using CORRECT layout
-        uint32_t classIndex = spurClassIndex(header);
-        uint8_t format = spurFormat(header);
-        uint32_t hash = spurHash(header);
-        uint8_t numSlots = spurNumSlots(header);
-
-        // VALIDATION: With correct Spur layout, validate the header
-        // numSlots in bits 56-63, format in bits 24-28, classIndex in bits 0-21
-
-        // Class index 0 is valid (free chunks), but classIndex > 1M is suspicious
-        if (classIndex > 0x100000) {
-            if (currentOffset >= 0x6d600 && currentOffset < 0x6de00) {
-                std::cerr << "[SKIP-CLSIDX] @0x" << std::hex << currentOffset
-                          << " val=0x" << header << " cls=" << std::dec << classIndex << std::endl;
-            }
-            scan += 8;
-            continue;
-        }
-
-        // Format must be 0-31
-        if (format > 31) {
-            if (currentOffset >= 0x6d600 && currentOffset < 0x6de00) {
-                std::cerr << "[SKIP-FMT] @0x" << std::hex << currentOffset
-                          << " val=0x" << header << " fmt=" << std::dec << (int)format << std::endl;
-            }
-            scan += 8;
-            continue;
-        }
-
-        // Reserved bits 22-23 and 29-31 should typically be 0
-        uint64_t reservedBits = (header >> 22) & 0x3 | (header >> 29) & 0x7;
-        if (reservedBits != 0) {
-            // Some reserved bits set - could be invalid
-            // But don't reject outright as some images may use these
-        }
-
-        // Additional check: ASCII text in bytes 0-6 often creates suspicious patterns
-        // Check if ALL bytes 1-6 are printable ASCII - very likely string data, not a header
-        bool looksLikeAscii = true;
-        for (int i = 1; i <= 6; i++) {
-            uint8_t b = (header >> (i * 8)) & 0xFF;
-            if (b != 0 && (b < 0x20 || b > 0x7e)) {
-                looksLikeAscii = false;
-                break;
-            }
-        }
-
-        // Skip if ALL of bytes 1-6 are printable ASCII and slot count byte is also ASCII
-        uint8_t slotByte = header & 0xFF;
-        bool slotByteIsAscii = (slotByte >= 0x20 && slotByte <= 0x7e);
-        if (looksLikeAscii && slotByteIsAscii && classIndex > 0) {
-            if (currentOffset >= 0x6d600 && currentOffset < 0x6de00) {
-                std::cerr << "[SKIP-ASCII] @0x" << std::hex << currentOffset
-                          << " val=0x" << header << " fmt=" << std::dec << (int)format
-                          << " cls=" << classIndex << std::endl;
-            }
-            scan += 8;
-            continue;
-        }
-
-        // Check for free chunks: classIndex 0 with a valid structure
-        // Free chunks in Spur have format 0 (pointer object) and reasonable slot count
-        if (classIndex == 0 && format <= 5) {
-            // Valid free chunk should have a reasonable header structure
-            // In the correct layout, numSlots is in bits 56-63
-            if (numSlots > 0) {
-                // Additional check: verify next few words are NOT ASCII data
-                bool nextIsAscii = true;
-                uint64_t* nextPtr = headerPtr + 1;
-                for (int i = 0; i < 2 && (scan + (i+1)*8 < end); i++) {
-                    uint64_t nextVal = nextPtr[i];
-                    for (int j = 0; j < 8; j++) {
-                        uint8_t b = (nextVal >> (j * 8)) & 0xFF;
-                        if (b != 0 && (b < 0x20 || b > 0x7e)) {
-                            nextIsAscii = false;
-                            break;
-                        }
-                    }
-                    if (!nextIsAscii) break;
-                }
-                if (nextIsAscii) {
-                    // Following data is ASCII, this isn't a real free chunk
-                    if (currentOffset >= 0x6d600 && currentOffset < 0x6de00) {
-                        std::cerr << "[SKIP-FAKE-FREE] @0x" << std::hex << currentOffset
-                                  << " val=0x" << header << std::dec << std::endl;
-                    }
-                    scan += 8;
-                    continue;
-                }
-                // This looks like a genuine free chunk - skip the entire chunk
-                size_t freeChunkSize = objectSize(headerPtr);
-                if (currentOffset >= 0x6d600 && currentOffset < 0x6de00) {
-                    std::cerr << "[SKIP-FREE] @0x" << std::hex << currentOffset
-                              << " val=0x" << header << " slots=" << std::dec << (int)numSlots
-                              << " sz=" << freeChunkSize << std::endl;
-                }
-                if (freeChunkSize > 0 && freeChunkSize <= (end - scan)) {
-                    scan += freeChunkSize;
+        if (numSlotsField == 255) {
+            // This could be an overflow word (the count) preceding a header.
+            // Check the next word to see if IT also has numSlots=255 (the actual header).
+            if (scan + 8 < end) {
+                uint64_t nextWord = *(wordPtr + 1);
+                if (spurNumSlots(nextWord) == 255) {
+                    // Current word is the overflow count, next word is the real header
+                    slotCount = static_cast<size_t>((word << 8) >> 8);  // Low 56 bits
+                    headerPtr = wordPtr + 1;
+                    header = nextWord;
+                    totalHeaderSize = 16;  // overflow word + header
                 } else {
-                    scan += 8;
+                    // numSlots=255 but next word doesn't match — treat current as the header
+                    // with the PREVIOUS word as overflow count (if available)
+                    if (scan > loadedData_) {
+                        uint64_t prevWord = *(wordPtr - 1);
+                        slotCount = static_cast<size_t>((prevWord << 8) >> 8);
+                    } else {
+                        slotCount = 0;
+                    }
                 }
-                continue;
+            } else {
+                slotCount = 0;
             }
-            // Not a valid free chunk, just skip 8 bytes
-            if (currentOffset >= 0x6d600 && currentOffset < 0x6de00) {
-                std::cerr << "[SKIP-CLS0] @0x" << std::hex << currentOffset
-                          << " val=0x" << header << std::dec << std::endl;
-            }
-            scan += 8;
-            continue;
+        } else {
+            slotCount = numSlotsField;
         }
 
-        // Validate format
-        // Formats 6, 7, 8 are reserved and shouldn't appear
-        // Note: Format 0 CAN have slots (it means no fixed instance vars from class def)
-        if (format >= 6 && format <= 8) {
-            // Reserved format
-            if (currentOffset >= 0x6d600 && currentOffset < 0x6de00) {
-                std::cerr << "[SKIP-RSVFMT] @0x" << std::hex << currentOffset
-                          << " val=0x" << header << " fmt=" << std::dec << (int)format << std::endl;
-            }
-            scan += 8;
-            continue;
-        }
+        // Compute object size: header(s) + slots * 8, minimum 16 bytes (Spur invariant)
+        size_t bodySize = slotCount * 8;
+        size_t objectBytes = totalHeaderSize + bodySize;
+        if (objectBytes < 16) objectBytes = 16;
+        objectBytes = (objectBytes + 7) & ~7ULL;
 
-        // Class index 0 is reserved for free chunks (already handled above)
-        // Valid class indices are 1 to 0x3FFFFF (about 4 million)
-        // No upper limit check needed since we already validated flags and format
-        if (classIndex == 0) {
-            // if (currentOffset >= 0x6d600 && currentOffset < 0x6de00) {
-            //     std::cerr << "[SKIP-CLS0] @0x" << std::hex << currentOffset
-            //               << " val=0x" << header << " cls=" << std::dec << classIndex << std::endl;
-            // }
-            scan += 8;
-            continue;
-        }
-
-        size_t size = objectSize(headerPtr);
-        size_t offset = scan - loadedData_;
-
-        // Debug: uncomment to trace first objects
-        // if (objectNum < 20) {
-        //     std::cerr << "[OBJ] #" << objectNum
-        //               << " @0x" << std::hex << offset
-        //               << " hdr=0x" << header
-        //               << " slots=" << std::dec << (int)numSlots
-        //               << " fmt=" << (int)format
-        //               << " cls=" << classIndex
-        //               << " sz=" << size
-        //               << " overflow=" << isOverflowObject
-        //               << " end=0x" << std::hex << (offset + size) << std::dec << std::endl;
-        // }
-
-        // Sanity check size
-        if (size == 0 || size > (end - scan)) {
-            std::cerr << "[ERROR] Invalid size " << size << " at offset 0x"
-                      << std::hex << offset << std::dec << ", header=0x"
-                      << std::hex << header << std::dec << std::endl;
+        // Sanity check: object must fit within the heap
+        if (objectBytes > static_cast<size_t>(end - scan)) {
+            // Possible corruption or end-of-heap alignment — stop scanning
             break;
         }
 
-        objectNum++;
-        callback(headerPtr, size);
-        scan += size;
-    }
+        // Skip free chunks (classIndex == 0) but still advance by their size
+        uint32_t classIndex = spurClassIndex(header);
+        if (classIndex == 0) {
+            scan += objectBytes;
+            continue;
+        }
 
-    // std::cerr << "[DEBUG] forEachObject done: " << objectNum << " objects" << std::endl;
+        objectNum++;
+        callback(headerPtr, objectBytes);
+        scan += objectBytes;
+    }
 }
 
 } // namespace pharo

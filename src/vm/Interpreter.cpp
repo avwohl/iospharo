@@ -2565,6 +2565,25 @@ bool Interpreter::step() {
         return false;
     }
 
+    // GC safe point: between bytecodes, no C++ locals hold Oops.
+    // All Oop values are on the Smalltalk stack (visited by forEachRoot).
+    // This check MUST be in step() rather than only in interpret() because
+    // the test harness calls step() directly without going through interpret().
+    if (memory_.needsCompactGC()) {
+        memory_.clearCompactGCFlag();
+        static int safePointGCCount = 0;
+        safePointGCCount++;
+        fprintf(stderr, "[SAFE-POINT-GC #%d] Compacting at step %llu used=%zuMB\n",
+                safePointGCCount, (unsigned long long)g_stepNum,
+                (size_t)(memory_.oldSpaceFree() - memory_.oldSpaceStart()) / (1024*1024));
+        fflush(stderr);
+        memory_.fullGC();
+        fprintf(stderr, "[SAFE-POINT-GC #%d] Done, used=%zuMB\n",
+                safePointGCCount,
+                (size_t)(memory_.oldSpaceFree() - memory_.oldSpaceStart()) / (1024*1024));
+        fflush(stderr);
+    }
+
     g_stepCount++;
     // Check timer and process pending signals periodically
     {
@@ -5292,6 +5311,17 @@ terminate_process:
         {
             static int idleDumpCount = 0;
             while (running_) {
+                // GC safe point: no process is active, safe to compact
+                if (memory_.needsCompactGC()) {
+                    memory_.clearCompactGCFlag();
+                    static int idleGCCount = 0;
+                    idleGCCount++;
+                    fprintf(stderr, "[IDLE-GC #%d] Compacting at step %llu\n",
+                            idleGCCount, (unsigned long long)g_stepNum);
+                    fflush(stderr);
+                    memory_.fullGC();
+                }
+
                 // Process input events - may signal semaphores that wake processes
                 processInputEvents();
 

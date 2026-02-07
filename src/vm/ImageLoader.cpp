@@ -297,12 +297,30 @@ bool ImageLoader::relocatePointers(ObjectMemory& memory, LoadResult& result) {
     static bool visitedFloatValuesArray = false;
     static size_t maxOffsetSeen = 0;
 
+    static bool visitedBadObject = false;
+
     forEachObject([this, &objectCount, &pointerCount, &relocatedCount, &visitedSchedulerAssoc, schedulerOffset](uint64_t* headerPtr, size_t size) {
         objectCount++;
         size_t offset = reinterpret_cast<uint8_t*>(headerPtr) - loadedData_;
 
         // Track maximum offset reached
         if (offset > maxOffsetSeen) maxOffsetSeen = offset;
+
+        // Diagnostic: check if we visit the object with classIdx=8462 near offset 0x3824000
+        uint64_t hdr = *headerPtr;
+        uint32_t cls = hdr & 0x3FFFFF;
+        if (cls == 8462 && offset >= 0x3820000 && offset <= 0x3830000) {
+            fprintf(stderr, "[RELOC-DIAG] Found cls=8462 at offset 0x%zx (expected ~0x3824488) size=%zu\n",
+                    offset, size);
+            visitedBadObject = true;
+            // Check first few slots for unrelocated values
+            uint64_t* firstSlot = headerPtr + 1;
+            size_t slots = (hdr >> 56) & 0xFF;
+            for (size_t i = 0; i < std::min(slots, (size_t)5); i++) {
+                fprintf(stderr, "  slot[%zu] = 0x%llx\n", i, (unsigned long long)firstSlot[i]);
+            }
+            fflush(stderr);
+        }
 
         // Track Float values array visit (for debugging)
         if (offset == 0x30971e8) {
@@ -415,9 +433,32 @@ bool ImageLoader::relocatePointers(ObjectMemory& memory, LoadResult& result) {
         // Byte/word objects don't have pointers to relocate
     });
 
-    // Relocation summary (reduced verbosity)
-    // std::cerr << "[DEBUG] Relocation: " << objectCount << " objects, "
-    //           << relocatedCount << " pointers relocated" << std::endl;
+    fprintf(stderr, "[RELOC] %zu objects, %zu pointers relocated, maxOffset=0x%zx visitedBad=%d\n",
+            objectCount, relocatedCount, maxOffsetSeen, visitedBadObject ? 1 : 0);
+    fflush(stderr);
+
+    // Post-relocation check: verify the cls=8462 object at offset ~0x3824488
+    {
+        size_t checkOff = 0x3824488;
+        if (checkOff + 168 <= loadedSize_) {
+            uint64_t* hdrPtr = reinterpret_cast<uint64_t*>(loadedData_ + checkOff);
+            uint64_t hdr = *hdrPtr;
+            uint32_t cls = hdr & 0x3FFFFF;
+            uint8_t fmt = (hdr >> 24) & 0x1F;
+            uint8_t nSlots = (hdr >> 56) & 0xFF;
+            fprintf(stderr, "[POST-RELOC] offset=0x%zx cls=%u fmt=%u slots=%u\n", checkOff, cls, fmt, nSlots);
+            if (cls == 8462 && nSlots == 19) {
+                uint64_t* slots = hdrPtr + 1;
+                for (int i = 0; i < 13; i++) {
+                    uint64_t v = slots[i];
+                    bool unrelocated = (v >= oldBase_ && v < oldBase_ + loadedSize_ && (v & 7) == 0);
+                    fprintf(stderr, "  slot[%d] = 0x%llx%s\n", i, (unsigned long long)v,
+                            unrelocated ? " [UNRELOCATED!]" : "");
+                }
+            }
+            fflush(stderr);
+        }
+    }
 
     // DEBUG: Check the same offset after relocation
     size_t testOff = 0x296e0;

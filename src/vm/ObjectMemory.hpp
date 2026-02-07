@@ -417,14 +417,21 @@ public:
     /// Run an incremental GC step
     GCResult incrementalGC();
 
-    /// Run a full compacting GC
+    /// Run a full compacting GC (only safe at known safe points, NOT from allocation)
     GCResult fullGC();
+
+    /// Run a non-compacting mark-sweep GC (safe to call from allocations)
+    void sweepGC();
 
     /// Check if GC is needed
     bool needsGC() const;
 
     /// Force a GC on next allocation
     void forceGC() { forceGCFlag_ = true; }
+
+    /// Check if compacting GC is needed at next safe point
+    bool needsCompactGC() const { return needsCompactGC_; }
+    void clearCompactGCFlag() { needsCompactGC_ = false; }
 
     /// Register a root for GC (interpreter stack, etc.)
     void addRoot(Oop* root);
@@ -508,6 +515,8 @@ private:
     uint8_t* oldSpaceStart_ = nullptr;
     uint8_t* oldSpaceEnd_ = nullptr;
     uint8_t* oldSpaceFree_ = nullptr;   // Next allocation in old space
+    bool oldSpaceUseMmap_ = false;       // true if old space was allocated with mmap
+    size_t oldSpaceMmapSize_ = 0;        // Size of mmap'd region
     uint8_t* newSpaceStart_ = nullptr;
     uint8_t* newSpaceEnd_ = nullptr;
     uint8_t* edenStart_ = nullptr;
@@ -529,6 +538,9 @@ private:
 
     // GC state
     bool forceGCFlag_ = false;
+    bool needsCompactGC_ = false;  // Set by allocator when compaction needed at safe point
+    size_t lastCompactedSize_ = 0;  // Old space used bytes after last compacting GC
+    size_t gcHeadroom_ = 256ULL * 1024 * 1024;  // 256MB headroom before requesting GC
     Interpreter* interpreter_ = nullptr;  // For root enumeration during GC
     std::vector<Oop*> roots_;
     std::vector<ObjectHeader*> rememberedSet_;  // Old-space objects with young pointers

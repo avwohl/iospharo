@@ -11,6 +11,7 @@
 #include <iostream>
 #include <unordered_map>
 #include <functional>
+#include <sys/mman.h>
 
 namespace pharo {
 
@@ -26,7 +27,11 @@ ObjectMemory::~ObjectMemory() {
         std::free(permSpaceStart_);
     }
     if (oldSpaceStart_) {
-        std::free(oldSpaceStart_);
+        if (oldSpaceUseMmap_) {
+            munmap(oldSpaceStart_, oldSpaceMmapSize_);
+        } else {
+            std::free(oldSpaceStart_);
+        }
     }
     if (newSpaceStart_) {
         std::free(newSpaceStart_);
@@ -42,13 +47,20 @@ bool ObjectMemory::initialize(const MemoryConfig& config) {
     if (!permSpaceStart_) return false;
     permSpaceEnd_ = permSpaceStart_ + config.permSpaceSize;
 
+    // Use mmap for old space to get lazy-committed pages.
+    // The OS only allocates physical memory when pages are written to,
+    // so reserving a large virtual range is cheap.
     oldSpaceStart_ = static_cast<uint8_t*>(
-        std::aligned_alloc(8, config.oldSpaceSize));
-    if (!oldSpaceStart_) {
+        mmap(nullptr, config.oldSpaceSize, PROT_READ | PROT_WRITE,
+             MAP_ANONYMOUS | MAP_PRIVATE, -1, 0));
+    if (oldSpaceStart_ == MAP_FAILED) {
+        oldSpaceStart_ = nullptr;
         std::free(permSpaceStart_);
         permSpaceStart_ = nullptr;
         return false;
     }
+    oldSpaceUseMmap_ = true;
+    oldSpaceMmapSize_ = config.oldSpaceSize;
     oldSpaceEnd_ = oldSpaceStart_ + config.oldSpaceSize;
     oldSpaceFree_ = oldSpaceStart_;
     fprintf(stderr, "[HEAP] permSpace: %p - %p\n", permSpaceStart_, permSpaceEnd_);
@@ -76,9 +88,9 @@ bool ObjectMemory::initialize(const MemoryConfig& config) {
     // Initialize class table
     classTable_.resize(config.classTableSize, Oop::nil());
 
-    // Zero all memory (objects expect zero-initialized slots)
+    // Zero perm space and new space (old space is mmap'd with MAP_ANONYMOUS,
+    // which provides zero-filled pages lazily — no memset needed)
     std::memset(permSpaceStart_, 0, config.permSpaceSize);
-    std::memset(oldSpaceStart_, 0, config.oldSpaceSize);
     std::memset(newSpaceStart_, 0, config.newSpaceSize);
 
     return true;
@@ -146,40 +158,15 @@ Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
     }
 
     if (!obj) {
-        // Old space is full - try a full GC and retry once
         static int allocFailCount = 0;
-        static int gcRetryCount = 0;
         allocFailCount++;
-
-        if (gcRetryCount < 10) {
-            gcRetryCount++;
-            if (gcRetryCount <= 3) {
-                std::cerr << "[ALLOC-GC #" << gcRetryCount << "] Old space full, triggering GC and retry...\n";
-            }
-            fullGC();
-            obj = allocateRaw(totalSize, Space::Old);
-            if (obj) {
-                if (gcRetryCount <= 3) {
-                    std::cerr << "[ALLOC-GC #" << gcRetryCount << "] GC freed space, allocation succeeded\n";
-                }
-                // Fall through to continue with allocation
-            } else {
-                // GC didn't help
-                if (gcRetryCount <= 3) {
-                    std::cerr << "[ALLOC-GC #" << gcRetryCount << "] GC didn't free enough space\n";
-                }
-            }
+        if (allocFailCount <= 10) {
+            fprintf(stderr, "[ALLOC-FAIL #%d] allocateSlots: old space OOM! classIdx=%u slots=%zu totalSize=%zu used=%zuMB\n",
+                    allocFailCount, classIndex, slotCount, totalSize,
+                    (size_t)(oldSpaceFree_ - oldSpaceStart_) / (1024*1024));
+            fflush(stderr);
         }
-
-        if (!obj) {
-            if (allocFailCount <= 10) {
-                std::cerr << "[ALLOC-FAIL #" << allocFailCount << "] allocateSlots failed in old space! classIdx="
-                          << classIndex << " slots=" << slotCount << " totalSize=" << totalSize << "\n";
-                std::cerr << "  oldSpaceFree_=" << std::hex << (uintptr_t)oldSpaceFree_
-                          << " oldSpaceEnd_=" << (uintptr_t)oldSpaceEnd_ << std::dec << "\n";
-            }
-            return nilObject_;
-        }
+        return nilObject_;
     }
 
     // Set up overflow word if needed
@@ -231,22 +218,7 @@ Oop ObjectMemory::allocateBytes(uint32_t classIndex, size_t byteCount) {
     // TEMPORARY FIX: Allocate directly in old space (see allocateSlots comment)
     ObjectHeader* obj = allocateRaw(totalSize, Space::Old);
 
-    if (!obj) {
-        // Old space is full - try a full GC and retry
-        static int gcRetryCount = 0;
-        if (gcRetryCount < 10) {
-            gcRetryCount++;
-            if (gcRetryCount <= 3) {
-                std::cerr << "[ALLOC-BYTES-GC #" << gcRetryCount << "] Old space full, triggering GC and retry...\n";
-            }
-            fullGC();
-            obj = allocateRaw(totalSize, Space::Old);
-            if (obj && gcRetryCount <= 3) {
-                std::cerr << "[ALLOC-BYTES-GC #" << gcRetryCount << "] GC freed space, allocation succeeded\n";
-            }
-        }
-        if (!obj) return nilObject_;
-    }
+    if (!obj) return nilObject_;
 
     // Handle overflow
     if (hasOverflow) {
@@ -310,22 +282,7 @@ Oop ObjectMemory::allocateWords(uint32_t classIndex, size_t wordCount) {
     // TEMPORARY FIX: Allocate directly in old space (see allocateSlots comment)
     ObjectHeader* obj = allocateRaw(totalSize, Space::Old);
 
-    if (!obj) {
-        // Old space is full - try a full GC and retry
-        static int gcRetryCount = 0;
-        if (gcRetryCount < 10) {
-            gcRetryCount++;
-            if (gcRetryCount <= 3) {
-                std::cerr << "[ALLOC-WORDS-GC #" << gcRetryCount << "] Old space full, triggering GC and retry...\n";
-            }
-            fullGC();
-            obj = allocateRaw(totalSize, Space::Old);
-            if (obj && gcRetryCount <= 3) {
-                std::cerr << "[ALLOC-WORDS-GC #" << gcRetryCount << "] GC freed space, allocation succeeded\n";
-            }
-        }
-        if (!obj) return nilObject_;
-    }
+    if (!obj) return nilObject_;
 
     if (hasOverflow) {
         uint64_t* overflow = reinterpret_cast<uint64_t*>(obj);
@@ -1502,6 +1459,113 @@ void ObjectMemory::forEachObjectInOldSpace(std::function<void(ObjectHeader*)> ca
     }
 }
 
+void ObjectMemory::sweepGC() {
+    // Non-compacting mark-sweep GC. Safe to call from within allocations
+    // because no objects are moved — only dead objects become free chunks.
+    static int sweepCount = 0;
+    sweepCount++;
+
+    auto start = std::chrono::steady_clock::now();
+
+    // 1. Clear all marks
+    ObjectScanner clearScanner(oldSpaceStart_, oldSpaceFree_);
+    while (ObjectHeader* obj = clearScanner.next()) {
+        obj->setMarked(false);
+    }
+
+    // 2. Mark phase (same as fullGC)
+    size_t markedCount = markPhase();
+
+    // 3. Sweep: convert dead objects to free chunks, coalesce adjacent ones,
+    //    and shrink oldSpaceFree_ if tail is dead.
+    clearFreeLists();
+
+    uint8_t* lastLiveEnd = oldSpaceStart_;
+    size_t deadCount = 0;
+    size_t deadBytes = 0;
+
+    // We need to coalesce adjacent dead objects into single free chunks.
+    // Track start of current dead run.
+    uint8_t* deadRunStart = nullptr;
+
+    ObjectScanner sweepScanner(oldSpaceStart_, oldSpaceFree_);
+    while (ObjectHeader* obj = sweepScanner.next()) {
+        uint8_t* objAddr = reinterpret_cast<uint8_t*>(obj);
+        size_t objSize = obj->totalSize();
+        bool hasOverflow = obj->hasOverflowSlots();
+        uint8_t* objStart = hasOverflow ? (objAddr - 8) : objAddr;
+        size_t fullSize = hasOverflow ? (objSize + 8) : objSize;
+
+        if (obj->isMarked()) {
+            // Live object — clear mark
+            obj->setMarked(false);
+            lastLiveEnd = objStart + fullSize;
+
+            // End any dead run
+            if (deadRunStart) {
+                size_t runSize = objStart - deadRunStart;
+                if (runSize >= 16) {
+                    ObjectHeader* freeChunk = makeFreeChunk(deadRunStart, runSize);
+                    if (freeChunk) {
+                        addToFreeList(freeChunk, runSize);
+                    }
+                }
+                deadRunStart = nullptr;
+            }
+        } else {
+            // Dead object
+            deadCount++;
+            deadBytes += fullSize;
+
+            // Start or extend dead run
+            if (!deadRunStart) {
+                deadRunStart = objStart;
+            }
+        }
+    }
+
+    // Handle trailing dead run — shrink oldSpaceFree_
+    if (deadRunStart && deadRunStart >= lastLiveEnd) {
+        oldSpaceFree_ = lastLiveEnd;
+    } else if (deadRunStart) {
+        // Dead run at end but mixed with live
+        size_t runSize = oldSpaceFree_ - deadRunStart;
+        if (runSize >= 16) {
+            ObjectHeader* freeChunk = makeFreeChunk(deadRunStart, runSize);
+            if (freeChunk) {
+                addToFreeList(freeChunk, runSize);
+            }
+        }
+    }
+
+    auto end = std::chrono::steady_clock::now();
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+
+    size_t usedAfter = oldSpaceFree_ - oldSpaceStart_;
+    size_t freeAfter = oldSpaceEnd_ - oldSpaceFree_;
+
+    if (sweepCount <= 10) {
+        fprintf(stderr, "[SWEEP-GC #%d] marked=%zu dead=%zu (%zuKB) time=%lldms used=%zuMB free=%zuMB\n",
+                sweepCount, markedCount, deadCount, deadBytes / 1024,
+                (long long)ms, usedAfter / (1024*1024), freeAfter / (1024*1024));
+        fflush(stderr);
+    }
+
+    // If less than 25% free after sweep, request compacting GC at next safe point
+    size_t totalSpace = oldSpaceEnd_ - oldSpaceStart_;
+    if (freeAfter < totalSpace / 4) {
+        needsCompactGC_ = true;
+        if (sweepCount <= 5) {
+            fprintf(stderr, "[SWEEP-GC] Set needsCompactGC_ (free=%zuMB < %zuMB threshold)\n",
+                    freeAfter / (1024*1024), totalSpace / 4 / (1024*1024));
+            fflush(stderr);
+        }
+    }
+
+    gcCount_++;
+    totalGCTime_ += ms;
+}
+
 GCResult ObjectMemory::fullGC() {
     auto start = std::chrono::steady_clock::now();
     GCResult result{0, 0, 0};
@@ -1621,6 +1685,9 @@ GCResult ObjectMemory::fullGC() {
         }
     }
 
+    // Record compacted size for threshold-based GC triggering
+    lastCompactedSize_ = oldSpaceFree_ - oldSpaceStart_;
+
     gcCount_++;
     totalGCTime_ += result.milliseconds;
     return result;
@@ -1735,22 +1802,32 @@ ObjectHeader* ObjectMemory::allocateRaw(size_t size, Space space) {
             // Permanent space not supported for new allocations
             return nullptr;
 
-        case Space::Old:
-            if (oldSpaceFree_ + size > oldSpaceEnd_) {
-                static int oldSpaceFailCount = 0;
-                oldSpaceFailCount++;
-                if (oldSpaceFailCount <= 5) {
-                    std::cerr << "[OLD-SPACE-FAIL #" << oldSpaceFailCount << "] oldSpaceFree_=" << std::hex
-                              << (uintptr_t)oldSpaceFree_ << " oldSpaceEnd_=" << (uintptr_t)oldSpaceEnd_
-                              << " size=" << std::dec << size << "\n";
-                }
-                return nullptr;
-            }
-            {
+        case Space::Old: {
+            if (oldSpaceFree_ + size <= oldSpaceEnd_) {
+                // Fast path: bump pointer allocation
                 ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(oldSpaceFree_);
                 oldSpaceFree_ += size;
+
+                // Threshold-based GC trigger: request compacting GC at next safe point
+                // when heap usage exceeds last compacted size + headroom.
+                // This avoids running GC from allocation where C++ locals hold Oops.
+                size_t used = oldSpaceFree_ - oldSpaceStart_;
+                size_t gcThreshold = lastCompactedSize_ + gcHeadroom_;
+                if (used > gcThreshold && !needsCompactGC_) {
+                    needsCompactGC_ = true;
+                    static int thresholdGCCount = 0;
+                    if (++thresholdGCCount <= 20) {
+                        fprintf(stderr, "[GC-TRIGGER #%d] used=%zuMB > threshold=%zuMB (lastCompacted=%zuMB + headroom=%zuMB)\n",
+                                thresholdGCCount, used / (1024*1024), gcThreshold / (1024*1024),
+                                lastCompactedSize_ / (1024*1024), gcHeadroom_ / (1024*1024));
+                        fflush(stderr);
+                    }
+                }
                 return obj;
             }
+            // Bump pointer full — OOM
+            return nullptr;
+        }
 
         case Space::New:
             return allocateInEden(size);
