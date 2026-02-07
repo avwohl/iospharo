@@ -118,19 +118,52 @@ Fix the compile error, then:
 
 ---
 
-## Test Results — Run #44 (2026-02-07)
+## Test Results — Run #33 (2026-02-07)
 
-**62 test classes, 4301 tests. Pass: 4236, Fail: 22, Error: 29, Skip: 4.**
+**73 test classes, 4292 tests. Pass: 4278, Fail: 1, Error: 9, Skip: 4.**
 
-**98.49% pass rate** (4236/4301). Clean exit (no crashes). 8 classes skipped (process/timer-dependent).
+**99.67% pass rate** (4278/4292). Clean exit (no crashes). 11 classes skipped (process/timer-dependent).
 
-### Key fix this run: primitiveAt heap bounds check (commit 3cfcc80)
-The heap bounds check in `primitiveAt` assumed perm space starts before old space
-(`ptr < permSpaceStart`). But the actual memory layout has old space at lower
-addresses (0x300M-0x400M) and perm space at higher addresses (0x4D6M+). This
-caused ALL old-space objects to be falsely rejected by primitive 60, triggering
-constant `SubscriptOutOfBounds` exceptions during startup and preventing the VM
-from ever reaching idle state. Fixed to use proper `isOldObject/isYoungObject/isPermObject` checks.
+### Key fixes this run
+
+**GC weak object handling (commit 4377bdb)**: In Spur, format 4 (Weak) objects
+can have fixed instance variables — not just format 5 (WeakWithFixed). The class's
+instSpec records the fixed field count. WeakAnnouncementSubscription has format 4
+with 4 fixed fields (announcer, announcementClass, action, next). The GC was
+treating ALL slots of format 4 objects as weak and nil-ing them when the referent
+died. Fixed markAndTrace to trace fixed fields of all weak objects, and
+processWeaklings to skip fixed fields based on fixedFieldCountOf().
+
+Also fixed primitiveNew/primitiveNewWithArg to correctly set Weak/WeakWithFixed
+format for newly allocated objects (instSpec 4 and 5).
+
+**Massive improvement**: The GC weak fix resolved ~40 additional failures beyond
+the initial measurement: all ClassDescriptionTest, BehaviorTest, WeakMessageSendTest,
+ObjectTest, ContextTest, LinkedListTest, WriteStreamTest, LimitedWriteStreamTest,
+RecursionStopperTest, MessageNotUnderstoodTest, and PragmaTest errors. These were
+all caused by the GC incorrectly nil-ing fixed (strong) fields of Weak objects.
+
+### Remaining failures (10 total: 1 fail + 9 errors)
+
+| Category | Count | Tests |
+|---|---|---|
+| ExceptionTest timeout | 9 | All `testUnhandled*` + `testDefaultAction` + `testResumeNonresumable*` |
+| DeprecationTest | 1 | `testTransformingDeprecation` ("Denial failed") |
+
+**ExceptionTest (9 errors)**: All use `runWithNoHandlers:` which forks a process
+and waits with `waitTimeoutSeconds: 2`. The forked process encounters an unhandled
+exception → `Exception >> defaultAction` → `raiseUnhandledError` →
+`UnhandledError signalForException:`. The `UnhandledError` should be caught by
+`on: UnhandledError do:` in the forked block, but the process hangs instead.
+Root cause: `waitTimeoutSeconds:` uses `DelayWaitTimeout` which requires Delay
+support — our VM doesn't have working timer interrupts. The 2-second timeout
+never fires, so the test hangs until our test runner's 5-second timeout catches it.
+
+**DeprecationTest (1 fail)**: `testTransformingDeprecation` tests automatic AST
+rewriting of deprecated method calls. It expects `deprecated:transformWith:` to
+rewrite the caller's source code at runtime using the Pharo AST rewriter. This
+requires `Context >> sourceNodeExecuted` and OpalCompiler infrastructure which
+may not work fully in our VM. Not a critical VM issue.
 
 ### Per-class results
 
@@ -153,36 +186,36 @@ from ever reaching idle state. Fixed to use proper `isOldObject/isYoungObject/is
 | ArrayTest | 324 | 324 | 0 | 0 | 0 | |
 | StringTest | 438 | 438 | 0 | 0 | 0 | |
 | HeapTest | 148 | 148 | 0 | 0 | 0 | |
-| ContextTest | 34 | 25 | 7 | 1 | 0 | Context manipulation |
-| ExceptionTest | 47 | 37 | 1 | 9 | 0 | 9 "Timeout for block execution" |
-| BecomeTest | 8 | 8 | 0 | 0 | 0 | **Fixed** (was 5/8) |
+| ContextTest | 34 | 34 | 0 | 0 | 0 | **Fixed** (was 25/34) |
+| ExceptionTest | 47 | 38 | 0 | 9 | 0 | 9 "Timeout for block execution" |
+| BecomeTest | 8 | 8 | 0 | 0 | 0 | |
 | BooleanTest | 5 | 5 | 0 | 0 | 0 | |
 | TrueTest | 17 | 17 | 0 | 0 | 0 | |
 | FalseTest | 17 | 17 | 0 | 0 | 0 | |
 | ProtoObjectTest | 17 | 15 | 0 | 0 | 0 | |
-| ObjectTest | 28 | 24 | 4 | 0 | 0 | adopt/readOnly/changeClass |
+| ObjectTest | 28 | 28 | 0 | 0 | 0 | **Fixed** (was 24/28) |
 | UndefinedObjectTest | 19 | 19 | 0 | 0 | 0 | |
-| RecursionStopperTest | 4 | 3 | 1 | 0 | 0 | |
-| LocalRecursionStopperTest | 4 | 3 | 1 | 0 | 0 | |
+| RecursionStopperTest | 4 | 4 | 0 | 0 | 0 | **Fixed** (was 3/4) |
+| LocalRecursionStopperTest | 4 | 4 | 0 | 0 | 0 | **Fixed** (was 3/4) |
 | LargePositiveIntegerTest | 19 | 18 | 0 | 0 | 0 | |
 | LargeNegativeIntegerTest | 15 | 15 | 0 | 0 | 0 | |
 | IntegerDigitLogicTest | 7 | 7 | 0 | 0 | 0 | |
 | NumberTest | 23 | 23 | 0 | 0 | 0 | |
 | MagnitudeTest | 7 | 7 | 0 | 0 | 0 | |
 | ScaledDecimalTest | 36 | 36 | 0 | 0 | 0 | |
-| BehaviorTest | 45 | 40 | 2 | 2 | 0 | |
-| CompiledCodeTest | 32 | 31 | 0 | 1 | 0 | |
+| BehaviorTest | 45 | 44 | 0 | 0 | 0 | **Fixed** (was 40/45) |
+| CompiledCodeTest | 32 | 32 | 0 | 0 | 0 | **Fixed** (was 31/32) |
 | CompiledBlockTest | 2 | 2 | 0 | 0 | 0 | |
-| ClassDescriptionTest | 29 | 19 | 0 | 10 | 0 | nil >> #handlesAnnouncement: |
-| BasicBehaviorClassMetaclassTest | 9 | 9 | 0 | 0 | 0 | **Fixed** (was 8/9) |
-| PragmaTest | 10 | 8 | 0 | 1 | 0 | |
-| DeprecationTest | 2 | 1 | 1 | 0 | 0 | |
-| MessageNotUnderstoodTest | 2 | 1 | 1 | 0 | 0 | nil receiver in DNU msg |
-| WeakMessageSendTest | 11 | 5 | 1 | 5 | 0 | GC-related failures |
+| ClassDescriptionTest | 29 | 29 | 0 | 0 | 0 | **Fixed** (was 19/29) |
+| BasicBehaviorClassMetaclassTest | 9 | 9 | 0 | 0 | 0 | |
+| PragmaTest | 10 | 9 | 0 | 0 | 0 | **Fixed** (was 8/10) |
+| DeprecationTest | 2 | 1 | 1 | 0 | 0 | AST rewriting test |
+| MessageNotUnderstoodTest | 2 | 2 | 0 | 0 | 0 | **Fixed** (was 1/2) |
+| WeakMessageSendTest | 11 | 11 | 0 | 0 | 0 | **Fixed** (was 5/11) |
 | ObjectLayoutTest | 1 | 1 | 0 | 0 | 0 | |
 | DependentsArrayTest | 1 | 1 | 0 | 0 | 0 | |
-| LinkedListTest | 255 | 254 | 1 | 0 | 0 | |
-| OrderedDictionaryTest | 67 | 67 | 0 | 0 | 0 | **Fixed** (was 65/67) |
+| LinkedListTest | 255 | 255 | 0 | 0 | 0 | **Fixed** (was 254/255) |
+| OrderedDictionaryTest | 67 | 67 | 0 | 0 | 0 | |
 | IdentityDictionaryTest | 206 | 206 | 0 | 0 | 0 | |
 | StackTest | 13 | 13 | 0 | 0 | 0 | |
 | DoubleLinkedListTest | 22 | 22 | 0 | 0 | 0 | |
@@ -192,13 +225,13 @@ from ever reaching idle state. Fixed to use proper `isOldObject/isYoungObject/is
 | ReduceTest | 8 | 8 | 0 | 0 | 0 | |
 | WideStringTest | 19 | 19 | 0 | 0 | 0 | |
 | ByteSymbolTest | 13 | 13 | 0 | 0 | 0 | |
-| ReadStreamTest | 12 | 12 | 0 | 0 | 0 | **New** |
-| WriteStreamTest | 19 | 18 | 1 | 0 | 0 | **New** |
-| ReadWriteStreamTest | 19 | 19 | 0 | 0 | 0 | **New** |
-| LimitedWriteStreamTest | 23 | 22 | 1 | 0 | 0 | **New** |
-| RandomTest | 16 | 16 | 0 | 0 | 0 | **New** |
-| NumberParserTest | 25 | 25 | 0 | 0 | 0 | **New** |
-| NumberParsingTest | 13 | 13 | 0 | 0 | 0 | **New** |
+| ReadStreamTest | 12 | 12 | 0 | 0 | 0 | |
+| WriteStreamTest | 19 | 19 | 0 | 0 | 0 | **Fixed** (was 18/19) |
+| ReadWriteStreamTest | 19 | 19 | 0 | 0 | 0 | |
+| LimitedWriteStreamTest | 23 | 23 | 0 | 0 | 0 | **Fixed** (was 22/23) |
+| RandomTest | 16 | 16 | 0 | 0 | 0 | |
+| NumberParserTest | 25 | 25 | 0 | 0 | 0 | |
+| NumberParsingTest | 13 | 13 | 0 | 0 | 0 | |
 
 Skipped: BlockClosureTest, SemaphoreTest, ProcessTerminateBugTest,
 ProcessSpecificTest, MonitorTest, DelayTest, GeneratorTest, AllocationTest,
@@ -206,22 +239,14 @@ ClassHierarchyTest, MetaClassTest, SharedPoolTest.
 
 ### Known issues
 
-1. **Context manipulation tests** (8 failures): ContextTest failures in testActiveHome,
-   testHome, testTempNamed etc. - our inline frame stack doesn't perfectly match
-   Pharo's expected Context object layout for debugging/stepping.
+1. **ExceptionTest timeouts** (9 errors): Tests use `runWithNoHandlers:` which
+   forks a process and waits with `waitTimeoutSeconds: 2`. This requires
+   `DelayWaitTimeout` which depends on timer interrupts. Our VM doesn't have
+   working timer interrupts, so the delay never fires and the test hangs.
 
-2. **ExceptionTest timeouts** (9 errors): Tests rely on `UnhandledError` process
-   which requires process scheduling to deliver errors to a handler process.
-
-3. **ClassFactory/Announcements** (10+ errors): `nil >> #handlesAnnouncement:` in
-   ClassDescriptionTest, SharedPoolTest. The announcement system has a nil reference
-   somewhere in the class modification notification chain.
-
-4. **MessageNotUnderstoodTest**: Error message shows `nil >> #a` instead of
-   `SmallInteger >> #a` — the receiver in DNU message is nil.
-
-5. **WeakMessageSend** (5 errors): GC-related - weak references not being cleared
-   properly without a working scavenger.
+2. **DeprecationTest** (1 fail): `testTransformingDeprecation` tests runtime AST
+   rewriting via `deprecated:transformWith:`. Requires `Context >> sourceNodeExecuted`
+   and OpalCompiler infrastructure.
 
 ### History
 | Run | Date | Classes | Pass | Fail | Error | Skip | Total | Notes |
@@ -231,6 +256,7 @@ ClassHierarchyTest, MetaClassTest, SharedPoolTest.
 | #3 | 2026-02-06 | 13/74 | ~1698 | 1 | 1 | 4 | ~1704 | OOM stall (new image, no GC) |
 | #43 | 2026-02-06 | 59 | 4119 | 26 | 39 | 4 | 4199 | 98.1% pass, GC corruption issue |
 | #44 | 2026-02-07 | 62 | 4236 | 22 | 29 | 4 | 4301 | **98.49%** Fix primitiveAt heap bounds |
+| #33 | 2026-02-07 | 73 | 4278 | 1 | 9 | 4 | 4292 | **99.67%** GC weak fix resolved ~40 failures |
 
 ---
 
