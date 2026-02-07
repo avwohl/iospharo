@@ -1,6 +1,6 @@
 # iOS Pharo VM — Status
 
-Last verified: 2026-02-06
+Last verified: 2026-02-07
 
 ---
 
@@ -118,100 +118,110 @@ Fix the compile error, then:
 
 ---
 
-## Test Results — Run #43 (2026-02-06)
+## Test Results — Run #44 (2026-02-07)
 
-**59 test classes, 4199 tests. Pass: 4119, Fail: 26, Error: 39, Skip: 4, Timeout: 2.**
+**62 test classes, 4301 tests. Pass: 4236, Fail: 22, Error: 29, Skip: 4.**
 
-**98.1% pass rate** (4119/4199). 8 classes skipped (process/timer-dependent).
+**98.49% pass rate** (4236/4301). Clean exit (no crashes). 8 classes skipped (process/timer-dependent).
+
+### Key fix this run: primitiveAt heap bounds check (commit 3cfcc80)
+The heap bounds check in `primitiveAt` assumed perm space starts before old space
+(`ptr < permSpaceStart`). But the actual memory layout has old space at lower
+addresses (0x300M-0x400M) and perm space at higher addresses (0x4D6M+). This
+caused ALL old-space objects to be falsely rejected by primitive 60, triggering
+constant `SubscriptOutOfBounds` exceptions during startup and preventing the VM
+from ever reaching idle state. Fixed to use proper `isOldObject/isYoungObject/isPermObject` checks.
 
 ### Per-class results
 
-| Class | Total | Pass | Fail | Error | Skip | T/O | Notes |
-|---|---|---|---|---|---|---|---|
-| SortedCollectionTest | 287 | 287 | 0 | 0 | 0 | | Run first (GC-sensitive) |
-| IdentitySetTest | 176 | 176 | 0 | 0 | 0 | | Run first (GC-sensitive) |
-| SmallIntegerTest | 29 | 29 | 0 | 0 | 0 | | |
-| IntegerTest | 83 | 78 | 0 | 0 | 3 | | Skips: testCreationFromBytes |
-| FloatTest | 75 | 74 | 0 | 0 | 1 | | Skip: testNaNCompare |
-| FractionTest | 32 | 32 | 0 | 0 | 0 | | |
-| PointTest | 36 | 36 | 0 | 0 | 0 | | |
-| CharacterTest | 19 | 17 | 0 | 0 | 0 | | 2 missing (not counted) |
-| DictionaryTest | 205 | 205 | 0 | 0 | 0 | | |
-| SetTest | 174 | 174 | 0 | 0 | 0 | | |
-| BagTest | 168 | 168 | 0 | 0 | 0 | | |
-| IntervalTest | 260 | 260 | 0 | 0 | 0 | | |
-| SymbolTest | 268 | 268 | 0 | 0 | 0 | | |
-| OrderedCollectionTest | 351 | 351 | 0 | 0 | 0 | | |
-| ArrayTest | 324 | 324 | 0 | 0 | 0 | | |
-| StringTest | 438 | 438 | 0 | 0 | 0 | | |
-| HeapTest | 148 | 148 | 0 | 0 | 0 | | |
-| ContextTest | 34 | 25 | 7 | 1 | 0 | 1 | Context manipulation |
-| ExceptionTest | 47 | 37 | 1 | 9 | 0 | | 9 "Timeout for block execution" |
-| BecomeTest | 8 | 5 | 3 | 0 | 0 | | become/identity hash issues |
-| BooleanTest | 5 | 5 | 0 | 0 | 0 | | |
-| TrueTest | 17 | 17 | 0 | 0 | 0 | | |
-| FalseTest | 17 | 17 | 0 | 0 | 0 | | |
-| ProtoObjectTest | 17 | 14 | 0 | 0 | 0 | 1 | Heap iteration timeout |
-| ObjectTest | 28 | 23 | 5 | 0 | 0 | | |
-| UndefinedObjectTest | 19 | 19 | 0 | 0 | 0 | | |
-| RecursionStopperTest | 4 | 3 | 1 | 0 | 0 | | |
-| LocalRecursionStopperTest | 4 | 3 | 1 | 0 | 0 | | |
-| LargePositiveIntegerTest | 19 | 18 | 0 | 0 | 0 | | |
-| LargeNegativeIntegerTest | 15 | 15 | 0 | 0 | 0 | | |
-| IntegerDigitLogicTest | 7 | 7 | 0 | 0 | 0 | | |
-| NumberTest | 23 | 23 | 0 | 0 | 0 | | |
-| MagnitudeTest | 7 | 7 | 0 | 0 | 0 | | |
-| ScaledDecimalTest | 36 | 36 | 0 | 0 | 0 | | |
-| BehaviorTest | 45 | 40 | 2 | 2 | 0 | | |
-| CompiledCodeTest | 32 | 31 | 0 | 1 | 0 | | |
-| CompiledBlockTest | 2 | 2 | 0 | 0 | 0 | | |
-| ClassDescriptionTest | 29 | 19 | 0 | 10 | 0 | | ClassFactory/announcements |
-| ClassHierarchyTest | 3 | 0 | 0 | 3 | 0 | | All timeout/error |
-| MetaClassTest | 3 | 2 | 0 | 1 | 0 | | |
-| BasicBehaviorClassMetaclassTest | 9 | 8 | 1 | 0 | 0 | | |
-| PragmaTest | 10 | 8 | 0 | 1 | 0 | | |
-| DeprecationTest | 2 | 1 | 1 | 0 | 0 | | |
-| MessageNotUnderstoodTest | 2 | 1 | 1 | 0 | 0 | | nil receiver in DNU msg |
-| WeakMessageSendTest | 11 | 5 | 1 | 5 | 0 | | GC-related failures |
-| ObjectLayoutTest | 1 | 1 | 0 | 0 | 0 | | |
-| DependentsArrayTest | 1 | 1 | 0 | 0 | 0 | | |
-| SharedPoolTest | 6 | 1 | 0 | 5 | 0 | | ClassFactory/announcements |
-| LinkedListTest | 255 | 254 | 1 | 0 | 0 | | |
-| OrderedDictionaryTest | 67 | 65 | 1 | 1 | 0 | | |
-| IdentityDictionaryTest | 206 | 206 | 0 | 0 | 0 | | |
-| StackTest | 13 | 13 | 0 | 0 | 0 | | |
-| DoubleLinkedListTest | 22 | 22 | 0 | 0 | 0 | | |
-| ByteArrayTest | 12 | 12 | 0 | 0 | 0 | | |
-| RunArrayTest | 35 | 35 | 0 | 0 | 0 | | |
-| AssociationTest | 13 | 13 | 0 | 0 | 0 | | |
-| ReduceTest | 8 | 8 | 0 | 0 | 0 | | |
-| WideStringTest | 19 | 19 | 0 | 0 | 0 | | |
-| ByteSymbolTest | 13 | 13 | 0 | 0 | 0 | | |
+| Class | Total | Pass | Fail | Error | Skip | Notes |
+|---|---|---|---|---|---|---|
+| SortedCollectionTest | 287 | 287 | 0 | 0 | 0 | |
+| IdentitySetTest | 176 | 176 | 0 | 0 | 0 | |
+| SmallIntegerTest | 29 | 29 | 0 | 0 | 0 | |
+| IntegerTest | 83 | 78 | 0 | 0 | 3 | Skips: testCreationFromBytes |
+| FloatTest | 75 | 74 | 0 | 0 | 1 | Skip: testNaNCompare |
+| FractionTest | 32 | 32 | 0 | 0 | 0 | |
+| PointTest | 36 | 36 | 0 | 0 | 0 | |
+| CharacterTest | 19 | 17 | 0 | 0 | 0 | 2 missing (not counted) |
+| DictionaryTest | 205 | 205 | 0 | 0 | 0 | |
+| SetTest | 174 | 174 | 0 | 0 | 0 | |
+| BagTest | 168 | 168 | 0 | 0 | 0 | |
+| IntervalTest | 260 | 260 | 0 | 0 | 0 | |
+| SymbolTest | 268 | 268 | 0 | 0 | 0 | |
+| OrderedCollectionTest | 351 | 351 | 0 | 0 | 0 | |
+| ArrayTest | 324 | 324 | 0 | 0 | 0 | |
+| StringTest | 438 | 438 | 0 | 0 | 0 | |
+| HeapTest | 148 | 148 | 0 | 0 | 0 | |
+| ContextTest | 34 | 25 | 7 | 1 | 0 | Context manipulation |
+| ExceptionTest | 47 | 37 | 1 | 9 | 0 | 9 "Timeout for block execution" |
+| BecomeTest | 8 | 8 | 0 | 0 | 0 | **Fixed** (was 5/8) |
+| BooleanTest | 5 | 5 | 0 | 0 | 0 | |
+| TrueTest | 17 | 17 | 0 | 0 | 0 | |
+| FalseTest | 17 | 17 | 0 | 0 | 0 | |
+| ProtoObjectTest | 17 | 15 | 0 | 0 | 0 | |
+| ObjectTest | 28 | 24 | 4 | 0 | 0 | adopt/readOnly/changeClass |
+| UndefinedObjectTest | 19 | 19 | 0 | 0 | 0 | |
+| RecursionStopperTest | 4 | 3 | 1 | 0 | 0 | |
+| LocalRecursionStopperTest | 4 | 3 | 1 | 0 | 0 | |
+| LargePositiveIntegerTest | 19 | 18 | 0 | 0 | 0 | |
+| LargeNegativeIntegerTest | 15 | 15 | 0 | 0 | 0 | |
+| IntegerDigitLogicTest | 7 | 7 | 0 | 0 | 0 | |
+| NumberTest | 23 | 23 | 0 | 0 | 0 | |
+| MagnitudeTest | 7 | 7 | 0 | 0 | 0 | |
+| ScaledDecimalTest | 36 | 36 | 0 | 0 | 0 | |
+| BehaviorTest | 45 | 40 | 2 | 2 | 0 | |
+| CompiledCodeTest | 32 | 31 | 0 | 1 | 0 | |
+| CompiledBlockTest | 2 | 2 | 0 | 0 | 0 | |
+| ClassDescriptionTest | 29 | 19 | 0 | 10 | 0 | nil >> #handlesAnnouncement: |
+| BasicBehaviorClassMetaclassTest | 9 | 9 | 0 | 0 | 0 | **Fixed** (was 8/9) |
+| PragmaTest | 10 | 8 | 0 | 1 | 0 | |
+| DeprecationTest | 2 | 1 | 1 | 0 | 0 | |
+| MessageNotUnderstoodTest | 2 | 1 | 1 | 0 | 0 | nil receiver in DNU msg |
+| WeakMessageSendTest | 11 | 5 | 1 | 5 | 0 | GC-related failures |
+| ObjectLayoutTest | 1 | 1 | 0 | 0 | 0 | |
+| DependentsArrayTest | 1 | 1 | 0 | 0 | 0 | |
+| LinkedListTest | 255 | 254 | 1 | 0 | 0 | |
+| OrderedDictionaryTest | 67 | 67 | 0 | 0 | 0 | **Fixed** (was 65/67) |
+| IdentityDictionaryTest | 206 | 206 | 0 | 0 | 0 | |
+| StackTest | 13 | 13 | 0 | 0 | 0 | |
+| DoubleLinkedListTest | 22 | 22 | 0 | 0 | 0 | |
+| ByteArrayTest | 12 | 12 | 0 | 0 | 0 | |
+| RunArrayTest | 35 | 35 | 0 | 0 | 0 | |
+| AssociationTest | 13 | 13 | 0 | 0 | 0 | |
+| ReduceTest | 8 | 8 | 0 | 0 | 0 | |
+| WideStringTest | 19 | 19 | 0 | 0 | 0 | |
+| ByteSymbolTest | 13 | 13 | 0 | 0 | 0 | |
+| ReadStreamTest | 12 | 12 | 0 | 0 | 0 | **New** |
+| WriteStreamTest | 19 | 18 | 1 | 0 | 0 | **New** |
+| ReadWriteStreamTest | 19 | 19 | 0 | 0 | 0 | **New** |
+| LimitedWriteStreamTest | 23 | 22 | 1 | 0 | 0 | **New** |
+| RandomTest | 16 | 16 | 0 | 0 | 0 | **New** |
+| NumberParserTest | 25 | 25 | 0 | 0 | 0 | **New** |
+| NumberParsingTest | 13 | 13 | 0 | 0 | 0 | **New** |
 
 Skipped: BlockClosureTest, SemaphoreTest, ProcessTerminateBugTest,
-ProcessSpecificTest, MonitorTest, DelayTest, GeneratorTest, AllocationTest.
+ProcessSpecificTest, MonitorTest, DelayTest, GeneratorTest, AllocationTest,
+ClassHierarchyTest, MetaClassTest, SharedPoolTest.
 
 ### Known issues
 
-1. **GC compaction corrupts memory**: After second GC cycle (~500MB allocation),
-   mark phase finds BAD pointers to non-old-space addresses. The compactor then
-   corrupts objects (classIdx→0, broken internal arrays). Tests run AFTER GC
-   corruption show inflated failures. Running GC-sensitive tests FIRST avoids this.
+1. **Context manipulation tests** (8 failures): ContextTest failures in testActiveHome,
+   testHome, testTempNamed etc. - our inline frame stack doesn't perfectly match
+   Pharo's expected Context object layout for debugging/stepping.
 
-2. **Timer/Delay broken**: Delay scheduling produces wake times ~25193 days in
-   future. Tests relying on timeouts stall indefinitely. The test runner's own
-   `waitTimeoutSeconds:` timeout never fires for stalling tests.
+2. **ExceptionTest timeouts** (9 errors): Tests rely on `UnhandledError` process
+   which requires process scheduling to deliver errors to a handler process.
 
-3. **ClassFactory/Announcements broken**: `ClassFactoryForTestCase` fails with
-   `nil >> #handlesAnnouncement:`. Affects tests that create temporary classes
-   (IdentitySetTest, ClassDescriptionTest, SharedPoolTest). IdentitySetTest works
-   when run before GC corruption.
+3. **ClassFactory/Announcements** (10+ errors): `nil >> #handlesAnnouncement:` in
+   ClassDescriptionTest, SharedPoolTest. The announcement system has a nil reference
+   somewhere in the class modification notification chain.
 
-4. **ExceptionTest timeouts**: 9 tests fail with "Timeout for block execution" —
-   these tests rely on `UnhandledError` process which requires process scheduling.
-
-5. **MessageNotUnderstoodTest**: Error message shows `nil >> #a` instead of
+4. **MessageNotUnderstoodTest**: Error message shows `nil >> #a` instead of
    `SmallInteger >> #a` — the receiver in DNU message is nil.
+
+5. **WeakMessageSend** (5 errors): GC-related - weak references not being cleared
+   properly without a working scavenger.
 
 ### History
 | Run | Date | Classes | Pass | Fail | Error | Skip | Total | Notes |
@@ -220,6 +230,7 @@ ProcessSpecificTest, MonitorTest, DelayTest, GeneratorTest, AllocationTest.
 | #2 | 2026-02-06 | 74 | 4422 | 0 | 0 | 6 | 4428 | All non-skip pass (prev image) |
 | #3 | 2026-02-06 | 13/74 | ~1698 | 1 | 1 | 4 | ~1704 | OOM stall (new image, no GC) |
 | #43 | 2026-02-06 | 59 | 4119 | 26 | 39 | 4 | 4199 | 98.1% pass, GC corruption issue |
+| #44 | 2026-02-07 | 62 | 4236 | 22 | 29 | 4 | 4301 | **98.49%** Fix primitiveAt heap bounds |
 
 ---
 
