@@ -33,20 +33,41 @@ When something doesn't work:
 
 **If you find yourself writing code that "works around" something, STOP and investigate the root cause instead.**
 
-### Current Priority: Run Pharo Test Suite and Fix Failures
-Run the official Pharo SUnit test suite on our VM. Report current pass/fail counts, then systematically fix failures.
+### Current Priority: Fix FFI/Display — FOR REAL THIS TIME
 
-**Workflow:**
-1. Run the test suite (see "Running Official Pharo Test Suite" section below)
-2. Record baseline pass/fail/error counts in `docs/WIP.md`
-3. Categorize failures by root cause (missing primitives, broken bytecodes, etc.)
-4. Fix the root causes one at a time, re-running tests after each fix
-5. Track progress in `docs/WIP.md`
+⛔️ **This has been "attempted" 15+ times and never actually fixed.**
+Every previous session either wandered off to something else, added a workaround,
+or declared it fixed when it wasn't. **DO NOT REPEAT THIS PATTERN.**
 
-**Known issues from earlier runs:**
-- `#on:do:` DNU on Array - exception handling chain problem
-- `#asArray` on UndefinedObject - nil where an object is expected
-- These suggest fundamental issues in method lookup or context handling
+**The display is broken.** All pixels are gray (0xff808080). No updates. No rendering.
+OSSDL2Driver cannot start because FFI type resolution is broken.
+
+**Rules for this task:**
+1. **Do not skip any part of the FFI callout chain.** Trace every step.
+2. **Do not work around FFI.** No injected Smalltalk code, no C++ display hacks.
+3. **Do not declare it fixed until the display actually shows Pharo's desktop.**
+4. **Do not wander off to other tasks.** Fix this first. Everything else waits.
+5. **Do not add C++ code that does Smalltalk's job** (no direct rendering, no
+   C++ event loops, no hardcoded SDL calls from the VM side).
+
+**What must work end-to-end:**
+1. Image starts up → OSSDL2Driver is selected as the display driver
+2. OSSDL2Driver >> setupEventLoop calls SDL_Init via FFI → succeeds
+3. SDL_CreateWindow, SDL_CreateRenderer via FFI → succeed
+4. Event loop process starts polling SDL_PollEvent via FFI → events flow
+5. Morphic renders to the SDL surface → pixels appear on screen
+
+**Known root cause (investigate, don't assume):**
+- TFFI types have stale handles from the reference VM's ffi_type* pointers
+- TFBasicType >> validate skips primFillType when isValid returns true
+- ByteSymbol >> newReferentClass: / asPointerType not found (FFI returns
+  Symbols instead of ExternalType objects)
+- No session invalidation for TFAbstractType
+
+**After FFI/display is fixed**, then:
+- Enable the 11 skipped test classes (134 hidden tests) and fix failures
+- Fix the 10 individually skipped test selectors
+- Only 32-bit-specific skips are acceptable
 
 ---
 
