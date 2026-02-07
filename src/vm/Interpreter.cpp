@@ -9374,8 +9374,9 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
     Oop originalReceiver = pop();
 
-    // lookupClass (slot 2) is left as nil — Pharo's messageText will use
-    // receiver class instead, which is more reliable
+    // Set lookupClass (slot 2) to the receiver's class.
+    // MessageNotUnderstood >> messageText uses message lookupClass printString.
+    memory_.storePointer(2, message, memory_.classOf(originalReceiver));
 
     // Send doesNotUnderstand: to the original receiver
     push(originalReceiver);
