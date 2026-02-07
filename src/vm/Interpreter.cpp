@@ -2555,11 +2555,16 @@ void Interpreter::processPendingSignals() {
 }
 
 bool Interpreter::step() {
-    static bool stepEntryLogged = false;
-    if (!stepEntryLogged) {
-        FILE* f = nullptr;
-        if (f) { fprintf(f, "step() called for the first time\n"); fclose(f); }
-        stepEntryLogged = true;
+    static uint64_t stepCallCount = 0;
+    stepCallCount++;
+    if (stepCallCount % 10000000 == 0) {
+        FILE* df = fopen("/tmp/step_diag.txt", "a");
+        if (df) {
+            fprintf(df, "[STEP-DIAG] calls=%llu g_stepNum=%llu g_stepCount=%lld running=%d\n",
+                    (unsigned long long)stepCallCount, (unsigned long long)g_stepNum,
+                    (long long)g_stepCount, running_ ? 1 : 0);
+            fclose(df);
+        }
     }
     if (!running_) {
         return false;
@@ -2648,7 +2653,15 @@ bool Interpreter::step() {
 
     // Check if we've run past the end of bytecodes
     if (instructionPointer_ >= bytecodeEnd_) {
+        static uint64_t pastEndCount = 0;
+        pastEndCount++;
         returnValue(receiver_);
+        // DIAG: Log how many times we hit past-end vs normal steps
+        if (pastEndCount % 1000000 == 0) {
+            fprintf(stderr, "[PAST-END] count=%llu g_stepNum=%llu total=%llu\n",
+                    (unsigned long long)pastEndCount, (unsigned long long)g_stepNum,
+                    (unsigned long long)g_stepCount);
+        }
         return running_;
     }
 
@@ -2659,6 +2672,69 @@ bool Interpreter::step() {
 
     // Track step count (for debugging if needed)
     g_stepNum++;
+
+    // DIAG: Periodic method trace to detect loops
+    if (g_stepNum % 10000000 == 0) {
+        std::string methName = "?";
+        int nLitsFound = -1;
+        if (method_.isObject()) {
+            Oop hdr = memory_.fetchPointer(0, method_);
+            if (hdr.isSmallInteger()) {
+                int nLits = hdr.asSmallInteger() & 0x7FFF;
+                nLitsFound = nLits;
+                // Try the last literal (slot nLits) for selector
+                if (nLits >= 1 && nLits < 200) {
+                    Oop sel = memory_.fetchPointer(nLits, method_);
+                    if (sel.isObject() && !sel.isNil()) {
+                        ObjectHeader* sH = sel.asObjectPtr();
+                        if (sH->isBytesObject() && sH->byteSize() < 100) {
+                            methName = std::string((char*)sH->bytes(), sH->byteSize());
+                        } else if (sH->isPointersObject() && sH->slotCount() >= 2) {
+                            // AdditionalMethodState: slot 1 is selector
+                            Oop innerSel = sH->slotAt(1);
+                            if (innerSel.isObject() && !innerSel.isNil()) {
+                                ObjectHeader* isH = innerSel.asObjectPtr();
+                                if (isH->isBytesObject() && isH->byteSize() < 100)
+                                    methName = std::string((char*)isH->bytes(), isH->byteSize());
+                            }
+                        }
+                    }
+                    // Also try penultimate literal (nLits - 1) for older conventions
+                    if (methName == "?" && nLits >= 2) {
+                        Oop sel2 = memory_.fetchPointer(nLits - 1, method_);
+                        if (sel2.isObject() && !sel2.isNil()) {
+                            ObjectHeader* s2H = sel2.asObjectPtr();
+                            if (s2H->isBytesObject() && s2H->byteSize() < 100) {
+                                methName = "penult:" + std::string((char*)s2H->bytes(), s2H->byteSize());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Get receiver class name
+        std::string rcvrClass = "?";
+        if (receiver_.isSmallInteger()) rcvrClass = "SmallInteger";
+        else if (receiver_.isNil()) rcvrClass = "nil";
+        else if (receiver_.isObject()) {
+            Oop cls = memory_.classOf(receiver_);
+            if (cls.isObject()) {
+                Oop cn = memory_.fetchPointer(6, cls);
+                if (cn.isObject() && !cn.isNil()) {
+                    ObjectHeader* cnH = cn.asObjectPtr();
+                    if (cnH->isBytesObject() && cnH->byteSize() < 100)
+                        rcvrClass = std::string((char*)cnH->bytes(), cnH->byteSize());
+                }
+            }
+        }
+        FILE* tf = fopen("/tmp/step_diag.txt", "a");
+        if (tf) {
+            fprintf(tf, "[TRACE step=%llu] %s >> #%s nLits=%d fd=%zu method=0x%llx\n",
+                    (unsigned long long)g_stepNum, rcvrClass.c_str(), methName.c_str(),
+                    nLitsFound, frameDepth_, (unsigned long long)method_.rawBits());
+            fclose(tf);
+        }
+    }
 
     // Check for forced process yield BEFORE fetching the next bytecode.
     // CRITICAL: Must happen before fetchByte() because fetchByte() advances
@@ -16680,6 +16756,7 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
     if (primitiveIndex >= 0 && primitiveIndex < 1000) {
         primCounts[primitiveIndex]++;
     }
+
 
     // Log first 100 primitive calls, then periodically
     if (allPrimLog && (primCallCount <= 100 || (primCallCount % 1000 == 0))) {

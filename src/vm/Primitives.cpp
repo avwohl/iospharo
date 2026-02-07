@@ -2449,7 +2449,18 @@ PrimitiveResult Interpreter::primitiveObjectAt(int argCount) {
 
     // Get literal count from method header (slot 0)
     Oop methodHeaderOop = header->slotAt(0);
-    if (!methodHeaderOop.isSmallInteger()) return PrimitiveResult::Failure;
+    if (!methodHeaderOop.isSmallInteger()) {
+        // In Cog VMs, slot 0 can be a CogMethod pointer when JIT-compiled.
+        // For saved images, this should always be a SmallInteger. Log failures.
+        static int objAtFailCount = 0;
+        if (objAtFailCount++ < 5) {
+            std::cerr << "[PRIM68-FAIL] objectAt: slot 0 of CompiledMethod 0x" << std::hex
+                      << rcvr.rawBits() << " is not SmallInteger: raw=0x"
+                      << methodHeaderOop.rawBits() << " isObj=" << methodHeaderOop.isObject()
+                      << " tag=" << (methodHeaderOop.rawBits() & 7) << std::dec << "\n";
+        }
+        return PrimitiveResult::Failure;
+    }
     int64_t headerBits = methodHeaderOop.asSmallInteger();
     size_t numLiterals = headerBits & 0x7FFF;
 
