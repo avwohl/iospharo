@@ -4130,8 +4130,13 @@ PrimitiveResult Interpreter::primitiveSignal(int argCount) {
     static int signalCallCount = 0;
     static FILE* signalLog = nullptr;
     signalCallCount++;
-
-    if (!signalLog) {
+    // Log early signals and signals in the startup completion range
+    if (signalCallCount <= 5 || (g_stepNum >= 15000000 && g_stepNum <= 25000000)) {
+        fprintf(stderr, "[PRIM85] primitiveSignal call #%d step=%llu sem=0x%llx\n",
+                signalCallCount, (unsigned long long)g_stepNum,
+                (unsigned long long)stackTop().rawBits());
+        signalLog = stderr;
+    } else {
         signalLog = nullptr;
     }
 
@@ -4219,14 +4224,14 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
     static int waitCallCount = 0;
     static FILE* waitLog = nullptr;
     waitCallCount++;
-
-    if (!waitLog) {
+    // Log early waits and waits in the startup completion range
+    if (waitCallCount <= 5 || (g_stepNum >= 15000000 && g_stepNum <= 25000000)) {
+        fprintf(stderr, "[PRIM86] primitiveWait call #%d step=%llu sem=0x%llx\n",
+                waitCallCount, (unsigned long long)g_stepNum,
+                (unsigned long long)stackValue(argCount).rawBits());
+        waitLog = stderr;
+    } else {
         waitLog = nullptr;
-        if (waitLog) {
-            fprintf(waitLog, "[INIT] g_stepNum=%llu &g_stepNum=%p\n",
-                    (unsigned long long)g_stepNum, (void*)&g_stepNum);
-            fflush(waitLog);
-        }
     }
 
     if (stackPointer_ < stackBase_ + argCount + 1) {

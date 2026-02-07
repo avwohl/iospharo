@@ -410,8 +410,8 @@ bool Interpreter::initialize() {
             }
         }
 
-        // Debug chain output - disabled for normal operation
-        // std::cerr << "[CHAIN " << depth << "] " << rcvrClassName << ">>" << methodSelector << "\n";
+        // Debug chain output - ENABLED to understand startup resume
+        std::cerr << "[CHAIN " << depth << "] " << rcvrClassName << ">>" << methodSelector << "\n";
 
         // Check if this method has a primitive (for first few contexts)
         if (depth < 10 && method.isObject() && method.rawBits() > 0x10000) {
@@ -452,13 +452,7 @@ bool Interpreter::initialize() {
     //   non-nil = resuming from save -> run startup handlers
     // We need to modify the context to indicate "resuming" by ensuring the
     // snapshot primitive returns a non-nil value (true).
-    {
-        FILE* f = nullptr;
-        if (f) {
-            fprintf(f, "[INIT] inSnapshotCode=%d snapshotEndDepth=%d\n", inSnapshotCode, snapshotEndDepth);
-            fclose(f);
-        }
-    }
+    std::cerr << "[INIT] inSnapshotCode=" << inSnapshotCode << " snapshotEndDepth=" << snapshotEndDepth << "\n";
     if (inSnapshotCode) {
         // Patch the snapshot context's stack top to true so Smalltalk
         // interprets this as "resuming from saved image" instead of
@@ -477,13 +471,9 @@ bool Interpreter::initialize() {
                     Oop trueObj = memory_.specialObject(SpecialObjectIndex::TrueObject);
                     Oop oldVal = memory_.fetchPointer(stackTopSlot, context);
                     memory_.storePointer(stackTopSlot, context, trueObj);
-                    FILE* f = nullptr;
-                    if (f) {
-                        fprintf(f, "[INIT] Patched snapshot context stack top (slot %zu): 0x%llx -> true (0x%llx)\n",
-                                stackTopSlot, (unsigned long long)oldVal.rawBits(),
-                                (unsigned long long)trueObj.rawBits());
-                        fclose(f);
-                    }
+                    std::cerr << "[INIT] Patched snapshot context stack top (slot " << stackTopSlot
+                              << "): 0x" << std::hex << oldVal.rawBits()
+                              << " -> true (0x" << trueObj.rawBits() << ")" << std::dec << "\n";
                 }
             }
         }
@@ -2694,7 +2684,44 @@ bool Interpreter::step() {
     // Track step count (for debugging if needed)
     g_stepNum++;
 
-    g_stepNum++;
+    // Method sampling: log what's executing at regular intervals during startup
+    if (g_stepNum > 0 && (g_stepNum % 2000000) == 0 && g_stepNum <= 100000000) {
+        // Extract current method selector
+        std::string methodSel = "<unknown>";
+        std::string rcvrClass = "<unknown>";
+        if (method_.isObject() && method_.rawBits() > 0x10000) {
+            ObjectHeader* mHdr = method_.asObjectPtr();
+            if (mHdr->isCompiledMethod()) {
+                Oop hdr = memory_.fetchPointer(0, method_);
+                if (hdr.isSmallInteger()) {
+                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                    if (numLits >= 2) {
+                        Oop selLit = memory_.fetchPointer(numLits - 1, method_);
+                        if (selLit.isObject() && selLit.rawBits() > 0x10000) {
+                            ObjectHeader* slHdr = selLit.asObjectPtr();
+                            if (slHdr->isBytesObject() && slHdr->byteSize() < 80) {
+                                methodSel = std::string((char*)slHdr->bytes(), slHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+            Oop cls = memory_.classOf(receiver_);
+            if (cls.isObject()) {
+                Oop nameOop = memory_.fetchPointer(6, cls);
+                if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                    ObjectHeader* nHdr = nameOop.asObjectPtr();
+                    if (nHdr->isBytesObject() && nHdr->byteSize() < 80) {
+                        rcvrClass = std::string((char*)nHdr->bytes(), nHdr->byteSize());
+                    }
+                }
+            }
+        }
+        fprintf(stderr, "[SAMPLE step=%llu] %s >> %s\n",
+                (unsigned long long)g_stepNum, rcvrClass.c_str(), methodSel.c_str());
+    }
 
     // Check for forced process yield BEFORE fetching the next bytecode.
     // CRITICAL: Must happen before fetchByte() because fetchByte() advances
@@ -6748,6 +6775,70 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     }
 
     Oop rcvr = stackValue(argCount);
+
+    // ===== Display driver startup tracing (temporary) =====
+    if (selBytes && selLen > 3 && selLen < 40) {
+        auto match = [&](const char* s) {
+            size_t l = strlen(s);
+            return selLen == l && memcmp(selBytes, s, l) == 0;
+        };
+        if (match("isApplicableFor:") || match("detectCorrectOneForWorld:") ||
+            match("isSuitable") || match("isAvailable") || match("setupEventLoop") ||
+            match("pickDriverClass") || match("loadSymbol:from:") ||
+            match("activate") || match("hasOption:") || match("isInteractive") ||
+            match("isHeadless") || match("handleArgument:") || match("handleSubcommand") ||
+            match("snapshot:andQuit:") || match("startUp:") || match("runStartup:") ||
+            match("executeDeferredStartupActions:") || match("quitPrimitive") ||
+            match("handleStartupArguments") || match("handleCommandLine") ||
+            match("handleCommand:") || match("activateHandler:") ||
+            match("openWorldWithSpec") || match("uiManager") ||
+            match("isMorphic") || match("installNewDisplay") ||
+            match("runDeferredStartupActions") || match("processCommandLine") ||
+            match("openMorphic") || match("fullScreenOn") || match("openWorld") ||
+            match("start:") ||
+            match("installNewSession") || match("performSnapshot") ||
+            match("stop:") || match("terminate")) {
+            static int driverTrace = 0;
+            if (driverTrace++ < 2000) {
+                // Get receiver class name for context
+                std::string rcvrCls = "?";
+                if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                    Oop cls = memory_.classOf(rcvr);
+                    if (cls.isObject()) {
+                        Oop nameOop = memory_.fetchPointer(6, cls);
+                        if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                            ObjectHeader* nHdr = nameOop.asObjectPtr();
+                            if (nHdr->isBytesObject() && nHdr->byteSize() < 60) {
+                                rcvrCls = std::string((char*)nHdr->bytes(), nHdr->byteSize());
+                            }
+                        }
+                    }
+                }
+                fprintf(stderr, "[DRIVER] %s >> #%.*s step=%llu\n",
+                        rcvrCls.c_str(), (int)selLen, selBytes, g_stepNum);
+            }
+        }
+        // Separate trace for signal/wait on non-SymbolTable semaphores
+        if ((match("signal") || match("wait")) && g_stepNum < 25000000) {
+            std::string rcvrCls = "?";
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                Oop cls = memory_.classOf(rcvr);
+                if (cls.isObject()) {
+                    Oop nameOop = memory_.fetchPointer(6, cls);
+                    if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                        ObjectHeader* nHdr = nameOop.asObjectPtr();
+                        if (nHdr->isBytesObject() && nHdr->byteSize() < 60) {
+                            rcvrCls = std::string((char*)nHdr->bytes(), nHdr->byteSize());
+                        }
+                    }
+                }
+            }
+            if (rcvrCls.find("SymbolTable") == std::string::npos) {
+                fprintf(stderr, "[SEM] %s >> #%.*s step=%llu\n",
+                        rcvrCls.c_str(), (int)selLen, selBytes, g_stepNum);
+            }
+        }
+    }
 
     // ===== INTERCEPT PROBLEMATIC SELECTORS =====
     // Handle specific message intercepts needed for embedded VM operation

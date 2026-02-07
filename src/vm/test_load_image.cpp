@@ -526,11 +526,10 @@ int main(int argc, char* argv[]) {
     interpreter.setVMPath(argv[0]);
     interpreter.setImageArguments(imageArgs);
 
-    // Set VM parameters - when command-line args are present, run headless
-    // like the standard Pharo launcher does (pharo always passes --headless)
-    if (!imageArgs.empty()) {
-        interpreter.setVMParameters({"--headless"});
-    }
+    // Do NOT set --headless: the image checks isHeadless to decide whether
+    // to use OSWorldRenderer (GUI) vs NullWorldRenderer (headless).
+    // We want the GUI path so the display driver starts via FFI/SDL2.
+    // The test runner script handles its own lifecycle (quit after tests).
 
     // Set up event callback BEFORE initialization
     gTestInterpreter = &interpreter;
