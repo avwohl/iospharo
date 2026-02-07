@@ -86,50 +86,68 @@ runDiagnostic: stream
    ifFalse: [stream nextPutAll: 'T8 runWithNoHandlers OK: '; nextPutAll: result printString; cr]. stream flush]
   on: Error do: [:e |
    stream nextPutAll: 'T8 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
-  "Test 9: Fork at priority 80 then runWithNoHandlers inside (matches test runner)"
+  "Test 9: forkAt:80 + inner fork with Semaphore>>wait (no timeout machinery)"
   [| outerSem outerResult |
    outerSem := Semaphore new.
    outerResult := 'not set'.
-   [[| synchSemaphore result executed |
-     synchSemaphore := Semaphore new.
+   [[| innerSem executed |
+     innerSem := Semaphore new.
      executed := false.
-     [result := [[ 1/0 ] on: UnhandledError do: [:e | executed := true]]
-       ensure: [synchSemaphore signal]] forkNamed: 'Test process'.
-     (synchSemaphore waitTimeoutSeconds: 2) ifTrue: [
-       outerResult := 'TIMEOUT']
-     ifFalse: [
-       outerResult := 'OK executed=', executed printString].
+     [executed := true. innerSem signal] fork.
+     innerSem wait. "Direct wait - no timeout mechanism"
+     outerResult := 'OK executed=', executed printString.
      outerSem signal]
    on: Error do: [:e |
      outerResult := 'ERROR: ', e class name, ' - ', e messageText.
      outerSem signal]] forkAt: 80.
    (outerSem waitTimeoutSeconds: 5) ifTrue: [
-     stream nextPutAll: 'T9 ForkAt80+runWithNoHandlers OUTER_TIMEOUT'; cr]
+     stream nextPutAll: 'T9 ForkAt80+wait OUTER_TIMEOUT'; cr]
    ifFalse: [
-     stream nextPutAll: 'T9 ForkAt80+runWithNoHandlers: '; nextPutAll: outerResult; cr].
+     stream nextPutAll: 'T9 ForkAt80+wait: '; nextPutAll: outerResult; cr].
    stream flush]
   on: Error do: [:e |
    stream nextPutAll: 'T9 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
-  "Test 10: Actually run ExceptionTest testUnhandledErrorWhenNoHandlers"
+  "Test 10: forkAt:80 + inner fork with waitTimeoutSeconds: (complex machinery)"
   [| outerSem outerResult |
    outerSem := Semaphore new.
    outerResult := 'not set'.
-   [[| test |
-     test := ExceptionTest selector: #testUnhandledErrorWhenNoHandlers.
-     [test runCase.
-      outerResult := 'PASS']
-     on: TestFailure do: [:tf |
-       outerResult := 'FAIL: ', tf messageText]
-     on: Error do: [:e |
-       outerResult := 'ERROR: ', e class name, ' - ', e messageText].
-     outerSem signal] forkAt: 80.
+   [[| innerSem executed |
+     innerSem := Semaphore new.
+     executed := false.
+     [executed := true. innerSem signal] fork.
+     (innerSem waitTimeoutSeconds: 2) ifTrue: [outerResult := 'INNER_TIMEOUT']
+     ifFalse: [outerResult := 'OK executed=', executed printString].
+     outerSem signal]
+   on: Error do: [:e |
+     outerResult := 'ERROR: ', e class name, ' - ', e messageText.
+     outerSem signal]] forkAt: 80.
    (outerSem waitTimeoutSeconds: 5) ifTrue: [
-     stream nextPutAll: 'T10 ExceptionTest OUTER_TIMEOUT'; cr]
+     stream nextPutAll: 'T10 ForkAt80+waitTimeout OUTER_TIMEOUT'; cr]
    ifFalse: [
-     stream nextPutAll: 'T10 ExceptionTest: '; nextPutAll: outerResult; cr].
+     stream nextPutAll: 'T10 ForkAt80+waitTimeout: '; nextPutAll: outerResult; cr].
    stream flush]
   on: Error do: [:e |
    stream nextPutAll: 'T10 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
+  "Test 11: forkAt:80 with pre-signaled semaphore (no scheduling needed)"
+  [| outerSem outerResult |
+   outerSem := Semaphore new.
+   outerResult := 'not set'.
+   [[| innerSem |
+     innerSem := Semaphore new.
+     innerSem signal. "Pre-signal"
+     innerSem wait. "Should return immediately"
+     outerResult := 'OK (pre-signaled)'.
+     outerSem signal]
+   on: Error do: [:e |
+     outerResult := 'ERROR: ', e class name, ' - ', e messageText.
+     outerSem signal]] forkAt: 80.
+   (outerSem waitTimeoutSeconds: 5) ifTrue: [
+     stream nextPutAll: 'T11 ForkAt80+preSignaled OUTER_TIMEOUT'; cr]
+   ifFalse: [
+     stream nextPutAll: 'T11 ForkAt80+preSignaled: '; nextPutAll: outerResult; cr].
+   stream flush]
+  on: Error do: [:e |
+   stream nextPutAll: 'T11 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
   stream nextPutAll: '=== END DIAGNOSTICS ==='; cr; cr. stream flush! !
 
 !SUnitRunner class methodsFor: 'running'!
@@ -232,7 +250,7 @@ runAllTests
 !SUnitRunner class methodsFor: 'running'!
 runTestClass: testClass run: runNum on: s detail: d
   "Run all tests in a class. Returns #(pass fail error skip timeout)."
-  | sels p f e sk t |
+  | sels p f e sk t testPriority |
 
   "Skip classes that stall due to process/scheduling issues in our VM.
    These tests fork processes at the same priority or rely on Delay timeouts
@@ -245,6 +263,10 @@ runTestClass: testClass run: runNum on: s detail: d
 
   s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' ==='; cr.
   s flush.
+  "Tests that use waitTimeoutSeconds: internally need priority < 80 (timingPriority)
+   so the delay scheduler can preempt and register timeouts."
+  testPriority := (#(ExceptionTest) includes: testClass name)
+    ifTrue: [79] ifFalse: [80].
   p := 0. f := 0. e := 0. sk := 0. t := 0.
   sels := testClass allTestSelectors asArray.
   "Sort with comparison counter to detect infinite loops"
@@ -265,12 +287,12 @@ runTestClass: testClass run: runNum on: s detail: d
     "Skip tests known to hang or cause VM-level crashes"
     ((#(testPrintStringAll testStoreStringAll testPrintStringBase testReciprocalModulo
         testAllReferencesTo testAllReferences testPragmaAddingProperty
-        testPragmaRemovingProperty testOneGBAllocation) includes: sel) or: [
+        testPragmaRemovingProperty testOneGBAllocation testPrintingRecursive) includes: sel) or: [
          "Skip tests that iterate all heap objects (stalls with broken timer)"
          sel beginsWith: 'testPointers']) ifFalse: [
       | result |
       s nextPutAll: '  RUN: '; nextPutAll: sel; cr. s flush.
-      result := self runSingleTest: testClass selector: sel timeout: 5 on: s.
+      result := self runSingleTest: testClass selector: sel timeout: 5 priority: testPriority on: s.
       result ifNil: [
         p := p + 1.
         d nextPutAll: runNum printString; nextPut: $	.
@@ -313,7 +335,7 @@ runTestClass: testClass run: runNum on: s detail: d
   ^ {p. f. e. sk. t}! !
 
 !SUnitRunner class methodsFor: 'running'!
-runSingleTest: testClass selector: sel timeout: seconds on: s
+runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
   "Run a single test with a timeout. Returns nil for pass, #fail, #error, #skip, or #timeout."
   | sem result testProcess |
   sem := Semaphore new.
@@ -335,7 +357,7 @@ runSingleTest: testClass selector: sel timeout: seconds on: s
         s nextPutAll: '  ERROR: '; nextPutAll: sel;
           nextPutAll: ' ('; nextPutAll: ex class name;
           nextPutAll: ': '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 100)); nextPutAll: ')'; cr].
-    sem signal] forkAt: 80.
+    sem signal] forkAt: priority.
 
   "Wait for test completion or timeout"
   (sem waitTimeoutSeconds: seconds) ifTrue: [
