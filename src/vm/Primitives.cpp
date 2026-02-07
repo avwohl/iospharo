@@ -2553,7 +2553,19 @@ PrimitiveResult Interpreter::primitiveNew(int argCount) {
         }
     }
 
-    Oop newObj = memory_.allocateSlots(classIndex, instSize);
+    // Choose correct object format based on instSpec
+    ObjectFormat objFormat;
+    switch (instFormat) {
+        case 0: objFormat = ObjectFormat::ZeroSized; break;
+        case 1: objFormat = ObjectFormat::FixedSize; break;
+        case 2: objFormat = ObjectFormat::Indexable; break;
+        case 3: objFormat = ObjectFormat::IndexableWithFixed; break;
+        case 4: objFormat = ObjectFormat::Weak; break;
+        case 5: objFormat = ObjectFormat::WeakWithFixed; break;
+        default: objFormat = ObjectFormat::FixedSize; break;
+    }
+
+    Oop newObj = memory_.allocateSlots(classIndex, instSize, objFormat);
 
     if (newObj.isNil() || newObj.rawBits() == memory_.nil().rawBits()) {
         return PrimitiveResult::Failure;  // Out of memory
@@ -2892,7 +2904,15 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
         // Choose correct format based on instSpec:
         // instSpec 2 = variable pointers only (Array)
         // instSpec 3 = variable pointers with fixed fields (Context, CompiledMethod)
-        ObjectFormat objFormat = (instSpec == 3) ? ObjectFormat::IndexableWithFixed : ObjectFormat::Indexable;
+        // instSpec 4 = weak variable pointers only (WeakArray)
+        // instSpec 5 = weak variable pointers with fixed fields (WeakAnnouncementSubscription)
+        ObjectFormat objFormat;
+        switch (instSpec) {
+            case 3: objFormat = ObjectFormat::IndexableWithFixed; break;
+            case 4: objFormat = ObjectFormat::Weak; break;
+            case 5: objFormat = ObjectFormat::WeakWithFixed; break;
+            default: objFormat = ObjectFormat::Indexable; break;
+        }
         newObj = memory_.allocateSlots(classIndex, totalSlots, objFormat);
     }
 
@@ -20724,7 +20744,13 @@ PrimitiveResult Interpreter::primitiveNewWithArgOldSpace(int argCount) {
         }
     } else {
         size_t totalSlots = fixedSize + static_cast<size_t>(indexableSize);
-        ObjectFormat objFormat = (instSpec == 3) ? ObjectFormat::IndexableWithFixed : ObjectFormat::Indexable;
+        ObjectFormat objFormat;
+        switch (instSpec) {
+            case 3: objFormat = ObjectFormat::IndexableWithFixed; break;
+            case 4: objFormat = ObjectFormat::Weak; break;
+            case 5: objFormat = ObjectFormat::WeakWithFixed; break;
+            default: objFormat = ObjectFormat::Indexable; break;
+        }
         newObj = memory_.allocateSlots(classIndex, totalSlots, objFormat);
     }
 
@@ -20841,7 +20867,13 @@ PrimitiveResult Interpreter::primitiveNewWithArgPinned(int argCount) {
         }
     } else {
         size_t totalSlots = fixedSize + static_cast<size_t>(indexableSize);
-        ObjectFormat objFormat = (instSpec == 3) ? ObjectFormat::IndexableWithFixed : ObjectFormat::Indexable;
+        ObjectFormat objFormat;
+        switch (instSpec) {
+            case 3: objFormat = ObjectFormat::IndexableWithFixed; break;
+            case 4: objFormat = ObjectFormat::Weak; break;
+            case 5: objFormat = ObjectFormat::WeakWithFixed; break;
+            default: objFormat = ObjectFormat::Indexable; break;
+        }
         newObj = memory_.allocateSlots(classIndex, totalSlots, objFormat);
     }
 

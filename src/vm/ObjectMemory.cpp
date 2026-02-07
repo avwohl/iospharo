@@ -2807,10 +2807,12 @@ void ObjectMemory::markAndTrace(Oop oop) {
     ObjectFormat fmt = obj->format();
     if (fmt == ObjectFormat::Weak || fmt == ObjectFormat::WeakWithFixed) {
         weakList_.push_back(obj);
-        // For WeakWithFixed: trace the fixed (strong) fields immediately.
-        // Only the variable (indexable) part is weak — fixed instVars are strong.
-        if (fmt == ObjectFormat::WeakWithFixed) {
-            size_t fixedFields = fixedFieldCountOf(obj);
+        // Trace the fixed (strong) fields immediately.
+        // In Spur, both Weak (format 4) and WeakWithFixed (format 5) can have
+        // fixed fields — the class's instSpec records the count.
+        // Only the variable (indexable) part beyond fixedFields is weak.
+        size_t fixedFields = fixedFieldCountOf(obj);
+        if (fixedFields > 0) {
             Oop* slots = obj->slots();
             size_t total = obj->slotCount();
             for (size_t i = 0; i < fixedFields && i < total; ++i) {
@@ -2892,18 +2894,15 @@ void ObjectMemory::processWeaklings() {
     for (ObjectHeader* obj : weakList_) {
         size_t slots = obj->slotCount();
         Oop* slotPtr = obj->slots();
-        // For WeakWithFixed (format 5), skip the fixed fields — they are
-        // strong references that were already traced during the mark phase.
-        // Only nil out the variable (weak) part.
-        size_t startSlot = 0;
-        if (obj->format() == ObjectFormat::WeakWithFixed) {
-            startSlot = fixedFieldCountOf(obj);
-        }
+        // Skip the fixed fields — they are strong references that were
+        // already traced during the mark phase. Only nil the variable (weak) part.
+        // In Spur, BOTH format 4 (Weak) and format 5 (WeakWithFixed) can have
+        // fixed fields — the class's instSpec records the count.
+        size_t startSlot = fixedFieldCountOf(obj);
         for (size_t i = startSlot; i < slots; ++i) {
             Oop ref = slotPtr[i];
             if (ref.isObject() && !isPermObject(ref.asObjectPtr())) {
                 if (!ref.asObjectPtr()->isMarked()) {
-                    // Referent is dead — nil it out
                     slotPtr[i] = nilObject_;
                 }
             }
