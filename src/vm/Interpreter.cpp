@@ -8337,6 +8337,19 @@ Oop Interpreter::receiverInstVar(size_t index) const {
 }
 
 void Interpreter::setReceiverInstVar(size_t index, Oop value) {
+    // Check immutability - send attemptToAssign:withIndex: if receiver is immutable
+    if (receiver_.isObject()) {
+        ObjectHeader* hdr = receiver_.asObjectPtr();
+        if (hdr->isImmutable()) {
+            Oop selector = memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign);
+            push(receiver_);                                                // receiver of message
+            push(value);                                                    // arg 1: value being assigned
+            push(Oop::fromSmallInteger(static_cast<int64_t>(index + 1)));   // arg 2: 1-based index
+            sendSelector(selector, 2);
+            return;
+        }
+    }
+
     // TRACE: Log OSSDL2Driver slot writes (especially inputSemaphore = slot 0)
     if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
         Oop rcls = memory_.classOf(receiver_);

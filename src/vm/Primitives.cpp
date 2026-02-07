@@ -8790,19 +8790,10 @@ PrimitiveResult Interpreter::primitiveBehaviorHash(int argCount) {
 PrimitiveResult Interpreter::primitiveChangeClass(int argCount) {
     // Primitive 115: Change the class of the receiver to the class of the argument
     // NOTE: The argument is an INSTANCE of the target class, not the class itself!
-    // This is per official VM semantics: receiver adoptInstance: anInstance
     Oop argInstance = stackValue(0);  // An instance of the target class
     Oop rcvr = stackValue(1);
 
     if (!rcvr.isObject() || !argInstance.isObject()) {
-        return PrimitiveResult::Failure;
-    }
-
-    ObjectHeader* rcvrHeader = rcvr.asObjectPtr();
-    ObjectHeader* argHeader = argInstance.asObjectPtr();
-
-    // Check immutability
-    if (rcvrHeader->isImmutable()) {
         return PrimitiveResult::Failure;
     }
 
@@ -8812,44 +8803,78 @@ PrimitiveResult Interpreter::primitiveChangeClass(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Format compatibility check: receiver and argument must have same format category
-    // Can't change bytes object to pointers object, etc.
-    ObjectFormat rcvrFmt = rcvrHeader->format();
-    ObjectFormat argFmt = argHeader->format();
+    return changeClassOf(rcvr, newClass);
+}
 
-    // Check format compatibility (simplified version)
-    // Both must be pointer objects, or both must be byte objects with same format
-    bool rcvrIsPointers = rcvrFmt <= ObjectFormat::WeakWithFixed;
-    bool argIsPointers = argFmt <= ObjectFormat::WeakWithFixed;
+PrimitiveResult Interpreter::changeClassOf(Oop rcvr, Oop newClass) {
+    // Shared implementation for primitiveChangeClass (115) and primitiveAdoptInstance (160)
+    // Follows official VM's changeClassOfto() validation
+    ObjectHeader* rcvrHeader = rcvr.asObjectPtr();
 
-    if (rcvrIsPointers != argIsPointers) {
-        return PrimitiveResult::Failure;  // Can't mix pointers and non-pointers
+    // Check immutability
+    if (rcvrHeader->isImmutable()) {
+        return PrimitiveResult::Failure;
     }
 
-    // For non-pointer objects, formats should match more closely
-    if (!rcvrIsPointers) {
-        bool rcvrIsBytes = rcvrFmt >= ObjectFormat::Indexable8 && rcvrFmt <= ObjectFormat::Indexable8_7;
-        bool argIsBytes = argFmt >= ObjectFormat::Indexable8 && argFmt <= ObjectFormat::Indexable8_7;
-        bool rcvrIsWords = rcvrFmt == ObjectFormat::Indexable64 ||
-                          (rcvrFmt >= ObjectFormat::Indexable32 && rcvrFmt <= ObjectFormat::Indexable32Odd);
-        bool argIsWords = argFmt == ObjectFormat::Indexable64 ||
-                         (argFmt >= ObjectFormat::Indexable32 && argFmt <= ObjectFormat::Indexable32Odd);
-
-        if (rcvrIsBytes != argIsBytes || rcvrIsWords != argIsWords) {
-            return PrimitiveResult::Failure;  // Format mismatch
-        }
+    // Get new class format and fixed fields from class instSpec (slot 2)
+    Oop classFormatOop = memory_.fetchPointer(2, newClass);
+    if (!classFormatOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
     }
+    int64_t classFormatRaw = classFormatOop.asSmallInteger();
+    size_t fixedFields = classFormatRaw & 0xFFFF;
+    uint8_t classFormat = static_cast<uint8_t>((classFormatRaw >> 16) & 0x1F);
+
+    uint8_t instFormat = static_cast<uint8_t>(rcvrHeader->format());
+    size_t instSlots = rcvrHeader->slotCount();
 
     // Get the class index for the new class
     uint32_t newClassIndex = memory_.indexOfClass(newClass);
-
-    // Basic safety check: the new class should be a valid behavior
     if (newClassIndex == 0) {
         return PrimitiveResult::Failure;
     }
 
-    // Change the class index in the object header
+    uint8_t newFormat;
+
+    if (classFormat <= 5) {
+        // New class is pointer type (0=zero, 1=fixed, 2=indexable, 3=indexable+fixed, 4=weak, 5=ephemeron)
+        if (instFormat > 5) {
+            return PrimitiveResult::Failure;  // Can't change non-pointer to pointer
+        }
+        // Check slot count compatibility:
+        // - Receiver must have at least as many slots as the new class's fixed fields
+        // - If receiver has MORE slots than fixed fields, new class must be indexable (format 2-4)
+        if (instSlots < fixedFields) {
+            return PrimitiveResult::Failure;  // Not enough slots
+        }
+        if (instSlots > fixedFields && (classFormat <= 1 || classFormat == 5)) {
+            return PrimitiveResult::Failure;  // Extra slots but class is non-indexable
+        }
+        newFormat = classFormat;
+    } else {
+        // Non-pointer format: bytes, words, compiled methods
+        // For now, check basic compatibility
+        if (instFormat <= 5) {
+            return PrimitiveResult::Failure;  // Can't change pointer to non-pointer
+        }
+        // Require same format category
+        bool instIsBytes = instFormat >= 16 && instFormat <= 23;
+        bool classIsBytes = classFormat >= 16 && classFormat <= 23;
+        bool instIsWords32 = instFormat >= 10 && instFormat <= 11;
+        bool classIsWords32 = classFormat >= 10 && classFormat <= 11;
+        bool instIsWords64 = instFormat == 9;
+        bool classIsWords64 = classFormat == 9;
+        if (instIsBytes != classIsBytes || instIsWords32 != classIsWords32 ||
+            instIsWords64 != classIsWords64) {
+            return PrimitiveResult::Failure;
+        }
+        newFormat = instFormat;  // Keep existing format (preserves padding bits)
+    }
+
+    // Update the class index and format in the object header
     rcvrHeader->setClassIndex(newClassIndex);
+    // Also update the format to match the new class
+    rcvrHeader->setFormat(static_cast<ObjectFormat>(newFormat));
 
     popN(2);
     push(rcvr);  // Return receiver
@@ -9343,6 +9368,8 @@ PrimitiveResult Interpreter::primitiveNewMethod(int argCount) {
 
 // Primitive 160: Adopt an instance - change class with format compatibility check
 PrimitiveResult Interpreter::primitiveAdoptInstance(int argCount) {
+    // Primitive 160: aClass adoptInstance: anInstance
+    // Changes anInstance's class to aClass (the receiver)
     Oop instanceOop = stackValue(0);
     Oop newClassOop = stackValue(1);
 
@@ -9350,26 +9377,8 @@ PrimitiveResult Interpreter::primitiveAdoptInstance(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    ObjectHeader* instanceHeader = instanceOop.asObjectPtr();
-
-    // Check immutability
-    if (instanceHeader->isImmutable()) {
-        return PrimitiveResult::Failure;
-    }
-
-    // Get the new class index
-    uint32_t newClassIndex = memory_.indexOfClass(newClassOop);
-    if (newClassIndex == 0) {
-        return PrimitiveResult::Failure;
-    }
-
-    // In a full implementation, we'd verify format compatibility here
-    // For now, just change the class
-    instanceHeader->setClassIndex(newClassIndex);
-
-    popN(2);
-    push(instanceOop);
-    return PrimitiveResult::Success;
+    // Use shared validation with primitiveChangeClass
+    return changeClassOf(instanceOop, newClassOop);
 }
 
 // ===== OBJECT PINNING PRIMITIVES =====

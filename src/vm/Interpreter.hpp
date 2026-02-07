@@ -1353,6 +1353,7 @@ private:
     // Class/behavior primitives
     PrimitiveResult primitiveBehaviorHash(int argCount);     // 175
     PrimitiveResult primitiveChangeClass(int argCount);      // 115
+    PrimitiveResult changeClassOf(Oop rcvr, Oop newClass);   // shared helper
 
     // 16-bit array access primitives
     PrimitiveResult primitiveShortAt(int argCount);          // 143

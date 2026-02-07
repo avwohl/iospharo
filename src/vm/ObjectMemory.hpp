@@ -165,6 +165,7 @@ enum class SpecialObjectIndex : size_t {
     // 44-47 unused
     SelectorAboutToReturn = 48,    // Was incorrectly 40
     SelectorRunWithIn = 49,
+    SelectorAttemptToAssign = 50,   // attemptToAssign:withIndex:
     // ... more indices up to 59
     ClassFullBlockClosure = 59,
     Count = 60
