@@ -46,6 +46,7 @@ FILE* g_sendTraceFile = nullptr;
 // REMOVED: g_debugPendingFlag (was for workaround code)
 
 uint64_t g_stepNum = 0;  // Global step counter for hang debugging (non-static for use in Primitives.cpp)
+const char* g_xferReason = "unknown";  // Reason for the most recent transferTo call
 uint64_t g_docwMethodOop = 0;  // Method OID for doOneCycleWhile: (set by executeFromContext)
 int g_docwRestoreCount = 0;     // How many times doOneCycleWhile: has been restored
 
@@ -2288,6 +2289,7 @@ void Interpreter::checkTimerSemaphore() {
                 }
                 if (processPriority > activePriority) {
                     putToSleep(activeProcess);
+                    g_xferReason = "checkTimerSem";
                     transferTo(process);
                 } else {
                     putToSleep(process);
@@ -2348,6 +2350,7 @@ void Interpreter::checkTimerSemaphore() {
             if (processPriority > activePriority) {
                 // Higher priority preempts (standard Spur behavior)
                 putToSleep(activeProcess);
+                g_xferReason = "processPendingSig";
                 transferTo(process);
             } else {
                 putToSleep(process);
@@ -2571,6 +2574,7 @@ void Interpreter::processPendingSignals() {
         if (processPriority > activePriority) {
             // Higher priority preempts (standard Spur behavior)
             putToSleep(activeProcess);
+            g_xferReason = "signalSemVM";
             transferTo(process);
         } else {
             // Lower priority - just add to ready queue
@@ -2685,7 +2689,10 @@ bool Interpreter::step() {
     g_stepNum++;
 
     // Method sampling: log what's executing at regular intervals during startup
-    if (g_stepNum > 0 && (g_stepNum % 2000000) == 0 && g_stepNum <= 100000000) {
+    // Sample densely around 43M-47M where Process B should finish
+    if (g_stepNum > 0 && ((g_stepNum % 2000000) == 0 ||
+        (g_stepNum >= 43000000 && g_stepNum <= 47000000 && (g_stepNum % 50000) == 0)) &&
+        g_stepNum <= 100000000) {
         // Extract current method selector
         std::string methodSel = "<unknown>";
         std::string rcvrClass = "<unknown>";
@@ -2719,8 +2726,15 @@ bool Interpreter::step() {
                 }
             }
         }
-        fprintf(stderr, "[SAMPLE step=%llu] %s >> %s\n",
-                (unsigned long long)g_stepNum, rcvrClass.c_str(), methodSel.c_str());
+        // Get active process priority
+        int activePri = -1;
+        Oop actProc = getActiveProcess();
+        if (actProc.isObject() && actProc.rawBits() > 0x10000) {
+            Oop priOop = memory_.fetchPointer(2, actProc);  // slot 2 = priority
+            if (priOop.isSmallInteger()) activePri = (int)priOop.asSmallInteger();
+        }
+        fprintf(stderr, "[SAMPLE step=%llu pri=%d] %s >> %s\n",
+                (unsigned long long)g_stepNum, activePri, rcvrClass.c_str(), methodSel.c_str());
     }
 
     // Check for forced process yield BEFORE fetching the next bytecode.
@@ -2796,6 +2810,7 @@ bool Interpreter::step() {
 
         if (foundProcess) {
             putToSleep(activeProcess);
+            g_xferReason = "forceYield";
             transferTo(nextProcess);
         }
 
@@ -4932,9 +4947,16 @@ void Interpreter::returnValue(Oop value) {
                         }
                     }
                 }
-                if (nilSenderCount <= 10) {
-                    std::cerr << "[NIL-SENDER #" << nilSenderCount << "] Return from " << methodSel
-                              << " with nil sender - going to terminate_process\n";
+                // Get process priority for context
+                int nilSenderPrio = -1;
+                Oop nilSenderProc = getActiveProcess();
+                if (nilSenderProc.isObject() && nilSenderProc.rawBits() > 0x10000) {
+                    Oop priOop = memory_.fetchPointer(2, nilSenderProc);
+                    if (priOop.isSmallInteger()) nilSenderPrio = (int)priOop.asSmallInteger();
+                }
+                if (nilSenderCount <= 20) {
+                    fprintf(stderr, "[NIL-SENDER #%d step=%llu pri=%d] Return from #%s with nil sender\n",
+                            nilSenderCount, (unsigned long long)g_stepNum, nilSenderPrio, methodSel.c_str());
                 }
                 // Fall through to terminate current process
             } else if (sender.isObject() && sender.rawBits() != nilObj.rawBits()) {
@@ -5265,10 +5287,99 @@ terminate_process:
             Oop ap = getActiveProcess();
             Oop prioOop = memory_.fetchPointer(2, ap);
             int prio = prioOop.isSmallInteger() ? static_cast<int>(prioOop.asSmallInteger()) : -1;
-            if (termLogCount <= 20) {
-                fprintf(stderr, "[PROC-TERM #%d step=%llu] priority=%d process=0x%llx\n",
+            if (termLogCount <= 30) {
+                // Get current method name
+                std::string curMethod = "?";
+                if (activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
+                    Oop ctxMeth = memory_.fetchPointer(3, activeContext_);
+                    if (ctxMeth.isObject() && ctxMeth.rawBits() > 0x10000) {
+                        Oop mhdr = memory_.fetchPointer(0, ctxMeth);
+                        if (mhdr.isSmallInteger()) {
+                            int nLits = mhdr.asSmallInteger() & 0x7FFF;
+                            if (nLits >= 2 && nLits < 100) {
+                                Oop sel = memory_.fetchPointer(nLits - 1, ctxMeth);
+                                if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                    ObjectHeader* selH = sel.asObjectPtr();
+                                    if (selH->isBytesObject() && selH->byteSize() < 80) {
+                                        curMethod = std::string((char*)selH->bytes(), selH->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                fprintf(stderr, "[PROC-TERM #%d step=%llu] priority=%d process=0x%llx method=#%s\n",
                         termLogCount, (unsigned long long)g_stepNum, prio,
-                        (unsigned long long)ap.rawBits());
+                        (unsigned long long)ap.rawBits(), curMethod.c_str());
+            }
+            // For high-priority processes (snapshot process = pri 79), dump full context chain
+            if (prio >= 60 && termLogCount <= 30) {
+                fprintf(stderr, "[PROC-TERM-CHAIN pri=%d] Context chain at termination:\n", prio);
+                Oop ctx = activeContext_;
+                Oop nilObj2 = memory_.nil();
+                for (int ci = 0; ci < 30 && ctx.isObject() && ctx.rawBits() != nilObj2.rawBits(); ci++) {
+                    ObjectHeader* ch = ctx.asObjectPtr();
+                    if (ch->slotCount() < 4) break;
+                    Oop cm = memory_.fetchPointer(3, ctx);
+                    std::string cmn = "?";
+                    bool isBlock = false;
+                    if (cm.isObject() && cm.rawBits() > 0x10000) {
+                        ObjectHeader* cmHdr = cm.asObjectPtr();
+                        auto cmFmt = static_cast<int>(cmHdr->format());
+                        isBlock = (24 <= cmFmt && cmFmt <= 31);
+                        Oop mh2 = memory_.fetchPointer(0, cm);
+                        if (mh2.isSmallInteger()) {
+                            int nl = mh2.asSmallInteger() & 0x7FFF;
+                            if (nl >= 2 && nl < 100) {
+                                Oop sel2 = memory_.fetchPointer(nl - 1, cm);
+                                if (sel2.isObject() && sel2.rawBits() > 0x10000) {
+                                    ObjectHeader* sh = sel2.asObjectPtr();
+                                    if (sh->isBytesObject() && sh->byteSize() < 80) {
+                                        cmn = std::string((char*)sh->bytes(), sh->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Oop snd = memory_.fetchPointer(0, ctx);
+                    Oop pc = memory_.fetchPointer(1, ctx);
+                    Oop closure = memory_.fetchPointer(4, ctx);
+                    fprintf(stderr, "  [%d] %s%s pc=%lld closure=0x%llx sender=%s\n",
+                            ci, isBlock ? "BLOCK/" : "", cmn.c_str(),
+                            pc.isSmallInteger() ? pc.asSmallInteger() : -1,
+                            (unsigned long long)closure.rawBits(),
+                            snd.rawBits() == nilObj2.rawBits() ? "nil" :
+                            (snd.rawBits() < 0x10000 ? "INVALID" : "ok"));
+                    // For top frames, dump temps/stack
+                    if (ci < 3) {
+                        Oop sp = memory_.fetchPointer(2, ctx);
+                        int numSlots = ch->slotCount();
+                        fprintf(stderr, "    sp=%lld slots=%d temps: ",
+                                sp.isSmallInteger() ? sp.asSmallInteger() : -1, numSlots);
+                        for (int ti = 6; ti < std::min(numSlots, 20); ti++) {
+                            Oop tv = memory_.fetchPointer(ti, ctx);
+                            if (tv.isSmallInteger()) fprintf(stderr, "[%d]=SI(%lld) ", ti, tv.asSmallInteger());
+                            else if (tv.rawBits() == nilObj2.rawBits()) fprintf(stderr, "[%d]=nil ", ti);
+                            else {
+                                // Try to get class name for object values
+                                std::string tvCls = "";
+                                Oop tvClass = memory_.classOf(tv);
+                                if (tvClass.isObject()) {
+                                    Oop cn = memory_.fetchPointer(6, tvClass);
+                                    if (cn.isObject() && cn.rawBits() > 0x10000) {
+                                        ObjectHeader* cnh = cn.asObjectPtr();
+                                        if (cnh->isBytesObject() && cnh->byteSize() < 40)
+                                            tvCls = std::string((char*)cnh->bytes(), cnh->byteSize());
+                                    }
+                                }
+                                fprintf(stderr, "[%d]=0x%llx(%s) ", ti, (unsigned long long)tv.rawBits(), tvCls.c_str());
+                            }
+                        }
+                        fprintf(stderr, "\n");
+                    }
+                    ctx = snd;
+                }
+                fflush(stderr);
             }
         }
 
@@ -5713,7 +5824,13 @@ void Interpreter::returnFromMethod() {
                         frameDepth_ = 0;
                     }
 
-                    // Return FROM the home context by executing from its sender
+                    // Check for unwind (ensure:) contexts between here and home.
+                    // If found, redirect through the ensure: context so its cleanup fires.
+                    if (handleContextNLRUnwind(value, activeContext_, homeCtx)) {
+                        return;
+                    }
+
+                    // No unwind contexts - return FROM the home context by executing from its sender
                     Oop sender = memory_.fetchPointer(0, homeCtx);
                     if (sender.isObject() && !sender.isNil()) {
                         // Store the return value on sender's stack
@@ -5856,35 +5973,37 @@ void Interpreter::returnFromMethod() {
         if (isCompiledBlock && frameDepth_ == 0 && homeMethod.isObject() && !homeMethod.isNil()) {
             // Walk up the context chain to find the context executing homeMethod
             Oop ctx = activeContext_;
+            Oop homeCtx = Oop::nil();
             int depth = 0;
             while (ctx.isObject() && !ctx.isNil() && depth < 200) {
-                // Context layout: slot 3 = method (for MethodContext)
                 Oop ctxMethod = memory_.fetchPointer(3, ctx);
                 if (ctxMethod.rawBits() == homeMethod.rawBits()) {
-                    // Found the home context! Return FROM this context
-                    // by setting activeContext to its sender and pushing value there
-                    Oop sender = memory_.fetchPointer(0, ctx);
-                    if (sender.isObject() && !sender.isNil()) {
-                        // Store the return value on sender's stack
-                        // Context layout: slot 2 = stackp (index of top in context)
-                        Oop stackpOop = memory_.fetchPointer(2, sender);
-                        if (stackpOop.isSmallInteger()) {
-                            int stackp = stackpOop.asSmallInteger();
-                            // Push value onto sender's stack: increment stackp and store
-                            stackp++;
-                            memory_.storePointer(2, sender, Oop::fromSmallInteger(stackp));
-                            // Context temps/stack start at slot 6, so slot 6 + stackp - 1 = value position
-                            // stackp is 1-based index
-                            memory_.storePointer(5 + stackp, sender, value);
-                        }
-                        // Execute from the sender context
-                        executeFromContext(sender);
-                        return;
-                    }
+                    homeCtx = ctx;
+                    break;
                 }
-                // Move to sender
                 ctx = memory_.fetchPointer(0, ctx);
                 depth++;
+            }
+
+            if (homeCtx.isObject() && !homeCtx.isNil()) {
+                // Check for unwind (ensure:) contexts between here and home
+                if (handleContextNLRUnwind(value, activeContext_, homeCtx)) {
+                    return;
+                }
+
+                // No unwind contexts - return FROM the home context
+                Oop sender = memory_.fetchPointer(0, homeCtx);
+                if (sender.isObject() && !sender.isNil()) {
+                    Oop stackpOop = memory_.fetchPointer(2, sender);
+                    if (stackpOop.isSmallInteger()) {
+                        int stackp = stackpOop.asSmallInteger();
+                        stackp++;
+                        memory_.storePointer(2, sender, Oop::fromSmallInteger(stackp));
+                        memory_.storePointer(5 + stackp, sender, value);
+                    }
+                    executeFromContext(sender);
+                    return;
+                }
             }
         }
     }
@@ -5943,36 +6062,37 @@ void Interpreter::returnFromBlock() {
         // Walk up the context chain to find the context executing homeMethod
         if (homeMethod.isObject() && !homeMethod.isNil()) {
             Oop ctx = activeContext_;
+            Oop homeCtx = Oop::nil();
             int depth = 0;
             while (ctx.isObject() && !ctx.isNil() && depth < 200) {
-                // Context layout: slot 3 = method (for MethodContext)
                 Oop ctxMethod = memory_.fetchPointer(3, ctx);
                 if (ctxMethod.rawBits() == homeMethod.rawBits()) {
-                    // Found the home context! Return FROM this context
-                    // by setting activeContext to its sender and executing from there
-                    Oop sender = memory_.fetchPointer(0, ctx);
-                    if (sender.isObject() && !sender.isNil()) {
-                        // Use executeFromContext to restore interpreter state from sender
-                        // First, store the return value on sender's stack
-                        // Context layout: slot 2 = stackp (index of top in context)
-                        Oop stackpOop = memory_.fetchPointer(2, sender);
-                        if (stackpOop.isSmallInteger()) {
-                            int stackp = stackpOop.asSmallInteger();
-                            // Push value onto sender's stack: increment stackp and store
-                            stackp++;
-                            memory_.storePointer(2, sender, Oop::fromSmallInteger(stackp));
-                            // Context temps/stack start at slot 6, so slot 6 + stackp - 1 = value position
-                            // stackp is 1-based index
-                            memory_.storePointer(5 + stackp, sender, value);
-                        }
-                        // Now execute from the sender context
-                        executeFromContext(sender);
-                        return;
-                    }
+                    homeCtx = ctx;
+                    break;
                 }
-                // Move to sender
                 ctx = memory_.fetchPointer(0, ctx);
                 depth++;
+            }
+
+            if (homeCtx.isObject() && !homeCtx.isNil()) {
+                // Check for unwind (ensure:) contexts between here and home
+                if (handleContextNLRUnwind(value, activeContext_, homeCtx)) {
+                    return;
+                }
+
+                // No unwind contexts - return FROM the home context
+                Oop sender = memory_.fetchPointer(0, homeCtx);
+                if (sender.isObject() && !sender.isNil()) {
+                    Oop stackpOop = memory_.fetchPointer(2, sender);
+                    if (stackpOop.isSmallInteger()) {
+                        int stackp = stackpOop.asSmallInteger();
+                        stackp++;
+                        memory_.storePointer(2, sender, Oop::fromSmallInteger(stackp));
+                        memory_.storePointer(5 + stackp, sender, value);
+                    }
+                    executeFromContext(sender);
+                    return;
+                }
             }
         }
     }
@@ -5983,6 +6103,69 @@ void Interpreter::returnFromBlock() {
     push(activeContext_);  // receiver: the context that cannot return
     push(value);           // arg: the value that was being returned
     sendSelector(selectors_.cannotReturn, 1);
+}
+
+// Handle unwind (ensure:) contexts during context-based non-local returns.
+// Walks the sender chain from startCtx to homeCtx looking for contexts whose
+// method has primitive 198 (the ensure:/ifCurtailed: marker). If found, redirects
+// execution through the unwind context so its cleanup block fires before the NLR
+// completes. Returns true if an unwind context was found and execution redirected.
+bool Interpreter::handleContextNLRUnwind(Oop value, Oop startCtx, Oop homeCtx) {
+    Oop ctx = startCtx;
+    int depth = 0;
+
+    while (ctx.isObject() && !ctx.isNil() && depth < 200) {
+        if (ctx.rawBits() == homeCtx.rawBits()) break;  // Reached home, no unwind found
+
+        Oop method = memory_.fetchPointer(3, ctx);  // slot 3 = method
+        if (method.isObject() && !method.isNil()) {
+            if (primitiveIndexOf(method) == 198) {
+                // Found an unwind context (ensure:/ifCurtailed:).
+                // The ensure: method body is:
+                //   | complete returnValue |
+                //   <primitive: 198>
+                //   returnValue := self valueNoContextSwitch.
+                //   complete ifNil: [ complete := true. aBlock value. ].
+                //   ^ returnValue
+                //
+                // The context's PC is after the valueNoContextSwitch send.
+                // complete is nil (not yet assigned), so aBlock value will fire.
+                // We push the NLR value as the return of valueNoContextSwitch,
+                // and set the sender to homeCtx's sender so ^returnValue goes
+                // to the correct destination.
+
+                static int unwindNLRCount = 0;
+                if (++unwindNLRCount <= 20) {
+                    fprintf(stderr, "[CONTEXT-NLR-UNWIND #%d step=%llu] Found ensure: ctx=0x%llx, "
+                            "redirecting NLR through it\n",
+                            unwindNLRCount, (unsigned long long)g_stepNum,
+                            (unsigned long long)ctx.rawBits());
+                }
+
+                // Set unwind context's sender to home context's sender
+                Oop homeSender = memory_.fetchPointer(0, homeCtx);
+                memory_.storePointer(0, ctx, homeSender);
+
+                // Push NLR value on unwind context's stack
+                // (as the return value of the interrupted valueNoContextSwitch send)
+                Oop stackpOop = memory_.fetchPointer(2, ctx);  // slot 2 = stackp
+                if (stackpOop.isSmallInteger()) {
+                    int stackp = static_cast<int>(stackpOop.asSmallInteger());
+                    stackp++;
+                    memory_.storePointer(2, ctx, Oop::fromSmallInteger(stackp));
+                    // Stack entries are at slot (6 + index), stackp is 1-based
+                    memory_.storePointer(5 + stackp, ctx, value);
+                }
+
+                // Resume execution from the unwind context
+                executeFromContext(ctx);
+                return true;
+            }
+        }
+        ctx = memory_.fetchPointer(0, ctx);  // sender = slot 0
+        depth++;
+    }
+    return false;
 }
 
 void Interpreter::extendedPush() {
@@ -9175,6 +9358,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                 stopVM("Recursive doesNotUnderstand: and no other runnable process");
                 return;
             }
+            g_xferReason = "dnuCascade";
             transferTo(nextProcess);
             return;
         }
@@ -10975,15 +11159,80 @@ void Interpreter::transferTo(Oop newProcess) {
     {
         static int earlyXferLog = 0;
         earlyXferLog++;
-        if (earlyXferLog <= 30) {
+        if (earlyXferLog <= 40) {
             Oop oldPri2 = memory_.fetchPointer(ProcessPriorityIndex, oldProcess);
             Oop newPri2 = memory_.fetchPointer(ProcessPriorityIndex, newProcess);
-            fprintf(stderr, "[XFER #%d step=%llu] old=0x%llx(p%lld) new=0x%llx(p%lld)\n",
-                    earlyXferLog, (unsigned long long)g_stepNum,
-                    (unsigned long long)oldProcess.rawBits(),
-                    oldPri2.isSmallInteger() ? oldPri2.asSmallInteger() : -1,
-                    (unsigned long long)newProcess.rawBits(),
-                    newPri2.isSmallInteger() ? newPri2.asSmallInteger() : -1);
+            int64_t oldPriVal = oldPri2.isSmallInteger() ? oldPri2.asSmallInteger() : -1;
+            int64_t newPriVal = newPri2.isSmallInteger() ? newPri2.asSmallInteger() : -1;
+            fprintf(stderr, "[XFER #%d step=%llu reason=%s] old=0x%llx(p%lld) new=0x%llx(p%lld)\n",
+                    earlyXferLog, (unsigned long long)g_stepNum, g_xferReason,
+                    (unsigned long long)oldProcess.rawBits(), oldPriVal,
+                    (unsigned long long)newProcess.rawBits(), newPriVal);
+
+            // For high-priority old processes (p>=60), dump current method and context chain
+            if (oldPriVal >= 60) {
+                // Current method_ is what oldProcess was executing
+                std::string oldMethod = "?";
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    Oop mhdr = memory_.fetchPointer(0, method_);
+                    if (mhdr.isSmallInteger()) {
+                        int nl = mhdr.asSmallInteger() & 0x7FFF;
+                        if (nl >= 2 && nl < 100) {
+                            Oop sel = memory_.fetchPointer(nl - 1, method_);
+                            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                ObjectHeader* selH = sel.asObjectPtr();
+                                if (selH->isBytesObject() && selH->byteSize() < 80)
+                                    oldMethod = std::string((char*)selH->bytes(), selH->byteSize());
+                            }
+                        }
+                    }
+                }
+                std::string oldRcvrCls = "?";
+                if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+                    Oop cls = memory_.classOf(receiver_);
+                    if (cls.isObject()) {
+                        Oop cn = memory_.fetchPointer(6, cls);
+                        if (cn.isObject() && cn.rawBits() > 0x10000) {
+                            ObjectHeader* cnh = cn.asObjectPtr();
+                            if (cnh->isBytesObject() && cnh->byteSize() < 80)
+                                oldRcvrCls = std::string((char*)cnh->bytes(), cnh->byteSize());
+                        }
+                    }
+                }
+                fprintf(stderr, "  OLD(p%lld) executing: %s >> %s\n", oldPriVal, oldRcvrCls.c_str(), oldMethod.c_str());
+                // Dump old process's context chain (up to 10 frames)
+                fprintf(stderr, "  OLD context chain:\n");
+                Oop ctx = activeContext_;
+                Oop nilO = memory_.nil();
+                for (int ci = 0; ci < 10 && ctx.isObject() && ctx.rawBits() != nilO.rawBits(); ci++) {
+                    ObjectHeader* ch = ctx.asObjectPtr();
+                    if (ch->slotCount() < 4) break;
+                    Oop cm = memory_.fetchPointer(3, ctx);
+                    std::string cmn = "?";
+                    bool isBlk = false;
+                    if (cm.isObject() && cm.rawBits() > 0x10000) {
+                        auto cmFmt = static_cast<int>(cm.asObjectPtr()->format());
+                        isBlk = (24 <= cmFmt && cmFmt <= 31);
+                        Oop mh = memory_.fetchPointer(0, cm);
+                        if (mh.isSmallInteger()) {
+                            int nl2 = mh.asSmallInteger() & 0x7FFF;
+                            if (nl2 >= 2 && nl2 < 100) {
+                                Oop sel2 = memory_.fetchPointer(nl2 - 1, cm);
+                                if (sel2.isObject() && sel2.rawBits() > 0x10000) {
+                                    ObjectHeader* sh = sel2.asObjectPtr();
+                                    if (sh->isBytesObject() && sh->byteSize() < 80)
+                                        cmn = std::string((char*)sh->bytes(), sh->byteSize());
+                                }
+                            }
+                        }
+                    }
+                    Oop snd = memory_.fetchPointer(0, ctx);
+                    fprintf(stderr, "    [%d] %s%s sender=%s\n",
+                            ci, isBlk ? "BLOCK/" : "", cmn.c_str(),
+                            snd.rawBits() == nilO.rawBits() ? "nil" : "ok");
+                    ctx = snd;
+                }
+            }
 
             // Dump the new process's suspendedContext details
             Oop newCtx = memory_.fetchPointer(ProcessSuspendedContextIndex, newProcess);
@@ -11468,6 +11717,7 @@ void Interpreter::checkForPreemption() {
         putToSleep(activeProcess);
 
         // Switch to new process
+        g_xferReason = "checkPreemption";
         transferTo(firstProcess);
         return;
     }

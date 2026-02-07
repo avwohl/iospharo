@@ -41,6 +41,7 @@ static std::vector<uint8_t> extractMagnitude(ObjectMemory& memory, Oop largeInt)
 
 // External step counter from Interpreter.cpp for debugging
 extern uint64_t g_stepNum;
+extern const char* g_xferReason;
 
 // External variable from Interpreter.cpp for tracing sends after prim 264
 extern int g_traceSendsAfterPrim264;
@@ -368,6 +369,7 @@ PrimitiveResult Interpreter::primitiveExitCriticalSection(int argCount) {
         if (newPriority >= activePriority) {
             // Put active process to sleep and switch
             putToSleep(activeProcess);
+            g_xferReason = "critSectEnter";
             transferTo(wakeHighestPriority());
         }
 
@@ -424,6 +426,7 @@ PrimitiveResult Interpreter::primitiveEnterCriticalSection(int argCount) {
     addLastLinkToList(activeProc, criticalSection);
 
     // Switch to highest priority runnable process
+    g_xferReason = "critSectWait";
     transferTo(wakeHighestPriority());
 
     return PrimitiveResult::Success;
@@ -3911,6 +3914,7 @@ PrimitiveResult Interpreter::primitiveSuspend(int argCount) {
             // No other process to run - this shouldn't happen
             return PrimitiveResult::Failure;
         }
+        g_xferReason = "primSuspend";
         transferTo(nextProcess);
         return PrimitiveResult::Success;
     }
@@ -4112,6 +4116,7 @@ PrimitiveResult Interpreter::primitiveResume(int argCount) {
         // Put current process to sleep
         putToSleep(activeProcess);
         // Switch to resumed process (don't put it to sleep, just run it)
+        g_xferReason = "primResume";
         transferTo(process);
     } else {
         // Same or lower priority - just add to ready queue
@@ -4131,7 +4136,7 @@ PrimitiveResult Interpreter::primitiveSignal(int argCount) {
     static FILE* signalLog = nullptr;
     signalCallCount++;
     // Log early signals and signals in the startup completion range
-    if (signalCallCount <= 5 || (g_stepNum >= 15000000 && g_stepNum <= 25000000)) {
+    if (signalCallCount <= 5 || (g_stepNum >= 43000000 && g_stepNum <= 48000000)) {
         fprintf(stderr, "[PRIM85] primitiveSignal call #%d step=%llu sem=0x%llx\n",
                 signalCallCount, (unsigned long long)g_stepNum,
                 (unsigned long long)stackTop().rawBits());
@@ -4207,6 +4212,7 @@ PrimitiveResult Interpreter::primitiveSignal(int argCount) {
     if (processPriority > activePriority) {
         // Higher priority preempts (standard Spur behavior)
         putToSleep(activeProcess);
+        g_xferReason = "primSignal";
         transferTo(process);
     } else {
         // Lower priority - just add to ready queue
@@ -4225,7 +4231,7 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
     static FILE* waitLog = nullptr;
     waitCallCount++;
     // Log early waits and waits in the startup completion range
-    if (waitCallCount <= 5 || (g_stepNum >= 15000000 && g_stepNum <= 25000000)) {
+    if (waitCallCount <= 5 || (g_stepNum >= 43000000 && g_stepNum <= 48000000)) {
         fprintf(stderr, "[PRIM86] primitiveWait call #%d step=%llu sem=0x%llx\n",
                 waitCallCount, (unsigned long long)g_stepNum,
                 (unsigned long long)stackValue(argCount).rawBits());
@@ -4398,6 +4404,7 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
         fflush(waitLog);
     }
 
+    g_xferReason = "primWait";
     transferTo(nextProcess);
     return PrimitiveResult::Success;
 }
@@ -12913,6 +12920,7 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
                             // Put current process back in its queue
                             putToSleep(activeProcess);
                             // Switch to the new process
+                            g_xferReason = "primRelinquish";
                             transferTo(nextProcess);
                             return PrimitiveResult::Success;  // Don't pop again below
                         }

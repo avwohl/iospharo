@@ -534,6 +534,7 @@ private:
     void returnValue(Oop value);
     void returnFromMethod();
     void returnFromBlock();
+    bool handleContextNLRUnwind(Oop value, Oop startCtx, Oop homeCtx);
 
     // Extended bytecodes (2-3 bytes)
     void extendedPush();
