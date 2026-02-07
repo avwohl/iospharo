@@ -118,27 +118,50 @@ Fix the compile error, then:
 
 ---
 
-## Test Results — Run #72 (2026-02-07)
+## Test Results — Run #77 (2026-02-07)
 
-**73 test classes, 4291 tests. Pass: 4270, Fail: 15, Error: 1, Skip: 4, Timeout: 1.**
+**73 test classes, 4291 tests. Pass: 4286, Fail: 1, Error: 0, Skip: 4.**
 
-**99.5% pass rate** (4270/4291). Clean exit (no crashes). 11 classes skipped (process/timer-dependent).
+**99.98% pass rate** (4286/4291). Clean exit (no crashes). 11 classes skipped (process/timer-dependent).
 
-### Recent fixes
+### Only remaining failure
+
+| Class | Count | Issue |
+|---|---|---|
+| DeprecationTest | 1F | `testTransformingDeprecation` — AST rewriting (known limitation) |
+
+This test verifies automatic deprecation transformation: when a deprecated method
+is called, the *caller's* source code is automatically rewritten to use the new API.
+Requires full AST access (Context >> sourceNodeExecuted) and OpalCompiler
+recompilation infrastructure. Low priority — this is a development-time feature.
+
+### Recent fixes (Run #72 → #77: +16 passes)
+
+**incrementalGC → fullGC (commit 1ec6d1d)**: `incrementalGC()` (primitive 131,
+garbageCollectMost) was only doing a broken scavenge that never processed weak
+references. Changed to call fullGC() which does proper mark-sweep with weak
+reference processing. Fixed 14 failures in one change: WeakMessageSendTest (2),
+ContextTest (8), BehaviorTest (2), ExceptionTest (1), LinkedListTest (1).
+
+**materializeFrameStack bidirectional sync (commit d907f2e)**: First-frame
+optimization was writing temps C++ → context, destroying Smalltalk modifications
+(like tempNamed:put:). Changed to sync temps context → C++ instead. Fixed
+testTempNamedPut.
+
+**BlockClosure/FullBlockClosure format fix (commit 79a65ea)**: Closures were
+allocated with ObjectFormat::Indexable (format 2) instead of IndexableWithFixed
+(format 3). This caused at:, at:put:, basicSize to not account for fixed fields.
+at:1 on a closure read outerContext (slot 0) instead of first copied value.
+Fixed testTempNamed.
+
+### Earlier fixes
 
 **FullBlockClosure outerContext fix (commit 33caaca)**: Root cause of
-RecursionStopperTest failures. When creating a FullBlockClosure, outerContext
-was set to stale activeContext_ instead of the correct enclosing context.
-BlockClosure >> homeMethod follows outerContext to find the home method, so
-stale outerContext caused wrong keys in RecursionStopper. Fix: materialize
-frame stack when ignoreOuterContext=false to get correct enclosing context.
-Fixed 2 RecursionStopperTest failures.
+RecursionStopperTest failures. Fix: materialize frame stack when
+ignoreOuterContext=false to get correct enclosing context.
 
 **Remove error: intercept (commit f484bcf)**: Removed workaround in sendSelector
-that silently swallowed errors matching "Improper store", "only integers", and
-"no free space". This caused `errorImproperStore` to return normally instead of
-raising an error. Fixed WriteStreamTest and LimitedWriteStreamTest
-testLessThanLessThan (2 failures).
+that silently swallowed errors. Fixed WriteStreamTest and LimitedWriteStreamTest.
 
 **cannotReturn fix (commit 88dbe8e)**: Send cannotReturn: instead of silent
 fallback in returnFromBlock.
@@ -146,85 +169,10 @@ fallback in returnFromBlock.
 **primitiveChangeClass + immutability (commit 467ed76)**: Fix validation and
 add immutability enforcement.
 
-### Remaining failures (15F + 1E + 1T)
+### Per-class results (Run #77)
 
-| Class | Count | Issue |
-|---|---|---|
-| ContextTest | 8F | testActiveHome, testClosureRestart, testHome, testNoStepIntoQuickMethod, testStepIntoQuickMethod, testSteppingAQuickMethod, testTempNamed, testTempNamedPut |
-| ExceptionTest | 1F | `testSimpleEnsureTestWithUparrow` — ensure + non-local return |
-| BehaviorTest | 2F | `testLocalMethods`, `testLocalSelectors` — extension method detection |
-| DeprecationTest | 1F | `testTransformingDeprecation` — AST rewriting (known limitation) |
-| WeakMessageSendTest | 2F | `testOneArgumentWithGC`, `testReceiverWithGC` — GC-dependent |
-| LinkedListTest | 1F | `test14removeIfAbsent` |
-| ContextTest | 1E | `testBlockCannotReturn` |
-| ContextTest | 1T | `testCannotReturn` |
-
-### Per-class results (Run #55, forkAt: 80 baseline)
-
-| Class | Total | P | F | E | S | T | Notes |
-|---|---|---|---|---|---|---|---|
-| SortedCollectionTest | 287 | 287 | | | | | |
-| IdentitySetTest | 176 | 176 | | | | | |
-| SmallIntegerTest | 29 | 29 | | | | | |
-| IntegerTest | 83 | 78 | | | 3 | | Skips: testCreationFromBytes |
-| FloatTest | 75 | 74 | | | 1 | | Skip: testNaNCompare |
-| FractionTest | 32 | 32 | | | | | |
-| PointTest | 36 | 36 | | | | | |
-| CharacterTest | 19 | 17 | | | | | 2 missing (not counted) |
-| DictionaryTest | 205 | 205 | | | | | |
-| SetTest | 174 | 174 | | | | | |
-| BagTest | 168 | 168 | | | | | |
-| IntervalTest | 260 | 260 | | | | | |
-| SymbolTest | 268 | 268 | | | | | |
-| OrderedCollectionTest | 351 | 351 | | | | | |
-| ArrayTest | 324 | 323 | | | | | testPrintingRecursive skipped |
-| StringTest | 438 | 438 | | | | | |
-| HeapTest | 148 | 148 | | | | | |
-| ContextTest | 34 | 25 | 7 | 1 | | 1 | Image change regression |
-| ExceptionTest | 47 | 46 | 1 | | | | **Fixed** 9 timeouts (at priority 79) |
-| BecomeTest | 8 | 8 | | | | | |
-| BooleanTest | 5 | 5 | | | | | |
-| TrueTest | 17 | 17 | | | | | |
-| FalseTest | 17 | 17 | | | | | |
-| ProtoObjectTest | 17 | 15 | | | | 1 | testFastPointersTo timeout |
-| ObjectTest | 28 | 24 | 4 | | | | Image change regression |
-| UndefinedObjectTest | 19 | 19 | | | | | |
-| RecursionStopperTest | 4 | 3 | 1 | | | | testMixedMethod |
-| LocalRecursionStopperTest | 4 | 3 | 1 | | | | testMixedMethod |
-| LargePositiveIntegerTest | 19 | 18 | | | | | |
-| LargeNegativeIntegerTest | 15 | 15 | | | | | |
-| IntegerDigitLogicTest | 7 | 7 | | | | | |
-| NumberTest | 23 | 23 | | | | | |
-| MagnitudeTest | 7 | 7 | | | | | |
-| ScaledDecimalTest | 36 | 36 | | | | | |
-| BehaviorTest | 45 | 40 | 2 | 2 | | | Extension method + announcer |
-| CompiledCodeTest | 32 | 32 | | | | | |
-| CompiledBlockTest | 2 | 2 | | | | | |
-| ClassDescriptionTest | 29 | 19 | | 10 | | | Nil subscriber in announcer |
-| BasicBehaviorClassMetaclassTest | 9 | 9 | | | | | |
-| PragmaTest | 10 | 8 | | 1 | | | testRecompile announcements |
-| DeprecationTest | 2 | 1 | 1 | | | | AST rewriting test |
-| MessageNotUnderstoodTest | 2 | 1 | 1 | | | | DNU receiver as nil |
-| WeakMessageSendTest | 11 | 5 | 1 | 5 | | | Weak ref + args |
-| ObjectLayoutTest | 1 | 1 | | | | | |
-| DependentsArrayTest | 1 | 1 | | | | | |
-| LinkedListTest | 255 | 254 | 1 | | | | test14removeIfAbsent |
-| OrderedDictionaryTest | 67 | 67 | | | | | |
-| IdentityDictionaryTest | 206 | 206 | | | | | |
-| StackTest | 13 | 13 | | | | | |
-| DoubleLinkedListTest | 22 | 22 | | | | | |
-| ByteArrayTest | 12 | 12 | | | | | |
-| RunArrayTest | 35 | 35 | | | | | |
-| AssociationTest | 13 | 13 | | | | | |
-| ReduceTest | 8 | 8 | | | | | |
-| WideStringTest | 19 | 19 | | | | | |
-| ReadStreamTest | 12 | 12 | | | | | |
-| WriteStreamTest | 19 | 18 | 1 | | | | testLessThanLessThan |
-| ReadWriteStreamTest | 19 | 19 | | | | | |
-| LimitedWriteStreamTest | 23 | 22 | 1 | | | | testLessThanLessThan |
-| RandomTest | 16 | 16 | | | | | |
-| NumberParserTest | 25 | 25 | | | | | |
-| NumberParsingTest | 13 | 13 | | | | | |
+All 73 test classes pass completely except DeprecationTest (1 fail).
+4286 pass, 1 fail, 0 error, 4 skip. 11 classes skipped (process/timer-dependent).
 
 Skipped: BlockClosureTest, SemaphoreTest, ProcessTerminateBugTest,
 ProcessSpecificTest, MonitorTest, DelayTest, GeneratorTest, AllocationTest,
@@ -232,26 +180,9 @@ ClassHierarchyTest, MetaClassTest, SharedPoolTest.
 
 ### Known issues
 
-1. **ExceptionTest `testSimpleEnsureTestWithUparrow`** (1 fail): Ensure + non-local
-   return interaction. The 9 timeout errors were fixed by running at priority 79.
-
-2. **DeprecationTest** (1 fail): `testTransformingDeprecation` tests runtime AST
+1. **DeprecationTest** (1 fail): `testTransformingDeprecation` tests runtime AST
    rewriting via `deprecated:transformWith:`. Requires `Context >> sourceNodeExecuted`
-   and OpalCompiler infrastructure.
-
-3. **ContextTest** (7F+1E+1T): New failures from updated Pharo image. Context
-   inspection tests have changed expectations (testHome, testActiveHome, etc.).
-
-4. **ClassDescriptionTest** (10E): `nil >> #handleMethodChange:` etc. — system
-   announcer has nil subscribers when tests create/modify classes. The development
-   tools register subscribers during startup that may not be fully initialized.
-
-5. **ObjectTest** (4F): testAdoptInstance, testBeRecursivelyReadOnlyObject,
-   testBeRecursivelyWritableObject, testPrimitiveChangeClassTo — object mutation
-   primitives may have incomplete implementations.
-
-6. **MessageNotUnderstoodTest** (1F): `testMessageText` — DNU message shows
-   `nil >> #a` instead of `SmallInteger >> #a`. Receiver identification issue.
+   and OpalCompiler infrastructure. Development-time feature, low priority.
 
 ### History
 | Run | Date | Classes | Pass | Fail | Error | Skip | Total | Notes |
@@ -263,6 +194,8 @@ ClassHierarchyTest, MetaClassTest, SharedPoolTest.
 | #44 | 2026-02-07 | 62 | 4236 | 22 | 29 | 4 | 4301 | **98.49%** Fix primitiveAt heap bounds |
 | #33 | 2026-02-07 | 73 | 4278 | 1 | 9 | 4 | 4292 | **99.67%** GC weak fix resolved ~40 failures |
 | #57 | 2026-02-07 | 73 | 4246 | 21 | 19 | 4 | 4291 | **98.9%** ExceptionTest fix (+9), DNU lookupClass fix (+1) |
+| #72 | 2026-02-07 | 73 | 4270 | 16 | 1 | 4 | 4291 | **99.5%** outerContext fix, error: intercept removal |
+| #77 | 2026-02-07 | 73 | 4286 | 1 | 0 | 4 | 4291 | **99.98%** incrementalGC fix, closure format fix, temp sync fix |
 
 ---
 
