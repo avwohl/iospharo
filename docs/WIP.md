@@ -118,31 +118,100 @@ Fix the compile error, then:
 
 ---
 
-## Test Results — Last Known Status
+## Test Results — Run #43 (2026-02-06)
 
-### Best verified result: Run #2 (previous session, different Pharo 130 image)
+**59 test classes, 4199 tests. Pass: 4119, Fail: 26, Error: 39, Skip: 4, Timeout: 2.**
 
-**74 test classes, 4428 tests. Pass: 4422, Fail: 0, Error: 0, Skip: 6.**
+**98.1% pass rate** (4119/4199). 8 classes skipped (process/timer-dependent).
 
-99.86% pass rate. All non-skip tests pass. Used `ex resume` for Deprecation handling.
-(Note: Pharo 130 is a development image that changes between downloads.)
+### Per-class results
 
-### Current image (downloaded 2026-02-06), 512MB heap, no forced GC
+| Class | Total | Pass | Fail | Error | Skip | T/O | Notes |
+|---|---|---|---|---|---|---|---|
+| SortedCollectionTest | 287 | 287 | 0 | 0 | 0 | | Run first (GC-sensitive) |
+| IdentitySetTest | 176 | 176 | 0 | 0 | 0 | | Run first (GC-sensitive) |
+| SmallIntegerTest | 29 | 29 | 0 | 0 | 0 | | |
+| IntegerTest | 83 | 78 | 0 | 0 | 3 | | Skips: testCreationFromBytes |
+| FloatTest | 75 | 74 | 0 | 0 | 1 | | Skip: testNaNCompare |
+| FractionTest | 32 | 32 | 0 | 0 | 0 | | |
+| PointTest | 36 | 36 | 0 | 0 | 0 | | |
+| CharacterTest | 19 | 17 | 0 | 0 | 0 | | 2 missing (not counted) |
+| DictionaryTest | 205 | 205 | 0 | 0 | 0 | | |
+| SetTest | 174 | 174 | 0 | 0 | 0 | | |
+| BagTest | 168 | 168 | 0 | 0 | 0 | | |
+| IntervalTest | 260 | 260 | 0 | 0 | 0 | | |
+| SymbolTest | 268 | 268 | 0 | 0 | 0 | | |
+| OrderedCollectionTest | 351 | 351 | 0 | 0 | 0 | | |
+| ArrayTest | 324 | 324 | 0 | 0 | 0 | | |
+| StringTest | 438 | 438 | 0 | 0 | 0 | | |
+| HeapTest | 148 | 148 | 0 | 0 | 0 | | |
+| ContextTest | 34 | 25 | 7 | 1 | 0 | 1 | Context manipulation |
+| ExceptionTest | 47 | 37 | 1 | 9 | 0 | | 9 "Timeout for block execution" |
+| BecomeTest | 8 | 5 | 3 | 0 | 0 | | become/identity hash issues |
+| BooleanTest | 5 | 5 | 0 | 0 | 0 | | |
+| TrueTest | 17 | 17 | 0 | 0 | 0 | | |
+| FalseTest | 17 | 17 | 0 | 0 | 0 | | |
+| ProtoObjectTest | 17 | 14 | 0 | 0 | 0 | 1 | Heap iteration timeout |
+| ObjectTest | 28 | 23 | 5 | 0 | 0 | | |
+| UndefinedObjectTest | 19 | 19 | 0 | 0 | 0 | | |
+| RecursionStopperTest | 4 | 3 | 1 | 0 | 0 | | |
+| LocalRecursionStopperTest | 4 | 3 | 1 | 0 | 0 | | |
+| LargePositiveIntegerTest | 19 | 18 | 0 | 0 | 0 | | |
+| LargeNegativeIntegerTest | 15 | 15 | 0 | 0 | 0 | | |
+| IntegerDigitLogicTest | 7 | 7 | 0 | 0 | 0 | | |
+| NumberTest | 23 | 23 | 0 | 0 | 0 | | |
+| MagnitudeTest | 7 | 7 | 0 | 0 | 0 | | |
+| ScaledDecimalTest | 36 | 36 | 0 | 0 | 0 | | |
+| BehaviorTest | 45 | 40 | 2 | 2 | 0 | | |
+| CompiledCodeTest | 32 | 31 | 0 | 1 | 0 | | |
+| CompiledBlockTest | 2 | 2 | 0 | 0 | 0 | | |
+| ClassDescriptionTest | 29 | 19 | 0 | 10 | 0 | | ClassFactory/announcements |
+| ClassHierarchyTest | 3 | 0 | 0 | 3 | 0 | | All timeout/error |
+| MetaClassTest | 3 | 2 | 0 | 1 | 0 | | |
+| BasicBehaviorClassMetaclassTest | 9 | 8 | 1 | 0 | 0 | | |
+| PragmaTest | 10 | 8 | 0 | 1 | 0 | | |
+| DeprecationTest | 2 | 1 | 1 | 0 | 0 | | |
+| MessageNotUnderstoodTest | 2 | 1 | 1 | 0 | 0 | | nil receiver in DNU msg |
+| WeakMessageSendTest | 11 | 5 | 1 | 5 | 0 | | GC-related failures |
+| ObjectLayoutTest | 1 | 1 | 0 | 0 | 0 | | |
+| DependentsArrayTest | 1 | 1 | 0 | 0 | 0 | | |
+| SharedPoolTest | 6 | 1 | 0 | 5 | 0 | | ClassFactory/announcements |
+| LinkedListTest | 255 | 254 | 1 | 0 | 0 | | |
+| OrderedDictionaryTest | 67 | 65 | 1 | 1 | 0 | | |
+| IdentityDictionaryTest | 206 | 206 | 0 | 0 | 0 | | |
+| StackTest | 13 | 13 | 0 | 0 | 0 | | |
+| DoubleLinkedListTest | 22 | 22 | 0 | 0 | 0 | | |
+| ByteArrayTest | 12 | 12 | 0 | 0 | 0 | | |
+| RunArrayTest | 35 | 35 | 0 | 0 | 0 | | |
+| AssociationTest | 13 | 13 | 0 | 0 | 0 | | |
+| ReduceTest | 8 | 8 | 0 | 0 | 0 | | |
+| WideStringTest | 19 | 19 | 0 | 0 | 0 | | |
+| ByteSymbolTest | 13 | 13 | 0 | 0 | 0 | | |
 
-With testPrintStringBase and testReciprocalModulo added to skip list, the test suite
-runs but crashes during IntegerTest due to a pre-existing LargeInteger arithmetic bug
-that produces a corrupted pointer → recursive DNU → stopVM. This is NOT a GC bug.
+Skipped: BlockClosureTest, SemaphoreTest, ProcessTerminateBugTest,
+ProcessSpecificTest, MonitorTest, DelayTest, GeneratorTest, AllocationTest.
 
-### Pre-existing IntegerTest failures:
-- `testReciprocalModulo` — "Got 164 instead of 1" — LargeInteger modular arithmetic bug
-- `testPrintStringBase` — corrupted pointer from LargeInteger `numberOfDigitsInBase:`
-  Both skipped in test runner to avoid VM crash.
+### Known issues
 
-### What was fixed (Run #1 → Run #2)
+1. **GC compaction corrupts memory**: After second GC cycle (~500MB allocation),
+   mark phase finds BAD pointers to non-old-space addresses. The compactor then
+   corrupts objects (classIdx→0, broken internal arrays). Tests run AFTER GC
+   corruption show inflated failures. Running GC-sensitive tests FIRST avoids this.
 
-1. **ExceptionTest (4 errors)**: Changed `on: Exception do:` to `on: Error do:`
-2. **ContextTest (3 failures)**: Use `(testClass selector: sel) runCase`
-3. **SemaphoreTest, DelayTest, ProcessTerminateBugTest (4 failures)**: Fork at priority 40
+2. **Timer/Delay broken**: Delay scheduling produces wake times ~25193 days in
+   future. Tests relying on timeouts stall indefinitely. The test runner's own
+   `waitTimeoutSeconds:` timeout never fires for stalling tests.
+
+3. **ClassFactory/Announcements broken**: `ClassFactoryForTestCase` fails with
+   `nil >> #handlesAnnouncement:`. Affects tests that create temporary classes
+   (IdentitySetTest, ClassDescriptionTest, SharedPoolTest). IdentitySetTest works
+   when run before GC corruption.
+
+4. **ExceptionTest timeouts**: 9 tests fail with "Timeout for block execution" —
+   these tests rely on `UnhandledError` process which requires process scheduling.
+
+5. **MessageNotUnderstoodTest**: Error message shows `nil >> #a` instead of
+   `SmallInteger >> #a` — the receiver in DNU message is nil.
 
 ### History
 | Run | Date | Classes | Pass | Fail | Error | Skip | Total | Notes |
@@ -150,6 +219,7 @@ that produces a corrupted pointer → recursive DNU → stopVM. This is NOT a GC
 | #1 | 2026-02-06 | 74 | 4362 | 5 | 7 | 6 | 4380 | Test-runner bugs |
 | #2 | 2026-02-06 | 74 | 4422 | 0 | 0 | 6 | 4428 | All non-skip pass (prev image) |
 | #3 | 2026-02-06 | 13/74 | ~1698 | 1 | 1 | 4 | ~1704 | OOM stall (new image, no GC) |
+| #43 | 2026-02-06 | 59 | 4119 | 26 | 39 | 4 | 4199 | 98.1% pass, GC corruption issue |
 
 ---
 

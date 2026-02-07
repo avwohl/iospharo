@@ -146,11 +146,9 @@ runAllTests
 
   testClasses := OrderedCollection new.
 
-  "=== Run problematic classes first for diagnosis ==="
-  testClasses addAll: { SortedCollectionTest. IdentitySetTest }.
-
   "=== Original 15 (all passing) ==="
   testClasses addAll: {
+    SortedCollectionTest. IdentitySetTest.
     SmallIntegerTest. IntegerTest. FloatTest. FractionTest.
     PointTest. CharacterTest.
     DictionaryTest. SetTest. BagTest. IntervalTest.
@@ -184,8 +182,8 @@ runAllTests
         ifNotNil: [:cls | testClasses add: cls]].
 
   "=== Tier 4: More collections ==="
-  #(LinkedListTest SortedCollectionTest OrderedDictionaryTest
-    IdentityDictionaryTest IdentitySetTest StackTest
+  #(LinkedListTest OrderedDictionaryTest
+    IdentityDictionaryTest StackTest
     DoubleLinkedListTest ByteArrayTest RunArrayTest
     AssociationTest ReduceTest "CollectionRootTest is abstract"
     WideStringTest ByteSymbolTest) do: [:name |
@@ -208,7 +206,6 @@ runAllTests
   totalP := 0. totalF := 0. totalE := 0. totalS := 0. totalT := 0.
   [
     stream nextPutAll: '=== SUnit Test Run #'; print: runNum; nextPutAll: ' ==='; cr; cr.
-    self runDiagnostic: stream.
     detail nextPutAll: 'RUN	CLASS	TEST	RESULT	INFO'; cr.
     detail flush.
     testClasses do: [:tc | | counts |
