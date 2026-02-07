@@ -5911,8 +5911,12 @@ void Interpreter::returnFromBlock() {
         }
     }
 
-    // Fallback: just do a regular return (may not be correct for NLR, but avoids crash)
-    returnValue(value);
+    // Home method not found in context chain - send cannotReturn: to the active context
+    // This happens when a block tries to return from a method that has already returned.
+    // Per Pharo spec, Context >> cannotReturn: signals BlockCannotReturn.
+    push(activeContext_);  // receiver: the context that cannot return
+    push(value);           // arg: the value that was being returned
+    sendSelector(selectors_.cannotReturn, 1);
 }
 
 void Interpreter::extendedPush() {
