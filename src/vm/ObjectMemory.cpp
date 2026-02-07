@@ -1559,8 +1559,9 @@ GCResult ObjectMemory::scavenge() {
 }
 
 GCResult ObjectMemory::incrementalGC() {
-    // For now, just do a scavenge
-    return scavenge();
+    // Without a proper generational GC, incremental GC must do a full GC
+    // to process weak references (which tests like WeakMessageSendTest need).
+    return fullGC();
 }
 
 // Helper to iterate over all objects in old space
