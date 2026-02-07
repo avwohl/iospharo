@@ -146,7 +146,7 @@ runDiagnostic: stream
    stream nextPutAll: '  state at:1 class: '; nextPutAll: val class name; cr.
    stream nextPutAll: '  state at:1 value: '; nextPutAll: val printString; cr.
    "Step through PCG computation"
-   [| mult sum masked |
+   [| mult sum masked count shifted xored shifted2 anded rotA rotB rotResult |
     mult := val * 6364136223846793005.
     stream nextPutAll: '  val*const class: '; nextPutAll: mult class name; cr.
     stream nextPutAll: '  val*const value: '; nextPutAll: mult printString; cr.
@@ -158,7 +158,6 @@ runDiagnostic: stream
     state at: 1 put: masked.
     stream nextPutAll: '  stored back OK'; cr.
     "Now test the output part"
-    | count shifted xored shifted2 anded rotA rotB rotResult |
     count := val >> 59.
     stream nextPutAll: '  count: '; nextPutAll: count printString; cr.
     shifted := val >> 18.

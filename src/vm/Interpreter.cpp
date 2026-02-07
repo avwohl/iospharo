@@ -10747,6 +10747,32 @@ void Interpreter::setReceiverInstVar(size_t index, Oop value) {
 // ===== SPECIAL SENDS =====
 
 void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
+    // Targeted debug: trace DNU for #/ and #sqrt to diagnose RandomTest failures
+    if (selector.isObject() && memory_.isValidPointer(selector)) {
+        ObjectHeader* selHdr = selector.asObjectPtr();
+        if (selHdr->isBytesObject()) {
+            size_t len = selHdr->byteSize();
+            const char* selBytes = reinterpret_cast<const char*>(selHdr->bytes());
+            bool isSlash = (len == 1 && selBytes[0] == '/');
+            bool isSqrt = (len == 4 && memcmp(selBytes, "sqrt", 4) == 0);
+            bool isAsInt = (len == 9 && memcmp(selBytes, "asInteger", 9) == 0);
+            if (isSlash || isSqrt || isAsInt) {
+                Oop rcvr = stackValue(argCount);
+                std::string selName(selBytes, len);
+                fprintf(stderr, "[DNU-TRACE] #%s on rcvr=0x%llx", selName.c_str(),
+                        (unsigned long long)rcvr.rawBits());
+                if (rcvr.isNil()) fprintf(stderr, " (NIL)");
+                else if (rcvr.isSmallInteger()) fprintf(stderr, " (SmallInt %lld)", (long long)rcvr.asSmallInteger());
+                else if (rcvr.isSmallFloat()) fprintf(stderr, " (SmallFloat)");
+                else if (rcvr.isObject()) {
+                    ObjectHeader* h = rcvr.asObjectPtr();
+                    fprintf(stderr, " (obj classIdx=%u fmt=%d slots=%zu)",
+                            h->classIndex(), (int)h->format(), h->slotCount());
+                }
+                fprintf(stderr, " step=%llu\n", (unsigned long long)g_stepNum);
+            }
+        }
+    }
 
     static int dnuCount = 0;
     dnuCount++;
@@ -11408,6 +11434,8 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     uint32_t messageClassIdx = memory_.indexOfClass(messageClass);
     if (messageClassIdx == 0)
         messageClassIdx = memory_.registerClass(messageClass);
+    // Pharo's Message has 3 instance vars: selector, args, lookupClass
+    // Allocate 3 slots; lookupClass (slot 2) defaults to nil
     Oop message = memory_.allocateSlots(messageClassIdx, 3, ObjectFormat::FixedSize);
 
     if (message.rawBits() == memory_.nil().rawBits()) {
@@ -11442,9 +11470,8 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
     Oop originalReceiver = pop();
 
-    // Store lookupClass (slot 2): the class of the receiver
-    Oop lookupClass = memory_.classOf(originalReceiver);
-    memory_.storePointer(2, message, lookupClass);
+    // lookupClass (slot 2) is left as nil — Pharo's messageText will use
+    // receiver class instead, which is more reliable
 
     // Send doesNotUnderstand: to the original receiver
     push(originalReceiver);
