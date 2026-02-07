@@ -8286,6 +8286,17 @@ void Interpreter::setTemporary(int index, Oop value) {
     }
 
     *(framePointer_ + 1 + index) = value;
+
+    // Write-through to context when materialized (frameDepth_==0).
+    // After thisContext materializes, the context object is exposed to Smalltalk.
+    // Interpreter temp stores must also update the context so that Smalltalk code
+    // reading context temps (via tempNamed:) sees current values.
+    if (frameDepth_ == 0 && activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
+        ObjectHeader* ctxHdr = activeContext_.asObjectPtr();
+        if (static_cast<size_t>(6 + index) < ctxHdr->slotCount()) {
+            memory_.storePointer(6 + index, activeContext_, value);
+        }
+    }
 }
 
 Oop Interpreter::argument(int index) const {
@@ -9581,8 +9592,10 @@ void Interpreter::createBlock() {
     // Create BlockClosure
     Oop blockClass = memory_.specialObject(SpecialObjectIndex::ClassBlockClosure);
     size_t slots = 3 + numCopied;  // outerContext, startPC, numArgs, copied...
+    // BlockClosure has 3 fixed fields (outerContext, startPC, numArgs) plus
+    // variable indexed fields (copied values). Must use IndexableWithFixed.
     Oop block = memory_.allocateSlots(
-        memory_.indexOfClass(blockClass), slots, ObjectFormat::Indexable);
+        memory_.indexOfClass(blockClass), slots, ObjectFormat::IndexableWithFixed);
 
     // Set fields
     // Ensure proper context identity by materializing if running inline
@@ -9679,7 +9692,10 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
     // slot 3: receiver
     // slot 4+: copied values
     size_t slots = 4 + numCopied;  // 4 fixed slots + copied values
-    Oop block = memory_.allocateSlots(classIdx, slots, ObjectFormat::Indexable);
+    // FullBlockClosure has 4 fixed fields (outerContext, compiledBlock, numArgs, receiver)
+    // plus variable indexed fields (copied values). Must use IndexableWithFixed so that
+    // at:/at:put:/basicSize correctly skip the fixed fields when accessing copied values.
+    Oop block = memory_.allocateSlots(classIdx, slots, ObjectFormat::IndexableWithFixed);
 
     // Use activeContext_ as the outer context
     // Note: activateBlock now updates activeContext_ when entering blocks,
@@ -9859,8 +9875,10 @@ void Interpreter::createBlockWithArgs(int numArgs, int numCopied, int blockSize)
     // Create BlockClosure
     Oop blockClass = memory_.specialObject(SpecialObjectIndex::ClassBlockClosure);
     size_t slots = 3 + numCopied;  // outerContext, startPC, numArgs, copied...
+    // BlockClosure has 3 fixed fields (outerContext, startPC, numArgs) plus
+    // variable indexed fields (copied values). Must use IndexableWithFixed.
     Oop block = memory_.allocateSlots(
-        memory_.indexOfClass(blockClass), slots, ObjectFormat::Indexable);
+        memory_.indexOfClass(blockClass), slots, ObjectFormat::IndexableWithFixed);
 
     // Set fields
     // Ensure proper context identity by materializing if running inline
@@ -10391,10 +10409,21 @@ void Interpreter::putToSleep(Oop process) {
 // Returns the topmost context (current execution point)
 Oop Interpreter::materializeFrameStack() {
     if (frameDepth_ == 0) {
-        // No inline frames — but we must sync the interpreter's current state
-        // (IP, stack) back into activeContext_ before returning it.
+        // No inline frames — sync the interpreter's current state with activeContext_.
         // The context's stored PC and stackp may be stale if bytecodes have
         // executed since the context was restored via executeFromContext.
+        //
+        // IMPORTANT: After thisContext materializes (setting frameDepth_=0), the context
+        // object is exposed to Smalltalk. Code like tempNamed:put: can modify context
+        // temp slots directly. We must NOT blindly overwrite context temps from the
+        // C++ stack, as that would destroy Smalltalk-side modifications.
+        //
+        // Strategy:
+        // - PC: sync C++ → context (interpreter has the current position)
+        // - Temps: sync context → C++ (preserves Smalltalk modifications;
+        //   interpreter modifications are already in context via write-through)
+        // - Expression stack: sync C++ → context (interpreter manages the stack)
+        // - stackp: sync C++ → context
         if (activeContext_.isObject() && activeContext_.rawBits() > 0x10000 &&
             method_.isObject() && method_.rawBits() > 0x10000) {
             ObjectHeader* methodObj = method_.asObjectPtr();
@@ -10404,8 +10433,14 @@ Oop Interpreter::materializeFrameStack() {
             int64_t pc = (instructionPointer_ - methodBytes) + 1;
             memory_.storePointer(1, activeContext_, Oop::fromSmallInteger(pc));
 
-            // Save stack items back to context slots 6+
-            // framePointer_[0] = receiver, framePointer_[1..N] = temps/stack
+            // Get numTemps from method header to distinguish temps from expression stack
+            Oop methodHeader = memory_.fetchPointer(0, method_);
+            int numTemps = 0;
+            if (methodHeader.isSmallInteger()) {
+                numTemps = (methodHeader.asSmallInteger() >> 18) & 0x3F;
+            }
+
+            // Total items on C++ stack above receiver
             int numItems = static_cast<int>(stackPointer_ - framePointer_) - 1;
             if (numItems < 0) numItems = 0;
             if (numItems > 200) numItems = 200;  // Sanity limit
@@ -10415,18 +10450,15 @@ Oop Interpreter::materializeFrameStack() {
             ObjectHeader* ctxHdr = activeContext_.asObjectPtr();
             size_t ctxSlots = ctxHdr->slotCount();
 
-            for (int i = 0; i < numItems && (ContextFixedFields + i) < static_cast<int>(ctxSlots); i++) {
-                Oop item = *(framePointer_ + 1 + i);
-                memory_.storePointer(ContextFixedFields + i, activeContext_, item);
+            // Sync temps: context → C++ (preserves Smalltalk modifications like tempNamed:put:)
+            for (int i = 0; i < numTemps && i < numItems && (ContextFixedFields + i) < static_cast<int>(ctxSlots); i++) {
+                *(framePointer_ + 1 + i) = memory_.fetchPointer(ContextFixedFields + i, activeContext_);
             }
 
-            // TRACE: If this is an ensure: context (prim 198), log what we wrote
-            {
-                int matPrimIdx0 = primitiveIndexOf(method_);
-                if (matPrimIdx0 == 198) {
-                    static int matEnsure0Count = 0;
-                    matEnsure0Count++;
-                }
+            // Sync expression stack: C++ → context (interpreter manages the stack)
+            for (int i = numTemps; i < numItems && (ContextFixedFields + i) < static_cast<int>(ctxSlots); i++) {
+                Oop item = *(framePointer_ + 1 + i);
+                memory_.storePointer(ContextFixedFields + i, activeContext_, item);
             }
         }
         return activeContext_;
