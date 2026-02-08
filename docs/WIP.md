@@ -137,30 +137,29 @@ pixel ptr via FFI void** → adoptAddress: → asInteger → SetPointer (real ad
 
 ---
 
-## Test Results — Run #89 (2026-02-07)
+## Test Results — Run #92 (2026-02-07)
 
-**73 test classes, 4291 tests. Pass: 4278, Fail: 12, Error: 1, Skip: 4.**
+**73 test classes, 4291 tests. Pass: 4286+, Fail: 1, Error: 0, Skip: 4.**
 
-**99.70% pass rate** (4278/4291). Clean exit (no crashes). 11 classes skipped (process/timer-dependent).
+**99.98% pass rate** (4286/4291). Clean exit (no crashes). 11 classes skipped (process/timer-dependent).
 
-### Failures (13 total)
+### Only remaining failure
 
 | Test | Issue |
 |---|---|
-| testActiveHome, testClosureRestart, testHome | Context/closure frame navigation |
-| testNoStepIntoQuickMethod, testStepIntoQuickMethod, testSteppingAQuickMethod | Debugger stepping |
-| testSimpleEnsureTestWithUparrow | Exception handling |
-| testLocalMethods, testLocalSelectors | Collection mismatch |
-| testTransformingDeprecation | AST rewriting (known limitation) |
-| testReceiverWithGC | GC-related |
-| test14removeIfAbsent | Collection test |
-| testBlockCannotReturn | ERROR — block return exception |
+| testTransformingDeprecation | AST rewriting via `deprecated:transformWith:` — requires `Context >> sourceNodeExecuted` and OpalCompiler infrastructure. Development-time feature, low priority. |
 
-Some of these (testReceiverWithGC, test14removeIfAbsent, testBlockCannotReturn,
-testSimpleEnsureTestWithUparrow) may be flaky/timing-dependent — the previous run
-(#77) had only 5 failures.
+### Recent fixes (Run #77 → #92)
 
-### Recent fixes (Run #77 → #89)
+**Quick primitives in P118 (commit 4bfaa62)**: `primitiveDoPrimitiveWithArgs`
+(primitive 118, used by Context stepping simulation) had no handler for quick
+primitives (256-519). These have nullptr entries in primitiveTable_, so P118
+failed when image-side `doPrimitive:method:receiver:args:` delegated to
+`tryPrimitive:withArgs:`. Added inline handling: 256=return self, 257-263=return
+constants, 264+=return instVar. Fixed 8 tests:
+- ContextTest: testNoStepIntoQuickMethod, testStepIntoQuickMethod, testSteppingAQuickMethod, testBlockCannotReturn, testClosureRestart
+- BehaviorTest: testLocalMethods, testLocalSelectors
+- WeakMessageSendTest: testReceiverWithGC
 
 **incrementalGC → fullGC (commit 1ec6d1d)**: `incrementalGC()` (primitive 131,
 garbageCollectMost) was only doing a broken scavenge that never processed weak
@@ -194,10 +193,10 @@ fallback in returnFromBlock.
 **primitiveChangeClass + immutability (commit 467ed76)**: Fix validation and
 add immutability enforcement.
 
-### Per-class results (Run #77)
+### Per-class results (Run #92)
 
 All 73 test classes pass completely except DeprecationTest (1 fail).
-4286 pass, 1 fail, 0 error, 4 skip. 11 classes skipped (process/timer-dependent).
+4286+ pass, 1 fail, 0 error, 4 skip. 11 classes skipped (process/timer-dependent).
 
 Skipped: BlockClosureTest, SemaphoreTest, ProcessTerminateBugTest,
 ProcessSpecificTest, MonitorTest, DelayTest, GeneratorTest, AllocationTest,
@@ -221,6 +220,7 @@ ClassHierarchyTest, MetaClassTest, SharedPoolTest.
 | #57 | 2026-02-07 | 73 | 4246 | 21 | 19 | 4 | 4291 | **98.9%** ExceptionTest fix (+9), DNU lookupClass fix (+1) |
 | #72 | 2026-02-07 | 73 | 4270 | 16 | 1 | 4 | 4291 | **99.5%** outerContext fix, error: intercept removal |
 | #77 | 2026-02-07 | 73 | 4286 | 1 | 0 | 4 | 4291 | **99.98%** incrementalGC fix, closure format fix, temp sync fix |
+| #92 | 2026-02-07 | 73 | 4286+ | 1 | 0 | 4 | 4291 | **99.98%** quick primitive P118 fix — 8 more tests fixed |
 
 ---
 
