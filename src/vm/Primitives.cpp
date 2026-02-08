@@ -13796,6 +13796,11 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
         if (it != namedPrimitives_.end()) {
             return (this->*(it->second))(argCount);
         }
+        // Try external plugin primitives
+        auto xit = externalPrimitives_.find(":" + literalStrings[a]);
+        if (xit != externalPrimitives_.end()) {
+            return callExternalPrimitive(xit->second);
+        }
         // Try as module:name with other literals as names
         for (size_t b = 0; b < literalStrings.size(); b++) {
             if (a == b) continue;
@@ -13807,6 +13812,15 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
                     fflush(namedLog);
                 }
                 return (this->*(it2->second))(argCount);
+            }
+            // Try external plugin primitives
+            auto xit2 = externalPrimitives_.find(key);
+            if (xit2 != externalPrimitives_.end()) {
+                if (namedLog && namedLogCount <= 5000) {
+                    fprintf(namedLog, "[NAMED #%d] FOUND external %s\n", namedLogCount, key.c_str());
+                    fflush(namedLog);
+                }
+                return callExternalPrimitive(xit2->second);
             }
         }
     }
@@ -14098,10 +14112,26 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
                     return (this->*(it->second))(argCount);
                 }
 
+                // Try external plugin primitives
+                auto xit = externalPrimitives_.find(key);
+                if (xit != externalPrimitives_.end()) {
+                    if (extLog && extCallCount <= 500) {
+                        fprintf(extLog, "[EXT] #%d Found external %s! Calling...\n", extCallCount, key.c_str());
+                        fflush(extLog);
+                    }
+                    return callExternalPrimitive(xit->second);
+                }
+
                 // Try without module prefix (for compatibility)
                 auto it2 = namedPrimitives_.find(":" + primName);
                 if (it2 != namedPrimitives_.end()) {
                     return (this->*(it2->second))(argCount);
+                }
+
+                // Try external primitives without module prefix
+                auto xit2 = externalPrimitives_.find(":" + primName);
+                if (xit2 != externalPrimitives_.end()) {
+                    return callExternalPrimitive(xit2->second);
                 }
             }
         }
@@ -14176,10 +14206,25 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
                         }
                         return (this->*(it->second))(argCount);
                     }
+                    // Try external plugin primitives
+                    auto xit = externalPrimitives_.find(key);
+                    if (xit != externalPrimitives_.end()) {
+                        if (extLog && extCallCount <= 500) {
+                            fprintf(extLog, "[EXT] #%d Found external '%s' via lit0 array\n",
+                                    extCallCount, key.c_str());
+                            fflush(extLog);
+                        }
+                        return callExternalPrimitive(xit->second);
+                    }
                     // Try without module
                     auto it2 = namedPrimitives_.find(":" + functionName);
                     if (it2 != namedPrimitives_.end()) {
                         return (this->*(it2->second))(argCount);
+                    }
+                    // Try external without module
+                    auto xit2 = externalPrimitives_.find(":" + functionName);
+                    if (xit2 != externalPrimitives_.end()) {
+                        return callExternalPrimitive(xit2->second);
                     }
 
                     // Try to load the symbol dynamically

@@ -29,16 +29,23 @@ set(VM_SOURCES
     src/vm/Interpreter.cpp
     src/vm/Primitives.cpp
     src/vm/FFI.cpp
+    src/vm/InterpreterProxy.cpp
     src/platform/EventQueue.cpp
     src/platform/PlatformBridge.cpp
     src/platform/iOSBridge.cpp
 )
+
+# B2DPlugin (BalloonEngine) - compiled as C, not C++
+set(B2D_SOURCES src/vm/plugins/B2DPlugin.c)
+set_source_files_properties(${B2D_SOURCES} PROPERTIES LANGUAGE C)
+list(APPEND VM_SOURCES ${B2D_SOURCES})
 
 add_library(PharoVMCore STATIC ${VM_SOURCES})
 
 # Include directories - use platform-appropriate xcframework slice
 target_include_directories(PharoVMCore PUBLIC
     ${CMAKE_SOURCE_DIR}/src/vm
+    ${CMAKE_SOURCE_DIR}/src/vm/plugins
     ${CMAKE_SOURCE_DIR}/src/platform
     ${CMAKE_SOURCE_DIR}/SDL2.xcframework/${XCFRAMEWORK_PLATFORM}/Headers
     ${CMAKE_SOURCE_DIR}/libffi.xcframework/${XCFRAMEWORK_PLATFORM}/Headers

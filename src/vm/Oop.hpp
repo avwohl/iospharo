@@ -264,6 +264,9 @@ public:
 
     // ===== SPECIAL VALUES =====
 
+    /// Create Oop from raw bits (for interpreter proxy / plugin interface)
+    static Oop fromRawBits(uint64_t bits) { return Oop(bits); }
+
     /// Create nil Oop (uses actual relocated nil address)
     static Oop nil() { return Oop(s_nilBits); }
 

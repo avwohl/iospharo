@@ -5,6 +5,7 @@
  */
 
 #include "Interpreter.hpp"
+#include "InterpreterProxy.h"
 #include "FFI.hpp"
 #include "../platform/DisplaySurface.hpp"
 #include "../platform/EventQueue.hpp"
@@ -7151,6 +7152,12 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             if (result == PrimitiveResult::Success) {
                 return;
             }
+            // Log primitive failures in critical window
+            if (g_stepNum >= 53770000 && g_stepNum <= 54500000) {
+                std::string selStr = selBytes ? std::string(selBytes, selLen) : "?";
+                fprintf(stderr, "[PRIM-FAIL step=%llu] cached prim=%d #%s\n",
+                        g_stepNum, cached->primitiveIndex, selStr.c_str());
+            }
         }
 
         // Suppress context switch for primitive 198 (ensure:/ifCurtailed:)
@@ -7183,6 +7190,12 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         PrimitiveResult result = executePrimitive(primIndex, argCount);
         if (result == PrimitiveResult::Success) {
             return;
+        }
+        // Log primitive failures in critical window
+        if (g_stepNum >= 53770000 && g_stepNum <= 54500000) {
+            std::string selStr = selBytes ? std::string(selBytes, selLen) : "?";
+            fprintf(stderr, "[PRIM-FAIL step=%llu] prim=%d #%s\n",
+                    g_stepNum, primIndex, selStr.c_str());
         }
     }
 
@@ -9407,7 +9420,8 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         }
 
         static int dnuLogCount = 0;
-        if (dnuLogCount++ < 200) {
+        bool dnuInCriticalWindow = (g_stepNum >= 53780000 && g_stepNum <= 54500000);
+        if (dnuLogCount++ < 200 || dnuInCriticalWindow) {
             // Helper to get selector name from a compiled method
             auto getSelName = [&](Oop meth) -> std::string {
                     if (!meth.isObject() || meth.rawBits() < 0x10000) return "?";
@@ -9718,6 +9732,52 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     // Send doesNotUnderstand: to the original receiver
     push(originalReceiver);
     push(message);
+
+    // Debug: check which doesNotUnderstand: method will be found
+    {
+        static int dnuTraceCount = 0;
+        if (dnuTraceCount++ < 30) {
+            Oop rcvrClass = memory_.classOf(originalReceiver);
+            Oop dnuMethod = lookupMethod(selectors_.doesNotUnderstand, rcvrClass);
+            std::string dnuClassName = "?";
+            if (dnuMethod.isObject() && dnuMethod.rawBits() > 0x10000) {
+                // Get the class that defines this method (last literal = class binding)
+                ObjectHeader* mh = dnuMethod.asObjectPtr();
+                Oop mHdr = memory_.fetchPointer(0, dnuMethod);
+                if (mHdr.isSmallInteger()) {
+                    size_t nLit = mHdr.asSmallInteger() & 0x7FFF;
+                    if (nLit >= 1) {
+                        Oop classBinding = memory_.fetchPointer(nLit, dnuMethod);
+                        if (classBinding.isObject() && classBinding.rawBits() > 0x10000) {
+                            // ClassBinding is an Association: key=className value=classObj
+                            Oop classObj = memory_.fetchPointer(1, classBinding);
+                            if (classObj.isObject() && classObj.rawBits() > 0x10000) {
+                                Oop nameOop = memory_.fetchPointer(6, classObj);
+                                if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                                    ObjectHeader* nH = nameOop.asObjectPtr();
+                                    if (nH->isBytesObject() && nH->byteSize() < 60)
+                                        dnuClassName = std::string((char*)nH->bytes(), nH->byteSize());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            std::string rcvrClassName = "?";
+            if (rcvrClass.isObject() && rcvrClass.rawBits() > 0x10000) {
+                Oop nm = memory_.fetchPointer(6, rcvrClass);
+                if (nm.isObject() && nm.rawBits() > 0x10000) {
+                    ObjectHeader* nH = nm.asObjectPtr();
+                    if (nH->isBytesObject() && nH->byteSize() < 60)
+                        rcvrClassName = std::string((char*)nH->bytes(), nH->byteSize());
+                }
+            }
+            fprintf(stderr, "[DNU-DISPATCH] doesNotUnderstand: found on %s for receiver %s (method=%s step=%llu)\n",
+                    dnuClassName.c_str(), rcvrClassName.c_str(),
+                    dnuMethod.isNil() ? "nil" : "found", g_stepNum);
+        }
+    }
+
     sendSelector(selectors_.doesNotUnderstand, 1);
 
     dnuDepth--;
@@ -14830,11 +14890,28 @@ void Interpreter::initializePrimitives() {
     // Initialize FFI early to register SDL2 stubs before image tries to use them
     // This makes OSWindow think SDL2 is available, so it starts InputEventSensor
     ffi::initializeFFI();
+
+    // Initialize B2DPlugin (BalloonEngine) for vector graphics rendering
+    initializeB2DPlugin(this);
 }
 
 void Interpreter::registerNamedPrimitive(const std::string& module, const std::string& name, PrimitiveFunc func) {
     std::string key = module + ":" + name;
     namedPrimitives_[key] = func;
+}
+
+void Interpreter::registerNamedPrimitive(const std::string& module, const std::string& name, ExternalPrimFunc func) {
+    std::string key = module + ":" + name;
+    externalPrimitives_[key] = func;
+}
+
+PrimitiveResult Interpreter::callExternalPrimitive(ExternalPrimFunc fn) {
+    resetProxyFailure();
+    fn();
+    if (proxyFailed()) {
+        return PrimitiveResult::Failure;
+    }
+    return PrimitiveResult::Success;
 }
 
 void Interpreter::initializeNamedPrimitives() {

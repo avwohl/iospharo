@@ -305,6 +305,11 @@ public:
     /// Check if primitive succeeded
     bool primitiveSucceeded() const { return !primitiveFailed_; }
 
+    // External plugin primitive support (for B2DPlugin, etc.)
+    using ExternalPrimFunc = int (*)(void);
+    void registerNamedPrimitive(const std::string& module, const std::string& name, ExternalPrimFunc func);
+    PrimitiveResult callExternalPrimitive(ExternalPrimFunc fn);
+
 private:
     ObjectMemory& memory_;
 
@@ -505,6 +510,9 @@ private:
     // Named primitive registry - maps "moduleName:primitiveName" to function
     std::map<std::string, PrimitiveFunc> namedPrimitives_;
 
+    // External plugin primitive registry (free C functions, not member functions)
+    std::map<std::string, ExternalPrimFunc> externalPrimitives_;
+
     // Bytecode history for debugging
     std::array<uint8_t, 256> recentBytecodes_;
     size_t recentBytecodeIdx_ = 0;
@@ -625,7 +633,7 @@ private:
     /// Initialize named primitives (module:name -> function mapping)
     void initializeNamedPrimitives();
 
-    /// Register a named primitive
+    /// Register a named primitive (member function)
     void registerNamedPrimitive(const std::string& module, const std::string& name, PrimitiveFunc func);
 
     /// Execute a primitive
