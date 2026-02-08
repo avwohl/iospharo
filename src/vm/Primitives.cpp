@@ -24692,7 +24692,9 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
     {
         auto it = g_symbolNames.find(reinterpret_cast<uintptr_t>(funcPtr));
         const char* funcName = (it != g_symbolNames.end()) ? it->second.c_str() : "?";
-        if (callCount <= 20) {
+        // Log all SDL calls, suppress non-SDL after first 20
+        bool isSDL = (strstr(funcName, "SDL_") != nullptr);
+        if (callCount <= 20 || isSDL) {
             fprintf(stderr, "[TFFI-CALL #%d] funcPtr=%p '%s' nargs=%u retType=%u\n",
                     callCount, funcPtr, funcName, cif->nargs, cif->rtype->type);
         }
