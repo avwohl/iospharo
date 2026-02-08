@@ -310,8 +310,8 @@ runDiagnostic: stream
    stream flush]
   on: Error do: [:e |
    stream nextPutAll: 'T17 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
-  "Test 19: Deprecation transform chain"
-  [| oldRW oldAT cm |
+  "Test 19: Deprecation transform chain - detailed trace"
+  [| oldRW oldAT cm dep ruleStr ctxStr cosStr nodeStr xformStr |
    ExampleForDeprecationTest compile: 'sendsDeprecatedMessageWithTransform ^ self deprecatedMessageWithTransform'.
    cm := ExampleForDeprecationTest compiledMethodAt: #sendsDeprecatedMessageWithTransform.
    stream nextPutAll: 'T19a compiled sendsOld: '; nextPutAll: (cm sendsSelector: #deprecatedMessageWithTransform) printString; cr.
@@ -319,7 +319,26 @@ runDiagnostic: stream
    oldAT := Deprecation activateTransformations.
    Deprecation raiseWarning: false.
    Deprecation activateTransformations: true.
-   ExampleForDeprecationTest new sendsDeprecatedMessageWithTransform.
+   dep := nil.
+   cosStr := 'not-set'. nodeStr := 'not-set'. xformStr := 'not-set'.
+   [ExampleForDeprecationTest new sendsDeprecatedMessageWithTransform]
+     on: Deprecation do: [:d |
+       dep := d.
+       [| cos |
+         cos := d contextOfSender.
+         cosStr := cos class name , ' >> ' , cos method selector.
+         [| sn |
+           sn := cos sourceNodeExecuted.
+           nodeStr := sn class name , ': ' , sn printString.
+         ] on: Error do: [:e2 | nodeStr := e2 class name , ' - ' , e2 messageText].
+       ] on: Error do: [:e2 | cosStr := e2 class name , ' - ' , e2 messageText].
+       [d transform. xformStr := 'OK'] on: Error do: [:e2 | xformStr := e2 class name , ' - ' , e2 messageText].
+       d resume].
+   stream nextPutAll: 'T19c caught: '; nextPutAll: (dep ifNil: ['NONE'] ifNotNil: [dep class name]); cr.
+   stream nextPutAll: 'T19c shouldTransform: '; nextPutAll: (dep ifNil: ['N/A'] ifNotNil: [dep shouldTransform printString]); cr.
+   stream nextPutAll: 'T19c contextOfSender: '; nextPutAll: cosStr; cr.
+   stream nextPutAll: 'T19c sourceNode: '; nextPutAll: nodeStr; cr.
+   stream nextPutAll: 'T19c transform: '; nextPutAll: xformStr; cr.
    Deprecation raiseWarning: oldRW.
    Deprecation activateTransformations: oldAT.
    cm := ExampleForDeprecationTest compiledMethodAt: #sendsDeprecatedMessageWithTransform.
@@ -528,7 +547,9 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
         result := #fail.
         s nextPutAll: '  FAIL: '; nextPutAll: sel;
           nextPutAll: ' ['; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 500)); nextPutAll: ']'; cr]]
-      on: Deprecation do: [:ex | ex resume]]
+      on: Deprecation do: [:ex |
+        [ex shouldTransform ifTrue: [ex transform]] on: Error do: [:e | ].
+        ex resume]]
       on: TestSkipped do: [:ex |
         result := #skip.
         s nextPutAll: '  SKIP: '; nextPutAll: sel;
