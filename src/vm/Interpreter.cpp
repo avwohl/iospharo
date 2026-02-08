@@ -11290,13 +11290,26 @@ Oop Interpreter::materializeFrameStack() {
                 memory_.storePointer(2, context, Oop::fromSmallInteger(savedCount)); // stackp
 
                 // Ensure context identity: if this frame has a closure (block context),
-                // update the closure's outerContext to point to the sender context we
-                // just materialized. This guarantees that thisContext home (which navigates
-                // via closure >> outerContext >> home) and thisContext sender return the
-                // same context object. Without this, the closure's outerContext may point
-                // to a stale context from a previous materialization.
+                // update the closure's outerContext to point to the freshly materialized
+                // context for the SAME activation. This guarantees that thisContext home
+                // (via closure >> outerContext) and thisContext sender return the same
+                // object when the block was called directly from its creating method.
+                //
+                // IMPORTANT: Only update when sender.method == oldOuterContext.method,
+                // meaning the sender is a re-materialization of the same activation.
+                // Blocks passed through other methods (e.g., RecursionStopper during:
+                // which calls ensure: which calls the block) have a sender that's a
+                // DIFFERENT method — updating outerContext would break homeMethod navigation.
                 if (closure_.isObject() && !closure_.isNil() && closure_.rawBits() > 0x10000) {
-                    memory_.storePointer(0, closure_, sender);  // outerContext = sender
+                    Oop oldOuterCtx = memory_.fetchPointer(0, closure_);
+                    if (oldOuterCtx.isObject() && oldOuterCtx.rawBits() > 0x10000 &&
+                        sender.isObject() && sender.rawBits() > 0x10000) {
+                        Oop oldMethod = memory_.fetchPointer(3, oldOuterCtx);
+                        Oop senderMethod = memory_.fetchPointer(3, sender);
+                        if (oldMethod.rawBits() == senderMethod.rawBits()) {
+                            memory_.storePointer(0, closure_, sender);
+                        }
+                    }
                 }
 
                 return context;

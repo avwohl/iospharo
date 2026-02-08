@@ -184,6 +184,40 @@ runDiagnostic: stream
    stream flush]
   on: Error do: [:e |
    stream nextPutAll: 'T14 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
+  "Test 15: RecursionStopper homeMethod diagnostic"
+  [| value log |
+   value := 0. log := OrderedCollection new.
+   RecursionStopper during: [
+     value := value + 1.
+     log add: ('outer-before: v=', value printString).
+     RecursionStopper during: [
+       value := value + 1.
+       log add: ('inner: v=', value printString).
+     ].
+     log add: ('outer-after: v=', value printString).
+   ].
+   stream nextPutAll: 'T15 RecursionStopper: log='; nextPutAll: log printString; cr.
+   stream nextPutAll: 'T15 value='; nextPutAll: value printString; cr.
+   (value = 1) ifTrue: [stream nextPutAll: 'T15 OK'; cr]
+     ifFalse: [stream nextPutAll: 'T15 FAIL (expected 1 got '; nextPutAll: value printString; nextPutAll: ')'; cr].
+   stream flush]
+  on: Error do: [:e |
+   stream nextPutAll: 'T15 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
+  "Test 16: thisContext sender homeMethod identity check"
+  [| method1 method2 |
+   method1 := thisContext method.
+   method2 := nil.
+   RecursionStopper during: [
+     "We're inside during:'s block. during: calls thisContext sender homeMethod."
+     "Let's manually check what homeMethod returns here"
+     method2 := thisContext home method.
+   ].
+   stream nextPutAll: 'T16 method1='; nextPutAll: method1 printString; cr.
+   stream nextPutAll: 'T16 method2='; nextPutAll: method2 printString; cr.
+   stream nextPutAll: 'T16 same='; nextPutAll: (method1 == method2) printString; cr.
+   stream flush]
+  on: Error do: [:e |
+   stream nextPutAll: 'T16 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
   stream nextPutAll: '=== END DIAGNOSTICS ==='; cr; cr. stream flush! !
 
 !SUnitRunner class methodsFor: 'running'!
