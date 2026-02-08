@@ -5122,7 +5122,11 @@ void Interpreter::returnValue(Oop value) {
                     }
 
                     // Execute from sender, which will push the return value appropriately
-                    // First, set up the sender context
+                    // First, mark the returning context as dead per Cog VM semantics:
+                    // nil the sender and PC so isDead returns true and sender chain is broken.
+                    memory_.storePointer(0, activeContext_, memory_.nil());  // sender = nil
+                    memory_.storePointer(1, activeContext_, memory_.nil());  // pc = nil → isDead
+
                     if (g_crashTraceEnabled) {
                         fprintf(stderr, "[RETVAL-TRACE] about to executeFromContext(sender=0x%llx)\n",
                                 (unsigned long long)sender.rawBits());
@@ -5882,6 +5886,20 @@ void Interpreter::returnFromMethod() {
                     // No unwind contexts - return FROM the home context by executing from its sender
                     Oop sender = memory_.fetchPointer(0, homeCtx);
                     if (sender.isObject() && !sender.isNil()) {
+                        // Mark all contexts from activeContext_ through homeCtx as dead
+                        // (nil their sender and PC per Cog VM semantics)
+                        {
+                            Oop ctx = activeContext_;
+                            Oop nilObj = memory_.nil();
+                            int safety = 0;
+                            while (ctx.isObject() && ctx.rawBits() != nilObj.rawBits() && safety++ < 200) {
+                                Oop nextSender = memory_.fetchPointer(0, ctx);
+                                memory_.storePointer(0, ctx, nilObj);  // sender = nil
+                                memory_.storePointer(1, ctx, nilObj);  // pc = nil → isDead
+                                if (ctx.rawBits() == homeCtx.rawBits()) break;
+                                ctx = nextSender;
+                            }
+                        }
                         // Store the return value on sender's stack
                         Oop stackpOop = memory_.fetchPointer(2, sender);
                         if (stackpOop.isSmallInteger()) {
