@@ -297,10 +297,33 @@ static sqInt proxy_sizeOfSTArrayFromCPrimitive(void* cPtr) {
 }
 
 static sqInt proxy_slotSizeOf(sqInt oop) {
+    // In the standard VM, slotSizeOf delegates to stSizeOf which returns
+    // the element count appropriate for the format:
+    // - Pointer objects: slot count
+    // - 32-bit word objects: 32-bit word count
+    // - Byte objects: byte count
     Oop obj = sqIntToOop(oop);
     if (!obj.isObject()) return 0;
     ObjectHeader* hdr = obj.asObjectPtr();
-    return static_cast<sqInt>(hdr->slotCount());
+    auto format = hdr->format();
+    size_t slots = hdr->slotCount();
+
+    // 32-bit word indexable (e.g., Bitmap, FloatArray, MatrixTransform2x3)
+    if (format == ObjectFormat::Indexable32 || format == ObjectFormat::Indexable32Odd) {
+        size_t bytes = hdr->byteSize();
+        return static_cast<sqInt>(bytes / 4); // 32-bit word count
+    }
+    // Byte indexable (String, ByteArray)
+    if (format >= ObjectFormat::Indexable8 && format <= ObjectFormat::Indexable8_7) {
+        return static_cast<sqInt>(hdr->byteSize());
+    }
+    // 16-bit indexable
+    if (format >= ObjectFormat::Indexable16 && format <= ObjectFormat::Indexable16_3) {
+        size_t bytes = hdr->byteSize();
+        return static_cast<sqInt>(bytes / 2);
+    }
+    // Pointer and other objects: return raw slot count
+    return static_cast<sqInt>(slots);
 }
 
 static sqInt proxy_stObjectat(sqInt array, sqInt fieldIndex) {
