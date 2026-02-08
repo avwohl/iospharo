@@ -9944,10 +9944,63 @@ PrimitiveResult Interpreter::primitiveFindHandlerContext(int argCount) {
 
     static int prim197Count = 0;
     prim197Count++;
-    if (prim197Count <= 50) {
-        fprintf(stderr, "[PRIM197 #%d] startContext=0x%llx isObj=%d isNil=%d\n",
-                prim197Count, (unsigned long long)startContext.rawBits(),
+    bool inCriticalWindow = (g_stepNum >= 53770000 && g_stepNum <= 54500000);
+    if (prim197Count <= 50 || inCriticalWindow) {
+        fprintf(stderr, "[PRIM197 #%d step=%llu] startContext=0x%llx isObj=%d isNil=%d\n",
+                prim197Count, g_stepNum, (unsigned long long)startContext.rawBits(),
                 startContext.isObject() ? 1 : 0, startContext.isNil() ? 1 : 0);
+        if (inCriticalWindow) {
+            // Show what method is at the start context
+            if (startContext.isObject() && !startContext.isNil()) {
+                Oop method = memory_.fetchPointer(3, startContext);
+                if (method.isObject() && method.rawBits() > 0x10000) {
+                    ObjectHeader* mh = method.asObjectPtr();
+                    if (mh->isCompiledMethod()) {
+                        Oop mHdr = memory_.fetchPointer(0, method);
+                        if (mHdr.isSmallInteger()) {
+                            size_t nLit = mHdr.asSmallInteger() & 0x7FFF;
+                            if (nLit >= 2 && nLit <= 200) {
+                                Oop sel = memory_.fetchPointer(nLit - 1, method);
+                                if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                    ObjectHeader* sh = sel.asObjectPtr();
+                                    if (sh->isBytesObject() && sh->byteSize() < 100) {
+                                        std::string selStr((char*)sh->bytes(), sh->byteSize());
+                                        fprintf(stderr, "[PRIM197-CTX] startContext method=#%s\n", selStr.c_str());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // Walk sender chain a few levels to show where the exception was signaled
+                Oop ctx = startContext;
+                for (int i = 0; i < 8 && ctx.isObject() && !ctx.isNil(); i++) {
+                    Oop senderCtx = memory_.fetchPointer(0, ctx); // sender = slot 0
+                    if (!senderCtx.isObject() || senderCtx.isNil()) break;
+                    Oop meth = memory_.fetchPointer(3, senderCtx);
+                    if (meth.isObject() && meth.rawBits() > 0x10000) {
+                        ObjectHeader* mh2 = meth.asObjectPtr();
+                        if (mh2->isCompiledMethod()) {
+                            Oop mHdr2 = memory_.fetchPointer(0, meth);
+                            if (mHdr2.isSmallInteger()) {
+                                size_t nLit2 = mHdr2.asSmallInteger() & 0x7FFF;
+                                if (nLit2 >= 2 && nLit2 <= 200) {
+                                    Oop sel2 = memory_.fetchPointer(nLit2 - 1, meth);
+                                    if (sel2.isObject() && sel2.rawBits() > 0x10000) {
+                                        ObjectHeader* sh2 = sel2.asObjectPtr();
+                                        if (sh2->isBytesObject() && sh2->byteSize() < 100) {
+                                            std::string s((char*)sh2->bytes(), sh2->byteSize());
+                                            fprintf(stderr, "[PRIM197-CTX]   sender[%d] #%s\n", i, s.c_str());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    ctx = senderCtx;
+                }
+            }
+        }
     }
 
     if (!startContext.isObject()) {
@@ -10514,7 +10567,7 @@ PrimitiveResult Interpreter::primitivePerformInSuperclass(int argCount) {
     size_t numArgs = argsHeader->slotCount();
 
     // Look up the method starting from lookupClass
-    Oop method = lookupMethod(lookupClass, selector);
+    Oop method = lookupMethod(selector, lookupClass);
     if (method.isNil()) {
         // DNU - fail and let Smalltalk handle it
         return PrimitiveResult::Failure;
@@ -23994,7 +24047,7 @@ PrimitiveResult Interpreter::primitiveGetSameThreadRunnerAddress(int argCount) {
 PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
     static int callCount = 0;
     callCount++;
-    if (callCount <= 500 || callCount % 50 == 0) {
+    if (callCount <= 500 || callCount % 50 == 0 || callCount > 700) {
         fprintf(stderr, "[TFFI-CALL #%d step=%llu] primitiveSameThreadCallout argCount=%d\n",
                 callCount, g_stepNum, argCount);
     }
@@ -24035,7 +24088,7 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
     {
         auto it = g_symbolNames.find(reinterpret_cast<uintptr_t>(funcPtr));
         const char* funcName = (it != g_symbolNames.end()) ? it->second.c_str() : "?";
-        if (callCount <= 500 || callCount % 50 == 0) {
+        if (callCount <= 500 || callCount % 50 == 0 || callCount > 700) {
             fprintf(stderr, "[TFFI-CALL #%d] funcPtr=%p '%s' nargs=%u retType=%u\n",
                     callCount, funcPtr, funcName, cif->nargs, cif->rtype->type);
         }
@@ -24219,7 +24272,7 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
     // Perform the FFI call
     ffi_call(cif, FFI_FN(funcPtr), returnHolder, argPtrs);
 
-    if (callCount <= 500 || callCount % 50 == 0) {
+    if (callCount <= 500 || callCount % 50 == 0 || callCount > 700) {
         uint64_t rv = 0;
         memcpy(&rv, returnHolder, std::min(sizeof(rv), (size_t)cif->rtype->size));
         fprintf(stderr, "[TFFI-CALL #%d] returned: 0x%llx\n", callCount, rv);
