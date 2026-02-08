@@ -3351,11 +3351,6 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                             activeContext_ = contextToPush;
                             frameDepth_ = 0;
 
-                            if (thisCtxCount <= 20) {
-                                std::cerr << "[THISCTX #" << thisCtxCount
-                                          << "] Materialized " << savedFrameDepth
-                                          << " inline frames for thisContext access\n";
-                            }
                         } else if (contextToPush.isNil() || contextToPush.rawBits() == memory_.nil().rawBits()) {
                             static int thisCtxNilCount = 0;
                             if (thisCtxNilCount++ < 10) {
@@ -6674,14 +6669,6 @@ void Interpreter::commonSend(int which) {
 
     int selectorIndex = which + 16;  // Offset by 16 from the arithmetic sends
 
-    // TRACE: value: sends (which=10)
-    if (which == 10 || which == 9 || which == 11) {
-        static int csValCount = 0;
-        if (csValCount++ < 20) {
-            std::cerr << "[COMMON-SEND] which=" << which << " (value/value:/do:) #" << csValCount << "\n";
-        }
-    }
-
     // Get special selectors array
     Oop specialSelectors = memory_.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
     if (!specialSelectors.isObject() || specialSelectors.rawBits() < 0x10000) {
@@ -7107,110 +7094,43 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
     Oop rcvr = stackValue(argCount);
 
-    // ===== Display driver startup tracing (temporary) =====
-    if (selBytes && selLen > 3 && selLen < 40) {
-        auto match = [&](const char* s) {
-            size_t l = strlen(s);
-            return selLen == l && memcmp(selBytes, s, l) == 0;
-        };
-        if (match("isApplicableFor:") || match("detectCorrectOneForWorld:") ||
-            match("isSuitable") || match("isAvailable") || match("setupEventLoop") ||
-            match("pickDriverClass") || match("loadSymbol:from:") ||
-            match("activate") || match("hasOption:") || match("isInteractive") ||
-            match("isHeadless") || match("handleArgument:") || match("handleSubcommand") ||
-            match("snapshot:andQuit:") || match("startUp:") || match("runStartup:") ||
-            match("executeDeferredStartupActions:") || match("quitPrimitive") ||
-            match("handleStartupArguments") || match("handleCommandLine") ||
-            match("handleCommand:") || match("activateHandler:") ||
-            match("openWorldWithSpec") || match("uiManager") ||
-            match("isMorphic") || match("installNewDisplay") ||
-            match("runDeferredStartupActions") || match("processCommandLine") ||
-            match("openMorphic") || match("fullScreenOn") || match("openWorld") ||
-            match("start:") ||
-            match("installNewSession") || match("performSnapshot") ||
-            match("stop:") || match("terminate")) {
-            static int driverTrace = 0;
-            if (driverTrace++ < 2000) {
-                // Get receiver class name for context
-                std::string rcvrCls = "?";
-                if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-                    Oop cls = memory_.classOf(rcvr);
-                    if (cls.isObject()) {
-                        Oop nameOop = memory_.fetchPointer(6, cls);
-                        if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
-                            ObjectHeader* nHdr = nameOop.asObjectPtr();
-                            if (nHdr->isBytesObject() && nHdr->byteSize() < 60) {
-                                rcvrCls = std::string((char*)nHdr->bytes(), nHdr->byteSize());
-                            }
-                        }
-                    }
-                }
-                fprintf(stderr, "[DRIVER] %s >> #%.*s step=%llu\n",
-                        rcvrCls.c_str(), (int)selLen, selBytes, g_stepNum);
-            }
-        }
-        // Separate trace for signal/wait on non-SymbolTable semaphores
-        if ((match("signal") || match("wait")) && g_stepNum < 25000000) {
-            std::string rcvrCls = "?";
-            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-                Oop cls = memory_.classOf(rcvr);
-                if (cls.isObject()) {
-                    Oop nameOop = memory_.fetchPointer(6, cls);
-                    if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
-                        ObjectHeader* nHdr = nameOop.asObjectPtr();
-                        if (nHdr->isBytesObject() && nHdr->byteSize() < 60) {
-                            rcvrCls = std::string((char*)nHdr->bytes(), nHdr->byteSize());
-                        }
-                    }
-                }
-            }
-            if (rcvrCls.find("SymbolTable") == std::string::npos) {
-                fprintf(stderr, "[SEM] %s >> #%.*s step=%llu\n",
-                        rcvrCls.c_str(), (int)selLen, selBytes, g_stepNum);
-            }
-        }
-    }
-
     // ===== INTERCEPT PROBLEMATIC SELECTORS =====
     // Handle specific message intercepts needed for embedded VM operation
-    if (selector.isObject() && selector.rawBits() > 0x10000) {
-        ObjectHeader* selHdr = selector.asObjectPtr();
-        if (selHdr->isBytesObject() && selHdr->byteSize() > 0 && selHdr->byteSize() < 50) {
-            std::string selStr((char*)selHdr->bytes(), selHdr->byteSize());
+    if (selBytes && selLen > 0) {
+        auto selIs = [selBytes, selLen](const char* s) {
+            size_t n = strlen(s);
+            return selLen == n && memcmp(selBytes, s, n) == 0;
+        };
 
-            // ===== INTERCEPT relinquishProcessorForMicroseconds: =====
-            // This is called during idle loop. Use it to auto-load the display driver.
-            if (selStr == "relinquishProcessorForMicroseconds:" && argCount == 1) {
-                static int idleCycles = 0;
-                ++idleCycles;
-                if (idleCycles == 10) {  // After 10 idle cycles, auto-load driver
-                    autoLoadDriver();
-                }
-                // Let relinquish proceed normally
+        // ===== INTERCEPT relinquishProcessorForMicroseconds: =====
+        // This is called during idle loop. Use it to auto-load the display driver.
+        if (selIs("relinquishProcessorForMicroseconds:") && argCount == 1) {
+            static int idleCycles = 0;
+            ++idleCycles;
+            if (idleCycles == 10) {  // After 10 idle cycles, auto-load driver
+                autoLoadDriver();
             }
+            // Let relinquish proceed normally
+        }
 
-            // ===== INTERCEPT snapshot:andQuit: - SAVE IS DISABLED =====
-            if (selStr == "snapshot:andQuit:" && argCount == 2) {
-                Oop saveArg = stackValue(1);
-                Oop quitArg = stackValue(0);
-                bool shouldQuit = quitArg.rawBits() == memory_.trueObject().rawBits();
-                bool shouldSave = saveArg.rawBits() == memory_.trueObject().rawBits();
-                if (shouldSave) {
-                    std::cerr << "[VM] Save disabled - ignoring save request\n";
-                }
-                if (shouldQuit) {
-                    stopVM("snapshot:andQuit: quit requested");
-                    popN(argCount + 1);
-                    push(memory_.nil());
-                    return;
-                }
+        // ===== INTERCEPT snapshot:andQuit: - SAVE IS DISABLED =====
+        if (selIs("snapshot:andQuit:") && argCount == 2) {
+            Oop saveArg = stackValue(1);
+            Oop quitArg = stackValue(0);
+            bool shouldQuit = quitArg.rawBits() == memory_.trueObject().rawBits();
+            bool shouldSave = saveArg.rawBits() == memory_.trueObject().rawBits();
+            if (shouldSave) {
+                std::cerr << "[VM] Save disabled - ignoring save request\n";
+            }
+            if (shouldQuit) {
+                stopVM("snapshot:andQuit: quit requested");
                 popN(argCount + 1);
                 push(memory_.nil());
                 return;
             }
-
-            // error: intercept REMOVED - was silently swallowing errors like
-            // "Improper store" instead of letting Smalltalk handle them properly
+            popN(argCount + 1);
+            push(memory_.nil());
+            return;
         }
     }
 
@@ -10254,10 +10174,11 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
     // return the wrong method.
     //
     // For blocks that need outerContext (ignoreOuterContext=false), we materialize
-    // the frame stack to create proper Context objects. We do NOT reset frameDepth_
-    // or update activeContext_ — the inline frames continue to work for execution.
-    // The materialized contexts are only referenced via the closure's outerContext
-    // for the home/homeMethod chain.
+    // the frame stack to create proper Context objects. The materialized contexts
+    // are only used for the closure's outerContext chain (for home/homeMethod).
+    // We do NOT switch to context-based execution here because that would break
+    // process suspension (activeContext_ becomes stale when inline frames are
+    // pushed on top, causing suspended processes to lose their execution state).
     Oop outerContextForBlock;
     if (!ignoreOuterContext && frameDepth_ > 0) {
         outerContextForBlock = materializeFrameStack();
@@ -11350,17 +11271,14 @@ Oop Interpreter::materializeFrameStack() {
                 // Set stackp to actual number of items saved
                 memory_.storePointer(2, context, Oop::fromSmallInteger(savedCount)); // stackp
 
-                if (matLog) {
-                    fprintf(matLog, "[MATERIALIZE] Created %zu+1 contexts, topmost=0x%llx\n",
-                            frameDepth_, (unsigned long long)context.rawBits());
-                    fprintf(matLog, "  slots: sender=0x%llx pc=%lld stackp=%d method=0x%llx closure=0x%llx rcvr=0x%llx\n",
-                            (unsigned long long)sender.rawBits(),
-                            (long long)pc,
-                            savedCount,
-                            (unsigned long long)method_.rawBits(),
-                            (unsigned long long)memory_.nil().rawBits(),
-                            (unsigned long long)receiver_.rawBits());
-                    fflush(matLog);
+                // Ensure context identity: if this frame has a closure (block context),
+                // update the closure's outerContext to point to the sender context we
+                // just materialized. This guarantees that thisContext home (which navigates
+                // via closure >> outerContext >> home) and thisContext sender return the
+                // same context object. Without this, the closure's outerContext may point
+                // to a stale context from a previous materialization.
+                if (closure_.isObject() && !closure_.isNil() && closure_.rawBits() > 0x10000) {
+                    memory_.storePointer(0, closure_, sender);  // outerContext = sender
                 }
 
                 return context;

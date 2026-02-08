@@ -148,6 +148,42 @@ runDiagnostic: stream
    stream flush]
   on: Error do: [:e |
    stream nextPutAll: 'T11 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
+  "Test 12: ExceptionTester simpleEnsureTestWithUparrow (the actual failing test)"
+  [| tester result |
+   tester := ExceptionTester new.
+   result := tester runTest: #simpleEnsureTestWithUparrow.
+   stream nextPutAll: 'T12 ExceptionTester suiteLog: '; nextPutAll: result printString; cr.
+   stream nextPutAll: 'T12 ExceptionTester log: '; nextPutAll: tester log printString; cr.
+   stream nextPutAll: 'T12 Expected: '; nextPutAll: tester simpleEnsureTestWithUparrowResults printString; cr.
+   stream flush]
+  on: Error do: [:e |
+   stream nextPutAll: 'T12 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
+  "Test 13: simple ensure without NLR (ensure block should fire)"
+  [| ensuredRan result |
+   ensuredRan := false.
+   result := [42] ensure: [ensuredRan := true].
+   stream nextPutAll: 'T13 SimpleEnsure: result='; nextPutAll: result printString;
+     nextPutAll: ' ensured='; nextPutAll: ensuredRan printString; cr.
+   stream flush]
+  on: Error do: [:e |
+   stream nextPutAll: 'T13 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
+  "Test 14: ensure with NLR from block (non-method ^nil)"
+  [| sem log |
+   sem := Semaphore new. log := OrderedCollection new.
+   [| r |
+    r := [log add: 'before'. true ifTrue: [^nil]. log add: 'after'] ensure: [log add: 'ensured'].
+    log add: ('result=', r printString).
+    sem signal] fork.
+   (sem waitTimeoutSeconds: 3) ifTrue: [
+     stream nextPutAll: 'T14 Fork+Ensure+NLR: TIMEOUT'; cr]
+   ifFalse: [
+     stream nextPutAll: 'T14 Fork+Ensure+NLR log: '; nextPutAll: log printString; cr.
+     (log includes: 'ensured')
+       ifTrue: [stream nextPutAll: 'T14 Fork+Ensure+NLR: OK (ensure fired)'; cr]
+       ifFalse: [stream nextPutAll: 'T14 Fork+Ensure+NLR: FAIL (ensure did not fire)'; cr]].
+   stream flush]
+  on: Error do: [:e |
+   stream nextPutAll: 'T14 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
   stream nextPutAll: '=== END DIAGNOSTICS ==='; cr; cr. stream flush! !
 
 !SUnitRunner class methodsFor: 'running'!

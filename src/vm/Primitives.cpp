@@ -3043,18 +3043,7 @@ PrimitiveResult Interpreter::primitiveIdentical(int argCount) {
 
     bool result = (rcvr == arg);
 
-    // DIAG: Log Character comparisons (first 50)
-    {
-        static int charCmpCount = 0;
-        if (charCmpCount < 50 && (rcvr.isCharacter() || arg.isCharacter())) {
-            charCmpCount++;
-            fprintf(stderr, "[CHAR-CMP #%d step=%llu] rcvr=0x%llx(char=%d) arg=0x%llx(char=%d) result=%d\n",
-                    charCmpCount, (unsigned long long)g_stepNum,
-                    (unsigned long long)rcvr.rawBits(), rcvr.isCharacter(),
-                    (unsigned long long)arg.rawBits(), arg.isCharacter(),
-                    result);
-        }
-    }
+    // DIAG traces removed from hot path for performance
 
     // Detect scanFor: spinning - track consecutive == calls with same arg
     {
