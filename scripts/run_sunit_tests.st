@@ -423,14 +423,44 @@ runDiagnostic: stream
    stream flush]
   on: Error do: [:e |
    stream nextPutAll: 'T22 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
-  "Test 23: Weak reference + GC"
-  [| m val |
+  "Test 22c: Investigate isExtension / hasProperty: #extensionPackage"
+  [| m |
+   ExampleForTest1 compile: 'extensionMethod ' classified: '*AGeneratedPackageForTest'.
+   m := ExampleForTest1 >> #extensionMethod.
+   stream nextPutAll: 'T22c method class: '; nextPutAll: m class name; cr.
+   stream nextPutAll: 'T22c protocolName: '; nextPutAll: m protocolName printString; cr.
+   stream nextPutAll: 'T22c isExtension: '; nextPutAll: m isExtension printString; cr.
+   stream nextPutAll: 'T22c hasProperty extensionPackage: '; nextPutAll: (m hasProperty: #extensionPackage) printString; cr.
+   "Check if properties exist at all"
+   stream nextPutAll: 'T22c properties: '; nextPutAll: m properties printString; cr.
+   "Check package info"
+   stream nextPutAll: 'T22c package: '; nextPutAll: m package printString; cr.
+   stream nextPutAll: 'T22c methodClass package: '; nextPutAll: m methodClass package printString; cr.
+   "Check definedMethods vs localMethods"
+   stream nextPutAll: 'T22c localMethods: '; nextPutAll: (ExampleForTest1 localMethods collect: [:x | x selector]) printString; cr.
+   stream nextPutAll: 'T22c definedMethods: '; nextPutAll: (ExampleForTest1 definedMethods collect: [:x | x selector]) printString; cr.
+   "Cleanup"
+   [self packageOrganizer removePackage: 'AGeneratedPackageForTest'] on: Error do: [:e | ].
+   stream flush]
+  on: Error do: [:e |
+   stream nextPutAll: 'T22c ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
+  "Test 23: Weak reference + GC — replicate testReceiverWithGC exactly"
+  [| m result |
    m := WeakMessageSend receiver: Object new selector: #isNil.
-   stream nextPutAll: 'T23 before GC: m value = '; nextPutAll: m value printString; cr.
+   "Replicate what garbageCollectMost does"
    Smalltalk garbageCollectMost.
-   val := m value.
-   stream nextPutAll: 'T23 after GC: m value = '; nextPutAll: val printString; cr.
-   stream nextPutAll: 'T23 m value isNil = '; nextPutAll: val isNil printString; cr.
+   result := m value.
+   stream nextPutAll: 'T23 result = '; nextPutAll: result printString; cr.
+   stream nextPutAll: 'T23 result isNil = '; nextPutAll: result isNil printString; cr.
+   stream nextPutAll: 'T23 receiver after GC = '; nextPutAll: m receiver printString; cr.
+   stream nextPutAll: 'T23 receiver isNil = '; nextPutAll: m receiver isNil printString; cr.
+   "Now test with fullGC instead"
+   m := WeakMessageSend receiver: Object new selector: #isNil.
+   Smalltalk garbageCollect.
+   result := m value.
+   stream nextPutAll: 'T23b after fullGC: result = '; nextPutAll: result printString; cr.
+   stream nextPutAll: 'T23b result isNil = '; nextPutAll: result isNil printString; cr.
+   stream nextPutAll: 'T23b receiver = '; nextPutAll: m receiver printString; cr.
    stream flush]
   on: Error do: [:e |
    stream nextPutAll: 'T23 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].

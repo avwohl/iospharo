@@ -9313,58 +9313,33 @@ PrimitiveResult Interpreter::primitiveSetImmutability(int argCount) {
 
 // ===== OBJECT COPY PRIMITIVE =====
 
-// Primitive 168: Create a copy of an object (shallow copy with new identity)
+// Primitive 168: Object>>copyFrom: anotherObject — copy contents of arg into receiver
 PrimitiveResult Interpreter::primitiveCopyObject(int argCount) {
-    Oop rcvr = stackTop();
+    // Primitive 168: Object>>copyFrom: anotherObject
+    // Copy the contents of the argument (source) into the receiver (destination).
+    // Both must be non-immediate objects with the same format and slot count.
+    Oop arg = stackValue(0);    // anotherObject (source)
+    Oop rcvr = stackValue(1);   // self (destination)
 
-    if (!rcvr.isObject()) {
-        // Immediates are their own copy
-        return PrimitiveResult::Success;
+    if (!arg.isObject() || !rcvr.isObject()) {
+        return PrimitiveResult::Failure;
     }
 
-    ObjectHeader* header = rcvr.asObjectPtr();
-    uint32_t classIndex = header->classIndex();
-    ObjectFormat format = header->format();
-    size_t slotCount = header->slotCount();
+    ObjectHeader* src = arg.asObjectPtr();
+    ObjectHeader* dst = rcvr.asObjectPtr();
 
-    Oop copy;
+    // Must have same format and slot count
+    if (src->format() != dst->format()) return PrimitiveResult::Failure;
+    if (src->slotCount() != dst->slotCount()) return PrimitiveResult::Failure;
 
-    // Handle different object formats
-    if (format >= ObjectFormat::Indexable8 && format <= ObjectFormat::Indexable8_7) {
-        // Byte object
-        size_t byteSize = memory_.byteSizeOf(rcvr);
-        copy = memory_.allocateBytes(classIndex, byteSize);
-        if (copy.isNil()) return PrimitiveResult::Failure;
-
-        // Copy bytes
-        uint8_t* srcBytes = reinterpret_cast<uint8_t*>(header + 1);
-        uint8_t* dstBytes = reinterpret_cast<uint8_t*>(copy.asObjectPtr() + 1);
-        std::memcpy(dstBytes, srcBytes, byteSize);
-    } else if (format >= ObjectFormat::Indexable32 && format <= ObjectFormat::Indexable64) {
-        // Word object
-        size_t byteSize = memory_.byteSizeOf(rcvr);
-        size_t wordCount = byteSize / 8;
-        copy = memory_.allocateWords(classIndex, wordCount);
-        if (copy.isNil()) return PrimitiveResult::Failure;
-
-        // Copy words
-        uint64_t* srcWords = reinterpret_cast<uint64_t*>(header + 1);
-        uint64_t* dstWords = reinterpret_cast<uint64_t*>(copy.asObjectPtr() + 1);
-        std::memcpy(dstWords, srcWords, byteSize);
-    } else {
-        // Pointer object
-        copy = memory_.allocateSlots(classIndex, slotCount, format);
-        if (copy.isNil()) return PrimitiveResult::Failure;
-
-        // Copy slots
-        for (size_t i = 0; i < slotCount; i++) {
-            Oop slot = memory_.fetchPointer(i, rcvr);
-            memory_.storePointer(i, copy, slot);
-        }
+    // Copy all slots from source to destination
+    size_t numSlots = src->slotCount();
+    for (size_t i = 0; i < numSlots; i++) {
+        dst->slotAtPut(i, src->slotAt(i));
     }
 
-    pop();
-    push(copy);
+    // Pop argument, leave receiver on stack
+    popN(1);
     return PrimitiveResult::Success;
 }
 
