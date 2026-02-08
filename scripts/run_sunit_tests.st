@@ -348,22 +348,50 @@ runDiagnostic: stream
    stream flush]
   on: Error do: [:e |
    stream nextPutAll: 'T19 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
-  "Test 20: Context restart temp clearing"
-  [| a firstTimeThrough log |
+  "Test 20a: Dump restart/jump source and bytecodes"
+  [| jumpMethod restartMethod |
+   jumpMethod := Context >> #jump.
+   restartMethod := Context >> #restart.
+   stream nextPutAll: 'T20a restart source: '; nextPutAll: restartMethod sourceCode; cr.
+   stream nextPutAll: 'T20a jump source: '; nextPutAll: jumpMethod sourceCode; cr.
+   stream nextPutAll: 'T20a jump bytecodes:'.
+   jumpMethod initialPC to: jumpMethod endPC do: [:i |
+     stream nextPutAll: ' '; nextPutAll: (jumpMethod at: i) printString].
+   stream cr.
+   stream nextPutAll: 'T20a jump initialPC: '; nextPutAll: jumpMethod initialPC printString; cr.
+   stream nextPutAll: 'T20a jump endPC: '; nextPutAll: jumpMethod endPC printString; cr.
+   stream nextPutAll: 'T20a jump numLiterals: '; nextPutAll: jumpMethod numLiterals printString; cr.
+   stream nextPutAll: 'T20a jump header: '; nextPutAll: (jumpMethod headerDescription); cr.
+   stream nextPutAll: 'T20a restart bytecodes:'.
+   restartMethod initialPC to: restartMethod endPC do: [:i |
+     stream nextPutAll: ' '; nextPutAll: (restartMethod at: i) printString].
+   stream cr.
+   stream flush]
+  on: Error do: [:e |
+   stream nextPutAll: 'T20a ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
+  "Test 20: Context restart - simple test matching SUnit testClosureRestart"
+  [| a firstTimeThrough result |
    firstTimeThrough := true.
    a := 10.
-   log := OrderedCollection new.
+   result := nil.
    [ | b |
-     log add: ('b-start=' , (b printString)).
+     stream nextPutAll: 'T20-BLK b='; nextPutAll: b printString;
+       nextPutAll: ' a='; nextPutAll: a printString;
+       nextPutAll: ' ftt='; nextPutAll: firstTimeThrough printString; cr; flush.
      b := a + 20.
-     log add: ('b-after=' , (b printString)).
-     firstTimeThrough
-       ifTrue: [ firstTimeThrough := false.
-         log add: 'restarting'.
-         thisContext restart ].
-     log add: ('b-end=' , (b printString)).
+     stream nextPutAll: 'T20-BLK2 b='; nextPutAll: b printString; cr; flush.
+     firstTimeThrough ifTrue: [
+       firstTimeThrough := false.
+       stream nextPutAll: 'T20-RESTART'; cr; flush.
+       thisContext restart ].
+     stream nextPutAll: 'T20-PAST b='; nextPutAll: b printString; cr; flush.
+     result := b.
    ] value.
-   stream nextPutAll: 'T20 restart log: '; nextPutAll: log printString; cr.
+   stream nextPutAll: 'T20 result='; nextPutAll: result printString; cr.
+   stream nextPutAll: 'T20 a='; nextPutAll: a printString; cr.
+   (result = 30 and: [a = 10])
+     ifTrue: [stream nextPutAll: 'T20 OK'; cr]
+     ifFalse: [stream nextPutAll: 'T20 FAIL (expected result=30 a=10)'; cr].
    stream flush]
   on: Error do: [:e |
    stream nextPutAll: 'T20 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
@@ -379,6 +407,33 @@ runDiagnostic: stream
    stream flush]
   on: Error do: [:e |
    stream nextPutAll: 'T21 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
+  "Test 22: localMethods / localSelectors"
+  [| lm ls allSels |
+   lm := ExampleForTest1 localMethods.
+   ls := ExampleForTest1 localSelectors.
+   allSels := ExampleForTest1 methodDict keys.
+   stream nextPutAll: 'T22 methodDict keys: '; nextPutAll: allSels printString; cr.
+   stream nextPutAll: 'T22 localMethods: '; nextPutAll: (lm collect: [:m | m selector]) printString; cr.
+   stream nextPutAll: 'T22 localSelectors: '; nextPutAll: ls printString; cr.
+   lm do: [:m |
+     stream nextPutAll: 'T22 method '; nextPutAll: m selector; nextPutAll: ' protocol='.
+     stream nextPutAll: m protocolName printString.
+     stream nextPutAll: ' origin='; nextPutAll: m origin name.
+     stream nextPutAll: ' isExtension='; nextPutAll: m isExtension printString; cr].
+   stream flush]
+  on: Error do: [:e |
+   stream nextPutAll: 'T22 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
+  "Test 23: Weak reference + GC"
+  [| m val |
+   m := WeakMessageSend receiver: Object new selector: #isNil.
+   stream nextPutAll: 'T23 before GC: m value = '; nextPutAll: m value printString; cr.
+   Smalltalk garbageCollectMost.
+   val := m value.
+   stream nextPutAll: 'T23 after GC: m value = '; nextPutAll: val printString; cr.
+   stream nextPutAll: 'T23 m value isNil = '; nextPutAll: val isNil printString; cr.
+   stream flush]
+  on: Error do: [:e |
+   stream nextPutAll: 'T23 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
   stream nextPutAll: '=== END DIAGNOSTICS ==='; cr; cr. stream flush! !
 
 !SUnitRunner class methodsFor: 'running'!
