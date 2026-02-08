@@ -137,19 +137,38 @@ pixel ptr via FFI void** → adoptAddress: → asInteger → SetPointer (real ad
 
 ---
 
-## Test Results — Run #92 (2026-02-07)
+## Test Results — Run #118 (2026-02-08)
 
-**73 test classes, 4291 tests. Pass: 4286+, Fail: 1, Error: 0, Skip: 4.**
+**73 test classes, 4291 tests. Pass: 4283, Fail: 4, Error: 0.**
 
-**99.98% pass rate** (4286/4291). Clean exit (no crashes). 11 classes skipped (process/timer-dependent).
+**99.81% pass rate** (4283/4291). Clean exit (no crashes). 11 classes skipped (process/timer-dependent).
 
-### Only remaining failure
+### Remaining failures
 
 | Test | Issue |
 |---|---|
-| testTransformingDeprecation | AST rewriting via `deprecated:transformWith:` — requires `Context >> sourceNodeExecuted` and OpalCompiler infrastructure. Development-time feature, low priority. |
+| testClosureRestart | Block temp `b` not reset to nil after `thisContext restart` — under investigation |
+| testLocalMethods | `localMethods` returns extension method that should be filtered |
+| testLocalSelectors | Same root cause as testLocalMethods |
+| testReceiverWithGC | Weak reference not nil'd after `garbageCollectMost` — under investigation |
 
-### Recent fixes (Run #77 → #92)
+### Recent fixes (Run #92 → #118)
+
+**primitiveClass fix (commit 65e551b)**: `primitiveClass` (primitive 111) used
+`stackValue(argCount)` (gets receiver) instead of `stackValue(0)` (gets top of
+stack = argument). For `Context >> objectClass:` (1-arg), this returned the
+Context's class instead of the argument's class. Broke `isFailToken:` checks
+in Context stepping simulation. Fixed by always using stackTop, matching
+standard VM behavior. Fixed 4 tests:
+- ContextTest: testNoStepIntoQuickMethod, testStepIntoQuickMethod, testSteppingAQuickMethod, testBlockCannotReturn
+
+**Deprecation handler fix (commit 72c4010)**: Test runner's `on: Deprecation do:
+[:ex | ex resume]` caught Deprecation signals before `defaultAction` could run,
+preventing AST rewriting. Changed handler to call `shouldTransform`/`transform`
+before resuming, matching standard SUnit behavior while preventing logTranscript
+errors from missing stdout. Fixed testTransformingDeprecation.
+
+### Earlier fixes (Run #77 → #92)
 
 **Quick primitives in P118 (commit 4bfaa62)**: `primitiveDoPrimitiveWithArgs`
 (primitive 118, used by Context stepping simulation) had no handler for quick
@@ -193,10 +212,11 @@ fallback in returnFromBlock.
 **primitiveChangeClass + immutability (commit 467ed76)**: Fix validation and
 add immutability enforcement.
 
-### Per-class results (Run #92)
+### Per-class results (Run #118)
 
-All 73 test classes pass completely except DeprecationTest (1 fail).
-4286+ pass, 1 fail, 0 error, 4 skip. 11 classes skipped (process/timer-dependent).
+All 73 test classes pass completely except ContextTest (1 fail), BehaviorTest (2 fail),
+WeakMessageSendTest (1 fail). 4283 pass, 4 fail, 0 error. 11 classes skipped
+(process/timer-dependent).
 
 Skipped: BlockClosureTest, SemaphoreTest, ProcessTerminateBugTest,
 ProcessSpecificTest, MonitorTest, DelayTest, GeneratorTest, AllocationTest,
@@ -204,9 +224,15 @@ ClassHierarchyTest, MetaClassTest, SharedPoolTest.
 
 ### Known issues
 
-1. **DeprecationTest** (1 fail): `testTransformingDeprecation` tests runtime AST
-   rewriting via `deprecated:transformWith:`. Requires `Context >> sourceNodeExecuted`
-   and OpalCompiler infrastructure. Development-time feature, low priority.
+1. **ContextTest** (1 fail): `testClosureRestart` — block temp not reset after
+   `thisContext restart`. Restart works (block re-executes) but local temps retain
+   values from previous execution instead of being nil'd.
+2. **BehaviorTest** (2 fail): `testLocalMethods`/`testLocalSelectors` — `localMethods`
+   includes extension methods that should be filtered. Likely Smalltalk-level method
+   filtering issue, not a VM primitive bug.
+3. **WeakMessageSendTest** (1 fail): `testReceiverWithGC` — weak reference not
+   cleared after `garbageCollectMost`. GC weak reference processing may have a
+   regression.
 
 ### History
 | Run | Date | Classes | Pass | Fail | Error | Skip | Total | Notes |
@@ -221,6 +247,8 @@ ClassHierarchyTest, MetaClassTest, SharedPoolTest.
 | #72 | 2026-02-07 | 73 | 4270 | 16 | 1 | 4 | 4291 | **99.5%** outerContext fix, error: intercept removal |
 | #77 | 2026-02-07 | 73 | 4286 | 1 | 0 | 4 | 4291 | **99.98%** incrementalGC fix, closure format fix, temp sync fix |
 | #92 | 2026-02-07 | 73 | 4286+ | 1 | 0 | 4 | 4291 | **99.98%** quick primitive P118 fix — 8 more tests fixed |
+| #111 | 2026-02-08 | 73 | 4282 | 5 | 0 | 4 | 4291 | **99.79%** primitiveClass fix — regression discovered |
+| #118 | 2026-02-08 | 73 | 4283 | 4 | 0 | 0 | 4291 | **99.81%** Deprecation handler fix, testTransformingDeprecation passes |
 
 ---
 

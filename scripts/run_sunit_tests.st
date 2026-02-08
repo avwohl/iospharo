@@ -348,6 +348,37 @@ runDiagnostic: stream
    stream flush]
   on: Error do: [:e |
    stream nextPutAll: 'T19 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
+  "Test 20: Context restart temp clearing"
+  [| a firstTimeThrough log |
+   firstTimeThrough := true.
+   a := 10.
+   log := OrderedCollection new.
+   [ | b |
+     log add: ('b-start=' , (b printString)).
+     b := a + 20.
+     log add: ('b-after=' , (b printString)).
+     firstTimeThrough
+       ifTrue: [ firstTimeThrough := false.
+         log add: 'restarting'.
+         thisContext restart ].
+     log add: ('b-end=' , (b printString)).
+   ] value.
+   stream nextPutAll: 'T20 restart log: '; nextPutAll: log printString; cr.
+   stream flush]
+  on: Error do: [:e |
+   stream nextPutAll: 'T20 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
+  "Test 21: Primitive 76 (stackp:) and 211 (tempAt:put:) directly"
+  [| ctx meth |
+   meth := Context >> #privRefresh.
+   ctx := Context sender: nil receiver: nil method: meth arguments: #().
+   "Check tempAt:put: on the context"
+   ctx tempAt: 1 put: 42.
+   stream nextPutAll: 'T21 tempAt:1 after put:42 = '; nextPutAll: (ctx tempAt: 1) printString; cr.
+   ctx tempAt: 1 put: nil.
+   stream nextPutAll: 'T21 tempAt:1 after put:nil = '; nextPutAll: (ctx tempAt: 1) printString; cr.
+   stream flush]
+  on: Error do: [:e |
+   stream nextPutAll: 'T21 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
   stream nextPutAll: '=== END DIAGNOSTICS ==='; cr; cr. stream flush! !
 
 !SUnitRunner class methodsFor: 'running'!
