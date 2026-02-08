@@ -6970,6 +6970,41 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
     }
 
+    // TRACE: After PRIM639 fires, log subsequent sends to find adoptAddress:
+    extern bool g_traceAfterPrim639;
+    extern int g_traceAfterCount;
+    if (g_traceAfterPrim639 && selBytes && selLen > 0) {
+        g_traceAfterCount++;
+        if (g_traceAfterCount <= 50) {
+            fprintf(stderr, "[SEND-TRACE #%d] #%.*s args=%d\n",
+                    g_traceAfterCount, (int)selLen, selBytes, argCount);
+        }
+        if (g_traceAfterCount >= 50) {
+            g_traceAfterPrim639 = false;
+        }
+    }
+
+    // TRACE: When setManualSurfacePointer: is sent, trace the next 200 sends
+    static bool g_traceSetManual = false;
+    static int g_traceSetManualCount = 0;
+    if (selBytes && selLen > 0) {
+        if (!g_traceSetManual && selLen == 24 && memcmp(selBytes, "setManualSurfacePointer:", 24) == 0) {
+            g_traceSetManual = true;
+            g_traceSetManualCount = 0;
+            fprintf(stderr, "[SMP-TRACE] setManualSurfacePointer: ACTIVATED\n");
+        }
+        if (g_traceSetManual) {
+            g_traceSetManualCount++;
+            if (g_traceSetManualCount <= 200) {
+                fprintf(stderr, "[SMP-TRACE #%d] #%.*s args=%d\n",
+                        g_traceSetManualCount, (int)selLen, selBytes, argCount);
+            }
+            if (g_traceSetManualCount >= 200) {
+                g_traceSetManual = false;
+            }
+        }
+    }
+
     Oop rcvr = stackValue(argCount);
 
     // ===== Display driver startup tracing (temporary) =====
@@ -9451,6 +9486,11 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
             std::cerr << "[DNU] Selector '#" << selStr << "' not found on " << rcvrClassName
                       << " (args=" << argCount << ") step=" << g_stepNum
                       << " in #" << getSelName(method_) << " fd=" << frameDepth_ << "\n";
+            // CRITICAL: always log adoptAddress: DNU since it's key to FFI output params
+            if (selStr == "adoptAddress:") {
+                std::cerr << "[DNU-CRITICAL] adoptAddress: NOT FOUND on " << rcvrClassName
+                          << " — FFI output params will NOT be written back!\n";
+            }
             // For sporadic DNUs, show stack info
             if (selStr != "handleClassChange:" && selStr != "printStringHex") {
                 std::cerr << "[DNU]   FP=" << (void*)framePointer_ << " SP=" << (void*)stackPointer_
@@ -14883,6 +14923,23 @@ void Interpreter::initializePrimitives() {
     //
     // The old hand-written table had many errors (wrong primitive numbers).
     // Using the generated table ensures correctness.
+
+    // ExternalAddress read primitives (numbered 631-639)
+    // These read from external memory pointed to by ExternalAddress.
+    // Used by FFI for output parameter dereferencing (void**, int*, etc.)
+    primitiveTable_[631] = &Interpreter::primitiveExternalUint8Read;   // uint8AtOffset:
+    primitiveTable_[633] = &Interpreter::primitiveExternalUint16Read;  // uint16AtOffset:
+    primitiveTable_[635] = &Interpreter::primitiveExternalUint32Read;  // uint32AtOffset:
+    primitiveTable_[636] = &Interpreter::primitiveExternalInt32Read;   // int32AtOffset:
+    primitiveTable_[639] = &Interpreter::primitiveExternalPointerRead; // pointerAtOffset:
+
+    // ExternalAddress write primitives (write to external memory)
+    primitiveTable_[646] = &Interpreter::primitiveExternalUint8Write;    // uint8AtOffset:put:
+    primitiveTable_[648] = &Interpreter::primitiveExternalUint16Write;   // uint16AtOffset:put:
+    primitiveTable_[650] = &Interpreter::primitiveExternalUint32Write;   // uint32AtOffset:put:
+    primitiveTable_[651] = &Interpreter::primitiveExternalInt32Write;    // int32AtOffset:put:
+    primitiveTable_[652] = &Interpreter::primitiveExternalUint64Write;   // uint64AtOffset:put:
+    primitiveTable_[654] = &Interpreter::primitiveExternalPointerWrite;  // pointerAtOffset:put:
 
     // Also initialize named primitives for module-based lookup
     initializeNamedPrimitives();

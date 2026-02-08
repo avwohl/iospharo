@@ -279,10 +279,96 @@ int stub_SDL_RenderClear(void* renderer) {
 }
 
 void stub_SDL_RenderPresent(void* renderer) {
-    // No-op
+    static int presentCount = 0;
+    presentCount++;
+    if (presentCount <= 10 || presentCount % 100 == 0) {
+        fprintf(stderr, "[SDL2-STUB] SDL_RenderPresent #%d\n", presentCount);
+    }
 }
 
 int stub_SDL_SetRenderDrawColor(void* renderer, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+    return 0;
+}
+
+// Texture stubs
+static void* sFakeTextureHandle = reinterpret_cast<void*>(0xFACEFEED);
+
+// Texture pixel buffer — backing store for SDL_LockTexture
+static uint32_t* sTexturePixels = nullptr;
+static int sTextureWidth = 0;
+static int sTextureHeight = 0;
+static int sTexturePitch = 0;
+
+void* stub_SDL_CreateTexture(void* renderer, uint32_t format, int access, int w, int h) {
+    fprintf(stderr, "[SDL2-STUB] SDL_CreateTexture(fmt=0x%x access=%d %dx%d) -> %p\n",
+            format, access, w, h, sFakeTextureHandle);
+    // Allocate pixel buffer for the texture
+    if (sTexturePixels) {
+        free(sTexturePixels);
+    }
+    sTextureWidth = w;
+    sTextureHeight = h;
+    sTexturePitch = w * 4;  // 32bpp XRGB
+    sTexturePixels = static_cast<uint32_t*>(calloc(w * h, 4));
+    return sFakeTextureHandle;
+}
+
+void stub_SDL_DestroyTexture(void* texture) {
+    fprintf(stderr, "[SDL2-STUB] SDL_DestroyTexture(%p)\n", texture);
+    if (sTexturePixels) {
+        free(sTexturePixels);
+        sTexturePixels = nullptr;
+    }
+}
+
+int stub_SDL_LockTexture(void* texture, void* rect, void** pixels, int* pitch) {
+    static int lockCount = 0;
+    lockCount++;
+    if (lockCount <= 20 || lockCount % 100 == 0) {
+        fprintf(stderr, "[SDL2-STUB] SDL_LockTexture #%d (pixels=%p pitch=%p)\n",
+                lockCount, (void*)pixels, (void*)pitch);
+    }
+    if (!sTexturePixels) {
+        return -1;  // No texture allocated
+    }
+    if (pixels) {
+        *pixels = sTexturePixels;
+        if (lockCount <= 20) {
+            fprintf(stderr, "[SDL2-STUB]   -> *pixels = %p\n", sTexturePixels);
+        }
+    }
+    if (pitch) {
+        *pitch = sTexturePitch;
+        if (lockCount <= 20) {
+            fprintf(stderr, "[SDL2-STUB]   -> *pitch = %d\n", sTexturePitch);
+        }
+    }
+    return 0;  // Success
+}
+
+void stub_SDL_UnlockTexture(void* texture) {
+    static int unlockCount = 0;
+    unlockCount++;
+    if (unlockCount <= 20 || unlockCount % 100 == 0) {
+        fprintf(stderr, "[SDL2-STUB] SDL_UnlockTexture #%d\n", unlockCount);
+    }
+}
+
+int stub_SDL_RenderCopy(void* renderer, void* texture, void* srcrect, void* dstrect) {
+    static int copyCount = 0;
+    copyCount++;
+    if (copyCount <= 10 || copyCount % 100 == 0) {
+        fprintf(stderr, "[SDL2-STUB] SDL_RenderCopy #%d\n", copyCount);
+    }
+    return 0;
+}
+
+int stub_SDL_UpdateTexture(void* texture, void* rect, void* pixels, int pitch) {
+    static int updateCount = 0;
+    updateCount++;
+    if (updateCount <= 10 || updateCount % 100 == 0) {
+        fprintf(stderr, "[SDL2-STUB] SDL_UpdateTexture #%d\n", updateCount);
+    }
     return 0;
 }
 
@@ -607,6 +693,12 @@ SDL_EXPORT void SDL_DestroyRenderer(void* r) { stub_SDL_DestroyRenderer(r); }
 SDL_EXPORT int SDL_RenderClear(void* r) { return stub_SDL_RenderClear(r); }
 SDL_EXPORT void SDL_RenderPresent(void* r) { stub_SDL_RenderPresent(r); }
 SDL_EXPORT int SDL_SetRenderDrawColor(void* r, uint8_t rr, uint8_t g, uint8_t b, uint8_t a) { return stub_SDL_SetRenderDrawColor(r, rr, g, b, a); }
+SDL_EXPORT void* SDL_CreateTexture(void* r, uint32_t fmt, int acc, int w, int h) { return stub_SDL_CreateTexture(r, fmt, acc, w, h); }
+SDL_EXPORT void SDL_DestroyTexture(void* t) { stub_SDL_DestroyTexture(t); }
+SDL_EXPORT int SDL_LockTexture(void* t, void* rect, void** px, int* pitch) { return stub_SDL_LockTexture(t, rect, px, pitch); }
+SDL_EXPORT void SDL_UnlockTexture(void* t) { stub_SDL_UnlockTexture(t); }
+SDL_EXPORT int SDL_RenderCopy(void* r, void* t, void* sr, void* dr) { return stub_SDL_RenderCopy(r, t, sr, dr); }
+SDL_EXPORT int SDL_UpdateTexture(void* t, void* r, void* px, int p) { return stub_SDL_UpdateTexture(t, r, px, p); }
 SDL_EXPORT int SDL_PollEvent(void* e) { return stub_SDL_PollEvent(e); }
 SDL_EXPORT int SDL_WaitEvent(void* e) { return stub_SDL_WaitEvent(e); }
 SDL_EXPORT int SDL_PushEvent(void* e) { return stub_SDL_PushEvent(e); }
@@ -690,6 +782,14 @@ void registerSDL2Stubs() {
     registerFunction("SDL_RenderClear", reinterpret_cast<void*>(stub_SDL_RenderClear));
     registerFunction("SDL_RenderPresent", reinterpret_cast<void*>(stub_SDL_RenderPresent));
     registerFunction("SDL_SetRenderDrawColor", reinterpret_cast<void*>(stub_SDL_SetRenderDrawColor));
+
+    // Texture
+    registerFunction("SDL_CreateTexture", reinterpret_cast<void*>(stub_SDL_CreateTexture));
+    registerFunction("SDL_DestroyTexture", reinterpret_cast<void*>(stub_SDL_DestroyTexture));
+    registerFunction("SDL_LockTexture", reinterpret_cast<void*>(stub_SDL_LockTexture));
+    registerFunction("SDL_UnlockTexture", reinterpret_cast<void*>(stub_SDL_UnlockTexture));
+    registerFunction("SDL_RenderCopy", reinterpret_cast<void*>(stub_SDL_RenderCopy));
+    registerFunction("SDL_UpdateTexture", reinterpret_cast<void*>(stub_SDL_UpdateTexture));
 
     // Events
     registerFunction("SDL_PollEvent", reinterpret_cast<void*>(stub_SDL_PollEvent));

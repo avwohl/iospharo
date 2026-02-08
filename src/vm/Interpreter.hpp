@@ -1586,6 +1586,22 @@ private:
     PrimitiveResult primitiveFFIIntegerAtPut(int argCount);       // Named: write integer at offset
     PrimitiveResult primitiveGetAddressOfOOP(int argCount);       // Named: get address of oop
 
+    // ExternalAddress read primitives (numbered 631-639)
+    // Read from external memory pointed to by ExternalAddress
+    PrimitiveResult primitiveExternalUint8Read(int argCount);     // 631: uint8AtOffset:
+    PrimitiveResult primitiveExternalUint16Read(int argCount);    // 633: uint16AtOffset:
+    PrimitiveResult primitiveExternalUint32Read(int argCount);    // 635: uint32AtOffset:
+    PrimitiveResult primitiveExternalInt32Read(int argCount);     // 636: int32AtOffset:
+    PrimitiveResult primitiveExternalPointerRead(int argCount);   // 639: pointerAtOffset:
+
+    // Write to external memory pointed to by ExternalAddress
+    PrimitiveResult primitiveExternalUint8Write(int argCount);    // 646: uint8AtOffset:put:
+    PrimitiveResult primitiveExternalUint16Write(int argCount);   // 648: uint16AtOffset:put:
+    PrimitiveResult primitiveExternalUint32Write(int argCount);   // 650: uint32AtOffset:put:
+    PrimitiveResult primitiveExternalInt32Write(int argCount);    // 651: int32AtOffset:put:
+    PrimitiveResult primitiveExternalUint64Write(int argCount);   // 652: uint64AtOffset:put:
+    PrimitiveResult primitiveExternalPointerWrite(int argCount);  // 654: pointerAtOffset:put:
+
     // ThreadedFFI (TFFI) Primitives - used by TFFIBackend in Pharo 13+
     PrimitiveResult primitiveFillBasicType(int argCount);            // Named: fill ffi_type* from typeCode
     PrimitiveResult primitiveTypeByteSize(int argCount);             // Named: return ffi_type->size

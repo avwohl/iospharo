@@ -70,6 +70,11 @@ static std::vector<uint8_t> extractMagnitude(ObjectMemory& memory, Oop largeInt)
 
 // External step counter from Interpreter.cpp for debugging
 extern uint64_t g_stepNum;
+
+// Debug flag: set when PRIM639 reads a non-null pixel pointer
+// Used to trace subsequent message sends to find adoptAddress:
+bool g_traceAfterPrim639 = false;
+int g_traceAfterCount = 0;
 extern const char* g_xferReason;
 
 // External variable from Interpreter.cpp for tracing sends after prim 264
@@ -2008,6 +2013,49 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
         }
         if (arrayIndex >= header->byteSize()) {
             return PrimitiveResult::Failure;
+        }
+        // Targeted trace: during active PRIM639 trace, log ALL EA writes
+        if (header->byteSize() == 8 && g_traceAfterPrim639) {
+            Oop extAddrClass2 = memory_.specialObject(SpecialObjectIndex::ClassExternalAddress);
+            if (extAddrClass2.isObject() && memory_.classOf(rcvr).rawBits() == extAddrClass2.rawBits()) {
+                static int ptrAdoptCount = 0;
+                if (++ptrAdoptCount <= 20) {
+                    fprintf(stderr, "[PTR-ADOPT #%d] EA@0x%llx basicAt:%lld put:%lld\n",
+                            ptrAdoptCount, (unsigned long long)rcvr.rawBits(), idx, byteValue);
+                    if (idx == 8) {
+                        // After last byte written, dump final EA contents
+                        // Note: byteAtPut hasn't happened yet, so include this byte manually
+                        uint8_t finalBytes[8];
+                        for (int bi = 0; bi < 8; bi++) finalBytes[bi] = header->byteAt(bi);
+                        finalBytes[7] = (uint8_t)byteValue; // last write
+                        void* finalPtr; memcpy(&finalPtr, finalBytes, 8);
+                        fprintf(stderr, "[PTR-ADOPT] FINAL EA bytes: ");
+                        for (int bi = 0; bi < 8; bi++) fprintf(stderr, "%02x ", finalBytes[bi]);
+                        fprintf(stderr, "= %p\n", finalPtr);
+                    }
+                }
+            }
+        }
+        // Targeted trace: detect adoptAddress: copying bytes into ExternalAddress
+        if (header->byteSize() == 8 && byteValue != 0) {
+            Oop extAddrClass = memory_.specialObject(SpecialObjectIndex::ClassExternalAddress);
+            if (extAddrClass.isObject() && memory_.classOf(rcvr).rawBits() == extAddrClass.rawBits()) {
+                static int adoptTraceCount = 0;
+                if (++adoptTraceCount <= 100) {
+                    fprintf(stderr, "[ADOPT-TRACE #%d] EA@0x%llx basicAt:%lld put:%lld (byte %zu of 8)\n",
+                            adoptTraceCount, (unsigned long long)rcvr.rawBits(),
+                            idx, byteValue, arrayIndex);
+                    // Dump full EA contents every 8th write (complete adoption)
+                    if (arrayIndex == 0) {
+                        fprintf(stderr, "[ADOPT-TRACE] EA@0x%llx BEFORE: ",
+                                (unsigned long long)rcvr.rawBits());
+                        for (size_t i = 0; i < 8; i++)
+                            fprintf(stderr, "%02x ", header->byteAt(i));
+                        void* ptr; memcpy(&ptr, header->bytes(), 8);
+                        fprintf(stderr, "= %p\n", ptr);
+                    }
+                }
+            }
         }
         header->byteAtPut(arrayIndex, static_cast<uint8_t>(byteValue));
         primitiveSuccess(value);
@@ -5684,6 +5732,34 @@ PrimitiveResult Interpreter::primitiveReplaceFromTo(int argCount) {
     if (rcvrHeader->isBytesObject() && replHeader->isBytesObject()) {
         size_t rcvrSize = rcvrHeader->byteSize();
         size_t replSize = replHeader->byteSize();
+        // Trace: detect when asByteArrayPointer copies from ExternalAddress
+        {
+            static int replEACount = 0;
+            if (replEACount < 5 && replSize == 8) {
+                Oop eaClass = memory_.specialObject(SpecialObjectIndex::ClassExternalAddress);
+                if (eaClass.isObject() && memory_.classOf(replacement).rawBits() == eaClass.rawBits()) {
+                    replEACount++;
+                    void* ptrInEA; memcpy(&ptrInEA, replHeader->bytes(), 8);
+                    fprintf(stderr, "[REPLACE-EA #%d] src EA@0x%llx bytes: ",
+                            replEACount, (unsigned long long)replacement.rawBits());
+                    for (size_t bi = 0; bi < 8; bi++)
+                        fprintf(stderr, "%02x ", replHeader->byteAt(bi));
+                    fprintf(stderr, "= %p → dst@0x%llx (dstSize=%zu)\n", ptrInEA,
+                            (unsigned long long)rcvr.rawBits(), rcvrSize);
+                    // Also dump dst class
+                    Oop dstCls = memory_.classOf(rcvr);
+                    if (dstCls.isObject()) {
+                        Oop cn = memory_.fetchPointer(6, dstCls);
+                        if (cn.isObject() && cn.rawBits() > 0x10000) {
+                            ObjectHeader* cnH = cn.asObjectPtr();
+                            if (cnH->isBytesObject() && cnH->byteSize() < 100)
+                                fprintf(stderr, "[REPLACE-EA #%d] dst class: %.*s\n",
+                                        replEACount, (int)cnH->byteSize(), (char*)cnH->bytes());
+                        }
+                    }
+                }
+            }
+        }
 
         if (static_cast<size_t>(stopIdx) > rcvrSize ||
             static_cast<size_t>(repStartIdx + count - 1) > replSize) {
@@ -23497,15 +23573,22 @@ PrimitiveResult Interpreter::primitiveFFIAllocate(int argCount) {
 }
 
 // primitiveFFIFree
-// Stack: receiver, externalAddress -> receiver
-// Frees a block of external memory
+// Pharo: ExternalAddress >> primFFIFree (0-arg method, receiver is EA to free)
+// Also supports 1-arg form: receiver.free(anExternalAddress)
 PrimitiveResult Interpreter::primitiveFFIFree(int argCount) {
-    if (argCount != 1) return PrimitiveResult::Failure;
+    Oop addrOop;
+    if (argCount == 0) {
+        // Unary: receiver is the ExternalAddress to free
+        addrOop = stackTop();
+    } else if (argCount == 1) {
+        // Binary: argument is the ExternalAddress to free
+        addrOop = stackTop();
+    } else {
+        return PrimitiveResult::Failure;
+    }
 
-    Oop addrOop = stackTop();
     if (addrOop.isNil()) {
-        // Freeing nil is a no-op
-        popN(1);
+        if (argCount > 0) popN(argCount);
         return PrimitiveResult::Success;
     }
 
@@ -23525,7 +23608,287 @@ PrimitiveResult Interpreter::primitiveFFIFree(int argCount) {
         memset(addrHdr->bytes(), 0, sizeof(void*));
     }
 
-    popN(1);  // pop address, leave receiver
+    if (argCount > 0) popN(argCount);  // pop args, leave receiver
+    return PrimitiveResult::Success;
+}
+
+// ===== ExternalAddress read primitives (631-639) =====
+// These read from EXTERNAL MEMORY pointed to by an ExternalAddress.
+// The ExternalAddress bytes contain a pointer value; these primitives
+// dereference that pointer + offset to access the external data.
+
+// Helper: get stored pointer and offset from ExternalAddress + offset arg
+static bool externalAddressReadSetup(pharo::Interpreter& interp, pharo::ObjectMemory& mem,
+                                      int argCount, void*& basePtr, int64_t& offset) {
+    if (argCount != 1) return false;
+    Oop offsetOop = interp.stackTop();
+    if (!offsetOop.isSmallInteger()) return false;
+    offset = offsetOop.asSmallInteger();
+    if (offset < 0) return false;
+
+    Oop receiver = interp.stackValue(1);
+    if (!receiver.isObject()) return false;
+    ObjectHeader* hdr = receiver.asObjectPtr();
+    if (!hdr->isBytesObject() || hdr->byteSize() < sizeof(void*)) return false;
+
+    memcpy(&basePtr, hdr->bytes(), sizeof(void*));
+    return basePtr != nullptr;  // Null pointer -> let Smalltalk fallback handle it
+}
+
+// Primitive 631: uint8AtOffset: — read unsigned byte from external memory
+PrimitiveResult Interpreter::primitiveExternalUint8Read(int argCount) {
+    void* basePtr = nullptr;
+    int64_t offset = 0;
+    if (!externalAddressReadSetup(*this, memory_, argCount, basePtr, offset))
+        return PrimitiveResult::Failure;
+
+    uint8_t value = *reinterpret_cast<uint8_t*>(static_cast<uint8_t*>(basePtr) + offset);
+    popN(argCount + 1);
+    push(Oop::fromSmallInteger(value));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 633: uint16AtOffset: — read unsigned 16-bit from external memory
+PrimitiveResult Interpreter::primitiveExternalUint16Read(int argCount) {
+    void* basePtr = nullptr;
+    int64_t offset = 0;
+    if (!externalAddressReadSetup(*this, memory_, argCount, basePtr, offset))
+        return PrimitiveResult::Failure;
+
+    uint16_t value;
+    memcpy(&value, static_cast<uint8_t*>(basePtr) + offset, sizeof(uint16_t));
+    popN(argCount + 1);
+    push(Oop::fromSmallInteger(value));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 635: uint32AtOffset: — read unsigned 32-bit from external memory
+PrimitiveResult Interpreter::primitiveExternalUint32Read(int argCount) {
+    void* basePtr = nullptr;
+    int64_t offset = 0;
+    if (!externalAddressReadSetup(*this, memory_, argCount, basePtr, offset))
+        return PrimitiveResult::Failure;
+
+    uint32_t value;
+    memcpy(&value, static_cast<uint8_t*>(basePtr) + offset, sizeof(uint32_t));
+    popN(argCount + 1);
+    push(Oop::fromSmallInteger(static_cast<int64_t>(value)));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 636: int32AtOffset: — read signed 32-bit from external memory
+PrimitiveResult Interpreter::primitiveExternalInt32Read(int argCount) {
+    void* basePtr = nullptr;
+    int64_t offset = 0;
+    if (!externalAddressReadSetup(*this, memory_, argCount, basePtr, offset))
+        return PrimitiveResult::Failure;
+
+    int32_t value;
+    memcpy(&value, static_cast<uint8_t*>(basePtr) + offset, sizeof(int32_t));
+    popN(argCount + 1);
+    push(Oop::fromSmallInteger(static_cast<int64_t>(value)));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 639: pointerAtOffset: — read pointer from external memory
+PrimitiveResult Interpreter::primitiveExternalPointerRead(int argCount) {
+    void* basePtr = nullptr;
+    int64_t offset = 0;
+    if (!externalAddressReadSetup(*this, memory_, argCount, basePtr, offset)) {
+        static int failCount = 0;
+        if (++failCount <= 20) {
+            fprintf(stderr, "[PRIM639] FAIL #%d argCount=%d\n", failCount, argCount);
+            if (argCount == 1) {
+                Oop offsetOop = stackTop();
+                Oop receiver = stackValue(1);
+                fprintf(stderr, "[PRIM639]   offsetOop=0x%llx si=%d receiver=0x%llx obj=%d\n",
+                        (unsigned long long)offsetOop.rawBits(), offsetOop.isSmallInteger(),
+                        (unsigned long long)receiver.rawBits(), receiver.isObject());
+                if (receiver.isObject()) {
+                    ObjectHeader* hdr = receiver.asObjectPtr();
+                    fprintf(stderr, "[PRIM639]   receiver bytes=%d byteSize=%zu\n",
+                            hdr->isBytesObject(), hdr->byteSize());
+                    if (hdr->isBytesObject() && hdr->byteSize() >= sizeof(void*)) {
+                        void* storedPtr;
+                        memcpy(&storedPtr, hdr->bytes(), sizeof(void*));
+                        fprintf(stderr, "[PRIM639]   storedPtr=%p\n", storedPtr);
+                    }
+                }
+            }
+        }
+        return PrimitiveResult::Failure;
+    }
+
+    // pointerAtOffset: uses 0-based offset — use directly
+    void* value = nullptr;
+    memcpy(&value, static_cast<uint8_t*>(basePtr) + offset, sizeof(void*));
+
+    static int successCount = 0;
+    if (++successCount <= 20) {
+        fprintf(stderr, "[PRIM639] SUCCESS #%d basePtr=%p offset=%lld value=%p\n",
+                successCount, basePtr, (long long)offset, value);
+    }
+
+    // Activate send tracing after reading a non-null pixel-like pointer
+    if (value != nullptr && successCount <= 5) {
+        g_traceAfterPrim639 = true;
+        g_traceAfterCount = 0;
+        fprintf(stderr, "[PRIM639] TRACE ACTIVATED — will trace next 50 sends\n");
+    }
+
+    Oop result = tffi_newExternalAddress(value);
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    popN(argCount + 1);
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// ExternalAddress WRITE primitives (646-654)
+// These write to EXTERNAL MEMORY pointed to by an ExternalAddress.
+// Stack: receiver (ExternalAddress), zeroBasedOffset, value -> value
+
+static bool externalAddressWriteSetup(pharo::Interpreter& interp, pharo::ObjectMemory& mem,
+                                       int argCount, void*& basePtr, int64_t& offset) {
+    if (argCount != 2) return false;
+    Oop offsetOop = interp.stackValue(1);
+    if (!offsetOop.isSmallInteger()) return false;
+    offset = offsetOop.asSmallInteger();
+    if (offset < 0) return false;
+    Oop receiver = interp.stackValue(2);
+    if (!receiver.isObject()) return false;
+    ObjectHeader* hdr = receiver.asObjectPtr();
+    if (!hdr->isBytesObject() || hdr->byteSize() < sizeof(void*)) return false;
+    memcpy(&basePtr, hdr->bytes(), sizeof(void*));
+    return basePtr != nullptr;
+}
+
+// Primitive 646: uint8AtOffset:put:
+PrimitiveResult Interpreter::primitiveExternalUint8Write(int argCount) {
+    void* basePtr = nullptr;
+    int64_t offset = 0;
+    if (!externalAddressWriteSetup(*this, memory_, argCount, basePtr, offset))
+        return PrimitiveResult::Failure;
+    Oop valueOop = stackTop();
+    if (!valueOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t v = valueOop.asSmallInteger();
+    if (v < 0 || v > 255) return PrimitiveResult::Failure;
+    *reinterpret_cast<uint8_t*>(static_cast<uint8_t*>(basePtr) + offset) = static_cast<uint8_t>(v);
+    Oop result = valueOop;
+    popN(argCount + 1);
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 648: uint16AtOffset:put:
+PrimitiveResult Interpreter::primitiveExternalUint16Write(int argCount) {
+    void* basePtr = nullptr;
+    int64_t offset = 0;
+    if (!externalAddressWriteSetup(*this, memory_, argCount, basePtr, offset))
+        return PrimitiveResult::Failure;
+    Oop valueOop = stackTop();
+    if (!valueOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t v = valueOop.asSmallInteger();
+    if (v < 0 || v > 65535) return PrimitiveResult::Failure;
+    uint16_t val16 = static_cast<uint16_t>(v);
+    memcpy(static_cast<uint8_t*>(basePtr) + offset, &val16, 2);
+    Oop result = valueOop;
+    popN(argCount + 1);
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 650: uint32AtOffset:put:
+PrimitiveResult Interpreter::primitiveExternalUint32Write(int argCount) {
+    void* basePtr = nullptr;
+    int64_t offset = 0;
+    if (!externalAddressWriteSetup(*this, memory_, argCount, basePtr, offset))
+        return PrimitiveResult::Failure;
+    Oop valueOop = stackTop();
+    if (!valueOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t v = valueOop.asSmallInteger();
+    if (v < 0) return PrimitiveResult::Failure;
+    uint32_t val32 = static_cast<uint32_t>(v);
+    memcpy(static_cast<uint8_t*>(basePtr) + offset, &val32, 4);
+    Oop result = valueOop;
+    popN(argCount + 1);
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 651: int32AtOffset:put:
+PrimitiveResult Interpreter::primitiveExternalInt32Write(int argCount) {
+    void* basePtr = nullptr;
+    int64_t offset = 0;
+    if (!externalAddressWriteSetup(*this, memory_, argCount, basePtr, offset))
+        return PrimitiveResult::Failure;
+    Oop valueOop = stackTop();
+    if (!valueOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int32_t val32 = static_cast<int32_t>(valueOop.asSmallInteger());
+    memcpy(static_cast<uint8_t*>(basePtr) + offset, &val32, 4);
+    Oop result = valueOop;
+    popN(argCount + 1);
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 652: uint64AtOffset:put:
+PrimitiveResult Interpreter::primitiveExternalUint64Write(int argCount) {
+    void* basePtr = nullptr;
+    int64_t offset = 0;
+    if (!externalAddressWriteSetup(*this, memory_, argCount, basePtr, offset))
+        return PrimitiveResult::Failure;
+    Oop valueOop = stackTop();
+    uint64_t val64 = 0;
+    if (valueOop.isSmallInteger()) {
+        int64_t v = valueOop.asSmallInteger();
+        if (v < 0) return PrimitiveResult::Failure;
+        val64 = static_cast<uint64_t>(v);
+    } else if (valueOop.isObject()) {
+        ObjectHeader* vhdr = valueOop.asObjectPtr();
+        if (!vhdr->isBytesObject()) return PrimitiveResult::Failure;
+        size_t bsz = vhdr->byteSize();
+        if (bsz > 8) return PrimitiveResult::Failure;
+        memcpy(&val64, vhdr->bytes(), bsz);
+    } else {
+        return PrimitiveResult::Failure;
+    }
+    memcpy(static_cast<uint8_t*>(basePtr) + offset, &val64, 8);
+    Oop result = valueOop;
+    popN(argCount + 1);
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 654: pointerAtOffset:put:
+PrimitiveResult Interpreter::primitiveExternalPointerWrite(int argCount) {
+    void* basePtr = nullptr;
+    int64_t offset = 0;
+    if (!externalAddressWriteSetup(*this, memory_, argCount, basePtr, offset))
+        return PrimitiveResult::Failure;
+    Oop valueOop = stackTop();
+    void* ptrVal = nullptr;
+    if (valueOop.isNil() || valueOop.rawBits() == memory_.nil().rawBits()) {
+        ptrVal = nullptr;
+    } else if (valueOop.isObject()) {
+        ObjectHeader* vhdr = valueOop.asObjectPtr();
+        if (vhdr->isBytesObject() && vhdr->byteSize() >= sizeof(void*)) {
+            memcpy(&ptrVal, vhdr->bytes(), sizeof(void*));
+        }
+    } else if (valueOop.isSmallInteger()) {
+        ptrVal = reinterpret_cast<void*>(static_cast<uintptr_t>(valueOop.asSmallInteger()));
+    }
+    memcpy(static_cast<uint8_t*>(basePtr) + offset, &ptrVal, sizeof(void*));
+
+    static int writeCount = 0;
+    if (++writeCount <= 30) {
+        fprintf(stderr, "[PRIM654] WRITE #%d basePtr=%p offset=%lld ptrVal=%p\n",
+                writeCount, basePtr, (long long)offset, ptrVal);
+    }
+
+    Oop result = valueOop;
+    popN(argCount + 1);
+    push(result);
     return PrimitiveResult::Success;
 }
 
@@ -23554,22 +23917,38 @@ PrimitiveResult Interpreter::primitiveFFIIntegerAt(int argCount) {
     if (offset < 1) return PrimitiveResult::Failure;
     offset -= 1;  // Convert 1-based to 0-based
 
-    // Get the base address from the object
-    void* basePtr = nullptr;
+    // Get the data pointer - depends on object class
+    uint8_t* ptr = nullptr;
+    size_t availBytes = 0;
     if (objectOop.isObject()) {
         ObjectHeader* objHdr = objectOop.asObjectPtr();
         if (objHdr->isBytesObject()) {
-            // For ExternalAddress or similar, the bytes contain the pointer
-            if (objHdr->byteSize() >= sizeof(void*)) {
-                memcpy(&basePtr, objHdr->bytes(), sizeof(void*));
+            // Check if this is an ExternalAddress (dereference pointer to external memory)
+            // or a ByteArray/other bytes object (read from object's own bytes)
+            Oop eaClass = memory_.specialObject(SpecialObjectIndex::ClassExternalAddress);
+            bool isEA = eaClass.isObject() &&
+                        memory_.classOf(objectOop).rawBits() == eaClass.rawBits();
+            if (isEA) {
+                // ExternalAddress: bytes contain a pointer, dereference it
+                void* basePtr = nullptr;
+                if (objHdr->byteSize() >= sizeof(void*)) {
+                    memcpy(&basePtr, objHdr->bytes(), sizeof(void*));
+                }
+                if (!basePtr) return PrimitiveResult::Failure;
+                ptr = reinterpret_cast<uint8_t*>(basePtr) + offset;
+                availBytes = SIZE_MAX; // External memory, we trust the caller
+            } else {
+                // ByteArray or other bytes object: read from own bytes
+                size_t objSize = objHdr->byteSize();
+                if (offset + nBytes > static_cast<int64_t>(objSize))
+                    return PrimitiveResult::Failure;
+                ptr = objHdr->bytes() + offset;
+                availBytes = objSize - offset;
             }
         }
     }
 
-    if (!basePtr) return PrimitiveResult::Failure;
-
-    // Read the value from external memory
-    uint8_t* ptr = reinterpret_cast<uint8_t*>(basePtr) + offset;
+    if (!ptr) return PrimitiveResult::Failure;
     int64_t value = 0;
 
     switch (nBytes) {
@@ -23647,21 +24026,33 @@ PrimitiveResult Interpreter::primitiveFFIIntegerAtPut(int argCount) {
     if (!valueOop.isSmallInteger()) return PrimitiveResult::Failure;
     int64_t value = valueOop.asSmallInteger();
 
-    // Get the base address from the object
-    void* basePtr = nullptr;
+    // Get the data pointer - depends on object class
+    uint8_t* ptr = nullptr;
     if (objectOop.isObject()) {
         ObjectHeader* objHdr = objectOop.asObjectPtr();
         if (objHdr->isBytesObject()) {
-            if (objHdr->byteSize() >= sizeof(void*)) {
-                memcpy(&basePtr, objHdr->bytes(), sizeof(void*));
+            Oop eaClass = memory_.specialObject(SpecialObjectIndex::ClassExternalAddress);
+            bool isEA = eaClass.isObject() &&
+                        memory_.classOf(objectOop).rawBits() == eaClass.rawBits();
+            if (isEA) {
+                // ExternalAddress: bytes contain a pointer, dereference it
+                void* basePtr = nullptr;
+                if (objHdr->byteSize() >= sizeof(void*)) {
+                    memcpy(&basePtr, objHdr->bytes(), sizeof(void*));
+                }
+                if (!basePtr) return PrimitiveResult::Failure;
+                ptr = reinterpret_cast<uint8_t*>(basePtr) + offset;
+            } else {
+                // ByteArray or other bytes object: write to own bytes
+                size_t objSize = objHdr->byteSize();
+                if (offset + nBytes > static_cast<int64_t>(objSize))
+                    return PrimitiveResult::Failure;
+                ptr = objHdr->bytes() + offset;
             }
         }
     }
 
-    if (!basePtr) return PrimitiveResult::Failure;
-
-    // Write the value to external memory
-    uint8_t* ptr = reinterpret_cast<uint8_t*>(basePtr) + offset;
+    if (!ptr) return PrimitiveResult::Failure;
 
     switch (nBytes) {
         case 1:
@@ -24416,6 +24807,34 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
         // Allocate generous storage for each argument (max 16 bytes each for alignment)
         argStorage = static_cast<uint8_t*>(alloca(nargs * 16));
 
+        // Dump argument Oops for SDL_LockTexture to trace pixel pointer EA
+        {
+            auto it2 = g_symbolNames.find(reinterpret_cast<uintptr_t>(funcPtr));
+            const char* fn2 = (it2 != g_symbolNames.end()) ? it2->second.c_str() : "";
+            if (strstr(fn2, "SDL_LockTexture")) {
+                fprintf(stderr, "[LOCK-TEX] Argument Oops:\n");
+                for (size_t ai = 0; ai < nargs; ai++) {
+                    Oop aOop = memory_.fetchPointer(ai, argsArrayOop);
+                    fprintf(stderr, "  arg[%zu] = 0x%llx (si=%d obj=%d nil=%d)",
+                            ai, (unsigned long long)aOop.rawBits(),
+                            aOop.isSmallInteger(), aOop.isObject(), aOop.isNil());
+                    if (aOop.isObject() && aOop.rawBits() > 0x10000) {
+                        ObjectHeader* ah = aOop.asObjectPtr();
+                        if (ah->isBytesObject() && ah->byteSize() <= 16) {
+                            fprintf(stderr, " bytes[%zu]:", ah->byteSize());
+                            for (size_t bi = 0; bi < ah->byteSize(); bi++)
+                                fprintf(stderr, "%02x", ah->byteAt(bi));
+                        }
+                        // Check if it's an ExternalAddress
+                        Oop eaClass = memory_.specialObject(SpecialObjectIndex::ClassExternalAddress);
+                        if (memory_.classOf(aOop).rawBits() == eaClass.rawBits())
+                            fprintf(stderr, " [ExternalAddress]");
+                    }
+                    fprintf(stderr, "\n");
+                }
+            }
+        }
+
         for (size_t i = 0; i < nargs; i++) {
             Oop argOop = memory_.fetchPointer(i, argsArrayOop);
             uint8_t* argSlot = argStorage + (i * 16);
@@ -24426,10 +24845,33 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
             switch (argTypeId) {
                 case FFI_TYPE_POINTER: {
                     void* ptrVal = nullptr;
-                    if (!argOop.isNil() && argOop.rawBits() != memory_.nil().rawBits()) {
-                        ptrVal = tffi_getAddressFromExternalAddressOrByteArray(argOop);
+                    if (argOop.isNil() || argOop.rawBits() == memory_.nil().rawBits()) {
+                        // nil → NULL pointer
+                        memcpy(argSlot, &ptrVal, sizeof(void*));
+                    } else if (argOop.isObject()) {
+                        ObjectHeader* argHdr = argOop.asObjectPtr();
+                        if (argHdr->isBytesObject()) {
+                            Oop extAddrClass = memory_.specialObject(SpecialObjectIndex::ClassExternalAddress);
+                            if (memory_.classOf(argOop).rawBits() == extAddrClass.rawBits()) {
+                                // ExternalAddress: pass the stored pointer value
+                                // (image-side packToArity: handles output parameters)
+                                void* storedPtr = tffi_readAddress(argOop);
+                                memcpy(argSlot, &storedPtr, sizeof(void*));
+                            } else {
+                                // ByteArray: pass pointer to the bytes themselves
+                                ptrVal = argHdr->bytes();
+                                memcpy(argSlot, &ptrVal, sizeof(void*));
+                            }
+                        } else {
+                            memcpy(argSlot, &ptrVal, sizeof(void*));
+                        }
+                    } else if (argOop.isSmallInteger()) {
+                        // SmallInteger as pointer (e.g., 0 for NULL)
+                        ptrVal = reinterpret_cast<void*>(static_cast<uintptr_t>(argOop.asSmallInteger()));
+                        memcpy(argSlot, &ptrVal, sizeof(void*));
+                    } else {
+                        memcpy(argSlot, &ptrVal, sizeof(void*));
                     }
-                    memcpy(argSlot, &ptrVal, sizeof(void*));
                     break;
                 }
                 case FFI_TYPE_FLOAT: {
