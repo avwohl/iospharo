@@ -3328,31 +3328,27 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                     case 0x50: push(Oop::fromSmallInteger(0)); break;  // push 0
                     case 0x51: push(Oop::fromSmallInteger(1)); break;  // push 1
                     case 0x52: {
+                        // Sista V1: extB == 0 → push thisContext
+                        //           extB == 1 → push thisProcess (active Process)
+                        int savedExtB = extB_;
+                        extB_ = 0;
+
+                        if (savedExtB == 1) {
+                            // Push thisProcess: the active Process object
+                            push(getActiveProcess());
+                            break;
+                        }
+
                         // Push thisContext - must materialize inline frames first!
-                        // Without this, FFI code traversing the context chain would
-                        // see a stale activeContext_ that doesn't include inline frames.
                         static int thisCtxCount = 0;
                         thisCtxCount++;
 
                         Oop contextToPush = activeContext_;
 
                         if (frameDepth_ > 0) {
-                            // We have inline frames - materialize them so the context
-                            // chain is complete. This is critical for FFI which does
-                            // thisContext sender sender ... to find calling methods.
                             size_t savedFrameDepth = frameDepth_;
                             contextToPush = materializeFrameStack();
-
-                            // Update activeContext_ to the materialized chain
                             activeContext_ = contextToPush;
-
-                            // Reset inline frame state since we've materialized.
-                            // This ensures context identity is preserved: subsequent
-                            // thisContext pushes return the SAME activeContext_ object
-                            // (since frameDepth_==0, we skip materialization and return
-                            // activeContext_ directly). Context identity is critical for
-                            // exception handler matching (on:do: captures thisContext
-                            // and later searches for it by identity in the sender chain).
                             frameDepth_ = 0;
 
                             if (thisCtxCount <= 20) {
@@ -3366,20 +3362,6 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                                 std::cerr << "[THISCTX-NIL #" << thisCtxNilCount
                                           << "] Pushing nil activeContext (no inline frames)\n";
                             }
-                        }
-
-                        // Trace: log ALL thisContext pushes near step 24505
-                        if (g_stepNum >= 23900 && g_stepNum <= 25000) {
-                            Oop senderSlot = memory_.nil();
-                            if (contextToPush.isObject() && contextToPush.rawBits() > 0x10000) {
-                                senderSlot = memory_.fetchPointer(0, contextToPush);
-                            }
-                            std::cerr << "[THISCTX-TRACE step=" << g_stepNum
-                                      << " fd=" << frameDepth_
-                                      << "] ctx=0x" << std::hex << contextToPush.rawBits()
-                                      << " sender=0x" << senderSlot.rawBits() << std::dec
-                                      << (senderSlot.rawBits() == memory_.nil().rawBits() ? " (NIL!)" : "")
-                                      << "\n";
                         }
 
                         push(contextToPush);
