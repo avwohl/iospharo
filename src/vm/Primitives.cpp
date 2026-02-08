@@ -26,6 +26,10 @@
 #include <unistd.h>
 #include <vector>
 #include <set>
+#include <unordered_map>
+
+// Global symbol name map for TFFI call logging
+static std::unordered_map<uintptr_t, std::string> g_symbolNames;
 #include <ffi.h>
 
 namespace pharo {
@@ -16919,22 +16923,15 @@ enum FormFields {
 // Primitive 290: Copy bits (main BitBlt operation)
 // aBitBlt primitiveCopyBits -> aBitBlt
 // The core BitBlt operation that copies pixels from source to destination
+// Combination rules: 0=AND 1=AND+NOT 2=NOT+AND 3=STORE 4=NOT+OR 5=DEST 6=XOR 7=OR
+// 24=alphaBlend 25=paint(OR) 34=sourceWord(copy)
 PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
-    static int copyBitsCallCount = 0;
-    copyBitsCallCount++;
-    if (copyBitsCallCount <= 20 || copyBitsCallCount % 10000 == 0) {
-        static FILE* cbLog = nullptr;
-        if (cbLog) {
-            fprintf(cbLog, "[COPYBITS #%d] argCount=%d\n", copyBitsCallCount, argCount);
-            fflush(cbLog);
-        }
-    }
+    static int cbCount = 0;
+    cbCount++;
     if (argCount != 0) return PrimitiveResult::Failure;
 
     Oop bitBlt = stackTop();
-    if (!bitBlt.isObject()) {
-        return PrimitiveResult::Failure;
-    }
+    if (!bitBlt.isObject()) return PrimitiveResult::Failure;
 
     // Extract BitBlt parameters
     Oop destForm = memory_.fetchPointer(BBDestForm, bitBlt);
@@ -16952,73 +16949,453 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     intptr_t clipHeight = bitBltField(memory_, bitBlt, BBClipHeight);
 
     // Validate destination form
-    if (destForm.isNil() || !destForm.isObject()) {
-        return PrimitiveResult::Failure;
-    }
+    if (destForm.isNil() || !destForm.isObject()) return PrimitiveResult::Failure;
 
-    // Get destination form parameters
     Oop destBits = memory_.fetchPointer(FormBits, destForm);
     intptr_t destWidth = bitBltField(memory_, destForm, FormWidth);
     intptr_t destHeight = bitBltField(memory_, destForm, FormHeight);
     intptr_t destDepth = bitBltField(memory_, destForm, FormDepth);
 
-    if (destBits.isNil() || !destBits.isObject()) {
-        return PrimitiveResult::Failure;
+    if (destBits.isNil() || !destBits.isObject()) return PrimitiveResult::Failure;
+    // destBits may be a SmallInteger surface handle — fail for that
+    if (destBits.isSmallInteger()) return PrimitiveResult::Failure;
+    // Validate pointer range
+    if (destBits.rawBits() < 0x10000) return PrimitiveResult::Failure;
+
+    // Get raw pointer to dest bits
+    ObjectHeader* destBitsHdr = destBits.asObjectPtr();
+    uint32_t* destPixels = reinterpret_cast<uint32_t*>(destBitsHdr->bytes());
+    size_t destBitsSize = destBitsHdr->byteSize();
+    intptr_t destPitch = destWidth; // in 32-bit words for 32-bit depth
+
+    if (cbCount <= 10) {
+        fprintf(stderr, "[COPYBITS #%d] ENTER rule=%ld src=%s dest=%ldx%ldx%ld bits=0x%llx sz=%zu dx=%ld dy=%ld w=%ld h=%ld\n",
+                cbCount, (long)combinationRule, sourceForm.isNil() ? "nil" : "obj",
+                (long)destWidth, (long)destHeight, (long)destDepth,
+                (unsigned long long)destBits.rawBits(), destBitsSize,
+                (long)destX, (long)destY, (long)width, (long)height);
+        Oop htForm = memory_.fetchPointer(BBHalftoneForm, bitBlt);
+        fprintf(stderr, "  htForm=0x%llx isNil=%d isSI=%d isObj=%d\n",
+                (unsigned long long)htForm.rawBits(), htForm.isNil(),
+                htForm.isSmallInteger(), htForm.isObject());
+        if (htForm.isObject() && !htForm.isNil() && htForm.rawBits() > 0x10000) {
+            ObjectHeader* htH = htForm.asObjectPtr();
+            fprintf(stderr, "  htFmt=%d slots=%zu bytes=%zu\n",
+                    (int)htH->format(), htH->slotCount(), htH->byteSize());
+        }
+        fflush(stderr);
     }
 
-    // Clip the operation to destination bounds
-    if (destX < clipX) {
-        width -= (clipX - destX);
-        sourceX += (clipX - destX);
-        destX = clipX;
-    }
-    if (destY < clipY) {
-        height -= (clipY - destY);
-        sourceY += (clipY - destY);
-        destY = clipY;
-    }
-    if (destX + width > clipX + clipWidth) {
-        width = clipX + clipWidth - destX;
-    }
-    if (destY + height > clipY + clipHeight) {
-        height = clipY + clipHeight - destY;
+    // Clip to clip rect
+    if (destX < clipX) { intptr_t d = clipX - destX; width -= d; sourceX += d; destX = clipX; }
+    if (destY < clipY) { intptr_t d = clipY - destY; height -= d; sourceY += d; destY = clipY; }
+    if (destX + width > clipX + clipWidth) width = clipX + clipWidth - destX;
+    if (destY + height > clipY + clipHeight) height = clipY + clipHeight - destY;
+
+    // Clip to dest form bounds
+    if (destX < 0) { intptr_t d = -destX; width -= d; sourceX += d; destX = 0; }
+    if (destY < 0) { intptr_t d = -destY; height -= d; sourceY += d; destY = 0; }
+    if (destX + width > destWidth) width = destWidth - destX;
+    if (destY + height > destHeight) height = destHeight - destY;
+
+    if (width <= 0 || height <= 0) return PrimitiveResult::Success;
+
+    // Halftone form extraction (used as fill color for no-source ops)
+    Oop halftoneForm = memory_.fetchPointer(BBHalftoneForm, bitBlt);
+    uint32_t halftoneWord = 0xFFFFFFFF;
+    uint32_t* halftoneWords = nullptr;
+    intptr_t halftoneHeight = 0;
+    if (!halftoneForm.isNil()) {
+        if (halftoneForm.isSmallInteger()) {
+            halftoneWord = static_cast<uint32_t>(halftoneForm.asSmallInteger());
+        } else if (halftoneForm.isObject()) {
+            // Halftone can be a Form or a Bitmap (word array)
+            ObjectHeader* htHdr = halftoneForm.asObjectPtr();
+            if (htHdr->isBytesObject() ||
+                htHdr->format() == ObjectFormat::Indexable32 ||
+                htHdr->format() == ObjectFormat::Indexable32Odd) {
+                halftoneWords = reinterpret_cast<uint32_t*>(htHdr->bytes());
+                halftoneHeight = static_cast<intptr_t>(htHdr->byteSize() / 4);
+            } else {
+                // It's a Form - get its bits
+                Oop htBits = memory_.fetchPointer(FormBits, halftoneForm);
+                if (htBits.isObject() && !htBits.isNil()) {
+                    ObjectHeader* htBitsHdr = htBits.asObjectPtr();
+                    halftoneWords = reinterpret_cast<uint32_t*>(htBitsHdr->bytes());
+                    halftoneHeight = static_cast<intptr_t>(htBitsHdr->byteSize() / 4);
+                }
+            }
+        }
     }
 
-    // If nothing to draw, succeed immediately
-    if (width <= 0 || height <= 0) {
+    if (cbCount <= 10) {
+        fprintf(stderr, "[COPYBITS #%d] rule=%ld src=%s dest=%ldx%ldx%ld destBitsSize=%zu dx=%ld dy=%ld w=%ld h=%ld\n",
+                cbCount, (long)combinationRule, sourceForm.isNil() ? "nil" : "obj",
+                (long)destWidth, (long)destHeight, (long)destDepth, destBitsSize,
+                (long)destX, (long)destY, (long)width, (long)height);
+        fprintf(stderr, "  halftone: isNil=%d isSI=%d isObj=%d word=0x%x htWords=%p htH=%ld\n",
+                halftoneForm.isNil(), halftoneForm.isSmallInteger(), halftoneForm.isObject(),
+                halftoneWord, (void*)halftoneWords, (long)halftoneHeight);
+        fprintf(stderr, "  destPixels=%p destBitsOop=0x%llx\n",
+                (void*)destPixels, (unsigned long long)destBits.rawBits());
+        fflush(stderr);
+    }
+
+    // No-source operations (fill)
+    if (sourceForm.isNil()) {
+        if (destDepth != 32) return PrimitiveResult::Failure;
+        size_t requiredBytes = static_cast<size_t>((destY + height - 1) * destWidth + destX + width) * 4;
+        if (requiredBytes > destBitsSize) return PrimitiveResult::Failure;
+
+        for (intptr_t y = 0; y < height; y++) {
+            uint32_t fill = halftoneWords ? halftoneWords[(destY + y) % halftoneHeight] : halftoneWord;
+            uint32_t* row = destPixels + (destY + y) * destPitch + destX;
+            switch (combinationRule) {
+                case 3: // store
+                    for (intptr_t x = 0; x < width; x++) row[x] = fill;
+                    break;
+                case 7: // OR
+                    for (intptr_t x = 0; x < width; x++) row[x] |= fill;
+                    break;
+                case 0: // AND
+                    for (intptr_t x = 0; x < width; x++) row[x] &= fill;
+                    break;
+                case 6: // XOR
+                    for (intptr_t x = 0; x < width; x++) row[x] ^= fill;
+                    break;
+                default:
+                    return PrimitiveResult::Failure;
+            }
+        }
         return PrimitiveResult::Success;
     }
 
-    // For simple cases (fill operations), implement directly
-    // combinationRule 3 = store (most common for fills)
-    // combinationRule 34 = source (most common for copy)
-    if (sourceForm.isNil() && combinationRule == 3) {
-        // Fill with halftone or solid color
-        Oop halftoneForm = memory_.fetchPointer(BBHalftoneForm, bitBlt);
-
-        // Get fill value (from halftone or default to all 1s)
-        uint32_t fillValue = 0xFFFFFFFF;
-        if (!halftoneForm.isNil() && halftoneForm.isSmallInteger()) {
-            fillValue = static_cast<uint32_t>(halftoneForm.asSmallInteger());
-        }
-
-        // Simple fill implementation for 32-bit depth
-        if (destDepth == 32) {
-            size_t destBytesPerRow = static_cast<size_t>(destWidth * 4);
-
-            for (intptr_t y = 0; y < height; y++) {
-                for (intptr_t x = 0; x < width; x++) {
-                    size_t offset = static_cast<size_t>((destY + y) * destWidth + (destX + x)) * 4;
-                    memory_.storeWord32(offset / 4, destBits, fillValue);
-                }
-            }
-            return PrimitiveResult::Success;
-        }
+    // --- Source operations ---
+    if (!sourceForm.isObject()) {
+        static int f1 = 0; if (++f1 <= 5) fprintf(stderr, "[COPYBITS-FAIL] srcForm not object\n");
+        return PrimitiveResult::Failure;
     }
 
-    // For complex operations, fail to Smalltalk fallback
-    // A full BitBlt implementation would handle all combination rules,
-    // depths, color maps, etc.
+    Oop srcBits = memory_.fetchPointer(FormBits, sourceForm);
+    intptr_t srcWidth = bitBltField(memory_, sourceForm, FormWidth);
+    intptr_t srcHeight = bitBltField(memory_, sourceForm, FormHeight);
+    intptr_t srcDepth = bitBltField(memory_, sourceForm, FormDepth);
+
+    if (srcBits.isNil() || !srcBits.isObject() || srcBits.isSmallInteger() || srcBits.rawBits() < 0x10000) {
+        static int f2 = 0; if (++f2 <= 5)
+            fprintf(stderr, "[COPYBITS-FAIL] srcBits: nil=%d obj=%d si=%d raw=0x%llx srcDepth=%ld rule=%ld\n",
+                    srcBits.isNil(), srcBits.isObject(), srcBits.isSmallInteger(),
+                    (unsigned long long)srcBits.rawBits(), (long)srcDepth, (long)combinationRule);
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* srcBitsHdr = srcBits.asObjectPtr();
+    uint8_t* srcBytes = srcBitsHdr->bytes();
+    size_t srcBitsSize = srcBitsHdr->byteSize();
+
+    if (cbCount <= 5) {
+        fprintf(stderr, "[COPYBITS #%d] src: %ldx%ldx%ld bits=0x%llx bytes=%zu sx=%ld sy=%ld\n",
+                cbCount, (long)srcWidth, (long)srcHeight, (long)srcDepth,
+                (unsigned long long)srcBits.rawBits(), srcBitsSize,
+                (long)sourceX, (long)sourceY);
+        fflush(stderr);
+    }
+
+    // Clip to source form bounds
+    if (sourceX < 0) { intptr_t d = -sourceX; width -= d; destX += d; sourceX = 0; }
+    if (sourceY < 0) { intptr_t d = -sourceY; height -= d; destY += d; sourceY = 0; }
+    if (sourceX + width > srcWidth) width = srcWidth - sourceX;
+    if (sourceY + height > srcHeight) height = srcHeight - sourceY;
+    if (width <= 0 || height <= 0) return PrimitiveResult::Success;
+
+    // Color map extraction
+    Oop colorMap = memory_.fetchPointer(BBColorMap, bitBlt);
+    uint32_t* cmTable = nullptr;
+    size_t cmSize = 0;
+    if (!colorMap.isNil() && colorMap.isObject()) {
+        ObjectHeader* cmHdr = colorMap.asObjectPtr();
+        cmTable = reinterpret_cast<uint32_t*>(cmHdr->bytes());
+        cmSize = cmHdr->byteSize() / 4;
+    }
+
+    // Bounds check for dest
+    if (destDepth != 32) {
+        static int f3 = 0; if (++f3 <= 5)
+            fprintf(stderr, "[COPYBITS-FAIL] destDepth=%ld (not 32) srcDepth=%ld rule=%ld\n",
+                    (long)destDepth, (long)srcDepth, (long)combinationRule);
+        return PrimitiveResult::Failure;
+    }
+    size_t requiredDestBytes = static_cast<size_t>((destY + height - 1) * destWidth + destX + width) * 4;
+    if (requiredDestBytes > destBitsSize) {
+        static int f4 = 0; if (++f4 <= 5)
+            fprintf(stderr, "[COPYBITS-FAIL] dest bounds: need=%zu have=%zu\n", requiredDestBytes, destBitsSize);
+        return PrimitiveResult::Failure;
+    }
+
+    // Calculate source pitch in bytes
+    intptr_t srcPixelsPerWord = (srcDepth > 0) ? (32 / srcDepth) : 1;
+    intptr_t srcPitchBytes = ((srcWidth + srcPixelsPerWord - 1) / srcPixelsPerWord) * 4;
+
+    // 32-bit source to 32-bit dest
+    if (srcDepth == 32) {
+        uint32_t* srcPixels = reinterpret_cast<uint32_t*>(srcBytes);
+        intptr_t srcPitch = srcWidth;
+
+        size_t requiredSrcBytes = static_cast<size_t>((sourceY + height - 1) * srcPitch + sourceX + width) * 4;
+        if (requiredSrcBytes > srcBitsSize) return PrimitiveResult::Failure;
+
+        for (intptr_t y = 0; y < height; y++) {
+            uint32_t* srcRow = srcPixels + (sourceY + y) * srcPitch + sourceX;
+            uint32_t* dstRow = destPixels + (destY + y) * destPitch + destX;
+            uint32_t ht = halftoneWords ? halftoneWords[(destY + y) % halftoneHeight] : 0xFFFFFFFF;
+            switch (combinationRule) {
+                case 3:  // store (source AND halftone)
+                case 34: // sourceWord
+                    if (ht == 0xFFFFFFFF) {
+                        memcpy(dstRow, srcRow, width * 4);
+                    } else {
+                        for (intptr_t x = 0; x < width; x++) dstRow[x] = srcRow[x] & ht;
+                    }
+                    break;
+                case 0:  // AND: dest = dest AND (source AND halftone)
+                    for (intptr_t x = 0; x < width; x++) dstRow[x] &= (srcRow[x] & ht);
+                    break;
+                case 6:  // XOR: dest = dest XOR (source AND halftone)
+                    for (intptr_t x = 0; x < width; x++) dstRow[x] ^= (srcRow[x] & ht);
+                    break;
+                case 7:  // OR: dest = dest OR (source AND halftone)
+                case 25: // paint (same as OR for 32-bit)
+                    for (intptr_t x = 0; x < width; x++) dstRow[x] |= (srcRow[x] & ht);
+                    break;
+                case 1:  // AND complement: dest = dest AND NOT(source AND halftone)
+                    for (intptr_t x = 0; x < width; x++) dstRow[x] &= ~(srcRow[x] & ht);
+                    break;
+                case 4:  // OR NOT: dest = dest OR NOT(source AND halftone)
+                    for (intptr_t x = 0; x < width; x++) dstRow[x] |= ~(srcRow[x] & ht);
+                    break;
+                case 24: { // alpha blend
+                    for (intptr_t x = 0; x < width; x++) {
+                        uint32_t s = srcRow[x];
+                        uint32_t d = dstRow[x];
+                        uint32_t sa = (s >> 24) & 0xFF;
+                        if (sa == 255) { dstRow[x] = s; continue; }
+                        if (sa == 0) continue;
+                        uint32_t da = 255 - sa;
+                        uint32_t rb = ((s & 0xFF00FF) * sa + (d & 0xFF00FF) * da + 0x800080) >> 8;
+                        uint32_t g  = ((s & 0x00FF00) * sa + (d & 0x00FF00) * da + 0x008000) >> 8;
+                        dstRow[x] = (rb & 0xFF00FF) | (g & 0x00FF00) | 0xFF000000;
+                    }
+                    break;
+                }
+                default:
+                    return PrimitiveResult::Failure;
+            }
+        }
+        return PrimitiveResult::Success;
+    }
+
+    // 1-bit source to 32-bit dest (used for strike font text rendering)
+    if (srcDepth == 1) {
+        // Default colors: 0 = black (0xFF000000), 1 = white (0xFFFFFFFF)
+        uint32_t color0 = 0xFF000000;
+        uint32_t color1 = 0xFFFFFFFF;
+        if (cmTable && cmSize >= 2) {
+            color0 = cmTable[0];
+            color1 = cmTable[1];
+        }
+
+        size_t requiredSrcBytes = static_cast<size_t>(sourceY + height) * srcPitchBytes;
+        if (requiredSrcBytes > srcBitsSize) return PrimitiveResult::Failure;
+
+        for (intptr_t y = 0; y < height; y++) {
+            uint32_t* dstRow = destPixels + (destY + y) * destPitch + destX;
+            intptr_t srcRowOffset = (sourceY + y) * srcPitchBytes;
+            uint32_t ht = halftoneWords ? halftoneWords[(destY + y) % halftoneHeight] : 0xFFFFFFFF;
+            for (intptr_t x = 0; x < width; x++) {
+                intptr_t sx = sourceX + x;
+                // Bit ordering: MSB first within each 32-bit word
+                intptr_t wordIndex = sx / 32;
+                intptr_t bitIndex = 31 - (sx % 32);
+                uint32_t srcWord = *reinterpret_cast<uint32_t*>(srcBytes + srcRowOffset + wordIndex * 4);
+                int bit = (srcWord >> bitIndex) & 1;
+                uint32_t srcPixel = bit ? color1 : color0;
+                srcPixel &= ht;
+
+                switch (combinationRule) {
+                    case 3: case 34:
+                        dstRow[x] = srcPixel;
+                        break;
+                    case 25: case 7: // paint/OR
+                        dstRow[x] |= srcPixel;
+                        break;
+                    case 0: // AND
+                        dstRow[x] &= srcPixel;
+                        break;
+                    case 6: // XOR
+                        dstRow[x] ^= srcPixel;
+                        break;
+                    case 1: // AND NOT
+                        dstRow[x] &= ~srcPixel;
+                        break;
+                    case 24: { // alpha blend
+                        uint32_t sa = (srcPixel >> 24) & 0xFF;
+                        if (sa == 255) { dstRow[x] = srcPixel; break; }
+                        if (sa == 0) break;
+                        uint32_t da = 255 - sa;
+                        uint32_t d = dstRow[x];
+                        uint32_t rb = ((srcPixel & 0xFF00FF) * sa + (d & 0xFF00FF) * da + 0x800080) >> 8;
+                        uint32_t g  = ((srcPixel & 0x00FF00) * sa + (d & 0x00FF00) * da + 0x008000) >> 8;
+                        dstRow[x] = (rb & 0xFF00FF) | (g & 0x00FF00) | 0xFF000000;
+                        break;
+                    }
+                    default:
+                        return PrimitiveResult::Failure;
+                }
+            }
+        }
+        return PrimitiveResult::Success;
+    }
+
+    // 8-bit source to 32-bit dest (used for grayscale forms)
+    if (srcDepth == 8) {
+        size_t requiredSrcBytes = static_cast<size_t>(sourceY + height) * srcPitchBytes;
+        if (requiredSrcBytes > srcBitsSize) return PrimitiveResult::Failure;
+
+        for (intptr_t y = 0; y < height; y++) {
+            uint32_t* dstRow = destPixels + (destY + y) * destPitch + destX;
+            intptr_t srcRowOffset = (sourceY + y) * srcPitchBytes;
+            uint32_t ht = halftoneWords ? halftoneWords[(destY + y) % halftoneHeight] : 0xFFFFFFFF;
+            for (intptr_t x = 0; x < width; x++) {
+                intptr_t sx = sourceX + x;
+                // 8-bit: 4 pixels per word, MSB first
+                intptr_t byteOffset = srcRowOffset + sx;
+                // Pharo stores 8-bit pixels in 32-bit words, big-endian byte order within word
+                intptr_t wordIdx = sx / 4;
+                intptr_t byteInWord = 3 - (sx % 4);  // MSB first
+                uint8_t pixelIdx = *(srcBytes + srcRowOffset + wordIdx * 4 + (3 - byteInWord));
+
+                uint32_t srcPixel;
+                if (cmTable && pixelIdx < cmSize) {
+                    srcPixel = cmTable[pixelIdx];
+                } else {
+                    // Default: treat as grayscale
+                    srcPixel = 0xFF000000 | (pixelIdx << 16) | (pixelIdx << 8) | pixelIdx;
+                }
+                srcPixel &= ht;
+
+                switch (combinationRule) {
+                    case 3: case 34:
+                        dstRow[x] = srcPixel;
+                        break;
+                    case 25: case 7:
+                        dstRow[x] |= srcPixel;
+                        break;
+                    case 24: {
+                        uint32_t sa = (srcPixel >> 24) & 0xFF;
+                        if (sa == 255) { dstRow[x] = srcPixel; break; }
+                        if (sa == 0) break;
+                        uint32_t da = 255 - sa;
+                        uint32_t d = dstRow[x];
+                        uint32_t rb = ((srcPixel & 0xFF00FF) * sa + (d & 0xFF00FF) * da + 0x800080) >> 8;
+                        uint32_t g  = ((srcPixel & 0x00FF00) * sa + (d & 0x00FF00) * da + 0x008000) >> 8;
+                        dstRow[x] = (rb & 0xFF00FF) | (g & 0x00FF00) | 0xFF000000;
+                        break;
+                    }
+                    default:
+                        return PrimitiveResult::Failure;
+                }
+            }
+        }
+        return PrimitiveResult::Success;
+    }
+
+    // 16-bit source to 32-bit dest
+    if (srcDepth == 16) {
+        size_t requiredSrcBytes = static_cast<size_t>(sourceY + height) * srcPitchBytes;
+        if (requiredSrcBytes > srcBitsSize) return PrimitiveResult::Failure;
+
+        uint16_t* srcPixels16 = reinterpret_cast<uint16_t*>(srcBytes);
+        intptr_t srcPitch16 = srcPitchBytes / 2;
+
+        for (intptr_t y = 0; y < height; y++) {
+            uint16_t* srcRow = srcPixels16 + (sourceY + y) * srcPitch16 + sourceX;
+            uint32_t* dstRow = destPixels + (destY + y) * destPitch + destX;
+            for (intptr_t x = 0; x < width; x++) {
+                uint16_t s16 = srcRow[x];
+                // Convert 5-5-5 to 8-8-8-8 (ARGB)
+                uint32_t r = ((s16 >> 10) & 0x1F) * 255 / 31;
+                uint32_t g = ((s16 >> 5) & 0x1F) * 255 / 31;
+                uint32_t b = (s16 & 0x1F) * 255 / 31;
+                uint32_t srcPixel = 0xFF000000 | (r << 16) | (g << 8) | b;
+                switch (combinationRule) {
+                    case 3: case 34: dstRow[x] = srcPixel; break;
+                    case 25: case 7: dstRow[x] |= srcPixel; break;
+                    default: return PrimitiveResult::Failure;
+                }
+            }
+        }
+        return PrimitiveResult::Success;
+    }
+
+    // 2-bit and 4-bit sources to 32-bit dest
+    if (srcDepth == 2 || srcDepth == 4) {
+        size_t requiredSrcBytes = static_cast<size_t>(sourceY + height) * srcPitchBytes;
+        if (requiredSrcBytes > srcBitsSize) return PrimitiveResult::Failure;
+
+        intptr_t pixelsPerWord = 32 / srcDepth;
+        intptr_t pixelMask = (1 << srcDepth) - 1;
+
+        for (intptr_t y = 0; y < height; y++) {
+            uint32_t* dstRow = destPixels + (destY + y) * destPitch + destX;
+            intptr_t srcRowOffset = (sourceY + y) * srcPitchBytes;
+            for (intptr_t x = 0; x < width; x++) {
+                intptr_t sx = sourceX + x;
+                intptr_t wordIndex = sx / pixelsPerWord;
+                intptr_t pixelInWord = (pixelsPerWord - 1) - (sx % pixelsPerWord); // MSB first
+                uint32_t srcWord = *reinterpret_cast<uint32_t*>(srcBytes + srcRowOffset + wordIndex * 4);
+                uint32_t pixelIdx = (srcWord >> (pixelInWord * srcDepth)) & pixelMask;
+
+                uint32_t srcPixel;
+                if (cmTable && pixelIdx < cmSize) {
+                    srcPixel = cmTable[pixelIdx];
+                } else {
+                    uint32_t gray = pixelIdx * 255 / pixelMask;
+                    srcPixel = 0xFF000000 | (gray << 16) | (gray << 8) | gray;
+                }
+
+                switch (combinationRule) {
+                    case 3: case 34: dstRow[x] = srcPixel; break;
+                    case 25: case 7: dstRow[x] |= srcPixel; break;
+                    case 24: {
+                        uint32_t sa = (srcPixel >> 24) & 0xFF;
+                        if (sa == 255) { dstRow[x] = srcPixel; break; }
+                        if (sa == 0) break;
+                        uint32_t da = 255 - sa;
+                        uint32_t d = dstRow[x];
+                        uint32_t rb = ((srcPixel & 0xFF00FF) * sa + (d & 0xFF00FF) * da + 0x800080) >> 8;
+                        uint32_t g  = ((srcPixel & 0x00FF00) * sa + (d & 0x00FF00) * da + 0x008000) >> 8;
+                        dstRow[x] = (rb & 0xFF00FF) | (g & 0x00FF00) | 0xFF000000;
+                        break;
+                    }
+                    default: return PrimitiveResult::Failure;
+                }
+            }
+        }
+        return PrimitiveResult::Success;
+    }
+
+    // Unsupported source depth / destination depth — log it for diagnosis
+    {
+        static int failCount = 0;
+        failCount++;
+        if (failCount <= 20) {
+            fprintf(stderr, "[COPYBITS-FAIL #%d] srcDepth=%ld destDepth=%ld rule=%ld src=%ldx%ld dst=%ldx%ld w=%ld h=%ld\n",
+                    failCount, (long)srcDepth, (long)destDepth, (long)combinationRule,
+                    (long)srcWidth, (long)srcHeight, (long)destWidth, (long)destHeight,
+                    (long)width, (long)height);
+            fflush(stderr);
+        }
+    }
     return PrimitiveResult::Failure;
 }
 
@@ -22515,6 +22892,12 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
                         std::string libName = "lib" + moduleName + ".dylib";
                         moduleHandle = dlopen(libName.c_str(), RTLD_NOW | RTLD_GLOBAL);
                     }
+                    if (!moduleHandle) {
+                        // dlopen failed — string may be a Smalltalk object repr
+                        // (e.g., "a FFIMacLibraryFinder"), not a library path.
+                        // Fall back to RTLD_DEFAULT to search all loaded images.
+                        moduleHandle = RTLD_DEFAULT;
+                    }
                 }
             }
         }
@@ -22523,7 +22906,7 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
         moduleHandle = RTLD_DEFAULT;
     }
 
-    if (ffiLog && loadCount <= 100) {
+    if (ffiLog) {
         fprintf(ffiLog, "[LOAD_SYMBOL] #%d symbol='%s' module='%s' handle=%p\n",
                 loadCount, symbolName.c_str(), moduleName.c_str(), moduleHandle);
         fflush(ffiLog);
@@ -22538,7 +22921,7 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
     }
 
     if (!symbolAddr) {
-        if (ffiLog && loadCount <= 100) {
+        if (ffiLog) {
             fprintf(ffiLog, "[LOAD_SYMBOL] #%d FAILED to find '%s' in '%s'\n",
                     loadCount, symbolName.c_str(), moduleName.c_str());
             fflush(ffiLog);
@@ -22546,7 +22929,7 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    if (ffiLog && loadCount <= 100) {
+    if (ffiLog) {
         fprintf(ffiLog, "[LOAD_SYMBOL] #%d FOUND '%s' at %p\n",
                 loadCount, symbolName.c_str(), symbolAddr);
         fflush(ffiLog);
@@ -22578,7 +22961,10 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
     ObjectHeader* resultHdr = result.asObjectPtr();
     memcpy(resultHdr->bytes(), &symbolAddr, sizeof(void*));
 
-    if (ffiLog && loadCount <= 100) {
+    // Track symbol name for TFFI call logging
+    g_symbolNames[reinterpret_cast<uintptr_t>(symbolAddr)] = symbolName;
+
+    if (ffiLog) {
         fprintf(ffiLog, "[LOAD_SYMBOL] #%d SUCCESS - created ExternalAddress %p containing %p\n",
                 loadCount, (void*)result.rawBits(), symbolAddr);
         fflush(ffiLog);
@@ -23608,7 +23994,7 @@ PrimitiveResult Interpreter::primitiveGetSameThreadRunnerAddress(int argCount) {
 PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
     static int callCount = 0;
     callCount++;
-    if (callCount <= 260 || callCount % 10 == 0) {
+    if (callCount <= 500 || callCount % 50 == 0) {
         fprintf(stderr, "[TFFI-CALL #%d step=%llu] primitiveSameThreadCallout argCount=%d\n",
                 callCount, g_stepNum, argCount);
     }
@@ -23646,9 +24032,13 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    if (callCount <= 260 || callCount % 10 == 0) {
-        fprintf(stderr, "[TFFI-CALL #%d] funcPtr=%p nargs=%u retType=%u\n",
-                callCount, funcPtr, cif->nargs, cif->rtype->type);
+    {
+        auto it = g_symbolNames.find(reinterpret_cast<uintptr_t>(funcPtr));
+        const char* funcName = (it != g_symbolNames.end()) ? it->second.c_str() : "?";
+        if (callCount <= 500 || callCount % 50 == 0) {
+            fprintf(stderr, "[TFFI-CALL #%d] funcPtr=%p '%s' nargs=%u retType=%u\n",
+                    callCount, funcPtr, funcName, cif->nargs, cif->rtype->type);
+        }
     }
 
     // Validate arguments array
@@ -23829,7 +24219,7 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
     // Perform the FFI call
     ffi_call(cif, FFI_FN(funcPtr), returnHolder, argPtrs);
 
-    if (callCount <= 260 || callCount % 10 == 0) {
+    if (callCount <= 500 || callCount % 50 == 0) {
         uint64_t rv = 0;
         memcpy(&rv, returnHolder, std::min(sizeof(rv), (size_t)cif->rtype->size));
         fprintf(stderr, "[TFFI-CALL #%d] returned: 0x%llx\n", callCount, rv);

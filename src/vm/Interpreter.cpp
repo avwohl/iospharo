@@ -6035,6 +6035,18 @@ void Interpreter::returnFromBlock() {
         return;
     }
 
+    // When frameDepth_ > 0 but homeFrame == SIZE_MAX, the home method is in the
+    // context chain (not in savedFrames_). This happens when exception handling caused
+    // context materialization: the home method's frame was turned into a context object
+    // and is no longer in the inline frame stack. Materialize all remaining inline
+    // frames to contexts, then use the context-based NLR path below.
+    if (frameDepth_ > 0 && homeFrame == SIZE_MAX) {
+        Oop topCtx = materializeFrameStack();
+        activeContext_ = topCtx;
+        frameDepth_ = 0;
+        // closure_ is still valid — fall through to context-based NLR
+    }
+
     // CONTEXT-BASED NLR: When frameDepth_ == 0 (after thisContext materialization),
     // we need to use the context chain to find the home method and unwind to it.
     // This happens when exception handling (on:do:) caused context materialization.
@@ -8111,11 +8123,10 @@ void Interpreter::activateBlock(Oop block, int argCount) {
                     // materialize the current frames and switch to context-based execution.
                     // This ensures all future NLRs work correctly.
 
-                    // IMPORTANT: Don't materialize here - it would be expensive.
-                    // Instead, leave homeFrame as SIZE_MAX. When NLR happens and
-                    // homeFrame is SIZE_MAX, the code should fall through to check
-                    // if current method is a CompiledBlock and use context-based NLR.
-                    // This is already implemented in returnValue().
+                    // Don't materialize here — defer to returnFromBlock() which will
+                    // materialize on demand when NLR actually happens.
+                    // returnFromBlock() handles frameDepth_>0 + homeFrame==SIZE_MAX
+                    // by materializing and falling through to context-based NLR.
                     break;
                 }
                 ctx = memory_.fetchPointer(0, ctx);
