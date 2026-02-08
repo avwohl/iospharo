@@ -218,6 +218,90 @@ runDiagnostic: stream
    stream flush]
   on: Error do: [:e |
    stream nextPutAll: 'T16 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
+  "Test 17: Direct tryPrimitive:withArgs: test for quick primitives"
+  [| aReceiver result isFailTok |
+   aReceiver := Rectangle origin: 0@0 corner: 100@200.
+   "Test P118 with quick primitive 264 (return instVar 0)"
+   result := aReceiver tryPrimitive: 264 withArgs: #().
+   isFailTok := (result class == Array and: [result size = 2]).
+   stream nextPutAll: 'T17a P118(264) result class: '; nextPutAll: result class name; cr.
+   stream nextPutAll: 'T17a P118(264) result: '; nextPutAll: result printString; cr.
+   stream nextPutAll: 'T17a P118(264) isFailToken: '; nextPutAll: isFailTok printString; cr.
+   (isFailTok not and: [result = (0@0)])
+     ifTrue: [stream nextPutAll: 'T17a OK'; cr]
+     ifFalse: [stream nextPutAll: 'T17a FAIL'; cr].
+   "Test P118 with quick primitive 256 (return self)"
+   result := aReceiver tryPrimitive: 256 withArgs: #().
+   isFailTok := (result class == Array and: [result size = 2]).
+   stream nextPutAll: 'T17b P118(256) result class: '; nextPutAll: result class name; cr.
+   stream nextPutAll: 'T17b P118(256) result: '; nextPutAll: result printString; cr.
+   stream nextPutAll: 'T17b P118(256) isFailToken: '; nextPutAll: isFailTok printString; cr.
+   (isFailTok not and: [result == aReceiver])
+     ifTrue: [stream nextPutAll: 'T17b OK'; cr]
+     ifFalse: [stream nextPutAll: 'T17b FAIL'; cr].
+   "Test P118 with quick primitive 257 (return true)"
+   result := aReceiver tryPrimitive: 257 withArgs: #().
+   stream nextPutAll: 'T17c P118(257) result: '; nextPutAll: result printString; cr.
+   "Test doPrimitive: directly"
+   [| ctx value |
+    ctx := Context sender: thisContext receiver: aReceiver method: (Rectangle >> #center) arguments: #().
+    ctx push: aReceiver. "push receiver for topLeft send"
+    value := ctx doPrimitive: 264 method: (Rectangle >> #topLeft) receiver: aReceiver args: #().
+    stream nextPutAll: 'T17d doPrimitive:264 class: '; nextPutAll: value class name; cr.
+    stream nextPutAll: 'T17d doPrimitive:264 result: '; nextPutAll: value printString; cr.
+    stream nextPutAll: 'T17d is same ctx: '; nextPutAll: (value == ctx) printString; cr.
+    (value == ctx)
+      ifTrue: [stream nextPutAll: 'T17d OK (doPrimitive returned context)'; cr]
+      ifFalse: [stream nextPutAll: 'T17d FAIL (doPrimitive returned something else)'; cr].
+   ] on: Error do: [:e |
+    stream nextPutAll: 'T17d ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr].
+   "Test the full stepping - manual send:to:with:super: trace"
+   [| ctx centerMethod newCtx sp sendResult |
+    centerMethod := Rectangle >> #center.
+    ctx := Context sender: thisContext receiver: aReceiver method: centerMethod arguments: #().
+    ctx step. "push self"
+    sp := ctx instVarAt: 3. "stackp is 3rd instVar"
+    stream nextPutAll: 'T17e sp='; nextPutAll: sp printString; cr.
+    stream nextPutAll: 'T17e top='; nextPutAll: (ctx at: sp) printString; cr.
+    stream flush.
+    "Manual pop + send:to:with:super:"
+    ctx pop.
+    sp := ctx instVarAt: 3.
+    stream nextPutAll: 'T17e afterPop sp='; nextPutAll: sp printString; cr.
+    sendResult := ctx send: #topLeft to: aReceiver with: #() super: false.
+    stream nextPutAll: 'T17e send class='; nextPutAll: sendResult class name; cr.
+    stream nextPutAll: 'T17e send='; nextPutAll: sendResult printString; cr.
+    stream nextPutAll: 'T17e send==ctx: '; nextPutAll: (sendResult == ctx) printString; cr.
+    stream nextPutAll: 'T17e isFailTok: '; nextPutAll: (ctx isFailToken: sendResult) printString; cr.
+    stream flush.
+    "Step on fresh context"
+    ctx := Context sender: thisContext receiver: aReceiver method: centerMethod arguments: #().
+    ctx step.
+    newCtx := ctx step.
+    stream nextPutAll: 'T17e step2='; nextPutAll: newCtx class name.
+    stream nextPutAll: ' ==ctx:'; nextPutAll: (newCtx == ctx) printString; cr.
+    stream flush.
+   ] on: Error do: [:e |
+    stream nextPutAll: 'T17e ERR: '; nextPutAll: e class name; nextPutAll: ' '; nextPutAll: e messageText; cr. stream flush].
+   stream flush]
+  on: Error do: [:e |
+   stream nextPutAll: 'T17 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr.
+   stream flush].
+  "Test 18: Manual send:to:with:super: for quick method"
+  [| ctx aRcv cm sendRes |
+   aRcv := Rectangle origin: 0@0 corner: 100@200.
+   cm := Rectangle >> #center.
+   ctx := Context sender: thisContext receiver: aRcv method: cm arguments: #().
+   ctx push: aRcv. "simulate pushReceiver"
+   "Now manually call send:to:with:super: as step would"
+   sendRes := ctx send: #topLeft to: aRcv with: #() super: false.
+   stream nextPutAll: 'T18 sendRes class: '; nextPutAll: sendRes class name; cr.
+   stream nextPutAll: 'T18 sendRes: '; nextPutAll: sendRes printString; cr.
+   stream nextPutAll: 'T18 ==ctx: '; nextPutAll: (sendRes == ctx) printString; cr.
+   stream nextPutAll: 'T18 isFailTok: '; nextPutAll: (ctx isFailToken: sendRes) printString; cr.
+   stream flush]
+  on: Error do: [:e |
+   stream nextPutAll: 'T18 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
   stream nextPutAll: '=== END DIAGNOSTICS ==='; cr; cr. stream flush! !
 
 !SUnitRunner class methodsFor: 'running'!

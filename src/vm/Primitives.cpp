@@ -282,6 +282,55 @@ PrimitiveResult Interpreter::primitiveDoPrimitiveWithArgs(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    // Handle quick primitives (256-519) inline.
+    // These are not in the primitive table — they're bytecode shortcuts that
+    // return self, constants, or instance variables. The image's Context>>step
+    // simulation calls tryPrimitive:withArgs: (primitive 118) to execute them.
+    if (primIndex >= 256 && primIndex <= 519) {
+        // Validate argument array first
+        if (!argsArrayOop.isObject()) {
+            return PrimitiveResult::Failure;
+        }
+
+        Oop receiver = stackValue(2);  // receiver is below primIndex and argsArray on stack
+
+        Oop result;
+        if (primIndex == 256) {
+            result = receiver;  // return self
+        } else if (primIndex == 257) {
+            result = memory_.trueObject();
+        } else if (primIndex == 258) {
+            result = memory_.falseObject();
+        } else if (primIndex == 259) {
+            result = memory_.nil();
+        } else if (primIndex == 260) {
+            result = Oop::fromSmallInteger(-1);
+        } else if (primIndex == 261) {
+            result = Oop::fromSmallInteger(0);
+        } else if (primIndex == 262) {
+            result = Oop::fromSmallInteger(1);
+        } else if (primIndex == 263) {
+            result = Oop::fromSmallInteger(2);
+        } else {
+            // 264+ = return instVar at (primIndex - 264)
+            size_t instVarIndex = static_cast<size_t>(primIndex - 264);
+            if (!receiver.isObject()) {
+                return PrimitiveResult::Failure;
+            }
+            ObjectHeader* rcvrHdr = receiver.asObjectPtr();
+            if (instVarIndex >= rcvrHdr->slotCount()) {
+                return PrimitiveResult::Failure;
+            }
+            result = memory_.fetchPointer(instVarIndex, receiver);
+        }
+
+        // Pop args (argsArray, primIndex) and replace receiver with result
+        popN(2);
+        pop();  // pop receiver
+        push(result);
+        return PrimitiveResult::Success;
+    }
+
     // Get the primitive function
     PrimitiveFunc primFunc = primitiveTable_[static_cast<size_t>(primIndex)];
     if (primFunc == nullptr) {
