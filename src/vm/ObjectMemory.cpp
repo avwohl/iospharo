@@ -2895,10 +2895,6 @@ void ObjectMemory::processWeaklings() {
     for (ObjectHeader* obj : weakList_) {
         size_t slots = obj->slotCount();
         Oop* slotPtr = obj->slots();
-        // Skip the fixed fields — they are strong references that were
-        // already traced during the mark phase. Only nil the variable (weak) part.
-        // In Spur, BOTH format 4 (Weak) and format 5 (WeakWithFixed) can have
-        // fixed fields — the class's instSpec records the count.
         size_t startSlot = fixedFieldCountOf(obj);
         for (size_t i = startSlot; i < slots; ++i) {
             Oop ref = slotPtr[i];

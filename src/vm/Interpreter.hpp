@@ -1797,7 +1797,9 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
     }
 
     // Operand stack (only the live portion)
-    for (Oop* p = stackBase_; p <= stackPointer_; ++p) {
+    // stackPointer_ points one past the last live value (post-increment push),
+    // so use < not <= to avoid scanning the dead slot at stackPointer_.
+    for (Oop* p = stackBase_; p < stackPointer_; ++p) {
         visitor(*p);
     }
 

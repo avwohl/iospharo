@@ -212,24 +212,17 @@ PrimitiveResult Interpreter::primitiveArrayBecome(int argCount) {
 PrimitiveResult Interpreter::primitiveIncrementalGC(int argCount) {
     // Primitive 131: Perform an incremental garbage collection
     // Returns the number of bytes of free space after collection
-    // Per official VM: does scavenging with tenuring, returns free space
     (void)argCount;
 
-    // Try incremental GC if available, otherwise do nothing (leave for full GC)
-    // Note: A true incremental/generational GC would scavenge new space
-    // For now, we don't have generational GC, so just report current free space
     memory_.incrementalGC();
 
-    // Get total free space (old space + eden + past/future survivor spaces)
     size_t freeBytes = memory_.freeOldSpaceBytes();
 
-    // Return free space as SmallInteger
+    // Use primitiveSuccess() for consistent stack handling with primitiveFullGC
     if (Oop::canBeSmallInteger(static_cast<int64_t>(freeBytes))) {
-        pop();
-        push(Oop::fromSmallInteger(static_cast<int64_t>(freeBytes)));
+        primitiveSuccess(Oop::fromSmallInteger(static_cast<int64_t>(freeBytes)));
     } else {
-        pop();
-        push(Oop::fromSmallInteger(Oop::smallIntegerMax()));
+        primitiveSuccess(Oop::fromSmallInteger(Oop::smallIntegerMax()));
     }
 
     return PrimitiveResult::Success;
@@ -8576,8 +8569,8 @@ void Interpreter::scanStackReplace(Oop oldOop, Oop newOop) {
     if (receiver_.rawBits() == oldBits) receiver_ = newOop;
     if (method_.rawBits() == oldBits) method_ = newOop;
 
-    // Scan the entire operand stack
-    for (Oop* p = stackBase_; p <= stackPointer_; p++) {
+    // Scan the live operand stack (stackPointer_ is one past the last live value)
+    for (Oop* p = stackBase_; p < stackPointer_; p++) {
         if (p->rawBits() == oldBits) *p = newOop;
     }
 
@@ -8641,7 +8634,7 @@ PrimitiveResult Interpreter::primitiveBecome(int argCount) {
     if (method_.rawBits() == rcvrBits) method_ = arg;
     else if (method_.rawBits() == argBits) method_ = rcvr;
 
-    for (Oop* p = stackBase_; p <= stackPointer_; p++) {
+    for (Oop* p = stackBase_; p < stackPointer_; p++) {
         if (p->rawBits() == rcvrBits) *p = arg;
         else if (p->rawBits() == argBits) *p = rcvr;
     }
