@@ -14906,9 +14906,16 @@ void Interpreter::registerNamedPrimitive(const std::string& module, const std::s
 }
 
 PrimitiveResult Interpreter::callExternalPrimitive(ExternalPrimFunc fn) {
+    static int extCallNum = 0;
+    extCallNum++;
     resetProxyFailure();
-    fn();
-    if (proxyFailed()) {
+    int result = fn();
+    bool failed = proxyFailed();
+    if (extCallNum <= 100) {
+        fprintf(stderr, "[EXT-PRIM #%d] fn=%p result=%d proxyFailed=%d\n",
+                extCallNum, (void*)fn, result, failed ? 1 : 0);
+    }
+    if (failed) {
         return PrimitiveResult::Failure;
     }
     return PrimitiveResult::Success;

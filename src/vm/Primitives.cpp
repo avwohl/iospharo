@@ -13705,6 +13705,15 @@ PrimitiveResult Interpreter::primitiveDLLCall(int argCount) {
 PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
     bool traceThis = false;
 
+    static int extPrimCallCount = 0;
+    extPrimCallCount++;
+    if (extPrimCallCount == 1) {
+        fprintf(stderr, "[EXTCALL] externalPrimitives_ has %zu entries\n", externalPrimitives_.size());
+        for (auto& kv : externalPrimitives_) {
+            fprintf(stderr, "[EXTCALL]   key='%s' fn=%p\n", kv.first.c_str(), (void*)kv.second);
+        }
+    }
+
     // Use newMethod_ (the method being activated) rather than method_ (the caller)
     // because executePrimitive runs BEFORE activateMethod
     Oop method = newMethod_.isObject() ? newMethod_ : method_;
@@ -13779,14 +13788,24 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
         }
     }
     // Log literal strings found for first N calls
-    static FILE* namedLog = nullptr;
+    static FILE* namedLog = stderr;
     static int namedLogCount = 0;
     namedLogCount++;
-    if (namedLog && namedLogCount <= 5000) {
-        fprintf(namedLog, "[NAMED #%d] argCount=%d literals(%zu):", namedLogCount, argCount, literalStrings.size());
-        for (auto& s : literalStrings) fprintf(namedLog, " '%s'", s.c_str());
-        fprintf(namedLog, "\n");
-        fflush(namedLog);
+
+    // Check if any literal contains B2D for targeted logging
+    bool hasB2D = false;
+    for (auto& s : literalStrings) {
+        if (s.find("B2D") != std::string::npos || s.find("Balloon") != std::string::npos ||
+            s.find("BitBlt") != std::string::npos) {
+            hasB2D = true;
+            break;
+        }
+    }
+    if (hasB2D) {
+        fprintf(stderr, "[B2D-NAMED #%d] argCount=%d literals(%zu):", namedLogCount, argCount, literalStrings.size());
+        for (auto& s : literalStrings) fprintf(stderr, " '%s'", s.c_str());
+        fprintf(stderr, "\n");
+        fflush(stderr);
     }
 
     // Try all combinations of module:name from literal strings
@@ -13794,32 +13813,34 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
         // Try as direct name with empty module
         auto it = namedPrimitives_.find(":" + literalStrings[a]);
         if (it != namedPrimitives_.end()) {
+            if (hasB2D) fprintf(stderr, "[B2D-DISPATCH] FOUND named ':%s'\n", literalStrings[a].c_str());
             return (this->*(it->second))(argCount);
         }
         // Try external plugin primitives
         auto xit = externalPrimitives_.find(":" + literalStrings[a]);
         if (xit != externalPrimitives_.end()) {
+            if (hasB2D) fprintf(stderr, "[B2D-DISPATCH] FOUND external ':%s'\n", literalStrings[a].c_str());
             return callExternalPrimitive(xit->second);
         }
         // Try as module:name with other literals as names
         for (size_t b = 0; b < literalStrings.size(); b++) {
             if (a == b) continue;
             std::string key = literalStrings[a] + ":" + literalStrings[b];
+            if (hasB2D) {
+                fprintf(stderr, "[B2D-TRY] key='%s' (len=%zu) named=%d ext=%d\n",
+                        key.c_str(), key.size(),
+                        namedPrimitives_.count(key) ? 1 : 0,
+                        externalPrimitives_.count(key) ? 1 : 0);
+            }
             auto it2 = namedPrimitives_.find(key);
             if (it2 != namedPrimitives_.end()) {
-                if (namedLog && namedLogCount <= 5000) {
-                    fprintf(namedLog, "[NAMED #%d] FOUND %s\n", namedLogCount, key.c_str());
-                    fflush(namedLog);
-                }
+                if (hasB2D) fprintf(stderr, "[B2D-DISPATCH] FOUND named '%s'\n", key.c_str());
                 return (this->*(it2->second))(argCount);
             }
             // Try external plugin primitives
             auto xit2 = externalPrimitives_.find(key);
             if (xit2 != externalPrimitives_.end()) {
-                if (namedLog && namedLogCount <= 5000) {
-                    fprintf(namedLog, "[NAMED #%d] FOUND external %s\n", namedLogCount, key.c_str());
-                    fflush(namedLog);
-                }
+                if (hasB2D) fprintf(stderr, "[B2D-DISPATCH] FOUND external '%s'\n", key.c_str());
                 return callExternalPrimitive(xit2->second);
             }
         }
@@ -13860,7 +13881,7 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
         }
     }
 
-    static FILE* extLog = nullptr;
+    static FILE* extLog = stderr;
     static int extCallCount = 0;
     extCallCount++;
 
@@ -17026,10 +17047,21 @@ enum FormFields {
 PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     static int cbCount = 0;
     cbCount++;
-    if (argCount != 0) return PrimitiveResult::Failure;
+    // Targeted failure logging: track the reason for every failure
+    int failCode = 0;  // 0 = no failure
+    auto logFail = [&](int code, const char* reason) {
+        static int failLogCount = 0;
+        failLogCount++;
+        if (failLogCount <= 50 || (g_stepNum > 50000000 && g_stepNum < 60000000)) {
+            fprintf(stderr, "[CB-FAIL #%d step=%llu cb=%d] code=%d: %s\n",
+                    failLogCount, (unsigned long long)g_stepNum, cbCount, code, reason);
+            fflush(stderr);
+        }
+    };
+    if (argCount != 0) { logFail(1, "argCount!=0"); return PrimitiveResult::Failure; }
 
     Oop bitBlt = stackTop();
-    if (!bitBlt.isObject()) return PrimitiveResult::Failure;
+    if (!bitBlt.isObject()) { logFail(2, "bitBlt not object"); return PrimitiveResult::Failure; }
 
     // Extract BitBlt parameters
     Oop destForm = memory_.fetchPointer(BBDestForm, bitBlt);
@@ -17047,18 +17079,18 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     intptr_t clipHeight = bitBltField(memory_, bitBlt, BBClipHeight);
 
     // Validate destination form
-    if (destForm.isNil() || !destForm.isObject()) return PrimitiveResult::Failure;
+    if (destForm.isNil() || !destForm.isObject()) { logFail(3, "destForm nil/not obj"); return PrimitiveResult::Failure; }
 
     Oop destBits = memory_.fetchPointer(FormBits, destForm);
     intptr_t destWidth = bitBltField(memory_, destForm, FormWidth);
     intptr_t destHeight = bitBltField(memory_, destForm, FormHeight);
     intptr_t destDepth = bitBltField(memory_, destForm, FormDepth);
 
-    if (destBits.isNil() || !destBits.isObject()) return PrimitiveResult::Failure;
+    if (destBits.isNil() || !destBits.isObject()) { logFail(4, "destBits nil/not obj"); return PrimitiveResult::Failure; }
     // destBits may be a SmallInteger surface handle — fail for that
-    if (destBits.isSmallInteger()) return PrimitiveResult::Failure;
+    if (destBits.isSmallInteger()) { logFail(5, "destBits is SmallInt (surface handle)"); return PrimitiveResult::Failure; }
     // Validate pointer range
-    if (destBits.rawBits() < 0x10000) return PrimitiveResult::Failure;
+    if (destBits.rawBits() < 0x10000) { logFail(6, "destBits raw<0x10000"); return PrimitiveResult::Failure; }
 
     // Get raw pointer to dest bits
     ObjectHeader* destBitsHdr = destBits.asObjectPtr();
@@ -17141,9 +17173,13 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
 
     // No-source operations (fill)
     if (sourceForm.isNil()) {
-        if (destDepth != 32) return PrimitiveResult::Failure;
+        if (destDepth != 32) {
+            char buf[120]; snprintf(buf, sizeof(buf), "no-source destDepth=%ld rule=%ld", (long)destDepth, (long)combinationRule);
+            logFail(10, buf);
+            return PrimitiveResult::Failure;
+        }
         size_t requiredBytes = static_cast<size_t>((destY + height - 1) * destWidth + destX + width) * 4;
-        if (requiredBytes > destBitsSize) return PrimitiveResult::Failure;
+        if (requiredBytes > destBitsSize) { logFail(11, "no-source dest bounds overflow"); return PrimitiveResult::Failure; }
 
         for (intptr_t y = 0; y < height; y++) {
             uint32_t fill = halftoneWords ? halftoneWords[(destY + y) % halftoneHeight] : halftoneWord;
@@ -17153,6 +17189,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     for (intptr_t x = 0; x < width; x++) row[x] = fill;
                     break;
                 case 7: // OR
+                case 25: // paint (same as OR)
                     for (intptr_t x = 0; x < width; x++) row[x] |= fill;
                     break;
                 case 0: // AND
@@ -17161,8 +17198,35 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 case 6: // XOR
                     for (intptr_t x = 0; x < width; x++) row[x] ^= fill;
                     break;
-                default:
+                case 1: // AND NOT
+                    for (intptr_t x = 0; x < width; x++) row[x] &= ~fill;
+                    break;
+                case 4: // OR NOT
+                    for (intptr_t x = 0; x < width; x++) row[x] |= ~fill;
+                    break;
+                case 24: { // alpha blend fill
+                    uint32_t sa = (fill >> 24) & 0xFF;
+                    if (sa == 255) {
+                        for (intptr_t x = 0; x < width; x++) row[x] = fill;
+                    } else if (sa > 0) {
+                        uint32_t da = 255 - sa;
+                        uint32_t fillRB = fill & 0xFF00FF;
+                        uint32_t fillG  = fill & 0x00FF00;
+                        for (intptr_t x = 0; x < width; x++) {
+                            uint32_t d = row[x];
+                            uint32_t rb = (fillRB * sa + (d & 0xFF00FF) * da + 0x800080) >> 8;
+                            uint32_t g  = (fillG  * sa + (d & 0x00FF00) * da + 0x008000) >> 8;
+                            row[x] = (rb & 0xFF00FF) | (g & 0x00FF00) | 0xFF000000;
+                        }
+                    }
+                    // sa == 0: fully transparent, nothing to do
+                    break;
+                }
+                default: {
+                    char buf[80]; snprintf(buf, sizeof(buf), "no-source unsupported rule=%ld", (long)combinationRule);
+                    logFail(12, buf);
                     return PrimitiveResult::Failure;
+                }
             }
         }
         return PrimitiveResult::Success;
@@ -17170,7 +17234,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
 
     // --- Source operations ---
     if (!sourceForm.isObject()) {
-        static int f1 = 0; if (++f1 <= 5) fprintf(stderr, "[COPYBITS-FAIL] srcForm not object\n");
+        logFail(13, "srcForm not object");
         return PrimitiveResult::Failure;
     }
 
@@ -17180,10 +17244,10 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     intptr_t srcDepth = bitBltField(memory_, sourceForm, FormDepth);
 
     if (srcBits.isNil() || !srcBits.isObject() || srcBits.isSmallInteger() || srcBits.rawBits() < 0x10000) {
-        static int f2 = 0; if (++f2 <= 5)
-            fprintf(stderr, "[COPYBITS-FAIL] srcBits: nil=%d obj=%d si=%d raw=0x%llx srcDepth=%ld rule=%ld\n",
-                    srcBits.isNil(), srcBits.isObject(), srcBits.isSmallInteger(),
-                    (unsigned long long)srcBits.rawBits(), (long)srcDepth, (long)combinationRule);
+        char buf[120]; snprintf(buf, sizeof(buf), "srcBits invalid: nil=%d obj=%d si=%d raw=0x%llx depth=%ld rule=%ld",
+                srcBits.isNil(), srcBits.isObject(), srcBits.isSmallInteger(),
+                (unsigned long long)srcBits.rawBits(), (long)srcDepth, (long)combinationRule);
+        logFail(14, buf);
         return PrimitiveResult::Failure;
     }
 
@@ -17218,15 +17282,14 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
 
     // Bounds check for dest
     if (destDepth != 32) {
-        static int f3 = 0; if (++f3 <= 5)
-            fprintf(stderr, "[COPYBITS-FAIL] destDepth=%ld (not 32) srcDepth=%ld rule=%ld\n",
-                    (long)destDepth, (long)srcDepth, (long)combinationRule);
+        char buf[100]; snprintf(buf, sizeof(buf), "destDepth=%ld (not 32) srcDepth=%ld rule=%ld", (long)destDepth, (long)srcDepth, (long)combinationRule);
+        logFail(15, buf);
         return PrimitiveResult::Failure;
     }
     size_t requiredDestBytes = static_cast<size_t>((destY + height - 1) * destWidth + destX + width) * 4;
     if (requiredDestBytes > destBitsSize) {
-        static int f4 = 0; if (++f4 <= 5)
-            fprintf(stderr, "[COPYBITS-FAIL] dest bounds: need=%zu have=%zu\n", requiredDestBytes, destBitsSize);
+        char buf[100]; snprintf(buf, sizeof(buf), "dest bounds: need=%zu have=%zu", requiredDestBytes, destBitsSize);
+        logFail(16, buf);
         return PrimitiveResult::Failure;
     }
 
@@ -17240,7 +17303,13 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         intptr_t srcPitch = srcWidth;
 
         size_t requiredSrcBytes = static_cast<size_t>((sourceY + height - 1) * srcPitch + sourceX + width) * 4;
-        if (requiredSrcBytes > srcBitsSize) return PrimitiveResult::Failure;
+        if (requiredSrcBytes > srcBitsSize) {
+            char buf[200]; snprintf(buf, sizeof(buf),
+                "32→32 srcBounds: need=%zu have=%zu srcW=%ld srcH=%ld sx=%ld sy=%ld w=%ld h=%ld",
+                requiredSrcBytes, srcBitsSize, (long)srcWidth, (long)srcHeight,
+                (long)sourceX, (long)sourceY, (long)width, (long)height);
+            logFail(20, buf); return PrimitiveResult::Failure;
+        }
 
         for (intptr_t y = 0; y < height; y++) {
             uint32_t* srcRow = srcPixels + (sourceY + y) * srcPitch + sourceX;
@@ -17285,8 +17354,28 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     }
                     break;
                 }
-                default:
-                    return PrimitiveResult::Failure;
+                case 37: { // rgbComponentAlpha: source channels are per-channel alpha for halftone color
+                    uint32_t cR = (ht >> 16) & 0xFF;
+                    uint32_t cG = (ht >> 8) & 0xFF;
+                    uint32_t cB = ht & 0xFF;
+                    for (intptr_t x = 0; x < width; x++) {
+                        uint32_t s = srcRow[x];
+                        uint32_t d = dstRow[x];
+                        uint32_t aR = (s >> 16) & 0xFF;
+                        uint32_t aG = (s >> 8) & 0xFF;
+                        uint32_t aB = s & 0xFF;
+                        if ((aR | aG | aB) == 0) continue;
+                        uint32_t rR = (cR * aR + ((d >> 16) & 0xFF) * (255 - aR)) / 255;
+                        uint32_t rG = (cG * aG + ((d >> 8) & 0xFF) * (255 - aG)) / 255;
+                        uint32_t rB = (cB * aB + (d & 0xFF) * (255 - aB)) / 255;
+                        dstRow[x] = 0xFF000000 | (rR << 16) | (rG << 8) | rB;
+                    }
+                    break;
+                }
+                default: {
+                    char buf[80]; snprintf(buf, sizeof(buf), "32→32 unsupported rule=%ld", (long)combinationRule);
+                    logFail(21, buf); return PrimitiveResult::Failure;
+                }
             }
         }
         return PrimitiveResult::Success;
@@ -17303,7 +17392,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         }
 
         size_t requiredSrcBytes = static_cast<size_t>(sourceY + height) * srcPitchBytes;
-        if (requiredSrcBytes > srcBitsSize) return PrimitiveResult::Failure;
+        if (requiredSrcBytes > srcBitsSize) { logFail(30, "1→32 src bounds overflow"); return PrimitiveResult::Failure; }
 
         for (intptr_t y = 0; y < height; y++) {
             uint32_t* dstRow = destPixels + (destY + y) * destPitch + destX;
@@ -17346,8 +17435,10 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                         dstRow[x] = (rb & 0xFF00FF) | (g & 0x00FF00) | 0xFF000000;
                         break;
                     }
-                    default:
-                        return PrimitiveResult::Failure;
+                    default: {
+                        char buf[80]; snprintf(buf, sizeof(buf), "1→32 unsupported rule=%ld", (long)combinationRule);
+                        logFail(31, buf); return PrimitiveResult::Failure;
+                    }
                 }
             }
         }
@@ -17357,7 +17448,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     // 8-bit source to 32-bit dest (used for grayscale forms)
     if (srcDepth == 8) {
         size_t requiredSrcBytes = static_cast<size_t>(sourceY + height) * srcPitchBytes;
-        if (requiredSrcBytes > srcBitsSize) return PrimitiveResult::Failure;
+        if (requiredSrcBytes > srcBitsSize) { logFail(40, "8→32 src bounds overflow"); return PrimitiveResult::Failure; }
 
         for (intptr_t y = 0; y < height; y++) {
             uint32_t* dstRow = destPixels + (destY + y) * destPitch + destX;
@@ -17399,8 +17490,10 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                         dstRow[x] = (rb & 0xFF00FF) | (g & 0x00FF00) | 0xFF000000;
                         break;
                     }
-                    default:
-                        return PrimitiveResult::Failure;
+                    default: {
+                        char buf[80]; snprintf(buf, sizeof(buf), "8→32 unsupported rule=%ld", (long)combinationRule);
+                        logFail(41, buf); return PrimitiveResult::Failure;
+                    }
                 }
             }
         }
@@ -17410,7 +17503,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     // 16-bit source to 32-bit dest
     if (srcDepth == 16) {
         size_t requiredSrcBytes = static_cast<size_t>(sourceY + height) * srcPitchBytes;
-        if (requiredSrcBytes > srcBitsSize) return PrimitiveResult::Failure;
+        if (requiredSrcBytes > srcBitsSize) { logFail(50, "16→32 src bounds overflow"); return PrimitiveResult::Failure; }
 
         uint16_t* srcPixels16 = reinterpret_cast<uint16_t*>(srcBytes);
         intptr_t srcPitch16 = srcPitchBytes / 2;
@@ -17428,7 +17521,10 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 switch (combinationRule) {
                     case 3: case 34: dstRow[x] = srcPixel; break;
                     case 25: case 7: dstRow[x] |= srcPixel; break;
-                    default: return PrimitiveResult::Failure;
+                    default: {
+                        char buf[80]; snprintf(buf, sizeof(buf), "16→32 unsupported rule=%ld", (long)combinationRule);
+                        logFail(51, buf); return PrimitiveResult::Failure;
+                    }
                 }
             }
         }
@@ -17438,7 +17534,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     // 2-bit and 4-bit sources to 32-bit dest
     if (srcDepth == 2 || srcDepth == 4) {
         size_t requiredSrcBytes = static_cast<size_t>(sourceY + height) * srcPitchBytes;
-        if (requiredSrcBytes > srcBitsSize) return PrimitiveResult::Failure;
+        if (requiredSrcBytes > srcBitsSize) { logFail(60, "2/4→32 src bounds overflow"); return PrimitiveResult::Failure; }
 
         intptr_t pixelsPerWord = 32 / srcDepth;
         intptr_t pixelMask = (1 << srcDepth) - 1;
@@ -17475,24 +17571,22 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                         dstRow[x] = (rb & 0xFF00FF) | (g & 0x00FF00) | 0xFF000000;
                         break;
                     }
-                    default: return PrimitiveResult::Failure;
+                    default: {
+                        char buf[80]; snprintf(buf, sizeof(buf), "2/4→32 unsupported rule=%ld", (long)combinationRule);
+                        logFail(61, buf); return PrimitiveResult::Failure;
+                    }
                 }
             }
         }
         return PrimitiveResult::Success;
     }
 
-    // Unsupported source depth / destination depth — log it for diagnosis
+    // Unsupported source depth / destination depth
     {
-        static int failCount = 0;
-        failCount++;
-        if (failCount <= 20) {
-            fprintf(stderr, "[COPYBITS-FAIL #%d] srcDepth=%ld destDepth=%ld rule=%ld src=%ldx%ld dst=%ldx%ld w=%ld h=%ld\n",
-                    failCount, (long)srcDepth, (long)destDepth, (long)combinationRule,
-                    (long)srcWidth, (long)srcHeight, (long)destWidth, (long)destHeight,
-                    (long)width, (long)height);
-            fflush(stderr);
-        }
+        char buf[120]; snprintf(buf, sizeof(buf), "unsupported srcDepth=%ld destDepth=%ld rule=%ld src=%ldx%ld dst=%ldx%ld",
+                (long)srcDepth, (long)destDepth, (long)combinationRule,
+                (long)srcWidth, (long)srcHeight, (long)destWidth, (long)destHeight);
+        logFail(99, buf);
     }
     return PrimitiveResult::Failure;
 }
