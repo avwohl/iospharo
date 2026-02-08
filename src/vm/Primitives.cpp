@@ -32,6 +32,31 @@
 static std::unordered_map<uintptr_t, std::string> g_symbolNames;
 #include <ffi.h>
 
+// ===== SurfacePlugin: Manual Surface Management =====
+// Manual surfaces allow external code (e.g., SDL2 texture locking) to provide
+// pixel buffers that BitBlt can read from/write to. The surface ID is stored
+// as a SmallInteger in the Form's bits field.
+struct ManualSurface {
+    bool active;
+    int width;
+    int height;
+    int rowPitch;  // bytes per row
+    int depth;
+    bool isMSB;
+    void* bits;    // external pixel pointer (set via setPointer)
+};
+
+static constexpr int kMaxSurfaces = 64;
+static ManualSurface g_surfaces[kMaxSurfaces] = {};
+static int g_nextSurfaceID = 1;  // 0 is reserved/invalid
+
+// Look up a surface by handle. Returns nullptr if invalid.
+static ManualSurface* lookupSurface(int handle) {
+    if (handle < 1 || handle >= kMaxSurfaces) return nullptr;
+    if (!g_surfaces[handle].active) return nullptr;
+    return &g_surfaces[handle];
+}
+
 namespace pharo {
 
 // Forward declarations for LargeInteger arithmetic helpers
@@ -17086,17 +17111,32 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     intptr_t destHeight = bitBltField(memory_, destForm, FormHeight);
     intptr_t destDepth = bitBltField(memory_, destForm, FormDepth);
 
-    if (destBits.isNil() || !destBits.isObject()) { logFail(4, "destBits nil/not obj"); return PrimitiveResult::Failure; }
-    // destBits may be a SmallInteger surface handle — fail for that
-    if (destBits.isSmallInteger()) { logFail(5, "destBits is SmallInt (surface handle)"); return PrimitiveResult::Failure; }
-    // Validate pointer range
-    if (destBits.rawBits() < 0x10000) { logFail(6, "destBits raw<0x10000"); return PrimitiveResult::Failure; }
-
-    // Get raw pointer to dest bits
-    ObjectHeader* destBitsHdr = destBits.asObjectPtr();
-    uint32_t* destPixels = reinterpret_cast<uint32_t*>(destBitsHdr->bytes());
-    size_t destBitsSize = destBitsHdr->byteSize();
+    // Resolve destination bits: can be an object (Bitmap) or SmallInteger (surface handle)
+    uint32_t* destPixels = nullptr;
+    size_t destBitsSize = 0;
     intptr_t destPitch = destWidth; // in 32-bit words for 32-bit depth
+    int destSurfaceID = -1;
+
+    if (destBits.isSmallInteger()) {
+        // Surface handle — resolve via SurfacePlugin table
+        destSurfaceID = static_cast<int>(destBits.asSmallInteger());
+        ManualSurface* s = lookupSurface(destSurfaceID);
+        if (!s || !s->bits) {
+            char buf[80]; snprintf(buf, sizeof(buf), "destBits surface #%d invalid/no bits", destSurfaceID);
+            logFail(5, buf);
+            return PrimitiveResult::Failure;
+        }
+        destPixels = reinterpret_cast<uint32_t*>(s->bits);
+        destBitsSize = static_cast<size_t>(s->rowPitch) * s->height;
+        destPitch = s->rowPitch / 4; // rowPitch is in bytes, destPitch is in 32-bit words
+    } else if (destBits.isObject() && !destBits.isNil() && destBits.rawBits() >= 0x10000) {
+        ObjectHeader* destBitsHdr = destBits.asObjectPtr();
+        destPixels = reinterpret_cast<uint32_t*>(destBitsHdr->bytes());
+        destBitsSize = destBitsHdr->byteSize();
+    } else {
+        logFail(4, "destBits invalid");
+        return PrimitiveResult::Failure;
+    }
 
     if (cbCount <= 10) {
         fprintf(stderr, "[COPYBITS #%d] ENTER rule=%ld src=%s dest=%ldx%ldx%ld bits=0x%llx sz=%zu dx=%ld dy=%ld w=%ld h=%ld\n",
@@ -17589,6 +17629,128 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         logFail(99, buf);
     }
     return PrimitiveResult::Failure;
+}
+
+// ===== SurfacePlugin Named Primitives =====
+// These are dispatched via primitiveExternalCall as named primitives
+// in module 'SurfacePlugin'.
+
+// primitiveCreateManualSurface (module: SurfacePlugin)
+// rcvr primCreateManualSurfaceWidth: w height: h rowPitch: p depth: d isMSB: msb
+// Stack: rcvr w h p d msb (5 args)
+// Returns: surface ID (SmallInteger)
+PrimitiveResult Interpreter::primitiveCreateManualSurface(int argCount) {
+    if (argCount != 5) return PrimitiveResult::Failure;
+
+    Oop msbOop = stackTop();       // arg 5: isMSB (Boolean)
+    Oop depthOop = stackValue(1);  // arg 4: depth
+    Oop pitchOop = stackValue(2);  // arg 3: rowPitch
+    Oop heightOop = stackValue(3); // arg 2: height
+    Oop widthOop = stackValue(4);  // arg 1: width
+    // stackValue(5) is receiver
+
+    if (!widthOop.isSmallInteger() || !heightOop.isSmallInteger() ||
+        !pitchOop.isSmallInteger() || !depthOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
+
+    int w = static_cast<int>(widthOop.asSmallInteger());
+    int h = static_cast<int>(heightOop.asSmallInteger());
+    int p = static_cast<int>(pitchOop.asSmallInteger());
+    int d = static_cast<int>(depthOop.asSmallInteger());
+    bool msb = !msbOop.isNil() && msbOop != memory_.falseObject();
+
+    // Find a free slot
+    int surfaceID = -1;
+    for (int i = 1; i < kMaxSurfaces; i++) {
+        if (!g_surfaces[i].active) {
+            surfaceID = i;
+            break;
+        }
+    }
+    if (surfaceID < 0) return PrimitiveResult::Failure;  // table full
+
+    g_surfaces[surfaceID] = { true, w, h, p, d, msb, nullptr };
+
+    fprintf(stderr, "[SURFACE] Created manual surface #%d: %dx%d depth=%d pitch=%d\n",
+            surfaceID, w, h, d, p);
+
+    // Pop args and receiver, push result
+    popN(argCount + 1);
+    push(Oop::fromSmallInteger(surfaceID));
+    return PrimitiveResult::Success;
+}
+
+// primitiveDestroyManualSurface (module: SurfacePlugin)
+// rcvr primDestroyManualSurface: surfaceID
+// Stack: rcvr surfaceID (1 arg)
+PrimitiveResult Interpreter::primitiveDestroyManualSurface(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop idOop = stackTop();
+    if (!idOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    int surfaceID = static_cast<int>(idOop.asSmallInteger());
+    ManualSurface* s = lookupSurface(surfaceID);
+    if (!s) return PrimitiveResult::Failure;
+
+    s->active = false;
+    s->bits = nullptr;
+
+    // Pop arg, leave receiver
+    pop();
+    return PrimitiveResult::Success;
+}
+
+// primitiveSetManualSurfacePointer (module: SurfacePlugin)
+// rcvr primManualSurfaceSetPointer: surfaceID pointer: aPointer
+// Stack: rcvr surfaceID aPointer (2 args)
+PrimitiveResult Interpreter::primitiveSetManualSurfacePointer(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop ptrOop = stackTop();       // arg 2: pointer (ExternalAddress)
+    Oop idOop = stackValue(1);     // arg 1: surfaceID
+
+    if (!idOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    int surfaceID = static_cast<int>(idOop.asSmallInteger());
+    ManualSurface* s = lookupSurface(surfaceID);
+    if (!s) return PrimitiveResult::Failure;
+
+    // Extract pointer from ExternalAddress (first slot contains the raw pointer)
+    void* ptr = nullptr;
+    if (ptrOop.isObject() && !ptrOop.isNil()) {
+        ObjectHeader* ptrHdr = ptrOop.asObjectPtr();
+        if (ptrHdr->byteSize() >= sizeof(void*)) {
+            std::memcpy(&ptr, ptrHdr->bytes(), sizeof(void*));
+        }
+    } else if (ptrOop.isSmallInteger()) {
+        // Sometimes pointers are passed as SmallIntegers
+        ptr = reinterpret_cast<void*>(static_cast<uintptr_t>(ptrOop.asSmallInteger()));
+    }
+
+    s->bits = ptr;
+
+    static int setCount = 0;
+    if (++setCount <= 10) {
+        fprintf(stderr, "[SURFACE] SetPointer surface #%d -> %p (ptrOop: nil=%d si=%d obj=%d raw=0x%llx",
+                surfaceID, ptr, ptrOop.isNil(), ptrOop.isSmallInteger(), ptrOop.isObject(),
+                (unsigned long long)ptrOop.rawBits());
+        if (ptrOop.isObject() && !ptrOop.isNil() && ptrOop.rawBits() > 0x10000) {
+            ObjectHeader* h = ptrOop.asObjectPtr();
+            fprintf(stderr, " byteSize=%zu fmt=%d", h->byteSize(), (int)h->format());
+            if (h->byteSize() > 0 && h->byteSize() <= 16) {
+                fprintf(stderr, " bytes=");
+                uint8_t* b = h->bytes();
+                for (size_t i = 0; i < h->byteSize(); i++) fprintf(stderr, "%02x", b[i]);
+            }
+        }
+        fprintf(stderr, ")\n");
+    }
+
+    // Pop args, leave receiver
+    popN(argCount);
+    return PrimitiveResult::Success;
 }
 
 // Primitive 291: Draw loop (line drawing for BitBlt)

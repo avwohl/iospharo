@@ -986,6 +986,11 @@ private:
     PrimitiveResult primitiveMixedSound(int argCount);             // 268
     PrimitiveResult primitiveControlOSProcess(int argCount);       // 269
 
+    // SurfacePlugin named primitives (for OSSDL2ExternalForm)
+    PrimitiveResult primitiveCreateManualSurface(int argCount);
+    PrimitiveResult primitiveDestroyManualSurface(int argCount);
+    PrimitiveResult primitiveSetManualSurfacePointer(int argCount);
+
     // BitBlt primitives (290-299)
     PrimitiveResult primitiveCopyBits(int argCount);               // 290
     // primitiveDrawLoop (291) - uses existing declaration at 104

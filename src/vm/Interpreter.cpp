@@ -14941,6 +14941,9 @@ void Interpreter::initializeNamedPrimitives() {
     // Also register under SqueakPlugin/SurfacePlugin for compatibility
     registerNamedPrimitive("SqueakPlugin", "primitiveGetNextEvent", &Interpreter::primitiveGetNextEvent);
     registerNamedPrimitive("SurfacePlugin", "primitiveShowDisplayRect", &Interpreter::primitiveShowDisplayRect);
+    registerNamedPrimitive("SurfacePlugin", "primitiveCreateManualSurface", &Interpreter::primitiveCreateManualSurface);
+    registerNamedPrimitive("SurfacePlugin", "primitiveDestroyManualSurface", &Interpreter::primitiveDestroyManualSurface);
+    registerNamedPrimitive("SurfacePlugin", "primitiveSetManualSurfacePointer", &Interpreter::primitiveSetManualSurfacePointer);
 
     // Display primitives (called with empty module name)
     registerNamedPrimitive("", "primitiveForceDisplayUpdate", &Interpreter::primitiveForceDisplayUpdate);
