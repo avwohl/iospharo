@@ -266,6 +266,28 @@ runDiagnostic: stream
     stream flush]
   on: Error do: [:e |
    stream nextPutAll: 'T17e ERR: '; nextPutAll: e class name; nextPutAll: ' '; nextPutAll: e messageText; cr. stream flush].
+   stream flush]
+  on: Error do: [:e |
+   stream nextPutAll: 'T17 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
+  "Test 19: Deprecation transform chain"
+  [| oldRW oldAT cm |
+   ExampleForDeprecationTest compile: 'sendsDeprecatedMessageWithTransform ^ self deprecatedMessageWithTransform'.
+   cm := ExampleForDeprecationTest compiledMethodAt: #sendsDeprecatedMessageWithTransform.
+   stream nextPutAll: 'T19a compiled sendsOld: '; nextPutAll: (cm sendsSelector: #deprecatedMessageWithTransform) printString; cr.
+   oldRW := Deprecation raiseWarning.
+   oldAT := Deprecation activateTransformations.
+   Deprecation raiseWarning: false.
+   Deprecation activateTransformations: true.
+   ExampleForDeprecationTest new sendsDeprecatedMessageWithTransform.
+   Deprecation raiseWarning: oldRW.
+   Deprecation activateTransformations: oldAT.
+   cm := ExampleForDeprecationTest compiledMethodAt: #sendsDeprecatedMessageWithTransform.
+   stream nextPutAll: 'T19b afterCall sendsOld: '; nextPutAll: (cm sendsSelector: #deprecatedMessageWithTransform) printString; cr.
+   stream nextPutAll: 'T19b afterCall sendsNew: '; nextPutAll: (cm sendsSelector: #newMessage) printString; cr.
+   ExampleForDeprecationTest removeSelector: #sendsDeprecatedMessageWithTransform.
+   stream flush]
+  on: Error do: [:e |
+   stream nextPutAll: 'T19 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
   stream nextPutAll: '=== END DIAGNOSTICS ==='; cr; cr. stream flush! !
 
 !SUnitRunner class methodsFor: 'running'!
