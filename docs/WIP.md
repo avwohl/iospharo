@@ -137,22 +137,37 @@ pixel ptr via FFI void** → adoptAddress: → asInteger → SetPointer (real ad
 
 ---
 
-## Test Results — Run #118 (2026-02-08)
+## Test Results — Run #258 (2026-02-08)
 
-**73 test classes, 4291 tests. Pass: 4283, Fail: 4, Error: 0.**
+**73 test classes, 4291 tests. Pass: 4287, Fail: 0, Error: 0, Skip: 4.**
 
-**99.81% pass rate** (4283/4291). Clean exit (no crashes). 11 classes skipped (process/timer-dependent).
+**100% pass rate** (4287/4291, 4 skipped). Clean exit (no crashes). 11 classes skipped (process/timer-dependent).
 
-### Remaining failures
+All previously failing tests are now fixed.
 
-| Test | Issue |
-|---|---|
-| testClosureRestart | Block temp `b` not reset to nil after `thisContext restart` — under investigation |
-| testLocalMethods | `localMethods` returns extension method that should be filtered |
-| testLocalSelectors | Same root cause as testLocalMethods |
-| testReceiverWithGC | Weak reference not nil'd after `garbageCollectMost` — under investigation |
+### Recent fixes (Run #118 → #258)
 
-### Recent fixes (Run #92 → #118)
+**primitiveCopyObject fix (commit 9230cfb)**: Primitive 168 (`Object>>copyFrom:`)
+was implemented as a clone (create new object) instead of copy-from (copy argument
+contents into receiver). This broke `MethodDictionary>>removeKey:ifAbsent:` which
+makes a copy, modifies it, then uses `self copyFrom: copy` to atomically update
+the original. Fixed 2 tests:
+- BehaviorTest: testLocalMethods, testLocalSelectors
+
+**GC root scanning off-by-one fix (commit c1a2fa0)**: `forEachRoot` scanned
+`stackBase_ <= p <= stackPointer_` but push uses post-increment
+(`*stackPointer_++ = value`), so stackPointer_ points one past the last live
+value. The dead slot contained stale references, keeping weak referents alive.
+Changed to `p < stackPointer_` in forEachRoot and two become stack scans.
+Fixed 1 test:
+- WeakMessageSendTest: testReceiverWithGC
+
+**Context>>restart fix (commit fe288f2)**: `materializeFrameStack` was
+overwriting the startpc with the current pc, preventing restart from resetting
+to the method's beginning. Fixed by preserving the original startpc. Fixed 1 test:
+- ContextTest: testClosureRestart
+
+### Earlier fixes (Run #92 → #118)
 
 **primitiveClass fix (commit 65e551b)**: `primitiveClass` (primitive 111) used
 `stackValue(argCount)` (gets receiver) instead of `stackValue(0)` (gets top of
