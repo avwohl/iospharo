@@ -3387,21 +3387,14 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                             case 0x5A: val = memory_.falseObject(); break;
                             default:   val = memory_.nil(); break;
                         }
-                        size_t hfd = (frameDepth_ > 0) ? savedFrames_[frameDepth_ - 1].homeFrameDepth : SIZE_MAX;
-                        if (hfd != SIZE_MAX && hfd < frameDepth_) {
-                            // NLR from block: unwind to home frame
-                            while (frameDepth_ > hfd) {
-                                popFrame();
-                            }
-                            returnValue(val);
-                        } else {
-                            returnValue(val);
-                        }
+                        // Push value and use returnFromMethod() which handles
+                        // both regular returns and NLR with ensure: detection.
+                        // Previously this had inline NLR that skipped ensure: checks.
+                        push(val);
+                        returnFromMethod();
                         break;
                     }
                     case 0x5C: {
-                        // TRACE: Method return for detect investigation
-                        static int methodRetTraceCount = 0;
                         returnFromMethod();
                         break;
                     }
@@ -4700,6 +4693,13 @@ void Interpreter::pushSpecial(int which) {
 }
 
 void Interpreter::returnValue(Oop value) {
+    // Targeted step-window trace
+    if (g_stepNum >= 3200000 && g_stepNum <= 3300000) {
+        fprintf(stderr, "[RV step=%llu] fd=%zu value=0x%llx\n",
+                (unsigned long long)g_stepNum, frameDepth_,
+                (unsigned long long)value.rawBits());
+        fflush(stderr);
+    }
     // CRITICAL TRACE: Track when frame depth drops significantly during startup
     static FILE* startupUnwindLog = nullptr;
     static bool startupUnwindLogged = false;
@@ -5618,13 +5618,39 @@ terminate_process:
 }
 
 void Interpreter::returnFromMethod() {
-    // Simple trace for all returns to see if returnFromMethod is called
-    static int simpleRetCount = 0;
-    if (simpleRetCount++ < 5) {
-        std::cerr << "[RETURN-FROM-METHOD #" << simpleRetCount << "] frame=" << frameDepth_ << "\n";
-    }
-
     Oop value = pop();
+
+    // Targeted step-window trace: catch the ^nil from [^nil] in simpleEnsureTestWithUparrow
+    // Block activated at step ~3233864, ^nil should fire shortly after
+    if (g_stepNum >= 3200000 && g_stepNum <= 3300000) {
+        size_t hf = (frameDepth_ > 0) ? savedFrames_[frameDepth_ - 1].homeFrameDepth : SIZE_MAX;
+        fprintf(stderr, "[RFM step=%llu] fd=%zu homeFrame=%zu value=0x%llx\n",
+                (unsigned long long)g_stepNum, frameDepth_, hf,
+                (unsigned long long)value.rawBits());
+        for (size_t fi = 0; fi < frameDepth_ && fi < 15; fi++) {
+            Oop sm = savedFrames_[fi].savedMethod;
+            std::string sel = "?";
+            int pIdx = 0;
+            if (sm.isObject() && sm.rawBits() > 0x10000) {
+                pIdx = primitiveIndexOf(sm);
+                Oop hdr2 = memory_.fetchPointer(0, sm);
+                if (hdr2.isSmallInteger()) {
+                    int nl2 = hdr2.asSmallInteger() & 0x7FFF;
+                    if (nl2 >= 2) {
+                        Oop pl2 = memory_.fetchPointer(nl2 - 1, sm);
+                        if (pl2.isObject() && pl2.rawBits() > 0x10000) {
+                            ObjectHeader* plh2 = pl2.asObjectPtr();
+                            if (plh2->isBytesObject() && plh2->byteSize() < 80)
+                                sel = std::string((char*)plh2->bytes(), plh2->byteSize());
+                        }
+                    }
+                }
+            }
+            fprintf(stderr, "  saved[%zu]: #%s prim=%d hfd=%zu\n",
+                    fi, sel.c_str(), pIdx, savedFrames_[fi].homeFrameDepth);
+        }
+        fflush(stderr);
+    }
 
     // TRACE: Returns from detect:ifNone: and determineActivePlatform for DNU investigation
     {
@@ -5763,6 +5789,9 @@ void Interpreter::returnFromMethod() {
         // context-based NLR. This happens after exception handling when contexts
         // were materialized - the home method is in the context chain, not savedFrames_.
         if (homeFrame == SIZE_MAX) {
+            // Check SIZE_MAX path — only trace when we're in a CompiledBlock (actual NLR)
+            // (Normal methods with SIZE_MAX are just regular returns)
+
             // Check if we're in a CompiledBlock by looking at the method's last literal
             Oop homeMethodOop = Oop::nil();
             if (method_.isObject() && method_.rawBits() > 0x10000) {
@@ -5784,6 +5813,48 @@ void Interpreter::returnFromMethod() {
 
             // If we found a home method, search context chain and do context-based NLR
             if (homeMethodOop.isObject() && !homeMethodOop.isNil()) {
+                // Trace: NLR from CompiledBlock with SIZE_MAX (context-based path)
+                {
+                    std::string hmSel = "?";
+                    Oop hmh = memory_.fetchPointer(0, homeMethodOop);
+                    if (hmh.isSmallInteger()) {
+                        int nl = hmh.asSmallInteger() & 0x7FFF;
+                        if (nl >= 2) {
+                            Oop pl = memory_.fetchPointer(nl - 1, homeMethodOop);
+                            if (pl.isObject() && pl.rawBits() > 0x10000) {
+                                ObjectHeader* plh = pl.asObjectPtr();
+                                if (plh->isBytesObject() && plh->byteSize() < 80)
+                                    hmSel = std::string((char*)plh->bytes(), plh->byteSize());
+                            }
+                        }
+                    }
+                    fprintf(stderr, "[NLR-SIZEMAX step=%llu] home=#%s fd=%zu\n",
+                            (unsigned long long)g_stepNum, hmSel.c_str(), frameDepth_);
+                    // Show inline frame stack
+                    for (size_t fi = frameDepth_; fi > 0; fi--) {
+                        Oop sm = savedFrames_[fi - 1].savedMethod;
+                        std::string sel = "?";
+                        int pIdx = 0;
+                        if (sm.isObject() && sm.rawBits() > 0x10000) {
+                            pIdx = primitiveIndexOf(sm);
+                            Oop hdr2 = memory_.fetchPointer(0, sm);
+                            if (hdr2.isSmallInteger()) {
+                                int nl2 = hdr2.asSmallInteger() & 0x7FFF;
+                                if (nl2 >= 2) {
+                                    Oop pl2 = memory_.fetchPointer(nl2 - 1, sm);
+                                    if (pl2.isObject() && pl2.rawBits() > 0x10000) {
+                                        ObjectHeader* plh2 = pl2.asObjectPtr();
+                                        if (plh2->isBytesObject() && plh2->byteSize() < 80)
+                                            sel = std::string((char*)plh2->bytes(), plh2->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                        fprintf(stderr, "  frame[%zu]: #%s prim=%d hfd=%zu\n",
+                                fi - 1, sel.c_str(), pIdx, savedFrames_[fi - 1].homeFrameDepth);
+                    }
+                    fflush(stderr);
+                }
                 // First check if home method is in context chain
                 Oop ctx = activeContext_;
                 int searchDepth = 0;
@@ -5833,53 +5904,46 @@ void Interpreter::returnFromMethod() {
         }
 
         if (homeFrame != SIZE_MAX) {
-            // DIAG: Log NLR in critical step range
-            if (g_stepNum >= 1769500 && g_stepNum <= 1770700) {
-                static FILE* nlrLog = nullptr;
-                if (!nlrLog) nlrLog = nullptr;
-                if (nlrLog) {
-                    // Get current method's selector
-                    std::string msel = "?";
-                    Oop hdr = memory_.fetchPointer(0, method_);
-                    if (hdr.isSmallInteger()) {
-                        size_t nLits = hdr.asSmallInteger() & 0x7FFF;
-                        if (nLits >= 2) {
-                            Oop penLit = memory_.fetchPointer(nLits - 1, method_);
-                            if (penLit.isObject() && penLit.rawBits() > 0x10000) {
-                                ObjectHeader* plh = penLit.asObjectPtr();
-                                if (plh->isBytesObject() && plh->byteSize() < 80)
-                                    msel = std::string((char*)plh->bytes(), plh->byteSize());
-                            }
-                        }
+            // Non-local return: unwind frames from current down to homeFrame
+            // We want to return FROM the home method, so we pop down to homeFrame,
+            // then returnValue pops one more and pushes the value to the caller
+            // Targeted NLR trace: only fires when ensure: (prim 198) is in the unwind path
+            {
+                bool hasEnsure = false;
+                for (size_t fi = frameDepth_; fi > homeFrame && fi > 0; fi--) {
+                    Oop sm = savedFrames_[fi - 1].savedMethod;
+                    if (sm.isObject() && sm.rawBits() > 0x10000) {
+                        if (primitiveIndexOf(sm) == 198) { hasEnsure = true; break; }
                     }
-                    fprintf(nlrLog, "[NLR step=%llu fd=%zu→%zu] in method #%s homeFrame=%zu\n",
-                            (unsigned long long)g_stepNum, frameDepth_, homeFrame, msel.c_str(), homeFrame);
-                    // Show what's being unwound
-                    for (size_t fi = frameDepth_ - 1; fi >= homeFrame && fi < frameDepth_; fi--) {
-                        std::string fsm = "?";
-                        if (savedFrames_[fi].savedMethod.isObject() && savedFrames_[fi].savedMethod.rawBits() > 0x10000) {
-                            Oop fhdr = memory_.fetchPointer(0, savedFrames_[fi].savedMethod);
-                            if (fhdr.isSmallInteger()) {
-                                size_t fnl = fhdr.asSmallInteger() & 0x7FFF;
-                                if (fnl >= 2) {
-                                    Oop fpl = memory_.fetchPointer(fnl - 1, savedFrames_[fi].savedMethod);
-                                    if (fpl.isObject() && fpl.rawBits() > 0x10000) {
-                                        ObjectHeader* fph = fpl.asObjectPtr();
-                                        if (fph->isBytesObject() && fph->byteSize() < 80)
-                                            fsm = std::string((char*)fph->bytes(), fph->byteSize());
+                }
+                if (hasEnsure) {
+                    fprintf(stderr, "[NLR-ENSURE step=%llu] fd=%zu homeFrame=%zu VIA returnFromMethod()\n",
+                            (unsigned long long)g_stepNum, frameDepth_, homeFrame);
+                    for (size_t fi = frameDepth_; fi > homeFrame && fi > 0; fi--) {
+                        Oop sm = savedFrames_[fi - 1].savedMethod;
+                        std::string sel = "?";
+                        int pIdx = 0;
+                        if (sm.isObject() && sm.rawBits() > 0x10000) {
+                            pIdx = primitiveIndexOf(sm);
+                            Oop hdr = memory_.fetchPointer(0, sm);
+                            if (hdr.isSmallInteger()) {
+                                int nl = hdr.asSmallInteger() & 0x7FFF;
+                                if (nl >= 2) {
+                                    Oop pl = memory_.fetchPointer(nl - 1, sm);
+                                    if (pl.isObject() && pl.rawBits() > 0x10000) {
+                                        ObjectHeader* plh = pl.asObjectPtr();
+                                        if (plh->isBytesObject() && plh->byteSize() < 80)
+                                            sel = std::string((char*)plh->bytes(), plh->byteSize());
                                     }
                                 }
                             }
                         }
-                        fprintf(nlrLog, "  unwind frame %zu: #%s hfd=%zu\n",
-                                fi, fsm.c_str(), savedFrames_[fi].homeFrameDepth);
+                        fprintf(stderr, "  frame[%zu]: #%s prim=%d hfd=%zu\n",
+                                fi - 1, sel.c_str(), pIdx, savedFrames_[fi - 1].homeFrameDepth);
                     }
-                    fflush(nlrLog);
+                    fflush(stderr);
                 }
             }
-            // Non-local return: unwind frames from current down to homeFrame
-            // We want to return FROM the home method, so we pop down to homeFrame,
-            // then returnValue pops one more and pushes the value to the caller
             while (frameDepth_ > homeFrame) {
                 // Check if the frame we're about to restore has primitive 198 (ensure:/ifCurtailed:).
                 // If so, we must fire its termination block before continuing the NLR.
@@ -5900,14 +5964,12 @@ void Interpreter::returnFromMethod() {
                                 }
                                 if (primIndex == 198) {
                                     // Found an ensure: frame! Stop the NLR here.
-                                    // Pop down to this frame (restore ensure:'s state).
                                     popFrame();
                                     // Now method_ = ensure:, IP = after valueNoContextSwitch
                                     // Push the NLR return value as the result of valueNoContextSwitch
-                                    // (ensure: expects: returnValue := self valueNoContextSwitch)
                                     push(value);
-                                    // Set this frame's homeFrameDepth so that when ensure: does
-                                    // ^returnValue (0x5C), the NLR continues to the original target.
+                                    // Set homeFrameDepth so that when ensure: does ^returnValue,
+                                    // the NLR continues to the original target.
                                     if (frameDepth_ > 0) {
                                         savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
                                     }
@@ -5954,6 +6016,25 @@ void Interpreter::returnFromMethod() {
 
         // If we're in a CompiledBlock and frameDepth_ == 0, do context-based NLR
         if (isCompiledBlock && frameDepth_ == 0 && homeMethod.isObject() && !homeMethod.isNil()) {
+            static int ctxNlrCount = 0;
+            if (++ctxNlrCount <= 50) {
+                std::string hmSel = "?";
+                Oop hmh = memory_.fetchPointer(0, homeMethod);
+                if (hmh.isSmallInteger()) {
+                    int nl = hmh.asSmallInteger() & 0x7FFF;
+                    if (nl >= 2) {
+                        Oop pl = memory_.fetchPointer(nl - 1, homeMethod);
+                        if (pl.isObject() && pl.rawBits() > 0x10000) {
+                            ObjectHeader* plh = pl.asObjectPtr();
+                            if (plh->isBytesObject() && plh->byteSize() < 80)
+                                hmSel = std::string((char*)plh->bytes(), plh->byteSize());
+                        }
+                    }
+                }
+                fprintf(stderr, "[NLR-CTX-BLOCK #%d step=%llu] home=#%s fd=0\n",
+                        ctxNlrCount, (unsigned long long)g_stepNum, hmSel.c_str());
+                fflush(stderr);
+            }
             // Walk up the context chain to find the context executing homeMethod
             Oop ctx = activeContext_;
             Oop homeCtx = Oop::nil();
@@ -5995,10 +6076,17 @@ void Interpreter::returnFromMethod() {
 }
 
 void Interpreter::returnFromBlock() {
-    // Non-local return from block
-    // This is called when a block executes "^ value" - it should return from the
-    // method that CREATED the block, not just from the block itself.
+    // Non-local return from block (bytecode 0x5E with extA > 0)
     Oop value = pop();
+
+    // Targeted step-window trace
+    if (g_stepNum >= 3200000 && g_stepNum <= 3300000) {
+        size_t hf = (frameDepth_ > 0) ? savedFrames_[frameDepth_ - 1].homeFrameDepth : SIZE_MAX;
+        fprintf(stderr, "[RFB step=%llu] fd=%zu homeFrame=%zu value=0x%llx\n",
+                (unsigned long long)g_stepNum, frameDepth_, hf,
+                (unsigned long long)value.rawBits());
+        fflush(stderr);
+    }
 
     // Get the home frame depth from the current frame
     size_t homeFrame = SIZE_MAX;
@@ -6008,9 +6096,78 @@ void Interpreter::returnFromBlock() {
 
     // If homeFrame is valid and we have inline frames, unwind via inline frame stack
     if (homeFrame != SIZE_MAX && homeFrame < frameDepth_) {
-        // Unwind frames from current down to homeFrame + 1
-        // (homeFrame + 1 because we want to return FROM the home method)
+        // Targeted NLR trace: only fires when ensure: (prim 198) is in the unwind path
+        {
+            bool hasEnsure = false;
+            for (size_t fi = frameDepth_; fi > homeFrame + 1 && fi > 0; fi--) {
+                Oop sm = savedFrames_[fi - 1].savedMethod;
+                if (sm.isObject() && sm.rawBits() > 0x10000) {
+                    if (primitiveIndexOf(sm) == 198) { hasEnsure = true; break; }
+                }
+            }
+            if (hasEnsure) {
+                fprintf(stderr, "[NLR-ENSURE step=%llu] fd=%zu homeFrame=%zu VIA returnFromBlock()\n",
+                        (unsigned long long)g_stepNum, frameDepth_, homeFrame);
+                for (size_t fi = frameDepth_; fi > homeFrame && fi > 0; fi--) {
+                    Oop sm = savedFrames_[fi - 1].savedMethod;
+                    std::string sel = "?";
+                    int pIdx = 0;
+                    if (sm.isObject() && sm.rawBits() > 0x10000) {
+                        pIdx = primitiveIndexOf(sm);
+                        Oop hdr = memory_.fetchPointer(0, sm);
+                        if (hdr.isSmallInteger()) {
+                            int nl = hdr.asSmallInteger() & 0x7FFF;
+                            if (nl >= 2) {
+                                Oop pl = memory_.fetchPointer(nl - 1, sm);
+                                if (pl.isObject() && pl.rawBits() > 0x10000) {
+                                    ObjectHeader* plh = pl.asObjectPtr();
+                                    if (plh->isBytesObject() && plh->byteSize() < 80)
+                                        sel = std::string((char*)plh->bytes(), plh->byteSize());
+                                }
+                            }
+                        }
+                    }
+                    fprintf(stderr, "  frame[%zu]: #%s prim=%d hfd=%zu\n",
+                            fi - 1, sel.c_str(), pIdx, savedFrames_[fi - 1].homeFrameDepth);
+                }
+                fflush(stderr);
+            }
+        }
+        // Unwind frames from current down to homeFrame + 1, checking for ensure: at each level
         while (frameDepth_ > homeFrame + 1) {
+            // Check if the frame we're about to restore has primitive 198 (ensure:/ifCurtailed:).
+            // If so, we must fire its termination block before continuing the NLR.
+            if (frameDepth_ > 1) {
+                Oop restoringMethod = savedFrames_[frameDepth_ - 1].savedMethod;
+                if (restoringMethod.isObject() && restoringMethod.rawBits() > 0x10000) {
+                    Oop mHeader = memory_.fetchPointer(0, restoringMethod);
+                    if (mHeader.isSmallInteger()) {
+                        int64_t bits = mHeader.asSmallInteger();
+                        bool hasPrim = (bits >> 16) & 1;
+                        if (hasPrim) {
+                            int numLits = bits & 0x7FFF;
+                            ObjectHeader* mObj = restoringMethod.asObjectPtr();
+                            uint8_t* bc = mObj->bytes() + (1 + numLits) * 8;
+                            int primIndex = 0;
+                            if (bc[0] == 0xF8) {
+                                primIndex = bc[1] | (bc[2] << 8);
+                            }
+                            if (primIndex == 198) {
+                                // Found an ensure: frame! Stop the NLR here.
+                                popFrame();
+                                // Push the NLR return value as the result of valueNoContextSwitch
+                                push(value);
+                                // Set this frame's homeFrameDepth so that when ensure: does
+                                // ^returnValue, the NLR continues to the original target.
+                                if (frameDepth_ > 0) {
+                                    savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
+                                }
+                                return;  // Let interpreter run ensure:'s continuation
+                            }
+                        }
+                    }
+                }
+            }
             popFrame();
         }
         // Now do a regular return which pops one more frame and pushes the value
@@ -6102,9 +6259,9 @@ void Interpreter::returnFromBlock() {
 
 // Handle unwind (ensure:) contexts during context-based non-local returns.
 // Walks the sender chain from startCtx to homeCtx looking for contexts whose
-// method has primitive 198 (the ensure:/ifCurtailed: marker). If found, redirects
-// execution through the unwind context so its cleanup block fires before the NLR
-// completes. Returns true if an unwind context was found and execution redirected.
+// method has primitive 198 (the ensure:/ifCurtailed: marker). If found, sends
+// aboutToReturn:through: to the current context, letting Smalltalk handle the
+// unwind. Returns true if an unwind context was found.
 bool Interpreter::handleContextNLRUnwind(Oop value, Oop startCtx, Oop homeCtx) {
     Oop ctx = startCtx;
     int depth = 0;
@@ -6116,50 +6273,46 @@ bool Interpreter::handleContextNLRUnwind(Oop value, Oop startCtx, Oop homeCtx) {
         if (method.isObject() && !method.isNil()) {
             if (primitiveIndexOf(method) == 198) {
                 // Found an unwind context (ensure:/ifCurtailed:).
-                // The ensure: method body is:
-                //   | complete returnValue |
-                //   <primitive: 198>
-                //   returnValue := self valueNoContextSwitch.
-                //   complete ifNil: [ complete := true. aBlock value. ].
-                //   ^ returnValue
-                //
-                // The context's PC is after the valueNoContextSwitch send.
-                // complete is nil (not yet assigned), so aBlock value will fire.
-                // We push the NLR value as the return of valueNoContextSwitch,
-                // and set the sender to homeCtx's sender so ^returnValue goes
-                // to the correct destination.
-
+                // Per the reference VM, send aboutToReturn:through: to the
+                // current context and let Smalltalk handle the unwind.
                 static int unwindNLRCount = 0;
                 if (++unwindNLRCount <= 20) {
                     fprintf(stderr, "[CONTEXT-NLR-UNWIND #%d step=%llu] Found ensure: ctx=0x%llx, "
-                            "redirecting NLR through it\n",
+                            "sending aboutToReturn:through:\n",
                             unwindNLRCount, (unsigned long long)g_stepNum,
                             (unsigned long long)ctx.rawBits());
                 }
 
-                // Set unwind context's sender to home context's sender
-                Oop homeSender = memory_.fetchPointer(0, homeCtx);
-                memory_.storePointer(0, ctx, homeSender);
-
-                // Push NLR value on unwind context's stack
-                // (as the return value of the interrupted valueNoContextSwitch send)
-                Oop stackpOop = memory_.fetchPointer(2, ctx);  // slot 2 = stackp
-                if (stackpOop.isSmallInteger()) {
-                    int stackp = static_cast<int>(stackpOop.asSmallInteger());
-                    stackp++;
-                    memory_.storePointer(2, ctx, Oop::fromSmallInteger(stackp));
-                    // Stack entries are at slot (6 + index), stackp is 1-based
-                    memory_.storePointer(5 + stackp, ctx, value);
-                }
-
-                // Resume execution from the unwind context
-                executeFromContext(ctx);
+                // Send aboutToReturn:through: to activeContext_
+                // receiver = current context, arg1 = return value, arg2 = unwind context
+                push(activeContext_);  // receiver
+                push(value);           // arg 1: the return value
+                push(ctx);             // arg 2: the first unwind context
+                sendSelector(selectors_.aboutToReturn, 2);
                 return true;
             }
         }
         ctx = memory_.fetchPointer(0, ctx);  // sender = slot 0
         depth++;
     }
+
+    // Reference VM also checks if homeCtx itself has prim 198
+    // (e.g., the home IS an ensure: context)
+    if (ctx.isObject() && !ctx.isNil() && ctx.rawBits() == homeCtx.rawBits()) {
+        Oop method = memory_.fetchPointer(3, homeCtx);
+        if (method.isObject() && !method.isNil() && primitiveIndexOf(method) == 198) {
+            static int homeUnwindCount = 0;
+            if (++homeUnwindCount <= 10) {
+                fprintf(stderr, "[CONTEXT-NLR-UNWIND] homeCtx itself is ensure:, sending aboutToReturn:through:\n");
+            }
+            push(activeContext_);
+            push(value);
+            push(homeCtx);
+            sendSelector(selectors_.aboutToReturn, 2);
+            return true;
+        }
+    }
+
     return false;
 }
 
@@ -8131,23 +8284,47 @@ void Interpreter::activateBlock(Oop block, int argCount) {
 
         savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
 
-        // Log result of home frame search
+        // Targeted trace: log when home method selector contains "Ensure" or "ensure"
         {
-            static FILE* abResLog = nullptr;
-            static int abResCount = 0;
-            if (!abResLog) abResLog = nullptr;  // Disabled
-            if (abResLog && abResCount++ < 500) {
-                fprintf(abResLog, "[AB-RES #%d] fd=%zu homeMethodOop=0x%llx homeFrame=%zu\n",
-                        abResCount, frameDepth_,
-                        (unsigned long long)homeMethodForNLR.rawBits(), homeFrame);
-                // Show ALL saved frames
-                for (size_t i = 0; i < frameDepth_ && i < 30; i++) {
-                    bool match = (savedFrames_[i].savedMethod.rawBits() == homeMethodForNLR.rawBits());
-                    fprintf(abResLog, "  [%zu] 0x%llx%s\n", i,
-                            (unsigned long long)savedFrames_[i].savedMethod.rawBits(),
-                            match ? " *** MATCH ***" : "");
+            std::string hmSel = "?";
+            Oop hmh = memory_.fetchPointer(0, homeMethodForNLR);
+            if (hmh.isSmallInteger()) {
+                int nl = hmh.asSmallInteger() & 0x7FFF;
+                if (nl >= 2) {
+                    Oop pl = memory_.fetchPointer(nl - 1, homeMethodForNLR);
+                    if (pl.isObject() && pl.rawBits() > 0x10000) {
+                        ObjectHeader* plh = pl.asObjectPtr();
+                        if (plh->isBytesObject() && plh->byteSize() < 80)
+                            hmSel = std::string((char*)plh->bytes(), plh->byteSize());
+                    }
                 }
-                fflush(abResLog);
+            }
+            if (hmSel.find("nsure") != std::string::npos || hmSel.find("Uparrow") != std::string::npos) {
+                fprintf(stderr, "[ACTIVATE-BLOCK-ENSURE step=%llu] home=#%s fd=%zu homeFrame=%zu\n",
+                        (unsigned long long)g_stepNum, hmSel.c_str(), frameDepth_, homeFrame);
+                for (size_t fi = 0; fi < frameDepth_ && fi < 20; fi++) {
+                    Oop sm = savedFrames_[fi].savedMethod;
+                    std::string sel = "?";
+                    int pIdx = 0;
+                    if (sm.isObject() && sm.rawBits() > 0x10000) {
+                        pIdx = primitiveIndexOf(sm);
+                        Oop hdr2 = memory_.fetchPointer(0, sm);
+                        if (hdr2.isSmallInteger()) {
+                            int nl2 = hdr2.asSmallInteger() & 0x7FFF;
+                            if (nl2 >= 2) {
+                                Oop pl2 = memory_.fetchPointer(nl2 - 1, sm);
+                                if (pl2.isObject() && pl2.rawBits() > 0x10000) {
+                                    ObjectHeader* plh2 = pl2.asObjectPtr();
+                                    if (plh2->isBytesObject() && plh2->byteSize() < 80)
+                                        sel = std::string((char*)plh2->bytes(), plh2->byteSize());
+                                }
+                            }
+                        }
+                    }
+                    fprintf(stderr, "  saved[%zu]: #%s prim=%d hfd=%zu\n",
+                            fi, sel.c_str(), pIdx, savedFrames_[fi].homeFrameDepth);
+                }
+                fflush(stderr);
             }
         }
 
