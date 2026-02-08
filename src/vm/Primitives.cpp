@@ -71,10 +71,6 @@ static std::vector<uint8_t> extractMagnitude(ObjectMemory& memory, Oop largeInt)
 // External step counter from Interpreter.cpp for debugging
 extern uint64_t g_stepNum;
 
-// Debug flag: set when PRIM639 reads a non-null pixel pointer
-// Used to trace subsequent message sends to find adoptAddress:
-bool g_traceAfterPrim639 = false;
-int g_traceAfterCount = 0;
 extern const char* g_xferReason;
 
 // External variable from Interpreter.cpp for tracing sends after prim 264
@@ -2013,49 +2009,6 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
         }
         if (arrayIndex >= header->byteSize()) {
             return PrimitiveResult::Failure;
-        }
-        // Targeted trace: during active PRIM639 trace, log ALL EA writes
-        if (header->byteSize() == 8 && g_traceAfterPrim639) {
-            Oop extAddrClass2 = memory_.specialObject(SpecialObjectIndex::ClassExternalAddress);
-            if (extAddrClass2.isObject() && memory_.classOf(rcvr).rawBits() == extAddrClass2.rawBits()) {
-                static int ptrAdoptCount = 0;
-                if (++ptrAdoptCount <= 20) {
-                    fprintf(stderr, "[PTR-ADOPT #%d] EA@0x%llx basicAt:%lld put:%lld\n",
-                            ptrAdoptCount, (unsigned long long)rcvr.rawBits(), idx, byteValue);
-                    if (idx == 8) {
-                        // After last byte written, dump final EA contents
-                        // Note: byteAtPut hasn't happened yet, so include this byte manually
-                        uint8_t finalBytes[8];
-                        for (int bi = 0; bi < 8; bi++) finalBytes[bi] = header->byteAt(bi);
-                        finalBytes[7] = (uint8_t)byteValue; // last write
-                        void* finalPtr; memcpy(&finalPtr, finalBytes, 8);
-                        fprintf(stderr, "[PTR-ADOPT] FINAL EA bytes: ");
-                        for (int bi = 0; bi < 8; bi++) fprintf(stderr, "%02x ", finalBytes[bi]);
-                        fprintf(stderr, "= %p\n", finalPtr);
-                    }
-                }
-            }
-        }
-        // Targeted trace: detect adoptAddress: copying bytes into ExternalAddress
-        if (header->byteSize() == 8 && byteValue != 0) {
-            Oop extAddrClass = memory_.specialObject(SpecialObjectIndex::ClassExternalAddress);
-            if (extAddrClass.isObject() && memory_.classOf(rcvr).rawBits() == extAddrClass.rawBits()) {
-                static int adoptTraceCount = 0;
-                if (++adoptTraceCount <= 100) {
-                    fprintf(stderr, "[ADOPT-TRACE #%d] EA@0x%llx basicAt:%lld put:%lld (byte %zu of 8)\n",
-                            adoptTraceCount, (unsigned long long)rcvr.rawBits(),
-                            idx, byteValue, arrayIndex);
-                    // Dump full EA contents every 8th write (complete adoption)
-                    if (arrayIndex == 0) {
-                        fprintf(stderr, "[ADOPT-TRACE] EA@0x%llx BEFORE: ",
-                                (unsigned long long)rcvr.rawBits());
-                        for (size_t i = 0; i < 8; i++)
-                            fprintf(stderr, "%02x ", header->byteAt(i));
-                        void* ptr; memcpy(&ptr, header->bytes(), 8);
-                        fprintf(stderr, "= %p\n", ptr);
-                    }
-                }
-            }
         }
         header->byteAtPut(arrayIndex, static_cast<uint8_t>(byteValue));
         primitiveSuccess(value);
@@ -5732,35 +5685,6 @@ PrimitiveResult Interpreter::primitiveReplaceFromTo(int argCount) {
     if (rcvrHeader->isBytesObject() && replHeader->isBytesObject()) {
         size_t rcvrSize = rcvrHeader->byteSize();
         size_t replSize = replHeader->byteSize();
-        // Trace: detect when asByteArrayPointer copies from ExternalAddress
-        {
-            static int replEACount = 0;
-            if (replEACount < 5 && replSize == 8) {
-                Oop eaClass = memory_.specialObject(SpecialObjectIndex::ClassExternalAddress);
-                if (eaClass.isObject() && memory_.classOf(replacement).rawBits() == eaClass.rawBits()) {
-                    replEACount++;
-                    void* ptrInEA; memcpy(&ptrInEA, replHeader->bytes(), 8);
-                    fprintf(stderr, "[REPLACE-EA #%d] src EA@0x%llx bytes: ",
-                            replEACount, (unsigned long long)replacement.rawBits());
-                    for (size_t bi = 0; bi < 8; bi++)
-                        fprintf(stderr, "%02x ", replHeader->byteAt(bi));
-                    fprintf(stderr, "= %p → dst@0x%llx (dstSize=%zu)\n", ptrInEA,
-                            (unsigned long long)rcvr.rawBits(), rcvrSize);
-                    // Also dump dst class
-                    Oop dstCls = memory_.classOf(rcvr);
-                    if (dstCls.isObject()) {
-                        Oop cn = memory_.fetchPointer(6, dstCls);
-                        if (cn.isObject() && cn.rawBits() > 0x10000) {
-                            ObjectHeader* cnH = cn.asObjectPtr();
-                            if (cnH->isBytesObject() && cnH->byteSize() < 100)
-                                fprintf(stderr, "[REPLACE-EA #%d] dst class: %.*s\n",
-                                        replEACount, (int)cnH->byteSize(), (char*)cnH->bytes());
-                        }
-                    }
-                }
-            }
-        }
-
         if (static_cast<size_t>(stopIdx) > rcvrSize ||
             static_cast<size_t>(repStartIdx + count - 1) > replSize) {
             static FILE* bndLog = nullptr;
@@ -13902,7 +13826,7 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
             break;
         }
     }
-    if (hasB2D) {
+    if (hasB2D && namedLogCount <= 5) {
         fprintf(stderr, "[B2D-NAMED #%d] argCount=%d literals(%zu):", namedLogCount, argCount, literalStrings.size());
         for (auto& s : literalStrings) fprintf(stderr, " '%s'", s.c_str());
         fprintf(stderr, "\n");
@@ -23724,18 +23648,6 @@ PrimitiveResult Interpreter::primitiveExternalPointerRead(int argCount) {
     memcpy(&value, static_cast<uint8_t*>(basePtr) + offset, sizeof(void*));
 
     static int successCount = 0;
-    if (++successCount <= 20) {
-        fprintf(stderr, "[PRIM639] SUCCESS #%d basePtr=%p offset=%lld value=%p\n",
-                successCount, basePtr, (long long)offset, value);
-    }
-
-    // Activate send tracing after reading a non-null pixel-like pointer
-    if (value != nullptr && successCount <= 5) {
-        g_traceAfterPrim639 = true;
-        g_traceAfterCount = 0;
-        fprintf(stderr, "[PRIM639] TRACE ACTIVATED — will trace next 50 sends\n");
-    }
-
     Oop result = tffi_newExternalAddress(value);
     if (result.isNil()) return PrimitiveResult::Failure;
 
@@ -24780,7 +24692,7 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
     {
         auto it = g_symbolNames.find(reinterpret_cast<uintptr_t>(funcPtr));
         const char* funcName = (it != g_symbolNames.end()) ? it->second.c_str() : "?";
-        if (callCount <= 500 || callCount % 50 == 0 || callCount > 700) {
+        if (callCount <= 20) {
             fprintf(stderr, "[TFFI-CALL #%d] funcPtr=%p '%s' nargs=%u retType=%u\n",
                     callCount, funcPtr, funcName, cif->nargs, cif->rtype->type);
         }
@@ -24806,34 +24718,6 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
         argPtrs = static_cast<void**>(alloca(nargs * sizeof(void*)));
         // Allocate generous storage for each argument (max 16 bytes each for alignment)
         argStorage = static_cast<uint8_t*>(alloca(nargs * 16));
-
-        // Dump argument Oops for SDL_LockTexture to trace pixel pointer EA
-        {
-            auto it2 = g_symbolNames.find(reinterpret_cast<uintptr_t>(funcPtr));
-            const char* fn2 = (it2 != g_symbolNames.end()) ? it2->second.c_str() : "";
-            if (strstr(fn2, "SDL_LockTexture")) {
-                fprintf(stderr, "[LOCK-TEX] Argument Oops:\n");
-                for (size_t ai = 0; ai < nargs; ai++) {
-                    Oop aOop = memory_.fetchPointer(ai, argsArrayOop);
-                    fprintf(stderr, "  arg[%zu] = 0x%llx (si=%d obj=%d nil=%d)",
-                            ai, (unsigned long long)aOop.rawBits(),
-                            aOop.isSmallInteger(), aOop.isObject(), aOop.isNil());
-                    if (aOop.isObject() && aOop.rawBits() > 0x10000) {
-                        ObjectHeader* ah = aOop.asObjectPtr();
-                        if (ah->isBytesObject() && ah->byteSize() <= 16) {
-                            fprintf(stderr, " bytes[%zu]:", ah->byteSize());
-                            for (size_t bi = 0; bi < ah->byteSize(); bi++)
-                                fprintf(stderr, "%02x", ah->byteAt(bi));
-                        }
-                        // Check if it's an ExternalAddress
-                        Oop eaClass = memory_.specialObject(SpecialObjectIndex::ClassExternalAddress);
-                        if (memory_.classOf(aOop).rawBits() == eaClass.rawBits())
-                            fprintf(stderr, " [ExternalAddress]");
-                    }
-                    fprintf(stderr, "\n");
-                }
-            }
-        }
 
         for (size_t i = 0; i < nargs; i++) {
             Oop argOop = memory_.fetchPointer(i, argsArrayOop);
