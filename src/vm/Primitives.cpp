@@ -3054,17 +3054,21 @@ PrimitiveResult Interpreter::primitiveIdentityHash(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveClass(int argCount) {
-    Oop rcvr = stackValue(argCount);  // Receiver is under arguments
+    // Primitive 111 returns the class of the top-of-stack value.
+    // For Object>>class (argCount=0): stackValue(0) = receiver
+    // For Context>>objectClass: (argCount=1): stackValue(0) = the argument
+    // The standard VM always operates on stackTop, not the receiver.
+    Oop target = stackValue(0);
 
     // Per official VM: fail if forwarded object only when argCount > 0
-    if (argCount > 0 && rcvr.isObject()) {
-        ObjectHeader* hdr = rcvr.asObjectPtr();
+    if (argCount > 0 && target.isObject()) {
+        ObjectHeader* hdr = target.asObjectPtr();
         if (hdr && hdr->isForwarded()) {
             return PrimitiveResult::Failure;
         }
     }
 
-    Oop classOop = memory_.classOf(rcvr);
+    Oop classOop = memory_.classOf(target);
     popN(argCount + 1);
     push(classOop);
     return PrimitiveResult::Success;

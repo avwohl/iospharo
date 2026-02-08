@@ -212,8 +212,8 @@ runDiagnostic: stream
      "Let's manually check what homeMethod returns here"
      method2 := thisContext home method.
    ].
-   stream nextPutAll: 'T16 method1='; nextPutAll: method1 printString; cr.
-   stream nextPutAll: 'T16 method2='; nextPutAll: method2 printString; cr.
+   stream nextPutAll: 'T16 method1='; nextPutAll: method1 class name; cr.
+   stream nextPutAll: 'T16 method2='; nextPutAll: (method2 ifNil: ['nil'] ifNotNil: [method2 class name]); cr.
    stream nextPutAll: 'T16 same='; nextPutAll: (method1 == method2) printString; cr.
    stream flush]
   on: Error do: [:e |
@@ -255,11 +255,52 @@ runDiagnostic: stream
       ifFalse: [stream nextPutAll: 'T17d FAIL (doPrimitive returned something else)'; cr].
    ] on: Error do: [:e |
     stream nextPutAll: 'T17d ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr].
-   "Test the full stepping with quick methods"
-   [| ctx newCtx |
-    ctx := Context sender: thisContext receiver: aReceiver method: (Rectangle >> #center) arguments: #().
+   "Test the full stepping with quick methods - detailed trace"
+   [| ctx newCtx centerMethod topLeftMethod value ft1 ft2 |
+    centerMethod := Rectangle >> #center.
+    topLeftMethod := Rectangle >> #topLeft.
+    "Test isFailToken directly with detailed checks"
+    ft1 := Context primitiveFailToken.
+    ft2 := Context primitiveFailTokenFor: nil.
+    ctx := Context sender: thisContext receiver: aReceiver method: centerMethod arguments: #().
+    stream nextPutAll: 'T17e failToken class='; nextPutAll: ft1 class name; cr.
+    stream nextPutAll: 'T17e failToken size='; nextPutAll: ft1 size printString; cr.
+    stream nextPutAll: 'T17e failToken at1 class='; nextPutAll: (ft1 at: 1) class name; cr.
+    stream nextPutAll: 'T17e failToken at1 hash='; nextPutAll: (ft1 at: 1) identityHash printString; cr.
+    "Check objectClass:"
+    stream nextPutAll: 'T17e objectClass ft1='; nextPutAll: (ctx objectClass: ft1) name; cr.
+    stream nextPutAll: 'T17e objectClass==Array='; nextPutAll: ((ctx objectClass: ft1) == Array) printString; cr.
+    "Check PrimitiveFailToken from method literal"
+    stream nextPutAll: 'T17e PFT class='; nextPutAll: (Context classPool at: #PrimitiveFailToken) class name; cr.
+    stream nextPutAll: 'T17e PFT hash='; nextPutAll: (Context classPool at: #PrimitiveFailToken) identityHash printString; cr.
+    stream nextPutAll: 'T17e PFT==at1='; nextPutAll: ((Context classPool at: #PrimitiveFailToken) == (ft1 at: 1)) printString; cr.
+    "Check size = 2"
+    stream nextPutAll: 'T17e ft1 size=2? '; nextPutAll: (ft1 size = 2) printString; cr.
+    "Full isFailToken check"
+    stream nextPutAll: 'T17e isFailToken(ft1)='; nextPutAll: (ctx isFailToken: ft1) printString; cr.
+    stream nextPutAll: 'T17e isFailToken(ft2)='; nextPutAll: (ctx isFailToken: ft2) printString; cr.
+    "Test tryPrimitive:withArgs: directly"
+    value := aReceiver tryPrimitive: 264 withArgs: #().
+    stream nextPutAll: 'T17e direct tryPrim class='; nextPutAll: value class name; cr.
+    stream nextPutAll: 'T17e direct tryPrim value='; nextPutAll: value printString; cr.
+    stream nextPutAll: 'T17e isFailToken(direct)='; nextPutAll: (ctx isFailToken: value) printString; cr.
+    "Test doPrimitive:method:receiver:args: directly"
+    value := ctx doPrimitive: 264 method: topLeftMethod receiver: aReceiver args: #().
+    stream nextPutAll: 'T17e doPrim264 class='; nextPutAll: value class name; cr.
+    stream nextPutAll: 'T17e doPrim264 value='; nextPutAll: value printString; cr.
+    stream nextPutAll: 'T17e isFailToken(doPrim)='; nextPutAll: (ctx isFailToken: value) printString; cr.
+    "Test tryPrimitiveFor:receiver:args: directly"
+    value := ctx tryPrimitiveFor: topLeftMethod receiver: aReceiver args: #().
+    stream nextPutAll: 'T17e tryPrimFor class='; nextPutAll: value class name; cr.
+    stream nextPutAll: 'T17e tryPrimFor value='; nextPutAll: value printString; cr.
+    stream nextPutAll: 'T17e isFailToken(tryPrimFor)='; nextPutAll: (ctx isFailToken: value) printString; cr.
+    "Now test the full step"
+    ctx := Context sender: thisContext receiver: aReceiver method: centerMethod arguments: #().
     ctx step. "push self"
-    newCtx := ctx step. "send topLeft (quick prim 264)"
+    newCtx := ctx step. "send topLeft"
+    stream nextPutAll: 'T17e step2 class='; nextPutAll: newCtx class name; cr.
+    stream nextPutAll: 'T17e step2 value='; nextPutAll: newCtx printString; cr.
+    stream nextPutAll: 'T17e isFailToken(step2)='; nextPutAll: (ctx isFailToken: newCtx) printString; cr.
     (newCtx == ctx)
       ifTrue: [stream nextPutAll: 'T17e OK (quick step)'; cr]
       ifFalse: [stream nextPutAll: 'T17e FAIL: '; nextPutAll: newCtx class name; cr].
