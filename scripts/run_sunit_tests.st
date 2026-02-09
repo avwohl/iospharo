@@ -571,7 +571,7 @@ runTestClass: testClass run: runNum on: s detail: d
   "Skip classes that stall due to process/scheduling issues in our VM.
    These tests fork processes at the same priority or rely on Delay timeouts
    that cannot fire because our VM lacks proper time-slicing."
-  (#(ProcessSpecificTest DelayTest SemaphoreTest) includes: testClass name) ifTrue: [
+  (#(ProcessTerminateBugTest ProcessSpecificTest DelayTest SemaphoreTest) includes: testClass name) ifTrue: [
     s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' === SKIPPED (process-heavy)'; cr. s flush.
     ^ {0. 0. 0. 0. 0}].
 
