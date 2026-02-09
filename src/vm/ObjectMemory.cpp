@@ -1693,286 +1693,19 @@ GCResult ObjectMemory::fullGC() {
         interpreter_->prepareForGC();
     }
 
-    // 1b. Heap consistency check: detect overlapping objects (corrupted slot counts)
-    if (gcCallCount == 1) {
-        ObjectScanner overlapScanner(oldSpaceStart_, oldSpaceFree_);
-        ObjectHeader* prevObj = nullptr;
-        uintptr_t prevEnd = 0;
-        size_t overlapCount = 0;
-        size_t objIdx = 0;
-        while (ObjectHeader* obj = overlapScanner.next()) {
-            uintptr_t objAddr = reinterpret_cast<uintptr_t>(obj);
-            size_t objSize = obj->totalSize();
-            uint32_t cls = obj->classIndex();
-            // Check for suspiciously large objects that might indicate header corruption
-            if (objSize > 10000000 && cls != 0 && overlapCount < 10) {
-                std::cerr << "[HEAP-HUGE] obj#" << objIdx << " @0x" << std::hex << objAddr
-                          << " cls=" << std::dec << cls
-                          << " fmt=" << (int)obj->format()
-                          << " slots=" << obj->slotCount()
-                          << " size=" << objSize << "\n";
-            }
-            // Check classIndex validity
-            if (cls == 0 && overlapCount < 10) {
-                std::cerr << "[HEAP-CLS0] obj#" << objIdx << " @0x" << std::hex << objAddr
-                          << " rawHdr=0x" << obj->rawHeader()
-                          << " slots=" << std::dec << obj->slotCount()
-                          << " size=" << obj->totalSize() << "\n";
-                overlapCount++;
-            }
-            // Check if class table entry exists
-            if (cls > 0 && cls < classTable_.size() && !classTable_[cls].isObject()) {
-                if (overlapCount < 10) {
-                    std::cerr << "[HEAP-BADCLS] obj#" << objIdx << " @0x" << std::hex << objAddr
-                              << " cls=" << std::dec << cls
-                              << " fmt=" << (int)obj->format()
-                              << " slots=" << obj->slotCount() << " (no class table entry)\n";
-                    overlapCount++;
-                }
-            }
-            prevObj = obj;
-            prevEnd = objAddr + objSize;
-            objIdx++;
-        }
-        std::cerr << "[HEAP-CHECK] GC #1: scanned " << objIdx << " objects, issues=" << overlapCount << "\n";
-
-        // Check Form address validity and surrounding objects
-        if (interpreter_) {
-            Oop dForm = interpreter_->displayForm();
-            if (dForm.isObject()) {
-                uintptr_t formAddr = reinterpret_cast<uintptr_t>(dForm.asObjectPtr());
-                ObjectHeader* formObj = dForm.asObjectPtr();
-                std::cerr << "[FORM-CHECK] displayForm @0x" << std::hex << formAddr
-                          << " cls=" << std::dec << formObj->classIndex()
-                          << " fmt=" << (int)formObj->format()
-                          << " slots=" << formObj->slotCount() << "\n";
-
-                // Find the object just before the Form by scanning
-                ObjectHeader* prevFormObj = nullptr;
-                bool foundForm = false;
-                ObjectScanner formFinder(oldSpaceStart_, oldSpaceFree_);
-                while (ObjectHeader* scanObj = formFinder.next()) {
-                    uintptr_t scanAddr = reinterpret_cast<uintptr_t>(scanObj);
-                    if (scanAddr == formAddr) {
-                        std::cerr << "[FORM-CHECK] Form IS at a scanner-visited address\n";
-                        foundForm = true;
-                        break;
-                    }
-                    if (scanAddr > formAddr) {
-                        std::cerr << "[FORM-CHECK] Form NOT at scanner addr! Scanner jumped over it\n";
-                        break;
-                    }
-                    prevFormObj = scanObj;
-                }
-                // Report the last object before/containing the Form
-                if (prevFormObj) {
-                    uintptr_t prevAddr = reinterpret_cast<uintptr_t>(prevFormObj);
-                    size_t prevSize = prevFormObj->totalSize();
-                    uintptr_t prevEnd = prevAddr + prevSize;
-                    std::cerr << "[FORM-CHECK] last obj before: @0x" << std::hex << prevAddr
-                              << " cls=" << std::dec << prevFormObj->classIndex()
-                              << " fmt=" << (int)prevFormObj->format()
-                              << " slots=" << prevFormObj->slotCount()
-                              << " size=" << prevSize
-                              << " end=0x" << std::hex << prevEnd
-                              << " formInside=" << (formAddr < prevEnd ? "YES" : "no")
-                              << " pastFree=" << (prevEnd > (uintptr_t)oldSpaceFree_ ? "YES" : "no")
-                              << std::dec << "\n";
-                    // Also read the ACTUAL header at the Form address
-                    uint64_t formRawHdr = *reinterpret_cast<uint64_t*>(formAddr);
-                    uint32_t formCls = formRawHdr & 0x3FFFFF;
-                    uint32_t formFmt = (formRawHdr >> 24) & 0x1F;
-                    uint32_t formSlots = (formRawHdr >> 56) & 0xFF;
-                    std::cerr << "[FORM-CHECK] rawHdr @Form: 0x" << std::hex << formRawHdr
-                              << " cls=" << std::dec << formCls
-                              << " fmt=" << formFmt
-                              << " slots=" << formSlots << "\n";
-                }
-            }
-        }
-    }
-
-    // 1c. Pre-GC integrity check: find objects with suspicious headers
-    if (gcCallCount <= 3) {
-        size_t badPtrPreGC = 0;
-        ObjectScanner preScanner(oldSpaceStart_, oldSpaceFree_);
-        while (ObjectHeader* obj = preScanner.next()) {
-            size_t numPtrs = pointerSlotsOf(obj);
-            Oop* slots = obj->slots();
-            for (size_t s = 0; s < numPtrs; ++s) {
-                Oop val = slots[s];
-                if (!val.isObject()) continue;
-                ObjectHeader* target = val.asObjectPtr();
-                if (isPermObject(target)) continue;
-                if (!isOldObject(target)) {
-                    if (badPtrPreGC++ < 5) {
-                        std::cerr << "[PRE-GC-BAD] obj=0x" << std::hex
-                                  << (uintptr_t)obj << " cls=" << std::dec
-                                  << obj->classIndex()
-                                  << " fmt=" << (int)obj->format()
-                                  << " slots=" << obj->slotCount()
-                                  << " slot#=" << s << "/" << numPtrs
-                                  << " val=0x" << std::hex << val.rawBits()
-                                  << std::dec << "\n";
-                    }
-                }
-            }
-        }
-        std::cerr << "[PRE-GC-CHECK] GC #" << gcCallCount
-                  << ": badPtrs=" << badPtrPreGC
-                  << " oldSpaceFree=0x" << std::hex << (uintptr_t)oldSpaceFree_
-                  << " used=" << std::dec << ((oldSpaceFree_ - oldSpaceStart_) / (1024*1024)) << "MB\n";
-
-        // COMPREHENSIVE PRE-GC: build valid object set and check ALL pointer slots
-        {
-            std::unordered_set<uintptr_t> preGcValidAddrs;
-            ObjectScanner buildScan(oldSpaceStart_, oldSpaceFree_);
-            while (ObjectHeader* obj = buildScan.next()) {
-                preGcValidAddrs.insert(reinterpret_cast<uintptr_t>(obj));
-            }
-            ObjectScanner permScan(permSpaceStart_, permSpaceEnd_);
-            while (ObjectHeader* obj = permScan.next()) {
-                preGcValidAddrs.insert(reinterpret_cast<uintptr_t>(obj));
-            }
-
-            size_t preStaleCount = 0;
-            ObjectScanner verifyScan(oldSpaceStart_, oldSpaceFree_);
-            while (ObjectHeader* obj = verifyScan.next()) {
-                size_t numPtrs = pointerSlotsOf(obj);
-                Oop* slots = obj->slots();
-                for (size_t s = 0; s < numPtrs; ++s) {
-                    Oop val = slots[s];
-                    if (!val.isObject()) continue;
-                    uintptr_t addr = reinterpret_cast<uintptr_t>(val.asObjectPtr());
-                    // Check old space range
-                    if (addr < reinterpret_cast<uintptr_t>(oldSpaceStart_)) continue;
-                    if (addr >= reinterpret_cast<uintptr_t>(oldSpaceEnd_)) {
-                        if (addr < reinterpret_cast<uintptr_t>(permSpaceStart_) ||
-                            addr >= reinterpret_cast<uintptr_t>(permSpaceEnd_)) continue;
-                    }
-                    if (preGcValidAddrs.find(addr) == preGcValidAddrs.end()) {
-                        if (preStaleCount++ < 10) {
-                            std::cerr << "[PRE-GC-STALE] obj=0x" << std::hex << (uintptr_t)obj
-                                      << " cls=" << std::dec << obj->classIndex()
-                                      << " fmt=" << (int)obj->format()
-                                      << " slot#=" << s << "/" << numPtrs
-                                      << " val=0x" << std::hex << val.rawBits() << std::dec << "\n";
-                        }
-                    }
-                }
-            }
-            std::cerr << "[PRE-GC-COMPREHENSIVE] GC #" << gcCallCount
-                      << ": staleSlots=" << preStaleCount
-                      << " validObjs=" << preGcValidAddrs.size() << "\n";
-        }
-    }
-
     // 2. Clear all marks
     {
-        size_t clearCount = 0;
         ObjectScanner scanner(oldSpaceStart_, oldSpaceFree_);
         while (ObjectHeader* obj = scanner.next()) {
             obj->setMarked(false);
-            clearCount++;
-        }
-        if (gcCallCount <= 3) {
-            std::cerr << "[GC] Cleared marks on " << clearCount << " objects"
-                      << " in " << ((oldSpaceFree_ - oldSpaceStart_) / (1024*1024)) << "MB\n";
         }
     }
 
     // 3. Mark phase
     size_t markedCount = markPhase();
 
-    // 3b. Post-mark validation using valid object address set.
-    //     Checks that all marked objects' pointer slots point to valid
-    //     object starts (not interior pointers or freed addresses).
-    if (gcCallCount <= 3) {
-        // Build valid object start address set
-        std::unordered_set<uintptr_t> validMarkAddrs;
-        {
-            ObjectScanner buildMarkScan(oldSpaceStart_, oldSpaceFree_);
-            while (ObjectHeader* vobj = buildMarkScan.next()) {
-                validMarkAddrs.insert(reinterpret_cast<uintptr_t>(vobj));
-            }
-            ObjectScanner permMarkScan(permSpaceStart_, permSpaceEnd_);
-            while (ObjectHeader* vobj = permMarkScan.next()) {
-                validMarkAddrs.insert(reinterpret_cast<uintptr_t>(vobj));
-            }
-        }
-
-        size_t markBug = 0;
-        size_t interiorPtrs = 0;
-        size_t checkedPtrs = 0;
-        ObjectScanner markCheck(oldSpaceStart_, oldSpaceFree_);
-        while (ObjectHeader* obj = markCheck.next()) {
-            if (!obj->isMarked()) continue;
-            size_t numPtrs = pointerSlotsOf(obj);
-            Oop* slots = obj->slots();
-            for (size_t s = 0; s < numPtrs; ++s) {
-                Oop val = slots[s];
-                if (!val.isObject()) continue;
-                uintptr_t targetAddr = reinterpret_cast<uintptr_t>(val.asObjectPtr());
-                // Skip if outside old/perm space
-                if (targetAddr < reinterpret_cast<uintptr_t>(oldSpaceStart_)) continue;
-                if (targetAddr >= reinterpret_cast<uintptr_t>(oldSpaceEnd_) &&
-                    (targetAddr < reinterpret_cast<uintptr_t>(permSpaceStart_) ||
-                     targetAddr >= reinterpret_cast<uintptr_t>(permSpaceEnd_))) continue;
-                checkedPtrs++;
-                if (validMarkAddrs.find(targetAddr) == validMarkAddrs.end()) {
-                    // Stale or interior pointer in a marked object!
-                    // Check if it's beyond used heap or an interior pointer
-                    bool beyondUsed = (targetAddr >= reinterpret_cast<uintptr_t>(oldSpaceFree_));
-                    if (markBug++ < 20) {
-                        std::cerr << "[MARK-STALE] live obj=0x" << std::hex
-                                  << (uintptr_t)obj << std::dec
-                                  << " cls=" << obj->classIndex()
-                                  << " fmt=" << (int)obj->format()
-                                  << " slot#=" << s << "/" << numPtrs
-                                  << " -> invalid target=0x" << std::hex
-                                  << targetAddr << std::dec
-                                  << (beyondUsed ? " (BEYOND oldSpaceFree_)" : " (interior)")
-                                  << "\n";
-                    }
-                    if (!beyondUsed) interiorPtrs++;
-                }
-            }
-        }
-        std::cerr << "[POST-MARK-CHECK] GC #" << gcCallCount
-                  << ": stalePtrs=" << markBug
-                  << " interiorPtrs=" << interiorPtrs
-                  << " checkedPtrs=" << checkedPtrs
-                  << " marked=" << markedCount << "\n";
-    }
-
     // 4. Plan + update + copy (compact)
     planCompactSavingForwarders();
-
-    // 4a-inter. Check headers after plan phase (before update)
-    if (gcCallCount <= 2) {
-        // After plan: grey objects have forwarding addr in slot 0, but headers should be intact
-        size_t badHeaders = 0;
-        ObjectScanner planCheck(oldSpaceStart_, oldSpaceFree_);
-        while (ObjectHeader* obj = planCheck.next()) {
-            if (!obj->isMarked()) continue;
-            uint32_t cls = obj->classIndex();
-            uint8_t fmt = static_cast<uint8_t>(obj->format());
-            size_t slots = obj->slotCount();
-            // Format 0 (zero-sized) should have 0 slots
-            if (fmt == 0 && slots > 0 && cls != 0) {
-                if (badHeaders++ < 5) {
-                    std::cerr << "[PLAN-PHASE-BAD] obj=0x" << std::hex << (uintptr_t)obj
-                              << std::dec << " cls=" << cls << " fmt=" << (int)fmt
-                              << " slots=" << slots
-                              << " grey=" << obj->isGrey()
-                              << " raw=0x" << std::hex << obj->rawHeader() << std::dec << "\n";
-                }
-            }
-        }
-        std::cerr << "[PLAN-PHASE-CHECK] GC #" << gcCallCount
-                  << ": badHeaders=" << badHeaders << "\n";
-    }
-
     updatePointersAfterCompact();
 
     copyAndUnmark();
@@ -2054,226 +1787,6 @@ GCResult ObjectMemory::fullGC() {
             fflush(gcLog);
             fclose(gcLog);
         }
-    }
-
-    // Post-GC: find nextPendingCallback method and check its heap neighborhood
-    if (gcCallCount <= 3) {
-        FILE* npcPostLog = fopen("/tmp/iospharo-post-gc.log", "w");
-        if (npcPostLog) {
-            ObjectHeader* prevObj = nullptr;
-            uintptr_t prevEnd = 0;
-            size_t npcFound = 0;
-            ObjectScanner npcScanner(oldSpaceStart_, oldSpaceFree_);
-            while (ObjectHeader* obj = npcScanner.next()) {
-                if (!obj->isCompiledMethod()) {
-                    prevObj = obj;
-                    prevEnd = reinterpret_cast<uintptr_t>(obj) + obj->totalSize();
-                    continue;
-                }
-                // Check if this CompiledMethod's last selector is 'nextPendingCallback'
-                size_t nSlots = obj->slotCount();
-                if (nSlots == 0) { prevObj = obj; prevEnd = (uintptr_t)obj + obj->totalSize(); continue; }
-                Oop hdr0 = obj->slotAt(0);
-                if (!hdr0.isSmallInteger()) { prevObj = obj; prevEnd = (uintptr_t)obj + obj->totalSize(); continue; }
-                size_t numLits = hdr0.asSmallInteger() & 0x7FFF;
-                if (numLits < 2 || numLits >= nSlots) { prevObj = obj; prevEnd = (uintptr_t)obj + obj->totalSize(); continue; }
-                Oop selOop = obj->slotAt(numLits - 1);
-                if (!selOop.isObject() || selOop.rawBits() < 0x10000) { prevObj = obj; prevEnd = (uintptr_t)obj + obj->totalSize(); continue; }
-                ObjectHeader* selHdr = selOop.asObjectPtr();
-                if (!selHdr->isBytesObject() || selHdr->byteSize() != 19) { prevObj = obj; prevEnd = (uintptr_t)obj + obj->totalSize(); continue; }
-                if (memcmp(selHdr->bytes(), "nextPendingCallback", 19) != 0) { prevObj = obj; prevEnd = (uintptr_t)obj + obj->totalSize(); continue; }
-
-                npcFound++;
-                uintptr_t objAddr = reinterpret_cast<uintptr_t>(obj);
-                size_t objSize = obj->totalSize();
-                uintptr_t objOffset = objAddr - reinterpret_cast<uintptr_t>(oldSpaceStart_);
-                fprintf(npcPostLog, "[POST-GC-NPC #%zu] method @0x%llx offset=0x%llx cls=%u fmt=%d slots=%zu size=%zu\n",
-                        npcFound, (unsigned long long)objAddr, (unsigned long long)objOffset,
-                        obj->classIndex(), (int)obj->format(), nSlots, objSize);
-                fprintf(npcPostLog, "  rawHdr=0x%llx\n", (unsigned long long)obj->rawHeader());
-                fprintf(npcPostLog, "  slot0=0x%llx (isSmi=%d)\n",
-                        (unsigned long long)hdr0.rawBits(), hdr0.isSmallInteger());
-                // Previous object info
-                if (prevObj) {
-                    uintptr_t pAddr = reinterpret_cast<uintptr_t>(prevObj);
-                    fprintf(npcPostLog, "  prev @0x%llx cls=%u fmt=%d slots=%zu size=%zu end=0x%llx gap=%lld\n",
-                            (unsigned long long)pAddr, prevObj->classIndex(),
-                            (int)prevObj->format(), prevObj->slotCount(),
-                            prevObj->totalSize(), (unsigned long long)prevEnd,
-                            (long long)(objAddr - prevEnd));
-                    if (prevEnd > objAddr) {
-                        fprintf(npcPostLog, "  *** OVERLAP WITH PREVIOUS! ***\n");
-                    }
-                }
-                // Check the 24 bytes before the header for any recognizable pattern
-                uint64_t* pre = reinterpret_cast<uint64_t*>(objAddr);
-                fprintf(npcPostLog, "  header-3: 0x%llx\n", (unsigned long long)*(pre - 3));
-                fprintf(npcPostLog, "  header-2: 0x%llx\n", (unsigned long long)*(pre - 2));
-                fprintf(npcPostLog, "  header-1: 0x%llx\n", (unsigned long long)*(pre - 1));
-                fprintf(npcPostLog, "  header+0: 0x%llx (this is the header)\n", (unsigned long long)*pre);
-                fprintf(npcPostLog, "  header+1: 0x%llx (slot 0)\n", (unsigned long long)*(pre + 1));
-
-                prevObj = obj;
-                prevEnd = objAddr + objSize;
-            }
-            fprintf(npcPostLog, "[POST-GC-NPC] total found=%zu\n", npcFound);
-            fflush(npcPostLog);
-            fclose(npcPostLog);
-        }
-    }
-
-    // Post-GC integrity check (after afterGC): validate all pointer slots
-    if (gcCallCount <= 3) {
-        size_t badSlotCount = 0;
-        ObjectScanner postScanner(oldSpaceStart_, oldSpaceFree_);
-        while (ObjectHeader* obj = postScanner.next()) {
-            size_t numPtrs = pointerSlotsOf(obj);
-            Oop* slots = obj->slots();
-            for (size_t s = 0; s < numPtrs; ++s) {
-                Oop val = slots[s];
-                if (!val.isObject()) continue;
-                ObjectHeader* target = val.asObjectPtr();
-                if (isPermObject(target)) continue;
-                if (!isOldObject(target)) {
-                    if (badSlotCount++ < 10) {
-                        std::cerr << "[POST-GC-BAD-SLOT] obj=0x" << std::hex
-                                  << (uintptr_t)obj << " cls=" << std::dec
-                                  << obj->classIndex()
-                                  << " slot#=" << s << "/" << numPtrs
-                                  << " val=0x" << std::hex << val.rawBits()
-                                  << std::dec << "\n";
-                    }
-                }
-            }
-        }
-        std::cerr << "[POST-GC-CHECK] GC #" << gcCallCount
-                  << ": badSlots=" << badSlotCount << "\n";
-    }
-
-    // COMPREHENSIVE check: scan ALL slots (not just pointer slots) for
-    // stale heap pointers. This catches cases where pointerSlotsOf() returns
-    // too few slots, which updatePointersAfterCompact and the normal integrity
-    // check would both miss (they use the same function).
-    if (gcCallCount <= 3) {
-        // Phase 1: Build a set of all valid object start addresses
-        std::unordered_set<uintptr_t> validObjAddrs;
-        {
-            ObjectScanner buildScan(oldSpaceStart_, oldSpaceFree_);
-            while (ObjectHeader* obj = buildScan.next()) {
-                validObjAddrs.insert(reinterpret_cast<uintptr_t>(obj));
-            }
-        }
-        // Also add perm space objects
-        {
-            ObjectScanner permScan(permSpaceStart_, permSpaceEnd_);
-            while (ObjectHeader* obj = permScan.next()) {
-                validObjAddrs.insert(reinterpret_cast<uintptr_t>(obj));
-            }
-        }
-
-        // Phase 2: For every slot in every object, if it looks like a heap pointer,
-        // verify it points to a valid object start
-        size_t staleCount = 0;
-        ObjectScanner verifyScan(oldSpaceStart_, oldSpaceFree_);
-        while (ObjectHeader* obj = verifyScan.next()) {
-            size_t totalSlots = obj->slotCount();
-            size_t numPtrs = pointerSlotsOf(obj);
-            Oop* slots = obj->slots();
-
-            // Check ALL slots, not just pointer slots
-            for (size_t s = 0; s < totalSlots; ++s) {
-                uint64_t raw = reinterpret_cast<uint64_t*>(slots)[s];
-                // Is this a heap-pointer-looking value? (tag bits = 000, within heap range)
-                if ((raw & 7) != 0) continue;  // Not tag-0 (object pointer)
-                if (raw == 0) continue;  // Null/zero
-                uintptr_t addr = static_cast<uintptr_t>(raw);
-                if (addr < reinterpret_cast<uintptr_t>(oldSpaceStart_)) continue;
-                if (addr >= reinterpret_cast<uintptr_t>(oldSpaceEnd_)) {
-                    // Check perm space
-                    if (addr < reinterpret_cast<uintptr_t>(permSpaceStart_) ||
-                        addr >= reinterpret_cast<uintptr_t>(permSpaceEnd_)) continue;
-                }
-                // This looks like a heap pointer. Is it at a valid object start?
-                if (validObjAddrs.find(addr) == validObjAddrs.end()) {
-                    // STALE! This slot contains a pointer-like value that doesn't
-                    // point to a valid object.
-                    bool isPointerSlot = (s < numPtrs);
-                    staleCount++;
-                    // Log stale pointer slots (not Context garbage in beyond-stackp slots)
-                    if (isPointerSlot && staleCount <= 30) {
-                        std::cerr << "[STALE-PTR] obj=0x" << std::hex << (uintptr_t)obj
-                                  << " cls=" << std::dec << obj->classIndex()
-                                  << " fmt=" << (int)obj->format()
-                                  << " slot#=" << s << "/" << totalSlots
-                                  << " (ptrSlots=" << numPtrs << ")"
-                                  << " val=0x" << std::hex << raw << std::dec;
-                        // Dump what's at the target address
-                        auto* tgt = reinterpret_cast<uint8_t*>(addr);
-                        if (tgt >= oldSpaceStart_ && tgt + 8 <= oldSpaceFree_) {
-                            uint64_t rawHdr = *reinterpret_cast<uint64_t*>(tgt);
-                            uint32_t tgtCls = rawHdr & 0x3FFFFF;
-                            uint32_t tgtFmt = (rawHdr >> 24) & 0x1F;
-                            uint32_t tgtSlots = (rawHdr >> 56) & 0xFF;
-                            std::cerr << " [target rawHdr=0x" << std::hex << rawHdr
-                                      << " cls=" << std::dec << tgtCls
-                                      << " fmt=" << tgtFmt
-                                      << " slots=" << tgtSlots << "]";
-                            // Check if target-8 is a valid object start (off-by-one-header pattern)
-                            uintptr_t prevAddr = addr - 8;
-                            if (validObjAddrs.count(prevAddr)) {
-                                ObjectHeader* prevObj = reinterpret_cast<ObjectHeader*>(prevAddr);
-                                std::cerr << " [OFF-BY-8! valid obj at 0x" << std::hex << prevAddr
-                                          << " cls=" << std::dec << prevObj->classIndex()
-                                          << " fmt=" << (int)prevObj->format()
-                                          << " slots=" << prevObj->slotCount() << "]";
-                            }
-                            // Find the containing object by scanning backward
-                            for (size_t backOff = 8; backOff <= 4096; backOff += 8) {
-                                uintptr_t prevAddr = addr - backOff;
-                                if (prevAddr < reinterpret_cast<uintptr_t>(oldSpaceStart_)) break;
-                                if (validObjAddrs.count(prevAddr)) {
-                                    ObjectHeader* containingObj = reinterpret_cast<ObjectHeader*>(prevAddr);
-                                    size_t contSize = containingObj->totalSize();
-                                    uintptr_t contEnd = prevAddr + contSize;
-                                    bool isInside = (addr < contEnd);
-                                    std::cerr << " [prev valid obj -" << backOff << "b: 0x"
-                                              << std::hex << prevAddr
-                                              << " cls=" << std::dec << containingObj->classIndex()
-                                              << " fmt=" << (int)containingObj->format()
-                                              << " slots=" << containingObj->slotCount()
-                                              << " size=" << contSize
-                                              << (isInside ? " CONTAINS" : " before") << "]";
-                                    break;
-                                }
-                            }
-                        } else if (tgt >= oldSpaceFree_ && tgt < oldSpaceEnd_) {
-                            std::cerr << " [target BEYOND oldSpaceFree_]";
-                        }
-                        std::cerr << "\n";
-                    }
-                }
-            }
-        }
-
-        // Also check interpreter roots
-        size_t staleRootCount = 0;
-        if (interpreter_) {
-            interpreter_->forEachRoot([&](Oop& oop) {
-                if (!oop.isObject()) return;
-                uintptr_t addr = reinterpret_cast<uintptr_t>(oop.asObjectPtr());
-                if (validObjAddrs.find(addr) == validObjAddrs.end()) {
-                    if (staleRootCount++ < 5) {
-                        std::cerr << "[STALE-ROOT] root Oop=0x" << std::hex
-                                  << oop.rawBits() << std::dec << "\n";
-                    }
-                }
-            });
-        }
-
-        std::cerr << "[COMPREHENSIVE-CHECK] GC #" << gcCallCount
-                  << ": staleSlots=" << staleCount
-                  << " staleRoots=" << staleRootCount
-                  << " validObjs=" << validObjAddrs.size() << "\n";
     }
 
     // Record compacted size for threshold-based GC triggering
@@ -3124,56 +2637,7 @@ bool ObjectMemory::planCompactSavingForwarders() {
         toFinger += objSize;
     }
 
-    std::cerr << "[GC-PLAN] dead=" << deadCount << " (" << deadBytes << " bytes)"
-              << " move=" << moveCount << " stay=" << stayCount << "\n";
-
-    // Verify no overlapping destinations: rescan and check that all forwarding
-    // addresses produce non-overlapping destination ranges.
-    {
-        FILE* planLog = fopen("/tmp/iospharo-plan-check.log", "w");
-        if (planLog) {
-            uint8_t* checkFinger = oldSpaceStart_;
-            size_t overlapCount = 0;
-            ObjectScanner checkScanner(oldSpaceStart_, oldSpaceFree_);
-            while (ObjectHeader* obj = checkScanner.next()) {
-                if (!obj->isMarked()) continue;
-
-                size_t sz = obj->totalSize();
-                uint8_t* oAddr = reinterpret_cast<uint8_t*>(obj);
-                bool isOvf = obj->hasOverflowSlots();
-                uint8_t* oStart = isOvf ? (oAddr - 8) : oAddr;
-
-                if (obj->isPinned()) {
-                    if (checkFinger < oStart) checkFinger = oStart;
-                    checkFinger += sz;
-                    continue;
-                }
-
-                uint8_t* destH = isOvf ? (checkFinger + 8) : checkFinger;
-                checkFinger += sz;
-
-                // If this object is grey, verify its forwarding address matches our expected dest
-                if (obj->isGrey()) {
-                    Oop* firstField = reinterpret_cast<Oop*>(obj + 1);
-                    Oop fwd = *firstField;
-                    if (fwd.isObject()) {
-                        uintptr_t fwdAddr = reinterpret_cast<uintptr_t>(fwd.asObjectPtr());
-                        if (fwdAddr != reinterpret_cast<uintptr_t>(destH)) {
-                            fprintf(planLog, "[PLAN-MISMATCH] obj=0x%llx sz=%zu destH=0x%llx fwd=0x%llx delta=%lld\n",
-                                    (unsigned long long)(uintptr_t)oAddr, sz,
-                                    (unsigned long long)(uintptr_t)destH,
-                                    (unsigned long long)fwdAddr,
-                                    (long long)(fwdAddr - (uintptr_t)destH));
-                            overlapCount++;
-                        }
-                    }
-                }
-            }
-            fprintf(planLog, "[PLAN-CHECK] mismatches=%zu\n", overlapCount);
-            fflush(planLog);
-            fclose(planLog);
-        }
-    }
+    // Plan summary logged by fullGC caller
 
     return true;  // All objects planned in one pass
 }
@@ -3291,8 +2755,6 @@ void ObjectMemory::updatePointersAfterCompact() {
 }
 
 void ObjectMemory::copyAndUnmark() {
-    static int gcCopyGeneration = 0;
-    int currentGen = gcCopyGeneration++;
     Oop* savedFieldPtr = savedFirstFieldsSpace_.start;
     uint8_t* toFinger = oldSpaceStart_;
 
@@ -3341,27 +2803,6 @@ void ObjectMemory::copyAndUnmark() {
         movedObj->setMarked(false);
         movedObj->setGrey(false);
 
-        // GC #1 diagnostic: log objects landing near known corruption addresses
-        if (currentGen == 0) {
-            uintptr_t dest = (uintptr_t)destHeaderPos;
-            uintptr_t base = (uintptr_t)oldSpaceStart_;
-            size_t offset = dest - base;
-            // Log objects near the corruption zone (around 0x36a000-0x36c000)
-            if (offset >= 0x36a000 && offset < 0x36c000) {
-                std::cerr << "[COPY-TRACE] dest=0x" << std::hex << dest
-                          << " offset=0x" << offset
-                          << " src=0x" << (uintptr_t)objAddr
-                          << " cls=" << std::dec << movedObj->classIndex()
-                          << " fmt=" << (int)movedObj->format()
-                          << " slots=" << movedObj->slotCount()
-                          << " size=" << objSize
-                          << " grey=" << obj->isGrey()
-                          << " overflow=" << isOverflow
-                          << " raw=0x" << std::hex << movedObj->rawHeader()
-                          << std::dec << "\n";
-            }
-        }
-
         toFinger += objSize;
     }
     // gcCopyGeneration was already incremented at function start
@@ -3404,6 +2845,33 @@ size_t ObjectMemory::verifyHeapPointers() {
         }
     }
     fprintf(log, "[VERIFY] %zu valid objects in heap\n", validAddrs.size());
+
+    // Identify classIndex 36: print the class name
+    if (classTable_.size() > 36 && classTable_[36].isObject()) {
+        Oop cls36 = classTable_[36];
+        // Class name is typically in slot 5 or 6 (Symbol)
+        ObjectHeader* clsHdr = cls36.asObjectPtr();
+        if (clsHdr->slotCount() > 6) {
+            Oop name = clsHdr->slotAt(5);  // Name slot in standard Pharo class layout
+            if (name.isObject() && name.rawBits() > 0x10000) {
+                ObjectHeader* nameHdr = name.asObjectPtr();
+                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                    std::string className((char*)nameHdr->bytes(), nameHdr->byteSize());
+                    fprintf(log, "[VERIFY] classIndex 36 = '%s'\n", className.c_str());
+                } else {
+                    // Try slot 6
+                    name = clsHdr->slotAt(6);
+                    if (name.isObject() && name.rawBits() > 0x10000) {
+                        nameHdr = name.asObjectPtr();
+                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
+                            std::string className((char*)nameHdr->bytes(), nameHdr->byteSize());
+                            fprintf(log, "[VERIFY] classIndex 36 = '%s' (slot 6)\n", className.c_str());
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // Pass 2: Check every pointer slot in every pointer-format object
     size_t badPtrs = 0;
@@ -3475,6 +2943,27 @@ size_t ObjectMemory::verifyHeapPointers() {
                             fmt, i, (unsigned long long)addr,
                             (unsigned long long)targetWord,
                             pastHeap ? " [PAST-HEAP]" : "");
+                }
+                // For the first 5 bad pointers, dump the containing object's context
+                if (badPtrs <= 5) {
+                    fprintf(log, "  container: cls=%u fmt=%d slots=%zu\n",
+                            obj->classIndex(), fmt, nSlots);
+                    // Dump first 6 slots (fixed fields for Context/MethodDict)
+                    for (size_t s = 0; s < std::min(nSlots, (size_t)8); s++) {
+                        Oop sv = obj->slotAt(s);
+                        const char* desc = "";
+                        if (sv.isSmallInteger()) desc = " (SmallInt)";
+                        else if (sv.isNil()) desc = " (nil)";
+                        else if (sv.isObject() && sv.rawBits() > 0x10000) {
+                            ObjectHeader* svh = sv.asObjectPtr();
+                            static char buf[128];
+                            snprintf(buf, sizeof(buf), " (obj cls=%u fmt=%d slots=%zu)",
+                                     svh->classIndex(), (int)svh->format(), svh->slotCount());
+                            desc = buf;
+                        }
+                        fprintf(log, "  slot[%zu]=0x%llx%s\n", s,
+                                (unsigned long long)sv.rawBits(), desc);
+                    }
                 }
             }
         }

@@ -519,10 +519,6 @@ private:
     std::array<uint8_t, 256> recentBytecodes_;
     size_t recentBytecodeIdx_ = 0;
 
-    // GC corruption watchpoint: track a specific method header to catch the exact writer
-    ObjectHeader* watchedMethodObj_ = nullptr;   // Pointer to the watched method's ObjectHeader
-    uint64_t watchedMethodGoodHeader_ = 0;       // Expected header value (valid CompiledMethod header)
-
     /// Clear the method cache (used when methods are modified)
     void flushMethodCache() {
         for (auto& entry : methodCache_) {

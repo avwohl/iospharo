@@ -812,6 +812,15 @@ int main(int argc, char* argv[]) {
         gDisplaySurface = nullptr;
     }
 
+    // Post-execution heap verification
+    std::cout << "\n=== Post-Execution Heap Verification ===" << std::endl;
+    badPtrs = memory.verifyHeapPointers();
+    if (badPtrs > 0) {
+        std::cout << "WARNING: " << badPtrs << " bad pointers found after execution! See /tmp/iospharo-verify.log" << std::endl;
+    } else {
+        std::cout << "All heap pointers still valid after execution." << std::endl;
+    }
+
     std::cout << "\n=== Test Complete ===" << std::endl;
     return 0;
 }
