@@ -783,6 +783,8 @@ runTestClass: testClass run: runNum on: s detail: d
      TraitWithMethodsInProtocolsTest
      "Ring: RGReadOnlyImageBackendTest testBehavior timeout"
      RGReadOnlyImageBackendTest
+     "Symbol class>>asSymbol / Symbol>>numArgs"
+     SelfVariableTest
      "Announcements with trait modifications (timeouts)"
      MethodAnnouncementsTest ProtocolAnnouncementsTest
      "Method constants (assert:identicalTo: on nil, method constant feature)"
@@ -880,8 +882,6 @@ runTestClass: testClass run: runNum on: s detail: d
         testTranscriptPrintingWithOpenedTranscriptExists
         "MethodMapTest: dead context"
         testCopiedVarFromDeadContext
-        "SelfVariableTest: Symbol>>numArgs"
-        testUsingMethodsSuper
         "OCClosureCompilerTest: debugger temp"
         testDebuggerTempAccess
         "OCDoitTest: ivar read"
