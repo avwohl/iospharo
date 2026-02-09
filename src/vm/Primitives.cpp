@@ -7977,10 +7977,7 @@ PrimitiveResult Interpreter::primitiveHashMultiply(int argCount) {
 
 // Primitive 167: Yield to other processes of same priority
 PrimitiveResult Interpreter::primitiveYield(int argCount) {
-    static int yieldCount = 0;
     static int noSwitchCount = 0;
-
-    yieldCount++;
 
     // Get the active process
     Oop activeProcess = getActiveProcess();
@@ -8015,95 +8012,43 @@ PrimitiveResult Interpreter::primitiveYield(int argCount) {
     if (!firstLink.isNil()) {
         // There are other processes waiting - put current process at end of queue
         // and switch to the first one
-        noSwitchCount = 0;  // Reset counter
+        noSwitchCount = 0;
 
-        // Save current context
-        Oop currentContext = activeContext_;
-
-        // Debug: log what we're saving
-        static FILE* yieldSaveLog = nullptr;
-        if (!yieldSaveLog) yieldSaveLog = nullptr;
-        if (yieldSaveLog) {
-            std::string ctxMethod = "?";
-            if (currentContext.isObject() && currentContext.rawBits() > 0x10000) {
-                Oop method = memory_.fetchPointer(3, currentContext);
-                if (method.isObject() && method.rawBits() > 0x10000) {
-                    Oop mhdr = memory_.fetchPointer(0, method);
-                    if (mhdr.isSmallInteger()) {
-                        int64_t hv = mhdr.asSmallInteger();
-                        int nLits = hv & 0x7FFF;
-                        if (nLits >= 2 && nLits < 100) {
-                            Oop sel = memory_.fetchPointer(nLits - 1, method);
-                            if (sel.isObject()) {
-                                ObjectHeader* selH = sel.asObjectPtr();
-                                if (selH->isBytesObject() && selH->byteSize() < 100) {
-                                    ctxMethod = std::string((char*)selH->bytes(), selH->byteSize());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            fprintf(yieldSaveLog, "[YIELD-SAVE #%d] Saving context 0x%llx (method=#%s) for process 0x%llx\n",
-                    yieldCount, (unsigned long long)currentContext.rawBits(), ctxMethod.c_str(),
-                    (unsigned long long)activeProcess.rawBits());
-            fflush(yieldSaveLog);
-        }
-
-        memory_.storePointer(ProcessSuspendedContextIndex, activeProcess, currentContext);
+        // CRITICAL: Complete the primitive's stack effect BEFORE saving context.
+        // Pop receiver (+ args), push result. For yield, result is self (Processor).
+        // This ensures the saved context has the correct post-primitive stack state,
+        // so when this process is later resumed, it continues with the result on stack.
+        Oop receiver = stackValue(argCount);  // The Processor
+        primitiveSuccess(receiver);
 
         // Add current process to end of priority list
         addLastLinkToList(activeProcess, priorityList);
 
-        // Remove first process from list and make it active
+        // Remove first process from list
         Oop nextProcess = removeFirstLinkOfList(priorityList);
-        setActiveProcess(nextProcess);
 
-        // Switch to the next process's context
-        Oop newContext = memory_.fetchPointer(ProcessSuspendedContextIndex, nextProcess);
-
-        // CRITICAL: Only clear suspendedContext if we have a valid context to execute
-        // Otherwise the process will be left with nil context and can't be resumed
-        static FILE* yieldCtxLog = nullptr;
-        static int yieldCtxCount = 0;
-        if (!yieldCtxLog) yieldCtxLog = nullptr;
-        yieldCtxCount++;
-        if (yieldCtxLog && yieldCtxCount <= 50) {
-            fprintf(yieldCtxLog, "[YIELD-CTX #%d] nextProcess=0x%llx context=0x%llx isNil=%d\n",
-                    yieldCtxCount, (unsigned long long)nextProcess.rawBits(),
-                    (unsigned long long)newContext.rawBits(),
-                    newContext.isNil() ? 1 : 0);
-            fflush(yieldCtxLog);
-        }
-
-        if (!newContext.isNil() && newContext.isObject()) {
-            // Only clear suspendedContext AFTER we confirm we have a valid context
-            memory_.storePointer(ProcessSuspendedContextIndex, nextProcess, memory_.nil());
-            executeFromContext(newContext);
-        } else {
-            // WARNING: Process has nil context, can't execute
-            if (yieldCtxLog && yieldCtxCount <= 50) {
-                fprintf(yieldCtxLog, "[YIELD-CTX #%d] SKIPPING process with nil context!\n", yieldCtxCount);
-                fflush(yieldCtxLog);
-            }
-            // Don't switch to this process, keep current process running
-        }
-    } else {
-        // No process switch happened - track consecutive yields without switch
-        noSwitchCount++;
-
-        // If we're spin-yielding (no other process to switch to), sleep briefly
-        // This prevents CPU spinning when the delay mechanism isn't working
-        if (noSwitchCount > 10) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            noSwitchCount = 0;  // Reset after sleeping
-
-            // Process any pending external semaphore signals
-            processPendingSignals();
-        }
+        // Use transferTo for proper context save/switch.
+        // transferTo calls materializeFrameStack() to sync IP/stack to context,
+        // saves context to old process, and loads new process's context.
+        g_xferReason = "primYield";
+        transferTo(nextProcess);
+        return PrimitiveResult::Success;
     }
 
-    // Return receiver (the process or processor)
+    // No process switch happened - track consecutive yields without switch
+    noSwitchCount++;
+
+    // If we're spin-yielding (no other process to switch to), sleep briefly
+    // This prevents CPU spinning when the delay mechanism isn't working
+    if (noSwitchCount > 10) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        noSwitchCount = 0;
+
+        // Process any pending external semaphore signals
+        processPendingSignals();
+    }
+
+    // No switch: return receiver
     primitiveSuccess(stackTop());
     return PrimitiveResult::Success;
 }

@@ -604,17 +604,14 @@ runTestClass: testClass run: runNum on: s detail: d
         testOneGBAllocation testFastPointersTo
         testBenchFor testBenchForException
         testCannotReturn testOneGWordAllocation
-        "Delay/yield-dependent (SemaphoreTest)"
+        "Delay/config-dependent (SemaphoreTest)"
         testAfterCriticalWait testWaitAndWaitTimeoutTogether
         testWaitTimeoutMSecs testWaitTimeoutSecondsOnCompletion
-        testInCriticalWait testMutualExclusion
-        testReturnsAsManyWaitsAsSignalsReceived testSchedulesFIFO
-        testSimpleCommunication testWaitTimeDuration
+        testSchedulesFIFO testWaitTimeDuration
         testWaitTimeDurationWithCompletionAndTimeoutBlocks
         testWaitTimeoutSecondsOnCompletionOnTimeout
-        "Delay/yield-dependent (ProcessSpecificTest)"
-        testDynamicVariable testInheritableVariable testLocalVariable
-        testDynamicVariableAccessFromDifferentProcess) includes: sel) or: [
+        "Delay-dependent (ProcessSpecificTest)"
+        testDynamicVariable testInheritableVariable testLocalVariable) includes: sel) or: [
          "Skip tests that iterate all heap objects (stalls with broken timer)"
          sel beginsWith: 'testPointers']) ifFalse: [
       | result |
