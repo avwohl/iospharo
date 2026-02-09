@@ -527,6 +527,15 @@ runAllTests
       (Smalltalk globals at: name ifAbsent: [nil])
         ifNotNil: [:cls | addOnce value: cls]].
 
+  "=== Tier 6: Extended coverage ==="
+  #(SplitJoinTest CollectionArithmeticTest MethodDictionaryTest
+    Float32ArrayTest WordArrayTest IntegerArrayTest
+    ClassDescriptionProtocolsTest
+    SmallDictionaryTest ValueLinkTest
+    ChunkReadStreamTest MultiByteBinaryOrTextStreamTest) do: [:name |
+      (Smalltalk globals at: name ifAbsent: [nil])
+        ifNotNil: [:cls | addOnce value: cls]].
+
   "Open output files"
   stream := '/tmp/sunit_test_results.txt' asFileReference writeStream.
   detail := '/tmp/sunit_test_detail.txt' asFileReference writeStream.
