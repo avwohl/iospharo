@@ -41,66 +41,16 @@ A Spur-compatible mark-compact GC has been implemented following the plan in
 4. **Phase 4 (Planning Compactor)**: Spur-style plan/update/copy with saved first
    fields in eden scratch space, grey bit tracking for forwarding addresses
 
-### Current bug: Compactor corrupts pointers
+### GC compactor — Working (2026-02-08)
 
-**The forced GC test (fullGC after image load, before execution) crashes the VM.**
+Full mark-compact GC now works correctly. All 4287 tests pass after GC.
 
-Symptoms:
-- Mark phase works: marks 63,308 objects in ~62MB, takes 33ms
-- Compactor reports reclaiming ~296 bytes (a few dead objects exist in fresh image)
-- After GC, execution crashes with SIGSEGV in `lookupInMethodDict` — a method
-  dictionary pointer was corrupted during compaction
-
-**Root cause analysis (partially debugged):**
-
-Two bugs were found and fixed in commit 5f73cd8:
-
-1. **Zero-slot forwarding**: `planCompactSavingForwarders()` only stored forwarding
-   addresses for objects with `slotCount() > 0`. Zero-slot objects that moved got
-   no forwarding → dangling pointers. Fixed by using raw `(obj + 1)` pointer.
-
-2. **Saved first fields not updated**: The saved first fields in eden scratch space
-   weren't being scanned for forward resolution. If slot 0 of object A pointed to
-   moved object B, the saved copy of A's slot 0 wouldn't be updated. Added a
-   lockstep scan pass to resolve forwarding in saved fields.
-
-**These fixes reduced the corruption but did NOT eliminate it.** The VM still
-crashes after forced GC. There may be additional pointer update issues.
-
-### How to finish debugging the compactor
-
-The build has a compile error in debug logging added to `planCompactSavingForwarders`
-(variables `deadCount`, `deadBytes` etc. used before the function's `return`).
-Fix the compile error, then:
-
-1. **Find what's dead**: The debug logging (once compiling) will show which objects
-   are not marked. In a fresh image, almost nothing should be dead. If objects ARE
-   dead, the mark phase is missing them — check root enumeration.
-
-2. **Verify pointer update completeness**: After `updatePointersAfterCompact`, scan
-   ALL objects and check that every pointer field points to a valid marked object
-   at its new location. Any pointer to the old location of a moved object = bug.
-
-3. **Check overflow headers**: Objects with >254 slots have an 8-byte overflow word
-   before the header. The compactor must move both together. Check `totalSize()`
-   includes the overflow word. Check that forwarding address computation accounts
-   for overflow headers when the target location has one.
-
-4. **Check class table**: The class table contains raw Oop pointers. `forEachMemoryRoot`
-   must visit ALL class table entries. If a class object moves, its class table entry
-   must be updated.
-
-5. **Check Oop::setNilBits()**: After GC, if nil moved, `Oop::setNilBits()` is called
-   to update the nil singleton. Verify this actually works — check that `Oop::nil()`
-   returns the new address.
-
-### Key test: Run GC then verify execution
-
-```bash
-# The forced GC test is in test_load_image.cpp (currently commented out)
-# Uncomment the "Forced GC Test" block before the execution loop
-# If GC works, the test suite should run identically before and after GC
-```
+Key bugs fixed:
+1. **Zero-slot forwarding** (commit 5f73cd8): Objects with 0 slots weren't getting forwarding addresses.
+2. **Saved first fields** (commit 5f73cd8): Saved fields in eden scratch space not resolved.
+3. **Interior pointer corruption** (commit 7b8675c): `markAndTrace()` called `setMarked()` on
+   interior pointers, ORing MarkedBit (0x40000000) into slot values. Fixed with valid object
+   start address set built at the beginning of markPhase.
 
 ### Remaining GC phases (not started)
 
@@ -137,7 +87,7 @@ pixel ptr via FFI void** → adoptAddress: → asInteger → SetPointer (real ad
 
 ---
 
-## Test Results — Run #258 (2026-02-08)
+## Test Results — Run #260 (2026-02-08)
 
 **73 test classes, 4291 tests. Pass: 4287, Fail: 0, Error: 0, Skip: 4.**
 
@@ -145,7 +95,21 @@ pixel ptr via FFI void** → adoptAddress: → asInteger → SetPointer (real ad
 
 All previously failing tests are now fixed.
 
-### Recent fixes (Run #118 → #258)
+### Recent fixes (Run #258 → #260)
+
+**GC mark phase interior pointer fix (commit 7b8675c)**: `markAndTrace()` could
+receive interior pointers (pointing into the middle of another object's slots
+rather than at a header). When slot data happened to have bits 0-21 matching a
+valid class table entry, `setMarked(true)` was called on it, ORing the MarkedBit
+(0x40000000) into the slot VALUE — corrupting the Oop. Fix: build a set of all
+valid object start addresses at the beginning of markPhase, check in markAndTrace
+before calling setMarked. Source: Context objects (cls=36) with raw stack data
+in slots that pass classIndex validation but point mid-object.
+
+**primitiveInputSemaphore fix (commit c66ebe6)**: P153 was mapped to wrong
+function. Fixed mapping so InputEventSensor can register for input events.
+
+### Earlier fixes (Run #118 → #258)
 
 **primitiveCopyObject fix (commit 9230cfb)**: Primitive 168 (`Object>>copyFrom:`)
 was implemented as a clone (create new object) instead of copy-from (copy argument
