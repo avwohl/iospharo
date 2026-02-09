@@ -97,23 +97,19 @@ ExternalAddress (dereference pointer).
 
 ## Test Results — Run #10 (2026-02-09, clean)
 
-**81 test classes, 4998 tests. Pass: 4992, Fail: 0, Error: 0, Skip: 6.**
+**384 test classes, 10036 tests. Pass: 10024, Fail: 0, Error: 0, Skip: 12.**
 
-**99.88% pass rate** (4992/4998). Clean exit, zero failures.
+**99.88% pass rate** (10024/10036). Clean exit, zero failures.
 
-### Skipped test classes (2)
-- ProcessTerminateBugTest: needs Context>>terminateTo:/unwindAndStop: (context unwinding)
-- DelayTest: Delay-dependent
-- SemaphoreTest: Delay-dependent
-- GeneratorTest was re-enabled and passes 13/13
-
-### Skipped individual tests (13)
-- testBenchFor, testBenchForException, testBenchFib: Delay-dependent benchmarks
-- testOnForkError* (4 tests): process fork + semaphore wait
-- testCannotReturn: context identity for dead frames
-- testOneGWordAllocation, testOneGBAllocation: massive memory allocation
-- testPrintStringAll, testStoreStringAll, testPrintStringBase: heap iteration stalls
-- testPointers*: heap iteration stalls
+### Skipped test classes (52)
+Categories:
+- **Delay-dependent**: ProcessTerminateBugTest, DelayTest, StopwatchTest, TTLCacheTest
+- **Weak/GC finalization**: WeakSetTest, WeakIdentitySetTest, WeakIdentityKeyDictionaryTest, WeakOrderedCollectionTest, FinalizationRegistryTest, WeakAnnouncerTest, ObjectFinalizerTest
+- **Class restructuring (timeouts)**: ClassTest, SlotIntegrationTest, PropertySlotTest, SlotAnnouncementsTest, SlotLayoutEqualityTest, SlotTraitsTest, SlotLayoutExtensionTest, BooleanSlotTest, SlotMigrationTest
+- **Trait class modifications (timeouts)**: TraitTest, TraitCompositionTest, ClassTraitTest, MOPTraitTest, TraitPureBehaviorTest, TraitPrecedenceCompositionTest, TraitWithAliasTest, TraitWithConflictsTest, TraitChangesTest, TraitMethodDescriptionTest, TraitOverloadingOfMethodsInTraitedClassTest, TraitPackagingTest, TraitInTraitClassTest, TraitWithMethodsInProtocolsTest, MethodAnnouncementsTest, ProtocolAnnouncementsTest
+- **Abstract classes**: CollectionRootTest, CDBehaviorParserTest, CDClassDefinitionParserTest
+- **Compiler AST/IR execution**: OCASTVariableTranslatorTest, OCASTSpecialLiteralTranslatorTest, OCASTAndOrTranslatorTest, OCASTBasicTranslatorTest, OCASTBlockTranslatorTest, OCASTSingleBranchConditionalTranslatorTest, OCASTDoubleBranchConditionalTranslatorTest, OCIRBuilderTest, OCIRPrinterTest, OCIRVisitorTest, OCBytecodeGeneratorTest
+- **Other**: ProcessTest, CodeSimulationTest, OCSpecialSelectorTest, CDTraitCompositionClassParserTest, MethodConstantTest, RGReadOnlyImageBackendTest, SelfVariableTest
 
 ### Newly enabled classes (Run #261 → #272)
 - **SharedPoolTest**: 6/6 pass
@@ -257,6 +253,7 @@ testMetaclassSuperclassHierarchy is flaky (passes most runs).
 | #15 | 2026-02-09 | 139 | 7258 | 0 | 0 | 6 | 7264 | **99.92%** +32 classes (Tier 8: time, hash, cache, compiler, kernel) |
 | #22 | 2026-02-09 | 276 | 8939 | 0 | 0 | 12 | 8951 | **99.87%** +137 classes (Tier 9-10: regex, text, AST, OpalCompiler, ClassParser) |
 | #32 | 2026-02-09 | 276 | 8939 | 0 | 0 | 12 | 8951 | **99.87%** file truncation fix, same classes |
+| #45 | 2026-02-09 | 384 | 10024 | 0 | 0 | 12 | 10036 | **99.88%** +108 classes (Tier 11: ClassParser, Ring, Traits, ClassAnnotation, kernel) |
 
 ---
 
