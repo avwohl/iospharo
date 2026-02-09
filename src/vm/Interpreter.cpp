@@ -7238,6 +7238,22 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             suppressContextSwitch_ = true;
         }
 
+        // Log cache hits for 'nextPendingCallback' to track corruption timing
+        if (selBytes && selLen == 19 && memcmp(selBytes, "nextPendingCallback", 19) == 0) {
+            static FILE* npcHitLog = nullptr;
+            static int npcHitCount = 0;
+            if (!npcHitLog) npcHitLog = fopen("/tmp/iospharo-npc-hit.log", "w");
+            if (npcHitLog && npcHitCount++ < 200) {
+                ObjectHeader* mh = cached->method.asObjectPtr();
+                fprintf(npcHitLog, "[NPC-HIT #%d step=%llu] method=0x%llx rawHdr=0x%llx cls=%u fmt=%d slots=%zu cm=%d\n",
+                        npcHitCount, (unsigned long long)g_stepNum,
+                        (unsigned long long)cached->method.rawBits(),
+                        (unsigned long long)mh->rawHeader(), mh->classIndex(), (int)mh->format(),
+                        mh->slotCount(), mh->isCompiledMethod());
+                fflush(npcHitLog);
+            }
+        }
+
         // Validate cached method is still a CompiledMethod
         if (__builtin_expect(!cached->method.isObject() || cached->method.rawBits() < 0x10000 ||
                              !cached->method.asObjectPtr()->isCompiledMethod(), 0)) {
@@ -7314,6 +7330,27 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     if (method.isNil()) {
         sendDoesNotUnderstand(selector, argCount);
         return;
+    }
+
+    // Log every cache miss for 'nextPendingCallback' to track corruption timing
+    if (selBytes && selLen == 19 && memcmp(selBytes, "nextPendingCallback", 19) == 0) {
+        static FILE* npcLog = nullptr;
+        static int npcLogCount = 0;
+        if (!npcLog) npcLog = fopen("/tmp/iospharo-npc.log", "w");
+        if (npcLog && npcLogCount++ < 50) {
+            ObjectHeader* mh = method.asObjectPtr();
+            fprintf(npcLog, "[NPC step=%llu] method=0x%llx rawHdr=0x%llx cls=%u fmt=%d slots=%zu cm=%d\n",
+                    (unsigned long long)g_stepNum, (unsigned long long)method.rawBits(),
+                    (unsigned long long)mh->rawHeader(), mh->classIndex(), (int)mh->format(),
+                    mh->slotCount(), mh->isCompiledMethod());
+            // Also check slot 0
+            if (mh->slotCount() > 0) {
+                Oop slot0 = mh->slotAt(0);
+                fprintf(npcLog, "  slot0=0x%llx isSmi=%d\n",
+                        (unsigned long long)slot0.rawBits(), slot0.isSmallInteger());
+            }
+            fflush(npcLog);
+        }
     }
 
     // Validate looked-up method is a CompiledMethod
