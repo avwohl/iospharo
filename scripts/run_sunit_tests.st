@@ -565,6 +565,32 @@ runAllTests
       (Smalltalk globals at: name ifAbsent: [nil])
         ifNotNil: [:cls | addOnce value: cls]].
 
+  "Tier 9: Regex, system, text, announcements, class defs, more kernel/slot"
+  #(RxMatcherTest RxParserTest RxExtensionsTest
+    EventManagerTest FinalizationRegistryTest
+    SessionCreationTest SessionErrorHandlingTest
+    SessionManagerRegistrationOrderTest SessionManagerRegistrationTest
+    SessionManagerUnregistrationTest
+    ISOLanguageDefinitionTest LocaleChangedTest LocaleIDTest
+    LocaleTest NaturalLanguageTranslatorTest
+    KeyboardKeyTest Win32WideStringTest
+    AnnouncementSetTest WeakAnnouncerTest AnnouncerTest
+    TextTest TextEmphasisTest TextAlignmentTest TextColorTest
+    TextFontChangeTest TextFontReferenceTest TextIndentTest
+    TextStreamTest TextKernTest FontTest
+    ClassTest AsciiCharsetTest CodeSimulationTest InstructionClientTest
+    CollectionRootTest
+    FluidClassDefinitionPrinterTest LegacyClassDefinitionPrinterTest
+    OldClassDefinitionPrinterTest ClassDefinitionPrinterConfigurationTest
+    SlotTest SlotIntegrationTest PropertySlotTest
+    SlotAnnouncementsTest SlotClassVariableTest
+    ClassVariableTest GlobalVariableTest LiteralVariableTest
+    SlotLayoutEqualityTest SlotLayoutExtensionTest
+    SlotTraitsTest SelfVariableTest TemporaryVariableTest
+    ThisContextVariableTest BooleanSlotTest WriteOnceSlotTest) do: [:name |
+      (Smalltalk globals at: name ifAbsent: [nil])
+        ifNotNil: [:cls | addOnce value: cls]].
+
   "Open output files"
   stream := '/tmp/sunit_test_results.txt' asFileReference writeStream.
   detail := '/tmp/sunit_test_detail.txt' asFileReference writeStream.
@@ -612,7 +638,17 @@ runTestClass: testClass run: runNum on: s detail: d
   (#(ProcessTerminateBugTest DelayTest SlotMigrationTest
      WeakIdentityKeyDictionaryTest WeakOrderedCollectionTest
      WeakSetTest WeakIdentitySetTest ProcessTest
-     StopwatchTest TTLCacheTest) includes: testClass name) ifTrue: [
+     StopwatchTest TTLCacheTest
+     "Abstract class (SubclassResponsibility errors)"
+     CollectionRootTest
+     "GC finalization/ephemerons"
+     FinalizationRegistryTest WeakAnnouncerTest
+     "Class restructuring (timeouts)"
+     ClassTest SlotIntegrationTest PropertySlotTest
+     SlotAnnouncementsTest SlotLayoutEqualityTest SlotTraitsTest
+     SlotLayoutExtensionTest BooleanSlotTest
+     "Code simulation needs SistaV1 support"
+     CodeSimulationTest) includes: testClass name) ifTrue: [
     s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' === SKIPPED (process-heavy)'; cr. s flush.
     ^ {0. 0. 0. 0. 0}].
 
@@ -684,7 +720,22 @@ runTestClass: testClass run: runNum on: s detail: d
         testMutateByteArrayUsingDoubleAtPut testMutateByteArrayUsingFloatAtPut
         testMutateByteSymbolUsingPrivateAtPut testSetIsReadOnlyFailure
         testSetIsReadOnlyFailureProxy testBasicProxyReadOnly
-        testBasicProxyWritable) includes: sel) or: [
+        testBasicProxyWritable
+        "TextTest: BitBlt display"
+        testDisplay
+        "AnnouncerTest: ephemerons"
+        testNoWeakBlock
+        "CompiledMethodTest: Symbol>>numArgs FFI"
+        testUsingMethodsFFI
+        "TemporaryVariableTest: write temp vars"
+        testWriteTemporaryVariablesMethod
+        "SlotTest/ClassVariableTest: class restructuring"
+        testAddSlot testAddSlotAnonymous testRemoveSlot
+        testChangingShapeDoesNotPutNilInMethodsLastLiteralKey
+        testWantsInitializationAddsInitializeSlot testAddInstVarName
+        testWhichSelectorsAccessFindSlots
+        "GlobalVariableTest: Transcript"
+        testTranscriptPrintingWithOpenedTranscriptExists) includes: sel) or: [
          "Skip tests that iterate all heap objects (stalls with broken timer)"
          sel beginsWith: 'testPointers']) ifFalse: [
       | result |
