@@ -97,9 +97,9 @@ ExternalAddress (dereference pointer).
 
 ## Test Results — Run #10 (2026-02-09, clean)
 
-**551 test classes, 11261 tests. Pass: 11246, Fail: 0, Error: 0, Skip: 15.**
+**576 test classes, 11489 tests. Pass: 11474, Fail: 0, Error: 0, Skip: 15.**
 
-**99.87% pass rate** (11246/11261). Clean exit, zero failures.
+**99.87% pass rate** (11474/11489). Clean exit, zero failures.
 
 ### Skipped test classes (52)
 Categories:
@@ -258,6 +258,7 @@ testMetaclassSuperclassHierarchy is flaky (passes most runs).
 | #50 | 2026-02-09 | 483 | 10717 | 0 | 0 | 13 | 10730 | **99.88%** +49 classes (Tier 13: formatters, diff, text, visitors) |
 | #53 | 2026-02-09 | 524 | 11105 | 0 | 0 | 15 | 11120 | **99.87%** +41 classes (Tier 14: FFI, decompiler, equivalence) |
 | #56 | 2026-02-09 | 551 | 11246 | 0 | 0 | 15 | 11261 | **99.87%** +27 classes (Tier 15: SUnit self-tests, system, trait printers) |
+| #59 | 2026-02-09 | 576 | 11474 | 0 | 0 | 15 | 11489 | **99.87%** +25 classes (Tier 16: geometry, fuzzy, history, commander) |
 
 ---
 
