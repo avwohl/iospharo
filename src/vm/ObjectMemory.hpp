@@ -60,7 +60,7 @@ public:
                 scan_ += 8;
             if (scan_ >= end_) return nullptr;
 
-            // objectStartingAt_: if byte7 is 0xFF, this is an overflow word — skip it
+            // objectStartingAt_: if byte7 is 0xFF, this is an overflow word — skip it.
             // In Spur, both the overflow word and the real header have 0xFF in byte 7.
             // The scan always arrives at the overflow word first (start of the object
             // in memory), so one skip positions us at the real header.
@@ -69,10 +69,10 @@ public:
                 if (scan_ >= end_) return nullptr;
             }
 
-            // Now scan_ points to the object header
+            // Now scan_ points to the main object header
             ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(scan_);
 
-            // addressAfter_: compute advance from header position
+            // Compute advance from header position
             uint8_t numSlots = scan_[7];  // slot count byte of the header
             size_t advance;
             if (numSlots == 0xFF) {

@@ -381,7 +381,7 @@ int stub_SDL_PollEvent(void* event) {
     sdlCallCount++;
 
     if (!sdlLog) {
-        sdlLog = nullptr;
+        sdlLog = fopen("/tmp/sdl_poll.log", "w");
     }
 
     // Mark SDL2 event polling as active - this prevents processInputEvents

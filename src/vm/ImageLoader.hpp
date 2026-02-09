@@ -228,6 +228,15 @@ void ImageLoader::forEachObject(Func callback) {
     // Sequential Spur object scanner.
     // In Spur, objects are contiguous in memory. We step from object to object
     // using the size computed from each header. No heuristic detection needed.
+    //
+    // Overflow headers: Objects with >254 slots have a 2-word header:
+    //   [overflow word: 0xFF in top byte, actual slot count in low 56 bits]
+    //   [main header: numSlots=255, classIndex, format, hash]
+    //   [slots...]
+    // BOTH the overflow word and main header have 0xFF in byte 7 (numSlots position).
+    // When we see numSlots=255, we peek at the next word. If it also has numSlots=255,
+    // then current = overflow word, next = main header. Otherwise, current IS the
+    // main header and the overflow word was at the previous position.
     uint8_t* scan = loadedData_;
     uint8_t* end = loadedData_ + loadedSize_;
     size_t objectNum = 0;
@@ -244,7 +253,8 @@ void ImageLoader::forEachObject(Func callback) {
 
         // Check for overflow header: in Spur, large objects (>254 slots) have:
         //   [overflow word] [header with numSlots=255] [slots...]
-        // The overflow word has the actual slot count in the low 56 bits.
+        // The overflow word has the actual slot count in the low 56 bits AND
+        // 0xFF in its top byte (same as the main header's numSlots=255 marker).
         // We detect it by checking if the NEXT word has numSlots=255.
         uint64_t* headerPtr = wordPtr;
         uint64_t header = word;

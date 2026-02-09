@@ -179,6 +179,9 @@ bool ImageLoader::loadHeapData(std::ifstream& file, ObjectMemory& memory,
     // Calculate relocation offset
     oldBase_ = header_.startOfMemory;
     newBase_ = reinterpret_cast<uint64_t>(loadedData_);
+    fprintf(stderr, "[RELOC] oldBase=0x%llx newBase=0x%llx delta=%lld\n",
+            (unsigned long long)oldBase_, (unsigned long long)newBase_,
+            (long long)(newBase_ - oldBase_));
 
     // Update the free pointer
     memory.setOldSpaceFreePointer(loadEnd);

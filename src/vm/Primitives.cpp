@@ -12372,13 +12372,9 @@ PrimitiveResult Interpreter::primitiveSetFullScreen(int argCount) {
 // semaphore primitiveInputSemaphore -> self
 PrimitiveResult Interpreter::primitiveInputSemaphore(int argCount) {
     // Debug: Log calls
-    static FILE* sem153Log = nullptr;
     static int callCount153 = 0;
     callCount153++;
-    if (sem153Log && callCount153 <= 20) {
-        fprintf(sem153Log, "[PRIM153] Call #%d argCount=%d\n", callCount153, argCount);
-        fflush(sem153Log);
-    }
+    fprintf(stderr, "[PRIM153] Call #%d argCount=%d\n", callCount153, argCount);
 
     if (argCount < 1) {
         return PrimitiveResult::Failure;
@@ -12389,14 +12385,10 @@ PrimitiveResult Interpreter::primitiveInputSemaphore(int argCount) {
     if (semArg.isSmallInteger()) {
         int64_t semIndex = semArg.asSmallInteger();
         gEventQueue.setInputSemaphoreIndex(static_cast<int>(semIndex));
-        if (sem153Log && callCount153 <= 20) {
-            fprintf(sem153Log, "[PRIM153] Set input semaphore index to %lld\n", semIndex);
-            fflush(sem153Log);
-        }
-    } else if (sem153Log && callCount153 <= 20) {
-        fprintf(sem153Log, "[PRIM153] Arg is not SmallInteger, raw=0x%llx\n",
+        fprintf(stderr, "[PRIM153] Set input semaphore index to %lld\n", semIndex);
+    } else {
+        fprintf(stderr, "[PRIM153] Arg is not SmallInteger, raw=0x%llx\n",
                 (unsigned long long)semArg.rawBits());
-        fflush(sem153Log);
     }
 
     pop();  // pop semaphore, leave receiver
@@ -13838,6 +13830,13 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
     }
     if (hasB2D && namedLogCount <= 5) {
         fprintf(stderr, "[B2D-NAMED #%d] argCount=%d literals(%zu):", namedLogCount, argCount, literalStrings.size());
+        for (auto& s : literalStrings) fprintf(stderr, " '%s'", s.c_str());
+        fprintf(stderr, "\n");
+        fflush(stderr);
+    }
+    // Log ALL named primitive lookups (first 50 calls) to diagnose FFI failures
+    if (namedLogCount <= 50) {
+        fprintf(stderr, "[EXTCALL #%d] argCount=%d literals(%zu):", namedLogCount, argCount, literalStrings.size());
         for (auto& s : literalStrings) fprintf(stderr, " '%s'", s.c_str());
         fprintf(stderr, "\n");
         fflush(stderr);
