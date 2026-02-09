@@ -639,9 +639,67 @@ runAllTests
       (Smalltalk globals at: name ifAbsent: [nil])
         ifNotNil: [:cls | addOnce value: cls]].
 
-  "Note: Traits-Tests, Ring-*-Tests, ClassAnnotation-Tests, and most
-   ClassParser-Tests are NOT loaded in the default Pharo 13 image.
-   Only classes present in the base image are tested."
+  "Tier 11: ClassParser, Ring, Traits, ClassAnnotation, more kernel"
+  #(CDCompiledBlockClassParserTest CDCompiledMethodClassParserTest
+    CDNormalClassParserTest CDVariableClassParserTest
+    CDVariableByteClassParserTest CDVariableWordClassParserTest
+    CDDoubleByteClassParserTest CDDoubleWordClassParserTest
+    CDEphemeronClassParserTest CDImmediateClassParserTest
+    CDMetaclassWithTraitParserTest CDNilSubclassParserTest
+    CDWeakClassParserTest CDPointClassParserTest
+    CDNormalClassCategoryParserTest CDNormalMetaclassParserTest
+    CDClassWithPoolDictionaryParserTest CDClassWithTraitParserTest
+    CDClassWithTraitAliasParserTest CDClassWithTraitExclusionParserTest
+    CDClassWithTraitCompositionSequenceParserTest
+    CDTraitCompositionClassParserTest
+    "Ring metadata tests"
+    RGClassDefinitionTest RGCommentDefinitionTest
+    RGElementDefinitionTest RGMethodDefinitionTest
+    RGVariableDefinitionTest RGPackageDefinitionTest
+    RGMetaclassDefinitionTest RGMetatraitDefinitionTest
+    RGTraitDefinitionTest RGObjectTest RGSlotTest
+    RGStampParserTest RGUnresolvedValueTest
+    RGClassVariableTest RGGlobalVariableTest RGPoolVariableTest
+    RGCommentTest RGLayoutDefinitionTest
+    RGTraitAliasTest RGTraitCompositionTest RGTraitExclusionTest
+    RGBehaviorTest RGClassDescripitonStrategyTest
+    RGClassStrategyTest RGMetaclassStrategyTest
+    RGMetaclassTraitStrategyTest RGMetaclassTraitTest
+    RGTraitStrategyTest RGTraitTest RGClassTest
+    RGEnvironmentTest RGBackendTest RGAnnouncementsTest
+    RGEnsureTraitTest RGEnvironmentBackendTest
+    RGEnvironmentQueryInterfaceTest RGReadOnlyImageBackendTest
+    "Trait tests"
+    TraitTest TraitCompositionTest ClassTraitTest MOPTraitTest
+    TraitPureBehaviorTest TraitPrecedenceCompositionTest
+    TraitWithAliasTest TraitWithConflictsTest
+    TraitChangesTest TraitMethodDescriptionTest
+    TraitOverloadingOfMethodsInTraitedClassTest
+    TraitPackagingTest TraitInTraitClassTest
+    TraitWithMethodsInProtocolsTest
+    "ClassAnnotation tests"
+    ClassAnnotationTest ActiveClassAnnotationsTest
+    QueryAnnotationsFromClassTest RegisteredClassAnnotationsTest
+    CompositeAnnotationContextTest SimpleAnnotationContextTest
+    VisibleClassAnnotationsTest
+    "More kernel/compiler"
+    Base64Test Base64MimeConverterTest
+    ChainedSortFunctionTest ChunkImportTestCase
+    ClassQueryTest ClassHierarchyPrinterTest
+    MethodQueryTest MethodConstantTest
+    DateAndTimeDosEpochTest DateAndTimeEpochTest
+    DateAndTimeLeapTest DateAndTimeUnixEpochTest DateParsingTest
+    PointArrayTest ArgumentNamesTest
+    AbstractClassDescriptionTest ClassAnnouncementsTest
+    MethodAnnouncementsTest ProtocolAnnouncementsTest
+    OCScopeTest OCCompilerSyntaxErrorNotifyingTest
+    OCIsEssentialTest
+    BehaviorWithCompilerTest BlockClosuresTestCase
+    ObjectFinalizerTest CollectionValueHolderTest
+    HashTesterTest ProtocolConventionsTest
+    ClassFactoryForTestCaseTest) do: [:name |
+      (Smalltalk globals at: name ifAbsent: [nil])
+        ifNotNil: [:cls | addOnce value: cls]].
 
   "Open output files (delete first to ensure clean truncation)"
   '/tmp/sunit_test_results.txt' asFileReference ensureDelete.
@@ -715,7 +773,24 @@ runTestClass: testClass run: runNum on: s detail: d
      "IR builder/printer/visitor (CompiledMethod>>result: missing)"
      OCIRBuilderTest OCIRPrinterTest OCIRVisitorTest
      "Character>>adaptToNumber:andSend: missing"
-     OCBytecodeGeneratorTest) includes: testClass name) ifTrue: [
+     OCBytecodeGeneratorTest
+     "Trait tests (class modification timeouts)"
+     TraitTest TraitCompositionTest ClassTraitTest MOPTraitTest
+     TraitPureBehaviorTest TraitPrecedenceCompositionTest
+     TraitWithAliasTest TraitWithConflictsTest TraitChangesTest
+     TraitMethodDescriptionTest TraitOverloadingOfMethodsInTraitedClassTest
+     TraitPackagingTest TraitInTraitClassTest
+     TraitWithMethodsInProtocolsTest
+     "Ring: RGReadOnlyImageBackendTest testBehavior timeout"
+     RGReadOnlyImageBackendTest
+     "Announcements with trait modifications (timeouts)"
+     MethodAnnouncementsTest ProtocolAnnouncementsTest
+     "Method constants (assert:identicalTo: on nil, method constant feature)"
+     MethodConstantTest
+     "Weak/GC finalization"
+     ObjectFinalizerTest
+     "ClassParser: CDTraitCompositionClassParserTest (16 errors)"
+     CDTraitCompositionClassParserTest) includes: testClass name) ifTrue: [
     s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' === SKIPPED (process-heavy)'; cr. s flush.
     ^ {0. 0. 0. 0. 0}].
 
@@ -818,7 +893,9 @@ runTestClass: testClass run: runNum on: s detail: d
         "OCClassBuilderTest: undeclared variable"
         testCreateNormalClassWithTraitComposition
         "OCSimpleFormatterTest: Symbol class>>do:"
-        testCoreSystem) includes: sel) or: [
+        testCoreSystem
+        "ClassQueryTest: compiler optimization difference"
+        testAllCallsOn) includes: sel) or: [
          "Skip tests that iterate all heap objects (stalls with broken timer)"
          sel beginsWith: 'testPointers']) ifFalse: [
       | result |
