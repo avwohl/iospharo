@@ -23270,12 +23270,13 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
         fflush(ffiLog);
     }
 
-    // Look up the symbol
-    void* symbolAddr = dlsym(moduleHandle, symbolName.c_str());
+    // Look up the symbol - check our FFI function cache first (for SDL2 stubs),
+    // then fall back to dlsym. This ensures our stubs (e.g. stub_SDL_PollEvent)
+    // win over force-loaded real SDL2 symbols.
+    void* symbolAddr = ffi::lookupFunction(moduleName.empty() ? "" : moduleName, symbolName);
 
-    // Also check our FFI function cache (for SDL2 stubs)
     if (!symbolAddr) {
-        symbolAddr = ffi::lookupFunction(moduleName.empty() ? "" : moduleName, symbolName);
+        symbolAddr = dlsym(moduleHandle, symbolName.c_str());
     }
 
     if (!symbolAddr) {

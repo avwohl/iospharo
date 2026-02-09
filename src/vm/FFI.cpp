@@ -70,13 +70,32 @@ struct SDL_MouseWheelEvent {
     uint32_t direction;   // Normal or flipped
 };
 
-// SDL_Event union - just enough for mouse events
+struct SDL_Keysym {
+    int32_t scancode;     // SDL_Scancode
+    int32_t sym;          // SDL_Keycode (SDLK_*)
+    uint16_t mod;         // Key modifiers (SDL_Keymod)
+    uint32_t unused;
+};
+
+struct SDL_KeyboardEvent {
+    uint32_t type;        // SDL_KEYDOWN or SDL_KEYUP
+    uint32_t timestamp;
+    uint32_t windowID;
+    uint8_t state;        // SDL_PRESSED or SDL_RELEASED
+    uint8_t repeat;       // Non-zero if key repeat
+    uint8_t padding2;
+    uint8_t padding3;
+    SDL_Keysym keysym;
+};
+
+// SDL_Event union
 union SDL_Event {
     uint32_t type;
     SDL_CommonEvent common;
     SDL_MouseMotionEvent motion;
     SDL_MouseButtonEvent button;
     SDL_MouseWheelEvent wheel;
+    SDL_KeyboardEvent key;
     uint8_t padding[56];  // SDL_Event is 56 bytes
 };
 
@@ -506,6 +525,39 @@ int stub_SDL_PollEvent(void* event) {
         if (sdlLog && sdlCallCount <= 100) {
             fprintf(sdlLog, "[SDL_PollEvent] #%d Mouse wheel dx=%d dy=%d\n",
                     sdlCallCount, pharoEvent.arg1, pharoEvent.arg2);
+            fflush(sdlLog);
+        }
+        return 1;
+    } else if (pharoEvent.type == static_cast<int>(pharo::EventType::Keyboard)) {
+        // Keyboard event
+        // Pharo keyboard event layout:
+        //   arg1 = charCode, arg2 = subtype (0=down, 1=up, 2=keystroke)
+        //   arg3 = modifiers, arg4 = keyCode (scancode)
+        int subtype = pharoEvent.arg2;
+        if (subtype == 0 || subtype == 2) {
+            sdlEvent->key.type = SDL_KEYDOWN;
+            sdlEvent->key.state = 1;  // SDL_PRESSED
+        } else {
+            sdlEvent->key.type = SDL_KEYUP;
+            sdlEvent->key.state = 0;  // SDL_RELEASED
+        }
+        sdlEvent->key.timestamp = pharoEvent.timeStamp;
+        sdlEvent->key.windowID = pharoEvent.windowIndex;
+        sdlEvent->key.repeat = 0;
+        sdlEvent->key.keysym.scancode = pharoEvent.arg4;  // keyCode
+        sdlEvent->key.keysym.sym = pharoEvent.arg1;       // charCode
+        // Convert Pharo modifiers to SDL modifiers
+        uint16_t sdlMod = 0;
+        if (pharoEvent.arg3 & 1) sdlMod |= 0x0001;  // KMOD_LSHIFT
+        if (pharoEvent.arg3 & 2) sdlMod |= 0x0040;  // KMOD_LCTRL
+        if (pharoEvent.arg3 & 4) sdlMod |= 0x0100;  // KMOD_LALT
+        if (pharoEvent.arg3 & 8) sdlMod |= 0x0400;  // KMOD_LGUI (Cmd)
+        sdlEvent->key.keysym.mod = sdlMod;
+
+        if (sdlLog && sdlCallCount <= 100) {
+            fprintf(sdlLog, "[SDL_PollEvent] #%d Keyboard %s char=%d key=%d mod=%d\n",
+                    sdlCallCount, (subtype == 1) ? "UP" : "DOWN",
+                    pharoEvent.arg1, pharoEvent.arg4, pharoEvent.arg3);
             fflush(sdlLog);
         }
         return 1;
