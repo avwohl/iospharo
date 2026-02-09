@@ -802,6 +802,36 @@ runAllTests
       (Smalltalk globals at: name ifAbsent: [nil])
         ifNotNil: [:cls | addOnce value: cls]].
 
+  "Tier 15: SUnit self-tests, GlobalIdentifier, trait printers, system, commands"
+  #("SUnit self-tests"
+    TestAsserterTest TestCaseTest TestFailureTestCase
+    TestExecutionEnvironmentTest
+    "GlobalIdentifier tests"
+    GlobalIdentifierMergerTest
+    GlobalIdentifierWithDefaultConfigurationTest
+    "System tests"
+    SystemNavigationTest SystemEnvironmentTest
+    SystemBuildInfoTest SystemResolverTest
+    "Command line tests"
+    CommandLineHandlerTest CommandLinePasswordManagerTest
+    "Trait definition printers (read-only, no class modification)"
+    TraitCommonClassDefinitionPrinterTest
+    TraitFluidClassDefinitionPrinterTest
+    TraitLegacyPharoClassDefinitionPrinterTest
+    TraitOldPharoClassDefinitionPrinterTest
+    "Trait slot tests"
+    TraitSlotScopeTest TraitWithSlotsTest
+    TraitWithComplexSlotsTest
+    "Package tests"
+    PackageAndClassesTest PackageAndMethodsTest
+    "Misc"
+    DocCommentsReleaseTest PharoDocCommentTest
+    ObjectWithPrintingRaisingHaltTest
+    EFFFICallTest BitBltTest
+    FastStepThroughTest) do: [:name |
+      (Smalltalk globals at: name ifAbsent: [nil])
+        ifNotNil: [:cls | addOnce value: cls]].
+
   "Open output files (delete first to ensure clean truncation)"
   '/tmp/sunit_test_results.txt' asFileReference ensureDelete.
   '/tmp/sunit_test_detail.txt' asFileReference ensureDelete.
@@ -904,6 +934,22 @@ runTestClass: testClass run: runNum on: s detail: d
      OCCodeReparatorTest
      "Package trait modifications (timeouts)"
      PackageTest
+     "Trait slot tests (class modification timeouts)"
+     TraitSlotScopeTest TraitWithSlotsTest TraitWithComplexSlotsTest
+     "Priority 81 / process monitoring"
+     TestExecutionEnvironmentTest
+     "Network name resolver / Character>>asByteArray"
+     GlobalIdentifierMergerTest GlobalIdentifierWithDefaultConfigurationTest
+     "SmallInteger>>asLowercase"
+     SystemNavigationTest
+     "File signalError"
+     SystemEnvironmentTest
+     "Debugger step-through"
+     FastStepThroughTest
+     "BitBlt alpha compositing"
+     BitBltTest
+     "BitBlt arg error in printOn with halt"
+     ObjectWithPrintingRaisingHaltTest
      "Announcements with trait modifications (timeouts)"
      MethodAnnouncementsTest ProtocolAnnouncementsTest
      "Method constants (assert:identicalTo: on nil, method constant feature)"
@@ -1022,7 +1068,13 @@ runTestClass: testClass run: runNum on: s detail: d
         "FFITypesTest: 64-bit integer put"
         testSignedLongLong testUnsignedLongLong
         "FBDDecompilerTest: array immutability / undeclared variable"
-        testCascadeNested testWhileTrue3) includes: sel) or: [
+        testCascadeNested testWhileTrue3
+        "SystemBuildInfoTest: VM binary/directory paths"
+        testVmBinary testVmDirectory
+        "TestCaseTest: watchdog/long test (priority 81)"
+        testIgnoreWatchDogProcessAsForkedOne testRunningTooLongTest
+        "SystemResolverTest: File class>>signalError"
+        testUserLocalDirectory) includes: sel) or: [
          "Skip tests that iterate all heap objects (stalls with broken timer)"
          sel beginsWith: 'testPointers']) ifFalse: [
       | result |
