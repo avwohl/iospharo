@@ -324,6 +324,7 @@ private:
         Oop savedReceiver;
         Oop savedClosure;     // FullBlockClosure for block frames, nil for method frames
         Oop savedActiveContext;  // Active context at time of call (for proper return chain)
+        Oop materializedContext;  // Cached context from materializeFrameStack (nil if not yet materialized)
         Oop* savedFP;
         int savedArgCount;
         size_t homeFrameDepth;  // For non-local block returns: the frame to return to (SIZE_MAX = not a block)
@@ -355,6 +356,7 @@ private:
     Oop receiver_;
     Oop closure_;        // Current FullBlockClosure if executing a block, nil for methods
     Oop activeContext_;  // Current Smalltalk context (for sender chain)
+    Oop currentFrameMaterializedCtx_;  // Cached context for current frame (reused across materialize calls)
     int argCount_;
 
     // Sista V1 extension bytes (reset after each instruction)
@@ -1772,6 +1774,7 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
     visitor(receiver_);
     visitor(closure_);
     visitor(activeContext_);
+    visitor(currentFrameMaterializedCtx_);
 
     // VM state Oops
     visitor(displayForm_);
@@ -1811,6 +1814,7 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
         visitor(frame.savedReceiver);
         visitor(frame.savedClosure);
         visitor(frame.savedActiveContext);
+        visitor(frame.materializedContext);
     }
 
     // Method cache

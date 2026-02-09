@@ -66,6 +66,7 @@ Interpreter::Interpreter(ObjectMemory& memory)
     , instructionPointer_(nullptr)
     , bytecodeEnd_(nullptr)
     , activeContext_(Oop::nil())
+    , currentFrameMaterializedCtx_(Oop::nil())
     , closure_(Oop::nil())
     , argCount_(0)
     , extA_(0)
@@ -3347,6 +3348,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                             size_t savedFrameDepth = frameDepth_;
                             contextToPush = materializeFrameStack();
                             activeContext_ = contextToPush;
+                            currentFrameMaterializedCtx_ = memory_.nil();  // Now running from context, not frames
                             frameDepth_ = 0;
 
                         } else if (contextToPush.isNil() || contextToPush.rawBits() == memory_.nil().rawBits()) {
@@ -8419,6 +8421,11 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
         return false;
     }
 
+    // Save any cached materialized context for the current frame into the saved frame.
+    // This preserves context identity: if materializeFrameStack() already created a
+    // context for this activation, later materializations will reuse it.
+    Oop cachedCtx = currentFrameMaterializedCtx_;
+
     SavedFrame& frame = savedFrames_[frameDepth_++];
     frame.savedIP = instructionPointer_;
     frame.savedBytecodeEnd = bytecodeEnd_;
@@ -8430,6 +8437,8 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     frame.savedArgCount = argCount_;
     frame.savedClosure = closure_;  // Save current frame's closure (nil for methods, block for block activations)
     frame.homeFrameDepth = SIZE_MAX;  // Default: not a block (will be set by activateBlock if needed)
+    frame.materializedContext = cachedCtx;  // Preserve cached context from current frame
+    currentFrameMaterializedCtx_ = memory_.nil();  // New frame has no cached context
 
     // When pushing a frame on top of a heap context (fd 0→1), sync the return
     // address to the heap context's PC slot. This keeps the heap context's PC
@@ -8496,6 +8505,7 @@ void Interpreter::popFrame() {
     receiver_ = frame.savedReceiver;
     closure_ = frame.savedClosure;  // Restore caller's closure (nil for methods, block for block activations)
     activeContext_ = frame.savedActiveContext;  // Restore active context for proper return chain
+    currentFrameMaterializedCtx_ = frame.materializedContext;  // Restore cached context for this frame
     framePointer_ = frame.savedFP;
     argCount_ = frame.savedArgCount;
 
@@ -11044,7 +11054,7 @@ Oop Interpreter::materializeFrameStack() {
     }
 
     for (size_t i = startFrame; i < frameDepth_; i++) {
-        const auto& frame = savedFrames_[i];
+        auto& frame = savedFrames_[i];  // non-const: may update materializedContext
 
         if (matLog) {
             // Calculate PC for logging
@@ -11076,27 +11086,38 @@ Oop Interpreter::materializeFrameStack() {
         int numTemps = (headerValue >> 18) & 0x3F;  // Fixed: was using wrong bit offset
         int numArgs = (headerValue >> 24) & 0xF;
 
-        // Calculate context size (6 fixed + temps + some stack)
-        size_t contextSize = 6 + numTemps + 32;
+        // Reuse previously materialized context for this frame if available.
+        // This ensures context identity: block closures created in a frame get
+        // the same context object as thisContext returns for the same activation.
+        Oop context = frame.materializedContext;
+        if (context.isObject() && !context.isNil() && context.rawBits() > 0x10000) {
+            // Reuse existing context — just update sender and state
+            memory_.storePointer(0, context, sender);  // update sender
+        } else {
+            // Calculate context size (6 fixed + temps + some stack)
+            size_t contextSize = 6 + numTemps + 32;
 
-        // Get Context class and its index in the class table
-        Oop contextClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
-        // Use indexOfClass to get the class table index, NOT the object's own classIndex (which is the metaclass)
-        uint32_t classIndex = contextClass.isObject() ? memory_.indexOfClass(contextClass) : 0;
-        if (classIndex == 0) {
-            classIndex = 36;  // Fallback to typical Context class index
-        }
-
-        // Allocate context - use IndexableWithFixed (format 3) for contexts
-        // Contexts have fixed fields (sender, pc, stackp, method, closure, receiver)
-        // plus indexed temps/stack area
-        Oop context = memory_.allocateSlots(classIndex, contextSize, ObjectFormat::IndexableWithFixed);
-        if (context.isNil()) {
-            if (matLog) {
-                fprintf(matLog, "[MATERIALIZE] Failed to allocate context!\n");
-                fflush(matLog);
+            // Get Context class and its index in the class table
+            Oop contextClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
+            // Use indexOfClass to get the class table index, NOT the object's own classIndex (which is the metaclass)
+            uint32_t classIndex = contextClass.isObject() ? memory_.indexOfClass(contextClass) : 0;
+            if (classIndex == 0) {
+                classIndex = 36;  // Fallback to typical Context class index
             }
-            return activeContext_;  // Fall back to old behavior
+
+            // Allocate context - use IndexableWithFixed (format 3) for contexts
+            // Contexts have fixed fields (sender, pc, stackp, method, closure, receiver)
+            // plus indexed temps/stack area
+            context = memory_.allocateSlots(classIndex, contextSize, ObjectFormat::IndexableWithFixed);
+            if (context.isNil()) {
+                if (matLog) {
+                    fprintf(matLog, "[MATERIALIZE] Failed to allocate context!\n");
+                    fflush(matLog);
+                }
+                return activeContext_;  // Fall back to old behavior
+            }
+            // Cache this context for future materializations of the same frame
+            frame.materializedContext = context;
         }
 
         // Calculate PC (byte offset from method start)
@@ -11249,16 +11270,28 @@ Oop Interpreter::materializeFrameStack() {
             int64_t headerValue = methodHeader.asSmallInteger();
             int numTemps = (headerValue >> 18) & 0x3F;  // Fixed: was using wrong bit offset
 
-            size_t contextSize = 6 + numTemps + 32;
-            Oop contextClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
-            // Use indexOfClass to get the class table index, NOT the object's own classIndex (which is the metaclass)
-            uint32_t classIndex = contextClass.isObject() ? memory_.indexOfClass(contextClass) : 0;
-            if (classIndex == 0) {
-                classIndex = 36;  // Fallback to typical Context class index
-            }
+            // Reuse previously materialized context for the current frame if available.
+            // This ensures context identity across multiple materialize calls.
+            Oop context = currentFrameMaterializedCtx_;
+            bool reusingContext = false;
+            if (context.isObject() && !context.isNil() && context.rawBits() > 0x10000) {
+                // Reuse existing context — just update sender and state
+                memory_.storePointer(0, context, sender);  // update sender
+                reusingContext = true;
+            } else {
+                size_t contextSize = 6 + numTemps + 32;
+                Oop contextClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
+                // Use indexOfClass to get the class table index, NOT the object's own classIndex (which is the metaclass)
+                uint32_t classIndex = contextClass.isObject() ? memory_.indexOfClass(contextClass) : 0;
+                if (classIndex == 0) {
+                    classIndex = 36;  // Fallback to typical Context class index
+                }
 
-            // Use IndexableWithFixed for contexts (format 3)
-            Oop context = memory_.allocateSlots(classIndex, contextSize, ObjectFormat::IndexableWithFixed);
+                // Use IndexableWithFixed for contexts (format 3)
+                context = memory_.allocateSlots(classIndex, contextSize, ObjectFormat::IndexableWithFixed);
+                // Cache for future materializations of this frame
+                currentFrameMaterializedCtx_ = context;
+            }
             if (!context.isNil()) {
                 uint8_t* methodBytes = methodHdr->bytes();
                 int pc = 1;
@@ -13964,6 +13997,7 @@ bool Interpreter::executeFromContext(Oop context) {
     // The context object stores the Smalltalk stack state, which we'll restore below
     stackPointer_ = stackBase_;
     frameDepth_ = 0;
+    currentFrameMaterializedCtx_ = memory_.nil();
 
     // Reset bytecode extension registers - they are per-bytecode-sequence state
     // and must not leak between processes during a process switch.

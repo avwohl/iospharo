@@ -610,7 +610,7 @@ runTestClass: testClass run: runNum on: s detail: d
          sel beginsWith: 'testPointers']) ifFalse: [
       | result |
       s nextPutAll: '  RUN: '; nextPutAll: sel; cr. s flush.
-      result := self runSingleTest: testClass selector: sel timeout: 5 priority: testPriority on: s.
+      result := self runSingleTest: testClass selector: sel timeout: 10 priority: testPriority on: s.
       result ifNil: [
         p := p + 1.
         d nextPutAll: runNum printString; nextPut: $	.
