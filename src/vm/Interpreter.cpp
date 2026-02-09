@@ -2608,6 +2608,170 @@ bool Interpreter::step() {
     }
 
     g_stepCount++;
+
+    // Watchpoint: check if the watched method's header has been corrupted
+    if (__builtin_expect(watchedMethodObj_ != nullptr, 0)) {
+        uint64_t currentHeader = watchedMethodObj_->rawHeader();
+        if (currentHeader != watchedMethodGoodHeader_) {
+            FILE* wlog = fopen("/tmp/iospharo-watchpoint.log", "w");
+            if (wlog) {
+                fprintf(wlog, "[WATCHPOINT] Header corrupted at step %llu!\n",
+                        (unsigned long long)g_stepNum);
+                fprintf(wlog, "  watchedObj=0x%llx\n", (unsigned long long)(uintptr_t)watchedMethodObj_);
+                fprintf(wlog, "  goodHeader=0x%llx\n", (unsigned long long)watchedMethodGoodHeader_);
+                fprintf(wlog, "  currentHeader=0x%llx\n", (unsigned long long)currentHeader);
+                fprintf(wlog, "  tag=%d isObj=%d isSmi=%d\n",
+                        (int)(currentHeader & 7),
+                        (currentHeader & 7) == 0 && currentHeader > 0x10000,
+                        (int)(currentHeader & 1));
+
+                // What are we currently executing?
+                fprintf(wlog, "  current method_=0x%llx\n", (unsigned long long)method_.rawBits());
+                fprintf(wlog, "  current receiver_=0x%llx\n", (unsigned long long)receiver_.rawBits());
+                fprintf(wlog, "  frameDepth=%zu\n", frameDepth_);
+
+                // Dump current method's selector
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    ObjectHeader* mHdr = method_.asObjectPtr();
+                    if (mHdr->isCompiledMethod() && mHdr->slotCount() > 0) {
+                        Oop hdr0 = mHdr->slotAt(0);
+                        if (hdr0.isSmallInteger()) {
+                            size_t numLits = hdr0.asSmallInteger() & 0x7FFF;
+                            if (numLits >= 2 && numLits < 100) {
+                                Oop sel = mHdr->slotAt(numLits - 1);
+                                if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                    ObjectHeader* selH = sel.asObjectPtr();
+                                    if (selH->isBytesObject() && selH->byteSize() < 200) {
+                                        fprintf(wlog, "  current selector='%.*s'\n",
+                                                (int)selH->byteSize(), (char*)selH->bytes());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Dump recent bytecodes
+                fprintf(wlog, "  lastBytecode=0x%02x\n", lastBytecode_);
+                fprintf(wlog, "  recentBytecodes (last 32):");
+                for (int i = 31; i >= 0; i--) {
+                    size_t idx = (recentBytecodeIdx_ + 256 - i) % 256;
+                    fprintf(wlog, " %02x", recentBytecodes_[idx]);
+                }
+                fprintf(wlog, "\n");
+
+                // Dump the call stack (saved frames)
+                fprintf(wlog, "  call stack:\n");
+                for (size_t i = 0; i < std::min(frameDepth_, (size_t)10); i++) {
+                    SavedFrame& f = savedFrames_[i];
+                    fprintf(wlog, "    [%zu] method=0x%llx recv=0x%llx\n",
+                            i, (unsigned long long)f.savedMethod.rawBits(),
+                            (unsigned long long)f.savedReceiver.rawBits());
+                    // Try to get selector
+                    if (f.savedMethod.isObject() && f.savedMethod.rawBits() > 0x10000) {
+                        ObjectHeader* fm = f.savedMethod.asObjectPtr();
+                        if (fm->isCompiledMethod() && fm->slotCount() > 0) {
+                            Oop fh = fm->slotAt(0);
+                            if (fh.isSmallInteger()) {
+                                size_t nl = fh.asSmallInteger() & 0x7FFF;
+                                if (nl >= 2 && nl < 100) {
+                                    Oop fs = fm->slotAt(nl - 1);
+                                    if (fs.isObject() && fs.rawBits() > 0x10000) {
+                                        ObjectHeader* fsh = fs.asObjectPtr();
+                                        if (fsh->isBytesObject() && fsh->byteSize() < 200) {
+                                            fprintf(wlog, "         selector='%.*s'\n",
+                                                    (int)fsh->byteSize(), (char*)fsh->bytes());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Find the object immediately before the watched method in heap
+                fprintf(wlog, "  heap neighbors:\n");
+                uint8_t* watchedAddr = reinterpret_cast<uint8_t*>(watchedMethodObj_);
+                // Scan backwards to find preceding object (scan forward from start is more reliable)
+                ObjectHeader* prevObj = nullptr;
+                size_t prevEnd = 0;
+                ObjectScanner scanner(memory_.oldSpaceStart(), memory_.oldSpaceFree());
+                while (ObjectHeader* obj = scanner.next()) {
+                    uintptr_t objAddr = reinterpret_cast<uintptr_t>(obj);
+                    if (objAddr == (uintptr_t)watchedMethodObj_) {
+                        fprintf(wlog, "  watched method found in heap scan\n");
+                        break;
+                    }
+                    if (objAddr > (uintptr_t)watchedMethodObj_) {
+                        fprintf(wlog, "  watched method NOT found (scanner jumped over)!\n");
+                        fprintf(wlog, "  scanner at 0x%llx, watched at 0x%llx\n",
+                                (unsigned long long)objAddr,
+                                (unsigned long long)(uintptr_t)watchedMethodObj_);
+                        break;
+                    }
+                    prevObj = obj;
+                    prevEnd = objAddr + obj->totalSize();
+                }
+                if (prevObj) {
+                    uintptr_t pAddr = reinterpret_cast<uintptr_t>(prevObj);
+                    fprintf(wlog, "  preceding obj @0x%llx cls=%u fmt=%d slots=%zu size=%zu end=0x%llx\n",
+                            (unsigned long long)pAddr, prevObj->classIndex(),
+                            (int)prevObj->format(), prevObj->slotCount(),
+                            prevObj->totalSize(), (unsigned long long)prevEnd);
+                    // Does the preceding object's last slot overlap with our header?
+                    if (prevEnd > (uintptr_t)watchedMethodObj_) {
+                        fprintf(wlog, "  *** OVERLAP DETECTED *** prevEnd=0x%llx > watched=0x%llx\n",
+                                (unsigned long long)prevEnd,
+                                (unsigned long long)(uintptr_t)watchedMethodObj_);
+                    }
+                    // Dump the preceding object's last few slots
+                    size_t nSlots = prevObj->slotCount();
+                    fprintf(wlog, "  preceding obj last slots:\n");
+                    for (size_t s = (nSlots > 5 ? nSlots - 5 : 0); s < nSlots; s++) {
+                        Oop sv = prevObj->slotAt(s);
+                        fprintf(wlog, "    slot[%zu]=0x%llx (isObj=%d isSmi=%d)\n",
+                                s, (unsigned long long)sv.rawBits(),
+                                sv.isObject(), sv.isSmallInteger());
+                    }
+                    // Also dump the class name of preceding object
+                    uint32_t pCls = prevObj->classIndex();
+                    if (pCls > 0 && pCls < 100000) {
+                        Oop clsObj = memory_.classAtIndex(pCls);
+                        if (clsObj.isObject() && clsObj.rawBits() > 0x10000) {
+                            // Class name is usually at slot 6 (for Pharo classes)
+                            Oop nameOop = memory_.fetchPointer(6, clsObj);
+                            if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                                ObjectHeader* nameH = nameOop.asObjectPtr();
+                                if (nameH->isBytesObject() && nameH->byteSize() < 200) {
+                                    fprintf(wlog, "  preceding class='%.*s'\n",
+                                            (int)nameH->byteSize(), (char*)nameH->bytes());
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Also check: what is the corrupted header value as an Oop?
+                Oop corruptedOop = Oop::fromRawBits(currentHeader);
+                if (corruptedOop.isObject() && currentHeader > 0x10000) {
+                    ObjectHeader* corruptedTarget = corruptedOop.asObjectPtr();
+                    // Try to identify what object this points to
+                    fprintf(wlog, "  corrupted value as Oop -> obj @0x%llx cls=%u fmt=%d slots=%zu\n",
+                            (unsigned long long)currentHeader,
+                            corruptedTarget->classIndex(), (int)corruptedTarget->format(),
+                            corruptedTarget->slotCount());
+                }
+
+                fflush(wlog);
+                fclose(wlog);
+            }
+            fprintf(stderr, "[WATCHPOINT] Method header corrupted at step %llu! "
+                    "See /tmp/iospharo-watchpoint.log\n", (unsigned long long)g_stepNum);
+            fflush(stderr);
+            abort();
+        }
+    }
+
     // Check timer and process pending signals periodically
     {
     static int stepCheckCounter = 0;
@@ -7332,18 +7496,17 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         return;
     }
 
-    // Log every cache miss for 'nextPendingCallback' to track corruption timing
+    // Log every cache miss for 'nextPendingCallback' and set watchpoint
     if (selBytes && selLen == 19 && memcmp(selBytes, "nextPendingCallback", 19) == 0) {
         static FILE* npcLog = nullptr;
         static int npcLogCount = 0;
         if (!npcLog) npcLog = fopen("/tmp/iospharo-npc.log", "w");
+        ObjectHeader* mh = method.asObjectPtr();
         if (npcLog && npcLogCount++ < 50) {
-            ObjectHeader* mh = method.asObjectPtr();
             fprintf(npcLog, "[NPC step=%llu] method=0x%llx rawHdr=0x%llx cls=%u fmt=%d slots=%zu cm=%d\n",
                     (unsigned long long)g_stepNum, (unsigned long long)method.rawBits(),
                     (unsigned long long)mh->rawHeader(), mh->classIndex(), (int)mh->format(),
                     mh->slotCount(), mh->isCompiledMethod());
-            // Also check slot 0
             if (mh->slotCount() > 0) {
                 Oop slot0 = mh->slotAt(0);
                 fprintf(npcLog, "  slot0=0x%llx isSmi=%d\n",
@@ -7351,6 +7514,9 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             }
             fflush(npcLog);
         }
+        // Set watchpoint on this method's header
+        watchedMethodObj_ = mh;
+        watchedMethodGoodHeader_ = mh->rawHeader();
     }
 
     // Validate looked-up method is a CompiledMethod
@@ -15473,6 +15639,10 @@ void Interpreter::afterGC() {
 
     // GC may move method and class objects, invalidating cached lookups
     flushMethodCache();
+
+    // Invalidate watchpoint — method may have moved. Will be re-established on next cache miss.
+    watchedMethodObj_ = nullptr;
+    watchedMethodGoodHeader_ = 0;
 }
 
 // Explicit instantiation of forEachRoot is not needed since the template is in the header.

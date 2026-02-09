@@ -3060,6 +3060,55 @@ bool ObjectMemory::planCompactSavingForwarders() {
 
     std::cerr << "[GC-PLAN] dead=" << deadCount << " (" << deadBytes << " bytes)"
               << " move=" << moveCount << " stay=" << stayCount << "\n";
+
+    // Verify no overlapping destinations: rescan and check that all forwarding
+    // addresses produce non-overlapping destination ranges.
+    {
+        FILE* planLog = fopen("/tmp/iospharo-plan-check.log", "w");
+        if (planLog) {
+            uint8_t* checkFinger = oldSpaceStart_;
+            size_t overlapCount = 0;
+            ObjectScanner checkScanner(oldSpaceStart_, oldSpaceFree_);
+            while (ObjectHeader* obj = checkScanner.next()) {
+                if (!obj->isMarked()) continue;
+
+                size_t sz = obj->totalSize();
+                uint8_t* oAddr = reinterpret_cast<uint8_t*>(obj);
+                bool isOvf = obj->hasOverflowSlots();
+                uint8_t* oStart = isOvf ? (oAddr - 8) : oAddr;
+
+                if (obj->isPinned()) {
+                    if (checkFinger < oStart) checkFinger = oStart;
+                    checkFinger += sz;
+                    continue;
+                }
+
+                uint8_t* destH = isOvf ? (checkFinger + 8) : checkFinger;
+                checkFinger += sz;
+
+                // If this object is grey, verify its forwarding address matches our expected dest
+                if (obj->isGrey()) {
+                    Oop* firstField = reinterpret_cast<Oop*>(obj + 1);
+                    Oop fwd = *firstField;
+                    if (fwd.isObject()) {
+                        uintptr_t fwdAddr = reinterpret_cast<uintptr_t>(fwd.asObjectPtr());
+                        if (fwdAddr != reinterpret_cast<uintptr_t>(destH)) {
+                            fprintf(planLog, "[PLAN-MISMATCH] obj=0x%llx sz=%zu destH=0x%llx fwd=0x%llx delta=%lld\n",
+                                    (unsigned long long)(uintptr_t)oAddr, sz,
+                                    (unsigned long long)(uintptr_t)destH,
+                                    (unsigned long long)fwdAddr,
+                                    (long long)(fwdAddr - (uintptr_t)destH));
+                            overlapCount++;
+                        }
+                    }
+                }
+            }
+            fprintf(planLog, "[PLAN-CHECK] mismatches=%zu\n", overlapCount);
+            fflush(planLog);
+            fclose(planLog);
+        }
+    }
+
     return true;  // All objects planned in one pass
 }
 
