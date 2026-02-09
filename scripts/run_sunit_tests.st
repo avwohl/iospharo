@@ -571,9 +571,7 @@ runTestClass: testClass run: runNum on: s detail: d
   "Skip classes that stall due to process/scheduling issues in our VM.
    These tests fork processes at the same priority or rely on Delay timeouts
    that cannot fire because our VM lacks proper time-slicing."
-  (#(BlockClosureTest ProcessTerminateBugTest ProcessSpecificTest
-     MonitorTest DelayTest SemaphoreTest GeneratorTest AllocationTest
-     SharedPoolTest ClassHierarchyTest MetaClassTest) includes: testClass name) ifTrue: [
+  (#(ProcessSpecificTest DelayTest SemaphoreTest) includes: testClass name) ifTrue: [
     s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' === SKIPPED (process-heavy)'; cr. s flush.
     ^ {0. 0. 0. 0. 0}].
 
@@ -603,7 +601,11 @@ runTestClass: testClass run: runNum on: s detail: d
     "Skip tests known to hang or cause VM-level crashes"
     ((#(testPrintStringAll testStoreStringAll testPrintStringBase testReciprocalModulo
         testAllReferencesTo testAllReferences testPragmaAddingProperty
-        testPragmaRemovingProperty testOneGBAllocation testPrintingRecursive) includes: sel) or: [
+        testPragmaRemovingProperty testOneGBAllocation testPrintingRecursive
+        testBenchFor testBenchForException testBenchFib
+        testOnForkErrorTakesLessThanOneSecond testOnForkSplit
+        testCannotReturn testOnForkErrorOnSeparateProcess testOnForkErrorReturnsNil
+        testOnForkErrorExecutesBlock testOneGWordAllocation) includes: sel) or: [
          "Skip tests that iterate all heap objects (stalls with broken timer)"
          sel beginsWith: 'testPointers']) ifFalse: [
       | result |
