@@ -2781,8 +2781,9 @@ void ObjectMemory::markAndTrace(Oop oop) {
     // Validate this is a real object header, not an interior pointer.
     // Interior pointers (pointing into the middle of another object) would have
     // random slot data at their "header" position. Calling setMarked() on such
-    // data corrupts the containing object by flipping bit 30 on arbitrary data,
-    // which then cascades through scanPointerFields reading garbage as format/slots.
+    // data corrupts the containing object by flipping bit 30 (MarkedBit) on
+    // arbitrary data, which then cascades through scanPointerFields reading
+    // garbage as format/slots.
     uint32_t classIdx = obj->classIndex();
     if (classIdx == 0 || classIdx >= classTable_.size() ||
         !classTable_[classIdx].isObject()) {
@@ -2799,6 +2800,16 @@ void ObjectMemory::markAndTrace(Oop oop) {
             std::cerr << "\n";
         }
         return;
+    }
+
+    // Definitive interior pointer check: verify this address is at a real object
+    // start. The classIndex check above can pass for interior pointers if the
+    // slot data happens to have bits 0-21 matching a valid class table entry.
+    if (!validObjectStarts_.empty()) {
+        uintptr_t addr = reinterpret_cast<uintptr_t>(obj);
+        if (validObjectStarts_.find(addr) == validObjectStarts_.end()) {
+            return;
+        }
     }
 
     // Mark it
@@ -2913,6 +2924,19 @@ size_t ObjectMemory::markPhase() {
     markStack_.reserve(100000);
     weakList_.clear();
     ephemeronList_.clear();
+
+    // Build valid object start set for interior pointer detection.
+    // This prevents markAndTrace from calling setMarked() on interior pointers
+    // whose random data happens to have a valid classIndex, which would corrupt
+    // slot values by ORing the MarkedBit (0x40000000) into them.
+    validObjectStarts_.clear();
+    validObjectStarts_.reserve(800000);
+    {
+        ObjectScanner buildScan(oldSpaceStart_, oldSpaceFree_);
+        while (ObjectHeader* obj = buildScan.next()) {
+            validObjectStarts_.insert(reinterpret_cast<uintptr_t>(obj));
+        }
+    }
 
     size_t markedCount = 0;
 

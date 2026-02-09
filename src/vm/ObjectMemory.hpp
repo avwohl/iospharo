@@ -37,6 +37,7 @@
 #include <string>
 #include <memory>
 #include <functional>
+#include <unordered_set>
 
 namespace pharo {
 
@@ -566,6 +567,7 @@ private:
     std::vector<ObjectHeader*> markStack_;     // BFS worklist
     std::vector<ObjectHeader*> weakList_;      // Deferred weak objects
     std::vector<ObjectHeader*> ephemeronList_; // Deferred ephemerons
+    std::unordered_set<uintptr_t> validObjectStarts_; // Valid object boundaries for mark validation
 
     // Context class index (cached for GC - Context objects need special
     // handling to avoid tracing garbage in unused stack slots)
