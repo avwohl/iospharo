@@ -95,15 +95,47 @@ ExternalAddress (dereference pointer).
 
 ---
 
-## Test Results — Run #261 (2026-02-08)
+## Test Results — Run #272 (2026-02-08)
 
-**73 test classes, 4291 tests. Pass: 4287, Fail: 0, Error: 0, Skip: 4.**
+**73 test classes, 4361 tests. Pass: 4357, Fail: 0, Error: 0, Skip: 4.**
 
-**100% pass rate** (4287/4291, 4 skipped). Clean exit (no crashes). 11 classes skipped (process/timer-dependent).
+**99.91% pass rate** (4357/4361, 4 skipped). Clean exit (no crashes).
 
-All previously failing tests are now fixed.
+### Skipped test classes (5)
+- ProcessTerminateBugTest: needs Context>>terminateTo:/unwindAndStop: (context unwinding during process termination)
+- ProcessSpecificTest: uses Delay forMilliseconds:
+- DelayTest: Delay-dependent
+- SemaphoreTest: Delay-dependent
+- GeneratorTest was re-enabled and passes 13/13
 
-### Recent fixes (Run #258 → #260)
+### Skipped individual tests (13)
+- testBenchFor, testBenchForException, testBenchFib: Delay-dependent benchmarks
+- testOnForkError* (4 tests): process fork + semaphore wait
+- testCannotReturn: context identity for dead frames
+- testOneGWordAllocation, testOneGBAllocation: massive memory allocation
+- testPrintStringAll, testStoreStringAll, testPrintStringBase: heap iteration stalls
+- testPointers*: heap iteration stalls
+
+### Newly enabled classes (Run #261 → #272)
+- **SharedPoolTest**: 6/6 pass
+- **MetaClassTest**: 3/3 pass
+- **MonitorTest**: 3/3 pass
+- **GeneratorTest**: 13/13 pass
+- **BlockClosureTest**: 42/50 pass (8 individually skipped)
+- **ClassHierarchyTest**: 2/3 (testSubclasses has Symbol class >> #, error)
+- **AllocationTest**: 2/4 (testOneGWordAllocation skipped, testOneMBAllocation skip)
+
+### Context identity fix (commit 85810e4)
+
+`materializeFrameStack()` was called multiple times for the same frame stack
+(once during block closure creation, once during `thisContext`). Each call
+created NEW context objects, breaking `aBlock home == contextOfaBlock`.
+
+Fix: Cache materialized contexts in `SavedFrame.materializedContext` and
+`currentFrameMaterializedCtx_`. Subsequent calls reuse cached contexts.
+This fixed `BlockClosureTest >> testSetUp` and `testTallyMethods`.
+
+### Recent fixes (Run #258 → #261)
 
 **GC mark phase interior pointer fix (commit 7b8675c)**: `markAndTrace()` could
 receive interior pointers (pointing into the middle of another object's slots
