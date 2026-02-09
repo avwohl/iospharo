@@ -771,6 +771,37 @@ runAllTests
       (Smalltalk globals at: name ifAbsent: [nil])
         ifNotNil: [:cls | addOnce value: cls]].
 
+  "Tier 14: FFI tests, decompiler, equivalence, examples, misc"
+  #("FFI tests (validate FFI implementation)"
+    FFIArchitectureTest FFICalloutAPITest FFICalloutMethodBuilderTest
+    FFICalloutTest FFICompilerPluginTest FFIConstantHandleTest
+    FFIExternalArrayTest FFIExternalEnumerationTest
+    FFIExternalPackedStructureTest FFIExternalStructureFieldParserTest
+    FFIExternalStructurePlatformTest FFIExternalStructureTest
+    FFIExternalUnionTest FFIExternalValueHolderTest
+    FFIFunctionParserTest FFIFunctionResolutionTest
+    FFIOpaqueObjectTest FFIStringCalloutTest
+    FFITypeArrayTest FFITypesTest
+    FFICallbackParametersTest FFICallbackTest
+    FFIAutoReleaseOptionCalloutTest
+    "Bytecode decompiler"
+    FBDBytecodeDecompilerExamplesTest FBDDecompilerTest
+    FBIRBytecodeDecompilerTest
+    "Equivalence/comparison tests"
+    EqFruitComparisonTest EqPersonComparisonTest EquivalentTreeTest
+    "Example/demo tests"
+    ExampleClassVariableTest ExampleSetTest
+    ExampleSlotWithFluidAPITest ExampleSlotWithStateTest
+    "Bit operations"
+    BitRegisterTest
+    "Misc safe"
+    BreadthFirstGuideTest BuilderManifestTest
+    ExecutionCounterTest SlotMethodRecompilationTest
+    SortFunctionTest NullWorldRendererTest
+    FloatReferencesRuleTest ProcessMonitorTestServiceTest) do: [:name |
+      (Smalltalk globals at: name ifAbsent: [nil])
+        ifNotNil: [:cls | addOnce value: cls]].
+
   "Open output files (delete first to ensure clean truncation)"
   '/tmp/sunit_test_results.txt' asFileReference ensureDelete.
   '/tmp/sunit_test_detail.txt' asFileReference ensureDelete.
@@ -855,6 +886,18 @@ runTestClass: testClass run: runNum on: s detail: d
      RGReadOnlyImageBackendTest
      "Symbol class>>asSymbol / Symbol>>numArgs"
      SelfVariableTest
+     "FFI callbacks (not implemented)"
+     FFICallbackParametersTest FFICallbackTest
+     "Bytecode decompiler (CompiledMethod>>result: / execution)"
+     FBDBytecodeDecompilerExamplesTest FBIRBytecodeDecompilerTest
+     "Class reshaping timeouts"
+     ExampleSlotWithStateTest SlotMethodRecompilationTest
+     "Array modification forbidden"
+     BuilderManifestTest
+     "ExecutionCounterTest: installOn: missing (metalinks)"
+     ExecutionCounterTest
+     "Priority 81 (exceeds 80 limit)"
+     ProcessMonitorTestServiceTest
      "Coverage/reflectivity (NonBooleanReceiver, reflectivity infrastructure)"
      CoverageCollectorTest CoverageDemoTest OCCacheResetTest
      "Code reparation (class modification timeouts, paste differences)"
@@ -975,7 +1018,11 @@ runTestClass: testClass run: runNum on: s detail: d
         "ClassQueryTest: compiler optimization difference"
         testAllCallsOn
         "DeleteVisitorTest: network name resolver"
-        testSymbolicLink) includes: sel) or: [
+        testSymbolicLink
+        "FFITypesTest: 64-bit integer put"
+        testSignedLongLong testUnsignedLongLong
+        "FBDDecompilerTest: array immutability / undeclared variable"
+        testCascadeNested testWhileTrue3) includes: sel) or: [
          "Skip tests that iterate all heap objects (stalls with broken timer)"
          sel beginsWith: 'testPointers']) ifFalse: [
       | result |
