@@ -735,6 +735,42 @@ runAllTests
       (Smalltalk globals at: name ifAbsent: [nil])
         ifNotNil: [:cls | addOnce value: cls]].
 
+  "Tier 13: Formatters, diff, text, slots, visitors, timespan, misc"
+  #("EqualityFormatter tests (code formatting)"
+    EFArrayExpressionTest EFAssignmentExpressionTest
+    EFBlockExpressionOnlyTest EFBlockExpressionTest
+    EFCascadeExpressionTest EFContextTest
+    EFFormatterTest EFInternalTest
+    EFLiteralArrayExpressionTest EFLiteralValueExpressionTest
+    EFMessageExpressionTest EFMethodExpressionTest
+    EFParseErrorExpressionTest EFPatternBlockExpressionTest
+    EFPragmaExpressionTest EFReturnExpressionTest
+    EFSequenceExpressionTest EFTemporariesExpressionTest
+    EFTest EFVariableExpressionTest
+    "Diff algorithm tests"
+    DiffBuilderTest DiffPatchTest TextDiffBuilderTest
+    "AST visitors"
+    CollectVisitorTest CopyVisitorTest DeleteVisitorTest
+    "Text additional"
+    TextAnchorTest TextLineTest TextLineEndingsTest
+    "Timespan additional"
+    TimespanDoTest TimespanDoSpanAYearTest
+    "Slot additional"
+    SlotClassBuilderTest SlotEnvironmentTest
+    SlotExampleMovieAndPersonTest SlotSilentTest
+    "Misc kernel/compiler"
+    DosTimestampTest ConfigurableHistoryIteratorTest
+    DynamicMessageImplementorTest
+    CommentTestCase CommentsToTestsTest
+    ContextDebuggingTest
+    ClassFactoryWithNonDefaultEnvironmentTest
+    "Ring/Package additional"
+    RGReadOnlyBackendTest RGMCTest RGMCClassTest
+    RGMCPackageTest RGMCTraitCompositionVisitorTest
+    PackageAnnouncementsTest PackageOnModelTest) do: [:name |
+      (Smalltalk globals at: name ifAbsent: [nil])
+        ifNotNil: [:cls | addOnce value: cls]].
+
   "Open output files (delete first to ensure clean truncation)"
   '/tmp/sunit_test_results.txt' asFileReference ensureDelete.
   '/tmp/sunit_test_detail.txt' asFileReference ensureDelete.
@@ -937,7 +973,9 @@ runTestClass: testClass run: runNum on: s detail: d
         "OCSimpleFormatterTest: Symbol class>>do:"
         testCoreSystem
         "ClassQueryTest: compiler optimization difference"
-        testAllCallsOn) includes: sel) or: [
+        testAllCallsOn
+        "DeleteVisitorTest: network name resolver"
+        testSymbolicLink) includes: sel) or: [
          "Skip tests that iterate all heap objects (stalls with broken timer)"
          sel beginsWith: 'testPointers']) ifFalse: [
       | result |
