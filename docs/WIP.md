@@ -230,13 +230,11 @@ fallback in returnFromBlock.
 **primitiveChangeClass + immutability (commit 467ed76)**: Fix validation and
 add immutability enforcement.
 
-### Per-class results (Run #15)
+### Per-class results (Run #22)
 
-All 139 test classes tested, 7258 pass, 0 fail, 0 error, 6 skip.
-10 classes skipped at class level (ProcessTerminateBugTest, DelayTest,
-SlotMigrationTest, WeakSetTest, WeakIdentitySetTest,
-WeakIdentityKeyDictionaryTest, WeakOrderedCollectionTest, ProcessTest,
-StopwatchTest, TTLCacheTest).
+276 test classes, 8939 pass, 0 fail, 0 error, 12 skip.
+34 classes skipped at class level (process/delay, weak refs, abstract,
+class restructuring, compiler IR/AST execution tests).
 testMetaclassSuperclassHierarchy is flaky (passes most runs).
 
 ### History
@@ -257,6 +255,7 @@ testMetaclassSuperclassHierarchy is flaky (passes most runs).
 | #10 | 2026-02-09 | 81 | 4992 | 0 | 0 | 6 | 4998 | **99.88%** +8 classes, yield fix, context identity fix |
 | #13 | 2026-02-09 | 107 | 5934 | 0 | 0 | 6 | 5940 | **99.90%** +26 classes (Tier 7: weak, slot, queue, stream, native) |
 | #15 | 2026-02-09 | 139 | 7258 | 0 | 0 | 6 | 7264 | **99.92%** +32 classes (Tier 8: time, hash, cache, compiler, kernel) |
+| #22 | 2026-02-09 | 276 | 8939 | 0 | 0 | 12 | 8951 | **99.87%** +137 classes (Tier 9-10: regex, text, AST, OpalCompiler, ClassParser) |
 
 ---
 

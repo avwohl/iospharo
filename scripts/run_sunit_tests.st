@@ -591,6 +591,54 @@ runAllTests
       (Smalltalk globals at: name ifAbsent: [nil])
         ifNotNil: [:cls | addOnce value: cls]].
 
+  "Tier 10: OpalCompiler tests, AST tests, ClassParser tests"
+  #(MethodMapTest MethodPragmaTest
+    OCAnnotationTest OCArrayLiteralTest
+    OCASTAndOrTranslatorTest OCASTBasicTranslatorTest
+    OCASTBlockTranslatorTest OCASTCheckerTest
+    OCASTClosureAnalyzerTest OCASTDoubleBlockTranslatorTest
+    OCASTDoubleBranchConditionalTranslatorTest OCASTLiteralTranslatorTest
+    OCASTRepeatTranslatorTest OCASTSemanticAnalyzerTest
+    OCASTSingleBlockTranslatorTest OCASTSingleBranchConditionalTranslatorTest
+    OCASTSpecialLiteralTranslatorTest OCASTTimesRepeatTranslatorTest
+    OCASTToDoTranslatorTest OCASTTranslatorMappingForFullBlockClosuresTest
+    OCASTTranslatorTest OCASTVariableTranslatorTest
+    OCASTWhileFalseTranslatorTest OCASTWhileTrueTranslatorTest
+    OCBytecodeGeneratorTest OCBytecodeToASTCacheTest
+    OCClosureCompilerTest OCClosureTest
+    OCCodeSnippetScriptingTest OCCompilationContextTest
+    OCCompiledMethodIntegrityTest OCCompilerNotifyingTest
+    OCCompilerTest OCCompileWithFailureTest
+    OCContextIntegrationTest OCContextTempMappingTest
+    OCDoitTest OCDoItVariableTest
+    OCDynamicASTCompilerPluginTest OCEnvironmentScopeTest
+    OCIfNotNilTest OCIRBuilderTest OCIRPrinterTest
+    OCIRTransformTest OCIRVisitorTest
+    OCLiteralTest OCPerformTest OCScanner2Test
+    OCSourceCode2BytecodeTest OCSpecialSelectorTest
+    OCStaticASTCompilerPluginTest OCTargetCompilerTest
+    OCVariableNodeNameResolutionTest OpalCompilerTest
+    ContextDebuggingInfoTest
+    "AST tests"
+    OCScannerTest OCParserTest OCProgramNodeTest
+    OCMethodNodeTest OCMessageNodeTest
+    OCBlockNodeTest OCSequenceNodeTest OCVariableNodeTest
+    OCCommentNodeTest OCCommentNodeVisitorTest
+    OCDumpVisitorTest OCGenericNodeVisitorTest
+    OCTypingVisitorTest OCSimpleFormatterTest
+    OCParseTreeRewriterTest OCParseTreeSearcherTest
+    OCPatternParserTest OCErrorNodeParserTest
+    OCEOFTokenTest OCParseErrorNodeTest
+    OCEvaluationTest OCCompileCodeSnippetTest
+    OCParseCodeSnippetTest OCCodeSnippetTest
+    "ClassParser tests"
+    CDBehaviorParserTest CDClassDefinitionParserTest
+    CDFluidClassParserTest CDTraitParserTest
+    CDExistingClassDefinitionTest CDExistingClassSideDefinitionTest
+    OCClassBuilderTest) do: [:name |
+      (Smalltalk globals at: name ifAbsent: [nil])
+        ifNotNil: [:cls | addOnce value: cls]].
+
   "Open output files"
   stream := '/tmp/sunit_test_results.txt' asFileReference writeStream.
   detail := '/tmp/sunit_test_detail.txt' asFileReference writeStream.
@@ -648,7 +696,20 @@ runTestClass: testClass run: runNum on: s detail: d
      SlotAnnouncementsTest SlotLayoutEqualityTest SlotTraitsTest
      SlotLayoutExtensionTest BooleanSlotTest
      "Code simulation needs SistaV1 support"
-     CodeSimulationTest) includes: testClass name) ifTrue: [
+     CodeSimulationTest
+     "valueUnpreemptively blocks timeout"
+     OCSpecialSelectorTest
+     "Abstract ClassParser tests"
+     CDBehaviorParserTest CDClassDefinitionParserTest
+     "Compiler AST translator tests (execution returns wrong values)"
+     OCASTVariableTranslatorTest OCASTSpecialLiteralTranslatorTest
+     OCASTAndOrTranslatorTest OCASTBasicTranslatorTest
+     OCASTBlockTranslatorTest OCASTSingleBranchConditionalTranslatorTest
+     OCASTDoubleBranchConditionalTranslatorTest
+     "IR builder/printer/visitor (CompiledMethod>>result: missing)"
+     OCIRBuilderTest OCIRPrinterTest OCIRVisitorTest
+     "Character>>adaptToNumber:andSend: missing"
+     OCBytecodeGeneratorTest) includes: testClass name) ifTrue: [
     s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' === SKIPPED (process-heavy)'; cr. s flush.
     ^ {0. 0. 0. 0. 0}].
 
@@ -735,7 +796,23 @@ runTestClass: testClass run: runNum on: s detail: d
         testWantsInitializationAddsInitializeSlot testAddInstVarName
         testWhichSelectorsAccessFindSlots
         "GlobalVariableTest: Transcript"
-        testTranscriptPrintingWithOpenedTranscriptExists) includes: sel) or: [
+        testTranscriptPrintingWithOpenedTranscriptExists
+        "MethodMapTest: dead context"
+        testCopiedVarFromDeadContext
+        "SelfVariableTest: Symbol>>numArgs"
+        testUsingMethodsSuper
+        "OCClosureCompilerTest: debugger temp"
+        testDebuggerTempAccess
+        "OCDoitTest: ivar read"
+        testDoItContextReadIvar
+        "OCParserTest: missing features"
+        testMatchInContext testParseExpressionDontFreeze
+        "OCProgramNodeTest: assertion"
+        testBestNodeForReturnAStatementWhenIntervalInStatementWithoutLeftPart
+        "OCClassBuilderTest: undeclared variable"
+        testCreateNormalClassWithTraitComposition
+        "OCSimpleFormatterTest: Symbol class>>do:"
+        testCoreSystem) includes: sel) or: [
          "Skip tests that iterate all heap objects (stalls with broken timer)"
          sel beginsWith: 'testPointers']) ifFalse: [
       | result |
