@@ -7512,6 +7512,18 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 fprintf(npcLog, "  slot0=0x%llx isSmi=%d\n",
                         (unsigned long long)slot0.rawBits(), slot0.isSmallInteger());
             }
+            // Dump 5 words before and after to see heap context
+            uint64_t* raw = reinterpret_cast<uint64_t*>(mh);
+            fprintf(npcLog, "  memory context around method:\n");
+            for (int off = -5; off <= 5; off++) {
+                fprintf(npcLog, "    [%+d] @0x%llx = 0x%llx\n", off,
+                        (unsigned long long)(uintptr_t)(raw + off),
+                        (unsigned long long)*(raw + off));
+            }
+            // Also dump offset from old space start
+            uintptr_t methodOff = (uintptr_t)mh - (uintptr_t)memory_.oldSpaceStart();
+            fprintf(npcLog, "  offsetFromOldSpaceStart=0x%llx\n",
+                    (unsigned long long)methodOff);
             fflush(npcLog);
         }
         // Set watchpoint on this method's header
@@ -7656,6 +7668,7 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
 
     // TRACE: Log lookupInMethodDict for #size during critical steps
     bool traceSizeLookup = (g_sendTraceFile && g_stepCount >= 420 && g_stepCount <= 440 && selectorStr == "size");
+    bool traceNPC = (selectorStr == "nextPendingCallback");
 
     // Search all key slots (linear scan — correct but O(n))
     for (size_t i = 0; i < keySlotCount; ++i) {
@@ -7668,6 +7681,39 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
         if (key.rawBits() == actualSelector.rawBits() || key.rawBits() == selector.rawBits()) {
             if (i < valuesSize) {
                 Oop method = memory_.fetchPointer(i, valuesArray);
+                if (traceNPC) {
+                    static FILE* npcDictLog = nullptr;
+                    if (!npcDictLog) npcDictLog = fopen("/tmp/iospharo-npc-dict.log", "w");
+                    if (npcDictLog) {
+                        fprintf(npcDictLog, "[NPC-DICT step=%llu] i=%zu method=0x%llx\n",
+                                (unsigned long long)g_stepNum, i, (unsigned long long)method.rawBits());
+                        fprintf(npcDictLog, "  valuesArray=0x%llx cls=%u fmt=%d slots=%zu\n",
+                                (unsigned long long)valuesArray.rawBits(),
+                                valuesHeader->classIndex(), (int)valuesHeader->format(),
+                                valuesSize);
+                        // Read the raw slot value directly from the array to verify fetchPointer
+                        Oop* rawSlots = valuesHeader->slots();
+                        fprintf(npcDictLog, "  rawSlots[%zu]=0x%llx (direct)\n",
+                                i, (unsigned long long)rawSlots[i].rawBits());
+                        // Also read values array header address and compute absolute slot addr
+                        uintptr_t slotAddr = (uintptr_t)(rawSlots + i);
+                        fprintf(npcDictLog, "  slotAddr=0x%llx valuesHdr=0x%llx\n",
+                                (unsigned long long)slotAddr,
+                                (unsigned long long)(uintptr_t)valuesHeader);
+                        // Dump a few surrounding values
+                        for (int delta = -2; delta <= 2; delta++) {
+                            size_t idx = (size_t)((int)i + delta);
+                            if (idx < valuesSize) {
+                                fprintf(npcDictLog, "  rawSlots[%zu]=0x%llx\n",
+                                        idx, (unsigned long long)rawSlots[idx].rawBits());
+                            }
+                        }
+                        // Method dictionary info
+                        fprintf(npcDictLog, "  methodDict=0x%llx mdSlots=%zu keySlots=%zu\n",
+                                (unsigned long long)methodDict.rawBits(), mdSlotCount, keySlotCount);
+                        fflush(npcDictLog);
+                    }
+                }
                 if (traceSizeLookup) {
                     fprintf(g_sendTraceFile, "[LOOKUP-DICT step=%lld] IDENTITY match #size at i=%zu method=0x%llx\n",
                             (long long)g_stepCount, i, (unsigned long long)method.rawBits());

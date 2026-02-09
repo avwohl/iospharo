@@ -444,6 +444,11 @@ public:
     bool needsCompactGC() const { return needsCompactGC_; }
     void clearCompactGCFlag() { needsCompactGC_ = false; }
 
+    /// Verify that all pointer slots in the heap point to valid object headers.
+    /// Builds a set of all valid object start addresses, then checks every pointer slot.
+    /// Returns number of bad pointers found. Writes diagnostic to /tmp/iospharo-verify.log.
+    size_t verifyHeapPointers();
+
     /// Register a root for GC (interpreter stack, etc.)
     void addRoot(Oop* root);
     void removeRoot(Oop* root);

@@ -2056,6 +2056,72 @@ GCResult ObjectMemory::fullGC() {
         }
     }
 
+    // Post-GC: find nextPendingCallback method and check its heap neighborhood
+    if (gcCallCount <= 3) {
+        FILE* npcPostLog = fopen("/tmp/iospharo-post-gc.log", "w");
+        if (npcPostLog) {
+            ObjectHeader* prevObj = nullptr;
+            uintptr_t prevEnd = 0;
+            size_t npcFound = 0;
+            ObjectScanner npcScanner(oldSpaceStart_, oldSpaceFree_);
+            while (ObjectHeader* obj = npcScanner.next()) {
+                if (!obj->isCompiledMethod()) {
+                    prevObj = obj;
+                    prevEnd = reinterpret_cast<uintptr_t>(obj) + obj->totalSize();
+                    continue;
+                }
+                // Check if this CompiledMethod's last selector is 'nextPendingCallback'
+                size_t nSlots = obj->slotCount();
+                if (nSlots == 0) { prevObj = obj; prevEnd = (uintptr_t)obj + obj->totalSize(); continue; }
+                Oop hdr0 = obj->slotAt(0);
+                if (!hdr0.isSmallInteger()) { prevObj = obj; prevEnd = (uintptr_t)obj + obj->totalSize(); continue; }
+                size_t numLits = hdr0.asSmallInteger() & 0x7FFF;
+                if (numLits < 2 || numLits >= nSlots) { prevObj = obj; prevEnd = (uintptr_t)obj + obj->totalSize(); continue; }
+                Oop selOop = obj->slotAt(numLits - 1);
+                if (!selOop.isObject() || selOop.rawBits() < 0x10000) { prevObj = obj; prevEnd = (uintptr_t)obj + obj->totalSize(); continue; }
+                ObjectHeader* selHdr = selOop.asObjectPtr();
+                if (!selHdr->isBytesObject() || selHdr->byteSize() != 19) { prevObj = obj; prevEnd = (uintptr_t)obj + obj->totalSize(); continue; }
+                if (memcmp(selHdr->bytes(), "nextPendingCallback", 19) != 0) { prevObj = obj; prevEnd = (uintptr_t)obj + obj->totalSize(); continue; }
+
+                npcFound++;
+                uintptr_t objAddr = reinterpret_cast<uintptr_t>(obj);
+                size_t objSize = obj->totalSize();
+                uintptr_t objOffset = objAddr - reinterpret_cast<uintptr_t>(oldSpaceStart_);
+                fprintf(npcPostLog, "[POST-GC-NPC #%zu] method @0x%llx offset=0x%llx cls=%u fmt=%d slots=%zu size=%zu\n",
+                        npcFound, (unsigned long long)objAddr, (unsigned long long)objOffset,
+                        obj->classIndex(), (int)obj->format(), nSlots, objSize);
+                fprintf(npcPostLog, "  rawHdr=0x%llx\n", (unsigned long long)obj->rawHeader());
+                fprintf(npcPostLog, "  slot0=0x%llx (isSmi=%d)\n",
+                        (unsigned long long)hdr0.rawBits(), hdr0.isSmallInteger());
+                // Previous object info
+                if (prevObj) {
+                    uintptr_t pAddr = reinterpret_cast<uintptr_t>(prevObj);
+                    fprintf(npcPostLog, "  prev @0x%llx cls=%u fmt=%d slots=%zu size=%zu end=0x%llx gap=%lld\n",
+                            (unsigned long long)pAddr, prevObj->classIndex(),
+                            (int)prevObj->format(), prevObj->slotCount(),
+                            prevObj->totalSize(), (unsigned long long)prevEnd,
+                            (long long)(objAddr - prevEnd));
+                    if (prevEnd > objAddr) {
+                        fprintf(npcPostLog, "  *** OVERLAP WITH PREVIOUS! ***\n");
+                    }
+                }
+                // Check the 24 bytes before the header for any recognizable pattern
+                uint64_t* pre = reinterpret_cast<uint64_t*>(objAddr);
+                fprintf(npcPostLog, "  header-3: 0x%llx\n", (unsigned long long)*(pre - 3));
+                fprintf(npcPostLog, "  header-2: 0x%llx\n", (unsigned long long)*(pre - 2));
+                fprintf(npcPostLog, "  header-1: 0x%llx\n", (unsigned long long)*(pre - 1));
+                fprintf(npcPostLog, "  header+0: 0x%llx (this is the header)\n", (unsigned long long)*pre);
+                fprintf(npcPostLog, "  header+1: 0x%llx (slot 0)\n", (unsigned long long)*(pre + 1));
+
+                prevObj = obj;
+                prevEnd = objAddr + objSize;
+            }
+            fprintf(npcPostLog, "[POST-GC-NPC] total found=%zu\n", npcFound);
+            fflush(npcPostLog);
+            fclose(npcPostLog);
+        }
+    }
+
     // Post-GC integrity check (after afterGC): validate all pointer slots
     if (gcCallCount <= 3) {
         size_t badSlotCount = 0;
@@ -3316,6 +3382,110 @@ void ObjectMemory::rebuildFreeListAfterCompact() {
     // We don't need to create a free list entry for the trailing gap —
     // the bump pointer allocator already handles this via oldSpaceFree_.
     // Free lists will be populated when we switch to free-list-based allocation.
+}
+
+// ===== HEAP POINTER VERIFICATION =====
+
+size_t ObjectMemory::verifyHeapPointers() {
+    FILE* log = fopen("/tmp/iospharo-verify.log", "w");
+    if (!log) return 0;
+
+    // Pass 1: Build set of all valid object start addresses (both old space and perm space)
+    std::unordered_set<uintptr_t> validAddrs;
+    validAddrs.reserve(800000);
+    ObjectScanner pass1(oldSpaceStart_, oldSpaceFree_);
+    while (ObjectHeader* obj = pass1.next()) {
+        validAddrs.insert(reinterpret_cast<uintptr_t>(obj));
+    }
+    if (permSpaceStart_ && permSpaceEnd_ > permSpaceStart_) {
+        ObjectScanner permScan(permSpaceStart_, permSpaceEnd_);
+        while (ObjectHeader* obj = permScan.next()) {
+            validAddrs.insert(reinterpret_cast<uintptr_t>(obj));
+        }
+    }
+    fprintf(log, "[VERIFY] %zu valid objects in heap\n", validAddrs.size());
+
+    // Pass 2: Check every pointer slot in every pointer-format object
+    size_t badPtrs = 0;
+    size_t checkedPtrs = 0;
+    ObjectScanner pass2(oldSpaceStart_, oldSpaceFree_);
+    while (ObjectHeader* obj = pass2.next()) {
+        uint8_t fmt = static_cast<uint8_t>(obj->format());
+        size_t nSlots = obj->slotCount();
+
+        // Determine which slots contain pointers
+        size_t ptrSlots = 0;
+        if (fmt <= 5) {
+            ptrSlots = nSlots;
+        } else if (fmt >= 24 && fmt <= 31) {
+            if (nSlots > 0) {
+                Oop hdr0 = obj->slotAt(0);
+                if (hdr0.isSmallInteger()) {
+                    size_t numLits = hdr0.asSmallInteger() & 0x7FFF;
+                    ptrSlots = std::min(numLits + 1, nSlots);
+                }
+            }
+        }
+
+        for (size_t i = 0; i < ptrSlots; ++i) {
+            Oop val = obj->slotAt(i);
+            if (!val.isObject()) continue;
+            if (val.rawBits() < 0x10000) continue;
+            if (val.isNil()) continue;
+
+            checkedPtrs++;
+            uintptr_t addr = val.rawBits();
+
+            if (validAddrs.find(addr) == validAddrs.end()) {
+                badPtrs++;
+                uintptr_t objAddr = reinterpret_cast<uintptr_t>(obj);
+
+                // Check if the target address is past the heap boundary
+                bool pastHeap = (addr >= reinterpret_cast<uintptr_t>(oldSpaceFree_));
+
+                // Look for nearby valid object
+                bool foundNear = false;
+                for (int delta = -8; delta <= 8; delta++) {
+                    if (delta == 0) continue;
+                    uintptr_t nearAddr = addr + delta * 8;
+                    if (validAddrs.find(nearAddr) != validAddrs.end()) {
+                        int offsetBytes = (int)(addr - nearAddr);
+                        ObjectHeader* nearObj = reinterpret_cast<ObjectHeader*>(nearAddr);
+                        fprintf(log, "[BAD-PTR #%zu] obj@0x%llx cls=%u fmt=%d slot[%zu]=0x%llx "
+                                "-> nearest valid @0x%llx (off by %+d) nearCls=%u nearFmt=%d nearSlots=%zu%s\n",
+                                badPtrs, (unsigned long long)objAddr, obj->classIndex(),
+                                fmt, i, (unsigned long long)addr,
+                                (unsigned long long)nearAddr, offsetBytes,
+                                nearObj->classIndex(), (int)nearObj->format(), nearObj->slotCount(),
+                                pastHeap ? " [PAST-HEAP]" : "");
+                        foundNear = true;
+                        break;
+                    }
+                }
+                if (!foundNear && badPtrs <= 100) {
+                    // Read what's at the target address for diagnostic
+                    uint64_t targetWord = 0;
+                    if (addr >= reinterpret_cast<uintptr_t>(oldSpaceStart_) &&
+                        addr + 8 <= reinterpret_cast<uintptr_t>(oldSpaceEnd_)) {
+                        targetWord = *reinterpret_cast<uint64_t*>(addr);
+                    }
+                    fprintf(log, "[BAD-PTR #%zu] obj@0x%llx cls=%u fmt=%d slot[%zu]=0x%llx "
+                            "-> NO nearby valid object targetWord=0x%llx%s\n",
+                            badPtrs, (unsigned long long)objAddr, obj->classIndex(),
+                            fmt, i, (unsigned long long)addr,
+                            (unsigned long long)targetWord,
+                            pastHeap ? " [PAST-HEAP]" : "");
+                }
+            }
+        }
+    }
+
+    fprintf(log, "[VERIFY] checked=%zu bad=%zu\n", checkedPtrs, badPtrs);
+    fflush(log);
+    fclose(log);
+
+    fprintf(stderr, "[VERIFY] checked=%zu pointers, bad=%zu\n", checkedPtrs, badPtrs);
+    return badPtrs;
 }
 
 } // namespace pharo
