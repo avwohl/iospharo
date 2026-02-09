@@ -639,7 +639,13 @@ runAllTests
       (Smalltalk globals at: name ifAbsent: [nil])
         ifNotNil: [:cls | addOnce value: cls]].
 
-  "Open output files"
+  "Note: Traits-Tests, Ring-*-Tests, ClassAnnotation-Tests, and most
+   ClassParser-Tests are NOT loaded in the default Pharo 13 image.
+   Only classes present in the base image are tested."
+
+  "Open output files (delete first to ensure clean truncation)"
+  '/tmp/sunit_test_results.txt' asFileReference ensureDelete.
+  '/tmp/sunit_test_detail.txt' asFileReference ensureDelete.
   stream := '/tmp/sunit_test_results.txt' asFileReference writeStream.
   detail := '/tmp/sunit_test_detail.txt' asFileReference writeStream.
   totalP := 0. totalF := 0. totalE := 0. totalS := 0. totalT := 0.
