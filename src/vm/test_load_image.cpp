@@ -20,6 +20,27 @@
 #include <execinfo.h>
 #include <unistd.h>
 
+#ifdef __APPLE__
+#include <dlfcn.h>
+// Activate the process as a foreground app so SDL2 windows are visible
+static void activateMacOSApp() {
+    // Use dlsym to avoid objc header conflicts (objc.h #defines nil)
+    typedef void* (*objc_getClass_t)(const char*);
+    typedef void* (*sel_registerName_t)(const char*);
+    typedef void* (*objc_msgSend_t)(void*, void*, ...);
+    auto getClass = (objc_getClass_t)dlsym(RTLD_DEFAULT, "objc_getClass");
+    auto regName = (sel_registerName_t)dlsym(RTLD_DEFAULT, "sel_registerName");
+    auto msgSend = (objc_msgSend_t)dlsym(RTLD_DEFAULT, "objc_msgSend");
+    if (!getClass || !regName || !msgSend) return;
+    void* nsAppClass = getClass("NSApplication");
+    if (!nsAppClass) return;
+    void* app = msgSend(nsAppClass, regName("sharedApplication"));
+    if (!app) return;
+    msgSend(app, regName("setActivationPolicy:"), (long)0); // Regular
+    msgSend(app, regName("activateIgnoringOtherApps:"), (int)1); // YES
+}
+#endif
+
 // SIGSEGV recovery support - defined in Interpreter.cpp
 extern sigjmp_buf g_sigsegvRecovery;
 extern volatile sig_atomic_t g_sigsegvRecoveryEnabled;
@@ -61,7 +82,9 @@ static void injectMouseClick(int x, int y, int button, int modifiers = 0) {
     gEventQueue.push(downEvent);
 
     std::cout << "[TEST] Injected mouse DOWN at (" << x << "," << y
-              << ") button=" << button << " subtype=" << downEvent.arg5 << std::endl;
+              << ") button=" << button << " subtype=" << downEvent.arg5
+              << " queueAddr=" << (void*)&gEventQueue
+              << " isEmpty=" << gEventQueue.isEmpty() << std::endl;
 
     // Mouse up event (a few ms later)
     Event upEvent = downEvent;
@@ -446,6 +469,9 @@ int main(int argc, char* argv[]) {
     sigemptyset(&sa.sa_mask);
     sigaction(SIGSEGV, &sa, nullptr);
     sigaction(SIGBUS, &sa, nullptr);
+#ifdef __APPLE__
+    activateMacOSApp();
+#endif
     std::cout << "Pharo Clean VM - Image Loader Test" << std::endl;
     std::cout << "===================================" << std::endl;
 
@@ -675,18 +701,23 @@ int main(int argc, char* argv[]) {
                 activeSteps++;
                 consecutiveIdle = 0;
 
-                // In interactive (no CLI args) mode, inject clicks for GUI testing
-                if (imageArgs.empty() && !clickInjected && activeSteps == 5000) {
-                    std::cout << "\n=== Injecting Right-Click (World Menu) ===" << std::endl;
-                    injectMouseClick(50, 300, 2);
-                    clickInjected = true;
-                }
+                // Event injection moved to idle section below — must wait until
+                // OSSDL2Driver's FFI event loop has started (SDL_PollEvent activates
+                // after ~111M steps).
             } else {
                 consecutiveIdle++;
                 // Report first idle transition and record wall-clock time
                 if (consecutiveIdle == 1) {
                     std::cout << "[IDLE] First idle at step " << i << " after " << activeSteps << " active steps" << std::endl;
                     idleStartTime = std::chrono::steady_clock::now();
+
+                    // Inject click during first idle — the OSSDL2Driver event loop
+                    // is now running (SDL_PollEvent has activated after startup).
+                    if (imageArgs.empty() && !clickInjected) {
+                        std::cout << "\n=== Injecting Right-Click (World Menu) ===" << std::endl;
+                        injectMouseClick(50, 300, 2);
+                        clickInjected = true;
+                    }
                 }
                 // Check wall-clock idle duration periodically (every 100K steps to avoid clock overhead)
                 if (consecutiveIdle % 100000 == 0) {
@@ -697,8 +728,8 @@ int main(int argc, char* argv[]) {
                         std::cout << "[CLI] Idle for " << idleSecs << "s wall-clock, stopping." << std::endl;
                         break;
                     }
-                    // In interactive mode, stop after 5s idle
-                    if (imageArgs.empty() && idleSecs > 5) {
+                    // In interactive mode, stop after 10s idle
+                    if (imageArgs.empty() && idleSecs > 10) {
                         break;
                     }
                 }
