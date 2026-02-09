@@ -4999,15 +4999,6 @@ PrimitiveResult Interpreter::primitiveBeDisplay(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveForceDisplayUpdate(int argCount) {
-    {
-        static int callCount = 0;
-        callCount++;
-        if (callCount <= 10) {
-            FILE* f = nullptr;
-            if (f) { fprintf(f, "[FORCE-UPDATE #%d] argCount=%d displayForm_.isNil=%d\n",
-                             callCount, argCount, displayForm_.isNil() ? 1 : 0); fclose(f); }
-        }
-    }
     if (argCount != 0) return PrimitiveResult::Failure;
 
     // If no display surface, nothing to do
@@ -13105,6 +13096,59 @@ PrimitiveResult Interpreter::primitiveShowDisplayRect(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// showDisplayBits - Copy affected rectangle from Display form bitmap to platform display surface.
+// Called after every successful BitBlt to mirror the reference VM's behavior
+// (BitBltPlugin calls showDisplayBitsLeftTopRightBottom after copyBits).
+void Interpreter::showDisplayBits(Oop destForm, int left, int top, int right, int bottom) {
+    if (!pharo::gDisplaySurface) return;
+
+    // Auto-discover Display form if needed
+    if (displayForm_.isNil()) {
+        Oop display = memory_.findGlobal("Display");
+        if (!display.isNil() && display.isObject()) {
+            displayForm_ = display;
+        }
+    }
+    if (displayForm_.isNil()) return;
+
+    // Only update screen for blits targeting the Display form
+    if (destForm != displayForm_) return;
+
+    // Get Form fields: 0=bits, 1=width, 2=height, 3=depth
+    Oop bits = memory_.fetchPointer(0, displayForm_);
+    if (bits.isNil() || !bits.isObject()) return;
+
+    ObjectHeader* bitsHdr = bits.asObjectPtr();
+    uint32_t* srcPixels = reinterpret_cast<uint32_t*>(bitsHdr->bytes());
+
+    Oop widthOop = memory_.fetchPointer(1, displayForm_);
+    Oop heightOop = memory_.fetchPointer(2, displayForm_);
+    int srcWidth = widthOop.isSmallInteger() ? widthOop.asSmallInteger() : screenWidth_;
+    int srcHeight = heightOop.isSmallInteger() ? heightOop.asSmallInteger() : screenHeight_;
+
+    uint32_t* dstPixels = pharo::gDisplaySurface->pixels();
+    int dstWidth = pharo::gDisplaySurface->width();
+    int dstHeight = pharo::gDisplaySurface->height();
+
+    // Clamp rect to valid range
+    if (left < 0) left = 0;
+    if (top < 0) top = 0;
+    if (right > srcWidth) right = srcWidth;
+    if (bottom > srcHeight) bottom = srcHeight;
+    if (right > dstWidth) right = dstWidth;
+    if (bottom > dstHeight) bottom = dstHeight;
+    if (right <= left || bottom <= top) return;
+
+    // Copy the rectangle from Form bits to display surface
+    for (int y = top; y < bottom; y++) {
+        memcpy(dstPixels + y * dstWidth + left,
+               srcPixels + y * srcWidth + left,
+               (right - left) * sizeof(uint32_t));
+    }
+
+    pharo::gDisplaySurface->update();
+}
+
 // Primitive 109: Snapshot with embedded sources
 // filename embedded primitiveSnapshotEmbedded -> boolean
 // Creates an image snapshot, optionally embedding sources
@@ -17223,6 +17267,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 }
             }
         }
+        showDisplayBits(destForm, destX, destY, destX + width, destY + height);
         return PrimitiveResult::Success;
     }
 
@@ -17372,6 +17417,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 }
             }
         }
+        showDisplayBits(destForm, destX, destY, destX + width, destY + height);
         return PrimitiveResult::Success;
     }
 
@@ -17436,6 +17482,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 }
             }
         }
+        showDisplayBits(destForm, destX, destY, destX + width, destY + height);
         return PrimitiveResult::Success;
     }
 
@@ -17491,6 +17538,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 }
             }
         }
+        showDisplayBits(destForm, destX, destY, destX + width, destY + height);
         return PrimitiveResult::Success;
     }
 
@@ -17522,6 +17570,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 }
             }
         }
+        showDisplayBits(destForm, destX, destY, destX + width, destY + height);
         return PrimitiveResult::Success;
     }
 
@@ -17572,6 +17621,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 }
             }
         }
+        showDisplayBits(destForm, destX, destY, destX + width, destY + height);
         return PrimitiveResult::Success;
     }
 

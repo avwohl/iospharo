@@ -781,6 +781,7 @@ private:
     PrimitiveResult primitiveScanCharacters(int argCount);       // 103
     PrimitiveResult primitiveDrawLoop(int argCount);             // 104
     PrimitiveResult primitiveShowDisplayRect(int argCount);      // 107
+    void showDisplayBits(Oop destForm, int left, int top, int right, int bottom);
     PrimitiveResult primitiveSnapshotEmbedded(int argCount);     // 109
 
     // I/O (stubs - iOS-specific implementation elsewhere)
