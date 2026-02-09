@@ -8546,9 +8546,20 @@ PrimitiveResult Interpreter::primitiveBecome(int argCount) {
         // Skip non-pointer objects (byte/word arrays)
         if (format >= ObjectFormat::Indexable8 && format <= ObjectFormat::Indexable8_7) return;
         if (format >= ObjectFormat::Indexable32 && format <= ObjectFormat::Indexable64) return;
+        // Also skip 16-bit arrays (format 12-15)
+        if (format >= ObjectFormat::Indexable16 && format <= ObjectFormat::Indexable16_3) return;
 
-        size_t slotCount = header->slotCount();
-        for (size_t i = 0; i < slotCount; i++) {
+        // For CompiledMethods, only scan the literal frame (pointer slots), not bytecodes
+        size_t numPointers = header->slotCount();
+        if (header->isCompiledMethod() && numPointers > 0) {
+            Oop methodHeader = header->slotAt(0);
+            if (methodHeader.isSmallInteger()) {
+                size_t numLits = methodHeader.asSmallInteger() & 0x7FFF;
+                numPointers = std::min(numPointers, numLits + 1);
+            }
+        }
+
+        for (size_t i = 0; i < numPointers; i++) {
             Oop slot = memory_.fetchPointer(i, obj);
             if (slot.rawBits() == rcvr.rawBits()) {
                 memory_.storePointer(i, obj, arg);

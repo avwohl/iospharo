@@ -7420,6 +7420,37 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
                     fflush(g_sendTraceFile);
                 }
                 if (method.isObject() && method.rawBits() > 0x10000) {
+                    // Validate method is actually a CompiledMethod
+                    ObjectHeader* mHdr = method.asObjectPtr();
+                    if (__builtin_expect(!mHdr->isCompiledMethod(), 0)) {
+                        fprintf(stderr, "[FATAL] lookupInMethodDict: non-method in values array!\n"
+                                "  method=0x%llx cls=%u fmt=%d slots=%zu\n"
+                                "  valuesArray=0x%llx valuesSize=%zu index=%zu\n"
+                                "  methodDict=0x%llx mdSlots=%zu\n"
+                                "  selector='%s' matchType=identity\n"
+                                "  step=%llu\n",
+                                (unsigned long long)method.rawBits(), mHdr->classIndex(),
+                                (int)mHdr->format(), mHdr->slotCount(),
+                                (unsigned long long)valuesArray.rawBits(), valuesSize, i,
+                                (unsigned long long)methodDict.rawBits(), mdSlotCount,
+                                selectorStr.c_str(),
+                                (unsigned long long)g_stepNum);
+                        // Dump values array contents
+                        for (size_t d = 0; d < valuesSize && d < 10; ++d) {
+                            Oop v = memory_.fetchPointer(d, valuesArray);
+                            if (v.isObject() && v.rawBits() > 0x10000) {
+                                ObjectHeader* vh = v.asObjectPtr();
+                                fprintf(stderr, "  values[%zu]=0x%llx cls=%u fmt=%d\n",
+                                        d, (unsigned long long)v.rawBits(),
+                                        vh->classIndex(), (int)vh->format());
+                            } else {
+                                fprintf(stderr, "  values[%zu]=0x%llx (imm/nil)\n",
+                                        d, (unsigned long long)v.rawBits());
+                            }
+                        }
+                        fflush(stderr);
+                        abort();
+                    }
                     return method;
                 }
             }
@@ -7443,6 +7474,24 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
                             fflush(g_sendTraceFile);
                         }
                         if (method.isObject() && method.rawBits() > 0x10000) {
+                            // Validate method is actually a CompiledMethod
+                            ObjectHeader* mHdr = method.asObjectPtr();
+                            if (__builtin_expect(!mHdr->isCompiledMethod(), 0)) {
+                                fprintf(stderr, "[FATAL] lookupInMethodDict: non-method in values array!\n"
+                                        "  method=0x%llx cls=%u fmt=%d slots=%zu\n"
+                                        "  valuesArray=0x%llx valuesSize=%zu index=%zu\n"
+                                        "  methodDict=0x%llx mdSlots=%zu\n"
+                                        "  selector='%s' matchType=string\n"
+                                        "  step=%llu\n",
+                                        (unsigned long long)method.rawBits(), mHdr->classIndex(),
+                                        (int)mHdr->format(), mHdr->slotCount(),
+                                        (unsigned long long)valuesArray.rawBits(), valuesSize, i,
+                                        (unsigned long long)methodDict.rawBits(), mdSlotCount,
+                                        selectorStr.c_str(),
+                                        (unsigned long long)g_stepNum);
+                                fflush(stderr);
+                                abort();
+                            }
                             return method;
                         }
                     }
@@ -8484,6 +8533,41 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
 
     // Calculate number of temporaries for the new method
     Oop newMethodHeader = memory_.fetchPointer(0, method);
+    if (__builtin_expect(!newMethodHeader.isSmallInteger(), 0)) {
+        ObjectHeader* mObj = method.asObjectPtr();
+        fprintf(stderr, "[FATAL] pushFrame: method header not SmallInteger!\n"
+                "  method=0x%llx cls=%u fmt=%d slots=%zu isCompiledMethod=%d\n"
+                "  header(slot0)=0x%llx tag=%d isObj=%d\n"
+                "  step=%llu frameDepth=%zu\n",
+                (unsigned long long)method.rawBits(),
+                mObj->classIndex(), (int)mObj->format(), mObj->slotCount(),
+                mObj->isCompiledMethod(),
+                (unsigned long long)newMethodHeader.rawBits(),
+                (int)(newMethodHeader.rawBits() & 7),
+                newMethodHeader.isObject(),
+                (unsigned long long)g_stepNum, frameDepth_);
+        // Dump first 6 slots
+        fprintf(stderr, "  slots:");
+        for (size_t i = 0; i < std::min(mObj->slotCount(), (size_t)6); ++i) {
+            Oop s = mObj->slotAt(i);
+            fprintf(stderr, " [%zu]=0x%llx(%s)", i, (unsigned long long)s.rawBits(),
+                    s.isSmallInteger() ? "smi" : s.isObject() ? "obj" : "imm");
+        }
+        fprintf(stderr, "\n");
+        // Check if the method object has a valid class
+        Oop cls = memory_.classOf(method);
+        if (cls.isObject()) {
+            Oop clsName = memory_.fetchPointer(6, cls);
+            if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+                ObjectHeader* nh = clsName.asObjectPtr();
+                if (nh->isBytesObject() && nh->byteSize() < 80) {
+                    fprintf(stderr, "  className=%.*s\n", (int)nh->byteSize(), (char*)nh->bytes());
+                }
+            }
+        }
+        fflush(stderr);
+        abort();
+    }
     int64_t headerBits = newMethodHeader.asSmallInteger();
     int numTemps = (headerBits >> 18) & 0x3F;
 
