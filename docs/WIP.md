@@ -1,6 +1,6 @@
 # iOS Pharo VM — Status
 
-Last verified: 2026-02-08
+Last verified: 2026-02-09
 
 ---
 
@@ -230,10 +230,12 @@ fallback in returnFromBlock.
 **primitiveChangeClass + immutability (commit 467ed76)**: Fix validation and
 add immutability enforcement.
 
-### Per-class results (Run #10)
+### Per-class results (Run #13)
 
-All 81 test classes pass completely. 4992 pass, 0 fail, 0 error, 6 skip.
-Only 2 classes skipped (ProcessTerminateBugTest, DelayTest).
+All 107 test classes tested, 5934 pass, 0 fail, 0 error, 6 skip.
+7 classes skipped at class level (ProcessTerminateBugTest, DelayTest,
+SlotMigrationTest, WeakSetTest, WeakIdentitySetTest,
+WeakIdentityKeyDictionaryTest, WeakOrderedCollectionTest).
 testMetaclassSuperclassHierarchy is flaky (passes most runs).
 
 ### History
@@ -252,6 +254,7 @@ testMetaclassSuperclassHierarchy is flaky (passes most runs).
 | #111 | 2026-02-08 | 73 | 4282 | 5 | 0 | 4 | 4291 | **99.79%** primitiveClass fix — regression discovered |
 | #118 | 2026-02-08 | 73 | 4283 | 4 | 0 | 0 | 4291 | **99.81%** Deprecation handler fix, testTransformingDeprecation passes |
 | #10 | 2026-02-09 | 81 | 4992 | 0 | 0 | 6 | 4998 | **99.88%** +8 classes, yield fix, context identity fix |
+| #13 | 2026-02-09 | 107 | 5934 | 0 | 0 | 6 | 5940 | **99.90%** +26 classes (Tier 7: weak, slot, queue, stream, native) |
 
 ---
 

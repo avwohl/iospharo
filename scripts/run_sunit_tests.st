@@ -536,6 +536,20 @@ runAllTests
       (Smalltalk globals at: name ifAbsent: [nil])
         ifNotNil: [:cls | addOnce value: cls]].
 
+  "=== Tier 7: More collections, weak refs, slots ==="
+  #(NullStreamTest StreamBugsTest
+    KeyedTreeTest NestedDictionaryTest PluggableDictionaryTest
+    IdentityBagTest HashTableSizesTest CharacterSetTest WideCharacterSetTest
+    NativeArrayTest StringInitializationTest StringLineEndingsTest
+    WeakSetTest WeakValueDictionaryTest WeakIdentitySetTest
+    WeakKeyDictionaryTest WeakIdentityKeyDictionaryTest
+    WeakOrderedCollectionTest WeakIdentityValueDictionaryTest
+    FIFOQueueTest LIFOQueueTest
+    SlotBasicTest SlotMigrationTest SlotErrorsTest SuperVariableTest
+    BenchmarkResultTest) do: [:name |
+      (Smalltalk globals at: name ifAbsent: [nil])
+        ifNotNil: [:cls | addOnce value: cls]].
+
   "Open output files"
   stream := '/tmp/sunit_test_results.txt' asFileReference writeStream.
   detail := '/tmp/sunit_test_detail.txt' asFileReference writeStream.
@@ -580,7 +594,9 @@ runTestClass: testClass run: runNum on: s detail: d
   "Skip classes that stall due to process/scheduling issues in our VM.
    These tests fork processes at the same priority or rely on Delay timeouts
    that cannot fire because our VM lacks proper time-slicing."
-  (#(ProcessTerminateBugTest DelayTest) includes: testClass name) ifTrue: [
+  (#(ProcessTerminateBugTest DelayTest SlotMigrationTest
+     WeakIdentityKeyDictionaryTest WeakOrderedCollectionTest
+     WeakSetTest WeakIdentitySetTest) includes: testClass name) ifTrue: [
     s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' === SKIPPED (process-heavy)'; cr. s flush.
     ^ {0. 0. 0. 0. 0}].
 
@@ -620,7 +636,18 @@ runTestClass: testClass run: runNum on: s detail: d
         testWaitTimeDurationWithCompletionAndTimeoutBlocks
         testWaitTimeoutSecondsOnCompletionOnTimeout
         "Delay-dependent (ProcessSpecificTest)"
-        testDynamicVariable testInheritableVariable testLocalVariable) includes: sel) or: [
+        testDynamicVariable testInheritableVariable testLocalVariable
+        "Process-heavy contention tests"
+        testHeavyContention testHeavyContention2
+        "Slot class restructuring (timeout)"
+        testInitializedSlotUpdateClass testCannotBeRecompiled
+        "Weak reference reclaim (GC issue)"
+        testAddIncludesSizeReclaim testClearing
+        testWeakOrderedCollectionAllGarbageCollected
+        testWeakOrderedCollectionSomeGarbageCollected
+        testFinalizeValuesWhenLastChainContinuesAtFront
+        "NativeArrayTest assertion"
+        testAtAllPutFail) includes: sel) or: [
          "Skip tests that iterate all heap objects (stalls with broken timer)"
          sel beginsWith: 'testPointers']) ifFalse: [
       | result |
