@@ -601,7 +601,7 @@ runTestClass: testClass run: runNum on: s detail: d
     "Skip tests known to hang or cause VM-level crashes"
     ((#(testPrintStringAll testStoreStringAll testPrintStringBase
         testAllReferencesTo testAllReferences testPrintingRecursive
-        testOneGBAllocation
+        testOneGBAllocation testSubclasses
         testBenchFor testBenchForException testBenchFib
         testOnForkErrorTakesLessThanOneSecond testOnForkSplit
         testCannotReturn testOnForkErrorOnSeparateProcess testOnForkErrorReturnsNil

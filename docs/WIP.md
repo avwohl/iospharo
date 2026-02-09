@@ -95,11 +95,11 @@ ExternalAddress (dereference pointer).
 
 ---
 
-## Test Results — Run #272 (2026-02-08)
+## Test Results — Run #1 (2026-02-08, clean)
 
-**73 test classes, 4361 tests. Pass: 4357, Fail: 0, Error: 0, Skip: 4.**
+**73 test classes, 4364 tests. Pass: 4359, Fail: 0, Error: 1, Skip: 4.**
 
-**99.91% pass rate** (4357/4361, 4 skipped). Clean exit (no crashes).
+**99.89% pass rate** (4359/4364, 1 error: testSubclasses metaclass name issue). Clean exit.
 
 ### Skipped test classes (5)
 - ProcessTerminateBugTest: needs Context>>terminateTo:/unwindAndStop: (context unwinding during process termination)
