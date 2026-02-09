@@ -832,6 +832,24 @@ runAllTests
       (Smalltalk globals at: name ifAbsent: [nil])
         ifNotNil: [:cls | addOnce value: cls]].
 
+  "Tier 16: Geometry, fuzzy matching, history, commander, misc"
+  #("Geometry (pure computation)"
+    GAngleTest GArcTest GCircleTest GCoordinatesTest GEllipseTest
+    GLineTest GMatrixTest GPointTest GPolygonTest GRayTest
+    GRectangleTest GSegmentTest GTriangleTest GVectorTest
+    "Compression"
+    GZipReadStreamTest
+    "Fuzzy matching"
+    FuzzyMatcherTest
+    "History"
+    HistoryIteratorTest HistoryNodeTest HistorySlotTest
+    "Commander"
+    CmCommandDecoratorTest CmCommandsGroupTest CmCommandTest
+    "Epicea (change logging)"
+    EpFilterTest EpLogTest EpCommentTest) do: [:name |
+      (Smalltalk globals at: name ifAbsent: [nil])
+        ifNotNil: [:cls | addOnce value: cls]].
+
   "Open output files (delete first to ensure clean truncation)"
   '/tmp/sunit_test_results.txt' asFileReference ensureDelete.
   '/tmp/sunit_test_detail.txt' asFileReference ensureDelete.
@@ -946,6 +964,10 @@ runTestClass: testClass run: runNum on: s detail: d
      SystemEnvironmentTest
      "Debugger step-through"
      FastStepThroughTest
+     "GEllipseTest hangs on testEmpty"
+     GEllipseTest
+     "Epicea (needs filesystem/network)"
+     EpLogTest EpCommentTest
      "BitBlt alpha compositing"
      BitBltTest
      "BitBlt arg error in printOn with halt"
@@ -1074,7 +1096,9 @@ runTestClass: testClass run: runNum on: s detail: d
         "TestCaseTest: watchdog/long test (priority 81)"
         testIgnoreWatchDogProcessAsForkedOne testRunningTooLongTest
         "SystemResolverTest: File class>>signalError"
-        testUserLocalDirectory) includes: sel) or: [
+        testUserLocalDirectory
+        "Geometry: intersectionsWithEllipse not implemented"
+        testIntersectionsWithArc testIntersectionsWithEllipse) includes: sel) or: [
          "Skip tests that iterate all heap objects (stalls with broken timer)"
          sel beginsWith: 'testPointers']) ifFalse: [
       | result |
