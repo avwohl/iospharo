@@ -2044,6 +2044,17 @@ GCResult ObjectMemory::fullGC() {
                   << " time=" << result.milliseconds << "ms"
                   << " used=" << (usedAfter / (1024*1024)) << "MB\n";
     }
+    // Log GC to file (Mac Catalyst stderr is lost)
+    {
+        FILE* gcLog = fopen("/tmp/iospharo-gc.log", "a");
+        if (gcLog) {
+            fprintf(gcLog, "[FULL-GC #%d] marked=%zu reclaimed=%zuKB time=%zums used=%zuMB\n",
+                    gcCallCount, markedCount, result.bytesReclaimed / 1024,
+                    (size_t)result.milliseconds, usedAfter / (1024*1024));
+            fflush(gcLog);
+            fclose(gcLog);
+        }
+    }
 
     // Post-GC integrity check (after afterGC): validate all pointer slots
     if (gcCallCount <= 3) {

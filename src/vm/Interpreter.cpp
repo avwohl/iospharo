@@ -7238,6 +7238,72 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             suppressContextSwitch_ = true;
         }
 
+        // Validate cached method is still a CompiledMethod
+        if (__builtin_expect(!cached->method.isObject() || cached->method.rawBits() < 0x10000 ||
+                             !cached->method.asObjectPtr()->isCompiledMethod(), 0)) {
+            FILE* clog = fopen("/tmp/iospharo-crash.log", "w");
+            if (!clog) clog = stderr;
+            fprintf(clog, "[FATAL] sendSelector: cached method is not CompiledMethod!\n"
+                    "  method=0x%llx", (unsigned long long)cached->method.rawBits());
+            if (cached->method.isObject() && cached->method.rawBits() > 0x10000) {
+                ObjectHeader* mh = cached->method.asObjectPtr();
+                fprintf(clog, " cls=%u fmt=%d slots=%zu rawHdr=0x%llx",
+                        mh->classIndex(), (int)mh->format(), mh->slotCount(),
+                        (unsigned long long)mh->rawHeader());
+            }
+            fprintf(clog, "\n  selector=0x%llx", (unsigned long long)selector.rawBits());
+            if (selBytes) fprintf(clog, " '%.*s'", (int)selLen, selBytes);
+            fprintf(clog, "\n  class=0x%llx", (unsigned long long)cached->classOop.rawBits());
+            fprintf(clog, "\n  step=%llu source=cache\n", (unsigned long long)g_stepNum);
+            fprintf(clog, "  methodInOldSpace=%d methodInPermSpace=%d\n",
+                    memory_.isOldObject(cached->method.asObjectPtr()),
+                    memory_.isPermObject(cached->method.asObjectPtr()));
+            // Check if the method header (8 bytes at the location) is all zeros
+            uint64_t* raw = reinterpret_cast<uint64_t*>(cached->method.asObjectPtr());
+            fprintf(clog, "  rawHeader=0x%llx rawSlot0=0x%llx rawSlot1=0x%llx\n",
+                    (unsigned long long)raw[0], (unsigned long long)raw[1], (unsigned long long)raw[2]);
+            // Also look at 64 bytes before and after to understand memory layout
+            fprintf(clog, "  context: ");
+            for (int off = -4; off <= 4; off++) {
+                fprintf(clog, "[%+d]=0x%llx ", off, (unsigned long long)raw[off]);
+            }
+            fprintf(clog, "\n");
+            // Scan the cache for other entries with this selector
+            int cacheMatches = 0;
+            size_t cacheIdx = cacheHash(selector, rcvrClass);
+            fprintf(clog, "  cacheIdx=%zu cacheSelector=0x%llx cacheClass=0x%llx\n",
+                    cacheIdx, (unsigned long long)cached->selector.rawBits(),
+                    (unsigned long long)cached->classOop.rawBits());
+            // Dump recent frames
+            fprintf(clog, "  recent frames (fd=%zu):\n", frameDepth_);
+            for (size_t fi = frameDepth_; fi > 0 && fi > (frameDepth_ > 8 ? frameDepth_ - 8 : 0); --fi) {
+                SavedFrame& sf = savedFrames_[fi - 1];
+                std::string selStr = "?";
+                if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                    ObjectHeader* sm = sf.savedMethod.asObjectPtr();
+                    if (sm->isCompiledMethod() && sm->slotCount() > 0) {
+                        Oop mh = sm->slotAt(0);
+                        if (mh.isSmallInteger()) {
+                            size_t nl = mh.asSmallInteger() & 0x7FFF;
+                            if (nl >= 2 && nl < sm->slotCount()) {
+                                Oop sel = sm->slotAt(nl - 1);
+                                if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                    ObjectHeader* sh = sel.asObjectPtr();
+                                    if (sh->isBytesObject() && sh->byteSize() < 80) {
+                                        selStr = std::string((char*)sh->bytes(), sh->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                fprintf(clog, "    frame[%zu] #%s method=0x%llx\n",
+                        fi-1, selStr.c_str(), (unsigned long long)sf.savedMethod.rawBits());
+            }
+            fflush(clog);
+            if (clog != stderr) fclose(clog);
+            abort();
+        }
         activateMethod(cached->method, argCount);
         return;
     }
@@ -7248,6 +7314,33 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     if (method.isNil()) {
         sendDoesNotUnderstand(selector, argCount);
         return;
+    }
+
+    // Validate looked-up method is a CompiledMethod
+    if (__builtin_expect(!method.isObject() || method.rawBits() < 0x10000 ||
+                         !method.asObjectPtr()->isCompiledMethod(), 0)) {
+        FILE* clog = fopen("/tmp/iospharo-crash.log", "w");
+        if (!clog) clog = stderr;
+        ObjectHeader* mh = method.asObjectPtr();
+        fprintf(clog, "[FATAL] sendSelector: lookupMethod returned non-CompiledMethod!\n"
+                "  method=0x%llx cls=%u fmt=%d slots=%zu\n"
+                "  selector=0x%llx", (unsigned long long)method.rawBits(),
+                mh->classIndex(), (int)mh->format(), mh->slotCount(),
+                (unsigned long long)selector.rawBits());
+        if (selBytes) fprintf(clog, " '%.*s'", (int)selLen, selBytes);
+        fprintf(clog, "\n  rcvrClass=0x%llx step=%llu source=lookup\n",
+                (unsigned long long)rcvrClass.rawBits(), (unsigned long long)g_stepNum);
+        // Dump method dict chain info
+        Oop curCls = rcvrClass;
+        for (int d = 0; d < 5 && curCls.isObject(); d++) {
+            Oop md = methodDictOf(curCls);
+            fprintf(clog, "  class[%d]=0x%llx methodDict=0x%llx\n",
+                    d, (unsigned long long)curCls.rawBits(), (unsigned long long)md.rawBits());
+            curCls = superclassOf(curCls);
+        }
+        fflush(clog);
+        if (clog != stderr) fclose(clog);
+        abort();
     }
 
     // Cache the method
@@ -7423,32 +7516,35 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
                     // Validate method is actually a CompiledMethod
                     ObjectHeader* mHdr = method.asObjectPtr();
                     if (__builtin_expect(!mHdr->isCompiledMethod(), 0)) {
-                        fprintf(stderr, "[FATAL] lookupInMethodDict: non-method in values array!\n"
+                        FILE* clog = fopen("/tmp/iospharo-crash.log", "w");
+                        if (!clog) clog = stderr;
+                        fprintf(clog, "[FATAL] lookupInMethodDict: non-method in values array!\n"
                                 "  method=0x%llx cls=%u fmt=%d slots=%zu\n"
                                 "  valuesArray=0x%llx valuesSize=%zu index=%zu\n"
                                 "  methodDict=0x%llx mdSlots=%zu\n"
                                 "  selector='%s' matchType=identity\n"
-                                "  step=%llu\n",
+                                "  step=%llu gcCount=%zu\n",
                                 (unsigned long long)method.rawBits(), mHdr->classIndex(),
                                 (int)mHdr->format(), mHdr->slotCount(),
                                 (unsigned long long)valuesArray.rawBits(), valuesSize, i,
                                 (unsigned long long)methodDict.rawBits(), mdSlotCount,
                                 selectorStr.c_str(),
-                                (unsigned long long)g_stepNum);
+                                (unsigned long long)g_stepNum, 0/*gcCount*/);
                         // Dump values array contents
                         for (size_t d = 0; d < valuesSize && d < 10; ++d) {
                             Oop v = memory_.fetchPointer(d, valuesArray);
                             if (v.isObject() && v.rawBits() > 0x10000) {
                                 ObjectHeader* vh = v.asObjectPtr();
-                                fprintf(stderr, "  values[%zu]=0x%llx cls=%u fmt=%d\n",
+                                fprintf(clog, "  values[%zu]=0x%llx cls=%u fmt=%d cm=%d\n",
                                         d, (unsigned long long)v.rawBits(),
-                                        vh->classIndex(), (int)vh->format());
+                                        vh->classIndex(), (int)vh->format(), vh->isCompiledMethod());
                             } else {
-                                fprintf(stderr, "  values[%zu]=0x%llx (imm/nil)\n",
+                                fprintf(clog, "  values[%zu]=0x%llx (imm/nil)\n",
                                         d, (unsigned long long)v.rawBits());
                             }
                         }
-                        fflush(stderr);
+                        fflush(clog);
+                        if (clog != stderr) fclose(clog);
                         abort();
                     }
                     return method;
@@ -7477,19 +7573,22 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
                             // Validate method is actually a CompiledMethod
                             ObjectHeader* mHdr = method.asObjectPtr();
                             if (__builtin_expect(!mHdr->isCompiledMethod(), 0)) {
-                                fprintf(stderr, "[FATAL] lookupInMethodDict: non-method in values array!\n"
+                                FILE* clog = fopen("/tmp/iospharo-crash.log", "w");
+                                if (!clog) clog = stderr;
+                                fprintf(clog, "[FATAL] lookupInMethodDict: non-method (string) in values array!\n"
                                         "  method=0x%llx cls=%u fmt=%d slots=%zu\n"
                                         "  valuesArray=0x%llx valuesSize=%zu index=%zu\n"
                                         "  methodDict=0x%llx mdSlots=%zu\n"
                                         "  selector='%s' matchType=string\n"
-                                        "  step=%llu\n",
+                                        "  step=%llu gcCount=%zu\n",
                                         (unsigned long long)method.rawBits(), mHdr->classIndex(),
                                         (int)mHdr->format(), mHdr->slotCount(),
                                         (unsigned long long)valuesArray.rawBits(), valuesSize, i,
                                         (unsigned long long)methodDict.rawBits(), mdSlotCount,
                                         selectorStr.c_str(),
-                                        (unsigned long long)g_stepNum);
-                                fflush(stderr);
+                                        (unsigned long long)g_stepNum, 0/*gcCount*/);
+                                fflush(clog);
+                                if (clog != stderr) fclose(clog);
                                 abort();
                             }
                             return method;
@@ -8534,26 +8633,36 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     // Calculate number of temporaries for the new method
     Oop newMethodHeader = memory_.fetchPointer(0, method);
     if (__builtin_expect(!newMethodHeader.isSmallInteger(), 0)) {
+        FILE* crashLog = fopen("/tmp/iospharo-crash.log", "w");
+        if (!crashLog) crashLog = stderr;
         ObjectHeader* mObj = method.asObjectPtr();
-        fprintf(stderr, "[FATAL] pushFrame: method header not SmallInteger!\n"
-                "  method=0x%llx cls=%u fmt=%d slots=%zu isCompiledMethod=%d\n"
+        // Print raw header and overflow word for deep analysis
+        uint64_t rawHdr = mObj->rawHeader();
+        uint64_t* rawPtr = reinterpret_cast<uint64_t*>(mObj);
+        uint64_t overflowWord = *(rawPtr - 1);  // word before header
+        uint8_t slotCountByte = (rawHdr >> 56) & 0xFF;
+        fprintf(crashLog, "[FATAL] pushFrame: method header not SmallInteger!\n"
+                "  method=0x%llx rawHdr=0x%llx overflowWord=0x%llx slotCountByte=%u\n"
+                "  cls=%u fmt=%d slots=%zu isCompiledMethod=%d\n"
                 "  header(slot0)=0x%llx tag=%d isObj=%d\n"
                 "  step=%llu frameDepth=%zu\n",
                 (unsigned long long)method.rawBits(),
+                (unsigned long long)rawHdr, (unsigned long long)overflowWord,
+                (unsigned)slotCountByte,
                 mObj->classIndex(), (int)mObj->format(), mObj->slotCount(),
                 mObj->isCompiledMethod(),
                 (unsigned long long)newMethodHeader.rawBits(),
                 (int)(newMethodHeader.rawBits() & 7),
                 newMethodHeader.isObject(),
                 (unsigned long long)g_stepNum, frameDepth_);
-        // Dump first 6 slots
-        fprintf(stderr, "  slots:");
-        for (size_t i = 0; i < std::min(mObj->slotCount(), (size_t)6); ++i) {
+        // Dump first 10 slots
+        fprintf(crashLog, "  slots:");
+        for (size_t i = 0; i < std::min(mObj->slotCount(), (size_t)10); ++i) {
             Oop s = mObj->slotAt(i);
-            fprintf(stderr, " [%zu]=0x%llx(%s)", i, (unsigned long long)s.rawBits(),
+            fprintf(crashLog, " [%zu]=0x%llx(%s)", i, (unsigned long long)s.rawBits(),
                     s.isSmallInteger() ? "smi" : s.isObject() ? "obj" : "imm");
         }
-        fprintf(stderr, "\n");
+        fprintf(crashLog, "\n");
         // Check if the method object has a valid class
         Oop cls = memory_.classOf(method);
         if (cls.isObject()) {
@@ -8561,11 +8670,63 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
             if (clsName.isObject() && clsName.rawBits() > 0x10000) {
                 ObjectHeader* nh = clsName.asObjectPtr();
                 if (nh->isBytesObject() && nh->byteSize() < 80) {
-                    fprintf(stderr, "  className=%.*s\n", (int)nh->byteSize(), (char*)nh->bytes());
+                    fprintf(crashLog, "  className=%.*s\n", (int)nh->byteSize(), (char*)nh->bytes());
                 }
             }
         }
-        fflush(stderr);
+        // Dump selector from the last literal
+        if (mObj->isCompiledMethod() && mObj->slotCount() > 1) {
+            Oop hdr = mObj->slotAt(0);
+            if (hdr.isSmallInteger()) {
+                size_t nLits = hdr.asSmallInteger() & 0x7FFF;
+                if (nLits >= 2 && nLits < mObj->slotCount()) {
+                    Oop selLit = mObj->slotAt(nLits);  // penultimate literal = methodClass assoc
+                    Oop selLit2 = mObj->slotAt(nLits - 1);  // second-to-last = selector (usually)
+                    fprintf(crashLog, "  lastLiteral[%zu]=0x%llx penultimate[%zu]=0x%llx\n",
+                            nLits, (unsigned long long)selLit.rawBits(),
+                            nLits-1, (unsigned long long)selLit2.rawBits());
+                }
+            }
+        }
+        // Current selector being sent
+        fprintf(crashLog, "  newMethod_=0x%llx method_=0x%llx receiver_=0x%llx\n",
+                (unsigned long long)newMethod_.rawBits(),
+                (unsigned long long)method_.rawBits(),
+                (unsigned long long)receiver_.rawBits());
+        // GC info
+        fprintf(crashLog, "  gcCount=%zu lastGCStep=%llu\n",
+                0/*gcCount*/, (unsigned long long)0/*lastGCStep*/);
+        // Check if method address is in valid heap range
+        fprintf(crashLog, "  methodAddr in heap: old=%d perm=%d\n",
+                memory_.isOldObject(mObj), memory_.isPermObject(mObj));
+        // Walk the stack to show recent callers
+        fprintf(crashLog, "  recent frames:\n");
+        for (size_t fi = frameDepth_; fi > 0 && fi > frameDepth_ - 8; --fi) {
+            SavedFrame& sf = savedFrames_[fi - 1];
+            std::string selStr = "?";
+            if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
+                ObjectHeader* sm = sf.savedMethod.asObjectPtr();
+                if (sm->isCompiledMethod()) {
+                    Oop mh = sm->slotAt(0);
+                    if (mh.isSmallInteger()) {
+                        size_t nl = mh.asSmallInteger() & 0x7FFF;
+                        if (nl >= 2 && nl < sm->slotCount()) {
+                            Oop sel = sm->slotAt(nl - 1);
+                            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                ObjectHeader* sh = sel.asObjectPtr();
+                                if (sh->isBytesObject() && sh->byteSize() < 80) {
+                                    selStr = std::string((char*)sh->bytes(), sh->byteSize());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            fprintf(crashLog, "    frame[%zu] #%s method=0x%llx\n",
+                    fi-1, selStr.c_str(), (unsigned long long)sf.savedMethod.rawBits());
+        }
+        fflush(crashLog);
+        if (crashLog != stderr) fclose(crashLog);
         abort();
     }
     int64_t headerBits = newMethodHeader.asSmallInteger();
