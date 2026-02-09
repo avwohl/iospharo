@@ -38,6 +38,8 @@
 #include <cassert>
 #include <cmath>
 #include <cstring>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
 
 namespace pharo {
@@ -120,7 +122,15 @@ public:
 
     /// Extract SmallInteger value. Caller must verify isSmallInteger() first.
     int64_t asSmallInteger() const {
-        assert(isSmallInteger());
+        if (__builtin_expect(!isSmallInteger(), 0)) {
+            fprintf(stderr, "[FATAL] asSmallInteger on non-SmallInt: bits=0x%llx tag=%d "
+                    "isObj=%d isChar=%d isFloat=%d caller=%p\n",
+                    (unsigned long long)bits_, (int)(bits_ & 7),
+                    isObject(), isCharacter(), isSmallFloat(),
+                    __builtin_return_address(0));
+            fflush(stderr);
+            abort();
+        }
         // Arithmetic right shift preserves sign bit for negative numbers
         return static_cast<int64_t>(bits_) >> 3;
     }
