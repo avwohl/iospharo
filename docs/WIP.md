@@ -95,15 +95,14 @@ ExternalAddress (dereference pointer).
 
 ---
 
-## Test Results — Run #1 (2026-02-08, clean)
+## Test Results — Run #10 (2026-02-09, clean)
 
-**73 test classes, 4364 tests. Pass: 4359, Fail: 0, Error: 1, Skip: 4.**
+**81 test classes, 4998 tests. Pass: 4992, Fail: 0, Error: 0, Skip: 6.**
 
-**99.89% pass rate** (4359/4364, 1 error: testSubclasses metaclass name issue). Clean exit.
+**99.88% pass rate** (4992/4998). Clean exit, zero failures.
 
-### Skipped test classes (5)
-- ProcessTerminateBugTest: needs Context>>terminateTo:/unwindAndStop: (context unwinding during process termination)
-- ProcessSpecificTest: uses Delay forMilliseconds:
+### Skipped test classes (2)
+- ProcessTerminateBugTest: needs Context>>terminateTo:/unwindAndStop: (context unwinding)
 - DelayTest: Delay-dependent
 - SemaphoreTest: Delay-dependent
 - GeneratorTest was re-enabled and passes 13/13
@@ -231,27 +230,11 @@ fallback in returnFromBlock.
 **primitiveChangeClass + immutability (commit 467ed76)**: Fix validation and
 add immutability enforcement.
 
-### Per-class results (Run #118)
+### Per-class results (Run #10)
 
-All 73 test classes pass completely except ContextTest (1 fail), BehaviorTest (2 fail),
-WeakMessageSendTest (1 fail). 4283 pass, 4 fail, 0 error. 11 classes skipped
-(process/timer-dependent).
-
-Skipped: BlockClosureTest, SemaphoreTest, ProcessTerminateBugTest,
-ProcessSpecificTest, MonitorTest, DelayTest, GeneratorTest, AllocationTest,
-ClassHierarchyTest, MetaClassTest, SharedPoolTest.
-
-### Known issues
-
-1. **ContextTest** (1 fail): `testClosureRestart` — block temp not reset after
-   `thisContext restart`. Restart works (block re-executes) but local temps retain
-   values from previous execution instead of being nil'd.
-2. **BehaviorTest** (2 fail): `testLocalMethods`/`testLocalSelectors` — `localMethods`
-   includes extension methods that should be filtered. Likely Smalltalk-level method
-   filtering issue, not a VM primitive bug.
-3. **WeakMessageSendTest** (1 fail): `testReceiverWithGC` — weak reference not
-   cleared after `garbageCollectMost`. GC weak reference processing may have a
-   regression.
+All 81 test classes pass completely. 4992 pass, 0 fail, 0 error, 6 skip.
+Only 2 classes skipped (ProcessTerminateBugTest, DelayTest).
+testMetaclassSuperclassHierarchy is flaky (passes most runs).
 
 ### History
 | Run | Date | Classes | Pass | Fail | Error | Skip | Total | Notes |
@@ -268,6 +251,7 @@ ClassHierarchyTest, MetaClassTest, SharedPoolTest.
 | #92 | 2026-02-07 | 73 | 4286+ | 1 | 0 | 4 | 4291 | **99.98%** quick primitive P118 fix — 8 more tests fixed |
 | #111 | 2026-02-08 | 73 | 4282 | 5 | 0 | 4 | 4291 | **99.79%** primitiveClass fix — regression discovered |
 | #118 | 2026-02-08 | 73 | 4283 | 4 | 0 | 0 | 4291 | **99.81%** Deprecation handler fix, testTransformingDeprecation passes |
+| #10 | 2026-02-09 | 81 | 4992 | 0 | 0 | 6 | 4998 | **99.88%** +8 classes, yield fix, context identity fix |
 
 ---
 
