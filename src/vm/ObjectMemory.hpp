@@ -551,7 +551,7 @@ private:
     bool forceGCFlag_ = false;
     bool needsCompactGC_ = false;  // Set by allocator when compaction needed at safe point
     size_t lastCompactedSize_ = 0;  // Old space used bytes after last compacting GC
-    size_t gcHeadroom_ = 4ULL * 1024 * 1024;  // 4MB — force early GC for debugging (was 256MB)
+    size_t gcHeadroom_ = 256ULL * 1024 * 1024;  // 256MB headroom before requesting GC
     Interpreter* interpreter_ = nullptr;  // For root enumeration during GC
     std::vector<Oop*> roots_;
     std::vector<ObjectHeader*> rememberedSet_;  // Old-space objects with young pointers

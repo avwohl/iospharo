@@ -7903,6 +7903,33 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     ObjectHeader* methodObj = method_.asObjectPtr();
 
     Oop methodHeader = memory_.fetchPointer(0, method_);
+    if (__builtin_expect(!methodHeader.isSmallInteger(), 0)) {
+        // Method header must be a SmallInteger. If it's not, the method object
+        // is corrupted (possibly by GC or by activating a non-method object).
+        fprintf(stderr, "[FATAL] activateMethod: method header is not SmallInteger!\n"
+                "  method_=0x%llx cls=%u fmt=%d slots=%zu\n"
+                "  header=0x%llx tag=%d isObj=%d\n"
+                "  newMethod_=0x%llx receiver_=0x%llx\n"
+                "  step=%llu frameDepth=%zu\n",
+                (unsigned long long)method_.rawBits(),
+                methodObj->classIndex(), (int)methodObj->format(),
+                methodObj->slotCount(),
+                (unsigned long long)methodHeader.rawBits(),
+                (int)(methodHeader.rawBits() & 7),
+                methodHeader.isObject(),
+                (unsigned long long)newMethod_.rawBits(),
+                (unsigned long long)receiver_.rawBits(),
+                (unsigned long long)g_stepNum, frameDepth_);
+        // Print the first 4 slots of the method object for diagnosis
+        fprintf(stderr, "  slots:");
+        for (size_t i = 0; i < std::min(methodObj->slotCount(), (size_t)4); ++i) {
+            Oop s = methodObj->slotAt(i);
+            fprintf(stderr, " [%zu]=0x%llx", i, (unsigned long long)s.rawBits());
+        }
+        fprintf(stderr, "\n");
+        fflush(stderr);
+        abort();
+    }
     int64_t headerBits = methodHeader.asSmallInteger();
     int numLiterals = headerBits & 0x7FFF;  // bits 0-14 are numLiterals
 

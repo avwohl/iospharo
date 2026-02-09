@@ -41,6 +41,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <execinfo.h>
 
 namespace pharo {
 
@@ -128,6 +129,16 @@ public:
                     (unsigned long long)bits_, (int)(bits_ & 7),
                     isObject(), isCharacter(), isSmallFloat(),
                     __builtin_return_address(0));
+            // Print stack backtrace
+            void* bt[20];
+            int btSize = backtrace(bt, 20);
+            char** btSyms = backtrace_symbols(bt, btSize);
+            if (btSyms) {
+                for (int i = 0; i < btSize; ++i) {
+                    fprintf(stderr, "  [%d] %s\n", i, btSyms[i]);
+                }
+                free(btSyms);
+            }
             fflush(stderr);
             abort();
         }
