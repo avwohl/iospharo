@@ -33,23 +33,23 @@ When something doesn't work:
 
 **If you find yourself writing code that "works around" something, STOP and investigate the root cause instead.**
 
-### FFI/Display: FIXED (2026-02-07)
+### FFI/Display: VERIFIED WORKING (2026-02-08)
 
-The SDL display pipeline now works end-to-end:
-1. OSSDL2Driver selected → SDL_Init via FFI → SDL_CreateWindow → SDL_CreateRenderer
-2. SDL_LockTexture → pixel pointer flows through FFI void** marshalling
-3. adoptAddress: copies pointer to ExternalAddress → asInteger reads it
-4. SurfacePlugin SetPointer receives real pixel address
-5. 100K+ BitBlt operations → SDL_UnlockTexture → SDL_RenderCopy → SDL_RenderPresent
+Real SDL2 is statically linked via `-Wl,-force_load` in CMakeLists.txt. The Pharo
+image's OSSDL2Driver calls real SDL_Init, SDL_CreateWindow, SDL_PollEvent etc. via
+FFI (TFFI callout → dlsym(RTLD_DEFAULT) → finds force-loaded SDL2 symbols).
 
-**Root cause was in `primitiveFFIIntegerAt`**: it treated ALL bytes objects
-(including ByteArray) as ExternalAddresses, dereferencing their contents as
-a pointer instead of reading the bytes directly. Fixed by checking the class
-(ExternalAddress → dereference, ByteArray → read directly).
+Frame capture proves correct rendering: Pharo logo, menu bar, desktop visible.
+Event loop runs (939 SDL_PollEvent calls in 45s). The stub functions in FFI.cpp
+are dead code — never called by TFFI when real SDL2 is available.
 
-### Current Priority: Visual verification and remaining test failures
+**Remaining display issue**: `GrafPort(Object)>>error:` renders a red X over the
+desktop. Caused by SpStyleEnvironmentColorProxy missing `#isTransparent` and
+`#fillRectangle:on:`. This is a Morphic/Spec2 theming issue, not FFI.
 
-- Verify the display actually shows rendered content (not just gray)
+### Current Priority: Fix GrafPort rendering error, enable skipped tests
+
+- Investigate GrafPort(Object)>>error: during desktop rendering
 - Enable the 11 skipped test classes (134 hidden tests) and fix failures
 - Fix the 10 individually skipped test selectors
 - Only 32-bit-specific skips are acceptable

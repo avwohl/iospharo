@@ -1,6 +1,6 @@
 # iOS Pharo VM — Status
 
-Last verified: 2026-02-07
+Last verified: 2026-02-08
 
 ---
 
@@ -68,26 +68,34 @@ Key bugs fixed:
 
 ---
 
-## FFI/Display Pipeline — FIXED (2026-02-07)
+## FFI/Display Pipeline — VERIFIED WORKING (2026-02-08)
 
-The SDL display pipeline is now working end-to-end. Root cause: `primitiveFFIIntegerAt`
-(named primitive used by `ByteArray >> integerAt:size:signed:` via TFFIBackend)
-treated ALL bytes objects as ExternalAddresses — reading their bytes as a pointer
-and dereferencing into external memory. For ByteArray (used by
-`ExternalAddress >> asInteger` via `asByteArrayPointer`), this meant reading random
-pixel memory instead of the ByteArray's own bytes, returning 0 to
-`setManualSurfacePointer:`.
+The SDL display pipeline is fully operational with real SDL2.
 
-Fixed by checking the object's class: ExternalAddress → dereference pointer,
-ByteArray → read directly. Commit 491d515.
+**Architecture**: Real SDL2 is statically linked via `-Wl,-force_load` in CMakeLists.txt.
+When the Pharo image calls `SDL_Init`, `SDL_CreateWindow`, `SDL_PollEvent` etc. via FFI,
+`dlsym(RTLD_DEFAULT, ...)` finds the real SDL2 symbols. The stub functions in FFI.cpp are
+dead code (never called by TFFI).
 
-Verified pipeline: SDL_CreateWindow → SDL_CreateRenderer → SDL_LockTexture →
-pixel ptr via FFI void** → adoptAddress: → asInteger → SetPointer (real addr) →
-100K+ BitBlt → SDL_UnlockTexture → SDL_RenderCopy → SDL_RenderPresent.
+**Verified pipeline** (frame capture proves real pixels):
+1. OSSDL2Driver selected as display driver
+2. SDL_Init, SDL_CreateWindow, SDL_CreateRenderer called via TFFI → succeed
+3. SDL_LockTexture → primitiveCopyBits (BitBlt) → SDL_UnlockTexture → texture filled
+4. SDL_RenderCopy → SDL_RenderPresent → frame rendered
+5. SDL_PollEvent called ~939 times in 45s (event loop running)
+6. Frame capture shows: Pharo logo, menu bar, desktop content
+
+**Remaining display issue**: `GrafPort(Object)>>error:` renders red X pattern over
+the main desktop area. This is a Morphic rendering error (SpStyleEnvironmentColorProxy
+missing `#isTransparent` and `#fillRectangle:on:`), not an FFI/Display issue.
+
+**Earlier FFI fix** (commit 491d515): `primitiveFFIIntegerAt` treated all bytes objects
+as ExternalAddresses. Fixed to distinguish ByteArray (read directly) from
+ExternalAddress (dereference pointer).
 
 ---
 
-## Test Results — Run #260 (2026-02-08)
+## Test Results — Run #261 (2026-02-08)
 
 **73 test classes, 4291 tests. Pass: 4287, Fail: 0, Error: 0, Skip: 4.**
 
