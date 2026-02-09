@@ -599,9 +599,9 @@ runTestClass: testClass run: runNum on: s detail: d
 
   sels do: [:sel |
     "Skip tests known to hang or cause VM-level crashes"
-    ((#(testPrintStringAll testStoreStringAll testPrintStringBase testReciprocalModulo
-        testAllReferencesTo testAllReferences testPragmaAddingProperty
-        testPragmaRemovingProperty testOneGBAllocation testPrintingRecursive
+    ((#(testPrintStringAll testStoreStringAll testPrintStringBase
+        testAllReferencesTo testAllReferences testPrintingRecursive
+        testOneGBAllocation
         testBenchFor testBenchForException testBenchFib
         testOnForkErrorTakesLessThanOneSecond testOnForkSplit
         testCannotReturn testOnForkErrorOnSeparateProcess testOnForkErrorReturnsNil
