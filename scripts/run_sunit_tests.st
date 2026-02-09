@@ -701,6 +701,40 @@ runAllTests
       (Smalltalk globals at: name ifAbsent: [nil])
         ifNotNil: [:cls | addOnce value: cls]].
 
+  "Tier 12: Graph algorithms, slots, continuations, compiler, system"
+  #("AI Graph algorithms (pure computation)"
+    AIAstarTest AIBellmanFordTest AIBFSTest AIDijkstraTest
+    AIDinicTest AIGraphAlgorithmTest AIGraphReducerTest AIHitsTest
+    AIKruskalTest AILongestPathInDAGTest AILongestPathInDCGTest
+    AIPrimTest AIShortestPathInDAGTest AITarjanTest
+    AITopologicalSortingTest AIWeightedHitsTest
+    "Slot variants"
+    AccessorInstanceVariableSlotTest ComputedSlotTest
+    ProcessLocalSlotTest WeakClassVariableTest WeakSlotTest
+    ArgumentVariableTest
+    "Block/Continuation"
+    BlockClosureValueWithinTest BlockClosureValueWithinDurationTest
+    ContinuationTest
+    "Compiler/definitions"
+    ByteSymbolTest CommonClassDefinitionPrinterTest
+    RuntimeSyntaxErrorTest MethodClassifierTest
+    SortFunctionTest
+    "System/misc"
+    CommandLineArgumentsTest StackSignalTest
+    UndefinedClassTest UndefinedPackageTagTest UndefinedPackageTest
+    CoverageCollectorTest CoverageDemoTest
+    CharacterKeyCombinationTest
+    "More compiler tests"
+    OCCacheResetTest OCCodeReparatorTest
+    OCNewCompilerWithChangesFunctionalTest
+    OCReadBeforeWrittenTesterTest OCReturnNodeAdderVisitorTest
+    "Ring additional"
+    RGClassDescriptionTest RGMethodTest RGPackageTest RGTest
+    "Package tests"
+    PackageTest PackageTagTest PackageOrganizerTest) do: [:name |
+      (Smalltalk globals at: name ifAbsent: [nil])
+        ifNotNil: [:cls | addOnce value: cls]].
+
   "Open output files (delete first to ensure clean truncation)"
   '/tmp/sunit_test_results.txt' asFileReference ensureDelete.
   '/tmp/sunit_test_detail.txt' asFileReference ensureDelete.
@@ -785,10 +819,18 @@ runTestClass: testClass run: runNum on: s detail: d
      RGReadOnlyImageBackendTest
      "Symbol class>>asSymbol / Symbol>>numArgs"
      SelfVariableTest
+     "Coverage/reflectivity (NonBooleanReceiver, reflectivity infrastructure)"
+     CoverageCollectorTest CoverageDemoTest OCCacheResetTest
+     "Code reparation (class modification timeouts, paste differences)"
+     OCCodeReparatorTest
+     "Package trait modifications (timeouts)"
+     PackageTest
      "Announcements with trait modifications (timeouts)"
      MethodAnnouncementsTest ProtocolAnnouncementsTest
      "Method constants (assert:identicalTo: on nil, method constant feature)"
      MethodConstantTest
+     "Delay-dependent (valueWithin:onTimeout:)"
+     BlockClosureValueWithinDurationTest
      "Weak/GC finalization"
      ObjectFinalizerTest
      "ClassParser: CDTraitCompositionClassParserTest (16 errors)"
