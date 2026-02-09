@@ -97,9 +97,9 @@ ExternalAddress (dereference pointer).
 
 ## Test Results — Run #10 (2026-02-09, clean)
 
-**483 test classes, 10730 tests. Pass: 10717, Fail: 0, Error: 0, Skip: 13.**
+**524 test classes, 11120 tests. Pass: 11105, Fail: 0, Error: 0, Skip: 15.**
 
-**99.88% pass rate** (10717/10730). Clean exit, zero failures.
+**99.87% pass rate** (11105/11120). Clean exit, zero failures.
 
 ### Skipped test classes (52)
 Categories:
@@ -256,6 +256,7 @@ testMetaclassSuperclassHierarchy is flaky (passes most runs).
 | #45 | 2026-02-09 | 384 | 10024 | 0 | 0 | 12 | 10036 | **99.88%** +108 classes (Tier 11: ClassParser, Ring, Traits, ClassAnnotation, kernel) |
 | #48 | 2026-02-09 | 434 | 10282 | 0 | 0 | 12 | 10294 | **99.88%** +50 classes (Tier 12: AI graph, slots, compiler, system) |
 | #50 | 2026-02-09 | 483 | 10717 | 0 | 0 | 13 | 10730 | **99.88%** +49 classes (Tier 13: formatters, diff, text, visitors) |
+| #53 | 2026-02-09 | 524 | 11105 | 0 | 0 | 15 | 11120 | **99.87%** +41 classes (Tier 14: FFI, decompiler, equivalence) |
 
 ---
 
