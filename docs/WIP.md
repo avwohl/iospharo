@@ -109,22 +109,28 @@ ExternalAddress (dereference pointer).
 
 ---
 
-## Test Results — Run #107 (2026-02-09, with GC)
+## Test Results — Run #109 (2026-02-09, with GC)
 
-**580 test classes, 11769 tests. Pass: 11754, Fail: 0, Error: 0, Skip: 15.**
+**576 test classes, 11794 tests. Pass: 11779, Fail: 0, Error: 0, Skip: 15.**
 
-**99.87% pass rate** (11754/11769). GC compaction cycles active.
+**99.87% pass rate** (11779/11794). GC compaction cycles active.
 
-### Newly enabled weak collection classes (Run #107)
-- **WeakSetTest**: 48/50 pass (testAsArray, testAddIncludesSizeReclaim skipped — GC reclaim timing)
-- **WeakIdentitySetTest**: 49/51 pass (testAsArray, testClearing skipped — GC reclaim timing)
+### Materialized context GC sync fix (Run #109, commit 7670089)
+
+Root cause of testAsArray failure: `materializeFrameStack()` creates heap
+Context objects that snapshot C++ stack temps. These contexts are GC roots
+(scanned via `forEachRoot`), but their temp slots were never updated when
+the C++ stack changed. When `item := nil` nilled a temp, the materialized
+Context still held the old Object reference, keeping it alive through GC.
+
+Fix: `prepareForGC()` now syncs all materialized context temps from the
+C++ stack before the mark phase. +25 tests from un-skipping testAsArray.
+
+### Weak collection classes (Run #107-#109)
+- **WeakSetTest**: 50/50 pass (testAsArray fixed!)
+- **WeakIdentitySetTest**: 51/51 pass (testAsArray fixed!)
 - **WeakIdentityKeyDictionaryTest**: 206/209 pass (3 reclaim-dependent skipped)
 - **WeakOrderedCollectionTest**: 0/2 (both tests are reclaim-dependent, individually skipped)
-
-+303 new passing tests vs Run #105. processWeaklings() correctly nils out
-unreachable weak referents. Only GC reclaim *timing* tests fail (testAsArray
-expects immediate reclaim after `Smalltalk garbageCollect`, but our stack
-may still hold references).
 
 ### GC Compaction — Verified Working
 - gcHeadroom_=32MB triggers GC compaction during both test suite and Mac Catalyst
@@ -293,6 +299,7 @@ testMetaclassSuperclassHierarchy is flaky (passes most runs).
 | #56 | 2026-02-09 | 551 | 11246 | 0 | 0 | 15 | 11261 | **99.87%** +27 classes (Tier 15: SUnit self-tests, system, trait printers) |
 | #59 | 2026-02-09 | 576 | 11474 | 0 | 0 | 15 | 11489 | **99.87%** +25 classes (Tier 16: geometry, fuzzy, history, commander) |
 | #107 | 2026-02-09 | 580 | 11754 | 0 | 0 | 15 | 11769 | **99.87%** +4 weak collection classes enabled (303 new tests) |
+| #109 | 2026-02-09 | 576 | 11779 | 0 | 0 | 15 | 11794 | **99.87%** Materialized context GC sync fix, testAsArray passes |
 
 ---
 
