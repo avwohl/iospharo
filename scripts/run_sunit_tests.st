@@ -907,15 +907,13 @@ runTestClass: testClass run: runNum on: s detail: d
      SlotIntegrationTest PropertySlotTest
      SlotAnnouncementsTest SlotLayoutEqualityTest SlotTraitsTest
      SlotLayoutExtensionTest ExampleSlotWithStateTest SlotMethodRecompilationTest
-     "Code simulation needs SistaV1 support"
-     CodeSimulationTest
+     "Code simulation (ENABLED: trying — may need SistaV1 support)"
      "OCSpecialSelectorTest: ENABLED (non-method handled via #run:with:in:)"
      "Abstract ClassParser tests (SubclassResponsibility)"
      CDBehaviorParserTest CDClassDefinitionParserTest
      "Compiler AST translator tests (testing with SmallInt fast paths)"
      "IR builder/printer/visitor (ENABLED: prim 188 mirror fix)"
-     "Character>>adaptToNumber:andSend: missing"
-     OCBytecodeGeneratorTest
+     "OCBytecodeGeneratorTest (ENABLED: Character>>adaptToNumber:andSend: may fail)"
      "Trait tests: complex class modification hangs (no Delay timeout)"
      TraitTest TraitCompositionTest ClassTraitTest MOPTraitTest
      TraitPureBehaviorTest TraitPrecedenceCompositionTest
@@ -1067,10 +1065,8 @@ runTestClass: testClass run: runNum on: s detail: d
         testTranscriptPrintingWithOpenedTranscriptExists
         "MethodMapTest: dead context — MNU defineCopiedVarBecomeDeadContext"
         testCopiedVarFromDeadContext
-        "OCClosureCompilerTest: debugger temp — reads 3 instead of -3.0"
-        testDebuggerTempAccess
-        "OCDoitTest: ivar read — reads class ref instead of value"
-        testDoItContextReadIvar
+        "OCClosureCompilerTest: testDebuggerTempAccess ENABLED (prim 188 mirror fix)"
+        "OCDoitTest: testDoItContextReadIvar ENABLED (prim 188 mirror fix)"
         "OCParserTest: missing features"
         testMatchInContext testParseExpressionDontFreeze
         "OCProgramNodeTest: assertion"
