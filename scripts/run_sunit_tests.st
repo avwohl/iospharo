@@ -896,37 +896,15 @@ runTestClass: testClass run: runNum on: s detail: d
   "Skip classes that stall due to process/scheduling issues in our VM.
    These tests fork processes at the same priority or rely on Delay timeouts
    that cannot fire because our VM lacks proper time-slicing."
-  (#(ProcessTerminateBugTest DelayTest SlotMigrationTest
-     ProcessTest
-     StopwatchTest TTLCacheTest
+  (#(ProcessTerminateBugTest
      "Abstract class (SubclassResponsibility errors)"
      CollectionRootTest
      "GC finalization/ephemerons"
      FinalizationRegistryTest WeakAnnouncerTest
-     "Class restructuring: hangs block the run (no Delay timeout available)"
-     SlotIntegrationTest PropertySlotTest
-     SlotAnnouncementsTest SlotLayoutEqualityTest SlotTraitsTest
-     SlotLayoutExtensionTest ExampleSlotWithStateTest SlotMethodRecompilationTest
-     "Code simulation (ENABLED: trying — may need SistaV1 support)"
-     "OCSpecialSelectorTest: ENABLED (non-method handled via #run:with:in:)"
      "Abstract ClassParser tests (SubclassResponsibility)"
      CDBehaviorParserTest CDClassDefinitionParserTest
-     "Compiler AST translator tests (testing with SmallInt fast paths)"
-     "IR builder/printer/visitor (ENABLED: prim 188 mirror fix)"
-     "OCBytecodeGeneratorTest (ENABLED: Character>>adaptToNumber:andSend: may fail)"
-     "Trait tests: complex class modification hangs (no Delay timeout)"
-     TraitTest TraitCompositionTest ClassTraitTest MOPTraitTest
-     TraitPureBehaviorTest TraitPrecedenceCompositionTest
-     TraitWithAliasTest TraitWithConflictsTest TraitChangesTest
-     TraitMethodDescriptionTest TraitOverloadingOfMethodsInTraitedClassTest
-     TraitPackagingTest TraitInTraitClassTest
-     TraitWithMethodsInProtocolsTest
-     "RGReadOnlyImageBackendTest: ENABLED (19/19 pass)"
-     "SelfVariableTest: ENABLED (testUsingMethods/Super may fail — skip individually)"
      "FFI callbacks (not implemented)"
      FFICallbackParametersTest FFICallbackTest
-     "Bytecode decompiler (ENABLED: prim 188 mirror fix)"
-     "Class reshaping: hangs block the run (no Delay timeout)"
      "Array modification forbidden (ModificationForbidden)"
      BuilderManifestTest
      "ExecutionCounterTest: installOn: missing (metalinks)"
@@ -935,33 +913,18 @@ runTestClass: testClass run: runNum on: s detail: d
      ProcessMonitorTestServiceTest
      "Coverage/reflectivity (NonBooleanReceiver, reflectivity infrastructure)"
      CoverageCollectorTest CoverageDemoTest
-     "OCCacheResetTest: ENABLED (non-method handled via #run:with:in:)"
-     "Code reparation (class modification hangs)"
-     OCCodeReparatorTest
-     "Package trait modifications (class modification hangs)"
-     PackageTest
-     "Trait slot tests (class modification hangs)"
-     TraitSlotScopeTest TraitWithSlotsTest TraitWithComplexSlotsTest
      "Priority 81 / process monitoring"
      TestExecutionEnvironmentTest
      "Network name resolver / Character>>asByteArray"
      GlobalIdentifierMergerTest GlobalIdentifierWithDefaultConfigurationTest
-     "SystemNavigationTest: ENABLED (10/11, testAllGlobalNames skipped)"
-     "SystemEnvironmentTest: ENABLED (217/217 pass)"
      "Debugger step-through (context introspection issues)"
      FastStepThroughTest
-     "GEllipseTest: ENABLED (21/23 pass, testEmpty no longer hangs)"
      "Epicea (needs network primNameResolverStatus)"
      EpLogTest EpCommentTest
      "BitBlt alpha compositing"
      BitBltTest
      "BitBlt arg error in printOn with halt"
      ObjectWithPrintingRaisingHaltTest
-     "MethodAnnouncementsTest: ENABLED (6/10, 4 trait timeouts skipped)"
-     "ProtocolAnnouncementsTest: ENABLED (13/14, 1 trait timeout skipped)"
-     "MethodConstantTest: ENABLED (non-method handled via #run:with:in:)"
-     "Delay-dependent (valueWithin:onTimeout:)"
-     BlockClosureValueWithinDurationTest
      "Weak/GC finalization"
      ObjectFinalizerTest
      "ClassParser: CDTraitCompositionClassParserTest (16 errors)"
@@ -971,10 +934,9 @@ runTestClass: testClass run: runNum on: s detail: d
 
   s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' ==='; cr.
   s flush.
-  "Tests that use waitTimeoutSeconds: internally need priority < 80 (timingPriority)
-   so the delay scheduler can preempt and register timeouts."
-  testPriority := (#(ExceptionTest) includes: testClass name)
-    ifTrue: [79] ifFalse: [80].
+  "ALL tests must run below timingPriority (80) so the Delay scheduler can
+   preempt hanging tests and fire waitTimeoutSeconds: timeouts."
+  testPriority := 79.
   p := 0. f := 0. e := 0. sk := 0. t := 0.
   sels := testClass allTestSelectors asArray.
   "Sort with comparison counter to detect infinite loops"

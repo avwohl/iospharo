@@ -294,6 +294,10 @@ public:
     /// Check timer semaphore and signal if time has elapsed
     void checkTimerSemaphore();
 
+    /// Signal a semaphore synchronously (wake first waiter or increment excess).
+    /// If the woken process has higher priority, preempts the active process.
+    void synchronousSignal(Oop semaphore);
+
     // ===== PRIMITIVE SUPPORT =====
 
     /// Set the primitive result (success)

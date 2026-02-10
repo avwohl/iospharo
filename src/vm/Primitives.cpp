@@ -4220,96 +4220,19 @@ PrimitiveResult Interpreter::primitiveResume(int argCount) {
 
 PrimitiveResult Interpreter::primitiveSignal(int argCount) {
     // Primitive 85: Semaphore>>signal
-    // Signal a semaphore. If processes are waiting, wake the first one.
-    // Otherwise increment excessSignals.
-
-    static int signalCallCount = 0;
-    static FILE* signalLog = nullptr;
-    signalCallCount++;
-    // Log early signals and signals in the startup completion range
-    if (signalCallCount <= 5 || (g_stepNum >= 43000000 && g_stepNum <= 48000000)) {
-        fprintf(stderr, "[PRIM85] primitiveSignal call #%d step=%llu sem=0x%llx\n",
-                signalCallCount, (unsigned long long)g_stepNum,
-                (unsigned long long)stackTop().rawBits());
-        signalLog = stderr;
-    } else {
-        signalLog = nullptr;
-    }
-
-    Oop semaphore = stackTop();  // Receiver
+    Oop semaphore = stackTop();
 
     if (!semaphore.isObject()) {
         return PrimitiveResult::Failure;
     }
 
-    // If this is the lowSpaceSemaphore, set ProcessSignalingLowSpace to current process
-    // so the lowSpaceWatcher has valid context information
+    // If this is the lowSpaceSemaphore, set ProcessSignalingLowSpace
     Oop lowSpaceSem = memory_.specialObject(SpecialObjectIndex::TheLowSpaceSemaphore);
-    if (signalLog && signalCallCount <= 10) {
-        fprintf(signalLog, "[SIGNAL #%d] sem=0x%llx lowSpaceSem=0x%llx match=%d isNil=%d\n",
-                signalCallCount, (unsigned long long)semaphore.rawBits(),
-                (unsigned long long)lowSpaceSem.rawBits(),
-                semaphore.rawBits() == lowSpaceSem.rawBits() ? 1 : 0,
-                lowSpaceSem.isNil() ? 1 : 0);
-        fflush(signalLog);
-    }
     if (semaphore.rawBits() == lowSpaceSem.rawBits() && !lowSpaceSem.isNil()) {
-        Oop activeProcess = getActiveProcess();
-        memory_.setSpecialObject(SpecialObjectIndex::ProcessSignalingLowSpace, activeProcess);
-        if (signalLog) {
-            fprintf(signalLog, "[SIGNAL #%d] Set ProcessSignalingLowSpace to active process 0x%llx\n",
-                    signalCallCount, (unsigned long long)activeProcess.rawBits());
-            fflush(signalLog);
-        }
+        memory_.setSpecialObject(SpecialObjectIndex::ProcessSignalingLowSpace, getActiveProcess());
     }
 
-    Oop nilObj = memory_.nil();
-    Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, semaphore);
-
-    if (firstLink.isNil() || firstLink.rawBits() == nilObj.rawBits()) {
-        // No processes waiting - increment excessSignals
-        Oop excessOop = memory_.fetchPointer(SemaphoreExcessSignalsIndex, semaphore);
-        int64_t excess = excessOop.isSmallInteger() ? excessOop.asSmallInteger() : 0;
-        memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
-                            Oop::fromSmallInteger(excess + 1));
-        if (signalLog) {
-            fprintf(signalLog, "[SIGNAL #%d step=%llu] sem=0x%llx no waiters -> excess=%lld\n",
-                    signalCallCount, (unsigned long long)g_stepNum, (unsigned long long)semaphore.rawBits(), (long long)(excess + 1));
-            fflush(signalLog);
-        }
-        // Return receiver (semaphore stays on stack)
-        return PrimitiveResult::Success;
-    }
-
-    // Wake the first waiting process
-    Oop process = removeFirstLinkOfList(semaphore);
-
-    // Get process priority and check if we should preempt
-    Oop processPriorityOop = memory_.fetchPointer(ProcessPriorityIndex, process);
-    int processPriority = static_cast<int>(processPriorityOop.asSmallInteger());
-
-    Oop activeProcess = getActiveProcess();
-    Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
-    int activePriority = static_cast<int>(activePriorityOop.asSmallInteger());
-
-    if (signalLog) {
-        fprintf(signalLog, "[SIGNAL #%d step=%llu] sem=0x%llx waking process 0x%llx (pri=%d) active_pri=%d -> %s\n",
-                signalCallCount, (unsigned long long)g_stepNum, (unsigned long long)semaphore.rawBits(),
-                (unsigned long long)process.rawBits(), processPriority, activePriority,
-                processPriority > activePriority ? "PREEMPT" : "enqueue");
-        fflush(signalLog);
-    }
-
-    if (processPriority > activePriority) {
-        // Higher priority preempts (standard Spur behavior)
-        putToSleep(activeProcess);
-        g_xferReason = "primSignal";
-        transferTo(process);
-    } else {
-        // Lower priority - just add to ready queue
-        putToSleep(process);
-    }
-
+    synchronousSignal(semaphore);
     return PrimitiveResult::Success;
 }
 

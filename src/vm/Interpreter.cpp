@@ -2215,151 +2215,65 @@ void Interpreter::interpret() {
 }
 
 void Interpreter::checkTimerSemaphore() {
-    static int callCount242 = 0;
-    callCount242++;
-    if (callCount242 == 1) {
-        fprintf(stderr, "[TIMER-FUNC] checkTimerSemaphore first call, this=%p &usec=%p usec=%lld\n",
-                (void*)this, (void*)&nextWakeupUsec_, nextWakeupUsec_);
-    }
-    // Periodic check: is the timer still armed?
-    if (callCount242 == 50000 || callCount242 == 100000 || callCount242 == 500000 || callCount242 == 1000000) {
-        fprintf(stderr, "[TIMER-PERIODIC calls=%d] usec=%lld isMax=%d semaIsNil=%d\n",
-                callCount242, nextWakeupUsec_, nextWakeupUsec_ == INT64_MAX ? 1 : 0,
-                timerSemaphore_.isNil() ? 1 : 0);
-    }
     // Check microsecond timer (primitive 242 - used by DelaySemaphoreScheduler)
-    // Trace when usec timer is set
-    if (nextWakeupUsec_ != INT64_MAX) {
-        static int topTrace = 0;
-        if (topTrace++ < 5) {
-            fprintf(stderr, "[TIMER-TOP #%d] this=%p usec=%lld sema=0x%llx isNil=%d &usec=%p\n",
-                    topTrace, (void*)this, nextWakeupUsec_,
-                    timerSemaphore_.rawBits(), timerSemaphore_.isNil() ? 1 : 0,
-                    (void*)&nextWakeupUsec_);
-        }
-    }
     if (nextWakeupUsec_ != INT64_MAX && !timerSemaphore_.isNil()) {
-        // Get current UTC microseconds in Smalltalk epoch (Jan 1, 1901)
-        // Unix epoch is Jan 1, 1970 = 2177452800 seconds after Smalltalk epoch
         static constexpr int64_t kSmalltalkEpochOffset = 2177452800LL * 1000000LL;
         auto now = std::chrono::system_clock::now();
         auto epoch = now.time_since_epoch();
         int64_t unixUsec = std::chrono::duration_cast<std::chrono::microseconds>(epoch).count();
         int64_t currentUsec = unixUsec + kSmalltalkEpochOffset;
 
-        static int usecCheckCount = 0;
-        usecCheckCount++;
-        if (false && (usecCheckCount <= 50 || usecCheckCount % 1000 == 0)) {
-            fprintf(stderr, "[TIMER-USEC-CHK #%d] current=%lld target=%lld delta=%lldms\n",
-                    usecCheckCount, currentUsec, nextWakeupUsec_,
-                    (nextWakeupUsec_ - currentUsec) / 1000);
-        }
         if (currentUsec >= nextWakeupUsec_) {
-            static int usecTimerLog = 0;
-            usecTimerLog++;
-            if (false && usecTimerLog <= 20) {
-                static FILE* tlog = nullptr;
-                if (tlog) { fprintf(tlog, "[TIMER #%d] fired! delta=%lldms\n", usecTimerLog,
-                                    (currentUsec - nextWakeupUsec_) / 1000); fflush(tlog); }
-            }
             Oop semaphore = timerSemaphore_;
             timerSemaphore_ = Oop::nil();
             nextWakeupUsec_ = INT64_MAX;
-
-            // Signal the semaphore
-            Oop nilObj = memory_.nil();
-            Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, semaphore);
-            static int timerSignalLog = 0;
-            timerSignalLog++;
-            if (firstLink.isNil() || firstLink.rawBits() == nilObj.rawBits()) {
-                Oop excessOop = memory_.fetchPointer(SemaphoreExcessSignalsIndex, semaphore);
-                int64_t excess = excessOop.isSmallInteger() ? excessOop.asSmallInteger() : 0;
-                memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
-                                    Oop::fromSmallInteger(excess + 1));
-                if (false && timerSignalLog <= 50) {
-                    fprintf(stderr, "[TIMER-SIGNAL #%d step=%llu] no waiter, excess now %lld\n",
-                            timerSignalLog, (unsigned long long)g_stepNum, excess + 1);
-                }
-            } else {
-                Oop process = removeFirstLinkOfList(semaphore);
-                Oop processPriorityOop = memory_.fetchPointer(ProcessPriorityIndex, process);
-                int processPriority = static_cast<int>(processPriorityOop.asSmallInteger());
-                Oop activeProcess = getActiveProcess();
-                Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
-                int activePriority = static_cast<int>(activePriorityOop.asSmallInteger());
-                if (false && timerSignalLog <= 50) {
-                    fprintf(stderr, "[TIMER-SIGNAL #%d step=%llu] waking process pri=%d active=%d preempt=%d\n",
-                            timerSignalLog, (unsigned long long)g_stepNum,
-                            processPriority, activePriority, processPriority > activePriority ? 1 : 0);
-                }
-                if (processPriority > activePriority) {
-                    putToSleep(activeProcess);
-                    g_xferReason = "checkTimerSem";
-                    transferTo(process);
-                } else {
-                    putToSleep(process);
-                }
-            }
+            synchronousSignal(semaphore);
             return;
         }
     }
 
+    // Check millisecond timer (primitive 136 - legacy)
     if (nextWakeupTime_ == 0 || timerSemaphore_.isNil()) {
-        return;  // No millisecond timer set
+        return;
     }
 
-    // Get current time using ioMSecs() (30-bit wrapping counter)
     int64_t currentMs = ioMSecs();
     int64_t targetMs = nextWakeupTime_;
-
-    // Compare with wrap-around handling: if difference is positive and
-    // less than half the range, the timer has elapsed
     int64_t diff = (currentMs - targetMs) & 0x3FFFFFFF;
     bool timerElapsed = (diff > 0) && (diff < 0x20000000);
 
-    static int timerCheckLog = 0;
-    if (timerCheckLog++ < 5) {
-        fprintf(stderr, "[TIMER-CHK #%d] current=%lld target=%lld diff=%lld elapsed=%d\n",
-                timerCheckLog, currentMs, targetMs, diff, timerElapsed?1:0);
-    }
-
     if (timerElapsed) {
-        // Time has elapsed - signal the semaphore
-        // Signal the timer semaphore
         Oop semaphore = timerSemaphore_;
         timerSemaphore_ = Oop::nil();
         nextWakeupTime_ = 0;
+        synchronousSignal(semaphore);
+    }
+}
 
-        // Same signal logic as primitiveSignal
-        Oop nilObj = memory_.nil();
-        Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, semaphore);
+void Interpreter::synchronousSignal(Oop semaphore) {
+    Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, semaphore);
 
-        if (firstLink.isNil() || firstLink.rawBits() == nilObj.rawBits()) {
-            // No processes waiting - increment excessSignals
-            Oop excessOop = memory_.fetchPointer(SemaphoreExcessSignalsIndex, semaphore);
-            int64_t excess = excessOop.isSmallInteger() ? excessOop.asSmallInteger() : 0;
-            memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
-                                Oop::fromSmallInteger(excess + 1));
+    if (firstLink.isNil() || firstLink.rawBits() == memory_.nil().rawBits()) {
+        // No processes waiting - increment excessSignals
+        Oop excessOop = memory_.fetchPointer(SemaphoreExcessSignalsIndex, semaphore);
+        int64_t excess = excessOop.isSmallInteger() ? excessOop.asSmallInteger() : 0;
+        memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
+                            Oop::fromSmallInteger(excess + 1));
+    } else {
+        // Wake the first waiting process
+        Oop process = removeFirstLinkOfList(semaphore);
+        Oop processPriorityOop = memory_.fetchPointer(ProcessPriorityIndex, process);
+        int processPriority = static_cast<int>(processPriorityOop.asSmallInteger());
+
+        Oop activeProcess = getActiveProcess();
+        Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
+        int activePriority = static_cast<int>(activePriorityOop.asSmallInteger());
+
+        if (processPriority > activePriority) {
+            putToSleep(activeProcess);
+            transferTo(process);
         } else {
-            // Wake the first waiting process
-            Oop process = removeFirstLinkOfList(semaphore);
-
-            // Get process priority and check if we should preempt
-            Oop processPriorityOop = memory_.fetchPointer(ProcessPriorityIndex, process);
-            int processPriority = static_cast<int>(processPriorityOop.asSmallInteger());
-
-            Oop activeProcess = getActiveProcess();
-            Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
-            int activePriority = static_cast<int>(activePriorityOop.asSmallInteger());
-
-            if (processPriority > activePriority) {
-                // Higher priority preempts (standard Spur behavior)
-                putToSleep(activeProcess);
-                g_xferReason = "processPendingSig";
-                transferTo(process);
-            } else {
-                putToSleep(process);
-            }
+            putToSleep(process);
         }
     }
 }
@@ -2450,33 +2364,6 @@ void Interpreter::processPendingSignals() {
     int index = pendingSignalIndex_.exchange(0, std::memory_order_acquire);
     if (index <= 0) return;
 
-    // Debug: Log signal processing (disabled for performance)
-    static FILE* sigLog = nullptr;
-    static int sigCount = 0;
-    sigCount++;
-    if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!sigLog) sigLog = nullptr;
-        if (sigLog && sigCount <= 100) {
-            fprintf(sigLog, "[SIGNAL] #%d Processing semaphore index %d\n", sigCount, index);
-            fflush(sigLog);
-        }
-
-        // Debug: Dump semaphore table info on first call
-        if (sigCount == 1 && sigLog) {
-            Oop semTableCheck = memory_.specialObject(SpecialObjectIndex::ExternalObjectsArray);
-            if (!semTableCheck.isNil() && semTableCheck.isObject()) {
-                size_t tblSize = memory_.slotCountOf(semTableCheck);
-                fprintf(sigLog, "[SIGNAL] ExternalObjectsArray has %zu slots\n", tblSize);
-                for (size_t i = 0; i < std::min(tblSize, (size_t)10); i++) {
-                    Oop slot = memory_.fetchPointer(i, semTableCheck);
-                    fprintf(sigLog, "[SIGNAL]   slot[%zu] = 0x%llx (isNil=%d isObj=%d)\n",
-                            i, (unsigned long long)slot.rawBits(), slot.isNil() ? 1 : 0, slot.isObject() ? 1 : 0);
-                }
-                fflush(sigLog);
-            }
-        }
-    }
-
     // Get the external semaphore table from special objects
     Oop semTable = memory_.specialObject(SpecialObjectIndex::ExternalObjectsArray);
     if (semTable.isNil() || !semTable.isObject()) {
@@ -2490,102 +2377,12 @@ void Interpreter::processPendingSignals() {
         return;
     }
 
-    // Get the semaphore at this index
     Oop semaphore = memory_.fetchPointer(tableIndex, semTable);
     if (semaphore.isNil() || !semaphore.isObject()) {
-        if (sigLog && sigCount <= 50) {
-            fprintf(sigLog, "[SIGNAL] #%d Semaphore at index %zu is nil/invalid\n", sigCount, tableIndex);
-            fflush(sigLog);
-        }
         return;
     }
 
-    // Signal the semaphore (same logic as primitiveSignal)
-    Oop nilObj = memory_.nil();
-    Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, semaphore);
-
-    // Debug: Log semaphore state
-    if (sigLog && sigCount <= 100) {
-        Oop lastLink = memory_.fetchPointer(LinkedListLastLinkIndex, semaphore);
-        Oop excessOopDbg = memory_.fetchPointer(SemaphoreExcessSignalsIndex, semaphore);
-        int64_t excessDbg = excessOopDbg.isSmallInteger() ? excessOopDbg.asSmallInteger() : -999;
-        fprintf(sigLog, "[SIGNAL] #%d nilObj=0x%llx firstLink=0x%llx match=%d\n",
-                sigCount, (unsigned long long)nilObj.rawBits(),
-                (unsigned long long)firstLink.rawBits(),
-                firstLink.rawBits() == nilObj.rawBits() ? 1 : 0);
-        fprintf(sigLog, "[SIGNAL] #%d Semaphore 0x%llx: firstLink=0x%llx(nil=%d) lastLink=0x%llx excess=%lld\n",
-                sigCount, (unsigned long long)semaphore.rawBits(),
-                (unsigned long long)firstLink.rawBits(), firstLink.isNil() ? 1 : 0,
-                (unsigned long long)lastLink.rawBits(), excessDbg);
-        fflush(sigLog);
-    }
-
-    if (firstLink.isNil() || firstLink.rawBits() == nilObj.rawBits()) {
-        // No processes waiting - increment excessSignals
-        Oop excessOop = memory_.fetchPointer(SemaphoreExcessSignalsIndex, semaphore);
-        int64_t excess = excessOop.isSmallInteger() ? excessOop.asSmallInteger() : 0;
-        memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
-                            Oop::fromSmallInteger(excess + 1));
-        if (sigLog && sigCount <= 50) {
-            fprintf(sigLog, "[SIGNAL] #%d No waiting process, excessSignals now %lld\n", sigCount, excess + 1);
-            fflush(sigLog);
-        }
-    } else {
-        // Wake the first waiting process
-        Oop process = removeFirstLinkOfList(semaphore);
-        if (sigLog && sigCount <= 50) {
-            fprintf(sigLog, "[SIGNAL] #%d Waking process 0x%llx\n", sigCount, (unsigned long long)process.rawBits());
-
-            // Get process priority and context for debugging
-            Oop procPriorityOop = memory_.fetchPointer(ProcessPriorityIndex, process);
-            int procPriority = procPriorityOop.isSmallInteger() ? static_cast<int>(procPriorityOop.asSmallInteger()) : -1;
-            Oop procContext = memory_.fetchPointer(ProcessSuspendedContextIndex, process);
-            fprintf(sigLog, "[SIGNAL] #%d Process priority=%d suspendedContext=0x%llx\n",
-                    sigCount, procPriority, (unsigned long long)procContext.rawBits());
-
-            // Try to get the method from the suspended context
-            if (procContext.isObject() && !procContext.isNil()) {
-                Oop ctxMethod = memory_.fetchPointer(3, procContext);  // slot 3 = method
-                if (ctxMethod.isObject() && ctxMethod.rawBits() > 0x10000) {
-                    Oop mhdr = memory_.fetchPointer(0, ctxMethod);
-                    if (mhdr.isSmallInteger()) {
-                        int64_t hv = mhdr.asSmallInteger();
-                        int nLits = hv & 0x7FFF;
-                        if (nLits >= 2 && nLits < 100) {
-                            Oop sel = memory_.fetchPointer(nLits - 1, ctxMethod);
-                            if (sel.isObject()) {
-                                ObjectHeader* selH = sel.asObjectPtr();
-                                if (selH->isBytesObject() && selH->byteSize() < 100) {
-                                    std::string methodName((char*)selH->bytes(), selH->byteSize());
-                                    fprintf(sigLog, "[SIGNAL] #%d Woken process will resume in method #%s\n",
-                                            sigCount, methodName.c_str());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            fflush(sigLog);
-        }
-
-        // Get process priority and check if we should preempt
-        Oop processPriorityOop = memory_.fetchPointer(ProcessPriorityIndex, process);
-        int processPriority = static_cast<int>(processPriorityOop.asSmallInteger());
-
-        Oop activeProcess = getActiveProcess();
-        Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
-        int activePriority = static_cast<int>(activePriorityOop.asSmallInteger());
-
-        if (processPriority > activePriority) {
-            // Higher priority preempts (standard Spur behavior)
-            putToSleep(activeProcess);
-            g_xferReason = "signalSemVM";
-            transferTo(process);
-        } else {
-            // Lower priority - just add to ready queue
-            putToSleep(process);
-        }
-    }
+    synchronousSignal(semaphore);
 }
 
 bool Interpreter::step() {
