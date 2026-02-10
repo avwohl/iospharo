@@ -549,8 +549,10 @@ PrimitiveResult Interpreter::primitiveTestAndSetOwnershipOfCriticalSection(int a
 
 PrimitiveResult Interpreter::primitiveExecuteMethodArgsArray(int argCount) {
     // Primitive 188: receiver withArgs: argsArray executeMethod: aMethod
-    // Stack: receiver, argsArray, method (top)
-    // argCount = 2 (argsArray and method)
+    // 2-arg form: receiver withArgs: argsArray executeMethod: method
+    //   Stack: receiver | argsArray | method (top)    argCount=2
+    // 3-arg form (mirror): CM receiver: rcvr withArguments: argsArray executeMethod: method
+    //   Stack: CM | rcvr | argsArray | method (top)   argCount=3
 
     if (argCount < 2) {
         return PrimitiveResult::Failure;
@@ -580,7 +582,6 @@ PrimitiveResult Interpreter::primitiveExecuteMethodArgsArray(int argCount) {
     }
 
     // Get argument count from method header
-    // Method header is slot 0, numArgs is in bits 24-27
     Oop methodHeader = memory_.fetchPointer(0, method);
     if (!methodHeader.isSmallInteger()) {
         return PrimitiveResult::Failure;
@@ -594,13 +595,38 @@ PrimitiveResult Interpreter::primitiveExecuteMethodArgsArray(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Pop the current arguments (method and argsArray) but leave receiver
+    // Mirror form: argCount > 2 means desired receiver is at stackValue(2)
+    // Replace the message receiver slot with the desired receiver
+    if (argCount > 2) {
+        if (argCount > 4) {
+            return PrimitiveResult::Failure;
+        }
+        Oop desiredReceiver = stackValue(2);
+        // Write desired receiver into the message receiver position
+        *(stackPointer_ - 1 - argCount) = desiredReceiver;
+    }
+
+    // Pop the current arguments but leave receiver
     popN(static_cast<size_t>(argCount));
 
     // Push arguments from the array onto the stack
     for (int i = 0; i < methodNumArgs; i++) {
         Oop arg = memory_.fetchPointer(static_cast<size_t>(i), argsArray);
         push(arg);
+    }
+
+    // Check if the method has a primitive — execute it before activating
+    int primIndex = primitiveIndexOf(method);
+    if (primIndex > 0) {
+        Oop savedMethod = method_;
+        method_ = method;
+        auto result = executePrimitive(primIndex, methodNumArgs);
+        if (result == PrimitiveResult::Success) {
+            method_ = savedMethod;
+            return PrimitiveResult::Success;
+        }
+        method_ = savedMethod;
+        // Primitive failed — fall through to activate the method normally
     }
 
     // Activate the method with the new arguments
