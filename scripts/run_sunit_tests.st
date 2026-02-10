@@ -891,7 +891,7 @@ runAllTests
 !SUnitRunner class methodsFor: 'running'!
 runTestClass: testClass run: runNum on: s detail: d
   "Run all tests in a class. Returns #(pass fail error skip timeout)."
-  | sels p f e sk t testPriority |
+  | sels p f e sk t testPriority consecutiveTimeouts |
 
   "Skip classes that stall due to process/scheduling issues in our VM.
    These tests fork processes at the same priority or rely on Delay timeouts
@@ -939,7 +939,6 @@ runTestClass: testClass run: runNum on: s detail: d
   "ALL tests must run below timingPriority (80) so the Delay scheduler can
    preempt hanging tests and fire waitTimeoutSeconds: timeouts."
   testPriority := 79.
-  | consecutiveTimeouts |
   p := 0. f := 0. e := 0. sk := 0. t := 0. consecutiveTimeouts := 0.
   sels := testClass allTestSelectors asArray.
   "Sort with comparison counter to detect infinite loops"
