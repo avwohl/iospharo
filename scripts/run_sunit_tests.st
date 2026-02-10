@@ -1137,8 +1137,8 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
 
   "Wait for test completion or timeout"
   (sem waitTimeoutSeconds: seconds) ifTrue: [
-    "Timeout occurred - terminate the test process"
-    testProcess terminate.
+    "Timeout: suspend (not terminate) to avoid unwinding hangs"
+    testProcess suspend.
     result := #timeout.
     s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
       nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; cr.
