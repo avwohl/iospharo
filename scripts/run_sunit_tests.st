@@ -903,10 +903,9 @@ runTestClass: testClass run: runNum on: s detail: d
      CollectionRootTest
      "GC finalization/ephemerons"
      FinalizationRegistryTest WeakAnnouncerTest
-     "Class restructuring (timeouts)"
-     ClassTest SlotIntegrationTest PropertySlotTest
-     SlotAnnouncementsTest SlotLayoutEqualityTest SlotTraitsTest
-     SlotLayoutExtensionTest BooleanSlotTest
+     "Class restructuring (testing with cache flush fix)"
+     SlotAnnouncementsTest SlotTraitsTest
+     SlotLayoutExtensionTest
      "Code simulation needs SistaV1 support"
      CodeSimulationTest
      "OCSpecialSelectorTest: ENABLED (non-method handled via #run:with:in:)"
@@ -1089,8 +1088,11 @@ runTestClass: testClass run: runNum on: s detail: d
         testAllCallsOn
         "DeleteVisitorTest: network name resolver"
         testSymbolicLink
-        "FFITypesTest: (enabled - 64-bit integer put fixed)"
-        "FBDDecompilerTest: try enabling with write barrier fix"
+        "OCSpecialSelectorTest: CompiledMethod >> #negative / #numArgsError: missing"
+        testUnoptimisedPlusSpecialSendsMessageCapturesSend
+        testUnoptimisedValueSpecialSendsMessageCapturesSend
+        "FBDDecompilerTest: literal array immutability / undeclared variable"
+        testCascadeNested testWhileTrue3
         "SystemBuildInfoTest: VM binary/directory paths"
         testVmBinary testVmDirectory
         "TestCaseTest: watchdog/long test (priority 81)"

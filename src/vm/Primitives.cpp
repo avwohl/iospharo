@@ -10496,23 +10496,34 @@ PrimitiveResult Interpreter::primitiveDoNamedPrimitiveWithArgs(int argCount) {
 // Primitive 119: Flush method cache entries for a specific method
 // Called when a method is modified or replaced
 PrimitiveResult Interpreter::primitiveFlushCacheByMethod(int argCount) {
-    // In a full implementation, we'd have a method cache and flush entries
-    // that reference this method. For now, this is a no-op since we don't
-    // have method caching yet.
-
-    // No arguments expected, just return the receiver (the method)
-    // Stack has: receiver (which is already on top), so just succeed
+    // Flush all cache entries that reference this method
+    Oop method = stackTop();
+    for (auto& entry : methodCache_) {
+        if (entry.method.rawBits() == method.rawBits()) {
+            entry.selector = Oop::nil();
+            entry.classOop = Oop::nil();
+            entry.method = Oop::nil();
+            entry.primitive = nullptr;
+            entry.primitiveIndex = 0;
+        }
+    }
     return PrimitiveResult::Success;
 }
 
 // Primitive 120: Flush method cache entries for a specific selector
 // Called when any method with this selector might have changed
 PrimitiveResult Interpreter::primitiveFlushCacheBySelector(int argCount) {
-    // In a full implementation, we'd flush all cache entries for this selector.
-    // For now, this is a no-op since we don't have method caching yet.
-
-    // No arguments expected, just return the receiver (the selector)
-    // Stack has: receiver (which is already on top), so just succeed
+    // Flush all cache entries matching this selector
+    Oop selector = stackTop();
+    for (auto& entry : methodCache_) {
+        if (entry.selector.rawBits() == selector.rawBits()) {
+            entry.selector = Oop::nil();
+            entry.classOop = Oop::nil();
+            entry.method = Oop::nil();
+            entry.primitive = nullptr;
+            entry.primitiveIndex = 0;
+        }
+    }
     return PrimitiveResult::Success;
 }
 
