@@ -298,6 +298,11 @@ public:
     /// If the woken process has higher priority, preempts the active process.
     void synchronousSignal(Oop semaphore);
 
+    /// Check if an object can be made immutable (per Cog VM's canBeImmutable:).
+    /// Returns false for contexts, ephemerons, weak objects, semaphores,
+    /// the processor scheduler, process lists, linked lists, and processes.
+    bool canBeImmutable(Oop oop);
+
     // ===== PRIMITIVE SUPPORT =====
 
     /// Set the primitive result (success)

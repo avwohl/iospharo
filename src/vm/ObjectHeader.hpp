@@ -131,13 +131,14 @@ private:
     // Overflow indicator (when numSlots == 255)
     static constexpr uint64_t OverflowSlots = 255;
 
-    // GC flag bits (in reserved areas - exact positions may vary by implementation)
-    // These use the reserved bits between the main fields
-    static constexpr uint64_t ImmutableBit = 1ULL << 22;   // Reserved bit 22
-    static constexpr uint64_t PinnedBit = 1ULL << 23;      // Reserved bit 23
-    static constexpr uint64_t RememberedBit = 1ULL << 29;  // Reserved bit 29
-    static constexpr uint64_t MarkedBit = 1ULL << 30;      // Reserved bit 30
-    static constexpr uint64_t GreyBit = 1ULL << 31;        // Reserved bit 31
+    // Flag bits - must match standard Spur 64-bit header layout
+    // (from cointerp-cpp.c: immutableBitShift=23, pinnedBitShift=30,
+    //  rememberedBitShift=29, greyBitShift=31, markedBitFullShift=55)
+    static constexpr uint64_t ImmutableBit = 1ULL << 23;   // Bit 23 (standard Spur)
+    static constexpr uint64_t PinnedBit = 1ULL << 30;      // Bit 30 (standard Spur)
+    static constexpr uint64_t RememberedBit = 1ULL << 29;  // Bit 29 (standard Spur)
+    static constexpr uint64_t MarkedBit = 1ULL << 55;      // Bit 55 (standard Spur)
+    static constexpr uint64_t GreyBit = 1ULL << 31;        // Bit 31 (standard Spur)
 
 public:
     // ===== SLOT COUNT =====

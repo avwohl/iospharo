@@ -9180,27 +9180,105 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
 
 // ===== IMMUTABILITY PRIMITIVES =====
 
-// Primitive 150: Get immutability flag of object
-PrimitiveResult Interpreter::primitiveGetImmutability(int argCount) {
-    Oop rcvr = stackTop();
+// Check if an object can be made immutable.
+// Per the standard Pharo VM (canBeImmutable:), certain objects must stay mutable:
+// contexts, ephemerons, weak objects, semaphores, the processor scheduler,
+// process lists, linked lists, and processes.
+bool Interpreter::canBeImmutable(Oop oop) {
+    if (!oop.isObject()) return false;  // Immediates handled separately
 
-    if (!rcvr.isObject()) {
-        // Immediates are always immutable
-        pop();
-        push(memory_.trueObject());
-        return PrimitiveResult::Success;
+    ObjectHeader* header = oop.asObjectPtr();
+    ObjectFormat format = header->format();
+    Oop oopClass = memory_.classOf(oop);
+
+    // Contexts cannot be immutable
+    Oop contextClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
+    if (oopClass.rawBits() == contextClass.rawBits()) {
+        return false;
     }
 
-    ObjectHeader* header = rcvr.asObjectPtr();
-    bool isImmutable = header->isImmutable();
+    // Ephemerons cannot be immutable (format 5)
+    if (format == ObjectFormat::WeakWithFixed) {
+        return false;
+    }
 
-    pop();
+    // Weak objects cannot be immutable (format 4)
+    if (format == ObjectFormat::Weak) {
+        return false;
+    }
+
+    // Semaphores cannot be immutable
+    Oop semClass = memory_.specialObject(SpecialObjectIndex::ClassSemaphore);
+    if (oopClass.rawBits() == semClass.rawBits()) {
+        return false;
+    }
+
+    // ProcessorScheduler cannot be immutable
+    Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
+    Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);  // Association value
+    if (oop.rawBits() == scheduler.rawBits()) {
+        return false;
+    }
+
+    // processLists array cannot be immutable
+    Oop processLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
+    if (oop.rawBits() == processLists.rawBits()) {
+        return false;
+    }
+
+    // LinkedList instances (same class as entries in processLists) cannot be immutable
+    if (processLists.isObject()) {
+        ObjectHeader* plHeader = processLists.asObjectPtr();
+        size_t numLists = plHeader->slotCount();
+        if (numLists > 0) {
+            Oop aList = memory_.fetchPointer(0, processLists);
+            if (aList.isObject()) {
+                Oop linkedListClass = memory_.classOf(aList);
+                if (oopClass.rawBits() == linkedListClass.rawBits()) {
+                    return false;
+                }
+            }
+        }
+    }
+
+    // Process instances (same class as activeProcess) cannot be immutable
+    Oop activeProcess = memory_.fetchPointer(SchedulerActiveProcessIndex, scheduler);
+    if (activeProcess.isObject()) {
+        Oop processClass = memory_.classOf(activeProcess);
+        if (oopClass.rawBits() == processClass.rawBits()) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// Primitive 163: Get immutability flag of object
+// Object-side (argCount=0): receiver is the object to query
+// MirrorPrimitives (argCount=1): argument is the object to query
+PrimitiveResult Interpreter::primitiveGetImmutability(int argCount) {
+    // In both cases, the target object is stackTop():
+    //   argCount=0: stack = [receiver], top = receiver
+    //   argCount=1: stack = [mirrorClass, targetObj], top = targetObj
+    Oop target = stackTop();
+
+    bool isImmutable;
+    if (!target.isObject()) {
+        // Immediates are always immutable
+        isImmutable = true;
+    } else {
+        isImmutable = target.asObjectPtr()->isImmutable();
+    }
+
+    popN(argCount + 1);
     push(isImmutable ? memory_.trueObject() : memory_.falseObject());
     return PrimitiveResult::Success;
 }
 
 // Primitive 164: Set immutability flag of object
 // Returns the PREVIOUS immutability state (boolean), not the receiver
+// Object-side (argCount=1): receiver setIsReadOnlyObject: aBoolean
+// MirrorPrimitives (argCount=2): MirrorPrimitives makeObject: obj readOnly: aBool
 PrimitiveResult Interpreter::primitiveSetImmutability(int argCount) {
     Oop flagOop = stackValue(0);
     Oop rcvr = stackValue(1);
@@ -9215,23 +9293,26 @@ PrimitiveResult Interpreter::primitiveSetImmutability(int argCount) {
         return PrimitiveResult::Failure;  // Flag must be true or false
     }
 
-    // Immediates are always immutable
+    // Immediates: can't change, report as always immutable
     if (!rcvr.isObject()) {
-        // Immediates always report as immutable
-        popN(2);
-        push(memory_.trueObject());  // Previous state was "immutable"
-        return PrimitiveResult::Success;
+        return PrimitiveResult::Failure;
     }
 
     ObjectHeader* header = rcvr.asObjectPtr();
     bool wasImmutable = header->isImmutable();
 
-    // Only set if we can (not already immutable when trying to make mutable)
-    if (!wasImmutable || !makeImmutable) {
-        header->setImmutable(makeImmutable);
+    if (makeImmutable) {
+        // Check if this object type can be made immutable
+        if (!canBeImmutable(rcvr)) {
+            return PrimitiveResult::Failure;
+        }
+        header->setImmutable(true);
+    } else {
+        // Making mutable is always allowed
+        header->setImmutable(false);
     }
 
-    popN(2);
+    popN(argCount + 1);
     push(wasImmutable ? memory_.trueObject() : memory_.falseObject());
     return PrimitiveResult::Success;
 }

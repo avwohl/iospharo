@@ -1007,11 +1007,10 @@ runTestClass: testClass run: runNum on: s detail: d
         testStepThroughInAMethodWithMNU
         testStepThroughInAMethodWithoutError
         testTerminatingBlockedCriticalWhichWasSignalledButNotResumedYet
-        "WriteBarrierTest: immutability/write barrier"
+        "WriteBarrierTest: ENABLED — immutability primitives fixed (canBeImmutable, MirrorPrimitives popN)
+         These 2 are <expectedFailure> in standard Pharo — they fail even on the reference VM.
+         Our test runner fork/timeout doesn't handle the pragma, so skip them."
         testMutateByteArrayUsingDoubleAtPut testMutateByteArrayUsingFloatAtPut
-        testMutateByteSymbolUsingPrivateAtPut testSetIsReadOnlyFailure
-        testSetIsReadOnlyFailureProxy testBasicProxyReadOnly
-        testBasicProxyWritable
         "TextTest: BitBlt display"
         testDisplay
         "AnnouncerTest: ephemerons"
