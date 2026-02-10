@@ -43,8 +43,9 @@ A Spur-compatible mark-compact GC has been implemented following the plan in
 
 ### GC compactor — Working and Verified (2026-02-09)
 
-Full mark-compact GC works correctly with 32MB headroom (~300 compaction
-cycles per test suite run). All 11473/11489 tests pass with active GC.
+Full mark-compact GC works correctly with 32MB headroom. Test suite:
+11472/11488 pass with ~5 GC compaction cycles. Mac Catalyst app:
+runs 60M+ steps with 8+ GC cycles, no crashes.
 
 Key bugs fixed:
 1. **Zero-slot forwarding** (commit 5f73cd8): Objects with 0 slots weren't getting forwarding addresses.
@@ -54,6 +55,11 @@ Key bugs fixed:
    start address set built at the beginning of markPhase.
 4. **Stale grey bits** (commit 1ca8fb6): Pre-compaction pass only cleared mark bits, not grey.
    Stale grey on pinned objects could desync savedFieldPtr. Fixed by clearing both bits.
+5. **Missing setInterpreter in PlatformBridge** (commit 502549e): `vm_loadImage()` in
+   PlatformBridge.cpp created the Interpreter but never called `gMemory->setInterpreter()`.
+   GC compaction skipped all interpreter root updates (stack, saved frames, method_, receiver_).
+   After compaction, stale pointers pointed to zeroed memory → classIdx=0 crash.
+   Only affected Mac Catalyst app; test_load_image.cpp already had the call.
 
 ### Remaining GC phases (not started)
 
@@ -97,22 +103,21 @@ ExternalAddress (dereference pointer).
 
 ---
 
-## Test Results — Run #104 (2026-02-09, with GC)
+## Test Results — Run #105 (2026-02-09, with GC)
 
 **576 test classes, 11488 tests. Pass: 11472, Fail: 0, Error: 1, Skip: 15.**
 
-**99.86% pass rate** (11472/11488). 601 GC compaction cycles exercised.
+**99.86% pass rate** (11472/11488). 5 GC compaction cycles.
 
-1 error: CompiledMethodTest>>testUndeclaredReparationWithInstanceVariable
-(intermittent class restructuring error — "selector changed!", not GC-related)
+1 error: testBinarySelectors (intermittent `Symbol class >> #asSymbol`)
 
-### GC Compaction — Verified Working (commit 6cb8342)
-- gcHeadroom_=32MB triggers ~300-600 compaction cycles during full test suite
-- All pointer slots verified valid after every GC cycle (tested up to 2400 cycles)
-- Interpreter roots verified intact after GC (stack, saved frames, methods)
-- Grey bit clearing in pre-compaction pass prevents stale grey desync
-- Pinned objects explicitly cleared of grey bits in plan phase
-- 1300+ lines of diagnostic GC logging removed (commit 56170c4)
+### GC Compaction — Verified Working
+- gcHeadroom_=32MB triggers GC compaction during both test suite and Mac Catalyst
+- Test suite: 11472/11488 pass with ~5 GC cycles
+- Mac Catalyst app: runs 60M+ steps with 8+ GC cycles, no crashes
+- Interpreter roots properly updated during compaction via setInterpreter()
+- Key fix (commit 502549e): PlatformBridge.cpp was missing setInterpreter() call,
+  causing GC to skip all interpreter root updates in Mac Catalyst app
 
 ### Skipped test classes (52)
 Categories:
