@@ -911,7 +911,7 @@ runTestClass: testClass run: runNum on: s detail: d
      CodeSimulationTest
      "valueUnpreemptively blocks timeout"
      OCSpecialSelectorTest
-     "Abstract ClassParser tests"
+     "Abstract ClassParser tests (SubclassResponsibility)"
      CDBehaviorParserTest CDClassDefinitionParserTest
      "Compiler AST translator tests (execution returns wrong values)"
      OCASTVariableTranslatorTest OCASTSpecialLiteralTranslatorTest
@@ -929,8 +929,7 @@ runTestClass: testClass run: runNum on: s detail: d
      TraitMethodDescriptionTest TraitOverloadingOfMethodsInTraitedClassTest
      TraitPackagingTest TraitInTraitClassTest
      TraitWithMethodsInProtocolsTest
-     "Ring: RGReadOnlyImageBackendTest testBehavior timeout"
-     RGReadOnlyImageBackendTest
+     "RGReadOnlyImageBackendTest: ENABLED (19/19 pass)"
      "Symbol class>>numArgs (testUsingMethods, testUsingMethodsSuper errors)"
      SelfVariableTest
      "FFI callbacks (not implemented)"
@@ -939,7 +938,7 @@ runTestClass: testClass run: runNum on: s detail: d
      FBDBytecodeDecompilerExamplesTest FBIRBytecodeDecompilerTest
      "Class reshaping timeouts"
      ExampleSlotWithStateTest SlotMethodRecompilationTest
-     "Array modification forbidden"
+     "Array modification forbidden (ModificationForbidden)"
      BuilderManifestTest
      "ExecutionCounterTest: installOn: missing (metalinks)"
      ExecutionCounterTest
@@ -958,9 +957,8 @@ runTestClass: testClass run: runNum on: s detail: d
      "Network name resolver / Character>>asByteArray"
      GlobalIdentifierMergerTest GlobalIdentifierWithDefaultConfigurationTest
      "SystemNavigationTest: ENABLED (10/11, testAllGlobalNames skipped)"
-     "File signalError"
-     SystemEnvironmentTest
-     "Debugger step-through"
+     "SystemEnvironmentTest: ENABLED (217/217 pass)"
+     "Debugger step-through (context introspection issues)"
      FastStepThroughTest
      "GEllipseTest hangs on testEmpty"
      GEllipseTest
