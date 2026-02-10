@@ -1693,11 +1693,17 @@ GCResult ObjectMemory::fullGC() {
         interpreter_->prepareForGC();
     }
 
-    // 2. Clear all marks
+    // 2. Clear all marks AND grey bits
+    // Grey bits must be cleared to prevent stale grey bits (from the image
+    // or from a previous interrupted GC) from desyncing the savedFieldPtr
+    // in updatePointersAfterCompact. A stale grey on a pinned object would
+    // cause it to be treated as mobile, advancing the saved fields pointer
+    // and corrupting every subsequent object's first field.
     {
         ObjectScanner scanner(oldSpaceStart_, oldSpaceFree_);
         while (ObjectHeader* obj = scanner.next()) {
             obj->setMarked(false);
+            obj->setGrey(false);
         }
     }
 
@@ -1710,43 +1716,57 @@ GCResult ObjectMemory::fullGC() {
 
     copyAndUnmark();
 
-    // 4b. Post-compact integrity check: validate ALL pointer slots
-    if (gcCallCount <= 3) {
+    // 4b. Post-compact integrity check: build valid object set and verify all pointers.
+    // Runs on EVERY GC to catch intermittent compaction corruption.
+    {
+        // Build set of valid object addresses post-compaction
+        std::unordered_set<uintptr_t> validAddrs;
+        validAddrs.reserve(600000);
+        {
+            ObjectScanner addrScan(oldSpaceStart_, oldSpaceFree_);
+            while (ObjectHeader* obj = addrScan.next()) {
+                validAddrs.insert(reinterpret_cast<uintptr_t>(obj));
+            }
+        }
+        // Also include permanent space objects
+        {
+            ObjectScanner permScan(permSpaceStart_, permSpaceEnd_);
+            while (ObjectHeader* obj = permScan.next()) {
+                validAddrs.insert(reinterpret_cast<uintptr_t>(obj));
+            }
+        }
+
         size_t badSlotCount = 0;
-        size_t badClassCount = 0;
         ObjectScanner compactCheck(oldSpaceStart_, oldSpaceFree_);
         while (ObjectHeader* obj = compactCheck.next()) {
-            uint32_t cls = obj->classIndex();
-            if (cls == 0 && obj->slotCount() > 0) {
-                if (badClassCount++ < 3) {
-                    std::cerr << "[COMPACT-CHECK] classIdx=0 at 0x" << std::hex
-                              << (uintptr_t)obj << std::dec
-                              << " fmt=" << (int)obj->format()
-                              << " slots=" << obj->slotCount() << "\n";
-                }
-            }
-            // Check all pointer slots for validity
             size_t numPtrs = pointerSlotsOf(obj);
             Oop* slots = obj->slots();
             for (size_t s = 0; s < numPtrs; ++s) {
                 Oop val = slots[s];
                 if (!val.isObject()) continue;
                 ObjectHeader* target = val.asObjectPtr();
-                if (isPermObject(target)) continue;
-                if (!isOldObject(target)) {
-                    if (badSlotCount++ < 10) {
-                        std::cerr << "[COMPACT-BAD-SLOT] obj=0x" << std::hex
-                                  << (uintptr_t)obj << " cls=" << std::dec << cls
+                uintptr_t targetAddr = reinterpret_cast<uintptr_t>(target);
+                if (validAddrs.find(targetAddr) == validAddrs.end()) {
+                    if (badSlotCount++ < 5) {
+                        uint32_t objCls = obj->classIndex();
+                        uint32_t targetCls = target->classIndex();
+                        std::cerr << "[COMPACT-CORRUPT] GC #" << gcCallCount
+                                  << " obj=0x" << std::hex << (uintptr_t)obj
+                                  << " cls=" << std::dec << objCls
                                   << " fmt=" << (int)obj->format()
                                   << " slot#=" << s << "/" << numPtrs
-                                  << " val=0x" << std::hex << val.rawBits()
-                                  << " target=0x" << (uintptr_t)target << std::dec << "\n";
+                                  << " -> target=0x" << std::hex << targetAddr
+                                  << " targetCls=" << std::dec << targetCls
+                                  << " isOld=" << isOldObject(target)
+                                  << " isPerm=" << isPermObject(target) << "\n";
                     }
                 }
             }
         }
-        std::cerr << "[COMPACT-CHECK] GC #" << gcCallCount
-                  << ": badClass=" << badClassCount << " badSlots=" << badSlotCount << "\n";
+        if (badSlotCount > 0) {
+            std::cerr << "[COMPACT-CHECK] GC #" << gcCallCount
+                      << ": CORRUPTION detected! badSlots=" << badSlotCount << "\n";
+        }
     }
 
     // 5. Rebuild free list from gap
@@ -2596,6 +2616,7 @@ bool ObjectMemory::planCompactSavingForwarders() {
                 // Gap before pinned object — skip over it
                 toFinger = objStart;
             }
+            obj->setGrey(false);  // Ensure no stale grey — critical for savedFieldPtr sync
             toFinger += objSize;
             stayCount++;
             continue;
