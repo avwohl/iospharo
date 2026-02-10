@@ -931,7 +931,7 @@ runTestClass: testClass run: runNum on: s detail: d
      TraitWithMethodsInProtocolsTest
      "Ring: RGReadOnlyImageBackendTest testBehavior timeout"
      RGReadOnlyImageBackendTest
-     "Symbol class>>asSymbol / Symbol>>numArgs"
+     "Symbol class>>numArgs (testUsingMethods, testUsingMethodsSuper errors)"
      SelfVariableTest
      "FFI callbacks (not implemented)"
      FFICallbackParametersTest FFICallbackTest
@@ -957,8 +957,7 @@ runTestClass: testClass run: runNum on: s detail: d
      TestExecutionEnvironmentTest
      "Network name resolver / Character>>asByteArray"
      GlobalIdentifierMergerTest GlobalIdentifierWithDefaultConfigurationTest
-     "SmallInteger>>asLowercase"
-     SystemNavigationTest
+     "SystemNavigationTest: ENABLED (10/11, testAllGlobalNames skipped)"
      "File signalError"
      SystemEnvironmentTest
      "Debugger step-through"
@@ -971,9 +970,9 @@ runTestClass: testClass run: runNum on: s detail: d
      BitBltTest
      "BitBlt arg error in printOn with halt"
      ObjectWithPrintingRaisingHaltTest
-     "Announcements with trait modifications (timeouts)"
-     MethodAnnouncementsTest ProtocolAnnouncementsTest
-     "Method constants (assert:identicalTo: on nil, method constant feature)"
+     "MethodAnnouncementsTest: ENABLED (6/10, 4 trait timeouts skipped)"
+     "ProtocolAnnouncementsTest: ENABLED (13/14, 1 trait timeout skipped)"
+     "Method constants — non-method in method dict crashes VM"
      MethodConstantTest
      "Delay-dependent (valueWithin:onTimeout:)"
      BlockClosureValueWithinDurationTest
@@ -1056,6 +1055,15 @@ runTestClass: testClass run: runNum on: s detail: d
         testDisplay
         "AnnouncerTest: ephemerons"
         "testNoWeakBlock — FIXED by GC context sync"
+        "MethodAnnouncementsTest: trait-related timeouts"
+        testCompileMethodAnnounceAdditionOnlyInTrait
+        testRemoveMethodAnnounceRemovalOnlyInTrait
+        testUpdateMethodAnnounceModificationOnlyInTrait
+        testUpdateMethodAnnounceRecategorizationOnlyInTrait
+        "ProtocolAnnouncementsTest: trait-related timeout"
+        testAddProtocolAnnouncedOnlyInTrait
+        "SystemNavigationTest: SmallInteger>>asLowercase"
+        testAllGlobalNamesStartingWithDoCaseSensitive
         "CompiledMethodTest: Symbol>>numArgs FFI"
         testUsingMethodsFFI
         "TemporaryVariableTest: write temp vars — reads var name not value"
