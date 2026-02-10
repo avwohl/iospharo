@@ -94,8 +94,14 @@ dead code (never called by TFFI).
 6. Frame capture shows: Pharo logo, menu bar, desktop content
 
 **Remaining display issue**: `GrafPort(Object)>>error:` renders red X pattern over
-the main desktop area. This is a Morphic rendering error (SpStyleEnvironmentColorProxy
-missing `#isTransparent` and `#fillRectangle:on:`), not an FFI/Display issue.
+the main desktop area. Root cause: `SpStyleEnvironmentColorProxy` (a `ProtoObject`
+subclass) forwards unknown messages via DNU to `Smalltalk ui theme perform:
+colorSelector`. The `isTransparent` and `fillRectangle:on:` messages are forwarded
+correctly in principle, but fail because `UITheme current` is not properly initialized
+when rendering starts. This is a **session startup ordering issue**: rendering begins
+before `SessionManager >> installNewSession` completes all startup handlers (which
+include `PharoLightTheme beCurrent`). Not a VM bug — the DNU forwarding mechanism
+and Color methods work correctly when the theme is initialized.
 
 **Earlier FFI fix** (commit 491d515): `primitiveFFIIntegerAt` treated all bytes objects
 as ExternalAddresses. Fixed to distinguish ByteArray (read directly) from
