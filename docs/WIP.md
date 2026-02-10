@@ -1,6 +1,6 @@
 # iOS Pharo VM — Status
 
-Last verified: 2026-02-09
+Last verified: 2026-02-10
 
 ---
 
@@ -109,13 +109,21 @@ ExternalAddress (dereference pointer).
 
 ---
 
-## Test Results — Run #151 (2026-02-10, with GC)
+## Test Results — Run #158 (2026-02-10, with GC)
 
-**576 test classes, 12138 tests. Pass: 12123, Fail: 0, Error: 0, Skip: 15.**
+**576 test classes, 12384 tests. Pass: 12368, Fail: 0, Error: 0, Skip: 16.**
 
-**99.88% pass rate** (12123/12138). GC compaction cycles active.
+**99.87% pass rate** (12368/12384). GC compaction cycles active.
 
-### New VM features in this run (commits 8eaea4c, 2caf7af, 673dc00, 68472c6)
+### New VM features in this run (commits 813c377, 8eaea4c, 2caf7af, 673dc00)
+
+**Primitive 188 mirror fix** (commit 813c377): `primitiveExecuteMethodArgsArray`
+3-argument "mirror" form (`CM receiver: rcvr withArguments: args executeMethod: method`)
+was ignoring the desired receiver. The CompiledMethod (message receiver) was used instead,
+causing instance variable reads/writes on the wrong object. Fix: when argCount > 2, write
+desired receiver from stackValue(2) into the message receiver position. Also executes
+the target method's primitive if it has one. Unblocked 29 OCAST test failures and 5
+decompiler/IR test classes.
 
 **invokeObjectAsMethod**: Non-CompiledMethod objects in method dictionaries
 (metalinks, ReflectiveMethod) now correctly get `#run:with:in:` sent to them
@@ -123,8 +131,7 @@ instead of crashing the VM with abort(). Matches reference Cog VM behavior.
 
 **SmallInteger arithmetic fast paths**: `arithmeticSend` for bytecodes 0x60-0x6F
 now inlines +, -, <, >, <=, >=, =, ~=, *, /, \\, bitShift:, //, bitAnd:, bitOr:
-for SmallInteger operands. Bypasses method dictionary entirely. Required for
-correctness (OCSpecialSelectorTest tests that optimized `+` doesn't go through dict).
+for SmallInteger operands. Bypasses method dictionary entirely.
 
 **FFI 64-bit integer support**: `primitiveFFIIntegerAt` and `primitiveFFIIntegerAtPut`
 now handle LargePositiveInteger/LargeNegativeInteger for values outside SmallInteger range.
@@ -134,11 +141,20 @@ now handle LargePositiveInteger/LargeNegativeInteger for values outside SmallInt
 
 **Cache flush primitives**: `primitiveFlushCacheByMethod` (119) and
 `primitiveFlushCacheBySelector` (120) now properly clear matching cache entries.
-Were previously no-ops, blocking class restructuring.
 
-**Class table registration**: `primitiveChangeClass` (115) / `primitiveAdoptInstance`
-(160) now register new classes in the class table instead of failing. Fixes class
-restructuring for dynamically-created classes.
+**Class table registration**: `primitiveChangeClass` (115) now registers new classes
+in the class table instead of failing.
+
+### Newly enabled classes (Run #151 → #158)
+- **All 20 OCAST translator test classes**: 89/89 pass (prim 188 mirror fix)
+- **OCIRBuilderTest**: 34/34 pass
+- **OCIRPrinterTest**: 18/18 pass
+- **OCIRVisitorTest**: 18/18 pass
+- **FBIRBytecodeDecompilerTest**: 33/33 pass
+- **FBDBytecodeDecompilerExamplesTest**: 49/51 pass
+- **SelfVariableTest**: 2/5 pass (3 individually skipped)
+- **CodeSimulationTest**: 6/9 pass (SistaV1 simulation missing)
+- **OCBytecodeGeneratorTest**: 2/2 pass
 
 ### Newly enabled classes (Run #129 → #151)
 - **ClassTest**: 41/46 pass (5 class-modification tests excluded)
