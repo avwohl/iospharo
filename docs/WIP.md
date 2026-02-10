@@ -109,11 +109,23 @@ ExternalAddress (dereference pointer).
 
 ---
 
-## Test Results — Run #109 (2026-02-09, with GC)
+## Test Results — Run #129 (2026-02-09, with GC)
 
-**576 test classes, 11794 tests. Pass: 11779, Fail: 0, Error: 0, Skip: 15.**
+**576 test classes, 12084 tests. Pass: 12069, Fail: 0, Error: 0, Skip: 15.**
 
-**99.87% pass rate** (11779/11794). GC compaction cycles active.
+**99.88% pass rate** (12069/12084). GC compaction cycles active.
+
+### Newly enabled classes (Run #113 → #129)
+- **MethodAnnouncementsTest**: 6/10 pass (4 trait timeouts skipped)
+- **ProtocolAnnouncementsTest**: 13/14 pass (1 trait timeout skipped)
+- **SystemNavigationTest**: 10/11 pass (testAllGlobalNames skipped)
+- **RGReadOnlyImageBackendTest**: 19/19 pass (testBehavior timeout resolved)
+- **SystemEnvironmentTest**: 217/217 pass
+- **GEllipseTest**: 21/23 pass (testEmpty no longer hangs)
+- **testNoWeakBlock** (AnnouncerTest): fixed by GC context sync
+- **testAddIncludesSizeReclaim**: fixed by GC context sync
+- **testWeakOrderedCollectionAllGarbageCollected**: fixed by GC context sync
+- **testWeakOrderedCollectionSomeGarbageCollected**: fixed by GC context sync
 
 ### Materialized context GC sync fix (Run #109, commit 7670089)
 
@@ -140,24 +152,26 @@ C++ stack before the mark phase. +25 tests from un-skipping testAsArray.
 - Key fix (commit 502549e): PlatformBridge.cpp was missing setInterpreter() call,
   causing GC to skip all interpreter root updates in Mac Catalyst app
 
-### Skipped test classes (48)
+### Skipped test classes (~68)
 Categories:
-- **Delay-dependent**: ProcessTerminateBugTest, DelayTest, StopwatchTest, TTLCacheTest
+- **Delay-dependent**: ProcessTerminateBugTest, DelayTest, ProcessTest, StopwatchTest, TTLCacheTest, BlockClosureValueWithinDurationTest
 - **GC finalization**: FinalizationRegistryTest, WeakAnnouncerTest, ObjectFinalizerTest
-- **Class restructuring (timeouts)**: ClassTest, SlotIntegrationTest, PropertySlotTest, SlotAnnouncementsTest, SlotLayoutEqualityTest, SlotTraitsTest, SlotLayoutExtensionTest, BooleanSlotTest, SlotMigrationTest
-- **Trait class modifications (timeouts)**: TraitTest, TraitCompositionTest, ClassTraitTest, MOPTraitTest, TraitPureBehaviorTest, TraitPrecedenceCompositionTest, TraitWithAliasTest, TraitWithConflictsTest, TraitChangesTest, TraitMethodDescriptionTest, TraitOverloadingOfMethodsInTraitedClassTest, TraitPackagingTest, TraitInTraitClassTest, TraitWithMethodsInProtocolsTest, MethodAnnouncementsTest, ProtocolAnnouncementsTest
+- **Class restructuring (timeouts)**: ClassTest, SlotIntegrationTest, PropertySlotTest, SlotAnnouncementsTest, SlotLayoutEqualityTest, SlotTraitsTest, SlotLayoutExtensionTest, BooleanSlotTest, SlotMigrationTest, ExampleSlotWithStateTest, SlotMethodRecompilationTest
+- **Trait class modifications (timeouts)**: TraitTest, TraitCompositionTest, ClassTraitTest, MOPTraitTest, TraitPureBehaviorTest, TraitPrecedenceCompositionTest, TraitWithAliasTest, TraitWithConflictsTest, TraitChangesTest, TraitMethodDescriptionTest, TraitOverloadingOfMethodsInTraitedClassTest, TraitPackagingTest, TraitInTraitClassTest, TraitWithMethodsInProtocolsTest, TraitSlotScopeTest, TraitWithSlotsTest, TraitWithComplexSlotsTest
 - **Abstract classes**: CollectionRootTest, CDBehaviorParserTest, CDClassDefinitionParserTest
 - **Compiler AST/IR execution**: OCASTVariableTranslatorTest, OCASTSpecialLiteralTranslatorTest, OCASTAndOrTranslatorTest, OCASTBasicTranslatorTest, OCASTBlockTranslatorTest, OCASTSingleBranchConditionalTranslatorTest, OCASTDoubleBranchConditionalTranslatorTest, OCIRBuilderTest, OCIRPrinterTest, OCIRVisitorTest, OCBytecodeGeneratorTest
-- **Other**: ProcessTest, CodeSimulationTest, OCSpecialSelectorTest, CDTraitCompositionClassParserTest, MethodConstantTest, RGReadOnlyImageBackendTest, SelfVariableTest
+- **Non-method in method dict**: OCSpecialSelectorTest, OCCacheResetTest, MethodConstantTest
+- **Reflectivity/coverage**: CoverageCollectorTest, CoverageDemoTest
+- **FFI callbacks**: FFICallbackParametersTest, FFICallbackTest
+- **Network**: EpLogTest, EpCommentTest, GlobalIdentifierMergerTest, GlobalIdentifierWithDefaultConfigurationTest
+- **Display**: BitBltTest, ObjectWithPrintingRaisingHaltTest
+- **Debugger**: FastStepThroughTest
+- **Other**: CodeSimulationTest, CDTraitCompositionClassParserTest, SelfVariableTest, BuilderManifestTest, ExecutionCounterTest, ProcessMonitorTestServiceTest, OCCodeReparatorTest, PackageTest, FBDBytecodeDecompilerExamplesTest, FBIRBytecodeDecompilerTest, TestExecutionEnvironmentTest
 
-### Newly enabled classes (Run #261 → #272)
-- **SharedPoolTest**: 6/6 pass
-- **MetaClassTest**: 3/3 pass
-- **MonitorTest**: 3/3 pass
-- **GeneratorTest**: 13/13 pass
-- **BlockClosureTest**: 42/50 pass (8 individually skipped)
-- **ClassHierarchyTest**: 2/3 (testSubclasses has Symbol class >> #, error)
-- **AllocationTest**: 2/4 (testOneGWordAllocation skipped, testOneMBAllocation skip)
+### Previously enabled classes
+- SharedPoolTest, MetaClassTest, MonitorTest, GeneratorTest, BlockClosureTest,
+  ClassHierarchyTest, AllocationTest, WeakSetTest, WeakIdentitySetTest,
+  WeakIdentityKeyDictionaryTest, WeakOrderedCollectionTest, and many more
 
 ### Context identity fix (commit 85810e4)
 
