@@ -598,6 +598,9 @@ private:
     /// Send doesNotUnderstand:
     void sendDoesNotUnderstand(Oop selector, int argCount);
 
+    /// Invoke a non-CompiledMethod object as a method (sends #run:with:in:)
+    void invokeObjectAsMethod(Oop nonMethod, Oop selector, int argCount);
+
     /// Send mustBeBoolean
     void sendMustBeBoolean(Oop value);
 

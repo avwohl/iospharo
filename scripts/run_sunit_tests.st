@@ -909,8 +909,7 @@ runTestClass: testClass run: runNum on: s detail: d
      SlotLayoutExtensionTest BooleanSlotTest
      "Code simulation needs SistaV1 support"
      CodeSimulationTest
-     "valueUnpreemptively / non-method in method dict crash"
-     OCSpecialSelectorTest
+     "OCSpecialSelectorTest: ENABLED (non-method handled via #run:with:in:)"
      "Abstract ClassParser tests (SubclassResponsibility)"
      CDBehaviorParserTest CDClassDefinitionParserTest
      "Compiler AST translator tests (execution returns wrong values)"
@@ -946,8 +945,7 @@ runTestClass: testClass run: runNum on: s detail: d
      ProcessMonitorTestServiceTest
      "Coverage/reflectivity (NonBooleanReceiver, reflectivity infrastructure)"
      CoverageCollectorTest CoverageDemoTest
-     "OCCacheResetTest: non-method in method dict (metalinks)"
-     OCCacheResetTest
+     "OCCacheResetTest: ENABLED (non-method handled via #run:with:in:)"
      "Code reparation (class modification timeouts, paste differences)"
      OCCodeReparatorTest
      "Package trait modifications (timeouts)"
@@ -971,8 +969,7 @@ runTestClass: testClass run: runNum on: s detail: d
      ObjectWithPrintingRaisingHaltTest
      "MethodAnnouncementsTest: ENABLED (6/10, 4 trait timeouts skipped)"
      "ProtocolAnnouncementsTest: ENABLED (13/14, 1 trait timeout skipped)"
-     "Method constants — non-method in method dict crashes VM"
-     MethodConstantTest
+     "MethodConstantTest: ENABLED (non-method handled via #run:with:in:)"
      "Delay-dependent (valueWithin:onTimeout:)"
      BlockClosureValueWithinDurationTest
      "Weak/GC finalization"
@@ -1092,10 +1089,8 @@ runTestClass: testClass run: runNum on: s detail: d
         testAllCallsOn
         "DeleteVisitorTest: network name resolver"
         testSymbolicLink
-        "FFITypesTest: 64-bit integer put"
-        testSignedLongLong testUnsignedLongLong
-        "FBDDecompilerTest: array immutability / undeclared variable"
-        testCascadeNested testWhileTrue3
+        "FFITypesTest: (enabled - 64-bit integer put fixed)"
+        "FBDDecompilerTest: try enabling with write barrier fix"
         "SystemBuildInfoTest: VM binary/directory paths"
         testVmBinary testVmDirectory
         "TestCaseTest: watchdog/long test (priority 81)"

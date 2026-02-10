@@ -6614,12 +6614,146 @@ void Interpreter::arithmeticSend(int which) {
         }
     }
 
-    // Nil is a valid Smalltalk object (UndefinedObject). All sends to nil must go
-    // through normal method dispatch. Object>>#= does ^ self == anObject, which
-    // correctly handles nil = nil → true via primitiveIdentical.
+    // SmallInteger fast paths — matches reference Cog VM behavior.
+    // These bypass the method dictionary entirely when both operands are SmallIntegers.
+    // Required for correctness: tests like OCSpecialSelectorTest expect that the
+    // compiler-optimized +/* etc. never go through the method dictionary.
+    {
+        Oop rcvr = stackValue(argCount);
+        Oop arg = stackValue(0);
 
-    // Note: @ (which=11) must go through method lookup to find Number>>@.
-    // Bit operations on non-integers should also go through method lookup.
+        if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
+            int64_t a = rcvr.asSmallInteger();
+            int64_t b = arg.asSmallInteger();
+
+            switch (which) {
+                case 0: {  // +
+                    int64_t result = a + b;
+                    if (result >= Oop::smallIntegerMin() && result <= Oop::smallIntegerMax()) {
+                        popN(2);
+                        push(Oop::fromSmallInteger(result));
+                        return;
+                    }
+                    break;
+                }
+                case 1: {  // -
+                    int64_t result = a - b;
+                    if (result >= Oop::smallIntegerMin() && result <= Oop::smallIntegerMax()) {
+                        popN(2);
+                        push(Oop::fromSmallInteger(result));
+                        return;
+                    }
+                    break;
+                }
+                case 2:  // <
+                    popN(2);
+                    push(a < b ? memory_.trueObject() : memory_.falseObject());
+                    return;
+                case 3:  // >
+                    popN(2);
+                    push(a > b ? memory_.trueObject() : memory_.falseObject());
+                    return;
+                case 4:  // <=
+                    popN(2);
+                    push(a <= b ? memory_.trueObject() : memory_.falseObject());
+                    return;
+                case 5:  // >=
+                    popN(2);
+                    push(a >= b ? memory_.trueObject() : memory_.falseObject());
+                    return;
+                case 6:  // =
+                    popN(2);
+                    push(a == b ? memory_.trueObject() : memory_.falseObject());
+                    return;
+                case 7:  // ~=
+                    popN(2);
+                    push(a != b ? memory_.trueObject() : memory_.falseObject());
+                    return;
+                case 8: {  // *
+                    // Check for overflow using __int128 or by checking bounds
+                    __int128 result128 = static_cast<__int128>(a) * static_cast<__int128>(b);
+                    int64_t result = static_cast<int64_t>(result128);
+                    if (result128 == static_cast<__int128>(result) &&
+                        result >= Oop::smallIntegerMin() && result <= Oop::smallIntegerMax()) {
+                        popN(2);
+                        push(Oop::fromSmallInteger(result));
+                        return;
+                    }
+                    break;
+                }
+                case 9: {  // /
+                    if (b != 0 && (a % b) == 0) {
+                        int64_t result = a / b;
+                        if (result >= Oop::smallIntegerMin() && result <= Oop::smallIntegerMax()) {
+                            popN(2);
+                            push(Oop::fromSmallInteger(result));
+                            return;
+                        }
+                    }
+                    break;
+                }
+                case 10: {  // \\  (modulo)
+                    if (b != 0) {
+                        int64_t result = a % b;
+                        // Smalltalk modulo: result has sign of divisor
+                        if (result != 0 && ((result ^ b) < 0)) {
+                            result += b;
+                        }
+                        popN(2);
+                        push(Oop::fromSmallInteger(result));
+                        return;
+                    }
+                    break;
+                }
+                case 12: {  // bitShift:
+                    if (b >= 0 && b < 63) {
+                        // Left shift - check for overflow
+                        int64_t result = a << b;
+                        if ((result >> b) == a && result >= Oop::smallIntegerMin() && result <= Oop::smallIntegerMax()) {
+                            popN(2);
+                            push(Oop::fromSmallInteger(result));
+                            return;
+                        }
+                    } else if (b < 0 && b > -64) {
+                        // Right shift
+                        int64_t result = a >> (-b);
+                        popN(2);
+                        push(Oop::fromSmallInteger(result));
+                        return;
+                    }
+                    break;
+                }
+                case 13: {  // //  (integer division, truncates toward negative infinity)
+                    if (b != 0) {
+                        int64_t result;
+                        if ((a ^ b) >= 0 || a == 0) {
+                            result = a / b;  // Same sign or zero: C division is correct
+                        } else {
+                            result = ((a + 1) / b) - 1;  // Different signs: floor
+                        }
+                        if (result >= Oop::smallIntegerMin() && result <= Oop::smallIntegerMax()) {
+                            popN(2);
+                            push(Oop::fromSmallInteger(result));
+                            return;
+                        }
+                    }
+                    break;
+                }
+                case 14: {  // bitAnd:
+                    popN(2);
+                    push(Oop::fromSmallInteger(a & b));
+                    return;
+                }
+                case 15: {  // bitOr:
+                    popN(2);
+                    push(Oop::fromSmallInteger(a | b));
+                    return;
+                }
+                default:
+                    break;  // @ (11) — fall through to method lookup
+            }
+        }
+    }
 
     // Try to get cached well-known selector
     Oop selector;
@@ -7200,71 +7334,11 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             suppressContextSwitch_ = true;
         }
 
-        // Validate cached method is still a CompiledMethod
+        // Non-CompiledMethod in cache — invoke as object-as-method
         if (__builtin_expect(!cached->method.isObject() || cached->method.rawBits() < 0x10000 ||
                              !cached->method.asObjectPtr()->isCompiledMethod(), 0)) {
-            FILE* clog = fopen("/tmp/iospharo-crash.log", "w");
-            if (!clog) clog = stderr;
-            fprintf(clog, "[FATAL] sendSelector: cached method is not CompiledMethod!\n"
-                    "  method=0x%llx", (unsigned long long)cached->method.rawBits());
-            if (cached->method.isObject() && cached->method.rawBits() > 0x10000) {
-                ObjectHeader* mh = cached->method.asObjectPtr();
-                fprintf(clog, " cls=%u fmt=%d slots=%zu rawHdr=0x%llx",
-                        mh->classIndex(), (int)mh->format(), mh->slotCount(),
-                        (unsigned long long)mh->rawHeader());
-            }
-            fprintf(clog, "\n  selector=0x%llx", (unsigned long long)selector.rawBits());
-            if (selBytes) fprintf(clog, " '%.*s'", (int)selLen, selBytes);
-            fprintf(clog, "\n  class=0x%llx", (unsigned long long)cached->classOop.rawBits());
-            fprintf(clog, "\n  step=%llu source=cache\n", (unsigned long long)g_stepNum);
-            fprintf(clog, "  methodInOldSpace=%d methodInPermSpace=%d\n",
-                    memory_.isOldObject(cached->method.asObjectPtr()),
-                    memory_.isPermObject(cached->method.asObjectPtr()));
-            // Check if the method header (8 bytes at the location) is all zeros
-            uint64_t* raw = reinterpret_cast<uint64_t*>(cached->method.asObjectPtr());
-            fprintf(clog, "  rawHeader=0x%llx rawSlot0=0x%llx rawSlot1=0x%llx\n",
-                    (unsigned long long)raw[0], (unsigned long long)raw[1], (unsigned long long)raw[2]);
-            // Also look at 64 bytes before and after to understand memory layout
-            fprintf(clog, "  context: ");
-            for (int off = -4; off <= 4; off++) {
-                fprintf(clog, "[%+d]=0x%llx ", off, (unsigned long long)raw[off]);
-            }
-            fprintf(clog, "\n");
-            // Scan the cache for other entries with this selector
-            int cacheMatches = 0;
-            size_t cacheIdx = cacheHash(selector, rcvrClass);
-            fprintf(clog, "  cacheIdx=%zu cacheSelector=0x%llx cacheClass=0x%llx\n",
-                    cacheIdx, (unsigned long long)cached->selector.rawBits(),
-                    (unsigned long long)cached->classOop.rawBits());
-            // Dump recent frames
-            fprintf(clog, "  recent frames (fd=%zu):\n", frameDepth_);
-            for (size_t fi = frameDepth_; fi > 0 && fi > (frameDepth_ > 8 ? frameDepth_ - 8 : 0); --fi) {
-                SavedFrame& sf = savedFrames_[fi - 1];
-                std::string selStr = "?";
-                if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
-                    ObjectHeader* sm = sf.savedMethod.asObjectPtr();
-                    if (sm->isCompiledMethod() && sm->slotCount() > 0) {
-                        Oop mh = sm->slotAt(0);
-                        if (mh.isSmallInteger()) {
-                            size_t nl = mh.asSmallInteger() & 0x7FFF;
-                            if (nl >= 2 && nl < sm->slotCount()) {
-                                Oop sel = sm->slotAt(nl - 1);
-                                if (sel.isObject() && sel.rawBits() > 0x10000) {
-                                    ObjectHeader* sh = sel.asObjectPtr();
-                                    if (sh->isBytesObject() && sh->byteSize() < 80) {
-                                        selStr = std::string((char*)sh->bytes(), sh->byteSize());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                fprintf(clog, "    frame[%zu] #%s method=0x%llx\n",
-                        fi-1, selStr.c_str(), (unsigned long long)sf.savedMethod.rawBits());
-            }
-            fflush(clog);
-            if (clog != stderr) fclose(clog);
-            abort();
+            invokeObjectAsMethod(cached->method, selector, argCount);
+            return;
         }
         activateMethod(cached->method, argCount);
         return;
@@ -7278,31 +7352,11 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         return;
     }
 
-    // Validate looked-up method is a CompiledMethod
+    // Non-CompiledMethod found — invoke as object-as-method (metalinks, etc.)
     if (__builtin_expect(!method.isObject() || method.rawBits() < 0x10000 ||
                          !method.asObjectPtr()->isCompiledMethod(), 0)) {
-        FILE* clog = fopen("/tmp/iospharo-crash.log", "w");
-        if (!clog) clog = stderr;
-        ObjectHeader* mh = method.asObjectPtr();
-        fprintf(clog, "[FATAL] sendSelector: lookupMethod returned non-CompiledMethod!\n"
-                "  method=0x%llx cls=%u fmt=%d slots=%zu\n"
-                "  selector=0x%llx", (unsigned long long)method.rawBits(),
-                mh->classIndex(), (int)mh->format(), mh->slotCount(),
-                (unsigned long long)selector.rawBits());
-        if (selBytes) fprintf(clog, " '%.*s'", (int)selLen, selBytes);
-        fprintf(clog, "\n  rcvrClass=0x%llx step=%llu source=lookup\n",
-                (unsigned long long)rcvrClass.rawBits(), (unsigned long long)g_stepNum);
-        // Dump method dict chain info
-        Oop curCls = rcvrClass;
-        for (int d = 0; d < 5 && curCls.isObject(); d++) {
-            Oop md = methodDictOf(curCls);
-            fprintf(clog, "  class[%d]=0x%llx methodDict=0x%llx\n",
-                    d, (unsigned long long)curCls.rawBits(), (unsigned long long)md.rawBits());
-            curCls = superclassOf(curCls);
-        }
-        fflush(clog);
-        if (clog != stderr) fclose(clog);
-        abort();
+        invokeObjectAsMethod(method, selector, argCount);
+        return;
     }
 
     // Cache the method
@@ -7421,14 +7475,7 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
                 if (method.isObject() && method.rawBits() > 0x10000) {
                     // Validate method is actually a CompiledMethod
                     ObjectHeader* mHdr = method.asObjectPtr();
-                    if (__builtin_expect(!mHdr->isCompiledMethod(), 0)) {
-                        fprintf(stderr, "[FATAL] lookupInMethodDict: non-method in values array!\n"
-                                "  method=0x%llx cls=%u fmt=%d slots=%zu index=%zu selector='%s'\n",
-                                (unsigned long long)method.rawBits(), mHdr->classIndex(),
-                                (int)mHdr->format(), mHdr->slotCount(), i, selectorStr.c_str());
-                        abort();
-                    }
-                    return method;
+                    return method;  // May be non-CompiledMethod (metalink etc.) — caller handles
                 }
             }
             continue;
@@ -7445,14 +7492,7 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
                         Oop method = memory_.fetchPointer(i, valuesArray);
                         if (method.isObject() && method.rawBits() > 0x10000) {
                             ObjectHeader* mHdr = method.asObjectPtr();
-                            if (__builtin_expect(!mHdr->isCompiledMethod(), 0)) {
-                                fprintf(stderr, "[FATAL] lookupInMethodDict: non-method (string) in values array!\n"
-                                        "  method=0x%llx cls=%u fmt=%d slots=%zu index=%zu selector='%s'\n",
-                                        (unsigned long long)method.rawBits(), mHdr->classIndex(),
-                                        (int)mHdr->format(), mHdr->slotCount(), i, selectorStr.c_str());
-                                abort();
-                            }
-                            return method;
+                            return method;  // May be non-CompiledMethod — caller handles
                         }
                     }
                 }
@@ -10032,6 +10072,43 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     sendSelector(selectors_.doesNotUnderstand, 1);
 
     dnuDepth--;
+}
+
+void Interpreter::invokeObjectAsMethod(Oop nonMethod, Oop selector, int argCount) {
+    // Reference VM behavior: when a non-CompiledMethod is found in a method dictionary
+    // (e.g. ReflectiveMethod, metalink wrapper), send #run:with:in: to it.
+    //
+    // Stack on entry: ... receiver arg1 arg2 ... argN
+    // We must:
+    //   1. Pop argCount args into a fresh Array
+    //   2. Pop receiver
+    //   3. Push: nonMethod, selector, argsArray, receiver
+    //   4. Send #run:with:in: to nonMethod (3 args)
+
+    // Allocate Array for arguments
+    Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
+    uint32_t arrayClassIndex = memory_.indexOfClass(arrayClass);
+    Oop argsArray = memory_.allocateSlots(arrayClassIndex, argCount, ObjectFormat::Indexable);
+
+    // Pop arguments into the array (top of stack = last arg)
+    for (int i = argCount - 1; i >= 0; --i) {
+        Oop arg = pop();
+        memory_.storePointer(i, argsArray, arg);
+    }
+
+    // Pop receiver
+    Oop receiver = pop();
+
+    // Push: nonMethod (becomes the new receiver of #run:with:in:)
+    push(nonMethod);
+    // Push args: selector, argsArray, receiver
+    push(selector);
+    push(argsArray);
+    push(receiver);
+
+    // Send #run:with:in: (special object 49)
+    Oop runWithInSelector = memory_.specialObject(SpecialObjectIndex::SelectorRunWithIn);
+    sendSelector(runWithInSelector, 3);
 }
 
 void Interpreter::sendMustBeBoolean(Oop value) {

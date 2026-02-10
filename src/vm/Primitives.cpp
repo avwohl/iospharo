@@ -6430,6 +6430,31 @@ static bool trySigned64BitValueOf(ObjectMemory& memory, Oop oop, int64_t& value)
     return true;
 }
 
+// Helper: Extract unsigned 64-bit value from SmallInteger or LargePositiveInteger
+static bool tryUnsigned64BitValueOf(ObjectMemory& memory, Oop oop, uint64_t& value) {
+    if (oop.isSmallInteger()) {
+        int64_t sv = oop.asSmallInteger();
+        if (sv < 0) return false;
+        value = static_cast<uint64_t>(sv);
+        return true;
+    }
+
+    if (!oop.isObject()) return false;
+
+    Oop largePositiveClass = memory.specialObject(SpecialObjectIndex::ClassLargePositiveInteger);
+    Oop objClass = memory.classOf(oop);
+    if (objClass.rawBits() != largePositiveClass.rawBits()) return false;
+
+    size_t byteSize = memory.byteSizeOf(oop);
+    if (byteSize > 8) return false;
+
+    value = 0;
+    for (size_t i = 0; i < byteSize; i++) {
+        value |= static_cast<uint64_t>(memory.fetchByte(i, oop)) << (i * 8);
+    }
+    return true;
+}
+
 // Helper: Check if Oop is a LargeInteger (positive or negative)
 static bool isLargeInteger(ObjectMemory& memory, Oop oop, bool& isNegative) {
     if (!oop.isObject()) return false;
@@ -15074,10 +15099,7 @@ PrimitiveResult Interpreter::primitiveObjectSetReadOnly(int argCount) {
     }
 
     bool makeReadOnly = (readOnlyOop == memory_.trueObject());
-    if (makeReadOnly) {
-        memory_.makeImmutable(receiver);
-    }
-    // Note: making mutable again would need additional support
+    receiver.asObjectPtr()->setImmutable(makeReadOnly);
 
     pop();  // readOnly flag
     // Leave receiver on stack
@@ -23915,16 +23937,50 @@ PrimitiveResult Interpreter::primitiveFFIIntegerAt(int argCount) {
             return PrimitiveResult::Failure;
     }
 
-    // Return as SmallInteger if possible, otherwise need LargeInteger
+    // For unsigned 64-bit, handle as unsigned magnitude
+    if (!isSigned && nBytes == 8) {
+        uint64_t uvalue = *reinterpret_cast<uint64_t*>(ptr);
+        if (uvalue <= static_cast<uint64_t>(Oop::smallIntegerMax())) {
+            popN(5);
+            push(Oop::fromSmallInteger(static_cast<int64_t>(uvalue)));
+            return PrimitiveResult::Success;
+        }
+        // Create LargePositiveInteger
+        std::vector<uint8_t> mag;
+        uint64_t tmp = uvalue;
+        while (tmp > 0) {
+            mag.push_back(static_cast<uint8_t>(tmp & 0xFF));
+            tmp >>= 8;
+        }
+        if (mag.empty()) mag.push_back(0);
+        Oop result = makeLargeInteger(memory_, mag, false);
+        if (result.isNil()) return PrimitiveResult::Failure;
+        popN(5);
+        push(result);
+        return PrimitiveResult::Success;
+    }
+
+    // Signed result (or unsigned < 8 bytes which fits in int64_t)
     if (value >= Oop::smallIntegerMin() && value <= Oop::smallIntegerMax()) {
-        popN(5);  // pop all args and receiver
+        popN(5);
         push(Oop::fromSmallInteger(value));
         return PrimitiveResult::Success;
     }
 
-    // Need to create a LargeInteger - for now, fail for large values
-    // TODO: implement LargeInteger creation
-    return PrimitiveResult::Failure;
+    // Create LargeInteger for large signed values
+    bool isNeg = value < 0;
+    uint64_t absValue = isNeg ? static_cast<uint64_t>(-value) : static_cast<uint64_t>(value);
+    std::vector<uint8_t> mag;
+    while (absValue > 0) {
+        mag.push_back(static_cast<uint8_t>(absValue & 0xFF));
+        absValue >>= 8;
+    }
+    if (mag.empty()) mag.push_back(0);
+    Oop result = makeLargeInteger(memory_, mag, isNeg);
+    if (result.isNil()) return PrimitiveResult::Failure;
+    popN(5);
+    push(result);
+    return PrimitiveResult::Success;
 }
 
 // primitiveFFIIntegerAtPut
@@ -23950,9 +24006,30 @@ PrimitiveResult Interpreter::primitiveFFIIntegerAtPut(int argCount) {
     if (offset < 1) return PrimitiveResult::Failure;
     offset -= 1;  // Convert 1-based to 0-based
 
-    // Parse value
-    if (!valueOop.isSmallInteger()) return PrimitiveResult::Failure;
-    int64_t value = valueOop.asSmallInteger();
+    // Parse signed flag
+    bool isSigned = (signedOop.rawBits() == memory_.trueObject().rawBits());
+
+    // Parse value — accept SmallInteger or LargeInteger
+    int64_t signedValue = 0;
+    uint64_t unsignedValue = 0;
+    if (isSigned) {
+        if (!trySigned64BitValueOf(memory_, valueOop, signedValue))
+            return PrimitiveResult::Failure;
+        // Range check for smaller sizes
+        if (nBytes < 8) {
+            int64_t max = static_cast<int64_t>(1ULL << (8 * nBytes - 1));
+            if (signedValue < -max || signedValue >= max)
+                return PrimitiveResult::Failure;
+        }
+    } else {
+        if (!tryUnsigned64BitValueOf(memory_, valueOop, unsignedValue))
+            return PrimitiveResult::Failure;
+        // Range check for smaller sizes
+        if (nBytes < 8) {
+            if (unsignedValue >= (1ULL << (8 * nBytes)))
+                return PrimitiveResult::Failure;
+        }
+    }
 
     // Get the data pointer - depends on object class
     uint8_t* ptr = nullptr;
@@ -23982,18 +24059,19 @@ PrimitiveResult Interpreter::primitiveFFIIntegerAtPut(int argCount) {
 
     if (!ptr) return PrimitiveResult::Failure;
 
+    uint64_t rawValue = isSigned ? static_cast<uint64_t>(signedValue) : unsignedValue;
     switch (nBytes) {
         case 1:
-            *reinterpret_cast<uint8_t*>(ptr) = static_cast<uint8_t>(value);
+            *reinterpret_cast<uint8_t*>(ptr) = static_cast<uint8_t>(rawValue);
             break;
         case 2:
-            *reinterpret_cast<uint16_t*>(ptr) = static_cast<uint16_t>(value);
+            *reinterpret_cast<uint16_t*>(ptr) = static_cast<uint16_t>(rawValue);
             break;
         case 4:
-            *reinterpret_cast<uint32_t*>(ptr) = static_cast<uint32_t>(value);
+            *reinterpret_cast<uint32_t*>(ptr) = static_cast<uint32_t>(rawValue);
             break;
         case 8:
-            *reinterpret_cast<uint64_t*>(ptr) = static_cast<uint64_t>(value);
+            *reinterpret_cast<uint64_t*>(ptr) = rawValue;
             break;
         default:
             return PrimitiveResult::Failure;
