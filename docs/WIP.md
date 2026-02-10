@@ -109,13 +109,46 @@ ExternalAddress (dereference pointer).
 
 ---
 
-## Test Results — Run #129 (2026-02-09, with GC)
+## Test Results — Run #151 (2026-02-10, with GC)
 
-**576 test classes, 12084 tests. Pass: 12069, Fail: 0, Error: 0, Skip: 15.**
+**576 test classes, 12138 tests. Pass: 12123, Fail: 0, Error: 0, Skip: 15.**
 
-**99.88% pass rate** (12069/12084). GC compaction cycles active.
+**99.88% pass rate** (12123/12138). GC compaction cycles active.
 
-### Newly enabled classes (Run #113 → #129)
+### New VM features in this run (commits 8eaea4c, 2caf7af, 673dc00, 68472c6)
+
+**invokeObjectAsMethod**: Non-CompiledMethod objects in method dictionaries
+(metalinks, ReflectiveMethod) now correctly get `#run:with:in:` sent to them
+instead of crashing the VM with abort(). Matches reference Cog VM behavior.
+
+**SmallInteger arithmetic fast paths**: `arithmeticSend` for bytecodes 0x60-0x6F
+now inlines +, -, <, >, <=, >=, =, ~=, *, /, \\, bitShift:, //, bitAnd:, bitOr:
+for SmallInteger operands. Bypasses method dictionary entirely. Required for
+correctness (OCSpecialSelectorTest tests that optimized `+` doesn't go through dict).
+
+**FFI 64-bit integer support**: `primitiveFFIIntegerAt` and `primitiveFFIIntegerAtPut`
+now handle LargePositiveInteger/LargeNegativeInteger for values outside SmallInteger range.
+
+**Write barrier fix**: `primitiveObjectSetReadOnly` (544) now correctly handles
+`setIsReadOnly: false` (making objects mutable again).
+
+**Cache flush primitives**: `primitiveFlushCacheByMethod` (119) and
+`primitiveFlushCacheBySelector` (120) now properly clear matching cache entries.
+Were previously no-ops, blocking class restructuring.
+
+**Class table registration**: `primitiveChangeClass` (115) / `primitiveAdoptInstance`
+(160) now register new classes in the class table instead of failing. Fixes class
+restructuring for dynamically-created classes.
+
+### Newly enabled classes (Run #129 → #151)
+- **ClassTest**: 41/46 pass (5 class-modification tests excluded)
+- **BooleanSlotTest**: 3/3 pass
+- **MethodConstantTest**: 5/5 pass (non-method in method dict fixed)
+- **OCCacheResetTest**: 1/1 pass (non-method in method dict fixed)
+- **OCSpecialSelectorTest**: 2/4 pass (optimized tests pass with fast paths)
+- **FFITypesTest**: testSignedLongLong, testUnsignedLongLong now pass (15/15)
+
+### Previously enabled classes (Run #113 → #129)
 - **MethodAnnouncementsTest**: 6/10 pass (4 trait timeouts skipped)
 - **ProtocolAnnouncementsTest**: 13/14 pass (1 trait timeout skipped)
 - **SystemNavigationTest**: 10/11 pass (testAllGlobalNames skipped)
@@ -152,21 +185,20 @@ C++ stack before the mark phase. +25 tests from un-skipping testAsArray.
 - Key fix (commit 502549e): PlatformBridge.cpp was missing setInterpreter() call,
   causing GC to skip all interpreter root updates in Mac Catalyst app
 
-### Skipped test classes (~68)
+### Skipped test classes (~63)
 Categories:
-- **Delay-dependent**: ProcessTerminateBugTest, DelayTest, ProcessTest, StopwatchTest, TTLCacheTest, BlockClosureValueWithinDurationTest
-- **GC finalization**: FinalizationRegistryTest, WeakAnnouncerTest, ObjectFinalizerTest
-- **Class restructuring (timeouts)**: ClassTest, SlotIntegrationTest, PropertySlotTest, SlotAnnouncementsTest, SlotLayoutEqualityTest, SlotTraitsTest, SlotLayoutExtensionTest, BooleanSlotTest, SlotMigrationTest, ExampleSlotWithStateTest, SlotMethodRecompilationTest
-- **Trait class modifications (timeouts)**: TraitTest, TraitCompositionTest, ClassTraitTest, MOPTraitTest, TraitPureBehaviorTest, TraitPrecedenceCompositionTest, TraitWithAliasTest, TraitWithConflictsTest, TraitChangesTest, TraitMethodDescriptionTest, TraitOverloadingOfMethodsInTraitedClassTest, TraitPackagingTest, TraitInTraitClassTest, TraitWithMethodsInProtocolsTest, TraitSlotScopeTest, TraitWithSlotsTest, TraitWithComplexSlotsTest
+- **Delay-dependent**: ProcessTerminateBugTest, DelayTest, ProcessTest, StopwatchTest, TTLCacheTest
+- **GC finalization**: FinalizationRegistryTest, WeakAnnouncerTest
+- **Class restructuring (hangs, no Delay timeout)**: SlotIntegrationTest, PropertySlotTest, SlotAnnouncementsTest, SlotLayoutEqualityTest, SlotTraitsTest, SlotLayoutExtensionTest, SlotMigrationTest, ExampleSlotWithStateTest, SlotMethodRecompilationTest
+- **Trait class modifications (hangs)**: TraitTest, TraitCompositionTest, ClassTraitTest, MOPTraitTest, TraitPureBehaviorTest, TraitPrecedenceCompositionTest, TraitWithAliasTest, TraitWithConflictsTest, TraitChangesTest, TraitMethodDescriptionTest, TraitOverloadingOfMethodsInTraitedClassTest, TraitPackagingTest, TraitInTraitClassTest, TraitWithMethodsInProtocolsTest, TraitSlotScopeTest, TraitWithSlotsTest, TraitWithComplexSlotsTest
 - **Abstract classes**: CollectionRootTest, CDBehaviorParserTest, CDClassDefinitionParserTest
-- **Compiler AST/IR execution**: OCASTVariableTranslatorTest, OCASTSpecialLiteralTranslatorTest, OCASTAndOrTranslatorTest, OCASTBasicTranslatorTest, OCASTBlockTranslatorTest, OCASTSingleBranchConditionalTranslatorTest, OCASTDoubleBranchConditionalTranslatorTest, OCIRBuilderTest, OCIRPrinterTest, OCIRVisitorTest, OCBytecodeGeneratorTest
-- **Non-method in method dict**: OCSpecialSelectorTest, OCCacheResetTest, MethodConstantTest
+- **Compiler AST/IR**: OCASTVariableTranslatorTest, OCASTSpecialLiteralTranslatorTest, OCASTAndOrTranslatorTest, OCASTBasicTranslatorTest, OCASTBlockTranslatorTest, OCASTSingleBranchConditionalTranslatorTest, OCASTDoubleBranchConditionalTranslatorTest, OCIRBuilderTest, OCIRPrinterTest, OCIRVisitorTest, OCBytecodeGeneratorTest
 - **Reflectivity/coverage**: CoverageCollectorTest, CoverageDemoTest
 - **FFI callbacks**: FFICallbackParametersTest, FFICallbackTest
 - **Network**: EpLogTest, EpCommentTest, GlobalIdentifierMergerTest, GlobalIdentifierWithDefaultConfigurationTest
 - **Display**: BitBltTest, ObjectWithPrintingRaisingHaltTest
 - **Debugger**: FastStepThroughTest
-- **Other**: CodeSimulationTest, CDTraitCompositionClassParserTest, SelfVariableTest, BuilderManifestTest, ExecutionCounterTest, ProcessMonitorTestServiceTest, OCCodeReparatorTest, PackageTest, FBDBytecodeDecompilerExamplesTest, FBIRBytecodeDecompilerTest, TestExecutionEnvironmentTest
+- **Other**: CodeSimulationTest, SelfVariableTest, BuilderManifestTest, ExecutionCounterTest, ProcessMonitorTestServiceTest, OCCodeReparatorTest, PackageTest, FBDBytecodeDecompilerExamplesTest, FBIRBytecodeDecompilerTest, TestExecutionEnvironmentTest
 
 ### Previously enabled classes
 - SharedPoolTest, MetaClassTest, MonitorTest, GeneratorTest, BlockClosureTest,
