@@ -8872,10 +8872,14 @@ PrimitiveResult Interpreter::changeClassOf(Oop rcvr, Oop newClass) {
     uint8_t instFormat = static_cast<uint8_t>(rcvrHeader->format());
     size_t instSlots = rcvrHeader->slotCount();
 
-    // Get the class index for the new class
+    // Get or register the class index for the new class
     uint32_t newClassIndex = memory_.indexOfClass(newClass);
     if (newClassIndex == 0) {
-        return PrimitiveResult::Failure;
+        // Class not in table yet — register it (matches reference VM's enterIntoClassTable)
+        newClassIndex = memory_.registerClass(newClass);
+        if (newClassIndex == 0) {
+            return PrimitiveResult::Failure;  // Table full
+        }
     }
 
     uint8_t newFormat;
