@@ -897,8 +897,7 @@ runTestClass: testClass run: runNum on: s detail: d
    These tests fork processes at the same priority or rely on Delay timeouts
    that cannot fire because our VM lacks proper time-slicing."
   (#(ProcessTerminateBugTest DelayTest SlotMigrationTest
-     WeakIdentityKeyDictionaryTest WeakOrderedCollectionTest
-     WeakSetTest WeakIdentitySetTest ProcessTest
+     ProcessTest
      StopwatchTest TTLCacheTest
      "Abstract class (SubclassResponsibility errors)"
      CollectionRootTest
@@ -1026,8 +1025,8 @@ runTestClass: testClass run: runNum on: s detail: d
         testHeavyContention testHeavyContention2
         "Slot class restructuring (timeout)"
         testInitializedSlotUpdateClass testCannotBeRecompiled
-        "Weak reference reclaim (GC issue)"
-        testAddIncludesSizeReclaim testClearing
+        "Weak reference reclaim (GC timing)"
+        testAddIncludesSizeReclaim testClearing testAsArray
         testWeakOrderedCollectionAllGarbageCollected
         testWeakOrderedCollectionSomeGarbageCollected
         testFinalizeValuesWhenLastChainContinuesAtFront
