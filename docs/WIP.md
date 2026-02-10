@@ -109,13 +109,33 @@ ExternalAddress (dereference pointer).
 
 ---
 
-## Test Results — Run #158 (2026-02-10, with GC)
+## Test Results — Run #162 (2026-02-10, with GC)
 
-**576 test classes, 12384 tests. Pass: 12368, Fail: 0, Error: 0, Skip: 16.**
+**576 test classes, 12434 tests. Pass: 12408, Fail: 2, Error: 3, Skip: 16, Timeout: 5.**
 
-**99.87% pass rate** (12368/12384). GC compaction cycles active.
+**99.79% pass rate** (12408/12434). GC compaction cycles active.
 
-### New VM features in this run (commits 813c377, 8eaea4c, 2caf7af, 673dc00)
+### Timer/Delay fix (commit 24fb3c7)
+
+**Root cause**: Tests ran at priority 80, same as the Delay scheduler.
+When a test hung, `checkTimerSemaphore()` woke the delay scheduler, but
+`80 > 80` is false — no preemption. The hanging test never yielded, so
+`waitTimeoutSeconds:` timeouts never fired.
+
+**Fix**: Run all tests at priority 79. The Delay scheduler at 80 can now
+preempt hanging tests and fire timeouts. Also extracted `synchronousSignal()`
+to deduplicate signal logic across primitiveSignal, checkTimerSemaphore,
+and processPendingSignals.
+
+**Results**: StopwatchTest (13/13), TTLCacheTest (26/28), DelayTest (3/5),
+BlockClosureValueWithinTest (5/5), BlockClosureValueWithinDurationTest (5/5).
+
+**Note**: Class restructuring tests (slot/trait) still skipped. Their timeouts
+work correctly, but suspended processes hold modification locks that corrupt
+subsequent tests. Root cause: cascade propagation in
+`TraitBuilderEnhancer >> propagateChangesToRelatedClasses:`.
+
+### New VM features in this run (commits 813c377, 8eaea4c, 2caf7af, 673dc00, 24fb3c7)
 
 **Primitive 188 mirror fix** (commit 813c377): `primitiveExecuteMethodArgsArray`
 3-argument "mirror" form (`CM receiver: rcvr withArguments: args executeMethod: method`)
@@ -144,6 +164,13 @@ now handle LargePositiveInteger/LargeNegativeInteger for values outside SmallInt
 
 **Class table registration**: `primitiveChangeClass` (115) now registers new classes
 in the class table instead of failing.
+
+### Newly enabled classes (Run #158 → #162)
+- **StopwatchTest**: 13/13 pass (timer/Delay fix)
+- **TTLCacheTest**: 26/28 pass (timer/Delay fix)
+- **DelayTest**: 3/5 pass (timer infrastructure partially works)
+- **BlockClosureValueWithinTest**: 5/5 pass (timer/Delay fix)
+- **BlockClosureValueWithinDurationTest**: 5/5 pass (timer/Delay fix)
 
 ### Newly enabled classes (Run #151 → #158)
 - **All 20 OCAST translator test classes**: 89/89 pass (prim 188 mirror fix)

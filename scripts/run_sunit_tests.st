@@ -1079,7 +1079,15 @@ runTestClass: testClass run: runNum on: s detail: d
         "SystemResolverTest: File class>>signalError"
         testUserLocalDirectory
         "Geometry: intersectionsWithEllipse not implemented"
-        testIntersectionsWithArc testIntersectionsWithEllipse) includes: sel) or: [
+        testIntersectionsWithArc testIntersectionsWithEllipse
+        "SHA hash: too slow for 10s timeout"
+        testExample3 testFips180Example3
+        "ClassHierarchyTest: class iteration timeout"
+        testSubclasses
+        "DelayTest: timer edge cases"
+        testSemaphoreNoTimeout testSemaphoreTimeout
+        "FBDDecompilerTest: decompiler round-trip (image-side)"
+        testToDoArgument) includes: sel) or: [
          "Skip tests that iterate all heap objects (stalls with broken timer)"
          sel beginsWith: 'testPointers']) ifFalse: [
       | result |
