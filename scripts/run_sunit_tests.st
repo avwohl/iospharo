@@ -1025,11 +1025,8 @@ runTestClass: testClass run: runNum on: s detail: d
         testHeavyContention testHeavyContention2
         "Slot class restructuring (timeout)"
         testInitializedSlotUpdateClass testCannotBeRecompiled
-        "Weak reference reclaim (GC timing)"
-        testAddIncludesSizeReclaim testClearing
-        testWeakOrderedCollectionAllGarbageCollected
-        testWeakOrderedCollectionSomeGarbageCollected
-        testFinalizeValuesWhenLastChainContinuesAtFront
+        "Weak dict tally compaction (needs finalization-triggered cleanup)"
+        testClearing testFinalizeValuesWhenLastChainContinuesAtFront
         "NativeArrayTest assertion"
         testAtAllPutFail
         "StopwatchTest, TTLCacheTest (class-skipped)"
