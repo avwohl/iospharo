@@ -109,11 +109,11 @@ ExternalAddress (dereference pointer).
 
 ---
 
-## Test Results — Run #162 (2026-02-10, with GC)
+## Test Results — Run #164 (2026-02-10, with GC)
 
-**576 test classes, 12434 tests. Pass: 12408, Fail: 2, Error: 3, Skip: 16, Timeout: 5.**
+**576 test classes, 12436 tests. Pass: 12416, Fail: 0, Error: 2, Skip: 16, Timeout: 2.**
 
-**99.79% pass rate** (12408/12434). GC compaction cycles active.
+**99.84% pass rate** (12416/12436). 0 failures. GC compaction cycles active.
 
 ### Timer/Delay fix (commit 24fb3c7)
 
@@ -128,7 +128,8 @@ to deduplicate signal logic across primitiveSignal, checkTimerSemaphore,
 and processPendingSignals.
 
 **Results**: StopwatchTest (13/13), TTLCacheTest (26/28), DelayTest (3/5),
-BlockClosureValueWithinTest (5/5), BlockClosureValueWithinDurationTest (5/5).
+BlockClosureValueWithinTest (5/5), BlockClosureValueWithinDurationTest (5/5),
+SemaphoreTest (17/18, +6 new), ProcessSpecificTest (8/8, +3 new).
 
 **Note**: Class restructuring tests (slot/trait) still skipped. Their timeouts
 work correctly, but suspended processes hold modification locks that corrupt
@@ -165,12 +166,14 @@ now handle LargePositiveInteger/LargeNegativeInteger for values outside SmallInt
 **Class table registration**: `primitiveChangeClass` (115) now registers new classes
 in the class table instead of failing.
 
-### Newly enabled classes (Run #158 → #162)
+### Newly enabled/improved (Run #158 → #164)
 - **StopwatchTest**: 13/13 pass (timer/Delay fix)
 - **TTLCacheTest**: 26/28 pass (timer/Delay fix)
 - **DelayTest**: 3/5 pass (timer infrastructure partially works)
 - **BlockClosureValueWithinTest**: 5/5 pass (timer/Delay fix)
 - **BlockClosureValueWithinDurationTest**: 5/5 pass (timer/Delay fix)
+- **SemaphoreTest**: 17/18 pass (+6 delay-dependent tests now pass)
+- **ProcessSpecificTest**: 8/8 pass (+3 delay-dependent tests now pass)
 
 ### Newly enabled classes (Run #151 → #158)
 - **All 20 OCAST translator test classes**: 89/89 pass (prim 188 mirror fix)
