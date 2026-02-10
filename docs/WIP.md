@@ -97,16 +97,17 @@ ExternalAddress (dereference pointer).
 
 ---
 
-## Test Results — Run #102 (2026-02-09, with GC)
+## Test Results — Run #104 (2026-02-09, with GC)
 
-**576 test classes, 11489 tests. Pass: 11473, Fail: 0, Error: 1, Skip: 15.**
+**576 test classes, 11488 tests. Pass: 11472, Fail: 0, Error: 1, Skip: 15.**
 
-**99.86% pass rate** (11473/11489). ~300 GC compaction cycles exercised.
+**99.86% pass rate** (11472/11488). 601 GC compaction cycles exercised.
 
-1 error: testBasicCommandlineHandler (stderr unavailable — infrastructure issue, not a bug)
+1 error: CompiledMethodTest>>testUndeclaredReparationWithInstanceVariable
+(intermittent class restructuring error — "selector changed!", not GC-related)
 
 ### GC Compaction — Verified Working (commit 6cb8342)
-- gcHeadroom_=32MB triggers ~300 compaction cycles during full test suite
+- gcHeadroom_=32MB triggers ~300-600 compaction cycles during full test suite
 - All pointer slots verified valid after every GC cycle (tested up to 2400 cycles)
 - Interpreter roots verified intact after GC (stack, saved frames, methods)
 - Grey bit clearing in pre-compaction pass prevents stale grey desync

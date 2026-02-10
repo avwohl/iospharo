@@ -1040,6 +1040,8 @@ runTestClass: testClass run: runNum on: s detail: d
         test5kClasses
         "CompiledMethodTest: slot restructuring timeout"
         testAddingSlotDoesNotRemoveExtension
+        "CommandLineHandlerTest: no stderr in test runner"
+        testBasicCommandlineHandler
         "SizeInMemoryTest: OOP encoding differs"
         testSizeInMemoryLargeInstances testSizeInMemoryNormalClasses
         testSizeInMemoryOfByteObjects
