@@ -978,7 +978,8 @@ runTestClass: testClass run: runNum on: s detail: d
         testOneGBAllocation testFastPointersTo
         testBenchFor testBenchForException
         testCannotReturn testOneGWordAllocation
-        "SemaphoreTest: Delay-dependent tests ENABLED (timer fix)"
+        "SemaphoreTest: Delay-dependent ENABLED (timer fix), keep priority 89 skip"
+        testSchedulesFIFO
         "ProcessSpecificTest: Delay-dependent ENABLED (timer fix)"
         "Process-heavy contention tests"
         testHeavyContention testHeavyContention2
@@ -1015,7 +1016,12 @@ runTestClass: testClass run: runNum on: s detail: d
         testDisplay
         "AnnouncerTest: ephemerons"
         "testNoWeakBlock — FIXED by GC context sync"
-        "MethodAnnouncementsTest/ProtocolAnnouncementsTest: trait-related ENABLED (timer fix)"
+        "MethodAnnouncementsTest/ProtocolAnnouncementsTest: trait-related timeouts (class mod)"
+        testCompileMethodAnnounceAdditionOnlyInTrait
+        testRemoveMethodAnnounceRemovalOnlyInTrait
+        testUpdateMethodAnnounceModificationOnlyInTrait
+        testUpdateMethodAnnounceRecategorizationOnlyInTrait
+        testAddProtocolAnnouncedOnlyInTrait
         "SystemNavigationTest: SmallInteger>>asLowercase"
         testAllGlobalNamesStartingWithDoCaseSensitive
         "CompiledMethodTest: Symbol>>numArgs FFI"
