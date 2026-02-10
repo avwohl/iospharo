@@ -978,14 +978,8 @@ runTestClass: testClass run: runNum on: s detail: d
         testOneGBAllocation testFastPointersTo
         testBenchFor testBenchForException
         testCannotReturn testOneGWordAllocation
-        "Delay/config-dependent (SemaphoreTest)"
-        testAfterCriticalWait testWaitAndWaitTimeoutTogether
-        testWaitTimeoutMSecs testWaitTimeoutSecondsOnCompletion
-        testSchedulesFIFO testWaitTimeDuration
-        testWaitTimeDurationWithCompletionAndTimeoutBlocks
-        testWaitTimeoutSecondsOnCompletionOnTimeout
-        "Delay-dependent (ProcessSpecificTest)"
-        testDynamicVariable testInheritableVariable testLocalVariable
+        "SemaphoreTest: Delay-dependent tests ENABLED (timer fix)"
+        "ProcessSpecificTest: Delay-dependent ENABLED (timer fix)"
         "Process-heavy contention tests"
         testHeavyContention testHeavyContention2
         "Slot class restructuring (timeout)"
@@ -1021,13 +1015,7 @@ runTestClass: testClass run: runNum on: s detail: d
         testDisplay
         "AnnouncerTest: ephemerons"
         "testNoWeakBlock — FIXED by GC context sync"
-        "MethodAnnouncementsTest: trait-related timeouts"
-        testCompileMethodAnnounceAdditionOnlyInTrait
-        testRemoveMethodAnnounceRemovalOnlyInTrait
-        testUpdateMethodAnnounceModificationOnlyInTrait
-        testUpdateMethodAnnounceRecategorizationOnlyInTrait
-        "ProtocolAnnouncementsTest: trait-related timeout"
-        testAddProtocolAnnouncedOnlyInTrait
+        "MethodAnnouncementsTest/ProtocolAnnouncementsTest: trait-related ENABLED (timer fix)"
         "SystemNavigationTest: SmallInteger>>asLowercase"
         testAllGlobalNamesStartingWithDoCaseSensitive
         "CompiledMethodTest: Symbol>>numArgs FFI"
