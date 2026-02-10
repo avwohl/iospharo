@@ -1055,10 +1055,10 @@ runTestClass: testClass run: runNum on: s detail: d
         "TextTest: BitBlt display"
         testDisplay
         "AnnouncerTest: ephemerons"
-        testNoWeakBlock
+        "testNoWeakBlock — FIXED by GC context sync"
         "CompiledMethodTest: Symbol>>numArgs FFI"
         testUsingMethodsFFI
-        "TemporaryVariableTest: write temp vars"
+        "TemporaryVariableTest: write temp vars — reads var name not value"
         testWriteTemporaryVariablesMethod
         "SlotTest/ClassVariableTest: class restructuring"
         testAddSlot testAddSlotAnonymous testRemoveSlot
@@ -1067,11 +1067,11 @@ runTestClass: testClass run: runNum on: s detail: d
         testWhichSelectorsAccessFindSlots
         "GlobalVariableTest: Transcript"
         testTranscriptPrintingWithOpenedTranscriptExists
-        "MethodMapTest: dead context"
+        "MethodMapTest: dead context — MNU defineCopiedVarBecomeDeadContext"
         testCopiedVarFromDeadContext
-        "OCClosureCompilerTest: debugger temp"
+        "OCClosureCompilerTest: debugger temp — reads 3 instead of -3.0"
         testDebuggerTempAccess
-        "OCDoitTest: ivar read"
+        "OCDoitTest: ivar read — reads class ref instead of value"
         testDoItContextReadIvar
         "OCParserTest: missing features"
         testMatchInContext testParseExpressionDontFreeze
