@@ -912,13 +912,8 @@ runTestClass: testClass run: runNum on: s detail: d
      "OCSpecialSelectorTest: ENABLED (non-method handled via #run:with:in:)"
      "Abstract ClassParser tests (SubclassResponsibility)"
      CDBehaviorParserTest CDClassDefinitionParserTest
-     "Compiler AST translator tests (execution returns wrong values)"
-     OCASTVariableTranslatorTest OCASTSpecialLiteralTranslatorTest
-     OCASTAndOrTranslatorTest OCASTBasicTranslatorTest
-     OCASTBlockTranslatorTest OCASTSingleBranchConditionalTranslatorTest
-     OCASTDoubleBranchConditionalTranslatorTest
-     "IR builder/printer/visitor (CompiledMethod>>result: missing)"
-     OCIRBuilderTest OCIRPrinterTest OCIRVisitorTest
+     "Compiler AST translator tests (testing with SmallInt fast paths)"
+     "IR builder/printer/visitor (ENABLED: prim 188 mirror fix)"
      "Character>>adaptToNumber:andSend: missing"
      OCBytecodeGeneratorTest
      "Trait tests: complex class modification hangs (no Delay timeout)"
@@ -929,12 +924,10 @@ runTestClass: testClass run: runNum on: s detail: d
      TraitPackagingTest TraitInTraitClassTest
      TraitWithMethodsInProtocolsTest
      "RGReadOnlyImageBackendTest: ENABLED (19/19 pass)"
-     "Symbol class>>numArgs (testUsingMethods, testUsingMethodsSuper errors)"
-     SelfVariableTest
+     "SelfVariableTest: ENABLED (testUsingMethods/Super may fail — skip individually)"
      "FFI callbacks (not implemented)"
      FFICallbackParametersTest FFICallbackTest
-     "Bytecode decompiler (CompiledMethod>>result: / execution)"
-     FBDBytecodeDecompilerExamplesTest FBIRBytecodeDecompilerTest
+     "Bytecode decompiler (ENABLED: prim 188 mirror fix)"
      "Class reshaping: hangs block the run (no Delay timeout)"
      "Array modification forbidden (ModificationForbidden)"
      BuilderManifestTest
@@ -1061,6 +1054,8 @@ runTestClass: testClass run: runNum on: s detail: d
         testAllGlobalNamesStartingWithDoCaseSensitive
         "CompiledMethodTest: Symbol>>numArgs FFI"
         testUsingMethodsFFI
+        "SelfVariableTest: allMethods AST iteration heavy (numArgs issue)"
+        testUsingMethods testUsingMethodsSuper
         "TemporaryVariableTest: write temp vars — reads var name not value"
         testWriteTemporaryVariablesMethod
         "SlotTest/ClassVariableTest: class restructuring"
@@ -1093,6 +1088,8 @@ runTestClass: testClass run: runNum on: s detail: d
         testUnoptimisedValueSpecialSendsMessageCapturesSend
         "FBDDecompilerTest: literal array immutability / undeclared variable"
         testCascadeNested testWhileTrue3
+        "FBDBytecodeDecompilerExamplesTest: decompiler round-trip loses blockReturnTop"
+        testExampleIfTrue testExampleSimpleBlockReturn
         "SlotIntegrationTest/PropertySlotTest: (class-level skip above)"
         "SystemBuildInfoTest: VM binary/directory paths"
         testVmBinary testVmDirectory
