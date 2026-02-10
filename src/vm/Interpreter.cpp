@@ -496,6 +496,12 @@ bool Interpreter::initialize() {
             fclose(f);
         }
     }
+    // Nil out the active process's suspendedContext now that we've loaded it.
+    // This prevents GC from tracing stale context chains that keep objects alive.
+    if (activeProcess.isObject() && !activeProcess.isNil()) {
+        memory_.storePointer(1, activeProcess, memory_.nil());  // slot 1 = suspendedContext
+    }
+
     // Now execute from the original context
     return executeFromContext(context);
 }
@@ -11539,6 +11545,11 @@ void Interpreter::transferTo(Oop newProcess) {
     // Get new process's suspended context
     Oop newContext = memory_.fetchPointer(ProcessSuspendedContextIndex, newProcess);
 
+    // Nil out the new process's suspendedContext now that we've read it.
+    // This prevents GC from tracing stale context chains that keep objects alive.
+    // The reference VM (cointerp.c transferTo:from:) does the same.
+    memory_.storePointer(ProcessSuspendedContextIndex, newProcess, memory_.nil());
+
     // Reset interpreter state
     stackPointer_ = stackBase_;
     frameDepth_ = 0;
@@ -14948,6 +14959,62 @@ void Interpreter::prepareForGC() {
         } else {
             frame.savedIPOffset = 0;
             frame.savedBytecodeEndOffset = 0;
+        }
+    }
+
+    // Sync materialized context temps with C++ stack.
+    // Materialized contexts are GC roots (scanned via forEachRoot). Their temp
+    // slots are snapshots from materialization time and may be stale — e.g., a
+    // temp that was nilled on the C++ stack still holds the old value in the
+    // context. This causes weak references to survive GC incorrectly because
+    // the context keeps the old object marked.
+    static constexpr int ContextFixedFields = 6;
+    for (size_t i = 0; i < frameDepth_; ++i) {
+        SavedFrame& frame = savedFrames_[i];
+        Oop matCtx = frame.materializedContext;
+        if (!matCtx.isObject() || matCtx.isNil() || matCtx.rawBits() <= 0x10000) continue;
+        if (!frame.savedMethod.isObject() || frame.savedMethod.rawBits() <= 0x10000) continue;
+
+        ObjectHeader* ctxHdr = matCtx.asObjectPtr();
+        size_t ctxSlots = ctxHdr->slotCount();
+        if (ctxSlots <= ContextFixedFields) continue;
+
+        // Get numTemps from method header (includes args)
+        Oop methodHeader = memory_.fetchPointer(0, frame.savedMethod);
+        int numTemps = 0;
+        if (methodHeader.isSmallInteger()) {
+            numTemps = (methodHeader.asSmallInteger() >> 18) & 0x3F;
+        }
+
+        // Sync each temp: C++ stack → context
+        for (int t = 0; t < numTemps && (ContextFixedFields + t) < static_cast<int>(ctxSlots); t++) {
+            Oop* stackSlot = frame.savedFP + 1 + t;
+            if (stackSlot >= stackBase_ && stackSlot < stackPointer_) {
+                memory_.storePointer(ContextFixedFields + t, matCtx, *stackSlot);
+            }
+        }
+    }
+
+    // Also sync current frame's materialized context
+    if (currentFrameMaterializedCtx_.isObject() && !currentFrameMaterializedCtx_.isNil() &&
+        currentFrameMaterializedCtx_.rawBits() > 0x10000 &&
+        method_.isObject() && method_.rawBits() > 0x10000) {
+
+        ObjectHeader* ctxHdr = currentFrameMaterializedCtx_.asObjectPtr();
+        size_t ctxSlots = ctxHdr->slotCount();
+        if (ctxSlots > ContextFixedFields) {
+            Oop methodHeader = memory_.fetchPointer(0, method_);
+            int numTemps = 0;
+            if (methodHeader.isSmallInteger()) {
+                numTemps = (methodHeader.asSmallInteger() >> 18) & 0x3F;
+            }
+
+            for (int t = 0; t < numTemps && (ContextFixedFields + t) < static_cast<int>(ctxSlots); t++) {
+                Oop* stackSlot = framePointer_ + 1 + t;
+                if (stackSlot >= stackBase_ && stackSlot < stackPointer_) {
+                    memory_.storePointer(ContextFixedFields + t, currentFrameMaterializedCtx_, *stackSlot);
+                }
+            }
         }
     }
 }

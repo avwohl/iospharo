@@ -1026,7 +1026,7 @@ runTestClass: testClass run: runNum on: s detail: d
         "Slot class restructuring (timeout)"
         testInitializedSlotUpdateClass testCannotBeRecompiled
         "Weak reference reclaim (GC timing)"
-        testAddIncludesSizeReclaim testClearing testAsArray
+        testAddIncludesSizeReclaim testClearing
         testWeakOrderedCollectionAllGarbageCollected
         testWeakOrderedCollectionSomeGarbageCollected
         testFinalizeValuesWhenLastChainContinuesAtFront
