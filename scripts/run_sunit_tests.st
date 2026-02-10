@@ -903,7 +903,10 @@ runTestClass: testClass run: runNum on: s detail: d
      CollectionRootTest
      "GC finalization/ephemerons"
      FinalizationRegistryTest WeakAnnouncerTest
-     "Class restructuring (testing with class table registration fix)"
+     "Class restructuring: hangs block the run (no Delay timeout available)"
+     SlotIntegrationTest PropertySlotTest
+     SlotAnnouncementsTest SlotLayoutEqualityTest SlotTraitsTest
+     SlotLayoutExtensionTest ExampleSlotWithStateTest SlotMethodRecompilationTest
      "Code simulation needs SistaV1 support"
      CodeSimulationTest
      "OCSpecialSelectorTest: ENABLED (non-method handled via #run:with:in:)"
@@ -918,7 +921,13 @@ runTestClass: testClass run: runNum on: s detail: d
      OCIRBuilderTest OCIRPrinterTest OCIRVisitorTest
      "Character>>adaptToNumber:andSend: missing"
      OCBytecodeGeneratorTest
-     "Trait tests (testing with class table registration fix)"
+     "Trait tests: complex class modification hangs (no Delay timeout)"
+     TraitTest TraitCompositionTest ClassTraitTest MOPTraitTest
+     TraitPureBehaviorTest TraitPrecedenceCompositionTest
+     TraitWithAliasTest TraitWithConflictsTest TraitChangesTest
+     TraitMethodDescriptionTest TraitOverloadingOfMethodsInTraitedClassTest
+     TraitPackagingTest TraitInTraitClassTest
+     TraitWithMethodsInProtocolsTest
      "RGReadOnlyImageBackendTest: ENABLED (19/19 pass)"
      "Symbol class>>numArgs (testUsingMethods, testUsingMethodsSuper errors)"
      SelfVariableTest
@@ -926,7 +935,7 @@ runTestClass: testClass run: runNum on: s detail: d
      FFICallbackParametersTest FFICallbackTest
      "Bytecode decompiler (CompiledMethod>>result: / execution)"
      FBDBytecodeDecompilerExamplesTest FBIRBytecodeDecompilerTest
-     "Class reshaping (testing with class table registration fix)"
+     "Class reshaping: hangs block the run (no Delay timeout)"
      "Array modification forbidden (ModificationForbidden)"
      BuilderManifestTest
      "ExecutionCounterTest: installOn: missing (metalinks)"
@@ -936,9 +945,12 @@ runTestClass: testClass run: runNum on: s detail: d
      "Coverage/reflectivity (NonBooleanReceiver, reflectivity infrastructure)"
      CoverageCollectorTest CoverageDemoTest
      "OCCacheResetTest: ENABLED (non-method handled via #run:with:in:)"
-     "Code reparation (class modification - testing with fix)"
-     "Package trait modifications (testing with fix)"
-     "Trait slot tests (testing with fix)"
+     "Code reparation (class modification hangs)"
+     OCCodeReparatorTest
+     "Package trait modifications (class modification hangs)"
+     PackageTest
+     "Trait slot tests (class modification hangs)"
+     TraitSlotScopeTest TraitWithSlotsTest TraitWithComplexSlotsTest
      "Priority 81 / process monitoring"
      TestExecutionEnvironmentTest
      "Network name resolver / Character>>asByteArray"
@@ -1081,7 +1093,7 @@ runTestClass: testClass run: runNum on: s detail: d
         testUnoptimisedValueSpecialSendsMessageCapturesSend
         "FBDDecompilerTest: literal array immutability / undeclared variable"
         testCascadeNested testWhileTrue3
-        "SlotIntegrationTest/PropertySlotTest: testing with class table registration fix"
+        "SlotIntegrationTest/PropertySlotTest: (class-level skip above)"
         "SystemBuildInfoTest: VM binary/directory paths"
         testVmBinary testVmDirectory
         "TestCaseTest: watchdog/long test (priority 81)"
