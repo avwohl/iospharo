@@ -14972,6 +14972,57 @@ void Interpreter::afterGC() {
 
     // GC may move method and class objects, invalidating cached lookups
     flushMethodCache();
+
+    // Post-GC verification: check that all interpreter roots point to valid objects
+    // that are actually alive (marked) in the heap. This catches cases where
+    // forEachRoot missed some Oop, leaving a stale pointer after compaction.
+    {
+        static int gcVerifyCount = 0;
+        gcVerifyCount++;
+        int badRoots = 0;
+        auto checkOop = [&](Oop val, const char* name) {
+            if (!val.isObject()) return;
+            auto* target = val.asObjectPtr();
+            auto p = reinterpret_cast<uint8_t*>(target);
+            // Check if the target is within valid heap range
+            if (p >= memory_.oldSpaceStart() && p < memory_.oldSpaceFree()) {
+                // Valid range — check if classIndex looks sane
+                uint32_t cIdx = target->classIndex();
+                if (cIdx == 0 || cIdx >= 65536) {
+                    if (badRoots++ < 5) {
+                        fprintf(stderr, "[POST-GC-ROOT] GC #%d BAD root '%s'=0x%llx classIdx=%u\n",
+                                gcVerifyCount, name, (unsigned long long)val.rawBits(), cIdx);
+                    }
+                }
+            } else if (p >= memory_.permSpaceStart() && p < memory_.permSpaceEnd()) {
+                // In permanent space — OK
+            } else {
+                // Outside all heaps!
+                if (badRoots++ < 5) {
+                    fprintf(stderr, "[POST-GC-ROOT] GC #%d OUT-OF-HEAP root '%s'=0x%llx target=%p\n",
+                                gcVerifyCount, name, (unsigned long long)val.rawBits(), (void*)target);
+                }
+            }
+        };
+        checkOop(method_, "method_");
+        checkOop(receiver_, "receiver_");
+        checkOop(activeContext_, "activeContext_");
+        checkOop(closure_, "closure_");
+        checkOop(homeMethod_, "homeMethod_");
+        checkOop(newMethod_, "newMethod_");
+        // Check stack
+        for (Oop* p = stackBase_; p < stackPointer_; ++p) {
+            checkOop(*p, "stack");
+        }
+        // Check saved frames
+        for (size_t i = 0; i < frameDepth_; ++i) {
+            checkOop(savedFrames_[i].savedMethod, "savedFrame.method");
+            checkOop(savedFrames_[i].savedReceiver, "savedFrame.receiver");
+        }
+        if (badRoots > 0) {
+            fprintf(stderr, "[POST-GC-ROOT] GC #%d: %d bad roots!\n", gcVerifyCount, badRoots);
+        }
+    }
 }
 
 // Explicit instantiation of forEachRoot is not needed since the template is in the header.

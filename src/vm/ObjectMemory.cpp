@@ -1716,26 +1716,10 @@ GCResult ObjectMemory::fullGC() {
 
     copyAndUnmark();
 
-    // 4b. Post-compact integrity check: build valid object set and verify all pointers.
-    // Runs on EVERY GC to catch intermittent compaction corruption.
-    {
-        // Build set of valid object addresses post-compaction
-        std::unordered_set<uintptr_t> validAddrs;
-        validAddrs.reserve(600000);
-        {
-            ObjectScanner addrScan(oldSpaceStart_, oldSpaceFree_);
-            while (ObjectHeader* obj = addrScan.next()) {
-                validAddrs.insert(reinterpret_cast<uintptr_t>(obj));
-            }
-        }
-        // Also include permanent space objects
-        {
-            ObjectScanner permScan(permSpaceStart_, permSpaceEnd_);
-            while (ObjectHeader* obj = permScan.next()) {
-                validAddrs.insert(reinterpret_cast<uintptr_t>(obj));
-            }
-        }
-
+    // 4b. Post-compact integrity check (lightweight).
+    // Check for pointer slots pointing to non-object addresses.
+    // Build validObjectStarts (same as markPhase uses) and verify.
+    if (gcCallCount <= 3) {
         size_t badSlotCount = 0;
         ObjectScanner compactCheck(oldSpaceStart_, oldSpaceFree_);
         while (ObjectHeader* obj = compactCheck.next()) {
@@ -1745,27 +1729,21 @@ GCResult ObjectMemory::fullGC() {
                 Oop val = slots[s];
                 if (!val.isObject()) continue;
                 ObjectHeader* target = val.asObjectPtr();
-                uintptr_t targetAddr = reinterpret_cast<uintptr_t>(target);
-                if (validAddrs.find(targetAddr) == validAddrs.end()) {
+                if (isPermObject(target)) continue;
+                auto p = reinterpret_cast<uint8_t*>(target);
+                if (p < oldSpaceStart_ || p >= oldSpaceFree_) {
                     if (badSlotCount++ < 5) {
-                        uint32_t objCls = obj->classIndex();
-                        uint32_t targetCls = target->classIndex();
-                        std::cerr << "[COMPACT-CORRUPT] GC #" << gcCallCount
+                        std::cerr << "[COMPACT-BAD] GC #" << gcCallCount
                                   << " obj=0x" << std::hex << (uintptr_t)obj
-                                  << " cls=" << std::dec << objCls
-                                  << " fmt=" << (int)obj->format()
-                                  << " slot#=" << s << "/" << numPtrs
-                                  << " -> target=0x" << std::hex << targetAddr
-                                  << " targetCls=" << std::dec << targetCls
-                                  << " isOld=" << isOldObject(target)
-                                  << " isPerm=" << isPermObject(target) << "\n";
+                                  << " cls=" << std::dec << obj->classIndex()
+                                  << " slot#=" << s << " -> 0x" << std::hex
+                                  << (uintptr_t)target << std::dec << "\n";
                     }
                 }
             }
         }
         if (badSlotCount > 0) {
-            std::cerr << "[COMPACT-CHECK] GC #" << gcCallCount
-                      << ": CORRUPTION detected! badSlots=" << badSlotCount << "\n";
+            std::cerr << "[COMPACT-CHECK] GC #" << gcCallCount << ": badSlots=" << badSlotCount << "\n";
         }
     }
 

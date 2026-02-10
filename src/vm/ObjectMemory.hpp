@@ -493,6 +493,7 @@ public:
     uint8_t* oldSpaceFree() const { return oldSpaceFree_; }
     uint8_t* newSpaceStart() const { return newSpaceStart_; }
     uint8_t* permSpaceStart() const { return permSpaceStart_; }
+    uint8_t* permSpaceEnd() const { return permSpaceEnd_; }
 
     /// Get free bytes in old space
     size_t freeOldSpaceBytes() const {
