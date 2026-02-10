@@ -496,8 +496,8 @@ Oop ObjectMemory::classOf(Oop obj) const {
                       << " NOT FOUND in class table (tableSize=" << classTable_.size() << ")\n";
         }
 
-        // Enhanced diagnostics on FIRST classIdx=0 after GC
-        if (nilClassCount == 1 && classIdx == 0) {
+        // Enhanced diagnostics on FIRST invalid classIdx after GC
+        if (nilClassCount == 1) {
             uint64_t rawHeader = header->rawHeader();
             std::cerr << "[CLASSOF-DIAG] FIRST classIdx=0!\n"
                       << "  obj=0x" << std::hex << obj.rawBits() << std::dec << "\n"
@@ -1713,39 +1713,7 @@ GCResult ObjectMemory::fullGC() {
     // 4. Plan + update + copy (compact)
     planCompactSavingForwarders();
     updatePointersAfterCompact();
-
     copyAndUnmark();
-
-    // 4b. Post-compact integrity check (lightweight).
-    // Check for pointer slots pointing to non-object addresses.
-    // Build validObjectStarts (same as markPhase uses) and verify.
-    if (gcCallCount <= 3) {
-        size_t badSlotCount = 0;
-        ObjectScanner compactCheck(oldSpaceStart_, oldSpaceFree_);
-        while (ObjectHeader* obj = compactCheck.next()) {
-            size_t numPtrs = pointerSlotsOf(obj);
-            Oop* slots = obj->slots();
-            for (size_t s = 0; s < numPtrs; ++s) {
-                Oop val = slots[s];
-                if (!val.isObject()) continue;
-                ObjectHeader* target = val.asObjectPtr();
-                if (isPermObject(target)) continue;
-                auto p = reinterpret_cast<uint8_t*>(target);
-                if (p < oldSpaceStart_ || p >= oldSpaceFree_) {
-                    if (badSlotCount++ < 5) {
-                        std::cerr << "[COMPACT-BAD] GC #" << gcCallCount
-                                  << " obj=0x" << std::hex << (uintptr_t)obj
-                                  << " cls=" << std::dec << obj->classIndex()
-                                  << " slot#=" << s << " -> 0x" << std::hex
-                                  << (uintptr_t)target << std::dec << "\n";
-                    }
-                }
-            }
-        }
-        if (badSlotCount > 0) {
-            std::cerr << "[COMPACT-CHECK] GC #" << gcCallCount << ": badSlots=" << badSlotCount << "\n";
-        }
-    }
 
     // 5. Rebuild free list from gap
     rebuildFreeListAfterCompact();

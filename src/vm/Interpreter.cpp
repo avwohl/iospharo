@@ -14972,8 +14972,6 @@ void Interpreter::afterGC() {
 
     // GC may move method and class objects, invalidating cached lookups
     flushMethodCache();
-
-    // (Root verification removed — no bad roots detected in testing)
 }
 
 // Explicit instantiation of forEachRoot is not needed since the template is in the header.

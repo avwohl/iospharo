@@ -220,6 +220,7 @@ bool vm_loadImage(const char* imagePath) {
     }
 
     gInterpreter = new pharo::Interpreter(*gMemory);
+    gMemory->setInterpreter(gInterpreter);  // Critical: GC needs this to update interpreter roots
     gInterpreter->setImageName(imagePath);
     if (!gInterpreter->initialize()) {
         return false;
