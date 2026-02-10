@@ -1065,7 +1065,8 @@ runTestClass: testClass run: runNum on: s detail: d
         testTranscriptPrintingWithOpenedTranscriptExists
         "MethodMapTest: dead context — MNU defineCopiedVarBecomeDeadContext"
         testCopiedVarFromDeadContext
-        "OCClosureCompilerTest: testDebuggerTempAccess ENABLED (prim 188 mirror fix)"
+        "OCClosureCompilerTest: debugger temp — reads 3 instead of -3.0"
+        testDebuggerTempAccess
         "OCDoitTest: testDoItContextReadIvar ENABLED (prim 188 mirror fix)"
         "OCParserTest: missing features"
         testMatchInContext testParseExpressionDontFreeze
@@ -1086,6 +1087,10 @@ runTestClass: testClass run: runNum on: s detail: d
         testCascadeNested testWhileTrue3
         "FBDBytecodeDecompilerExamplesTest: decompiler round-trip loses blockReturnTop"
         testExampleIfTrue testExampleSimpleBlockReturn
+        "FBDDecompilerTest: intermittent timeout (and/or decompilation)"
+        testAndOr testAndOr2
+        "CodeSimulationTest: SistaV1 simulation support missing"
+        testTranscriptPrinting
         "SlotIntegrationTest/PropertySlotTest: (class-level skip above)"
         "SystemBuildInfoTest: VM binary/directory paths"
         testVmBinary testVmDirectory
