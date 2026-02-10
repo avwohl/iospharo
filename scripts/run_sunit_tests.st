@@ -909,7 +909,7 @@ runTestClass: testClass run: runNum on: s detail: d
      SlotLayoutExtensionTest BooleanSlotTest
      "Code simulation needs SistaV1 support"
      CodeSimulationTest
-     "valueUnpreemptively blocks timeout"
+     "valueUnpreemptively / non-method in method dict crash"
      OCSpecialSelectorTest
      "Abstract ClassParser tests (SubclassResponsibility)"
      CDBehaviorParserTest CDClassDefinitionParserTest
@@ -945,7 +945,9 @@ runTestClass: testClass run: runNum on: s detail: d
      "Priority 81 (exceeds 80 limit)"
      ProcessMonitorTestServiceTest
      "Coverage/reflectivity (NonBooleanReceiver, reflectivity infrastructure)"
-     CoverageCollectorTest CoverageDemoTest OCCacheResetTest
+     CoverageCollectorTest CoverageDemoTest
+     "OCCacheResetTest: non-method in method dict (metalinks)"
+     OCCacheResetTest
      "Code reparation (class modification timeouts, paste differences)"
      OCCodeReparatorTest
      "Package trait modifications (timeouts)"
@@ -960,9 +962,8 @@ runTestClass: testClass run: runNum on: s detail: d
      "SystemEnvironmentTest: ENABLED (217/217 pass)"
      "Debugger step-through (context introspection issues)"
      FastStepThroughTest
-     "GEllipseTest hangs on testEmpty"
-     GEllipseTest
-     "Epicea (needs filesystem/network)"
+     "GEllipseTest: ENABLED (21/23 pass, testEmpty no longer hangs)"
+     "Epicea (needs network primNameResolverStatus)"
      EpLogTest EpCommentTest
      "BitBlt alpha compositing"
      BitBltTest
