@@ -2715,6 +2715,10 @@ bool ObjectMemory::markInactiveEphemerons() {
 }
 
 void ObjectMemory::fireAllEphemerons() {
+    if (!ephemeronList_.empty()) {
+        fprintf(stderr, "[EPHEMERON] fireAllEphemerons: %zu ephemerons to fire, mournQueue size before=%zu\n",
+                ephemeronList_.size(), mournQueue_.size());
+    }
     for (ObjectHeader* obj : ephemeronList_) {
         // Fire: change format from 5 (WeakWithFixed/Ephemeron) to 1 (FixedSize)
         // so it's no longer treated as an ephemeron in subsequent GCs.

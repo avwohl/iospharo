@@ -473,6 +473,9 @@ public:
     /// Check if there are mourners waiting
     bool hasMourners() const { return !mournQueue_.empty(); }
 
+    /// Get mourner count (for diagnostics)
+    size_t mournerCount() const { return mournQueue_.size(); }
+
     /// Get/clear pending finalization signal count
     int pendingFinalizationSignals() const { return pendingFinalizationSignals_; }
     void clearPendingFinalizationSignals() { pendingFinalizationSignals_ = 0; }
