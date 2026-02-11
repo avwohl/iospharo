@@ -1013,6 +1013,9 @@ runTestClass: testClass run: runNum on: s detail: d
          These 2 are <expectedFailure> in standard Pharo — they fail even on the reference VM.
          Our test runner fork/timeout doesn't handle the pragma, so skip them."
         testMutateByteArrayUsingDoubleAtPut testMutateByteArrayUsingFloatAtPut
+        "BlockClosureValueWithinTest: testValueWithinTimingBasicMilliseconds hangs
+         (timing-dependent, hangs on baseline VM with current Pharo image)"
+        testValueWithinTimingBasicMilliseconds
         "TextTest: BitBlt display"
         testDisplay
         "AnnouncerTest: ephemerons"
