@@ -912,24 +912,14 @@ runTestClass: testClass run: runNum on: s detail: d
      ExecutionCounterTest
      "Priority 81 (exceeds 80 limit)"
      ProcessMonitorTestServiceTest
-     "Coverage/reflectivity (NonBooleanReceiver, reflectivity infrastructure)"
-     CoverageCollectorTest CoverageDemoTest
      "Priority 81 / process monitoring"
      TestExecutionEnvironmentTest
      "Network name resolver / Character>>asByteArray"
      GlobalIdentifierMergerTest GlobalIdentifierWithDefaultConfigurationTest
-     "Debugger step-through (context introspection issues)"
-     FastStepThroughTest
      "Epicea (needs network primNameResolverStatus)"
      EpLogTest EpCommentTest
-     "BitBlt alpha compositing"
-     BitBltTest
-     "BitBlt arg error in printOn with halt"
-     ObjectWithPrintingRaisingHaltTest
-     "Weak/GC finalization"
+     "Weak/GC finalization (VM finalization signaling missing)"
      ObjectFinalizerTest
-     "ClassParser: CDTraitCompositionClassParserTest (16 errors)"
-     CDTraitCompositionClassParserTest
      "Class restructuring: timeouts hold modification locks, poisoning later tests.
       Root cause: cascade propagation in TraitBuilderEnhancer>>propagateChangesToRelatedClasses:.
       Timeouts work (priority 79 fix), but suspended processes corrupt shared state."
