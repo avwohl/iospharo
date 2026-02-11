@@ -7570,16 +7570,34 @@ PrimitiveResult Interpreter::primitiveConstantFill(int argCount) {
         uint8_t* bytes = reinterpret_cast<uint8_t*>(header + 1);
         std::memset(bytes, static_cast<uint8_t>(byteVal), size);
     } else if (format >= ObjectFormat::Indexable32 && format <= ObjectFormat::Indexable32Odd) {
-        // 32-bit word array
+        // 32-bit word array — value must be unsigned 0..0xFFFFFFFF
         if (!value.isSmallInteger()) {
             return PrimitiveResult::Failure;
         }
         int64_t wordVal = value.asSmallInteger();
+        if (wordVal < 0 || wordVal > 0xFFFFFFFF) {
+            return PrimitiveResult::Failure;
+        }
 
         uint32_t* words = reinterpret_cast<uint32_t*>(header + 1);
         size_t wordCount = size / 4;
         for (size_t i = 0; i < wordCount; i++) {
             words[i] = static_cast<uint32_t>(wordVal);
+        }
+    } else if (format >= ObjectFormat::Indexable16 && format <= ObjectFormat::Indexable16_3) {
+        // 16-bit word array — value must be unsigned 0..0xFFFF
+        if (!value.isSmallInteger()) {
+            return PrimitiveResult::Failure;
+        }
+        int64_t wordVal = value.asSmallInteger();
+        if (wordVal < 0 || wordVal > 0xFFFF) {
+            return PrimitiveResult::Failure;
+        }
+
+        uint16_t* words = reinterpret_cast<uint16_t*>(header + 1);
+        size_t wordCount = size / 2;
+        for (size_t i = 0; i < wordCount; i++) {
+            words[i] = static_cast<uint16_t>(wordVal);
         }
     } else if (format == ObjectFormat::Indexable64) {
         // 64-bit word array
