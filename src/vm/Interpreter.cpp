@@ -2278,6 +2278,16 @@ void Interpreter::synchronousSignal(Oop semaphore) {
     }
 }
 
+void Interpreter::signalFinalizationIfNeeded() {
+    if (memory_.pendingFinalizationSignals() > 0) {
+        memory_.clearPendingFinalizationSignals();
+        Oop sema = memory_.specialObject(SpecialObjectIndex::TheFinalizationSemaphore);
+        if (sema.isObject() && sema.rawBits() != memory_.nil().rawBits()) {
+            synchronousSignal(sema);
+        }
+    }
+}
+
 // ===== HEARTBEAT THREAD =====
 
 void Interpreter::startHeartbeat() {
@@ -2404,6 +2414,7 @@ bool Interpreter::step() {
         fflush(stderr);
         memory_.fullGC();
         flushMethodCache();  // Compaction moves objects — stale cache entries cause DNU
+        signalFinalizationIfNeeded();
         fprintf(stderr, "[SAFE-POINT-GC #%d] Done, used=%zuMB\n",
                 safePointGCCount,
                 (size_t)(memory_.oldSpaceFree() - memory_.oldSpaceStart()) / (1024*1024));
@@ -5284,6 +5295,7 @@ terminate_process:
                     fflush(stderr);
                     memory_.fullGC();
                     flushMethodCache();  // Compaction moves objects — stale cache
+                    signalFinalizationIfNeeded();
                 }
 
                 // Process input events - may signal semaphores that wake processes

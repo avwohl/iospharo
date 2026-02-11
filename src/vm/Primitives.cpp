@@ -216,6 +216,7 @@ PrimitiveResult Interpreter::primitiveIncrementalGC(int argCount) {
 
     memory_.incrementalGC();
     flushMethodCache();  // Compaction moves objects — stale cache entries cause DNU
+    signalFinalizationIfNeeded();
 
     size_t freeBytes = memory_.freeOldSpaceBytes();
 
@@ -379,11 +380,11 @@ PrimitiveResult Interpreter::primitiveDoPrimitiveWithArgs(int argCount) {
 
 PrimitiveResult Interpreter::primitiveFetchNextMourner(int argCount) {
     (void)argCount;
-    // GC finalization queue is always empty (no GC yet).
-    // Return nil = "no mourner in queue".
-    // If we return Failure with no error code, the Smalltalk fallback sees ec=nil
-    // and raises "primitive is missing" error, causing an infinite loop.
-    primitiveSuccess(memory_.nil());
+    if (!memory_.hasMourners()) {
+        return PrimitiveResult::Failure;
+    }
+    Oop mourner = memory_.popMourner();
+    primitiveSuccess(mourner);
     return PrimitiveResult::Success;
 }
 
@@ -7403,6 +7404,7 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
     // Trigger a full garbage collection
     memory_.fullGC();
     flushMethodCache();  // Compaction moves objects — stale cache entries cause DNU
+    signalFinalizationIfNeeded();
 
     // Get free space after GC
     size_t freeBytes = memory_.freeOldSpaceBytes();

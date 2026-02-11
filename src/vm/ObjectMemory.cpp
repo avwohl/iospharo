@@ -1611,6 +1611,9 @@ void ObjectMemory::sweepGC() {
     static int sweepCount = 0;
     sweepCount++;
 
+    // Clear finalization state for this GC cycle (fresh count)
+    pendingFinalizationSignals_ = 0;
+
     auto start = std::chrono::steady_clock::now();
 
     // 1. Clear all marks
@@ -1720,6 +1723,9 @@ GCResult ObjectMemory::fullGC() {
     gcCallCount++;
 
     size_t usedBefore = oldSpaceFree_ - oldSpaceStart_;
+
+    // Clear finalization state for this GC cycle (fresh count)
+    pendingFinalizationSignals_ = 0;
 
     // 1. Convert interpreter IPs to offsets (methods may move)
     if (interpreter_) {
@@ -2422,12 +2428,38 @@ void ObjectMemory::markAndTrace(Oop oop) {
 
     // Classify by format
     ObjectFormat fmt = obj->format();
-    if (fmt == ObjectFormat::Weak || fmt == ObjectFormat::WeakWithFixed) {
+    if (fmt == ObjectFormat::WeakWithFixed) {
+        // Format 5 = Ephemeron. Key is slot 0 (first indexable slot after fixed fields).
+        // If key is immediate or already marked → "inactive" ephemeron, treat as strong.
+        // Otherwise → "active" ephemeron, defer to ephemeronList_.
+        size_t fixedFields = fixedFieldCountOf(obj);
+        size_t total = obj->slotCount();
+        size_t keyIndex = fixedFields;  // First weak/indexable slot is the key
+        bool keyAlive = true;
+        if (keyIndex < total) {
+            Oop key = obj->slotAt(keyIndex);
+            if (key.isObject() && !isPermObject(key.asObjectPtr())) {
+                keyAlive = key.asObjectPtr()->isMarked();
+            }
+            // Immediates and perm objects are always "alive"
+        }
+
+        if (keyAlive) {
+            // Inactive ephemeron: treat as fully strong (mark all pointer fields)
+            markStack_.push_back(obj);
+        } else {
+            // Active ephemeron: defer; mark only fixed (strong) fields, NOT key or values
+            ephemeronList_.push_back(obj);
+            if (fixedFields > 0) {
+                Oop* slots = obj->slots();
+                for (size_t i = 0; i < fixedFields && i < total; ++i) {
+                    markAndTrace(slots[i]);
+                }
+            }
+        }
+    } else if (fmt == ObjectFormat::Weak) {
+        // Format 4 = Weak array. Add to weakList_, mark only fixed fields.
         weakList_.push_back(obj);
-        // Trace the fixed (strong) fields immediately.
-        // In Spur, both Weak (format 4) and WeakWithFixed (format 5) can have
-        // fixed fields — the class's instSpec records the count.
-        // Only the variable (indexable) part beyond fixedFields is weak.
         size_t fixedFields = fixedFieldCountOf(obj);
         if (fixedFields > 0) {
             Oop* slots = obj->slots();
@@ -2512,15 +2544,75 @@ void ObjectMemory::processWeaklings() {
         size_t slots = obj->slotCount();
         Oop* slotPtr = obj->slots();
         size_t startSlot = fixedFieldCountOf(obj);
+        bool anyNilled = false;
         for (size_t i = startSlot; i < slots; ++i) {
             Oop ref = slotPtr[i];
             if (ref.isObject() && !isPermObject(ref.asObjectPtr())) {
                 if (!ref.asObjectPtr()->isMarked()) {
                     slotPtr[i] = nilObject_;
+                    anyNilled = true;
                 }
             }
         }
+        if (anyNilled) {
+            // Queue this weak object as a mourner so finalization can detect
+            // that one of its references was collected.
+            Oop objOop = Oop::fromObject(obj);
+            mournQueue_.push_back(objOop);
+            pendingFinalizationSignals_++;
+        }
     }
+}
+
+bool ObjectMemory::markInactiveEphemerons() {
+    bool foundInactive = false;
+    size_t writeIdx = 0;
+
+    for (size_t i = 0; i < ephemeronList_.size(); ++i) {
+        ObjectHeader* obj = ephemeronList_[i];
+        size_t fixedFields = fixedFieldCountOf(obj);
+        size_t total = obj->slotCount();
+        size_t keyIndex = fixedFields;
+
+        bool keyAlive = true;
+        if (keyIndex < total) {
+            Oop key = obj->slotAt(keyIndex);
+            if (key.isObject() && !isPermObject(key.asObjectPtr())) {
+                keyAlive = key.asObjectPtr()->isMarked();
+            }
+        }
+
+        if (keyAlive) {
+            // Key became reachable — mark all fields as strong
+            scanPointerFields(obj);
+            processMarkStack();
+            foundInactive = true;
+            // Don't keep in list (removed by not copying to writeIdx)
+        } else {
+            // Still active — keep in list
+            ephemeronList_[writeIdx++] = obj;
+        }
+    }
+    ephemeronList_.resize(writeIdx);
+    return foundInactive;
+}
+
+void ObjectMemory::fireAllEphemerons() {
+    for (ObjectHeader* obj : ephemeronList_) {
+        // Fire: change format from 5 (WeakWithFixed/Ephemeron) to 1 (FixedSize)
+        // so it's no longer treated as an ephemeron in subsequent GCs.
+        obj->setFormat(ObjectFormat::FixedSize);
+
+        // Queue as mourner
+        Oop objOop = Oop::fromObject(obj);
+        mournQueue_.push_back(objOop);
+        pendingFinalizationSignals_++;
+
+        // Mark all fields (key + values stay alive for mourning)
+        scanPointerFields(obj);
+        processMarkStack();
+    }
+    ephemeronList_.clear();
 }
 
 size_t ObjectMemory::markPhase() {
@@ -2560,7 +2652,19 @@ size_t ObjectMemory::markPhase() {
     // 3. Drain mark stack
     processMarkStack();
 
-    // 4. Process weak objects
+    // 4. Ephemeron fixed-point iteration
+    // Some ephemerons' keys may have become reachable through other marking.
+    // Iterate until no more ephemerons become inactive, then fire the rest.
+    if (!ephemeronList_.empty()) {
+        while (markInactiveEphemerons()) {
+            // markInactiveEphemerons drains the mark stack internally,
+            // which may make more ephemeron keys reachable.
+        }
+        // All remaining ephemerons have dead keys — fire them
+        fireAllEphemerons();
+    }
+
+    // 5. Process weak objects (nil dead references, queue mourners)
     processWeaklings();
 
     // 5. Count marked objects

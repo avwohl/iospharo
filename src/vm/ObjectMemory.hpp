@@ -460,6 +460,23 @@ public:
     bool needsCompactGC() const { return needsCompactGC_; }
     void clearCompactGCFlag() { needsCompactGC_ = false; }
 
+    // ===== FINALIZATION / MOURNING =====
+
+    /// Pop a mourner from the queue (for primitive 172)
+    Oop popMourner() {
+        if (mournQueue_.empty()) return nilObject_;
+        Oop mourner = mournQueue_.back();
+        mournQueue_.pop_back();
+        return mourner;
+    }
+
+    /// Check if there are mourners waiting
+    bool hasMourners() const { return !mournQueue_.empty(); }
+
+    /// Get/clear pending finalization signal count
+    int pendingFinalizationSignals() const { return pendingFinalizationSignals_; }
+    void clearPendingFinalizationSignals() { pendingFinalizationSignals_ = 0; }
+
     /// Verify that all pointer slots in the heap point to valid object headers.
     /// Builds a set of all valid object start addresses, then checks every pointer slot.
     /// Returns number of bad pointers found. Writes diagnostic to /tmp/iospharo-verify.log.
@@ -591,6 +608,10 @@ private:
     std::vector<ObjectHeader*> ephemeronList_; // Deferred ephemerons
     std::unordered_set<uintptr_t> validObjectStarts_; // Valid object boundaries for mark validation
 
+    // Finalization / mourning
+    std::vector<Oop> mournQueue_;              // Objects needing finalization (ephemerons + weak)
+    int pendingFinalizationSignals_ = 0;       // Count of signals to send post-GC
+
     // Context class index (cached for GC - Context objects need special
     // handling to avoid tracing garbage in unused stack slots)
     uint32_t contextClassIndex_ = 0;
@@ -665,9 +686,19 @@ private:
     size_t pointerSlotsOf(ObjectHeader* obj) const;
 
     /// Process weak objects: nil out slots pointing to unmarked objects.
+    /// Queues as mourners any weak object that had slots nilled.
     void processWeaklings();
 
-    /// Complete mark phase: mark from all roots, drain mark stack, process weaklings.
+    /// Scan ephemeron list; mark those whose keys are now marked.
+    /// Returns true if any ephemerons became inactive (keys were marked).
+    bool markInactiveEphemerons();
+
+    /// Fire all remaining active ephemerons (dead keys): change format 5→1,
+    /// queue as mourners, mark all their fields so values stay alive for mourning.
+    void fireAllEphemerons();
+
+    /// Complete mark phase: mark from all roots, drain mark stack,
+    /// process ephemerons, process weaklings.
     /// Returns the count of marked objects.
     size_t markPhase();
 
@@ -717,6 +748,11 @@ void ObjectMemory::forEachMemoryRoot(Visitor&& visitor) {
         if (root) {
             visitor(*root);
         }
+    }
+
+    // Mourner queue entries must survive GC (they're needed by prim 172)
+    for (auto& mourner : mournQueue_) {
+        visitor(mourner);
     }
 }
 

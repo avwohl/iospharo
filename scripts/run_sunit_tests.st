@@ -901,8 +901,7 @@ runTestClass: testClass run: runNum on: s detail: d
      ProcessTest
      "Abstract class (SubclassResponsibility errors)"
      CollectionRootTest
-     "GC finalization/ephemerons"
-     FinalizationRegistryTest WeakAnnouncerTest
+     "GC finalization/ephemerons: ENABLED (ephemeron + mourning support implemented)"
      "Abstract ClassParser tests (SubclassResponsibility)"
      CDBehaviorParserTest CDClassDefinitionParserTest
      "FFI callbacks (not implemented)"
@@ -924,8 +923,7 @@ runTestClass: testClass run: runNum on: s detail: d
      BitBltTest
      "BitBlt arg error in printOn with halt"
      ObjectWithPrintingRaisingHaltTest
-     "Weak/GC finalization (VM finalization signaling missing)"
-     ObjectFinalizerTest
+     "Weak/GC finalization: ENABLED (VM finalization signaling implemented)"
      "ClassParser: CDTraitCompositionClassParserTest (16 errors, class mod timeouts)"
      CDTraitCompositionClassParserTest
      "Class restructuring: timeouts hold modification locks, poisoning later tests.
