@@ -1119,10 +1119,10 @@ runTestClass: testClass run: runNum on: s detail: d
           d nextPutAll: testClass name; nextPut: $	.
           d nextPutAll: sel; nextPut: $	.
           d nextPutAll: 'TIMEOUT'; cr].
-        "Bail out of class after 3 consecutive timeouts — suspended processes
-         may hold class modification locks, causing deadlocks."
-        consecutiveTimeouts >= 3 ifTrue: [
-          s nextPutAll: '  BAIL: 3 consecutive timeouts, skipping rest of class'; cr.
+        "Bail out of class after 2 consecutive timeouts — suspended processes
+         hold Mutexes (compilation, class mod), causing next test to deadlock."
+        consecutiveTimeouts >= 2 ifTrue: [
+          s nextPutAll: '  BAIL: 2 consecutive timeouts, skipping rest of class'; cr.
           s nextPutAll: 'Total: '; print: sels size;
             nextPutAll: ' P:'; print: p; nextPutAll: ' F:'; print: f;
             nextPutAll: ' E:'; print: e; nextPutAll: ' S:'; print: sk;
