@@ -2555,10 +2555,9 @@ void ObjectMemory::processWeaklings() {
             }
         }
         if (anyNilled) {
-            // Queue this weak object as a mourner so finalization can detect
-            // that one of its references was collected.
-            Oop objOop = Oop::fromObject(obj);
-            mournQueue_.push_back(objOop);
+            // Per Cog VM: weak arrays are NOT queued to mournQueue.
+            // Only signal finalization so the image-level handler can process them.
+            // (Only ephemerons go to mournQueue, via fireAllEphemerons.)
             pendingFinalizationSignals_++;
         }
     }
