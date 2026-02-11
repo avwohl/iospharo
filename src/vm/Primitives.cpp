@@ -10776,37 +10776,53 @@ PrimitiveResult Interpreter::primitiveSizeInBytesOfInstance(int argCount) {
     size_t instSize = static_cast<size_t>(format & 0xFFFF);
     int formatType = static_cast<int>((format >> 16) & 0x1F);
 
-    // Calculate total size based on format type
-    size_t totalSlots;
-    size_t bytesPerElement = 8;  // Default: pointer slots (64-bit)
+    // Calculate total slots based on format type (matches Cog VM's byteSizeOfInstanceOf:)
+    size_t numSlots;
 
-    if (formatType <= 4) {
-        // Pointer object (fixed or variable)
-        totalSlots = instSize + numElements;
-    } else if (formatType >= 16 && formatType <= 23) {
-        // Byte object
-        bytesPerElement = 1;
-        totalSlots = instSize + (numElements + 7) / 8;  // Round up to 64-bit slots
-    } else if (formatType >= 12 && formatType <= 15) {
-        // 16-bit object
-        bytesPerElement = 2;
-        totalSlots = instSize + (numElements + 3) / 4;  // Round up to 64-bit slots
-    } else if (formatType >= 10 && formatType <= 11) {
-        // 32-bit or 64-bit object
-        if (formatType == 10) {
-            bytesPerElement = 8;
-            totalSlots = instSize + numElements;
-        } else {
-            bytesPerElement = 4;
-            totalSlots = instSize + (numElements + 1) / 2;
-        }
-    } else {
-        // CompiledMethod or other special format
-        totalSlots = instSize + numElements;
+    switch (formatType) {
+        case 2: // Pure indexable (Array)
+            numSlots = numElements;
+            break;
+        case 3: // Indexable with fixed (e.g., Context)
+        case 4: // Weak
+        case 5: // Weak with fixed
+            numSlots = instSize + numElements;
+            break;
+        case 9: // 64-bit indexable
+            numSlots = numElements;
+            break;
+        case 10: // 32-bit first long format
+            numSlots = (numElements + 1) / 2;
+            break;
+        case 12: // 16-bit first short format
+            numSlots = (numElements + 3) / 4;
+            break;
+        case 16: // Byte format (first)
+        case 24: // CompiledMethod format (first)
+            numSlots = (numElements + 7) / 8;
+            break;
+        default:
+            if (formatType <= 1) {
+                // Fixed size only (argCount==0 case or no variable part)
+                numSlots = instSize + numElements;
+            } else {
+                return PrimitiveResult::Failure;
+            }
+            break;
     }
 
-    // Add header size (8 bytes for standard header)
-    size_t totalBytes = 8 + totalSlots * 8;
+    // Compute total byte size matching Spur layout:
+    // - numSlots == 0: minimum 16 bytes (8 header + 8 body for forwarding ptr)
+    // - numSlots < 255: numSlots * 8 + 8 (body + standard header)
+    // - numSlots >= 255: numSlots * 8 + 16 (body + overflow header + standard header)
+    size_t totalBytes;
+    if (numSlots == 0) {
+        totalBytes = 8 + 8;  // BaseHeaderSize + minimum body
+    } else if (numSlots >= 255) {
+        totalBytes = (numSlots * 8) + 8 + 8;  // body + 2 headers (overflow)
+    } else {
+        totalBytes = (numSlots * 8) + 8;  // body + 1 header
+    }
 
     popN(argCount + 1);
     push(Oop::fromSmallInteger(static_cast<int64_t>(totalBytes)));

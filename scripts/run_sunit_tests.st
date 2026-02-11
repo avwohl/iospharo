@@ -999,9 +999,7 @@ runTestClass: testClass run: runNum on: s detail: d
         testAddingSlotDoesNotRemoveExtension
         "CommandLineHandlerTest: no stderr in test runner"
         testBasicCommandlineHandler
-        "SizeInMemoryTest: OOP encoding differs"
-        testSizeInMemoryLargeInstances testSizeInMemoryNormalClasses
-        testSizeInMemoryOfByteObjects
+        "SizeInMemoryTest: ENABLED (primitive 181 fixed to match Spur layout)"
         "InstructionStreamTest: priority 81 (exceeds 80 limit)"
         testSimulatedTerminationOfProcessDoNotCorruptTheContext
         testSimulatingAMethodWithHaltHasCorrectContext
