@@ -856,6 +856,7 @@ runAllTests
   stream := '/tmp/sunit_test_results.txt' asFileReference writeStream.
   detail := '/tmp/sunit_test_detail.txt' asFileReference writeStream.
   totalP := 0. totalF := 0. totalE := 0. totalS := 0. totalT := 0.
+
   [
     stream nextPutAll: '=== SUnit Test Run #'; print: runNum; nextPutAll: ' ==='; cr; cr.
     self runDiagnostic: stream.
@@ -956,11 +957,11 @@ runTestClass: testClass run: runNum on: s detail: d
 
   s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' ==='; cr.
   s flush.
-  "Tests must run below BOTH timingPriority (80) for timeout preemption AND
-   userInterruptPriority (50) so the FinalizationProcess can preempt tests
-   to process mourners (ephemerons, weak refs). Default user priority (40)
-   matches the reference VM's test execution environment."
-  testPriority := 40.
+  "ALL tests must run below timingPriority (80) so the Delay scheduler can
+   preempt hanging tests and fire waitTimeoutSeconds: timeouts.
+   The VM handles finalization preemption by force-yielding after GC
+   (see signalFinalizationIfNeeded in Interpreter.cpp)."
+  testPriority := 79.
   p := 0. f := 0. e := 0. sk := 0. t := 0. consecutiveTimeouts := 0.
   sels := testClass allTestSelectors asArray.
   "Sort with comparison counter to detect infinite loops"
@@ -986,7 +987,8 @@ runTestClass: testClass run: runNum on: s detail: d
         "testCannotReturn: ContextTest PASS, BlockClosureTest/BlockClosuresTestCase FAIL
          (forked process variant — assertion on result/home doesn't match)"
         testCannotReturn testOneGWordAllocation
-        "ProcessTerminateBugTest: testUnwindFromForeignProcess ENABLED (priority 40 < userInterruptPriority 50)"
+        "ProcessTerminateBugTest: forkAt: userInterruptPriority (50) < test priority (79)"
+        testUnwindFromForeignProcess
         "SemaphoreTest: Delay-dependent ENABLED (timer fix), keep priority 89 skip"
         testSchedulesFIFO
         "ProcessSpecificTest: Delay-dependent ENABLED (timer fix)"

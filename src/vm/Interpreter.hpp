@@ -303,6 +303,7 @@ public:
 
     /// Signal the finalization semaphore if any mourners were queued during GC.
     void signalFinalizationIfNeeded();
+    void forceYieldForFinalization(Oop activeProcess);
 
     /// Check if an object can be made immutable (per Cog VM's canBeImmutable:).
     /// Returns false for contexts, ephemerons, weak objects, semaphores,

@@ -2284,10 +2284,52 @@ void Interpreter::signalFinalizationIfNeeded() {
         if (memory_.hasMourners()) {
             Oop sema = memory_.specialObject(SpecialObjectIndex::TheFinalizationSemaphore);
             if (sema.isObject() && sema.rawBits() != memory_.nil().rawBits()) {
-                synchronousSignal(sema);
+                Oop activeProcess = getActiveProcess();
+                Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, sema);
+
+                if (firstLink.isObject() && firstLink.rawBits() != memory_.nil().rawBits()) {
+                    // Case 1: Finalization process is waiting on the semaphore.
+                    // Remove it and force-yield to it directly.
+                    Oop finProcess = removeFirstLinkOfList(sema);
+                    putToSleep(activeProcess);
+                    transferTo(finProcess);
+                } else {
+                    // Case 2: Finalization process is not on the semaphore.
+                    // It may be on the ready list (woken by a previous signal but
+                    // unable to preempt our higher-priority process).
+                    // Signal the semaphore (for excess count), then search the
+                    // ready list for a finalization-priority process and yield to it.
+                    synchronousSignal(sema);
+                    forceYieldForFinalization(activeProcess);
+                }
             }
         }
     }
+}
+
+void Interpreter::forceYieldForFinalization(Oop activeProcess) {
+    // The finalization process runs at userInterruptPriority (50).
+    // Check ONLY the ready list at that priority to avoid yielding to
+    // the event loop (priority 60) which would busy-loop on SDL_WaitEvent.
+    constexpr int finalizationPriority = 50;
+    constexpr int finalizationIdx = finalizationPriority - 1; // 0-indexed
+
+    Oop schedAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
+    Oop scheduler = memory_.fetchPointer(1, schedAssoc);
+    Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
+    ObjectHeader* listsHdr = schedLists.asObjectPtr();
+
+    if (finalizationIdx >= (int)listsHdr->slotCount()) return;
+
+    Oop processList = memory_.fetchPointer(finalizationIdx, schedLists);
+    Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, processList);
+    if (first.isObject() && first.rawBits() != memory_.nil().rawBits()) {
+        // Found the finalization process on the ready list at priority 50.
+        Oop finProcess = removeFirstLinkOfList(processList);
+        putToSleep(activeProcess);
+        transferTo(finProcess);
+    }
+    // If not found, mourners accumulate until finalization process runs naturally.
 }
 
 // ===== HEARTBEAT THREAD =====
