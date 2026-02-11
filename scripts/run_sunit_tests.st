@@ -928,7 +928,7 @@ runTestClass: testClass run: runNum on: s detail: d
      CDTraitCompositionClassParserTest
      "Class restructuring: timeouts hold modification locks, poisoning later tests.
       Root cause: cascade propagation in TraitBuilderEnhancer>>propagateChangesToRelatedClasses:.
-      Timeouts work (priority 79 fix), but suspended processes corrupt shared state."
+      Timeouts work (priority 40 fix), but suspended processes corrupt shared state."
      SlotMigrationTest SlotIntegrationTest PropertySlotTest
      SlotAnnouncementsTest SlotLayoutEqualityTest SlotTraitsTest
      SlotLayoutExtensionTest ExampleSlotWithStateTest SlotMethodRecompilationTest
@@ -956,9 +956,11 @@ runTestClass: testClass run: runNum on: s detail: d
 
   s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' ==='; cr.
   s flush.
-  "ALL tests must run below timingPriority (80) so the Delay scheduler can
-   preempt hanging tests and fire waitTimeoutSeconds: timeouts."
-  testPriority := 79.
+  "Tests must run below BOTH timingPriority (80) for timeout preemption AND
+   userInterruptPriority (50) so the FinalizationProcess can preempt tests
+   to process mourners (ephemerons, weak refs). Default user priority (40)
+   matches the reference VM's test execution environment."
+  testPriority := 40.
   p := 0. f := 0. e := 0. sk := 0. t := 0. consecutiveTimeouts := 0.
   sels := testClass allTestSelectors asArray.
   "Sort with comparison counter to detect infinite loops"
@@ -984,8 +986,7 @@ runTestClass: testClass run: runNum on: s detail: d
         "testCannotReturn: ContextTest PASS, BlockClosureTest/BlockClosuresTestCase FAIL
          (forked process variant — assertion on result/home doesn't match)"
         testCannotReturn testOneGWordAllocation
-        "ProcessTerminateBugTest: forkAt: userInterruptPriority (50) < test priority (79), no preempt"
-        testUnwindFromForeignProcess
+        "ProcessTerminateBugTest: testUnwindFromForeignProcess ENABLED (priority 40 < userInterruptPriority 50)"
         "SemaphoreTest: Delay-dependent ENABLED (timer fix), keep priority 89 skip"
         testSchedulesFIFO
         "ProcessSpecificTest: Delay-dependent ENABLED (timer fix)"

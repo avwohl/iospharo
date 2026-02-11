@@ -171,7 +171,23 @@ void* lookupFunction(const std::string& moduleName, const std::string& funcName)
         return it->second;
     }
 
-    // Look up the function
+    // For SDL_ functions not in our stub cache, return a generic no-op
+    // instead of falling through to dlsym (which finds force-loaded real SDL2
+    // that crashes on our fake 0xDEADBEEF window handles).
+    if (funcName.compare(0, 4, "SDL_") == 0) {
+        // Generic no-op: returns 0 (safe for int/void/pointer returns).
+        // On ARM64, extra arguments are in registers and harmlessly ignored.
+        static auto genericSDLNoOp = +[]() -> intptr_t { return 0; };
+        void* func = reinterpret_cast<void*>(genericSDLNoOp);
+        sFunctionCache[funcName] = func;
+        if (lookupCount <= 200) {
+            fprintf(stderr, "[FFI-LOOKUP] #%d '%s' in '%s' -> SDL generic no-op %p\n",
+                    lookupCount, funcName.c_str(), moduleName.c_str(), func);
+        }
+        return func;
+    }
+
+    // Look up the function via dlsym
     void* func = dlsym(RTLD_DEFAULT, funcName.c_str());
     if (lookupCount <= 200) {
         fprintf(stderr, "[FFI-LOOKUP] #%d '%s' in '%s' -> dlsym=%p\n",
@@ -281,6 +297,10 @@ void stub_SDL_GetWindowPosition(void* window, int* x, int* y) {
 
 void stub_SDL_SetWindowPosition(void* window, int x, int y) {
     fprintf(stderr, "[SDL2-STUB] SDL_SetWindowPosition(%p, %d, %d)\n", window, x, y);
+}
+
+void stub_SDL_SetWindowIcon(void* window, void* icon) {
+    fprintf(stderr, "[SDL2-STUB] SDL_SetWindowIcon(%p, %p)\n", window, icon);
 }
 
 // Renderer stubs
@@ -740,6 +760,7 @@ SDL_EXPORT void* SDL_GetWindowFromID(uint32_t id) { return stub_SDL_GetWindowFro
 SDL_EXPORT int SDL_SetWindowFullscreen(void* w, uint32_t f) { return stub_SDL_SetWindowFullscreen(w, f); }
 SDL_EXPORT void SDL_GetWindowPosition(void* w, int* x, int* y) { stub_SDL_GetWindowPosition(w, x, y); }
 SDL_EXPORT void SDL_SetWindowPosition(void* w, int x, int y) { stub_SDL_SetWindowPosition(w, x, y); }
+SDL_EXPORT void SDL_SetWindowIcon(void* w, void* icon) { stub_SDL_SetWindowIcon(w, icon); }
 SDL_EXPORT void* SDL_CreateRenderer(void* w, int i, uint32_t f) { return stub_SDL_CreateRenderer(w, i, f); }
 SDL_EXPORT void SDL_DestroyRenderer(void* r) { stub_SDL_DestroyRenderer(r); }
 SDL_EXPORT int SDL_RenderClear(void* r) { return stub_SDL_RenderClear(r); }
@@ -827,6 +848,7 @@ void registerSDL2Stubs() {
     registerFunction("SDL_SetWindowFullscreen", reinterpret_cast<void*>(stub_SDL_SetWindowFullscreen));
     registerFunction("SDL_GetWindowPosition", reinterpret_cast<void*>(stub_SDL_GetWindowPosition));
     registerFunction("SDL_SetWindowPosition", reinterpret_cast<void*>(stub_SDL_SetWindowPosition));
+    registerFunction("SDL_SetWindowIcon", reinterpret_cast<void*>(stub_SDL_SetWindowIcon));
 
     // Renderer
     registerFunction("SDL_CreateRenderer", reinterpret_cast<void*>(stub_SDL_CreateRenderer));
