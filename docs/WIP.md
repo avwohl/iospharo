@@ -1,6 +1,6 @@
 # iOS Pharo VM — Status
 
-Last verified: 2026-02-11 (Run #242)
+Last verified: 2026-02-11 (Run #328)
 
 ---
 
@@ -109,6 +109,40 @@ ExternalAddress (dereference pointer).
 
 ---
 
+## Test Results — Run #328 (2026-02-11)
+
+**576 test classes, 12510 tests. Pass: 12484, Fail: 0, Error: 8, Skip: 16, Timeout: 2.**
+
+**99.83% pass rate** (12484/12510). GC compaction active. Ephemeron + finalization fully working.
+
+### Finalization fully working (commits 574a7df through 36e2b3e)
+
+The finalization pipeline is now end-to-end operational:
+- **FinalizationRegistryTest**: 6/6 pass (including testFinalizationWithOnFork, testFinalizationWithOnFork2)
+- **WeakAnnouncerTest**: 33/34 pass (1 error: testNoWeakBlock — Smalltalk-side ephemeron check)
+- **ObjectFinalizerTest**: 1/1 pass
+
+**Key fixes**:
+1. **Active ephemeron tracing** (commit f5a60c9): Don't mark non-key slots of active ephemerons
+   during initial trace — they must stay unmarked until the fixed-point resolves whether the key
+   is reachable via other paths
+2. **Force-yield to finalization process** (commit 574a7df): After GC fires ephemerons, yield to
+   the finalization process so it can run `primitiveFetchNextMourner` before the next GC cycle
+3. **Priority-based test scheduling** (commits 19b7bf2, 36e2b3e): Finalization tests run at
+   priority 40 (below mourn process at 51) so suspended mourn frames don't hold references to
+   mourned entries. Other tests run at priority 79.
+
+### Remaining errors (all intermittent)
+
+- **TTLCacheTest**: testPrimeFactors×2 (scheduler previousLink)
+- **WeakAnnouncerTest**: testNoWeakBlock (Smalltalk-side "missing ephemerons" check)
+- **CDNormalClassCategoryParserTest**: testClassDefFromLegacyStringHasSuperclassName (intermittent)
+- **SystemNavigationTest**: testAllReferencesToDo (NonBooleanReceiver, intermittent)
+- **PackageAndClassesTest**: testAddExtensionProtocol, testAddNewProtocolDoesNothing (stdout unavailable)
+- **StopwatchTest**: testReActivate (DateAndTime negated, intermittent timer)
+
+---
+
 ## Test Results — Run #242 (2026-02-11)
 
 **578 test classes, 12510 tests. Pass: 12488, Fail: 4, Error: 1, Skip: 16, Timeout: 1.**
@@ -140,14 +174,6 @@ in order. Also fixed `primitiveObjectPointsTo` (prim 132) to follow forwarding p
 #### Skip BlockClosureValueWithinTest (commit 1676c28)
 `valueWithin:` timer tests corrupt the delay scheduler, causing total VM hang.
 Confirmed same behavior on reference Pharo VM. Moved to class-level skip.
-
-### Remaining failures (all finalization/weak-related)
-
-- **FinalizationRegistryTest** (1 timeout, 1 fail): finalization chain incomplete
-- **WeakAnnouncerTest** (1 error, 2 fail): ephemeron support message, weak ref handling
-- **ObjectFinalizerTest** (1 fail): testFinalizationOfMultipleResources
-
-All other test classes pass 100%.
 
 ---
 
