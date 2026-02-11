@@ -2714,6 +2714,10 @@ bool ObjectMemory::markInactiveEphemerons() {
 
 void ObjectMemory::fireAllEphemerons() {
     for (ObjectHeader* obj : ephemeronList_) {
+        size_t fixedFields = fixedFieldCountOf(obj);
+        size_t total = obj->slotCount();
+        size_t keyIndex = fixedFields;  // key is first variable slot
+
         // Fire: change format from 5 (WeakWithFixed/Ephemeron) to 1 (FixedSize)
         // so it's no longer treated as an ephemeron in subsequent GCs.
         obj->setFormat(ObjectFormat::FixedSize);
@@ -2723,8 +2727,16 @@ void ObjectMemory::fireAllEphemerons() {
         mournQueue_.push_back(objOop);
         pendingFinalizationSignals_++;
 
-        // Mark all fields (key + values stay alive for mourning)
-        scanPointerFields(obj);
+        // Mark all fields EXCEPT the key.
+        // The key must stay unmarked so processWeaklings can nil
+        // weak references to it (e.g., in WeakMessageSend, WeakArray).
+        // Fixed fields were already marked when the ephemeron was deferred.
+        // Value slots (after key) hold the finalizer and must stay alive.
+        Oop* slots = obj->slots();
+        for (size_t i = 0; i < total; ++i) {
+            if (i == keyIndex) continue;  // Skip the key
+            markAndTrace(slots[i]);
+        }
         processMarkStack();
     }
     ephemeronList_.clear();
