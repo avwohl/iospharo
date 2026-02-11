@@ -2281,9 +2281,15 @@ void Interpreter::synchronousSignal(Oop semaphore) {
 void Interpreter::signalFinalizationIfNeeded() {
     if (memory_.pendingFinalizationSignals() > 0) {
         memory_.clearPendingFinalizationSignals();
-        Oop sema = memory_.specialObject(SpecialObjectIndex::TheFinalizationSemaphore);
-        if (sema.isObject() && sema.rawBits() != memory_.nil().rawBits()) {
-            synchronousSignal(sema);
+        // Only signal the finalization semaphore when there are actual mourners
+        // (fired ephemerons) to process. Weak array nilling triggers the counter
+        // but doesn't queue mourners — the image handles those via its own
+        // finalization registry scanning after GC.
+        if (memory_.hasMourners()) {
+            Oop sema = memory_.specialObject(SpecialObjectIndex::TheFinalizationSemaphore);
+            if (sema.isObject() && sema.rawBits() != memory_.nil().rawBits()) {
+                synchronousSignal(sema);
+            }
         }
     }
 }
@@ -2414,7 +2420,6 @@ bool Interpreter::step() {
         fflush(stderr);
         memory_.fullGC();
         flushMethodCache();  // Compaction moves objects — stale cache entries cause DNU
-        signalFinalizationIfNeeded();
         fprintf(stderr, "[SAFE-POINT-GC #%d] Done, used=%zuMB\n",
                 safePointGCCount,
                 (size_t)(memory_.oldSpaceFree() - memory_.oldSpaceStart()) / (1024*1024));
@@ -2432,6 +2437,7 @@ bool Interpreter::step() {
         if (hasPendingSignals()) {
             processPendingSignals();
         }
+        signalFinalizationIfNeeded();
         // Display sync requested by heartbeat thread — safe to access heap here
         if (pendingDisplaySync_.load(std::memory_order_acquire)) {
             pendingDisplaySync_.store(false, std::memory_order_release);
@@ -5295,7 +5301,6 @@ terminate_process:
                     fflush(stderr);
                     memory_.fullGC();
                     flushMethodCache();  // Compaction moves objects — stale cache
-                    signalFinalizationIfNeeded();
                 }
 
                 // Process input events - may signal semaphores that wake processes

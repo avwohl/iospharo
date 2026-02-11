@@ -216,7 +216,6 @@ PrimitiveResult Interpreter::primitiveIncrementalGC(int argCount) {
 
     memory_.incrementalGC();
     flushMethodCache();  // Compaction moves objects — stale cache entries cause DNU
-    signalFinalizationIfNeeded();
 
     size_t freeBytes = memory_.freeOldSpaceBytes();
 
@@ -7404,7 +7403,6 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
     // Trigger a full garbage collection
     memory_.fullGC();
     flushMethodCache();  // Compaction moves objects — stale cache entries cause DNU
-    signalFinalizationIfNeeded();
 
     // Get free space after GC
     size_t freeBytes = memory_.freeOldSpaceBytes();
