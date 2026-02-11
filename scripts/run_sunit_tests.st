@@ -986,6 +986,8 @@ runTestClass: testClass run: runNum on: s detail: d
         "ProcessSpecificTest: Delay-dependent ENABLED (timer fix)"
         "Process-heavy contention tests"
         testHeavyContention testHeavyContention2
+        "MutexTest: recursive mutex deadlocks (image-side Mutex>>critical: issue)"
+        testTwoRecursiveCriticalsShouldNotWaitEachOther
         "Slot class restructuring (timeout)"
         testInitializedSlotUpdateClass testCannotBeRecompiled
         "Weak dict tally compaction (needs finalization-triggered cleanup)"

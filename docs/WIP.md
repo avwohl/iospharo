@@ -109,6 +109,37 @@ ExternalAddress (dereference pointer).
 
 ---
 
+## Test Results — Run #210 (2026-02-11, with GC)
+
+**576 test classes, 12468 tests. Pass: 12447, Fail: 0, Error: 3, Skip: 16, Timeout: 2.**
+
+**99.83% pass rate** (12447/12468). 0 failures. GC compaction cycles active.
+
+### Context tempAt:put: C++ stack sync (commits d71e6aa, 4ade79f)
+
+**Root cause**: `primitiveContextAtPut` (prim 211, used by `tempAt:put:`) wrote to the
+context object but never synced to the backing C++ stack frame. When Smalltalk code
+modified a context temp (e.g. debugger evaluating `local1 := -3.0`), the interpreter
+still read the old value from the C++ stack.
+
+**Fix**: After writing to the context object, check if it has a backing C++ frame
+(active frame or saved frame via `savedActiveContext`/`materializedContext`) and update
+the stack slot. Key subtlety: after `thisContext` materializes, `currentFrameMaterializedCtx_`
+is cleared — so saved frames must also be checked via `savedActiveContext`.
+
+**Results**: testDebuggerTempAccess PASS ("Got 3 instead of -3.0" → fixed),
+testWriteTemporaryVariablesMethod PASS ("Got tempVar instead of 5" → fixed).
+
+### primitiveConstantFill range validation (commit 5af5470)
+
+**Root cause**: `primitiveConstantFill` (prim 145, `atAllPut:`) for 32-bit word arrays
+didn't validate the value was non-negative. `atAllPut: -1` succeeded by wrapping -1 to
+0xFFFFFFFF instead of failing. Also added missing 16-bit array (DoubleByteArray) handling.
+
+**Result**: testAtAllPutFail PASS.
+
+---
+
 ## Test Results — Run #164 (2026-02-10, with GC)
 
 **576 test classes, 12436 tests. Pass: 12416, Fail: 0, Error: 2, Skip: 16, Timeout: 2.**
