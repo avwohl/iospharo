@@ -378,9 +378,13 @@ Oop ObjectMemory::shallowCopy(Oop original) {
     // Generate new identity hash
     copy->setIdentityHash(generateHash());
 
-    // Clear GC flags - clones start clean
+    // Clear GC and protection flags - clones start clean and mutable.
+    // Standard Cog VM's clone (cloneshouldAllocateInPermSpace) creates a fresh
+    // header that does NOT inherit immutable/pinned/marked/remembered bits.
     copy->setMarked(false);
     copy->setRemembered(false);
+    copy->setImmutable(false);
+    copy->setPinned(false);
 
     bytesAllocated_ += size;
     return oopFromPointer(copy);
