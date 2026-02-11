@@ -2713,6 +2713,8 @@ bool ObjectMemory::markInactiveEphemerons() {
 }
 
 void ObjectMemory::fireAllEphemerons() {
+    firedEphemeronKeys_.clear();
+
     for (ObjectHeader* obj : ephemeronList_) {
         size_t fixedFields = fixedFieldCountOf(obj);
         size_t total = obj->slotCount();
@@ -2727,6 +2729,15 @@ void ObjectMemory::fireAllEphemerons() {
         mournQueue_.push_back(objOop);
         pendingFinalizationSignals_++;
 
+        // Save the key Oop — we'll mark it AFTER processWeaklings
+        // so it survives compaction (the finalization process needs to read it).
+        if (keyIndex < total) {
+            Oop key = obj->slots()[keyIndex];
+            if (key.isObject() && !isPermObject(key.asObjectPtr())) {
+                firedEphemeronKeys_.push_back(key);
+            }
+        }
+
         // Mark all fields EXCEPT the key.
         // The key must stay unmarked so processWeaklings can nil
         // weak references to it (e.g., in WeakMessageSend, WeakArray).
@@ -2740,6 +2751,22 @@ void ObjectMemory::fireAllEphemerons() {
         processMarkStack();
     }
     ephemeronList_.clear();
+}
+
+void ObjectMemory::markFiredEphemeronKeys() {
+    // After processWeaklings has nilled weak references to ephemeron keys,
+    // mark the keys so they survive compaction. The finalization process
+    // needs to read the key from the fired ephemeron to execute finalizers.
+    for (Oop key : firedEphemeronKeys_) {
+        if (key.isObject()) {
+            ObjectHeader* obj = key.asObjectPtr();
+            if (!obj->isMarked()) {
+                markAndTrace(key);
+            }
+        }
+    }
+    processMarkStack();
+    firedEphemeronKeys_.clear();
 }
 
 size_t ObjectMemory::markPhase() {
@@ -2794,7 +2821,14 @@ size_t ObjectMemory::markPhase() {
     // 5. Process weak objects (nil dead references, queue mourners)
     processWeaklings();
 
-    // 5. Count marked objects
+    // 6. Now mark fired ephemeron keys so they survive compaction.
+    // processWeaklings already nilled weak references to these keys,
+    // but the keys must remain in memory for the finalization process.
+    if (!firedEphemeronKeys_.empty()) {
+        markFiredEphemeronKeys();
+    }
+
+    // 7. Count marked objects
     ObjectScanner scanner(oldSpaceStart_, oldSpaceFree_);
     while (ObjectHeader* obj = scanner.next()) {
         if (obj->isMarked()) markedCount++;
