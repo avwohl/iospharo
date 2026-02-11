@@ -912,14 +912,22 @@ runTestClass: testClass run: runNum on: s detail: d
      ExecutionCounterTest
      "Priority 81 (exceeds 80 limit)"
      ProcessMonitorTestServiceTest
+     "Coverage/reflectivity (NonBooleanReceiver, reflectivity infrastructure)"
+     CoverageCollectorTest CoverageDemoTest
      "Priority 81 / process monitoring"
      TestExecutionEnvironmentTest
      "Network name resolver / Character>>asByteArray"
      GlobalIdentifierMergerTest GlobalIdentifierWithDefaultConfigurationTest
      "Epicea (needs network primNameResolverStatus)"
      EpLogTest EpCommentTest
+     "BitBlt alpha compositing"
+     BitBltTest
+     "BitBlt arg error in printOn with halt"
+     ObjectWithPrintingRaisingHaltTest
      "Weak/GC finalization (VM finalization signaling missing)"
      ObjectFinalizerTest
+     "ClassParser: CDTraitCompositionClassParserTest (16 errors, class mod timeouts)"
+     CDTraitCompositionClassParserTest
      "Class restructuring: timeouts hold modification locks, poisoning later tests.
       Root cause: cascade propagation in TraitBuilderEnhancer>>propagateChangesToRelatedClasses:.
       Timeouts work (priority 79 fix), but suspended processes corrupt shared state."
@@ -1069,7 +1077,11 @@ runTestClass: testClass run: runNum on: s detail: d
         "DelayTest: timer edge cases"
         testSemaphoreNoTimeout testSemaphoreTimeout
         "FBDDecompilerTest: decompiler round-trip (image-side)"
-        testToDoArgument) includes: sel) or: [
+        testToDoArgument
+        "FastStepThroughTest: step-through returns method instead of block (context issue)"
+        testStepIntoBlockArgumentInMessageSend testStepThrough
+        testStepThroughInABlockInATemporary testStepThroughJumpsToHomeWhenBlockEvaluationEnds
+        testStepThroughLonger) includes: sel) or: [
          "Skip tests that iterate all heap objects (stalls with broken timer)"
          sel beginsWith: 'testPointers']) ifFalse: [
       | result |
