@@ -896,7 +896,7 @@ runTestClass: testClass run: runNum on: s detail: d
   "Skip classes that stall due to process/scheduling issues in our VM.
    These tests fork processes at the same priority or rely on Delay timeouts
    that cannot fire because our VM lacks proper time-slicing."
-  (#(ProcessTerminateBugTest
+  (#("ProcessTerminateBugTest: ENABLED (prim 196 terminateTo: implemented)"
      "ProcessTest: 46/46 error (DefaultExecutionEnvironment>>processMonitor missing)"
      ProcessTest
      "Abstract class (SubclassResponsibility errors)"
@@ -981,6 +981,8 @@ runTestClass: testClass run: runNum on: s detail: d
         "testCannotReturn: ContextTest PASS, BlockClosureTest/BlockClosuresTestCase FAIL
          (forked process variant — assertion on result/home doesn't match)"
         testCannotReturn testOneGWordAllocation
+        "ProcessTerminateBugTest: forkAt: userInterruptPriority (50) < test priority (79), no preempt"
+        testUnwindFromForeignProcess
         "SemaphoreTest: Delay-dependent ENABLED (timer fix), keep priority 89 skip"
         testSchedulesFIFO
         "ProcessSpecificTest: Delay-dependent ENABLED (timer fix)"
@@ -1076,7 +1078,7 @@ runTestClass: testClass run: runNum on: s detail: d
         testExample3 testFips180Example3
         "ClassHierarchyTest: testSubclasses needs >10s for full class iteration"
         testSubclasses
-        "DelayTest: timer edge cases"
+        "DelayTest: timer edge cases — still fail (unschedule nil, assertion)"
         testSemaphoreNoTimeout testSemaphoreTimeout
         "FBDDecompilerTest: decompiler round-trip (image-side)"
         testToDoArgument
