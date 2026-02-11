@@ -516,7 +516,7 @@ private:
 
     // File handles (maps Smalltalk file IDs to FILE pointers)
     std::map<int, FILE*> openFiles_;
-    int nextFileId_ = 1;
+    int nextFileId_ = 3;  // 0,1,2 reserved for stdin/stdout/stderr
 
     // ===== CACHES =====
 

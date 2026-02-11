@@ -11904,17 +11904,16 @@ PrimitiveResult Interpreter::primitiveGetCurrentWorkingDirectory(int argCount) {
 // primitiveFileStdioHandles -> Array of (stdin, stdout, stderr) handles
 PrimitiveResult Interpreter::primitiveFileStdioHandles(int argCount) {
     // Register stdin, stdout, stderr if not already registered
-    // Use negative IDs for standard handles to distinguish them
+    // Use actual POSIX fd numbers so primitiveFileDescriptorType can fstat() them
     static bool stdioInitialized = false;
-    static int stdinId = -1;
-    static int stdoutId = -2;
-    static int stderrId = -3;
+    static int stdinId = 0;
+    static int stdoutId = 1;
+    static int stderrId = 2;
 
     if (!stdioInitialized) {
-        // Store standard handles with special negative IDs
-        openFiles_[-1] = stdin;
-        openFiles_[-2] = stdout;
-        openFiles_[-3] = stderr;
+        openFiles_[0] = stdin;
+        openFiles_[1] = stdout;
+        openFiles_[2] = stderr;
         stdioInitialized = true;
     }
 
