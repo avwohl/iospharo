@@ -512,6 +512,11 @@ private:
     std::atomic<bool> pendingDisplaySync_{false};
     std::thread heartbeatThread_;
 
+    // Finalization: set when force-yield to finalization process failed
+    // (process was not on the ready list at priority 50).
+    // The step check will periodically retry yielding.
+    bool pendingMournerYield_ = false;
+
     // Clipboard (simple in-memory storage for headless mode)
     std::string clipboardText_;
 

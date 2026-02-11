@@ -2280,16 +2280,21 @@ void Interpreter::synchronousSignal(Oop semaphore) {
 
 void Interpreter::signalFinalizationIfNeeded() {
     if (memory_.pendingFinalizationSignals() > 0) {
+        int signals = memory_.pendingFinalizationSignals();
         memory_.clearPendingFinalizationSignals();
         if (memory_.hasMourners()) {
             Oop sema = memory_.specialObject(SpecialObjectIndex::TheFinalizationSemaphore);
             if (sema.isObject() && sema.rawBits() != memory_.nil().rawBits()) {
                 Oop activeProcess = getActiveProcess();
+                Oop activePrioOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
+                int activePrio = activePrioOop.isSmallInteger() ? (int)activePrioOop.asSmallInteger() : -1;
                 Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, sema);
 
                 if (firstLink.isObject() && firstLink.rawBits() != memory_.nil().rawBits()) {
                     // Case 1: Finalization process is waiting on the semaphore.
                     // Remove it and force-yield to it directly.
+                    fprintf(stderr, "[FIN-SIGNAL] Case 1: signals=%d mourners=%d activePrio=%d - removing waiter from semaphore\n",
+                            signals, (int)memory_.mournerCount(), activePrio);
                     Oop finProcess = removeFirstLinkOfList(sema);
                     putToSleep(activeProcess);
                     transferTo(finProcess);
@@ -2299,6 +2304,8 @@ void Interpreter::signalFinalizationIfNeeded() {
                     // unable to preempt our higher-priority process).
                     // Signal the semaphore (for excess count), then search the
                     // ready list for a finalization-priority process and yield to it.
+                    fprintf(stderr, "[FIN-SIGNAL] Case 2: signals=%d mourners=%d activePrio=%d - signaling + forceYield\n",
+                            signals, (int)memory_.mournerCount(), activePrio);
                     synchronousSignal(sema);
                     forceYieldForFinalization(activeProcess);
                 }
@@ -2309,8 +2316,7 @@ void Interpreter::signalFinalizationIfNeeded() {
 
 void Interpreter::forceYieldForFinalization(Oop activeProcess) {
     // The finalization process runs at userInterruptPriority (50).
-    // Check ONLY the ready list at that priority to avoid yielding to
-    // the event loop (priority 60) which would busy-loop on SDL_WaitEvent.
+    // Check the ready list at priority 50 for the finalization process.
     constexpr int finalizationPriority = 50;
     constexpr int finalizationIdx = finalizationPriority - 1; // 0-indexed
 
@@ -2328,8 +2334,17 @@ void Interpreter::forceYieldForFinalization(Oop activeProcess) {
         Oop finProcess = removeFirstLinkOfList(processList);
         putToSleep(activeProcess);
         transferTo(finProcess);
+    } else {
+        // Finalization process is not on the ready list at priority 50.
+        // It may be blocked on a throttle semaphore (inside its mourning loop).
+        // The finalization semaphore has been signaled (excess++), so the fin
+        // process will pick up mourners when it returns to its wait loop.
+        // However, this may take time if higher-priority processes keep running.
+        //
+        // Mark that we have pending mourners that need attention.
+        // The step check will periodically try to yield to the fin process.
+        pendingMournerYield_ = true;
     }
-    // If not found, mourners accumulate until finalization process runs naturally.
 }
 
 // ===== HEARTBEAT THREAD =====
@@ -2476,6 +2491,44 @@ bool Interpreter::step() {
             processPendingSignals();
         }
         signalFinalizationIfNeeded();
+
+        // If mourners are pending but we couldn't yield to the finalization
+        // process (it was blocked on a throttle semaphore), check if it's
+        // now available on the finalization semaphore or ready list.
+        if (pendingMournerYield_ && memory_.hasMourners()) {
+            Oop sema = memory_.specialObject(SpecialObjectIndex::TheFinalizationSemaphore);
+            if (sema.isObject() && sema.rawBits() != memory_.nil().rawBits()) {
+                Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, sema);
+                if (firstLink.isObject() && firstLink.rawBits() != memory_.nil().rawBits()) {
+                    // Finalization process is now on the semaphore - yield to it
+                    pendingMournerYield_ = false;
+                    Oop finProcess = removeFirstLinkOfList(sema);
+                    Oop activeProcess = getActiveProcess();
+                    putToSleep(activeProcess);
+                    transferTo(finProcess);
+                } else {
+                    // Try ready list at priority 50
+                    Oop schedAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
+                    Oop scheduler = memory_.fetchPointer(1, schedAssoc);
+                    Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
+                    constexpr int finIdx = 49; // priority 50, 0-indexed
+                    if (finIdx < (int)schedLists.asObjectPtr()->slotCount()) {
+                        Oop processList = memory_.fetchPointer(finIdx, schedLists);
+                        Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, processList);
+                        if (first.isObject() && first.rawBits() != memory_.nil().rawBits()) {
+                            pendingMournerYield_ = false;
+                            Oop finProcess = removeFirstLinkOfList(processList);
+                            Oop activeProcess = getActiveProcess();
+                            putToSleep(activeProcess);
+                            transferTo(finProcess);
+                        }
+                    }
+                }
+            }
+        } else if (pendingMournerYield_ && !memory_.hasMourners()) {
+            pendingMournerYield_ = false;  // Mourners were processed
+        }
+
         // Display sync requested by heartbeat thread — safe to access heap here
         if (pendingDisplaySync_.load(std::memory_order_acquire)) {
             pendingDisplaySync_.store(false, std::memory_order_release);
@@ -4795,7 +4848,7 @@ void Interpreter::returnValue(Oop value) {
                     Oop priOop = memory_.fetchPointer(2, nilSenderProc);
                     if (priOop.isSmallInteger()) nilSenderPrio = (int)priOop.asSmallInteger();
                 }
-                if (nilSenderCount <= 20) {
+                if (nilSenderCount <= 50) {
                     fprintf(stderr, "[NIL-SENDER #%d step=%llu pri=%d] Return from #%s with nil sender\n",
                             nilSenderCount, (unsigned long long)g_stepNum, nilSenderPrio, methodSel.c_str());
                 }
