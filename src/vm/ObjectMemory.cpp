@@ -2567,14 +2567,14 @@ void ObjectMemory::markAndTrace(Oop oop) {
             // Inactive ephemeron: treat as fully strong (mark all pointer fields)
             markStack_.push_back(obj);
         } else {
-            // Active ephemeron: defer; mark all slots EXCEPT the key
+            // Active ephemeron: defer ALL tracing. Do NOT mark any fields.
+            // Matching Cog VM behavior: active ephemerons are added to the list
+            // and no fields are traced until the key's fate is determined.
+            // This is critical: if value == key (e.g., Object>>finalizer returns
+            // self), marking the value would mark the key, preventing firing.
+            // Fields are traced later by markInactiveEphemerons (if key becomes
+            // reachable) or fireAllEphemerons (if key remains unreachable).
             ephemeronList_.push_back(obj);
-            if (total > 1) {
-                Oop* slots = obj->slots();
-                for (size_t i = 1; i < total; ++i) {
-                    markAndTrace(slots[i]);
-                }
-            }
         }
     } else if (fmt == ObjectFormat::Weak) {
         // Format 4 = Weak array. Add to weakList_, mark only fixed fields.
