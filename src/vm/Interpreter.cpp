@@ -2403,6 +2403,7 @@ bool Interpreter::step() {
                 (size_t)(memory_.oldSpaceFree() - memory_.oldSpaceStart()) / (1024*1024));
         fflush(stderr);
         memory_.fullGC();
+        flushMethodCache();  // Compaction moves objects — stale cache entries cause DNU
         fprintf(stderr, "[SAFE-POINT-GC #%d] Done, used=%zuMB\n",
                 safePointGCCount,
                 (size_t)(memory_.oldSpaceFree() - memory_.oldSpaceStart()) / (1024*1024));
@@ -5278,6 +5279,7 @@ terminate_process:
                             idleGCCount, (unsigned long long)g_stepNum);
                     fflush(stderr);
                     memory_.fullGC();
+                    flushMethodCache();  // Compaction moves objects — stale cache
                 }
 
                 // Process input events - may signal semaphores that wake processes
