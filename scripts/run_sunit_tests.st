@@ -957,11 +957,15 @@ runTestClass: testClass run: runNum on: s detail: d
 
   s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' ==='; cr.
   s flush.
-  "ALL tests must run below timingPriority (80) so the Delay scheduler can
+  "Tests must run below timingPriority (80) so the Delay scheduler can
    preempt hanging tests and fire waitTimeoutSeconds: timeouts.
-   The VM handles finalization preemption by force-yielding after GC
-   (see signalFinalizationIfNeeded in Interpreter.cpp)."
-  testPriority := 79.
+   Tests MUST also run below finalization mourn priority (51) so that
+   the mourn process can complete before the test resumes. If the test
+   preempts the mourn process, suspended mourn frames hold references
+   to mourned entries, keeping ephemeron keys alive and preventing
+   subsequent ephemerons from firing (testFinalizationWithOnFork).
+   Priority 40 matches the standard Pharo UI process priority."
+  testPriority := 40.
   p := 0. f := 0. e := 0. sk := 0. t := 0. consecutiveTimeouts := 0.
   sels := testClass allTestSelectors asArray.
   "Sort with comparison counter to detect infinite loops"
@@ -987,7 +991,7 @@ runTestClass: testClass run: runNum on: s detail: d
         "testCannotReturn: ContextTest PASS, BlockClosureTest/BlockClosuresTestCase FAIL
          (forked process variant — assertion on result/home doesn't match)"
         testCannotReturn testOneGWordAllocation
-        "ProcessTerminateBugTest: forkAt: userInterruptPriority (50) < test priority (79)"
+        "ProcessTerminateBugTest: forkAt: userInterruptPriority (50) > test priority (40), preempts"
         testUnwindFromForeignProcess
         "SemaphoreTest: Delay-dependent ENABLED (timer fix), keep priority 89 skip"
         testSchedulesFIFO
