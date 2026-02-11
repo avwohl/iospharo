@@ -558,7 +558,16 @@ int main(int argc, char* argv[]) {
     Interpreter& interpreter = *interpreterPtr;
     memory.setInterpreter(&interpreter);
     interpreter.setImageName(imagePath);
-    interpreter.setVMPath(argv[0]);
+    // Resolve argv[0] to absolute path so Smalltalk vm fullPath works
+    {
+        char* resolved = realpath(argv[0], nullptr);
+        if (resolved) {
+            interpreter.setVMPath(resolved);
+            free(resolved);
+        } else {
+            interpreter.setVMPath(argv[0]);
+        }
+    }
     interpreter.setImageArguments(imageArgs);
 
     // In Pharo 13, the standard VM is always "headless" by default.

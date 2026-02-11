@@ -4903,10 +4903,16 @@ PrimitiveResult Interpreter::primitiveImageName(int argCount) {
     return PrimitiveResult::Failure;
 }
 
-// Primitive 142: Get the VM executable path
-// Returns the path to the VM as a String
+// Primitive 142: Get the VM executable directory path
+// Returns the directory containing the VM as a String (with trailing separator)
 PrimitiveResult Interpreter::primitiveVMPath(int argCount) {
-    Oop result = createStringObject(memory_, vmPath_);
+    std::string dir = vmPath_;
+    // Extract directory from full path
+    size_t lastSlash = dir.rfind('/');
+    if (lastSlash != std::string::npos) {
+        dir = dir.substr(0, lastSlash + 1);  // Include trailing /
+    }
+    Oop result = createStringObject(memory_, dir);
     if (result.isNil()) {
         return PrimitiveResult::Failure;
     }
