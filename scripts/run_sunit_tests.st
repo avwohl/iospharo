@@ -945,7 +945,12 @@ runTestClass: testClass run: runNum on: s detail: d
      "Code reparation/package: class modification hangs"
      OCCodeReparatorTest PackageTest
      "HistorySlotTest: class restructuring hangs (SlotTestsClassA class >> #do:)"
-     HistorySlotTest) includes: testClass name) ifTrue: [
+     HistorySlotTest
+     "BlockClosureValueWithinTest: valueWithin: corrupts delay scheduler,
+      causing total VM hang (no timeout recovery). Same on baseline VM."
+     BlockClosureValueWithinTest
+     "BlockClosureValueWithinDurationTest: same issue as above"
+     BlockClosureValueWithinDurationTest) includes: testClass name) ifTrue: [
     s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' === SKIPPED (process-heavy)'; cr. s flush.
     ^ {0. 0. 0. 0. 0}].
 
@@ -1013,9 +1018,6 @@ runTestClass: testClass run: runNum on: s detail: d
          These 2 are <expectedFailure> in standard Pharo — they fail even on the reference VM.
          Our test runner fork/timeout doesn't handle the pragma, so skip them."
         testMutateByteArrayUsingDoubleAtPut testMutateByteArrayUsingFloatAtPut
-        "BlockClosureValueWithinTest: testValueWithinTimingBasicMilliseconds hangs
-         (timing-dependent, hangs on baseline VM with current Pharo image)"
-        testValueWithinTimingBasicMilliseconds
         "TextTest: BitBlt display"
         testDisplay
         "AnnouncerTest: ephemerons"
