@@ -945,7 +945,9 @@ runTestClass: testClass run: runNum on: s detail: d
      "Weak class variable: class restructuring hangs (no timeout preemption)"
      WeakClassVariableTest
      "Code reparation/package: class modification hangs"
-     OCCodeReparatorTest PackageTest) includes: testClass name) ifTrue: [
+     OCCodeReparatorTest PackageTest
+     "HistorySlotTest: class restructuring hangs (SlotTestsClassA class >> #do:)"
+     HistorySlotTest) includes: testClass name) ifTrue: [
     s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' === SKIPPED (process-heavy)'; cr. s flush.
     ^ {0. 0. 0. 0. 0}].
 
