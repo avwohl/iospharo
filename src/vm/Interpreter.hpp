@@ -262,6 +262,9 @@ public:
     /// Get stack value at offset from top (0 = top)
     Oop stackValue(size_t offset) const;
 
+    /// Write stack value at offset from top (0 = top)
+    void stackValuePut(size_t offset, Oop value);
+
     /// Pop multiple values
     void popN(size_t n);
 

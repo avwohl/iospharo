@@ -4054,6 +4054,10 @@ Oop Interpreter::stackValue(size_t offset) const {
     return *(stackPointer_ - 1 - offset);
 }
 
+void Interpreter::stackValuePut(size_t offset, Oop value) {
+    *(stackPointer_ - 1 - offset) = value;
+}
+
 void Interpreter::popN(size_t n) {
     stackPointer_ -= n;
     if (stackPointer_ < stackBase_) {

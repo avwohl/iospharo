@@ -250,6 +250,22 @@ public:
         }
     }
 
+    /// Follow forwarding pointers (created by become:).
+    /// If the Oop points to a forwarded object (classIndex == 8),
+    /// return the forwarding target. Otherwise return the Oop unchanged.
+    Oop followForwarded(Oop oop) const {
+        if (!oop.isObject()) return oop;
+        ObjectHeader* hdr = oop.asObjectPtr();
+        // Follow chain of forwarding pointers (usually just one level)
+        int limit = 10;  // Prevent infinite loops on corrupt heap
+        while (hdr->isForwarded() && limit-- > 0) {
+            oop = hdr->slotAt(0);  // Forwarding target is in first slot
+            if (!oop.isObject()) return oop;
+            hdr = oop.asObjectPtr();
+        }
+        return oop;
+    }
+
     /// Get the class of an object (follows class index to class table)
     Oop classOf(Oop obj) const;
 

@@ -246,11 +246,9 @@ PrimitiveResult Interpreter::primitiveClone(int argCount) {
         return PrimitiveResult::Success;
     }
 
-    // Check for forwarded objects
-    ObjectHeader* hdr = rcvr.asObjectPtr();
-    if (hdr->isForwarded()) {
-        return PrimitiveResult::Failure;
-    }
+    // Follow forwarding pointers (created by become:)
+    rcvr = memory_.followForwarded(rcvr);
+    stackValuePut(0, rcvr);
 
     // Delegate to shallowCopy
     return primitiveShallowCopy(argCount);
@@ -2291,13 +2289,8 @@ PrimitiveResult Interpreter::primitiveInstVarAt(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Check for forwarded receiver when argCount > 1 (e.g., object:instVarAt:)
-    if (argCount > 1) {
-        ObjectHeader* hdr = rcvr.asObjectPtr();
-        if (hdr->isForwarded()) {
-            return PrimitiveResult::Failure;
-        }
-    }
+    // Follow forwarding pointers (created by become:)
+    rcvr = memory_.followForwarded(rcvr);
 
     int64_t idx = index.asSmallInteger();
     if (idx < 1) {
@@ -2431,11 +2424,9 @@ PrimitiveResult Interpreter::primitiveInstVarAtPut(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Check for forwarded receiver when argCount > 2 (e.g., object:instVarAt:put:)
+    // Follow forwarding pointers (created by become:)
+    rcvr = memory_.followForwarded(rcvr);
     ObjectHeader* header = rcvr.asObjectPtr();
-    if (argCount > 2 && header->isForwarded()) {
-        return PrimitiveResult::Failure;
-    }
 
     if (header->isImmutable()) {
         return PrimitiveResult::Failure;
@@ -3058,13 +3049,8 @@ PrimitiveResult Interpreter::primitiveIdentityHash(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Fail if forwarded object (official VM: only check when argCount > 0)
-    if (argCount > 0) {
-        ObjectHeader* hdr = rcvr.asObjectPtr();
-        if (hdr && hdr->isForwarded()) {
-            return PrimitiveResult::Failure;
-        }
-    }
+    // Follow forwarding pointers (created by become:)
+    rcvr = memory_.followForwarded(rcvr);
 
     // identityHashOf handles lazy hash generation and caching
     uint32_t hash = memory_.identityHashOf(rcvr);
@@ -3080,13 +3066,8 @@ PrimitiveResult Interpreter::primitiveClass(int argCount) {
     // The standard VM always operates on stackTop, not the receiver.
     Oop target = stackValue(0);
 
-    // Per official VM: fail if forwarded object only when argCount > 0
-    if (argCount > 0 && target.isObject()) {
-        ObjectHeader* hdr = target.asObjectPtr();
-        if (hdr && hdr->isForwarded()) {
-            return PrimitiveResult::Failure;
-        }
-    }
+    // Follow forwarding pointers (created by become:)
+    target = memory_.followForwarded(target);
 
     Oop classOop = memory_.classOf(target);
     popN(argCount + 1);
@@ -3098,78 +3079,11 @@ PrimitiveResult Interpreter::primitiveIdentical(int argCount) {
     Oop arg = stackValue(0);   // otherObject
     Oop rcvr = stackValue(1);  // thisObject
 
-    // Per official VM: fail if forwarded object
-    // - Always check if arg (otherObject) is forwarded
-    // - Only check receiver (thisObject) when argCount > 1
-    if (arg.isObject()) {
-        ObjectHeader* hdr = arg.asObjectPtr();
-        if (hdr && hdr->isForwarded()) {
-            return PrimitiveResult::Failure;
-        }
-    }
-    if (argCount > 1 && rcvr.isObject()) {
-        ObjectHeader* hdr = rcvr.asObjectPtr();
-        if (hdr && hdr->isForwarded()) {
-            return PrimitiveResult::Failure;
-        }
-    }
+    // Follow forwarding pointers (created by become:)
+    arg = memory_.followForwarded(arg);
+    rcvr = memory_.followForwarded(rcvr);
 
     bool result = (rcvr == arg);
-
-    // DIAG traces removed from hot path for performance
-
-    // Detect scanFor: spinning - track consecutive == calls with same arg
-    {
-        static uint64_t identCallCount = 0;
-        static uint64_t lastArgBits = 0;
-        static uint64_t sameArgRun = 0;
-        identCallCount++;
-        if (arg.rawBits() == lastArgBits) {
-            sameArgRun++;
-            if (sameArgRun == 10000) {
-                static FILE* idLog = nullptr;
-                if (!idLog) idLog = nullptr;
-                if (idLog) {
-                    fprintf(idLog, "=== 10K consecutive == with same arg at step %llu ===\n", g_stepNum);
-                    fprintf(idLog, "arg (rhs): 0x%llx isObj=%d isSmallInt=%d isNil=%d\n",
-                            (unsigned long long)arg.rawBits(), arg.isObject(), arg.isSmallInteger(),
-                            arg.rawBits() == memory_.nil().rawBits());
-                    if (arg.isObject() && arg.rawBits() > 0x10000) {
-                        ObjectHeader* ah = arg.asObjectPtr();
-                        fprintf(idLog, "arg format=%d classIdx=%u slots=%zu\n",
-                                (int)ah->format(), ah->classIndex(), ah->slotCount());
-                        Oop cls = memory_.classOf(arg);
-                        if (cls.isObject()) {
-                            Oop cn = memory_.fetchPointer(6, cls);
-                            if (cn.isObject() && cn.rawBits() > 0x10000) {
-                                ObjectHeader* cnH = cn.asObjectPtr();
-                                if (cnH->isBytesObject() && cnH->byteSize() < 100)
-                                    fprintf(idLog, "arg class: %.*s\n", (int)cnH->byteSize(), (char*)cnH->bytes());
-                            }
-                        }
-                    }
-                    // Also log some sample receivers (what's being compared)
-                    fprintf(idLog, "Current rcvr (lhs): 0x%llx isObj=%d isSmallInt=%d isNil=%d\n",
-                            (unsigned long long)rcvr.rawBits(), rcvr.isObject(), rcvr.isSmallInteger(),
-                            rcvr.rawBits() == memory_.nil().rawBits());
-                    fprintf(idLog, "result: %s\n", result ? "true" : "false");
-                    fflush(idLog);
-                }
-            }
-            if (sameArgRun == 200000) {
-                static FILE* idLog = nullptr;
-                if (idLog) {
-                    fprintf(idLog, "=== 200K consecutive == with same arg - likely infinite loop ===\n");
-                    fprintf(idLog, "Last rcvr: 0x%llx result=%s\n",
-                            (unsigned long long)rcvr.rawBits(), result ? "true" : "false");
-                    fflush(idLog);
-                }
-            }
-        } else {
-            lastArgBits = arg.rawBits();
-            sameArgRun = 1;
-        }
-    }
 
     pop();
     pop();
@@ -3181,21 +3095,9 @@ PrimitiveResult Interpreter::primitiveNotIdentical(int argCount) {
     Oop arg = stackValue(0);   // otherObject
     Oop rcvr = stackValue(1);  // thisObject
 
-    // Per official VM: fail if forwarded object
-    // - Always check if arg (otherObject) is forwarded
-    // - Only check receiver (thisObject) when argCount > 1
-    if (arg.isObject()) {
-        ObjectHeader* hdr = arg.asObjectPtr();
-        if (hdr && hdr->isForwarded()) {
-            return PrimitiveResult::Failure;
-        }
-    }
-    if (argCount > 1 && rcvr.isObject()) {
-        ObjectHeader* hdr = rcvr.asObjectPtr();
-        if (hdr && hdr->isForwarded()) {
-            return PrimitiveResult::Failure;
-        }
-    }
+    // Follow forwarding pointers (created by become:)
+    arg = memory_.followForwarded(arg);
+    rcvr = memory_.followForwarded(rcvr);
 
     bool result = (rcvr != arg);
     pop();
@@ -3512,11 +3414,11 @@ PrimitiveResult Interpreter::primitivePerformWithArgs(int argCount) {
 
     ObjectHeader* argsHeader = argsArray.asObjectPtr();
 
+    // Follow forwarding pointers (created by become:)
+    argsArray = memory_.followForwarded(argsArray);
+    argsHeader = argsArray.asObjectPtr();
+
     // Validate argsArray is an indexable pointer object (Array)
-    // Per official Pharo VM: must be format 2 (Indexable) with pointer contents
-    if (argsHeader->isForwarded()) {
-        return PrimitiveResult::Failure;
-    }
     ObjectFormat fmt = argsHeader->format();
     if (fmt != ObjectFormat::Indexable) {
         // Not a proper array - could be fixed-size object, byte array, etc.
@@ -3546,10 +3448,11 @@ PrimitiveResult Interpreter::primitiveBlockValue(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    // Follow forwarding pointers (created by become:)
+    block = memory_.followForwarded(block);
+    stackValuePut(argCount, block);
+
     ObjectHeader* blockHdr = block.asObjectPtr();
-    if (blockHdr->isForwarded()) {
-        return PrimitiveResult::Failure;
-    }
 
     // Verify arg count matches block's numArgs
     Oop numArgsObj = memory_.fetchPointer(2, block);
@@ -3986,11 +3889,9 @@ PrimitiveResult Interpreter::primitiveSuspend(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Check for forwarded process (official VM behavior)
-    ObjectHeader* procHdr = process.asObjectPtr();
-    if (procHdr->isForwarded()) {
-        return PrimitiveResult::Failure;
-    }
+    // Follow forwarding pointers (created by become:)
+    process = memory_.followForwarded(process);
+    stackValuePut(0, process);
 
     Oop activeProcess = getActiveProcess();
     Oop nilObj = memory_.nil();
@@ -4014,12 +3915,9 @@ PrimitiveResult Interpreter::primitiveSuspend(int argCount) {
     // Suspending another process - it must be on some list
     Oop myList = memory_.fetchPointer(ProcessMyListIndex, process);
 
-    // Check if myList is forwarded (official VM uses followForwarded)
-    if (myList.isObject() && myList.rawBits() > 0x10000) {
-        ObjectHeader* listHdr = myList.asObjectPtr();
-        if (listHdr->isForwarded()) {
-            return PrimitiveResult::Failure;
-        }
+    // Follow forwarding pointers on myList
+    if (myList.isObject()) {
+        myList = memory_.followForwarded(myList);
     }
 
     if (myList.isNil() || myList.rawBits() == nilObj.rawBits()) {
@@ -4045,76 +3943,30 @@ PrimitiveResult Interpreter::primitiveResume(int argCount) {
     // Resume a suspended process. Add to scheduler queue.
     // If it has higher priority than current, preempt.
 
-    static int resumeCallCount = 0;
-    static FILE* resumeLog = nullptr;
-    resumeCallCount++;
-
-    if (!resumeLog) {
-        resumeLog = nullptr;
-    }
-
-    // Log EVERY entry to primitiveResume
-    if (resumeLog && resumeCallCount <= 100) {
-        Oop proc = stackTop();
-        int pri = -1;
-        if (proc.isObject() && proc.rawBits() > 0x10000) {
-            Oop priOop = memory_.fetchPointer(2, proc);  // ProcessPriorityIndex = 2
-            if (priOop.isSmallInteger()) pri = (int)priOop.asSmallInteger();
-        }
-        fprintf(resumeLog, "[RESUME-ENTRY #%d step=%llu] proc=0x%llx pri=%d\n",
-                resumeCallCount, (unsigned long long)g_stepNum, (unsigned long long)proc.rawBits(), pri);
-        fflush(resumeLog);
-    }
-
     Oop process = stackTop();  // Receiver is the process to resume
 
     if (!process.isObject()) {
-        if (resumeCallCount <= 200) {
-            fprintf(stderr, "[RESUME-FAIL #%d step=%llu] process not object 0x%llx\n",
-                    resumeCallCount, (unsigned long long)g_stepNum, (unsigned long long)process.rawBits());
-        }
         return PrimitiveResult::Failure;
     }
 
-    // Check for forwarded process (official VM behavior)
-    ObjectHeader* procHdr = process.asObjectPtr();
-    if (procHdr->isForwarded()) {
-        if (resumeCallCount <= 200) {
-            fprintf(stderr, "[RESUME-FAIL #%d step=%llu] forwarded process 0x%llx\n",
-                    resumeCallCount, (unsigned long long)g_stepNum, (unsigned long long)process.rawBits());
-        }
-        return PrimitiveResult::Failure;
-    }
+    // Follow forwarding pointers (created by become:)
+    process = memory_.followForwarded(process);
+    stackValuePut(0, process);
 
     // Verify process has a valid suspended context
     Oop context = memory_.fetchPointer(ProcessSuspendedContextIndex, process);
     Oop nilObj = memory_.nil();
 
     if (context.isNil() || context.rawBits() == nilObj.rawBits() || !context.isObject()) {
-        if (resumeCallCount <= 200) {
-            fprintf(stderr, "[RESUME-FAIL #%d step=%llu] no valid context, proc=0x%llx ctx=0x%llx nil=0x%llx\n",
-                    resumeCallCount, (unsigned long long)g_stepNum, (unsigned long long)process.rawBits(),
-                    (unsigned long long)context.rawBits(), (unsigned long long)nilObj.rawBits());
-        }
         return PrimitiveResult::Failure;  // Can't resume without a valid context
     }
 
-    // Per official VM: validate context is actually a Context
-    // Check if context is forwarded and validate format
-    ObjectHeader* ctxHdr = context.asObjectPtr();
-    if (ctxHdr->isForwarded()) {
-        if (resumeCallCount <= 200) {
-            fprintf(stderr, "[RESUME-FAIL #%d step=%llu] forwarded context\n",
-                    resumeCallCount, (unsigned long long)g_stepNum);
-        }
-        return PrimitiveResult::Failure;
-    }
+    // Follow forwarding on context too
+    context = memory_.followForwarded(context);
+
     // Context objects have format 3 (IndexableWithFixed)
+    ObjectHeader* ctxHdr = context.asObjectPtr();
     if (ctxHdr->format() != ObjectFormat::IndexableWithFixed) {
-        if (resumeCallCount <= 200) {
-            fprintf(stderr, "[RESUME-FAIL #%d step=%llu] context wrong format=%d (expected 3)\n",
-                    resumeCallCount, (unsigned long long)g_stepNum, (int)ctxHdr->format());
-        }
         return PrimitiveResult::Failure;  // Not a valid Context
     }
 
@@ -4125,83 +3977,6 @@ PrimitiveResult Interpreter::primitiveResume(int argCount) {
     Oop activeProcess = getActiveProcess();
     Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
     int activePriority = static_cast<int>(activePriorityOop.asSmallInteger());
-
-    if (resumeLog && resumeCallCount <= 50) {
-        fprintf(resumeLog, "[RESUME #%d] proc=0x%llx pri=%d active_pri=%d -> %s\n",
-                resumeCallCount, (unsigned long long)process.rawBits(),
-                processPriority, activePriority,
-                processPriority > activePriority ? "PREEMPT" : "enqueue");
-
-        // Log what method the process will run
-        std::string ctxMethod = "?";
-        if (context.isObject() && context.rawBits() > 0x10000) {
-            Oop method = memory_.fetchPointer(3, context);  // MethodIndex = 3
-            if (method.isObject() && method.rawBits() > 0x10000) {
-                Oop mhdr = memory_.fetchPointer(0, method);
-                if (mhdr.isSmallInteger()) {
-                    int64_t hv = mhdr.asSmallInteger();
-                    int nLits = hv & 0x7FFF;
-                    if (nLits >= 2 && nLits < 100) {
-                        Oop sel = memory_.fetchPointer(nLits - 1, method);
-                        if (sel.isObject()) {
-                            ObjectHeader* selH = sel.asObjectPtr();
-                            if (selH->isBytesObject() && selH->byteSize() < 100) {
-                                ctxMethod = std::string((char*)selH->bytes(), selH->byteSize());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        fprintf(resumeLog, "[RESUME #%d]   context=0x%llx will run method: #%s\n",
-                resumeCallCount, (unsigned long long)context.rawBits(), ctxMethod.c_str());
-
-        // Trace the entire context chain to debug termination issues
-        fprintf(resumeLog, "[RESUME #%d]   CONTEXT CHAIN:\n", resumeCallCount);
-        Oop chainCtx = context;
-        int chainDepth = 0;
-        while (chainCtx.isObject() && chainCtx.rawBits() > 0x10000 && chainDepth < 20) {
-            // Get method and its primitive index
-            Oop chainMethod = memory_.fetchPointer(3, chainCtx);  // MethodIndex = 3
-            std::string chainSel = "?";
-            int primIndex = 0;
-            if (chainMethod.isObject() && chainMethod.rawBits() > 0x10000) {
-                Oop mhdr = memory_.fetchPointer(0, chainMethod);
-                if (mhdr.isSmallInteger()) {
-                    int64_t hv = mhdr.asSmallInteger();
-                    primIndex = (hv >> 16) & 0xFF;  // Get primitive index from header
-                    int nLits = hv & 0x7FFF;
-                    if (nLits >= 2 && nLits < 100) {
-                        Oop sel = memory_.fetchPointer(nLits - 1, chainMethod);
-                        if (sel.isObject()) {
-                            ObjectHeader* selH = sel.asObjectPtr();
-                            if (selH->isBytesObject() && selH->byteSize() < 100) {
-                                chainSel = std::string((char*)selH->bytes(), selH->byteSize());
-                            }
-                        }
-                    }
-                }
-            }
-            fprintf(resumeLog, "[RESUME #%d]     [%d] ctx=0x%llx method=#%s prim=%d\n",
-                    resumeCallCount, chainDepth, (unsigned long long)chainCtx.rawBits(),
-                    chainSel.c_str(), primIndex);
-            // Get sender
-            Oop sender = memory_.fetchPointer(0, chainCtx);  // SenderIndex = 0
-            if (sender.isNil() || !sender.isObject()) break;
-            chainCtx = sender;
-            chainDepth++;
-        }
-        fflush(resumeLog);
-    }
-
-    // Log process resume to stderr for debugging scheduling issues
-    if (resumeCallCount <= 100) {
-        fprintf(stderr, "[RESUME #%d step=%llu] proc=0x%llx pri=%d active_pri=%d -> %s\n",
-                resumeCallCount, (unsigned long long)g_stepNum,
-                (unsigned long long)process.rawBits(),
-                processPriority, activePriority,
-                processPriority > activePriority ? "PREEMPT" : "enqueue");
-    }
 
     if (processPriority > activePriority) {
         // Resumed process has higher priority - preempt current process
@@ -9447,12 +9222,10 @@ PrimitiveResult Interpreter::primitiveIsPinned(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Also fail on forwarded objects
-    ObjectHeader* header = rcvr.asObjectPtr();
-    if (header->isForwarded()) {
-        return PrimitiveResult::Failure;
-    }
+    // Follow forwarding pointers (created by become:)
+    rcvr = memory_.followForwarded(rcvr);
 
+    ObjectHeader* header = rcvr.asObjectPtr();
     bool isPinned = header->isPinned();
 
     pop();
@@ -9489,11 +9262,10 @@ PrimitiveResult Interpreter::primitivePin(int argCount) {
         return PrimitiveResult::Failure;  // Must be true or false
     }
 
-    ObjectHeader* header = rcvr.asObjectPtr();
-    if (header->isForwarded()) {
-        return PrimitiveResult::Failure;
-    }
+    // Follow forwarding pointers (created by become:)
+    rcvr = memory_.followForwarded(rcvr);
 
+    ObjectHeader* header = rcvr.asObjectPtr();
     bool wasPinned = header->isPinned();
     header->setPinned(shouldPin);
 
@@ -10582,12 +10354,9 @@ PrimitiveResult Interpreter::primitivePerformInSuperclass(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Check for forwarded objects
+    // Follow forwarding pointers (created by become:)
     if (receiver.isObject()) {
-        ObjectHeader* rcvrHeader = receiver.asObjectPtr();
-        if (rcvrHeader->isForwarded()) {
-            return PrimitiveResult::Failure;
-        }
+        receiver = memory_.followForwarded(receiver);
     }
 
     // CRITICAL: Validate that lookupClass is in the receiver's superclass chain
