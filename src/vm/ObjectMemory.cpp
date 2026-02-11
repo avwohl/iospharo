@@ -1611,6 +1611,11 @@ void ObjectMemory::sweepGC() {
     static int sweepCount = 0;
     sweepCount++;
 
+    // Tenure eden objects first — markPhase only marks old space objects.
+    // Without this, eden objects are invisible to mark/sweep and their
+    // references from old space would be treated as dead.
+    tenureEdenToOldSpace();
+
     // Clear finalization state for this GC cycle (fresh count)
     pendingFinalizationSignals_ = 0;
 
@@ -1715,12 +1720,102 @@ void ObjectMemory::sweepGC() {
     totalGCTime_ += ms;
 }
 
+void ObjectMemory::tenureEdenToOldSpace() {
+    if (edenFree_ == edenStart_) return;  // Eden is empty
+
+    // Phase 1: Copy each eden object to old space, write forwarding pointer in eden.
+    // We use the first slot after the eden header to store the new Oop.
+    // Mark the eden header's classIndex to 0 to signal "forwarded".
+    uint8_t* scan = edenStart_;
+    while (scan < edenFree_) {
+        ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(scan);
+        size_t size = obj->totalSize();
+        if (size == 0) break;  // Safety
+        uint32_t cls = obj->classIndex();
+
+        if (cls != 0 && oldSpaceFree_ + size <= oldSpaceEnd_) {
+            // Copy to old space
+            ObjectHeader* newObj = reinterpret_cast<ObjectHeader*>(oldSpaceFree_);
+            std::memcpy(newObj, obj, size);
+            oldSpaceFree_ += size;
+
+            // Write forwarding pointer in eden: set classIndex to 0 (marks as forwarded),
+            // store new address in first slot position
+            Oop newOop = oopFromPointer(newObj);
+            obj->setClassIndex(0);  // Mark as forwarded
+            Oop* firstSlot = reinterpret_cast<Oop*>(obj + 1);
+            *firstSlot = newOop;
+        }
+
+        scan += size;
+    }
+
+    // Phase 2: Update all pointers from eden addresses to old space addresses.
+    // Any Oop pointing into eden needs to be resolved via the forwarding table.
+    auto resolveEden = [this](Oop ref) -> Oop {
+        if (!ref.isObject()) return ref;
+        auto* ptr = reinterpret_cast<uint8_t*>(ref.asObjectPtr());
+        if (ptr < edenStart_ || ptr >= edenFree_) return ref;  // Not in eden
+        // Read forwarding pointer
+        ObjectHeader* edenObj = ref.asObjectPtr();
+        if (edenObj->classIndex() == 0) {
+            Oop* firstSlot = reinterpret_cast<Oop*>(edenObj + 1);
+            return *firstSlot;
+        }
+        return ref;  // Not forwarded (shouldn't happen)
+    };
+
+    // Update pointers in old space objects (including the just-tenured ones)
+    {
+        ObjectScanner scanner(oldSpaceStart_, oldSpaceFree_);
+        while (ObjectHeader* obj = scanner.next()) {
+            size_t numPointers = pointerSlotsOf(obj);
+            Oop* slots = obj->slots();
+            for (size_t i = 0; i < numPointers; ++i) {
+                slots[i] = resolveEden(slots[i]);
+            }
+        }
+    }
+
+    // Update pointers in permanent space
+    {
+        ObjectScanner permScanner(permSpaceStart_, permSpaceEnd_);
+        while (ObjectHeader* obj = permScanner.next()) {
+            size_t numPointers = pointerSlotsOf(obj);
+            Oop* slots = obj->slots();
+            for (size_t i = 0; i < numPointers; ++i) {
+                slots[i] = resolveEden(slots[i]);
+            }
+        }
+    }
+
+    // Update memory roots
+    forEachMemoryRoot([&resolveEden](Oop& oop) {
+        oop = resolveEden(oop);
+    });
+
+    // Update interpreter roots
+    if (interpreter_) {
+        interpreter_->forEachRoot([&resolveEden](Oop& oop) {
+            oop = resolveEden(oop);
+        });
+    }
+
+    // Phase 3: Reset eden — all objects are now in old space with pointers updated
+    edenFree_ = edenStart_;
+}
+
 GCResult ObjectMemory::fullGC() {
     auto start = std::chrono::steady_clock::now();
     GCResult result{0, 0, 0};
 
     static int gcCallCount = 0;
     gcCallCount++;
+
+    // Tenure eden objects to old space before compaction.
+    // fullGC uses eden as scratch space for saved first fields,
+    // so any live eden objects must be promoted first.
+    tenureEdenToOldSpace();
 
     size_t usedBefore = oldSpaceFree_ - oldSpaceStart_;
 

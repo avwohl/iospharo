@@ -676,6 +676,13 @@ private:
     /// Clear all free lists.
     void clearFreeLists();
 
+    // ===== EDEN TENURING =====
+
+    /// Tenure all eden objects to old space before full GC.
+    /// Copies objects, writes forwarding pointers in eden, updates all references,
+    /// then resets eden. This is necessary because fullGC uses eden as scratch space.
+    void tenureEdenToOldSpace();
+
     // ===== MARK PHASE =====
 
     /// Mark an Oop as reachable. If unmarked non-immediate non-perm, set mark
