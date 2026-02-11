@@ -1833,15 +1833,23 @@ void ObjectMemory::allObjectsDo(std::function<void(Oop)> callback) {
                 word = *wordPtr;
             }
 
-            // Check for overflow header (next word has numSlots=255)
+            // Check for overflow header.
+            // In Spur, overflow objects have: [overflow_count_word][header_word][slots...]
+            // Both the overflow count word and the header word have 0xFF in bits 56-63.
+            // CRITICAL: Only check for overflow when the CURRENT word has 0xFF in its
+            // top byte. Otherwise, wordPtr+1 is a slot value, not a header!
             uint64_t* headerPtr = wordPtr;
             bool hasOverflow = false;
-            if (scan + 8 < end) {
+            uint8_t topByte = static_cast<uint8_t>((word >> 56) & 0xFF);
+            if (topByte == 255 && scan + 8 < end) {
                 uint64_t nextWord = *(wordPtr + 1);
-                if ((nextWord & 0xFF) == 255) {
-                    uint64_t overflowCount = word;
+                uint8_t nextNumSlots = static_cast<uint8_t>((nextWord >> 56) & 0xFF);
+                if (nextNumSlots == 255) {
+                    // Current word is overflow count, next word is the actual header
+                    // The overflow count is in the low 56 bits of the first word
+                    uint64_t overflowCount = (word << 8) >> 8;  // mask off top byte
                     size_t remaining = end - scan;
-                    size_t neededSize = 8 + overflowCount * 8 + 8;
+                    size_t neededSize = 8 + 8 + overflowCount * 8;  // overflow word + header + slots
 
                     if (overflowCount >= 255 && neededSize <= remaining) {
                         headerPtr = wordPtr + 1;
@@ -2050,14 +2058,18 @@ Oop ObjectMemory::firstInstanceOf(uint32_t targetClassIndex) {
                 word = *wordPtr;
             }
 
-            // Check for overflow header
+            // Check for overflow header.
+            // Only when current word has 0xFF in top byte (overflow count words
+            // always do). Otherwise wordPtr+1 would be a slot value, not a header.
             uint64_t* headerPtr = wordPtr;
-            if (scan + 8 < end) {
+            uint8_t topByte = static_cast<uint8_t>((word >> 56) & 0xFF);
+            if (topByte == 255 && scan + 8 < end) {
                 uint64_t nextWord = *(wordPtr + 1);
-                if ((nextWord & 0xFF) == 255) {
-                    uint64_t overflowCount = word;
+                uint8_t nextNumSlots = static_cast<uint8_t>((nextWord >> 56) & 0xFF);
+                if (nextNumSlots == 255) {
+                    uint64_t overflowCount = (word << 8) >> 8;  // mask off top byte
                     size_t remaining = end - scan;
-                    size_t neededSize = 8 + overflowCount * 8 + 8;
+                    size_t neededSize = 8 + 8 + overflowCount * 8;  // overflow word + header + slots
 
                     if (overflowCount >= 255 && neededSize <= remaining) {
                         headerPtr = wordPtr + 1;
@@ -2143,14 +2155,18 @@ Oop ObjectMemory::nextInstanceAfter(Oop afterObject, uint32_t targetClassIndex) 
                 word = *wordPtr;
             }
 
-            // Check for overflow header
+            // Check for overflow header.
+            // Only when current word has 0xFF in top byte (overflow count words
+            // always do). Otherwise wordPtr+1 would be a slot value, not a header.
             uint64_t* headerPtr = wordPtr;
-            if (scan + 8 < end) {
+            uint8_t topByte = static_cast<uint8_t>((word >> 56) & 0xFF);
+            if (topByte == 255 && scan + 8 < end) {
                 uint64_t nextWord = *(wordPtr + 1);
-                if ((nextWord & 0xFF) == 255) {
-                    uint64_t overflowCount = word;
+                uint8_t nextNumSlots = static_cast<uint8_t>((nextWord >> 56) & 0xFF);
+                if (nextNumSlots == 255) {
+                    uint64_t overflowCount = (word << 8) >> 8;  // mask off top byte
                     size_t remaining = end - scan;
-                    size_t neededSize = 8 + overflowCount * 8 + 8;
+                    size_t neededSize = 8 + 8 + overflowCount * 8;  // overflow word + header + slots
 
                     if (overflowCount >= 255 && neededSize <= remaining) {
                         headerPtr = wordPtr + 1;
