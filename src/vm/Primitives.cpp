@@ -219,12 +219,14 @@ PrimitiveResult Interpreter::primitiveIncrementalGC(int argCount) {
 
     size_t freeBytes = memory_.freeOldSpaceBytes();
 
-    // Use primitiveSuccess() for consistent stack handling with primitiveFullGC
+    // Push result BEFORE signaling finalization (same reason as primitiveFullGC)
     if (Oop::canBeSmallInteger(static_cast<int64_t>(freeBytes))) {
         primitiveSuccess(Oop::fromSmallInteger(static_cast<int64_t>(freeBytes)));
     } else {
         primitiveSuccess(Oop::fromSmallInteger(Oop::smallIntegerMax()));
     }
+
+    signalFinalizationIfNeeded();
 
     return PrimitiveResult::Success;
 }
@@ -380,7 +382,12 @@ PrimitiveResult Interpreter::primitiveDoPrimitiveWithArgs(int argCount) {
 PrimitiveResult Interpreter::primitiveFetchNextMourner(int argCount) {
     (void)argCount;
     if (!memory_.hasMourners()) {
-        return PrimitiveResult::Failure;
+        // Return nil when queue is empty. The Smalltalk side checks isNotNil.
+        // We avoid returning Failure because our VM doesn't yet support
+        // primitive error codes, and the Smalltalk fallback interprets
+        // ec=nil as "primitive missing".
+        primitiveSuccess(memory_.nil());
+        return PrimitiveResult::Success;
     }
     Oop mourner = memory_.popMourner();
     primitiveSuccess(mourner);
@@ -7407,14 +7414,19 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
     // Get free space after GC
     size_t freeBytes = memory_.freeOldSpaceBytes();
 
-    // Try to return as SmallInteger
+    // Push result BEFORE signaling finalization — signalFinalizationIfNeeded may
+    // call transferTo() to switch to the finalization process, so the result must
+    // be on the current process's stack before the switch.
     if (Oop::canBeSmallInteger(static_cast<int64_t>(freeBytes))) {
         primitiveSuccess(Oop::fromSmallInteger(static_cast<int64_t>(freeBytes)));
     } else {
-        // If too large for SmallInteger, return a reasonable estimate
-        // (shouldn't happen in practice, but be safe)
         primitiveSuccess(Oop::fromSmallInteger(Oop::smallIntegerMax()));
     }
+
+    // Signal finalization semaphore after GC result is pushed.
+    // This may preempt the current process if the finalization process
+    // has higher priority (e.g., FinalizationProcess at priority 60).
+    signalFinalizationIfNeeded();
 
     return PrimitiveResult::Success;
 }

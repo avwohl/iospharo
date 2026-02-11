@@ -2548,14 +2548,14 @@ void ObjectMemory::markAndTrace(Oop oop) {
     // Classify by format
     ObjectFormat fmt = obj->format();
     if (fmt == ObjectFormat::WeakWithFixed) {
-        // Format 5 = Ephemeron. Key is slot 0 (first indexable slot after fixed fields).
+        // Format 5 = Ephemeron. Key is ALWAYS the first inst var (slot 0).
+        // In Spur, ephemeron key is slot[0], values are all remaining slots.
         // If key is immediate or already marked → "inactive" ephemeron, treat as strong.
         // Otherwise → "active" ephemeron, defer to ephemeronList_.
-        size_t fixedFields = fixedFieldCountOf(obj);
         size_t total = obj->slotCount();
-        size_t keyIndex = fixedFields;  // First weak/indexable slot is the key
+        constexpr size_t keyIndex = 0;  // Key is always slot 0 for ephemerons
         bool keyAlive = true;
-        if (keyIndex < total) {
+        if (total > 0) {
             Oop key = obj->slotAt(keyIndex);
             if (key.isObject() && !isPermObject(key.asObjectPtr())) {
                 keyAlive = key.asObjectPtr()->isMarked();
@@ -2567,11 +2567,11 @@ void ObjectMemory::markAndTrace(Oop oop) {
             // Inactive ephemeron: treat as fully strong (mark all pointer fields)
             markStack_.push_back(obj);
         } else {
-            // Active ephemeron: defer; mark only fixed (strong) fields, NOT key or values
+            // Active ephemeron: defer; mark all slots EXCEPT the key
             ephemeronList_.push_back(obj);
-            if (fixedFields > 0) {
+            if (total > 1) {
                 Oop* slots = obj->slots();
-                for (size_t i = 0; i < fixedFields && i < total; ++i) {
+                for (size_t i = 1; i < total; ++i) {
                     markAndTrace(slots[i]);
                 }
             }
@@ -2674,6 +2674,9 @@ void ObjectMemory::processWeaklings() {
             }
         }
         if (anyNilled) {
+            // Queue weak object as mourner (matches Spur behavior).
+            // WeakFinalizationList detects collected entries this way.
+            mournQueue_.push_back(Oop::fromObject(obj));
             pendingFinalizationSignals_++;
         }
     }
@@ -2685,12 +2688,11 @@ bool ObjectMemory::markInactiveEphemerons() {
 
     for (size_t i = 0; i < ephemeronList_.size(); ++i) {
         ObjectHeader* obj = ephemeronList_[i];
-        size_t fixedFields = fixedFieldCountOf(obj);
         size_t total = obj->slotCount();
-        size_t keyIndex = fixedFields;
+        constexpr size_t keyIndex = 0;  // Key is always slot 0
 
         bool keyAlive = true;
-        if (keyIndex < total) {
+        if (total > 0) {
             Oop key = obj->slotAt(keyIndex);
             if (key.isObject() && !isPermObject(key.asObjectPtr())) {
                 keyAlive = key.asObjectPtr()->isMarked();
@@ -2713,13 +2715,7 @@ bool ObjectMemory::markInactiveEphemerons() {
 }
 
 void ObjectMemory::fireAllEphemerons() {
-    firedEphemeronKeys_.clear();
-
     for (ObjectHeader* obj : ephemeronList_) {
-        size_t fixedFields = fixedFieldCountOf(obj);
-        size_t total = obj->slotCount();
-        size_t keyIndex = fixedFields;  // key is first variable slot
-
         // Fire: change format from 5 (WeakWithFixed/Ephemeron) to 1 (FixedSize)
         // so it's no longer treated as an ephemeron in subsequent GCs.
         obj->setFormat(ObjectFormat::FixedSize);
@@ -2729,44 +2725,16 @@ void ObjectMemory::fireAllEphemerons() {
         mournQueue_.push_back(objOop);
         pendingFinalizationSignals_++;
 
-        // Save the key Oop — we'll mark it AFTER processWeaklings
-        // so it survives compaction (the finalization process needs to read it).
-        if (keyIndex < total) {
-            Oop key = obj->slots()[keyIndex];
-            if (key.isObject() && !isPermObject(key.asObjectPtr())) {
-                firedEphemeronKeys_.push_back(key);
-            }
-        }
-
-        // Mark all fields EXCEPT the key.
-        // The key must stay unmarked so processWeaklings can nil
-        // weak references to it (e.g., in WeakMessageSend, WeakArray).
-        // Fixed fields were already marked when the ephemeron was deferred.
-        // Value slots (after key) hold the finalizer and must stay alive.
-        Oop* slots = obj->slots();
-        for (size_t i = 0; i < total; ++i) {
-            if (i == keyIndex) continue;  // Skip the key
-            markAndTrace(slots[i]);
-        }
+        // Mark ALL fields including the key. The Spur VM marks everything
+        // when firing — the key stays alive so the finalization process can
+        // read it. Weak references to the key are NOT nilled in this GC cycle.
+        // Instead, the finalization process (signaled via TheFinalizationSemaphore)
+        // runs cleanup actions (e.g., removing subscriptions from registries).
+        // The key becomes truly unreachable on the next GC cycle.
+        scanPointerFields(obj);
         processMarkStack();
     }
     ephemeronList_.clear();
-}
-
-void ObjectMemory::markFiredEphemeronKeys() {
-    // After processWeaklings has nilled weak references to ephemeron keys,
-    // mark the keys so they survive compaction. The finalization process
-    // needs to read the key from the fired ephemeron to execute finalizers.
-    for (Oop key : firedEphemeronKeys_) {
-        if (key.isObject()) {
-            ObjectHeader* obj = key.asObjectPtr();
-            if (!obj->isMarked()) {
-                markAndTrace(key);
-            }
-        }
-    }
-    processMarkStack();
-    firedEphemeronKeys_.clear();
 }
 
 size_t ObjectMemory::markPhase() {
@@ -2821,14 +2789,7 @@ size_t ObjectMemory::markPhase() {
     // 5. Process weak objects (nil dead references, queue mourners)
     processWeaklings();
 
-    // 6. Now mark fired ephemeron keys so they survive compaction.
-    // processWeaklings already nilled weak references to these keys,
-    // but the keys must remain in memory for the finalization process.
-    if (!firedEphemeronKeys_.empty()) {
-        markFiredEphemeronKeys();
-    }
-
-    // 7. Count marked objects
+    // 6. Count marked objects
     ObjectScanner scanner(oldSpaceStart_, oldSpaceFree_);
     while (ObjectHeader* obj = scanner.next()) {
         if (obj->isMarked()) markedCount++;

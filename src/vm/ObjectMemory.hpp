@@ -612,7 +612,7 @@ private:
     std::vector<ObjectHeader*> markStack_;     // BFS worklist
     std::vector<ObjectHeader*> weakList_;      // Deferred weak objects
     std::vector<ObjectHeader*> ephemeronList_; // Deferred ephemerons
-    std::vector<Oop> firedEphemeronKeys_;      // Keys from fired ephemerons (mark after processWeaklings)
+
     std::unordered_set<uintptr_t> validObjectStarts_; // Valid object boundaries for mark validation
 
     // Finalization / mourning
@@ -703,7 +703,6 @@ private:
     /// Fire all remaining active ephemerons (dead keys): change format 5→1,
     /// queue as mourners, mark all their fields so values stay alive for mourning.
     void fireAllEphemerons();
-    void markFiredEphemeronKeys();
 
     /// Complete mark phase: mark from all roots, drain mark stack,
     /// process ephemerons, process weaklings.

@@ -2281,10 +2281,6 @@ void Interpreter::synchronousSignal(Oop semaphore) {
 void Interpreter::signalFinalizationIfNeeded() {
     if (memory_.pendingFinalizationSignals() > 0) {
         memory_.clearPendingFinalizationSignals();
-        // Only signal the finalization semaphore when there are actual mourners
-        // (fired ephemerons) to process. Weak array nilling triggers the counter
-        // but doesn't queue mourners — the image handles those via its own
-        // finalization registry scanning after GC.
         if (memory_.hasMourners()) {
             Oop sema = memory_.specialObject(SpecialObjectIndex::TheFinalizationSemaphore);
             if (sema.isObject() && sema.rawBits() != memory_.nil().rawBits()) {
