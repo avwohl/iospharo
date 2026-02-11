@@ -575,14 +575,43 @@ Oop ObjectMemory::classOf(Oop obj) const {
 }
 
 uint32_t ObjectMemory::registerClass(Oop classOop) {
+    // In Spur, if the class already has an identity hash, that IS its class
+    // table index. Use it rather than assigning a new sequential index.
+    if (classOop.isObject()) {
+        ObjectHeader* hdr = classOop.asObjectPtr();
+        uint32_t hash = hdr->identityHash();
+        if (hash != 0 && hash < classTable_.size()) {
+            classTable_[hash] = classOop;
+            return hash;
+        }
+    }
+    // No hash yet — assign new index and set the hash to match
     uint32_t index = nextClassIndex_++;
     if (index < classTable_.size()) {
         classTable_[index] = classOop;
+        if (classOop.isObject()) {
+            classOop.asObjectPtr()->setIdentityHash(index);
+        }
     }
     return index;
 }
 
 uint32_t ObjectMemory::indexOfClass(Oop classOop) const {
+    // In Spur, a class's identity hash IS its class table index.
+    // The Cog VM's classTagForClass: extracts the hash directly:
+    //   classIndex = (uint32AtPointer(classObj + 4)) & identityHashHalfWordMask
+    // Using the identity hash is O(1) and always returns the canonical index.
+    // A linear scan can return a wrong index if a class appears at multiple
+    // positions (e.g., metaclass circularity), causing primitiveAllInstances
+    // to count wrong objects.
+    if (classOop.isObject()) {
+        ObjectHeader* hdr = classOop.asObjectPtr();
+        uint32_t hash = hdr->identityHash();
+        if (hash != 0 && hash < classTable_.size() && classTable_[hash] == classOop) {
+            return hash;
+        }
+    }
+    // Fallback: linear scan for classes without a hash or with stale hash
     for (uint32_t i = 0; i < classTable_.size(); ++i) {
         if (classTable_[i] == classOop) {
             return i;
