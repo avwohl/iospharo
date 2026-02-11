@@ -972,7 +972,7 @@ runTestClass: testClass run: runNum on: s detail: d
 
   sels do: [:sel |
     "Skip tests known to hang or cause VM-level crashes"
-    ((#(testPrintStringAll testStoreStringAll testPrintStringBase
+    (#(testPrintStringAll testStoreStringAll testPrintStringBase
         testAllReferencesTo testAllReferences testPrintingRecursive
         testOneGBAllocation testFastPointersTo
         testBenchFor testBenchForException
@@ -986,7 +986,7 @@ runTestClass: testClass run: runNum on: s detail: d
         testInitializedSlotUpdateClass testCannotBeRecompiled
         "Weak dict tally compaction (needs finalization-triggered cleanup)"
         testClearing testFinalizeValuesWhenLastChainContinuesAtFront
-        "NativeArrayTest: testAtAllPutFail expects atAllPut:-1 to raise Error on unsigned native arrays"
+        "NativeArrayTest: testAtAllPutFail expects atAllPut:-1 to raise Error"
         testAtAllPutFail
         "StopwatchTest: ENABLED (13/13), TTLCacheTest: ENABLED (27/28)"
         "Character >> bitShift: missing (hashing tests)"
@@ -1072,7 +1072,7 @@ runTestClass: testClass run: runNum on: s detail: d
         testIntersectionsWithArc testIntersectionsWithEllipse
         "SHA hash: too slow for 10s timeout"
         testExample3 testFips180Example3
-        "ClassHierarchyTest: class iteration timeout"
+        "ClassHierarchyTest: testSubclasses needs >10s for full class iteration"
         testSubclasses
         "DelayTest: timer edge cases"
         testSemaphoreNoTimeout testSemaphoreTimeout
@@ -1081,9 +1081,7 @@ runTestClass: testClass run: runNum on: s detail: d
         "FastStepThroughTest: step-through returns method instead of block (context issue)"
         testStepIntoBlockArgumentInMessageSend testStepThrough
         testStepThroughInABlockInATemporary testStepThroughJumpsToHomeWhenBlockEvaluationEnds
-        testStepThroughLonger) includes: sel) or: [
-         "Skip tests that iterate all heap objects (stalls with broken timer)"
-         sel beginsWith: 'testPointers']) ifFalse: [
+        testStepThroughLonger) includes: sel) ifFalse: [
       | result |
       s nextPutAll: '  RUN: '; nextPutAll: sel; cr. s flush.
       result := self runSingleTest: testClass selector: sel timeout: 10 priority: testPriority on: s.
