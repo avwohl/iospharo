@@ -385,6 +385,7 @@
 				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				VALIDATE_PRODUCT = YES;
+				"EXCLUDED_ARCHS[sdk=macosx*]" = x86_64;
 			};
 			name = Release;
 		};
