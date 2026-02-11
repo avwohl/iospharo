@@ -46,13 +46,6 @@ struct ContentView: View {
             }
 
         }
-        // Note: SwiftUI gesture is needed for event routing even if it doesn't fire
-        #if targetEnvironment(macCatalyst)
-        .contentShape(Rectangle())
-        .onHover { hovering in
-            // This enables the hover gesture chain
-        }
-        #endif
         .onAppear {
             imageManager.checkForExistingImage()
 
@@ -63,53 +56,14 @@ struct ContentView: View {
                     startPharo()
                 }
             }
-
-            #if targetEnvironment(macCatalyst)
-            // Auto-test: After 5 seconds, send a left-click, then at 6s send a right-click
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
-                if bridge.isRunning {
-                    let testPoint = CGPoint(x: 512, y: 384)
-                    if let file = fopen("/tmp/auto_test.log", "a") {
-                        fputs("[AUTO] 5s: LEFT CLICK at \(testPoint)\n", file)
-                        fclose(file)
-                    }
-                    bridge.sendMouseMoved(to: testPoint, modifiers: 0)
-                    bridge.sendTouchDown(at: testPoint, buttons: Int(IOS_RED_BUTTON))
-                    bridge.sendTouchUp(at: testPoint)
-                }
-            }
-            // Test RIGHT CLICK at 6 seconds - this should trigger world menu
-            DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) {
-                if bridge.isRunning {
-                    let testPoint = CGPoint(x: 512, y: 384)
-                    if let file = fopen("/tmp/auto_test.log", "a") {
-                        fputs("[AUTO] 6s: RIGHT CLICK (buttons=2) at \(testPoint) - should show world menu!\n", file)
-                        fclose(file)
-                    }
-                    bridge.sendMouseMoved(to: testPoint, modifiers: 0)
-                    bridge.sendTouchDown(at: testPoint, buttons: Int(IOS_YELLOW_BUTTON))
-                    bridge.sendTouchUp(at: testPoint)
-                }
-            }
-            #endif
         }
     }
 
     // MARK: - Views
 
     private var pharoCanvas: some View {
-        // Canvas view for Metal rendering
-        // On Mac Catalyst, SwiftUI gestures capture clicks that UIKit misses
-        #if targetEnvironment(macCatalyst)
-        // Mac Catalyst: Let UIKit handle mouse events directly
-        // Right-clicks will be handled by the underlying PharoCanvasView/MetalCanvasView
-        // which receives proper mouse events from UIKit
         PharoCanvasView(bridge: bridge)
             .edgesIgnoringSafeArea(.all)
-        #else
-        PharoCanvasView(bridge: bridge)
-            .edgesIgnoringSafeArea(.all)
-        #endif
     }
 
     private var downloadingView: some View {

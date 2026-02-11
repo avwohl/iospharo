@@ -1948,8 +1948,10 @@ void Interpreter::syncDisplayToSurface() {
     // Process input events - queued for Smalltalk via primitive 264
     processInputEvents();
 
-    // NO WORKAROUNDS: Removed processPendingWorldMenu, processPendingMenuAction, updateActiveHandPosition
-    // Events must be handled by Smalltalk's InputEventSensor, not C++ workarounds
+    // When SDL2 event polling is active, stub_SDL_RenderPresent copies the
+    // SDL texture pixels to gDisplaySurface. Don't overwrite with stale
+    // Display Form content.
+    if (pharo::gEventQueue.isSDL2EventPollingActive()) return;
 
     // displayForm_ is set during startup or by primitiveBeDisplay (prim 102).
     if (displayForm_.isNil()) {

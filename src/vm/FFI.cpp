@@ -6,7 +6,9 @@
 
 #include "FFI.hpp"
 #include "../platform/EventQueue.hpp"
+#include "../platform/DisplaySurface.hpp"
 #include <iostream>
+#include <algorithm>
 #include <cstring>
 #include <chrono>
 #include <dlfcn.h>
@@ -251,10 +253,20 @@ void stub_SDL_DestroyWindow(void* window) {
 }
 
 void stub_SDL_GetWindowSize(void* window, int* w, int* h) {
-    // Return a reasonable default size
-    if (w) *w = 1024;
-    if (h) *h = 768;
-    fprintf(stderr, "[SDL2-STUB] SDL_GetWindowSize(%p) -> %dx%d\n", window, 1024, 768);
+    // Return actual display surface dimensions when available
+    if (pharo::gDisplaySurface) {
+        if (w) *w = pharo::gDisplaySurface->width();
+        if (h) *h = pharo::gDisplaySurface->height();
+    } else {
+        if (w) *w = 1024;
+        if (h) *h = 768;
+    }
+    static int getCount = 0;
+    getCount++;
+    if (getCount <= 5) {
+        fprintf(stderr, "[SDL2-STUB] SDL_GetWindowSize(%p) -> %dx%d\n",
+                window, w ? *w : 0, h ? *h : 0);
+    }
 }
 
 void stub_SDL_SetWindowSize(void* window, int w, int h) {
@@ -303,6 +315,14 @@ void stub_SDL_SetWindowIcon(void* window, void* icon) {
     fprintf(stderr, "[SDL2-STUB] SDL_SetWindowIcon(%p, %p)\n", window, icon);
 }
 
+// Texture pixel buffer — backing store for SDL_LockTexture
+// Declared here (before renderer stubs) so stub_SDL_RenderPresent can access them
+static void* sFakeTextureHandle = reinterpret_cast<void*>(0xFACEFEED);
+static uint32_t* sTexturePixels = nullptr;
+static int sTextureWidth = 0;
+static int sTextureHeight = 0;
+static int sTexturePitch = 0;
+
 // Renderer stubs
 void* stub_SDL_CreateRenderer(void* window, int index, uint32_t flags) {
     fprintf(stderr, "[SDL2-STUB] SDL_CreateRenderer(%p) -> %p\n", window, sFakeRendererHandle);
@@ -320,8 +340,22 @@ int stub_SDL_RenderClear(void* renderer) {
 void stub_SDL_RenderPresent(void* renderer) {
     static int presentCount = 0;
     presentCount++;
-    if (presentCount <= 10 || presentCount % 100 == 0) {
+    if (presentCount <= 10 || presentCount % 1000 == 0) {
         fprintf(stderr, "[SDL2-STUB] SDL_RenderPresent #%d\n", presentCount);
+    }
+
+    // Copy SDL texture pixels to the Metal display surface
+    if (sTexturePixels && pharo::gDisplaySurface) {
+        uint32_t* dst = pharo::gDisplaySurface->pixels();
+        int dstW = pharo::gDisplaySurface->width();
+        int dstH = pharo::gDisplaySurface->height();
+        int copyW = std::min(sTextureWidth, dstW);
+        int copyH = std::min(sTextureHeight, dstH);
+        for (int y = 0; y < copyH; y++) {
+            memcpy(dst + y * dstW, sTexturePixels + y * sTextureWidth,
+                   copyW * sizeof(uint32_t));
+        }
+        pharo::gDisplaySurface->update();
     }
 }
 
@@ -330,14 +364,6 @@ int stub_SDL_SetRenderDrawColor(void* renderer, uint8_t r, uint8_t g, uint8_t b,
 }
 
 // Texture stubs
-static void* sFakeTextureHandle = reinterpret_cast<void*>(0xFACEFEED);
-
-// Texture pixel buffer — backing store for SDL_LockTexture
-static uint32_t* sTexturePixels = nullptr;
-static int sTextureWidth = 0;
-static int sTextureHeight = 0;
-static int sTexturePitch = 0;
-
 void* stub_SDL_CreateTexture(void* renderer, uint32_t format, int access, int w, int h) {
     fprintf(stderr, "[SDL2-STUB] SDL_CreateTexture(fmt=0x%x access=%d %dx%d) -> %p\n",
             format, access, w, h, sFakeTextureHandle);
@@ -538,13 +564,13 @@ int stub_SDL_PollEvent(void* event) {
         sdlEvent->wheel.timestamp = pharoEvent.timeStamp;
         sdlEvent->wheel.windowID = pharoEvent.windowIndex;
         sdlEvent->wheel.which = 0;
-        sdlEvent->wheel.x = pharoEvent.arg1;  // Horizontal scroll
-        sdlEvent->wheel.y = pharoEvent.arg2;  // Vertical scroll
+        sdlEvent->wheel.x = pharoEvent.arg3;  // Horizontal scroll (deltaX)
+        sdlEvent->wheel.y = pharoEvent.arg4;  // Vertical scroll (deltaY)
         sdlEvent->wheel.direction = 0;  // Normal
 
         if (sdlLog && sdlCallCount <= 100) {
             fprintf(sdlLog, "[SDL_PollEvent] #%d Mouse wheel dx=%d dy=%d\n",
-                    sdlCallCount, pharoEvent.arg1, pharoEvent.arg2);
+                    sdlCallCount, pharoEvent.arg3, pharoEvent.arg4);
             fflush(sdlLog);
         }
         return 1;
@@ -660,8 +686,13 @@ int stub_SDL_GetDisplayBounds(int displayIndex, void* rect) {
         int* r = static_cast<int*>(rect);
         r[0] = 0;     // x
         r[1] = 0;     // y
-        r[2] = 1024;  // w
-        r[3] = 768;   // h
+        if (pharo::gDisplaySurface) {
+            r[2] = pharo::gDisplaySurface->width();
+            r[3] = pharo::gDisplaySurface->height();
+        } else {
+            r[2] = 1024;
+            r[3] = 768;
+        }
     }
     return 0;
 }
