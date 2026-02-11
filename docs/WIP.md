@@ -1,6 +1,6 @@
 # iOS Pharo VM — Status
 
-Last verified: 2026-02-11 (Run #328)
+Last verified: 2026-02-11 (Run #329)
 
 ---
 
