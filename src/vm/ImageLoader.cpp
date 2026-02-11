@@ -760,16 +760,9 @@ Oop ImageLoader::rawToOop(uint64_t raw, ObjectMemory& memory) const {
             uint32_t codepoint = static_cast<uint32_t>((raw >> 3) & 0x3FFFFFFF);
             return Oop::fromCharacter(codepoint);
         } else if (tag3 == 5) {
-            // Our SmallFloat encoding (101)
-            Oop result;
-            uint64_t rotated = raw >> 3;
-            uint64_t doubleBits = (rotated >> 61) | (rotated << 3);
-            double value;
-            std::memcpy(&value, &doubleBits, sizeof(double));
-            if (!Oop::tryFromSmallFloat(value, result)) {
-                return Oop::fromSmallInteger(0);
-            }
-            return result;
+            // Our SmallFloat encoding (101) - already correct after relocation
+            // Payload is identical to Spur's, just different tag bits.
+            return Oop::fromRawBits(raw);
         }
         // tag 7: treat as SmallInteger
         int64_t value = static_cast<int64_t>(raw) >> 3;
@@ -784,16 +777,9 @@ Oop ImageLoader::rawToOop(uint64_t raw, ObjectMemory& memory) const {
             uint32_t codepoint = static_cast<uint32_t>(raw >> 3);
             return Oop::fromCharacter(codepoint);
         } else if ((raw & 7) == 4) {
-            // Spur SmallFloat
-            Oop result;
-            uint64_t rotated = raw >> 3;
-            uint64_t doubleBits = (rotated >> 61) | (rotated << 3);
-            double value;
-            std::memcpy(&value, &doubleBits, sizeof(double));
-            if (!Oop::tryFromSmallFloat(value, result)) {
-                return Oop::fromSmallInteger(0);
-            }
-            return result;
+            // Unrelocated Spur SmallFloat (tag 100) - just change tag to ours (101)
+            // Payload encoding is identical between Spur and our format.
+            return Oop::fromRawBits((raw & ~7ULL) | 5);
         }
         return Oop::fromSmallInteger(0);  // Unknown
     }

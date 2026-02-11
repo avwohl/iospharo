@@ -976,7 +976,8 @@ runTestClass: testClass run: runNum on: s detail: d
         testAllReferencesTo testAllReferences testPrintingRecursive
         testOneGBAllocation testFastPointersTo
         testBenchFor testBenchForException
-        testCannotReturn testOneGWordAllocation
+        "testCannotReturn: ENABLED (cannotReturn: send + timer fix)"
+        testOneGWordAllocation
         "SemaphoreTest: Delay-dependent ENABLED (timer fix), keep priority 89 skip"
         testSchedulesFIFO
         "ProcessSpecificTest: Delay-dependent ENABLED (timer fix)"
@@ -1033,10 +1034,8 @@ runTestClass: testClass run: runNum on: s detail: d
         testWhichSelectorsAccessFindSlots
         "GlobalVariableTest: Transcript"
         testTranscriptPrintingWithOpenedTranscriptExists
-        "MethodMapTest: dead context — MNU defineCopiedVarBecomeDeadContext"
-        testCopiedVarFromDeadContext
-        "OCClosureCompilerTest: debugger temp — reads 3 instead of -3.0"
-        testDebuggerTempAccess
+        "MethodMapTest: testCopiedVarFromDeadContext ENABLED (forwarding fix may resolve MNU)"
+        "OCClosureCompilerTest: testDebuggerTempAccess ENABLED (SmallFloat decode fix)"
         "OCDoitTest: testDoItContextReadIvar ENABLED (prim 188 mirror fix)"
         "OCParserTest: missing features"
         testMatchInContext testParseExpressionDontFreeze
