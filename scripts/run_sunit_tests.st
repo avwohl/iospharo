@@ -990,8 +990,7 @@ runTestClass: testClass run: runNum on: s detail: d
         testInitializedSlotUpdateClass testCannotBeRecompiled
         "Weak dict tally compaction (needs finalization-triggered cleanup)"
         testClearing testFinalizeValuesWhenLastChainContinuesAtFront
-        "NativeArrayTest: testAtAllPutFail expects atAllPut:-1 to raise Error"
-        testAtAllPutFail
+        "NativeArrayTest: testAtAllPutFail ENABLED (primitive 145 correctly fails for -1)"
         "StopwatchTest: ENABLED (13/13), TTLCacheTest: ENABLED (27/28)"
         "Character >> bitShift: missing (hashing tests)"
         testLargeCharacterStream
@@ -1028,8 +1027,7 @@ runTestClass: testClass run: runNum on: s detail: d
         testUsingMethodsFFI
         "SelfVariableTest: allMethods AST iteration heavy (numArgs issue)"
         testUsingMethods testUsingMethodsSuper
-        "TemporaryVariableTest: write temp vars — reads var name not value"
-        testWriteTemporaryVariablesMethod
+        "TemporaryVariableTest: testWriteTemporaryVariablesMethod ENABLED (contextAtPut C++ stack sync fix)"
         "SlotTest/ClassVariableTest: class restructuring"
         testAddSlot testAddSlotAnonymous testRemoveSlot
         testChangingShapeDoesNotPutNilInMethodsLastLiteralKey
@@ -1038,8 +1036,7 @@ runTestClass: testClass run: runNum on: s detail: d
         "GlobalVariableTest: Transcript"
         testTranscriptPrintingWithOpenedTranscriptExists
         "MethodMapTest: testCopiedVarFromDeadContext ENABLED (forwarding fix may resolve MNU)"
-        "OCClosureCompilerTest: testDebuggerTempAccess — runtime -3.0 reads as 3, not image loading"
-        testDebuggerTempAccess
+        "OCClosureCompilerTest: testDebuggerTempAccess ENABLED (contextAtPut C++ stack sync fix)"
         "OCDoitTest: testDoItContextReadIvar ENABLED (prim 188 mirror fix)"
         "OCParserTest: testMatchInContext ENABLED (pure AST matching)"
         "testParseExpressionDontFreeze: parser may hang on malformed '#' input"

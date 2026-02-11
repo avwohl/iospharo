@@ -10063,6 +10063,22 @@ PrimitiveResult Interpreter::primitiveContextAtPut(int argCount) {
 
     memory_.storePointer(actualSlot, context, value);
 
+    // Sync to backing C++ stack frame if one exists.
+    // When Smalltalk code modifies a context temp (e.g. debugger evaluating
+    // "local1 := -3.0"), the backing C++ stack must also be updated so the
+    // interpreter sees the new value when execution returns to that frame.
+    if (frameDepth_ == 0 && context == activeContext_) {
+        // Active frame: update C++ stack directly
+        *(framePointer_ + 1 + zeroIndex) = value;
+    } else {
+        for (size_t i = 0; i < frameDepth_; ++i) {
+            if (savedFrames_[i].materializedContext == context) {
+                *(savedFrames_[i].savedFP + 1 + zeroIndex) = value;
+                break;
+            }
+        }
+    }
+
     popN(3);
     push(value);  // Return the stored value
     return PrimitiveResult::Success;
