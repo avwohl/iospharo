@@ -8868,7 +8868,7 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
     //   If no arguments were provided, default to "--interactive" so the GUI starts.
     // Index 1000+: VM info attributes
     if (index == 0) {
-        Oop str = memory_.createString("iospharo");
+        Oop str = memory_.createString(vmPath_.empty() ? "iospharo" : vmPath_);
         pop();
         push(str);
         return PrimitiveResult::Success;
@@ -10017,131 +10017,6 @@ PrimitiveResult Interpreter::primitiveContextAt(int argCount) {
     }
 
     Oop value = memory_.fetchPointer(actualSlot, context);
-
-    // TRACE: Log tempAt: for ensure: contexts (prim 198) to debug unwindComplete
-    {
-        static FILE* tempAtLog = nullptr;
-        static int ensureCount = 0;
-        if (!tempAtLog) tempAtLog = nullptr;
-
-        // Get context's method to check if ensure: context
-        Oop ctxMethod = memory_.fetchPointer(3, context);
-        int primIdx = 0;
-        int methodNumArgs = -1;
-        int methodNumTemps = -1;
-        std::string methodSel = "?";
-        if (ctxMethod.isObject() && ctxMethod.rawBits() > 0x10000) {
-            primIdx = primitiveIndexOf(ctxMethod);
-            Oop mHdr = memory_.fetchPointer(0, ctxMethod);
-            if (mHdr.isSmallInteger()) {
-                int64_t hdrBits = mHdr.asSmallInteger();
-                size_t numLits = hdrBits & 0x7FFF;
-                methodNumArgs = (hdrBits >> 24) & 0xF;
-                methodNumTemps = (hdrBits >> 18) & 0x3F;
-                if (numLits >= 2 && numLits < 100) {
-                    Oop sel = memory_.fetchPointer(numLits - 1, ctxMethod);
-                    if (sel.isObject() && sel.rawBits() > 0x10000) {
-                        ObjectHeader* selH = sel.asObjectPtr();
-                        if (selH->isBytesObject() && selH->byteSize() < 50) {
-                            methodSel = std::string((char*)selH->bytes(), selH->byteSize());
-                        }
-                    }
-                }
-            }
-        }
-
-        // Only log for ensure:/ifCurtailed: contexts (prim 198) - the ones we care about
-        if (tempAtLog && primIdx == 198 && ensureCount < 500) {
-            ensureCount++;
-
-            // Get closureOrNil (slot 4) to determine how numArgs will be computed
-            Oop closureOrNil = memory_.fetchPointer(4, context);
-            std::string closureClass = "nil";
-            int closureNumArgs = -1;
-            if (closureOrNil.rawBits() != memory_.nil().rawBits()) {
-                if (closureOrNil.isObject() && closureOrNil.rawBits() > 0x10000) {
-                    Oop cc = memory_.classOf(closureOrNil);
-                    if (cc.isObject()) {
-                        Oop ccn = memory_.fetchPointer(6, cc);
-                        if (ccn.isObject() && ccn.rawBits() > 0x10000) {
-                            ObjectHeader* ccnH = ccn.asObjectPtr();
-                            if (ccnH->isBytesObject() && ccnH->byteSize() < 50)
-                                closureClass = std::string((char*)ccnH->bytes(), ccnH->byteSize());
-                        }
-                    }
-                    // Try to read closure's numArgs (slot 0 = outerContext, slot 1 = startPC, slot 2 = numArgs)
-                    ObjectHeader* clH = closureOrNil.asObjectPtr();
-                    if (clH->slotCount() >= 3) {
-                        Oop cna = memory_.fetchPointer(2, closureOrNil);
-                        if (cna.isSmallInteger()) closureNumArgs = (int)cna.asSmallInteger();
-                    }
-                }
-            }
-
-            // Determine value class
-            std::string valClass = "?";
-            if (value.rawBits() == memory_.nil().rawBits()) valClass = "nil";
-            else if (value.rawBits() == memory_.trueObject().rawBits()) valClass = "true";
-            else if (value.rawBits() == memory_.falseObject().rawBits()) valClass = "false";
-            else if (value.isSmallInteger()) valClass = "SmallInt(" + std::to_string(value.asSmallInteger()) + ")";
-            else if (value.isObject() && value.rawBits() > 0x10000) {
-                Oop vCls = memory_.classOf(value);
-                if (vCls.isObject()) {
-                    Oop vClsName = memory_.fetchPointer(6, vCls);
-                    if (vClsName.isObject() && vClsName.rawBits() > 0x10000) {
-                        ObjectHeader* vcnHdr = vClsName.asObjectPtr();
-                        if (vcnHdr->isBytesObject() && vcnHdr->byteSize() < 50)
-                            valClass = std::string((char*)vcnHdr->bytes(), vcnHdr->byteSize());
-                    }
-                }
-            }
-
-            fprintf(tempAtLog, "[ENSURE-TEMPAT #%d step=%llu] ctx=0x%llx idx=%lld slot=%zu sel=#%s "
-                    "methodNumArgs=%d methodNumTemps=%d closureOrNil=%s(closureNumArgs=%d) "
-                    "value=%s(0x%llx)\n",
-                    ensureCount, (unsigned long long)g_stepNum,
-                    (unsigned long long)context.rawBits(), index, actualSlot,
-                    methodSel.c_str(), methodNumArgs, methodNumTemps,
-                    closureClass.c_str(), closureNumArgs,
-                    valClass.c_str(), (unsigned long long)value.rawBits());
-
-            // Dump ALL slots for ensure: contexts so we can see the full temp layout
-            fprintf(tempAtLog, "  CONTEXT SLOTS (slotCount=%zu):\n", slotCount);
-            for (size_t s = 0; s < slotCount && s < 20; s++) {
-                Oop sv = memory_.fetchPointer(s, context);
-                std::string slotClass = "?";
-                if (sv.rawBits() == memory_.nil().rawBits()) slotClass = "nil";
-                else if (sv.rawBits() == memory_.trueObject().rawBits()) slotClass = "true";
-                else if (sv.rawBits() == memory_.falseObject().rawBits()) slotClass = "false";
-                else if (sv.isSmallInteger()) slotClass = "SmallInt(" + std::to_string(sv.asSmallInteger()) + ")";
-                else if (sv.isObject() && sv.rawBits() > 0x10000) {
-                    Oop sc = memory_.classOf(sv);
-                    if (sc.isObject()) {
-                        Oop scn = memory_.fetchPointer(6, sc);
-                        if (scn.isObject() && scn.rawBits() > 0x10000) {
-                            ObjectHeader* scnH = scn.asObjectPtr();
-                            if (scnH->isBytesObject() && scnH->byteSize() < 50)
-                                slotClass = std::string((char*)scnH->bytes(), scnH->byteSize());
-                        }
-                    }
-                }
-                const char* slotName = "";
-                if (s == 0) slotName = " (sender)";
-                else if (s == 1) slotName = " (pc)";
-                else if (s == 2) slotName = " (stackp)";
-                else if (s == 3) slotName = " (method)";
-                else if (s == 4) slotName = " (closureOrNil)";
-                else if (s == 5) slotName = " (receiver)";
-                else if (s == 6) slotName = " (temp1/arg:aBlock)";
-                else if (s == 7) slotName = " (temp2/local:handler)";
-                else if (s == 8) slotName = " (temp3/local:complete)";
-                else if (s == 9) slotName = " (temp4/local:returnValue)";
-                fprintf(tempAtLog, "    slot[%zu]%s = %s (0x%llx)\n",
-                        s, slotName, slotClass.c_str(), (unsigned long long)sv.rawBits());
-            }
-            fflush(tempAtLog);
-        }
-    }
 
     popN(2);
     push(value);

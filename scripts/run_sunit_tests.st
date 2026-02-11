@@ -976,8 +976,9 @@ runTestClass: testClass run: runNum on: s detail: d
         testAllReferencesTo testAllReferences testPrintingRecursive
         testOneGBAllocation testFastPointersTo
         testBenchFor testBenchForException
-        "testCannotReturn: ENABLED (cannotReturn: send + timer fix)"
-        testOneGWordAllocation
+        "testCannotReturn: ContextTest PASS, BlockClosureTest/BlockClosuresTestCase FAIL
+         (forked process variant — assertion on result/home doesn't match)"
+        testCannotReturn testOneGWordAllocation
         "SemaphoreTest: Delay-dependent ENABLED (timer fix), keep priority 89 skip"
         testSchedulesFIFO
         "ProcessSpecificTest: Delay-dependent ENABLED (timer fix)"
@@ -1035,10 +1036,12 @@ runTestClass: testClass run: runNum on: s detail: d
         "GlobalVariableTest: Transcript"
         testTranscriptPrintingWithOpenedTranscriptExists
         "MethodMapTest: testCopiedVarFromDeadContext ENABLED (forwarding fix may resolve MNU)"
-        "OCClosureCompilerTest: testDebuggerTempAccess ENABLED (SmallFloat decode fix)"
+        "OCClosureCompilerTest: testDebuggerTempAccess — runtime -3.0 reads as 3, not image loading"
+        testDebuggerTempAccess
         "OCDoitTest: testDoItContextReadIvar ENABLED (prim 188 mirror fix)"
-        "OCParserTest: missing features"
-        testMatchInContext testParseExpressionDontFreeze
+        "OCParserTest: testMatchInContext ENABLED (pure AST matching)"
+        "testParseExpressionDontFreeze: parser may hang on malformed '#' input"
+        testParseExpressionDontFreeze
         "OCProgramNodeTest: assertion"
         testBestNodeForReturnAStatementWhenIntervalInStatementWithoutLeftPart
         "OCClassBuilderTest: undeclared variable"
@@ -1061,8 +1064,7 @@ runTestClass: testClass run: runNum on: s detail: d
         "CodeSimulationTest: SistaV1 simulation support missing"
         testTranscriptPrinting
         "SlotIntegrationTest: ENABLED (7/17), PropertySlotTest: ENABLED (1/8)"
-        "SystemBuildInfoTest: VM binary/directory paths"
-        testVmBinary testVmDirectory
+        "SystemBuildInfoTest: testVmBinary/testVmDirectory ENABLED (vmPath_ fix)"
         "TestCaseTest: watchdog/long test (priority 81)"
         testIgnoreWatchDogProcessAsForkedOne testRunningTooLongTest
         "SystemResolverTest: File class>>signalError"
