@@ -10071,8 +10071,15 @@ PrimitiveResult Interpreter::primitiveContextAtPut(int argCount) {
         // Active frame: update C++ stack directly
         *(framePointer_ + 1 + zeroIndex) = value;
     } else {
+        // Check saved frames. After thisContext materializes (frameDepth_ goes to 0),
+        // the context is stored in activeContext_ but currentFrameMaterializedCtx_ is
+        // cleared to nil. When pushFrame saves it, materializedContext is nil.
+        // So we check BOTH materializedContext and savedActiveContext.
         for (size_t i = 0; i < frameDepth_; ++i) {
-            if (savedFrames_[i].materializedContext == context) {
+            if ((savedFrames_[i].materializedContext.isObject() &&
+                 savedFrames_[i].materializedContext == context) ||
+                (savedFrames_[i].savedActiveContext.isObject() &&
+                 savedFrames_[i].savedActiveContext == context)) {
                 *(savedFrames_[i].savedFP + 1 + zeroIndex) = value;
                 break;
             }
