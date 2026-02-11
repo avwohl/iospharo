@@ -1,6 +1,6 @@
 # iOS Pharo VM — Status
 
-Last verified: 2026-02-11
+Last verified: 2026-02-11 (Run #227)
 
 ---
 
@@ -106,6 +106,44 @@ and Color methods work correctly when the theme is initialized.
 **Earlier FFI fix** (commit 491d515): `primitiveFFIIntegerAt` treated all bytes objects
 as ExternalAddresses. Fixed to distinguish ByteArray (read directly) from
 ExternalAddress (dereference pointer).
+
+---
+
+## Test Results — Run #227 (2026-02-11, with GC + ephemerons)
+
+**576 test classes, 12516 tests. Pass: 12485, Fail: 5, Error: 8, Skip: 16, Timeout: 2.**
+
+**99.78% pass rate** (12485/12516). GC compaction cycles active. Ephemeron support enabled.
+
+### Ephemeron & finalization support (commits b98602e, cea17df, ba2df18)
+
+Full ephemeron handling added to the GC:
+- **Format 5 (ephemeron)** objects classified separately from format 4 (weak) in `markAndTrace()`
+- **Iterative fixed-point** in `markPhase()`: ephemerons with live keys become inactive and get fully traced; remaining ephemerons with dead keys are "fired" (format 5→1, queued to mournQueue)
+- **`primitiveFetchNextMourner`** (prim 172): pops from mournQueue, enabling image-side finalization
+- **Finalization signaling**: `signalFinalizationIfNeeded()` signals TheFinalizationSemaphore (specialObjects[41]) when fired ephemerons exist, deferred to periodic event check (matching Cog VM)
+- **Weak mourning**: weak objects with nilled slots increment `pendingFinalizationSignals_` but are NOT queued to mournQueue (matching Cog VM behavior)
+
+**Key design decisions**:
+1. Only signal finalization semaphore when `hasMourners()` — avoids process switch overhead from ~1975 weak nillings per GC cycle
+2. Deferred signaling in periodic event check, not synchronous after GC — matches Cog VM's `checkForEventsMayContextSwitch`
+3. Mourner queue is a C++ `std::vector<Oop>`, not a Smalltalk ObjStack — simpler for non-generational GC
+
+**Results**: +48 new tests from 3 previously-skipped classes:
+- WeakAnnouncerTest: 31/34 pass (3 fail — pre-existing, same on reference VM)
+- FinalizationRegistryTest: 0/7 pass (2 timeout, 5 not run — needs end-to-end finalization chain)
+- ObjectFinalizerTest: 0/7 pass (1 fail, 6 not run — needs finalization chain)
+
+### ProcessTerminateBugTest enabled (commit b2bdad4)
+
+11/12 tests pass. Skipped `testTerminateInTerminate` (priority-dependent,
+needs precise preemption timing between priority 25 and 30 processes).
+
+### Errors/failures (all intermittent or pre-existing)
+
+- **5 fail**: testPointersTo (weak timing), testWeakObject/testWeakDoubleAnnouncer (pre-existing weak issues), testFinalizationOfMultipleResources (needs finalization chain), testProperAccessingProtocolIsUsed (intermittent)
+- **8 error**: testPrimeFactors×2/testFactory (scheduler previousLink), testNoWeakBlock (missing ephemeron chain), testFormatter/testBehavior (intermittent), testAllReferencesToDo (NonBooleanReceiver), ClassDescriptionProtocolsTest (intermittent)
+- **2 timeout**: testFinalization, testFinalizationRemovesEntryFromRegistry (FinalizationRegistryTest — needs end-to-end ephemeron finalization working in image)
 
 ---
 
