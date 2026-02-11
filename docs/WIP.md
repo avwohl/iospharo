@@ -1,6 +1,6 @@
 # iOS Pharo VM — Status
 
-Last verified: 2026-02-10
+Last verified: 2026-02-11
 
 ---
 
@@ -262,10 +262,35 @@ C++ stack before the mark phase. +25 tests from un-skipping testAsArray.
 - Key fix (commit 502549e): PlatformBridge.cpp was missing setInterpreter() call,
   causing GC to skip all interpreter root updates in Mac Catalyst app
 
+### Ephemeron & Finalization Support (Run #226, commits b98602e..ba2df18)
+
+Implemented Spur-compatible ephemeron handling and finalization signaling:
+- **Ephemeron marking**: Format 5 objects classified as ephemerons in `markAndTrace()`;
+  key checked for liveness, deferred to `ephemeronList_` if key is dead
+- **Fixed-point iteration**: `markInactiveEphemerons()` loop in `markPhase()`;
+  ephemerons whose keys become reachable are promoted to strong objects
+- **Ephemeron firing**: `fireAllEphemerons()` changes format 5→1, queues to `mournQueue_`
+- **Finalization signaling**: `signalFinalizationIfNeeded()` in periodic event check;
+  signals `TheFinalizationSemaphore` (specialObjects[41]) when mourners exist
+- **Primitive 172**: `primitiveFetchNextMourner` dequeues from `mournQueue_`, fails when empty
+- **Weak mourning**: `processWeaklings()` increments `pendingFinalizationSignals_`
+  when weak slots are nilled (not queued to mournQueue, per Cog VM)
+
+Test impact: +31 passes from WeakAnnouncerTest (previously skipped). No regressions.
+FinalizationRegistryTest (2 timeout) and ObjectFinalizerTest (1 fail) still fail — same
+as baseline; the image's finalization process needs full end-to-end ephemeron chain.
+
+### Test Status (Run #226): 12487/12516 pass (99.77%)
+- 12487 pass, 3 fail, 6 error, 16 skip, 4 timeout
+- 576 test classes tested, ~51 class-level skipped
+- 4 timeouts: testFinalization, testFinalizationRemovesEntryFromRegistry (FinalizationRegistryTest),
+  testFormatter, testBehavior (intermittent)
+- Errors/fails are all intermittent (TTLCacheTest, NonBooleanReceiver)
+
 ### Skipped test classes (~63)
 Categories:
 - **Delay-dependent**: ProcessTerminateBugTest, DelayTest, ProcessTest, StopwatchTest, TTLCacheTest
-- **GC finalization**: FinalizationRegistryTest, WeakAnnouncerTest
+- **GC finalization (enabled, partial)**: FinalizationRegistryTest (2 timeout), WeakAnnouncerTest (31/34 pass), ObjectFinalizerTest (1 fail)
 - **Class restructuring (hangs, no Delay timeout)**: SlotIntegrationTest, PropertySlotTest, SlotAnnouncementsTest, SlotLayoutEqualityTest, SlotTraitsTest, SlotLayoutExtensionTest, SlotMigrationTest, ExampleSlotWithStateTest, SlotMethodRecompilationTest
 - **Trait class modifications (hangs)**: TraitTest, TraitCompositionTest, ClassTraitTest, MOPTraitTest, TraitPureBehaviorTest, TraitPrecedenceCompositionTest, TraitWithAliasTest, TraitWithConflictsTest, TraitChangesTest, TraitMethodDescriptionTest, TraitOverloadingOfMethodsInTraitedClassTest, TraitPackagingTest, TraitInTraitClassTest, TraitWithMethodsInProtocolsTest, TraitSlotScopeTest, TraitWithSlotsTest, TraitWithComplexSlotsTest
 - **Abstract classes**: CollectionRootTest, CDBehaviorParserTest, CDClassDefinitionParserTest
