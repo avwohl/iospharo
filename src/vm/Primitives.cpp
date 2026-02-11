@@ -8207,6 +8207,16 @@ PrimitiveResult Interpreter::primitiveObjectPointsTo(int argCount) {
     Oop target = stackValue(0);
     Oop rcvr = stackValue(1);
 
+    // Follow forwarding pointers (created by become:)
+    if (target.isObject()) {
+        target = memory_.followForwarded(target);
+        stackValuePut(0, target);
+    }
+    if (rcvr.isObject()) {
+        rcvr = memory_.followForwarded(rcvr);
+        stackValuePut(1, rcvr);
+    }
+
     if (!rcvr.isObject()) {
         popN(2);
         push(memory_.falseObject());
@@ -8772,33 +8782,13 @@ PrimitiveResult Interpreter::primitiveShortAtPut(int argCount) {
 
 // Primitive 138: Return the first object in memory
 PrimitiveResult Interpreter::primitiveSomeObject(int argCount) {
-    // Find the first visible object in old space
-    uint8_t* ptr = memory_.oldSpaceStart();
-    uint8_t* end = memory_.oldSpaceFree();  // Scan only the used portion
-
-    while (ptr < end) {
-        ObjectHeader* header = reinterpret_cast<ObjectHeader*>(ptr);
-
-        // Skip hidden objects (classIndex 0 = free chunks, class table pages)
-        // Also skip objects whose class isn't in the class table
-        uint32_t cls = header->classIndex();
-        if (cls != 0) {
-            Oop classOop = memory_.classAtIndex(cls);
-            if (classOop.isObject() && !classOop.isNil()) {
-                Oop obj = memory_.oopFromPointer(header);
-                pop();  // Pop receiver
-                push(obj);
-                return PrimitiveResult::Success;
-            }
-        }
-
-        // Move to next object
-        size_t size = header->totalSize();
-        if (size == 0) break;  // Safety check
-        ptr += size;
+    Oop first = memory_.firstObject();
+    if (first.isSmallInteger()) {
+        return PrimitiveResult::Failure;  // No objects found
     }
-
-    return PrimitiveResult::Failure;  // No objects found
+    pop();  // Pop receiver
+    push(first);
+    return PrimitiveResult::Success;
 }
 
 // Primitive 139: Return the next object in memory after this one
@@ -8809,35 +8799,9 @@ PrimitiveResult Interpreter::primitiveNextObject(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    ObjectHeader* current = rcvr.asObjectPtr();
-    size_t currentSize = current->totalSize();
-
-    uint8_t* ptr = reinterpret_cast<uint8_t*>(current) + currentSize;
-    uint8_t* end = memory_.oldSpaceFree();  // Scan only the used portion
-
-    while (ptr < end) {
-        ObjectHeader* header = reinterpret_cast<ObjectHeader*>(ptr);
-
-        // Skip hidden objects (classIndex 0) and objects with invalid class
-        uint32_t cls = header->classIndex();
-        if (cls != 0) {
-            Oop classOop = memory_.classAtIndex(cls);
-            if (classOop.isObject() && !classOop.isNil()) {
-                Oop obj = memory_.oopFromPointer(header);
-                pop();
-                push(obj);
-                return PrimitiveResult::Success;
-            }
-        }
-
-        size_t size = header->totalSize();
-        if (size == 0) break;
-        ptr += size;
-    }
-
-    // Per official VM: return SmallInteger 0 when no more objects
+    Oop next = memory_.objectAfter(rcvr);
     pop();
-    push(Oop::fromSmallInteger(0));
+    push(next);  // Returns SmallInteger 0 when no more objects
     return PrimitiveResult::Success;
 }
 

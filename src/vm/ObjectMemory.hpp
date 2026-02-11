@@ -497,6 +497,12 @@ public:
     /// Iterate over all objects in the heap
     void allObjectsDo(std::function<void(Oop)> callback);
 
+    /// Return the first accessible object in heap (perm → old → eden)
+    Oop firstObject();
+
+    /// Return the next accessible object after the given one, or SmallInteger 0 if none
+    Oop objectAfter(Oop obj);
+
     /// Iterate over all objects in old space (for GC)
     void forEachObjectInOldSpace(std::function<void(ObjectHeader*)> callback);
 
