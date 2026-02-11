@@ -386,27 +386,6 @@ PrimitiveResult Interpreter::primitiveFetchNextMourner(int argCount) {
         return PrimitiveResult::Success;
     }
     Oop mourner = memory_.popMourner();
-    // Log mourner class for diagnostics
-    if (mourner.isObject() && mourner.rawBits() > 0x10000) {
-        ObjectHeader* mHdr = mourner.asObjectPtr();
-        uint32_t classIdx = mHdr->classIndex();
-        Oop cls = memory_.classOf(mourner);
-        std::string className = "?";
-        if (cls.isObject() && cls.rawBits() > 0x10000) {
-            ObjectHeader* clsHdr = cls.asObjectPtr();
-            if (clsHdr->slotCount() > 6) {
-                Oop name = memory_.fetchPointer(6, cls);
-                if (name.isObject() && name.rawBits() > 0x10000) {
-                    ObjectHeader* nH = name.asObjectPtr();
-                    if (nH->isBytesObject() && nH->byteSize() < 80)
-                        className = std::string((char*)nH->bytes(), nH->byteSize());
-                }
-            }
-        }
-        fprintf(stderr, "[PRIM-172] mourner=0x%llx class=%s fmt=%d remaining=%zu\n",
-                (unsigned long long)mourner.rawBits(), className.c_str(),
-                (int)mHdr->format(), memory_.mournerCount());
-    }
     primitiveSuccess(mourner);
     return PrimitiveResult::Success;
 }

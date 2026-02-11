@@ -2280,32 +2280,23 @@ void Interpreter::synchronousSignal(Oop semaphore) {
 
 void Interpreter::signalFinalizationIfNeeded() {
     if (memory_.pendingFinalizationSignals() > 0) {
-        int signals = memory_.pendingFinalizationSignals();
         memory_.clearPendingFinalizationSignals();
         if (memory_.hasMourners()) {
             Oop sema = memory_.specialObject(SpecialObjectIndex::TheFinalizationSemaphore);
             if (sema.isObject() && sema.rawBits() != memory_.nil().rawBits()) {
                 Oop activeProcess = getActiveProcess();
-                Oop activePrioOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
-                int activePrio = activePrioOop.isSmallInteger() ? (int)activePrioOop.asSmallInteger() : -1;
                 Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, sema);
 
                 if (firstLink.isObject() && firstLink.rawBits() != memory_.nil().rawBits()) {
                     // Case 1: Finalization process is waiting on the semaphore.
                     // Remove it and force-yield to it directly.
-                    fprintf(stderr, "[FIN-SIGNAL] Case 1: signals=%d mourners=%d activePrio=%d - removing waiter from semaphore\n",
-                            signals, (int)memory_.mournerCount(), activePrio);
                     Oop finProcess = removeFirstLinkOfList(sema);
                     putToSleep(activeProcess);
                     transferTo(finProcess);
                 } else {
                     // Case 2: Finalization process is not on the semaphore.
-                    // It may be on the ready list (woken by a previous signal but
-                    // unable to preempt our higher-priority process).
                     // Signal the semaphore (for excess count), then search the
                     // ready list for a finalization-priority process and yield to it.
-                    fprintf(stderr, "[FIN-SIGNAL] Case 2: signals=%d mourners=%d activePrio=%d - signaling + forceYield\n",
-                            signals, (int)memory_.mournerCount(), activePrio);
                     synchronousSignal(sema);
                     forceYieldForFinalization(activeProcess);
                 }
