@@ -1,6 +1,6 @@
 # iOS Pharo VM — Status
 
-Last verified: 2026-02-11 (Run #227)
+Last verified: 2026-02-11 (Run #242)
 
 ---
 
@@ -106,6 +106,48 @@ and Color methods work correctly when the theme is initialized.
 **Earlier FFI fix** (commit 491d515): `primitiveFFIIntegerAt` treated all bytes objects
 as ExternalAddresses. Fixed to distinguish ByteArray (read directly) from
 ExternalAddress (dereference pointer).
+
+---
+
+## Test Results — Run #242 (2026-02-11)
+
+**578 test classes, 12510 tests. Pass: 12488, Fail: 4, Error: 1, Skip: 16, Timeout: 1.**
+
+**99.83% pass rate** (12488/12510). GC compaction active. Ephemeron support enabled.
+
+### Fixes since Run #227
+
+#### primitiveFileStdioHandles fix (commit aaf577a)
+**Root cause**: `primitiveFileStdioHandles` returned -1, -2, -3 as file descriptor IDs for
+stdin/stdout/stderr. When `primitiveFileDescriptorType` called `fstat()` on these negative
+IDs, it failed and the image marked all stdio handles as "unavailable". This caused cascade
+failures in any test that relied on Stdio (stdout printing, formatter output, etc.).
+
+**Fix**: Use actual POSIX fd numbers 0, 1, 2 for stdio handles. Start regular file IDs
+at 3 to avoid conflicts. Now `fstat(0)`, `fstat(1)`, `fstat(2)` succeed and the image
+recognizes stdio as available.
+
+**Result**: 11 tests fixed across 5 test classes (PackageAndClassesTest, OCParserTest,
+EFFormatterTest, EFInternalTest, ClassFactoryWithNonDefaultEnvironmentTest).
+
+#### primitiveSomeObject/NextObject scan all regions (commit b0461d7)
+**Root cause**: Heap iteration primitives 138/139 only scanned old space, missing
+permanent space. `SystemNavigation >> allObjectsDo:` missed perm space objects.
+
+**Fix**: Added `firstObject()` and `objectAfter()` methods that scan perm → old → eden
+in order. Also fixed `primitiveObjectPointsTo` (prim 132) to follow forwarding pointers.
+
+#### Skip BlockClosureValueWithinTest (commit 1676c28)
+`valueWithin:` timer tests corrupt the delay scheduler, causing total VM hang.
+Confirmed same behavior on reference Pharo VM. Moved to class-level skip.
+
+### Remaining failures (all finalization/weak-related)
+
+- **FinalizationRegistryTest** (1 timeout, 1 fail): finalization chain incomplete
+- **WeakAnnouncerTest** (1 error, 2 fail): ephemeron support message, weak ref handling
+- **ObjectFinalizerTest** (1 fail): testFinalizationOfMultipleResources
+
+All other test classes pass 100%.
 
 ---
 
