@@ -632,6 +632,23 @@ bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
                 continue;
             }
 
+            // Validate class entry points within the heap.
+            // After relocation, all valid class pointers must be within
+            // [newBase, newBase+loadedSize). Values outside this range
+            // are raw data that happens to have tag bits 000 — not class pointers.
+            uint64_t classAddr = classOop.rawBits();
+            if (classAddr < newBase_ || classAddr >= newBase_ + loadedSize_) {
+                static int skippedCount = 0;
+                if (skippedCount++ < 5) {
+                    fprintf(stderr, "[CLASS-TABLE] Skipping bad class entry at page %zu slot %zu: 0x%llx (outside heap)\n",
+                            pageNum, i, (unsigned long long)classAddr);
+                }
+                // Nil out the slot in the page object so GC won't try to mark
+                // this bad pointer when scanning the hiddenRootsObj page's slots.
+                pageHdr->slotAtPut(i, nilObj);
+                continue;
+            }
+
             uint32_t classIndex = static_cast<uint32_t>(pageNum * PageSize + i);
             memory.setClassAtIndex(classIndex, classOop);
             totalClasses++;

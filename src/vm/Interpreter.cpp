@@ -22,6 +22,7 @@
 #if __APPLE__
 #include <CoreGraphics/CoreGraphics.h>
 #include <CoreText/CoreText.h>
+#include <CoreFoundation/CFRunLoop.h>
 // Undefine Objective-C's nil macro to avoid conflict with Oop::nil()
 #undef nil
 #endif
@@ -2138,6 +2139,9 @@ void Interpreter::interpret() {
     }
 
     int loopCount = 0;
+#if __APPLE__
+    auto lastRunLoopPump = std::chrono::steady_clock::now();
+#endif
     while (running_) {
         // Execute a batch of bytecodes before checking overhead
         // This dramatically reduces the per-bytecode cost of timer/event checks
@@ -2162,6 +2166,20 @@ void Interpreter::interpret() {
             processInputEvents();
         }
 
+#if __APPLE__
+        // Pump the native run loop periodically (~60fps) so the Metal
+        // display link can fire and UIKit can deliver events. The
+        // interpreter runs on the main thread and blocks the run loop;
+        // without this, the display never updates.
+        {
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRunLoopPump).count();
+            if (elapsed >= 16) {
+                lastRunLoopPump = now;
+                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.001, true);
+            }
+        }
+#endif
 
         // Progress reporting every 10M steps
         if (loopCount % 10000000 == 0) {
