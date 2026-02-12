@@ -393,25 +393,38 @@ int stub_SDL_RenderClear(void* renderer) {
 }
 
 void stub_SDL_RenderPresent(void* renderer) {
+    static int totalCalls = 0;
+    totalCalls++;
+
     // Only copy main renderer's texture to the Metal display surface
     if (renderer != sMainRenderer) {
+        if (totalCalls <= 5)
+            fprintf(stderr, "[SDL-RP] #%d SKIP: renderer=%p != main=%p\n",
+                    totalCalls, renderer, sMainRenderer);
         return;
     }
 
     // Mark SDL2 rendering as active on first main renderer present.
     static bool renderingActive = false;
-    static int presentCount = 0;
     if (!renderingActive) {
         renderingActive = true;
         pharo::gEventQueue.setSDL2EventPollingActive(true);
-        fprintf(stderr, "[SDL-STUB] SDL_RenderPresent: first call, sdlActive=true\n");
+        fprintf(stderr, "[SDL-RP] first call, sdlActive=true\n");
     }
 
     auto rit = sRenderers.find(renderer);
-    if (rit == sRenderers.end() || !rit->second.currentTexture) return;
+    if (rit == sRenderers.end() || !rit->second.currentTexture) {
+        if (totalCalls <= 5)
+            fprintf(stderr, "[SDL-RP] #%d SKIP: renderer not found or no texture\n", totalCalls);
+        return;
+    }
 
     auto tit = sTextures.find(rit->second.currentTexture);
-    if (tit == sTextures.end() || !tit->second.pixels) return;
+    if (tit == sTextures.end() || !tit->second.pixels) {
+        if (totalCalls <= 5)
+            fprintf(stderr, "[SDL-RP] #%d SKIP: texture not found or no pixels\n", totalCalls);
+        return;
+    }
 
     if (pharo::gDisplaySurface) {
         uint32_t* src = tit->second.pixels;
@@ -424,21 +437,10 @@ void stub_SDL_RenderPresent(void* renderer) {
         int copyW = std::min(srcW, dstW);
         int copyH = std::min(srcH, dstH);
 
-        if (presentCount < 5) {
-            fprintf(stderr, "[SDL-STUB] RenderPresent #%d: texture=%dx%d surface=%dx%d copy=%dx%d\n",
-                    presentCount, srcW, srcH, dstW, dstH, copyW, copyH);
-            // Sample pixels to verify content
-            if (srcW > 100 && srcH > 100) {
-                fprintf(stderr, "[SDL-STUB]   src[0,0]=%08x src[50,50]=%08x src[100,50]=%08x src[500,300]=%08x\n",
-                        src[0], src[50*srcW+50], src[50*srcW+100],
-                        (srcH > 300 && srcW > 500) ? src[300*srcW+500] : 0);
-            }
-            presentCount++;
-        }
-
         for (int y = 0; y < copyH; y++) {
             memcpy(dst + y * dstW, src + y * srcW, copyW * sizeof(uint32_t));
         }
+
         pharo::gDisplaySurface->update();
     }
 }
@@ -533,6 +535,57 @@ int stub_SDL_RenderCopy(void* renderer, void* texture, void* srcrect, void* dstr
 }
 
 int stub_SDL_UpdateTexture(void* texture, void* rect, void* pixels, int pitch) {
+    auto it = sTextures.find(texture);
+    if (it == sTextures.end() || !it->second.pixels || !pixels) {
+        return -1;
+    }
+
+    static int updateCount = 0;
+    updateCount++;
+
+    int texW = it->second.width;
+    int texH = it->second.height;
+    int texPitch = it->second.pitch;  // bytes per row
+
+    if (!rect) {
+        // Full texture update
+        int srcBytesPerRow = pitch;
+        int dstBytesPerRow = texPitch;
+        int copyBytes = std::min(srcBytesPerRow, dstBytesPerRow);
+        uint8_t* src = static_cast<uint8_t*>(pixels);
+        uint8_t* dst = reinterpret_cast<uint8_t*>(it->second.pixels);
+
+        for (int y = 0; y < texH; y++) {
+            memcpy(dst + y * dstBytesPerRow, src + y * srcBytesPerRow, copyBytes);
+        }
+
+        if (updateCount <= 5) {
+            uint32_t* srcPx = static_cast<uint32_t*>(pixels);
+            uint32_t center = (texH > 384 && texW > 512) ? srcPx[384 * (pitch/4) + 512] : 0;
+            fprintf(stderr, "[SDL-UT] #%d full update: %dx%d pitch=%d center=%08x\n",
+                    updateCount, texW, texH, pitch, center);
+        }
+    } else {
+        // Partial rect update (SDL_Rect = {x, y, w, h})
+        int* r = static_cast<int*>(rect);
+        int rx = r[0], ry = r[1], rw = r[2], rh = r[3];
+        int srcBytesPerRow = pitch;
+        int dstBytesPerRow = texPitch;
+        int copyBytes = std::min(rw * 4, std::min(srcBytesPerRow, dstBytesPerRow));
+        uint8_t* src = static_cast<uint8_t*>(pixels);
+        uint8_t* dst = reinterpret_cast<uint8_t*>(it->second.pixels);
+
+        for (int y = 0; y < rh && (ry + y) < texH; y++) {
+            memcpy(dst + (ry + y) * dstBytesPerRow + rx * 4,
+                   src + y * srcBytesPerRow,
+                   copyBytes);
+        }
+
+        if (updateCount <= 5) {
+            fprintf(stderr, "[SDL-UT] #%d rect update: (%d,%d,%d,%d) pitch=%d\n",
+                    updateCount, rx, ry, rw, rh, pitch);
+        }
+    }
     return 0;
 }
 

@@ -12455,8 +12455,8 @@ PrimitiveResult Interpreter::primitiveShowDisplayRect(int argCount) {
 
     if (!pharo::gDisplaySurface) return PrimitiveResult::Success;
 
-    // Auto-discover Display form
-    if (displayForm_.isNil()) {
+    // Always refresh Display form (Pharo may change it, GC may move it)
+    {
         Oop display = memory_.findGlobal("Display");
         if (!display.isNil() && display.isObject()) {
             displayForm_ = display;
@@ -12506,32 +12506,36 @@ PrimitiveResult Interpreter::primitiveShowDisplayRect(int argCount) {
 void Interpreter::showDisplayBits(Oop destForm, int left, int top, int right, int bottom) {
     if (!pharo::gDisplaySurface) return;
 
-    // Auto-discover Display form if needed
-    if (displayForm_.isNil()) {
-        Oop display = memory_.findGlobal("Display");
-        if (!display.isNil() && display.isObject()) {
-            displayForm_ = display;
-        }
-    }
-    if (displayForm_.isNil()) return;
+    // When OSSDL2Driver is active, it owns display updates via SDL_RenderPresent.
+    // Do NOT also copy from Bitmap-backed forms — they contain stale content that
+    // overwrites SDL_RenderPresent's correct output.
+    if (pharo::gEventQueue.isSDL2EventPollingActive()) return;
 
-    // Only update screen for blits targeting the Display form
-    if (destForm != displayForm_) {
-        return;
-    }
+    // Match by form dimensions instead of identity (OSSDL2Driver creates a new form
+    // that doesn't match the Display global, and GC can move objects).
+    if (!destForm.isObject()) return;
+    Oop bits = memory_.fetchPointer(0, destForm);  // FormBits
 
-    // Get Form fields: 0=bits, 1=width, 2=height, 3=depth
-    Oop bits = memory_.fetchPointer(0, displayForm_);
-    if (bits.isNil() || !bits.isObject()) return;
+    // bits can be: Bitmap object (regular Form), SmallInteger (ManualSurface handle),
+    // or ExternalAddress (ExternalForm pointer). We can only copy from Bitmap objects.
+    if (bits.isSmallInteger()) return;  // ManualSurface — SDL_RenderPresent handles
+    if (!bits.isObject() || bits.isNil()) return;
 
+    // Check if bits is a Bitmap (format 10 = 32-bit indexable words) vs ExternalAddress
     ObjectHeader* bitsHdr = bits.asObjectPtr();
+    auto fmt = bitsHdr->format();
+    if (fmt != ObjectFormat::Indexable32) return;
+
+    Oop widthOop = memory_.fetchPointer(1, destForm);
+    Oop heightOop = memory_.fetchPointer(2, destForm);
+    if (!widthOop.isSmallInteger() || !heightOop.isSmallInteger()) return;
+    int srcWidth = static_cast<int>(widthOop.asSmallInteger());
+    int srcHeight = static_cast<int>(heightOop.asSmallInteger());
+    int surfWidth = pharo::gDisplaySurface->width();
+    int surfHeight = pharo::gDisplaySurface->height();
+    if (srcWidth != surfWidth || srcHeight != surfHeight) return;
+
     uint32_t* srcPixels = reinterpret_cast<uint32_t*>(bitsHdr->bytes());
-
-    Oop widthOop = memory_.fetchPointer(1, displayForm_);
-    Oop heightOop = memory_.fetchPointer(2, displayForm_);
-    int srcWidth = widthOop.isSmallInteger() ? widthOop.asSmallInteger() : screenWidth_;
-    int srcHeight = heightOop.isSmallInteger() ? heightOop.asSmallInteger() : screenHeight_;
-
     uint32_t* dstPixels = pharo::gDisplaySurface->pixels();
     int dstWidth = pharo::gDisplaySurface->width();
     int dstHeight = pharo::gDisplaySurface->height();
@@ -16280,7 +16284,6 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     uint8_t* srcBytes = srcBitsHdr->bytes();
     size_t srcBitsSize = srcBitsHdr->byteSize();
 
-
     // Clip to source form bounds
     if (sourceX < 0) { intptr_t d = -sourceX; width -= d; destX += d; sourceX = 0; }
     if (sourceY < 0) { intptr_t d = -sourceY; height -= d; destY += d; sourceY = 0; }
@@ -16300,6 +16303,11 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
 
     // Bounds check for dest
     if (destDepth != 32) {
+        static int nonD32Count = 0;
+        if (nonD32Count++ < 5) {
+            fprintf(stderr, "[BITBLT-FAIL] destDepth=%ld srcDepth=%ld rule=%ld src=%ldx%ld dst=%ldx%ld\n",
+                    destDepth, srcDepth, combinationRule, srcWidth, srcHeight, destWidth, destHeight);
+        }
         return PrimitiveResult::Failure;
     }
     size_t requiredDestBytes = static_cast<size_t>((destY + height - 1) * destWidth + destX + width) * 4;
@@ -16374,19 +16382,35 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     }
                     break;
                 }
-                case 20: { // rgbMul: dest = (source * dest) / 255 per component
+                case 20: { // rgbAdd: dest = (source AND halftone) + dest, clamped per component
                     for (intptr_t x = 0; x < width; x++) {
                         uint32_t s = srcRow[x] & ht;
                         uint32_t d = dstRow[x];
-                        uint32_t rR = (((s >> 16) & 0xFF) * ((d >> 16) & 0xFF) + 127) / 255;
-                        uint32_t rG = (((s >> 8) & 0xFF) * ((d >> 8) & 0xFF) + 127) / 255;
-                        uint32_t rB = ((s & 0xFF) * (d & 0xFF) + 127) / 255;
-                        uint32_t rA = (((s >> 24) & 0xFF) * ((d >> 24) & 0xFF) + 127) / 255;
+                        // partitionedAdd: add each byte lane with saturation at 255
+                        uint32_t rA = std::min(((s >> 24) & 0xFF) + ((d >> 24) & 0xFF), 255u);
+                        uint32_t rR = std::min(((s >> 16) & 0xFF) + ((d >> 16) & 0xFF), 255u);
+                        uint32_t rG = std::min(((s >> 8) & 0xFF) + ((d >> 8) & 0xFF), 255u);
+                        uint32_t rB = std::min((s & 0xFF) + (d & 0xFF), 255u);
                         dstRow[x] = (rA << 24) | (rR << 16) | (rG << 8) | rB;
                     }
                     break;
                 }
-                case 21: { // rgbMax: dest = max(source, dest) per component
+                case 21: { // rgbSub: dest = (source AND halftone) - dest, clamped per component
+                    for (intptr_t x = 0; x < width; x++) {
+                        uint32_t s = srcRow[x] & ht;
+                        uint32_t d = dstRow[x];
+                        int rA = (int)((s >> 24) & 0xFF) - (int)((d >> 24) & 0xFF);
+                        int rR = (int)((s >> 16) & 0xFF) - (int)((d >> 16) & 0xFF);
+                        int rG = (int)((s >> 8) & 0xFF) - (int)((d >> 8) & 0xFF);
+                        int rB = (int)(s & 0xFF) - (int)(d & 0xFF);
+                        dstRow[x] = ((uint32_t)std::max(rA, 0) << 24) |
+                                    ((uint32_t)std::max(rR, 0) << 16) |
+                                    ((uint32_t)std::max(rG, 0) << 8) |
+                                    (uint32_t)std::max(rB, 0);
+                    }
+                    break;
+                }
+                case 27: { // rgbMax: dest = max(source, dest) per component
                     for (intptr_t x = 0; x < width; x++) {
                         uint32_t s = srcRow[x] & ht;
                         uint32_t d = dstRow[x];
@@ -16398,7 +16422,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     }
                     break;
                 }
-                case 22: { // rgbMin: dest = min(source, dest) per component
+                case 28: { // rgbMin: dest = min(source, dest) per component
                     for (intptr_t x = 0; x < width; x++) {
                         uint32_t s = srcRow[x] & ht;
                         uint32_t d = dstRow[x];
@@ -16414,7 +16438,21 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     for (intptr_t x = 0; x < width; x++) dstRow[x] &= ~srcRow[x];
                     break;
                 }
-                case 37: { // rgbComponentAlpha: source channels are per-channel alpha for halftone color
+                case 37: { // rgbMul: dest = (source AND halftone) * dest / 255 per component
+                    for (intptr_t x = 0; x < width; x++) {
+                        uint32_t s = srcRow[x] & ht;
+                        uint32_t d = dstRow[x];
+                        uint32_t rA = (((s >> 24) & 0xFF) * ((d >> 24) & 0xFF) + 127) / 255;
+                        uint32_t rR = (((s >> 16) & 0xFF) * ((d >> 16) & 0xFF) + 127) / 255;
+                        uint32_t rG = (((s >> 8) & 0xFF) * ((d >> 8) & 0xFF) + 127) / 255;
+                        uint32_t rB = ((s & 0xFF) * (d & 0xFF) + 127) / 255;
+                        dstRow[x] = (rA << 24) | (rR << 16) | (rG << 8) | rB;
+                    }
+                    break;
+                }
+                case 41: { // rgbComponentAlpha: source channels are per-channel alpha for halftone color
+                    // On Retina/non-LCD displays, sub-pixel rendering creates visible color fringing.
+                    // Convert per-channel alpha to uniform grayscale alpha for correct appearance.
                     uint32_t cR = (ht >> 16) & 0xFF;
                     uint32_t cG = (ht >> 8) & 0xFF;
                     uint32_t cB = ht & 0xFF;
@@ -16425,14 +16463,25 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                         uint32_t aG = (s >> 8) & 0xFF;
                         uint32_t aB = s & 0xFF;
                         if ((aR | aG | aB) == 0) continue;
-                        uint32_t rR = (cR * aR + ((d >> 16) & 0xFF) * (255 - aR)) / 255;
-                        uint32_t rG = (cG * aG + ((d >> 8) & 0xFF) * (255 - aG)) / 255;
-                        uint32_t rB = (cB * aB + (d & 0xFF) * (255 - aB)) / 255;
+                        // Use uniform alpha (average of per-channel values)
+                        uint32_t a = (aR + aG + aB + 1) / 3;
+                        uint32_t da = 255 - a;
+                        uint32_t rR = (cR * a + ((d >> 16) & 0xFF) * da) / 255;
+                        uint32_t rG = (cG * a + ((d >> 8) & 0xFF) * da) / 255;
+                        uint32_t rB = (cB * a + (d & 0xFF) * da) / 255;
                         dstRow[x] = 0xFF000000 | (rR << 16) | (rG << 8) | rB;
                     }
                     break;
                 }
                 default: {
+                    static int def32Count = 0;
+                    if (def32Count++ < 20) {
+                        fprintf(stderr, "[BITBLT-32to32-FAIL] rule=%ld src=%ldx%ld dst=%ldx%ld "
+                                "dXY=(%ld,%ld) WH=(%ld,%ld) ht=%s\n",
+                                combinationRule, srcWidth, srcHeight, destWidth, destHeight,
+                                destX, destY, width, height,
+                                halftoneWords ? "present" : "nil");
+                    }
                     return PrimitiveResult::Failure;
                 }
             }
@@ -16642,6 +16691,16 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     }
 
     // Unsupported source depth / destination depth
+    {
+        static int unsupCount = 0;
+        if (unsupCount++ < 20) {
+            fprintf(stderr, "[BITBLT-UNSUP] srcDepth=%ld destDepth=%ld rule=%ld "
+                    "src=%ldx%ld dst=%ldx%ld dXY=(%ld,%ld) WH=(%ld,%ld)\n",
+                    srcDepth, destDepth, combinationRule,
+                    srcWidth, srcHeight, destWidth, destHeight,
+                    destX, destY, width, height);
+        }
+    }
     return PrimitiveResult::Failure;
 }
 
@@ -16741,6 +16800,13 @@ PrimitiveResult Interpreter::primitiveSetManualSurfacePointer(int argCount) {
     }
 
     s->bits = ptr;
+
+    static int setPointerCount = 0;
+    if (setPointerCount < 5) {
+        fprintf(stderr, "[SURFACE] setPointer: surfID=%d ptr=%p (w=%d h=%d pitch=%d depth=%d)\n",
+                surfaceID, ptr, s->width, s->height, s->rowPitch, s->depth);
+        setPointerCount++;
+    }
 
     // Pop args, leave receiver
     popN(argCount);

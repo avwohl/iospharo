@@ -55,7 +55,7 @@ public:
 
     uint32_t* frontPixels() {
         std::lock_guard<std::mutex> lock(mutex_);
-        return frontBuffer_.data();
+        return backBuffer_.data();  // Single-buffer: same as pixels()
     }
 
     size_t pitch() const override {
@@ -63,13 +63,13 @@ public:
         return width_ * 4;
     }
 
-    // Returns front buffer info - this buffer remains valid until next update()
+    // Returns buffer info - single-buffer, same as what VM writes to
     void getBufferInfo(int& w, int& h, uint32_t*& pixels, size_t& size) {
         std::lock_guard<std::mutex> lock(mutex_);
-        w = frontWidth_;
-        h = frontHeight_;
-        pixels = frontBuffer_.data();
-        size = frontBuffer_.size();
+        w = width_;
+        h = height_;
+        pixels = backBuffer_.data();
+        size = backBuffer_.size();
     }
 
     bool isResizing() const {
@@ -100,18 +100,15 @@ public:
         {
             std::lock_guard<std::mutex> lock(mutex_);
 
-            // Apply pending resize to front buffer during swap
+            // Apply pending resize
             if (pendingResize_) {
-                frontBuffer_.resize(pendingWidth_ * pendingHeight_);
-                frontWidth_ = pendingWidth_;
-                frontHeight_ = pendingHeight_;
                 pendingResize_ = false;
             }
 
-            std::swap(backBuffer_, frontBuffer_);
-            std::swap(width_, frontWidth_);
-            std::swap(height_, frontHeight_);
-
+            // No buffer swap: VM and Metal run on the same main thread
+            // (serialized by CFRunLoopRunInMode), so single-buffer is safe.
+            // The old swap design lost incremental showDisplayBits updates
+            // because each swap replaced the back buffer with stale content.
             newWidth = width_;
             newHeight = height_;
         }
