@@ -16301,6 +16301,24 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         cmSize = cmHdr->byteSize() / 4;
     }
 
+    // Detect compressed source form (ByteArray bits that are too small for claimed dimensions)
+    {
+        auto srcBitsFmt = srcBitsHdr->format();
+        bool isByteArray = (srcBitsFmt >= ObjectFormat::Indexable8 && srcBitsFmt <= ObjectFormat::Indexable8_7);
+        if (isByteArray && srcDepth == 32) {
+            size_t expectedBytes = static_cast<size_t>(srcWidth) * srcHeight * 4;
+            if (srcBitsSize < expectedBytes) {
+                static int compressedCount = 0;
+                if (compressedCount++ < 5) {
+                    fprintf(stderr, "[BITBLT] Compressed source form detected: %zux%ld d=%ld bits=%zu (need %zu). "
+                            "Returning Failure to trigger unhibernate.\n",
+                            (size_t)srcWidth, srcHeight, srcDepth, srcBitsSize, expectedBytes);
+                }
+                return PrimitiveResult::Failure;
+            }
+        }
+    }
+
     // Bounds check for dest
     if (destDepth != 32) {
         static int nonD32Count = 0;
@@ -16382,9 +16400,21 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     }
                     break;
                 }
-                case 20: { // rgbAdd: dest = (source AND halftone) + dest, clamped per component
+                case 20: { // rgbAdd: dest = colorMap(source AND halftone) + dest, clamped per component
                     for (intptr_t x = 0; x < width; x++) {
                         uint32_t s = srcRow[x] & ht;
+                        // Apply colorMap to remap source pixels (used in two-pass font rendering)
+                        // Standard BitBlt: rgbMapPixel extracts top 4 bits of R,G,B → 12-bit index
+                        // Masks from setupColorMasksFrom:8 to:4:
+                        //   Red:   (pixel & 0x00F00000) >> 12  → bits 11-8 of index
+                        //   Green: (pixel & 0x0000F000) >> 8   → bits 7-4 of index
+                        //   Blue:  (pixel & 0x000000F0) >> 4   → bits 3-0 of index
+                        if (cmTable && cmSize == 4096) {
+                            uint32_t idx = ((s >> 12) & 0xF00) |
+                                           ((s >> 8)  & 0x0F0) |
+                                           ((s >> 4)  & 0x00F);
+                            s = cmTable[idx];
+                        }
                         uint32_t d = dstRow[x];
                         // partitionedAdd: add each byte lane with saturation at 255
                         uint32_t rA = std::min(((s >> 24) & 0xFF) + ((d >> 24) & 0xFF), 255u);
@@ -16877,57 +16907,95 @@ PrimitiveResult Interpreter::primitiveCompressToByteArray(int argCount) {
     return PrimitiveResult::Success;
 }
 
-// Primitive 293: Decompress byte array to bitmap
-// byteArray bitmap primitiveDecompressFromByteArray -> bitmap
+// MiscPrimitivePlugin: primitiveDecompressFromByteArray
+// receiver decompress: bm fromByteArray: ba at: index
+// Pharo RLE format: sequence of {N D}* pairs
+//   N = count*4 + code, variable-length encoded (decodeIntFrom:)
+//   code 0: skip count words (no data)
+//   code 1: count words, all 4 bytes = next byte
+//   code 2: count words, all = next 4 bytes
+//   code 3: count literal words (4*count bytes follow)
 PrimitiveResult Interpreter::primitiveDecompressFromByteArray(int argCount) {
-    if (argCount != 2) return PrimitiveResult::Failure;
+    if (argCount != 3) return PrimitiveResult::Failure;
 
-    Oop bitmap = stackTop();
-    Oop byteArray = stackValue(1);
+    Oop indexOop = stackValue(0);    // index (1-based)
+    Oop ba = stackValue(1);          // byteArray (compressed source)
+    Oop bm = stackValue(2);          // bitmap (destination)
+    // stackValue(3) = receiver (same as bm)
 
-    if (!bitmap.isObject() || !byteArray.isObject()) {
+    if (!indexOop.isSmallInteger() || !ba.isObject() || !bm.isObject())
         return PrimitiveResult::Failure;
-    }
 
-    size_t srcSize = memory_.byteSizeOf(byteArray);
-    size_t destWords = memory_.byteSizeOf(bitmap) / 4;
+    size_t baSize = memory_.byteSizeOf(ba);
+    size_t bmWords = memory_.byteSizeOf(bm) / 4;
+    uint8_t* baBytes = ba.asObjectPtr()->bytes();
+    uint32_t* bmData = reinterpret_cast<uint32_t*>(bm.asObjectPtr()->bytes());
 
-    size_t srcIndex = 0;
-    size_t destIndex = 0;
+    size_t i = static_cast<size_t>(indexOop.asSmallInteger()) - 1;  // convert 1-based to 0-based
+    size_t k = 0;  // bitmap word write index
 
-    while (srcIndex < srcSize && destIndex < destWords) {
-        uint8_t header = memory_.fetchByte(srcIndex++, byteArray);
+    while (i < baSize) {
+        // Decode N using decodeIntFrom: encoding
+        uint32_t anInt = baBytes[i]; i++;
+        if (anInt > 223) {
+            if (anInt <= 254) {
+                if (i >= baSize) break;
+                anInt = (anInt - 224) * 256 + baBytes[i]; i++;
+            } else {
+                // anInt == 255: next 4 bytes
+                if (i + 4 > baSize) break;
+                anInt = (static_cast<uint32_t>(baBytes[i]) << 24) |
+                        (static_cast<uint32_t>(baBytes[i+1]) << 16) |
+                        (static_cast<uint32_t>(baBytes[i+2]) << 8) |
+                         static_cast<uint32_t>(baBytes[i+3]);
+                i += 4;
+            }
+        }
 
-        if (header & 0x80) {
-            // Run-length encoded
-            size_t runLength = header & 0x7F;
-            if (srcIndex + 4 > srcSize) break;
+        size_t n = anInt >> 2;
+        uint32_t code = anInt & 3;
 
-            uint32_t word = (static_cast<uint32_t>(memory_.fetchByte(srcIndex, byteArray)) << 24) |
-                           (static_cast<uint32_t>(memory_.fetchByte(srcIndex + 1, byteArray)) << 16) |
-                           (static_cast<uint32_t>(memory_.fetchByte(srcIndex + 2, byteArray)) << 8) |
-                            static_cast<uint32_t>(memory_.fetchByte(srcIndex + 3, byteArray));
-            srcIndex += 4;
+        if (k + n > bmWords) return PrimitiveResult::Failure;
 
-            for (size_t i = 0; i < runLength && destIndex < destWords; i++) {
-                memory_.storeWord32(destIndex++, bitmap, word);
+        if (code == 0) {
+            // Skip n words (leave destination unchanged)
+            k += n;
+        } else if (code == 1) {
+            // n words with all 4 bytes = next byte
+            if (i >= baSize) break;
+            uint32_t b = baBytes[i]; i++;
+            uint32_t data = b | (b << 8);
+            data = data | (data << 16);
+            for (size_t j = 0; j < n; j++) {
+                bmData[k++] = data;
+            }
+        } else if (code == 2) {
+            // n words all = next 4 bytes (big-endian)
+            if (i + 4 > baSize) break;
+            uint32_t data = (static_cast<uint32_t>(baBytes[i]) << 24) |
+                            (static_cast<uint32_t>(baBytes[i+1]) << 16) |
+                            (static_cast<uint32_t>(baBytes[i+2]) << 8) |
+                             static_cast<uint32_t>(baBytes[i+3]);
+            i += 4;
+            for (size_t j = 0; j < n; j++) {
+                bmData[k++] = data;
             }
         } else {
-            // Literal words
-            size_t literalCount = header;
-            for (size_t i = 0; i < literalCount && destIndex < destWords && srcIndex + 4 <= srcSize; i++) {
-                uint32_t word = (static_cast<uint32_t>(memory_.fetchByte(srcIndex, byteArray)) << 24) |
-                               (static_cast<uint32_t>(memory_.fetchByte(srcIndex + 1, byteArray)) << 16) |
-                               (static_cast<uint32_t>(memory_.fetchByte(srcIndex + 2, byteArray)) << 8) |
-                                static_cast<uint32_t>(memory_.fetchByte(srcIndex + 3, byteArray));
-                srcIndex += 4;
-                memory_.storeWord32(destIndex++, bitmap, word);
+            // code == 3: n literal words (4n bytes, big-endian)
+            if (i + n * 4 > baSize) break;
+            for (size_t j = 0; j < n; j++) {
+                uint32_t data = (static_cast<uint32_t>(baBytes[i]) << 24) |
+                                (static_cast<uint32_t>(baBytes[i+1]) << 16) |
+                                (static_cast<uint32_t>(baBytes[i+2]) << 8) |
+                                 static_cast<uint32_t>(baBytes[i+3]);
+                i += 4;
+                bmData[k++] = data;
             }
         }
     }
 
-    popN(2);  // arguments
-    push(bitmap);
+    popN(3);  // pop 3 arguments
+    // Leave receiver on stack (success)
     return PrimitiveResult::Success;
 }
 
