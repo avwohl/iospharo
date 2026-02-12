@@ -371,15 +371,15 @@ public:
         return reinterpret_cast<const uint8_t*>(this + 1);
     }
 
-    /// Get byte at index.
+    /// Get byte at index. Works for any non-pointer format (bytes, words, shorts).
     uint8_t byteAt(size_t index) const {
-        assert(isBytesObject() && index < byteSize());
+        assert(!isPointersObject() && index < byteSize());
         return bytes()[index];
     }
 
-    /// Set byte at index.
+    /// Set byte at index. Works for any non-pointer format (bytes, words, shorts).
     void byteAtPut(size_t index, uint8_t value) {
-        assert(isBytesObject() && index < byteSize());
+        assert(!isPointersObject() && index < byteSize());
         bytes()[index] = value;
     }
 

@@ -5201,11 +5201,14 @@ PrimitiveResult Interpreter::primitiveStringAtPut(int argCount) {
             return PrimitiveResult::Failure;
         }
         // Store 4 bytes as little-endian 32-bit value
+        // Use raw bytes() instead of byteAtPut() since byteAtPut() asserts
+        // isBytesObject() which is false for Indexable32 format
         size_t byteOffset = arrayIndex * 4;
-        header->byteAtPut(byteOffset, codePoint & 0xFF);
-        header->byteAtPut(byteOffset + 1, (codePoint >> 8) & 0xFF);
-        header->byteAtPut(byteOffset + 2, (codePoint >> 16) & 0xFF);
-        header->byteAtPut(byteOffset + 3, (codePoint >> 24) & 0xFF);
+        uint8_t* data = const_cast<uint8_t*>(header->bytes());
+        data[byteOffset] = codePoint & 0xFF;
+        data[byteOffset + 1] = (codePoint >> 8) & 0xFF;
+        data[byteOffset + 2] = (codePoint >> 16) & 0xFF;
+        data[byteOffset + 3] = (codePoint >> 24) & 0xFF;
         primitiveSuccess(value);  // Return the character
         return PrimitiveResult::Success;
     }
