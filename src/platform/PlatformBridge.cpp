@@ -222,6 +222,14 @@ bool vm_loadImage(const char* imagePath) {
     gInterpreter = new pharo::Interpreter(*gMemory);
     gMemory->setInterpreter(gInterpreter);  // Critical: GC needs this to update interpreter roots
     gInterpreter->setImageName(imagePath);
+
+    // In Pharo 13, the standard VM is always "headless" by default.
+    // OSWorldRenderer >> isApplicableFor: checks:
+    //   CommandLineArguments new hasOption: 'interactive'
+    // which reads from Smalltalk arguments (attribute indices 3+).
+    // So we pass --headless as VM param AND --interactive as image argument.
+    gInterpreter->setVMParameters({"--headless"});
+
     if (!gInterpreter->initialize()) {
         return false;
     }

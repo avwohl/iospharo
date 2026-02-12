@@ -1985,16 +1985,16 @@ void Interpreter::syncDisplayToSurface() {
     // Debug log Form dimensions periodically
     static int formCopyCount = 0;
     formCopyCount++;
-    if (formCopyCount <= 5 || (formCopyCount % 300 == 0 && formCopyCount <= 3000)) {
-        static FILE* formLog = nullptr;
-        if (formLog) {
-            // Sample pixels at various positions
-            int mid = (srcWidth * srcHeight) / 2;
-            fprintf(formLog, "[FORM #%d] src=%dx%d depth=%d, pixels[0]=%08x [100]=%08x [mid]=%08x\n",
-                    formCopyCount, srcWidth, srcHeight, srcDepth,
-                    srcPixels[0], srcPixels[100], srcPixels[mid]);
-            fflush(formLog);
-        }
+    if (formCopyCount <= 5 || formCopyCount % 100 == 0) {
+        // Sample pixels at various positions to see what Morphic is rendering
+        int mid = (srcWidth * srcHeight) / 2;
+        int topLeft = 0;
+        int topBar = 50 * srcWidth + 200;  // y=50 x=200 (should be in menu bar area)
+        int center = (srcHeight / 2) * srcWidth + (srcWidth / 2);
+        fprintf(stderr, "[FORM-COPY #%d] src=%dx%d depth=%d, "
+                "topLeft=%08x topBar=%08x center=%08x mid=%08x\n",
+                formCopyCount, srcWidth, srcHeight, srcDepth,
+                srcPixels[topLeft], srcPixels[topBar], srcPixels[center], srcPixels[mid]);
     }
 
     int copyWidth = std::min(srcWidth, dstWidth);

@@ -8879,8 +8879,21 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
         int argIdx = static_cast<int>(index) - 2;
         const auto& args = imageArguments_;
         if (args.empty()) {
-            // No explicit args — default to --interactive for GUI startup
+            // Default args for GUI startup: --interactive
+            // In the standard Pharo VM:
+            //   index 2 = first image arg (the "command", e.g. --headless, eval, test)
+            //   index 3+ = remaining args
+            // CommandLineArguments >> initialize uses Smalltalk arguments
+            //   which starts at argumentAt: 1 = getSystemAttribute: 3
+            // OSWorldRenderer >> isApplicableFor: checks:
+            //   CommandLineArguments new hasOption: 'interactive'
+            // So --interactive MUST appear at index 3 (argIdx 1) for the renderer to find it.
             if (argIdx == 0) {
+                pop();
+                push(memory_.createString("--interactive"));
+                return PrimitiveResult::Success;
+            }
+            if (argIdx == 1) {
                 pop();
                 push(memory_.createString("--interactive"));
                 return PrimitiveResult::Success;
@@ -12794,6 +12807,12 @@ PrimitiveResult Interpreter::primitiveDrawLoop(int argCount) {
 // left top right bottom primitiveShowDisplayRect -> self
 // Updates the specified rectangle of the display
 PrimitiveResult Interpreter::primitiveShowDisplayRect(int argCount) {
+    static int showRectCount = 0;
+    showRectCount++;
+    if (showRectCount <= 5 || showRectCount % 500 == 0) {
+        fprintf(stderr, "[SHOW-RECT #%d step=%llu] primitiveShowDisplayRect called argCount=%d\n",
+                showRectCount, (unsigned long long)g_stepNum, argCount);
+    }
     // Pop all arguments (left, top, right, bottom) but use them for partial update
     int left = 0, top = 0, right = 0, bottom = 0;
     if (argCount >= 4) {
@@ -16828,6 +16847,10 @@ enum FormFields {
 PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     static int cbCount = 0;
     cbCount++;
+    if (cbCount <= 5 || cbCount % 1000 == 0) {
+        fprintf(stderr, "[BITBLT #%d step=%llu] primitiveCopyBits called\n",
+                cbCount, (unsigned long long)g_stepNum);
+    }
     // Targeted failure logging: track the reason for every failure
     int failCode = 0;  // 0 = no failure
     auto logFail = [&](int code, const char* reason) {
