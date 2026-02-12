@@ -4067,20 +4067,7 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
     Oop nextProcess = wakeHighestPriority();
     if (nextProcess.isNil()) {
         // No runnable process - this shouldn't happen in a working system
-        if (waitLog) {
-            fprintf(waitLog, "[WAIT #%d] ERROR: No runnable process after blocking!\n", waitCallCount);
-            fflush(waitLog);
-        }
         return PrimitiveResult::Failure;
-    }
-
-    Oop nextPriorityOop = memory_.fetchPointer(ProcessPriorityIndex, nextProcess);
-    int nextPriority = nextPriorityOop.isSmallInteger() ?
-                       static_cast<int>(nextPriorityOop.asSmallInteger()) : -1;
-    if (waitLog && waitCallCount <= 500) {
-        fprintf(waitLog, "[WAIT #%d] -> Switching to process 0x%llx (priority %d)\n",
-                waitCallCount, (unsigned long long)nextProcess.rawBits(), nextPriority);
-        fflush(waitLog);
     }
 
     g_xferReason = "primWait";
