@@ -342,7 +342,19 @@ int stub_SDL_RenderClear(void* renderer) {
 
 void stub_SDL_RenderPresent(void* renderer) {
     // Only copy main renderer's texture to the Metal display surface
-    if (renderer != sMainRenderer) return;
+    if (renderer != sMainRenderer) {
+        return;
+    }
+
+    // Mark SDL2 rendering as active on first main renderer present.
+    // This stops syncDisplayToSurface from overwriting the real SDL texture
+    // content with the stale Display Form. OSSDL2Driver calls RenderPresent
+    // BEFORE PollEvent in each frame, so we must set this here (not in PollEvent).
+    static bool renderingActive = false;
+    if (!renderingActive) {
+        renderingActive = true;
+        pharo::gEventQueue.setSDL2EventPollingActive(true);
+    }
 
     auto rit = sRenderers.find(renderer);
     if (rit == sRenderers.end() || !rit->second.currentTexture) return;
@@ -354,6 +366,7 @@ void stub_SDL_RenderPresent(void* renderer) {
         uint32_t* src = tit->second.pixels;
         int srcW = tit->second.width;
         int srcH = tit->second.height;
+
         uint32_t* dst = pharo::gDisplaySurface->pixels();
         int dstW = pharo::gDisplaySurface->width();
         int dstH = pharo::gDisplaySurface->height();
@@ -789,8 +802,6 @@ void* primitiveLoadModule(void* moduleName) {
 } // extern "C"
 
 void registerSDL2Stubs() {
-    fprintf(stderr, "[SDL2-STUB] Registering SDL2 stub functions\n");
-
     // Core initialization
     registerFunction("SDL_Init", reinterpret_cast<void*>(stub_SDL_Init));
     registerFunction("SDL_Quit", reinterpret_cast<void*>(stub_SDL_Quit));
@@ -857,7 +868,6 @@ void registerSDL2Stubs() {
     registerFunction("SDL_GetPerformanceCounter", reinterpret_cast<void*>(stub_SDL_GetPerformanceCounter));
     registerFunction("SDL_GetPerformanceFrequency", reinterpret_cast<void*>(stub_SDL_GetPerformanceFrequency));
 
-    fprintf(stderr, "[SDL2-STUB] Registered %zu stub functions\n", sFunctionCache.size());
 }
 
 FFIType parseType(const std::string& typeName) {

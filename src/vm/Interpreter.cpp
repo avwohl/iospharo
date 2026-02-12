@@ -1927,7 +1927,9 @@ void Interpreter::syncDisplayToSurface() {
     // When SDL2 event polling is active, stub_SDL_RenderPresent copies the
     // SDL texture pixels to gDisplaySurface. Don't overwrite with stale
     // Display Form content.
-    if (pharo::gEventQueue.isSDL2EventPollingActive()) return;
+    if (pharo::gEventQueue.isSDL2EventPollingActive()) {
+        return;
+    }
 
     // displayForm_ is set during startup or by primitiveBeDisplay (prim 102).
     if (displayForm_.isNil()) {
@@ -1940,7 +1942,9 @@ void Interpreter::syncDisplayToSurface() {
 
     // Get the Form's bits (slot 0)
     Oop bits = memory_.fetchPointer(0, displayForm_);
-    if (bits.isNil() || !bits.isObject()) return;
+    if (bits.isNil() || !bits.isObject()) {
+        return;
+    }
 
     ObjectHeader* bitsHdr = bits.asObjectPtr();
     uint32_t* srcPixels = reinterpret_cast<uint32_t*>(bitsHdr->bytes());
@@ -1957,7 +1961,6 @@ void Interpreter::syncDisplayToSurface() {
     uint32_t* dstPixels = pharo::gDisplaySurface->pixels();
     int dstWidth = pharo::gDisplaySurface->width();
     int dstHeight = pharo::gDisplaySurface->height();
-
 
     int copyWidth = std::min(srcWidth, dstWidth);
     int copyHeight = std::min(srcHeight, dstHeight);
@@ -1979,13 +1982,6 @@ void Interpreter::syncDisplayToSurface() {
 // ===== MAIN LOOP =====
 
 void Interpreter::stopVM(const char* reason) {
-    static FILE* stopLog = nullptr;
-    if (!stopLog) stopLog = nullptr;
-    if (stopLog) {
-        fprintf(stopLog, "[VM-STOP step=%llu fd=%zu] %s\n",
-                (unsigned long long)g_stepNum, frameDepth_, reason);
-        fflush(stopLog);
-    }
     fprintf(stderr, "[VM-STOP step=%llu] %s\n", (unsigned long long)g_stepNum, reason);
     running_ = false;
 }
@@ -2309,6 +2305,7 @@ void Interpreter::startHeartbeat() {
 
     heartbeatRunning_ = true;
     heartbeatThread_ = std::thread([this]() {
+      try {
         int tickCount = 0;
 
         while (heartbeatRunning_) {
@@ -2353,17 +2350,13 @@ void Interpreter::startHeartbeat() {
             // Using a longer interval (1 second) to allow more startup work to complete
             if (tickCount % 1000 == 0) {
                 forceYield_.store(true, std::memory_order_release);
-                static FILE* yieldSetLog = nullptr;
-                static int yieldSetCount = 0;
-                if (!yieldSetLog) yieldSetLog = nullptr;
-                if (yieldSetLog && yieldSetCount < 50) {
-                    yieldSetCount++;
-                    fprintf(yieldSetLog, "[YIELD-SET #%d] tickCount=%d setting forceYield=true\n",
-                            yieldSetCount, tickCount);
-                    fflush(yieldSetLog);
-                }
             }
         }
+
+      } catch (const std::exception& e) {
+        (void)e;  // Heartbeat thread exception
+      } catch (...) {
+      }
     });
 }
 
@@ -2420,18 +2413,8 @@ bool Interpreter::step() {
     // the test harness calls step() directly without going through interpret().
     if (memory_.needsCompactGC()) {
         memory_.clearCompactGCFlag();
-        static int safePointGCCount = 0;
-        safePointGCCount++;
-        fprintf(stderr, "[SAFE-POINT-GC #%d] Compacting at step %llu used=%zuMB\n",
-                safePointGCCount, (unsigned long long)g_stepNum,
-                (size_t)(memory_.oldSpaceFree() - memory_.oldSpaceStart()) / (1024*1024));
-        fflush(stderr);
         memory_.fullGC();
         flushMethodCache();  // Compaction moves objects — stale cache entries cause DNU
-        fprintf(stderr, "[SAFE-POINT-GC #%d] Done, used=%zuMB\n",
-                safePointGCCount,
-                (size_t)(memory_.oldSpaceFree() - memory_.oldSpaceStart()) / (1024*1024));
-        fflush(stderr);
     }
 
     g_stepCount++;
@@ -4017,39 +4000,6 @@ terminate_process:
         // Mark current process as terminated by clearing its suspendedContext
         terminateCurrentProcess();
 
-        // Log process terminations (limited to 5) to understand why VM exits
-        {
-            static int termLogCount = 0;
-            termLogCount++;
-            if (termLogCount <= 5) {
-                Oop ap = getActiveProcess();
-                Oop prioOop = memory_.fetchPointer(2, ap);
-                int prio = prioOop.isSmallInteger() ? static_cast<int>(prioOop.asSmallInteger()) : -1;
-                std::string curMethod = "?";
-                if (activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
-                    Oop ctxMeth = memory_.fetchPointer(3, activeContext_);
-                    if (ctxMeth.isObject() && ctxMeth.rawBits() > 0x10000) {
-                        Oop mhdr = memory_.fetchPointer(0, ctxMeth);
-                        if (mhdr.isSmallInteger()) {
-                            int nLits = mhdr.asSmallInteger() & 0x7FFF;
-                            if (nLits >= 2 && nLits < 100) {
-                                Oop sel = memory_.fetchPointer(nLits - 1, ctxMeth);
-                                if (sel.isObject() && sel.rawBits() > 0x10000) {
-                                    ObjectHeader* selH = sel.asObjectPtr();
-                                    if (selH->isBytesObject() && selH->byteSize() < 80) {
-                                        curMethod = std::string((char*)selH->bytes(), selH->byteSize());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                fprintf(stderr, "[PROC-TERM #%d step=%llu] priority=%d process=0x%llx method=#%s\n",
-                        termLogCount, (unsigned long long)g_stepNum, prio,
-                        (unsigned long long)ap.rawBits(), curMethod.c_str());
-            }
-        }
-
         // Check if we need to call setupEventLoop after install completed
         if (hasPendingDriverSetup_ && pendingDriverSetupMethod_.isObject()) {
 
@@ -4134,11 +4084,6 @@ terminate_process:
                 // GC safe point: no process is active, safe to compact
                 if (memory_.needsCompactGC()) {
                     memory_.clearCompactGCFlag();
-                    static int idleGCCount = 0;
-                    idleGCCount++;
-                    fprintf(stderr, "[IDLE-GC #%d] Compacting at step %llu\n",
-                            idleGCCount, (unsigned long long)g_stepNum);
-                    fflush(stderr);
                     memory_.fullGC();
                     flushMethodCache();  // Compaction moves objects — stale cache
                 }
@@ -9003,7 +8948,6 @@ void Interpreter::transferTo(Oop newProcess) {
         return;  // Already running this process
     }
 
-
     // Validate newProcess
     if (!newProcess.isObject()) {
         return;
@@ -11260,31 +11204,8 @@ bool Interpreter::executeFromContext(Oop context) {
     // Set up SIGSEGV recovery point - if we crash accessing unrelocated pointers,
     // we'll longjmp back here and return false instead of terminating the VM
     if (sigsetjmp(g_sigsegvRecovery, 1) != 0) {
-        // Returned from SIGSEGV recovery - log what was executing
+        // Returned from SIGSEGV recovery
         g_sigsegvRecoveryEnabled = 0;
-        static int recoverCount = 0;
-        recoverCount++;
-        if (recoverCount <= 10) {
-            // Try to identify the method that was executing
-            std::string methName = "?";
-            if (method_.isObject() && method_.rawBits() > 0x10000) {
-                Oop hdr = memory_.fetchPointer(0, method_);
-                if (hdr.isSmallInteger()) {
-                    int nl = hdr.asSmallInteger() & 0x7FFF;
-                    if (nl >= 2 && nl < 200) {
-                        Oop sel = memory_.fetchPointer(nl - 1, method_);
-                        if (sel.isObject() && sel.rawBits() > 0x10000) {
-                            ObjectHeader* sh = sel.asObjectPtr();
-                            if (sh->isBytesObject() && sh->byteSize() < 100)
-                                methName = std::string((char*)sh->bytes(), sh->byteSize());
-                        }
-                    }
-                }
-            }
-            fprintf(stderr, "[SIGSEGV-RECOVER-CTX #%d] method=#%s activeCtx=0x%llx step=%llu\n",
-                    recoverCount, methName.c_str(),
-                    (unsigned long long)activeContext_.rawBits(), g_stepNum);
-        }
         stackPointer_ = stackBase_;
         frameDepth_ = 0;
         return false;

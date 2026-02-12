@@ -2920,25 +2920,6 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
 
     uint32_t classIndex = memory_.indexOfClass(rcvr);
 
-    // Debug: trace Context allocation
-    static int contextAllocCount = 0;
-    if (instSpec == 3 && contextAllocCount < 5) {
-        contextAllocCount++;
-        std::string className = "<unknown>";
-        Oop nameOop = memory_.fetchPointer(6, rcvr);
-        if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
-            ObjectHeader* nameHdr = nameOop.asObjectPtr();
-            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
-                className = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-            }
-        }
-        std::cerr << "[ALLOC-DEBUG] basicNew: " << className
-                  << " indexableSize=" << indexableSize
-                  << " fixedSize=" << fixedSize
-                  << " classIndex=" << classIndex
-                  << " instSpec=" << instSpec << "\n";
-    }
-
     Oop newObj;
 
     // CompiledMethod (instSpec 24) is special: it has pointer slots for literals
@@ -4903,8 +4884,12 @@ PrimitiveResult Interpreter::primitiveSetVMSDL2Input(int argCount) {
     // Store the semaphore index for SDL2 event signaling
     gEventQueue.setSDL2InputSemaphoreIndex(static_cast<int>(semIndex));
 
-    // Also enable SDL2 event polling - this is the key!
-    gEventQueue.setSDL2EventPollingActive(true);
+    // Note: do NOT set isSDL2EventPollingActive here. That flag should only
+    // be set when stub_SDL_PollEvent is actually called. Setting it here
+    // blocks the Display Form → gDisplaySurface copy in syncDisplayToSurface(),
+    // but if OSSDL2Driver never reaches its event loop (e.g., SDL_Init fails
+    // or FFI type resolution fails), no SDL2 rendering happens and the display
+    // goes blank.
 
     if (sdlLog) {
         fprintf(sdlLog, "[SDL2-INPUT] SDL2 event polling NOW ACTIVE\n");
@@ -12259,53 +12244,6 @@ PrimitiveResult Interpreter::primitiveSetGCSemaphore(int argCount) {
 // milliseconds primitiveRelinquishProcessor -> self
 // Allows other processes to run, sleeping for the specified time
 PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
-    static int relinquishCount = 0;
-    static FILE* relinquishLog = nullptr;
-    relinquishCount++;
-
-    if (!relinquishLog) {
-        relinquishLog = nullptr;
-    }
-    if (relinquishLog && relinquishCount <= 50) {
-        fprintf(relinquishLog, "[RELINQUISH] #%d argCount=%d\n", relinquishCount, argCount);
-        // Log current method context for first 10 calls
-        if (relinquishCount <= 10 && method_.isObject() && method_.rawBits() > 0x10000) {
-            std::string methodSel = "<unknown>";
-            ObjectHeader* mHdr = method_.asObjectPtr();
-            if (mHdr->isCompiledMethod()) {
-                Oop hdr = memory_.fetchPointer(0, method_);
-                if (hdr.isSmallInteger()) {
-                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                    if (numLits >= 2) {
-                        Oop selLit = memory_.fetchPointer(numLits - 1, method_);
-                        if (selLit.isObject() && selLit.rawBits() > 0x10000) {
-                            ObjectHeader* slHdr = selLit.asObjectPtr();
-                            if (slHdr->isBytesObject() && slHdr->byteSize() < 50) {
-                                methodSel = std::string((char*)slHdr->bytes(), slHdr->byteSize());
-                            }
-                        }
-                    }
-                }
-            }
-            std::string rcvrClass = "<unknown>";
-            if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-                Oop cls = memory_.classOf(receiver_);
-                if (cls.isObject()) {
-                    Oop clsName = memory_.fetchPointer(6, cls);
-                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                        ObjectHeader* cnHdr = clsName.asObjectPtr();
-                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
-                            rcvrClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
-                        }
-                    }
-                }
-            }
-            fprintf(relinquishLog, "[RELINQUISH] #%d method=#%s receiver=%s\n",
-                    relinquishCount, methodSel.c_str(), rcvrClass.c_str());
-        }
-        fflush(relinquishLog);
-    }
-
     if (argCount < 1) {
         return PrimitiveResult::Failure;
     }
@@ -12319,11 +12257,6 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
     // CRITICAL: Argument is in MICROSECONDS, not milliseconds!
     // Per official VM: ioRelinquishProcessorForMicroseconds(microSecs)
     int64_t microSeconds = microSecondsOop.asSmallInteger();
-
-    if (relinquishLog && relinquishCount <= 50) {
-        fprintf(relinquishLog, "[RELINQUISH] #%d us=%lld\n", relinquishCount, (long long)microSeconds);
-        fflush(relinquishLog);
-    }
 
     // In a cooperative VM, relinquishing the processor means:
     // 1. Check for pending events/signals
@@ -12364,13 +12297,6 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
     processPendingSignals();
     checkTimerSemaphore();
 
-    // Debug: Log large delay requests
-    if (relinquishLog && microSeconds > 100000) {  // > 100ms
-        fprintf(relinquishLog, "[RELINQUISH] Capped %lldus -> %lldus\n",
-                (long long)microSeconds, (long long)sleepUs);
-        fflush(relinquishLog);
-    }
-
     // Try to yield to higher priority ready processes
     // This is the key part that makes process switching work!
     Oop activeProcess = getActiveProcess();
@@ -12389,23 +12315,6 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
                 ObjectHeader* queuesHdr = schedLists.asObjectPtr();
                 size_t numQueues = queuesHdr->slotCount();
 
-                if (relinquishLog && relinquishCount <= 20) {
-                    fprintf(relinquishLog, "[RELINQUISH] #%d activeProcess=0x%llx activePriority=%d numQueues=%zu\n",
-                            relinquishCount, (unsigned long long)activeProcess.rawBits(), activePriority, numQueues);
-                    // Dump all non-empty queues
-                    for (size_t i = 0; i < numQueues; i++) {
-                        Oop q = memory_.fetchPointer(i, schedLists);
-                        if (q.isObject()) {
-                            Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, q);
-                            if (first.isObject() && first.rawBits() != nilObj.rawBits()) {
-                                fprintf(relinquishLog, "  Queue[%zu] (priority %zu): first=0x%llx\n",
-                                        i, i + 1, (unsigned long long)first.rawBits());
-                            }
-                        }
-                    }
-                    fflush(relinquishLog);
-                }
-
                 // Search from highest priority down to priority 1 (include ALL priorities)
                 // relinquishProcessor means "give up CPU" - any runnable process should get a turn
                 // NOTE: Priority is 1-based, but array indices are 0-based
@@ -12418,12 +12327,6 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
                     if (firstProcess.isObject() && firstProcess.rawBits() != nilObj.rawBits() &&
                         firstProcess.rawBits() != activeProcess.rawBits()) {
                         // Found a higher priority process - yield to it
-                        if (relinquishLog && relinquishCount <= 50) {
-                            fprintf(relinquishLog, "[RELINQUISH] #%d Yielding to process 0x%llx at priority %d\n",
-                                    relinquishCount, (unsigned long long)firstProcess.rawBits(), pri);
-                            fflush(relinquishLog);
-                        }
-
                         // Remove the process from queue
                         Oop nextProcess = removeFirstLinkOfList(queue);
                         if (nextProcess.isObject() && nextProcess.rawBits() != nilObj.rawBits()) {
@@ -12603,7 +12506,9 @@ void Interpreter::showDisplayBits(Oop destForm, int left, int top, int right, in
     if (displayForm_.isNil()) return;
 
     // Only update screen for blits targeting the Display form
-    if (destForm != displayForm_) return;
+    if (destForm != displayForm_) {
+        return;
+    }
 
     // Get Form fields: 0=bits, 1=width, 2=height, 3=depth
     Oop bits = memory_.fetchPointer(0, displayForm_);
@@ -12798,97 +12703,6 @@ PrimitiveResult Interpreter::primitiveFloat64ArrayAdd(int argCount) {
 // externalFunction args primitiveCalloutToFFI -> result
 // Calls a foreign function through FFI mechanism
 PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
-    static FILE* ffiCalloutLog = nullptr;
-    static int calloutCount = 0;
-    calloutCount++;
-
-    if (ffiCalloutLog && calloutCount <= 100) {
-        fprintf(ffiCalloutLog, "[FFI-CALLOUT] #%d argCount=%d\n", calloutCount, argCount);
-        // Dump method literals for debugging
-        Oop method = newMethod_.isObject() ? newMethod_ : method_;
-        if (method.isObject()) {
-            Oop mhdr = memory_.fetchPointer(0, method);
-            if (mhdr.isSmallInteger()) {
-                size_t nLits = mhdr.asSmallInteger() & 0x7FFF;
-                // Get selector from second-to-last literal
-                if (nLits >= 2) {
-                    Oop sel = memory_.fetchPointer(nLits - 1, method);
-                    if (sel.isObject() && memory_.isValidPointer(sel)) {
-                        ObjectHeader* selH = sel.asObjectPtr();
-                        if (selH->isBytesObject() && selH->byteSize() < 100) {
-                            fprintf(ffiCalloutLog, "[FFI-CALLOUT] #%d selector='%.*s'\n",
-                                    calloutCount, (int)selH->byteSize(), (char*)selH->bytes());
-                        }
-                    }
-                }
-                fprintf(ffiCalloutLog, "[FFI-CALLOUT] #%d numLiterals=%zu\n", calloutCount, nLits);
-                for (size_t i = 1; i <= nLits && i < 20; i++) {
-                    Oop lit = memory_.fetchPointer(i, method);
-                    if (lit.isSmallInteger()) {
-                        fprintf(ffiCalloutLog, "[FFI-CALLOUT] #%d  lit[%zu]=SmallInt(%lld)\n",
-                                calloutCount, i, lit.asSmallInteger());
-                    } else if (lit.isObject() && memory_.isValidPointer(lit)) {
-                        ObjectHeader* lh = lit.asObjectPtr();
-                        Oop cls = memory_.classOf(lit);
-                        std::string clsName = "?";
-                        if (cls.isObject() && memory_.isValidPointer(cls)) {
-                            ObjectHeader* ch = cls.asObjectPtr();
-                            if (ch->slotCount() > 6) {
-                                Oop cn = memory_.fetchPointer(6, cls);
-                                if (cn.isObject() && memory_.isValidPointer(cn)) {
-                                    ObjectHeader* cnh = cn.asObjectPtr();
-                                    if (cnh->isBytesObject() && cnh->byteSize() < 100)
-                                        clsName = std::string((char*)cnh->bytes(), cnh->byteSize());
-                                }
-                            }
-                        }
-                        if (lh->isBytesObject() && lh->byteSize() < 100) {
-                            fprintf(ffiCalloutLog, "[FFI-CALLOUT] #%d  lit[%zu]=%s('%.*s')\n",
-                                    calloutCount, i, clsName.c_str(), (int)lh->byteSize(), (char*)lh->bytes());
-                        } else {
-                            fprintf(ffiCalloutLog, "[FFI-CALLOUT] #%d  lit[%zu]=%s(slots=%zu fmt=%u)\n",
-                                    calloutCount, i, clsName.c_str(), lh->slotCount(), (unsigned)lh->format());
-                            // Dump Array contents
-                            if (lh->format() == ObjectFormat::Indexable && lh->slotCount() <= 10) {
-                                for (size_t j = 0; j < lh->slotCount(); j++) {
-                                    Oop sub = memory_.fetchPointer(j, lit);
-                                    if (sub.isSmallInteger()) {
-                                        fprintf(ffiCalloutLog, "[FFI-CALLOUT] #%d    [%zu]=SmallInt(%lld)\n",
-                                                calloutCount, j, sub.asSmallInteger());
-                                    } else if (sub.isNil()) {
-                                        fprintf(ffiCalloutLog, "[FFI-CALLOUT] #%d    [%zu]=nil\n", calloutCount, j);
-                                    } else if (sub.isObject() && memory_.isValidPointer(sub)) {
-                                        ObjectHeader* sh = sub.asObjectPtr();
-                                        if (sh->isBytesObject() && sh->byteSize() < 100) {
-                                            fprintf(ffiCalloutLog, "[FFI-CALLOUT] #%d    [%zu]='%.*s'\n",
-                                                    calloutCount, j, (int)sh->byteSize(), (char*)sh->bytes());
-                                        } else {
-                                            Oop sc = memory_.classOf(sub);
-                                            std::string scn = "?";
-                                            if (sc.isObject() && memory_.isValidPointer(sc)) {
-                                                ObjectHeader* sch = sc.asObjectPtr();
-                                                if (sch->slotCount() > 6) {
-                                                    Oop scname = memory_.fetchPointer(6, sc);
-                                                    if (scname.isObject() && memory_.isValidPointer(scname)) {
-                                                        ObjectHeader* scnh = scname.asObjectPtr();
-                                                        if (scnh->isBytesObject() && scnh->byteSize() < 100)
-                                                            scn = std::string((char*)scnh->bytes(), scnh->byteSize());
-                                                    }
-                                                }
-                                            }
-                                            fprintf(ffiCalloutLog, "[FFI-CALLOUT] #%d    [%zu]=%s\n", calloutCount, j, scn.c_str());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        fflush(ffiCalloutLog);
-    }
-
     // --- Named primitive dispatch ---
     // Primitive 117 is used for both old-style FFI callouts (SDL2-specific)
     // and new TFFI primitives (via <primitive: 'name'>).
@@ -13068,17 +12882,7 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
     }
 
     if (funcName.empty()) {
-        if (ffiCalloutLog && calloutCount <= 100) {
-            fprintf(ffiCalloutLog, "[FFI-CALLOUT] #%d No funcName found, failing\n", calloutCount);
-            fflush(ffiCalloutLog);
-        }
         return PrimitiveResult::Failure;
-    }
-
-    if (ffiCalloutLog && calloutCount <= 100) {
-        fprintf(ffiCalloutLog, "[FFI-CALLOUT] #%d Found funcName='%s' retType='%s'\n",
-                calloutCount, funcName.c_str(), returnTypeName.c_str());
-        fflush(ffiCalloutLog);
     }
 
     // Look up the function
@@ -22350,15 +22154,7 @@ PrimitiveResult Interpreter::primitiveStoreFloat64IntoExternalAddress(int argCou
 // Stack: receiver, symbolString, moduleStringOrNil
 // Returns: ExternalAddress containing the symbol address, or fails
 PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
-    static FILE* ffiLog = stderr;
-    static int loadCount = 0;
-    loadCount++;
-
     if (argCount != 2) {
-        if (ffiLog) {
-            fprintf(ffiLog, "[LOAD_SYMBOL] #%d argCount=%d (expected 2)\n", loadCount, argCount);
-            fflush(ffiLog);
-        }
         return PrimitiveResult::Failure;
     }
 
@@ -22369,19 +22165,11 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
 
     // Symbol must be a string
     if (!symbolOop.isObject()) {
-        if (ffiLog) {
-            fprintf(ffiLog, "[LOAD_SYMBOL] #%d symbol is not an object\n", loadCount);
-            fflush(ffiLog);
-        }
         return PrimitiveResult::Failure;
     }
 
     ObjectHeader* symbolHdr = symbolOop.asObjectPtr();
     if (!symbolHdr->isBytesObject()) {
-        if (ffiLog) {
-            fprintf(ffiLog, "[LOAD_SYMBOL] #%d symbol is not a bytes object\n", loadCount);
-            fflush(ffiLog);
-        }
         return PrimitiveResult::Failure;
     }
 
@@ -22440,12 +22228,6 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
         moduleHandle = RTLD_DEFAULT;
     }
 
-    if (ffiLog) {
-        fprintf(ffiLog, "[LOAD_SYMBOL] #%d symbol='%s' module='%s' handle=%p\n",
-                loadCount, symbolName.c_str(), moduleName.c_str(), moduleHandle);
-        fflush(ffiLog);
-    }
-
     // Look up the symbol - check our FFI function cache first (for SDL2 stubs),
     // then fall back to dlsym. This ensures our stubs (e.g. stub_SDL_PollEvent)
     // win over force-loaded real SDL2 symbols.
@@ -22456,28 +22238,13 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
     }
 
     if (!symbolAddr) {
-        if (ffiLog) {
-            fprintf(ffiLog, "[LOAD_SYMBOL] #%d FAILED to find '%s' in '%s'\n",
-                    loadCount, symbolName.c_str(), moduleName.c_str());
-            fflush(ffiLog);
-        }
         return PrimitiveResult::Failure;
-    }
-
-    if (ffiLog) {
-        fprintf(ffiLog, "[LOAD_SYMBOL] #%d FOUND '%s' at %p\n",
-                loadCount, symbolName.c_str(), symbolAddr);
-        fflush(ffiLog);
     }
 
     // Create an ExternalAddress containing the symbol address
     // ExternalAddress is a bytes object holding sizeof(void*) bytes
     Oop externalAddressClass = memory_.specialObject(SpecialObjectIndex::ClassExternalAddress);
     if (externalAddressClass.isNil()) {
-        if (ffiLog) {
-            fprintf(ffiLog, "[LOAD_SYMBOL] #%d ClassExternalAddress not found in special objects\n", loadCount);
-            fflush(ffiLog);
-        }
         return PrimitiveResult::Failure;
     }
 
@@ -22485,10 +22252,6 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
     uint32_t classIndex = memory_.indexOfClass(externalAddressClass);
     Oop result = memory_.allocateBytes(classIndex, sizeof(void*));
     if (result.isNil()) {
-        if (ffiLog) {
-            fprintf(ffiLog, "[LOAD_SYMBOL] #%d Failed to allocate ExternalAddress\n", loadCount);
-            fflush(ffiLog);
-        }
         return PrimitiveResult::Failure;
     }
 
@@ -22498,12 +22261,6 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
 
     // Track symbol name for TFFI call logging
     g_symbolNames[reinterpret_cast<uintptr_t>(symbolAddr)] = symbolName;
-
-    if (ffiLog) {
-        fprintf(ffiLog, "[LOAD_SYMBOL] #%d SUCCESS - created ExternalAddress %p containing %p\n",
-                loadCount, (void*)result.rawBits(), symbolAddr);
-        fflush(ffiLog);
-    }
 
     // Pop args and push result
     popN(static_cast<size_t>(argCount + 1));  // Pop args and receiver
@@ -22516,15 +22273,7 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
 // Stack: receiver, moduleString
 // Returns: ExternalAddress containing the module handle, or fails
 PrimitiveResult Interpreter::primitiveLoadModule(int argCount) {
-    static FILE* ffiLog = stderr;
-    static int loadCount = 0;
-    loadCount++;
-
     if (argCount != 1) {
-        if (ffiLog) {
-            fprintf(ffiLog, "[LOAD_MODULE] #%d argCount=%d (expected 1)\n", loadCount, argCount);
-            fflush(ffiLog);
-        }
         return PrimitiveResult::Failure;
     }
 
@@ -22533,28 +22282,15 @@ PrimitiveResult Interpreter::primitiveLoadModule(int argCount) {
     Oop receiver = stackValue(1);
 
     if (!moduleOop.isObject()) {
-        if (ffiLog) {
-            fprintf(ffiLog, "[LOAD_MODULE] #%d module is not an object\n", loadCount);
-            fflush(ffiLog);
-        }
         return PrimitiveResult::Failure;
     }
 
     ObjectHeader* moduleHdr = moduleOop.asObjectPtr();
     if (!moduleHdr->isBytesObject()) {
-        if (ffiLog) {
-            fprintf(ffiLog, "[LOAD_MODULE] #%d module is not a bytes object\n", loadCount);
-            fflush(ffiLog);
-        }
         return PrimitiveResult::Failure;
     }
 
     std::string moduleName((char*)moduleHdr->bytes(), moduleHdr->byteSize());
-
-    if (ffiLog && loadCount <= 100) {
-        fprintf(ffiLog, "[LOAD_MODULE] #%d module='%s'\n", loadCount, moduleName.c_str());
-        fflush(ffiLog);
-    }
 
     void* moduleHandle = nullptr;
 
@@ -22563,12 +22299,6 @@ PrimitiveResult Interpreter::primitiveLoadModule(int argCount) {
         moduleName.find("SDL") != std::string::npos) {
         // SDL2 is "built-in" via our stubs - return a non-null handle
         moduleHandle = reinterpret_cast<void*>(0xDEADBEEF);
-
-        if (ffiLog && loadCount <= 100) {
-            fprintf(ffiLog, "[LOAD_MODULE] #%d SDL2 detected - using built-in stubs, handle=%p\n",
-                    loadCount, moduleHandle);
-            fflush(ffiLog);
-        }
     } else {
         // Try to load the library
         moduleHandle = dlopen(moduleName.c_str(), RTLD_NOW | RTLD_GLOBAL);
@@ -22585,37 +22315,18 @@ PrimitiveResult Interpreter::primitiveLoadModule(int argCount) {
     }
 
     if (!moduleHandle) {
-        if (ffiLog && loadCount <= 100) {
-            fprintf(ffiLog, "[LOAD_MODULE] #%d FAILED to load '%s': %s\n",
-                    loadCount, moduleName.c_str(), dlerror());
-            fflush(ffiLog);
-        }
         return PrimitiveResult::Failure;
-    }
-
-    if (ffiLog && loadCount <= 100) {
-        fprintf(ffiLog, "[LOAD_MODULE] #%d SUCCESS - loaded '%s' at %p\n",
-                loadCount, moduleName.c_str(), moduleHandle);
-        fflush(ffiLog);
     }
 
     // Create an ExternalAddress containing the module handle
     Oop externalAddressClass = memory_.specialObject(SpecialObjectIndex::ClassExternalAddress);
     if (externalAddressClass.isNil()) {
-        if (ffiLog) {
-            fprintf(ffiLog, "[LOAD_MODULE] #%d ClassExternalAddress not found\n", loadCount);
-            fflush(ffiLog);
-        }
         return PrimitiveResult::Failure;
     }
 
     uint32_t classIndex = memory_.indexOfClass(externalAddressClass);
     Oop result = memory_.allocateBytes(classIndex, sizeof(void*));
     if (result.isNil()) {
-        if (ffiLog) {
-            fprintf(ffiLog, "[LOAD_MODULE] #%d Failed to allocate ExternalAddress\n", loadCount);
-            fflush(ffiLog);
-        }
         return PrimitiveResult::Failure;
     }
 
