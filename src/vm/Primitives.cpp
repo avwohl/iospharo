@@ -24539,14 +24539,7 @@ PrimitiveResult Interpreter::primitiveGetSameThreadRunnerAddress(int argCount) {
 // Stack: receiver, externalFunction, argumentsArray
 // This is the core FFI call primitive.
 PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
-    static int callCount = 0;
-    callCount++;
-    if (callCount <= 500 || callCount % 50 == 0 || callCount > 700) {
-        fprintf(stderr, "[TFFI-CALL #%d step=%llu] primitiveSameThreadCallout argCount=%d\n",
-                callCount, g_stepNum, argCount);
-    }
     if (argCount != 2) {
-        fprintf(stderr, "[TFFI-CALL #%d] FAIL: argCount=%d (expected 2)\n", callCount, argCount);
         return PrimitiveResult::Failure;
     }
 
@@ -24555,11 +24548,9 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
     // receiver at stackValue(2) - the runner
 
     if (!externalFuncOop.isObject()) {
-        fprintf(stderr, "[TFFI-CALL #%d] FAIL: externalFunc not object\n", callCount);
         return PrimitiveResult::Failure;
     }
     if (memory_.slotCountOf(externalFuncOop) < 2) {
-        fprintf(stderr, "[TFFI-CALL #%d] FAIL: externalFunc too few slots\n", callCount);
         return PrimitiveResult::Failure;
     }
 
@@ -24567,7 +24558,6 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
     Oop funcAddrOop = memory_.fetchPointer(0, externalFuncOop);
     void* funcPtr = tffi_readAddress(funcAddrOop);
     if (!funcPtr) {
-        fprintf(stderr, "[TFFI-CALL #%d] FAIL: funcPtr is null\n", callCount);
         return PrimitiveResult::Failure;
     }
 
@@ -24575,30 +24565,15 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
     Oop funcDefOop = memory_.fetchPointer(1, externalFuncOop);
     ffi_cif* cif = static_cast<ffi_cif*>(tffi_getHandler(funcDefOop));
     if (!cif) {
-        fprintf(stderr, "[TFFI-CALL #%d] FAIL: cif is null (funcPtr=%p)\n", callCount, funcPtr);
         return PrimitiveResult::Failure;
-    }
-
-    {
-        auto it = g_symbolNames.find(reinterpret_cast<uintptr_t>(funcPtr));
-        const char* funcName = (it != g_symbolNames.end()) ? it->second.c_str() : "?";
-        // Log all SDL calls, suppress non-SDL after first 20
-        bool isSDL = (strstr(funcName, "SDL_") != nullptr);
-        if (callCount <= 20 || isSDL) {
-            fprintf(stderr, "[TFFI-CALL #%d] funcPtr=%p '%s' nargs=%u retType=%u\n",
-                    callCount, funcPtr, funcName, cif->nargs, cif->rtype->type);
-        }
     }
 
     // Validate arguments array
     if (!argsArrayOop.isObject()) {
-        fprintf(stderr, "[TFFI-CALL #%d] FAIL: argsArray not object (funcPtr=%p)\n", callCount, funcPtr);
         return PrimitiveResult::Failure;
     }
     size_t nargs = memory_.slotCountOf(argsArrayOop);
     if (nargs != cif->nargs) {
-        fprintf(stderr, "[TFFI-CALL #%d] FAIL: nargs mismatch array=%zu cif=%u (funcPtr=%p)\n",
-                callCount, nargs, cif->nargs, funcPtr);
         return PrimitiveResult::Failure;
     }
 
@@ -24653,8 +24628,6 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
                 case FFI_TYPE_FLOAT: {
                     double d = 0.0;
                     if (!extractFloat(memory_, argOop, d)) {
-                        fprintf(stderr, "[TFFI-CALL #%d] FAIL: arg[%zu] extractFloat for FLOAT (funcPtr=%p oop=0x%llx)\n",
-                                callCount, i, funcPtr, (unsigned long long)argOop.rawBits());
                         return PrimitiveResult::Failure;
                     }
                     float f = static_cast<float>(d);
@@ -24664,8 +24637,6 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
                 case FFI_TYPE_DOUBLE: {
                     double d = 0.0;
                     if (!extractFloat(memory_, argOop, d)) {
-                        fprintf(stderr, "[TFFI-CALL #%d] FAIL: arg[%zu] extractFloat for DOUBLE (funcPtr=%p oop=0x%llx)\n",
-                                callCount, i, funcPtr, (unsigned long long)argOop.rawBits());
                         return PrimitiveResult::Failure;
                     }
                     memcpy(argSlot, &d, sizeof(double));
@@ -24759,8 +24730,6 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
                     // Struct: memcpy from ExternalAddress or ByteArray
                     void* src = tffi_getAddressFromExternalAddressOrByteArray(argOop);
                     if (!src) {
-                        fprintf(stderr, "[TFFI-CALL #%d] FAIL: arg[%zu] struct src=null (funcPtr=%p)\n",
-                                callCount, i, funcPtr);
                         return PrimitiveResult::Failure;
                     }
                     size_t structSize = cif->arg_types[i]->size;
@@ -24775,8 +24744,6 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
                     break;
                 }
                 default:
-                    fprintf(stderr, "[TFFI-CALL #%d] FAIL: arg[%zu] unknown type=%u (funcPtr=%p)\n",
-                            callCount, i, argTypeId, funcPtr);
                     return PrimitiveResult::Failure;
             }
         }
@@ -24790,12 +24757,6 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
 
     // Perform the FFI call
     ffi_call(cif, FFI_FN(funcPtr), returnHolder, argPtrs);
-
-    if (callCount <= 500 || callCount % 50 == 0 || callCount > 700) {
-        uint64_t rv = 0;
-        memcpy(&rv, returnHolder, std::min(sizeof(rv), (size_t)cif->rtype->size));
-        fprintf(stderr, "[TFFI-CALL #%d] returned: 0x%llx\n", callCount, rv);
-    }
 
     // Marshall return value back to Smalltalk
     unsigned short returnTypeId = cif->rtype->type;

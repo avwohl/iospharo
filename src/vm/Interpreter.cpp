@@ -5679,19 +5679,52 @@ void Interpreter::returnFromMethod() {
             // Check SIZE_MAX path — only trace when we're in a CompiledBlock (actual NLR)
             // (Normal methods with SIZE_MAX are just regular returns)
 
-            // Check if we're in a CompiledBlock by looking at the method's last literal
+            // Check if we're in a CompiledBlock by looking at the method's last literal.
+            // For NESTED blocks, the last literal is another CompiledBlock, not the
+            // home method. Follow the chain until we reach the actual CompiledMethod
+            // (whose last literal is NOT a CompiledMethod — it's the class binding).
             Oop homeMethodOop = Oop::nil();
             if (method_.isObject() && method_.rawBits() > 0x10000) {
                 Oop hdr = memory_.fetchPointer(0, method_);
                 if (hdr.isSmallInteger()) {
                     int numLits = hdr.asSmallInteger() & 0x7FFF;
                     if (numLits >= 1) {
-                        Oop lastLit = memory_.fetchPointer(numLits, method_);
-                        if (lastLit.isObject() && lastLit.rawBits() > 0x10000) {
-                            ObjectHeader* llHdr = lastLit.asObjectPtr();
-                            if (llHdr->isCompiledMethod()) {
-                                // This is a CompiledBlock - lastLit is the home method
-                                homeMethodOop = lastLit;
+                        Oop enclosing = memory_.fetchPointer(numLits, method_);
+                        // Follow the chain of enclosing blocks/methods
+                        int chainDepth = 0;
+                        while (enclosing.isObject() && enclosing.rawBits() > 0x10000 && chainDepth < 20) {
+                            ObjectHeader* ecHdr = enclosing.asObjectPtr();
+                            if (!ecHdr->isCompiledMethod()) break;
+                            // Check if this is a CompiledBlock or CompiledMethod
+                            // by examining its last literal
+                            Oop ecHeader = memory_.fetchPointer(0, enclosing);
+                            if (!ecHeader.isSmallInteger()) break;
+                            int ecNumLits = ecHeader.asSmallInteger() & 0x7FFF;
+                            if (ecNumLits < 1) {
+                                // No literals — treat as home method
+                                homeMethodOop = enclosing;
+                                break;
+                            }
+                            Oop ecLastLit = memory_.fetchPointer(ecNumLits, enclosing);
+                            bool isBlock = false;
+                            if (ecLastLit.isObject() && ecLastLit.rawBits() > 0x10000) {
+                                ObjectHeader* llHdr = ecLastLit.asObjectPtr();
+                                isBlock = llHdr->isCompiledMethod();
+                            }
+                            if (!isBlock) {
+                                // Last literal is NOT compiled code — this is the home method
+                                homeMethodOop = enclosing;
+                                break;
+                            }
+                            // It's a CompiledBlock — follow the chain
+                            enclosing = ecLastLit;
+                            chainDepth++;
+                        }
+                        // Fallback: if chain exhausted, use whatever we have
+                        if (homeMethodOop.isNil() && enclosing.isObject() && enclosing.rawBits() > 0x10000) {
+                            ObjectHeader* ecHdr = enclosing.asObjectPtr();
+                            if (ecHdr->isCompiledMethod()) {
+                                homeMethodOop = enclosing;
                             }
                         }
                     }
@@ -5700,52 +5733,36 @@ void Interpreter::returnFromMethod() {
 
             // If we found a home method, search context chain and do context-based NLR
             if (homeMethodOop.isObject() && !homeMethodOop.isNil()) {
-                // Trace: NLR from CompiledBlock with SIZE_MAX (context-based path)
-                {
-                    std::string hmSel = "?";
-                    Oop hmh = memory_.fetchPointer(0, homeMethodOop);
-                    if (hmh.isSmallInteger()) {
-                        int nl = hmh.asSmallInteger() & 0x7FFF;
-                        if (nl >= 2) {
-                            Oop pl = memory_.fetchPointer(nl - 1, homeMethodOop);
-                            if (pl.isObject() && pl.rawBits() > 0x10000) {
-                                ObjectHeader* plh = pl.asObjectPtr();
-                                if (plh->isBytesObject() && plh->byteSize() < 80)
-                                    hmSel = std::string((char*)plh->bytes(), plh->byteSize());
-                            }
-                        }
-                    }
-                    fprintf(stderr, "[NLR-SIZEMAX step=%llu] home=#%s fd=%zu\n",
-                            (unsigned long long)g_stepNum, hmSel.c_str(), frameDepth_);
-                    // Show inline frame stack
-                    for (size_t fi = frameDepth_; fi > 0; fi--) {
-                        Oop sm = savedFrames_[fi - 1].savedMethod;
-                        std::string sel = "?";
-                        int pIdx = 0;
-                        if (sm.isObject() && sm.rawBits() > 0x10000) {
-                            pIdx = primitiveIndexOf(sm);
-                            Oop hdr2 = memory_.fetchPointer(0, sm);
-                            if (hdr2.isSmallInteger()) {
-                                int nl2 = hdr2.asSmallInteger() & 0x7FFF;
-                                if (nl2 >= 2) {
-                                    Oop pl2 = memory_.fetchPointer(nl2 - 1, sm);
-                                    if (pl2.isObject() && pl2.rawBits() > 0x10000) {
-                                        ObjectHeader* plh2 = pl2.asObjectPtr();
-                                        if (plh2->isBytesObject() && plh2->byteSize() < 80)
-                                            sel = std::string((char*)plh2->bytes(), plh2->byteSize());
-                                    }
-                                }
-                            }
-                        }
-                        fprintf(stderr, "  frame[%zu]: #%s prim=%d hfd=%zu\n",
-                                fi - 1, sel.c_str(), pIdx, savedFrames_[fi - 1].homeFrameDepth);
-                    }
-                    fflush(stderr);
-                }
                 // First check if home method is in context chain
                 Oop ctx = activeContext_;
                 int searchDepth = 0;
                 Oop homeCtx = Oop::nil();
+
+                // ALSO check savedFrames_ (activateBlock sets SIZE_MAX but the home
+                // might still be in inline frames if block was re-pushed after materialization)
+                for (size_t si = 0; si < frameDepth_; si++) {
+                    if (savedFrames_[si].savedMethod.rawBits() == homeMethodOop.rawBits()) {
+                        // Home method IS in savedFrames_ — use inline NLR instead
+                        size_t homeFrame = si;
+                        while (frameDepth_ > homeFrame) {
+                            // Check ensure: in unwind path
+                            if (frameDepth_ > 1) {
+                                Oop rm = savedFrames_[frameDepth_ - 1].savedMethod;
+                                if (rm.isObject() && rm.rawBits() > 0x10000 &&
+                                    primitiveIndexOf(rm) == 198) {
+                                    popFrame();
+                                    push(value);
+                                    if (frameDepth_ > 0) savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
+                                    return;
+                                }
+                            }
+                            popFrame();
+                        }
+                        returnValue(value);
+                        return;
+                    }
+                }
+
                 while (ctx.isObject() && !ctx.isNil() && searchDepth < 200) {
                     Oop ctxMethod = memory_.fetchPointer(3, ctx);
                     if (ctxMethod.rawBits() == homeMethodOop.rawBits()) {
@@ -5902,12 +5919,30 @@ void Interpreter::returnFromMethod() {
                 if (hdr.isSmallInteger()) {
                     int numLits = hdr.asSmallInteger() & 0x7FFF;
                     if (numLits >= 1) {
-                        Oop lastLit = memory_.fetchPointer(numLits, method_);
-                        if (lastLit.isObject() && lastLit.rawBits() > 0x10000) {
-                            ObjectHeader* llHdr = lastLit.asObjectPtr();
-                            if (llHdr->isCompiledMethod()) {
+                        Oop enclosing = memory_.fetchPointer(numLits, method_);
+                        // Follow chain of enclosing blocks to find home CompiledMethod
+                        int chainDepth = 0;
+                        while (enclosing.isObject() && enclosing.rawBits() > 0x10000 && chainDepth < 20) {
+                            ObjectHeader* ecHdr = enclosing.asObjectPtr();
+                            if (!ecHdr->isCompiledMethod()) break;
+                            isCompiledBlock = true;
+                            Oop ecHeader = memory_.fetchPointer(0, enclosing);
+                            if (!ecHeader.isSmallInteger()) { homeMethod = enclosing; break; }
+                            int ecNumLits = ecHeader.asSmallInteger() & 0x7FFF;
+                            if (ecNumLits < 1) { homeMethod = enclosing; break; }
+                            Oop ecLastLit = memory_.fetchPointer(ecNumLits, enclosing);
+                            bool isBlock = false;
+                            if (ecLastLit.isObject() && ecLastLit.rawBits() > 0x10000) {
+                                isBlock = ecLastLit.asObjectPtr()->isCompiledMethod();
+                            }
+                            if (!isBlock) { homeMethod = enclosing; break; }
+                            enclosing = ecLastLit;
+                            chainDepth++;
+                        }
+                        if (homeMethod.isNil() && enclosing.isObject() && enclosing.rawBits() > 0x10000) {
+                            if (enclosing.asObjectPtr()->isCompiledMethod()) {
                                 isCompiledBlock = true;
-                                homeMethod = lastLit;  // Last literal of CompiledBlock is home method
+                                homeMethod = enclosing;
                             }
                         }
                     }
