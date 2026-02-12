@@ -16846,65 +16846,12 @@ PrimitiveResult Interpreter::primitiveSetManualSurfacePointer(int argCount) {
 // Primitive 291: Draw loop (line drawing for BitBlt)
 // Uses existing primitiveDrawLoop implementation (also primitive 104)
 
-// Primitive 292: Compress bitmap to byte array (RLE compression)
-// bitmap byteArray primitiveCompressToByteArray -> compressedSize
+// Primitive 292: Compress bitmap to byte array (Pharo RLE compression)
+// receiver compress: bm toByteArray: ba -> compressedSize
+// TODO: Implement correct Pharo RLE format (encodeInt: with codes 0-3).
+// For now, return Failure to use the Smalltalk fallback implementation.
 PrimitiveResult Interpreter::primitiveCompressToByteArray(int argCount) {
-    if (argCount != 2) return PrimitiveResult::Failure;
-
-    Oop byteArray = stackTop();
-    Oop bitmap = stackValue(1);
-
-    if (!bitmap.isObject() || !byteArray.isObject()) {
-        return PrimitiveResult::Failure;
-    }
-
-    // Get bitmap data
-    size_t bitmapSize = memory_.byteSizeOf(bitmap);
-    size_t destSize = memory_.byteSizeOf(byteArray);
-
-    if (bitmapSize == 0 || destSize == 0) {
-        return PrimitiveResult::Failure;
-    }
-
-    // Simple RLE compression
-    size_t srcIndex = 0;
-    size_t destIndex = 0;
-    size_t wordCount = bitmapSize / 4;
-
-    while (srcIndex < wordCount && destIndex < destSize - 4) {
-        uint32_t word = memory_.fetchWord32(srcIndex, bitmap);
-
-        // Count consecutive identical words
-        size_t runLength = 1;
-        while (srcIndex + runLength < wordCount &&
-               runLength < 127 &&
-               memory_.fetchWord32(srcIndex + runLength, bitmap) == word) {
-            runLength++;
-        }
-
-        if (runLength >= 2 || word == 0) {
-            // Encode as run
-            memory_.storeByte(destIndex++, byteArray, static_cast<uint8_t>(runLength | 0x80));
-            memory_.storeByte(destIndex++, byteArray, static_cast<uint8_t>((word >> 24) & 0xFF));
-            memory_.storeByte(destIndex++, byteArray, static_cast<uint8_t>((word >> 16) & 0xFF));
-            memory_.storeByte(destIndex++, byteArray, static_cast<uint8_t>((word >> 8) & 0xFF));
-            memory_.storeByte(destIndex++, byteArray, static_cast<uint8_t>(word & 0xFF));
-            srcIndex += runLength;
-        } else {
-            // Encode as literal
-            memory_.storeByte(destIndex++, byteArray, 1);  // Length 1
-            memory_.storeByte(destIndex++, byteArray, static_cast<uint8_t>((word >> 24) & 0xFF));
-            memory_.storeByte(destIndex++, byteArray, static_cast<uint8_t>((word >> 16) & 0xFF));
-            memory_.storeByte(destIndex++, byteArray, static_cast<uint8_t>((word >> 8) & 0xFF));
-            memory_.storeByte(destIndex++, byteArray, static_cast<uint8_t>(word & 0xFF));
-            srcIndex++;
-        }
-    }
-
-    popN(2);  // arguments
-    pop();    // receiver
-    push(Oop::fromSmallInteger(static_cast<intptr_t>(destIndex)));
-    return PrimitiveResult::Success;
+    return PrimitiveResult::Failure;
 }
 
 // MiscPrimitivePlugin: primitiveDecompressFromByteArray
