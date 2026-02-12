@@ -33,26 +33,40 @@ When something doesn't work:
 
 **If you find yourself writing code that "works around" something, STOP and investigate the root cause instead.**
 
-### FFI/Display: VERIFIED WORKING (2026-02-08)
+### ⛔️ VERIFY VISUALLY BEFORE CLAIMING ANYTHING WORKS ⛔️
 
-Real SDL2 is statically linked via `-Wl,-force_load` in CMakeLists.txt. The Pharo
-image's OSSDL2Driver calls real SDL_Init, SDL_CreateWindow, SDL_PollEvent etc. via
-FFI (TFFI callout → dlsym(RTLD_DEFAULT) → finds force-loaded SDL2 symbols).
+**NEVER claim display, menus, or interaction "works" without taking a screenshot
+and examining it.** Run the Mac Catalyst app, take a screenshot, and READ the
+screenshot with the Read tool to confirm what's actually on screen.
 
-Frame capture proves correct rendering: Pharo logo, menu bar, desktop visible.
-Event loop runs (939 SDL_PollEvent calls in 45s). The stub functions in FFI.cpp
-are dead code — never called by TFFI when real SDL2 is available.
+Checklist before claiming a GUI fix works:
+1. Build and launch the Mac Catalyst app
+2. Take a screenshot: `screencapture -x /tmp/pharo-screenshot.png`
+3. Read the screenshot with the Read tool to see what's actually rendered
+4. Verify EACH specific claim (menu visible? clickable? world menu opens?)
 
-**Remaining display issue**: `GrafPort(Object)>>error:` renders a red X over the
-desktop. Caused by SpStyleEnvironmentColorProxy missing `#isTransparent` and
-`#fillRectangle:on:`. This is a Morphic/Spec2 theming issue, not FFI.
+**Do NOT rely on log output, test pass rates, or code analysis alone.**
+Two weeks of "verified working" claims were wrong because nobody looked at the screen.
 
-### Current Priority: Fix GrafPort rendering error, enable skipped tests
+### Current Priority: GUI Display and Interaction
 
-- Investigate GrafPort(Object)>>error: during desktop rendering
-- Enable the 11 skipped test classes (134 hidden tests) and fix failures
-- Fix the 10 individually skipped test selectors
-- Only 32-bit-specific skips are acceptable
+The ONLY current project is getting the Mac Catalyst app to:
+1. **Display properly** — Pharo desktop renders correctly, no red X
+2. **Top menu works** — menu bar visible AND clickable, dropdowns open
+3. **World menu works** — right-click on desktop opens the world menu
+
+Do NOT wander off into test suite improvements, skipped test classes, or other
+side projects until ALL THREE of these work and are visually verified.
+
+### FFI/Display Status
+
+SDL2 stubs in FFI.cpp bridge between the Pharo image's OSSDL2Driver and our
+Metal rendering pipeline. The image calls SDL2 functions via FFI, our stubs
+translate to gDisplaySurface/gEventQueue.
+
+**Known issue**: `GrafPort(Object)>>error:` renders a red X over the desktop.
+Caused by SpStyleEnvironmentColorProxy (ProtoObject subclass) forwarding DNU
+to `Smalltalk ui theme` before UITheme is initialized during session startup.
 
 ---
 

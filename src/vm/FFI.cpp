@@ -178,6 +178,7 @@ void* lookupFunction(const std::string& moduleName, const std::string& funcName)
     // instead of falling through to dlsym (which finds force-loaded real SDL2
     // that crashes on our fake 0xDEADBEEF window handles).
     if (funcName.compare(0, 4, "SDL_") == 0) {
+        fprintf(stderr, "[SDL-STUB] MISSING stub for: %s (returning no-op)\n", funcName.c_str());
         // Generic no-op: returns 0 (safe for int/void/pointer returns).
         // On ARM64, extra arguments are in registers and harmlessly ignored.
         static auto genericSDLNoOp = +[]() -> intptr_t { return 0; };
@@ -290,6 +291,8 @@ void stub_SDL_GetWindowSize(void* window, int* w, int* h) {
     if (window == sMainWindow && pharo::gDisplaySurface) {
         if (w) *w = pharo::gDisplaySurface->width();
         if (h) *h = pharo::gDisplaySurface->height();
+        fprintf(stderr, "[SDL-STUB] SDL_GetWindowSize(main) -> %dx%d\n",
+                w ? *w : -1, h ? *h : -1);
         return;
     }
     auto it = sWindows.find(window);
@@ -353,6 +356,18 @@ void stub_SDL_SetWindowPosition(void* window, int x, int y) {
 void stub_SDL_SetWindowIcon(void* window, void* icon) {
 }
 
+int stub_SDL_GetWindowWMInfo(void* window, void* info) {
+    // Fill with zeros and return success (1 = SDL_TRUE)
+    // The info struct is SDL_SysWMinfo — its size varies but 64 bytes covers it
+    if (info) {
+        memset(info, 0, 64);
+        // Set version at the start (SDL_SysWMinfo starts with SDL_version)
+        uint8_t* ver = static_cast<uint8_t*>(info);
+        ver[0] = 2; ver[1] = 0; ver[2] = 20; // SDL 2.0.20
+    }
+    return 1;  // SDL_TRUE
+}
+
 // Renderer stubs
 void* stub_SDL_CreateRenderer(void* window, int index, uint32_t flags) {
     void* handle = reinterpret_cast<void*>(sNextHandle++);
@@ -384,10 +399,8 @@ void stub_SDL_RenderPresent(void* renderer) {
     }
 
     // Mark SDL2 rendering as active on first main renderer present.
-    // This stops syncDisplayToSurface from overwriting the real SDL texture
-    // content with the stale Display Form. OSSDL2Driver calls RenderPresent
-    // BEFORE PollEvent in each frame, so we must set this here (not in PollEvent).
     static bool renderingActive = false;
+    static int presentCount = 0;
     if (!renderingActive) {
         renderingActive = true;
         pharo::gEventQueue.setSDL2EventPollingActive(true);
@@ -410,11 +423,38 @@ void stub_SDL_RenderPresent(void* renderer) {
         int dstH = pharo::gDisplaySurface->height();
         int copyW = std::min(srcW, dstW);
         int copyH = std::min(srcH, dstH);
+
+        if (presentCount < 5) {
+            fprintf(stderr, "[SDL-STUB] RenderPresent #%d: texture=%dx%d surface=%dx%d copy=%dx%d\n",
+                    presentCount, srcW, srcH, dstW, dstH, copyW, copyH);
+            // Sample pixels to verify content
+            if (srcW > 100 && srcH > 100) {
+                fprintf(stderr, "[SDL-STUB]   src[0,0]=%08x src[50,50]=%08x src[100,50]=%08x src[500,300]=%08x\n",
+                        src[0], src[50*srcW+50], src[50*srcW+100],
+                        (srcH > 300 && srcW > 500) ? src[300*srcW+500] : 0);
+            }
+            presentCount++;
+        }
+
         for (int y = 0; y < copyH; y++) {
             memcpy(dst + y * dstW, src + y * srcW, copyW * sizeof(uint32_t));
         }
         pharo::gDisplaySurface->update();
     }
+}
+
+int stub_SDL_GetRendererOutputSize(void* renderer, int* w, int* h) {
+    // Return display surface dimensions so Pharo creates Forms at the right size
+    int rw = 1024, rh = 768;
+    if (pharo::gDisplaySurface) {
+        rw = pharo::gDisplaySurface->width();
+        rh = pharo::gDisplaySurface->height();
+    }
+    if (w) *w = rw;
+    if (h) *h = rh;
+    fprintf(stderr, "[SDL-STUB] SDL_GetRendererOutputSize(renderer=%p) -> %dx%d\n",
+            renderer, rw, rh);
+    return 0;
 }
 
 int stub_SDL_SetRenderDrawColor(void* renderer, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
@@ -423,6 +463,11 @@ int stub_SDL_SetRenderDrawColor(void* renderer, uint8_t r, uint8_t g, uint8_t b,
 
 // Texture stubs
 void* stub_SDL_CreateTexture(void* renderer, uint32_t format, int access, int w, int h) {
+    // DO NOT override dimensions! Pharo's Form uses the same extent for BitBlt stride.
+    // If we change the texture size without Pharo knowing, the stride mismatches and
+    // rendering appears as diagonal garbage.
+    fprintf(stderr, "[SDL-STUB] SDL_CreateTexture(%dx%d, fmt=0x%x, access=%d, renderer=%p)\n",
+            w, h, format, access, renderer);
     void* handle = reinterpret_cast<void*>(sNextHandle++);
     SDLTextureState state;
     state.pixels = static_cast<uint32_t*>(calloc(w * h, 4));
@@ -464,6 +509,13 @@ int stub_SDL_LockTexture(void* texture, void* rect, void** pixels, int* pitch) {
     }
     if (pitch) {
         *pitch = it->second.pitch;
+    }
+    static int lockCount = 0;
+    if (lockCount < 5) {
+        fprintf(stderr, "[SDL-STUB] SDL_LockTexture #%d: texture=%p pixels=%p pitch=%d (%dx%d)\n",
+                lockCount, texture, it->second.pixels, it->second.pitch,
+                it->second.width, it->second.height);
+        lockCount++;
     }
     return 0;
 }
@@ -660,7 +712,16 @@ int stub_SDL_HasClipboardText() {
 
 // Cursor stubs
 void* stub_SDL_CreateSystemCursor(int id) {
-    return reinterpret_cast<void*>(0x12345678);
+    return reinterpret_cast<void*>(static_cast<uintptr_t>(0x20000 + id));
+}
+
+void* stub_SDL_CreateCursor(void* data, void* mask, int w, int h, int hot_x, int hot_y) {
+    // Return a unique handle for each custom cursor
+    static uintptr_t nextCursorHandle = 0x30000;
+    void* handle = reinterpret_cast<void*>(nextCursorHandle++);
+    fprintf(stderr, "[SDL-STUB] SDL_CreateCursor(%dx%d, hot=%d,%d) -> %p\n",
+            w, h, hot_x, hot_y, handle);
+    return handle;
 }
 
 void stub_SDL_SetCursor(void* cursor) {
@@ -671,6 +732,25 @@ void stub_SDL_FreeCursor(void* cursor) {
 
 int stub_SDL_ShowCursor(int toggle) {
     return toggle;
+}
+
+uint32_t stub_SDL_GetWindowFlags(void* window) {
+    // Return SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
+    return 0x00000004 | 0x00000020;
+}
+
+void* stub_SDL_CreateRGBSurfaceFrom(void* pixels, int width, int height, int depth,
+                                      int pitch, uint32_t Rmask, uint32_t Gmask,
+                                      uint32_t Bmask, uint32_t Amask) {
+    // Return a handle - surfaces are mainly used for cursor and icon creation
+    static uintptr_t nextSurfHandle = 0x40000;
+    void* handle = reinterpret_cast<void*>(nextSurfHandle++);
+    fprintf(stderr, "[SDL-STUB] SDL_CreateRGBSurfaceFrom(%dx%d depth=%d) -> %p\n",
+            width, height, depth, handle);
+    return handle;
+}
+
+void stub_SDL_FreeSurface(void* surface) {
 }
 
 // Mouse stubs
@@ -793,10 +873,12 @@ SDL_EXPORT int SDL_SetWindowFullscreen(void* w, uint32_t f) { return stub_SDL_Se
 SDL_EXPORT void SDL_GetWindowPosition(void* w, int* x, int* y) { stub_SDL_GetWindowPosition(w, x, y); }
 SDL_EXPORT void SDL_SetWindowPosition(void* w, int x, int y) { stub_SDL_SetWindowPosition(w, x, y); }
 SDL_EXPORT void SDL_SetWindowIcon(void* w, void* icon) { stub_SDL_SetWindowIcon(w, icon); }
+SDL_EXPORT int SDL_GetWindowWMInfo(void* w, void* info) { return stub_SDL_GetWindowWMInfo(w, info); }
 SDL_EXPORT void* SDL_CreateRenderer(void* w, int i, uint32_t f) { return stub_SDL_CreateRenderer(w, i, f); }
 SDL_EXPORT void SDL_DestroyRenderer(void* r) { stub_SDL_DestroyRenderer(r); }
 SDL_EXPORT int SDL_RenderClear(void* r) { return stub_SDL_RenderClear(r); }
 SDL_EXPORT void SDL_RenderPresent(void* r) { stub_SDL_RenderPresent(r); }
+SDL_EXPORT int SDL_GetRendererOutputSize(void* r, int* w, int* h) { return stub_SDL_GetRendererOutputSize(r, w, h); }
 SDL_EXPORT int SDL_SetRenderDrawColor(void* r, uint8_t rr, uint8_t g, uint8_t b, uint8_t a) { return stub_SDL_SetRenderDrawColor(r, rr, g, b, a); }
 SDL_EXPORT void* SDL_CreateTexture(void* r, uint32_t fmt, int acc, int w, int h) { return stub_SDL_CreateTexture(r, fmt, acc, w, h); }
 SDL_EXPORT void SDL_DestroyTexture(void* t) { stub_SDL_DestroyTexture(t); }
@@ -811,9 +893,13 @@ SDL_EXPORT char* SDL_GetClipboardText() { return stub_SDL_GetClipboardText(); }
 SDL_EXPORT int SDL_SetClipboardText(const char* t) { return stub_SDL_SetClipboardText(t); }
 SDL_EXPORT int SDL_HasClipboardText() { return stub_SDL_HasClipboardText(); }
 SDL_EXPORT void* SDL_CreateSystemCursor(int id) { return stub_SDL_CreateSystemCursor(id); }
+SDL_EXPORT void* SDL_CreateCursor(void* data, void* mask, int w, int h, int hx, int hy) { return stub_SDL_CreateCursor(data, mask, w, h, hx, hy); }
 SDL_EXPORT void SDL_SetCursor(void* c) { stub_SDL_SetCursor(c); }
 SDL_EXPORT void SDL_FreeCursor(void* c) { stub_SDL_FreeCursor(c); }
 SDL_EXPORT int SDL_ShowCursor(int t) { return stub_SDL_ShowCursor(t); }
+SDL_EXPORT uint32_t SDL_GetWindowFlags(void* w) { return stub_SDL_GetWindowFlags(w); }
+SDL_EXPORT void* SDL_CreateRGBSurfaceFrom(void* px, int w, int h, int d, int p, uint32_t rm, uint32_t gm, uint32_t bm, uint32_t am) { return stub_SDL_CreateRGBSurfaceFrom(px, w, h, d, p, rm, gm, bm, am); }
+SDL_EXPORT void SDL_FreeSurface(void* s) { stub_SDL_FreeSurface(s); }
 SDL_EXPORT uint32_t SDL_GetMouseState(int* x, int* y) { return stub_SDL_GetMouseState(x, y); }
 SDL_EXPORT uint32_t SDL_GetGlobalMouseState(int* x, int* y) { return stub_SDL_GetGlobalMouseState(x, y); }
 SDL_EXPORT int SDL_GetNumVideoDisplays() { return stub_SDL_GetNumVideoDisplays(); }
@@ -879,12 +965,14 @@ void registerSDL2Stubs() {
     registerFunction("SDL_GetWindowPosition", reinterpret_cast<void*>(stub_SDL_GetWindowPosition));
     registerFunction("SDL_SetWindowPosition", reinterpret_cast<void*>(stub_SDL_SetWindowPosition));
     registerFunction("SDL_SetWindowIcon", reinterpret_cast<void*>(stub_SDL_SetWindowIcon));
+    registerFunction("SDL_GetWindowWMInfo", reinterpret_cast<void*>(stub_SDL_GetWindowWMInfo));
 
     // Renderer
     registerFunction("SDL_CreateRenderer", reinterpret_cast<void*>(stub_SDL_CreateRenderer));
     registerFunction("SDL_DestroyRenderer", reinterpret_cast<void*>(stub_SDL_DestroyRenderer));
     registerFunction("SDL_RenderClear", reinterpret_cast<void*>(stub_SDL_RenderClear));
     registerFunction("SDL_RenderPresent", reinterpret_cast<void*>(stub_SDL_RenderPresent));
+    registerFunction("SDL_GetRendererOutputSize", reinterpret_cast<void*>(stub_SDL_GetRendererOutputSize));
     registerFunction("SDL_SetRenderDrawColor", reinterpret_cast<void*>(stub_SDL_SetRenderDrawColor));
 
     // Texture
@@ -907,9 +995,17 @@ void registerSDL2Stubs() {
 
     // Cursor
     registerFunction("SDL_CreateSystemCursor", reinterpret_cast<void*>(stub_SDL_CreateSystemCursor));
+    registerFunction("SDL_CreateCursor", reinterpret_cast<void*>(stub_SDL_CreateCursor));
     registerFunction("SDL_SetCursor", reinterpret_cast<void*>(stub_SDL_SetCursor));
     registerFunction("SDL_FreeCursor", reinterpret_cast<void*>(stub_SDL_FreeCursor));
     registerFunction("SDL_ShowCursor", reinterpret_cast<void*>(stub_SDL_ShowCursor));
+
+    // Window flags
+    registerFunction("SDL_GetWindowFlags", reinterpret_cast<void*>(stub_SDL_GetWindowFlags));
+
+    // Surface
+    registerFunction("SDL_CreateRGBSurfaceFrom", reinterpret_cast<void*>(stub_SDL_CreateRGBSurfaceFrom));
+    registerFunction("SDL_FreeSurface", reinterpret_cast<void*>(stub_SDL_FreeSurface));
 
     // Mouse
     registerFunction("SDL_GetMouseState", reinterpret_cast<void*>(stub_SDL_GetMouseState));
