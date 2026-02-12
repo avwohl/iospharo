@@ -35,6 +35,9 @@
 #include <set>
 #include <unordered_map>
 
+// Forward declaration for SDL rendering active check (defined in FFI.cpp)
+extern "C" bool ffi_isSDLRenderingActive();
+
 // Global symbol name map for TFFI call logging
 static std::unordered_map<uintptr_t, std::string> g_symbolNames;
 #include <ffi.h>
@@ -4587,6 +4590,11 @@ PrimitiveResult Interpreter::primitiveForceDisplayUpdate(int argCount) {
 
     // If no display surface, nothing to do
     if (!pharo::gDisplaySurface) {
+        return PrimitiveResult::Success;
+    }
+
+    // SDL2 rendering active — don't overwrite with stale Display Form
+    if (ffi_isSDLRenderingActive()) {
         return PrimitiveResult::Success;
     }
 
@@ -12437,6 +12445,13 @@ PrimitiveResult Interpreter::primitiveDrawLoop(int argCount) {
 // left top right bottom primitiveShowDisplayRect -> self
 // Updates the specified rectangle of the display
 PrimitiveResult Interpreter::primitiveShowDisplayRect(int argCount) {
+    // When SDL_RenderPresent is active, it owns display updates.
+    // Don't overwrite with stale Display Form content.
+    if (ffi_isSDLRenderingActive()) {
+        if (argCount > 0) popN(argCount);
+        return PrimitiveResult::Success;
+    }
+
     // Pop all arguments (left, top, right, bottom) but use them for partial update
     int left = 0, top = 0, right = 0, bottom = 0;
     if (argCount >= 4) {
@@ -12504,27 +12519,51 @@ PrimitiveResult Interpreter::primitiveShowDisplayRect(int argCount) {
 // Called after every successful BitBlt to mirror the reference VM's behavior
 // (BitBltPlugin calls showDisplayBitsLeftTopRightBottom after copyBits).
 void Interpreter::showDisplayBits(Oop destForm, int left, int top, int right, int bottom) {
+    static int callCount = 0;
+    static int bailSdl = 0, bailNotObj = 0, bailSmallInt = 0, bailNil = 0;
+    static int bailFmt = 0, bailSize = 0, bailEmpty = 0, successCount = 0;
+    callCount++;
+
     if (!pharo::gDisplaySurface) return;
 
-    // When OSSDL2Driver is active, it owns display updates via SDL_RenderPresent.
-    // Do NOT also copy from Bitmap-backed forms — they contain stale content that
-    // overwrites SDL_RenderPresent's correct output.
-    if (pharo::gEventQueue.isSDL2EventPollingActive()) return;
+    // When OSSDL2Driver is active (SDL_RenderPresent has been called), it owns
+    // display updates. Do NOT also copy from Bitmap-backed forms — they contain
+    // stale content that overwrites SDL_RenderPresent's correct output.
+    // Check both SDL2 event polling AND SDL rendering active flags, since
+    // SDL_PollEvent may not be called even though rendering is active.
+    if (pharo::gEventQueue.isSDL2EventPollingActive() || ffi_isSDLRenderingActive()) {
+        if (++bailSdl <= 3) fprintf(stderr, "[SDB] #%d bail: SDL2 active (poll=%d render=%d)\n",
+            callCount, pharo::gEventQueue.isSDL2EventPollingActive() ? 1 : 0,
+            ffi_isSDLRenderingActive() ? 1 : 0);
+        return;
+    }
 
     // Match by form dimensions instead of identity (OSSDL2Driver creates a new form
     // that doesn't match the Display global, and GC can move objects).
-    if (!destForm.isObject()) return;
+    if (!destForm.isObject()) {
+        if (++bailNotObj <= 3) fprintf(stderr, "[SDB] #%d bail: destForm not object\n", callCount);
+        return;
+    }
     Oop bits = memory_.fetchPointer(0, destForm);  // FormBits
 
     // bits can be: Bitmap object (regular Form), SmallInteger (ManualSurface handle),
     // or ExternalAddress (ExternalForm pointer). We can only copy from Bitmap objects.
-    if (bits.isSmallInteger()) return;  // ManualSurface — SDL_RenderPresent handles
-    if (!bits.isObject() || bits.isNil()) return;
+    if (bits.isSmallInteger()) {
+        if (++bailSmallInt <= 3) fprintf(stderr, "[SDB] #%d bail: bits is SmallInt=%lld\n", callCount, (long long)bits.asSmallInteger());
+        return;
+    }
+    if (!bits.isObject() || bits.isNil()) {
+        if (++bailNil <= 3) fprintf(stderr, "[SDB] #%d bail: bits nil/not-obj\n", callCount);
+        return;
+    }
 
     // Check if bits is a Bitmap (format 10 = 32-bit indexable words) vs ExternalAddress
     ObjectHeader* bitsHdr = bits.asObjectPtr();
     auto fmt = bitsHdr->format();
-    if (fmt != ObjectFormat::Indexable32) return;
+    if (fmt != ObjectFormat::Indexable32) {
+        if (++bailFmt <= 3) fprintf(stderr, "[SDB] #%d bail: bits format=%d (expected Indexable32)\n", callCount, static_cast<int>(fmt));
+        return;
+    }
 
     Oop widthOop = memory_.fetchPointer(1, destForm);
     Oop heightOop = memory_.fetchPointer(2, destForm);
@@ -12533,7 +12572,10 @@ void Interpreter::showDisplayBits(Oop destForm, int left, int top, int right, in
     int srcHeight = static_cast<int>(heightOop.asSmallInteger());
     int surfWidth = pharo::gDisplaySurface->width();
     int surfHeight = pharo::gDisplaySurface->height();
-    if (srcWidth != surfWidth || srcHeight != surfHeight) return;
+    if (srcWidth != surfWidth || srcHeight != surfHeight) {
+        if (++bailSize <= 3) fprintf(stderr, "[SDB] #%d bail: size mismatch src=%dx%d surf=%dx%d\n", callCount, srcWidth, srcHeight, surfWidth, surfHeight);
+        return;
+    }
 
     uint32_t* srcPixels = reinterpret_cast<uint32_t*>(bitsHdr->bytes());
     uint32_t* dstPixels = pharo::gDisplaySurface->pixels();
@@ -12554,6 +12596,13 @@ void Interpreter::showDisplayBits(Oop destForm, int left, int top, int right, in
         memcpy(dstPixels + y * dstWidth + left,
                srcPixels + y * srcWidth + left,
                (right - left) * sizeof(uint32_t));
+    }
+
+    successCount++;
+    if (successCount <= 5 || successCount % 500 == 0) {
+        fprintf(stderr, "[SDB] #%d SUCCESS copy (%d,%d)-(%d,%d) total=%d bails: sdl=%d si=%d fmt=%d size=%d\n",
+                callCount, left, top, right, bottom, successCount,
+                bailSdl, bailSmallInt, bailFmt, bailSize);
     }
 
     pharo::gDisplaySurface->update();

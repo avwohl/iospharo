@@ -234,8 +234,14 @@ static std::unordered_map<void*, SDLTextureState> sTextures;
 static std::unordered_map<void*, SDLRendererState> sRenderers;
 static void* sMainRenderer = nullptr;  // First renderer is the "main" one (renders to display)
 static void* sMainWindow = nullptr;    // First window is the "main" one (receives events)
+static bool sSDLRenderingActive = false;  // Set when SDL_RenderPresent first copies to display
 
 extern "C" {
+
+// Query whether SDL2 has started rendering (SDL_RenderPresent was called)
+bool ffi_isSDLRenderingActive() {
+    return sSDLRenderingActive;
+}
 
 // SDL_Init returns 0 on success
 int stub_SDL_Init(uint32_t flags) {
@@ -357,15 +363,11 @@ void stub_SDL_SetWindowIcon(void* window, void* icon) {
 }
 
 int stub_SDL_GetWindowWMInfo(void* window, void* info) {
-    // Fill with zeros and return success (1 = SDL_TRUE)
-    // The info struct is SDL_SysWMinfo — its size varies but 64 bytes covers it
-    if (info) {
-        memset(info, 0, 64);
-        // Set version at the start (SDL_SysWMinfo starts with SDL_version)
-        uint8_t* ver = static_cast<uint8_t*>(info);
-        ver[0] = 2; ver[1] = 0; ver[2] = 20; // SDL 2.0.20
-    }
-    return 1;  // SDL_TRUE
+    // Return failure — we don't have real WM info on Mac Catalyst.
+    // Returning success with zeroed data causes SDLOSXPlatform>>afterSetWindowTitle:
+    // to access zeroed struct fields as Smalltalk objects (classIdx=0 crash),
+    // which kills the OSSDL2Driver setup process before the event loop starts.
+    return 0;  // SDL_FALSE
 }
 
 // Renderer stubs
@@ -409,9 +411,8 @@ void stub_SDL_RenderPresent(void* renderer) {
     // by stub_SDL_PollEvent when the image's event loop actually starts polling.
     // Setting it here prematurely blocks processInputEvents() from draining the
     // event queue, causing a deadlock if SDL_PollEvent is never called.
-    static bool renderingActive = false;
-    if (!renderingActive) {
-        renderingActive = true;
+    if (!sSDLRenderingActive) {
+        sSDLRenderingActive = true;
         fprintf(stderr, "[SDL-RP] first call (rendering active, events via processInputEvents until PollEvent starts)\n");
     }
 
@@ -439,6 +440,24 @@ void stub_SDL_RenderPresent(void* renderer) {
         int dstH = pharo::gDisplaySurface->height();
         int copyW = std::min(srcW, dstW);
         int copyH = std::min(srcH, dstH);
+
+        // Sample a few pixels before and after copy
+        if (totalCalls <= 5 || totalCalls % 200 == 0) {
+            uint32_t srcCenter = (srcH > 384 && srcW > 512) ? src[384 * srcW + 512] : 0;
+            uint32_t srcCorner = src[0];
+            uint32_t dstCenter = (dstH > 384 && dstW > 512) ? dst[384 * dstW + 512] : 0;
+            // Count non-zero pixels in src (sample every 100th)
+            int nonZero = 0;
+            int uniqueCount = 0;
+            uint32_t lastColor = 0xDEADBEEF;
+            for (int i = 0; i < srcW * srcH; i += 100) {
+                if (src[i] != 0) nonZero++;
+                if (src[i] != lastColor) { uniqueCount++; lastColor = src[i]; }
+            }
+            fprintf(stderr, "[SDL-RP] #%d copy %dx%d -> %dx%d srcCenter=%08x srcCorner=%08x dstCenter=%08x srcNonZero=%d/%d srcUnique=%d\n",
+                    totalCalls, srcW, srcH, dstW, dstH,
+                    srcCenter, srcCorner, dstCenter, nonZero, srcW*srcH/100, uniqueCount);
+        }
 
         for (int y = 0; y < copyH; y++) {
             memcpy(dst + y * dstW, src + y * srcW, copyW * sizeof(uint32_t));

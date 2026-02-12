@@ -569,6 +569,11 @@ Oop ObjectMemory::classOf(Oop obj) const {
                 scan--;
             }
             std::cerr.flush();
+
+            // Log interpreter state to identify what code triggered this
+            if (interpreter_) {
+                interpreter_->logCurrentMethod(stderr);
+            }
         }
     }
     return cls;
@@ -2618,23 +2623,12 @@ size_t ObjectMemory::pointerSlotsOf(ObjectHeader* obj) const {
     if (fmt <= ObjectFormat::WeakWithFixed) {
         size_t totalSlots = obj->slotCount();
 
-        // Context objects: only trace up to the stack pointer, not all slots.
-        // Slots beyond the stack pointer contain garbage from previous activations.
-        // Context layout: slot 0=sender, 1=pc, 2=stackp, 3=method, 4=closure, 5=receiver
-        // slot 6+: temps and stack values. stackp is 1-based index of stack top.
-        if (contextClassIndex_ != 0 && obj->classIndex() == contextClassIndex_) {
-            static constexpr size_t CtxtTempFrameStart = 6;
-            if (totalSlots > CtxtTempFrameStart) {
-                Oop stackpOop = obj->slotAt(2);
-                if (stackpOop.isSmallInteger()) {
-                    int64_t stackp = stackpOop.asSmallInteger();
-                    if (stackp >= 0) {
-                        size_t validSlots = CtxtTempFrameStart + static_cast<size_t>(stackp);
-                        return std::min(validSlots, totalSlots);
-                    }
-                }
-            }
-        }
+        // Context objects: scan ALL slots, not just up to stackp.
+        // The stackp optimization is unsafe because prepareForGC syncs temps
+        // to the Context without always updating stackp. A stale stackp causes
+        // the GC to skip valid pointer slots during both marking and compaction
+        // reference updating, leading to classIdx=0 crashes (stale pointers to
+        // memory freed by compaction). Scanning nil slots beyond stackp is cheap.
 
         return totalSlots;
     }

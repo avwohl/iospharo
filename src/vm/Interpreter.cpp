@@ -37,6 +37,9 @@ std::atomic<int> g_watchdogPhase{0};
 // Sub-phase inside step(): 10=GC, 11=timer, 12=finalization, 13=displaySync, 14=forceYield, 15=dispatch, 16=preempt
 volatile int g_watchdogSubphase = 0;
 volatile uint8_t g_watchdogLastBytecode = 0;
+
+// Forward declaration for SDL rendering active check (defined in FFI.cpp)
+extern "C" bool ffi_isSDLRenderingActive();
 // Watchdog send diagnostic: selector and receiver class name for last send
 char g_watchdogSelector[64] = {0};
 char g_watchdogReceiverClass[64] = {0};
@@ -1865,7 +1868,6 @@ void Interpreter::processInputEvents() {
         if (event.type == static_cast<int>(pharo::EventType::WindowMetrics)) {
             continue;
         }
-
         // Log mouse events for debugging
         if (logFile && callCount <= 100 && event.type == static_cast<int>(pharo::EventType::Mouse)) {
             fprintf(logFile, "[EVENT] Mouse type=%d at %d,%d buttons=%d\n",
@@ -1937,10 +1939,9 @@ void Interpreter::syncDisplayToSurface() {
     // Process input events - queued for Smalltalk via primitive 264
     processInputEvents();
 
-    // When SDL2 event polling is active, stub_SDL_RenderPresent copies the
-    // SDL texture pixels to gDisplaySurface. Don't overwrite with stale
-    // Display Form content.
-    if (pharo::gEventQueue.isSDL2EventPollingActive()) {
+    // When SDL2 rendering is active (SDL_RenderPresent has been called),
+    // it handles display updates. Don't overwrite with stale Display Form content.
+    if (pharo::gEventQueue.isSDL2EventPollingActive() || ffi_isSDLRenderingActive()) {
         return;
     }
 
@@ -12400,6 +12401,15 @@ void Interpreter::prepareForGC() {
                 memory_.storePointer(ContextFixedFields + t, matCtx, *stackSlot);
             }
         }
+
+        // Update stackp to cover all synced temps so GC traces them.
+        // Without this, a stale stackp from materialization time could cause
+        // the GC to skip valid pointer slots during marking/compaction.
+        Oop currentStackp = memory_.fetchPointer(2, matCtx);
+        int64_t currentSP = currentStackp.isSmallInteger() ? currentStackp.asSmallInteger() : 0;
+        if (numTemps > currentSP) {
+            memory_.storePointer(2, matCtx, Oop::fromSmallInteger(numTemps));
+        }
     }
 
     // Also sync current frame's materialized context
@@ -12421,6 +12431,13 @@ void Interpreter::prepareForGC() {
                 if (stackSlot >= stackBase_ && stackSlot < stackPointer_) {
                     memory_.storePointer(ContextFixedFields + t, currentFrameMaterializedCtx_, *stackSlot);
                 }
+            }
+
+            // Update stackp to cover all synced temps
+            Oop currentStackp = memory_.fetchPointer(2, currentFrameMaterializedCtx_);
+            int64_t currentSP = currentStackp.isSmallInteger() ? currentStackp.asSmallInteger() : 0;
+            if (numTemps > currentSP) {
+                memory_.storePointer(2, currentFrameMaterializedCtx_, Oop::fromSmallInteger(numTemps));
             }
         }
     }
@@ -12446,6 +12463,66 @@ void Interpreter::afterGC() {
 
     // GC may move method and class objects, invalidating cached lookups
     flushMethodCache();
+}
+
+void Interpreter::logCurrentMethod(FILE* out) {
+    if (!method_.isObject() || method_.rawBits() <= 0x10000) {
+        fprintf(out, "[INTERP-STATE] method_=0x%llx (not valid)\n",
+                (unsigned long long)method_.rawBits());
+        return;
+    }
+    // Extract selector from method (last literal before association)
+    Oop methodHeader = memory_.fetchPointer(0, method_);
+    std::string selName = "?";
+    if (methodHeader.isSmallInteger()) {
+        int numLiterals = methodHeader.asSmallInteger() & 0x7FFF;
+        if (numLiterals >= 2) {
+            Oop sel = memory_.fetchPointer(numLiterals - 1, method_);
+            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                ObjectHeader* selH = sel.asObjectPtr();
+                if (selH->isBytesObject() && selH->byteSize() < 100) {
+                    selName = std::string((char*)selH->bytes(), selH->byteSize());
+                }
+            }
+        }
+    }
+    // Get receiver class name
+    std::string rcvrClassName = "?";
+    if (receiver_.isSmallInteger()) rcvrClassName = "SmallInteger";
+    else if (receiver_.isNil()) rcvrClassName = "nil";
+    else if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+        Oop cls = memory_.classOf(receiver_);
+        if (cls.isObject() && cls.rawBits() > 0x10000 && memory_.slotCountOf(cls) > 6) {
+            Oop nameOop = memory_.fetchPointer(6, cls);
+            if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                ObjectHeader* nh = nameOop.asObjectPtr();
+                if (nh->isBytesObject() && nh->byteSize() < 80) {
+                    rcvrClassName = std::string((char*)nh->bytes(), nh->byteSize());
+                }
+            }
+        }
+    }
+    int pc = 0;
+    if (instructionPointer_ && method_.isObject()) {
+        pc = (int)(instructionPointer_ - method_.asObjectPtr()->bytes());
+    }
+    fprintf(out, "[INTERP-STATE] %s>>%s pc=%d receiver_=0x%llx (%s) frameDepth=%zu\n",
+            rcvrClassName.c_str(), selName.c_str(), pc,
+            (unsigned long long)receiver_.rawBits(), rcvrClassName.c_str(),
+            frameDepth_);
+
+    // Also log what was on the stack (the bad receiver is likely a stack value)
+    int numStack = (int)(stackPointer_ - framePointer_) - 1;
+    if (numStack > 10) numStack = 10;
+    for (int i = 0; i < numStack; i++) {
+        Oop val = *(framePointer_ + 1 + i);
+        fprintf(out, "[INTERP-STATE]   stack[%d] = 0x%llx%s\n",
+                i, (unsigned long long)val.rawBits(),
+                val.rawBits() == 0 ? " (ZERO!)" :
+                (val.isSmallInteger() ? " (SI)" :
+                (val.isNil() ? " (nil)" : "")));
+    }
+    fflush(out);
 }
 
 // Explicit instantiation of forEachRoot is not needed since the template is in the header.

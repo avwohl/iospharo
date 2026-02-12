@@ -16,6 +16,9 @@ import SwiftUI
 /// App delegate to handle lifecycle events
 class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
+        // Redirect stderr to a file so we can capture VM fprintf output
+        freopen("/tmp/iospharo-stderr.log", "w", stderr)
+        NSLog("[APP] didFinishLaunching - stderr redirected to /tmp/iospharo-stderr.log")
         return true
     }
 

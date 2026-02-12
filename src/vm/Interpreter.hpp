@@ -199,6 +199,9 @@ public:
     /// Convert IP offsets back to pointers after GC (methods may have moved)
     void afterGC();
 
+    /// Log current method and bytecode for debugging
+    void logCurrentMethod(FILE* out);
+
     /// Visit every Oop root the interpreter holds.
     /// Visitor signature: void(Oop&) — visitor may update the Oop in-place.
     template<typename Visitor>
