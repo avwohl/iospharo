@@ -17124,13 +17124,19 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         uint32_t* srcPixels = reinterpret_cast<uint32_t*>(srcBytes);
         intptr_t srcPitch = srcWidth;
 
-        size_t requiredSrcBytes = static_cast<size_t>((sourceY + height - 1) * srcPitch + sourceX + width) * 4;
-        if (requiredSrcBytes > srcBitsSize) {
-            char buf[200]; snprintf(buf, sizeof(buf),
-                "32→32 srcBounds: need=%zu have=%zu srcW=%ld srcH=%ld sx=%ld sy=%ld w=%ld h=%ld",
-                requiredSrcBytes, srcBitsSize, (long)srcWidth, (long)srcHeight,
-                (long)sourceX, (long)sourceY, (long)width, (long)height);
-            logFail(20, buf); return PrimitiveResult::Failure;
+        // Clip to available source data (standard VM clips rather than failing)
+        intptr_t srcMaxPixels = static_cast<intptr_t>(srcBitsSize / 4);
+        intptr_t srcActualHeight = (srcPitch > 0) ? (srcMaxPixels / srcPitch) : 0;
+        if (sourceY + height > srcActualHeight) {
+            height = srcActualHeight - sourceY;
+        }
+        if (sourceX + width > srcWidth) {
+            width = srcWidth - sourceX;
+        }
+        if (height <= 0 || width <= 0) {
+            // Nothing to copy after clipping
+            showDisplayBits(destForm, destX, destY, destX, destY);
+            return PrimitiveResult::Success;
         }
 
         for (intptr_t y = 0; y < height; y++) {
@@ -17174,6 +17180,46 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                         uint32_t g  = ((s & 0x00FF00) * sa + (d & 0x00FF00) * da + 0x008000) >> 8;
                         dstRow[x] = (rb & 0xFF00FF) | (g & 0x00FF00) | 0xFF000000;
                     }
+                    break;
+                }
+                case 20: { // rgbMul: dest = (source * dest) / 255 per component
+                    for (intptr_t x = 0; x < width; x++) {
+                        uint32_t s = srcRow[x] & ht;
+                        uint32_t d = dstRow[x];
+                        uint32_t rR = (((s >> 16) & 0xFF) * ((d >> 16) & 0xFF) + 127) / 255;
+                        uint32_t rG = (((s >> 8) & 0xFF) * ((d >> 8) & 0xFF) + 127) / 255;
+                        uint32_t rB = ((s & 0xFF) * (d & 0xFF) + 127) / 255;
+                        uint32_t rA = (((s >> 24) & 0xFF) * ((d >> 24) & 0xFF) + 127) / 255;
+                        dstRow[x] = (rA << 24) | (rR << 16) | (rG << 8) | rB;
+                    }
+                    break;
+                }
+                case 21: { // rgbMax: dest = max(source, dest) per component
+                    for (intptr_t x = 0; x < width; x++) {
+                        uint32_t s = srcRow[x] & ht;
+                        uint32_t d = dstRow[x];
+                        uint32_t rR = std::max((s >> 16) & 0xFF, (d >> 16) & 0xFF);
+                        uint32_t rG = std::max((s >> 8) & 0xFF, (d >> 8) & 0xFF);
+                        uint32_t rB = std::max(s & 0xFF, d & 0xFF);
+                        uint32_t rA = std::max((s >> 24) & 0xFF, (d >> 24) & 0xFF);
+                        dstRow[x] = (rA << 24) | (rR << 16) | (rG << 8) | rB;
+                    }
+                    break;
+                }
+                case 22: { // rgbMin: dest = min(source, dest) per component
+                    for (intptr_t x = 0; x < width; x++) {
+                        uint32_t s = srcRow[x] & ht;
+                        uint32_t d = dstRow[x];
+                        uint32_t rR = std::min((s >> 16) & 0xFF, (d >> 16) & 0xFF);
+                        uint32_t rG = std::min((s >> 8) & 0xFF, (d >> 8) & 0xFF);
+                        uint32_t rB = std::min(s & 0xFF, d & 0xFF);
+                        uint32_t rA = std::min((s >> 24) & 0xFF, (d >> 24) & 0xFF);
+                        dstRow[x] = (rA << 24) | (rR << 16) | (rG << 8) | rB;
+                    }
+                    break;
+                }
+                case 26: { // erase: dest = dest AND NOT source
+                    for (intptr_t x = 0; x < width; x++) dstRow[x] &= ~srcRow[x];
                     break;
                 }
                 case 37: { // rgbComponentAlpha: source channels are per-channel alpha for halftone color
