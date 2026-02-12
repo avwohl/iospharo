@@ -130,46 +130,27 @@ void shutdownFFI() {
 }
 
 bool isModuleLoaded(const std::string& moduleName) {
-    static int moduleCheckCount = 0;
-    moduleCheckCount++;
-
     // We support SDL2 and general dlsym lookup
     if (moduleName == "SDL2" || moduleName == "libSDL2" ||
         moduleName.find("SDL2") != std::string::npos) {
         // Check both real SDL2 and our stubs
         void* sdlInit = dlsym(RTLD_DEFAULT, "SDL_Init");
         if (sdlInit != nullptr) {
-            fprintf(stderr, "[FFI-MODULE] #%d '%s' -> FOUND via dlsym (%p)\n",
-                    moduleCheckCount, moduleName.c_str(), sdlInit);
             return true;
         }
         // Check if our stubs are registered
         auto it = sFunctionCache.find("SDL_Init");
-        bool found = it != sFunctionCache.end();
-        fprintf(stderr, "[FFI-MODULE] #%d '%s' -> stub cache: %s\n",
-                moduleCheckCount, moduleName.c_str(), found ? "YES" : "NO");
-        return found;
+        return it != sFunctionCache.end();
     }
 
-    if (moduleCheckCount <= 20) {
-        fprintf(stderr, "[FFI-MODULE] #%d '%s' -> assuming loaded\n",
-                moduleCheckCount, moduleName.c_str());
-    }
     // For other modules, check if any function from that module is available
     return true;  // Assume available, will fail on lookup if not
 }
 
 void* lookupFunction(const std::string& moduleName, const std::string& funcName) {
-    static int lookupCount = 0;
-    lookupCount++;
-
     // Check cache first
     auto it = sFunctionCache.find(funcName);
     if (it != sFunctionCache.end()) {
-        if (lookupCount <= 200) {
-            fprintf(stderr, "[FFI-LOOKUP] #%d '%s' in '%s' -> CACHED %p\n",
-                    lookupCount, funcName.c_str(), moduleName.c_str(), it->second);
-        }
         return it->second;
     }
 
@@ -182,19 +163,11 @@ void* lookupFunction(const std::string& moduleName, const std::string& funcName)
         static auto genericSDLNoOp = +[]() -> intptr_t { return 0; };
         void* func = reinterpret_cast<void*>(genericSDLNoOp);
         sFunctionCache[funcName] = func;
-        if (lookupCount <= 200) {
-            fprintf(stderr, "[FFI-LOOKUP] #%d '%s' in '%s' -> SDL generic no-op %p\n",
-                    lookupCount, funcName.c_str(), moduleName.c_str(), func);
-        }
         return func;
     }
 
     // Look up the function via dlsym
     void* func = dlsym(RTLD_DEFAULT, funcName.c_str());
-    if (lookupCount <= 200) {
-        fprintf(stderr, "[FFI-LOOKUP] #%d '%s' in '%s' -> dlsym=%p\n",
-                lookupCount, funcName.c_str(), moduleName.c_str(), func);
-    }
     if (func) {
         sFunctionCache[funcName] = func;
     }
@@ -244,19 +217,16 @@ extern "C" {
 
 // SDL_Init returns 0 on success
 int stub_SDL_Init(uint32_t flags) {
-    fprintf(stderr, "[SDL2-STUB] SDL_Init(0x%x) -> 0 (success)\n", flags);
     sSDL2Initialized = true;
     return 0;
 }
 
 void stub_SDL_Quit() {
-    fprintf(stderr, "[SDL2-STUB] SDL_Quit()\n");
     sSDL2Initialized = false;
 }
 
 // Returns version info - version 2.0.20
 void stub_SDL_GetVersion(void* ver) {
-    fprintf(stderr, "[SDL2-STUB] SDL_GetVersion()\n");
     if (ver) {
         uint8_t* v = static_cast<uint8_t*>(ver);
         v[0] = 2;   // major
@@ -276,13 +246,10 @@ void* stub_SDL_CreateWindow(const char* title, int x, int y, int w, int h, uint3
     state.height = h;
     state.title = title ? title : "";
     sWindows[handle] = state;
-    fprintf(stderr, "[SDL2-STUB] SDL_CreateWindow('%s', %d, %d, %dx%d, 0x%x) -> %p\n",
-            title ? title : "(null)", x, y, w, h, flags, handle);
     return handle;
 }
 
 void stub_SDL_DestroyWindow(void* window) {
-    fprintf(stderr, "[SDL2-STUB] SDL_DestroyWindow(%p)\n", window);
     sWindows.erase(window);
 }
 
@@ -299,16 +266,9 @@ void stub_SDL_GetWindowSize(void* window, int* w, int* h) {
         if (w) *w = 1024;
         if (h) *h = 768;
     }
-    static int getCount = 0;
-    getCount++;
-    if (getCount <= 5) {
-        fprintf(stderr, "[SDL2-STUB] SDL_GetWindowSize(%p) -> %dx%d\n",
-                window, w ? *w : 0, h ? *h : 0);
-    }
 }
 
 void stub_SDL_SetWindowSize(void* window, int w, int h) {
-    fprintf(stderr, "[SDL2-STUB] SDL_SetWindowSize(%p, %dx%d)\n", window, w, h);
     auto it = sWindows.find(window);
     if (it != sWindows.end()) {
         it->second.width = w;
@@ -317,19 +277,15 @@ void stub_SDL_SetWindowSize(void* window, int w, int h) {
 }
 
 void stub_SDL_SetWindowTitle(void* window, const char* title) {
-    fprintf(stderr, "[SDL2-STUB] SDL_SetWindowTitle(%p, '%s')\n", window, title ? title : "(null)");
 }
 
 void stub_SDL_ShowWindow(void* window) {
-    fprintf(stderr, "[SDL2-STUB] SDL_ShowWindow(%p)\n", window);
 }
 
 void stub_SDL_HideWindow(void* window) {
-    fprintf(stderr, "[SDL2-STUB] SDL_HideWindow(%p)\n", window);
 }
 
 void stub_SDL_RaiseWindow(void* window) {
-    fprintf(stderr, "[SDL2-STUB] SDL_RaiseWindow(%p)\n", window);
 }
 
 uint32_t stub_SDL_GetWindowID(void* window) {
@@ -346,7 +302,6 @@ void* stub_SDL_GetWindowFromID(uint32_t id) {
 }
 
 int stub_SDL_SetWindowFullscreen(void* window, uint32_t flags) {
-    fprintf(stderr, "[SDL2-STUB] SDL_SetWindowFullscreen(%p, 0x%x)\n", window, flags);
     return 0;
 }
 
@@ -356,11 +311,9 @@ void stub_SDL_GetWindowPosition(void* window, int* x, int* y) {
 }
 
 void stub_SDL_SetWindowPosition(void* window, int x, int y) {
-    fprintf(stderr, "[SDL2-STUB] SDL_SetWindowPosition(%p, %d, %d)\n", window, x, y);
 }
 
 void stub_SDL_SetWindowIcon(void* window, void* icon) {
-    fprintf(stderr, "[SDL2-STUB] SDL_SetWindowIcon(%p, %p)\n", window, icon);
 }
 
 // Renderer stubs
@@ -373,13 +326,10 @@ void* stub_SDL_CreateRenderer(void* window, int index, uint32_t flags) {
     if (!sMainRenderer) {
         sMainRenderer = handle;  // First renderer is the "main" one
     }
-    fprintf(stderr, "[SDL2-STUB] SDL_CreateRenderer(%p) -> %p (main=%d)\n",
-            window, handle, handle == sMainRenderer);
     return handle;
 }
 
 void stub_SDL_DestroyRenderer(void* renderer) {
-    fprintf(stderr, "[SDL2-STUB] SDL_DestroyRenderer(%p)\n", renderer);
     // Don't clear sMainRenderer if this is a secondary renderer
     if (renderer != sMainRenderer) {
         sRenderers.erase(renderer);
@@ -391,13 +341,6 @@ int stub_SDL_RenderClear(void* renderer) {
 }
 
 void stub_SDL_RenderPresent(void* renderer) {
-    static int presentCount = 0;
-    presentCount++;
-    if (presentCount <= 10 || presentCount % 1000 == 0) {
-        fprintf(stderr, "[SDL2-STUB] SDL_RenderPresent #%d renderer=%p (main=%d)\n",
-                presentCount, renderer, renderer == sMainRenderer);
-    }
-
     // Only copy main renderer's texture to the Metal display surface
     if (renderer != sMainRenderer) return;
 
@@ -442,13 +385,10 @@ void* stub_SDL_CreateTexture(void* renderer, uint32_t format, int access, int w,
     if (rit != sRenderers.end()) {
         rit->second.currentTexture = handle;
     }
-    fprintf(stderr, "[SDL2-STUB] SDL_CreateTexture(renderer=%p fmt=0x%x access=%d %dx%d) -> %p\n",
-            renderer, format, access, w, h, handle);
     return handle;
 }
 
 void stub_SDL_DestroyTexture(void* texture) {
-    fprintf(stderr, "[SDL2-STUB] SDL_DestroyTexture(%p)\n", texture);
     auto it = sTextures.find(texture);
     if (it != sTextures.end()) {
         if (it->second.pixels) {
@@ -464,13 +404,8 @@ void stub_SDL_DestroyTexture(void* texture) {
 }
 
 int stub_SDL_LockTexture(void* texture, void* rect, void** pixels, int* pitch) {
-    static int lockCount = 0;
-    lockCount++;
     auto it = sTextures.find(texture);
     if (it == sTextures.end() || !it->second.pixels) {
-        if (lockCount <= 20) {
-            fprintf(stderr, "[SDL2-STUB] SDL_LockTexture #%d texture=%p NOT FOUND\n", lockCount, texture);
-        }
         return -1;
     }
     if (pixels) {
@@ -479,74 +414,39 @@ int stub_SDL_LockTexture(void* texture, void* rect, void** pixels, int* pitch) {
     if (pitch) {
         *pitch = it->second.pitch;
     }
-    if (lockCount <= 20 || lockCount % 100 == 0) {
-        fprintf(stderr, "[SDL2-STUB] SDL_LockTexture #%d texture=%p -> pixels=%p pitch=%d\n",
-                lockCount, texture, it->second.pixels, it->second.pitch);
-    }
     return 0;
 }
 
 void stub_SDL_UnlockTexture(void* texture) {
-    static int unlockCount = 0;
-    unlockCount++;
-    if (unlockCount <= 20 || unlockCount % 100 == 0) {
-        fprintf(stderr, "[SDL2-STUB] SDL_UnlockTexture #%d\n", unlockCount);
-    }
 }
 
 int stub_SDL_RenderCopy(void* renderer, void* texture, void* srcrect, void* dstrect) {
-    static int copyCount = 0;
-    copyCount++;
     // Track which texture was last rendered
     auto rit = sRenderers.find(renderer);
     if (rit != sRenderers.end()) {
         rit->second.currentTexture = texture;
     }
-    if (copyCount <= 10 || copyCount % 100 == 0) {
-        fprintf(stderr, "[SDL2-STUB] SDL_RenderCopy #%d renderer=%p texture=%p\n",
-                copyCount, renderer, texture);
-    }
     return 0;
 }
 
 int stub_SDL_UpdateTexture(void* texture, void* rect, void* pixels, int pitch) {
-    static int updateCount = 0;
-    updateCount++;
-    if (updateCount <= 10 || updateCount % 100 == 0) {
-        fprintf(stderr, "[SDL2-STUB] SDL_UpdateTexture #%d\n", updateCount);
-    }
     return 0;
 }
 
 // Event stubs - critical for InputEventSensor
 // Forward events from our queue to SDL event structure
 int stub_SDL_PollEvent(void* event) {
-    static FILE* sdlLog = nullptr;
-    static int sdlCallCount = 0;
     static bool flagSet = false;
-    sdlCallCount++;
-
-    if (!sdlLog) {
-        sdlLog = fopen("/tmp/sdl_poll.log", "w");
-    }
 
     // Mark SDL2 event polling as active - this prevents processInputEvents
     // from draining gEventQueue (we handle it here instead)
     if (!flagSet) {
         flagSet = true;
         pharo::gEventQueue.setSDL2EventPollingActive(true);
-        if (sdlLog) {
-            fprintf(sdlLog, "[SDL_PollEvent] SDL2 event polling NOW ACTIVE\n");
-            fflush(sdlLog);
-        }
     }
 
     if (!event) {
         // Just check if events available
-        if (sdlLog && sdlCallCount <= 100) {
-            fprintf(sdlLog, "[SDL_PollEvent] Call #%d event=null (check only)\n", sdlCallCount);
-            fflush(sdlLog);
-        }
         return !pharo::gEventQueue.isEmpty() ? 1 : 0;
     }
 
@@ -579,12 +479,6 @@ int stub_SDL_PollEvent(void* event) {
             if (pharoEvent.arg3 & 1) sdlState |= (1 << 1);  // Middle/Blue
             if (pharoEvent.arg3 & 2) sdlState |= (1 << 2);  // Right/Yellow
             sdlEvent->motion.state = sdlState;
-
-            if (sdlLog && sdlCallCount <= 100) {
-                fprintf(sdlLog, "[SDL_PollEvent] #%d Mouse motion at (%d,%d) state=%u\n",
-                        sdlCallCount, pharoEvent.arg1, pharoEvent.arg2, sdlState);
-                fflush(sdlLog);
-            }
         } else if (subtype == 1) {
             // Mouse button down
             sdlEvent->button.type = SDL_MOUSEBUTTONDOWN;
@@ -604,12 +498,6 @@ int stub_SDL_PollEvent(void* event) {
                 sdlEvent->button.button = SDL_BUTTON_MIDDLE;
             } else {
                 sdlEvent->button.button = SDL_BUTTON_LEFT;  // Default
-            }
-
-            if (sdlLog && sdlCallCount <= 100) {
-                fprintf(sdlLog, "[SDL_PollEvent] #%d Mouse DOWN button=%d at (%d,%d)\n",
-                        sdlCallCount, sdlEvent->button.button, pharoEvent.arg1, pharoEvent.arg2);
-                fflush(sdlLog);
             }
         } else if (subtype == 2) {
             // Mouse button up
@@ -631,12 +519,6 @@ int stub_SDL_PollEvent(void* event) {
             } else {
                 sdlEvent->button.button = SDL_BUTTON_LEFT;  // Default
             }
-
-            if (sdlLog && sdlCallCount <= 100) {
-                fprintf(sdlLog, "[SDL_PollEvent] #%d Mouse UP button=%d at (%d,%d)\n",
-                        sdlCallCount, sdlEvent->button.button, pharoEvent.arg1, pharoEvent.arg2);
-                fflush(sdlLog);
-            }
         }
         return 1;  // Event available
     } else if (pharoEvent.type == static_cast<int>(pharo::EventType::MouseWheel)) {
@@ -648,12 +530,6 @@ int stub_SDL_PollEvent(void* event) {
         sdlEvent->wheel.x = pharoEvent.arg3;  // Horizontal scroll (deltaX)
         sdlEvent->wheel.y = pharoEvent.arg4;  // Vertical scroll (deltaY)
         sdlEvent->wheel.direction = 0;  // Normal
-
-        if (sdlLog && sdlCallCount <= 100) {
-            fprintf(sdlLog, "[SDL_PollEvent] #%d Mouse wheel dx=%d dy=%d\n",
-                    sdlCallCount, pharoEvent.arg3, pharoEvent.arg4);
-            fflush(sdlLog);
-        }
         return 1;
     } else if (pharoEvent.type == static_cast<int>(pharo::EventType::Keyboard)) {
         // Keyboard event
@@ -680,30 +556,14 @@ int stub_SDL_PollEvent(void* event) {
         if (pharoEvent.arg3 & 4) sdlMod |= 0x0100;  // KMOD_LALT
         if (pharoEvent.arg3 & 8) sdlMod |= 0x0400;  // KMOD_LGUI (Cmd)
         sdlEvent->key.keysym.mod = sdlMod;
-
-        if (sdlLog && sdlCallCount <= 100) {
-            fprintf(sdlLog, "[SDL_PollEvent] #%d Keyboard %s char=%d key=%d mod=%d\n",
-                    sdlCallCount, (subtype == 1) ? "UP" : "DOWN",
-                    pharoEvent.arg1, pharoEvent.arg4, pharoEvent.arg3);
-            fflush(sdlLog);
-        }
         return 1;
     } else if (pharoEvent.type == static_cast<int>(pharo::EventType::WindowMetrics)) {
         // Skip window metrics events - we handle display separately
-        if (sdlLog && sdlCallCount <= 100) {
-            fprintf(sdlLog, "[SDL_PollEvent] #%d WindowMetrics (skipped)\n", sdlCallCount);
-            fflush(sdlLog);
-        }
         // Recursively try to get next event
         return stub_SDL_PollEvent(event);
     }
 
     // Unknown event type - skip
-    if (sdlLog && sdlCallCount <= 100) {
-        fprintf(sdlLog, "[SDL_PollEvent] #%d Unknown type=%d (skipped)\n",
-                sdlCallCount, pharoEvent.type);
-        fflush(sdlLog);
-    }
     return 0;
 }
 
@@ -797,47 +657,37 @@ uint64_t stub_SDL_GetPerformanceFrequency() {
 
 // Additional commonly needed SDL2 functions
 uint32_t stub_SDL_WasInit(uint32_t flags) {
-    fprintf(stderr, "[SDL2-STUB] SDL_WasInit(0x%x) -> 0x%x\n", flags, sSDL2Initialized ? flags : 0);
     return sSDL2Initialized ? flags : 0;
 }
 
 int stub_SDL_VideoInit(const char* driver) {
-    fprintf(stderr, "[SDL2-STUB] SDL_VideoInit('%s') -> 0\n", driver ? driver : "(null)");
     return 0;
 }
 
 void stub_SDL_VideoQuit() {
-    fprintf(stderr, "[SDL2-STUB] SDL_VideoQuit()\n");
 }
 
 int stub_SDL_InitSubSystem(uint32_t flags) {
-    fprintf(stderr, "[SDL2-STUB] SDL_InitSubSystem(0x%x) -> 0\n", flags);
     return 0;
 }
 
 void stub_SDL_QuitSubSystem(uint32_t flags) {
-    fprintf(stderr, "[SDL2-STUB] SDL_QuitSubSystem(0x%x)\n", flags);
 }
 
 int stub_SDL_SetHint(const char* name, const char* value) {
-    fprintf(stderr, "[SDL2-STUB] SDL_SetHint('%s', '%s') -> 1\n",
-            name ? name : "(null)", value ? value : "(null)");
     return 1;
 }
 
 int stub_SDL_GL_SetAttribute(int attr, int value) {
-    fprintf(stderr, "[SDL2-STUB] SDL_GL_SetAttribute(%d, %d) -> 0\n", attr, value);
     return 0;
 }
 
 void* stub_SDL_GL_CreateContext(void* window) {
     void* handle = reinterpret_cast<void*>(sNextHandle++);
-    fprintf(stderr, "[SDL2-STUB] SDL_GL_CreateContext(%p) -> %p\n", window, handle);
     return handle;
 }
 
 void stub_SDL_GL_DeleteContext(void* context) {
-    fprintf(stderr, "[SDL2-STUB] SDL_GL_DeleteContext(%p)\n", context);
 }
 
 int stub_SDL_GL_MakeCurrent(void* window, void* context) {
@@ -1078,16 +928,6 @@ FFIResult callFunction(
     const std::vector<uint64_t>& argValues,
     FFIType returnType
 ) {
-    static FILE* ffiLog = nullptr;
-    static int ffiCallCount = 0;
-    ffiCallCount++;
-
-    if (ffiLog && ffiCallCount <= 1000) {
-        fprintf(ffiLog, "[FFI #%d] callFunction funcPtr=%p argc=%zu\n",
-                ffiCallCount, funcPtr, argTypes.size());
-        fflush(ffiLog);
-    }
-
     FFIResult result;
     result.success = false;
     result.intValue = 0;

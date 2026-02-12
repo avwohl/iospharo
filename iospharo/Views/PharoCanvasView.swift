@@ -63,15 +63,13 @@ class PharoMTKView: MTKView {
         let point = touch.location(in: self)
 
         #if targetEnvironment(macCatalyst)
+        // CGEventTap handles button down — only track state for drag
         hadTouchesBegan = true
-        let buttons = buttonMaskToPharo(event)
-        currentButton = buttons
+        currentButton = buttonMaskToPharo(event)
         #else
-        let buttons = IOS_RED_BUTTON
-        #endif
-
         bridge.sendMouseMoved(to: point, modifiers: 0)
-        bridge.sendTouchDown(at: point, buttons: buttons)
+        bridge.sendTouchDown(at: point, buttons: IOS_RED_BUTTON)
+        #endif
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -88,27 +86,25 @@ class PharoMTKView: MTKView {
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        #if targetEnvironment(macCatalyst)
+        // CGEventTap handles button up — only clear state
+        hadTouchesBegan = false
+        #else
         guard let touch = touches.first, let bridge = bridge else { return }
         let point = touch.location(in: self)
-
-        #if targetEnvironment(macCatalyst)
-        // Right-clicks on Mac Catalyst skip touchesBegan — detect and handle
-        if !hadTouchesBegan {
-            bridge.sendMouseMoved(to: point, modifiers: 0)
-            bridge.sendTouchDown(at: point, buttons: IOS_YELLOW_BUTTON)
-            bridge.sendTouchUp(at: point)
-            return
-        }
-        hadTouchesBegan = false
-        #endif
-
         bridge.sendTouchUp(at: point)
+        #endif
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        #if targetEnvironment(macCatalyst)
+        // CGEventTap handles button up — only clear state
+        hadTouchesBegan = false
+        #else
         guard let touch = touches.first, let bridge = bridge else { return }
         let point = touch.location(in: self)
         bridge.sendTouchUp(at: point)
+        #endif
     }
 
     #if targetEnvironment(macCatalyst)
