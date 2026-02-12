@@ -1747,11 +1747,6 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
     {
         uint8_t* ptr = reinterpret_cast<uint8_t*>(rcvr.rawBits());
         if (!memory_.isOldObject(ptr) && !memory_.isYoungObject(ptr) && !memory_.isPermObject(ptr)) {
-            static int invalidCount = 0;
-            if (++invalidCount <= 5) {
-                fprintf(stderr, "[AT-INVALID #%d] rcvr=0x%llx NOT in any heap space\n",
-                        invalidCount, (unsigned long long)rcvr.rawBits());
-            }
             return PrimitiveResult::Failure;
         }
     }
@@ -4020,34 +4015,18 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
     // Wait on a semaphore. If excessSignals > 0, decrement and return.
     // Otherwise suspend current process on the semaphore's wait list.
 
-    static int waitCallCount = 0;
-    static FILE* waitLog = nullptr;
-    waitCallCount++;
-    // Log early waits and waits in the startup completion range
-    if (waitCallCount <= 5 || (g_stepNum >= 43000000 && g_stepNum <= 48000000)) {
-        fprintf(stderr, "[PRIM86] primitiveWait call #%d step=%llu sem=0x%llx\n",
-                waitCallCount, (unsigned long long)g_stepNum,
-                (unsigned long long)stackValue(argCount).rawBits());
-        waitLog = stderr;
-    } else {
-        waitLog = nullptr;
-    }
-
     if (stackPointer_ < stackBase_ + argCount + 1) {
-        if (waitLog) { fprintf(waitLog, "[WAIT #%d] FAIL: stack underflow\n", waitCallCount); fflush(waitLog); }
         return PrimitiveResult::Failure;
     }
 
     Oop semaphore = stackValue(argCount);  // Receiver is under args
 
     if (!semaphore.isObject()) {
-        if (waitLog) { fprintf(waitLog, "[WAIT #%d] FAIL: receiver not object (0x%llx)\n", waitCallCount, (unsigned long long)semaphore.rawBits()); fflush(waitLog); }
         return PrimitiveResult::Failure;
     }
 
     ObjectHeader* semHdr = semaphore.asObjectPtr();
     if (!semHdr || semHdr->slotCount() < 3) {
-        if (waitLog) { fprintf(waitLog, "[WAIT #%d] FAIL: bad slot count (%zu)\n", waitCallCount, semHdr ? semHdr->slotCount() : 0); fflush(waitLog); }
         return PrimitiveResult::Failure;
     }
 
@@ -4058,34 +4037,12 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
         int64_t excess = excessOop.asSmallInteger();
         if (excess > 0) {
             // Semaphore is signaled - decrement and return immediately
-            if (waitLog) {
-                fprintf(waitLog, "[WAIT #%d step=%llu] sem=0x%llx excess=%lld -> immediate return\n",
-                        waitCallCount, (unsigned long long)g_stepNum, (unsigned long long)semaphore.rawBits(), (long long)excess);
-                fflush(waitLog);
-            }
-
-            // If this is the lowSpaceSemaphore and ProcessSignalingLowSpace is nil,
-            // set it to the current process so the lowSpaceWatcher has valid context.
-            // This handles the case where the semaphore had excess signals from a previous session.
             Oop lowSpaceSem = memory_.specialObject(SpecialObjectIndex::TheLowSpaceSemaphore);
-            if (waitLog && waitCallCount <= 10) {
-                fprintf(waitLog, "[WAIT #%d] sem=0x%llx lowSpaceSem=0x%llx match=%d isNil=%d\n",
-                        waitCallCount, (unsigned long long)semaphore.rawBits(),
-                        (unsigned long long)lowSpaceSem.rawBits(),
-                        semaphore.rawBits() == lowSpaceSem.rawBits() ? 1 : 0,
-                        lowSpaceSem.isNil() ? 1 : 0);
-                fflush(waitLog);
-            }
             if (semaphore.rawBits() == lowSpaceSem.rawBits() && !lowSpaceSem.isNil()) {
                 Oop currentProcess = getActiveProcess();
                 Oop procSignalingLowSpace = memory_.specialObject(SpecialObjectIndex::ProcessSignalingLowSpace);
                 if (procSignalingLowSpace.isNil() || procSignalingLowSpace.rawBits() == memory_.nil().rawBits()) {
                     memory_.setSpecialObject(SpecialObjectIndex::ProcessSignalingLowSpace, currentProcess);
-                    if (waitLog) {
-                        fprintf(waitLog, "[WAIT #%d] Set ProcessSignalingLowSpace to process 0x%llx (was nil)\n",
-                                waitCallCount, (unsigned long long)currentProcess.rawBits());
-                        fflush(waitLog);
-                    }
                 }
             }
 
@@ -4094,12 +4051,6 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
             return PrimitiveResult::Success;
         }
     } else {
-        // excessSignals is NOT a SmallInteger - corrupted semaphore
-        if (waitLog) {
-            fprintf(waitLog, "[WAIT #%d] FAIL: excessSignals not SmallInt! sem=0x%llx excess=0x%llx\n",
-                    waitCallCount, (unsigned long long)semaphore.rawBits(), (unsigned long long)excessOop.rawBits());
-            fflush(waitLog);
-        }
         return PrimitiveResult::Failure;
     }
 
@@ -4108,71 +4059,6 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
     Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
     int activePriority = activePriorityOop.isSmallInteger() ?
                          static_cast<int>(activePriorityOop.asSmallInteger()) : -1;
-
-    if (waitLog && waitCallCount <= 500) {
-        fprintf(waitLog, "[WAIT #%d step=%llu] sem=0x%llx excess=0 -> BLOCKING process 0x%llx (priority %d)\n",
-                waitCallCount, (unsigned long long)g_stepNum, (unsigned long long)semaphore.rawBits(),
-                (unsigned long long)activeProcess.rawBits(), activePriority);
-        // Log method selector
-        std::string waitMethodSel = "<unknown>";
-        if (method_.isObject() && method_.rawBits() > 0x10000) {
-            Oop mhdr = memory_.fetchPointer(0, method_);
-            if (mhdr.isSmallInteger()) {
-                int nLits = mhdr.asSmallInteger() & 0x7FFF;
-                if (nLits >= 2 && nLits < 200) {
-                    Oop sel = memory_.fetchPointer(nLits - 1, method_);
-                    if (sel.isObject() && sel.rawBits() > 0x10000) {
-                        ObjectHeader* selH = sel.asObjectPtr();
-                        if (selH->isBytesObject() && selH->byteSize() < 80)
-                            waitMethodSel = std::string((char*)selH->bytes(), selH->byteSize());
-                    }
-                }
-            }
-        }
-        fprintf(waitLog, "  method=#%s (0x%llx)\n", waitMethodSel.c_str(), (unsigned long long)method_.rawBits());
-        // Also dump the activeContext sender chain methods
-        fprintf(waitLog, "  sender chain: ");
-        Oop ctx = activeContext_;
-        Oop nilObj2 = memory_.nil();
-        for (int i = 0; i < 8 && ctx.isObject() && ctx.rawBits() != nilObj2.rawBits() && ctx.rawBits() > 0x10000; i++) {
-            ObjectHeader* ctxH = ctx.asObjectPtr();
-            if (ctxH->slotCount() < 4) break;
-            Oop cm = memory_.fetchPointer(3, ctx);
-            if (cm.isObject() && cm.rawBits() > 0x10000) {
-                Oop mh = memory_.fetchPointer(0, cm);
-                if (mh.isSmallInteger()) {
-                    int nl = mh.asSmallInteger() & 0x7FFF;
-                    if (nl >= 2 && nl < 200) {
-                        Oop sel = memory_.fetchPointer(nl - 1, cm);
-                        if (sel.isObject() && sel.rawBits() > 0x10000) {
-                            ObjectHeader* sH = sel.asObjectPtr();
-                            if (sH->isBytesObject() && sH->byteSize() < 80) {
-                                if (i > 0) fprintf(waitLog, " -> ");
-                                fprintf(waitLog, "#%.*s", (int)sH->byteSize(), (char*)sH->bytes());
-                            }
-                        }
-                    }
-                }
-            }
-            ctx = memory_.fetchPointer(0, ctx);
-        }
-        fprintf(waitLog, "\n");
-        // Check: is the semaphore the delay semaphore?
-        Oop timerSema = timerSemaphore_;
-        fprintf(waitLog, "  sem==timerSema? %d  nextWakeupUsec=%lld nextWakeupTime=%lld\n",
-                semaphore.rawBits() == timerSema.rawBits() ? 1 : 0,
-                nextWakeupUsec_ == INT64_MAX ? -1LL : nextWakeupUsec_,
-                nextWakeupTime_);
-        fflush(waitLog);
-    }
-
-    // Log blocking wait to stderr for scheduling debugging
-    if (waitCallCount <= 200) {
-        fprintf(stderr, "[WAIT-BLOCK #%d step=%llu] process=0x%llx pri=%d blocking on sem=0x%llx\n",
-                waitCallCount, (unsigned long long)g_stepNum,
-                (unsigned long long)activeProcess.rawBits(), activePriority,
-                (unsigned long long)semaphore.rawBits());
-    }
 
     // Add current process to semaphore wait list and switch to next runnable
     addLastLinkToList(activeProcess, semaphore);
@@ -4453,12 +4339,7 @@ PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
                 }
                 // Replace in special objects array
                 memory_.setSpecialObject(SpecialObjectIndex::ExternalObjectsArray, newTable);
-                fprintf(stderr, "[VM] Resized ExternalObjectsArray from %zu to %lld\n", oldSize, newSize);
-                logFile = nullptr;
-                if (logFile) { fprintf(logFile, "[RESIZE49 #%d] SUCCESS: resized to %lld\n", resize49Count, (long long)newSize); fclose(logFile); }
             } else {
-                logFile = nullptr;
-                if (logFile) { fprintf(logFile, "[RESIZE49 #%d] NOOP: newSize <= oldSize\n", resize49Count); fclose(logFile); }
             }
         }
 
@@ -4981,11 +4862,6 @@ PrimitiveResult Interpreter::primitiveScreenDepth(int argCount) {
 // CRITICAL: OSSDL2Driver checks this to decide whether to start its event loop.
 // Without this returning true, the driver won't poll for SDL events.
 PrimitiveResult Interpreter::primitiveIsVMDisplayUsingSDL2(int argCount) {
-    static int callCount = 0;
-    callCount++;
-    if (callCount <= 5) {
-        fprintf(stderr, "[SDL2-DETECT] isVMDisplayUsingSDL2 called #%d, returning true\n", callCount);
-    }
     // Return true - we're providing SDL2 stubs that will handle events
     pop();  // Pop receiver
     push(memory_.trueObject());
@@ -5238,12 +5114,6 @@ PrimitiveResult Interpreter::primitiveSignalAtMilliseconds(int argCount) {
     // Store the timer info (in ioMSecs units, 30-bit wrapping)
     timerSemaphore_ = semaphore;
     nextWakeupTime_ = targetMs & 0x3FFFFFFF;  // Ensure 30-bit
-
-    static int timerSetLog = 0;
-    if (timerSetLog++ < 10) {
-        fprintf(stderr, "[TIMER-SET #%d] target=%lld current=%lld\n",
-                timerSetLog, nextWakeupTime_, ioMSecs());
-    }
 
     primitiveSuccess(semaphore);  // Return receiver
     return PrimitiveResult::Success;
@@ -5668,12 +5538,6 @@ static bool extractFloat(ObjectMemory& memory, Oop oop, double& result) {
                 std::memcpy(&result, header->bytes(), 8);
                 return true;
             }
-        }
-        // Log unexpected format for debugging
-        static int extractFailCount = 0;
-        if (extractFailCount++ < 10) {
-            fprintf(stderr, "[EXTRACT-FLOAT-FAIL] oop=0x%llx fmt=%d byteSize=%zu\n",
-                    (unsigned long long)oop.rawBits(), (int)fmtVal, header->byteSize());
         }
     }
     return false;
@@ -8825,16 +8689,6 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
 
     int64_t index = indexOop.asSmallInteger();
 
-    // Trace what attribute indices are being requested
-    static int attrTraceCount = 0;
-    attrTraceCount++;
-    // Log key indices (2, 3, 4 control --interactive detection) and negative (--headless)
-    if ((index >= 0 && index <= 4) || (index < 0 && index >= -2)) {
-        if (attrTraceCount <= 50) {
-            std::cerr << "[ATTR-149 #" << attrTraceCount << "] primitiveGetAttribute(" << index << ")\n";
-        }
-    }
-
     // Negative indices: VM parameters (flags like --headless)
     // In the standard Cog VM, VM flags before the image path are at negative indices.
     // Index -1 = vmParameters_[0], -2 = vmParameters_[1], etc.
@@ -8873,29 +8727,9 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
         int argIdx = static_cast<int>(index) - 2;
         const auto& args = imageArguments_;
         if (args.empty()) {
-            // Default args for GUI startup: --interactive
-            // In the standard Pharo VM:
-            //   index 2 = first image arg (the "command", e.g. --headless, eval, test)
-            //   index 3+ = remaining args
-            // CommandLineArguments >> initialize uses Smalltalk arguments
-            //   which starts at argumentAt: 1 = getSystemAttribute: 3
-            // OSWorldRenderer >> isApplicableFor: checks:
-            //   CommandLineArguments new hasOption: 'interactive'
-            // So --interactive MUST appear at index 3 (argIdx 1) for the renderer to find it.
-            if (argIdx == 0) {
-                std::cerr << "[ATTR-149] index=" << index << " → returning '--interactive'\n";
-                pop();
-                push(memory_.createString("--interactive"));
-                return PrimitiveResult::Success;
-            }
-            if (argIdx == 1) {
-                std::cerr << "[ATTR-149] index=" << index << " → returning '--interactive'\n";
-                pop();
-                push(memory_.createString("--interactive"));
-                return PrimitiveResult::Success;
-            }
-            // No more args
-            std::cerr << "[ATTR-149] index=" << index << " → returning nil (no more args)\n";
+            // No image arguments — return nil.
+            // PlatformBridge.cpp explicitly sets {"--interactive"} for GUI mode.
+            // test_load_image runs headless with no image args.
             pop();
             push(memory_.nil());
             return PrimitiveResult::Success;
@@ -9763,67 +9597,6 @@ PrimitiveResult Interpreter::primitiveFindHandlerContext(int argCount) {
     // Stack: receiver (a context)
     Oop startContext = stackTop();
 
-    static int prim197Count = 0;
-    prim197Count++;
-    bool inCriticalWindow = (g_stepNum >= 53770000 && g_stepNum <= 54500000);
-    if (prim197Count <= 50 || inCriticalWindow) {
-        fprintf(stderr, "[PRIM197 #%d step=%llu] startContext=0x%llx isObj=%d isNil=%d\n",
-                prim197Count, g_stepNum, (unsigned long long)startContext.rawBits(),
-                startContext.isObject() ? 1 : 0, startContext.isNil() ? 1 : 0);
-        if (inCriticalWindow) {
-            // Show what method is at the start context
-            if (startContext.isObject() && !startContext.isNil()) {
-                Oop method = memory_.fetchPointer(3, startContext);
-                if (method.isObject() && method.rawBits() > 0x10000) {
-                    ObjectHeader* mh = method.asObjectPtr();
-                    if (mh->isCompiledMethod()) {
-                        Oop mHdr = memory_.fetchPointer(0, method);
-                        if (mHdr.isSmallInteger()) {
-                            size_t nLit = mHdr.asSmallInteger() & 0x7FFF;
-                            if (nLit >= 2 && nLit <= 200) {
-                                Oop sel = memory_.fetchPointer(nLit - 1, method);
-                                if (sel.isObject() && sel.rawBits() > 0x10000) {
-                                    ObjectHeader* sh = sel.asObjectPtr();
-                                    if (sh->isBytesObject() && sh->byteSize() < 100) {
-                                        std::string selStr((char*)sh->bytes(), sh->byteSize());
-                                        fprintf(stderr, "[PRIM197-CTX] startContext method=#%s\n", selStr.c_str());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                // Walk sender chain a few levels to show where the exception was signaled
-                Oop ctx = startContext;
-                for (int i = 0; i < 8 && ctx.isObject() && !ctx.isNil(); i++) {
-                    Oop senderCtx = memory_.fetchPointer(0, ctx); // sender = slot 0
-                    if (!senderCtx.isObject() || senderCtx.isNil()) break;
-                    Oop meth = memory_.fetchPointer(3, senderCtx);
-                    if (meth.isObject() && meth.rawBits() > 0x10000) {
-                        ObjectHeader* mh2 = meth.asObjectPtr();
-                        if (mh2->isCompiledMethod()) {
-                            Oop mHdr2 = memory_.fetchPointer(0, meth);
-                            if (mHdr2.isSmallInteger()) {
-                                size_t nLit2 = mHdr2.asSmallInteger() & 0x7FFF;
-                                if (nLit2 >= 2 && nLit2 <= 200) {
-                                    Oop sel2 = memory_.fetchPointer(nLit2 - 1, meth);
-                                    if (sel2.isObject() && sel2.rawBits() > 0x10000) {
-                                        ObjectHeader* sh2 = sel2.asObjectPtr();
-                                        if (sh2->isBytesObject() && sh2->byteSize() < 100) {
-                                            std::string s((char*)sh2->bytes(), sh2->byteSize());
-                                            fprintf(stderr, "[PRIM197-CTX]   sender[%d] #%s\n", i, s.c_str());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    ctx = senderCtx;
-                }
-            }
-        }
-    }
-
     if (!startContext.isObject()) {
         return PrimitiveResult::Failure;
     }
@@ -9840,18 +9613,6 @@ PrimitiveResult Interpreter::primitiveFindHandlerContext(int argCount) {
         if (method.isObject() && !method.isNil()) {
             int primIdx = primitiveIndexOf(method);
             if (primIdx == 199) {
-                // Found a handler or signaling context
-                static int foundCount = 0;
-                if (foundCount++ < 20) {
-                    static FILE* fhLog = nullptr;
-                    if (!fhLog) fhLog = nullptr;
-                    if (fhLog) {
-                        fprintf(fhLog, "[FIND step=%llu] FOUND handler ctx=0x%llx after %d\n",
-                                (unsigned long long)g_stepNum,
-                                (unsigned long long)ctx.rawBits(), walked);
-                        fflush(fhLog);
-                    }
-                }
                 pop();
                 push(ctx);
                 return PrimitiveResult::Success;
@@ -11633,30 +11394,6 @@ PrimitiveResult Interpreter::primitiveFileWrite(int argCount) {
         tempBuffer[i] = memory_.fetchByte(start - 1 + i, bufferOop);
     }
 
-    // Trace writes to stdout/stderr for debugging CLI handlers
-    if (fileId == -2) {
-        static int stdoutWriteCount = 0;
-        stdoutWriteCount++;
-        if (stdoutWriteCount <= 50) {
-            std::string preview(tempBuffer.begin(), tempBuffer.begin() + std::min((int64_t)80, count));
-            for (char& c : preview) if (c < 32 && c != '\n') c = '.';
-            fprintf(stderr, "[STDOUT-WRITE #%d step=%llu] count=%lld: \"%s\"\n",
-                    stdoutWriteCount, (unsigned long long)g_stepNum, (long long)count,
-                    preview.c_str());
-        }
-    } else if (fileId == -3) {
-        static int stderrWriteCount = 0;
-        stderrWriteCount++;
-        // Only log first and every 100th stderr write to avoid spam
-        if (stderrWriteCount <= 3 || stderrWriteCount % 100 == 0) {
-            std::string preview(tempBuffer.begin(), tempBuffer.begin() + std::min((int64_t)80, count));
-            for (char& c : preview) if (c < 32 && c != '\n') c = '.';
-            fprintf(stderr, "[STDERR-WRITE #%d step=%llu] count=%lld: \"%s\"\n",
-                    stderrWriteCount, (unsigned long long)g_stepNum, (long long)count,
-                    preview.c_str());
-        }
-    }
-
     size_t bytesWritten = fwrite(tempBuffer.data(), 1, count, it->second);
     fflush(it->second);
 
@@ -12078,11 +11815,6 @@ PrimitiveResult Interpreter::primitiveSetFullScreen(int argCount) {
 // Primitive 153: Set the input semaphore
 // semaphore primitiveInputSemaphore -> self
 PrimitiveResult Interpreter::primitiveInputSemaphore(int argCount) {
-    // Debug: Log calls
-    static int callCount153 = 0;
-    callCount153++;
-    fprintf(stderr, "[PRIM153] Call #%d argCount=%d\n", callCount153, argCount);
-
     if (argCount < 1) {
         return PrimitiveResult::Failure;
     }
@@ -12092,10 +11824,6 @@ PrimitiveResult Interpreter::primitiveInputSemaphore(int argCount) {
     if (semArg.isSmallInteger()) {
         int64_t semIndex = semArg.asSmallInteger();
         gEventQueue.setInputSemaphoreIndex(static_cast<int>(semIndex));
-        fprintf(stderr, "[PRIM153] Set input semaphore index to %lld\n", semIndex);
-    } else {
-        fprintf(stderr, "[PRIM153] Arg is not SmallInteger, raw=0x%llx\n",
-                (unsigned long long)semArg.rawBits());
     }
 
     pop();  // pop semaphore, leave receiver
@@ -12809,12 +12537,6 @@ PrimitiveResult Interpreter::primitiveDrawLoop(int argCount) {
 // left top right bottom primitiveShowDisplayRect -> self
 // Updates the specified rectangle of the display
 PrimitiveResult Interpreter::primitiveShowDisplayRect(int argCount) {
-    static int showRectCount = 0;
-    showRectCount++;
-    if (showRectCount <= 5 || showRectCount % 500 == 0) {
-        fprintf(stderr, "[SHOW-RECT #%d step=%llu] primitiveShowDisplayRect called argCount=%d\n",
-                showRectCount, (unsigned long long)g_stepNum, argCount);
-    }
     // Pop all arguments (left, top, right, bottom) but use them for partial update
     int left = 0, top = 0, right = 0, bottom = 0;
     if (argCount >= 4) {
@@ -13501,17 +13223,6 @@ PrimitiveResult Interpreter::primitiveDLLCall(int argCount) {
 // primitiveExternalCall -> result
 // Calls a primitive defined in an external plugin module
 PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
-    bool traceThis = false;
-
-    static int extPrimCallCount = 0;
-    extPrimCallCount++;
-    if (extPrimCallCount == 1) {
-        fprintf(stderr, "[EXTCALL] externalPrimitives_ has %zu entries\n", externalPrimitives_.size());
-        for (auto& kv : externalPrimitives_) {
-            fprintf(stderr, "[EXTCALL]   key='%s' fn=%p\n", kv.first.c_str(), (void*)kv.second);
-        }
-    }
-
     // Use newMethod_ (the method being activated) rather than method_ (the caller)
     // because executePrimitive runs BEFORE activateMethod
     Oop method = newMethod_.isObject() ? newMethod_ : method_;
@@ -13585,67 +13296,29 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
             }
         }
     }
-    // Log literal strings found for first N calls
-    static FILE* namedLog = stderr;
-    static int namedLogCount = 0;
-    namedLogCount++;
-
-    // Check if any literal contains B2D for targeted logging
-    bool hasB2D = false;
-    for (auto& s : literalStrings) {
-        if (s.find("B2D") != std::string::npos || s.find("Balloon") != std::string::npos ||
-            s.find("BitBlt") != std::string::npos) {
-            hasB2D = true;
-            break;
-        }
-    }
-    if (hasB2D && namedLogCount <= 5) {
-        fprintf(stderr, "[B2D-NAMED #%d] argCount=%d literals(%zu):", namedLogCount, argCount, literalStrings.size());
-        for (auto& s : literalStrings) fprintf(stderr, " '%s'", s.c_str());
-        fprintf(stderr, "\n");
-        fflush(stderr);
-    }
-    // Log ALL named primitive lookups (first 50 calls) to diagnose FFI failures
-    if (namedLogCount <= 50) {
-        fprintf(stderr, "[EXTCALL #%d] argCount=%d literals(%zu):", namedLogCount, argCount, literalStrings.size());
-        for (auto& s : literalStrings) fprintf(stderr, " '%s'", s.c_str());
-        fprintf(stderr, "\n");
-        fflush(stderr);
-    }
-
     // Try all combinations of module:name from literal strings
     for (size_t a = 0; a < literalStrings.size(); a++) {
         // Try as direct name with empty module
         auto it = namedPrimitives_.find(":" + literalStrings[a]);
         if (it != namedPrimitives_.end()) {
-            if (hasB2D) fprintf(stderr, "[B2D-DISPATCH] FOUND named ':%s'\n", literalStrings[a].c_str());
             return (this->*(it->second))(argCount);
         }
         // Try external plugin primitives
         auto xit = externalPrimitives_.find(":" + literalStrings[a]);
         if (xit != externalPrimitives_.end()) {
-            if (hasB2D) fprintf(stderr, "[B2D-DISPATCH] FOUND external ':%s'\n", literalStrings[a].c_str());
             return callExternalPrimitive(xit->second);
         }
         // Try as module:name with other literals as names
         for (size_t b = 0; b < literalStrings.size(); b++) {
             if (a == b) continue;
             std::string key = literalStrings[a] + ":" + literalStrings[b];
-            if (hasB2D) {
-                fprintf(stderr, "[B2D-TRY] key='%s' (len=%zu) named=%d ext=%d\n",
-                        key.c_str(), key.size(),
-                        namedPrimitives_.count(key) ? 1 : 0,
-                        externalPrimitives_.count(key) ? 1 : 0);
-            }
             auto it2 = namedPrimitives_.find(key);
             if (it2 != namedPrimitives_.end()) {
-                if (hasB2D) fprintf(stderr, "[B2D-DISPATCH] FOUND named '%s'\n", key.c_str());
                 return (this->*(it2->second))(argCount);
             }
             // Try external plugin primitives
             auto xit2 = externalPrimitives_.find(key);
             if (xit2 != externalPrimitives_.end()) {
-                if (hasB2D) fprintf(stderr, "[B2D-DISPATCH] FOUND external '%s'\n", key.c_str());
                 return callExternalPrimitive(xit2->second);
             }
         }
@@ -13686,43 +13359,14 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
         }
     }
 
-    static FILE* extLog = stderr;
-    static int extCallCount = 0;
-    extCallCount++;
-
-    if (extLog && extCallCount <= 500) {
-        fprintf(extLog, "[EXT] #%d argCount=%d numLiterals=%zu\n",
-                extCallCount, argCount, numLiterals);
-        fflush(extLog);
-    }
-
     // Search literals for the primitive spec (usually an Array with module/name)
     // Literals are at slots 1..numLiterals (slot 0 is the method header)
     for (size_t i = 1; i <= numLiterals && i < 10; i++) {
         Oop literal = memory_.fetchPointer(i, method);
-        if (extLog && extCallCount <= 500) {
-            fprintf(extLog, "[EXT] #%d literal[%zu] isObj=%d bits=0x%llx\n",
-                    extCallCount, i, literal.isObject() ? 1 : 0,
-                    (unsigned long long)literal.rawBits());
-            fflush(extLog);
-        }
         if (!literal.isObject()) continue;
         if (!memory_.isValidPointer(literal)) continue;  // Validate before dereference
 
         ObjectHeader* litHdr = literal.asObjectPtr();
-        uint32_t fmt = static_cast<uint32_t>(litHdr->format());
-        size_t slots = litHdr->slotCount();
-
-        if (extLog && extCallCount <= 500) {
-            fprintf(extLog, "[EXT] #%d   format=%u slots=%zu clsIdx=%u\n",
-                    extCallCount, fmt, slots, litHdr->classIndex());
-            // If it's a string/symbol, log its contents
-            if (litHdr->isBytesObject() && litHdr->byteSize() < 100) {
-                std::string str((char*)litHdr->bytes(), litHdr->byteSize());
-                fprintf(extLog, "[EXT] #%d   literal string='%s'\n", extCallCount, str.c_str());
-            }
-            fflush(extLog);
-        }
 
         // Check for ThreadedFFI callback primitives directly in string literals
         // This is needed because the TFCallbackInvocation methods have the selector
@@ -13734,37 +13378,20 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
                 // IMPORTANT: Use memory_.nil() not Oop::nil() - the image's nil is at a real address
                 popN(static_cast<size_t>(argCount + 1));  // Pop args and receiver
                 push(memory_.nil());
-                if (extLog) {
-                    fprintf(extLog, "[EXT] #%d Returning image nil (0x%llx) for callback primitive '%s'\n",
-                            extCallCount, (unsigned long long)memory_.nil().rawBits(), str.c_str());
-                    fflush(extLog);
-                }
                 return PrimitiveResult::Success;
             }
             if (str == "primNumberOfCallbacks" || str == "numberOfCallbacks") {
                 // Return 0 - no pending callbacks
                 popN(static_cast<size_t>(argCount + 1));  // Pop args and receiver
                 push(Oop::fromSmallInteger(0));
-                if (extLog) {
-                    fprintf(extLog, "[EXT] #%d Returning 0 for callback count primitive '%s'\n", extCallCount, str.c_str());
-                    fflush(extLog);
-                }
                 return PrimitiveResult::Success;
             }
             // CRITICAL: isVMDisplayUsingSDL2 check - OSSDL2Driver uses this to decide event handling
             if (str == "isVMDisplayUsingSDL2") {
-                if (extLog) {
-                    fprintf(extLog, "[EXT] #%d Found isVMDisplayUsingSDL2, returning TRUE\n", extCallCount);
-                    fflush(extLog);
-                }
                 return primitiveIsVMDisplayUsingSDL2(argCount);
             }
             // SDL2 input semaphore - enables SDL2 event polling
             if (str == "primitiveSetVMSDL2Input:" || str == "primitiveSetVMSDL2Input") {
-                if (extLog) {
-                    fprintf(extLog, "[EXT] #%d Found primitiveSetVMSDL2Input, enabling SDL2 input\n", extCallCount);
-                    fflush(extLog);
-                }
                 return primitiveSetVMSDL2Input(argCount);
             }
         }
@@ -13777,85 +13404,30 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
             Oop moduleOop = memory_.fetchPointer(0, literal);
             Oop nameOop = memory_.fetchPointer(1, literal);
 
-            if (extLog && extCallCount <= 500) {
-                fprintf(extLog, "[EXT] #%d   slot[0]=0x%llx slot[1]=0x%llx\n",
-                        extCallCount,
-                        (unsigned long long)moduleOop.rawBits(),
-                        (unsigned long long)nameOop.rawBits());
-                fflush(extLog);
-            }
-
             // Extract strings
             std::string moduleName, primName;
 
             if (moduleOop.isObject() && memory_.isValidPointer(moduleOop)) {
                 ObjectHeader* modHdr = moduleOop.asObjectPtr();
-                if (extLog && extCallCount <= 500) {
-                    fprintf(extLog, "[EXT] #%d   moduleOop: fmt=%u isBytes=%d size=%zu\n",
-                            extCallCount,
-                            static_cast<uint32_t>(modHdr->format()),
-                            modHdr->isBytesObject() ? 1 : 0,
-                            modHdr->isBytesObject() ? modHdr->byteSize() : modHdr->slotCount());
-                    fflush(extLog);
-                }
                 if (modHdr->isBytesObject() && modHdr->byteSize() < 100) {
                     moduleName = std::string((char*)modHdr->bytes(), modHdr->byteSize());
-                    if (extLog && extCallCount <= 500) {
-                        fprintf(extLog, "[EXT] #%d   moduleName='%s'\n", extCallCount, moduleName.c_str());
-                        fflush(extLog);
-                    }
                 }
             }
 
             if (nameOop.isObject() && memory_.isValidPointer(nameOop)) {
                 ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                if (extLog && extCallCount <= 500) {
-                    fprintf(extLog, "[EXT] #%d   nameOop: fmt=%u isBytes=%d size=%zu clsIdx=%u\n",
-                            extCallCount,
-                            static_cast<uint32_t>(nameHdr->format()),
-                            nameHdr->isBytesObject() ? 1 : 0,
-                            nameHdr->isBytesObject() ? nameHdr->byteSize() : nameHdr->slotCount(),
-                            nameHdr->classIndex());
-                    fflush(extLog);
-                }
                 if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
                     primName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                    if (extLog && extCallCount <= 500) {
-                        fprintf(extLog, "[EXT] #%d   primName='%s'\n", extCallCount, primName.c_str());
-                        fflush(extLog);
-                    }
                 }
                 // If nameOop is a FixedSize object, check its slots for module/name
                 if (nameHdr->format() == ObjectFormat::FixedSize && nameHdr->slotCount() >= 2) {
                     // This could be ExternalLibraryFunction - check slots
-                    if (extLog && extCallCount <= 500) {
-                        fprintf(extLog, "[EXT] #%d   Checking nameOop slots (count=%zu):\n",
-                                extCallCount, nameHdr->slotCount());
-                        fflush(extLog);
-                    }
                     for (size_t j = 0; j < nameHdr->slotCount() && j < 8; j++) {
                         Oop innerOop = memory_.fetchPointer(j, nameOop);
-                        if (extLog && extCallCount <= 500) {
-                            fprintf(extLog, "[EXT] #%d     slot[%zu]=0x%llx isObj=%d\n",
-                                    extCallCount, j, (unsigned long long)innerOop.rawBits(),
-                                    innerOop.isObject() ? 1 : 0);
-                            fflush(extLog);
-                        }
                         if (innerOop.isObject() && memory_.isValidPointer(innerOop)) {
                             ObjectHeader* innerHdr = innerOop.asObjectPtr();
-                            if (extLog && extCallCount <= 500) {
-                                fprintf(extLog, "[EXT] #%d       slot[%zu] fmt=%u clsIdx=%u\n",
-                                        extCallCount, j,
-                                        static_cast<uint32_t>(innerHdr->format()),
-                                        innerHdr->classIndex());
-                                fflush(extLog);
-                            }
                             if (innerHdr->isBytesObject() && innerHdr->byteSize() < 100) {
                                 std::string str((char*)innerHdr->bytes(), innerHdr->byteSize());
-                                if (extLog && extCallCount <= 500) {
-                                    fprintf(extLog, "[EXT] #%d         ='%s'\n", extCallCount, str.c_str());
-                                    fflush(extLog);
-                                }
                                 // If this is slot 3 or 5, it might be module or function name
                                 if (j == 3) {
                                     moduleName = str;
@@ -13871,11 +13443,6 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
                                         ObjectHeader* deepHdr = deepOop.asObjectPtr();
                                         if (deepHdr->isBytesObject() && deepHdr->byteSize() < 100) {
                                             std::string str((char*)deepHdr->bytes(), deepHdr->byteSize());
-                                            if (extLog && extCallCount <= 500) {
-                                                fprintf(extLog, "[EXT] #%d           slot[%zu].slot[%zu]='%s' clsIdx=%u\n",
-                                                        extCallCount, j, k, str.c_str(), deepHdr->classIndex());
-                                                fflush(extLog);
-                                            }
                                             // Extract module and primitive names
                                             if (str == "MiscPrimitivePlugin" || str == "primitiveStringHash") {
                                                 if (str.find("Plugin") != std::string::npos) {
@@ -13896,14 +13463,6 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
             if (!moduleName.empty() && !primName.empty()) {
                 std::string key = moduleName + ":" + primName;
 
-                if (extLog && extCallCount <= 500) {
-                    fprintf(extLog, "[EXT] #%d Looking up '%s'\n", extCallCount, key.c_str());
-                    fflush(extLog);
-                }
-                if (moduleName == "iOSPlugin") {
-                    std::cerr << "[iOS-PRIM] Looking up '" << key << "'\n";
-                }
-
                 // Handle ThreadedFFI callback primitives - return nil/0 instead of failing
                 // This prevents exception handling from consuming startup cycles
                 if (primName == "primNextPendingCallback" || primName == "nextPendingCallback") {
@@ -13911,40 +13470,23 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
                     // IMPORTANT: Use memory_.nil() not Oop::nil() - the image's nil is at a real address
                     popN(static_cast<size_t>(argCount + 1));  // Pop args and receiver
                     push(memory_.nil());
-                    if (extLog && extCallCount <= 500) {
-                        fprintf(extLog, "[EXT] #%d Returning image nil (0x%llx) for %s\n",
-                                extCallCount, (unsigned long long)memory_.nil().rawBits(), primName.c_str());
-                        fflush(extLog);
-                    }
                     return PrimitiveResult::Success;
                 }
                 if (primName == "primNumberOfCallbacks" || primName == "numberOfCallbacks") {
                     // Return 0 - no pending callbacks
                     popN(static_cast<size_t>(argCount + 1));  // Pop args and receiver
                     push(Oop::fromSmallInteger(0));
-                    if (extLog && extCallCount <= 500) {
-                        fprintf(extLog, "[EXT] #%d Returning 0 for %s\n", extCallCount, primName.c_str());
-                        fflush(extLog);
-                    }
                     return PrimitiveResult::Success;
                 }
 
                 auto it = namedPrimitives_.find(key);
                 if (it != namedPrimitives_.end()) {
-                    if (extLog && extCallCount <= 500) {
-                        fprintf(extLog, "[EXT] #%d Found! Calling...\n", extCallCount);
-                        fflush(extLog);
-                    }
                     return (this->*(it->second))(argCount);
                 }
 
                 // Try external plugin primitives
                 auto xit = externalPrimitives_.find(key);
                 if (xit != externalPrimitives_.end()) {
-                    if (extLog && extCallCount <= 500) {
-                        fprintf(extLog, "[EXT] #%d Found external %s! Calling...\n", extCallCount, key.c_str());
-                        fflush(extLog);
-                    }
                     return callExternalPrimitive(xit->second);
                 }
 
@@ -13978,46 +13520,21 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
 
                 std::string moduleName, functionName;
 
-                if (traceThis) {
-                    fprintf(stderr, "[EXT-TRACE] lit0 array: slots=%zu mod=0x%llx func=0x%llx\n",
-                            lit0Hdr->slotCount(), moduleOop.rawBits(), functionOop.rawBits());
-                }
-
                 // Extract module name
                 if (moduleOop.isObject() && memory_.isValidPointer(moduleOop) &&
                     moduleOop.rawBits() != memory_.nil().rawBits()) {
                     ObjectHeader* modHdr = moduleOop.asObjectPtr();
-                    if (traceThis) {
-                        fprintf(stderr, "[EXT-TRACE] moduleOop: fmt=%u isBytes=%d byteSize=%zu\n",
-                                (uint32_t)modHdr->format(), modHdr->isBytesObject()?1:0,
-                                modHdr->isBytesObject()?modHdr->byteSize():0);
-                    }
                     if (modHdr->isBytesObject() && modHdr->byteSize() < 100) {
                         moduleName = std::string((char*)modHdr->bytes(), modHdr->byteSize());
                     }
-                } else if (traceThis) {
-                    fprintf(stderr, "[EXT-TRACE] moduleOop: isObj=%d valid=%d isNil=%d\n",
-                            moduleOop.isObject()?1:0,
-                            (moduleOop.isObject() && memory_.isValidPointer(moduleOop))?1:0,
-                            (moduleOop.rawBits() == memory_.nil().rawBits())?1:0);
                 }
 
                 // Extract function name
                 if (functionOop.isObject() && memory_.isValidPointer(functionOop)) {
                     ObjectHeader* funcHdr = functionOop.asObjectPtr();
-                    if (traceThis) {
-                        fprintf(stderr, "[EXT-TRACE] functionOop: fmt=%u isBytes=%d byteSize=%zu\n",
-                                (uint32_t)funcHdr->format(), funcHdr->isBytesObject()?1:0,
-                                funcHdr->isBytesObject()?funcHdr->byteSize():0);
-                    }
                     if (funcHdr->isBytesObject() && funcHdr->byteSize() < 100) {
                         functionName = std::string((char*)funcHdr->bytes(), funcHdr->byteSize());
                     }
-                }
-
-                if (traceThis) {
-                    fprintf(stderr, "[EXT-TRACE] module='%s' function='%s'\n",
-                            moduleName.c_str(), functionName.c_str());
                 }
 
                 if (!functionName.empty()) {
@@ -14025,21 +13542,11 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
                     std::string key = moduleName + ":" + functionName;
                     auto it = namedPrimitives_.find(key);
                     if (it != namedPrimitives_.end()) {
-                        if (extLog && extCallCount <= 500) {
-                            fprintf(extLog, "[EXT] #%d Found named primitive '%s' via lit0 array\n",
-                                    extCallCount, key.c_str());
-                            fflush(extLog);
-                        }
                         return (this->*(it->second))(argCount);
                     }
                     // Try external plugin primitives
                     auto xit = externalPrimitives_.find(key);
                     if (xit != externalPrimitives_.end()) {
-                        if (extLog && extCallCount <= 500) {
-                            fprintf(extLog, "[EXT] #%d Found external '%s' via lit0 array\n",
-                                    extCallCount, key.c_str());
-                            fflush(extLog);
-                        }
                         return callExternalPrimitive(xit->second);
                     }
                     // Try without module
@@ -14053,17 +13560,6 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
                         return callExternalPrimitive(xit2->second);
                     }
 
-                    // Try to load the symbol dynamically
-                    void* funcPtr = dlsym(RTLD_DEFAULT, functionName.c_str());
-                    if (!funcPtr) {
-                        funcPtr = ffi::lookupFunction(moduleName, functionName);
-                    }
-
-                    if (funcPtr && extLog && extCallCount <= 100) {
-                        fprintf(extLog, "[EXT] #%d Found dynamic function '%s' in module '%s' at %p\n",
-                                extCallCount, functionName.c_str(), moduleName.c_str(), funcPtr);
-                        fflush(extLog);
-                    }
                 }
             }
         }
@@ -15435,23 +14931,6 @@ static constexpr int64_t SmalltalkEpochOffsetMicroseconds = SmalltalkEpochOffset
 // Signals the timer semaphore when UTC clock reaches usecs. Value 0 disables.
 // Stack: receiver ticker, arg1 sema, arg2 usecs
 PrimitiveResult Interpreter::primitiveSignalAtUTCMicroseconds(int argCount) {
-    static int p242entry = 0;
-    p242entry++;
-    {
-        static FILE* tlog = nullptr;
-        if (tlog) {
-            fprintf(tlog, "[PRIM242-ENTRY #%d] argCount=%d", p242entry, argCount);
-            if (argCount >= 2) {
-                Oop u = stackTop();
-                Oop s = stackValue(1);
-                fprintf(tlog, " usecs=%s sema=0x%llx",
-                        u.isSmallInteger() ? std::to_string(u.asSmallInteger()).c_str() : "large",
-                        (unsigned long long)s.rawBits());
-            }
-            fprintf(tlog, "\n");
-            fflush(tlog);
-        }
-    }
     if (argCount != 2) return PrimitiveResult::Failure;
 
     Oop usecsOop = stackTop();        // usecs is 2nd argument (stackValue(0))
@@ -15491,14 +14970,6 @@ PrimitiveResult Interpreter::primitiveSignalAtUTCMicroseconds(int argCount) {
         // Schedule the timer
         timerSemaphore_ = sema;
         nextWakeupUsec_ = usecs;
-        static int p242count = 0;
-        if (p242count++ < 10) {
-            auto now = std::chrono::system_clock::now();
-            int64_t nowUsec = std::chrono::duration_cast<std::chrono::microseconds>(
-                now.time_since_epoch()).count();
-            fprintf(stderr, "[PRIM242] #%d this=%p scheduled at usec=%lld (now=%lld, delta=%lldms) &nextWakeupUsec_=%p\n",
-                    p242count, (void*)this, usecs, nowUsec, (usecs - nowUsec) / 1000, (void*)&nextWakeupUsec_);
-        }
     }
 
     popN(2);  // Pop both arguments, leave receiver
@@ -16288,15 +15759,6 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
     // We must get the receiver from the stack. The receiver is under the arguments.
     Oop actualReceiver = stackValue(static_cast<size_t>(argCount));
 
-    // Debug: Simple stderr output
-    static int entryCount = 0;
-    entryCount++;
-    if (entryCount <= 20) {
-        fprintf(stderr, "[GETNEXT] #%d argCount=%d stackTop=0x%llx actualReceiver=0x%llx\n",
-                entryCount, argCount, (unsigned long long)stackTop().rawBits(),
-                (unsigned long long)actualReceiver.rawBits());
-    }
-
     // Process input events first - this handles menu bar clicks natively
     processInputEvents();
 
@@ -16847,27 +16309,10 @@ enum FormFields {
 // Combination rules: 0=AND 1=AND+NOT 2=NOT+AND 3=STORE 4=NOT+OR 5=DEST 6=XOR 7=OR
 // 24=alphaBlend 25=paint(OR) 34=sourceWord(copy)
 PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
-    static int cbCount = 0;
-    cbCount++;
-    if (cbCount <= 5 || cbCount % 1000 == 0) {
-        fprintf(stderr, "[BITBLT #%d step=%llu] primitiveCopyBits called\n",
-                cbCount, (unsigned long long)g_stepNum);
-    }
-    // Targeted failure logging: track the reason for every failure
-    int failCode = 0;  // 0 = no failure
-    auto logFail = [&](int code, const char* reason) {
-        static int failLogCount = 0;
-        failLogCount++;
-        if (failLogCount <= 50 || (g_stepNum > 50000000 && g_stepNum < 60000000)) {
-            fprintf(stderr, "[CB-FAIL #%d step=%llu cb=%d] code=%d: %s\n",
-                    failLogCount, (unsigned long long)g_stepNum, cbCount, code, reason);
-            fflush(stderr);
-        }
-    };
-    if (argCount != 0) { logFail(1, "argCount!=0"); return PrimitiveResult::Failure; }
+    if (argCount != 0) { return PrimitiveResult::Failure; }
 
     Oop bitBlt = stackTop();
-    if (!bitBlt.isObject()) { logFail(2, "bitBlt not object"); return PrimitiveResult::Failure; }
+    if (!bitBlt.isObject()) { return PrimitiveResult::Failure; }
 
     // Extract BitBlt parameters
     Oop destForm = memory_.fetchPointer(BBDestForm, bitBlt);
@@ -16885,7 +16330,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     intptr_t clipHeight = bitBltField(memory_, bitBlt, BBClipHeight);
 
     // Validate destination form
-    if (destForm.isNil() || !destForm.isObject()) { logFail(3, "destForm nil/not obj"); return PrimitiveResult::Failure; }
+    if (destForm.isNil() || !destForm.isObject()) { return PrimitiveResult::Failure; }
 
     Oop destBits = memory_.fetchPointer(FormBits, destForm);
     intptr_t destWidth = bitBltField(memory_, destForm, FormWidth);
@@ -16903,8 +16348,6 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         destSurfaceID = static_cast<int>(destBits.asSmallInteger());
         ManualSurface* s = lookupSurface(destSurfaceID);
         if (!s || !s->bits) {
-            char buf[80]; snprintf(buf, sizeof(buf), "destBits surface #%d invalid/no bits", destSurfaceID);
-            logFail(5, buf);
             return PrimitiveResult::Failure;
         }
         destPixels = reinterpret_cast<uint32_t*>(s->bits);
@@ -16915,26 +16358,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         destPixels = reinterpret_cast<uint32_t*>(destBitsHdr->bytes());
         destBitsSize = destBitsHdr->byteSize();
     } else {
-        logFail(4, "destBits invalid");
         return PrimitiveResult::Failure;
-    }
-
-    if (cbCount <= 10) {
-        fprintf(stderr, "[COPYBITS #%d] ENTER rule=%ld src=%s dest=%ldx%ldx%ld bits=0x%llx sz=%zu dx=%ld dy=%ld w=%ld h=%ld\n",
-                cbCount, (long)combinationRule, sourceForm.isNil() ? "nil" : "obj",
-                (long)destWidth, (long)destHeight, (long)destDepth,
-                (unsigned long long)destBits.rawBits(), destBitsSize,
-                (long)destX, (long)destY, (long)width, (long)height);
-        Oop htForm = memory_.fetchPointer(BBHalftoneForm, bitBlt);
-        fprintf(stderr, "  htForm=0x%llx isNil=%d isSI=%d isObj=%d\n",
-                (unsigned long long)htForm.rawBits(), htForm.isNil(),
-                htForm.isSmallInteger(), htForm.isObject());
-        if (htForm.isObject() && !htForm.isNil() && htForm.rawBits() > 0x10000) {
-            ObjectHeader* htH = htForm.asObjectPtr();
-            fprintf(stderr, "  htFmt=%d slots=%zu bytes=%zu\n",
-                    (int)htH->format(), htH->slotCount(), htH->byteSize());
-        }
-        fflush(stderr);
     }
 
     // Clip to clip rect
@@ -16979,28 +16403,13 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         }
     }
 
-    if (cbCount <= 10) {
-        fprintf(stderr, "[COPYBITS #%d] rule=%ld src=%s dest=%ldx%ldx%ld destBitsSize=%zu dx=%ld dy=%ld w=%ld h=%ld\n",
-                cbCount, (long)combinationRule, sourceForm.isNil() ? "nil" : "obj",
-                (long)destWidth, (long)destHeight, (long)destDepth, destBitsSize,
-                (long)destX, (long)destY, (long)width, (long)height);
-        fprintf(stderr, "  halftone: isNil=%d isSI=%d isObj=%d word=0x%x htWords=%p htH=%ld\n",
-                halftoneForm.isNil(), halftoneForm.isSmallInteger(), halftoneForm.isObject(),
-                halftoneWord, (void*)halftoneWords, (long)halftoneHeight);
-        fprintf(stderr, "  destPixels=%p destBitsOop=0x%llx\n",
-                (void*)destPixels, (unsigned long long)destBits.rawBits());
-        fflush(stderr);
-    }
-
     // No-source operations (fill)
     if (sourceForm.isNil()) {
         if (destDepth != 32) {
-            char buf[120]; snprintf(buf, sizeof(buf), "no-source destDepth=%ld rule=%ld", (long)destDepth, (long)combinationRule);
-            logFail(10, buf);
             return PrimitiveResult::Failure;
         }
         size_t requiredBytes = static_cast<size_t>((destY + height - 1) * destWidth + destX + width) * 4;
-        if (requiredBytes > destBitsSize) { logFail(11, "no-source dest bounds overflow"); return PrimitiveResult::Failure; }
+        if (requiredBytes > destBitsSize) { return PrimitiveResult::Failure; }
 
         for (intptr_t y = 0; y < height; y++) {
             uint32_t fill = halftoneWords ? halftoneWords[(destY + y) % halftoneHeight] : halftoneWord;
@@ -17044,8 +16453,6 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     break;
                 }
                 default: {
-                    char buf[80]; snprintf(buf, sizeof(buf), "no-source unsupported rule=%ld", (long)combinationRule);
-                    logFail(12, buf);
                     return PrimitiveResult::Failure;
                 }
             }
@@ -17056,7 +16463,6 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
 
     // --- Source operations ---
     if (!sourceForm.isObject()) {
-        logFail(13, "srcForm not object");
         return PrimitiveResult::Failure;
     }
 
@@ -17066,10 +16472,6 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     intptr_t srcDepth = bitBltField(memory_, sourceForm, FormDepth);
 
     if (srcBits.isNil() || !srcBits.isObject() || srcBits.isSmallInteger() || srcBits.rawBits() < 0x10000) {
-        char buf[120]; snprintf(buf, sizeof(buf), "srcBits invalid: nil=%d obj=%d si=%d raw=0x%llx depth=%ld rule=%ld",
-                srcBits.isNil(), srcBits.isObject(), srcBits.isSmallInteger(),
-                (unsigned long long)srcBits.rawBits(), (long)srcDepth, (long)combinationRule);
-        logFail(14, buf);
         return PrimitiveResult::Failure;
     }
 
@@ -17077,13 +16479,6 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     uint8_t* srcBytes = srcBitsHdr->bytes();
     size_t srcBitsSize = srcBitsHdr->byteSize();
 
-    if (cbCount <= 5) {
-        fprintf(stderr, "[COPYBITS #%d] src: %ldx%ldx%ld bits=0x%llx bytes=%zu sx=%ld sy=%ld\n",
-                cbCount, (long)srcWidth, (long)srcHeight, (long)srcDepth,
-                (unsigned long long)srcBits.rawBits(), srcBitsSize,
-                (long)sourceX, (long)sourceY);
-        fflush(stderr);
-    }
 
     // Clip to source form bounds
     if (sourceX < 0) { intptr_t d = -sourceX; width -= d; destX += d; sourceX = 0; }
@@ -17104,14 +16499,10 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
 
     // Bounds check for dest
     if (destDepth != 32) {
-        char buf[100]; snprintf(buf, sizeof(buf), "destDepth=%ld (not 32) srcDepth=%ld rule=%ld", (long)destDepth, (long)srcDepth, (long)combinationRule);
-        logFail(15, buf);
         return PrimitiveResult::Failure;
     }
     size_t requiredDestBytes = static_cast<size_t>((destY + height - 1) * destWidth + destX + width) * 4;
     if (requiredDestBytes > destBitsSize) {
-        char buf[100]; snprintf(buf, sizeof(buf), "dest bounds: need=%zu have=%zu", requiredDestBytes, destBitsSize);
-        logFail(16, buf);
         return PrimitiveResult::Failure;
     }
 
@@ -17241,8 +16632,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     break;
                 }
                 default: {
-                    char buf[80]; snprintf(buf, sizeof(buf), "32→32 unsupported rule=%ld", (long)combinationRule);
-                    logFail(21, buf); return PrimitiveResult::Failure;
+                    return PrimitiveResult::Failure;
                 }
             }
         }
@@ -17261,7 +16651,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         }
 
         size_t requiredSrcBytes = static_cast<size_t>(sourceY + height) * srcPitchBytes;
-        if (requiredSrcBytes > srcBitsSize) { logFail(30, "1→32 src bounds overflow"); return PrimitiveResult::Failure; }
+        if (requiredSrcBytes > srcBitsSize) { return PrimitiveResult::Failure; }
 
         for (intptr_t y = 0; y < height; y++) {
             uint32_t* dstRow = destPixels + (destY + y) * destPitch + destX;
@@ -17305,8 +16695,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                         break;
                     }
                     default: {
-                        char buf[80]; snprintf(buf, sizeof(buf), "1→32 unsupported rule=%ld", (long)combinationRule);
-                        logFail(31, buf); return PrimitiveResult::Failure;
+                        return PrimitiveResult::Failure;
                     }
                 }
             }
@@ -17318,7 +16707,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     // 8-bit source to 32-bit dest (used for grayscale forms)
     if (srcDepth == 8) {
         size_t requiredSrcBytes = static_cast<size_t>(sourceY + height) * srcPitchBytes;
-        if (requiredSrcBytes > srcBitsSize) { logFail(40, "8→32 src bounds overflow"); return PrimitiveResult::Failure; }
+        if (requiredSrcBytes > srcBitsSize) { return PrimitiveResult::Failure; }
 
         for (intptr_t y = 0; y < height; y++) {
             uint32_t* dstRow = destPixels + (destY + y) * destPitch + destX;
@@ -17361,8 +16750,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                         break;
                     }
                     default: {
-                        char buf[80]; snprintf(buf, sizeof(buf), "8→32 unsupported rule=%ld", (long)combinationRule);
-                        logFail(41, buf); return PrimitiveResult::Failure;
+                        return PrimitiveResult::Failure;
                     }
                 }
             }
@@ -17374,7 +16762,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     // 16-bit source to 32-bit dest
     if (srcDepth == 16) {
         size_t requiredSrcBytes = static_cast<size_t>(sourceY + height) * srcPitchBytes;
-        if (requiredSrcBytes > srcBitsSize) { logFail(50, "16→32 src bounds overflow"); return PrimitiveResult::Failure; }
+        if (requiredSrcBytes > srcBitsSize) { return PrimitiveResult::Failure; }
 
         uint16_t* srcPixels16 = reinterpret_cast<uint16_t*>(srcBytes);
         intptr_t srcPitch16 = srcPitchBytes / 2;
@@ -17393,8 +16781,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     case 3: case 34: dstRow[x] = srcPixel; break;
                     case 25: case 7: dstRow[x] |= srcPixel; break;
                     default: {
-                        char buf[80]; snprintf(buf, sizeof(buf), "16→32 unsupported rule=%ld", (long)combinationRule);
-                        logFail(51, buf); return PrimitiveResult::Failure;
+                        return PrimitiveResult::Failure;
                     }
                 }
             }
@@ -17406,7 +16793,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     // 2-bit and 4-bit sources to 32-bit dest
     if (srcDepth == 2 || srcDepth == 4) {
         size_t requiredSrcBytes = static_cast<size_t>(sourceY + height) * srcPitchBytes;
-        if (requiredSrcBytes > srcBitsSize) { logFail(60, "2/4→32 src bounds overflow"); return PrimitiveResult::Failure; }
+        if (requiredSrcBytes > srcBitsSize) { return PrimitiveResult::Failure; }
 
         intptr_t pixelsPerWord = 32 / srcDepth;
         intptr_t pixelMask = (1 << srcDepth) - 1;
@@ -17444,8 +16831,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                         break;
                     }
                     default: {
-                        char buf[80]; snprintf(buf, sizeof(buf), "2/4→32 unsupported rule=%ld", (long)combinationRule);
-                        logFail(61, buf); return PrimitiveResult::Failure;
+                        return PrimitiveResult::Failure;
                     }
                 }
             }
@@ -17455,12 +16841,6 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     }
 
     // Unsupported source depth / destination depth
-    {
-        char buf[120]; snprintf(buf, sizeof(buf), "unsupported srcDepth=%ld destDepth=%ld rule=%ld src=%ldx%ld dst=%ldx%ld",
-                (long)srcDepth, (long)destDepth, (long)combinationRule,
-                (long)srcWidth, (long)srcHeight, (long)destWidth, (long)destHeight);
-        logFail(99, buf);
-    }
     return PrimitiveResult::Failure;
 }
 
@@ -17504,9 +16884,6 @@ PrimitiveResult Interpreter::primitiveCreateManualSurface(int argCount) {
     if (surfaceID < 0) return PrimitiveResult::Failure;  // table full
 
     g_surfaces[surfaceID] = { true, w, h, p, d, msb, nullptr };
-
-    fprintf(stderr, "[SURFACE] Created manual surface #%d: %dx%d depth=%d pitch=%d\n",
-            surfaceID, w, h, d, p);
 
     // Pop args and receiver, push result
     popN(argCount + 1);
@@ -17563,23 +16940,6 @@ PrimitiveResult Interpreter::primitiveSetManualSurfacePointer(int argCount) {
     }
 
     s->bits = ptr;
-
-    static int setCount = 0;
-    if (++setCount <= 10) {
-        fprintf(stderr, "[SURFACE] SetPointer surface #%d -> %p (ptrOop: nil=%d si=%d obj=%d raw=0x%llx",
-                surfaceID, ptr, ptrOop.isNil(), ptrOop.isSmallInteger(), ptrOop.isObject(),
-                (unsigned long long)ptrOop.rawBits());
-        if (ptrOop.isObject() && !ptrOop.isNil() && ptrOop.rawBits() > 0x10000) {
-            ObjectHeader* h = ptrOop.asObjectPtr();
-            fprintf(stderr, " byteSize=%zu fmt=%d", h->byteSize(), (int)h->format());
-            if (h->byteSize() > 0 && h->byteSize() <= 16) {
-                fprintf(stderr, " bytes=");
-                uint8_t* b = h->bytes();
-                for (size_t i = 0; i < h->byteSize(); i++) fprintf(stderr, "%02x", b[i]);
-            }
-        }
-        fprintf(stderr, ")\n");
-    }
 
     // Pop args, leave receiver
     popN(argCount);
@@ -23453,27 +22813,6 @@ PrimitiveResult Interpreter::primitiveExternalPointerRead(int argCount) {
     void* basePtr = nullptr;
     int64_t offset = 0;
     if (!externalAddressReadSetup(*this, memory_, argCount, basePtr, offset)) {
-        static int failCount = 0;
-        if (++failCount <= 20) {
-            fprintf(stderr, "[PRIM639] FAIL #%d argCount=%d\n", failCount, argCount);
-            if (argCount == 1) {
-                Oop offsetOop = stackTop();
-                Oop receiver = stackValue(1);
-                fprintf(stderr, "[PRIM639]   offsetOop=0x%llx si=%d receiver=0x%llx obj=%d\n",
-                        (unsigned long long)offsetOop.rawBits(), offsetOop.isSmallInteger(),
-                        (unsigned long long)receiver.rawBits(), receiver.isObject());
-                if (receiver.isObject()) {
-                    ObjectHeader* hdr = receiver.asObjectPtr();
-                    fprintf(stderr, "[PRIM639]   receiver bytes=%d byteSize=%zu\n",
-                            hdr->isBytesObject(), hdr->byteSize());
-                    if (hdr->isBytesObject() && hdr->byteSize() >= sizeof(void*)) {
-                        void* storedPtr;
-                        memcpy(&storedPtr, hdr->bytes(), sizeof(void*));
-                        fprintf(stderr, "[PRIM639]   storedPtr=%p\n", storedPtr);
-                    }
-                }
-            }
-        }
         return PrimitiveResult::Failure;
     }
 
@@ -23481,7 +22820,6 @@ PrimitiveResult Interpreter::primitiveExternalPointerRead(int argCount) {
     void* value = nullptr;
     memcpy(&value, static_cast<uint8_t*>(basePtr) + offset, sizeof(void*));
 
-    static int successCount = 0;
     Oop result = tffi_newExternalAddress(value);
     if (result.isNil()) return PrimitiveResult::Failure;
 
@@ -23625,12 +22963,6 @@ PrimitiveResult Interpreter::primitiveExternalPointerWrite(int argCount) {
         ptrVal = reinterpret_cast<void*>(static_cast<uintptr_t>(valueOop.asSmallInteger()));
     }
     memcpy(static_cast<uint8_t*>(basePtr) + offset, &ptrVal, sizeof(void*));
-
-    static int writeCount = 0;
-    if (++writeCount <= 30) {
-        fprintf(stderr, "[PRIM654] WRITE #%d basePtr=%p offset=%lld ptrVal=%p\n",
-                writeCount, basePtr, (long long)offset, ptrVal);
-    }
 
     Oop result = valueOop;
     popN(argCount + 1);
@@ -24353,11 +23685,6 @@ PrimitiveResult Interpreter::primitiveTypeByteSize(int argCount) {
 // Stack: receiver, paramsArray, returnType [, abi]
 // Creates ffi_cif via ffi_prep_cif, stores in receiver's handler
 PrimitiveResult Interpreter::primitiveDefineFunction(int argCount) {
-    static int defCount = 0;
-    defCount++;
-    if (defCount <= 10) {
-        fprintf(stderr, "[TFFI] primitiveDefineFunction #%d argCount=%d\n", defCount, argCount);
-    }
     if (argCount < 2 || argCount > 3) return PrimitiveResult::Failure;
 
     ffi_abi abiToUse = FFI_DEFAULT_ABI;
@@ -25023,13 +24350,6 @@ static int g_pendingCallbackCount = 0;
 static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* userdata) {
     CallbackInfo* cbInfo = static_cast<CallbackInfo*>(userdata);
 
-    static int cbCallCount = 0;
-    if (++cbCallCount <= 20) {
-        fprintf(stderr, "[CALLBACK #%d] Closure invoked: cbInfo=%p nargs=%u retType=%u userData=%s\n",
-                cbCallCount, cbInfo, cif->nargs, cif->rtype->type,
-                cbInfo->userData ? static_cast<char*>(cbInfo->userData) : "(null)");
-    }
-
     // Queue the callback for Smalltalk processing
     if (g_pendingCallbackCount < MAX_PENDING_CALLBACKS) {
         g_pendingCallbacks[g_pendingCallbackCount].callback = cbInfo;
@@ -25057,7 +24377,6 @@ PrimitiveResult Interpreter::primitiveInitilizeCallbacks(int argCount) {
     if (!semIdxOop.isSmallInteger()) return PrimitiveResult::Failure;
 
     g_callbackSemaphoreIndex = static_cast<int>(semIdxOop.asSmallInteger());
-    fprintf(stderr, "[CALLBACK] Initialized callback semaphore index: %d\n", g_callbackSemaphoreIndex);
 
     popN(argCount);  // Pop args, leave receiver
     return PrimitiveResult::Success;
@@ -25092,9 +24411,6 @@ PrimitiveResult Interpreter::primitiveReadNextCallback(int argCount) {
 // Receiver: TFCallback, optional arg: debug string
 // Creates a libffi closure and stores the thunk address in the receiver.
 PrimitiveResult Interpreter::primitiveRegisterCallback(int argCount) {
-    static int regCount = 0;
-    regCount++;
-
     if (argCount > 1) return PrimitiveResult::Failure;
 
     Oop receiver = stackValue(argCount); // TFCallback instance
@@ -25103,8 +24419,6 @@ PrimitiveResult Interpreter::primitiveRegisterCallback(int argCount) {
 
     // Read TFCallback slots
     if (memory_.slotCountOf(receiver) < 5) {
-        if (regCount <= 10) fprintf(stderr, "[CALLBACK-REG #%d] TFCallback has too few slots: %zu\n",
-                                    regCount, memory_.slotCountOf(receiver));
         return PrimitiveResult::Failure;
     }
 
@@ -25116,14 +24430,12 @@ PrimitiveResult Interpreter::primitiveRegisterCallback(int argCount) {
     // Get the return ffi_type*
     ffi_type* returnType = static_cast<ffi_type*>(tffi_getHandler(returnTypeOop));
     if (!returnType) {
-        if (regCount <= 10) fprintf(stderr, "[CALLBACK-REG #%d] returnType is null\n", regCount);
         return PrimitiveResult::Failure;
     }
 
     // Get Runner pointer (must be non-null)
     void* runnerPtr = tffi_getHandler(runnerOop);
     if (!runnerPtr) {
-        if (regCount <= 10) fprintf(stderr, "[CALLBACK-REG #%d] runner is null\n", regCount);
         return PrimitiveResult::Failure;
     }
 
@@ -25138,7 +24450,6 @@ PrimitiveResult Interpreter::primitiveRegisterCallback(int argCount) {
         Oop paramOop = memory_.fetchPointer(i, paramArrayOop);
         ffi_type* pt = static_cast<ffi_type*>(tffi_getHandler(paramOop));
         if (!pt) {
-            if (regCount <= 10) fprintf(stderr, "[CALLBACK-REG #%d] param %zu type is null\n", regCount, i);
             free(paramTypes);
             return PrimitiveResult::Failure;
         }
@@ -25170,7 +24481,6 @@ PrimitiveResult Interpreter::primitiveRegisterCallback(int argCount) {
         ffi_closure_alloc(sizeof(ffi_closure), &cbInfo->functionAddress));
 
     if (!cbInfo->closure) {
-        if (regCount <= 10) fprintf(stderr, "[CALLBACK-REG #%d] ffi_closure_alloc failed\n", regCount);
         free(paramTypes);
         if (cbInfo->userData) free(cbInfo->userData);
         delete cbInfo;
@@ -25182,7 +24492,6 @@ PrimitiveResult Interpreter::primitiveRegisterCallback(int argCount) {
                                      static_cast<unsigned int>(paramCount),
                                      returnType, paramTypes);
     if (status != FFI_OK) {
-        if (regCount <= 10) fprintf(stderr, "[CALLBACK-REG #%d] ffi_prep_cif failed: %d\n", regCount, status);
         ffi_closure_free(cbInfo->closure);
         free(paramTypes);
         if (cbInfo->userData) free(cbInfo->userData);
@@ -25195,19 +24504,11 @@ PrimitiveResult Interpreter::primitiveRegisterCallback(int argCount) {
                                   callbackClosureHandler, cbInfo,
                                   cbInfo->functionAddress);
     if (status != FFI_OK) {
-        if (regCount <= 10) fprintf(stderr, "[CALLBACK-REG #%d] ffi_prep_closure_loc failed: %d\n", regCount, status);
         ffi_closure_free(cbInfo->closure);
         free(paramTypes);
         if (cbInfo->userData) free(cbInfo->userData);
         delete cbInfo;
         return PrimitiveResult::Failure;
-    }
-
-    if (regCount <= 20) {
-        fprintf(stderr, "[CALLBACK-REG #%d] Registered callback: thunk=%p userData=%s nargs=%zu\n",
-                regCount, cbInfo->functionAddress,
-                cbInfo->userData ? static_cast<char*>(cbInfo->userData) : "(null)",
-                paramCount);
     }
 
     // Store thunk address in receiver.slot[0] (handler ExternalAddress)
