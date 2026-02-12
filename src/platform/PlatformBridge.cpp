@@ -251,6 +251,25 @@ bool vm_loadImage(const char* imagePath) {
         }
     }
 
+    // Create placeholder libSDL2.dylib in the image directory.
+    // Pharo's FFIMacLibraryFinder checks if the file exists on disk before
+    // attempting to load it. Our primitiveLoadModule already handles SDL2
+    // specially (returns a fake handle), but the finder raises an error if
+    // the file doesn't exist. An empty file satisfies the existence check.
+    {
+        std::string imgPath(imagePath);
+        size_t lastSlash = imgPath.rfind('/');
+        if (lastSlash != std::string::npos) {
+            std::string imageDir = imgPath.substr(0, lastSlash);
+            std::string sdlPath = imageDir + "/libSDL2.dylib";
+            FILE* f = fopen(sdlPath.c_str(), "w");
+            if (f) {
+                fclose(f);
+                fprintf(stderr, "[VM] Created SDL2 placeholder: %s\n", sdlPath.c_str());
+            }
+        }
+    }
+
     // Register event callback to signal input semaphore when events arrive
     pharo::gEventQueue.setEventCallback(eventCallback, nullptr);
 
