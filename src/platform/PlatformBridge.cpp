@@ -263,28 +263,18 @@ void vm_run(void) {
     // Start the heartbeat thread (handles timers, like official VM)
     gInterpreter->startHeartbeat();
 
+    // Set relinquish callback for background thread (uses usleep, not CFRunLoop)
+    gInterpreter->setRelinquishCallback([](int microseconds) {
+        int sleepUs = std::max(microseconds, 1000);
+        if (sleepUs > 10000) sleepUs = 10000;  // Cap at 10ms
+        usleep(sleepUs);
+    });
+
     gRunning = true;
     gVMThread = std::thread([]() {
         // Post a window resize event to trigger Pharo layout
-        // This tells Pharo the display size so it can lay out morphs properly
         if (gDisplay) {
             vm_postWindowEvent(gDisplay->width(), gDisplay->height());
-
-            // Show a test pattern to verify display pipeline works
-            // This proves native rendering works even before Pharo renders
-            int w = gDisplay->width();
-            int h = gDisplay->height();
-            uint32_t* pixels = gDisplay->pixels();
-            for (int y = 0; y < h; y++) {
-                for (int x = 0; x < w; x++) {
-                    // Purple gradient to distinguish from Pharo content
-                    uint8_t r = static_cast<uint8_t>(100 + (x * 100 / w));
-                    uint8_t g = static_cast<uint8_t>(50);
-                    uint8_t b = static_cast<uint8_t>(100 + (y * 100 / h));
-                    pixels[y * w + x] = (255 << 24) | (r << 16) | (g << 8) | b;
-                }
-            }
-            gDisplay->update();
         }
 
         // Call interpret() which includes periodic event processing and semaphore handling
@@ -312,14 +302,16 @@ void vm_runOnMainThread(void) {
     // the UIKit run loop process events (display updates, touch events)
     // while the interpreter "sleeps".
     gInterpreter->setRelinquishCallback([](int microseconds) {
-#ifdef __APPLE__
-        // Process the main run loop for up to `microseconds` or 1ms minimum.
-        // This allows Metal rendering, touch events, and other UIKit work to proceed.
-        double seconds = std::max(microseconds, 1000) / 1000000.0;
+        // Process the main run loop during relinquish.
+        // This lets AppKit/UIKit handle events, Metal rendering, and menu updates.
+        // The timeout is capped to avoid blocking the interpreter for too long.
+        static int relinquishCount = 0;
+        if (++relinquishCount <= 3) {
+            fprintf(stderr, "[RELINQUISH] #%d us=%d\n", relinquishCount, microseconds);
+            fflush(stderr);
+        }
+        double seconds = std::min(microseconds, 10000) / 1000000.0;
         CFRunLoopRunInMode(kCFRunLoopDefaultMode, seconds, true);
-#else
-        std::this_thread::sleep_for(std::chrono::microseconds(microseconds));
-#endif
     });
 
     fprintf(stderr, "[VM] Running interpreter on main thread\n");

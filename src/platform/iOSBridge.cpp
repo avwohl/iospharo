@@ -67,6 +67,8 @@ void vm_parameters_destroy(VMParameters* parameters) {
 }
 
 int vm_init(VMParameters* parameters) {
+    // Force unbuffered stderr for diagnostic output
+    setvbuf(stderr, NULL, _IONBF, 0);
     if (!parameters) return 0;
 
     // Initialize VM memory

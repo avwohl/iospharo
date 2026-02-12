@@ -151,6 +151,11 @@ void* lookupFunction(const std::string& moduleName, const std::string& funcName)
     // Check cache first
     auto it = sFunctionCache.find(funcName);
     if (it != sFunctionCache.end()) {
+        // Trace first few SDL lookups
+        static int sdlLookupCount = 0;
+        if (funcName.compare(0, 4, "SDL_") == 0 && sdlLookupCount++ < 15) {
+            fprintf(stderr, "[FFI-LOOKUP] %s (cached) -> %p\n", funcName.c_str(), it->second);
+        }
         return it->second;
     }
 
@@ -158,6 +163,7 @@ void* lookupFunction(const std::string& moduleName, const std::string& funcName)
     // instead of falling through to dlsym (which finds force-loaded real SDL2
     // that crashes on our fake 0xDEADBEEF window handles).
     if (funcName.compare(0, 4, "SDL_") == 0) {
+        fprintf(stderr, "[FFI-LOOKUP] %s -> GENERIC NO-OP (not in stub cache)\n", funcName.c_str());
         // Generic no-op: returns 0 (safe for int/void/pointer returns).
         // On ARM64, extra arguments are in registers and harmlessly ignored.
         static auto genericSDLNoOp = +[]() -> intptr_t { return 0; };
@@ -217,6 +223,7 @@ extern "C" {
 
 // SDL_Init returns 0 on success
 int stub_SDL_Init(uint32_t flags) {
+    fprintf(stderr, "[SDL-STUB] SDL_Init(0x%x)\n", flags);
     sSDL2Initialized = true;
     return 0;
 }
@@ -240,6 +247,8 @@ const char* stub_SDL_GetError() {
 }
 
 void* stub_SDL_CreateWindow(const char* title, int x, int y, int w, int h, uint32_t flags) {
+    fprintf(stderr, "[SDL-STUB] SDL_CreateWindow('%s', %dx%d, flags=0x%x)\n",
+            title ? title : "(null)", w, h, flags);
     void* handle = reinterpret_cast<void*>(sNextHandle++);
     SDLWindowState state;
     state.width = w;
@@ -354,6 +363,7 @@ void stub_SDL_RenderPresent(void* renderer) {
     if (!renderingActive) {
         renderingActive = true;
         pharo::gEventQueue.setSDL2EventPollingActive(true);
+        fprintf(stderr, "[SDL-STUB] SDL_RenderPresent: first call, sdlActive=true\n");
     }
 
     auto rit = sRenderers.find(renderer);
@@ -456,6 +466,7 @@ int stub_SDL_PollEvent(void* event) {
     if (!flagSet) {
         flagSet = true;
         pharo::gEventQueue.setSDL2EventPollingActive(true);
+        fprintf(stderr, "[SDL-STUB] SDL_PollEvent: first call\n");
     }
 
     if (!event) {

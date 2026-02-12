@@ -28,6 +28,18 @@
 
 // SIGSEGV recovery support - used by executeFromContext, handler in test_load_image.cpp
 sigjmp_buf g_sigsegvRecovery;
+
+// Watchdog step counter — written by interpret(), read by heartbeat thread
+std::atomic<long long> g_watchdogSteps{0};
+// Watchdog phase tracker: 0=idle, 1=in step(), 2=in GC, 3=in processInputEvents, 4=in syncDisplay
+std::atomic<int> g_watchdogPhase{0};
+// Sub-phase inside step(): 10=GC, 11=timer, 12=finalization, 13=displaySync, 14=forceYield, 15=dispatch, 16=preempt
+volatile int g_watchdogSubphase = 0;
+volatile uint8_t g_watchdogLastBytecode = 0;
+// Watchdog send diagnostic: selector and receiver class name for last send
+char g_watchdogSelector[64] = {0};
+char g_watchdogReceiverClass[64] = {0};
+volatile int g_watchdogPrimIndex = 0;
 volatile sig_atomic_t g_sigsegvRecoveryEnabled = 0;
 
 namespace pharo {
@@ -2129,10 +2141,13 @@ void Interpreter::interpret() {
     while (running_) {
         // Execute a batch of bytecodes before checking overhead
         // This dramatically reduces the per-bytecode cost of timer/event checks
+        g_watchdogPhase.store(1, std::memory_order_relaxed);  // in step()
         for (int batch = 0; batch < 1000 && running_; batch++) {
             step();
         }
+        g_watchdogPhase.store(0, std::memory_order_relaxed);  // between batches
         loopCount += 1000;
+        g_watchdogSteps.store(loopCount, std::memory_order_relaxed);
 
         // Process any pending external semaphore signals
         if (hasPendingSignals()) {
@@ -2147,10 +2162,11 @@ void Interpreter::interpret() {
             processInputEvents();
         }
 
-        // Yield CPU periodically to prevent macOS from killing us for excessive CPU
-        // macOS enforces 50% CPU over 180s for Mac Catalyst apps
-        if (loopCount % 100000 == 0) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+        // Progress reporting every 10M steps
+        if (loopCount % 10000000 == 0) {
+            fprintf(stderr, "[PROGRESS] %dM steps\n", loopCount / 1000000);
+            fflush(stderr);
         }
 
         // Periodically look for Display Form
@@ -2351,6 +2367,28 @@ void Interpreter::startHeartbeat() {
             if (tickCount % 1000 == 0) {
                 forceYield_.store(true, std::memory_order_release);
             }
+
+            // Watchdog: report step count every 5 seconds
+            if (tickCount % 5000 == 0) {
+                long long steps = g_watchdogSteps.load(std::memory_order_relaxed);
+                int phase = g_watchdogPhase.load(std::memory_order_relaxed);
+                static long long lastSteps = -1;
+                const char* phaseName[] = {"idle", "step()", "GC", "events", "syncDisplay"};
+                int subphase = g_watchdogSubphase;
+                uint8_t lastBC = g_watchdogLastBytecode;
+                bool stuck = (steps == lastSteps);
+                fprintf(stderr, "[WATCHDOG] tick=%d steps=%lldM phase=%s sub=%d bc=0x%02x%s\n",
+                        tickCount, steps / 1000000,
+                        (phase >= 0 && phase <= 4) ? phaseName[phase] : "?",
+                        subphase, lastBC,
+                        stuck ? " STUCK!" : "");
+                if (stuck && subphase == 15) {
+                    fprintf(stderr, "[WATCHDOG] STUCK in send: %s >> %s (prim=%d)\n",
+                            g_watchdogReceiverClass, g_watchdogSelector, g_watchdogPrimIndex);
+                }
+                lastSteps = steps;
+                fflush(stderr);
+            }
         }
 
       } catch (const std::exception& e) {
@@ -2408,13 +2446,11 @@ bool Interpreter::step() {
     }
 
     // GC safe point: between bytecodes, no C++ locals hold Oops.
-    // All Oop values are on the Smalltalk stack (visited by forEachRoot).
-    // This check MUST be in step() rather than only in interpret() because
-    // the test harness calls step() directly without going through interpret().
+    g_watchdogSubphase = 10;
     if (memory_.needsCompactGC()) {
         memory_.clearCompactGCFlag();
         memory_.fullGC();
-        flushMethodCache();  // Compaction moves objects — stale cache entries cause DNU
+        flushMethodCache();
     }
 
     g_stepCount++;
@@ -2424,10 +2460,12 @@ bool Interpreter::step() {
     static int stepCheckCounter = 0;
     stepCheckCounter++;
     if (stepCheckCounter % 100 == 0) {
+        g_watchdogSubphase = 11;
         checkTimerSemaphore();
         if (hasPendingSignals()) {
             processPendingSignals();
         }
+        g_watchdogSubphase = 12;
         signalFinalizationIfNeeded();
 
         // If mourners are pending but we couldn't yield to the finalization
@@ -2470,7 +2508,9 @@ bool Interpreter::step() {
         // Display sync requested by heartbeat thread — safe to access heap here
         if (pendingDisplaySync_.load(std::memory_order_acquire)) {
             pendingDisplaySync_.store(false, std::memory_order_release);
+            g_watchdogPhase.store(4, std::memory_order_relaxed);
             syncDisplayToSurface();
+            g_watchdogPhase.store(0, std::memory_order_relaxed);
         }
     }
     }
@@ -2543,6 +2583,7 @@ bool Interpreter::step() {
     // instructionPointer_. If we yield after fetching, the saved PC will point
     // past the fetched bytecode, causing it to be SKIPPED when the process
     // is later restored — leading to expression stack corruption and DNUs.
+    g_watchdogSubphase = 14;
     bool shouldYield = forceYield_.load(std::memory_order_relaxed);
     if (shouldYield) {
         // Per Cog VM: suppress context switch after activating methods with
@@ -2600,11 +2641,9 @@ skip_yield:
 
     uint8_t bytecode = fetchByte();
     lastBytecode_ = bytecode;
+    g_watchdogLastBytecode = bytecode;
+    g_watchdogSubphase = 15;
 
-    // Clear inExtension_ flag for non-extension bytecodes.
-    // Extension bytes (0xE0/0xE1) re-set the flag in their handler.
-    // This must be cleared BEFORE we process the bytecode so that
-    // the next iteration's forceYield check knows we're not mid-extension.
     inExtension_ = false;
 
     dispatchBytecode(bytecode);
@@ -5529,6 +5568,26 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
     Oop rcvr = stackValue(argCount);
 
+    // Record send info for watchdog diagnostic
+    if (selBytes && selLen > 0 && selLen < 63) {
+        memcpy(g_watchdogSelector, selBytes, selLen);
+        g_watchdogSelector[selLen] = '\0';
+    }
+    // Record receiver class name
+    {
+        Oop rcvrCls = memory_.classOf(rcvr);
+        if (rcvrCls.isObject() && rcvrCls.rawBits() > 0x10000) {
+            Oop nameOop = memory_.fetchPointer(6, rcvrCls);
+            if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 63) {
+                    memcpy(g_watchdogReceiverClass, nameHdr->bytes(), nameHdr->byteSize());
+                    g_watchdogReceiverClass[nameHdr->byteSize()] = '\0';
+                }
+            }
+        }
+    }
+
     // ===== INTERCEPT PROBLEMATIC SELECTORS =====
     // Handle specific message intercepts needed for embedded VM operation
     if (selBytes && selLen > 0) {
@@ -5635,6 +5694,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     if (cached && cached->method != Oop::nil()) {
         // Cache hit
         if (cached->primitiveIndex > 0) {
+            g_watchdogPrimIndex = cached->primitiveIndex;
             argCount_ = argCount;
             primitiveFailed_ = false;
             newMethod_ = cached->method;
@@ -5681,6 +5741,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     int primIndex = primitiveIndexOf(method);
 
     if (primIndex > 0) {
+        g_watchdogPrimIndex = primIndex;
         argCount_ = argCount;
         primitiveFailed_ = false;
         newMethod_ = method;
@@ -7419,6 +7480,92 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         dnuDepth--;
         stopVM("DNU recursion depth exceeded — infinite doesNotUnderstand: loop");
         return;
+    }
+
+    // Diagnostic: trace DNU for #not on ExternalAddress (investigating display issue)
+    if (selector.isObject() && selector.rawBits() > 0x10000) {
+        ObjectHeader* selHdr = selector.asObjectPtr();
+        if (selHdr->isBytesObject() && selHdr->byteSize() == 3 &&
+            memcmp(selHdr->bytes(), "not", 3) == 0) {
+            Oop rcv = stackValue(argCount);  // receiver is under args
+            std::string rcvClassName = "unknown";
+            if (rcv.isSmallInteger()) rcvClassName = "SmallInteger(" + std::to_string(rcv.asSmallInteger()) + ")";
+            else if (rcv.isCharacter()) rcvClassName = "Character";
+            else if (rcv.isNil()) rcvClassName = "UndefinedObject";
+            else if (rcv.isObject()) {
+                Oop cls = memory_.classOf(rcv);
+                if (cls.isObject() && memory_.slotCountOf(cls) > 6) {
+                    Oop nameOop = memory_.fetchPointer(6, cls);
+                    if (nameOop.isObject()) {
+                        ObjectHeader* nh = nameOop.asObjectPtr();
+                        if (nh->isBytesObject())
+                            rcvClassName = std::string(reinterpret_cast<char*>(nh->bytes()), nh->byteSize());
+                    }
+                }
+                ObjectHeader* rcvHdr = rcv.asObjectPtr();
+                if (rcvHdr->isBytesObject()) {
+                    size_t bs = rcvHdr->byteSize();
+                    rcvClassName += " (bytes=" + std::to_string(bs) + " [";
+                    for (size_t bi = 0; bi < std::min(bs, (size_t)8); bi++) {
+                        char hex[4]; snprintf(hex, sizeof(hex), "%02x", rcvHdr->bytes()[bi]);
+                        if (bi > 0) rcvClassName += " ";
+                        rcvClassName += hex;
+                    }
+                    rcvClassName += "])";
+                }
+            }
+            fprintf(stderr, "[DNU-NOT] #not sent to %s (oop=0x%llx)\n",
+                    rcvClassName.c_str(), (unsigned long long)rcv.rawBits());
+
+            // Helper lambda: extract selector string from a CompiledMethod
+            auto extractSelector = [this](Oop method) -> std::string {
+                if (!method.isObject() || method.rawBits() < 0x10000) return "?";
+                ObjectHeader* mh = method.asObjectPtr();
+                if (!mh->isCompiledMethod() || mh->slotCount() < 2) return "?cm";
+                Oop selOop = memory_.fetchPointer(1, method);
+                if (selOop.isObject() && selOop.rawBits() > 0x10000) {
+                    ObjectHeader* sh = selOop.asObjectPtr();
+                    if (sh->isBytesObject() && sh->byteSize() <= 80)
+                        return std::string((char*)sh->bytes(), sh->byteSize());
+                }
+                return "?sel";
+            };
+            auto extractClass = [this](Oop method) -> std::string {
+                if (!method.isObject() || method.rawBits() < 0x10000) return "?";
+                Oop methHdr = memory_.fetchPointer(0, method);
+                if (!methHdr.isSmallInteger()) return "?hdr";
+                int nLits = methHdr.asSmallInteger() & 0x7FFF;
+                if (nLits < 1) return "?lit";
+                Oop lastLit = memory_.fetchPointer(nLits, method);
+                if (!lastLit.isObject()) return "?ll";
+                // Last literal is usually a MethodClassAssociation: key=selector, value=class
+                if (memory_.slotCountOf(lastLit) >= 2) {
+                    Oop cls = memory_.fetchPointer(1, lastLit);
+                    if (cls.isObject() && memory_.slotCountOf(cls) > 6) {
+                        Oop cn = memory_.fetchPointer(6, cls);
+                        if (cn.isObject()) {
+                            ObjectHeader* cnh = cn.asObjectPtr();
+                            if (cnh->isBytesObject())
+                                return std::string((char*)cnh->bytes(), cnh->byteSize());
+                        }
+                    }
+                }
+                return "?cls";
+            };
+
+            // Current method
+            fprintf(stderr, "[DNU-NOT]   current: %s >> %s\n",
+                    extractClass(method_).c_str(), extractSelector(method_).c_str());
+            // Saved frames (most recent first)
+            int printed = 0;
+            for (int fi = (int)frameDepth_ - 1; fi >= 0 && printed < 8; fi--, printed++) {
+                auto& sf = savedFrames_[fi];
+                fprintf(stderr, "[DNU-NOT]   frame[%d]: %s >> %s\n",
+                        fi, extractClass(sf.savedMethod).c_str(),
+                        extractSelector(sf.savedMethod).c_str());
+            }
+            fflush(stderr);
+        }
     }
 
     // Create Message object

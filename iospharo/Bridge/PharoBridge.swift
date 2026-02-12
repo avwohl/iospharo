@@ -122,10 +122,8 @@ class PharoBridge: ObservableObject {
             NSLog("[BRIDGE] VM initialized, scheduling interpreter on main thread")
 
             // Schedule the interpreter to run on the NEXT run loop iteration.
-            // This allows SwiftUI to finish its initial layout and the Metal
-            // view to be created before the interpreter starts. The interpreter
-            // blocks the main thread but periodically yields control back to
-            // the UIKit run loop via relinquishProcessor → CFRunLoopRunInMode.
+            // The interpreter runs on the main thread and periodically pumps
+            // CFRunLoopRunInMode to let AppKit/UIKit process events.
             CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue) {
                 NSLog("[BRIDGE] Starting interpreter on main thread")
                 vm_runOnMainThread()

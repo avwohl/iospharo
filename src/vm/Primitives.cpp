@@ -18,6 +18,13 @@
 #include <cstdlib>
 #include <dlfcn.h>
 #include <dirent.h>
+#if __APPLE__
+#include <dispatch/dispatch.h>
+#include <pthread.h>
+#include <CoreFoundation/CoreFoundation.h>
+// CoreFoundation pulls in objc headers which define nil as a macro
+#undef nil
+#endif
 #include <thread>
 #include <fstream>
 #include <iostream>
@@ -23780,8 +23787,59 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
     void* returnHolder = alloca(returnSize);
     memset(returnHolder, 0, returnSize);
 
-    // Perform the FFI call
-    ffi_call(cif, FFI_FN(funcPtr), returnHolder, argPtrs);
+    // Diagnostic: log FFI calls to help debug hangs
+    static int ffiCallCount = 0;
+    ffiCallCount++;
+    {
+        Dl_info dli;
+        const char* fname = "???";
+        if (dladdr(funcPtr, &dli) && dli.dli_sname) {
+            fname = dli.dli_sname;
+        }
+        bool shouldLog = (ffiCallCount <= 50 || ffiCallCount >= 180 || ffiCallCount % 100 == 0);
+        if (shouldLog) {
+            fprintf(stderr, "[FFI-CALL #%d] %s (%p) nArgs=%u", ffiCallCount, fname, funcPtr, cif->nargs);
+        }
+        // For objc_msgSend, also log the selector (arg[1])
+        if (strstr(fname, "objc_msgSend") && cif->nargs >= 2 && argPtrs[1]) {
+            void* selPtr = *(void**)argPtrs[1];
+            typedef const char* (*SelGetNameFn)(void*);
+            static SelGetNameFn selGetName = (SelGetNameFn)dlsym(RTLD_DEFAULT, "sel_getName");
+            if (selGetName && selPtr) {
+                const char* selName = selGetName(selPtr);
+                if (selName && shouldLog) {
+                    fprintf(stderr, " sel=%s", selName);
+                }
+            }
+        }
+        if (shouldLog) {
+            fprintf(stderr, "\n");
+            fflush(stderr);
+        }
+    }
+
+    // Perform the FFI call.
+    // Wrap in try/catch to handle ObjC exceptions (NSException) that may be
+    // thrown by AppKit calls (e.g., setSubmenu: in Mac Catalyst).
+    // ObjC exceptions are C++ exceptions on Apple platforms, so catch(...)
+    // catches them. Return PrimitiveResult::Failure so Smalltalk handles it.
+    try {
+        ffi_call(cif, FFI_FN(funcPtr), returnHolder, argPtrs);
+    } catch (...) {
+        fprintf(stderr, "[FFI-CALL #%d] ObjC exception caught — returning primitive failure\n",
+                ffiCallCount);
+        fflush(stderr);
+        return PrimitiveResult::Failure;
+    }
+
+    // Post-call log
+    {
+        bool shouldLog = (ffiCallCount <= 50 || ffiCallCount >= 180 || ffiCallCount % 100 == 0);
+        if (shouldLog) {
+            fprintf(stderr, "[FFI-CALL #%d] returned\n", ffiCallCount);
+            fflush(stderr);
+        }
+    }
 
     // Marshall return value back to Smalltalk
     unsigned short returnTypeId = cif->rtype->type;
