@@ -22244,12 +22244,6 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
         symbolAddr = dlsym(moduleHandle, symbolName.c_str());
     }
 
-    // Log SDL-related symbol lookups
-    if (symbolName.find("SDL") != std::string::npos) {
-        fprintf(stderr, "[FFI-SYMBOL] %s from '%s' -> %p\n",
-                symbolName.c_str(), moduleName.c_str(), symbolAddr);
-    }
-
     if (!symbolAddr) {
         return PrimitiveResult::Failure;
     }
@@ -22311,7 +22305,6 @@ PrimitiveResult Interpreter::primitiveLoadModule(int argCount) {
     if (moduleName.find("SDL2") != std::string::npos ||
         moduleName.find("SDL") != std::string::npos) {
         // SDL2 is "built-in" via our stubs - return a non-null handle
-        fprintf(stderr, "[FFI-MODULE] Loading SDL2 module (name='%s') -> 0xDEADBEEF\n", moduleName.c_str());
         moduleHandle = reinterpret_cast<void*>(0xDEADBEEF);
     } else {
         // Try to load the library
@@ -23794,36 +23787,8 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
     void* returnHolder = alloca(returnSize);
     memset(returnHolder, 0, returnSize);
 
-    // Diagnostic: log FFI calls to help debug hangs
     static int ffiCallCount = 0;
     ffiCallCount++;
-    {
-        Dl_info dli;
-        const char* fname = "???";
-        if (dladdr(funcPtr, &dli) && dli.dli_sname) {
-            fname = dli.dli_sname;
-        }
-        bool shouldLog = (ffiCallCount <= 50 || ffiCallCount >= 180 || ffiCallCount % 100 == 0);
-        if (shouldLog) {
-            fprintf(stderr, "[FFI-CALL #%d] %s (%p) nArgs=%u", ffiCallCount, fname, funcPtr, cif->nargs);
-        }
-        // For objc_msgSend, also log the selector (arg[1])
-        if (strstr(fname, "objc_msgSend") && cif->nargs >= 2 && argPtrs[1]) {
-            void* selPtr = *(void**)argPtrs[1];
-            typedef const char* (*SelGetNameFn)(void*);
-            static SelGetNameFn selGetName = (SelGetNameFn)dlsym(RTLD_DEFAULT, "sel_getName");
-            if (selGetName && selPtr) {
-                const char* selName = selGetName(selPtr);
-                if (selName && shouldLog) {
-                    fprintf(stderr, " sel=%s", selName);
-                }
-            }
-        }
-        if (shouldLog) {
-            fprintf(stderr, "\n");
-            fflush(stderr);
-        }
-    }
 
     // Perform the FFI call.
     // Wrap in try/catch to handle ObjC exceptions (NSException) that may be
@@ -23843,14 +23808,6 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
         memset(returnHolder, 0, 64);
     }
 
-    // Post-call log
-    {
-        bool shouldLog = (ffiCallCount <= 50 || ffiCallCount >= 180 || ffiCallCount % 100 == 0);
-        if (shouldLog) {
-            fprintf(stderr, "[FFI-CALL #%d] returned\n", ffiCallCount);
-            fflush(stderr);
-        }
-    }
 
     // Marshall return value back to Smalltalk
     unsigned short returnTypeId = cif->rtype->type;

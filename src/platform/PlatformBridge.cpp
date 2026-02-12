@@ -169,27 +169,11 @@ static void* gPendingCallbackContext = nullptr;
 
 // Event callback to signal the input semaphore
 static void eventCallback(void* context) {
-    (void)context;  // Unused
-
-    // Debug: Log callback invocations
-    static FILE* callbackLog = fopen("/tmp/event_callback.log", "a");
-    static int callbackCount = 0;
-    callbackCount++;
-    if (callbackLog && callbackCount <= 50) {
-        fprintf(callbackLog, "[CALLBACK] #%d gInterpreter=%p\n",
-                callbackCount, (void*)gInterpreter);
-        fflush(callbackLog);
-    }
-
+    (void)context;
     if (gInterpreter) {
         int semIndex = pharo::gEventQueue.getInputSemaphoreIndex();
-        // If Pharo hasn't set a semaphore index, use 1 as fallback (common for input semaphore)
         if (semIndex <= 0) {
-            semIndex = 1;
-        }
-        if (callbackLog && callbackCount <= 50) {
-            fprintf(callbackLog, "[CALLBACK] #%d Signaling semaphore %d\n", callbackCount, semIndex);
-            fflush(callbackLog);
+            semIndex = 1;  // Default input semaphore index
         }
         gInterpreter->signalExternalSemaphore(semIndex);
     }
@@ -321,16 +305,18 @@ void vm_runOnMainThread(void) {
     // the UIKit run loop process events (display updates, touch events)
     // while the interpreter "sleeps".
     gInterpreter->setRelinquishCallback([](int microseconds) {
-        static int relinquishCount = 0;
-        if (++relinquishCount <= 3) {
-            fprintf(stderr, "[RELINQUISH] #%d us=%d\n", relinquishCount, microseconds);
-            fflush(stderr);
-        }
-        // Use usleep during startup to avoid CFRunLoopRunInMode interference.
-        // CFRunLoopRunInMode will be re-enabled once the display pipeline is stable.
+#ifdef __APPLE__
+        // Pump the native run loop so Metal can render frames and UIKit
+        // can deliver touch/keyboard events. The interpreter runs on the
+        // main thread, so we must periodically give the run loop time.
+        double seconds = std::max(microseconds, 1000) / 1000000.0;
+        if (seconds > 0.016) seconds = 0.016;  // Cap at ~60fps
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, seconds, true);
+#else
         int sleepUs = std::max(microseconds, 1000);
         if (sleepUs > 10000) sleepUs = 10000;
         usleep(sleepUs);
+#endif
     });
 
     fprintf(stderr, "[VM] Running interpreter on main thread\n");
@@ -436,22 +422,6 @@ void vm_setDisplayUpdateCallback(DisplayUpdateFunc callback, void* context) {
 }
 
 void vm_postMouseEvent(int type, int x, int y, int buttons, int modifiers) {
-    // Debug: Log all mouse events to file
-    static FILE* mouseLog = nullptr;
-    static int mouseEventCount = 0;
-    mouseEventCount++;
-
-    if (!mouseLog) {
-        mouseLog = fopen("/tmp/vm_mouse_events.log", "w");
-    }
-    // Always log button presses (down/up), limit moves to first 200
-    if (mouseLog && (mouseEventCount <= 200 || type != 0)) {
-        const char* typeStr = (type == 0) ? "move" : (type == 1) ? "down" : "up";
-        fprintf(mouseLog, "[VM_MOUSE] #%d %s at (%d,%d) buttons=%d mods=%d\n",
-                mouseEventCount, typeStr, x, y, buttons, modifiers);
-        fflush(mouseLog);
-    }
-
     pharo::Event event;
     event.type = static_cast<int>(pharo::EventType::Mouse);
     event.timeStamp = static_cast<int>(
@@ -466,13 +436,6 @@ void vm_postMouseEvent(int type, int x, int y, int buttons, int modifiers) {
     // Pharo event format: 1=mouseDown, 2=mouseUp, 3=mouseMove
     // Swift sends: 0=move, 1=down, 2=up - convert move from 0 to 3
     event.arg5 = (type == 0) ? 3 : type;
-
-    // Debug: verify event type before push
-    if (mouseLog && mouseEventCount <= 200) {
-        fprintf(mouseLog, "[VM_MOUSE] #%d PUSHING event.type=%d to queue at %p\n",
-                mouseEventCount, event.type, (void*)&pharo::gEventQueue);
-        fflush(mouseLog);
-    }
     pharo::gEventQueue.push(event);
 }
 

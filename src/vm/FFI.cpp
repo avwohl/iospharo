@@ -151,11 +151,6 @@ void* lookupFunction(const std::string& moduleName, const std::string& funcName)
     // Check cache first
     auto it = sFunctionCache.find(funcName);
     if (it != sFunctionCache.end()) {
-        // Trace first few SDL lookups
-        static int sdlLookupCount = 0;
-        if (funcName.compare(0, 4, "SDL_") == 0 && sdlLookupCount++ < 15) {
-            fprintf(stderr, "[FFI-LOOKUP] %s (cached) -> %p\n", funcName.c_str(), it->second);
-        }
         return it->second;
     }
 
@@ -163,7 +158,6 @@ void* lookupFunction(const std::string& moduleName, const std::string& funcName)
     // instead of falling through to dlsym (which finds force-loaded real SDL2
     // that crashes on our fake 0xDEADBEEF window handles).
     if (funcName.compare(0, 4, "SDL_") == 0) {
-        fprintf(stderr, "[FFI-LOOKUP] %s -> GENERIC NO-OP (not in stub cache)\n", funcName.c_str());
         // Generic no-op: returns 0 (safe for int/void/pointer returns).
         // On ARM64, extra arguments are in registers and harmlessly ignored.
         static auto genericSDLNoOp = +[]() -> intptr_t { return 0; };
