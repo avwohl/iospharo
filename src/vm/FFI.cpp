@@ -879,6 +879,20 @@ void registerSDL2Stubs() {
     registerFunction("SDL_GetPerformanceCounter", reinterpret_cast<void*>(stub_SDL_GetPerformanceCounter));
     registerFunction("SDL_GetPerformanceFrequency", reinterpret_cast<void*>(stub_SDL_GetPerformanceFrequency));
 
+    // Init/subsystem (SDL_WasInit is critical for SDL2 isAvailable check)
+    registerFunction("SDL_WasInit", reinterpret_cast<void*>(stub_SDL_WasInit));
+    registerFunction("SDL_InitSubSystem", reinterpret_cast<void*>(stub_SDL_InitSubSystem));
+    registerFunction("SDL_QuitSubSystem", reinterpret_cast<void*>(stub_SDL_QuitSubSystem));
+    registerFunction("SDL_VideoInit", reinterpret_cast<void*>(stub_SDL_VideoInit));
+    registerFunction("SDL_VideoQuit", reinterpret_cast<void*>(stub_SDL_VideoQuit));
+    registerFunction("SDL_SetHint", reinterpret_cast<void*>(stub_SDL_SetHint));
+
+    // OpenGL context
+    registerFunction("SDL_GL_SetAttribute", reinterpret_cast<void*>(stub_SDL_GL_SetAttribute));
+    registerFunction("SDL_GL_CreateContext", reinterpret_cast<void*>(stub_SDL_GL_CreateContext));
+    registerFunction("SDL_GL_DeleteContext", reinterpret_cast<void*>(stub_SDL_GL_DeleteContext));
+    registerFunction("SDL_GL_MakeCurrent", reinterpret_cast<void*>(stub_SDL_GL_MakeCurrent));
+    registerFunction("SDL_GL_SwapWindow", reinterpret_cast<void*>(stub_SDL_GL_SwapWindow));
 }
 
 FFIType parseType(const std::string& typeName) {

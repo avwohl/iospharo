@@ -302,16 +302,16 @@ void vm_runOnMainThread(void) {
     // the UIKit run loop process events (display updates, touch events)
     // while the interpreter "sleeps".
     gInterpreter->setRelinquishCallback([](int microseconds) {
-        // Process the main run loop during relinquish.
-        // This lets AppKit/UIKit handle events, Metal rendering, and menu updates.
-        // The timeout is capped to avoid blocking the interpreter for too long.
         static int relinquishCount = 0;
         if (++relinquishCount <= 3) {
             fprintf(stderr, "[RELINQUISH] #%d us=%d\n", relinquishCount, microseconds);
             fflush(stderr);
         }
-        double seconds = std::min(microseconds, 10000) / 1000000.0;
-        CFRunLoopRunInMode(kCFRunLoopDefaultMode, seconds, true);
+        // Use usleep during startup to avoid CFRunLoopRunInMode interference.
+        // CFRunLoopRunInMode will be re-enabled once the display pipeline is stable.
+        int sleepUs = std::max(microseconds, 1000);
+        if (sleepUs > 10000) sleepUs = 10000;
+        usleep(sleepUs);
     });
 
     fprintf(stderr, "[VM] Running interpreter on main thread\n");

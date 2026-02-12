@@ -22244,6 +22244,12 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
         symbolAddr = dlsym(moduleHandle, symbolName.c_str());
     }
 
+    // Log SDL-related symbol lookups
+    if (symbolName.find("SDL") != std::string::npos) {
+        fprintf(stderr, "[FFI-SYMBOL] %s from '%s' -> %p\n",
+                symbolName.c_str(), moduleName.c_str(), symbolAddr);
+    }
+
     if (!symbolAddr) {
         return PrimitiveResult::Failure;
     }
@@ -22305,6 +22311,7 @@ PrimitiveResult Interpreter::primitiveLoadModule(int argCount) {
     if (moduleName.find("SDL2") != std::string::npos ||
         moduleName.find("SDL") != std::string::npos) {
         // SDL2 is "built-in" via our stubs - return a non-null handle
+        fprintf(stderr, "[FFI-MODULE] Loading SDL2 module (name='%s') -> 0xDEADBEEF\n", moduleName.c_str());
         moduleHandle = reinterpret_cast<void*>(0xDEADBEEF);
     } else {
         // Try to load the library
@@ -23820,16 +23827,20 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
 
     // Perform the FFI call.
     // Wrap in try/catch to handle ObjC exceptions (NSException) that may be
-    // thrown by AppKit calls (e.g., setSubmenu: in Mac Catalyst).
-    // ObjC exceptions are C++ exceptions on Apple platforms, so catch(...)
-    // catches them. Return PrimitiveResult::Failure so Smalltalk handles it.
+    // thrown by AppKit calls (e.g., setSubmenu: in Mac Catalyst where certain
+    // AppKit menu APIs aren't fully supported). On Apple platforms, ObjC
+    // exceptions are C++ exceptions, so catch(...) catches them.
+    // Return success with zeroed return value so Smalltalk sees nil/0 and
+    // continues startup (SDLOSXPlatform >> initPlatformSpecific needs to
+    // complete for SDL2 initialization to proceed).
     try {
         ffi_call(cif, FFI_FN(funcPtr), returnHolder, argPtrs);
     } catch (...) {
-        fprintf(stderr, "[FFI-CALL #%d] ObjC exception caught — returning primitive failure\n",
+        fprintf(stderr, "[FFI-CALL #%d] ObjC exception caught — returning zero/nil result\n",
                 ffiCallCount);
         fflush(stderr);
-        return PrimitiveResult::Failure;
+        // Zero the return value so Smalltalk gets 0/nil/NULL
+        memset(returnHolder, 0, 64);
     }
 
     // Post-call log
