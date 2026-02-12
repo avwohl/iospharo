@@ -1,6 +1,21 @@
 # iOS Pharo VM — Status
 
-Last verified: 2026-02-11 (Run #329)
+Last verified: 2026-02-12 (Run #343)
+
+## Latest Test Results — Run #343 (2026-02-12)
+
+- **12,489 pass / 0 fail / 3 error / 16 skip / 2 timeout** (25,121 total)
+- **581 test classes** tested, ~51 class-level skipped
+- GC cycles active, finalization fully working
+- 3 errors: WeakAnnouncerTest (ephemeron timing), OCScopeTest, SystemNavigationTest
+- Full suite completes in ~10 minutes (was timing out due to trace overhead)
+
+### Changes from Run #328 → #343
+- Fixed NLR from nested blocks (chain-following in returnFromMethod)
+- Fixed primitiveGetAttribute --interactive default (prevented Morphic startup in test mode)
+- Removed 3,547 lines of diagnostic fprintf(stderr) traces from Interpreter.cpp and Primitives.cpp
+- Stderr output reduced from 93K+ lines to ~691 lines
+- 5 more passes, 5 fewer errors vs Run #328
 
 ---
 
