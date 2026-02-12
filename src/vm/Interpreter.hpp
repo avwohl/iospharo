@@ -220,6 +220,12 @@ public:
     void setVMParameters(const std::vector<std::string>& params) { vmParameters_ = params; }
     const std::vector<std::string>& vmParameters() const { return vmParameters_; }
 
+    /// Set a callback for relinquishProcessor to call instead of usleep.
+    /// This allows the platform to process its native run loop (e.g., CFRunLoop)
+    /// while the VM sleeps. The callback receives microseconds to sleep.
+    using RelinquishCallback = std::function<void(int microseconds)>;
+    void setRelinquishCallback(RelinquishCallback cb) { relinquishCallback_ = std::move(cb); }
+
     /// Set/get screen dimensions
     void setScreenSize(int width, int height) { screenWidth_ = width; screenHeight_ = height; }
     void setScreenDepth(int depth) { screenDepth_ = depth; }
@@ -470,6 +476,7 @@ private:
     bool hasPendingDriverSetup_ = false;
     bool enableDirectInputSignaling_ = false;  // True when VM should signal input semaphore directly
     bool relinquishSlept_ = false;       // Set by primitiveRelinquishProcessor when it sleeps
+    RelinquishCallback relinquishCallback_;  // Platform callback for sleep (CFRunLoop etc.)
 
     // NOTE: Event injection workaround member variables REMOVED
     // Events must go through proper Smalltalk InputEventSensor process, not C++ workarounds

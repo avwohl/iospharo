@@ -14,6 +14,10 @@
 #include <vector>
 #include <mutex>
 
+#ifdef __APPLE__
+#include <CoreFoundation/CoreFoundation.h>
+#endif
+
 namespace pharo {
     DisplaySurface* gDisplaySurface = nullptr;
 }
@@ -229,6 +233,7 @@ bool vm_loadImage(const char* imagePath) {
     // which reads from Smalltalk arguments (attribute indices 3+).
     // So we pass --headless as VM param AND --interactive as image argument.
     gInterpreter->setVMParameters({"--headless"});
+    gInterpreter->setImageArguments({"--interactive"});
 
     if (!gInterpreter->initialize()) {
         return false;
@@ -286,6 +291,43 @@ void vm_run(void) {
         gInterpreter->interpret();
         gRunning = false;
     });
+}
+
+void vm_runOnMainThread(void) {
+    if (!gInterpreter || gRunning) return;
+
+    // Start the heartbeat thread (handles timers, like official VM)
+    gInterpreter->startHeartbeat();
+
+    gRunning = true;
+
+    // Post a window resize event to trigger Pharo layout
+    if (gDisplay) {
+        vm_postWindowEvent(gDisplay->width(), gDisplay->height());
+    }
+
+    // Set a relinquish callback that processes the native run loop.
+    // When Pharo calls Processor yield or Delay wait, the VM calls
+    // relinquishProcessor which invokes this callback. This lets
+    // the UIKit run loop process events (display updates, touch events)
+    // while the interpreter "sleeps".
+    gInterpreter->setRelinquishCallback([](int microseconds) {
+#ifdef __APPLE__
+        // Process the main run loop for up to `microseconds` or 1ms minimum.
+        // This allows Metal rendering, touch events, and other UIKit work to proceed.
+        double seconds = std::max(microseconds, 1000) / 1000000.0;
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, seconds, true);
+#else
+        std::this_thread::sleep_for(std::chrono::microseconds(microseconds));
+#endif
+    });
+
+    fprintf(stderr, "[VM] Running interpreter on main thread\n");
+
+    // Run interpreter on the current (main) thread
+    // This blocks until the interpreter exits
+    gInterpreter->interpret();
+    gRunning = false;
 }
 
 void vm_stop(void) {

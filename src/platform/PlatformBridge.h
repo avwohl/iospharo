@@ -16,7 +16,8 @@ extern "C" {
 // VM lifecycle
 bool vm_initialize(size_t heapSize);
 bool vm_loadImage(const char* imagePath);
-void vm_run(void);
+void vm_run(void);           // Runs interpreter on a background thread
+void vm_runOnMainThread(void); // Runs interpreter on the current (main) thread
 void vm_stop(void);
 bool vm_isRunning(void);
 

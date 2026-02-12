@@ -208,10 +208,37 @@ void registerFunction(const std::string& funcName, void* funcPtr) {
 
 // SDL2 stub functions for iOS
 // These make OSWindow think SDL2 is available
+// Support multiple windows/textures (Emergency Debugger creates separate windows)
 
 static bool sSDL2Initialized = false;
-static void* sFakeWindowHandle = reinterpret_cast<void*>(0xDEADBEEF);
-static void* sFakeRendererHandle = reinterpret_cast<void*>(0xCAFEBABE);
+
+// Per-window state
+struct SDLWindowState {
+    int width;
+    int height;
+    std::string title;
+};
+
+// Per-texture state
+struct SDLTextureState {
+    uint32_t* pixels;
+    int width;
+    int height;
+    int pitch;
+    void* renderer;  // Which renderer owns this texture
+};
+
+// Per-renderer state
+struct SDLRendererState {
+    void* window;
+    void* currentTexture;  // Most recently used texture
+};
+
+static uintptr_t sNextHandle = 0x10000;  // Incrementing unique handles
+static std::unordered_map<void*, SDLWindowState> sWindows;
+static std::unordered_map<void*, SDLTextureState> sTextures;
+static std::unordered_map<void*, SDLRendererState> sRenderers;
+static void* sMainRenderer = nullptr;  // First renderer is the "main" one (renders to display)
 
 extern "C" {
 
@@ -243,18 +270,29 @@ const char* stub_SDL_GetError() {
 }
 
 void* stub_SDL_CreateWindow(const char* title, int x, int y, int w, int h, uint32_t flags) {
+    void* handle = reinterpret_cast<void*>(sNextHandle++);
+    SDLWindowState state;
+    state.width = w;
+    state.height = h;
+    state.title = title ? title : "";
+    sWindows[handle] = state;
     fprintf(stderr, "[SDL2-STUB] SDL_CreateWindow('%s', %d, %d, %dx%d, 0x%x) -> %p\n",
-            title ? title : "(null)", x, y, w, h, flags, sFakeWindowHandle);
-    return sFakeWindowHandle;
+            title ? title : "(null)", x, y, w, h, flags, handle);
+    return handle;
 }
 
 void stub_SDL_DestroyWindow(void* window) {
     fprintf(stderr, "[SDL2-STUB] SDL_DestroyWindow(%p)\n", window);
+    sWindows.erase(window);
 }
 
 void stub_SDL_GetWindowSize(void* window, int* w, int* h) {
-    // Return actual display surface dimensions when available
-    if (pharo::gDisplaySurface) {
+    // Return the window's actual dimensions (from SDL_CreateWindow)
+    auto it = sWindows.find(window);
+    if (it != sWindows.end()) {
+        if (w) *w = it->second.width;
+        if (h) *h = it->second.height;
+    } else if (pharo::gDisplaySurface) {
         if (w) *w = pharo::gDisplaySurface->width();
         if (h) *h = pharo::gDisplaySurface->height();
     } else {
@@ -271,6 +309,11 @@ void stub_SDL_GetWindowSize(void* window, int* w, int* h) {
 
 void stub_SDL_SetWindowSize(void* window, int w, int h) {
     fprintf(stderr, "[SDL2-STUB] SDL_SetWindowSize(%p, %dx%d)\n", window, w, h);
+    auto it = sWindows.find(window);
+    if (it != sWindows.end()) {
+        it->second.width = w;
+        it->second.height = h;
+    }
 }
 
 void stub_SDL_SetWindowTitle(void* window, const char* title) {
@@ -290,11 +333,16 @@ void stub_SDL_RaiseWindow(void* window) {
 }
 
 uint32_t stub_SDL_GetWindowID(void* window) {
-    return 1;  // Window ID 1
+    return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(window) & 0xFFFFFFFF);
 }
 
 void* stub_SDL_GetWindowFromID(uint32_t id) {
-    return sFakeWindowHandle;
+    // Find window by ID (lower 32 bits of handle)
+    for (auto& kv : sWindows) {
+        if ((reinterpret_cast<uintptr_t>(kv.first) & 0xFFFFFFFF) == id)
+            return kv.first;
+    }
+    return nullptr;
 }
 
 int stub_SDL_SetWindowFullscreen(void* window, uint32_t flags) {
@@ -315,22 +363,27 @@ void stub_SDL_SetWindowIcon(void* window, void* icon) {
     fprintf(stderr, "[SDL2-STUB] SDL_SetWindowIcon(%p, %p)\n", window, icon);
 }
 
-// Texture pixel buffer — backing store for SDL_LockTexture
-// Declared here (before renderer stubs) so stub_SDL_RenderPresent can access them
-static void* sFakeTextureHandle = reinterpret_cast<void*>(0xFACEFEED);
-static uint32_t* sTexturePixels = nullptr;
-static int sTextureWidth = 0;
-static int sTextureHeight = 0;
-static int sTexturePitch = 0;
-
 // Renderer stubs
 void* stub_SDL_CreateRenderer(void* window, int index, uint32_t flags) {
-    fprintf(stderr, "[SDL2-STUB] SDL_CreateRenderer(%p) -> %p\n", window, sFakeRendererHandle);
-    return sFakeRendererHandle;
+    void* handle = reinterpret_cast<void*>(sNextHandle++);
+    SDLRendererState state;
+    state.window = window;
+    state.currentTexture = nullptr;
+    sRenderers[handle] = state;
+    if (!sMainRenderer) {
+        sMainRenderer = handle;  // First renderer is the "main" one
+    }
+    fprintf(stderr, "[SDL2-STUB] SDL_CreateRenderer(%p) -> %p (main=%d)\n",
+            window, handle, handle == sMainRenderer);
+    return handle;
 }
 
 void stub_SDL_DestroyRenderer(void* renderer) {
     fprintf(stderr, "[SDL2-STUB] SDL_DestroyRenderer(%p)\n", renderer);
+    // Don't clear sMainRenderer if this is a secondary renderer
+    if (renderer != sMainRenderer) {
+        sRenderers.erase(renderer);
+    }
 }
 
 int stub_SDL_RenderClear(void* renderer) {
@@ -341,19 +394,30 @@ void stub_SDL_RenderPresent(void* renderer) {
     static int presentCount = 0;
     presentCount++;
     if (presentCount <= 10 || presentCount % 1000 == 0) {
-        fprintf(stderr, "[SDL2-STUB] SDL_RenderPresent #%d\n", presentCount);
+        fprintf(stderr, "[SDL2-STUB] SDL_RenderPresent #%d renderer=%p (main=%d)\n",
+                presentCount, renderer, renderer == sMainRenderer);
     }
 
-    // Copy SDL texture pixels to the Metal display surface
-    if (sTexturePixels && pharo::gDisplaySurface) {
+    // Only copy main renderer's texture to the Metal display surface
+    if (renderer != sMainRenderer) return;
+
+    auto rit = sRenderers.find(renderer);
+    if (rit == sRenderers.end() || !rit->second.currentTexture) return;
+
+    auto tit = sTextures.find(rit->second.currentTexture);
+    if (tit == sTextures.end() || !tit->second.pixels) return;
+
+    if (pharo::gDisplaySurface) {
+        uint32_t* src = tit->second.pixels;
+        int srcW = tit->second.width;
+        int srcH = tit->second.height;
         uint32_t* dst = pharo::gDisplaySurface->pixels();
         int dstW = pharo::gDisplaySurface->width();
         int dstH = pharo::gDisplaySurface->height();
-        int copyW = std::min(sTextureWidth, dstW);
-        int copyH = std::min(sTextureHeight, dstH);
+        int copyW = std::min(srcW, dstW);
+        int copyH = std::min(srcH, dstH);
         for (int y = 0; y < copyH; y++) {
-            memcpy(dst + y * dstW, sTexturePixels + y * sTextureWidth,
-                   copyW * sizeof(uint32_t));
+            memcpy(dst + y * dstW, src + y * srcW, copyW * sizeof(uint32_t));
         }
         pharo::gDisplaySurface->update();
     }
@@ -365,50 +429,61 @@ int stub_SDL_SetRenderDrawColor(void* renderer, uint8_t r, uint8_t g, uint8_t b,
 
 // Texture stubs
 void* stub_SDL_CreateTexture(void* renderer, uint32_t format, int access, int w, int h) {
-    fprintf(stderr, "[SDL2-STUB] SDL_CreateTexture(fmt=0x%x access=%d %dx%d) -> %p\n",
-            format, access, w, h, sFakeTextureHandle);
-    // Allocate pixel buffer for the texture
-    if (sTexturePixels) {
-        free(sTexturePixels);
+    void* handle = reinterpret_cast<void*>(sNextHandle++);
+    SDLTextureState state;
+    state.pixels = static_cast<uint32_t*>(calloc(w * h, 4));
+    state.width = w;
+    state.height = h;
+    state.pitch = w * 4;  // 32bpp XRGB
+    state.renderer = renderer;
+    sTextures[handle] = state;
+    // Track as current texture for this renderer
+    auto rit = sRenderers.find(renderer);
+    if (rit != sRenderers.end()) {
+        rit->second.currentTexture = handle;
     }
-    sTextureWidth = w;
-    sTextureHeight = h;
-    sTexturePitch = w * 4;  // 32bpp XRGB
-    sTexturePixels = static_cast<uint32_t*>(calloc(w * h, 4));
-    return sFakeTextureHandle;
+    fprintf(stderr, "[SDL2-STUB] SDL_CreateTexture(renderer=%p fmt=0x%x access=%d %dx%d) -> %p\n",
+            renderer, format, access, w, h, handle);
+    return handle;
 }
 
 void stub_SDL_DestroyTexture(void* texture) {
     fprintf(stderr, "[SDL2-STUB] SDL_DestroyTexture(%p)\n", texture);
-    if (sTexturePixels) {
-        free(sTexturePixels);
-        sTexturePixels = nullptr;
+    auto it = sTextures.find(texture);
+    if (it != sTextures.end()) {
+        if (it->second.pixels) {
+            free(it->second.pixels);
+        }
+        // Clear currentTexture reference from the renderer
+        auto rit = sRenderers.find(it->second.renderer);
+        if (rit != sRenderers.end() && rit->second.currentTexture == texture) {
+            rit->second.currentTexture = nullptr;
+        }
+        sTextures.erase(it);
     }
 }
 
 int stub_SDL_LockTexture(void* texture, void* rect, void** pixels, int* pitch) {
     static int lockCount = 0;
     lockCount++;
-    if (lockCount <= 20 || lockCount % 100 == 0) {
-        fprintf(stderr, "[SDL2-STUB] SDL_LockTexture #%d (pixels=%p pitch=%p)\n",
-                lockCount, (void*)pixels, (void*)pitch);
-    }
-    if (!sTexturePixels) {
-        return -1;  // No texture allocated
+    auto it = sTextures.find(texture);
+    if (it == sTextures.end() || !it->second.pixels) {
+        if (lockCount <= 20) {
+            fprintf(stderr, "[SDL2-STUB] SDL_LockTexture #%d texture=%p NOT FOUND\n", lockCount, texture);
+        }
+        return -1;
     }
     if (pixels) {
-        *pixels = sTexturePixels;
-        if (lockCount <= 20) {
-            fprintf(stderr, "[SDL2-STUB]   -> *pixels = %p\n", sTexturePixels);
-        }
+        *pixels = it->second.pixels;
     }
     if (pitch) {
-        *pitch = sTexturePitch;
-        if (lockCount <= 20) {
-            fprintf(stderr, "[SDL2-STUB]   -> *pitch = %d\n", sTexturePitch);
-        }
+        *pitch = it->second.pitch;
     }
-    return 0;  // Success
+    if (lockCount <= 20 || lockCount % 100 == 0) {
+        fprintf(stderr, "[SDL2-STUB] SDL_LockTexture #%d texture=%p -> pixels=%p pitch=%d\n",
+                lockCount, texture, it->second.pixels, it->second.pitch);
+    }
+    return 0;
 }
 
 void stub_SDL_UnlockTexture(void* texture) {
@@ -422,8 +497,14 @@ void stub_SDL_UnlockTexture(void* texture) {
 int stub_SDL_RenderCopy(void* renderer, void* texture, void* srcrect, void* dstrect) {
     static int copyCount = 0;
     copyCount++;
+    // Track which texture was last rendered
+    auto rit = sRenderers.find(renderer);
+    if (rit != sRenderers.end()) {
+        rit->second.currentTexture = texture;
+    }
     if (copyCount <= 10 || copyCount % 100 == 0) {
-        fprintf(stderr, "[SDL2-STUB] SDL_RenderCopy #%d\n", copyCount);
+        fprintf(stderr, "[SDL2-STUB] SDL_RenderCopy #%d renderer=%p texture=%p\n",
+                copyCount, renderer, texture);
     }
     return 0;
 }
@@ -750,8 +831,9 @@ int stub_SDL_GL_SetAttribute(int attr, int value) {
 }
 
 void* stub_SDL_GL_CreateContext(void* window) {
-    fprintf(stderr, "[SDL2-STUB] SDL_GL_CreateContext(%p) -> %p\n", window, sFakeRendererHandle);
-    return sFakeRendererHandle;
+    void* handle = reinterpret_cast<void*>(sNextHandle++);
+    fprintf(stderr, "[SDL2-STUB] SDL_GL_CreateContext(%p) -> %p\n", window, handle);
+    return handle;
 }
 
 void stub_SDL_GL_DeleteContext(void* context) {

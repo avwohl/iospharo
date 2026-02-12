@@ -5817,7 +5817,7 @@ void Interpreter::returnFromMethod() {
                         if (primitiveIndexOf(sm) == 198) { hasEnsure = true; break; }
                     }
                 }
-                if (hasEnsure) {
+                if (hasEnsure && false) {  // DISABLED: too noisy
                     fprintf(stderr, "[NLR-ENSURE step=%llu] fd=%zu homeFrame=%zu VIA returnFromMethod()\n",
                             (unsigned long long)g_stepNum, frameDepth_, homeFrame);
                     for (size_t fi = frameDepth_; fi > homeFrame && fi > 0; fi--) {
@@ -6006,7 +6006,7 @@ void Interpreter::returnFromBlock() {
                     if (primitiveIndexOf(sm) == 198) { hasEnsure = true; break; }
                 }
             }
-            if (hasEnsure) {
+            if (hasEnsure && false) {  // DISABLED: too noisy
                 fprintf(stderr, "[NLR-ENSURE step=%llu] fd=%zu homeFrame=%zu VIA returnFromBlock()\n",
                         (unsigned long long)g_stepNum, frameDepth_, homeFrame);
                 for (size_t fi = frameDepth_; fi > homeFrame && fi > 0; fi--) {
@@ -7125,6 +7125,54 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             size_t n = strlen(s);
             return selLen == n && memcmp(selBytes, s, n) == 0;
         };
+
+        // ===== TRACE KEY STARTUP SELECTORS =====
+        {
+            static int startupTraceCount = 0;
+            if (startupTraceCount < 2000) {
+                if (selIs("detectCorrectOneForWorld:") || selIs("isApplicableFor:") ||
+                    selIs("hasOption:") || selIs("activate") || selIs("doActivate") ||
+                    selIs("pickMostSuitableWindowDriver") || selIs("worldRenderer:") ||
+                    selIs("forCurrentSystemConfiguration") || selIs("startUp:") ||
+                    selIs("restoreMorphicDisplay") ||
+                    selIs("startup:") || selIs("isValidForCurrentSystemConfiguration") ||
+                    selIs("default:") || selIs("executeDeferredStartupActions:") ||
+                    selIs("installNewSession") || selIs("runStartup:") ||
+                    selIs("performSnapshot") || selIs("deactivate") ||
+                    // SDL2/FFI library loading chain
+                    selIs("initEverything") || selIs("initLibrary") || selIs("init:") ||
+                    selIs("ffiCall:") || selIs("ffiCall:module:") ||
+                    selIs("ffiLibrary") || selIs("ffiLibraryName") ||
+                    selIs("macLibraryName") || selIs("uniqueLibraryName") ||
+                    selIs("loadLibrary") || selIs("libraryHandle") ||
+                    selIs("loadLibrary:") || selIs("loadSymbol:module:") ||
+                    selIs("findAnyLibrary:") || selIs("resolveFunction:") ||
+                    selIs("forceNewEventLoop") || selIs("setupEventLoop") ||
+                    selIs("openSDL2Driver") || selIs("createWindow:") ||
+                    selIs("initSDL2") || selIs("isAvailable") ||
+                    selIs("handleError:")) {
+                    startupTraceCount++;
+                    // Get receiver class name
+                    std::string rcvrClassName = "?";
+                    Oop rcvrForTrace = stackValue(argCount);
+                    if (rcvrForTrace.isObject() && rcvrForTrace.rawBits() > 0x10000) {
+                        Oop rcvrCls = memory_.classOf(rcvrForTrace);
+                        if (rcvrCls.isObject()) {
+                            Oop nameOop = memory_.fetchPointer(6, rcvrCls);
+                            if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                                ObjectHeader* nh = nameOop.asObjectPtr();
+                                if (nh->isBytesObject() && nh->byteSize() < 60)
+                                    rcvrClassName = std::string((char*)nh->bytes(), nh->byteSize());
+                            }
+                        }
+                    } else if (rcvrForTrace.isSmallInteger()) {
+                        rcvrClassName = "SmallInteger";
+                    }
+                    std::cerr << "[STARTUP-TRACE #" << startupTraceCount << " step=" << g_stepNum
+                              << "] " << rcvrClassName << ">>" << std::string(selBytes, selLen) << " argCount=" << argCount << "\n";
+                }
+            }
+        }
 
         // ===== INTERCEPT relinquishProcessorForMicroseconds: =====
         // This is called during idle loop. Use it to auto-load the display driver.

@@ -8828,16 +8828,10 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
     // Trace what attribute indices are being requested
     static int attrTraceCount = 0;
     attrTraceCount++;
-    // Log non-negative indices (negative indices are called 2001 times per isHeadless check)
-    if (index >= 0 && attrTraceCount <= 100) {
-        std::cerr << "[ATTR-149 #" << attrTraceCount << "] primitiveGetAttribute(" << index << ")\n";
-    }
-    // Log when --headless is found
-    if (index < 0) {
-        int paramIdx = static_cast<int>(-index) - 1;
-        const auto& params = vmParameters_;
-        if (paramIdx >= 0 && paramIdx < static_cast<int>(params.size())) {
-            std::cerr << "[ATTR-149] Found VM param at index " << index << ": " << params[paramIdx] << "\n";
+    // Log key indices (2, 3, 4 control --interactive detection) and negative (--headless)
+    if ((index >= 0 && index <= 4) || (index < 0 && index >= -2)) {
+        if (attrTraceCount <= 50) {
+            std::cerr << "[ATTR-149 #" << attrTraceCount << "] primitiveGetAttribute(" << index << ")\n";
         }
     }
 
@@ -8889,16 +8883,19 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
             //   CommandLineArguments new hasOption: 'interactive'
             // So --interactive MUST appear at index 3 (argIdx 1) for the renderer to find it.
             if (argIdx == 0) {
+                std::cerr << "[ATTR-149] index=" << index << " → returning '--interactive'\n";
                 pop();
                 push(memory_.createString("--interactive"));
                 return PrimitiveResult::Success;
             }
             if (argIdx == 1) {
+                std::cerr << "[ATTR-149] index=" << index << " → returning '--interactive'\n";
                 pop();
                 push(memory_.createString("--interactive"));
                 return PrimitiveResult::Success;
             }
             // No more args
+            std::cerr << "[ATTR-149] index=" << index << " → returning nil (no more args)\n";
             pop();
             push(memory_.nil());
             return PrimitiveResult::Success;
@@ -12632,14 +12629,19 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
     processInputEvents();
     processPendingSignals();
 
-    // Short sleep if requested (usleep takes microseconds)
+    // Short sleep if requested
     if (sleepUs > 0) {
         relinquishSlept_ = true;  // Signal to test harness that VM is idle
-        #ifdef _WIN32
-        Sleep(static_cast<DWORD>(sleepUs / 1000));  // Windows Sleep takes milliseconds
-        #else
-        usleep(static_cast<useconds_t>(sleepUs));  // usleep takes microseconds
-        #endif
+        if (relinquishCallback_) {
+            // Use platform callback (e.g., CFRunLoopRunInMode on main thread)
+            relinquishCallback_(static_cast<int>(sleepUs));
+        } else {
+            #ifdef _WIN32
+            Sleep(static_cast<DWORD>(sleepUs / 1000));
+            #else
+            usleep(static_cast<useconds_t>(sleepUs));
+            #endif
+        }
     }
 
     // Process events again after sleep

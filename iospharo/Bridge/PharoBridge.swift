@@ -25,8 +25,6 @@ class PharoBridge: ObservableObject {
     @Published var displayWidth: Int = 1024
     @Published var displayHeight: Int = 768
 
-    /// VM thread
-    private var vmThread: Thread?
     private var imagePath: String?
 
     /// Display update callback (stored to prevent deallocation)
@@ -103,20 +101,10 @@ class PharoBridge: ObservableObject {
         // This prevents SwiftUI from showing canvas before VM is ready
         errorMessage = nil
 
-        // Run VM on a dedicated thread
-        vmThread = Thread { [weak self] in
-            self?.runVM(imagePath: imagePath)
-        }
-        vmThread?.name = "PharoVM"
-        vmThread?.qualityOfService = .userInteractive
-        vmThread?.start()
-    }
-
-    private nonisolated func runVM(imagePath: String) {
+        // Initialize VM synchronously on main thread
         var parameters = VMParameters()
         vm_parameters_init(&parameters)
 
-        // Set image path
         parameters.imageFileName = strdup(imagePath)
         parameters.isInteractiveSession = true
         parameters.isWorker = false
@@ -124,38 +112,39 @@ class PharoBridge: ObservableObject {
         // Memory configuration (512MB default, can be adjusted)
         parameters.maxOldSpaceSize = 512 * 1024 * 1024
         parameters.edenSize = 10 * 1024 * 1024
-        // No code zone for iOS - interpreter only (no JIT)
         parameters.maxCodeSize = 0
 
-        // Initialize VM
         let initResult = vm_init(&parameters)
 
         if initResult != 0 {
-            // VM initialized successfully - NOW it's safe to show canvas
-            DispatchQueue.main.async {
-                self.isInitialized = true
-                self.isRunning = true  // Signal to show canvas AFTER init
-            }
+            isInitialized = true
+            isRunning = true
+            NSLog("[BRIDGE] VM initialized, scheduling interpreter on main thread")
 
-            // Run interpreter (blocking)
-            vm_run_interpreter()
+            // Schedule the interpreter to run on the NEXT run loop iteration.
+            // This allows SwiftUI to finish its initial layout and the Metal
+            // view to be created before the interpreter starts. The interpreter
+            // blocks the main thread but periodically yields control back to
+            // the UIKit run loop via relinquishProcessor → CFRunLoopRunInMode.
+            CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue) {
+                NSLog("[BRIDGE] Starting interpreter on main thread")
+                vm_runOnMainThread()
+
+                // VM exited
+                DispatchQueue.main.async {
+                    self.isRunning = false
+                    self.isInitialized = false
+                    NSLog("[BRIDGE] VM stopped, exiting app")
+                    exit(0)
+                }
+            }
+            // Wake up the run loop to process the block
+            CFRunLoopWakeUp(CFRunLoopGetMain())
         } else {
-            DispatchQueue.main.async {
-                self.errorMessage = "Failed to initialize VM"
-            }
+            errorMessage = "Failed to initialize VM"
         }
 
-        // Cleanup
         vm_parameters_destroy(&parameters)
-
-        DispatchQueue.main.async {
-            self.isRunning = false
-            self.isInitialized = false
-
-            // Exit the app when VM quits
-            NSLog("[BRIDGE] VM stopped, exiting app")
-            exit(0)
-        }
     }
 
     // MARK: - Display Access
