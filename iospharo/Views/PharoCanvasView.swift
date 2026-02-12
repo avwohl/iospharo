@@ -2,16 +2,18 @@
  * PharoCanvasView.swift
  *
  * SwiftUI view that wraps MTKView for Metal rendering
- * and handles touch/gesture input for Pharo.
+ * and handles touch/gesture/keyboard input for Pharo.
  *
- * Event handling (Mac Catalyst):
- *   - Hover (position): UIHoverGestureRecognizer on MTKView → MouseEventHandler.lastPosition
- *   - Clicks: CGEventTap in iosparoApp.swift → uses lastPosition
- *   - Scroll: UIPanGestureRecognizer (2-finger) on MTKView
- *   - Drag: Handled via touchesBegan/Moved/Ended on MTKView (UIKit delivers these)
+ * Event handling (both platforms):
+ *   - Clicks/touch: touchesBegan/Moved/Ended on PharoMTKView
+ *   - Keyboard: pressesBegan/pressesEnded on PharoMTKView
  *
- * Event handling (iOS):
- *   - Standard UIKit gesture recognizers on MTKView
+ * Event handling (Mac Catalyst only):
+ *   - Hover (position): UIHoverGestureRecognizer on PharoMTKView
+ *   - Scroll: UIPanGestureRecognizer (2-finger) on PharoMTKView
+ *
+ * Event handling (iOS only):
+ *   - Additional gesture recognizers (long press, pinch, two-finger tap)
  */
 
 import SwiftUI
@@ -53,62 +55,69 @@ class PharoMTKView: MTKView {
 
     // MARK: - Touch Handling
 
-    #if targetEnvironment(macCatalyst)
     private var currentButton: Int = IOS_RED_BUTTON
-    private var hadTouchesBegan: Bool = false
-    #endif
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = touches.first, let bridge = bridge else { return }
         let point = touch.location(in: self)
-
-        #if targetEnvironment(macCatalyst)
-        // CGEventTap handles button down — only track state for drag
-        hadTouchesBegan = true
-        currentButton = buttonMaskToPharo(event)
-        #else
+        let buttons = buttonMaskToPharo(event)
+        currentButton = buttons
         bridge.sendMouseMoved(to: point, modifiers: 0)
-        bridge.sendTouchDown(at: point, buttons: IOS_RED_BUTTON)
-        #endif
+        bridge.sendTouchDown(at: point, buttons: buttons)
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = touches.first, let bridge = bridge else { return }
         let point = touch.location(in: self)
-
-        #if targetEnvironment(macCatalyst)
-        let buttons = currentButton
-        #else
-        let buttons = IOS_RED_BUTTON
-        #endif
-
-        bridge.sendTouchMoved(to: point, buttons: buttons)
+        bridge.sendTouchMoved(to: point, buttons: currentButton)
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        #if targetEnvironment(macCatalyst)
-        // CGEventTap handles button up — only clear state
-        hadTouchesBegan = false
-        #else
         guard let touch = touches.first, let bridge = bridge else { return }
         let point = touch.location(in: self)
-        bridge.sendTouchUp(at: point)
-        #endif
+        bridge.sendTouchUp(at: point, buttons: currentButton)
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        #if targetEnvironment(macCatalyst)
-        // CGEventTap handles button up — only clear state
-        hadTouchesBegan = false
-        #else
         guard let touch = touches.first, let bridge = bridge else { return }
         let point = touch.location(in: self)
-        bridge.sendTouchUp(at: point)
-        #endif
+        bridge.sendTouchUp(at: point, buttons: currentButton)
     }
 
-    #if targetEnvironment(macCatalyst)
+    // MARK: - Keyboard Handling
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard let bridge = bridge else {
+            super.pressesBegan(presses, with: event)
+            return
+        }
+        for press in presses {
+            guard let key = press.key else { continue }
+            let charCode = key.characters.first.map { Int($0.asciiValue ?? 0) } ?? 0
+            if charCode > 0 {
+                bridge.sendKeyDown(Character(UnicodeScalar(charCode)!))
+            }
+        }
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard let bridge = bridge else {
+            super.pressesEnded(presses, with: event)
+            return
+        }
+        for press in presses {
+            guard let key = press.key else { continue }
+            let charCode = key.characters.first.map { Int($0.asciiValue ?? 0) } ?? 0
+            if charCode > 0 {
+                bridge.sendKeyUp(Character(UnicodeScalar(charCode)!))
+            }
+        }
+    }
+
+    // MARK: - Button Mapping
+
     private func buttonMaskToPharo(_ event: UIEvent?) -> Int {
+        #if targetEnvironment(macCatalyst)
         guard let event = event else { return IOS_RED_BUTTON }
         if #available(macCatalyst 13.4, *) {
             let mask = event.buttonMask
@@ -117,8 +126,10 @@ class PharoMTKView: MTKView {
             if event.modifierFlags.contains(.control) { return IOS_YELLOW_BUTTON }
         }
         return IOS_RED_BUTTON
+        #else
+        return IOS_RED_BUTTON
+        #endif
     }
-    #endif
 }
 
 // MARK: - View Controller
@@ -248,7 +259,6 @@ class PharoCanvasViewController: UIViewController {
 
         switch gesture.state {
         case .began, .changed:
-            MouseEventHandler.shared.lastPosition = point
             bridge.sendMouseMoved(to: point, modifiers: 0)
         default:
             break

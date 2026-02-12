@@ -404,12 +404,15 @@ void stub_SDL_RenderPresent(void* renderer) {
         return;
     }
 
-    // Mark SDL2 rendering as active on first main renderer present.
+    // Log first main renderer present call.
+    // NOTE: Do NOT set sdl2EventPollingActive here. That flag must only be set
+    // by stub_SDL_PollEvent when the image's event loop actually starts polling.
+    // Setting it here prematurely blocks processInputEvents() from draining the
+    // event queue, causing a deadlock if SDL_PollEvent is never called.
     static bool renderingActive = false;
     if (!renderingActive) {
         renderingActive = true;
-        pharo::gEventQueue.setSDL2EventPollingActive(true);
-        fprintf(stderr, "[SDL-RP] first call, sdlActive=true\n");
+        fprintf(stderr, "[SDL-RP] first call (rendering active, events via processInputEvents until PollEvent starts)\n");
     }
 
     auto rit = sRenderers.find(renderer);
