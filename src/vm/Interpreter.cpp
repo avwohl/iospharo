@@ -4139,15 +4139,7 @@ terminate_process:
         // process has been terminated and its method/IP are no longer valid.
         // Keep trying to find a runnable process - never give up in a GUI app
         {
-            static int idleLoopCount = 0;
             while (running_) {
-                idleLoopCount++;
-                if (idleLoopCount <= 5 || idleLoopCount % 1000 == 0) {
-                    fprintf(stderr, "[IDLE] loop #%d hasPending=%d relinquish=%d\n",
-                            idleLoopCount, hasPendingSignals() ? 1 : 0,
-                            relinquishCallback_ ? 1 : 0);
-                    fflush(stderr);
-                }
 
                 // GC safe point: no process is active, safe to compact
                 if (memory_.needsCompactGC()) {

@@ -40,32 +40,8 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 }
 
 #if targetEnvironment(macCatalyst)
-class PharoWindow: UIWindow {
-    override func sendEvent(_ event: UIEvent) {
-        // Log touch events to see if they reach the window
-        if event.type == .touches {
-            let allTouches = event.allTouches ?? []
-            for touch in allTouches {
-                let phase = touch.phase
-                let point = touch.location(in: nil)
-                NSLog("[WINDOW-EVENT] touch phase=%d at (%d,%d) view=%@",
-                      phase.rawValue, Int(point.x), Int(point.y),
-                      String(describing: type(of: touch.view as Any)))
-            }
-        }
-        super.sendEvent(event)
-    }
-}
-
 class SceneDelegate: NSObject, UIWindowSceneDelegate {
     var window: UIWindow?
-
-    func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
-        guard let windowScene = scene as? UIWindowScene else { return }
-        let window = PharoWindow(windowScene: windowScene)
-        self.window = window
-        NSLog("[SCENE] Created PharoWindow for scene")
-    }
 }
 #endif
 

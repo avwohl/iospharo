@@ -626,8 +626,10 @@ int stub_SDL_PollEvent(void* event) {
 
     if (!event || reinterpret_cast<uintptr_t>(event) < 0x10000) {
         // Null or near-null pointer — just check if events available
-        if (event) {
-            fprintf(stderr, "[SDL-STUB] SDL_PollEvent: bad event ptr=%p\n", event);
+        static int badPtrCount = 0;
+        badPtrCount++;
+        if (badPtrCount <= 5) {
+            fprintf(stderr, "[SDL-STUB] SDL_PollEvent: bad event ptr=%p (count=%d)\n", event, badPtrCount);
         }
         return !pharo::gEventQueue.isEmpty() ? 1 : 0;
     }
@@ -635,6 +637,13 @@ int stub_SDL_PollEvent(void* event) {
     // Pop event from our queue
     pharo::Event pharoEvent;
     if (!pharo::gEventQueue.pop(pharoEvent)) {
+        // No events available. Pump the native run loop so UIKit can
+        // deliver touch/hover events. The event loop process runs at
+        // priority 60 and polls continuously — without this yield,
+        // CFRunLoop never gets CPU time and no events arrive.
+#ifdef __APPLE__
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.001, true);
+#endif
         return 0;
     }
 

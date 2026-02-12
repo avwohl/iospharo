@@ -55,34 +55,19 @@ class PharoMTKView: MTKView {
 
     // MARK: - Hit Testing
 
-    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        let result = super.hitTest(point, with: event)
-        let eventType = event?.type.rawValue ?? -1
-        if result == self {
-            NSLog("[HITTEST] PharoMTKView HIT at (%d,%d) eventType=%d", Int(point.x), Int(point.y), eventType)
-        } else {
-            NSLog("[HITTEST] PharoMTKView MISSED at (%d,%d) -> %@ eventType=%d", Int(point.x), Int(point.y), String(describing: type(of: result as Any)), eventType)
-        }
-        return result
-    }
-
-    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        let result = super.point(inside: point, with: event)
-        NSLog("[POINT] inside=(%d,%d) result=%@ eventType=%d", Int(point.x), Int(point.y), result ? "YES" : "NO", event?.type.rawValue ?? -1)
-        return result
-    }
+    // hitTest and touchesBegan are not called for mouse on Mac Catalyst.
+    // Mouse clicks are handled via UITapGestureRecognizer (see setupGestureRecognizers).
+    // touchesBegan IS called for real trackpad touches on iOS.
 
     // MARK: - Touch Handling
 
     private var currentButton: Int = IOS_RED_BUTTON
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        NSLog("[TOUCH] touchesBegan bridge=%@", bridge != nil ? "YES" : "NIL")
         guard let touch = touches.first, let bridge = bridge else { return }
         let point = touch.location(in: self)
         let buttons = buttonMaskToPharo(event)
         currentButton = buttons
-        NSLog("[TOUCH] touchesBegan at (%d,%d) buttons=%d", Int(point.x), Int(point.y), buttons)
         bridge.sendMouseMoved(to: point, modifiers: 0)
         bridge.sendTouchDown(at: point, buttons: buttons)
     }
@@ -192,22 +177,7 @@ class PharoCanvasViewController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        let result = mtkView.becomeFirstResponder()
-        NSLog("[VIEW] viewDidAppear: becomeFirstResponder=%@", result ? "YES" : "NO")
-        NSLog("[VIEW] mtkView frame=(%d,%d %dx%d) isUserInteractionEnabled=%@",
-              Int(mtkView.frame.origin.x), Int(mtkView.frame.origin.y),
-              Int(mtkView.frame.size.width), Int(mtkView.frame.size.height),
-              mtkView.isUserInteractionEnabled ? "YES" : "NO")
-        NSLog("[VIEW] mtkView isFirstResponder=%@ canBecomeFirstResponder=%@",
-              mtkView.isFirstResponder ? "YES" : "NO",
-              mtkView.canBecomeFirstResponder ? "YES" : "NO")
-        NSLog("[VIEW] mtkView.window=%@ bridge=%@",
-              mtkView.window != nil ? "YES" : "NIL",
-              mtkView.bridge != nil ? "YES" : "NIL")
-        NSLog("[VIEW] view hierarchy: mtkView.superview=%@ vc.view=%@",
-              String(describing: type(of: mtkView.superview as Any)),
-              String(describing: type(of: view as Any)))
-        NSLog("[VIEW] gestureRecognizers count=%d", mtkView.gestureRecognizers?.count ?? 0)
+        mtkView.becomeFirstResponder()
     }
 
     private func setupGestureRecognizers() {
