@@ -41,17 +41,17 @@ enum EventTapManager {
                         PharoBridge.shared.sendMouseMoved(to: point, modifiers: 0)
                         PharoBridge.shared.sendTouchDown(at: point, buttons: IOS_RED_BUTTON)
                     case .leftMouseUp:
-                        PharoBridge.shared.sendTouchUp(at: point)
+                        PharoBridge.shared.sendTouchUp(at: point, buttons: IOS_RED_BUTTON)
                     case .rightMouseDown:
                         PharoBridge.shared.sendMouseMoved(to: point, modifiers: 0)
                         PharoBridge.shared.sendTouchDown(at: point, buttons: IOS_YELLOW_BUTTON)
                     case .rightMouseUp:
-                        PharoBridge.shared.sendTouchUp(at: point)
+                        PharoBridge.shared.sendTouchUp(at: point, buttons: IOS_YELLOW_BUTTON)
                     case .otherMouseDown:
                         PharoBridge.shared.sendMouseMoved(to: point, modifiers: 0)
                         PharoBridge.shared.sendTouchDown(at: point, buttons: IOS_BLUE_BUTTON)
                     case .otherMouseUp:
-                        PharoBridge.shared.sendTouchUp(at: point)
+                        PharoBridge.shared.sendTouchUp(at: point, buttons: IOS_BLUE_BUTTON)
                     default:
                         break
                     }

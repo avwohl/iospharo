@@ -193,18 +193,18 @@ class PharoBridge: ObservableObject {
     }
 
     /// Send touch up event
-    func sendTouchUp(at point: CGPoint, modifiers: Int = 0) {
-        logBridgeEvent("sendTouchUp at (\(Int(point.x)),\(Int(point.y)))")
+    func sendTouchUp(at point: CGPoint, buttons: Int = IOS_RED_BUTTON, modifiers: Int = 0) {
+        logBridgeEvent("sendTouchUp at (\(Int(point.x)),\(Int(point.y))) buttons=\(buttons)")
         vm_postMouseEvent(2, // type: up
                           Int32(point.x), Int32(point.y),
-                          0, Int32(modifiers))
+                          Int32(buttons), Int32(modifiers))
     }
 
     /// Send touch cancelled event
-    func sendTouchCancelled(at point: CGPoint) {
+    func sendTouchCancelled(at point: CGPoint, buttons: Int = IOS_RED_BUTTON) {
         vm_postMouseEvent(2, // type: up (treat cancelled as up)
                           Int32(point.x), Int32(point.y),
-                          0, 0)
+                          Int32(buttons), 0)
     }
 
     /// Send mouse moved event (no buttons pressed) - Mac Catalyst hover

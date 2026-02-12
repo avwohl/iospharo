@@ -30,6 +30,9 @@
 #define SDL_MOUSEBUTTONUP   0x402
 #define SDL_MOUSEWHEEL      0x403
 
+// SDL2 window event subtypes
+#define SDL_WINDOWEVENT_SIZE_CHANGED  6
+
 // SDL2 mouse button codes
 #define SDL_BUTTON_LEFT     1
 #define SDL_BUTTON_MIDDLE   2
@@ -76,6 +79,18 @@ struct SDL_MouseWheelEvent {
     uint32_t direction;   // Normal or flipped
 };
 
+struct SDL_WindowEvent {
+    uint32_t type;        // SDL_WINDOWEVENT
+    uint32_t timestamp;
+    uint32_t windowID;
+    uint8_t event;        // SDL_WindowEventID
+    uint8_t padding1;
+    uint8_t padding2;
+    uint8_t padding3;
+    int32_t data1;        // event-dependent data (e.g. width)
+    int32_t data2;        // event-dependent data (e.g. height)
+};
+
 struct SDL_Keysym {
     int32_t scancode;     // SDL_Scancode
     int32_t sym;          // SDL_Keycode (SDLK_*)
@@ -98,6 +113,7 @@ struct SDL_KeyboardEvent {
 union SDL_Event {
     uint32_t type;
     SDL_CommonEvent common;
+    SDL_WindowEvent window;
     SDL_MouseMotionEvent motion;
     SDL_MouseButtonEvent button;
     SDL_MouseWheelEvent wheel;
@@ -216,6 +232,7 @@ static std::unordered_map<void*, SDLWindowState> sWindows;
 static std::unordered_map<void*, SDLTextureState> sTextures;
 static std::unordered_map<void*, SDLRendererState> sRenderers;
 static void* sMainRenderer = nullptr;  // First renderer is the "main" one (renders to display)
+static void* sMainWindow = nullptr;    // First window is the "main" one (receives events)
 
 extern "C" {
 
@@ -245,6 +262,12 @@ const char* stub_SDL_GetError() {
 }
 
 void* stub_SDL_CreateWindow(const char* title, int x, int y, int w, int h, uint32_t flags) {
+    // Override dimensions with actual display surface size when available
+    // so Pharo creates textures/Forms at the correct resolution
+    if (pharo::gDisplaySurface) {
+        w = pharo::gDisplaySurface->width();
+        h = pharo::gDisplaySurface->height();
+    }
     fprintf(stderr, "[SDL-STUB] SDL_CreateWindow('%s', %dx%d, flags=0x%x)\n",
             title ? title : "(null)", w, h, flags);
     void* handle = reinterpret_cast<void*>(sNextHandle++);
@@ -253,6 +276,7 @@ void* stub_SDL_CreateWindow(const char* title, int x, int y, int w, int h, uint3
     state.height = h;
     state.title = title ? title : "";
     sWindows[handle] = state;
+    if (!sMainWindow) sMainWindow = handle;
     return handle;
 }
 
@@ -261,7 +285,13 @@ void stub_SDL_DestroyWindow(void* window) {
 }
 
 void stub_SDL_GetWindowSize(void* window, int* w, int* h) {
-    // Return the window's actual dimensions (from SDL_CreateWindow)
+    // For the main window, always return the display surface dimensions
+    // so Pharo tracks the actual UIView size (handles resize)
+    if (window == sMainWindow && pharo::gDisplaySurface) {
+        if (w) *w = pharo::gDisplaySurface->width();
+        if (h) *h = pharo::gDisplaySurface->height();
+        return;
+    }
     auto it = sWindows.find(window);
     if (it != sWindows.end()) {
         if (w) *w = it->second.width;
@@ -490,6 +520,9 @@ int stub_SDL_PollEvent(void* event) {
     SDL_Event* sdlEvent = reinterpret_cast<SDL_Event*>(event);
     memset(sdlEvent, 0, sizeof(SDL_Event));
 
+    // Use the main window's ID so OSSDL2BackendWindow accepts the event
+    uint32_t windowID = sMainWindow ? stub_SDL_GetWindowID(sMainWindow) : 1;
+
     // Convert Pharo event to SDL event
     if (pharoEvent.type == static_cast<int>(pharo::EventType::Mouse)) {
         // pharoEvent.arg5 is the mouse event subtype:
@@ -500,7 +533,7 @@ int stub_SDL_PollEvent(void* event) {
             // Mouse motion (move or drag)
             sdlEvent->motion.type = SDL_MOUSEMOTION;
             sdlEvent->motion.timestamp = pharoEvent.timeStamp;
-            sdlEvent->motion.windowID = pharoEvent.windowIndex;
+            sdlEvent->motion.windowID = windowID;
             sdlEvent->motion.which = 0;  // Touch or mouse
             sdlEvent->motion.x = pharoEvent.arg1;
             sdlEvent->motion.y = pharoEvent.arg2;
@@ -514,7 +547,7 @@ int stub_SDL_PollEvent(void* event) {
             // Mouse button down
             sdlEvent->button.type = SDL_MOUSEBUTTONDOWN;
             sdlEvent->button.timestamp = pharoEvent.timeStamp;
-            sdlEvent->button.windowID = pharoEvent.windowIndex;
+            sdlEvent->button.windowID = windowID;
             sdlEvent->button.which = 0;
             sdlEvent->button.x = pharoEvent.arg1;
             sdlEvent->button.y = pharoEvent.arg2;
@@ -534,7 +567,7 @@ int stub_SDL_PollEvent(void* event) {
             // Mouse button up
             sdlEvent->button.type = SDL_MOUSEBUTTONUP;
             sdlEvent->button.timestamp = pharoEvent.timeStamp;
-            sdlEvent->button.windowID = pharoEvent.windowIndex;
+            sdlEvent->button.windowID = windowID;
             sdlEvent->button.which = 0;
             sdlEvent->button.x = pharoEvent.arg1;
             sdlEvent->button.y = pharoEvent.arg2;
@@ -556,7 +589,7 @@ int stub_SDL_PollEvent(void* event) {
         // Mouse wheel
         sdlEvent->wheel.type = SDL_MOUSEWHEEL;
         sdlEvent->wheel.timestamp = pharoEvent.timeStamp;
-        sdlEvent->wheel.windowID = pharoEvent.windowIndex;
+        sdlEvent->wheel.windowID = windowID;
         sdlEvent->wheel.which = 0;
         sdlEvent->wheel.x = pharoEvent.arg3;  // Horizontal scroll (deltaX)
         sdlEvent->wheel.y = pharoEvent.arg4;  // Vertical scroll (deltaY)
@@ -576,7 +609,7 @@ int stub_SDL_PollEvent(void* event) {
             sdlEvent->key.state = 0;  // SDL_RELEASED
         }
         sdlEvent->key.timestamp = pharoEvent.timeStamp;
-        sdlEvent->key.windowID = pharoEvent.windowIndex;
+        sdlEvent->key.windowID = windowID;
         sdlEvent->key.repeat = 0;
         sdlEvent->key.keysym.scancode = pharoEvent.arg4;  // keyCode
         sdlEvent->key.keysym.sym = pharoEvent.arg1;       // charCode
@@ -589,9 +622,14 @@ int stub_SDL_PollEvent(void* event) {
         sdlEvent->key.keysym.mod = sdlMod;
         return 1;
     } else if (pharoEvent.type == static_cast<int>(pharo::EventType::WindowMetrics)) {
-        // Skip window metrics events - we handle display separately
-        // Recursively try to get next event
-        return stub_SDL_PollEvent(event);
+        // Convert to SDL_WINDOWEVENT so OSSDL2Driver can handle resize
+        sdlEvent->window.type = SDL_WINDOWEVENT;
+        sdlEvent->window.timestamp = pharoEvent.timeStamp;
+        sdlEvent->window.windowID = windowID;
+        sdlEvent->window.event = SDL_WINDOWEVENT_SIZE_CHANGED;
+        sdlEvent->window.data1 = pharoEvent.arg1;  // width
+        sdlEvent->window.data2 = pharoEvent.arg2;  // height
+        return 1;
     }
 
     // Unknown event type - skip

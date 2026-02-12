@@ -321,7 +321,7 @@ class PharoCanvasViewController: UIViewController {
         case .changed:
             bridge.sendTouchMoved(to: point, buttons: IOS_BLUE_BUTTON)
         case .ended, .cancelled:
-            bridge.sendTouchUp(at: point)
+            bridge.sendTouchUp(at: point, buttons: IOS_BLUE_BUTTON)
         default:
             break
         }
@@ -332,7 +332,7 @@ class PharoCanvasViewController: UIViewController {
         let point = gesture.location(in: mtkView)
         bridge.sendMouseMoved(to: point, modifiers: 0)
         bridge.sendTouchDown(at: point, buttons: IOS_YELLOW_BUTTON)
-        bridge.sendTouchUp(at: point)
+        bridge.sendTouchUp(at: point, buttons: IOS_YELLOW_BUTTON)
         bridge.hapticFeedback(style: .light)
     }
 
