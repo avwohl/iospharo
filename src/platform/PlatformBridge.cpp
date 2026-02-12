@@ -85,6 +85,11 @@ public:
             cb = updateCallback_;
             ctx = context_;
         }
+        static int invalidateCount = 0;
+        if (++invalidateCount <= 5) {
+            fprintf(stderr, "[DISPLAY-SURFACE] invalidateRect(%d,%d,%d,%d) cb=%p\n",
+                    x, y, w, h, (void*)cb);
+        }
         if (cb) {
             cb(x, y, w, h, ctx);
         }
@@ -294,6 +299,15 @@ void vm_runOnMainThread(void) {
 
     gRunning = true;
 
+    // Ensure display surface exists before interpreter starts.
+    // The interpreter blocks the main thread, and SwiftUI's MetalView
+    // may not have called vm_setDisplaySize yet. Create a default
+    // display surface so SDL stubs can render to it immediately.
+    // MetalView's drawableSizeWillChange will resize later.
+    if (!gDisplay) {
+        vm_setDisplaySize(1024, 768, 32);
+    }
+
     // Post a window resize event to trigger Pharo layout
     if (gDisplay) {
         vm_postWindowEvent(gDisplay->width(), gDisplay->height());
@@ -318,6 +332,17 @@ void vm_runOnMainThread(void) {
         usleep(sleepUs);
 #endif
     });
+
+    // Pump the run loop before starting the interpreter so SwiftUI has
+    // time to lay out the Metal view. The interpreter blocks the main
+    // thread and doesn't yield during initial startup (main process never
+    // relinquishes). Without this, the MTKView is never created and the
+    // display callback never fires.
+#ifdef __APPLE__
+    for (int i = 0; i < 30; i++) {
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.016, false);
+    }
+#endif
 
     fprintf(stderr, "[VM] Running interpreter on main thread\n");
 
@@ -350,6 +375,8 @@ void vm_setDisplaySize(int width, int height, int depth) {
         // Create new display
         gDisplay = new SimpleDisplaySurface(width, height, depth);
         pharo::gDisplaySurface = gDisplay;
+        fprintf(stderr, "[DISPLAY-SURFACE] Created %dx%dx%d, pendingCallback=%p\n",
+                width, height, depth, (void*)gPendingCallback);
 
         // Apply pending callback if one was registered before display existed
         if (gPendingCallback) {

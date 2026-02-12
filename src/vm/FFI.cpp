@@ -15,6 +15,10 @@
 #include <ffi.h>
 #include <unistd.h>
 
+#ifdef __APPLE__
+#include <CoreFoundation/CoreFoundation.h>
+#endif
+
 // SDL2 event types
 #define SDL_QUIT            0x100
 #define SDL_WINDOWEVENT     0x200
@@ -471,7 +475,16 @@ int stub_SDL_PollEvent(void* event) {
     // Pop event from our queue
     pharo::Event pharoEvent;
     if (!pharo::gEventQueue.pop(pharoEvent)) {
-        return 0;  // No events available
+        // No events available. Pump the native run loop so Metal can
+        // render and UIKit can deliver events. The interpreter runs on
+        // the main thread and only yields during relinquish (idle process),
+        // but the SDL event loop process runs at priority 60 and never
+        // yields to the idle process. This is the only place where we can
+        // regularly give the run loop time during active event processing.
+#ifdef __APPLE__
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.001, true);
+#endif
+        return 0;
     }
 
     SDL_Event* sdlEvent = reinterpret_cast<SDL_Event*>(event);
