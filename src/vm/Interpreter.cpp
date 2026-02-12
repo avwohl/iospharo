@@ -2171,7 +2171,9 @@ void Interpreter::interpret() {
         // display link can fire and UIKit can deliver events. The
         // interpreter runs on the main thread and blocks the run loop;
         // without this, the display never updates.
-        {
+        // Only pump when a relinquish callback is registered (Mac Catalyst app),
+        // not during headless test runs where the overhead causes timeouts.
+        if (relinquishCallback_) {
             auto now = std::chrono::steady_clock::now();
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRunLoopPump).count();
             if (elapsed >= 16) {
