@@ -53,15 +53,36 @@ class PharoMTKView: MTKView {
         }
     }
 
+    // MARK: - Hit Testing
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let result = super.hitTest(point, with: event)
+        let eventType = event?.type.rawValue ?? -1
+        if result == self {
+            NSLog("[HITTEST] PharoMTKView HIT at (%d,%d) eventType=%d", Int(point.x), Int(point.y), eventType)
+        } else {
+            NSLog("[HITTEST] PharoMTKView MISSED at (%d,%d) -> %@ eventType=%d", Int(point.x), Int(point.y), String(describing: type(of: result as Any)), eventType)
+        }
+        return result
+    }
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        let result = super.point(inside: point, with: event)
+        NSLog("[POINT] inside=(%d,%d) result=%@ eventType=%d", Int(point.x), Int(point.y), result ? "YES" : "NO", event?.type.rawValue ?? -1)
+        return result
+    }
+
     // MARK: - Touch Handling
 
     private var currentButton: Int = IOS_RED_BUTTON
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        NSLog("[TOUCH] touchesBegan bridge=%@", bridge != nil ? "YES" : "NIL")
         guard let touch = touches.first, let bridge = bridge else { return }
         let point = touch.location(in: self)
         let buttons = buttonMaskToPharo(event)
         currentButton = buttons
+        NSLog("[TOUCH] touchesBegan at (%d,%d) buttons=%d", Int(point.x), Int(point.y), buttons)
         bridge.sendMouseMoved(to: point, modifiers: 0)
         bridge.sendTouchDown(at: point, buttons: buttons)
     }
@@ -171,19 +192,60 @@ class PharoCanvasViewController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        mtkView.becomeFirstResponder()
+        let result = mtkView.becomeFirstResponder()
+        NSLog("[VIEW] viewDidAppear: becomeFirstResponder=%@", result ? "YES" : "NO")
+        NSLog("[VIEW] mtkView frame=(%d,%d %dx%d) isUserInteractionEnabled=%@",
+              Int(mtkView.frame.origin.x), Int(mtkView.frame.origin.y),
+              Int(mtkView.frame.size.width), Int(mtkView.frame.size.height),
+              mtkView.isUserInteractionEnabled ? "YES" : "NO")
+        NSLog("[VIEW] mtkView isFirstResponder=%@ canBecomeFirstResponder=%@",
+              mtkView.isFirstResponder ? "YES" : "NO",
+              mtkView.canBecomeFirstResponder ? "YES" : "NO")
+        NSLog("[VIEW] mtkView.window=%@ bridge=%@",
+              mtkView.window != nil ? "YES" : "NIL",
+              mtkView.bridge != nil ? "YES" : "NIL")
+        NSLog("[VIEW] view hierarchy: mtkView.superview=%@ vc.view=%@",
+              String(describing: type(of: mtkView.superview as Any)),
+              String(describing: type(of: view as Any)))
+        NSLog("[VIEW] gestureRecognizers count=%d", mtkView.gestureRecognizers?.count ?? 0)
     }
 
     private func setupGestureRecognizers() {
         let targetView = mtkView as UIView
 
         #if targetEnvironment(macCatalyst)
-        // Hover gesture: tracks mouse position for CGEventTap's button coordinates
+        // Hover gesture: tracks mouse position
         let hoverGesture = UIHoverGestureRecognizer(
             target: self,
             action: #selector(handleHover(_:))
         )
         targetView.addGestureRecognizer(hoverGesture)
+
+        // Click gesture: single tap for mouse click
+        let clickGesture = UITapGestureRecognizer(
+            target: self,
+            action: #selector(handleCatalystClick(_:))
+        )
+        clickGesture.numberOfTapsRequired = 1
+        targetView.addGestureRecognizer(clickGesture)
+
+        // Double-click gesture
+        let doubleClickGesture = UITapGestureRecognizer(
+            target: self,
+            action: #selector(handleCatalystDoubleClick(_:))
+        )
+        doubleClickGesture.numberOfTapsRequired = 2
+        targetView.addGestureRecognizer(doubleClickGesture)
+        clickGesture.require(toFail: doubleClickGesture)
+
+        // Drag gesture: single-finger pan for mouse drag
+        let dragGesture = UIPanGestureRecognizer(
+            target: self,
+            action: #selector(handleCatalystDrag(_:))
+        )
+        dragGesture.minimumNumberOfTouches = 1
+        dragGesture.maximumNumberOfTouches = 1
+        targetView.addGestureRecognizer(dragGesture)
 
         // Scroll gesture: two-finger trackpad scroll
         let scrollGesture = UIPanGestureRecognizer(
@@ -254,12 +316,58 @@ class PharoCanvasViewController: UIViewController {
 
     #if targetEnvironment(macCatalyst)
     @objc func handleHover(_ gesture: UIHoverGestureRecognizer) {
-        guard let bridge = bridge else { return }
+        guard let bridge = bridge else {
+            NSLog("[HOVER] handleHover bridge=NIL")
+            return
+        }
         let point = gesture.location(in: mtkView)
 
         switch gesture.state {
-        case .began, .changed:
+        case .began:
+            NSLog("[HOVER] began at (%d,%d)", Int(point.x), Int(point.y))
             bridge.sendMouseMoved(to: point, modifiers: 0)
+        case .changed:
+            bridge.sendMouseMoved(to: point, modifiers: 0)
+        default:
+            break
+        }
+    }
+
+    @objc func handleCatalystClick(_ gesture: UITapGestureRecognizer) {
+        guard let bridge = bridge else { return }
+        let point = gesture.location(in: mtkView)
+        let buttons = buttonMaskFromGesture(gesture)
+        NSLog("[CLICK] at (%d,%d) buttons=%d", Int(point.x), Int(point.y), buttons)
+        bridge.sendMouseMoved(to: point, modifiers: 0)
+        bridge.sendTouchDown(at: point, buttons: buttons)
+        bridge.sendTouchUp(at: point, buttons: buttons)
+    }
+
+    @objc func handleCatalystDoubleClick(_ gesture: UITapGestureRecognizer) {
+        guard let bridge = bridge else { return }
+        let point = gesture.location(in: mtkView)
+        let buttons = buttonMaskFromGesture(gesture)
+        NSLog("[DBLCLICK] at (%d,%d) buttons=%d", Int(point.x), Int(point.y), buttons)
+        bridge.sendMouseMoved(to: point, modifiers: 0)
+        bridge.sendTouchDown(at: point, buttons: buttons)
+        bridge.sendTouchUp(at: point, buttons: buttons)
+        bridge.sendTouchDown(at: point, buttons: buttons)
+        bridge.sendTouchUp(at: point, buttons: buttons)
+    }
+
+    @objc func handleCatalystDrag(_ gesture: UIPanGestureRecognizer) {
+        guard let bridge = bridge else { return }
+        let point = gesture.location(in: mtkView)
+        switch gesture.state {
+        case .began:
+            NSLog("[DRAG] began at (%d,%d)", Int(point.x), Int(point.y))
+            bridge.sendMouseMoved(to: point, modifiers: 0)
+            bridge.sendTouchDown(at: point, buttons: IOS_RED_BUTTON)
+        case .changed:
+            bridge.sendTouchMoved(to: point, buttons: IOS_RED_BUTTON)
+        case .ended, .cancelled:
+            NSLog("[DRAG] ended at (%d,%d)", Int(point.x), Int(point.y))
+            bridge.sendTouchUp(at: point, buttons: IOS_RED_BUTTON)
         default:
             break
         }
@@ -281,6 +389,19 @@ class PharoCanvasViewController: UIViewController {
         default:
             break
         }
+    }
+
+    private func buttonMaskFromGesture(_ gesture: UIGestureRecognizer) -> Int {
+        // On Mac Catalyst, check the button mask of the underlying event
+        if #available(macCatalyst 13.4, *) {
+            if let event = gesture.value(forKey: "_touchEvent") as? UIEvent {
+                let mask = event.buttonMask
+                if mask.contains(.secondary) { return IOS_YELLOW_BUTTON }
+                if mask.rawValue & 0x4 != 0 { return IOS_BLUE_BUTTON }
+                if event.modifierFlags.contains(.control) { return IOS_YELLOW_BUTTON }
+            }
+        }
+        return IOS_RED_BUTTON
     }
     #endif
 

@@ -4139,13 +4139,26 @@ terminate_process:
         // process has been terminated and its method/IP are no longer valid.
         // Keep trying to find a runnable process - never give up in a GUI app
         {
-            static int idleDumpCount = 0;
+            static int idleLoopCount = 0;
             while (running_) {
+                idleLoopCount++;
+                if (idleLoopCount <= 5 || idleLoopCount % 1000 == 0) {
+                    fprintf(stderr, "[IDLE] loop #%d hasPending=%d relinquish=%d\n",
+                            idleLoopCount, hasPendingSignals() ? 1 : 0,
+                            relinquishCallback_ ? 1 : 0);
+                    fflush(stderr);
+                }
+
                 // GC safe point: no process is active, safe to compact
                 if (memory_.needsCompactGC()) {
                     memory_.clearCompactGCFlag();
                     memory_.fullGC();
                     flushMethodCache();  // Compaction moves objects — stale cache
+                }
+
+                // Process pending external semaphore signals (from events, timers)
+                if (hasPendingSignals()) {
+                    processPendingSignals();
                 }
 
                 // Process input events - may signal semaphores that wake processes
@@ -4154,15 +4167,31 @@ terminate_process:
                 // Check timer semaphore - may wake delay processes
                 checkTimerSemaphore();
 
-                // Sleep briefly to avoid busy-waiting
+                // Pump the native run loop so UIKit can deliver touch/hover
+                // events and Metal can render frames.  Without this, the main
+                // thread is blocked and no events arrive — creating a deadlock
+                // where we wait for events that can never be delivered.
+#if __APPLE__
+                if (relinquishCallback_) {
+                    // Pump the run loop multiple times to fully process events.
+                    // A single pump may only handle hitTest; the actual touch
+                    // delivery happens in a subsequent run loop iteration.
+                    for (int pump = 0; pump < 10; pump++) {
+                        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.001, true);
+                    }
+                    // Then sleep briefly to cap CPU usage
+                    CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.010, false);
+                } else {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+#else
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
+#endif
 
                 // Try to find a runnable process
                 if (tryReschedule()) {
                     return;
                 }
-
-                ++idleDumpCount;
             }
             return;
         }
