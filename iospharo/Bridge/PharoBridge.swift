@@ -37,39 +37,16 @@ class PharoBridge: ObservableObject {
     // MARK: - Display Callback
 
     private func setupDisplayCallback() {
-        // Create a C callback that posts to main thread
+        // Register a lightweight callback that just sets a flag.
+        // The Metal renderer polls the front buffer directly on every
+        // draw(in:) call, so the callback is mainly for future use.
         let callback: IOSDisplayUpdateCallback = { x, y, width, height in
-            DispatchQueue.main.async {
-                PharoBridge.shared.handleDisplayUpdate(x: Int(x), y: Int(y),
-                                                        width: Int(width), height: Int(height))
-            }
+            // No-op: MetalRenderer always copies the front buffer
+            // on every draw(in:) call, bypassing the callback chain.
         }
 
         self.displayCallback = callback
         ios_registerDisplayUpdateCallback(callback)
-    }
-
-    // Track update count for logging
-    private var updateCount = 0
-
-    private func handleDisplayUpdate(x: Int, y: Int, width: Int, height: Int) {
-        updateCount += 1
-        // Log first 10 updates, then every 100th
-        if updateCount <= 10 || updateCount % 100 == 0 {
-            NSLog("[DISPLAY] Update #\(updateCount): rect=(\(x),\(y),\(width),\(height))")
-        }
-
-        // Update dimensions if changed
-        let newWidth = Int(ios_getDisplayWidth())
-        let newHeight = Int(ios_getDisplayHeight())
-
-        if newWidth != displayWidth || newHeight != displayHeight {
-            displayWidth = newWidth
-            displayHeight = newHeight
-        }
-
-        // Signal that display needs refresh
-        displayNeedsUpdate = true
     }
 
     // MARK: - VM Lifecycle

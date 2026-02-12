@@ -180,11 +180,12 @@ class MetalRenderer: NSObject, MTKViewDelegate {
     }
 
     func draw(in view: MTKView) {
-        // Update texture if display changed OR if we don't have a texture yet
-        if bridge?.displayNeedsUpdate == true || displayTexture == nil {
-            updateDisplayTexture()
-            bridge?.displayDidUpdate()
-        }
+        // Always update the texture from the VM's front buffer.
+        // The interpreter runs on the main thread and only gives the
+        // run loop brief windows (via CFRunLoopRunInMode in SDL_PollEvent).
+        // We can't rely on DispatchQueue.main.async callbacks arriving
+        // promptly, so just always copy the latest framebuffer.
+        updateDisplayTexture()
 
         // Ensure we have a texture and drawable
         guard let texture = displayTexture,
