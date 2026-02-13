@@ -19,16 +19,11 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         // Redirect stderr to a file so we can capture VM fprintf output
         freopen("/tmp/iospharo-stderr.log", "w", stderr)
         NSLog("[APP] didFinishLaunching - stderr redirected to /tmp/iospharo-stderr.log")
+        fputs("[APP] didFinishLaunching via fputs\n", stderr)
+        fflush(stderr)
         return true
     }
 
-    #if targetEnvironment(macCatalyst)
-    func application(_ application: UIApplication, configurationForConnecting connectingSceneSession: UISceneSession, options: UIScene.ConnectionOptions) -> UISceneConfiguration {
-        let config = UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)
-        config.delegateClass = SceneDelegate.self
-        return config
-    }
-    #endif
 
     func applicationWillTerminate(_ application: UIApplication) {
         NSLog("[APP] applicationWillTerminate - stopping VM")
@@ -39,12 +34,6 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     }
 }
 
-#if targetEnvironment(macCatalyst)
-class SceneDelegate: NSObject, UIWindowSceneDelegate {
-    var window: UIWindow?
-}
-#endif
-
 @main
 struct iosparoApp: App {
 
@@ -53,10 +42,16 @@ struct iosparoApp: App {
     @StateObject private var imageManager = ImageManager()
 
     var body: some Scene {
-        WindowGroup {
+        fputs("[APP] iosparoApp.body accessed\n", stderr)
+        fflush(stderr)
+        return WindowGroup {
             ContentView()
                 .environmentObject(bridge)
                 .environmentObject(imageManager)
+                .onAppear {
+                    fputs("[APP] ContentView.onAppear\n", stderr)
+                    fflush(stderr)
+                }
         }
     }
 }

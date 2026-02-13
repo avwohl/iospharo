@@ -46,8 +46,12 @@ class ImageManager: ObservableObject {
     /// Check for existing image and prepare a fresh working copy
     /// We always start from a pristine image to avoid corrupted state
     func checkForExistingImage() {
+        fputs("[IMG] checkForExistingImage starting, docs=\(documentsDirectory.path)\n", stderr)
+        fflush(stderr)
         // First check Documents directory for downloaded images
         var imageFiles = findImageFiles()
+        fputs("[IMG] findImageFiles returned \(imageFiles.count) files\n", stderr)
+        fflush(stderr)
 
         // If no image in Documents, check app bundle for development
         if imageFiles.isEmpty {
@@ -59,19 +63,15 @@ class ImageManager: ObservableObject {
         }
 
         if let firstImage = imageFiles.first {
-            // Always create a fresh working copy to start clean
-            if let workingCopy = prepareFreshWorkingCopy(from: firstImage) {
-                imagePath = workingCopy.path
-                imageName = workingCopy.lastPathComponent
-                hasImage = true
-                NSLog("[ImageManager] Using fresh working copy: %@", workingCopy.path)
-            } else {
-                // Fallback to original if copy fails
-                imagePath = firstImage.path
-                imageName = firstImage.lastPathComponent
-                hasImage = true
-                NSLog("[ImageManager] Warning: Using original image (copy failed): %@", firstImage.path)
-            }
+            fputs("[IMG] Found image: \(firstImage.path)\n", stderr)
+            fflush(stderr)
+            // Use original image directly to avoid iCloud file coordination hangs
+            // on macOS 26.3 when Documents is synced to iCloud.
+            imagePath = firstImage.path
+            imageName = firstImage.lastPathComponent
+            hasImage = true
+            fputs("[IMG] Using image: \(firstImage.path)\n", stderr)
+            fflush(stderr)
         } else {
             hasImage = false
             imagePath = nil
@@ -81,12 +81,18 @@ class ImageManager: ObservableObject {
 
     /// Create a fresh working copy of the image, deleting any previous working copy
     private func prepareFreshWorkingCopy(from originalImage: URL) -> URL? {
-        let workingDir = documentsDirectory.appendingPathComponent("WorkingImage")
+        // Use temp directory instead of Documents to avoid iCloud coordination hangs
+        let workingDir = fileManager.temporaryDirectory.appendingPathComponent("PharoWorking")
         let workingImage = workingDir.appendingPathComponent("Pharo-Working.image")
         let workingChanges = workingDir.appendingPathComponent("Pharo-Working.changes")
 
+        fputs("[IMG] prepareFreshWorkingCopy: workingDir=\(workingDir.path)\n", stderr)
+        fflush(stderr)
+
         // Clean up any existing working copy
         try? fileManager.removeItem(at: workingDir)
+        fputs("[IMG] prepareFreshWorkingCopy: removed old working dir\n", stderr)
+        fflush(stderr)
 
         // Create working directory
         do {
@@ -295,18 +301,36 @@ class ImageManager: ObservableObject {
     }
 
     private func findImageFiles() -> [URL] {
-        do {
-            let contents = try fileManager.contentsOfDirectory(
-                at: documentsDirectory,
-                includingPropertiesForKeys: [.isRegularFileKey],
-                options: .skipsHiddenFiles
-            )
+        fputs("[IMG] findImageFiles: checking known paths\n", stderr)
+        fflush(stderr)
 
-            return contents.filter { $0.pathExtension == "image" }
-                .sorted { $0.lastPathComponent < $1.lastPathComponent }
-        } catch {
-            return []
+        // Check non-iCloud locations first (temp, then Documents).
+        // On macOS 26.3, FileManager operations on iCloud-synced Documents
+        // can block the main thread via file coordination.
+        let searchDirs = [
+            URL(fileURLWithPath: "/tmp/PharoImage"),
+            fileManager.temporaryDirectory.appendingPathComponent("PharoWorking"),
+            documentsDirectory
+        ]
+        let knownNames = ["Pharo.image", "Pharo-Working.image", "Pharo-iOS-Ready.image"]
+        var results: [URL] = []
+
+        for dir in searchDirs {
+            for name in knownNames {
+                let url = dir.appendingPathComponent(name)
+                // Use access() which is a simple POSIX syscall, no file coordination
+                if access(url.path, R_OK) == 0 {
+                    results.append(url)
+                    fputs("[IMG] findImageFiles: found \(url.path)\n", stderr)
+                    fflush(stderr)
+                    return results  // Return first found
+                }
+            }
         }
+
+        fputs("[IMG] findImageFiles: no images found\n", stderr)
+        fflush(stderr)
+        return results
     }
 }
 

@@ -31,7 +31,11 @@ class PharoBridge: ObservableObject {
     private var displayCallback: IOSDisplayUpdateCallback?
 
     private init() {
+        fputs("[BRIDGE] PharoBridge.init() starting\n", stderr)
+        fflush(stderr)
         setupDisplayCallback()
+        fputs("[BRIDGE] PharoBridge.init() completed\n", stderr)
+        fflush(stderr)
     }
 
     // MARK: - Display Callback

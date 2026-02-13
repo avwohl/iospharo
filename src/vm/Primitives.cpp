@@ -23410,7 +23410,54 @@ void* Interpreter::tffi_getHandler(Oop obj) {
     if (!obj.isObject()) return nullptr;
     if (memory_.slotCountOf(obj) < 1) return nullptr;
     Oop slot0 = memory_.fetchPointer(0, obj);
-    return tffi_readAddress(slot0);
+    void* result = tffi_readAddress(slot0);
+
+    // Auto-fill TFBasicType objects whose handler hasn't been initialized yet.
+    // TFBasicType has >= 3 slots: slot[0]=handler(ExternalAddress), slot[1]=..., slot[2]=typeCode(SmallInt).
+    // If handler is null but typeCode is valid, fill it now. This makes FFI callouts
+    // work even if TFBasicType class>>initialize hasn't completed yet.
+    if (!result && memory_.slotCountOf(obj) >= 3) {
+        Oop typeCodeOop = memory_.fetchPointer(2, obj);
+        if (typeCodeOop.isSmallInteger()) {
+            int64_t typeCode = typeCodeOop.asSmallInteger();
+            ffi_type* ffiType = nullptr;
+            switch (typeCode) {
+                case 1:  ffiType = &ffi_type_void;    break;
+                case 2:  ffiType = &ffi_type_float;   break;
+                case 3:  ffiType = &ffi_type_double;  break;
+                case 4:  ffiType = &ffi_type_uint8;   break;
+                case 5:  ffiType = &ffi_type_uint16;  break;
+                case 6:  ffiType = &ffi_type_uint32;  break;
+                case 7:  ffiType = &ffi_type_uint64;  break;
+                case 8:  ffiType = &ffi_type_sint8;   break;
+                case 9:  ffiType = &ffi_type_sint16;  break;
+                case 10: ffiType = &ffi_type_sint32;  break;
+                case 11: ffiType = &ffi_type_sint64;  break;
+                case 12: ffiType = &ffi_type_pointer; break;
+                case 13: ffiType = &ffi_type_uchar;   break;
+                case 14: ffiType = &ffi_type_schar;   break;
+                case 15: ffiType = &ffi_type_ushort;  break;
+                case 16: ffiType = &ffi_type_sshort;  break;
+                case 17: ffiType = &ffi_type_uint;    break;
+                case 18: ffiType = &ffi_type_sint;    break;
+                case 19: ffiType = &ffi_type_ulong;   break;
+                case 20: ffiType = &ffi_type_slong;   break;
+                default: break;
+            }
+            if (ffiType) {
+                tffi_setHandler(obj, ffiType);
+                result = ffiType;
+                static int autoFillCount = 0;
+                autoFillCount++;
+                if (autoFillCount <= 30) {
+                    fprintf(stderr, "[TFFI-AUTOFILL] Auto-filled typeCode=%lld -> ffi_type @%p\n",
+                            typeCode, ffiType);
+                }
+            }
+        }
+    }
+
+    return result;
 }
 
 // Write native pointer into slot 0's ExternalAddress
