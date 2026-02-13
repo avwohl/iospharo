@@ -6073,6 +6073,242 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         if (selLen == 11 && memcmp(selBytes, "layoutItems", 11) == 0) {
             fprintf(stderr, "[MENU-TRACE] layoutItems called\n");
         }
+        // menuBarItems: (13 chars) — sets items on the menubar
+        if (selLen == 13 && memcmp(selBytes, "menuBarItems:", 13) == 0) {
+            fprintf(stderr, "[MENU-TRACE] menuBarItems: called\n");
+        }
+        // addMorphBack: (13 chars) — adds a submorph
+        if (selLen == 13 && memcmp(selBytes, "addMorphBack:", 13) == 0) {
+            // Get the class of the argument
+            std::string argCls = "?";
+            Oop arg = stackValue(0);
+            if (arg.isObject() && arg.rawBits() > 0x10000) {
+                Oop c = memory_.classOf(arg);
+                if (c.isObject() && memory_.slotCountOf(c) > 6) {
+                    Oop n = memory_.fetchPointer(6, c);
+                    if (n.isObject() && !n.isNil()) {
+                        ObjectHeader* nh = n.asObjectPtr();
+                        if (nh->isBytesObject() && nh->byteSize() < 100)
+                            argCls = std::string((char*)nh->bytes(), nh->byteSize());
+                    }
+                }
+            }
+            // Get class of receiver
+            std::string rcvCls = "?";
+            Oop rcv = stackValue(1);
+            if (rcv.isObject() && rcv.rawBits() > 0x10000) {
+                Oop c = memory_.classOf(rcv);
+                if (c.isObject() && memory_.slotCountOf(c) > 6) {
+                    Oop n = memory_.fetchPointer(6, c);
+                    if (n.isObject() && !n.isNil()) {
+                        ObjectHeader* nh = n.asObjectPtr();
+                        if (nh->isBytesObject() && nh->byteSize() < 100)
+                            rcvCls = std::string((char*)nh->bytes(), nh->byteSize());
+                    }
+                }
+            }
+            if (argCls.find("Menubar") != std::string::npos || rcvCls.find("Menubar") != std::string::npos ||
+                argCls.find("MenuBar") != std::string::npos || rcvCls.find("MenuBar") != std::string::npos) {
+                // For MenubarItemMorph, read the contents (slot 8, 0-indexed)
+                std::string contents = "?";
+                if (argCls.find("MenubarItemMorph") != std::string::npos) {
+                    // StringMorph slot 8 = contents
+                    if (arg.isObject() && memory_.slotCountOf(arg) > 8) {
+                        Oop contentsOop = memory_.fetchPointer(8, arg);
+                        if (contentsOop.isObject() && !contentsOop.isNil()) {
+                            ObjectHeader* ch = contentsOop.asObjectPtr();
+                            if (ch->isBytesObject() && ch->byteSize() < 100) {
+                                contents = std::string((char*)ch->bytes(), ch->byteSize());
+                            }
+                        }
+                    }
+                    // Read bounds (slot 0) - it's a Rectangle
+                    std::string boundsStr = "?";
+                    if (arg.isObject() && memory_.slotCountOf(arg) > 0) {
+                        Oop boundsOop = memory_.fetchPointer(0, arg);
+                        if (boundsOop.isObject() && !boundsOop.isNil()) {
+                            // Rectangle has origin and corner inst vars
+                            if (memory_.slotCountOf(boundsOop) >= 2) {
+                                Oop origin = memory_.fetchPointer(0, boundsOop);
+                                Oop corner = memory_.fetchPointer(1, boundsOop);
+                                // Each is a Point with x,y
+                                auto readPoint = [&](Oop pt) -> std::string {
+                                    if (pt.isSmallInteger()) return std::to_string(pt.asSmallInteger());
+                                    if (!pt.isObject() || pt.isNil()) return "nil";
+                                    if (memory_.slotCountOf(pt) >= 2) {
+                                        Oop x = memory_.fetchPointer(0, pt);
+                                        Oop y = memory_.fetchPointer(1, pt);
+                                        std::string xs = x.isSmallInteger() ? std::to_string(x.asSmallInteger()) : "?";
+                                        std::string ys = y.isSmallInteger() ? std::to_string(y.asSmallInteger()) : "?";
+                                        return xs + "@" + ys;
+                                    }
+                                    return "?pt";
+                                };
+                                boundsStr = readPoint(origin) + " corner: " + readPoint(corner);
+                            }
+                        }
+                    }
+                    fprintf(stderr, "[MENU-TRACE] addMorphBack: %s '%s' bounds=(%s) on %s\n",
+                            argCls.c_str(), contents.c_str(), boundsStr.c_str(), rcvCls.c_str());
+                } else {
+                    fprintf(stderr, "[MENU-TRACE] addMorphBack: %s on %s\n", argCls.c_str(), rcvCls.c_str());
+                }
+            }
+        }
+        // widthOfString: (14 chars) — font text measurement
+        if (selLen == 14 && memcmp(selBytes, "widthOfString:", 14) == 0) {
+            static int sWidthCount = 0;
+            if (sWidthCount < 50) {
+                // Get the string argument
+                std::string str = "?";
+                Oop strArg = stackValue(0);
+                if (strArg.isObject() && !strArg.isNil()) {
+                    ObjectHeader* sh = strArg.asObjectPtr();
+                    if (sh->isBytesObject() && sh->byteSize() < 100) {
+                        str = std::string((char*)sh->bytes(), sh->byteSize());
+                    }
+                }
+                // Get receiver class name (the font)
+                std::string fontCls = "?";
+                if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                    Oop c = memory_.classOf(rcvr);
+                    if (c.isObject() && memory_.slotCountOf(c) > 6) {
+                        Oop n = memory_.fetchPointer(6, c);
+                        if (n.isObject() && !n.isNil()) {
+                            ObjectHeader* nh = n.asObjectPtr();
+                            if (nh->isBytesObject() && nh->byteSize() < 100)
+                                fontCls = std::string((char*)nh->bytes(), nh->byteSize());
+                        }
+                    }
+                }
+                fprintf(stderr, "[FONT-TRACE] widthOfString: '%s' on %s\n", str.c_str(), fontCls.c_str());
+                sWidthCount++;
+            }
+        }
+        // rebuildMenuBar (14 chars)
+        if (selLen == 14 && memcmp(selBytes, "rebuildMenuBar", 14) == 0) {
+            fprintf(stderr, "[MENU-TRACE] rebuildMenuBar called\n");
+        }
+        // buildMenuBar (12 chars)
+        if (selLen == 12 && memcmp(selBytes, "buildMenuBar", 12) == 0) {
+            fprintf(stderr, "[MENU-TRACE] buildMenuBar called\n");
+        }
+        // newMenuBar (10 chars)
+        if (selLen == 10 && memcmp(selBytes, "newMenuBar", 10) == 0) {
+            fprintf(stderr, "[MENU-TRACE] newMenuBar called\n");
+        }
+        // fillMenuBar (11 chars)
+        if (selLen == 11 && memcmp(selBytes, "fillMenuBar", 11) == 0) {
+            fprintf(stderr, "[MENU-TRACE] fillMenuBar called\n");
+        }
+        // open: (5 chars) on MenubarMorph
+        if (selLen == 4 && memcmp(selBytes, "open", 4) == 0) {
+            std::string cls = "?";
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                Oop c = memory_.classOf(rcvr);
+                if (c.isObject() && memory_.slotCountOf(c) > 6) {
+                    Oop n = memory_.fetchPointer(6, c);
+                    if (n.isObject() && !n.isNil()) {
+                        ObjectHeader* nh = n.asObjectPtr();
+                        if (nh->isBytesObject() && nh->byteSize() < 100)
+                            cls = std::string((char*)nh->bytes(), nh->byteSize());
+                    }
+                }
+            }
+            if (cls.find("Menubar") != std::string::npos || cls.find("MenuBar") != std::string::npos) {
+                fprintf(stderr, "[MENU-TRACE] open on %s\n", cls.c_str());
+            }
+        }
+        // addGroup: (9 chars) — Spec2 menu group addition
+        if (selLen == 9 && memcmp(selBytes, "addGroup:", 9) == 0) {
+            // Check if receiver is a menu bar presenter
+            std::string cls = "?";
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                Oop c = memory_.classOf(rcvr);
+                if (c.isObject() && memory_.slotCountOf(c) > 6) {
+                    Oop n = memory_.fetchPointer(6, c);
+                    if (n.isObject() && !n.isNil()) {
+                        ObjectHeader* nh = n.asObjectPtr();
+                        if (nh->isBytesObject() && nh->byteSize() < 100)
+                            cls = std::string((char*)nh->bytes(), nh->byteSize());
+                    }
+                }
+            }
+            if (cls.find("Menu") != std::string::npos || cls.find("menu") != std::string::npos) {
+                fprintf(stderr, "[MENU-TRACE] addGroup: on %s\n", cls.c_str());
+            }
+        }
+        // drawOn: (7 chars) — trace drawing of menubar items
+        if (selLen == 7 && memcmp(selBytes, "drawOn:", 7) == 0) {
+            static int sDrawMenuCount = 0;
+            if (sDrawMenuCount < 30) {
+                std::string cls = "?";
+                if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                    Oop c = memory_.classOf(rcvr);
+                    if (c.isObject() && memory_.slotCountOf(c) > 6) {
+                        Oop n = memory_.fetchPointer(6, c);
+                        if (n.isObject() && !n.isNil()) {
+                            ObjectHeader* nh = n.asObjectPtr();
+                            if (nh->isBytesObject() && nh->byteSize() < 100)
+                                cls = std::string((char*)nh->bytes(), nh->byteSize());
+                        }
+                    }
+                }
+                if (cls.find("MenubarItem") != std::string::npos) {
+                    // Read contents (slot 8) and bounds (slot 0)
+                    std::string contents = "?";
+                    if (memory_.slotCountOf(rcvr) > 8) {
+                        Oop contentsOop = memory_.fetchPointer(8, rcvr);
+                        if (contentsOop.isObject() && !contentsOop.isNil()) {
+                            ObjectHeader* ch = contentsOop.asObjectPtr();
+                            if (ch->isBytesObject() && ch->byteSize() < 100) {
+                                contents = std::string((char*)ch->bytes(), ch->byteSize());
+                            }
+                        }
+                    }
+                    // Read bounds
+                    std::string boundsStr = "?";
+                    auto readNum = [&](Oop v) -> std::string {
+                        if (v.isSmallInteger()) return std::to_string(v.asSmallInteger());
+                        if (v.isSmallFloat()) {
+                            char buf[32]; snprintf(buf, sizeof(buf), "%.1f", v.asSmallFloat());
+                            return buf;
+                        }
+                        if (v.isObject() && !v.isNil()) {
+                            // Check for BoxedFloat64 (format 9 = 64-bit indexable)
+                            ObjectHeader* vh = v.asObjectPtr();
+                            if (vh->format() == ObjectFormat::Indexable64 && vh->byteSize() == 8) {
+                                double d;
+                                memcpy(&d, vh->bytes(), 8);
+                                char buf[32]; snprintf(buf, sizeof(buf), "%.1f", d);
+                                return buf;
+                            }
+                        }
+                        return "?";
+                    };
+                    if (memory_.slotCountOf(rcvr) > 0) {
+                        Oop boundsOop = memory_.fetchPointer(0, rcvr);
+                        if (boundsOop.isObject() && !boundsOop.isNil() && memory_.slotCountOf(boundsOop) >= 2) {
+                            Oop origin = memory_.fetchPointer(0, boundsOop);
+                            Oop corner = memory_.fetchPointer(1, boundsOop);
+                            auto readPt = [&](Oop pt) -> std::string {
+                                if (!pt.isObject() || pt.isNil()) return "nil";
+                                if (memory_.slotCountOf(pt) >= 2) {
+                                    Oop x = memory_.fetchPointer(0, pt);
+                                    Oop y = memory_.fetchPointer(1, pt);
+                                    return readNum(x) + "@" + readNum(y);
+                                }
+                                return "?";
+                            };
+                            boundsStr = readPt(origin) + " corner: " + readPt(corner);
+                        }
+                    }
+                    fprintf(stderr, "[MENU-DRAW] drawOn: MenubarItemMorph '%s' bounds=(%s)\n",
+                            contents.c_str(), boundsStr.c_str());
+                    sDrawMenuCount++;
+                }
+            }
+        }
         // menuEntitled: (13 chars) — converts PragmaMenuBuilder to MenuMorph
         if (selLen == 13 && memcmp(selBytes, "menuEntitled:", 13) == 0) {
             fprintf(stderr, "[MENU-TRACE] menuEntitled: called\n");

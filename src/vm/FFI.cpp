@@ -17,6 +17,7 @@
 #include <sys/mman.h>
 
 #ifdef __APPLE__
+#include <TargetConditionals.h>
 #include <CoreFoundation/CoreFoundation.h>
 #endif
 
@@ -157,8 +158,11 @@ bool initializeFFI() {
     // This makes OSWindow think SDL2 is available
     registerSDL2Stubs();
 
-    // Register FreeType stubs (FreeType not available on iOS/Mac Catalyst)
+    // On Mac Catalyst, let real FreeType be found via dlsym (Homebrew installs it).
+    // On iOS, register stubs since FreeType is unavailable.
+#if !TARGET_OS_MACCATALYST
     registerFreeTypeStubs();
+#endif
 
     return true;
 }
@@ -694,6 +698,25 @@ void stub_SDL_UnlockTexture(void* texture) {
     auto it = sTextures.find(texture);
     if (it == sTextures.end() || !it->second.pixels) return;
 
+    static int unlockCount = 0;
+    unlockCount++;
+
+    // Probe menu bar pixels in the texture BEFORE copying to display
+    if (unlockCount <= 20) {
+        uint32_t* src = it->second.pixels;
+        int srcW = it->second.width;
+        int srcH = it->second.height;
+        if (srcH > 10 && srcW > 200) {
+            // Sample pixels at y=5 (middle of menu bar) at various x positions
+            uint32_t p0   = src[5 * srcW + 10];   // "Pharo" area
+            uint32_t p100 = src[5 * srcW + 100];  // "Browse" area
+            uint32_t p200 = src[5 * srcW + 200];  // "Debug/Sources" area
+            uint32_t p400 = src[5 * srcW + 400];  // "Library/Windows" area
+            fprintf(stderr, "[UNLOCK-PROBE] #%d tex=%dx%d px@y=5: x10=%08x x100=%08x x200=%08x x400=%08x\n",
+                    unlockCount, srcW, srcH, p0, p100, p200, p400);
+        }
+    }
+
     if (pharo::gDisplaySurface) {
         uint32_t* src = it->second.pixels;
         int srcW = it->second.width;
@@ -726,8 +749,18 @@ int stub_SDL_RenderCopy(void* renderer, void* texture, void* srcrect, void* dstr
 }
 
 int stub_SDL_UpdateTexture(void* texture, void* rect, void* pixels, int pitch) {
+    static int utCount = 0;
+    utCount++;
+    if (utCount <= 10 || utCount % 100 == 0) {
+        fprintf(stderr, "[SDL-UT] #%d texture=%p rect=%p pixels=%p pitch=%d\n",
+                utCount, texture, rect, pixels, pitch);
+    }
     auto it = sTextures.find(texture);
     if (it == sTextures.end() || !it->second.pixels || !pixels) {
+        fprintf(stderr, "[SDL-UT] #%d FAILED: tex_found=%d has_pixels=%d src_pixels=%d\n",
+                utCount, (int)(it != sTextures.end()),
+                it != sTextures.end() ? (it->second.pixels != nullptr) : 0,
+                pixels != nullptr);
         return -1;
     }
 
