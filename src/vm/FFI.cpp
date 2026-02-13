@@ -25,6 +25,9 @@
 // Flag set when Emergency Debugger window is created — checked by interpreter to dump stack
 std::atomic<bool> g_emergencyDebuggerTriggered{false};
 
+// Trace sends after SDL_PollEvent returns a mouse event (read by Interpreter.cpp)
+extern std::atomic<int> g_traceAfterMouseSDLEvent;
+
 // SDL2 event types
 #define SDL_QUIT            0x100
 #define SDL_WINDOWEVENT     0x200
@@ -1041,6 +1044,8 @@ int stub_SDL_PollEvent(void* event) {
                     mouseLogCount, sdlEvent->button.type, sdlEvent->button.windowID,
                     sdlEvent->button.button, sdlEvent->button.state,
                     sdlEvent->button.x, sdlEvent->button.y);
+            // Note: send tracing now triggers from GetModState (last FFI call in event handler)
+            // to skip the >1000 sends of UFFI compilation/setup
         }
         return 1;  // Event available
     } else if (pharoEvent.type == static_cast<int>(pharo::EventType::MouseWheel)) {
@@ -1216,6 +1221,7 @@ uint32_t stub_SDL_GetModState() {
         fprintf(stderr, "[SDL-STATE] GetModState #%d: modState=0x%x\n",
                 callCount, sKeyModState);
     }
+    // GetModState trace trigger disabled — trace now triggers from HandMorph >> handleEvent:
     return sKeyModState;
 }
 

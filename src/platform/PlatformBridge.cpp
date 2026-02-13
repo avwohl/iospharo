@@ -208,6 +208,14 @@ bool vm_initialize(size_t heapSize) {
 }
 
 bool vm_loadImage(const char* imagePath) {
+    // Redirect stderr to file for Mac Catalyst trace capture
+    static bool stderrRedirected = false;
+    if (!stderrRedirected) {
+        FILE* traceFile = freopen("/tmp/iospharo-stderr.log", "w", stderr);
+        if (traceFile) setbuf(traceFile, nullptr);
+        stderrRedirected = true;
+    }
+
     if (!gMemory) {
         return false;
     }

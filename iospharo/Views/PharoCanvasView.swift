@@ -21,6 +21,11 @@
 import SwiftUI
 import MetalKit
 
+// Event logging — writes to stderr (already redirected to /tmp/iospharo-stderr.log by C++)
+func pharoEventLog(_ msg: String) {
+    fputs("[SWIFT-EVENT] \(msg)\n", stderr)
+}
+
 // MARK: - Custom MTKView with Direct Touch Handling
 
 /// Custom MTKView subclass that handles touch and mouse events directly
@@ -41,6 +46,9 @@ class PharoMTKView: MTKView {
         isUserInteractionEnabled = true
         isMultipleTouchEnabled = true
     }
+
+    // File-based logging that works with redirected stderr
+    func eventLog(_ msg: String) { pharoEventLog(msg) }
 
     override var canBecomeFirstResponder: Bool {
         return true
@@ -66,11 +74,12 @@ class PharoMTKView: MTKView {
     private var currentButton: Int = IOS_RED_BUTTON
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        eventLog("[TOUCH] touchesBegan count=\(touches.count) bridge=\(bridge != nil)")
         guard let touch = touches.first, let bridge = bridge else { return }
         let point = touch.location(in: self)
         let buttons = buttonMaskToPharo(event)
         currentButton = buttons
-        NSLog("[TOUCH] down at (%d,%d) buttons=%d", Int(point.x), Int(point.y), buttons)
+        eventLog("[TOUCH] down at (\(Int(point.x)),\(Int(point.y))) buttons=\(buttons)")
         bridge.sendMouseMoved(to: point, modifiers: 0)
         bridge.sendTouchDown(at: point, buttons: buttons)
     }
@@ -126,7 +135,7 @@ class PharoMTKView: MTKView {
 
     // MARK: - Button Mapping
 
-    private func buttonMaskToPharo(_ event: UIEvent?) -> Int {
+    func buttonMaskToPharo(_ event: UIEvent?) -> Int {
         #if targetEnvironment(macCatalyst)
         guard let event = event else { return IOS_RED_BUTTON }
         if #available(macCatalyst 13.4, *) {
@@ -185,10 +194,9 @@ class PharoCanvasViewController: UIViewController {
         mtkView.becomeFirstResponder()
 
         #if targetEnvironment(macCatalyst)
-        // Wait for SDL2 event polling to be active before injecting events.
-        // Events injected before this are consumed by processInputEvents()
-        // and never reach OSSDL2Driver, so mouse/keyboard events would be lost.
-        self.waitForSDLEventPolling {
+        // Wait for SDL event polling to be active before injecting test events
+        waitForSDLEventPolling {
+            NSLog("[TEST] SDL event polling active, injecting test events")
             self.injectMenuTest()
         }
         #endif
@@ -286,7 +294,12 @@ class PharoCanvasViewController: UIViewController {
             target: self,
             action: #selector(handleHover(_:))
         )
+        hoverGesture.cancelsTouchesInView = false
         targetView.addGestureRecognizer(hoverGesture)
+
+        // Mouse clicks/drags handled by touchesBegan/Moved/Ended
+        // (with cancelsTouchesInView=false on hover, touches are delivered)
+        // No additional tap/pan gestures needed for Mac Catalyst.
 
         // Scroll gesture: two-finger trackpad scroll
         let scrollGesture = UIPanGestureRecognizer(
@@ -358,17 +371,61 @@ class PharoCanvasViewController: UIViewController {
     #if targetEnvironment(macCatalyst)
     @objc func handleHover(_ gesture: UIHoverGestureRecognizer) {
         guard let bridge = bridge else {
-            NSLog("[HOVER] handleHover bridge=NIL")
+            pharoEventLog("[HOVER] handleHover bridge=NIL")
             return
         }
         let point = gesture.location(in: mtkView)
 
         switch gesture.state {
         case .began:
-            NSLog("[HOVER] began at (%d,%d)", Int(point.x), Int(point.y))
+            pharoEventLog("[HOVER] began at (\(Int(point.x)),\(Int(point.y)))")
             bridge.sendMouseMoved(to: point, modifiers: 0)
         case .changed:
             bridge.sendMouseMoved(to: point, modifiers: 0)
+        default:
+            break
+        }
+    }
+
+    @objc func handleMacCatalystTap(_ gesture: UITapGestureRecognizer) {
+        guard let bridge = bridge else { return }
+        let point = gesture.location(in: mtkView)
+        // Detect button: default to left, check modifiers for right-click
+        var buttons = IOS_RED_BUTTON
+        if #available(macCatalyst 13.4, *) {
+            if gesture.buttonMask.contains(.secondary) {
+                buttons = IOS_YELLOW_BUTTON
+            }
+        }
+        pharoEventLog("[MAC-TAP] at (\(Int(point.x)),\(Int(point.y))) buttons=\(buttons)")
+        bridge.sendMouseMoved(to: point, modifiers: 0)
+        bridge.sendTouchDown(at: point, buttons: buttons)
+        bridge.sendTouchUp(at: point, buttons: buttons)
+    }
+
+    @objc func handleMacCatalystRightTap(_ gesture: UITapGestureRecognizer) {
+        guard let bridge = bridge else { return }
+        let point = gesture.location(in: mtkView)
+        pharoEventLog("[MAC-RIGHT-TAP] at (\(Int(point.x)),\(Int(point.y)))")
+        bridge.sendMouseMoved(to: point, modifiers: 0)
+        bridge.sendTouchDown(at: point, buttons: IOS_YELLOW_BUTTON)
+        bridge.sendTouchUp(at: point, buttons: IOS_YELLOW_BUTTON)
+    }
+
+    @objc func handleMacCatalystPan(_ gesture: UIPanGestureRecognizer) {
+        guard let bridge = bridge else { return }
+        let point = gesture.location(in: mtkView)
+        switch gesture.state {
+        case .began:
+            let buttons = IOS_RED_BUTTON  // Pan/drag is always left-button
+            pharoEventLog("[MAC-PAN] began at (\(Int(point.x)),\(Int(point.y)))")
+            bridge.sendMouseMoved(to: point, modifiers: 0)
+            bridge.sendTouchDown(at: point, buttons: buttons)
+        case .changed:
+            bridge.sendTouchMoved(to: point, buttons: IOS_RED_BUTTON)
+        case .ended, .cancelled:
+            pharoEventLog("[MAC-PAN] ended at (\(Int(point.x)),\(Int(point.y)))")
+            bridge.sendTouchUp(at: point, buttons: IOS_RED_BUTTON)
         default:
             break
         }
