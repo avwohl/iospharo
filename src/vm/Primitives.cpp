@@ -11705,14 +11705,21 @@ PrimitiveResult Interpreter::primitiveFileDescriptorType(int argCount) {
         return PrimitiveResult::Success;
     }
 
-    // Use Cog VM numbering (not POSIX stat mode values)
+    // Cog VM's sqFileDescriptorType() numbering:
+    //   0 = no console (Windows-specific)
+    //   1 = terminal (character device)
+    //   2 = pipe/FIFO
+    //   3 = regular file
+    //   4 = Cygwin terminal (Windows-specific)
+    //  -1 = unknown/invalid
+    // Pharo's fileDescriptorIsAvailable: checks (type between: 1 and: 3)
     int type = -1;
-    if (S_ISREG(statBuf.st_mode)) type = 0;        // Regular file
-    else if (S_ISFIFO(statBuf.st_mode)) type = 1;   // Pipe/FIFO
+    if (S_ISCHR(statBuf.st_mode)) type = 1;          // Terminal/character device
+    else if (S_ISFIFO(statBuf.st_mode)) type = 2;    // Pipe/FIFO
 #ifdef S_ISSOCK
-    else if (S_ISSOCK(statBuf.st_mode)) type = 2;   // Socket
+    else if (S_ISSOCK(statBuf.st_mode)) type = 2;    // Socket (treat as pipe)
 #endif
-    else if (S_ISCHR(statBuf.st_mode)) type = 3;    // Character device (terminal)
+    else if (S_ISREG(statBuf.st_mode)) type = 3;     // Regular file
 
     pop();
     push(Oop::fromSmallInteger(type));
@@ -16887,10 +16894,19 @@ PrimitiveResult Interpreter::primitiveSetManualSurfacePointer(int argCount) {
     s->bits = ptr;
 
     static int setPointerCount = 0;
-    if (setPointerCount < 5) {
-        fprintf(stderr, "[SURFACE] setPointer: surfID=%d ptr=%p (w=%d h=%d pitch=%d depth=%d)\n",
-                surfaceID, ptr, s->width, s->height, s->rowPitch, s->depth);
-        setPointerCount++;
+    setPointerCount++;
+    if (setPointerCount <= 20 || setPointerCount % 100 == 0) {
+        const char* type = "unknown";
+        if (ptrOop.isNil()) type = "nil";
+        else if (ptrOop.isSmallInteger()) type = "SmallInt";
+        else if (ptrOop.isObject()) {
+            ObjectHeader* h = ptrOop.asObjectPtr();
+            if (h->isBytesObject()) type = "BytesObj";
+            else type = "PointerObj";
+        }
+        fprintf(stderr, "[SURFACE] setPointer: #%d surfID=%d ptr=%p type=%s oop=0x%llx (w=%d h=%d pitch=%d depth=%d)\n",
+                setPointerCount, surfaceID, ptr, type, (unsigned long long)ptrOop.rawBits(),
+                s->width, s->height, s->rowPitch, s->depth);
     }
 
     // Pop args, leave receiver
@@ -23268,7 +23284,10 @@ PrimitiveResult Interpreter::primitiveOpendir(int argCount) {
 }
 
 // FileAttributesPlugin>>primitiveReaddir
-// Stack: receiver, dirPointerBytes -> String (entry name) or nil (end of dir)
+// Stack: receiver, dirPointerBytes -> Array({filenameByteArray, attributesOrNil}) or nil (end of dir)
+// Pharo's DiskStore>>directoryAt:nodesDo: expects a 2+ element Array where:
+//   element 1 = filename as ByteArray (UTF-8 encoded)
+//   element 2 = symlink attributes Array or nil
 PrimitiveResult Interpreter::primitiveReaddir(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
@@ -23294,12 +23313,27 @@ PrimitiveResult Interpreter::primitiveReaddir(int argCount) {
         return PrimitiveResult::Success;
     }
 
-    // Create string for the entry name
-    Oop nameStr = createStringObject(memory_, entry->d_name);
-    if (nameStr.isNil()) return PrimitiveResult::Failure;
+    // Create ByteArray for the entry name (Pharo expects ByteArray, not String)
+    size_t nameLen = strlen(entry->d_name);
+    Oop byteArrayClass = memory_.specialObject(SpecialObjectIndex::ClassByteArray);
+    if (byteArrayClass.isNil()) return PrimitiveResult::Failure;
+    uint32_t baClassIndex = memory_.indexOfClass(byteArrayClass);
+    Oop nameBytes = memory_.allocateBytes(baClassIndex, nameLen);
+    if (nameBytes.isNil()) return PrimitiveResult::Failure;
+    memcpy(nameBytes.asObjectPtr()->bytes(), entry->d_name, nameLen);
+
+    // Create 2-element Array: {filenameByteArray, nil}
+    Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
+    if (arrayClass.isNil()) return PrimitiveResult::Failure;
+    uint32_t arrayClassIndex = memory_.indexOfClass(arrayClass);
+    Oop resultArray = memory_.allocateSlots(arrayClassIndex, 2, ObjectFormat::Indexable);
+    if (resultArray.isNil()) return PrimitiveResult::Failure;
+
+    memory_.storePointer(0, resultArray, nameBytes);
+    memory_.storePointer(1, resultArray, memory_.nil());
 
     popN(2);  // pop arg + receiver
-    push(nameStr);
+    push(resultArray);
     return PrimitiveResult::Success;
 }
 
