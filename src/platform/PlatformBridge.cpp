@@ -96,7 +96,10 @@ public:
     }
 
     void update() override {
+        static int updateCount = 0;
+        updateCount++;
         int newWidth, newHeight;
+        uint32_t centerPx = 0;
         {
             std::lock_guard<std::mutex> lock(mutex_);
 
@@ -105,12 +108,15 @@ public:
                 pendingResize_ = false;
             }
 
-            // No buffer swap: VM and Metal run on the same main thread
-            // (serialized by CFRunLoopRunInMode), so single-buffer is safe.
-            // The old swap design lost incremental showDisplayBits updates
-            // because each swap replaced the back buffer with stale content.
             newWidth = width_;
             newHeight = height_;
+            // Sample center pixel
+            if (newHeight > 384 && newWidth > 512 && backBuffer_.size() > (size_t)(384 * newWidth + 512)) {
+                centerPx = backBuffer_[384 * newWidth + 512];
+            }
+        }
+        if (updateCount <= 10 || updateCount % 200 == 0) {
+            fprintf(stderr, "[DISPLAY-UPDATE] #%d center=%08x\n", updateCount, centerPx);
         }
         invalidateRect(0, 0, newWidth, newHeight);
     }
@@ -125,6 +131,10 @@ public:
     void resize(int w, int h, int d) {
         std::lock_guard<std::mutex> lock(mutex_);
         if (w == width_ && h == height_ && d == depth_ && !pendingResize_) return;
+
+        fprintf(stderr, "[DISPLAY-RESIZE] %dx%dx%d -> %dx%dx%d (buf %zu -> %d)\n",
+                width_, height_, depth_, w, h, d,
+                backBuffer_.size(), w * h);
 
         // Resize back buffer immediately (VM renders here)
         width_ = w;

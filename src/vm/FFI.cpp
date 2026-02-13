@@ -32,6 +32,9 @@
 #define SDL_MOUSEWHEEL      0x403
 
 // SDL2 window event subtypes
+#define SDL_WINDOWEVENT_SHOWN         1
+#define SDL_WINDOWEVENT_EXPOSED       3
+#define SDL_WINDOWEVENT_FOCUS_GAINED  12
 #define SDL_WINDOWEVENT_SIZE_CHANGED  6
 
 // SDL2 mouse button codes
@@ -237,6 +240,9 @@ static void* sMainRenderer = nullptr;  // First renderer is the "main" one (rend
 static void* sMainWindow = nullptr;    // First window is the "main" one (receives events)
 static bool sSDLRenderingActive = false;  // Set when SDL_RenderPresent first copies to display
 
+// Pending synthetic window events (SDL2 sends these when window is created/shown)
+static std::queue<uint8_t> sPendingWindowEvents;
+
 // Mouse state tracking - updated by SDL_PollEvent, queried by SDL_GetMouseState/SDL_GetModState
 static int sMouseX = 0;
 static int sMouseY = 0;
@@ -304,8 +310,12 @@ void stub_SDL_GetWindowSize(void* window, int* w, int* h) {
     if (window == sMainWindow && pharo::gDisplaySurface) {
         if (w) *w = pharo::gDisplaySurface->width();
         if (h) *h = pharo::gDisplaySurface->height();
-        fprintf(stderr, "[SDL-STUB] SDL_GetWindowSize(main) -> %dx%d\n",
-                w ? *w : -1, h ? *h : -1);
+        static int winSizeCount = 0;
+        winSizeCount++;
+        if (winSizeCount <= 5 || winSizeCount % 500 == 0) {
+            fprintf(stderr, "[SDL-STUB] SDL_GetWindowSize #%d (main) -> %dx%d\n",
+                    winSizeCount, w ? *w : -1, h ? *h : -1);
+        }
         return;
     }
     auto it = sWindows.find(window);
@@ -384,9 +394,12 @@ void* stub_SDL_CreateRenderer(void* window, int index, uint32_t flags) {
     state.window = window;
     state.currentTexture = nullptr;
     sRenderers[handle] = state;
-    if (!sMainRenderer) {
-        sMainRenderer = handle;  // First renderer is the "main" one
+    // Track main renderer: prefer the renderer for the main window
+    if (window == sMainWindow || !sMainRenderer) {
+        sMainRenderer = handle;
     }
+    fprintf(stderr, "[SDL-STUB] SDL_CreateRenderer(win=%p) -> %p (main=%p)\n",
+            window, handle, sMainRenderer);
     return handle;
 }
 
@@ -398,6 +411,11 @@ void stub_SDL_DestroyRenderer(void* renderer) {
 }
 
 int stub_SDL_RenderClear(void* renderer) {
+    static int clearCount = 0;
+    clearCount++;
+    if (clearCount <= 5 || clearCount % 200 == 0) {
+        fprintf(stderr, "[SDL-RC] RenderClear #%d renderer=%p\n", clearCount, renderer);
+    }
     return 0;
 }
 
@@ -405,28 +423,30 @@ void stub_SDL_RenderPresent(void* renderer) {
     static int totalCalls = 0;
     totalCalls++;
 
-    // Only copy main renderer's texture to the Metal display surface
-    if (renderer != sMainRenderer) {
-        if (totalCalls <= 5)
-            fprintf(stderr, "[SDL-RP] #%d SKIP: renderer=%p != main=%p\n",
-                    totalCalls, renderer, sMainRenderer);
-        return;
-    }
-
-    // Log first main renderer present call.
-    // NOTE: Do NOT set sdl2EventPollingActive here. That flag must only be set
-    // by stub_SDL_PollEvent when the image's event loop actually starts polling.
-    // Setting it here prematurely blocks processInputEvents() from draining the
-    // event queue, causing a deadlock if SDL_PollEvent is never called.
+    // Log first call
     if (!sSDLRenderingActive) {
         sSDLRenderingActive = true;
-        fprintf(stderr, "[SDL-RP] first call (rendering active, events via processInputEvents until PollEvent starts)\n");
+        fprintf(stderr, "[SDL-RP] first call renderer=%p main=%p (rendering active)\n",
+                renderer, sMainRenderer);
     }
 
+    // Only copy to gDisplaySurface from the main renderer.
+    // Secondary renderers (Emergency Debugger, etc.) have their own windows
+    // and should not overwrite the main display.
     auto rit = sRenderers.find(renderer);
     if (rit == sRenderers.end() || !rit->second.currentTexture) {
         if (totalCalls <= 5)
-            fprintf(stderr, "[SDL-RP] #%d SKIP: renderer not found or no texture\n", totalCalls);
+            fprintf(stderr, "[SDL-RP] #%d SKIP: renderer %p not found or no texture\n", totalCalls, renderer);
+        return;
+    }
+
+    // Skip non-main renderers
+    if (renderer != sMainRenderer) {
+        static int skipCount = 0;
+        if (++skipCount <= 5) {
+            fprintf(stderr, "[SDL-RP] #%d SKIP: secondary renderer %p (main=%p)\n",
+                    totalCalls, renderer, sMainRenderer);
+        }
         return;
     }
 
@@ -448,22 +468,10 @@ void stub_SDL_RenderPresent(void* renderer) {
         int copyW = std::min(srcW, dstW);
         int copyH = std::min(srcH, dstH);
 
-        // Sample a few pixels before and after copy
         if (totalCalls <= 5 || totalCalls % 200 == 0) {
             uint32_t srcCenter = (srcH > 384 && srcW > 512) ? src[384 * srcW + 512] : 0;
-            uint32_t srcCorner = src[0];
-            uint32_t dstCenter = (dstH > 384 && dstW > 512) ? dst[384 * dstW + 512] : 0;
-            // Count non-zero pixels in src (sample every 100th)
-            int nonZero = 0;
-            int uniqueCount = 0;
-            uint32_t lastColor = 0xDEADBEEF;
-            for (int i = 0; i < srcW * srcH; i += 100) {
-                if (src[i] != 0) nonZero++;
-                if (src[i] != lastColor) { uniqueCount++; lastColor = src[i]; }
-            }
-            fprintf(stderr, "[SDL-RP] #%d copy %dx%d -> %dx%d srcCenter=%08x srcCorner=%08x dstCenter=%08x srcNonZero=%d/%d srcUnique=%d\n",
-                    totalCalls, srcW, srcH, dstW, dstH,
-                    srcCenter, srcCorner, dstCenter, nonZero, srcW*srcH/100, uniqueCount);
+            fprintf(stderr, "[SDL-RP] #%d copy %dx%d -> %dx%d srcCenter=%08x\n",
+                    totalCalls, srcW, srcH, dstW, dstH, srcCenter);
         }
 
         for (int y = 0; y < copyH; y++) {
@@ -483,8 +491,12 @@ int stub_SDL_GetRendererOutputSize(void* renderer, int* w, int* h) {
     }
     if (w) *w = rw;
     if (h) *h = rh;
-    fprintf(stderr, "[SDL-STUB] SDL_GetRendererOutputSize(renderer=%p) -> %dx%d\n",
-            renderer, rw, rh);
+    static int outputSizeCount = 0;
+    outputSizeCount++;
+    if (outputSizeCount <= 5 || outputSizeCount % 500 == 0) {
+        fprintf(stderr, "[SDL-STUB] SDL_GetRendererOutputSize #%d (renderer=%p) -> %dx%d\n",
+                outputSizeCount, renderer, rw, rh);
+    }
     return 0;
 }
 
@@ -542,11 +554,11 @@ int stub_SDL_LockTexture(void* texture, void* rect, void** pixels, int* pitch) {
         *pitch = it->second.pitch;
     }
     static int lockCount = 0;
-    if (lockCount < 5) {
-        fprintf(stderr, "[SDL-STUB] SDL_LockTexture #%d: texture=%p pixels=%p pitch=%d (%dx%d)\n",
+    lockCount++;
+    if (lockCount <= 5 || lockCount % 200 == 0) {
+        fprintf(stderr, "[SDL-LOCK] #%d texture=%p pixels=%p pitch=%d (%dx%d)\n",
                 lockCount, texture, it->second.pixels, it->second.pitch,
                 it->second.width, it->second.height);
-        lockCount++;
     }
     return 0;
 }
@@ -555,10 +567,15 @@ void stub_SDL_UnlockTexture(void* texture) {
 }
 
 int stub_SDL_RenderCopy(void* renderer, void* texture, void* srcrect, void* dstrect) {
+    static int copyCount = 0;
+    copyCount++;
     // Track which texture was last rendered
     auto rit = sRenderers.find(renderer);
     if (rit != sRenderers.end()) {
         rit->second.currentTexture = texture;
+    }
+    if (copyCount <= 5 || copyCount % 200 == 0) {
+        fprintf(stderr, "[SDL-RCOPY] #%d renderer=%p texture=%p\n", copyCount, renderer, texture);
     }
     return 0;
 }
@@ -588,7 +605,7 @@ int stub_SDL_UpdateTexture(void* texture, void* rect, void* pixels, int pitch) {
             memcpy(dst + y * dstBytesPerRow, src + y * srcBytesPerRow, copyBytes);
         }
 
-        if (updateCount <= 5) {
+        if (updateCount <= 5 || updateCount % 200 == 0) {
             uint32_t* srcPx = static_cast<uint32_t*>(pixels);
             uint32_t center = (texH > 384 && texW > 512) ? srcPx[384 * (pitch/4) + 512] : 0;
             fprintf(stderr, "[SDL-UT] #%d full update: %dx%d pitch=%d center=%08x\n",
@@ -610,7 +627,7 @@ int stub_SDL_UpdateTexture(void* texture, void* rect, void* pixels, int pitch) {
                    copyBytes);
         }
 
-        if (updateCount <= 5) {
+        if (updateCount <= 5 || updateCount % 200 == 0) {
             fprintf(stderr, "[SDL-UT] #%d rect update: (%d,%d,%d,%d) pitch=%d\n",
                     updateCount, rx, ry, rw, rh, pitch);
         }
@@ -635,9 +652,23 @@ int stub_SDL_PollEvent(void* event) {
     }
 
     // Log the first few calls and periodic calls to track pointer stability
-    if (totalPollCalls <= 5 || totalPollCalls % 500 == 0) {
+    if (totalPollCalls <= 5 || totalPollCalls % 5000 == 0) {
         fprintf(stderr, "[SDL-POLL] #%d event ptr=%p queueSize=%zu\n",
                 totalPollCalls, event, pharo::gEventQueue.size());
+    }
+
+    // Monitor gDisplaySurface for unexpected content changes
+    if (pharo::gDisplaySurface && (totalPollCalls % 1000 == 0)) {
+        uint32_t* px = pharo::gDisplaySurface->pixels();
+        int w = pharo::gDisplaySurface->width();
+        int h = pharo::gDisplaySurface->height();
+        uint32_t center = (h > 384 && w > 512) ? px[384 * w + 512] : px[0];
+        static uint32_t lastCenter = 0;
+        if (center != lastCenter) {
+            fprintf(stderr, "[SURF-MON] poll#%d surface center changed: %08x -> %08x\n",
+                    totalPollCalls, lastCenter, center);
+            lastCenter = center;
+        }
     }
 
     // Validate event pointer - FFI may pass stale heap address after GC compaction
@@ -674,6 +705,33 @@ int stub_SDL_PollEvent(void* event) {
         }
     }
 #endif
+
+    // Deliver pending synthetic window events one at a time
+    if (!sPendingWindowEvents.empty()) {
+        uint8_t windowEventType = sPendingWindowEvents.front();
+        sPendingWindowEvents.pop();
+        SDL_Event* sdlEvent = reinterpret_cast<SDL_Event*>(event);
+        memset(sdlEvent, 0, sizeof(SDL_Event));
+        uint32_t windowID = sMainWindow ? stub_SDL_GetWindowID(sMainWindow) : 1;
+        sdlEvent->window.type = SDL_WINDOWEVENT;
+        sdlEvent->window.timestamp = 0;
+        sdlEvent->window.windowID = windowID;
+        sdlEvent->window.event = windowEventType;
+        fprintf(stderr, "[SDL-PE] Delivering synthetic window event type=%d at poll#%d\n",
+                windowEventType, totalPollCalls);
+        return 1;
+    }
+
+    // After startup fully settles (~2min of polling), send SHOWN + EXPOSED + FOCUS_GAINED
+    // to trigger the initial full repaint. Real SDL2 sends these when the window
+    // first becomes visible. We delay because the event handler must be set up first
+    // and the Emergency Debugger cascade must complete.
+    if (sMainWindow && totalPollCalls == 10000) {
+        sPendingWindowEvents.push(SDL_WINDOWEVENT_SHOWN);
+        sPendingWindowEvents.push(SDL_WINDOWEVENT_EXPOSED);
+        sPendingWindowEvents.push(SDL_WINDOWEVENT_FOCUS_GAINED);
+        fprintf(stderr, "[SDL-PE] Queuing deferred SHOWN+EXPOSED+FOCUS at poll#%d\n", totalPollCalls);
+    }
 
     // Pop event from our queue
     pharo::Event pharoEvent;
