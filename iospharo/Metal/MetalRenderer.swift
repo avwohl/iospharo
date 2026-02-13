@@ -77,11 +77,12 @@ class MetalRenderer: NSObject, MTKViewDelegate {
 
         metalView.delegate = self
 
-        // framebufferOnly=false allows Window Server to read drawable textures
-        // for compositing, and allows diagnostic readback.
+        // presentsWithTransaction=true forces synchronous drawable→compositor
+        // handoff within the CATransaction, ensuring the Window Server sees content.
         if let metalLayer = metalView.layer as? CAMetalLayer {
             metalLayer.framebufferOnly = false
-            NSLog("[METAL-INIT] layer.drawableSize=\(metalLayer.drawableSize) framebufferOnly=\(metalLayer.framebufferOnly) contentsScale=\(metalLayer.contentsScale) pixelFormat=\(metalLayer.pixelFormat.rawValue)")
+            metalLayer.presentsWithTransaction = true
+            NSLog("[METAL-INIT] layer.drawableSize=\(metalLayer.drawableSize) framebufferOnly=\(metalLayer.framebufferOnly) presentsWithTransaction=\(metalLayer.presentsWithTransaction) contentsScale=\(metalLayer.contentsScale) pixelFormat=\(metalLayer.pixelFormat.rawValue)")
         }
     }
 
@@ -161,14 +162,12 @@ class MetalRenderer: NSObject, MTKViewDelegate {
         guard let rpd = view.currentRenderPassDescriptor else { return }
         guard let cmdBuf = commandQueue.makeCommandBuffer() else { return }
 
-        // First frame: dump full diagnostics
+        // First frame: dump diagnostics
         if drawCount == 1 {
             dumpViewHierarchy(view)
             if let metalLayer = view.layer as? CAMetalLayer {
                 NSLog("[METAL-DIAG] drawableSize=\(metalLayer.drawableSize) framebufferOnly=\(metalLayer.framebufferOnly) presentsWithTransaction=\(metalLayer.presentsWithTransaction)")
             }
-            let att = rpd.colorAttachments[0]!
-            NSLog("[METAL-DIAG] rpd.colorAttachment[0]: loadAction=\(att.loadAction.rawValue) storeAction=\(att.storeAction.rawValue) texture=\(att.texture?.width ?? 0)x\(att.texture?.height ?? 0)")
         }
 
         guard let enc = cmdBuf.makeRenderCommandEncoder(descriptor: rpd) else { return }
@@ -179,39 +178,19 @@ class MetalRenderer: NSObject, MTKViewDelegate {
         enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
         enc.endEncoding()
 
-        // Present the drawable
-        cmdBuf.present(drawable)
+        // With presentsWithTransaction=true: commit, wait, then present
+        // within the CATransaction so the compositor sees the content.
         cmdBuf.commit()
+        cmdBuf.waitUntilCompleted()
+        drawable.present()
 
-        // First 3 frames + every 300th: wait for completion and verify
-        if drawCount <= 3 || drawCount % 300 == 0 {
-            cmdBuf.waitUntilCompleted()
-            let statusNames = ["notEnqueued", "enqueued", "committed", "scheduled", "completed", "error"]
-            let statusName = cmdBuf.status.rawValue < statusNames.count ? statusNames[Int(cmdBuf.status.rawValue)] : "unknown"
-            NSLog("[METAL-DRAW] #\(drawCount) status=\(statusName) error=\(cmdBuf.error?.localizedDescription ?? "none") tex=\(texture.width)x\(texture.height) drawable=\(drawable.texture.width)x\(drawable.texture.height)")
-
-            // Readback from source texture (shared storage, always readable)
-            var srcPixel: UInt32 = 0
-            let mid = MTLRegion(origin: MTLOrigin(x: texture.width/2, y: texture.height/2, z: 0),
-                                size: MTLSize(width: 1, height: 1, depth: 1))
-            texture.getBytes(&srcPixel, bytesPerRow: 4, from: mid, mipmapLevel: 0)
-            NSLog("[METAL-DRAW] #\(drawCount) srcTexture center pixel=\(String(format: "%08X", srcPixel))")
-
-            // Also readback from the DRAWABLE texture to verify shader output
-            // (requires framebufferOnly=false on the CAMetalLayer)
-            if drawable.texture.storageMode == .shared || drawable.texture.storageMode == .managed {
-                var drawPixel: UInt32 = 0
-                let drawMid = MTLRegion(origin: MTLOrigin(x: drawable.texture.width/2, y: drawable.texture.height/2, z: 0),
-                                        size: MTLSize(width: 1, height: 1, depth: 1))
-                drawable.texture.getBytes(&drawPixel, bytesPerRow: 4, from: drawMid, mipmapLevel: 0)
-                NSLog("[METAL-DRAW] #\(drawCount) drawableTexture center pixel=\(String(format: "%08X", drawPixel))")
-            } else {
-                NSLog("[METAL-DRAW] #\(drawCount) drawableTexture storageMode=\(drawable.texture.storageMode.rawValue) (cannot readback)")
-            }
+        // Periodic logging
+        if drawCount <= 3 || drawCount % 600 == 0 {
+            NSLog("[METAL-DRAW] #\(drawCount) status=\(cmdBuf.status.rawValue) tex=\(texture.width)x\(texture.height)")
         }
 
-        // Save texture as PNG periodically for visual verification
-        if drawCount == 1800 || drawCount == 3600 || drawCount == 6000 {
+        // Save texture as PNG at key moments for offline verification
+        if drawCount == 600 || drawCount == 3600 || drawCount == 5400 {
             saveTextureToPNG(texture, path: "/tmp/iospharo-texture-\(drawCount).png")
         }
     }

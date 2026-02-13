@@ -162,7 +162,8 @@ class PharoCanvasViewController: UIViewController {
         mtkView.translatesAutoresizingMaskIntoConstraints = false
         mtkView.isPaused = false
         mtkView.enableSetNeedsDisplay = false
-        mtkView.preferredFramesPerSecond = 60
+        // 30fps: presentsWithTransaction blocks main thread each frame
+        mtkView.preferredFramesPerSecond = 30
 
         view.addSubview(mtkView)
         NSLayoutConstraint.activate([
@@ -183,45 +184,60 @@ class PharoCanvasViewController: UIViewController {
         super.viewDidAppear(animated)
         mtkView.becomeFirstResponder()
 
-        // Test event injection disabled — was causing window issues.
-        // The rendering pipeline is verified working via saved textures.
+        #if targetEnvironment(macCatalyst)
+        // Inject test events after Pharo desktop fully loads (~60s).
+        // Events go through the VM event queue (thread-safe).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 70.0) {
+            self.injectMenuTest()
+        }
+        #endif
     }
 
     #if targetEnvironment(macCatalyst)
-    private func injectTestEvents() {
+    private func injectMenuTest() {
         guard let bridge = bridge else {
-            NSLog("[TEST] injectTestEvents: bridge is nil")
+            NSLog("[TEST] injectMenuTest: bridge is nil")
             return
         }
 
-        // Test 1: Move mouse around to trigger Morphic hand tracking
-        NSLog("[TEST] Step 1: Mouse move to (100,100)")
-        bridge.sendMouseMoved(to: CGPoint(x: 100, y: 100), modifiers: 0)
+        // Step 1: Move mouse to center to establish hand tracking
+        NSLog("[TEST] Step 1: Mouse move to (500,400)")
+        bridge.sendMouseMoved(to: CGPoint(x: 500, y: 400), modifiers: 0)
 
-        // Test 2: Click on the welcome window close button (top-left area)
-        // The welcome window is roughly centered; close button should be near (300, 60)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            let closeBtn = CGPoint(x: 300, y: 60)
-            NSLog("[TEST] Step 2: Click at (%d,%d) — near welcome close button", Int(closeBtn.x), Int(closeBtn.y))
-            bridge.sendMouseMoved(to: closeBtn, modifiers: 0)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                bridge.sendTouchDown(at: closeBtn, buttons: IOS_RED_BUTTON)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    bridge.sendTouchUp(at: closeBtn, buttons: IOS_RED_BUTTON)
+        // Step 2: Mouse-down on "Pharo" menu bar — HOLD the button down.
+        // Pharo menus open on mouseDown and stay open while held.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            let menuPoint = CGPoint(x: 30, y: 5)
+            NSLog("[TEST] Step 2a: Move to menu bar at (%d,%d)", Int(menuPoint.x), Int(menuPoint.y))
+            bridge.sendMouseMoved(to: menuPoint, modifiers: 0)
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                NSLog("[TEST] Step 2b: MouseDOWN at (%d,%d) — holding", Int(menuPoint.x), Int(menuPoint.y))
+                bridge.sendTouchDown(at: menuPoint, buttons: IOS_RED_BUTTON)
+
+                // Hold for 3 seconds (texture saves will capture the state)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                    NSLog("[TEST] Step 2c: MouseUP at (%d,%d) — releasing", Int(menuPoint.x), Int(menuPoint.y))
+                    bridge.sendTouchUp(at: menuPoint, buttons: IOS_RED_BUTTON)
                 }
             }
         }
 
-        // Test 3: Right-click on empty desktop area to trigger world menu
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-            let desktop = CGPoint(x: 800, y: 600)
-            NSLog("[TEST] Step 3: Right-click at (%d,%d) — desktop area for world menu", Int(desktop.x), Int(desktop.y))
+        // Step 3: After 6 seconds, right-click on desktop for world menu
+        // Use mouseDown-hold pattern for world menu too
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) {
+            let desktop = CGPoint(x: 600, y: 400)
+            NSLog("[TEST] Step 3a: Move to desktop at (%d,%d)", Int(desktop.x), Int(desktop.y))
             bridge.sendMouseMoved(to: desktop, modifiers: 0)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                NSLog("[TEST] Step 3b: Right-MouseDOWN at (%d,%d) — holding", Int(desktop.x), Int(desktop.y))
                 bridge.sendTouchDown(at: desktop, buttons: IOS_YELLOW_BUTTON)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+
+                // Hold for 3 seconds
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                    NSLog("[TEST] Step 3c: Right-MouseUP at (%d,%d) — releasing", Int(desktop.x), Int(desktop.y))
                     bridge.sendTouchUp(at: desktop, buttons: IOS_YELLOW_BUTTON)
-                    NSLog("[TEST] Step 3 complete — right-click sent")
                 }
             }
         }
