@@ -822,7 +822,16 @@ int stub_SDL_PollEvent(void* event) {
         memset(sdlEvent, 0, sizeof(SDL_Event));
         uint32_t windowID = sMainWindow ? stub_SDL_GetWindowID(sMainWindow) : 1;
         sdlEvent->window.type = SDL_WINDOWEVENT;
-        sdlEvent->window.timestamp = 0;
+        // Use a real, incrementing timestamp. OSWindowRenderer >> exposed:
+        // discards events with timestamps <= lastExposeTime, so timestamp=0
+        // causes all but the first EXPOSED event to be silently dropped.
+        {
+            static auto start = std::chrono::steady_clock::now();
+            auto now = std::chrono::steady_clock::now();
+            sdlEvent->window.timestamp = static_cast<uint32_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count()
+            );
+        }
         sdlEvent->window.windowID = windowID;
         sdlEvent->window.event = windowEventType;
         // SIZE_CHANGED needs actual window dimensions in data1/data2
@@ -842,8 +851,9 @@ int stub_SDL_PollEvent(void* event) {
             sdlEvent->window.data1 = w;
             sdlEvent->window.data2 = h;
         }
-        fprintf(stderr, "[SDL-PE] Delivering synthetic window event type=%d data1=%d data2=%d at poll#%d\n",
-                windowEventType, sdlEvent->window.data1, sdlEvent->window.data2, totalPollCalls);
+        fprintf(stderr, "[SDL-PE] Delivering synthetic window event type=%d ts=%u wid=0x%x data1=%d data2=%d at poll#%d\n",
+                windowEventType, sdlEvent->window.timestamp, sdlEvent->window.windowID,
+                sdlEvent->window.data1, sdlEvent->window.data2, totalPollCalls);
         // Start post-EXPOSE tracking for periodic events (not startup ones)
         if (windowEventType == SDL_WINDOWEVENT_EXPOSED && totalPollCalls > 1000) {
             g_postExposeTracking = true;

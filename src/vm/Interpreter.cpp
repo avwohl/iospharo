@@ -2515,13 +2515,15 @@ bool Interpreter::step() {
             pendingMournerYield_ = false;  // Mourners were processed
         }
 
-        // Log active process priority every ~10M steps (sparse to reduce overhead)
+        // Log active process priority + selector every ~10M steps (sparse to reduce overhead)
         if (stepCheckCounter % 500000 == 0) {
             Oop proc = getActiveProcess();
             Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, proc);
             int prio = prioOop.isSmallInteger() ? static_cast<int>(prioOop.asSmallInteger()) : -1;
-            fprintf(stderr, "[PROC] steps=%lldM prio=%d\n",
-                    (long long)(g_stepNum / 1000000), prio);
+            // Include current method selector for diagnosing what the process is doing
+            const char* sel = g_watchdogSelector[0] ? g_watchdogSelector : "?";
+            fprintf(stderr, "[PROC] steps=%lldM prio=%d sel=%s\n",
+                    (long long)(g_stepNum / 1000000), prio, sel);
         }
 
         // Display sync requested by heartbeat thread — safe to access heap here
