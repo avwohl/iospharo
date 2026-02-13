@@ -57,6 +57,7 @@ public:
     void push(const Event& event);
     bool pop(Event& event);
     bool isEmpty() const;
+    size_t size() const;
     void clear();
 
     /// Set callback to be invoked when events are pushed

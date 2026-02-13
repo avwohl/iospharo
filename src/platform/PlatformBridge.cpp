@@ -460,6 +460,8 @@ void vm_postMouseEvent(int type, int x, int y, int buttons, int modifiers) {
     // Pharo event format: 1=mouseDown, 2=mouseUp, 3=mouseMove
     // Swift sends: 0=move, 1=down, 2=up - convert move from 0 to 3
     event.arg5 = (type == 0) ? 3 : type;
+    fprintf(stderr, "[POST-EVT] type=%d x=%d y=%d buttons=%d mods=%d queueSize=%zu\n",
+            type, x, y, buttons, modifiers, pharo::gEventQueue.size());
     pharo::gEventQueue.push(event);
 }
 

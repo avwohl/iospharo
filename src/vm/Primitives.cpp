@@ -15704,6 +15704,10 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
     static FILE* bufLog = nullptr;
     static int bufCount = 0;
     bufCount++;
+    if (bufCount <= 10 || bufCount % 5000 == 0) {
+        fprintf(stderr, "[P264] #%d called, passthrough=%zu argCount=%d\n",
+                bufCount, passThroughEvents_.size(), argCount);
+    }
 
     // Debug: Log what eventBuffer is AND what receiver is
     if (bufLog && bufCount <= 20) {

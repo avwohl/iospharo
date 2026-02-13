@@ -1868,11 +1868,15 @@ void Interpreter::processInputEvents() {
         if (event.type == static_cast<int>(pharo::EventType::WindowMetrics)) {
             continue;
         }
-        // Log mouse events for debugging
-        if (logFile && callCount <= 100 && event.type == static_cast<int>(pharo::EventType::Mouse)) {
-            fprintf(logFile, "[EVENT] Mouse type=%d at %d,%d buttons=%d\n",
-                    event.arg5, event.arg1, event.arg2, event.arg3);
-            fflush(logFile);
+        // Log all mouse events to stderr for debugging
+        if (event.type == static_cast<int>(pharo::EventType::Mouse)) {
+            static int mouseEventCount = 0;
+            mouseEventCount++;
+            if (mouseEventCount <= 20) {
+                fprintf(stderr, "[DRAIN-EVT] Mouse #%d: subtype=%d at %d,%d buttons=%d semaIdx=%d\n",
+                        mouseEventCount, event.arg5, event.arg1, event.arg2, event.arg3,
+                        pharo::gEventQueue.getInputSemaphoreIndex());
+            }
         }
 
         // Track mouse position for direct hand updates (backup if event system not working)

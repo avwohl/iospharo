@@ -14,6 +14,7 @@
 #include <dlfcn.h>
 #include <ffi.h>
 #include <unistd.h>
+#include <sys/mman.h>
 
 #ifdef __APPLE__
 #include <CoreFoundation/CoreFoundation.h>
@@ -235,6 +236,12 @@ static std::unordered_map<void*, SDLRendererState> sRenderers;
 static void* sMainRenderer = nullptr;  // First renderer is the "main" one (renders to display)
 static void* sMainWindow = nullptr;    // First window is the "main" one (receives events)
 static bool sSDLRenderingActive = false;  // Set when SDL_RenderPresent first copies to display
+
+// Mouse state tracking - updated by SDL_PollEvent, queried by SDL_GetMouseState/SDL_GetModState
+static int sMouseX = 0;
+static int sMouseY = 0;
+static uint32_t sMouseButtons = 0;  // SDL button mask (bit 0=left, bit 1=middle, bit 2=right)
+static uint32_t sKeyModState = 0;   // SDL keyboard modifier state
 
 extern "C" {
 
@@ -618,14 +625,23 @@ int stub_SDL_PollEvent(void* event) {
 
     // Mark SDL2 event polling as active - this prevents processInputEvents
     // from draining gEventQueue (we handle it here instead)
+    static int totalPollCalls = 0;
+    totalPollCalls++;
+
     if (!flagSet) {
         flagSet = true;
         pharo::gEventQueue.setSDL2EventPollingActive(true);
-        fprintf(stderr, "[SDL-STUB] SDL_PollEvent: first call\n");
+        fprintf(stderr, "[SDL-STUB] SDL_PollEvent: first call, event ptr=%p\n", event);
     }
 
+    // Log the first few calls and periodic calls to track pointer stability
+    if (totalPollCalls <= 5 || totalPollCalls % 500 == 0) {
+        fprintf(stderr, "[SDL-POLL] #%d event ptr=%p queueSize=%zu\n",
+                totalPollCalls, event, pharo::gEventQueue.size());
+    }
+
+    // Validate event pointer - FFI may pass stale heap address after GC compaction
     if (!event || reinterpret_cast<uintptr_t>(event) < 0x10000) {
-        // Null or near-null pointer — just check if events available
         static int badPtrCount = 0;
         badPtrCount++;
         if (badPtrCount <= 5) {
@@ -633,6 +649,31 @@ int stub_SDL_PollEvent(void* event) {
         }
         return !pharo::gEventQueue.isEmpty() ? 1 : 0;
     }
+
+#ifdef __APPLE__
+    // Check if the event pointer's page is actually mapped in memory.
+    // After GC compaction, ByteArray data pointers can become stale if the
+    // FFI argument resolution doesn't properly follow forwarding pointers.
+    {
+        char vec;
+        caddr_t pageAddr = reinterpret_cast<caddr_t>(reinterpret_cast<uintptr_t>(event) & ~0xFFFUL);
+        if (mincore(pageAddr, 4096, &vec) != 0) {
+            static int unmappedCount = 0;
+            unmappedCount++;
+            if (unmappedCount <= 10) {
+                fprintf(stderr, "[SDL-STUB] SDL_PollEvent: UNMAPPED event ptr=%p page=%p (count=%d)\n",
+                        event, pageAddr, unmappedCount);
+            }
+            // Don't write to unmapped memory - just drain queue and return 0
+            pharo::Event discard;
+            pharo::gEventQueue.pop(discard);  // discard one event if available
+#ifdef __APPLE__
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.001, true);
+#endif
+            return 0;
+        }
+    }
+#endif
 
     // Pop event from our queue
     pharo::Event pharoEvent;
@@ -658,6 +699,18 @@ int stub_SDL_PollEvent(void* event) {
         // pharoEvent.arg5 is the mouse event subtype:
         // 0 = move, 1 = down, 2 = up, 3 = drag (move with button held)
         int subtype = pharoEvent.arg5;
+        fprintf(stderr, "[SDL-EVT] Mouse event: subtype=%d x=%d y=%d buttons=%d\n",
+                subtype, pharoEvent.arg1, pharoEvent.arg2, pharoEvent.arg3);
+
+        // Update tracked mouse position
+        sMouseX = pharoEvent.arg1;
+        sMouseY = pharoEvent.arg2;
+
+        // Convert Pharo button mask to SDL button mask for state tracking
+        uint32_t sdlButtonMask = 0;
+        if (pharoEvent.arg3 & 4) sdlButtonMask |= (1 << 0);  // Left/Red → SDL_BUTTON_LMASK
+        if (pharoEvent.arg3 & 1) sdlButtonMask |= (1 << 1);  // Middle/Blue → SDL_BUTTON_MMASK
+        if (pharoEvent.arg3 & 2) sdlButtonMask |= (1 << 2);  // Right/Yellow → SDL_BUTTON_RMASK
 
         if (subtype == 0 || subtype == 3) {
             // Mouse motion (move or drag)
@@ -667,14 +720,11 @@ int stub_SDL_PollEvent(void* event) {
             sdlEvent->motion.which = 0;  // Touch or mouse
             sdlEvent->motion.x = pharoEvent.arg1;
             sdlEvent->motion.y = pharoEvent.arg2;
-            // Convert Pharo button mask to SDL state
-            uint32_t sdlState = 0;
-            if (pharoEvent.arg3 & 4) sdlState |= (1 << 0);  // Left/Red button
-            if (pharoEvent.arg3 & 1) sdlState |= (1 << 1);  // Middle/Blue
-            if (pharoEvent.arg3 & 2) sdlState |= (1 << 2);  // Right/Yellow
-            sdlEvent->motion.state = sdlState;
+            sdlEvent->motion.state = sdlButtonMask;
         } else if (subtype == 1) {
-            // Mouse button down
+            // Mouse button down — update tracked state
+            sMouseButtons |= sdlButtonMask;
+
             sdlEvent->button.type = SDL_MOUSEBUTTONDOWN;
             sdlEvent->button.timestamp = pharoEvent.timeStamp;
             sdlEvent->button.windowID = windowID;
@@ -694,7 +744,9 @@ int stub_SDL_PollEvent(void* event) {
                 sdlEvent->button.button = SDL_BUTTON_LEFT;  // Default
             }
         } else if (subtype == 2) {
-            // Mouse button up
+            // Mouse button up — update tracked state
+            sMouseButtons &= ~sdlButtonMask;
+
             sdlEvent->button.type = SDL_MOUSEBUTTONUP;
             sdlEvent->button.timestamp = pharoEvent.timeStamp;
             sdlEvent->button.windowID = windowID;
@@ -831,17 +883,36 @@ void* stub_SDL_CreateRGBSurfaceFrom(void* pixels, int width, int height, int dep
 void stub_SDL_FreeSurface(void* surface) {
 }
 
-// Mouse stubs
 uint32_t stub_SDL_GetMouseState(int* x, int* y) {
-    if (x) *x = 0;
-    if (y) *y = 0;
-    return 0;
+    static int callCount = 0;
+    callCount++;
+    if (callCount <= 10 || callCount % 5000 == 0) {
+        fprintf(stderr, "[SDL-STATE] GetMouseState #%d: x=%d y=%d buttons=0x%x\n",
+                callCount, sMouseX, sMouseY, sMouseButtons);
+    }
+    if (x) *x = sMouseX;
+    if (y) *y = sMouseY;
+    return sMouseButtons;
 }
 
 uint32_t stub_SDL_GetGlobalMouseState(int* x, int* y) {
-    if (x) *x = 0;
-    if (y) *y = 0;
-    return 0;
+    if (x) *x = sMouseX;
+    if (y) *y = sMouseY;
+    return sMouseButtons;
+}
+
+uint32_t stub_SDL_GetModState() {
+    static int callCount = 0;
+    callCount++;
+    if (callCount <= 10 || callCount % 5000 == 0) {
+        fprintf(stderr, "[SDL-STATE] GetModState #%d: modState=0x%x\n",
+                callCount, sKeyModState);
+    }
+    return sKeyModState;
+}
+
+void stub_SDL_SetModState(uint32_t state) {
+    sKeyModState = state;
 }
 
 // Video subsystem stubs
@@ -980,6 +1051,8 @@ SDL_EXPORT void* SDL_CreateRGBSurfaceFrom(void* px, int w, int h, int d, int p, 
 SDL_EXPORT void SDL_FreeSurface(void* s) { stub_SDL_FreeSurface(s); }
 SDL_EXPORT uint32_t SDL_GetMouseState(int* x, int* y) { return stub_SDL_GetMouseState(x, y); }
 SDL_EXPORT uint32_t SDL_GetGlobalMouseState(int* x, int* y) { return stub_SDL_GetGlobalMouseState(x, y); }
+SDL_EXPORT uint32_t SDL_GetModState() { return stub_SDL_GetModState(); }
+SDL_EXPORT void SDL_SetModState(uint32_t state) { stub_SDL_SetModState(state); }
 SDL_EXPORT int SDL_GetNumVideoDisplays() { return stub_SDL_GetNumVideoDisplays(); }
 SDL_EXPORT int SDL_GetDisplayBounds(int d, void* r) { return stub_SDL_GetDisplayBounds(d, r); }
 SDL_EXPORT uint32_t SDL_GetTicks() { return stub_SDL_GetTicks(); }
@@ -1088,6 +1161,8 @@ void registerSDL2Stubs() {
     // Mouse
     registerFunction("SDL_GetMouseState", reinterpret_cast<void*>(stub_SDL_GetMouseState));
     registerFunction("SDL_GetGlobalMouseState", reinterpret_cast<void*>(stub_SDL_GetGlobalMouseState));
+    registerFunction("SDL_GetModState", reinterpret_cast<void*>(stub_SDL_GetModState));
+    registerFunction("SDL_SetModState", reinterpret_cast<void*>(stub_SDL_SetModState));
 
     // Video
     registerFunction("SDL_GetNumVideoDisplays", reinterpret_cast<void*>(stub_SDL_GetNumVideoDisplays));

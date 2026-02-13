@@ -5,12 +5,14 @@
  * and handles touch/gesture/keyboard input for Pharo.
  *
  * Event handling (both platforms):
- *   - Clicks/touch: touchesBegan/Moved/Ended on PharoMTKView
+ *   - Clicks/touch/drag: touchesBegan/Moved/Ended on PharoMTKView
  *   - Keyboard: pressesBegan/pressesEnded on PharoMTKView
  *
  * Event handling (Mac Catalyst only):
- *   - Hover (position): UIHoverGestureRecognizer on PharoMTKView
- *   - Scroll: UIPanGestureRecognizer (2-finger) on PharoMTKView
+ *   - Hover (position): UIHoverGestureRecognizer (no button pressed)
+ *   - Scroll: UIPanGestureRecognizer (2-finger trackpad)
+ *   - Mouse clicks become single-finger touches via UIKit translation
+ *   - Right-click detected via UIEvent.buttonMask
  *
  * Event handling (iOS only):
  *   - Additional gesture recognizers (long press, pinch, two-finger tap)
@@ -68,6 +70,7 @@ class PharoMTKView: MTKView {
         let point = touch.location(in: self)
         let buttons = buttonMaskToPharo(event)
         currentButton = buttons
+        NSLog("[TOUCH] down at (%d,%d) buttons=%d", Int(point.x), Int(point.y), buttons)
         bridge.sendMouseMoved(to: point, modifiers: 0)
         bridge.sendTouchDown(at: point, buttons: buttons)
     }
@@ -81,6 +84,7 @@ class PharoMTKView: MTKView {
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = touches.first, let bridge = bridge else { return }
         let point = touch.location(in: self)
+        NSLog("[TOUCH] up at (%d,%d) buttons=%d", Int(point.x), Int(point.y), currentButton)
         bridge.sendTouchUp(at: point, buttons: currentButton)
     }
 
@@ -178,44 +182,71 @@ class PharoCanvasViewController: UIViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         mtkView.becomeFirstResponder()
+
+        // Temporary: auto-inject test events after startup to verify the
+        // event pipeline works (bridge→VM→SDL_PollEvent→Pharo)
+        #if targetEnvironment(macCatalyst)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) { [weak self] in
+            self?.injectTestEvents()
+        }
+        #endif
     }
+
+    #if targetEnvironment(macCatalyst)
+    private func injectTestEvents() {
+        guard let bridge = bridge else {
+            NSLog("[TEST] injectTestEvents: bridge is nil")
+            return
+        }
+
+        // Test 1: Move mouse around to trigger Morphic hand tracking
+        NSLog("[TEST] Step 1: Mouse move to (100,100)")
+        bridge.sendMouseMoved(to: CGPoint(x: 100, y: 100), modifiers: 0)
+
+        // Test 2: Click on the welcome window close button (top-left area)
+        // The welcome window is roughly centered; close button should be near (300, 60)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            let closeBtn = CGPoint(x: 300, y: 60)
+            NSLog("[TEST] Step 2: Click at (%d,%d) — near welcome close button", Int(closeBtn.x), Int(closeBtn.y))
+            bridge.sendMouseMoved(to: closeBtn, modifiers: 0)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                bridge.sendTouchDown(at: closeBtn, buttons: IOS_RED_BUTTON)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    bridge.sendTouchUp(at: closeBtn, buttons: IOS_RED_BUTTON)
+                }
+            }
+        }
+
+        // Test 3: Right-click on empty desktop area to trigger world menu
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+            let desktop = CGPoint(x: 800, y: 600)
+            NSLog("[TEST] Step 3: Right-click at (%d,%d) — desktop area for world menu", Int(desktop.x), Int(desktop.y))
+            bridge.sendMouseMoved(to: desktop, modifiers: 0)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                bridge.sendTouchDown(at: desktop, buttons: IOS_YELLOW_BUTTON)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    bridge.sendTouchUp(at: desktop, buttons: IOS_YELLOW_BUTTON)
+                    NSLog("[TEST] Step 3 complete — right-click sent")
+                }
+            }
+        }
+    }
+    #endif
 
     private func setupGestureRecognizers() {
         let targetView = mtkView as UIView
 
         #if targetEnvironment(macCatalyst)
-        // Hover gesture: tracks mouse position
+        // Mac Catalyst: clicks and drags are handled by touchesBegan/Moved/Ended
+        // (mouse events are translated to single-finger touches by UIKit).
+        // Only use gesture recognizers for hover (no button) and scroll (2-finger).
+
+        // Hover gesture: tracks mouse position without button press
         let hoverGesture = UIHoverGestureRecognizer(
             target: self,
             action: #selector(handleHover(_:))
         )
         targetView.addGestureRecognizer(hoverGesture)
-
-        // Click gesture: single tap for mouse click
-        let clickGesture = UITapGestureRecognizer(
-            target: self,
-            action: #selector(handleCatalystClick(_:))
-        )
-        clickGesture.numberOfTapsRequired = 1
-        targetView.addGestureRecognizer(clickGesture)
-
-        // Double-click gesture
-        let doubleClickGesture = UITapGestureRecognizer(
-            target: self,
-            action: #selector(handleCatalystDoubleClick(_:))
-        )
-        doubleClickGesture.numberOfTapsRequired = 2
-        targetView.addGestureRecognizer(doubleClickGesture)
-        clickGesture.require(toFail: doubleClickGesture)
-
-        // Drag gesture: single-finger pan for mouse drag
-        let dragGesture = UIPanGestureRecognizer(
-            target: self,
-            action: #selector(handleCatalystDrag(_:))
-        )
-        dragGesture.minimumNumberOfTouches = 1
-        dragGesture.maximumNumberOfTouches = 1
-        targetView.addGestureRecognizer(dragGesture)
 
         // Scroll gesture: two-finger trackpad scroll
         let scrollGesture = UIPanGestureRecognizer(
@@ -303,46 +334,6 @@ class PharoCanvasViewController: UIViewController {
         }
     }
 
-    @objc func handleCatalystClick(_ gesture: UITapGestureRecognizer) {
-        guard let bridge = bridge else { return }
-        let point = gesture.location(in: mtkView)
-        let buttons = buttonMaskFromGesture(gesture)
-        NSLog("[CLICK] at (%d,%d) buttons=%d", Int(point.x), Int(point.y), buttons)
-        bridge.sendMouseMoved(to: point, modifiers: 0)
-        bridge.sendTouchDown(at: point, buttons: buttons)
-        bridge.sendTouchUp(at: point, buttons: buttons)
-    }
-
-    @objc func handleCatalystDoubleClick(_ gesture: UITapGestureRecognizer) {
-        guard let bridge = bridge else { return }
-        let point = gesture.location(in: mtkView)
-        let buttons = buttonMaskFromGesture(gesture)
-        NSLog("[DBLCLICK] at (%d,%d) buttons=%d", Int(point.x), Int(point.y), buttons)
-        bridge.sendMouseMoved(to: point, modifiers: 0)
-        bridge.sendTouchDown(at: point, buttons: buttons)
-        bridge.sendTouchUp(at: point, buttons: buttons)
-        bridge.sendTouchDown(at: point, buttons: buttons)
-        bridge.sendTouchUp(at: point, buttons: buttons)
-    }
-
-    @objc func handleCatalystDrag(_ gesture: UIPanGestureRecognizer) {
-        guard let bridge = bridge else { return }
-        let point = gesture.location(in: mtkView)
-        switch gesture.state {
-        case .began:
-            NSLog("[DRAG] began at (%d,%d)", Int(point.x), Int(point.y))
-            bridge.sendMouseMoved(to: point, modifiers: 0)
-            bridge.sendTouchDown(at: point, buttons: IOS_RED_BUTTON)
-        case .changed:
-            bridge.sendTouchMoved(to: point, buttons: IOS_RED_BUTTON)
-        case .ended, .cancelled:
-            NSLog("[DRAG] ended at (%d,%d)", Int(point.x), Int(point.y))
-            bridge.sendTouchUp(at: point, buttons: IOS_RED_BUTTON)
-        default:
-            break
-        }
-    }
-
     @objc func handleScroll(_ gesture: UIPanGestureRecognizer) {
         guard let bridge = bridge else { return }
         let point = gesture.location(in: mtkView)
@@ -361,18 +352,6 @@ class PharoCanvasViewController: UIViewController {
         }
     }
 
-    private func buttonMaskFromGesture(_ gesture: UIGestureRecognizer) -> Int {
-        // On Mac Catalyst, check the button mask of the underlying event
-        if #available(macCatalyst 13.4, *) {
-            if let event = gesture.value(forKey: "_touchEvent") as? UIEvent {
-                let mask = event.buttonMask
-                if mask.contains(.secondary) { return IOS_YELLOW_BUTTON }
-                if mask.rawValue & 0x4 != 0 { return IOS_BLUE_BUTTON }
-                if event.modifierFlags.contains(.control) { return IOS_YELLOW_BUTTON }
-            }
-        }
-        return IOS_RED_BUTTON
-    }
     #endif
 
     // MARK: - iOS Gesture Handlers

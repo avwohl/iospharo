@@ -38,6 +38,11 @@ bool EventQueue::isEmpty() const {
     return events_.empty();
 }
 
+size_t EventQueue::size() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return events_.size();
+}
+
 void EventQueue::clear() {
     std::lock_guard<std::mutex> lock(mutex_);
     while (!events_.empty()) events_.pop();
