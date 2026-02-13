@@ -196,32 +196,32 @@ class PharoCanvasViewController: UIViewController {
         mtkView.becomeFirstResponder()
 
         #if targetEnvironment(macCatalyst)
-        // Test injection disabled — test with manual cliclick instead
-        // waitForThemeReady {
-        //     NSLog("[TEST] Theme ready, injecting test events")
-        //     self.injectMenuTest()
-        // }
+        waitForThemeReady {
+            NSLog("[TEST] Theme ready, injecting test events")
+            self.injectMenuTest()
+        }
         #endif
     }
 
     #if targetEnvironment(macCatalyst)
+    private var waitStartTime: Date?
+
     private func waitForThemeReady(completion: @escaping () -> Void) {
-        // Wait until the first EXPOSED event has been delivered to the image.
-        // The EXPOSED event triggers window initialization and theme setup.
-        // Without this, rendering the world menu crashes with DNU on
-        // SpStyleEnvironmentColorProxy (theme not initialized yet).
+        if waitStartTime == nil { waitStartTime = Date() }
+        let elapsed = Date().timeIntervalSince(waitStartTime!)
+
         if ffi_isFirstExposedDelivered() {
-            NSLog("[TEST] First EXPOSED delivered! Waiting 3s for theme initialization...")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+            NSLog("[TEST] EXPOSED delivered after %.1fs! Waiting 2s for theme...", elapsed)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                 completion()
             }
-        } else if ffi_isSDLEventPollingActive() {
-            // SDL polling is active but EXPOSED not yet delivered — check again soon
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                self.waitForThemeReady(completion: completion)
-            }
+        } else if elapsed > 10.0 {
+            // Timeout: inject anyway — EXPOSED might not fire if P40 died
+            NSLog("[TEST] TIMEOUT: EXPOSED not delivered after %.1fs. Injecting anyway.", elapsed)
+            completion()
         } else {
-            NSLog("[TEST] Waiting for SDL event polling...")
+            let state = ffi_isSDLEventPollingActive() ? "polling active" : "waiting for polling"
+            NSLog("[TEST] %.1fs: %@", elapsed, state as NSString)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 self.waitForThemeReady(completion: completion)
             }
@@ -234,58 +234,25 @@ class PharoCanvasViewController: UIViewController {
             return
         }
 
-        // Test order: right-click FIRST (before menu bar), because
-        // clicking menu bar sets hand focus that captures all subsequent events.
-        //
-        // CRITICAL: Initial display Form is 976x665 (from image's saved extent).
-        // The SIZE_CHANGED event won't fire until poll#2000 (~35s into run).
-        // All click positions MUST be within 976x665 to hit the WorldMorph!
+        NSLog("[TEST] === Starting event injection test ===")
+        NSLog("[TEST] Test plan: right-click at (900,620) for world menu, then STOP (no dismiss)")
 
-        // Step 1: Move mouse to empty desktop (avoid Welcome window ~130,80 to ~800,560)
+        // Right-click on empty desktop for world menu
         // Stay within initial 976x665 bounds.
         let desktop = CGPoint(x: 900, y: 620)
-        NSLog("[TEST] Step 1: Mouse move to empty desktop (%d,%d)", Int(desktop.x), Int(desktop.y))
-        bridge.sendMouseMoved(to: desktop, modifiers: 0)
 
-        // Step 2: Right-click on empty desktop for world menu
-        // In Pharo 13, PasteUpMorph >> mouseDown: checks yellowButtonPressed
-        // (isMenuOpenByLeftClick=true), opens popUpContentsMenu: → invokeWorldMenu:
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            NSLog("[TEST] Step 2a: Right-MouseDOWN at (%d,%d) — world menu", Int(desktop.x), Int(desktop.y))
+            NSLog("[TEST] Right-click on desktop at (%d,%d) for world menu", Int(desktop.x), Int(desktop.y))
+            bridge.sendMouseMoved(to: desktop, modifiers: 0)
             bridge.sendTouchDown(at: desktop, buttons: IOS_YELLOW_BUTTON)
-
-            // Hold for 5 seconds (more time for menu to render and texture saves to capture it)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
-                NSLog("[TEST] Step 2b: Right-MouseUP at (%d,%d) — releasing", Int(desktop.x), Int(desktop.y))
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 bridge.sendTouchUp(at: desktop, buttons: IOS_YELLOW_BUTTON)
             }
         }
 
-        // Step 3: After 8s, left-click on desktop to dismiss any menu and release focus
-        DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) {
-            NSLog("[TEST] Step 3: Left-click to dismiss at (%d,%d)", Int(desktop.x), Int(desktop.y))
-            bridge.sendTouchDown(at: desktop, buttons: IOS_RED_BUTTON)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                bridge.sendTouchUp(at: desktop, buttons: IOS_RED_BUTTON)
-            }
-        }
-
-        // Step 4: After 10s, test menu bar click
+        // No further events — leave world menu open for visual inspection
         DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) {
-            let menuPoint = CGPoint(x: 30, y: 5)
-            NSLog("[TEST] Step 4a: Move to menu bar at (%d,%d)", Int(menuPoint.x), Int(menuPoint.y))
-            bridge.sendMouseMoved(to: menuPoint, modifiers: 0)
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                NSLog("[TEST] Step 4b: MouseDOWN at (%d,%d) — holding", Int(menuPoint.x), Int(menuPoint.y))
-                bridge.sendTouchDown(at: menuPoint, buttons: IOS_RED_BUTTON)
-
-                // Hold for 3 seconds
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                    NSLog("[TEST] Step 4c: MouseUP at (%d,%d) — releasing", Int(menuPoint.x), Int(menuPoint.y))
-                    bridge.sendTouchUp(at: menuPoint, buttons: IOS_RED_BUTTON)
-                }
-            }
+            NSLog("[TEST] === Test complete. World menu should be visible. ===")
         }
     }
     #endif
