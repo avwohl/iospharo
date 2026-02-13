@@ -527,6 +527,10 @@ private:
     // The step check will periodically retry yielding.
     bool pendingMournerYield_ = false;
 
+    // GC verification: saved bytecode at IP before GC to detect corruption
+    uint8_t gcVerifyBytecodeAtIP_ = 0xFF;
+    uint64_t gcVerifyMethodOop_ = 0;
+
     // Clipboard (simple in-memory storage for headless mode)
     std::string clipboardText_;
 

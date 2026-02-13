@@ -2523,12 +2523,12 @@ bool Interpreter::step() {
             pendingMournerYield_ = false;  // Mourners were processed
         }
 
-        // Log active process priority + selector every ~10M steps (sparse to reduce overhead)
-        if (stepCheckCounter % 500000 == 0) {
+        // Log active process priority + selector (disabled — fprintf overhead slows VM)
+        // Enable only when actively debugging scheduler issues
+        if (false && stepCheckCounter % 500000 == 0) {
             Oop proc = getActiveProcess();
             Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, proc);
             int prio = prioOop.isSmallInteger() ? static_cast<int>(prioOop.asSmallInteger()) : -1;
-            // Include current method selector for diagnosing what the process is doing
             const char* sel = g_watchdogSelector[0] ? g_watchdogSelector : "?";
             fprintf(stderr, "[PROC] steps=%lldM prio=%d sel=%s\n",
                     (long long)(g_stepNum / 1000000), prio, sel);
@@ -12716,9 +12716,14 @@ void Interpreter::prepareForGC() {
         uint8_t* methodBytes = method_.asObjectPtr()->bytes();
         ipOffset_ = instructionPointer_ - methodBytes;
         bytecodeEndOffset_ = bytecodeEnd_ - methodBytes;
+        // Save bytecodes around IP for post-GC verification
+        gcVerifyBytecodeAtIP_ = *instructionPointer_;
+        gcVerifyMethodOop_ = method_.rawBits();
     } else {
         ipOffset_ = 0;
         bytecodeEndOffset_ = 0;
+        gcVerifyBytecodeAtIP_ = 0xFF;
+        gcVerifyMethodOop_ = 0;
     }
 
     // Convert saved frames' IPs to offsets
@@ -12813,6 +12818,24 @@ void Interpreter::afterGC() {
         uint8_t* methodBytes = method_.asObjectPtr()->bytes();
         instructionPointer_ = methodBytes + ipOffset_;
         bytecodeEnd_ = methodBytes + bytecodeEndOffset_;
+
+        // Verify: bytecode at restored IP must match what was saved
+        if (gcVerifyMethodOop_ != 0 && gcVerifyBytecodeAtIP_ != 0xFF &&
+            instructionPointer_ && instructionPointer_ < bytecodeEnd_) {
+            uint8_t actualBC = *instructionPointer_;
+            if (actualBC != gcVerifyBytecodeAtIP_) {
+                static int gcMismatchCount = 0;
+                if (++gcMismatchCount <= 10) {
+                    fprintf(stderr, "[GC-VERIFY-FAIL #%d] BC mismatch! saved=0x%02X actual=0x%02X "
+                            "oldMethod=0x%llx newMethod=0x%llx ipOff=%lld fd=%zu gcCount=%d\n",
+                            gcMismatchCount, gcVerifyBytecodeAtIP_, actualBC,
+                            (unsigned long long)gcVerifyMethodOop_,
+                            (unsigned long long)method_.rawBits(),
+                            (long long)ipOffset_, frameDepth_,
+                            memory_.statistics().gcCount);
+                }
+            }
+        }
     }
 
     // Convert saved frames' offsets back to pointers
