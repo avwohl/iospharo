@@ -196,10 +196,11 @@ class PharoCanvasViewController: UIViewController {
         mtkView.becomeFirstResponder()
 
         #if targetEnvironment(macCatalyst)
-        waitForThemeReady {
-            NSLog("[TEST] Theme ready, injecting test events")
-            self.injectMenuTest()
-        }
+        // Test injection disabled — use manual interaction for testing
+        // waitForThemeReady {
+        //     NSLog("[TEST] Theme ready, injecting test events")
+        //     self.injectMenuTest()
+        // }
         #endif
     }
 
