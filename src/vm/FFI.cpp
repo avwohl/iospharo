@@ -276,6 +276,13 @@ bool ffi_isSDLRenderingActive() {
     return sSDLRenderingActive;
 }
 
+// Query whether SDL2 event polling is active (OSSDL2Driver's event loop has started).
+// Events injected before this returns true will be consumed by processInputEvents()
+// and NOT reach OSSDL2Driver, so mouse/keyboard events will be lost.
+bool ffi_isSDLEventPollingActive() {
+    return pharo::gEventQueue.isSDL2EventPollingActive();
+}
+
 // SDL_Init returns 0 on success
 int stub_SDL_Init(uint32_t flags) {
     fprintf(stderr, "[SDL-STUB] SDL_Init(0x%x)\n", flags);
@@ -322,16 +329,13 @@ void* stub_SDL_CreateWindow(const char* title, int x, int y, int w, int h, uint3
     sWindows[handle] = state;
     if (!sMainWindow) sMainWindow = handle;
 
-    // Queue initial window events — real SDL2 sends these when a window is created.
-    // Without these, Pharo's OSSDL2BackendWindow never receives SHOWN/EXPOSED/
-    // FOCUS_GAINED/SIZE_CHANGED and the window state is never properly initialized.
-    // SIZE_CHANGED is particularly critical: it carries the window dimensions in
-    // data1/data2. Without it, the event handler may not set up the correct form size.
-    sPendingWindowEvents.push(SDL_WINDOWEVENT_SHOWN);
-    sPendingWindowEvents.push(SDL_WINDOWEVENT_EXPOSED);
-    sPendingWindowEvents.push(SDL_WINDOWEVENT_FOCUS_GAINED);
-    sPendingWindowEvents.push(SDL_WINDOWEVENT_SIZE_CHANGED);
-    fprintf(stderr, "[SDL-STUB] Queued 4 initial window events for handle %p\n", handle);
+    // Do NOT queue initial window events during CreateWindow.
+    // The SpStyleEnvironmentColorProxy DNU error causes Emergency Debugger
+    // windows to open if rendering is triggered before UITheme is initialized.
+    // Instead, the periodic EXPOSED mechanism (starting at poll#5000) triggers
+    // the first render after startup completes. SIZE_CHANGED is sent along
+    // with the first periodic EXPOSED to set up correct form dimensions.
+    fprintf(stderr, "[SDL-STUB] Created window %p (no initial events — deferred to periodic EXPOSED)\n", handle);
 
     return handle;
 }
@@ -545,17 +549,26 @@ void stub_SDL_RenderPresent(void* renderer) {
             fprintf(stderr, "[SDL-RP] #%d copy %dx%d -> %dx%d srcCenter=%08x\n",
                     totalCalls, srcW, srcH, dstW, dstH, srcCenter);
         }
-        // Track content changes at menu bar position (30,5) and center
+        // Track content changes at key positions:
+        // menu(30,5), center(512,384), rightClick(900,680), submenu(30,30)
         {
             static uint32_t lastMenuPixel = 0;
             static uint32_t lastCenter = 0;
+            static uint32_t lastRClick = 0;
+            static uint32_t lastSubmenu = 0;
             uint32_t menuPixel = (srcH > 5 && srcW > 30) ? src[5 * srcW + 30] : 0;
             uint32_t center = (srcH > 384 && srcW > 512) ? src[384 * srcW + 512] : 0;
-            if (menuPixel != lastMenuPixel || center != lastCenter) {
-                fprintf(stderr, "[SDL-CONTENT] #%d CHANGED: menu(30,5)=%08x->%08x center=%08x->%08x\n",
-                        totalCalls, lastMenuPixel, menuPixel, lastCenter, center);
+            uint32_t rclick = (srcH > 680 && srcW > 900) ? src[680 * srcW + 900] : 0;
+            uint32_t submenu = (srcH > 30 && srcW > 30) ? src[30 * srcW + 30] : 0;
+            if (menuPixel != lastMenuPixel || center != lastCenter ||
+                rclick != lastRClick || submenu != lastSubmenu) {
+                fprintf(stderr, "[SDL-CONTENT] #%d CHANGED: menu(30,5)=%08x->%08x center=%08x->%08x rclick(900,680)=%08x->%08x submenu(30,30)=%08x->%08x\n",
+                        totalCalls, lastMenuPixel, menuPixel, lastCenter, center,
+                        lastRClick, rclick, lastSubmenu, submenu);
                 lastMenuPixel = menuPixel;
                 lastCenter = center;
+                lastRClick = rclick;
+                lastSubmenu = submenu;
             }
         }
 
@@ -892,11 +905,26 @@ int stub_SDL_PollEvent(void* event) {
     // During startup, the Pharo world transitions from splash screen to desktop,
     // and we need to catch these transitions. Real SDL2 sends EXPOSED when the
     // window needs repainting (becomes visible, is uncovered, etc.).
-    // Send every 5000 polls starting at poll#5000, up to poll#60000 (~10 min).
-    if (sMainWindow && totalPollCalls >= 5000 && totalPollCalls <= 60000
-        && totalPollCalls % 5000 == 0) {
-        sPendingWindowEvents.push(SDL_WINDOWEVENT_EXPOSED);
-        fprintf(stderr, "[SDL-PE] Queuing periodic EXPOSED at poll#%d\n", totalPollCalls);
+    //
+    // The first EXPOSED is sent at poll#2000 (with SHOWN + SIZE_CHANGED to
+    // initialize window state). This gives UITheme time to initialize,
+    // preventing SpStyleEnvironmentColorProxy DNU → Emergency Debugger.
+    // Subsequent EXPOSED events every 5000 polls up to poll#60000.
+    if (sMainWindow && totalPollCalls >= 2000 && totalPollCalls <= 60000) {
+        bool isFirst = (totalPollCalls == 2000);
+        bool isPeriodic = (totalPollCalls > 2000 && totalPollCalls % 5000 == 0);
+        if (isFirst || isPeriodic) {
+            if (isFirst) {
+                // First time: send SHOWN + SIZE_CHANGED + EXPOSED to fully
+                // initialize the window state before the first render.
+                sPendingWindowEvents.push(SDL_WINDOWEVENT_SHOWN);
+                sPendingWindowEvents.push(SDL_WINDOWEVENT_FOCUS_GAINED);
+                sPendingWindowEvents.push(SDL_WINDOWEVENT_SIZE_CHANGED);
+            }
+            sPendingWindowEvents.push(SDL_WINDOWEVENT_EXPOSED);
+            fprintf(stderr, "[SDL-PE] Queuing %sEXPOSED at poll#%d\n",
+                    isFirst ? "SHOWN+SIZE_CHANGED+" : "periodic ", totalPollCalls);
+        }
     }
 
     // Pop event from our queue
@@ -1005,15 +1033,14 @@ int stub_SDL_PollEvent(void* event) {
                 sdlEvent->button.button = SDL_BUTTON_LEFT;    // Default
             }
         }
-        // Log first few mouse events
+        // Log all mouse events (no limit)
         {
             static int mouseLogCount = 0;
-            if (++mouseLogCount <= 5) {
-                fprintf(stderr, "[SDL-MOUSE] #%d type=0x%x windowID=0x%x button=%d state=%d x=%d y=%d\n",
-                        mouseLogCount, sdlEvent->button.type, sdlEvent->button.windowID,
-                        sdlEvent->button.button, sdlEvent->button.state,
-                        sdlEvent->button.x, sdlEvent->button.y);
-            }
+            mouseLogCount++;
+            fprintf(stderr, "[SDL-MOUSE] #%d type=0x%x windowID=0x%x button=%d state=%d x=%d y=%d\n",
+                    mouseLogCount, sdlEvent->button.type, sdlEvent->button.windowID,
+                    sdlEvent->button.button, sdlEvent->button.state,
+                    sdlEvent->button.x, sdlEvent->button.y);
         }
         return 1;  // Event available
     } else if (pharoEvent.type == static_cast<int>(pharo::EventType::MouseWheel)) {

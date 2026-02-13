@@ -48,6 +48,7 @@ extern "C" bool ffi_isSDLRenderingActive();
 char g_watchdogSelector[64] = {0};
 char g_watchdogReceiverClass[64] = {0};
 volatile int g_watchdogPrimIndex = 0;
+volatile int g_watchdogProcessPriority = 0;  // Current process priority (updated in step loop)
 volatile sig_atomic_t g_sigsegvRecoveryEnabled = 0;
 
 namespace pharo {
@@ -2152,6 +2153,30 @@ void Interpreter::interpret() {
         loopCount += 1000;
         g_watchdogSteps.store(loopCount, std::memory_order_relaxed);
 
+        // Update watchdog with current process priority (every 100K steps)
+        if (loopCount % 100000 == 0) {
+            Oop proc = getActiveProcess();
+            if (proc.isObject() && proc.rawBits() > 0x10000) {
+                Oop priOop = memory_.fetchPointer(ProcessPriorityIndex, proc);
+                int pri = priOop.isSmallInteger() ? priOop.asSmallInteger() : -1;
+                g_watchdogProcessPriority = pri;
+
+                // Priority histogram: sample and report every 10M steps
+                static int priHist[81] = {0};  // priorities 0-80
+                if (pri >= 0 && pri <= 80) priHist[pri]++;
+                if (loopCount % 10000000 == 0) {
+                    fprintf(stderr, "[PRI-HIST] step=%lldM: ", (long long)loopCount / 1000000);
+                    for (int p = 80; p >= 1; p--) {
+                        if (priHist[p] > 0) {
+                            fprintf(stderr, "p%d=%d ", p, priHist[p]);
+                        }
+                    }
+                    fprintf(stderr, "\n");
+                    memset(priHist, 0, sizeof(priHist));
+                }
+            }
+        }
+
         // Process any pending external semaphore signals
         if (hasPendingSignals()) {
             processPendingSignals();
@@ -2398,10 +2423,10 @@ void Interpreter::startHeartbeat() {
                 int subphase = g_watchdogSubphase;
                 uint8_t lastBC = g_watchdogLastBytecode;
                 bool stuck = (steps == lastSteps);
-                fprintf(stderr, "[WATCHDOG] tick=%d steps=%lldM phase=%s sub=%d bc=0x%02x%s\n",
+                fprintf(stderr, "[WATCHDOG] tick=%d steps=%lldM phase=%s sub=%d bc=0x%02x pri=%d%s\n",
                         tickCount, steps / 1000000,
                         (phase >= 0 && phase <= 4) ? phaseName[phase] : "?",
-                        subphase, lastBC,
+                        subphase, lastBC, g_watchdogProcessPriority,
                         stuck ? " STUCK!" : "");
                 if (stuck && subphase == 15) {
                     fprintf(stderr, "[WATCHDOG] STUCK in send: %s >> %s (prim=%d)\n",
@@ -9515,6 +9540,26 @@ void Interpreter::transferTo(Oop newProcess) {
     ObjectHeader* newProcHdr = newProcess.asObjectPtr();
     if (newProcHdr->slotCount() < 2) {
         return;
+    }
+
+    // Log process switches with priorities
+    {
+        static int switchCount = 0;
+        switchCount++;
+        int oldPri = -1, newPri = -1;
+        if (oldProcess.isObject() && oldProcess.rawBits() > 0x10000) {
+            ObjectHeader* oldHdr = oldProcess.asObjectPtr();
+            if (oldHdr->slotCount() > ProcessPriorityIndex) {
+                Oop p = memory_.fetchPointer(ProcessPriorityIndex, oldProcess);
+                oldPri = p.isSmallInteger() ? p.asSmallInteger() : -1;
+            }
+        }
+        Oop p = memory_.fetchPointer(ProcessPriorityIndex, newProcess);
+        newPri = p.isSmallInteger() ? p.asSmallInteger() : -1;
+        if (switchCount <= 50 || switchCount % 1000 == 0) {
+            fprintf(stderr, "[SWITCH #%d] pri %d -> %d step=%lld\n",
+                    switchCount, oldPri, newPri, (long long)g_watchdogSteps.load());
+        }
     }
 
     // Save current execution state to old process's suspendedContext

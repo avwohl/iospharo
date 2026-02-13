@@ -109,6 +109,9 @@ void vm_postScrollEvent(int x, int y, int deltaX, int deltaY, int modifiers);
 #define IOS_ALT_KEY     4
 #define IOS_CMD_KEY     8
 
+/* SDL2 readiness flags */
+bool ffi_isSDLEventPollingActive(void);  // True when OSSDL2Driver event loop is running
+
 /* iOS utility functions */
 int iosIsIPad(void);
 const char* iosGetDeviceModel(void);

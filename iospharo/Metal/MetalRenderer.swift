@@ -184,16 +184,21 @@ class MetalRenderer: NSObject, MTKViewDelegate {
         cmdBuf.waitUntilCompleted()
         drawable.present()
 
-        // Periodic logging
-        if drawCount <= 3 || drawCount % 600 == 0 {
+        // Periodic logging (more frequent around event injection period)
+        // Events start after waitForSDLEventPolling (~32s = frame ~960)
+        // Step 1: T+0 move, Step 2a: T+1 rclick, Step 2b: T+6 release,
+        // Step 3: T+8 dismiss, Step 4a: T+10 menu move, Step 4b: T+10.3 menu-down, Step 4c: T+13.3 menu-up
+        if drawCount <= 3 || drawCount % 600 == 0 ||
+           (drawCount >= 900 && drawCount <= 1500 && drawCount % 15 == 0) {
             NSLog("[METAL-DRAW] #\(drawCount) status=\(cmdBuf.status.rawValue) tex=\(texture.width)x\(texture.height)")
         }
 
         // Save texture as PNG at key moments for offline verification
-        // At 30fps: 600=20s, 5400=3min, 9000=5min, 9600=5:20 (after events),
-        // 9900=5:30 (during menu hold), 10200=5:40 (during right-click hold)
-        if drawCount == 600 || drawCount == 5400 || drawCount == 9000 ||
-           drawCount == 9600 || drawCount == 9900 || drawCount == 10200 {
+        // At 30fps: 900=30s, 960=32s, 990=33s, 1140=38s, 1260=42s, 1380=46s
+        // Capture every 15 frames (0.5s) during event period for finer resolution
+        if drawCount == 600 ||
+           (drawCount >= 900 && drawCount <= 1500 && drawCount % 15 == 0) ||
+           drawCount == 5400 {
             saveTextureToPNG(texture, path: "/tmp/iospharo-texture-\(drawCount).png")
         }
     }
