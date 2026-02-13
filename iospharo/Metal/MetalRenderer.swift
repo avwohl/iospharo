@@ -190,8 +190,10 @@ class MetalRenderer: NSObject, MTKViewDelegate {
         }
 
         // Save texture as PNG at key moments for offline verification
-        // At 30fps: 600=20s (desktop), 2200=73s (during menu hold), 2350=78s (during right-click hold)
-        if drawCount == 600 || drawCount == 2200 || drawCount == 2350 {
+        // At 30fps: 600=20s, 5400=3min, 9000=5min, 9600=5:20 (after events),
+        // 9900=5:30 (during menu hold), 10200=5:40 (during right-click hold)
+        if drawCount == 600 || drawCount == 5400 || drawCount == 9000 ||
+           drawCount == 9600 || drawCount == 9900 || drawCount == 10200 {
             saveTextureToPNG(texture, path: "/tmp/iospharo-texture-\(drawCount).png")
         }
     }

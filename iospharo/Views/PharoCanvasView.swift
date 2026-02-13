@@ -185,9 +185,10 @@ class PharoCanvasViewController: UIViewController {
         mtkView.becomeFirstResponder()
 
         #if targetEnvironment(macCatalyst)
-        // Inject test events after Pharo desktop fully loads (~60s).
+        // Inject test events after Pharo session startup completes.
+        // Settings initialization via PragmaCollector takes ~4-5min on interpreted VM.
         // Events go through the VM event queue (thread-safe).
-        DispatchQueue.main.asyncAfter(deadline: .now() + 70.0) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 300.0) {
             self.injectMenuTest()
         }
         #endif

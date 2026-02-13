@@ -486,8 +486,19 @@ void stub_SDL_RenderPresent(void* renderer) {
                 renderer, sMainRenderer);
     }
 
-    // Log ALL calls (not just first 20) to detect rendering after events
-    if (totalCalls <= 20 || totalCalls % 10 == 0) {
+    // Detect long gaps between RenderPresent calls (startup completing)
+    {
+        static auto lastTime = std::chrono::steady_clock::now();
+        auto now = std::chrono::steady_clock::now();
+        auto gapMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastTime).count();
+        if (gapMs > 5000 || totalCalls <= 5) {
+            fprintf(stderr, "[SDL-RP] #%d RESUMED after %lld ms gap\n", totalCalls, (long long)gapMs);
+        }
+        lastTime = now;
+    }
+
+    // Log calls periodically
+    if (totalCalls <= 20 || totalCalls % 100 == 0) {
         fprintf(stderr, "[SDL-RP] #%d renderer=%p main=%p\n", totalCalls, renderer, sMainRenderer);
     }
 

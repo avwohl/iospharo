@@ -16281,6 +16281,36 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
 
     // No-source operations (fill)
     if (sourceForm.isNil()) {
+        if (destDepth == 1) {
+            // Fill 1-bit destination: halftone/fill word applied per bit
+            intptr_t destWordsPerRow = (destWidth + 31) / 32;
+            uint32_t* destWords = destPixels;
+            size_t requiredDestWords = static_cast<size_t>((destY + height - 1) * destWordsPerRow + (destX + width + 31) / 32);
+            if (requiredDestWords * 4 > destBitsSize) return PrimitiveResult::Failure;
+            for (intptr_t y = 0; y < height; y++) {
+                uint32_t fill = halftoneWords ? halftoneWords[(destY + y) % halftoneHeight] : halftoneWord;
+                uint32_t* destRow = destWords + (destY + y) * destWordsPerRow;
+                for (intptr_t x = 0; x < width; x++) {
+                    intptr_t dx = destX + x;
+                    uint32_t bitMask = 0x80000000u >> (dx % 32);
+                    uint32_t fillBit = (fill != 0) ? bitMask : 0; // simplification: non-zero fill → 1
+                    switch (combinationRule) {
+                        case 3: case 34:
+                            destRow[dx / 32] = (destRow[dx / 32] & ~bitMask) | fillBit; break;
+                        case 0:
+                            if (!fillBit) destRow[dx / 32] &= ~bitMask; break;
+                        case 7: case 25:
+                            if (fillBit) destRow[dx / 32] |= bitMask; break;
+                        case 6:
+                            if (fillBit) destRow[dx / 32] ^= bitMask; break;
+                        default:
+                            destRow[dx / 32] = (destRow[dx / 32] & ~bitMask) | fillBit; break;
+                    }
+                }
+            }
+            showDisplayBits(destForm, destX, destY, destX + width, destY + height);
+            return PrimitiveResult::Success;
+        }
         if (destDepth != 32) {
             return PrimitiveResult::Failure;
         }
@@ -16390,7 +16420,143 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         }
     }
 
-    // Bounds check for dest
+    // --- Handle non-32-bit destination depths ---
+    // Depth-1 destinations (cursor masks, bitmap operations)
+    if (destDepth == 1 && srcDepth == 32) {
+        // In 1-bit forms, bits are stored MSB-first in 32-bit words.
+        // Each word holds 32 pixels; pixel at x: word[x/32] bit (31 - x%32).
+        intptr_t destWordsPerRow = (destWidth + 31) / 32;
+        intptr_t srcPitch = srcWidth;
+        uint32_t* srcPixels = reinterpret_cast<uint32_t*>(srcBytes);
+        uint32_t* destWords = destPixels; // destPixels is already uint32_t*
+
+        // Bounds check: ensure we can access dest rows
+        size_t requiredDestWords = static_cast<size_t>((destY + height - 1) * destWordsPerRow + (destX + width + 31) / 32);
+        if (requiredDestWords * 4 > destBitsSize) return PrimitiveResult::Failure;
+
+        // Bounds check source
+        intptr_t srcMaxPixels = static_cast<intptr_t>(srcBitsSize / 4);
+        intptr_t srcActualHeight = (srcPitch > 0) ? (srcMaxPixels / srcPitch) : 0;
+        if (sourceY + height > srcActualHeight) height = srcActualHeight - sourceY;
+        if (sourceX + width > srcWidth) width = srcWidth - sourceX;
+        if (height <= 0 || width <= 0) return PrimitiveResult::Success;
+
+        for (intptr_t y = 0; y < height; y++) {
+            uint32_t* srcRow = srcPixels + (sourceY + y) * srcPitch + sourceX;
+            uint32_t* destRow = destWords + (destY + y) * destWordsPerRow;
+            for (intptr_t x = 0; x < width; x++) {
+                intptr_t dx = destX + x;
+                intptr_t wordIdx = dx / 32;
+                uint32_t bitMask = 0x80000000u >> (dx % 32);
+                // Convert 32-bit pixel to 1-bit: non-zero → 1
+                uint32_t srcBit = (srcRow[x] != 0) ? bitMask : 0;
+                switch (combinationRule) {
+                    case 3: case 34: // store
+                        destRow[wordIdx] = (destRow[wordIdx] & ~bitMask) | srcBit;
+                        break;
+                    case 0: // AND
+                        if (!srcBit) destRow[wordIdx] &= ~bitMask;
+                        break;
+                    case 7: case 25: // OR
+                        if (srcBit) destRow[wordIdx] |= bitMask;
+                        break;
+                    case 6: // XOR
+                        if (srcBit) destRow[wordIdx] ^= bitMask;
+                        break;
+                    case 1: // AND complement
+                        if (srcBit) destRow[wordIdx] &= ~bitMask;
+                        break;
+                    default: // For unsupported rules, just store
+                        destRow[wordIdx] = (destRow[wordIdx] & ~bitMask) | srcBit;
+                        break;
+                }
+            }
+        }
+        showDisplayBits(destForm, destX, destY, destX + width, destY + height);
+        return PrimitiveResult::Success;
+    }
+
+    // Depth-8 destinations (cursor forms, grayscale operations)
+    if (destDepth == 8 && srcDepth == 32) {
+        intptr_t destBytesPerRow = ((destWidth + 3) / 4) * 4; // word-aligned
+        uint8_t* destBytes8 = reinterpret_cast<uint8_t*>(destPixels);
+        intptr_t srcPitch = srcWidth;
+        uint32_t* srcPixels = reinterpret_cast<uint32_t*>(srcBytes);
+
+        size_t requiredDestBytes8 = static_cast<size_t>((destY + height - 1) * destBytesPerRow + destX + width);
+        if (requiredDestBytes8 > destBitsSize) return PrimitiveResult::Failure;
+
+        intptr_t srcMaxPixels = static_cast<intptr_t>(srcBitsSize / 4);
+        intptr_t srcActualHeight = (srcPitch > 0) ? (srcMaxPixels / srcPitch) : 0;
+        if (sourceY + height > srcActualHeight) height = srcActualHeight - sourceY;
+        if (sourceX + width > srcWidth) width = srcWidth - sourceX;
+        if (height <= 0 || width <= 0) return PrimitiveResult::Success;
+
+        for (intptr_t y = 0; y < height; y++) {
+            uint32_t* srcRow = srcPixels + (sourceY + y) * srcPitch + sourceX;
+            uint8_t* dstRow = destBytes8 + (destY + y) * destBytesPerRow + destX;
+            for (intptr_t x = 0; x < width; x++) {
+                // Convert 32-bit ARGB to 8-bit grayscale (luminance)
+                uint32_t s = srcRow[x];
+                uint8_t r = (s >> 16) & 0xFF;
+                uint8_t g = (s >> 8) & 0xFF;
+                uint8_t b = s & 0xFF;
+                uint8_t gray = static_cast<uint8_t>((r * 77 + g * 150 + b * 29) >> 8);
+                switch (combinationRule) {
+                    case 3: case 34: dstRow[x] = gray; break;
+                    case 0: dstRow[x] &= gray; break;
+                    case 7: case 25: dstRow[x] |= gray; break;
+                    case 6: dstRow[x] ^= gray; break;
+                    default: dstRow[x] = gray; break;
+                }
+            }
+        }
+        showDisplayBits(destForm, destX, destY, destX + width, destY + height);
+        return PrimitiveResult::Success;
+    }
+
+    // Depth-1 source to depth-1 dest (common for mask operations)
+    if (destDepth == 1 && srcDepth == 1) {
+        intptr_t destWordsPerRow = (destWidth + 31) / 32;
+        intptr_t srcWordsPerRow = (srcWidth + 31) / 32;
+        uint32_t* srcWords = reinterpret_cast<uint32_t*>(srcBytes);
+        uint32_t* destWords = destPixels;
+
+        size_t requiredDestWords = static_cast<size_t>((destY + height - 1) * destWordsPerRow + (destX + width + 31) / 32);
+        if (requiredDestWords * 4 > destBitsSize) return PrimitiveResult::Failure;
+
+        for (intptr_t y = 0; y < height; y++) {
+            uint32_t* srcRow = srcWords + (sourceY + y) * srcWordsPerRow;
+            uint32_t* destRow = destWords + (destY + y) * destWordsPerRow;
+            for (intptr_t x = 0; x < width; x++) {
+                intptr_t sx = sourceX + x;
+                intptr_t dx = destX + x;
+                uint32_t srcBit = (srcRow[sx / 32] >> (31 - sx % 32)) & 1;
+                uint32_t destBitMask = 0x80000000u >> (dx % 32);
+                switch (combinationRule) {
+                    case 3: case 34:
+                        destRow[dx / 32] = (destRow[dx / 32] & ~destBitMask) | (srcBit ? destBitMask : 0);
+                        break;
+                    case 0:
+                        if (!srcBit) destRow[dx / 32] &= ~destBitMask;
+                        break;
+                    case 7: case 25:
+                        if (srcBit) destRow[dx / 32] |= destBitMask;
+                        break;
+                    case 6:
+                        if (srcBit) destRow[dx / 32] ^= destBitMask;
+                        break;
+                    default:
+                        destRow[dx / 32] = (destRow[dx / 32] & ~destBitMask) | (srcBit ? destBitMask : 0);
+                        break;
+                }
+            }
+        }
+        showDisplayBits(destForm, destX, destY, destX + width, destY + height);
+        return PrimitiveResult::Success;
+    }
+
+    // Unsupported depth combinations
     if (destDepth != 32) {
         static int nonD32Count = 0;
         if (nonD32Count++ < 5) {
