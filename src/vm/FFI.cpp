@@ -20,6 +20,11 @@
 #include <CoreFoundation/CoreFoundation.h>
 #endif
 
+#include <atomic>
+
+// Flag set when Emergency Debugger window is created — checked by interpreter to dump stack
+std::atomic<bool> g_emergencyDebuggerTriggered{false};
+
 // SDL2 event types
 #define SDL_QUIT            0x100
 #define SDL_WINDOWEVENT     0x200
@@ -130,6 +135,7 @@ namespace ffi {
 
 // Forward declarations
 void registerSDL2Stubs();
+void registerFreeTypeStubs();
 
 // Module handles
 static bool sInitialized = false;
@@ -144,6 +150,9 @@ bool initializeFFI() {
     // Register SDL2 stub functions for iOS
     // This makes OSWindow think SDL2 is available
     registerSDL2Stubs();
+
+    // Register FreeType stubs (FreeType not available on iOS/Mac Catalyst)
+    registerFreeTypeStubs();
 
     return true;
 }
@@ -240,6 +249,17 @@ static void* sMainRenderer = nullptr;  // First renderer is the "main" one (rend
 static void* sMainWindow = nullptr;    // First window is the "main" one (receives events)
 static bool sSDLRenderingActive = false;  // Set when SDL_RenderPresent first copies to display
 
+// Global rendering pipeline counters - logged from PollEvent every 5000 polls
+static int g_lockTextureCount = 0;
+static int g_updateTextureCount = 0;
+static int g_renderCopyCount = 0;
+static int g_renderPresentCount = 0;
+static int g_renderClearCount = 0;
+
+// Post-EXPOSE tracking: set when periodic EXPOSED event is delivered, cleared after 10k polls
+static bool g_postExposeTracking = false;
+static int g_postExposePollCount = 0;
+
 // Pending synthetic window events (SDL2 sends these when window is created/shown)
 static std::queue<uint8_t> sPendingWindowEvents;
 
@@ -290,6 +310,10 @@ void* stub_SDL_CreateWindow(const char* title, int x, int y, int w, int h, uint3
     }
     fprintf(stderr, "[SDL-STUB] SDL_CreateWindow('%s', %dx%d, flags=0x%x)\n",
             title ? title : "(null)", w, h, flags);
+    if (title && strstr(title, "Emergency") != nullptr) {
+        g_emergencyDebuggerTriggered.store(true, std::memory_order_release);
+        fprintf(stderr, "[ED-TRIGGER] Emergency Debugger window created!\n");
+    }
     void* handle = reinterpret_cast<void*>(sNextHandle++);
     SDLWindowState state;
     state.width = w;
@@ -297,6 +321,18 @@ void* stub_SDL_CreateWindow(const char* title, int x, int y, int w, int h, uint3
     state.title = title ? title : "";
     sWindows[handle] = state;
     if (!sMainWindow) sMainWindow = handle;
+
+    // Queue initial window events — real SDL2 sends these when a window is created.
+    // Without these, Pharo's OSSDL2BackendWindow never receives SHOWN/EXPOSED/
+    // FOCUS_GAINED/SIZE_CHANGED and the window state is never properly initialized.
+    // SIZE_CHANGED is particularly critical: it carries the window dimensions in
+    // data1/data2. Without it, the event handler may not set up the correct form size.
+    sPendingWindowEvents.push(SDL_WINDOWEVENT_SHOWN);
+    sPendingWindowEvents.push(SDL_WINDOWEVENT_EXPOSED);
+    sPendingWindowEvents.push(SDL_WINDOWEVENT_FOCUS_GAINED);
+    sPendingWindowEvents.push(SDL_WINDOWEVENT_SIZE_CHANGED);
+    fprintf(stderr, "[SDL-STUB] Queued 4 initial window events for handle %p\n", handle);
+
     return handle;
 }
 
@@ -352,15 +388,29 @@ void stub_SDL_RaiseWindow(void* window) {
 }
 
 uint32_t stub_SDL_GetWindowID(void* window) {
-    return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(window) & 0xFFFFFFFF);
+    static int callCount = 0;
+    callCount++;
+    uint32_t id = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(window) & 0xFFFFFFFF);
+    if (callCount <= 10) {
+        fprintf(stderr, "[SDL-GWID] #%d SDL_GetWindowID(window=%p) -> %u (0x%x)\n",
+                callCount, window, id, id);
+    }
+    return id;
 }
 
 void* stub_SDL_GetWindowFromID(uint32_t id) {
+    static int callCount = 0;
+    callCount++;
     // Find window by ID (lower 32 bits of handle)
     for (auto& kv : sWindows) {
-        if ((reinterpret_cast<uintptr_t>(kv.first) & 0xFFFFFFFF) == id)
+        if ((reinterpret_cast<uintptr_t>(kv.first) & 0xFFFFFFFF) == id) {
+            if (callCount <= 10)
+                fprintf(stderr, "[SDL-GWFID] #%d GetWindowFromID(%u) -> %p\n", callCount, id, kv.first);
             return kv.first;
+        }
     }
+    if (callCount <= 10)
+        fprintf(stderr, "[SDL-GWFID] #%d GetWindowFromID(%u) -> NULL (not found!)\n", callCount, id);
     return nullptr;
 }
 
@@ -413,6 +463,7 @@ void stub_SDL_DestroyRenderer(void* renderer) {
 int stub_SDL_RenderClear(void* renderer) {
     static int clearCount = 0;
     clearCount++;
+    g_renderClearCount = clearCount;
     if (clearCount <= 5 || clearCount % 200 == 0) {
         fprintf(stderr, "[SDL-RC] RenderClear #%d renderer=%p\n", clearCount, renderer);
     }
@@ -422,12 +473,22 @@ int stub_SDL_RenderClear(void* renderer) {
 void stub_SDL_RenderPresent(void* renderer) {
     static int totalCalls = 0;
     totalCalls++;
+    g_renderPresentCount = totalCalls;
+    if (g_postExposeTracking) {
+        fprintf(stderr, "[POST-EXPOSE] SDL_RenderPresent called! present#%d (expose poll+%d)\n",
+                totalCalls, g_postExposePollCount);
+    }
 
     // Log first call
     if (!sSDLRenderingActive) {
         sSDLRenderingActive = true;
         fprintf(stderr, "[SDL-RP] first call renderer=%p main=%p (rendering active)\n",
                 renderer, sMainRenderer);
+    }
+
+    // Log ALL calls (not just first 20) to detect rendering after events
+    if (totalCalls <= 20 || totalCalls % 10 == 0) {
+        fprintf(stderr, "[SDL-RP] #%d renderer=%p main=%p\n", totalCalls, renderer, sMainRenderer);
     }
 
     // Only copy to gDisplaySurface from the main renderer.
@@ -440,11 +501,11 @@ void stub_SDL_RenderPresent(void* renderer) {
         return;
     }
 
-    // Skip non-main renderers
+    // Skip secondary renderers (Emergency Debugger, etc.) — only main renderer
+    // should write to the display surface.
     if (renderer != sMainRenderer) {
-        static int skipCount = 0;
-        if (++skipCount <= 5) {
-            fprintf(stderr, "[SDL-RP] #%d SKIP: secondary renderer %p (main=%p)\n",
+        if (totalCalls <= 5) {
+            fprintf(stderr, "[SDL-RP] #%d SKIP secondary renderer %p (main=%p)\n",
                     totalCalls, renderer, sMainRenderer);
         }
         return;
@@ -472,6 +533,19 @@ void stub_SDL_RenderPresent(void* renderer) {
             uint32_t srcCenter = (srcH > 384 && srcW > 512) ? src[384 * srcW + 512] : 0;
             fprintf(stderr, "[SDL-RP] #%d copy %dx%d -> %dx%d srcCenter=%08x\n",
                     totalCalls, srcW, srcH, dstW, dstH, srcCenter);
+        }
+        // Track content changes at menu bar position (30,5) and center
+        {
+            static uint32_t lastMenuPixel = 0;
+            static uint32_t lastCenter = 0;
+            uint32_t menuPixel = (srcH > 5 && srcW > 30) ? src[5 * srcW + 30] : 0;
+            uint32_t center = (srcH > 384 && srcW > 512) ? src[384 * srcW + 512] : 0;
+            if (menuPixel != lastMenuPixel || center != lastCenter) {
+                fprintf(stderr, "[SDL-CONTENT] #%d CHANGED: menu(30,5)=%08x->%08x center=%08x->%08x\n",
+                        totalCalls, lastMenuPixel, menuPixel, lastCenter, center);
+                lastMenuPixel = menuPixel;
+                lastCenter = center;
+            }
         }
 
         for (int y = 0; y < copyH; y++) {
@@ -547,18 +621,31 @@ int stub_SDL_LockTexture(void* texture, void* rect, void** pixels, int* pitch) {
     if (it == sTextures.end() || !it->second.pixels) {
         return -1;
     }
+    static int lockCount = 0;
+    lockCount++;
+    g_lockTextureCount = lockCount;
+    if (g_postExposeTracking) {
+        fprintf(stderr, "[POST-EXPOSE] SDL_LockTexture called! lock#%d (expose poll+%d)\n",
+                lockCount, g_postExposePollCount);
+    }
+    if (lockCount <= 10 || lockCount % 200 == 0) {
+        fprintf(stderr, "[SDL-LOCK] #%d texture=%p pixels_ptr=%p pitch_ptr=%p actual_pixels=%p pitch=%d (%dx%d)\n",
+                lockCount, texture, (void*)pixels, (void*)pitch,
+                it->second.pixels, it->second.pitch,
+                it->second.width, it->second.height);
+    }
     if (pixels) {
         *pixels = it->second.pixels;
+        if (lockCount <= 10) {
+            fprintf(stderr, "[SDL-LOCK] #%d wrote *pixels=%p\n", lockCount, *pixels);
+        }
+    } else {
+        if (lockCount <= 10) {
+            fprintf(stderr, "[SDL-LOCK] #%d SKIP: pixels ptr is NULL! Cannot write output.\n", lockCount);
+        }
     }
     if (pitch) {
         *pitch = it->second.pitch;
-    }
-    static int lockCount = 0;
-    lockCount++;
-    if (lockCount <= 5 || lockCount % 200 == 0) {
-        fprintf(stderr, "[SDL-LOCK] #%d texture=%p pixels=%p pitch=%d (%dx%d)\n",
-                lockCount, texture, it->second.pixels, it->second.pitch,
-                it->second.width, it->second.height);
     }
     return 0;
 }
@@ -569,6 +656,7 @@ void stub_SDL_UnlockTexture(void* texture) {
 int stub_SDL_RenderCopy(void* renderer, void* texture, void* srcrect, void* dstrect) {
     static int copyCount = 0;
     copyCount++;
+    g_renderCopyCount = copyCount;
     // Track which texture was last rendered
     auto rit = sRenderers.find(renderer);
     if (rit != sRenderers.end()) {
@@ -588,6 +676,7 @@ int stub_SDL_UpdateTexture(void* texture, void* rect, void* pixels, int pitch) {
 
     static int updateCount = 0;
     updateCount++;
+    g_updateTextureCount = updateCount;
 
     int texW = it->second.width;
     int texH = it->second.height;
@@ -651,10 +740,29 @@ int stub_SDL_PollEvent(void* event) {
         fprintf(stderr, "[SDL-STUB] SDL_PollEvent: first call, event ptr=%p\n", event);
     }
 
+    // Track unique event pointers to detect multiple event loop callers
+    static void* knownPtrs[4] = {nullptr, nullptr, nullptr, nullptr};
+    static int knownCount = 0;
+    {
+        bool found = false;
+        for (int i = 0; i < knownCount; i++) {
+            if (knownPtrs[i] == event) { found = true; break; }
+        }
+        if (!found && knownCount < 4) {
+            knownPtrs[knownCount++] = event;
+            fprintf(stderr, "[SDL-POLL-CALLER] New event ptr #%d: %p (total callers: %d) at poll#%d\n",
+                    knownCount, event, knownCount, totalPollCalls);
+        }
+    }
+
     // Log the first few calls and periodic calls to track pointer stability
-    if (totalPollCalls <= 5 || totalPollCalls % 5000 == 0) {
-        fprintf(stderr, "[SDL-POLL] #%d event ptr=%p queueSize=%zu\n",
-                totalPollCalls, event, pharo::gEventQueue.size());
+    if (totalPollCalls <= 30 || totalPollCalls % 5000 == 0) {
+        fprintf(stderr, "[SDL-POLL] #%d event ptr=%p queueSize=%zu pending=%zu\n",
+                totalPollCalls, event, pharo::gEventQueue.size(),
+                sPendingWindowEvents.size());
+        fprintf(stderr, "[SDL-PIPELINE] poll#%d lock=%d update=%d copy=%d present=%d clear=%d\n",
+                totalPollCalls, g_lockTextureCount, g_updateTextureCount,
+                g_renderCopyCount, g_renderPresentCount, g_renderClearCount);
     }
 
     // Monitor gDisplaySurface for unexpected content changes
@@ -717,9 +825,46 @@ int stub_SDL_PollEvent(void* event) {
         sdlEvent->window.timestamp = 0;
         sdlEvent->window.windowID = windowID;
         sdlEvent->window.event = windowEventType;
-        fprintf(stderr, "[SDL-PE] Delivering synthetic window event type=%d at poll#%d\n",
-                windowEventType, totalPollCalls);
+        // SIZE_CHANGED needs actual window dimensions in data1/data2
+        // Otherwise Pharo tries to resize to 0x0 which kills the event loop
+        if (windowEventType == SDL_WINDOWEVENT_SIZE_CHANGED) {
+            int w = 1024, h = 768;
+            if (pharo::gDisplaySurface) {
+                w = pharo::gDisplaySurface->width();
+                h = pharo::gDisplaySurface->height();
+            } else if (sMainWindow) {
+                auto wit = sWindows.find(sMainWindow);
+                if (wit != sWindows.end()) {
+                    w = wit->second.width;
+                    h = wit->second.height;
+                }
+            }
+            sdlEvent->window.data1 = w;
+            sdlEvent->window.data2 = h;
+        }
+        fprintf(stderr, "[SDL-PE] Delivering synthetic window event type=%d data1=%d data2=%d at poll#%d\n",
+                windowEventType, sdlEvent->window.data1, sdlEvent->window.data2, totalPollCalls);
+        // Start post-EXPOSE tracking for periodic events (not startup ones)
+        if (windowEventType == SDL_WINDOWEVENT_EXPOSED && totalPollCalls > 1000) {
+            g_postExposeTracking = true;
+            g_postExposePollCount = 0;
+            fprintf(stderr, "[POST-EXPOSE] Tracking started at poll#%d\n", totalPollCalls);
+        }
         return 1;
+    }
+
+    // Track post-EXPOSE polls
+    if (g_postExposeTracking) {
+        g_postExposePollCount++;
+        if (g_postExposePollCount == 100 || g_postExposePollCount == 500 ||
+            g_postExposePollCount == 2000) {
+            fprintf(stderr, "[POST-EXPOSE] poll+%d: lock=%d copy=%d present=%d (no rendering yet)\n",
+                    g_postExposePollCount, g_lockTextureCount, g_renderCopyCount, g_renderPresentCount);
+        }
+        if (g_postExposePollCount >= 5000) {
+            fprintf(stderr, "[POST-EXPOSE] Tracking timeout after 5000 polls — NO rendering triggered\n");
+            g_postExposeTracking = false;
+        }
     }
 
     // Periodically send EXPOSED events to trigger full repaints.
@@ -832,6 +977,16 @@ int stub_SDL_PollEvent(void* event) {
                 sdlEvent->button.button = SDL_BUTTON_LEFT;  // Default
             }
         }
+        // Log first few mouse events
+        {
+            static int mouseLogCount = 0;
+            if (++mouseLogCount <= 5) {
+                fprintf(stderr, "[SDL-MOUSE] #%d type=0x%x windowID=0x%x button=%d state=%d x=%d y=%d\n",
+                        mouseLogCount, sdlEvent->button.type, sdlEvent->button.windowID,
+                        sdlEvent->button.button, sdlEvent->button.state,
+                        sdlEvent->button.x, sdlEvent->button.y);
+            }
+        }
         return 1;  // Event available
     } else if (pharoEvent.type == static_cast<int>(pharo::EventType::MouseWheel)) {
         // Mouse wheel
@@ -921,12 +1076,22 @@ void* stub_SDL_CreateCursor(void* data, void* mask, int w, int h, int hot_x, int
 }
 
 void stub_SDL_SetCursor(void* cursor) {
+    static int setCursorCount = 0;
+    setCursorCount++;
+    if (setCursorCount <= 20 || setCursorCount % 100 == 0) {
+        fprintf(stderr, "[SDL-CURSOR] SetCursor #%d cursor=%p\n", setCursorCount, cursor);
+    }
 }
 
 void stub_SDL_FreeCursor(void* cursor) {
 }
 
 int stub_SDL_ShowCursor(int toggle) {
+    static int showCursorCount = 0;
+    showCursorCount++;
+    if (showCursorCount <= 20 || showCursorCount % 100 == 0) {
+        fprintf(stderr, "[SDL-CURSOR] ShowCursor #%d toggle=%d\n", showCursorCount, toggle);
+    }
     return toggle;
 }
 
@@ -1253,6 +1418,62 @@ void registerSDL2Stubs() {
     registerFunction("SDL_GL_DeleteContext", reinterpret_cast<void*>(stub_SDL_GL_DeleteContext));
     registerFunction("SDL_GL_MakeCurrent", reinterpret_cast<void*>(stub_SDL_GL_MakeCurrent));
     registerFunction("SDL_GL_SwapWindow", reinterpret_cast<void*>(stub_SDL_GL_SwapWindow));
+}
+
+// ========== FreeType stubs ==========
+// FreeType is not available on iOS/Mac Catalyst. Register stubs that return
+// error codes so the image falls back to bitmap fonts.
+
+static int stub_FT_Init_FreeType(void** alibrary) {
+    fprintf(stderr, "[FT-STUB] FT_Init_FreeType -> error (FreeType not available)\n");
+    if (alibrary) *alibrary = nullptr;
+    return 1;  // FT_Err_Cannot_Open_Resource
+}
+
+static int stub_FT_Done_FreeType(void* library) {
+    return 0;
+}
+
+static int stub_FT_New_Face(void* library, const char* path, long index, void** face) {
+    fprintf(stderr, "[FT-STUB] FT_New_Face('%s') -> error\n", path ? path : "null");
+    if (face) *face = nullptr;
+    return 1;
+}
+
+static int stub_FT_New_Memory_Face(void* library, const void* data, long size, long index, void** face) {
+    if (face) *face = nullptr;
+    return 1;
+}
+
+static int stub_FT_Done_Face(void* face) { return 0; }
+static int stub_FT_Set_Char_Size(void* face, long w, long h, int hres, int vres) { return 1; }
+static int stub_FT_Set_Pixel_Sizes(void* face, int w, int h) { return 1; }
+static int stub_FT_Load_Glyph(void* face, int idx, int flags) { return 1; }
+static int stub_FT_Load_Char(void* face, unsigned long code, int flags) { return 1; }
+static int stub_FT_Render_Glyph(void* slot, int mode) { return 1; }
+static int stub_FT_Get_Char_Index(void* face, unsigned long code) { return 0; }
+static int stub_FT_Get_Kerning(void* face, int l, int r, int mode, void* k) { return 1; }
+static int stub_FT_Select_Charmap(void* face, int encoding) { return 1; }
+static void* stub_FT_Library_Version(void* lib, int* maj, int* min, int* pat) {
+    if (maj) *maj = 0; if (min) *min = 0; if (pat) *pat = 0;
+    return nullptr;
+}
+
+void registerFreeTypeStubs() {
+    registerFunction("FT_Init_FreeType", reinterpret_cast<void*>(stub_FT_Init_FreeType));
+    registerFunction("FT_Done_FreeType", reinterpret_cast<void*>(stub_FT_Done_FreeType));
+    registerFunction("FT_New_Face", reinterpret_cast<void*>(stub_FT_New_Face));
+    registerFunction("FT_New_Memory_Face", reinterpret_cast<void*>(stub_FT_New_Memory_Face));
+    registerFunction("FT_Done_Face", reinterpret_cast<void*>(stub_FT_Done_Face));
+    registerFunction("FT_Set_Char_Size", reinterpret_cast<void*>(stub_FT_Set_Char_Size));
+    registerFunction("FT_Set_Pixel_Sizes", reinterpret_cast<void*>(stub_FT_Set_Pixel_Sizes));
+    registerFunction("FT_Load_Glyph", reinterpret_cast<void*>(stub_FT_Load_Glyph));
+    registerFunction("FT_Load_Char", reinterpret_cast<void*>(stub_FT_Load_Char));
+    registerFunction("FT_Render_Glyph", reinterpret_cast<void*>(stub_FT_Render_Glyph));
+    registerFunction("FT_Get_Char_Index", reinterpret_cast<void*>(stub_FT_Get_Char_Index));
+    registerFunction("FT_Get_Kerning", reinterpret_cast<void*>(stub_FT_Get_Kerning));
+    registerFunction("FT_Select_Charmap", reinterpret_cast<void*>(stub_FT_Select_Charmap));
+    registerFunction("FT_Library_Version", reinterpret_cast<void*>(stub_FT_Library_Version));
 }
 
 FFIType parseType(const std::string& typeName) {

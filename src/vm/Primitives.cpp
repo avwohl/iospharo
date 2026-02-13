@@ -4594,10 +4594,9 @@ PrimitiveResult Interpreter::primitiveForceDisplayUpdate(int argCount) {
         return PrimitiveResult::Success;
     }
 
-    // SDL2 rendering active — don't overwrite with stale Display Form
-    if (ffi_isSDLRenderingActive()) {
-        return PrimitiveResult::Success;
-    }
+    // When SDL2 rendering is active, skip the pixel copy but still discover
+    // the Display global (some code may depend on displayForm_ being set).
+    bool skipPixelCopy = ffi_isSDLRenderingActive();
 
     // Auto-discover Display global if displayForm_ not set
     if (displayForm_.isNil()) {
@@ -4613,7 +4612,7 @@ PrimitiveResult Interpreter::primitiveForceDisplayUpdate(int argCount) {
 
     // Copy display form bits to the platform display surface
     // Form slots: 0=bits, 1=width, 2=height, 3=depth
-    if (!displayForm_.isNil() && displayForm_.isObject()) {
+    if (!skipPixelCopy && !displayForm_.isNil() && displayForm_.isObject()) {
         // Get the Form's bits (slot 0)
         Oop bits = memory_.fetchPointer(0, displayForm_);
         if (!bits.isNil() && bits.isObject()) {
@@ -4633,20 +4632,11 @@ PrimitiveResult Interpreter::primitiveForceDisplayUpdate(int argCount) {
             int copyWidth = std::min(srcWidth, dstWidth);
             int copyHeight = std::min(srcHeight, dstHeight);
 
-            // Handle pixel format conversion
-            // Pharo Forms are ARGB (or BGRA depending on endianness)
-            // iOS expects BGRA (little-endian: ARGB in memory order)
             if (srcDepth == 32) {
                 for (int y = 0; y < copyHeight; y++) {
-                    for (int x = 0; x < copyWidth; x++) {
-                        uint32_t pixel = srcPixels[y * srcWidth + x];
-                        // Pharo 32-bit Forms are typically ARGB
-                        // Our display expects ARGB as well, so direct copy should work
-                        dstPixels[y * dstWidth + x] = pixel;
-                    }
+                    memcpy(dstPixels + y * dstWidth, srcPixels + y * srcWidth, copyWidth * sizeof(uint32_t));
                 }
             } else if (srcDepth == 16) {
-                // 16-bit: RGB565 format
                 uint16_t* src16 = reinterpret_cast<uint16_t*>(srcPixels);
                 for (int y = 0; y < copyHeight; y++) {
                     for (int x = 0; x < copyWidth; x++) {
@@ -4658,11 +4648,8 @@ PrimitiveResult Interpreter::primitiveForceDisplayUpdate(int argCount) {
                     }
                 }
             } else {
-                // Other depths: just copy as-is
                 for (int y = 0; y < copyHeight; y++) {
-                    for (int x = 0; x < copyWidth; x++) {
-                        dstPixels[y * dstWidth + x] = srcPixels[y * srcWidth + x];
-                    }
+                    memcpy(dstPixels + y * dstWidth, srcPixels + y * srcWidth, copyWidth * sizeof(uint32_t));
                 }
             }
 
@@ -12453,13 +12440,7 @@ PrimitiveResult Interpreter::primitiveDrawLoop(int argCount) {
 // left top right bottom primitiveShowDisplayRect -> self
 // Updates the specified rectangle of the display
 PrimitiveResult Interpreter::primitiveShowDisplayRect(int argCount) {
-    // When SDL_RenderPresent is active, OSSDL2Driver renders to its own
-    // backbuffer and copies to gDisplaySurface via RenderPresent.
-    // Don't overwrite with stale Display Form content.
-    if (ffi_isSDLRenderingActive()) {
-        if (argCount > 0) popN(argCount);
-        return PrimitiveResult::Success;
-    }
+    // Allow Display-based rendering to coexist with SDL2 rendering.
 
     // Pop all arguments (left, top, right, bottom) but use them for partial update
     int left = 0, top = 0, right = 0, bottom = 0;
@@ -12513,11 +12494,17 @@ PrimitiveResult Interpreter::primitiveShowDisplayRect(int argCount) {
     if (right > dstWidth) right = dstWidth;
     if (bottom > dstHeight) bottom = dstHeight;
 
+    // When SDL2 rendering is active, skip the pixel copy to avoid overwriting
+    // SDL2 content with stale Display Form data. The primitive still succeeds
+    // so the Pharo side doesn't see errors.
+    if (ffi_isSDLRenderingActive()) {
+        return PrimitiveResult::Success;
+    }
+
     // Copy the rectangle from Form bits to display surface
     for (int y = top; y < bottom; y++) {
-        for (int x = left; x < right; x++) {
-            dstPixels[y * dstWidth + x] = srcPixels[y * srcWidth + x];
-        }
+        memcpy(dstPixels + y * dstWidth + left, srcPixels + y * srcWidth + left,
+               (right - left) * sizeof(uint32_t));
     }
 
     pharo::gDisplaySurface->update();
@@ -12535,15 +12522,9 @@ void Interpreter::showDisplayBits(Oop destForm, int left, int top, int right, in
 
     if (!pharo::gDisplaySurface) return;
 
-    // When OSSDL2Driver is active (SDL_RenderPresent has been called), it owns
-    // display updates. Do NOT also copy from Bitmap-backed forms — they contain
-    // stale content that overwrites SDL_RenderPresent's correct output.
-    // Check both SDL2 event polling AND SDL rendering active flags, since
-    // SDL_PollEvent may not be called even though rendering is active.
-    if (pharo::gEventQueue.isSDL2EventPollingActive() || ffi_isSDLRenderingActive()) {
-        if (++bailSdl <= 3) fprintf(stderr, "[SDB] #%d bail: SDL2 active (poll=%d render=%d)\n",
-            callCount, pharo::gEventQueue.isSDL2EventPollingActive() ? 1 : 0,
-            ffi_isSDLRenderingActive() ? 1 : 0);
+    // When SDL2 rendering is active, skip Display Form copies to avoid
+    // overwriting SDL2 content.
+    if (ffi_isSDLRenderingActive()) {
         return;
     }
 
