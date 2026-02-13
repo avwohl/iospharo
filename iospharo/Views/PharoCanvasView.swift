@@ -151,7 +151,7 @@ class PharoCanvasViewController: UIViewController {
 
     override func loadView() {
         view = UIView()
-        view.backgroundColor = .clear
+        view.backgroundColor = .black
     }
 
     override func viewDidLoad() {
@@ -166,7 +166,7 @@ class PharoCanvasViewController: UIViewController {
 
         view.addSubview(mtkView)
         NSLayoutConstraint.activate([
-            mtkView.topAnchor.constraint(equalTo: view.topAnchor),
+            mtkView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             mtkView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             mtkView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             mtkView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
@@ -183,13 +183,8 @@ class PharoCanvasViewController: UIViewController {
         super.viewDidAppear(animated)
         mtkView.becomeFirstResponder()
 
-        // Temporary: auto-inject test events after startup to verify the
-        // event pipeline works (bridge→VM→SDL_PollEvent→Pharo)
-        #if targetEnvironment(macCatalyst)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) { [weak self] in
-            self?.injectTestEvents()
-        }
-        #endif
+        // Test event injection disabled — was causing window issues.
+        // The rendering pipeline is verified working via saved textures.
     }
 
     #if targetEnvironment(macCatalyst)

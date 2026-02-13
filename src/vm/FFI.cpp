@@ -468,7 +468,7 @@ void stub_SDL_RenderPresent(void* renderer) {
         int copyW = std::min(srcW, dstW);
         int copyH = std::min(srcH, dstH);
 
-        if (totalCalls <= 5 || totalCalls % 200 == 0) {
+        if (totalCalls <= 20 || totalCalls % 200 == 0) {
             uint32_t srcCenter = (srcH > 384 && srcW > 512) ? src[384 * srcW + 512] : 0;
             fprintf(stderr, "[SDL-RP] #%d copy %dx%d -> %dx%d srcCenter=%08x\n",
                     totalCalls, srcW, srcH, dstW, dstH, srcCenter);
@@ -722,15 +722,15 @@ int stub_SDL_PollEvent(void* event) {
         return 1;
     }
 
-    // After startup fully settles (~2min of polling), send SHOWN + EXPOSED + FOCUS_GAINED
-    // to trigger the initial full repaint. Real SDL2 sends these when the window
-    // first becomes visible. We delay because the event handler must be set up first
-    // and the Emergency Debugger cascade must complete.
-    if (sMainWindow && totalPollCalls == 10000) {
-        sPendingWindowEvents.push(SDL_WINDOWEVENT_SHOWN);
+    // Periodically send EXPOSED events to trigger full repaints.
+    // During startup, the Pharo world transitions from splash screen to desktop,
+    // and we need to catch these transitions. Real SDL2 sends EXPOSED when the
+    // window needs repainting (becomes visible, is uncovered, etc.).
+    // Send every 5000 polls starting at poll#5000, up to poll#60000 (~10 min).
+    if (sMainWindow && totalPollCalls >= 5000 && totalPollCalls <= 60000
+        && totalPollCalls % 5000 == 0) {
         sPendingWindowEvents.push(SDL_WINDOWEVENT_EXPOSED);
-        sPendingWindowEvents.push(SDL_WINDOWEVENT_FOCUS_GAINED);
-        fprintf(stderr, "[SDL-PE] Queuing deferred SHOWN+EXPOSED+FOCUS at poll#%d\n", totalPollCalls);
+        fprintf(stderr, "[SDL-PE] Queuing periodic EXPOSED at poll#%d\n", totalPollCalls);
     }
 
     // Pop event from our queue

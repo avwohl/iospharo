@@ -77,8 +77,10 @@ class MetalRenderer: NSObject, MTKViewDelegate {
 
         metalView.delegate = self
 
-        // Log Metal layer properties
+        // framebufferOnly=false allows Window Server to read drawable textures
+        // for compositing, and allows diagnostic readback.
         if let metalLayer = metalView.layer as? CAMetalLayer {
+            metalLayer.framebufferOnly = false
             NSLog("[METAL-INIT] layer.drawableSize=\(metalLayer.drawableSize) framebufferOnly=\(metalLayer.framebufferOnly) contentsScale=\(metalLayer.contentsScale) pixelFormat=\(metalLayer.pixelFormat.rawValue)")
         }
     }
@@ -177,6 +179,7 @@ class MetalRenderer: NSObject, MTKViewDelegate {
         enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
         enc.endEncoding()
 
+        // Present the drawable
         cmdBuf.present(drawable)
         cmdBuf.commit()
 
@@ -193,6 +196,18 @@ class MetalRenderer: NSObject, MTKViewDelegate {
                                 size: MTLSize(width: 1, height: 1, depth: 1))
             texture.getBytes(&srcPixel, bytesPerRow: 4, from: mid, mipmapLevel: 0)
             NSLog("[METAL-DRAW] #\(drawCount) srcTexture center pixel=\(String(format: "%08X", srcPixel))")
+
+            // Also readback from the DRAWABLE texture to verify shader output
+            // (requires framebufferOnly=false on the CAMetalLayer)
+            if drawable.texture.storageMode == .shared || drawable.texture.storageMode == .managed {
+                var drawPixel: UInt32 = 0
+                let drawMid = MTLRegion(origin: MTLOrigin(x: drawable.texture.width/2, y: drawable.texture.height/2, z: 0),
+                                        size: MTLSize(width: 1, height: 1, depth: 1))
+                drawable.texture.getBytes(&drawPixel, bytesPerRow: 4, from: drawMid, mipmapLevel: 0)
+                NSLog("[METAL-DRAW] #\(drawCount) drawableTexture center pixel=\(String(format: "%08X", drawPixel))")
+            } else {
+                NSLog("[METAL-DRAW] #\(drawCount) drawableTexture storageMode=\(drawable.texture.storageMode.rawValue) (cannot readback)")
+            }
         }
 
         // Save texture as PNG periodically for visual verification

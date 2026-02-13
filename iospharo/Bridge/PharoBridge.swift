@@ -100,25 +100,12 @@ class PharoBridge: ObservableObject {
         if initResult != 0 {
             isInitialized = true
             isRunning = true
-            NSLog("[BRIDGE] VM initialized, scheduling interpreter on main thread")
+            NSLog("[BRIDGE] VM initialized, starting interpreter on background thread")
 
-            // Schedule the interpreter to run on the NEXT run loop iteration.
-            // The interpreter runs on the main thread and periodically pumps
-            // CFRunLoopRunInMode to let AppKit/UIKit process events.
-            CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue) {
-                NSLog("[BRIDGE] Starting interpreter on main thread")
-                vm_runOnMainThread()
-
-                // VM exited
-                DispatchQueue.main.async {
-                    self.isRunning = false
-                    self.isInitialized = false
-                    NSLog("[BRIDGE] VM stopped, exiting app")
-                    exit(0)
-                }
-            }
-            // Wake up the run loop to process the block
-            CFRunLoopWakeUp(CFRunLoopGetMain())
+            // Start the interpreter on a background thread.
+            // This returns immediately, leaving the main thread free for
+            // SwiftUI/UIKit event processing and Metal rendering.
+            vm_run()
         } else {
             errorMessage = "Failed to initialize VM"
         }

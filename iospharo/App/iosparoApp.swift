@@ -13,6 +13,32 @@
 
 import SwiftUI
 
+#if targetEnvironment(macCatalyst)
+/// Scene delegate to configure window size on Mac Catalyst
+class SceneDelegate: NSObject, UIWindowSceneDelegate {
+    func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
+        guard let windowScene = scene as? UIWindowScene else { return }
+        fputs("[SCENE] willConnectTo — configuring window size\n", stderr)
+        fflush(stderr)
+
+        // Set window size constraints to prevent full-screen default
+        if let sizeRestrictions = windowScene.sizeRestrictions {
+            sizeRestrictions.minimumSize = CGSize(width: 800, height: 600)
+            sizeRestrictions.maximumSize = CGSize(width: 2560, height: 1600)
+        }
+
+        // Request a reasonable initial window size
+        if #available(macCatalyst 16.0, *) {
+            let geometryPrefs = UIWindowScene.GeometryPreferences.Mac(systemFrame: CGRect(x: 100, y: 100, width: 1024, height: 768))
+            windowScene.requestGeometryUpdate(geometryPrefs) { error in
+                fputs("[SCENE] geometry update error: \(error.localizedDescription)\n", stderr)
+                fflush(stderr)
+            }
+        }
+    }
+}
+#endif
+
 /// App delegate to handle lifecycle events
 class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
@@ -24,6 +50,15 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         return true
     }
 
+    #if targetEnvironment(macCatalyst)
+    func application(_ application: UIApplication, configurationForConnecting connectingSceneSession: UISceneSession, options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+        let config = UISceneConfiguration(name: nil, sessionRole: connectingSceneSession.role)
+        config.delegateClass = SceneDelegate.self
+        fputs("[APP] configurationForConnecting scene — using SceneDelegate\n", stderr)
+        fflush(stderr)
+        return config
+    }
+    #endif
 
     func applicationWillTerminate(_ application: UIApplication) {
         NSLog("[APP] applicationWillTerminate - stopping VM")
@@ -55,4 +90,3 @@ struct iosparoApp: App {
         }
     }
 }
-
