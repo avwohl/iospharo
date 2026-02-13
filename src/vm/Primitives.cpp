@@ -4539,9 +4539,10 @@ PrimitiveResult Interpreter::primitiveKeyboardNext(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveBeDisplay(int argCount) {
-    {
-        static FILE* f = nullptr;
-        if (f) { fprintf(f, "[PRIM102] called argCount=%d\n", argCount); fflush(f); }
+    static int callCount = 0;
+    callCount++;
+    if (callCount <= 10) {
+        fprintf(stderr, "[PRIM102] beDisplay #%d argCount=%d\n", callCount, argCount);
     }
     if (argCount != 0) return PrimitiveResult::Failure;
 
@@ -4553,16 +4554,16 @@ PrimitiveResult Interpreter::primitiveBeDisplay(int argCount) {
 
     // Store as the display form
     setDisplayForm(form);
-    {
-        static FILE* f = nullptr;
-        if (f) {
-            Oop w = memory_.fetchPointer(1, form);
-            Oop h = memory_.fetchPointer(2, form);
-            fprintf(f, "[PRIM102] setDisplayForm OK, width=%lld height=%lld\n",
-                    w.isSmallInteger() ? (long long)w.asSmallInteger() : -1LL,
-                    h.isSmallInteger() ? (long long)h.asSmallInteger() : -1LL);
-            fflush(f);
-        }
+    if (callCount <= 10) {
+        Oop w = memory_.fetchPointer(1, form);
+        Oop h = memory_.fetchPointer(2, form);
+        Oop bits = memory_.fetchPointer(0, form);
+        uint32_t classIdx = form.asObjectPtr()->classIndex();
+        fprintf(stderr, "[PRIM102] setDisplayForm=%llx classIdx=%u width=%lld height=%lld bits=%llx\n",
+                (unsigned long long)form.rawBits(), classIdx,
+                w.isSmallInteger() ? (long long)w.asSmallInteger() : -1LL,
+                h.isSmallInteger() ? (long long)h.asSmallInteger() : -1LL,
+                (unsigned long long)bits.rawBits());
     }
 
     // Extract form dimensions to update screen size
@@ -12445,7 +12446,8 @@ PrimitiveResult Interpreter::primitiveDrawLoop(int argCount) {
 // left top right bottom primitiveShowDisplayRect -> self
 // Updates the specified rectangle of the display
 PrimitiveResult Interpreter::primitiveShowDisplayRect(int argCount) {
-    // When SDL_RenderPresent is active, it owns display updates.
+    // When SDL_RenderPresent is active, OSSDL2Driver renders to its own
+    // backbuffer and copies to gDisplaySurface via RenderPresent.
     // Don't overwrite with stale Display Form content.
     if (ffi_isSDLRenderingActive()) {
         if (argCount > 0) popN(argCount);

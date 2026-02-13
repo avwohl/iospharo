@@ -678,14 +678,22 @@ int stub_SDL_PollEvent(void* event) {
     // Pop event from our queue
     pharo::Event pharoEvent;
     if (!pharo::gEventQueue.pop(pharoEvent)) {
-        // No events available. Pump the native run loop so UIKit can
-        // deliver touch/hover events. The event loop process runs at
-        // priority 60 and polls continuously — without this yield,
-        // CFRunLoop never gets CPU time and no events arrive.
-#ifdef __APPLE__
-        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.001, true);
-#endif
+        // No events available. Return 0 quickly so the event loop process
+        // yields via Processor yield → relinquishProcessor, which pumps
+        // CFRunLoop via the relinquish callback. DO NOT call
+        // CFRunLoopRunInMode here — the event loop process tight-loops on
+        // PollEvent at priority 60, and blocking 1ms per call starves the
+        // interpreter and all lower-priority processes.
         return 0;
+    }
+
+    // Log every event pop (first 20 + periodic)
+    static int popCount = 0;
+    popCount++;
+    if (popCount <= 20 || popCount % 100 == 0) {
+        fprintf(stderr, "[SDL-POP] #%d event type=%d arg1=%d arg2=%d arg3=%d arg5=%d\n",
+                popCount, pharoEvent.type, pharoEvent.arg1, pharoEvent.arg2,
+                pharoEvent.arg3, pharoEvent.arg5);
     }
 
     SDL_Event* sdlEvent = reinterpret_cast<SDL_Event*>(event);

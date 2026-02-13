@@ -501,22 +501,14 @@ bool Interpreter::initialize() {
 // ===== DISPLAY INITIALIZATION =====
 
 void Interpreter::initializeDisplayForm() {
-    // Direct platform display initialization is now done in bootstrapStartup
-    // This method is kept for future use with Smalltalk Forms
+    // Display surface initialization.
+    // Once OSSDL2Driver starts, SDL_RenderPresent updates gDisplaySurface.
+    // Until then, fill with black.
     if (pharo::gDisplaySurface && displayForm_.isNil()) {
-        // For now, just fill platform display with a test pattern
         uint32_t* pixels = pharo::gDisplaySurface->pixels();
         int width = pharo::gDisplaySurface->width();
         int height = pharo::gDisplaySurface->height();
-
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                uint8_t r = static_cast<uint8_t>(128 + (x * 127 / width));
-                uint8_t g = static_cast<uint8_t>(128 + (y * 127 / height));
-                uint8_t b = 255;
-                pixels[y * width + x] = (255 << 24) | (r << 16) | (g << 8) | b;
-            }
-        }
+        memset(pixels, 0, width * height * 4);
         pharo::gDisplaySurface->update();
     }
 }
@@ -1944,8 +1936,10 @@ void Interpreter::syncDisplayToSurface() {
     processInputEvents();
 
     // When SDL2 rendering is active (SDL_RenderPresent has been called),
-    // it handles display updates. Don't overwrite with stale Display Form content.
-    if (pharo::gEventQueue.isSDL2EventPollingActive() || ffi_isSDLRenderingActive()) {
+    // OSSDL2Driver renders to its own backbuffer Form (not the Display global).
+    // SDL_RenderPresent copies the rendered content to gDisplaySurface.
+    // Don't overwrite with stale Display Form content.
+    if (ffi_isSDLRenderingActive()) {
         return;
     }
 
@@ -1955,10 +1949,7 @@ void Interpreter::syncDisplayToSurface() {
         return;
     }
 
-    // Re-fetch bits pointer every time in case GC moved the bitmap
-    // Also check if Display global changed (Pharo might replace it)
-
-    // Get the Form's bits (slot 0)
+    // Get the Form's bits (slot 0) — re-fetch every time in case GC moved it
     Oop bits = memory_.fetchPointer(0, displayForm_);
     if (bits.isNil() || !bits.isObject()) {
         return;
@@ -2367,19 +2358,10 @@ void Interpreter::startHeartbeat() {
                 // Set flag for the main interpreter loop to handle it.
                 pendingDisplaySync_.store(true, std::memory_order_release);
 
-                // Push a timer/redraw event to wake up the UI process
-                // Event type 6 = WindowMetrics (triggers redraw)
-                pharo::Event timerEvent;
-                timerEvent.type = 6;  // WindowMetrics
-                timerEvent.timeStamp = static_cast<int>(tickCount);
-                timerEvent.arg1 = 0;  // x
-                timerEvent.arg2 = 0;  // y
-                timerEvent.arg3 = 1024;  // width
-                timerEvent.arg4 = 768;   // height
-                timerEvent.windowIndex = 1;
-                pharo::gEventQueue.push(timerEvent);
-
                 // Signal the input semaphore to wake up the UI process
+                // (Don't push WindowMetrics events — they cause constant resize
+                // processing in OSSDL2Driver. Display sync is handled by
+                // pendingDisplaySync_ flag in the main interpreter loop.)
                 int inputSemaIdx = pharo::gEventQueue.getInputSemaphoreIndex();
                 if (inputSemaIdx > 0) {
                     pendingSignalIndex_.store(inputSemaIdx, std::memory_order_release);
