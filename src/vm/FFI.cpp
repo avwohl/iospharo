@@ -1068,7 +1068,29 @@ int stub_SDL_PollEvent(void* event) {
 }
 
 int stub_SDL_WaitEvent(void* event) {
-    // Return 0 = no event available
+    // SDL_WaitEvent blocks until an event is available, then returns it.
+    // This is used by modal event loops (e.g., menu dropdown grab loops).
+    // Without this, menu dropdowns open and close immediately.
+    static int waitCount = 0;
+    waitCount++;
+    if (waitCount <= 5) {
+        fprintf(stderr, "[SDL-WAIT] #%d WaitEvent called, delegating to PollEvent\n", waitCount);
+    }
+
+    // Try polling first
+    int result = stub_SDL_PollEvent(event);
+    if (result != 0) return result;
+
+    // No event available - sleep briefly and try again (up to ~100ms)
+    // This prevents busy-waiting while still being responsive
+    for (int i = 0; i < 10; i++) {
+        usleep(10000);  // 10ms
+        result = stub_SDL_PollEvent(event);
+        if (result != 0) return result;
+    }
+
+    // Still no event after waiting - return 0
+    // (SDL_WaitEvent should block forever, but we don't want to deadlock)
     return 0;
 }
 

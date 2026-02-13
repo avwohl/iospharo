@@ -5118,6 +5118,13 @@ PrimitiveResult Interpreter::primitiveSignalAtMilliseconds(int argCount) {
     timerSemaphore_ = semaphore;
     nextWakeupTime_ = targetMs & 0x3FFFFFFF;  // Ensure 30-bit
 
+    static int timerMs136Count = 0;
+    if (++timerMs136Count <= 10) {
+        fprintf(stderr, "[TIMER136 #%d] targetMs=%lld sema=0x%llx step=%llu\n",
+                timerMs136Count, (long long)targetMs, (unsigned long long)semaphore.rawBits(),
+                (unsigned long long)g_stepNum);
+    }
+
     primitiveSuccess(semaphore);  // Return receiver
     return PrimitiveResult::Success;
 }
@@ -14842,6 +14849,12 @@ PrimitiveResult Interpreter::primitiveSignalAtUTCMicroseconds(int argCount) {
         // Schedule the timer
         timerSemaphore_ = sema;
         nextWakeupUsec_ = usecs;
+        static int timerSetCount = 0;
+        if (++timerSetCount <= 10) {
+            fprintf(stderr, "[TIMER-SET #%d] usecs=%lld sema=0x%llx step=%llu\n",
+                    timerSetCount, (long long)usecs, (unsigned long long)sema.rawBits(),
+                    (unsigned long long)g_stepNum);
+        }
     }
 
     popN(2);  // Pop both arguments, leave receiver

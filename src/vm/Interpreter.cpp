@@ -2219,6 +2219,12 @@ void Interpreter::checkTimerSemaphore() {
         int64_t currentUsec = unixUsec + kSmalltalkEpochOffset;
 
         if (currentUsec >= nextWakeupUsec_) {
+            static int usecFireCount = 0;
+            if (++usecFireCount <= 10) {
+                fprintf(stderr, "[TIMER-FIRE-USEC #%d] target=%lld current=%lld step=%llu\n",
+                        usecFireCount, (long long)nextWakeupUsec_, (long long)currentUsec,
+                        (unsigned long long)g_stepNum);
+            }
             Oop semaphore = timerSemaphore_;
             timerSemaphore_ = Oop::nil();
             nextWakeupUsec_ = INT64_MAX;
@@ -2238,6 +2244,11 @@ void Interpreter::checkTimerSemaphore() {
     bool timerElapsed = (diff > 0) && (diff < 0x20000000);
 
     if (timerElapsed) {
+        static int timerFireCount = 0;
+        if (++timerFireCount <= 10) {
+            fprintf(stderr, "[TIMER-FIRE #%d] ms targetMs=%lld currentMs=%lld diff=%lld step=%llu\n",
+                    timerFireCount, targetMs, currentMs, diff, (unsigned long long)g_stepNum);
+        }
         Oop semaphore = timerSemaphore_;
         timerSemaphore_ = Oop::nil();
         nextWakeupTime_ = 0;
@@ -8681,11 +8692,8 @@ void Interpreter::initializeSelectors() {
 // ===== PROCESS SCHEDULING =====
 
 void Interpreter::terminateCurrentProcess() {
-    static FILE* termLog = nullptr;
+    static FILE* termLog = stderr;  // Always log terminations - critical diagnostic
     static int termCount = 0;
-    if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!termLog) termLog = nullptr;
-    }
     termCount++;
 
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
@@ -8726,9 +8734,30 @@ void Interpreter::terminateCurrentProcess() {
         // Get priority
         Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
         int prio = prioOop.isSmallInteger() ? static_cast<int>(prioOop.asSmallInteger()) : -1;
-        fprintf(termLog, "[TERMINATE #%d step=%lld] process=0x%llx priority=%d oldSuspendedContext=0x%llx\n",
+        fprintf(termLog, "[TERMINATE #%d step=%lld] process=0x%llx priority=%d oldSuspendedContext=0x%llx fd=%zu\n",
                 termCount, (long long)g_stepNum, (unsigned long long)activeProcess.rawBits(), prio,
-                (unsigned long long)suspendedCtx.rawBits());
+                (unsigned long long)suspendedCtx.rawBits(), frameDepth_);
+        // Log current method selector
+        auto extractSel = [this](Oop method) -> std::string {
+            if (!method.isObject() || method.rawBits() <= 0x10000) return "?";
+            ObjectHeader* mh = method.asObjectPtr();
+            if (!mh->isCompiledMethod()) return "?";
+            Oop h = mh->slotAt(0);
+            if (!h.isSmallInteger()) return "?";
+            int nl = h.asSmallInteger() & 0x7FFF;
+            if (nl < 2 || nl >= (int)mh->slotCount()) return "?";
+            Oop sel = mh->slotAt(nl - 1);
+            if (!sel.isObject() || sel.rawBits() <= 0x10000) return "?";
+            ObjectHeader* sh = sel.asObjectPtr();
+            if (!sh->isBytesObject() || sh->byteSize() > 80) return "?";
+            return std::string((char*)sh->bytes(), sh->byteSize());
+        };
+        fprintf(termLog, "[TERMINATE #%d] current: %s\n", termCount, extractSel(method_).c_str());
+        for (size_t fi = 0; fi < std::min(frameDepth_, (size_t)10); fi++) {
+            size_t idx = frameDepth_ - 1 - fi;
+            fprintf(termLog, "[TERMINATE #%d]   frame[%zu]: %s\n", termCount,
+                    idx, extractSel(savedFrames_[idx].savedMethod).c_str());
+        }
         fflush(termLog);
     }
 
