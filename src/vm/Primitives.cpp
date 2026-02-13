@@ -16114,11 +16114,39 @@ PrimitiveResult Interpreter::primitiveControlOSProcess(int argCount) {
 
 // ===== BITBLT PRIMITIVES (290-299) =====
 
-// BitBlt helper: Extract integer field from BitBlt object
+// BitBlt helper: Extract integer field from BitBlt object.
+// If the field is a Fraction (numerator/denominator), convert to integer
+// and write the SmallInteger back so the Smalltalk fallback code also
+// sees an integer (avoiding the "Bad BitBlt arg (Fraction?)" error).
 static intptr_t bitBltField(ObjectMemory& memory, Oop bitBlt, size_t index) {
     Oop field = memory.fetchPointer(index, bitBlt);
     if (field.isSmallInteger()) {
         return field.asSmallInteger();
+    }
+    if (field.isNil()) {
+        return 0;
+    }
+    // Try to extract integer from Fraction (2 SmallInteger inst vars: numerator, denominator)
+    if (field.isObject()) {
+        ObjectHeader* hdr = field.asObjectPtr();
+        auto fmt = hdr->format();
+        if (fmt == ObjectFormat::FixedSize) {
+            size_t slots = hdr->slotCount();
+            if (slots == 2) {
+                Oop num = memory.fetchPointer(0, field);
+                Oop den = memory.fetchPointer(1, field);
+                if (num.isSmallInteger() && den.isSmallInteger()) {
+                    intptr_t n = num.asSmallInteger();
+                    intptr_t d = den.asSmallInteger();
+                    if (d != 0) {
+                        intptr_t result = n / d; // truncate toward zero
+                        // Write back so Smalltalk fallback sees an integer too
+                        memory.storePointer(index, bitBlt, Oop::fromSmallInteger(result));
+                        return result;
+                    }
+                }
+            }
+        }
     }
     return 0;
 }
