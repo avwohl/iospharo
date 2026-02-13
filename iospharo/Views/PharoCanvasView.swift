@@ -66,6 +66,7 @@ class PharoMTKView: MTKView {
     // MARK: - Touch Handling
 
     private var currentButton: Int = IOS_RED_BUTTON
+    var suppressNextTouchCancel = false
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         eventLog("[TOUCH] touchesBegan count=\(touches.count) bridge=\(bridge != nil)")
@@ -92,6 +93,13 @@ class PharoMTKView: MTKView {
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        // When UIContextMenuInteraction handles a right-click, UIKit cancels
+        // the touch. Skip the spurious button-up since contextMenuInteraction
+        // already sent the correct right-click events to Pharo.
+        if suppressNextTouchCancel {
+            suppressNextTouchCancel = false
+            return
+        }
         guard let touch = touches.first, let bridge = bridge else { return }
         let point = touch.location(in: self)
         bridge.sendTouchUp(at: point, buttons: currentButton)
@@ -188,11 +196,11 @@ class PharoCanvasViewController: UIViewController {
         mtkView.becomeFirstResponder()
 
         #if targetEnvironment(macCatalyst)
-        // Wait for theme initialization (after EXPOSED event) before injecting test events
-        waitForThemeReady {
-            NSLog("[TEST] Theme ready, injecting test events")
-            self.injectMenuTest()
-        }
+        // Test injection disabled — test with manual cliclick instead
+        // waitForThemeReady {
+        //     NSLog("[TEST] Theme ready, injecting test events")
+        //     self.injectMenuTest()
+        // }
         #endif
     }
 
@@ -520,8 +528,11 @@ extension PharoCanvasViewController: UIContextMenuInteractionDelegate {
         _ interaction: UIContextMenuInteraction,
         configurationForMenuAtLocation location: CGPoint
     ) -> UIContextMenuConfiguration? {
-        // Capture right-click position and send to Pharo as yellow button
+        // Capture right-click position and send to Pharo as yellow button.
+        // Suppress the touchesCancelled that UIKit fires after context menu
+        // interaction, which would send a spurious LEFT button UP.
         pharoEventLog("[RIGHT-CLICK] at (\(Int(location.x)),\(Int(location.y)))")
+        mtkView.suppressNextTouchCancel = true
         if let bridge = bridge {
             bridge.sendMouseMoved(to: location, modifiers: 0)
             bridge.sendTouchDown(at: location, buttons: IOS_YELLOW_BUTTON)

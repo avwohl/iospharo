@@ -686,6 +686,28 @@ int stub_SDL_LockTexture(void* texture, void* rect, void** pixels, int* pitch) {
 }
 
 void stub_SDL_UnlockTexture(void* texture) {
+    // In real SDL2, UnlockTexture uploads modified pixels to the GPU texture.
+    // In our stub architecture, copy texture pixels to gDisplaySurface here
+    // because the deferred present (useDeferredUpdates → RenderCopy → RenderPresent)
+    // is NOT reached when Smalltalk errors propagate past the ensure: block in
+    // deferUpdatesWhile:. Without this, display never updates after drawing errors.
+    auto it = sTextures.find(texture);
+    if (it == sTextures.end() || !it->second.pixels) return;
+
+    if (pharo::gDisplaySurface) {
+        uint32_t* src = it->second.pixels;
+        int srcW = it->second.width;
+        int srcH = it->second.height;
+        uint32_t* dst = pharo::gDisplaySurface->pixels();
+        int dstW = pharo::gDisplaySurface->width();
+        int dstH = pharo::gDisplaySurface->height();
+        int copyW = std::min(srcW, dstW);
+        int copyH = std::min(srcH, dstH);
+        for (int y = 0; y < copyH; y++) {
+            memcpy(dst + y * dstW, src + y * srcW, copyW * sizeof(uint32_t));
+        }
+        pharo::gDisplaySurface->update();
+    }
 }
 
 int stub_SDL_RenderCopy(void* renderer, void* texture, void* srcrect, void* dstrect) {

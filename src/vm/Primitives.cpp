@@ -16303,7 +16303,105 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     if (destX + width > destWidth) width = destWidth - destX;
     if (destY + height > destHeight) height = destHeight - destY;
 
-    if (width <= 0 || height <= 0) return PrimitiveResult::Success;
+    if (width <= 0 || height <= 0) {
+        // For counting rules, return 0 when nothing to count
+        if (combinationRule >= 30 && combinationRule <= 32) {
+            primitiveSuccess(Oop::fromSmallInteger(0));
+            return PrimitiveResult::Success;
+        }
+        return PrimitiveResult::Success;
+    }
+
+    // Counting modes (rules 30-32): count pixels, return count as SmallInteger
+    // Rule 30: count dest pixels != 0
+    // Rule 31: count dest pixels == 0
+    // Rule 32: count source pixels != 0 (tally)
+    if (combinationRule >= 30 && combinationRule <= 32) {
+        intptr_t count = 0;
+
+        if (combinationRule == 32 && !sourceForm.isNil() && sourceForm.isObject()) {
+            // Rule 32: count non-zero source pixels
+            Oop srcBits = memory_.fetchPointer(FormBits, sourceForm);
+            intptr_t srcDepth = bitBltField(memory_, sourceForm, FormDepth);
+            intptr_t srcWidth2 = bitBltField(memory_, sourceForm, FormWidth);
+
+            if (srcBits.isObject() && !srcBits.isNil() && srcBits.rawBits() >= 0x10000) {
+                ObjectHeader* srcHdr = srcBits.asObjectPtr();
+                size_t srcBitsSize = srcHdr->byteSize();
+
+                if (srcDepth == 32) {
+                    uint32_t* srcPixels = reinterpret_cast<uint32_t*>(srcHdr->bytes());
+                    intptr_t srcPitch = srcWidth2;
+                    for (intptr_t y = 0; y < height; y++) {
+                        intptr_t sy = sourceY + y;
+                        if (sy < 0 || static_cast<size_t>((sy + 1) * srcPitch) * 4 > srcBitsSize) continue;
+                        uint32_t* row = srcPixels + sy * srcPitch + sourceX;
+                        for (intptr_t x = 0; x < width; x++) {
+                            if (row[x] != 0) count++;
+                        }
+                    }
+                } else if (srcDepth == 1) {
+                    intptr_t srcWordsPerRow = (srcWidth2 + 31) / 32;
+                    uint32_t* srcWords = reinterpret_cast<uint32_t*>(srcHdr->bytes());
+                    for (intptr_t y = 0; y < height; y++) {
+                        intptr_t sy = sourceY + y;
+                        if (sy < 0 || static_cast<size_t>((sy + 1) * srcWordsPerRow) * 4 > srcBitsSize) continue;
+                        uint32_t* row = srcWords + sy * srcWordsPerRow;
+                        for (intptr_t x = 0; x < width; x++) {
+                            intptr_t sx = sourceX + x;
+                            if ((row[sx / 32] >> (31 - sx % 32)) & 1) count++;
+                        }
+                    }
+                } else if (srcDepth == 8) {
+                    intptr_t srcBytesPerRow = ((srcWidth2 + 3) / 4) * 4;
+                    uint8_t* srcBytes8 = srcHdr->bytes();
+                    for (intptr_t y = 0; y < height; y++) {
+                        intptr_t sy = sourceY + y;
+                        if (sy < 0 || static_cast<size_t>((sy + 1) * srcBytesPerRow) > srcBitsSize) continue;
+                        uint8_t* row = srcBytes8 + sy * srcBytesPerRow + sourceX;
+                        for (intptr_t x = 0; x < width; x++) {
+                            if (row[x] != 0) count++;
+                        }
+                    }
+                }
+            }
+        } else if (combinationRule == 30 || combinationRule == 31) {
+            // Rules 30/31: count dest pixels that are non-zero/zero
+            if (destDepth == 32) {
+                for (intptr_t y = 0; y < height; y++) {
+                    uint32_t* row = destPixels + (destY + y) * destPitch + destX;
+                    for (intptr_t x = 0; x < width; x++) {
+                        bool nonZero = (row[x] != 0);
+                        if (combinationRule == 30 ? nonZero : !nonZero) count++;
+                    }
+                }
+            } else if (destDepth == 8) {
+                intptr_t destBytesPerRow = ((destWidth + 3) / 4) * 4;
+                uint8_t* destBytes8 = reinterpret_cast<uint8_t*>(destPixels);
+                for (intptr_t y = 0; y < height; y++) {
+                    uint8_t* row = destBytes8 + (destY + y) * destBytesPerRow + destX;
+                    for (intptr_t x = 0; x < width; x++) {
+                        bool nonZero = (row[x] != 0);
+                        if (combinationRule == 30 ? nonZero : !nonZero) count++;
+                    }
+                }
+            } else if (destDepth == 1) {
+                intptr_t destWordsPerRow = (destWidth + 31) / 32;
+                for (intptr_t y = 0; y < height; y++) {
+                    uint32_t* row = destPixels + (destY + y) * destWordsPerRow;
+                    for (intptr_t x = 0; x < width; x++) {
+                        intptr_t dx = destX + x;
+                        bool nonZero = (row[dx / 32] >> (31 - dx % 32)) & 1;
+                        if (combinationRule == 30 ? nonZero : !nonZero) count++;
+                    }
+                }
+            }
+        }
+
+        // Return count as SmallInteger (replace receiver on stack)
+        primitiveSuccess(Oop::fromSmallInteger(count));
+        return PrimitiveResult::Success;
+    }
 
     // Halftone form extraction (used as fill color for no-source ops)
     Oop halftoneForm = memory_.fetchPointer(BBHalftoneForm, bitBlt);
@@ -16562,6 +16660,49 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     case 7: case 25: dstRow[x] |= gray; break;
                     case 6: dstRow[x] ^= gray; break;
                     default: dstRow[x] = gray; break;
+                }
+            }
+        }
+        showDisplayBits(destForm, destX, destY, destX + width, destY + height);
+        return PrimitiveResult::Success;
+    }
+
+    // Depth-8 dest with 1-bit source (cursor form rendering)
+    if (destDepth == 8 && srcDepth == 1) {
+        intptr_t destBytesPerRow = ((destWidth + 3) / 4) * 4; // word-aligned
+        uint8_t* destBytes8 = reinterpret_cast<uint8_t*>(destPixels);
+        intptr_t srcWordsPerRow = (srcWidth + 31) / 32;
+
+        size_t requiredDestBytes8 = static_cast<size_t>((destY + height - 1) * destBytesPerRow + destX + width);
+        if (requiredDestBytes8 > destBitsSize) return PrimitiveResult::Failure;
+
+        size_t requiredSrcBytes = static_cast<size_t>((sourceY + height) * srcWordsPerRow * 4);
+        if (requiredSrcBytes > srcBitsSize) return PrimitiveResult::Failure;
+
+        // Color map: map bit 0 → color0, bit 1 → color1
+        // For 8-bit depth, default: 0→black(0), 1→white(255)
+        uint8_t color0 = 0;
+        uint8_t color1 = 255;
+        if (cmTable && cmSize >= 2) {
+            color0 = static_cast<uint8_t>(cmTable[0] & 0xFF);
+            color1 = static_cast<uint8_t>(cmTable[1] & 0xFF);
+        }
+
+        uint32_t* srcWords = reinterpret_cast<uint32_t*>(srcBytes);
+        for (intptr_t y = 0; y < height; y++) {
+            uint32_t* srcRow = srcWords + (sourceY + y) * srcWordsPerRow;
+            uint8_t* dstRow = destBytes8 + (destY + y) * destBytesPerRow + destX;
+            for (intptr_t x = 0; x < width; x++) {
+                intptr_t sx = sourceX + x;
+                uint32_t srcBit = (srcRow[sx / 32] >> (31 - sx % 32)) & 1;
+                uint8_t srcVal = srcBit ? color1 : color0;
+                switch (combinationRule) {
+                    case 3: case 34: dstRow[x] = srcVal; break;
+                    case 0: dstRow[x] &= srcVal; break;
+                    case 7: case 25: dstRow[x] |= srcVal; break;
+                    case 6: dstRow[x] ^= srcVal; break;
+                    case 1: if (srcBit) dstRow[x] &= ~srcVal; break;
+                    default: dstRow[x] = srcVal; break;
                 }
             }
         }
