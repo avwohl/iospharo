@@ -16169,9 +16169,10 @@ PrimitiveResult Interpreter::primitiveControlOSProcess(int argCount) {
 // ===== BITBLT PRIMITIVES (290-299) =====
 
 // BitBlt helper: Extract integer field from BitBlt object.
-// If the field is a Fraction (numerator/denominator), convert to integer
-// and write the SmallInteger back so the Smalltalk fallback code also
-// sees an integer (avoiding the "Bad BitBlt arg (Fraction?)" error).
+// Handles SmallInteger, SmallFloat, boxed Float, Fraction, and nil.
+// Float values are truncated to integer (matching Smalltalk's BitBlt behavior
+// where coordinate fields like destX/destY accept Floats from Canvas origins
+// computed via Float arithmetic on morph positions).
 static intptr_t bitBltField(ObjectMemory& memory, Oop bitBlt, size_t index) {
     Oop field = memory.fetchPointer(index, bitBlt);
     if (field.isSmallInteger()) {
@@ -16180,24 +16181,36 @@ static intptr_t bitBltField(ObjectMemory& memory, Oop bitBlt, size_t index) {
     if (field.isNil()) {
         return 0;
     }
-    // Try to extract integer from Fraction (2 SmallInteger inst vars: numerator, denominator)
+    // SmallFloat immediate — truncate to integer
+    if (field.isSmallFloat()) {
+        double val = field.asSmallFloat();
+        intptr_t result = static_cast<intptr_t>(val);
+        // Write back as SmallInteger for consistency
+        memory.storePointer(index, bitBlt, Oop::fromSmallInteger(result));
+        return result;
+    }
     if (field.isObject()) {
         ObjectHeader* hdr = field.asObjectPtr();
         auto fmt = hdr->format();
-        if (fmt == ObjectFormat::FixedSize) {
-            size_t slots = hdr->slotCount();
-            if (slots == 2) {
-                Oop num = memory.fetchPointer(0, field);
-                Oop den = memory.fetchPointer(1, field);
-                if (num.isSmallInteger() && den.isSmallInteger()) {
-                    intptr_t n = num.asSmallInteger();
-                    intptr_t d = den.asSmallInteger();
-                    if (d != 0) {
-                        intptr_t result = n / d; // truncate toward zero
-                        // Write back so Smalltalk fallback sees an integer too
-                        memory.storePointer(index, bitBlt, Oop::fromSmallInteger(result));
-                        return result;
-                    }
+        // Boxed Float (64-bit indexable, 1 slot = 8 bytes)
+        if (fmt == ObjectFormat::Indexable64 && hdr->slotCount() == 1) {
+            double val;
+            std::memcpy(&val, hdr->bytes(), sizeof(double));
+            intptr_t result = static_cast<intptr_t>(val);
+            memory.storePointer(index, bitBlt, Oop::fromSmallInteger(result));
+            return result;
+        }
+        // Fraction (2 SmallInteger inst vars: numerator, denominator)
+        if (fmt == ObjectFormat::FixedSize && hdr->slotCount() == 2) {
+            Oop num = memory.fetchPointer(0, field);
+            Oop den = memory.fetchPointer(1, field);
+            if (num.isSmallInteger() && den.isSmallInteger()) {
+                intptr_t n = num.asSmallInteger();
+                intptr_t d = den.asSmallInteger();
+                if (d != 0) {
+                    intptr_t result = n / d; // truncate toward zero
+                    memory.storePointer(index, bitBlt, Oop::fromSmallInteger(result));
+                    return result;
                 }
             }
         }
