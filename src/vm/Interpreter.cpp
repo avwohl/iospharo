@@ -4273,6 +4273,25 @@ terminate_process:
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
 #endif
 
+                // Diagnostic: detect stranded events in gEventQueue
+                {
+                    static int idleIterations = 0;
+                    idleIterations++;
+                    size_t qSize = pharo::gEventQueue.size();
+                    if (qSize > 0 && (idleIterations % 100 == 0)) {
+                        fprintf(stderr, "[IDLE-STRANDED] iter=%d queueSize=%zu timerSem=%s wakeup=%s\n",
+                                idleIterations, qSize,
+                                timerSemaphore_.isNil() ? "nil" : "set",
+                                nextWakeupUsec_ == INT64_MAX ? "none" : "armed");
+                    }
+                    if (idleIterations % 500 == 0) {
+                        fprintf(stderr, "[IDLE-STATE] iter=%d queueSize=%zu timerSem=%s wakeup=%s\n",
+                                idleIterations, qSize,
+                                timerSemaphore_.isNil() ? "nil" : "set",
+                                nextWakeupUsec_ == INT64_MAX ? "none" : "armed");
+                    }
+                }
+
                 // Try to find a runnable process
                 if (tryReschedule()) {
                     return;

@@ -262,6 +262,7 @@ static int g_renderClearCount = 0;
 // Post-EXPOSE tracking: set when periodic EXPOSED event is delivered, cleared after 10k polls
 static bool g_postExposeTracking = false;
 static int g_postExposePollCount = 0;
+static bool g_firstExposedDelivered = false;
 
 // Pending synthetic window events (SDL2 sends these when window is created/shown)
 static std::queue<uint8_t> sPendingWindowEvents;
@@ -284,6 +285,10 @@ bool ffi_isSDLRenderingActive() {
 // and NOT reach OSSDL2Driver, so mouse/keyboard events will be lost.
 bool ffi_isSDLEventPollingActive() {
     return pharo::gEventQueue.isSDL2EventPollingActive();
+}
+
+bool ffi_isFirstExposedDelivered() {
+    return g_firstExposedDelivered;
 }
 
 // SDL_Init returns 0 on success
@@ -782,14 +787,11 @@ int stub_SDL_PollEvent(void* event) {
         }
     }
 
-    // Log the first few calls and periodic calls to track pointer stability
-    if (totalPollCalls <= 30 || totalPollCalls % 5000 == 0) {
+    // Log calls — first 30, every 100th, and every 5000th for long runs
+    if (totalPollCalls <= 30 || totalPollCalls % 100 == 0) {
         fprintf(stderr, "[SDL-POLL] #%d event ptr=%p queueSize=%zu pending=%zu\n",
                 totalPollCalls, event, pharo::gEventQueue.size(),
                 sPendingWindowEvents.size());
-        fprintf(stderr, "[SDL-PIPELINE] poll#%d lock=%d update=%d copy=%d present=%d clear=%d\n",
-                totalPollCalls, g_lockTextureCount, g_updateTextureCount,
-                g_renderCopyCount, g_renderPresentCount, g_renderClearCount);
     }
 
     // Monitor gDisplaySurface for unexpected content changes
@@ -885,7 +887,8 @@ int stub_SDL_PollEvent(void* event) {
         if (windowEventType == SDL_WINDOWEVENT_EXPOSED && totalPollCalls > 1000) {
             g_postExposeTracking = true;
             g_postExposePollCount = 0;
-            fprintf(stderr, "[POST-EXPOSE] Tracking started at poll#%d\n", totalPollCalls);
+            g_firstExposedDelivered = true;
+            fprintf(stderr, "[POST-EXPOSE] Tracking started at poll#%d (first EXPOSED delivered)\n", totalPollCalls);
         }
         return 1;
     }

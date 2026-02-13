@@ -63,12 +63,6 @@ class PharoMTKView: MTKView {
         }
     }
 
-    // MARK: - Hit Testing
-
-    // hitTest and touchesBegan are not called for mouse on Mac Catalyst.
-    // Mouse clicks are handled via UITapGestureRecognizer (see setupGestureRecognizers).
-    // touchesBegan IS called for real trackpad touches on iOS.
-
     // MARK: - Touch Handling
 
     private var currentButton: Int = IOS_RED_BUTTON
@@ -194,27 +188,34 @@ class PharoCanvasViewController: UIViewController {
         mtkView.becomeFirstResponder()
 
         #if targetEnvironment(macCatalyst)
-        // Wait for SDL event polling to be active before injecting test events
-        waitForSDLEventPolling {
-            NSLog("[TEST] SDL event polling active, injecting test events")
+        // Wait for theme initialization (after EXPOSED event) before injecting test events
+        waitForThemeReady {
+            NSLog("[TEST] Theme ready, injecting test events")
             self.injectMenuTest()
         }
         #endif
     }
 
     #if targetEnvironment(macCatalyst)
-    private func waitForSDLEventPolling(completion: @escaping () -> Void) {
-        // Poll every 500ms until SDL event polling is active, then wait 2s more
-        // for the event loop to stabilize.
-        if ffi_isSDLEventPollingActive() {
-            NSLog("[TEST] SDL event polling active! Waiting 2s for stabilization...")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+    private func waitForThemeReady(completion: @escaping () -> Void) {
+        // Wait until the first EXPOSED event has been delivered to the image.
+        // The EXPOSED event triggers window initialization and theme setup.
+        // Without this, rendering the world menu crashes with DNU on
+        // SpStyleEnvironmentColorProxy (theme not initialized yet).
+        if ffi_isFirstExposedDelivered() {
+            NSLog("[TEST] First EXPOSED delivered! Waiting 3s for theme initialization...")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
                 completion()
+            }
+        } else if ffi_isSDLEventPollingActive() {
+            // SDL polling is active but EXPOSED not yet delivered — check again soon
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self.waitForThemeReady(completion: completion)
             }
         } else {
             NSLog("[TEST] Waiting for SDL event polling...")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                self.waitForSDLEventPolling(completion: completion)
+                self.waitForThemeReady(completion: completion)
             }
         }
     }
@@ -297,9 +298,14 @@ class PharoCanvasViewController: UIViewController {
         hoverGesture.cancelsTouchesInView = false
         targetView.addGestureRecognizer(hoverGesture)
 
-        // Mouse clicks/drags handled by touchesBegan/Moved/Ended
-        // (with cancelsTouchesInView=false on hover, touches are delivered)
-        // No additional tap/pan gestures needed for Mac Catalyst.
+        // Left-clicks and drags: touchesBegan/Moved/Ended
+        // (cancelsTouchesInView=false on hover ensures touches are delivered)
+
+        // Right-click: UIKit intercepts right-clicks for system context menus
+        // before gesture recognizers fire. Use UIContextMenuInteraction to
+        // suppress the system menu and capture the click for Pharo.
+        let contextMenuInteraction = UIContextMenuInteraction(delegate: self)
+        targetView.addInteraction(contextMenuInteraction)
 
         // Scroll gesture: two-finger trackpad scroll
         let scrollGesture = UIPanGestureRecognizer(
@@ -382,50 +388,6 @@ class PharoCanvasViewController: UIViewController {
             bridge.sendMouseMoved(to: point, modifiers: 0)
         case .changed:
             bridge.sendMouseMoved(to: point, modifiers: 0)
-        default:
-            break
-        }
-    }
-
-    @objc func handleMacCatalystTap(_ gesture: UITapGestureRecognizer) {
-        guard let bridge = bridge else { return }
-        let point = gesture.location(in: mtkView)
-        // Detect button: default to left, check modifiers for right-click
-        var buttons = IOS_RED_BUTTON
-        if #available(macCatalyst 13.4, *) {
-            if gesture.buttonMask.contains(.secondary) {
-                buttons = IOS_YELLOW_BUTTON
-            }
-        }
-        pharoEventLog("[MAC-TAP] at (\(Int(point.x)),\(Int(point.y))) buttons=\(buttons)")
-        bridge.sendMouseMoved(to: point, modifiers: 0)
-        bridge.sendTouchDown(at: point, buttons: buttons)
-        bridge.sendTouchUp(at: point, buttons: buttons)
-    }
-
-    @objc func handleMacCatalystRightTap(_ gesture: UITapGestureRecognizer) {
-        guard let bridge = bridge else { return }
-        let point = gesture.location(in: mtkView)
-        pharoEventLog("[MAC-RIGHT-TAP] at (\(Int(point.x)),\(Int(point.y)))")
-        bridge.sendMouseMoved(to: point, modifiers: 0)
-        bridge.sendTouchDown(at: point, buttons: IOS_YELLOW_BUTTON)
-        bridge.sendTouchUp(at: point, buttons: IOS_YELLOW_BUTTON)
-    }
-
-    @objc func handleMacCatalystPan(_ gesture: UIPanGestureRecognizer) {
-        guard let bridge = bridge else { return }
-        let point = gesture.location(in: mtkView)
-        switch gesture.state {
-        case .began:
-            let buttons = IOS_RED_BUTTON  // Pan/drag is always left-button
-            pharoEventLog("[MAC-PAN] began at (\(Int(point.x)),\(Int(point.y)))")
-            bridge.sendMouseMoved(to: point, modifiers: 0)
-            bridge.sendTouchDown(at: point, buttons: buttons)
-        case .changed:
-            bridge.sendTouchMoved(to: point, buttons: IOS_RED_BUTTON)
-        case .ended, .cancelled:
-            pharoEventLog("[MAC-PAN] ended at (\(Int(point.x)),\(Int(point.y)))")
-            bridge.sendTouchUp(at: point, buttons: IOS_RED_BUTTON)
         default:
             break
         }
@@ -549,6 +511,28 @@ class PharoCanvasViewController: UIViewController {
         renderer?.updateDisplayTexture()
     }
 }
+
+// MARK: - UIContextMenuInteractionDelegate (Mac Catalyst right-click)
+
+#if targetEnvironment(macCatalyst)
+extension PharoCanvasViewController: UIContextMenuInteractionDelegate {
+    func contextMenuInteraction(
+        _ interaction: UIContextMenuInteraction,
+        configurationForMenuAtLocation location: CGPoint
+    ) -> UIContextMenuConfiguration? {
+        // Capture right-click position and send to Pharo as yellow button
+        pharoEventLog("[RIGHT-CLICK] at (\(Int(location.x)),\(Int(location.y)))")
+        if let bridge = bridge {
+            bridge.sendMouseMoved(to: location, modifiers: 0)
+            bridge.sendTouchDown(at: location, buttons: IOS_YELLOW_BUTTON)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                bridge.sendTouchUp(at: location, buttons: IOS_YELLOW_BUTTON)
+            }
+        }
+        return nil  // Suppress system context menu
+    }
+}
+#endif
 
 // MARK: - SwiftUI Wrapper (UIViewControllerRepresentable)
 

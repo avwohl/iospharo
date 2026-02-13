@@ -111,6 +111,7 @@ void vm_postScrollEvent(int x, int y, int deltaX, int deltaY, int modifiers);
 
 /* SDL2 readiness flags */
 bool ffi_isSDLEventPollingActive(void);  // True when OSSDL2Driver event loop is running
+bool ffi_isFirstExposedDelivered(void);  // True when first EXPOSED event was delivered to image
 
 /* iOS utility functions */
 int iosIsIPad(void);
