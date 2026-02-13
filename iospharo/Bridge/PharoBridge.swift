@@ -90,8 +90,8 @@ class PharoBridge: ObservableObject {
         parameters.isInteractiveSession = true
         parameters.isWorker = false
 
-        // Memory configuration (512MB default, can be adjusted)
-        parameters.maxOldSpaceSize = 512 * 1024 * 1024
+        // Memory: 2GB virtual (mmap lazy commit, no physical RAM until touched)
+        parameters.maxOldSpaceSize = 2 * 1024 * 1024 * 1024
         parameters.edenSize = 10 * 1024 * 1024
         parameters.maxCodeSize = 0
 
