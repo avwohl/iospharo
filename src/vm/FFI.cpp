@@ -928,10 +928,13 @@ int stub_SDL_PollEvent(void* event) {
         sMouseY = pharoEvent.arg2;
 
         // Convert Pharo button mask to SDL button mask for state tracking
+        // Pharo: Red=4 Yellow=2 Blue=1  SDL: Left=1 Middle=2 Right=3
+        // OSSDL2 convertButtonFromEvent: SDL 1→Red(4), SDL 2→Blue(1), SDL 3→Yellow(2)
+        // So: Pharo Yellow(2)→SDL Right(3), Pharo Blue(1)→SDL Middle(2)
         uint32_t sdlButtonMask = 0;
-        if (pharoEvent.arg3 & 4) sdlButtonMask |= (1 << 0);  // Left/Red → SDL_BUTTON_LMASK
-        if (pharoEvent.arg3 & 1) sdlButtonMask |= (1 << 1);  // Middle/Blue → SDL_BUTTON_MMASK
-        if (pharoEvent.arg3 & 2) sdlButtonMask |= (1 << 2);  // Right/Yellow → SDL_BUTTON_RMASK
+        if (pharoEvent.arg3 & 4) sdlButtonMask |= (1 << 0);  // Red(4) → SDL_BUTTON_LMASK
+        if (pharoEvent.arg3 & 1) sdlButtonMask |= (1 << 1);  // Blue(1) → SDL_BUTTON_MMASK
+        if (pharoEvent.arg3 & 2) sdlButtonMask |= (1 << 2);  // Yellow(2) → SDL_BUTTON_RMASK
 
         if (subtype == 0 || subtype == 3) {
             // Mouse motion (move or drag)
@@ -955,14 +958,16 @@ int stub_SDL_PollEvent(void* event) {
             sdlEvent->button.state = 1;  // SDL_PRESSED
             sdlEvent->button.clicks = 1;
             // Convert Pharo button to SDL button
+            // OSSDL2 convertButtonFromEvent: SDL 2→Blue(1), SDL 3→Yellow(2)
+            // Yellow(2)→SDL Right(3)→OSSDL2 Yellow  Blue(1)→SDL Middle(2)→OSSDL2 Blue
             if (pharoEvent.arg3 & 4) {
-                sdlEvent->button.button = SDL_BUTTON_LEFT;
+                sdlEvent->button.button = SDL_BUTTON_LEFT;    // Red → select
             } else if (pharoEvent.arg3 & 2) {
-                sdlEvent->button.button = SDL_BUTTON_RIGHT;
+                sdlEvent->button.button = SDL_BUTTON_RIGHT;   // Yellow → world menu
             } else if (pharoEvent.arg3 & 1) {
-                sdlEvent->button.button = SDL_BUTTON_MIDDLE;
+                sdlEvent->button.button = SDL_BUTTON_MIDDLE;  // Blue → halos
             } else {
-                sdlEvent->button.button = SDL_BUTTON_LEFT;  // Default
+                sdlEvent->button.button = SDL_BUTTON_LEFT;    // Default
             }
         } else if (subtype == 2) {
             // Mouse button up — update tracked state
@@ -977,14 +982,16 @@ int stub_SDL_PollEvent(void* event) {
             sdlEvent->button.state = 0;  // SDL_RELEASED
             sdlEvent->button.clicks = 1;
             // Convert Pharo button to SDL button
+            // OSSDL2 convertButtonFromEvent: SDL 2→Blue(1), SDL 3→Yellow(2)
+            // Yellow(2)→SDL Right(3)→OSSDL2 Yellow  Blue(1)→SDL Middle(2)→OSSDL2 Blue
             if (pharoEvent.arg3 & 4) {
-                sdlEvent->button.button = SDL_BUTTON_LEFT;
+                sdlEvent->button.button = SDL_BUTTON_LEFT;    // Red → select
             } else if (pharoEvent.arg3 & 2) {
-                sdlEvent->button.button = SDL_BUTTON_RIGHT;
+                sdlEvent->button.button = SDL_BUTTON_RIGHT;   // Yellow → world menu
             } else if (pharoEvent.arg3 & 1) {
-                sdlEvent->button.button = SDL_BUTTON_MIDDLE;
+                sdlEvent->button.button = SDL_BUTTON_MIDDLE;  // Blue → halos
             } else {
-                sdlEvent->button.button = SDL_BUTTON_LEFT;  // Default
+                sdlEvent->button.button = SDL_BUTTON_LEFT;    // Default
             }
         }
         // Log first few mouse events

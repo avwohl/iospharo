@@ -223,10 +223,10 @@ class PharoCanvasViewController: UIViewController {
             }
         }
 
-        // Step 3: After 6 seconds, right-click on desktop for world menu
-        // Use mouseDown-hold pattern for world menu too
+        // Step 3: After 6 seconds, right-click on empty desktop for world menu
+        // Use area well away from centered welcome window (which is ~200,100 to ~800,600)
         DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) {
-            let desktop = CGPoint(x: 600, y: 400)
+            let desktop = CGPoint(x: 900, y: 650)
             NSLog("[TEST] Step 3a: Move to desktop at (%d,%d)", Int(desktop.x), Int(desktop.y))
             bridge.sendMouseMoved(to: desktop, modifiers: 0)
 

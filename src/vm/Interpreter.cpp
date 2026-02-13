@@ -4176,6 +4176,10 @@ terminate_process:
         // process has been terminated and its method/IP are no longer valid.
         // Keep trying to find a runnable process - never give up in a GUI app
         {
+            // Clear method_ so we can detect if signal processing activates a process
+            // via synchronousSignal() → transferTo() → executeFromContext()
+            method_ = Oop::nil();
+
             while (running_) {
 
                 // GC safe point: no process is active, safe to compact
@@ -4195,6 +4199,13 @@ terminate_process:
 
                 // Check timer semaphore - may wake delay processes
                 checkTimerSemaphore();
+
+                // If any signal processing above called synchronousSignal() →
+                // transferTo() → executeFromContext(), method_ will be set to
+                // the new process's method. Return to the bytecode loop to run it.
+                if (!method_.isNil() && method_.isObject()) {
+                    return;
+                }
 
                 // Pump the native run loop so UIKit can deliver touch/hover
                 // events and Metal can render frames.  Without this, the main
