@@ -5114,13 +5114,20 @@ PrimitiveResult Interpreter::primitiveSignalAtMilliseconds(int argCount) {
         return PrimitiveResult::Success;
     }
 
+    // Detect conflict: usec timer also armed?
+    if (nextWakeupUsec_ != INT64_MAX) {
+        fprintf(stderr, "[TIMER-CONFLICT] prim136 arming while usec timer also armed! usecTarget=%lld\n",
+                (long long)nextWakeupUsec_);
+    }
+
     // Store the timer info (in ioMSecs units, 30-bit wrapping)
     timerSemaphore_ = semaphore;
     nextWakeupTime_ = targetMs & 0x3FFFFFFF;  // Ensure 30-bit
 
     static int timerMs136Count = 0;
-    if (++timerMs136Count <= 10) {
-        fprintf(stderr, "[TIMER136 #%d] targetMs=%lld sema=0x%llx step=%llu\n",
+    timerMs136Count++;
+    if (timerMs136Count <= 20 || timerMs136Count % 200 == 0) {
+        fprintf(stderr, "[TIMER-SET136 #%d] targetMs=%lld sema=0x%llx step=%llu\n",
                 timerMs136Count, (long long)targetMs, (unsigned long long)semaphore.rawBits(),
                 (unsigned long long)g_stepNum);
     }
@@ -14841,18 +14848,24 @@ PrimitiveResult Interpreter::primitiveSignalAtUTCMicroseconds(int argCount) {
     }
 
     // Store the timer info
+    static int set242Count = 0;
     if (usecs == 0 || sema.isNil()) {
         // Disable timer
         timerSemaphore_ = Oop::nil();
         nextWakeupUsec_ = INT64_MAX;
     } else {
+        // Detect conflict: ms timer also armed?
+        if (nextWakeupTime_ != 0) {
+            fprintf(stderr, "[TIMER-CONFLICT] prim242 arming while ms timer also armed! msTarget=%lld\n",
+                    (long long)nextWakeupTime_);
+        }
         // Schedule the timer
         timerSemaphore_ = sema;
         nextWakeupUsec_ = usecs;
-        static int timerSetCount = 0;
-        if (++timerSetCount <= 10) {
-            fprintf(stderr, "[TIMER-SET #%d] usecs=%lld sema=0x%llx step=%llu\n",
-                    timerSetCount, (long long)usecs, (unsigned long long)sema.rawBits(),
+        set242Count++;
+        if (set242Count <= 20 || set242Count % 200 == 0) {
+            fprintf(stderr, "[TIMER-SET242 #%d] usecs=%lld sema=0x%llx step=%llu\n",
+                    set242Count, (long long)usecs, (unsigned long long)sema.rawBits(),
                     (unsigned long long)g_stepNum);
         }
     }

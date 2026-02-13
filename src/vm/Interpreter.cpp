@@ -2183,8 +2183,11 @@ void Interpreter::interpret() {
             processPendingSignals();
         }
 
-        // Check timer and signal delay semaphore if time has elapsed
-        checkTimerSemaphore();
+        // Check timer every 1000 bytecodes (~45K checks/sec at full speed)
+        // to avoid calling system_clock::now() on every bytecode.
+        if ((loopCount & 0x3FF) == 0) {  // every 1024 iterations
+            checkTimerSemaphore();
+        }
 
         // Process input events every 10K bytecodes
         if (loopCount % 10000 == 0) {
@@ -2192,13 +2195,10 @@ void Interpreter::interpret() {
         }
 
 #if __APPLE__
-        // Pump the native run loop periodically (~60fps) so the Metal
-        // display link can fire and UIKit can deliver events. The
-        // interpreter runs on the main thread and blocks the run loop;
-        // without this, the display never updates.
-        // Only pump when a relinquish callback is registered (Mac Catalyst app),
-        // not during headless test runs where the overhead causes timeouts.
-        if (relinquishCallback_) {
+        // Pump the native run loop periodically (~60fps) so Metal can
+        // render and UIKit can deliver events. Check only every 10K
+        // bytecodes to avoid steady_clock::now() overhead per bytecode.
+        if (relinquishCallback_ && (loopCount % 10000 == 0)) {
             auto now = std::chrono::steady_clock::now();
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRunLoopPump).count();
             if (elapsed >= 16) {
@@ -2236,6 +2236,78 @@ void Interpreter::interpret() {
 }
 
 void Interpreter::checkTimerSemaphore() {
+    // Periodic timer state summary (every ~5 seconds wall clock)
+    // Use counter-based gating: check wall clock only every 200 calls
+    // (~5 times/sec at 1024-bytecode intervals) to avoid clock overhead.
+    static int checkCount = 0;
+    static int usecFireTotal = 0;
+    static int msFireTotal = 0;
+    static auto lastSummary = std::chrono::steady_clock::now();
+    checkCount++;
+    bool doSummary = false;
+    if ((checkCount % 200) == 0) {
+        auto now_wall = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now_wall - lastSummary).count();
+        if (elapsed >= 5) {
+            doSummary = true;
+            lastSummary = now_wall;
+        }
+    }
+    if (doSummary) {
+        // Check active process priority
+        int activePri = -1;
+        Oop activeProc = getActiveProcess();
+        if (activeProc.isObject()) {
+            Oop priOop = memory_.fetchPointer(ProcessPriorityIndex, activeProc);
+            if (priOop.isSmallInteger()) activePri = (int)priOop.asSmallInteger();
+        }
+        // Count ready processes per priority
+        int readyCounts[101] = {};
+        Oop schedAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
+        if (schedAssoc.isObject()) {
+            Oop processScheduler = memory_.fetchPointer(1, schedAssoc);
+            if (processScheduler.isObject()) {
+                Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, processScheduler);
+                if (schedLists.isObject()) {
+                    ObjectHeader* listsHdr = schedLists.asObjectPtr();
+                    size_t nLists = listsHdr->slotCount();
+                    for (size_t i = 0; i < nLists && i < 100; i++) {
+                        Oop list = memory_.fetchPointer(i, schedLists);
+                        if (!list.isObject()) continue;
+                        Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, list);
+                        int count = 0;
+                        Oop proc = first;
+                        while (proc.isObject() && !proc.isNil() && count < 50) {
+                            count++;
+                            proc = memory_.fetchPointer(ProcessNextLinkIndex, proc);
+                        }
+                        readyCounts[i] = count;
+                    }
+                }
+            }
+        }
+        fprintf(stderr, "[TIMER-SUMMARY] checks=%d usecFires=%d msFires=%d "
+                "usecArmed=%s msArmed=%s timerSem=%s activePri=%d step=%llu\n",
+                checkCount, usecFireTotal, msFireTotal,
+                nextWakeupUsec_ != INT64_MAX ? "yes" : "no",
+                nextWakeupTime_ != 0 ? "yes" : "no",
+                timerSemaphore_.isNil() ? "nil" : "set",
+                activePri,
+                (unsigned long long)g_stepNum);
+        // Show non-zero ready queues
+        for (int i = 0; i < 100; i++) {
+            if (readyCounts[i] > 0) {
+                fprintf(stderr, "  [READY] pri=%d count=%d\n", i+1, readyCounts[i]);
+            }
+        }
+        // Show what the active process is doing
+        fprintf(stderr, "  [ACTIVE] sel=%s cls=%s fd=%zu\n",
+                g_lastSelName, g_watchdogReceiverClass, frameDepth_);
+        checkCount = 0;
+        usecFireTotal = 0;
+        msFireTotal = 0;
+    }
+
     // Check microsecond timer (primitive 242 - used by DelaySemaphoreScheduler)
     if (nextWakeupUsec_ != INT64_MAX && !timerSemaphore_.isNil()) {
         static constexpr int64_t kSmalltalkEpochOffset = 2177452800LL * 1000000LL;
@@ -2245,10 +2317,11 @@ void Interpreter::checkTimerSemaphore() {
         int64_t currentUsec = unixUsec + kSmalltalkEpochOffset;
 
         if (currentUsec >= nextWakeupUsec_) {
-            static int usecFireCount = 0;
-            if (++usecFireCount <= 10) {
-                fprintf(stderr, "[TIMER-FIRE-USEC #%d] target=%lld current=%lld step=%llu\n",
-                        usecFireCount, (long long)nextWakeupUsec_, (long long)currentUsec,
+            usecFireTotal++;
+            if (usecFireTotal <= 20 || usecFireTotal % 200 == 0) {
+                fprintf(stderr, "[TIMER-FIRE-USEC #%d] target=%lld current=%lld delta=%lldus step=%llu\n",
+                        usecFireTotal, (long long)nextWakeupUsec_, (long long)currentUsec,
+                        (long long)(currentUsec - nextWakeupUsec_),
                         (unsigned long long)g_stepNum);
             }
             Oop semaphore = timerSemaphore_;
@@ -2270,10 +2343,10 @@ void Interpreter::checkTimerSemaphore() {
     bool timerElapsed = (diff > 0) && (diff < 0x20000000);
 
     if (timerElapsed) {
-        static int timerFireCount = 0;
-        if (++timerFireCount <= 10) {
-            fprintf(stderr, "[TIMER-FIRE #%d] ms targetMs=%lld currentMs=%lld diff=%lld step=%llu\n",
-                    timerFireCount, targetMs, currentMs, diff, (unsigned long long)g_stepNum);
+        msFireTotal++;
+        if (msFireTotal <= 20 || msFireTotal % 200 == 0) {
+            fprintf(stderr, "[TIMER-FIRE-MS #%d] targetMs=%lld currentMs=%lld diff=%lld step=%llu\n",
+                    msFireTotal, targetMs, currentMs, diff, (unsigned long long)g_stepNum);
         }
         Oop semaphore = timerSemaphore_;
         timerSemaphore_ = Oop::nil();
@@ -5773,242 +5846,42 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
     Oop rcvr = stackValue(argCount);
 
-    // Record send info for watchdog diagnostic
-    if (selBytes && selLen > 0 && selLen < 63) {
-        memcpy(g_watchdogSelector, selBytes, selLen);
-        g_watchdogSelector[selLen] = '\0';
-    }
-    // Record receiver class name
+    // Record watchdog info periodically (every 1024 sends) for timer summary
     {
-        Oop rcvrCls = memory_.classOf(rcvr);
-        if (rcvrCls.isObject() && rcvrCls.rawBits() > 0x10000) {
-            Oop nameOop = memory_.fetchPointer(6, rcvrCls);
-            if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
-                ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 63) {
-                    memcpy(g_watchdogReceiverClass, nameHdr->bytes(), nameHdr->byteSize());
-                    g_watchdogReceiverClass[nameHdr->byteSize()] = '\0';
-                }
+        static int sendCount = 0;
+        if ((++sendCount & 0x3FF) == 0) {
+            if (selBytes && selLen > 0 && selLen < 63) {
+                memcpy(g_watchdogSelector, selBytes, selLen);
+                g_watchdogSelector[selLen] = '\0';
+                memcpy(g_lastSelName, selBytes, selLen);
+                g_lastSelName[selLen] = '\0';
             }
-        }
-    }
-    // Record selector name
-    if (selBytes && selLen > 0 && selLen < 63) {
-        memcpy(g_lastSelName, selBytes, selLen);
-        g_lastSelName[selLen] = '\0';
-    }
-
-    // ===== TRACE SENDS AFTER SDL MOUSE EVENT =====
-    {
-        int traceCount = g_traceAfterMouseSDLEvent.load(std::memory_order_relaxed);
-        if (traceCount > 0) {
-            int seqNum = 500 - traceCount + 1;  // 1, 2, 3, ... 500
-            g_traceAfterMouseSDLEvent.store(traceCount - 1, std::memory_order_relaxed);
-            std::string selName = (selBytes && selLen > 0) ?
-                std::string(selBytes, selLen) : "<unknown>";
-            std::string className = g_watchdogReceiverClass;
-            fprintf(stderr, "[SEND-TRACE] #%d %s >> %s (args=%d)\n",
-                    seqNum, className.c_str(), selName.c_str(), argCount);
-        }
-    }
-
-    // ===== TRACE EVENT DELIVERY TO HANDMORPH =====
-    if (selBytes && selLen > 0) {
-        // Log when ANYTHING receives handleEvent: — don't filter by class initially
-        if (selLen == 12 && memcmp(selBytes, "handleEvent:", 12) == 0) {
-            static int handleEventCount = 0;
-            handleEventCount++;
-            // Log ALL handleEvent: calls (first 50, then periodic) with class name
-            if (handleEventCount <= 50 || handleEventCount % 1000 == 0) {
-                // Get actual receiver class name fresh from receiver
-                std::string rcvrClassName = "<unknown>";
-                Oop rcvrForTrace = stackValue(argCount);
-                Oop rcvrClsForTrace = memory_.classOf(rcvrForTrace);
-                if (rcvrClsForTrace.isObject() && rcvrClsForTrace.rawBits() > 0x10000) {
-                    Oop nameOop2 = memory_.fetchPointer(6, rcvrClsForTrace);
-                    if (nameOop2.isObject() && nameOop2.rawBits() > 0x10000) {
-                        ObjectHeader* nameHdr2 = nameOop2.asObjectPtr();
-                        if (nameHdr2->isBytesObject() && nameHdr2->byteSize() < 64) {
-                            rcvrClassName = std::string((char*)nameHdr2->bytes(), nameHdr2->byteSize());
-                        }
+            Oop rcvrCls = memory_.classOf(rcvr);
+            if (rcvrCls.isObject() && rcvrCls.rawBits() > 0x10000) {
+                Oop nameOop = memory_.fetchPointer(6, rcvrCls);
+                if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 63) {
+                        memcpy(g_watchdogReceiverClass, nameHdr->bytes(), nameHdr->byteSize());
+                        g_watchdogReceiverClass[nameHdr->byteSize()] = '\0';
                     }
                 }
-                fprintf(stderr, "[HANDLE-EVENT] #%d %s >> handleEvent: (cached=%s)\n",
-                        handleEventCount, rcvrClassName.c_str(), g_watchdogReceiverClass);
-                // Enable send trace after HandMorph events
-                if (rcvrClassName == "HandMorph" && handleEventCount <= 5) {
-                    g_traceAfterMouseSDLEvent.store(100, std::memory_order_release);
-                }
             }
-        }
-        // Log flushAllSuchThat: on WaitfreeQueue
-        if (selLen == 18 && memcmp(selBytes, "flushAllSuchThat:", 18) == 0) {
-            const char* cls = g_watchdogReceiverClass;
-            if (strncmp(cls, "WaitfreeQueue", 13) == 0) {
-                static int flushCount = 0;
-                flushCount++;
-                if (flushCount <= 5 || flushCount % 1000 == 0) {
-                    fprintf(stderr, "[FLUSH] #%d WaitfreeQueue >> flushAllSuchThat:\n", flushCount);
-                }
-            }
-        }
-        // Log displayWorldSafely: (19 chars with colon)
-        if (selLen == 19 && memcmp(selBytes, "displayWorldSafely:", 19) == 0) {
-            static int dwsCount = 0;
-            dwsCount++;
-            if (dwsCount <= 50 || dwsCount % 500 == 0) {
-                fprintf(stderr, "[DISPLAY] #%d %s >> displayWorldSafely:\n", dwsCount, g_watchdogReceiverClass);
-            }
-        }
-        if (selLen == 7 && memcmp(selBytes, "display", 7) == 0) {
-            const char* cls = g_watchdogReceiverClass;
-            if (strncmp(cls, "OSWorldRenderer", 15) == 0) {
-                static int osrDisplayCount = 0;
-                osrDisplayCount++;
-                if (osrDisplayCount <= 10 || osrDisplayCount % 500 == 0) {
-                    fprintf(stderr, "[DISPLAY] #%d OSWorldRenderer >> display\n", osrDisplayCount);
-                }
-            }
-        }
-        // displayWorld (unary, 12 chars) called inside displayWorldSafely:
-        if (selLen == 12 && memcmp(selBytes, "displayWorld", 12) == 0) {
-            static int cnt = 0; cnt++;
-            if (cnt <= 20 || cnt % 500 == 0)
-                fprintf(stderr, "[DISPLAY] #%d %s >> displayWorld\n", cnt, g_watchdogReceiverClass);
-        }
-        // displayWorldState:ofWorld: (26 chars)
-        if (selLen == 26 && memcmp(selBytes, "displayWorldState:ofWorld:", 26) == 0) {
-            static int cnt = 0; cnt++;
-            if (cnt <= 20 || cnt % 500 == 0)
-                fprintf(stderr, "[DISPLAY] #%d %s >> displayWorldState:ofWorld:\n", cnt, g_watchdogReceiverClass);
-        }
-        // handleFatalDrawingError: (24 chars)
-        if (selLen == 24 && memcmp(selBytes, "handleFatalDrawingError:", 24) == 0) {
-            static int cnt = 0; cnt++;
-            fprintf(stderr, "[FATAL-DRAW] #%d %s >> handleFatalDrawingError:\n", cnt, g_watchdogReceiverClass);
-        }
-        // Process >> terminate — could kill the UI process
-        if (selLen == 9 && memcmp(selBytes, "terminate", 9) == 0) {
-            const char* cls = g_watchdogReceiverClass;
-            if (strncmp(cls, "Process", 7) == 0) {
-                static int cnt = 0; cnt++;
-                if (cnt <= 20 || cnt % 100 == 0)
-                    fprintf(stderr, "[PROCESS-TERMINATE] #%d Process >> terminate\n", cnt);
-            }
-        }
-        // Process >> suspend — could suspend the UI process
-        if (selLen == 7 && memcmp(selBytes, "suspend", 7) == 0) {
-            const char* cls = g_watchdogReceiverClass;
-            if (strncmp(cls, "Process", 7) == 0) {
-                static int cnt = 0; cnt++;
-                if (cnt <= 20 || cnt % 100 == 0)
-                    fprintf(stderr, "[PROCESS-SUSPEND] #%d Process >> suspend\n", cnt);
-            }
-        }
-        // Log doOneCycle* selectors
-        if (selLen >= 10 && memcmp(selBytes, "doOneCycle", 10) == 0) {
-            static int cycleCount = 0;
-            cycleCount++;
-            if (cycleCount <= 50 || cycleCount % 500 == 0) {
-                std::string sel(selBytes, selLen);
-                fprintf(stderr, "[CYCLE] #%d %s >> %s\n", cycleCount,
-                        g_watchdogReceiverClass, sel.c_str());
-            }
-        }
-        // Trace each step inside doOneCycleFor: to find where loop stops
-        if (selLen == 21 && memcmp(selBytes, "checkForNewScreenSize", 21) == 0) {
-            static int cnt = 0; cnt++;
-            if (cnt <= 20 || cnt % 500 == 0)
-                fprintf(stderr, "[RENDER-STEP] #%d %s >> checkForNewScreenSize\n", cnt, g_watchdogReceiverClass);
-        }
-        if (selLen == 13 && memcmp(selBytes, "processEvents", 13) == 0) {
-            static int cnt = 0; cnt++;
-            if (cnt <= 20 || cnt % 500 == 0)
-                fprintf(stderr, "[RENDER-STEP] #%d %s >> processEvents\n", cnt, g_watchdogReceiverClass);
-        }
-        if (selLen == 14 && memcmp(selBytes, "runStepMethods", 14) == 0) {
-            static int cnt = 0; cnt++;
-            if (cnt <= 20 || cnt % 500 == 0)
-                fprintf(stderr, "[RENDER-STEP] #%d %s >> runStepMethods\n", cnt, g_watchdogReceiverClass);
-        }
-        if (selLen == 16 && memcmp(selBytes, "doDrawCycleWith:", 16) == 0) {
-            static int cnt = 0; cnt++;
-            if (cnt <= 20 || cnt % 500 == 0)
-                fprintf(stderr, "[RENDER-STEP] #%d %s >> doDrawCycleWith:\n", cnt, g_watchdogReceiverClass);
-        }
-        if (selLen == 16 && memcmp(selBytes, "doInterCycleWait", 16) == 0) {
-            static int cnt = 0; cnt++;
-            if (cnt <= 20 || cnt % 500 == 0)
-                fprintf(stderr, "[RENDER-STEP] #%d doInterCycleWait\n", cnt);
-        }
-        // Trace Mutex critical: — ExtraWorldListMutex could block
-        if (selLen == 9 && memcmp(selBytes, "critical:", 9) == 0) {
-            const char* cls = g_watchdogReceiverClass;
-            if (strncmp(cls, "Mutex", 5) == 0 || strncmp(cls, "Monitor", 7) == 0) {
-                static int cnt = 0; cnt++;
-                if (cnt <= 20 || cnt % 1000 == 0)
-                    fprintf(stderr, "[MUTEX] #%d %s >> critical:\n", cnt, cls);
-            }
-        }
-        // Trace yield — shows when a render cycle completes
-        if (selLen == 5 && memcmp(selBytes, "yield", 5) == 0) {
-            const char* cls = g_watchdogReceiverClass;
-            if (strncmp(cls, "ProcessorScheduler", 18) == 0) {
-                static int cnt = 0; cnt++;
-                if (cnt <= 20 || cnt % 500 == 0)
-                    fprintf(stderr, "[YIELD] #%d ProcessorScheduler >> yield\n", cnt);
-            }
-        }
-        // Trace onErrorDo: — error handler in displayWorldSafely
-        if (selLen == 10 && memcmp(selBytes, "onErrorDo:", 10) == 0) {
-            static int cnt = 0; cnt++;
-            if (cnt <= 10 || cnt % 500 == 0)
-                fprintf(stderr, "[ERROR-HANDLER] #%d %s >> onErrorDo:\n", cnt, g_watchdogReceiverClass);
-        }
-        // Trace handsDo: — event loop in doOneCycleFor:
-        if (selLen == 8 && memcmp(selBytes, "handsDo:", 8) == 0) {
-            static int cnt = 0; cnt++;
-            if (cnt <= 20 || cnt % 500 == 0)
-                fprintf(stderr, "[RENDER-STEP] #%d %s >> handsDo:\n", cnt, g_watchdogReceiverClass);
-        }
-        // Trace Delay wait — could block render loop forever
-        if (selLen == 4 && memcmp(selBytes, "wait", 4) == 0) {
-            const char* cls = g_watchdogReceiverClass;
-            if (strncmp(cls, "Delay", 5) == 0) {
-                static int cnt = 0; cnt++;
-                if (cnt <= 20 || cnt % 500 == 0)
-                    fprintf(stderr, "[DELAY-WAIT] #%d Delay >> wait\n", cnt);
-            }
-        }
-        // Trace ensure: — doDrawCycleWith: uses ensure: for doInterCycleWait
-        if (selLen == 7 && memcmp(selBytes, "ensure:", 7) == 0) {
-            static int cnt = 0; cnt++;
-            if (cnt <= 5 || cnt % 5000 == 0)
-                fprintf(stderr, "[ENSURE] #%d %s >> ensure:\n", cnt, g_watchdogReceiverClass);
         }
     }
 
-    // ===== INTERCEPT PROBLEMATIC SELECTORS =====
-    // Handle specific message intercepts needed for embedded VM operation
+    // Intercept specific selectors needed for embedded VM operation
     if (selBytes && selLen > 0) {
-        auto selIs = [selBytes, selLen](const char* s) {
-            size_t n = strlen(s);
-            return selLen == n && memcmp(selBytes, s, n) == 0;
-        };
-
-        // ===== INTERCEPT relinquishProcessorForMicroseconds: =====
-        // This is called during idle loop. Use it to auto-load the display driver.
-        if (selIs("relinquishProcessorForMicroseconds:") && argCount == 1) {
+        // relinquishProcessorForMicroseconds: (35 chars)
+        if (selLen == 35 && argCount == 1 &&
+            memcmp(selBytes, "relinquishProcessorForMicroseconds:", 35) == 0) {
             static int idleCycles = 0;
-            ++idleCycles;
-            if (idleCycles == 10) {  // After 10 idle cycles, auto-load driver
-                autoLoadDriver();
-            }
-            // Let relinquish proceed normally
+            if (++idleCycles == 10) autoLoadDriver();
         }
 
-        // ===== INTERCEPT snapshot:andQuit: - SAVE IS DISABLED =====
-        if (selIs("snapshot:andQuit:") && argCount == 2) {
+        // snapshot:andQuit: (17 chars) - SAVE IS DISABLED
+        if (selLen == 17 && argCount == 2 &&
+            memcmp(selBytes, "snapshot:andQuit:", 17) == 0) {
             Oop saveArg = stackValue(1);
             Oop quitArg = stackValue(0);
             bool shouldQuit = quitArg.rawBits() == memory_.trueObject().rawBits();
@@ -6312,13 +6185,24 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
 }
 
 MethodCacheEntry* Interpreter::probeCache(Oop selector, Oop classOop) {
+    static uint64_t cacheHits = 0;
+    static uint64_t cacheMisses = 0;
+
     size_t hash = cacheHash(selector, classOop);
     MethodCacheEntry& entry = methodCache_[hash];
 
     if (entry.selector == selector && entry.classOop == classOop) {
+        cacheHits++;
+        if ((cacheHits & 0xFFFFFF) == 0) { // every 16M hits
+            fprintf(stderr, "[CACHE-STATS] hits=%llu misses=%llu rate=%.2f%% step=%llu\n",
+                    cacheHits, cacheMisses,
+                    100.0 * cacheHits / (cacheHits + cacheMisses),
+                    g_stepCount);
+        }
         return &entry;
     }
 
+    cacheMisses++;
     return nullptr;
 }
 
@@ -6342,46 +6226,6 @@ size_t Interpreter::cacheHash(Oop selector, Oop classOop) const {
 // ===== METHOD ACTIVATION =====
 
 void Interpreter::activateMethod(Oop method, int argCount) {
-    // TRACE: find anySatisfy: in activateMethod
-    {
-        static FILE* amLog = nullptr;
-        if (!amLog) amLog = nullptr;
-        static int amTotal = 0;
-        amTotal++;
-        // Check every method for anySatisfy: bytecode pattern
-        if (method.isObject() && method.rawBits() > 0x10000) {
-            // Don't check isCompiledMethod - just read bytes directly
-            Oop h = memory_.fetchPointer(0, method);
-            if (h.isSmallInteger()) {
-                int64_t bits = h.asSmallInteger();
-                int nl = bits & 0x7FFF;
-                if (nl >= 1 && nl < 200) {
-                    ObjectHeader* mh = method.asObjectPtr();
-                    size_t totalBytes = mh->byteSize();
-                    size_t bcStart = (1 + nl) * 8;
-                    if (bcStart + 8 <= totalBytes) {
-                        uint8_t* bc = mh->bytes() + bcStart;
-                        uint8_t* checkBc = bc;
-                        if (checkBc[0] == 0xF8) checkBc += 3;
-                        if (checkBc[0] == 76 && checkBc[1] == 64 && checkBc[2] == 249) {
-                            static int anyMatch = 0;
-                            anyMatch++;
-                            if (amLog) {
-                                fprintf(amLog, "[ANY-MATCH #%d] amTotal=%d method=0x%llx nl=%d bits=0x%llx neg=%d fmt=%d bc:",
-                                        anyMatch, amTotal, (unsigned long long)method.rawBits(), nl,
-                                        (long long)bits, bits < 0 ? 1 : 0, (int)mh->format());
-                                for (int i = 0; i < 8; i++) fprintf(amLog, " %d", checkBc[i]);
-                                fprintf(amLog, "\n");
-                                fflush(amLog);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    // TRACE: activateMethod entry
-
     // Save current state
 
     if (!pushFrame(method, argCount)) {
@@ -9771,7 +9615,7 @@ void Interpreter::transferTo(Oop newProcess) {
         }
         Oop p = memory_.fetchPointer(ProcessPriorityIndex, newProcess);
         newPri = p.isSmallInteger() ? p.asSmallInteger() : -1;
-        if (switchCount <= 50 || switchCount % 1000 == 0 || oldPri == 40) {
+        if (switchCount <= 50 || switchCount % 5000 == 0) {
             fprintf(stderr, "[SWITCH #%d] pri %d -> %d step=%lld sel=%s cls=%s\n",
                     switchCount, oldPri, newPri, (long long)g_watchdogSteps.load(),
                     g_lastSelName, g_watchdogReceiverClass);
