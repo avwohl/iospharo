@@ -2459,8 +2459,16 @@ bool Interpreter::step() {
     g_watchdogSubphase = 10;
     if (memory_.needsCompactGC()) {
         memory_.clearCompactGCFlag();
+        int gcNum = memory_.statistics().gcCount + 1;
+        fprintf(stderr, "[GC-RUN #%d] step=%llu fd=%zu method=0x%llx ip=%p\n",
+                gcNum, g_stepNum, frameDepth_,
+                (unsigned long long)method_.rawBits(),
+                (void*)instructionPointer_);
         memory_.fullGC();
         flushMethodCache();
+        fprintf(stderr, "[GC-DONE #%d] method=0x%llx ip=%p\n",
+                gcNum, (unsigned long long)method_.rawBits(),
+                (void*)instructionPointer_);
     }
 
     g_stepCount++;
@@ -7985,6 +7993,58 @@ void Interpreter::invokeObjectAsMethod(Oop nonMethod, Oop selector, int argCount
 void Interpreter::sendMustBeBoolean(Oop value) {
     // Send mustBeBoolean to the non-boolean value, let Smalltalk handle it.
     // If this causes infinite recursion, the DNU depth limit will stopVM().
+    static int mbCount = 0;
+    mbCount++;
+    if (mbCount <= 10) {
+        std::string clsName = "?";
+        if (value.isSmallInteger()) {
+            clsName = "SmallInteger(" + std::to_string(value.asSmallInteger()) + ")";
+        } else if (value.isObject()) {
+            Oop cls = memory_.classOf(value);
+            if (cls.isObject() && cls.asObjectPtr()->slotCount() > 6) {
+                Oop name = memory_.fetchPointer(6, cls);
+                if (name.isObject() && name.asObjectPtr()->isBytesObject() && name.asObjectPtr()->byteSize() < 100)
+                    clsName = std::string((char*)name.asObjectPtr()->bytes(), name.asObjectPtr()->byteSize());
+            }
+        }
+        std::string mSel = "?";
+        if (method_.isObject()) {
+            Oop mh = memory_.fetchPointer(0, method_);
+            if (mh.isSmallInteger()) {
+                int nL = mh.asSmallInteger() & 0x7FFF;
+                if (nL >= 2 && nL < 100) {
+                    Oop sel = memory_.fetchPointer(nL - 1, method_);
+                    if (sel.isObject() && sel.asObjectPtr()->isBytesObject() && sel.asObjectPtr()->byteSize() < 100)
+                        mSel = std::string((char*)sel.asObjectPtr()->bytes(), sel.asObjectPtr()->byteSize());
+                }
+            }
+        }
+        // Check if value is a forwarding pointer (format=0 with non-zero classIndex used as forwarding address)
+        bool isForwarder = false;
+        if (value.isObject()) {
+            ObjectHeader* hdr = value.asObjectPtr();
+            isForwarder = (hdr->format() == ObjectFormat::ZeroSized && hdr->classIndex() == 0 &&
+                          hdr->slotCount() == 0);  // Heuristic for freed/forwarded object
+        }
+        // Also dump the stack context: what receiver, what IP offset
+        std::string rcvrCls = "?";
+        if (receiver_.isObject()) {
+            Oop rc = memory_.classOf(receiver_);
+            if (rc.isObject() && rc.asObjectPtr()->slotCount() > 6) {
+                Oop rn = memory_.fetchPointer(6, rc);
+                if (rn.isObject() && rn.asObjectPtr()->isBytesObject() && rn.asObjectPtr()->byteSize() < 100)
+                    rcvrCls = std::string((char*)rn.asObjectPtr()->bytes(), rn.asObjectPtr()->byteSize());
+            }
+        }
+        int ipOff = -1;
+        if (method_.isObject() && instructionPointer_) {
+            ipOff = static_cast<int>(instructionPointer_ - method_.asObjectPtr()->bytes());
+        }
+        fprintf(stderr, "[MUSTBEBOOL #%d] value=0x%llx class=%s method=%s rcvr=%s ipOff=%d fd=%zu fwd=%d gcCount=%d\n",
+                mbCount, (unsigned long long)value.rawBits(), clsName.c_str(), mSel.c_str(),
+                rcvrCls.c_str(), ipOff, frameDepth_, isForwarder,
+                memory_.statistics().gcCount);
+    }
     sendSelector(selectors_.mustBeBoolean, 0);
 }
 
@@ -9631,8 +9691,10 @@ void Interpreter::checkForPreemption() {
         fflush(preemptLog);
     }
 
-    // Check for runnable processes at higher or SAME priority (round-robin)
-    for (size_t i = static_cast<size_t>(activePriority); i < numQueues; i++) {
+    // Check for runnable processes at SAME or higher priority (round-robin).
+    // Priorities are 1-based, queue indices are 0-based: queue[p-1] = priority p.
+    size_t startIdx = (activePriority > 0) ? static_cast<size_t>(activePriority - 1) : 0;
+    for (size_t i = startIdx; i < numQueues; i++) {
         Oop queue = queuesHeader->slotAt(i);
         if (!queue.isObject() || queue.rawBits() == nilObj.rawBits()) continue;
 

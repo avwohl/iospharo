@@ -1478,10 +1478,10 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
     // or if receiver is not an object (PrimErrInappropriate)
     if (!index.isSmallInteger() || !rcvr.isObject()) {
         // Log when at: is called with bad arguments (causes Smalltalk error)
-        static FILE* atLog = nullptr;
         static int atFailCount = 0;
         atFailCount++;
-        if (atLog && atFailCount <= 20) {
+        FILE* atLog = stderr;
+        if (atFailCount <= 10) {
             fprintf(atLog, "[AT-FAIL #%d] ", atFailCount);
             if (!index.isSmallInteger()) {
                 fprintf(atLog, "NON-INT INDEX: 0x%llx isObj=%d isChar=%d ",
@@ -1505,6 +1505,34 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
             }
             if (!rcvr.isObject()) {
                 fprintf(atLog, "NON-OBJ RCVR: 0x%llx ", rcvr.rawBits());
+            }
+            // Show current method selector
+            if (method_.isObject()) {
+                Oop mhdr2 = memory_.fetchPointer(0, method_);
+                if (mhdr2.isSmallInteger()) {
+                    int nL2 = mhdr2.asSmallInteger() & 0x7FFF;
+                    if (nL2 >= 2 && nL2 < 100) {
+                        Oop sel2 = memory_.fetchPointer(nL2 - 1, method_);
+                        if (sel2.isObject()) {
+                            ObjectHeader* sH2 = sel2.asObjectPtr();
+                            if (sH2->isBytesObject() && sH2->byteSize() < 100) {
+                                fprintf(atLog, "method='%s' ",
+                                        std::string((char*)sH2->bytes(), sH2->byteSize()).c_str());
+                            }
+                        }
+                    }
+                }
+            }
+            // Show receiver class
+            if (rcvr.isObject()) {
+                Oop rcCls = memory_.classOf(rcvr);
+                if (rcCls.isObject() && rcCls.asObjectPtr()->slotCount() > 6) {
+                    Oop rcName = memory_.fetchPointer(6, rcCls);
+                    if (rcName.isObject() && rcName.asObjectPtr()->isBytesObject() && rcName.asObjectPtr()->byteSize() < 100) {
+                        fprintf(atLog, "rcvrClass='%s' ",
+                                std::string((char*)rcName.asObjectPtr()->bytes(), rcName.asObjectPtr()->byteSize()).c_str());
+                    }
+                }
             }
             fprintf(atLog, "\n");
             fflush(atLog);
