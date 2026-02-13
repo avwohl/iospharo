@@ -134,6 +134,9 @@ union SDL_Event {
 };
 
 namespace pharo {
+
+// Global trace flag: when set, interpreter logs method sends
+int g_traceEventSends = 0;
 namespace ffi {
 
 // Forward declarations
@@ -993,6 +996,11 @@ int stub_SDL_PollEvent(void* event) {
         } else if (subtype == 1) {
             // Mouse button down — update tracked state
             sMouseButtons |= sdlButtonMask;
+
+            // SEND-TRACE disabled — was adding massive overhead during menu building
+            // g_traceEventSends = 20000;
+            // fprintf(stderr, "[TRACE-START] Button-down at (%d,%d) buttons=%d — tracing next 20000 sends\n",
+            //         pharoEvent.arg1, pharoEvent.arg2, pharoEvent.arg3);
 
             sdlEvent->button.type = SDL_MOUSEBUTTONDOWN;
             sdlEvent->button.timestamp = pharoEvent.timeStamp;

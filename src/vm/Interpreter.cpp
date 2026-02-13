@@ -66,6 +66,12 @@ int g_traceSendsAfterPrim264 = 0;
 // Global step count and send trace file for startup debugging
 int64_t g_stepCount = 0;
 
+// Trace flag for mouse button events (defined in FFI.cpp)
+extern int g_traceEventSends;
+
+// Track the p40 (MorphicRenderLoop) process for diagnostics
+static pharo::Oop g_savedP40Process = pharo::Oop::nil();
+
 // Global flag to trace jumps after isActivePlatform returns TRUE
 
 // REMOVED: g_debugPendingFlag (was for workaround code)
@@ -2303,6 +2309,90 @@ void Interpreter::checkTimerSemaphore() {
         // Show what the active process is doing
         fprintf(stderr, "  [ACTIVE] sel=%s cls=%s fd=%zu\n",
                 g_lastSelName, g_watchdogReceiverClass, frameDepth_);
+        // Dump blocked process info for priority 40 (MorphicRenderLoop)
+        if (readyCounts[39] == 0 && activePri != 40) {
+            if (g_savedP40Process.isObject() && !g_savedP40Process.isNil()) {
+                Oop proc = g_savedP40Process;
+                // myList (slot 3 of process) = what it's waiting on
+                Oop myList = memory_.fetchPointer(3, proc);
+                if (myList.isObject() && !myList.isNil()) {
+                    std::string listClassName = "?";
+                    Oop myListCls = memory_.classOf(myList);
+                    if (myListCls.isObject() && memory_.slotCountOf(myListCls) > 6) {
+                        Oop nameOop = memory_.fetchPointer(6, myListCls);
+                        if (nameOop.isObject() && !nameOop.isNil()) {
+                            ObjectHeader* nHdr = nameOop.asObjectPtr();
+                            if (nHdr->isBytesObject() && nHdr->byteSize() < 100)
+                                listClassName = std::string((char*)nHdr->bytes(), nHdr->byteSize());
+                        }
+                    }
+                    fprintf(stderr, "  [P40-WAITING-ON] %s (0x%llx)\n",
+                            listClassName.c_str(), (unsigned long long)myList.rawBits());
+                }
+                // Walk the context chain (up to 8 frames)
+                Oop ctx = memory_.fetchPointer(1, proc); // suspendedContext
+                for (int frame = 0; frame < 8 && ctx.isObject() && !ctx.isNil(); frame++) {
+                    ObjectHeader* ctxHdr = ctx.asObjectPtr();
+                    if (ctxHdr->slotCount() < 6) break;
+                    Oop method = memory_.fetchPointer(3, ctx);
+                    Oop receiver = memory_.fetchPointer(5, ctx);
+                    // Get receiver class name
+                    std::string rcvClass = "?";
+                    if (receiver.isSmallInteger()) rcvClass = "SmallInteger";
+                    else if (receiver.isNil()) rcvClass = "nil";
+                    else if (receiver.isObject() && receiver.rawBits() > 0x10000) {
+                        Oop cls = memory_.classOf(receiver);
+                        if (cls.isObject() && memory_.slotCountOf(cls) > 6) {
+                            Oop nameOop = memory_.fetchPointer(6, cls);
+                            if (nameOop.isObject() && !nameOop.isNil()) {
+                                ObjectHeader* nh = nameOop.asObjectPtr();
+                                if (nh->isBytesObject() && nh->byteSize() < 100)
+                                    rcvClass = std::string((char*)nh->bytes(), nh->byteSize());
+                            }
+                        }
+                    }
+                    // Get selector from method
+                    std::string selName = "?";
+                    if (method.isObject() && !method.isNil()) {
+                        Oop headerOop = memory_.fetchPointer(0, method);
+                        if (headerOop.isSmallInteger()) {
+                            int numLits = (int)(headerOop.asSmallInteger() & 0x7FFF);
+                            if (numLits > 0) {
+                                // Last literal is AdditionalMethodState or selector
+                                Oop lastLit = memory_.fetchPointer(numLits, method);
+                                if (lastLit.isObject() && !lastLit.isNil()) {
+                                    ObjectHeader* llHdr = lastLit.asObjectPtr();
+                                    if (llHdr->isBytesObject() && llHdr->byteSize() < 100) {
+                                        // Direct selector (Symbol)
+                                        selName = std::string((char*)llHdr->bytes(), llHdr->byteSize());
+                                    } else if (llHdr->slotCount() > 0) {
+                                        // AdditionalMethodState: selector in slot 0
+                                        Oop selOop = memory_.fetchPointer(0, lastLit);
+                                        if (selOop.isObject() && !selOop.isNil()) {
+                                            ObjectHeader* selHdr = selOop.asObjectPtr();
+                                            if (selHdr->isBytesObject() && selHdr->byteSize() < 100)
+                                                selName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
+                                        }
+                                    }
+                                }
+                                // If last literal didn't give us a selector, try second-to-last
+                                if (selName == "?" && numLits > 1) {
+                                    Oop penLit = memory_.fetchPointer(numLits - 1, method);
+                                    if (penLit.isObject() && !penLit.isNil()) {
+                                        ObjectHeader* plHdr = penLit.asObjectPtr();
+                                        if (plHdr->isBytesObject() && plHdr->byteSize() < 100)
+                                            selName = std::string((char*)plHdr->bytes(), plHdr->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    fprintf(stderr, "  [P40-FRAME#%d] %s >> %s\n", frame, rcvClass.c_str(), selName.c_str());
+                    // Follow sender chain
+                    ctx = memory_.fetchPointer(0, ctx); // sender
+                }
+            }
+        }
         checkCount = 0;
         usecFireTotal = 0;
         msFireTotal = 0;
@@ -5870,6 +5960,205 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
     }
 
+    // Trace sends after mouse button events (set by FFI.cpp)
+    {
+        if (g_traceEventSends > 0) {
+            g_traceEventSends--;
+            // Get receiver class name
+            std::string rcvClassName = "?";
+            if (rcvr.isSmallInteger()) rcvClassName = "SmallInteger";
+            else if (rcvr.isNil()) rcvClassName = "nil";
+            else if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                Oop cls = memory_.classOf(rcvr);
+                if (cls.isObject() && cls.rawBits() > 0x10000 && memory_.slotCountOf(cls) > 6) {
+                    Oop nameOop = memory_.fetchPointer(6, cls);
+                    if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                        ObjectHeader* nh = nameOop.asObjectPtr();
+                        if (nh->isBytesObject() && nh->byteSize() < 100)
+                            rcvClassName = std::string((char*)nh->bytes(), nh->byteSize());
+                    }
+                }
+            }
+            std::string sel(selBytes, selLen);
+            // Get active process priority
+            int activePri = -1;
+            {
+                Oop ap = getActiveProcess();
+                if (ap.isObject() && ap.rawBits() > 0x10000) {
+                    Oop priOop = memory_.fetchPointer(ProcessPriorityIndex, ap);
+                    if (priOop.isSmallInteger()) activePri = (int)priOop.asSmallInteger();
+                }
+            }
+            fprintf(stderr, "[SEND-TRACE] #%d p%d %s >> %s (args=%d) fd=%zu\n",
+                    20000 - g_traceEventSends, activePri, rcvClassName.c_str(), sel.c_str(), argCount, frameDepth_);
+
+            // When handleEvent: is sent, also log the argument class
+            if (sel == "handleEvent:" && argCount == 1) {
+                Oop arg = stackValue(0);
+                std::string argClassName = "?";
+                if (arg.isSmallInteger()) argClassName = "SmallInteger";
+                else if (arg.isNil()) argClassName = "nil";
+                else if (arg.isObject() && arg.rawBits() > 0x10000) {
+                    Oop argCls = memory_.classOf(arg);
+                    if (argCls.isObject() && argCls.rawBits() > 0x10000 && memory_.slotCountOf(argCls) > 6) {
+                        Oop argName = memory_.fetchPointer(6, argCls);
+                        if (argName.isObject() && argName.rawBits() > 0x10000) {
+                            ObjectHeader* anh = argName.asObjectPtr();
+                            if (anh->isBytesObject() && anh->byteSize() < 100)
+                                argClassName = std::string((char*)anh->bytes(), anh->byteSize());
+                        }
+                    }
+                }
+                fprintf(stderr, "[HANDLE-EVENT] arg class: %s arg=0x%llx\n",
+                        argClassName.c_str(), (unsigned long long)arg.rawBits());
+            }
+
+            // When dispatchMorphicEvent: is sent, log the argument class
+            if (sel == "dispatchMorphicEvent:" && argCount == 1) {
+                Oop arg = stackValue(0);
+                std::string argClassName = "?";
+                if (arg.isSmallInteger()) argClassName = "SmallInteger";
+                else if (arg.isNil()) argClassName = "nil";
+                else if (arg.isObject() && arg.rawBits() > 0x10000) {
+                    Oop argCls = memory_.classOf(arg);
+                    if (argCls.isObject() && argCls.rawBits() > 0x10000 && memory_.slotCountOf(argCls) > 6) {
+                        Oop argName = memory_.fetchPointer(6, argCls);
+                        if (argName.isObject() && argName.rawBits() > 0x10000) {
+                            ObjectHeader* anh = argName.asObjectPtr();
+                            if (anh->isBytesObject() && anh->byteSize() < 100)
+                                argClassName = std::string((char*)anh->bytes(), anh->byteSize());
+                        }
+                    }
+                }
+                fprintf(stderr, "[DISPATCH-EVENT] arg class: %s arg=0x%llx\n",
+                        argClassName.c_str(), (unsigned long long)arg.rawBits());
+            }
+        }
+    }
+
+    // Log key selectors for menu debugging (lightweight, always-on)
+    if (selBytes && selLen > 0) {
+        // invokeWorldMenu: (16 chars)
+        if (selLen == 16 && memcmp(selBytes, "invokeWorldMenu:", 16) == 0) {
+            fprintf(stderr, "[MENU-TRACE] invokeWorldMenu: called\n");
+        }
+        // popUpEvent:in: (14 chars)
+        if (selLen == 14 && memcmp(selBytes, "popUpEvent:in:", 14) == 0) {
+            fprintf(stderr, "[MENU-TRACE] popUpEvent:in: called\n");
+        }
+        // popUpAt:forHand:in:allowKeyboard: (34 chars)
+        if (selLen == 34 && memcmp(selBytes, "popUpAt:forHand:in:allowKeyboard:", 34) == 0) {
+            fprintf(stderr, "[MENU-TRACE] popUpAt:forHand:in:allowKeyboard: called\n");
+        }
+        // addMorphFront: (14 chars) — this is how menu gets added to world
+        if (selLen == 14 && memcmp(selBytes, "addMorphFront:", 14) == 0) {
+            std::string argCls = "?";
+            if (argCount >= 1) {
+                Oop arg = stackValue(0);
+                if (arg.isObject() && arg.rawBits() > 0x10000) {
+                    Oop c = memory_.classOf(arg);
+                    if (c.isObject() && memory_.slotCountOf(c) > 6) {
+                        Oop n = memory_.fetchPointer(6, c);
+                        if (n.isObject() && !n.isNil()) {
+                            ObjectHeader* nh = n.asObjectPtr();
+                            if (nh->isBytesObject() && nh->byteSize() < 100)
+                                argCls = std::string((char*)nh->bytes(), nh->byteSize());
+                        }
+                    }
+                }
+            }
+            fprintf(stderr, "[MENU-TRACE] addMorphFront: %s\n", argCls.c_str());
+        }
+        // layoutItems (11 chars)
+        if (selLen == 11 && memcmp(selBytes, "layoutItems", 11) == 0) {
+            fprintf(stderr, "[MENU-TRACE] layoutItems called\n");
+        }
+        // menuEntitled: (13 chars) — converts PragmaMenuBuilder to MenuMorph
+        if (selLen == 13 && memcmp(selBytes, "menuEntitled:", 13) == 0) {
+            fprintf(stderr, "[MENU-TRACE] menuEntitled: called\n");
+        }
+        // shouldShowWorldMenu (19 chars)
+        if (selLen == 19 && memcmp(selBytes, "shouldShowWorldMenu", 19) == 0) {
+            fprintf(stderr, "[MENU-TRACE] shouldShowWorldMenu called\n");
+        }
+        // isMenuOpenByLeftClick (21 chars)
+        if (selLen == 21 && memcmp(selBytes, "isMenuOpenByLeftClick", 21) == 0) {
+            fprintf(stderr, "[MENU-TRACE] isMenuOpenByLeftClick called\n");
+        }
+        // openInWorld (11 chars)
+        if (selLen == 11 && memcmp(selBytes, "openInWorld", 11) == 0) {
+            std::string cls = "?";
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                Oop c = memory_.classOf(rcvr);
+                if (c.isObject() && memory_.slotCountOf(c) > 6) {
+                    Oop n = memory_.fetchPointer(6, c);
+                    if (n.isObject() && !n.isNil()) {
+                        ObjectHeader* nh = n.asObjectPtr();
+                        if (nh->isBytesObject() && nh->byteSize() < 100)
+                            cls = std::string((char*)nh->bytes(), nh->byteSize());
+                    }
+                }
+            }
+            fprintf(stderr, "[MENU-TRACE] openInWorld on %s\n", cls.c_str());
+        }
+        // popUpContentsMenu: (18 chars)
+        if (selLen == 18 && memcmp(selBytes, "popUpContentsMenu:", 18) == 0) {
+            fprintf(stderr, "[MENU-TRACE] popUpContentsMenu: called\n");
+        }
+        // yellowButtonPressed (19 chars)
+        if (selLen == 19 && memcmp(selBytes, "yellowButtonPressed", 19) == 0) {
+            // Dump the receiver's 'buttons' field to see the actual value
+            // MouseButtonEvent layout: type(1) position(2) which(3) buttons(4) hand(5) stamp(6) ...
+            // Actually, MouseEvent superclass of MouseButtonEvent stores buttons in inst var 'buttons'
+            // But we don't know the exact slot. Just log the call.
+            fprintf(stderr, "[MENU-TRACE] yellowButtonPressed called\n");
+        }
+        // redButtonPressed (16 chars)
+        if (selLen == 16 && memcmp(selBytes, "redButtonPressed", 16) == 0) {
+            fprintf(stderr, "[MENU-TRACE] redButtonPressed called\n");
+        }
+        // anyMask: (8 chars) - this is how yellowButtonPressed/redButtonPressed work
+        if (selLen == 8 && memcmp(selBytes, "anyMask:", 8) == 0) {
+            // Only log when arg is 2 (yellowButton) or 4 (redButton)
+            if (argCount == 1) {
+                Oop arg = stackValue(0);
+                if (arg.isSmallInteger()) {
+                    int mask = (int)arg.asSmallInteger();
+                    if (mask == 2 || mask == 4) {
+                        int rcvVal = rcvr.isSmallInteger() ? (int)rcvr.asSmallInteger() : -1;
+                        fprintf(stderr, "[MENU-TRACE] anyMask: %d on %d (result=%s)\n",
+                                mask, rcvVal, (rcvVal & mask) ? "true" : "false");
+                    }
+                }
+            }
+        }
+        // morphToGrab: (12 chars)
+        if (selLen == 12 && memcmp(selBytes, "morphToGrab:", 12) == 0) {
+            fprintf(stderr, "[MENU-TRACE] morphToGrab: called\n");
+        }
+        // isEasySelecting (15 chars)
+        if (selLen == 15 && memcmp(selBytes, "isEasySelecting", 15) == 0) {
+            fprintf(stderr, "[MENU-TRACE] isEasySelecting called\n");
+        }
+        // mouseDown: on WorldMorph/PasteUpMorph (10 chars)
+        if (selLen == 10 && memcmp(selBytes, "mouseDown:", 10) == 0) {
+            std::string cls = "?";
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                Oop c = memory_.classOf(rcvr);
+                if (c.isObject() && memory_.slotCountOf(c) > 6) {
+                    Oop n = memory_.fetchPointer(6, c);
+                    if (n.isObject() && !n.isNil()) {
+                        ObjectHeader* nh = n.asObjectPtr();
+                        if (nh->isBytesObject() && nh->byteSize() < 100)
+                            cls = std::string((char*)nh->bytes(), nh->byteSize());
+                    }
+                }
+            }
+            if (cls.find("World") != std::string::npos || cls.find("PasteUp") != std::string::npos)
+                fprintf(stderr, "[MENU-TRACE] mouseDown: on %s\n", cls.c_str());
+        }
+    }
+
     // Intercept specific selectors needed for embedded VM operation
     if (selBytes && selLen > 0) {
         // relinquishProcessorForMicroseconds: (35 chars)
@@ -6893,6 +7182,27 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     for (int i = 0; i < numCopied; i++) {
         Oop copiedValue = memory_.fetchPointer(firstCopiedSlot + i, block);
         setTemporary(argCount + i, copiedValue);
+
+        // Log copied values when tracing is active
+        if (g_traceEventSends > 0 && numCopied > 0) {
+            std::string valClass = "?";
+            if (copiedValue.isSmallInteger()) valClass = "SmallInteger(" + std::to_string(copiedValue.asSmallInteger()) + ")";
+            else if (copiedValue.isNil()) valClass = "nil";
+            else if (copiedValue.isObject() && copiedValue.rawBits() > 0x10000) {
+                Oop cls = memory_.classOf(copiedValue);
+                if (cls.isObject() && cls.rawBits() > 0x10000 && memory_.slotCountOf(cls) > 6) {
+                    Oop nameOop = memory_.fetchPointer(6, cls);
+                    if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                        ObjectHeader* nh = nameOop.asObjectPtr();
+                        if (nh->isBytesObject() && nh->byteSize() < 100)
+                            valClass = std::string((char*)nh->bytes(), nh->byteSize());
+                    }
+                }
+            }
+            fprintf(stderr, "[BLK-COPIED] temp[%d] = 0x%llx class=%s (slot %d of block)\n",
+                    argCount + i, (unsigned long long)copiedValue.rawBits(),
+                    valClass.c_str(), firstCopiedSlot + i);
+        }
     }
 
     instructionPointer_ = startAddress;
@@ -7719,9 +8029,9 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     static int dnuDepth = 0;
     const int MAX_DNU_DEPTH = 10;
 
-    // General DNU tracing: log first 20 DNUs to find what triggers the ED
+    // General DNU tracing: log DNUs (skip startup batch, log new ones)
     static int generalDnuCount = 0;
-    if (generalDnuCount < 20) {
+    if (generalDnuCount < 20 || (generalDnuCount >= 20 && generalDnuCount < 500 && g_stepCount > 90000000)) {
         generalDnuCount++;
         std::string selName = "?";
         if (selector.isObject() && selector.rawBits() > 0x10000) {
@@ -9615,6 +9925,9 @@ void Interpreter::transferTo(Oop newProcess) {
         }
         Oop p = memory_.fetchPointer(ProcessPriorityIndex, newProcess);
         newPri = p.isSmallInteger() ? p.asSmallInteger() : -1;
+        // Track p40 process for diagnostic
+        if (newPri == 40) g_savedP40Process = newProcess;
+        else if (oldPri == 40) g_savedP40Process = oldProcess;
         if (switchCount <= 50 || switchCount % 5000 == 0) {
             fprintf(stderr, "[SWITCH #%d] pri %d -> %d step=%lld sel=%s cls=%s\n",
                     switchCount, oldPri, newPri, (long long)g_watchdogSteps.load(),
@@ -10965,6 +11278,7 @@ bool Interpreter::autoLoadDriver() {
 
 bool Interpreter::bootstrapStartup() {
     static int bootstrapCallCount = 0;
+    static bool imageBooted = false;  // true once we've ever found a runnable process
     bootstrapCallCount++;
     if (bootstrapCallCount <= 5) {
         std::cerr << "[STARTUP] bootstrapStartup called (call #" << bootstrapCallCount << ")\n";
@@ -11038,6 +11352,7 @@ bool Interpreter::bootstrapStartup() {
                         // Context format is usually 3 (indexable with fixed), Process format is 1
                         if (ctxHeader->format() == ObjectFormat::IndexableWithFixed) {
                             std::cerr << "[STARTUP] Found valid context, resuming execution!\n";
+                            imageBooted = true;
                             return executeFromContext(context);
                         } else {
                             std::cerr << "[STARTUP] suspendedContext doesn't look like a Context (format="
@@ -11048,8 +11363,6 @@ bool Interpreter::bootstrapStartup() {
             }
         }
     }
-
-    std::cerr << "[STARTUP] No runnable process found in scheduler queues\n";
 
     // Approach 2: Try to resume from where the image was saved
     // The saved active process might have a context embedded deeper
@@ -11079,6 +11392,7 @@ bool Interpreter::bootstrapStartup() {
                         // Try to resume from this context if it looks valid
                         if (ctxHdr->format() == ObjectFormat::IndexableWithFixed) {
                             std::cerr << "[STARTUP] Resuming from active process context!\n";
+                            imageBooted = true;
                             return executeFromContext(suspendedCtx);
                         }
                     } else {
@@ -11087,6 +11401,12 @@ bool Interpreter::bootstrapStartup() {
                 }
             }
         }
+    }
+
+    // Once the image has booted, don't retry Approach 3 startup methods.
+    // The caller's idle loop handles the "nothing to run" case properly.
+    if (imageBooted) {
+        return false;
     }
 
     // Approach 3: Try to find and call a startup method directly
@@ -11186,10 +11506,9 @@ bool Interpreter::bootstrapStartup() {
         }
     }
 
-    // If we've already tried many startup attempts, eventually give up.
-    // But allow many more attempts for the UI loop to run.
-    if (startupAttempt > 1000) {
-        stopVM("bootstrapStartup: exceeded 1000 attempts");
+    // If we've already completed all initial startup steps, just return false.
+    // The caller's idle loop handles the "nothing to run" case properly.
+    if (startupAttempt > 100) {
         return false;
     }
 
