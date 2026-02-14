@@ -2598,8 +2598,8 @@ void Interpreter::startHeartbeat() {
                 }
                 if (stuck) {
                     int ticks = stuckTicks_.fetch_add(1, std::memory_order_relaxed) + 1;
-                    // After 30s (6 ticks × 5s) of no progress, terminate the process
-                    if (ticks >= 6) {
+                    // After 15s (3 ticks × 5s) of no progress, terminate the process
+                    if (ticks >= 3) {
                         fprintf(stderr, "[WATCHDOG] Requesting process termination after %ds stuck\n",
                                 ticks * 5);
                         terminateStuck_.store(true, std::memory_order_release);
@@ -2816,8 +2816,12 @@ bool Interpreter::step() {
     // NEXT bytecode uses them. The consuming bytecodes reset them after use.
     // Resetting here would break extension byte chains.
 
-    // Track step count (for debugging if needed)
+    // Track step count
     g_stepNum++;
+    // Update watchdog steps (used by heartbeat thread to detect stuck processes).
+    // Must be updated here because test_load_image calls step() directly,
+    // not interpret() which has its own loopCount.
+    g_watchdogSteps.store(g_stepNum, std::memory_order_relaxed);
 
     // Check for forced process yield BEFORE fetching the next bytecode.
     // CRITICAL: Must happen before fetchByte() because fetchByte() advances
@@ -9046,26 +9050,17 @@ void Interpreter::terminateCurrentProcess() {
         return;
     }
 
-    // Check if already terminated (suspendedContext is nil) - prevent duplicate termination
-    Oop suspendedCtx = memory_.fetchPointer(ProcessSuspendedContextIndex, activeProcess);
-    if (suspendedCtx.rawBits() == nilObj.rawBits()) {
-        if (termLog && termCount <= 50) {
-            Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
-            int prio = prioOop.isSmallInteger() ? static_cast<int>(prioOop.asSmallInteger()) : -1;
-            fprintf(termLog, "[TERMINATE #%d] process=0x%llx priority=%d ALREADY TERMINATED - skipping\n",
-                    termCount, (unsigned long long)activeProcess.rawBits(), prio);
-            fflush(termLog);
-        }
-        return;  // Already terminated
-    }
+    // Note: for the ACTIVE process, suspendedContext is always nil because
+    // the context is in the interpreter's registers (not saved to the heap).
+    // So we do NOT skip based on suspendedContext == nil here.
 
     if (termLog && termCount <= 50) {
         // Get priority
         Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
         int prio = prioOop.isSmallInteger() ? static_cast<int>(prioOop.asSmallInteger()) : -1;
-        fprintf(termLog, "[TERMINATE #%d step=%lld] process=0x%llx priority=%d oldSuspendedContext=0x%llx fd=%zu\n",
+        fprintf(termLog, "[TERMINATE #%d step=%lld] process=0x%llx priority=%d fd=%zu\n",
                 termCount, (long long)g_stepNum, (unsigned long long)activeProcess.rawBits(), prio,
-                (unsigned long long)suspendedCtx.rawBits(), frameDepth_);
+                frameDepth_);
         // Log current method selector
         auto extractSel = [this](Oop method) -> std::string {
             if (!method.isObject() || method.rawBits() <= 0x10000) return "?";
