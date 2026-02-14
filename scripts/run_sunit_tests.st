@@ -1011,8 +1011,11 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
 
   "Raise our priority to match the test BEFORE forking.
    This ensures forkAt: puts processes in the ready list (not preempting us),
-   so we complete all setup (assign both vars) before any process runs."
-  Processor activeProcess priority: priority.
+   so we complete all setup (assign both vars) before any process runs.
+   Use instVarAt:put: to bypass Process>>priority: which calls
+   interpriorityYield: (suspend/resume dance that kills processes).
+   Process inst vars: Link.nextLink(1), suspendedContext(2), priority(3)."
+  Processor activeProcess instVarAt: 3 put: priority.
 
   testProcess := [
     [[[[(testClass selector: sel) runCase]
@@ -1053,7 +1056,7 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
   "Clean up any surviving processes"
   testProcess isTerminated ifFalse: [testProcess terminate].
   watchdogProcess isTerminated ifFalse: [watchdogProcess terminate].
-  Processor activeProcess priority: originalPriority.
+  Processor activeProcess instVarAt: 3 put: originalPriority.
   ^ result! !
 
 !SUnitRunner class methodsFor: 'startup'!
