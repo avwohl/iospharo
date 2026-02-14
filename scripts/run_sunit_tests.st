@@ -1033,7 +1033,6 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
           nextPutAll: ' ('; nextPutAll: ex class name;
           nextPutAll: ': '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 100)); nextPutAll: ')'; cr].
     done := true.
-    watchdogProcess terminate.
     sem signal] forkAt: priority.
 
   watchdogProcess := [
