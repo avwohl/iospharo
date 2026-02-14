@@ -3988,12 +3988,12 @@ PrimitiveResult Interpreter::primitiveResume(int argCount) {
     }
 
     // Get priorities to check for preemption
-    Oop processPriorityOop = memory_.fetchPointer(ProcessPriorityIndex, process);
-    int processPriority = static_cast<int>(processPriorityOop.asSmallInteger());
+    int processPriority = safeProcessPriority(process);
+    if (processPriority < 0) return PrimitiveResult::Failure;
 
     Oop activeProcess = getActiveProcess();
-    Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
-    int activePriority = static_cast<int>(activePriorityOop.asSmallInteger());
+    int activePriority = safeProcessPriority(activeProcess);
+    if (activePriority < 0) return PrimitiveResult::Failure;
 
     if (processPriority > activePriority) {
         // Resumed process has higher priority - preempt current process

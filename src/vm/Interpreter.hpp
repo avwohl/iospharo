@@ -1802,6 +1802,9 @@ private:
     /// Find a runnable process at lower priority than the given priority
     Oop wakeLowerPriorityProcess(int currentPriority);
 
+    /// Get process priority safely; returns -1 if corrupted
+    int safeProcessPriority(Oop process);
+
     /// Add process to its priority queue
     void putToSleep(Oop process);
 

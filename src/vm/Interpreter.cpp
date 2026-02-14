@@ -2461,8 +2461,8 @@ void Interpreter::synchronousSignal(Oop semaphore) {
     } else {
         // Wake the first waiting process
         Oop process = removeFirstLinkOfList(semaphore);
-        Oop processPriorityOop = memory_.fetchPointer(ProcessPriorityIndex, process);
-        int processPriority = static_cast<int>(processPriorityOop.asSmallInteger());
+        int processPriority = safeProcessPriority(process);
+        if (processPriority < 0) return;  // Corrupted process - abandon signal
 
         // Track Delay scheduler process (first pri=80 process we see signaled)
         if (processPriority == 80 && g_delaySchedulerProcess.isNil()) {
@@ -2472,8 +2472,12 @@ void Interpreter::synchronousSignal(Oop semaphore) {
         }
 
         Oop activeProcess = getActiveProcess();
-        Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
-        int activePriority = static_cast<int>(activePriorityOop.asSmallInteger());
+        int activePriority = safeProcessPriority(activeProcess);
+        if (activePriority < 0) {
+            // Active process corrupted - just transfer to woken process
+            transferTo(process);
+            return;
+        }
 
         if (processPriority > activePriority) {
             putToSleep(activeProcess);
@@ -2734,7 +2738,16 @@ bool Interpreter::step() {
                 auto now = std::chrono::steady_clock::now();
                 auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
                     now - lastHighPriTime).count();
-                if (elapsed >= 30) {
+                // Log every 10 seconds of absence
+                static long long lastLoggedElapsed = 0;
+                if (elapsed >= 10 && elapsed != lastLoggedElapsed && elapsed % 5 == 0) {
+                    lastLoggedElapsed = elapsed;
+                    fprintf(stderr, "[VM-TIMEOUT-WATCH] pri=%d absent=%llds step=%llu fd=%zu grace=%d\n",
+                            prio, (long long)elapsed, (unsigned long long)g_stepNum, frameDepth_,
+                            (int)startupGracePeriod);
+                    fflush(stderr);
+                }
+                if (elapsed >= 15) {
                     vmTimeoutCount++;
                     fprintf(stderr, "[VM-TIMEOUT #%d] Delay scheduler absent for %llds, "
                             "terminating pri=%d process. step=%llu fd=%zu sel=%s\n",
@@ -9410,6 +9423,22 @@ Oop Interpreter::wakeLowerPriorityProcess(int currentPriority) {
     return nilObj;
 }
 
+int Interpreter::safeProcessPriority(Oop process) {
+    Oop priorityOop = memory_.fetchPointer(ProcessPriorityIndex, process);
+    if (!priorityOop.isSmallInteger()) {
+        fprintf(stderr, "[CORRUPT-PRI] non-SmallInt priority: bits=0x%llx process=0x%llx\n",
+                (unsigned long long)priorityOop.rawBits(), (unsigned long long)process.rawBits());
+        return -1;
+    }
+    int pri = static_cast<int>(priorityOop.asSmallInteger());
+    if (pri < 1 || pri > 80) {
+        fprintf(stderr, "[CORRUPT-PRI] priority %d out of range process=0x%llx\n",
+                pri, (unsigned long long)process.rawBits());
+        return -1;
+    }
+    return pri;
+}
+
 void Interpreter::putToSleep(Oop process) {
     static int sleepCallCount = 0;
     static FILE* sleepLog = nullptr;
@@ -9425,9 +9454,9 @@ void Interpreter::putToSleep(Oop process) {
     Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
     Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
 
-    // Get process priority (1-based SmallInteger)
-    Oop priorityOop = memory_.fetchPointer(ProcessPriorityIndex, process);
-    int priority = static_cast<int>(priorityOop.asSmallInteger());
+    // Get and validate process priority
+    int priority = safeProcessPriority(process);
+    if (priority < 0) return;  // Corrupted process - cannot schedule
 
     // Get the appropriate priority list (0-indexed in array)
     Oop processList = memory_.fetchPointer(priority - 1, schedLists);
