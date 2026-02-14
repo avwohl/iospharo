@@ -1155,10 +1155,14 @@ runTestClass: testClass run: runNum on: s detail: d
 
 !SUnitRunner class methodsFor: 'running'!
 runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
-  "Run a single test with a timeout. Returns nil for pass, #fail, #error, #skip, or #timeout."
-  | sem result testProcess |
-  sem := Semaphore new.
+  "Run a single test with a spin-wait timeout that does NOT depend on the Delay scheduler.
+   Uses Processor yield + Time microsecondClockValue for timing.
+   Returns nil for pass, #fail, #error, #skip, or #timeout."
+  | done result testProcess startUsec timeoutUsec |
+  done := false.
   result := nil. "nil means pass"
+  startUsec := Time microsecondClockValue.
+  timeoutUsec := seconds * 1000000.
 
   testProcess := [
     [[[[(testClass selector: sel) runCase]
@@ -1178,16 +1182,19 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
         s nextPutAll: '  ERROR: '; nextPutAll: sel;
           nextPutAll: ' ('; nextPutAll: ex class name;
           nextPutAll: ': '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 100)); nextPutAll: ')'; cr].
-    sem signal] forkAt: priority.
+    done := true] forkAt: priority.
 
-  "Wait for test completion or timeout"
-  (sem waitTimeoutSeconds: seconds) ifTrue: [
-    "Timeout: suspend (not terminate) to avoid unwinding hangs"
-    testProcess suspend.
-    result := #timeout.
-    s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
-      nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; cr.
-    s flush].
+  "Spin-wait for completion or timeout (no Delay scheduler dependency)"
+  [done] whileFalse: [
+    ((Time microsecondClockValue - startUsec) abs > timeoutUsec)
+      ifTrue: [
+        testProcess suspend.
+        result := #timeout.
+        s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
+          nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; cr.
+        s flush.
+        ^ result].
+    Processor yield].
   ^ result! !
 
 !SUnitRunner class methodsFor: 'startup'!
