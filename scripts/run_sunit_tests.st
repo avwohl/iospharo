@@ -927,9 +927,14 @@ runTestClass: testClass run: runNum on: s detail: d
     sels := testClass allTestSelectors asArray "use unsorted on error"].
 
   sels do: [:sel |
-    "No method-level skips — let everything run with timeout.
-     Only skip tests that allocate 1GB+ memory (would OOM the test process)."
-    (#(testOneGBAllocation testOneGWordAllocation) includes: sel) ifFalse: [
+    "Minimal skips: 1GB allocations (OOM) and inherited ClassTestCase lint tests
+     that run AST-parsing lint rules on every method in the class hierarchy.
+     These timeout on every test class (~640) at 10s each = 100+ min of dead waiting.
+     They're static analysis checks, not VM correctness tests."
+    (#(testOneGBAllocation testOneGWordAllocation
+       testMethodsOfTheClassShouldNotBeRepeatedInItsSuperclasses
+       testTraitExplicitRequirementMethodsMustBeImplementedInTheClassOrInASuperclass)
+      includes: sel) ifFalse: [
       | result |
       s nextPutAll: '  RUN: '; nextPutAll: sel; cr. s flush.
       result := self runSingleTest: testClass selector: sel timeout: 10 priority: testPriority on: s.
