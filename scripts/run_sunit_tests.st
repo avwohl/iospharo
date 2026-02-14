@@ -894,65 +894,10 @@ runTestClass: testClass run: runNum on: s detail: d
   "Run all tests in a class. Returns #(pass fail error skip timeout)."
   | sels p f e sk t testPriority consecutiveTimeouts |
 
-  "Skip classes that stall due to process/scheduling issues in our VM.
-   These tests fork processes at the same priority or rely on Delay timeouts
-   that cannot fire because our VM lacks proper time-slicing."
-  (#("ProcessTerminateBugTest: ENABLED (prim 196 terminateTo: implemented)"
-     "ProcessTest: 46/46 error (DefaultExecutionEnvironment>>processMonitor missing)"
-     ProcessTest
-     "Abstract class (SubclassResponsibility errors)"
-     CollectionRootTest
-     "GC finalization/ephemerons: ENABLED (ephemeron + mourning support implemented)"
-     "Abstract ClassParser tests (SubclassResponsibility)"
-     CDBehaviorParserTest CDClassDefinitionParserTest
-     "FFI callbacks (not implemented)"
-     FFICallbackParametersTest FFICallbackTest
-     "BuilderManifestTest: ENABLED (ModificationForbidden fixed — shallowCopy clears immutable bit)"
-     "ExecutionCounterTest: installOn: missing (metalinks)"
-     ExecutionCounterTest
-     "Priority 81 (exceeds 80 limit)"
-     ProcessMonitorTestServiceTest
-     "Coverage/reflectivity (NonBooleanReceiver, reflectivity infrastructure)"
-     CoverageCollectorTest CoverageDemoTest
-     "Priority 81 / process monitoring"
-     TestExecutionEnvironmentTest
-     "Network name resolver / Character>>asByteArray"
-     GlobalIdentifierMergerTest GlobalIdentifierWithDefaultConfigurationTest
-     "Epicea (needs network primNameResolverStatus)"
-     EpLogTest EpCommentTest
-     "BitBlt alpha compositing"
-     BitBltTest
-     "BitBlt arg error in printOn with halt"
-     ObjectWithPrintingRaisingHaltTest
-     "Weak/GC finalization: ENABLED (VM finalization signaling implemented)"
-     "ClassParser: CDTraitCompositionClassParserTest (16 errors, class mod timeouts)"
-     CDTraitCompositionClassParserTest
-     "Class restructuring: timeouts hold modification locks, poisoning later tests.
-      Root cause: cascade propagation in TraitBuilderEnhancer>>propagateChangesToRelatedClasses:.
-      Timeouts work (priority 40 fix), but suspended processes corrupt shared state."
-     SlotMigrationTest SlotIntegrationTest PropertySlotTest
-     SlotAnnouncementsTest SlotLayoutEqualityTest SlotTraitsTest
-     SlotLayoutExtensionTest ExampleSlotWithStateTest SlotMethodRecompilationTest
-     "Trait tests: same cascade propagation issue"
-     TraitTest TraitCompositionTest ClassTraitTest MOPTraitTest
-     TraitPureBehaviorTest TraitPrecedenceCompositionTest
-     TraitWithAliasTest TraitWithConflictsTest TraitChangesTest
-     TraitMethodDescriptionTest TraitOverloadingOfMethodsInTraitedClassTest
-     TraitPackagingTest TraitInTraitClassTest
-     TraitWithMethodsInProtocolsTest
-     TraitSlotScopeTest TraitWithSlotsTest TraitWithComplexSlotsTest
-     "Weak class variable: class restructuring hangs (no timeout preemption)"
-     WeakClassVariableTest
-     "Code reparation/package: class modification hangs"
-     OCCodeReparatorTest PackageTest
-     "HistorySlotTest: class restructuring hangs (SlotTestsClassA class >> #do:)"
-     HistorySlotTest
-     "BlockClosureValueWithinTest: valueWithin: corrupts delay scheduler,
-      causing total VM hang (no timeout recovery). Same on baseline VM."
-     BlockClosureValueWithinTest
-     "BlockClosureValueWithinDurationTest: same issue as above"
-     BlockClosureValueWithinDurationTest) includes: testClass name) ifTrue: [
-    s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' === SKIPPED (process-heavy)'; cr. s flush.
+  "Skip only genuinely abstract classes (SubclassResponsibility on every test)"
+  (#(CollectionRootTest CDBehaviorParserTest CDClassDefinitionParserTest)
+    includes: testClass name) ifTrue: [
+    s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' === SKIPPED (abstract)'; cr. s flush.
     ^ {0. 0. 0. 0. 0}].
 
   s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' ==='; cr.
@@ -982,121 +927,9 @@ runTestClass: testClass run: runNum on: s detail: d
     sels := testClass allTestSelectors asArray "use unsorted on error"].
 
   sels do: [:sel |
-    "Skip tests known to hang or cause VM-level crashes"
-    (#(testPrintStringAll testStoreStringAll testPrintStringBase
-        testAllReferencesTo testAllReferences testPrintingRecursive
-        testOneGBAllocation testFastPointersTo
-        testBenchFor testBenchForException
-        "testCannotReturn: ContextTest PASS, BlockClosureTest/BlockClosuresTestCase FAIL
-         (forked process variant — assertion on result/home doesn't match)"
-        testCannotReturn testOneGWordAllocation
-        "ProcessTerminateBugTest: forkAt: userInterruptPriority (50) > test priority (79? no, 50<79 ok); actual issue: unwindTo: missing"
-        testUnwindFromForeignProcess
-        "SemaphoreTest: Delay-dependent ENABLED (timer fix), keep priority 89 skip"
-        testSchedulesFIFO
-        "ProcessSpecificTest: Delay-dependent ENABLED (timer fix)"
-        "Process-heavy contention tests"
-        testHeavyContention testHeavyContention2
-        "MutexTest: recursive mutex deadlocks (image-side Mutex>>critical: issue)"
-        testTwoRecursiveCriticalsShouldNotWaitEachOther
-        "Slot class restructuring (timeout)"
-        testInitializedSlotUpdateClass testCannotBeRecompiled
-        "Weak dict tally compaction (needs finalization-triggered cleanup)"
-        testClearing testFinalizeValuesWhenLastChainContinuesAtFront
-        "NativeArrayTest: testAtAllPutFail ENABLED (primitive 145 correctly fails for -1)"
-        "StopwatchTest: ENABLED (13/13), TTLCacheTest: ENABLED (27/28)"
-        "Character >> bitShift: missing (hashing tests)"
-        testLargeCharacterStream
-        "LRUCacheTest: LinkedList class issue"
-        test5kClasses
-        "CompiledMethodTest: slot restructuring timeout"
-        testAddingSlotDoesNotRemoveExtension
-        "CommandLineHandlerTest: no stderr in test runner"
-        testBasicCommandlineHandler
-        "SizeInMemoryTest: ENABLED (primitive 181 fixed to match Spur layout)"
-        "InstructionStreamTest: priority 81 (exceeds 80 limit)"
-        testSimulatedTerminationOfProcessDoNotCorruptTheContext
-        testSimulatingAMethodWithHaltHasCorrectContext
-        testStepThroughInAMethodWithMNU
-        testStepThroughInAMethodWithoutError
-        testTerminatingBlockedCriticalWhichWasSignalledButNotResumedYet
-        "WriteBarrierTest: ENABLED — immutability primitives fixed (canBeImmutable, MirrorPrimitives popN)
-         These 2 are <expectedFailure> in standard Pharo — they fail even on the reference VM.
-         Our test runner fork/timeout doesn't handle the pragma, so skip them."
-        testMutateByteArrayUsingDoubleAtPut testMutateByteArrayUsingFloatAtPut
-        "TextTest: BitBlt display"
-        testDisplay
-        "AnnouncerTest: ephemerons"
-        "testNoWeakBlock — FIXED by GC context sync"
-        "MethodAnnouncementsTest/ProtocolAnnouncementsTest: trait-related timeouts (class mod)"
-        testCompileMethodAnnounceAdditionOnlyInTrait
-        testRemoveMethodAnnounceRemovalOnlyInTrait
-        testUpdateMethodAnnounceModificationOnlyInTrait
-        testUpdateMethodAnnounceRecategorizationOnlyInTrait
-        testAddProtocolAnnouncedOnlyInTrait
-        "SystemNavigationTest: SmallInteger>>asLowercase"
-        testAllGlobalNamesStartingWithDoCaseSensitive
-        "CompiledMethodTest: Symbol>>numArgs FFI"
-        testUsingMethodsFFI
-        "SelfVariableTest: allMethods AST iteration heavy (numArgs issue)"
-        testUsingMethods testUsingMethodsSuper
-        "TemporaryVariableTest: testWriteTemporaryVariablesMethod ENABLED (contextAtPut C++ stack sync fix)"
-        "SlotTest/ClassVariableTest: class restructuring"
-        testAddSlot testAddSlotAnonymous testRemoveSlot
-        testChangingShapeDoesNotPutNilInMethodsLastLiteralKey
-        testWantsInitializationAddsInitializeSlot testAddInstVarName
-        testWhichSelectorsAccessFindSlots
-        "GlobalVariableTest: Transcript"
-        testTranscriptPrintingWithOpenedTranscriptExists
-        "MethodMapTest: testCopiedVarFromDeadContext ENABLED (forwarding fix may resolve MNU)"
-        "OCClosureCompilerTest: testDebuggerTempAccess ENABLED (contextAtPut C++ stack sync fix)"
-        "OCDoitTest: testDoItContextReadIvar ENABLED (prim 188 mirror fix)"
-        "OCParserTest: testMatchInContext ENABLED (pure AST matching)"
-        "testParseExpressionDontFreeze: parser may hang on malformed '#' input"
-        testParseExpressionDontFreeze
-        "OCParserTest: testFormatter consistently exceeds 10s timeout (formatting all methods)"
-        testFormatter
-        "OCProgramNodeTest: assertion"
-        testBestNodeForReturnAStatementWhenIntervalInStatementWithoutLeftPart
-        "OCClassBuilderTest: undeclared variable"
-        testCreateNormalClassWithTraitComposition
-        "OCSimpleFormatterTest: Symbol class>>do:"
-        testCoreSystem
-        "ClassQueryTest: compiler optimization difference"
-        testAllCallsOn
-        "DeleteVisitorTest: network name resolver"
-        testSymbolicLink
-        "OCSpecialSelectorTest: CompiledMethod >> #negative / #numArgsError: missing"
-        testUnoptimisedPlusSpecialSendsMessageCapturesSend
-        testUnoptimisedValueSpecialSendsMessageCapturesSend
-        "FBDDecompilerTest: testCascadeNested ENABLED (immutability fixed)"
-        testWhileTrue3
-        "FBDBytecodeDecompilerExamplesTest: decompiler round-trip loses blockReturnTop"
-        testExampleIfTrue testExampleSimpleBlockReturn
-        "FBDDecompilerTest: intermittent timeout (and/or decompilation)"
-        testAndOr testAndOr2
-        "CodeSimulationTest: SistaV1 simulation support missing"
-        testTranscriptPrinting
-        "SlotIntegrationTest: ENABLED (7/17), PropertySlotTest: ENABLED (1/8)"
-        "SystemBuildInfoTest: testVmBinary/testVmDirectory ENABLED (vmPath_ fix)"
-        "TestCaseTest: watchdog/long test (priority 81)"
-        testIgnoreWatchDogProcessAsForkedOne testRunningTooLongTest
-        "SystemResolverTest: File class>>signalError"
-        testUserLocalDirectory
-        "Geometry: intersectionsWithEllipse not implemented"
-        testIntersectionsWithArc testIntersectionsWithEllipse
-        "SHA hash: too slow for 10s timeout"
-        testExample3 testFips180Example3
-        "ClassHierarchyTest: testSubclasses needs >10s for full class iteration"
-        testSubclasses
-        "DelayTest: timer edge cases — still fail (unschedule nil, assertion)"
-        testSemaphoreNoTimeout testSemaphoreTimeout
-        "FBDDecompilerTest: decompiler round-trip (image-side)"
-        testToDoArgument
-        "FastStepThroughTest: step-through returns method instead of block (context issue)"
-        testStepIntoBlockArgumentInMessageSend testStepThrough
-        testStepThroughInABlockInATemporary testStepThroughJumpsToHomeWhenBlockEvaluationEnds
-        testStepThroughLonger) includes: sel) ifFalse: [
+    "No method-level skips — let everything run with timeout.
+     Only skip tests that allocate 1GB+ memory (would OOM the test process)."
+    (#(testOneGBAllocation testOneGWordAllocation) includes: sel) ifFalse: [
       | result |
       s nextPutAll: '  RUN: '; nextPutAll: sel; cr. s flush.
       result := self runSingleTest: testClass selector: sel timeout: 10 priority: testPriority on: s.
@@ -1134,10 +967,10 @@ runTestClass: testClass run: runNum on: s detail: d
           d nextPutAll: testClass name; nextPut: $	.
           d nextPutAll: sel; nextPut: $	.
           d nextPutAll: 'TIMEOUT'; cr].
-        "Bail out of class after 2 consecutive timeouts — suspended processes
+        "Bail out of class after 3 consecutive timeouts — suspended processes
          hold Mutexes (compilation, class mod), causing next test to deadlock."
-        consecutiveTimeouts >= 2 ifTrue: [
-          s nextPutAll: '  BAIL: 2 consecutive timeouts, skipping rest of class'; cr.
+        consecutiveTimeouts >= 3 ifTrue: [
+          s nextPutAll: '  BAIL: 3 consecutive timeouts, skipping rest of class'; cr.
           s nextPutAll: 'Total: '; print: sels size;
             nextPutAll: ' P:'; print: p; nextPutAll: ' F:'; print: f;
             nextPutAll: ' E:'; print: e; nextPutAll: ' S:'; print: sk;
@@ -1157,12 +990,22 @@ runTestClass: testClass run: runNum on: s detail: d
 runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
   "Run a single test with a spin-wait timeout that does NOT depend on the Delay scheduler.
    Uses Processor yield + Time microsecondClockValue for timing.
+   CRITICAL: We raise caller priority to MATCH the test priority BEFORE forking.
+   This ensures forceYield (heartbeat every 1s) round-robins between us and the test.
+   Without this, a CPU-bound infinite loop at pri=79 would never yield to us at pri=40.
    Returns nil for pass, #fail, #error, #skip, or #timeout."
-  | done result testProcess startUsec timeoutUsec |
+  | done result testProcess startUsec timeoutUsec originalPriority |
   done := false.
   result := nil. "nil means pass"
   startUsec := Time microsecondClockValue.
   timeoutUsec := seconds * 1000000.
+  originalPriority := Processor activeProcess priority.
+
+  "Raise our priority to match the test process BEFORE forking.
+   When we fork at the same priority, the new process goes to the back
+   of the ready list and we continue running into the spin-wait loop.
+   ForceYield (every 1s) alternates between us and the test process."
+  Processor activeProcess priority: priority.
 
   testProcess := [
     [[[[(testClass selector: sel) runCase]
@@ -1193,8 +1036,10 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
         s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
           nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; cr.
         s flush.
+        Processor activeProcess priority: originalPriority.
         ^ result].
     Processor yield].
+  Processor activeProcess priority: originalPriority.
   ^ result! !
 
 !SUnitRunner class methodsFor: 'startup'!
