@@ -1040,17 +1040,19 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
             nextPutAll: ': '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 100)); nextPutAll: ')'; cr].
       testDone := true] fork. "same priority as harness - no preemption"
 
-    "Act as watchdog: poll until done or timeout"
-    [testDone not and: [
-      ((Time microsecondClockValue - startUsec) abs <= timeoutUsec)]]
-        whileTrue: [Processor yield].
-    testDone ifFalse: [
-      testProcess suspend.
-      result := #timeout.
-      s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
-        nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; cr.
-      s flush].
-    sem signal] forkAt: priority.
+    "Act as watchdog: poll until done or timeout.
+     Use ensure: so sem signal ALWAYS fires, even if suspend or other ops error."
+    [
+      [testDone not and: [
+        ((Time microsecondClockValue - startUsec) abs <= timeoutUsec)]]
+          whileTrue: [Processor yield].
+      testDone ifFalse: [
+        [testProcess suspend] on: Error do: [:e |].
+        result ifNil: [result := #timeout].
+        s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
+          nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; cr.
+        s flush]]
+      ensure: [sem signal]] forkAt: priority.
 
   "Block until harness completes (test done or timeout)"
   sem wait.
