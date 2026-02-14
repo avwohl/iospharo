@@ -6976,7 +6976,11 @@ PrimitiveResult Interpreter::primitiveBitShiftLargeIntegers(int argCount) {
         size_t byteShift = shift / 8;
         int bitShift = shift % 8;
 
-        result.resize(aMag.size() + byteShift + 1, 0);
+        size_t resultSize = aMag.size() + byteShift + 1;
+        if (resultSize > 128 * 1024 * 1024) {  // 128MB max — prevent std::bad_alloc
+            return PrimitiveResult::Failure;
+        }
+        result.resize(resultSize, 0);
 
         // Copy with byte shift
         for (size_t i = 0; i < aMag.size(); i++) {
