@@ -870,11 +870,11 @@ runAllTests
       totalS := totalS + (counts at: 4).
       totalT := totalT + (counts at: 5)]
         on: Error do: [:ex |
-          stream nextPutAll: '!!! RUNNER ERROR in '; nextPutAll: tc name;
+          stream nextPutAll: '*** RUNNER ERROR in '; nextPutAll: tc name;
             nextPutAll: ': '; nextPutAll: ex class name;
             nextPutAll: ' - '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 200)); cr].
       stream flush. detail flush].
-    stream nextPutAll: '!!! LOOP COMPLETED NORMALLY for '; print: testClasses size; nextPutAll: ' classes'; cr.
+    stream nextPutAll: '*** LOOP COMPLETED NORMALLY for '; print: testClasses size; nextPutAll: ' classes'; cr.
     stream flush.
     stream cr.
     stream nextPutAll: '=== GRAND TOTAL ==='; cr.
@@ -1059,15 +1059,13 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
 
   "Block until test completes or watchdog fires timeout"
   sem wait.
-  "Clean up any surviving processes.
-   Do NOT call terminate on suspended processes - it walks the entire call stack
-   running unwind blocks, which can hang on deeply recursive tests.
-   Just nil out suspendedContext to mark as terminated instantly.
+  "Clean up: on timeout, the watchdog already suspended the test process.
+   Nil its suspendedContext to mark terminated without walking unwind blocks.
+   Do NOT touch the watchdog - it may still be on the ready list and will
+   self-terminate when it gets CPU and sees done=true.
    Process inst vars: Link.nextLink(1), suspendedContext(2), priority(3)."
-  testProcess isTerminated ifFalse: [
+  (result == #timeout and: [testProcess isTerminated not]) ifTrue: [
     testProcess instVarAt: 2 put: nil].
-  watchdogProcess isTerminated ifFalse: [
-    watchdogProcess instVarAt: 2 put: nil].
   Processor activeProcess instVarAt: 3 put: originalPriority.
   ^ result! !
 
