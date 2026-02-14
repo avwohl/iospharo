@@ -630,6 +630,9 @@ private:
     /// Activate a block closure
     void activateBlock(Oop block, int argCount);
 
+    /// Handle stack overflow by terminating the current process
+    void handleStackOverflow(int argCount);
+
     /// Send doesNotUnderstand:
     void sendDoesNotUnderstand(Oop selector, int argCount);
 

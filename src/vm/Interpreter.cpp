@@ -6388,13 +6388,45 @@ size_t Interpreter::cacheHash(Oop selector, Oop classOop) const {
     return static_cast<size_t>(h) & (MethodCacheSize - 1);
 }
 
+// ===== STACK OVERFLOW RECOVERY =====
+
+void Interpreter::handleStackOverflow(int argCount) {
+    // Stack overflow — terminate this process and switch to the next one.
+    // This is correct VM behavior: a runaway process should not kill the
+    // entire VM. The scheduler continues with other processes.
+    static int soCount = 0;
+    soCount++;
+    if (soCount <= 20 || soCount % 100 == 0) {
+        std::cerr << "[STACK-OVERFLOW #" << soCount << "] frameDepth=" << frameDepth_
+                  << " step=" << g_stepNum << " sel=" << g_lastSelName << "\n";
+    }
+
+    // Pop args+receiver that the send bytecode already pushed
+    for (int i = 0; i < argCount + 1; i++) pop();
+
+    // Find the next runnable process
+    Oop nextProcess = wakeHighestPriority();
+    if (nextProcess.isNil() || !nextProcess.isObject()) {
+        stopVM("Stack overflow and no other runnable process");
+        return;
+    }
+
+    // Switch to the new process. We skip saving the old process's context
+    // because the frame stack is at its limit. The old process is abandoned —
+    // executeFromContext resets frameDepth_ to 0.
+    setActiveProcess(nextProcess);
+    Oop newContext = memory_.fetchPointer(ProcessSuspendedContextIndex, nextProcess);
+    memory_.storePointer(ProcessSuspendedContextIndex, nextProcess, memory_.nil());
+    executeFromContext(newContext);
+}
+
 // ===== METHOD ACTIVATION =====
 
 void Interpreter::activateMethod(Oop method, int argCount) {
     // Save current state
 
     if (!pushFrame(method, argCount)) {
-        stopVM("Frame stack overflow in activateMethod");
+        handleStackOverflow(argCount);
         return;
     }
 
@@ -6813,7 +6845,7 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     }
 
     if (!pushFrame(methodToExecute, argCount)) {
-        stopVM("Frame stack overflow in block activation");
+        handleStackOverflow(argCount);
         return;
     }
 
