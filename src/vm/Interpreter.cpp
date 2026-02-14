@@ -6394,15 +6394,12 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // Save current state
 
     if (!pushFrame(method, argCount)) {
-        // Stack overflow — terminate the runaway process and switch to next.
-        // This is equivalent to what happens in the Cog VM when the C stack overflows.
-        terminateCurrentProcess();
-        Oop next = wakeHighestPriority();
-        if (next.isObject() && !next.isNil()) {
-            transferTo(next);
-        } else {
-            stopVM("Stack overflow: no process to switch to");
-        }
+        // Stack overflow — skip method activation and simulate returning nil.
+        // The send bytecode already pushed receiver + args; pop them and push nil
+        // as the "return value". This breaks infinite DNU loops naturally: the
+        // handler "returns nil" instead of recursing, and the caller unwinds.
+        for (int i = 0; i < argCount + 1; i++) pop();  // pop receiver + args
+        push(memory_.nil());  // simulate method returning nil
         return;
     }
 
@@ -6821,14 +6818,9 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     }
 
     if (!pushFrame(methodToExecute, argCount)) {
-        // Stack overflow in block — terminate process and switch (same as activateMethod)
-        terminateCurrentProcess();
-        Oop next = wakeHighestPriority();
-        if (next.isObject() && !next.isNil()) {
-            transferTo(next);
-        } else {
-            stopVM("Stack overflow in block: no process to switch to");
-        }
+        // Stack overflow in block — same as activateMethod: skip and return nil
+        for (int i = 0; i < argCount + 1; i++) pop();
+        push(memory_.nil());
         return;
     }
 
@@ -11152,10 +11144,8 @@ bool Interpreter::bootstrapStartup() {
 
     // In Spur, nil is an actual object at heap start, not 0
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
-    // DEBUG_LOG("[DEBUG] nil object = 0x" << std::hex << nilObj.rawBits() << std::dec;
 
     // Approach 1: Look for any ready-to-run process in the scheduler's queues
-    // DEBUG: "[DEBUG] Checking scheduler process queues for runnable processes..."
     Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
     if (schedulerAssoc.rawBits() != nilObj.rawBits() && schedulerAssoc.isObject()) {
         Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
@@ -11165,7 +11155,9 @@ bool Interpreter::bootstrapStartup() {
             if (queues.isObject()) {
                 ObjectHeader* queuesHeader = queues.asObjectPtr();
                 size_t numQueues = queuesHeader->slotCount();
-                std::cerr << "[STARTUP] Found " << numQueues << " priority queues\n";
+                if (bootstrapCallCount <= 5) {
+                    std::cerr << "[STARTUP] Found " << numQueues << " priority queues\n";
+                }
 
                 // Search from highest to lowest priority for a runnable process
                 for (int i = static_cast<int>(numQueues) - 1; i >= 0; i--) {
@@ -11173,14 +11165,9 @@ bool Interpreter::bootstrapStartup() {
                     if (queue.rawBits() == nilObj.rawBits() || !queue.isObject()) continue;
 
                     ObjectHeader* queueHeader = queue.asObjectPtr();
-                    std::cerr << "[STARTUP] Queue at priority " << (i + 1) << ": cls=" << queueHeader->classIndex()
-                              << " slots=" << queueHeader->slotCount() << "\n";
 
                     // LinkedList layout: slot 0 = firstLink, slot 1 = lastLink
                     Oop firstProcess = memory_.fetchPointer(0, queue);
-                    std::cerr << "[STARTUP] firstProcess: 0x" << std::hex << firstProcess.rawBits()
-                              << std::dec << " isNil=" << (firstProcess.rawBits() == nilObj.rawBits())
-                              << " isObj=" << firstProcess.isObject() << "\n";
                     if (firstProcess.rawBits() == nilObj.rawBits() || !firstProcess.isObject()) continue;
 
                     ObjectHeader* procHeader = firstProcess.asObjectPtr();
@@ -11200,27 +11187,25 @@ bool Interpreter::bootstrapStartup() {
                         // std::cerr; // DEBUG
                     }
 
-                    // Check if this process has a valid context
-                    // Modern Pharo Process layout:
-                    //   slot 0 = nextLink (for LinkedList)
-                    //   slot 1 = suspendedContext
-                    //   slot 2 = priority
                     Oop context = memory_.fetchPointer(1, firstProcess);  // suspendedContext is at slot 1
-                    std::cerr << "[STARTUP] Process at priority " << (i + 1)
-                              << ": suspendedContext=0x" << std::hex << context.rawBits() << std::dec << "\n";
+                    if (bootstrapCallCount <= 5) {
+                        std::cerr << "[STARTUP] Process at priority " << (i + 1)
+                                  << ": suspendedContext=0x" << std::hex << context.rawBits() << std::dec << "\n";
+                    }
                     if (context.rawBits() != nilObj.rawBits() && context.isObject()) {
                         ObjectHeader* ctxHeader = context.asObjectPtr();
-                        std::cerr << "[STARTUP] suspendedContext: cls=" << ctxHeader->classIndex()
-                                  << " slots=" << ctxHeader->slotCount()
-                                  << " fmt=" << (int)ctxHeader->format() << "\n";
-
-                        // Only try to execute if it looks like a Context (not a Process)
-                        // Context format is usually 3 (indexable with fixed), Process format is 1
+                        if (bootstrapCallCount <= 5) {
+                            std::cerr << "[STARTUP] suspendedContext: cls=" << ctxHeader->classIndex()
+                                      << " slots=" << ctxHeader->slotCount()
+                                      << " fmt=" << (int)ctxHeader->format() << "\n";
+                        }
                         if (ctxHeader->format() == ObjectFormat::IndexableWithFixed) {
-                            std::cerr << "[STARTUP] Found valid context, resuming execution!\n";
+                            if (bootstrapCallCount <= 5) {
+                                std::cerr << "[STARTUP] Found valid context, resuming execution!\n";
+                            }
                             imageBooted = true;
                             return executeFromContext(context);
-                        } else {
+                        } else if (bootstrapCallCount <= 5) {
                             std::cerr << "[STARTUP] suspendedContext doesn't look like a Context (format="
                                       << (int)ctxHeader->format() << ")\n";
                         }
@@ -11231,8 +11216,9 @@ bool Interpreter::bootstrapStartup() {
     }
 
     // Approach 2: Try to resume from where the image was saved
-    // The saved active process might have a context embedded deeper
-    std::cerr << "[STARTUP] Approach 2: Checking active process...\n";
+    if (bootstrapCallCount <= 5) {
+        std::cerr << "[STARTUP] Approach 2: Checking active process...\n";
+    }
     Oop schedulerAssoc2 = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
     if (schedulerAssoc2.isObject()) {
         Oop scheduler = memory_.fetchPointer(1, schedulerAssoc2);  // Get scheduler
@@ -11240,29 +11226,36 @@ bool Interpreter::bootstrapStartup() {
             Oop activeProcess = memory_.fetchPointer(1, scheduler);  // Get activeProcess
             if (activeProcess.isObject()) {
                 ObjectHeader* procHeader = activeProcess.asObjectPtr();
-                std::cerr << "[STARTUP] Active process: 0x" << std::hex << activeProcess.rawBits()
-                          << std::dec << " slots=" << procHeader->slotCount()
-                          << " cls=" << procHeader->classIndex() << "\n";
+                if (bootstrapCallCount <= 5) {
+                    std::cerr << "[STARTUP] Active process: 0x" << std::hex << activeProcess.rawBits()
+                              << std::dec << " slots=" << procHeader->slotCount()
+                              << " cls=" << procHeader->classIndex() << "\n";
+                }
 
                 // Check suspendedContext (slot 1) of active process
                 if (procHeader->slotCount() > 1) {
                     Oop suspendedCtx = procHeader->slotAt(1);
-                    std::cerr << "[STARTUP] Active process suspendedContext: 0x"
-                              << std::hex << suspendedCtx.rawBits() << std::dec;
+                    if (bootstrapCallCount <= 5) {
+                        std::cerr << "[STARTUP] Active process suspendedContext: 0x"
+                                  << std::hex << suspendedCtx.rawBits() << std::dec;
+                    }
                     if (suspendedCtx.isNil()) {
-                        std::cerr << " (nil)\n";
+                        if (bootstrapCallCount <= 5) std::cerr << " (nil)\n";
                     } else if (suspendedCtx.isObject()) {
                         ObjectHeader* ctxHdr = suspendedCtx.asObjectPtr();
-                        std::cerr << " cls=" << ctxHdr->classIndex()
-                                  << " fmt=" << (int)ctxHdr->format() << "\n";
-                        // Try to resume from this context if it looks valid
+                        if (bootstrapCallCount <= 5) {
+                            std::cerr << " cls=" << ctxHdr->classIndex()
+                                      << " fmt=" << (int)ctxHdr->format() << "\n";
+                        }
                         if (ctxHdr->format() == ObjectFormat::IndexableWithFixed) {
-                            std::cerr << "[STARTUP] Resuming from active process context!\n";
+                            if (bootstrapCallCount <= 5) {
+                                std::cerr << "[STARTUP] Resuming from active process context!\n";
+                            }
                             imageBooted = true;
                             return executeFromContext(suspendedCtx);
                         }
                     } else {
-                        std::cerr << " (not object)\n";
+                        if (bootstrapCallCount <= 5) std::cerr << " (not object)\n";
                     }
                 }
             }
