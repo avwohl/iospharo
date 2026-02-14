@@ -873,7 +873,10 @@ runAllTests
           stream nextPutAll: '*** RUNNER ERROR in '; nextPutAll: tc name;
             nextPutAll: ': '; nextPutAll: ex class name;
             nextPutAll: ' - '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 200)); cr].
-      stream flush. detail flush].
+      stream flush. detail flush.
+      "Full GC between classes to clean up dead contexts from timed-out tests.
+       Prevents accumulation of bad pointers that eventually corrupt the Delay scheduler."
+      Smalltalk garbageCollect].
     stream nextPutAll: '*** LOOP COMPLETED NORMALLY for '; print: testClasses size; nextPutAll: ' classes'; cr.
     stream flush.
     stream cr.
