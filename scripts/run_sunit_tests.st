@@ -863,13 +863,19 @@ runAllTests
     detail nextPutAll: 'RUN	CLASS	TEST	RESULT	INFO'; cr.
     detail flush.
     testClasses do: [:tc | | counts |
-      counts := self runTestClass: tc run: runNum on: stream detail: detail.
+      [counts := self runTestClass: tc run: runNum on: stream detail: detail.
       totalP := totalP + (counts at: 1).
       totalF := totalF + (counts at: 2).
       totalE := totalE + (counts at: 3).
       totalS := totalS + (counts at: 4).
-      totalT := totalT + (counts at: 5).
+      totalT := totalT + (counts at: 5)]
+        on: Error do: [:ex |
+          stream nextPutAll: '!!! RUNNER ERROR in '; nextPutAll: tc name;
+            nextPutAll: ': '; nextPutAll: ex class name;
+            nextPutAll: ' - '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 200)); cr].
       stream flush. detail flush].
+    stream nextPutAll: '!!! LOOP COMPLETED NORMALLY for '; print: testClasses size; nextPutAll: ' classes'; cr.
+    stream flush.
     stream cr.
     stream nextPutAll: '=== GRAND TOTAL ==='; cr.
     stream nextPutAll: 'Run: #'; print: runNum; cr.
