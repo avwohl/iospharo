@@ -688,16 +688,6 @@ int main(int argc, char* argv[]) {
             }
             bool result = interpreter.step();
 
-            // Check timer semaphore and pending signals every 1024 steps.
-            // The heartbeat thread sets flags, but checkTimerSemaphore() must
-            // run on the main thread since it manipulates Smalltalk heap objects.
-            if ((i & 0x3FF) == 0) {
-                interpreter.checkTimerSemaphore();
-                if (interpreter.hasPendingSignals()) {
-                    interpreter.processPendingSignals();
-                }
-            }
-
             // Progress report every 10M steps
             if (i > 0 && i % 10000000 == 0) {
                 std::cout << "[PROGRESS] Step " << i << ": active=" << activeSteps

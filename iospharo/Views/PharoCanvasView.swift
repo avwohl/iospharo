@@ -266,61 +266,13 @@ class PharoCanvasViewController: UIViewController {
             return
         }
 
-        NSLog("[TEST] === Starting interaction test ===")
+        NSLog("[TEST] === Quick verification test ===")
 
         // Take "before" screenshot
         saveBufferScreenshot(tag: "01-before")
 
-        // Step 1: Close any Information dialogs by clicking their X buttons
-        // They appear at bottom of screen and interfere with testing
+        // Click Browse menu
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            NSLog("[TEST] Closing Information dialogs")
-            // Close buttons are at approximately (16,598), (16,656), (16,714) for 3 dialogs
-            for (i, y) in [Int](arrayLiteral: 598, 628, 658).enumerated() {
-                DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.3) {
-                    let closeBtn = CGPoint(x: 16, y: y)
-                    bridge.sendMouseMoved(to: closeBtn, modifiers: 0)
-                    bridge.sendTouchDown(at: closeBtn, buttons: IOS_RED_BUTTON)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                        bridge.sendTouchUp(at: closeBtn, buttons: IOS_RED_BUTTON)
-                    }
-                }
-            }
-        }
-
-        // Step 2: Screenshot after closing dialogs
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-            self.saveBufferScreenshot(tag: "02-cleaned")
-        }
-
-        // Step 3: Drag the Welcome window title bar
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
-            NSLog("[TEST] Drag Welcome window: (470,68) -> (600,200)")
-            let start = CGPoint(x: 470, y: 68)
-            let end = CGPoint(x: 600, y: 200)
-            bridge.sendMouseMoved(to: start, modifiers: 0)
-            bridge.sendTouchDown(at: start, buttons: IOS_RED_BUTTON)
-            let steps = 10
-            for i in 1...steps {
-                let frac = CGFloat(i) / CGFloat(steps)
-                let pt = CGPoint(x: start.x + (end.x - start.x) * frac,
-                                 y: start.y + (end.y - start.y) * frac)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05 * Double(i)) {
-                    bridge.sendTouchMoved(to: pt, buttons: IOS_RED_BUTTON)
-                }
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                bridge.sendTouchUp(at: end, buttons: IOS_RED_BUTTON)
-            }
-        }
-
-        // Step 4: Screenshot after drag
-        DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) {
-            self.saveBufferScreenshot(tag: "03-after-drag")
-        }
-
-        // Step 5: Click Browse menu
-        DispatchQueue.main.asyncAfter(deadline: .now() + 7.0) {
             NSLog("[TEST] Click Browse menu at (113,8)")
             let browsePos = CGPoint(x: 113, y: 8)
             bridge.sendMouseMoved(to: browsePos, modifiers: 0)
@@ -330,36 +282,9 @@ class PharoCanvasViewController: UIViewController {
             }
         }
 
-        // Step 6: Screenshot of Browse dropdown
-        DispatchQueue.main.asyncAfter(deadline: .now() + 9.0) {
-            self.saveBufferScreenshot(tag: "04-browse-menu")
-        }
-
-        // Step 7: Right-click on empty desktop for world menu
-        // After failed drag: window at (130,60)-(840,600), click to left at (50,300)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) {
-            // First dismiss the browse menu
-            let dismiss = CGPoint(x: 500, y: 400)
-            bridge.sendMouseMoved(to: dismiss, modifiers: 0)
-            bridge.sendTouchDown(at: dismiss, buttons: IOS_RED_BUTTON)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                bridge.sendTouchUp(at: dismiss, buttons: IOS_RED_BUTTON)
-            }
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 12.0) {
-            NSLog("[TEST] Right-click on desktop at (50,300) for world menu")
-            let desktop = CGPoint(x: 50, y: 300)
-            bridge.sendMouseMoved(to: desktop, modifiers: 0)
-            bridge.sendTouchDown(at: desktop, buttons: IOS_YELLOW_BUTTON)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                bridge.sendTouchUp(at: desktop, buttons: IOS_YELLOW_BUTTON)
-            }
-        }
-
-        // Step 8: Screenshot after world menu
-        DispatchQueue.main.asyncAfter(deadline: .now() + 15.0) {
-            self.saveBufferScreenshot(tag: "05-worldmenu")
+        // Screenshot after Browse click
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+            self.saveBufferScreenshot(tag: "02-after-browse")
             NSLog("[TEST] === Test complete ===")
         }
     }
