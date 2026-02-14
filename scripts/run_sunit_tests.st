@@ -873,9 +873,7 @@ runAllTests
           stream nextPutAll: '*** RUNNER ERROR in '; nextPutAll: tc name;
             nextPutAll: ': '; nextPutAll: ex class name;
             nextPutAll: ' - '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 200)); cr].
-      stream flush. detail flush.
-      "Full GC between classes to clean up dead contexts from timed-out tests."
-      Smalltalk garbageCollect].
+      stream flush. detail flush].
     stream nextPutAll: '*** LOOP COMPLETED NORMALLY for '; print: testClasses size; nextPutAll: ' classes'; cr.
     stream flush.
     stream cr.
@@ -1024,86 +1022,41 @@ runTestClass: testClass run: runNum on: s detail: d
 
 !SUnitRunner class methodsFor: 'running'!
 runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
-  "Run a single test with a watchdog process. Does NOT depend on the Delay scheduler.
-   Forks both a test process and a watchdog at the SAME priority.
-   ForceYield (heartbeat every 1s) round-robins watchdog with the test.
-   When test completes: it kills the watchdog and signals our semaphore.
-   When watchdog detects timeout: it suspends the test and signals our semaphore.
-   Performance: fast tests complete instantly (no forceYield overhead) because
-   the test terminates the watchdog before it ever gets CPU time.
+  "Run a single test with Delay-based timeout. Simple and reliable — the same
+   approach that achieved 576 classes / 12485 pass in Run #363.
    Returns nil for pass, #fail, #error, #skip, or #timeout."
-  | sem result harnessAlive |
+  | sem result testProcess |
   sem := Semaphore new.
   result := nil. "nil means pass"
-  harnessAlive := true.
 
-  "Backup watchdog at runner priority (40). Only gets CPU when all pri-79
-   processes are gone. Catches DNU-CASCADE kills where the C++ VM
-   terminates the harness without running Smalltalk ensure: blocks."
-  [| bkStart bkTimeout |
-   bkStart := Time microsecondClockValue.
-   bkTimeout := (seconds + 5) * 1000000.
-   [harnessAlive and: [
-     ((Time microsecondClockValue - bkStart) abs < bkTimeout)]]
-       whileTrue: [Processor yield].
-   harnessAlive ifTrue: [
-     "Harness died without signaling - DNU-CASCADE or similar"
-     result ifNil: [result := #error].
-     s nextPutAll: '  ERROR: '; nextPutAll: sel;
-       nextPutAll: ' (harness killed)'; cr.
-     s flush.
-     sem signal]] fork.
+  testProcess := [
+    [[[[(testClass selector: sel) runCase]
+      on: TestFailure do: [:ex |
+        result := #fail.
+        s nextPutAll: '  FAIL: '; nextPutAll: sel;
+          nextPutAll: ' ['; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 500)); nextPutAll: ']'; cr]]
+      on: Deprecation do: [:ex |
+        [ex shouldTransform ifTrue: [ex transform]] on: Error do: [:e | ].
+        ex resume]]
+      on: TestSkipped do: [:ex |
+        result := #skip.
+        s nextPutAll: '  SKIP: '; nextPutAll: sel;
+          nextPutAll: ' ('; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 100)); nextPutAll: ')'; cr]]
+      on: Error do: [:ex |
+        result := #error.
+        s nextPutAll: '  ERROR: '; nextPutAll: sel;
+          nextPutAll: ' ('; nextPutAll: ex class name;
+          nextPutAll: ': '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 100)); nextPutAll: ')'; cr].
+    sem signal] forkAt: priority.
 
-  "Fork a single harness process at the test priority. It preempts us (pri 40)
-   immediately. Inside, it forks the actual test (same priority, no preemption),
-   then acts as watchdog. ForceYield rotates test and harness at the same priority.
-   No priority changes on the runner process - avoids scheduler corruption."
-  [| testProcess testDone startUsec timeoutUsec |
-    testDone := false.
-    startUsec := Time microsecondClockValue.
-    timeoutUsec := seconds * 1000000.
-
-    testProcess := [
-      [[[[(testClass selector: sel) runCase]
-        on: TestFailure do: [:ex |
-          result := #fail.
-          s nextPutAll: '  FAIL: '; nextPutAll: sel;
-            nextPutAll: ' ['; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 500)); nextPutAll: ']'; cr]]
-        on: Deprecation do: [:ex |
-          [ex shouldTransform ifTrue: [ex transform]] on: Error do: [:e | ].
-          ex resume]]
-        on: TestSkipped do: [:ex |
-          result := #skip.
-          s nextPutAll: '  SKIP: '; nextPutAll: sel;
-            nextPutAll: ' ('; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 100)); nextPutAll: ')'; cr]]
-        on: Error do: [:ex |
-          result := #error.
-          s nextPutAll: '  ERROR: '; nextPutAll: sel;
-            nextPutAll: ' ('; nextPutAll: ex class name;
-            nextPutAll: ': '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 100)); nextPutAll: ')'; cr].
-      testDone := true] fork. "same priority as harness - no preemption"
-
-    "Act as watchdog: poll until done or timeout.
-     Use ensure: so sem signal ALWAYS fires, even if suspend or other ops error."
-    [
-      [testDone not and: [
-        ((Time microsecondClockValue - startUsec) abs <= timeoutUsec)]]
-          whileTrue: [Processor yield].
-      testDone ifFalse: [
-        "Suspend, then nil suspendedContext so GC can collect the context chain.
-         Process is already removed from all scheduler lists by suspend.
-         Without this, accumulated timeout-suspended processes corrupt the heap."
-        [testProcess suspend.
-         testProcess instVarAt: 2 put: nil] on: Error do: [:e |].
-        result ifNil: [result := #timeout].
-        s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
-          nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; cr.
-        s flush]]
-      ensure: [harnessAlive := false. sem signal]] forkAt: priority.
-
-  "Block until harness completes (test done or timeout) or backup watchdog fires"
-  sem wait.
-  harnessAlive := false. "tell backup watchdog to stop"
+  "Wait for test completion or timeout using Delay scheduler"
+  (sem waitTimeoutSeconds: seconds) ifTrue: [
+    "Timeout: suspend the test process"
+    [testProcess suspend] on: Error do: [:e |].
+    result ifNil: [result := #timeout].
+    s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
+      nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; cr.
+    s flush].
   ^ result! !
 
 !SUnitRunner class methodsFor: 'startup'!
