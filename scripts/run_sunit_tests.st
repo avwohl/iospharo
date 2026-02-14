@@ -993,23 +993,25 @@ runTestClass: testClass run: runNum on: s detail: d
 
 !SUnitRunner class methodsFor: 'running'!
 runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
-  "Run a single test with a spin-wait timeout that does NOT depend on the Delay scheduler.
-   Uses Processor yield + Time microsecondClockValue for timing.
-   CRITICAL: We raise caller priority to MATCH the test priority BEFORE forking.
-   This ensures forceYield (heartbeat every 1s) round-robins between us and the test.
-   Without this, a CPU-bound infinite loop at pri=79 would never yield to us at pri=40.
+  "Run a single test with a watchdog process. Does NOT depend on the Delay scheduler.
+   Forks both a test process and a watchdog at the SAME priority.
+   ForceYield (heartbeat every 1s) round-robins watchdog with the test.
+   When test completes: it kills the watchdog and signals our semaphore.
+   When watchdog detects timeout: it suspends the test and signals our semaphore.
+   Performance: fast tests complete instantly (no forceYield overhead) because
+   the test terminates the watchdog before it ever gets CPU time.
    Returns nil for pass, #fail, #error, #skip, or #timeout."
-  | done result testProcess startUsec timeoutUsec originalPriority |
+  | sem done result testProcess watchdogProcess startUsec timeoutUsec originalPriority |
+  sem := Semaphore new.
   done := false.
   result := nil. "nil means pass"
   startUsec := Time microsecondClockValue.
   timeoutUsec := seconds * 1000000.
   originalPriority := Processor activeProcess priority.
 
-  "Raise our priority to match the test process BEFORE forking.
-   When we fork at the same priority, the new process goes to the back
-   of the ready list and we continue running into the spin-wait loop.
-   ForceYield (every 1s) alternates between us and the test process."
+  "Raise our priority to match the test BEFORE forking.
+   This ensures forkAt: puts processes in the ready list (not preempting us),
+   so we complete all setup (assign both vars) before any process runs."
   Processor activeProcess priority: priority.
 
   testProcess := [
@@ -1030,20 +1032,28 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
         s nextPutAll: '  ERROR: '; nextPutAll: sel;
           nextPutAll: ' ('; nextPutAll: ex class name;
           nextPutAll: ': '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 100)); nextPutAll: ')'; cr].
-    done := true] forkAt: priority.
+    done := true.
+    watchdogProcess terminate.
+    sem signal] forkAt: priority.
 
-  "Spin-wait for completion or timeout (no Delay scheduler dependency)"
-  [done] whileFalse: [
-    ((Time microsecondClockValue - startUsec) abs > timeoutUsec)
-      ifTrue: [
-        testProcess suspend.
-        result := #timeout.
-        s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
-          nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; cr.
-        s flush.
-        Processor activeProcess priority: originalPriority.
-        ^ result].
-    Processor yield].
+  watchdogProcess := [
+    "Poll until done or timeout. ForceYield alternates us with the test every 1s."
+    [done not and: [
+      ((Time microsecondClockValue - startUsec) abs <= timeoutUsec)]]
+        whileTrue: [Processor yield].
+    done ifFalse: [
+      testProcess suspend.
+      result := #timeout.
+      s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
+        nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; cr.
+      s flush.
+      sem signal]] forkAt: priority.
+
+  "Block until test completes or watchdog fires timeout"
+  sem wait.
+  "Clean up any surviving processes"
+  testProcess isTerminated ifFalse: [testProcess terminate].
+  watchdogProcess isTerminated ifFalse: [watchdogProcess terminate].
   Processor activeProcess priority: originalPriority.
   ^ result! !
 
