@@ -195,38 +195,69 @@ class PharoCanvasViewController: UIViewController {
         super.viewDidAppear(animated)
         mtkView.becomeFirstResponder()
 
-        #if targetEnvironment(macCatalyst)
-        // Test injection disabled — use manual interaction for testing
+        // Automated interaction testing — uncomment to enable:
+        // #if targetEnvironment(macCatalyst)
         // waitForThemeReady {
         //     NSLog("[TEST] Theme ready, injecting test events")
         //     self.injectMenuTest()
         // }
-        #endif
+        // #endif
     }
 
     #if targetEnvironment(macCatalyst)
     private var waitStartTime: Date?
+    private var bufferReadyTime: Date?
 
     private func waitForThemeReady(completion: @escaping () -> Void) {
         if waitStartTime == nil { waitStartTime = Date() }
         let elapsed = Date().timeIntervalSince(waitStartTime!)
 
-        if ffi_isFirstExposedDelivered() {
-            NSLog("[TEST] EXPOSED delivered after %.1fs! Waiting 2s for theme...", elapsed)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+        // Poll the display buffer for actual rendered content
+        let bufferReady = checkBufferHasContent()
+
+        if bufferReady && bufferReadyTime == nil {
+            bufferReadyTime = Date()
+            NSLog("[TEST] Buffer has content after %.1fs! Waiting for full desktop render...", elapsed)
+        }
+
+        // Once buffer has content, wait 5 more seconds for desktop to fully render
+        if let readyTime = bufferReadyTime {
+            let sinceReady = Date().timeIntervalSince(readyTime)
+            if sinceReady >= 5.0 {
+                NSLog("[TEST] Desktop ready after %.1fs (%.1fs since first content). Injecting.", elapsed, sinceReady)
                 completion()
+                return
             }
-        } else if elapsed > 10.0 {
-            // Timeout: inject anyway — EXPOSED might not fire if P40 died
-            NSLog("[TEST] TIMEOUT: EXPOSED not delivered after %.1fs. Injecting anyway.", elapsed)
+        }
+
+        if elapsed > 90.0 {
+            // Hard timeout
+            NSLog("[TEST] TIMEOUT: No content after %.1fs. Injecting anyway.", elapsed)
             completion()
         } else {
-            let state = ffi_isSDLEventPollingActive() ? "polling active" : "waiting for polling"
-            NSLog("[TEST] %.1fs: %@", elapsed, state as NSString)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                 self.waitForThemeReady(completion: completion)
             }
         }
+    }
+
+    /// Check if display buffer has substantial rendered content
+    private func checkBufferHasContent() -> Bool {
+        guard let bridge = bridge else { return false }
+        let (pixels, width, height, _) = bridge.getDisplayBufferInfo()
+        guard let bits = pixels, width > 0, height > 0 else { return false }
+
+        // Sample ~1000 pixels and count non-zero
+        let total = width * height
+        let step = max(1, total / 1000)
+        var nonZero = 0
+        var idx = 0
+        while idx < total {
+            if bits[idx] != 0 { nonZero += 1 }
+            idx += step
+        }
+        // Consider buffer "ready" when >50% of sampled pixels are non-zero
+        return nonZero > 500
     }
 
     private func injectMenuTest() {
@@ -235,25 +266,130 @@ class PharoCanvasViewController: UIViewController {
             return
         }
 
-        NSLog("[TEST] === Starting event injection test ===")
-        NSLog("[TEST] Test plan: right-click at (900,620) for world menu, then STOP (no dismiss)")
+        NSLog("[TEST] === Starting interaction test ===")
 
-        // Right-click on empty desktop for world menu
-        // Stay within initial 976x665 bounds.
-        let desktop = CGPoint(x: 900, y: 620)
+        // Take "before" screenshot
+        saveBufferScreenshot(tag: "01-before")
 
+        // Step 1: Close any Information dialogs by clicking their X buttons
+        // They appear at bottom of screen and interfere with testing
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            NSLog("[TEST] Right-click on desktop at (%d,%d) for world menu", Int(desktop.x), Int(desktop.y))
+            NSLog("[TEST] Closing Information dialogs")
+            // Close buttons are at approximately (16,598), (16,656), (16,714) for 3 dialogs
+            for (i, y) in [Int](arrayLiteral: 598, 628, 658).enumerated() {
+                DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.3) {
+                    let closeBtn = CGPoint(x: 16, y: y)
+                    bridge.sendMouseMoved(to: closeBtn, modifiers: 0)
+                    bridge.sendTouchDown(at: closeBtn, buttons: IOS_RED_BUTTON)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        bridge.sendTouchUp(at: closeBtn, buttons: IOS_RED_BUTTON)
+                    }
+                }
+            }
+        }
+
+        // Step 2: Screenshot after closing dialogs
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+            self.saveBufferScreenshot(tag: "02-cleaned")
+        }
+
+        // Step 3: Drag the Welcome window title bar
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+            NSLog("[TEST] Drag Welcome window: (470,68) -> (600,200)")
+            let start = CGPoint(x: 470, y: 68)
+            let end = CGPoint(x: 600, y: 200)
+            bridge.sendMouseMoved(to: start, modifiers: 0)
+            bridge.sendTouchDown(at: start, buttons: IOS_RED_BUTTON)
+            let steps = 10
+            for i in 1...steps {
+                let frac = CGFloat(i) / CGFloat(steps)
+                let pt = CGPoint(x: start.x + (end.x - start.x) * frac,
+                                 y: start.y + (end.y - start.y) * frac)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05 * Double(i)) {
+                    bridge.sendTouchMoved(to: pt, buttons: IOS_RED_BUTTON)
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                bridge.sendTouchUp(at: end, buttons: IOS_RED_BUTTON)
+            }
+        }
+
+        // Step 4: Screenshot after drag
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) {
+            self.saveBufferScreenshot(tag: "03-after-drag")
+        }
+
+        // Step 5: Click Browse menu
+        DispatchQueue.main.asyncAfter(deadline: .now() + 7.0) {
+            NSLog("[TEST] Click Browse menu at (113,8)")
+            let browsePos = CGPoint(x: 113, y: 8)
+            bridge.sendMouseMoved(to: browsePos, modifiers: 0)
+            bridge.sendTouchDown(at: browsePos, buttons: IOS_RED_BUTTON)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                bridge.sendTouchUp(at: browsePos, buttons: IOS_RED_BUTTON)
+            }
+        }
+
+        // Step 6: Screenshot of Browse dropdown
+        DispatchQueue.main.asyncAfter(deadline: .now() + 9.0) {
+            self.saveBufferScreenshot(tag: "04-browse-menu")
+        }
+
+        // Step 7: Right-click on empty desktop for world menu
+        // After failed drag: window at (130,60)-(840,600), click to left at (50,300)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) {
+            // First dismiss the browse menu
+            let dismiss = CGPoint(x: 500, y: 400)
+            bridge.sendMouseMoved(to: dismiss, modifiers: 0)
+            bridge.sendTouchDown(at: dismiss, buttons: IOS_RED_BUTTON)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                bridge.sendTouchUp(at: dismiss, buttons: IOS_RED_BUTTON)
+            }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12.0) {
+            NSLog("[TEST] Right-click on desktop at (50,300) for world menu")
+            let desktop = CGPoint(x: 50, y: 300)
             bridge.sendMouseMoved(to: desktop, modifiers: 0)
             bridge.sendTouchDown(at: desktop, buttons: IOS_YELLOW_BUTTON)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                 bridge.sendTouchUp(at: desktop, buttons: IOS_YELLOW_BUTTON)
             }
         }
 
-        // No further events — leave world menu open for visual inspection
-        DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) {
-            NSLog("[TEST] === Test complete. World menu should be visible. ===")
+        // Step 8: Screenshot after world menu
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15.0) {
+            self.saveBufferScreenshot(tag: "05-worldmenu")
+            NSLog("[TEST] === Test complete ===")
+        }
+    }
+
+    private func saveBufferScreenshot(tag: String) {
+        guard let bridge = bridge else { return }
+        let (pixels, width, height, _) = bridge.getDisplayBufferInfo()
+        guard let bits = pixels, width > 0, height > 0 else {
+            NSLog("[TEST-SCREENSHOT] No buffer for tag=%@", tag)
+            return
+        }
+
+        let bytesPerRow = width * 4
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+        guard let context = CGContext(
+            data: UnsafeMutableRawPointer(bits),
+            width: width, height: height,
+            bitsPerComponent: 8, bytesPerRow: bytesPerRow,
+            space: colorSpace, bitmapInfo: bitmapInfo.rawValue
+        ), let cgImage = context.makeImage() else {
+            NSLog("[TEST-SCREENSHOT] Failed CGContext for tag=%@", tag)
+            return
+        }
+
+        let image = UIImage(cgImage: cgImage)
+        if let data = image.pngData() {
+            let path = "/tmp/iospharo-test-\(tag).png"
+            try? data.write(to: URL(fileURLWithPath: path))
+            NSLog("[TEST-SCREENSHOT] Saved %dx%d to %@", width, height, path as NSString)
         }
     }
     #endif
