@@ -6394,7 +6394,15 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // Save current state
 
     if (!pushFrame(method, argCount)) {
-        stopVM("Frame stack overflow in activateMethod");
+        // Stack overflow — terminate the runaway process and switch to next.
+        // This is equivalent to what happens in the Cog VM when the C stack overflows.
+        terminateCurrentProcess();
+        Oop next = wakeHighestPriority();
+        if (next.isObject() && !next.isNil()) {
+            transferTo(next);
+        } else {
+            stopVM("Stack overflow: no process to switch to");
+        }
         return;
     }
 
@@ -6813,7 +6821,14 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     }
 
     if (!pushFrame(methodToExecute, argCount)) {
-        stopVM("Frame stack overflow in block activation");
+        // Stack overflow in block — terminate process and switch (same as activateMethod)
+        terminateCurrentProcess();
+        Oop next = wakeHighestPriority();
+        if (next.isObject() && !next.isNil()) {
+            transferTo(next);
+        } else {
+            stopVM("Stack overflow in block: no process to switch to");
+        }
         return;
     }
 

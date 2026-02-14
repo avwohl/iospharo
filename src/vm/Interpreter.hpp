@@ -358,7 +358,7 @@ private:
         ptrdiff_t savedBytecodeEndOffset;
     };
     static constexpr size_t MaxFrameDepth = 65536;
-    static constexpr size_t StackOverflowLimit = 35000;  // Graceful overflow limit (MaxFrameDepth is hard array bound)
+    static constexpr size_t StackOverflowLimit = 4096;  // Graceful overflow limit — Cog VM uses ~5K C stack frames
     std::array<SavedFrame, MaxFrameDepth> savedFrames_;
     size_t frameDepth_;
 
