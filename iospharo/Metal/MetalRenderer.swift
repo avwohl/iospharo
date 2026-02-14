@@ -3,6 +3,9 @@
  *
  * Metal rendering backend for displaying the Pharo VM framebuffer.
  * Updates a texture from VM display bits and renders it to screen.
+ *
+ * Note: screencapture cannot capture Metal layer content from Mac Catalyst apps.
+ * Use saveUIKitScreenshot() or check /tmp/iospharo-uikit-*.png for visual verification.
  */
 
 import Metal
@@ -28,13 +31,11 @@ class MetalRenderer: NSObject, MTKViewDelegate {
 
     /// Initialize the renderer
     init?(metalView: MTKView, bridge: PharoBridge) {
-        // Get the default Metal device
         guard let device = MTLCreateSystemDefaultDevice() else {
             print("MetalRenderer: Failed to create Metal device")
             return nil
         }
 
-        // Create command queue
         guard let commandQueue = device.makeCommandQueue() else {
             print("MetalRenderer: Failed to create command queue")
             return nil
@@ -77,12 +78,9 @@ class MetalRenderer: NSObject, MTKViewDelegate {
 
         metalView.delegate = self
 
-        // presentsWithTransaction=true forces synchronous drawable→compositor
-        // handoff within the CATransaction, ensuring the Window Server sees content.
         if let metalLayer = metalView.layer as? CAMetalLayer {
             metalLayer.framebufferOnly = false
-            metalLayer.presentsWithTransaction = true
-            NSLog("[METAL-INIT] layer.drawableSize=\(metalLayer.drawableSize) framebufferOnly=\(metalLayer.framebufferOnly) presentsWithTransaction=\(metalLayer.presentsWithTransaction) contentsScale=\(metalLayer.contentsScale) pixelFormat=\(metalLayer.pixelFormat.rawValue)")
+            NSLog("[METAL-INIT] drawableSize=\(metalLayer.drawableSize) contentsScale=\(metalLayer.contentsScale)")
         }
     }
 
@@ -91,14 +89,12 @@ class MetalRenderer: NSObject, MTKViewDelegate {
     func updateDisplayTexture() {
         guard let bridge = bridge else { return }
 
-        // Get display info atomically
         let (pixels, width, height, _) = bridge.getDisplayBufferInfo()
 
         guard let bits = pixels, width > 0, height > 0 else {
             return
         }
 
-        // Recreate texture if size changed
         if displayTexture == nil ||
            textureWidth != width ||
            textureHeight != height {
@@ -109,7 +105,6 @@ class MetalRenderer: NSObject, MTKViewDelegate {
             return
         }
 
-        // Copy framebuffer to texture
         let region = MTLRegion(
             origin: MTLOrigin(x: 0, y: 0, z: 0),
             size: MTLSize(width: width, height: height, depth: 1)
@@ -154,7 +149,6 @@ class MetalRenderer: NSObject, MTKViewDelegate {
     func draw(in view: MTKView) {
         drawCount += 1
 
-        // Always update the texture from the VM's front buffer
         updateDisplayTexture()
 
         guard let texture = displayTexture else { return }
@@ -162,125 +156,55 @@ class MetalRenderer: NSObject, MTKViewDelegate {
         guard let rpd = view.currentRenderPassDescriptor else { return }
         guard let cmdBuf = commandQueue.makeCommandBuffer() else { return }
 
-        // First frame: dump diagnostics
-        if drawCount == 1 {
-            dumpViewHierarchy(view)
-            if let metalLayer = view.layer as? CAMetalLayer {
-                NSLog("[METAL-DIAG] drawableSize=\(metalLayer.drawableSize) framebufferOnly=\(metalLayer.framebufferOnly) presentsWithTransaction=\(metalLayer.presentsWithTransaction)")
-            }
-        }
-
         guard let enc = cmdBuf.makeRenderCommandEncoder(descriptor: rpd) else { return }
 
-        // Draw textured full-screen quad
         enc.setRenderPipelineState(pipelineState)
         enc.setFragmentTexture(texture, index: 0)
         enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
         enc.endEncoding()
 
-        // With presentsWithTransaction=true: commit, wait, then present
-        // within the CATransaction so the compositor sees the content.
+        cmdBuf.present(drawable)
         cmdBuf.commit()
-        cmdBuf.waitUntilCompleted()
-        drawable.present()
 
-        // Periodic logging (more frequent around event injection period)
-        // Events start after waitForSDLEventPolling (~32s = frame ~960)
-        // Step 1: T+0 move, Step 2a: T+1 rclick, Step 2b: T+6 release,
-        // Step 3: T+8 dismiss, Step 4a: T+10 menu move, Step 4b: T+10.3 menu-down, Step 4c: T+13.3 menu-up
-        if drawCount <= 3 || drawCount % 600 == 0 ||
-           (drawCount >= 900 && drawCount <= 1500 && drawCount % 15 == 0) {
-            NSLog("[METAL-DRAW] #\(drawCount) status=\(cmdBuf.status.rawValue) tex=\(texture.width)x\(texture.height)")
+        // UIKit screenshot captures the composited view hierarchy (Metal content included).
+        // screencapture cannot see Metal layers on Mac Catalyst.
+        if drawCount == 900 {
+            saveUIKitScreenshot(view, frame: drawCount)
         }
 
-        // Save texture as PNG at key moments for offline verification
-        // At 30fps: 900=30s, 960=32s, 990=33s, 1140=38s, 1260=42s, 1380=46s
-        // Capture every 15 frames (0.5s) during event period for finer resolution
-        if drawCount == 600 ||
-           (drawCount >= 900 && drawCount <= 1500 && drawCount % 15 == 0) ||
-           drawCount == 5400 {
-            saveTextureToPNG(texture, path: "/tmp/iospharo-texture-\(drawCount).png")
+        if drawCount <= 3 || drawCount % 600 == 0 {
+            NSLog("[METAL-DRAW] #\(drawCount) tex=\(texture.width)x\(texture.height)")
         }
     }
 
-    private func saveTextureToPNG(_ texture: MTLTexture, path: String) {
-        let w = texture.width
-        let h = texture.height
-        let bytesPerRow = w * 4
-        var pixels = [UInt8](repeating: 0, count: h * bytesPerRow)
-        texture.getBytes(&pixels, bytesPerRow: bytesPerRow,
-                         from: MTLRegion(origin: MTLOrigin(x: 0, y: 0, z: 0),
-                                         size: MTLSize(width: w, height: h, depth: 1)),
-                         mipmapLevel: 0)
+    // MARK: - Screenshot (UIKit-based, works on Mac Catalyst)
 
-        // BGRA → RGBA swap for CGImage
-        for i in stride(from: 0, to: pixels.count, by: 4) {
-            let b = pixels[i]
-            pixels[i] = pixels[i+2]     // R
-            pixels[i+2] = b             // B
-        }
-
-        // Sample pixels for logging
-        let p1 = 50 * bytesPerRow + 50 * 4
-        let p2 = (h/2) * bytesPerRow + (w/2) * 4
-        NSLog("[METAL-SAVE] Pixel(50,50)=R\(pixels[p1])G\(pixels[p1+1])B\(pixels[p1+2])A\(pixels[p1+3])")
-        NSLog("[METAL-SAVE] Pixel(center)=R\(pixels[p2])G\(pixels[p2+1])B\(pixels[p2+2])A\(pixels[p2+3])")
-
-        // Count unique colors and non-black pixels
-        var nonBlack = 0
-        var uniqueColors = Set<UInt32>()
-        for y in stride(from: 0, to: h, by: 10) {
-            for x in stride(from: 0, to: w, by: 10) {
-                let off = y * bytesPerRow + x * 4
-                let r = UInt32(pixels[off])
-                let g = UInt32(pixels[off+1])
-                let b = UInt32(pixels[off+2])
-                let color = (r << 16) | (g << 8) | b
-                uniqueColors.insert(color)
-                if color != 0 { nonBlack += 1 }
-            }
-        }
-        NSLog("[METAL-SAVE] \(w)x\(h) uniqueColors=\(uniqueColors.count) nonBlackSamples=\(nonBlack)")
-
-        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
-              let ctx = CGContext(data: &pixels, width: w, height: h,
-                                 bitsPerComponent: 8, bytesPerRow: bytesPerRow,
-                                 space: colorSpace,
-                                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
-            NSLog("[METAL-SAVE] Failed to create CGContext")
+    private func saveUIKitScreenshot(_ view: MTKView, frame: Int) {
+        guard let window = view.window else {
+            NSLog("[SCREENSHOT] No window at frame %d", frame)
             return
         }
-
-        guard let image = ctx.makeImage() else {
-            NSLog("[METAL-SAVE] Failed to make CGImage")
-            return
+        let renderer = UIGraphicsImageRenderer(bounds: window.bounds)
+        let image = renderer.image { ctx in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: false)
         }
-
-        let url = URL(fileURLWithPath: path)
-        guard let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) else {
-            NSLog("[METAL-SAVE] Failed to create image destination")
-            return
+        if let data = image.pngData() {
+            let path = "/tmp/iospharo-uikit-\(frame).png"
+            try? data.write(to: URL(fileURLWithPath: path))
+            NSLog("[SCREENSHOT] Saved %dx%d to %@", Int(image.size.width), Int(image.size.height), path as NSString)
         }
-        CGImageDestinationAddImage(dest, image, nil)
-        CGImageDestinationFinalize(dest)
-        NSLog("[METAL-SAVE] Saved texture to \(path)")
     }
+
+    // MARK: - View Hierarchy Dump
 
     private func dumpViewHierarchy(_ view: UIView) {
         var v: UIView? = view
         var depth = 0
         while let current = v {
             let layerType = type(of: current.layer)
-            NSLog("[METAL-HIERARCHY] depth=\(depth) \(type(of: current)) frame=\(current.frame) hidden=\(current.isHidden) alpha=\(current.alpha) opaque=\(current.isOpaque) layer=\(layerType) clips=\(current.clipsToBounds)")
+            NSLog("[METAL-HIERARCHY] depth=\(depth) \(type(of: current)) frame=\(current.frame) hidden=\(current.isHidden) layer=\(layerType)")
             v = current.superview
             depth += 1
-        }
-        // Also dump the window
-        if let window = view.window {
-            NSLog("[METAL-HIERARCHY] window=\(type(of: window)) frame=\(window.frame) isKeyWindow=\(window.isKeyWindow)")
-            NSLog("[METAL-HIERARCHY] window.rootViewController=\(type(of: window.rootViewController ?? (NSObject() as AnyObject)))")
-        } else {
-            NSLog("[METAL-HIERARCHY] WARNING: view.window is nil!")
         }
     }
 }
