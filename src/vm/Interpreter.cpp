@@ -2707,35 +2707,39 @@ bool Interpreter::step() {
             processPendingSignals();
         }
 
-        // VM-level process timeout: if the same process has been running for
-        // > 30 seconds wall-clock time, terminate it. This is a safety net for
-        // when the Delay scheduler dies and Smalltalk-level timeouts stop working.
+        // VM-level process timeout: detect when the Delay scheduler (pri>=80)
+        // hasn't run for > 30 seconds while the timer is armed. This means
+        // Smalltalk-level timeouts are broken. Terminate the current process.
+        // Note: forceYield_ rotates between same-priority processes, so we
+        // can't just track "same process for N seconds" — we must track
+        // "no high-priority process for N seconds" instead.
         {
-            static Oop lastActiveProcess = Oop::nil();
-            static std::chrono::steady_clock::time_point processStartTime;
+            static std::chrono::steady_clock::time_point lastHighPriTime =
+                std::chrono::steady_clock::now();
             static int vmTimeoutCount = 0;
 
             Oop currentActive = getActiveProcess();
-            if (currentActive.rawBits() != lastActiveProcess.rawBits()) {
-                lastActiveProcess = currentActive;
-                processStartTime = std::chrono::steady_clock::now();
-            } else {
+            Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, currentActive);
+            int prio = prioOop.isSmallInteger() ? (int)prioOop.asSmallInteger() : 0;
+
+            if (prio >= 80) {
+                // A high-priority process is running — timer system is alive
+                lastHighPriTime = std::chrono::steady_clock::now();
+            } else if (!timerSemaphore_.isNil()) {
+                // Timer is armed but no high-priority process running
                 auto now = std::chrono::steady_clock::now();
-                auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - processStartTime).count();
+                auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                    now - lastHighPriTime).count();
                 if (elapsed >= 30) {
-                    Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, currentActive);
-                    int prio = prioOop.isSmallInteger() ? (int)prioOop.asSmallInteger() : -1;
-                    // Don't timeout system processes (Delay scheduler at 80, etc.)
-                    if (prio < 80) {
-                        vmTimeoutCount++;
-                        fprintf(stderr, "[VM-TIMEOUT #%d] Process at pri=%d running for %llds, terminating. step=%llu fd=%zu sel=%s\n",
-                                vmTimeoutCount, prio, (long long)elapsed,
-                                (unsigned long long)g_stepNum, frameDepth_, g_lastSelName);
-                        fflush(stderr);
-                        terminateAndSwitchProcess();
-                        lastActiveProcess = Oop::nil(); // Reset tracking
-                        return running_;
-                    }
+                    vmTimeoutCount++;
+                    fprintf(stderr, "[VM-TIMEOUT #%d] Delay scheduler absent for %llds, "
+                            "terminating pri=%d process. step=%llu fd=%zu sel=%s\n",
+                            vmTimeoutCount, (long long)elapsed, prio,
+                            (unsigned long long)g_stepNum, frameDepth_, g_lastSelName);
+                    fflush(stderr);
+                    terminateAndSwitchProcess();
+                    lastHighPriTime = std::chrono::steady_clock::now();
+                    return running_;
                 }
             }
         }
