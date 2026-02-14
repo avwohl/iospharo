@@ -1022,12 +1022,14 @@ runTestClass: testClass run: runNum on: s detail: d
 
 !SUnitRunner class methodsFor: 'running'!
 runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
-  "Run a single test with Delay-based timeout. Simple and reliable — the same
-   approach that achieved 576 classes / 12485 pass in Run #363.
+  "Run a single test with spin-wait timeout. Does NOT depend on Delay scheduler
+   (which dies from GC corruption around 1B steps). Forks test and watchdog at
+   the same priority — forceYield heartbeat (~20ms) rotates between them.
    Returns nil for pass, #fail, #error, #skip, or #timeout."
-  | sem result testProcess |
+  | sem result testDone testProcess |
   sem := Semaphore new.
   result := nil. "nil means pass"
+  testDone := false.
 
   testProcess := [
     [[[[(testClass selector: sel) runCase]
@@ -1047,16 +1049,27 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
         s nextPutAll: '  ERROR: '; nextPutAll: sel;
           nextPutAll: ' ('; nextPutAll: ex class name;
           nextPutAll: ': '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 100)); nextPutAll: ')'; cr].
+    testDone := true.
     sem signal] forkAt: priority.
 
-  "Wait for test completion or timeout using Delay scheduler"
-  (sem waitTimeoutSeconds: seconds) ifTrue: [
-    "Timeout: suspend the test process"
-    [testProcess suspend] on: Error do: [:e |].
-    result ifNil: [result := #timeout].
-    s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
-      nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; cr.
-    s flush].
+  "Watchdog at same priority — spin-waits using wall clock, no Delay dependency"
+  [| startUsec timeoutUsec |
+    startUsec := Time microsecondClockValue.
+    timeoutUsec := seconds * 1000000.
+    [testDone not and: [
+      ((Time microsecondClockValue - startUsec) abs <= timeoutUsec)]]
+        whileTrue: [Processor yield].
+    testDone ifFalse: [
+      "Timeout: suspend test process, leave it for GC (no instVarAt: cleanup)"
+      [testProcess suspend] on: Error do: [:e |].
+      result ifNil: [result := #timeout].
+      s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
+        nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; cr.
+      s flush.
+      sem signal]] forkAt: priority.
+
+  "Runner at lower priority waits until test or watchdog signals"
+  sem wait.
   ^ result! !
 
 !SUnitRunner class methodsFor: 'startup'!
