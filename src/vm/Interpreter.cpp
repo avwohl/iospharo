@@ -42,6 +42,10 @@ std::atomic<int> g_watchdogPhase{0};
 volatile int g_watchdogSubphase = 0;
 volatile uint8_t g_watchdogLastBytecode = 0;
 
+// Track the Delay scheduler process for diagnostics
+static pharo::Oop g_delaySchedulerProcess = pharo::Oop::nil();
+static bool g_delaySchedulerDead = false;
+
 // Forward declaration for SDL rendering active check (defined in FFI.cpp)
 extern "C" bool ffi_isSDLRenderingActive();
 // Watchdog send diagnostic: selector and receiver class name for last send
@@ -2460,6 +2464,13 @@ void Interpreter::synchronousSignal(Oop semaphore) {
         Oop processPriorityOop = memory_.fetchPointer(ProcessPriorityIndex, process);
         int processPriority = static_cast<int>(processPriorityOop.asSmallInteger());
 
+        // Track Delay scheduler process (first pri=80 process we see signaled)
+        if (processPriority == 80 && g_delaySchedulerProcess.isNil()) {
+            g_delaySchedulerProcess = process;
+            fprintf(stderr, "[DELAY-SCHED] Identified Delay scheduler process: 0x%llx\n",
+                    (unsigned long long)process.rawBits());
+        }
+
         Oop activeProcess = getActiveProcess();
         Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
         int activePriority = static_cast<int>(activePriorityOop.asSmallInteger());
@@ -2695,6 +2706,40 @@ bool Interpreter::step() {
         if (hasPendingSignals()) {
             processPendingSignals();
         }
+
+        // VM-level process timeout: if the same process has been running for
+        // > 30 seconds wall-clock time, terminate it. This is a safety net for
+        // when the Delay scheduler dies and Smalltalk-level timeouts stop working.
+        {
+            static Oop lastActiveProcess = Oop::nil();
+            static std::chrono::steady_clock::time_point processStartTime;
+            static int vmTimeoutCount = 0;
+
+            Oop currentActive = getActiveProcess();
+            if (currentActive.rawBits() != lastActiveProcess.rawBits()) {
+                lastActiveProcess = currentActive;
+                processStartTime = std::chrono::steady_clock::now();
+            } else {
+                auto now = std::chrono::steady_clock::now();
+                auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - processStartTime).count();
+                if (elapsed >= 30) {
+                    Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, currentActive);
+                    int prio = prioOop.isSmallInteger() ? (int)prioOop.asSmallInteger() : -1;
+                    // Don't timeout system processes (Delay scheduler at 80, etc.)
+                    if (prio < 80) {
+                        vmTimeoutCount++;
+                        fprintf(stderr, "[VM-TIMEOUT #%d] Process at pri=%d running for %llds, terminating. step=%llu fd=%zu sel=%s\n",
+                                vmTimeoutCount, prio, (long long)elapsed,
+                                (unsigned long long)g_stepNum, frameDepth_, g_lastSelName);
+                        fflush(stderr);
+                        terminateAndSwitchProcess();
+                        lastActiveProcess = Oop::nil(); // Reset tracking
+                        return running_;
+                    }
+                }
+            }
+        }
+
         g_watchdogSubphase = 12;
         signalFinalizationIfNeeded();
 
@@ -2857,7 +2902,22 @@ bool Interpreter::step() {
             Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
             Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
             Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
-            if (activePriority > 0 && activePriority <= static_cast<int>(schedLists.asObjectPtr()->slotCount())) {
+            int maxPri = static_cast<int>(schedLists.asObjectPtr()->slotCount());
+
+            // First: check for higher priority processes (preemption).
+            // This is critical for timer/Delay scheduler to preempt test processes.
+            for (int pri = maxPri; pri > activePriority; pri--) {
+                Oop processList = memory_.fetchPointer(pri - 1, schedLists);
+                Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, processList);
+                if (first.isObject() && first.rawBits() != nilObj.rawBits()) {
+                    nextProcess = removeFirstLinkOfList(processList);
+                    break;
+                }
+            }
+
+            // Then: round-robin at same priority level
+            if (nextProcess.rawBits() == nilObj.rawBits() &&
+                activePriority > 0 && activePriority <= maxPri) {
                 Oop processList = memory_.fetchPointer(activePriority - 1, schedLists);
                 Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, processList);
                 if (first.isObject() && first.rawBits() != nilObj.rawBits() &&
