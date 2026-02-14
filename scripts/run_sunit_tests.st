@@ -1030,9 +1030,27 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
    Performance: fast tests complete instantly (no forceYield overhead) because
    the test terminates the watchdog before it ever gets CPU time.
    Returns nil for pass, #fail, #error, #skip, or #timeout."
-  | sem result |
+  | sem result harnessAlive |
   sem := Semaphore new.
   result := nil. "nil means pass"
+  harnessAlive := true.
+
+  "Backup watchdog at runner priority (40). Only gets CPU when all pri-79
+   processes are gone. Catches DNU-CASCADE kills where the C++ VM
+   terminates the harness without running Smalltalk ensure: blocks."
+  [| bkStart bkTimeout |
+   bkStart := Time microsecondClockValue.
+   bkTimeout := (seconds + 5) * 1000000.
+   [harnessAlive and: [
+     ((Time microsecondClockValue - bkStart) abs < bkTimeout)]]
+       whileTrue: [Processor yield].
+   harnessAlive ifTrue: [
+     "Harness died without signaling - DNU-CASCADE or similar"
+     result ifNil: [result := #error].
+     s nextPutAll: '  ERROR: '; nextPutAll: sel;
+       nextPutAll: ' (harness killed)'; cr.
+     s flush.
+     sem signal]] fork.
 
   "Fork a single harness process at the test priority. It preempts us (pri 40)
    immediately. Inside, it forks the actual test (same priority, no preemption),
@@ -1075,10 +1093,11 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
         s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
           nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; cr.
         s flush]]
-      ensure: [sem signal]] forkAt: priority.
+      ensure: [harnessAlive := false. sem signal]] forkAt: priority.
 
-  "Block until harness completes (test done or timeout)"
+  "Block until harness completes (test done or timeout) or backup watchdog fires"
   sem wait.
+  harnessAlive := false. "tell backup watchdog to stop"
   ^ result! !
 
 !SUnitRunner class methodsFor: 'startup'!
