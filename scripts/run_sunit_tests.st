@@ -1059,13 +1059,11 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
 
   "Block until test completes or watchdog fires timeout"
   sem wait.
-  "Clean up: on timeout, the watchdog already suspended the test process.
-   Nil its suspendedContext to mark terminated without walking unwind blocks.
-   Do NOT touch the watchdog - it may still be on the ready list and will
-   self-terminate when it gets CPU and sees done=true.
-   Process inst vars: Link.nextLink(1), suspendedContext(2), priority(3)."
-  (result == #timeout and: [testProcess isTerminated not]) ifTrue: [
-    testProcess instVarAt: 2 put: nil].
+  "Do NOT call terminate or instVarAt: on test/watchdog processes.
+   Terminate walks the stack (hangs on deep recursion). InstVarAt: 2 put: nil
+   corrupts GC tracing of suspended context chains. Both cause crashes.
+   Let processes self-terminate (watchdog) or stay suspended (timed-out test).
+   GC collects them when references go out of scope after this method returns."
   Processor activeProcess instVarAt: 3 put: originalPriority.
   ^ result! !
 
