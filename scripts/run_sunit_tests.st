@@ -1088,7 +1088,11 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
         ((Time microsecondClockValue - startUsec) abs <= timeoutUsec)]]
           whileTrue: [Processor yield].
       testDone ifFalse: [
-        [testProcess suspend] on: Error do: [:e |].
+        "Suspend, then nil suspendedContext so GC can collect the context chain.
+         Process is already removed from all scheduler lists by suspend.
+         Without this, accumulated timeout-suspended processes corrupt the heap."
+        [testProcess suspend.
+         testProcess instVarAt: 2 put: nil] on: Error do: [:e |].
         result ifNil: [result := #timeout].
         s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
           nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; cr.
