@@ -1053,9 +1053,15 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
 
   "Block until test completes or watchdog fires timeout"
   sem wait.
-  "Clean up any surviving processes"
-  testProcess isTerminated ifFalse: [testProcess terminate].
-  watchdogProcess isTerminated ifFalse: [watchdogProcess terminate].
+  "Clean up any surviving processes.
+   Do NOT call terminate on suspended processes - it walks the entire call stack
+   running unwind blocks, which can hang on deeply recursive tests.
+   Just nil out suspendedContext to mark as terminated instantly.
+   Process inst vars: Link.nextLink(1), suspendedContext(2), priority(3)."
+  testProcess isTerminated ifFalse: [
+    testProcess instVarAt: 2 put: nil].
+  watchdogProcess isTerminated ifFalse: [
+    watchdogProcess instVarAt: 2 put: nil].
   Processor activeProcess instVarAt: 3 put: originalPriority.
   ^ result! !
 
