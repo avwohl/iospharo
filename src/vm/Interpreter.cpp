@@ -7458,22 +7458,7 @@ Oop Interpreter::temporary(int index) const {
     // and indices argCount+ are local temps/copied values.
     // Frame layout: [receiver, arg0, arg1, ..., temp0, temp1, ...]
     // So all are accessed at framePointer_[1 + index]
-    Oop result = *(framePointer_ + 1 + index);
-
-    // Log temp reads for debugging infinite loop
-    static FILE* tempLog = nullptr;
-    static int tempReadCount = 0;
-    if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!tempLog) tempLog = nullptr;
-    }
-    if (tempLog && tempReadCount < 100) {
-        tempReadCount++;
-        fprintf(tempLog, "[TEMP_READ #%d] index=%d value=0x%llx frameDepth=%zu\n",
-                tempReadCount, index, (unsigned long long)result.rawBits(), frameDepth_);
-        fflush(tempLog);
-    }
-
-    return result;
+    return *(framePointer_ + 1 + index);
 }
 
 bool Interpreter::isExecutingBlock() const {
@@ -7513,22 +7498,6 @@ void Interpreter::setOuterTemporary(int index, Oop value) {
 
 void Interpreter::setTemporary(int index, Oop value) {
     // Same layout as temporary() - see comment above
-
-    // Log temp writes for debugging infinite loop
-    static FILE* tempLog = nullptr;
-    static int tempWriteCount = 0;
-    if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!tempLog) tempLog = nullptr;
-    }
-    if (tempLog && tempWriteCount < 100) {
-        tempWriteCount++;
-        Oop oldValue = *(framePointer_ + 1 + index);
-        fprintf(tempLog, "[TEMP_WRITE #%d] index=%d old=0x%llx new=0x%llx frameDepth=%zu\n",
-                tempWriteCount, index, (unsigned long long)oldValue.rawBits(),
-                (unsigned long long)value.rawBits(), frameDepth_);
-        fflush(tempLog);
-    }
-
     *(framePointer_ + 1 + index) = value;
 
     // Write-through to context when materialized (frameDepth_==0).
@@ -9420,13 +9389,19 @@ Oop Interpreter::materializeFrameStack() {
             static const int CtxFixed = 6;
 
             if (frame0.savedFP != nullptr) {
-                // Bidirectional sync for temps: context → C++ (preserves Smalltalk
-                // modifications like tempNamed:put:), expression stack: C++ → context.
+                // Sync temps: C++ → context. The C++ stack is authoritative for
+                // saved frame 0's temps because:
+                // 1. Write-through in setTemporary keeps them in sync at depth 0
+                // 2. But the context can become stale when a value is modified by
+                //    a path that doesn't go through setTemporary (e.g., GC-moved
+                //    references, or values loaded during pushFrame that differ from
+                //    the context's snapshot).
+                // Expression stack: C++ → context (as before).
                 size_t ctxSlots = acHdr->slotCount();
                 for (int t = 0; t < numTemps && t < 32; t++) {
                     if (static_cast<size_t>(CtxFixed + t) < ctxSlots) {
-                        Oop ctxVal = memory_.fetchPointer(CtxFixed + t, activeContext_);
-                        *(frame0.savedFP + 1 + t) = ctxVal;
+                        Oop cppVal = *(frame0.savedFP + 1 + t);
+                        memory_.storePointer(CtxFixed + t, activeContext_, cppVal);
                     }
                     savedCount++;
                 }
