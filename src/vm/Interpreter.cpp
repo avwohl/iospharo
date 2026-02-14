@@ -2708,15 +2708,18 @@ bool Interpreter::step() {
         }
 
         // VM-level process timeout: detect when the Delay scheduler (pri>=80)
-        // hasn't run for > 30 seconds while the timer is armed. This means
-        // Smalltalk-level timeouts are broken. Terminate the current process.
-        // Note: forceYield_ rotates between same-priority processes, so we
-        // can't just track "same process for N seconds" — we must track
-        // "no high-priority process for N seconds" instead.
+        // hasn't run for > 30 seconds. When the Delay scheduler dies,
+        // Smalltalk-level timeouts stop working and stuck tests run forever.
+        // This is a VM safety net that terminates the current process.
+        // Note: we don't check timerSemaphore_ because after the Delay
+        // scheduler dies, the timer fires one last time clearing it to nil,
+        // and nobody re-arms it. So timerSemaphore_ being nil doesn't mean
+        // the system is healthy — it means the scheduler is dead.
         {
             static std::chrono::steady_clock::time_point lastHighPriTime =
                 std::chrono::steady_clock::now();
             static int vmTimeoutCount = 0;
+            static bool startupGracePeriod = true;
 
             Oop currentActive = getActiveProcess();
             Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, currentActive);
@@ -2725,8 +2728,9 @@ bool Interpreter::step() {
             if (prio >= 80) {
                 // A high-priority process is running — timer system is alive
                 lastHighPriTime = std::chrono::steady_clock::now();
-            } else if (!timerSemaphore_.isNil()) {
-                // Timer is armed but no high-priority process running
+                startupGracePeriod = false; // Delay scheduler has run at least once
+            } else if (!startupGracePeriod) {
+                // After startup: check if Delay scheduler has been absent too long
                 auto now = std::chrono::steady_clock::now();
                 auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
                     now - lastHighPriTime).count();
