@@ -2596,6 +2596,18 @@ void Interpreter::startHeartbeat() {
                     fprintf(stderr, "[WATCHDOG] STUCK in send: %s >> %s (prim=%d)\n",
                             g_watchdogReceiverClass, g_watchdogSelector, g_watchdogPrimIndex);
                 }
+                if (stuck) {
+                    int ticks = stuckTicks_.fetch_add(1, std::memory_order_relaxed) + 1;
+                    // After 30s (6 ticks × 5s) of no progress, terminate the process
+                    if (ticks >= 6) {
+                        fprintf(stderr, "[WATCHDOG] Requesting process termination after %ds stuck\n",
+                                ticks * 5);
+                        terminateStuck_.store(true, std::memory_order_release);
+                        stuckTicks_.store(0, std::memory_order_relaxed);
+                    }
+                } else {
+                    stuckTicks_.store(0, std::memory_order_relaxed);
+                }
                 lastSteps = steps;
                 fflush(stderr);
             }
@@ -2867,6 +2879,17 @@ bool Interpreter::step() {
         }
     }
 skip_yield:
+
+    // VM safety: terminate a process that the watchdog flagged as stuck
+    if (terminateStuck_.load(std::memory_order_acquire)) {
+        terminateStuck_.store(false, std::memory_order_relaxed);
+        static int termCount = 0;
+        termCount++;
+        fprintf(stderr, "[WATCHDOG-TERM #%d] Terminating stuck process at step=%llu fd=%zu\n",
+                termCount, (unsigned long long)g_stepNum, frameDepth_);
+        terminateAndSwitchProcess();
+        return running_;
+    }
 
     uint8_t bytecode = fetchByte();
     lastBytecode_ = bytecode;
@@ -6388,7 +6411,24 @@ size_t Interpreter::cacheHash(Oop selector, Oop classOop) const {
     return static_cast<size_t>(h) & (MethodCacheSize - 1);
 }
 
-// ===== STACK OVERFLOW RECOVERY =====
+// ===== PROCESS TERMINATION AND RECOVERY =====
+
+void Interpreter::terminateAndSwitchProcess() {
+    // Terminate the current process and switch to the next runnable one.
+    // Used by stack overflow handler and watchdog to prevent a single
+    // runaway process from hanging the entire VM.
+    terminateCurrentProcess();  // Mark process as dead, remove from scheduler
+
+    Oop nextProcess = wakeHighestPriority();
+    if (nextProcess.isNil() || !nextProcess.isObject()) {
+        stopVM("No runnable process available after termination");
+        return;
+    }
+    setActiveProcess(nextProcess);
+    Oop newContext = memory_.fetchPointer(ProcessSuspendedContextIndex, nextProcess);
+    memory_.storePointer(ProcessSuspendedContextIndex, nextProcess, memory_.nil());
+    executeFromContext(newContext);
+}
 
 void Interpreter::handleStackOverflow(int argCount) {
     // Stack overflow — terminate this process and switch to the next one.
@@ -6404,20 +6444,7 @@ void Interpreter::handleStackOverflow(int argCount) {
     // Pop args+receiver that the send bytecode already pushed
     for (int i = 0; i < argCount + 1; i++) pop();
 
-    // Find the next runnable process
-    Oop nextProcess = wakeHighestPriority();
-    if (nextProcess.isNil() || !nextProcess.isObject()) {
-        stopVM("Stack overflow and no other runnable process");
-        return;
-    }
-
-    // Switch to the new process. We skip saving the old process's context
-    // because the frame stack is at its limit. The old process is abandoned —
-    // executeFromContext resets frameDepth_ to 0.
-    setActiveProcess(nextProcess);
-    Oop newContext = memory_.fetchPointer(ProcessSuspendedContextIndex, nextProcess);
-    memory_.storePointer(ProcessSuspendedContextIndex, nextProcess, memory_.nil());
-    executeFromContext(newContext);
+    terminateAndSwitchProcess();
 }
 
 // ===== METHOD ACTIVATION =====

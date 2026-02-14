@@ -358,7 +358,7 @@ private:
         ptrdiff_t savedBytecodeEndOffset;
     };
     static constexpr size_t MaxFrameDepth = 65536;
-    static constexpr size_t StackOverflowLimit = 35000;  // Graceful overflow limit (MaxFrameDepth is hard array bound)
+    static constexpr size_t StackOverflowLimit = 4096;  // Graceful overflow limit — catch infinite recursion fast
     std::array<SavedFrame, MaxFrameDepth> savedFrames_;
     size_t frameDepth_;
 
@@ -506,6 +506,10 @@ private:
     // Force yield flag - set by heartbeat to preempt long-running processes
     std::atomic<bool> forceYield_{false};
 
+    // Watchdog: terminate process stuck for too long (VM safety feature)
+    std::atomic<int> stuckTicks_{0};       // Consecutive stuck ticks from watchdog thread
+    std::atomic<bool> terminateStuck_{false}; // Flag: main thread should terminate current process
+
     // Timer/delay semaphore (for Delay class)
     Oop timerSemaphore_ = Oop::nil();
     int64_t nextWakeupTime_ = 0;  // 0 means no timer set (in ioMSecs units)
@@ -632,6 +636,9 @@ private:
 
     /// Handle stack overflow by terminating the current process
     void handleStackOverflow(int argCount);
+
+    /// Terminate current process and switch to next runnable one (safety net)
+    void terminateAndSwitchProcess();
 
     /// Send doesNotUnderstand:
     void sendDoesNotUnderstand(Oop selector, int argCount);
