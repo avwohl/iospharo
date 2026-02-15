@@ -8060,6 +8060,16 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                     if (nh->isBytesObject() && nh->byteSize() < 100)
                         rcvClass = std::string((char*)nh->bytes(), nh->byteSize());
                 }
+                // If name not found, receiver might BE a class (metaclass instance)
+                // Try reading receiver's slot 6 (class name) directly
+                if (rcvClass == "?" && memory_.slotCountOf(rcv) > 6) {
+                    Oop nameOop = memory_.fetchPointer(6, rcv);
+                    if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                        ObjectHeader* nh = nameOop.asObjectPtr();
+                        if (nh->isBytesObject() && nh->byteSize() < 100)
+                            rcvClass = std::string((char*)nh->bytes(), nh->byteSize()) + " class";
+                    }
+                }
             }
         }
         // Also show the calling method

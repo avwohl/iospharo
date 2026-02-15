@@ -723,6 +723,11 @@ int main(int argc, char* argv[]) {
                 // OSSDL2Driver's FFI event loop has started (SDL_PollEvent activates
                 // after ~111M steps).
             } else {
+                // If VM was explicitly stopped (snapshot:andQuit:), exit immediately
+                if (!interpreter.isRunning()) {
+                    std::cout << "[VM-EXIT] VM stopped, exiting step loop." << std::endl;
+                    break;
+                }
                 consecutiveIdle++;
                 // Report first idle transition and record wall-clock time
                 if (consecutiveIdle == 1) {
