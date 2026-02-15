@@ -5600,58 +5600,6 @@ void Interpreter::arithmeticSend(int which) {
         }
     }
 
-    // Diagnostic: log when > is sent to a non-numeric receiver
-    if (which == 3) {  // >
-        Oop rcvr = stackValue(argCount);
-        if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-            static int gtDiagCount = 0;
-            if (++gtDiagCount <= 20) {
-                Oop arg = stackValue(0);
-                Oop cls = memory_.classOf(rcvr);
-                std::string clsName = "?";
-                if (cls.isObject() && cls.rawBits() > 0x10000) {
-                    ObjectHeader* clsHdr = cls.asObjectPtr();
-                    if (clsHdr->slotCount() > 6) {
-                        Oop nameOop = clsHdr->slotAt(6);
-                        if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
-                            ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                            if (nameHdr->isBytesObject()) {
-                                size_t len = nameHdr->byteSize();
-                                if (len < 200) {
-                                    clsName = std::string(reinterpret_cast<const char*>(nameHdr->bytes()), len);
-                                }
-                            }
-                        }
-                    }
-                }
-                // Show method being executed
-                std::string methSel = "?";
-                if (method_.isObject() && method_.rawBits() > 0x10000) {
-                    ObjectHeader* methHdr = method_.asObjectPtr();
-                    size_t numLits = methHdr->slotAt(0).asSmallInteger() & 0x7FFF;
-                    if (numLits >= 2 && methHdr->slotCount() > numLits) {
-                        Oop assoc = methHdr->slotAt(numLits);  // last literal = method class association
-                        Oop selOop = methHdr->slotAt(numLits - 1);  // second-to-last = selector
-                        if (selOop.isObject() && selOop.rawBits() > 0x10000) {
-                            ObjectHeader* selHdr = selOop.asObjectPtr();
-                            if (selHdr->isBytesObject()) {
-                                size_t slen = selHdr->byteSize();
-                                if (slen < 200) {
-                                    methSel = std::string(reinterpret_cast<const char*>(selHdr->bytes()), slen);
-                                }
-                            }
-                        }
-                    }
-                }
-                fprintf(stderr, "[GT-DIAG #%d] %s >> #> arg=%s step=%llu method=%s ip=%p\n",
-                        gtDiagCount, clsName.c_str(),
-                        arg.isSmallInteger() ? "SmallInt" : (arg.isObject() ? "object" : "imm"),
-                        (unsigned long long)g_stepNum, methSel.c_str(),
-                        (void*)instructionPointer_);
-            }
-        }
-    }
-
     // Try to get cached well-known selector
     Oop selector;
     switch (which) {
@@ -8084,79 +8032,6 @@ void Interpreter::setReceiverInstVar(size_t index, Oop value) {
 void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     static int dnuDepth = 0;
     const int MAX_DNU_DEPTH = 10;
-
-    // Diagnostic: when #> DNU fires on a Dictionary, dump the bytecodes leading to the send
-    {
-        bool isGtSelector = false;
-        if (selector.isObject() && selector.rawBits() > 0x10000) {
-            ObjectHeader* sh = selector.asObjectPtr();
-            if (sh->isBytesObject() && sh->byteSize() == 1 && sh->bytes()[0] == '>')
-                isGtSelector = true;
-        }
-        if (isGtSelector) {
-            static int gtDnuCount = 0;
-            if (++gtDnuCount <= 10) {
-                // Get class name of receiver
-                Oop rcv = stackValue(argCount);
-                std::string rcvCls = "?";
-                if (rcv.isObject() && rcv.rawBits() > 0x10000) {
-                    Oop cls = memory_.classOf(rcv);
-                    if (cls.isObject() && cls.rawBits() > 0x10000 && memory_.slotCountOf(cls) > 6) {
-                        Oop nameOop = memory_.fetchPointer(6, cls);
-                        if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
-                            ObjectHeader* nh = nameOop.asObjectPtr();
-                            if (nh->isBytesObject() && nh->byteSize() < 100)
-                                rcvCls = std::string((char*)nh->bytes(), nh->byteSize());
-                        }
-                    }
-                }
-                // Get current method selector
-                std::string methSel = "?";
-                if (method_.isObject() && method_.rawBits() > 0x10000) {
-                    Oop hdr = memory_.fetchPointer(0, method_);
-                    if (hdr.isSmallInteger()) {
-                        int nl = hdr.asSmallInteger() & 0x7FFF;
-                        if (nl >= 2) {
-                            Oop s = memory_.fetchPointer(nl - 1, method_);
-                            if (s.isObject() && s.rawBits() > 0x10000) {
-                                ObjectHeader* sh2 = s.asObjectPtr();
-                                if (sh2->isBytesObject() && sh2->byteSize() < 100)
-                                    methSel = std::string((char*)sh2->bytes(), sh2->byteSize());
-                            }
-                        }
-                    }
-                }
-                // Dump bytecodes around current IP
-                fprintf(stderr, "[GT-DNU #%d] %s >> #> in method=%s step=%llu fd=%zu\n",
-                        gtDnuCount, rcvCls.c_str(), methSel.c_str(),
-                        (unsigned long long)g_stepNum, frameDepth_);
-                if (method_.isObject() && method_.rawBits() > 0x10000) {
-                    ObjectHeader* mObj = method_.asObjectPtr();
-                    Oop hdr = memory_.fetchPointer(0, method_);
-                    if (hdr.isSmallInteger()) {
-                        int nl = hdr.asSmallInteger() & 0x7FFF;
-                        size_t bcStart = (1 + nl) * 8;
-                        ptrdiff_t ipOff = instructionPointer_ - mObj->bytes();
-                        fprintf(stderr, "  ipOff=%td bcStart=%zu bytecodes: ", ipOff, bcStart);
-                        for (int i = -15; i <= 2; i++) {
-                            ptrdiff_t pos = ipOff + i;
-                            if (pos >= (ptrdiff_t)bcStart && pos < (ptrdiff_t)mObj->byteSize()) {
-                                fprintf(stderr, "%s%02x", (i == 0 ? "[" : ""), mObj->bytes()[pos]);
-                                if (i == 0) fprintf(stderr, "]");
-                                else fprintf(stderr, " ");
-                            }
-                        }
-                        fprintf(stderr, "\n");
-                    }
-                }
-                // Show stack: receiver and arg
-                fprintf(stderr, "  rcv=0x%llx arg=0x%llx\n",
-                        (unsigned long long)stackValue(argCount).rawBits(),
-                        (unsigned long long)(argCount > 0 ? stackValue(0).rawBits() : 0));
-                fflush(stderr);
-            }
-        }
-    }
 
     // General DNU tracing: log DNUs (skip startup batch, log new ones)
     static int generalDnuCount = 0;
