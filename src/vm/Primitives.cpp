@@ -88,6 +88,7 @@ extern int g_traceSendsAfterPrim264;
 
 // Forward declaration for large integer helper (defined later with other large int primitives)
 static bool trySigned64BitValueOf(ObjectMemory& memory, Oop oop, int64_t& value);
+static std::vector<uint8_t> magnitudeLeftShift(const std::vector<uint8_t>& mag, int64_t shift);
 
 // ===== PRIMITIVE FAILURE STUB =====
 // This is used for primitives that should always fail (fall back to Smalltalk)
@@ -1170,23 +1171,48 @@ PrimitiveResult Interpreter::primitiveBitShift(int argCount) {
         return PrimitiveResult::Failure;
 
     if (shift >= 0) {
-        // Left shift - use __int128 for overflow safety
-        if (shift >= 127) return PrimitiveResult::Failure;
-        __int128 wide = (__int128)value << shift;
-        if (wide >= Oop::smallIntegerMin() && wide <= Oop::smallIntegerMax()) {
-            primitiveSuccess(Oop::fromSmallInteger((int64_t)wide));
+        // Left shift — handle overflow by creating LargeInteger
+        if (value == 0) {
+            // 0 << anything = 0
+            primitiveSuccess(Oop::fromSmallInteger(0));
             return PrimitiveResult::Success;
         }
-        // Check if fits in int64
-        if (wide > INT64_MAX || wide < INT64_MIN)
-            return PrimitiveResult::Failure;
-        int64_t result = (int64_t)wide;
-        bool neg = result < 0;
-        uint64_t mag = neg ? (uint64_t)(-(result + 1)) + 1 : (uint64_t)result;
-        std::vector<uint8_t> bytes;
-        while (mag > 0) { bytes.push_back(mag & 0xFF); mag >>= 8; }
-        if (bytes.empty()) bytes.push_back(0);
-        Oop largeResult = makeLargeInteger(memory_, bytes, neg);
+
+        // For shifts within __int128 range, use it for exact computation
+        if (shift < 127) {
+            __int128 wide = (__int128)value << shift;
+            if (wide >= Oop::smallIntegerMin() && wide <= Oop::smallIntegerMax()) {
+                primitiveSuccess(Oop::fromSmallInteger((int64_t)wide));
+                return PrimitiveResult::Success;
+            }
+            // Fits in int64 but not SmallInteger
+            if (wide >= INT64_MIN && wide <= INT64_MAX) {
+                int64_t result = (int64_t)wide;
+                bool neg = result < 0;
+                uint64_t mag = neg ? (uint64_t)(-(result + 1)) + 1 : (uint64_t)result;
+                std::vector<uint8_t> bytes;
+                while (mag > 0) { bytes.push_back(mag & 0xFF); mag >>= 8; }
+                if (bytes.empty()) bytes.push_back(0);
+                Oop largeResult = makeLargeInteger(memory_, bytes, neg);
+                if (largeResult.rawBits() == 0) return PrimitiveResult::Failure;
+                primitiveSuccess(largeResult);
+                return PrimitiveResult::Success;
+            }
+        }
+
+        // Result exceeds int64 range — use magnitude-based shift
+        // This handles the case where Smalltalk fallback would incorrectly
+        // create a LargePositiveInteger from a negative SmallInteger
+        bool neg = value < 0;
+        uint64_t mag = neg ? (uint64_t)(-(value + 1)) + 1 : (uint64_t)value;
+        std::vector<uint8_t> magBytes;
+        while (mag > 0) { magBytes.push_back(mag & 0xFF); mag >>= 8; }
+        if (magBytes.empty()) magBytes.push_back(0);
+
+        std::vector<uint8_t> shiftedMag = magnitudeLeftShift(magBytes, shift);
+        if (shiftedMag.empty()) return PrimitiveResult::Failure;  // overflow
+
+        Oop largeResult = makeLargeInteger(memory_, shiftedMag, neg);
         if (largeResult.rawBits() == 0) return PrimitiveResult::Failure;
         primitiveSuccess(largeResult);
         return PrimitiveResult::Success;
