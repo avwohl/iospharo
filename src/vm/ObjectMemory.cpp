@@ -1517,6 +1517,11 @@ uint32_t ObjectMemory::identityHashOf(Oop obj) {
     if (obj.isCharacter()) {
         return obj.asCharacter() & 0x3FFFFF;
     }
+    if (obj.isSmallFloat()) {
+        // SmallFloat identity hash: hash the raw bits
+        uint64_t bits = obj.rawBits();
+        return static_cast<uint32_t>((bits >> 32) ^ bits) & 0x3FFFFF;
+    }
     if (!obj.isObject()) {
         return 0;
     }
