@@ -8030,6 +8030,8 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         else if (rcv.isNil()) rcvClass = "nil";
         else if (rcv.rawBits() == memory_.trueObject().rawBits()) rcvClass = "true";
         else if (rcv.rawBits() == memory_.falseObject().rawBits()) rcvClass = "false";
+        else if (rcv.isSmallFloat()) rcvClass = "SmallFloat64";
+        else if (rcv.isCharacter()) rcvClass = "Character";
         else if (rcv.isObject() && rcv.rawBits() > 0x10000) {
             Oop cls = memory_.classOf(rcv);
             if (cls.isObject() && cls.rawBits() > 0x10000 && memory_.slotCountOf(cls) > 6) {
