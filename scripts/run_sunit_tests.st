@@ -36,7 +36,7 @@ runDiagnostic: stream
 !SUnitRunner class methodsFor: 'running'!
 runAllTests
   "Run all tests and write results to /tmp/sunit_test_results.txt and /tmp/sunit_test_detail.txt"
-  | testClasses stream detail runNum totalP totalF totalE totalS totalT seen addOnce |
+  | testClasses stream detail runNum totalP totalF totalE totalS totalT seen addOnce batchStart batchEnd batchClasses |
   runNum := self nextRunNumber.
 
   testClasses := OrderedCollection new.
@@ -419,7 +419,6 @@ runAllTests
 
   "Read batch range from /tmp/sunit_batch.txt (format: 'startIndex endIndex').
    If file absent, run all classes."
-  | batchStart batchEnd batchClasses |
   batchStart := 1.
   batchEnd := testClasses size.
   [| batchFile parts |
@@ -431,14 +430,12 @@ runAllTests
   on: Error do: [:e | ].
   batchClasses := testClasses copyFrom: batchStart to: batchEnd.
 
-  "Open output files — summary is per-batch (overwritten), detail is appended"
+  "Open output files — both overwritten per batch.
+   Shell script concatenates detail files across batches."
   '/tmp/sunit_test_results.txt' asFileReference ensureDelete.
   stream := '/tmp/sunit_test_results.txt' asFileReference writeStream.
-  "Append to detail file so batches accumulate"
-  detail := '/tmp/sunit_test_detail.txt' asFileReference
-    binaryWriteStream.
-  detail setToEnd.
-  detail := ZnCharacterWriteStream on: detail encoding: 'utf8'.
+  '/tmp/sunit_test_detail.txt' asFileReference ensureDelete.
+  detail := '/tmp/sunit_test_detail.txt' asFileReference writeStream.
   totalP := 0. totalF := 0. totalE := 0. totalS := 0. totalT := 0.
 
   [
