@@ -3,7 +3,7 @@
 # GC compaction corruption kills the runner after ~150-200 classes,
 # so we split into batches of 150 classes each.
 
-BATCH_SIZE=150
+BATCH_SIZE=50
 TOTAL_CLASSES=580  # approximate
 PROJ_DIR="/Users/wohl/src/iospharo"
 VM="$PROJ_DIR/build/test_load_image"
