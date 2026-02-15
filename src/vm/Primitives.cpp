@@ -11611,7 +11611,7 @@ PrimitiveResult Interpreter::primitiveFileGetPosition(int argCount) {
     }
 
     pop();
-    push(Oop::fromSmallInteger(pos));
+    push(int64ToOop(memory_, static_cast<int64_t>(pos)));
     return PrimitiveResult::Success;
 }
 
@@ -11797,7 +11797,7 @@ PrimitiveResult Interpreter::primitiveFileSize(int argCount) {
     }
 
     pop();
-    push(Oop::fromSmallInteger(size));
+    push(int64ToOop(memory_, static_cast<int64_t>(size)));
     return PrimitiveResult::Success;
 }
 

@@ -35,13 +35,18 @@ while [ $start -le $TOTAL_CLASSES ]; do
     # Write batch range
     echo "$start $end" > /tmp/sunit_batch.txt
 
+    # Clean stale detail/results files BEFORE running
+    rm -f /tmp/sunit_test_detail.txt /tmp/sunit_test_results.txt
+
     # Run batch with 15-minute timeout
     echo "Running batch $batch..."
     timeout 900 $VM /tmp/Pharo.image > /tmp/test_stdout.log 2>/tmp/test_stderr_batch${batch}.log || true
 
-    # Save this batch's detail file
+    # Save this batch's detail file (only if new one was created)
     if [ -f /tmp/sunit_test_detail.txt ]; then
         tr '\r' '\n' < /tmp/sunit_test_detail.txt > /tmp/sunit_test_detail_batch${batch}.txt
+    else
+        echo "WARNING: No detail file for batch $batch (VM may have crashed before test runner started)"
     fi
 
     # Report batch results
