@@ -23928,12 +23928,19 @@ PrimitiveResult Interpreter::primitiveReaddir(int argCount) {
     if (nameBytes.isNil()) return PrimitiveResult::Failure;
     memcpy(nameBytes.asObjectPtr()->bytes(), entry->d_name, nameLen);
 
+    // GC safety: push nameBytes onto stack so GC can update it during next allocation
+    push(nameBytes);
+
     // Create 2-element Array: {filenameByteArray, nil}
     Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
-    if (arrayClass.isNil()) return PrimitiveResult::Failure;
+    if (arrayClass.isNil()) { pop(); return PrimitiveResult::Failure; }
     uint32_t arrayClassIndex = memory_.indexOfClass(arrayClass);
     Oop resultArray = memory_.allocateSlots(arrayClassIndex, 2, ObjectFormat::Indexable);
-    if (resultArray.isNil()) return PrimitiveResult::Failure;
+    if (resultArray.isNil()) { pop(); return PrimitiveResult::Failure; }
+
+    // Retrieve GC-safe nameBytes from stack
+    nameBytes = stackTop();
+    pop();
 
     memory_.storePointer(0, resultArray, nameBytes);
     memory_.storePointer(1, resultArray, memory_.nil());
