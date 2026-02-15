@@ -417,19 +417,38 @@ runAllTests
       (Smalltalk globals at: name ifAbsent: [nil])
         ifNotNil: [:cls | addOnce value: cls]].
 
-  "Open output files (delete first to ensure clean truncation)"
+  "Read batch range from /tmp/sunit_batch.txt (format: 'startIndex endIndex').
+   If file absent, run all classes."
+  | batchStart batchEnd batchClasses |
+  batchStart := 1.
+  batchEnd := testClasses size.
+  [| batchFile parts |
+   batchFile := '/tmp/sunit_batch.txt' asFileReference.
+   batchFile exists ifTrue: [
+     parts := batchFile contents trimBoth substrings.
+     batchStart := parts first asInteger.
+     batchEnd := parts second asInteger min: testClasses size]]
+  on: Error do: [:e | ].
+  batchClasses := testClasses copyFrom: batchStart to: batchEnd.
+
+  "Open output files — summary is per-batch (overwritten), detail is appended"
   '/tmp/sunit_test_results.txt' asFileReference ensureDelete.
-  '/tmp/sunit_test_detail.txt' asFileReference ensureDelete.
   stream := '/tmp/sunit_test_results.txt' asFileReference writeStream.
-  detail := '/tmp/sunit_test_detail.txt' asFileReference writeStream.
+  "Append to detail file so batches accumulate"
+  detail := '/tmp/sunit_test_detail.txt' asFileReference
+    binaryWriteStream.
+  detail setToEnd.
+  detail := ZnCharacterWriteStream on: detail encoding: 'utf8'.
   totalP := 0. totalF := 0. totalE := 0. totalS := 0. totalT := 0.
 
   [
-    stream nextPutAll: '=== SUnit Test Run #'; print: runNum; nextPutAll: ' ==='; cr; cr.
+    stream nextPutAll: '=== SUnit Test Run #'; print: runNum;
+      nextPutAll: ' (batch '; print: batchStart;
+      nextPutAll: '-'; print: batchEnd;
+      nextPutAll: ' of '; print: testClasses size;
+      nextPutAll: ') ==='; cr; cr.
     self runDiagnostic: stream.
-    detail nextPutAll: 'RUN	CLASS	TEST	RESULT	INFO'; cr.
-    detail flush.
-    testClasses do: [:tc | | counts |
+    batchClasses do: [:tc | | counts |
       [counts := self runTestClass: tc run: runNum on: stream detail: detail.
       totalP := totalP + (counts at: 1).
       totalF := totalF + (counts at: 2).
@@ -441,12 +460,14 @@ runAllTests
             nextPutAll: ': '; nextPutAll: ex class name;
             nextPutAll: ' - '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 200)); cr].
       stream flush. detail flush].
-    stream nextPutAll: '*** LOOP COMPLETED NORMALLY for '; print: testClasses size; nextPutAll: ' classes'; cr.
+    stream nextPutAll: '*** BATCH COMPLETED for '; print: batchClasses size;
+      nextPutAll: ' classes ('; print: batchStart; nextPutAll: '-'; print: batchEnd; nextPutAll: ')'; cr.
     stream flush.
     stream cr.
-    stream nextPutAll: '=== GRAND TOTAL ==='; cr.
+    stream nextPutAll: '=== BATCH TOTAL ==='; cr.
     stream nextPutAll: 'Run: #'; print: runNum; cr.
-    stream nextPutAll: 'Classes: '; print: testClasses size; cr.
+    stream nextPutAll: 'Batch: '; print: batchStart; nextPutAll: '-'; print: batchEnd; cr.
+    stream nextPutAll: 'Classes: '; print: batchClasses size; cr.
     stream nextPutAll: 'Pass: '; print: totalP; cr.
     stream nextPutAll: 'Fail: '; print: totalF; cr.
     stream nextPutAll: 'Error: '; print: totalE; cr.
@@ -454,7 +475,7 @@ runAllTests
     totalT > 0 ifTrue: [stream nextPutAll: 'Timeout: '; print: totalT; cr].
     stream nextPutAll: 'Total: '; print: totalP + totalF + totalE + totalS + totalT; cr.
     stream cr.
-    stream nextPutAll: '=== ALL TESTS COMPLETE ==='; cr.
+    stream nextPutAll: '=== BATCH COMPLETE ==='; cr.
     stream flush]
   ensure: [stream close. detail close].
   "exitSuccess goes through SessionManager shutdown which may not reach primitiveQuit.
