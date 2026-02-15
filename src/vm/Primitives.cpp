@@ -21843,12 +21843,10 @@ PrimitiveResult Interpreter::primitiveLoadUInt64FromBytes(int argCount) {
     uint64_t value;
     memcpy(&value, bytes + index, sizeof(value));
 
-    // Return SmallInteger if it fits, otherwise need LargeInteger (not implemented)
-    if (value <= static_cast<uint64_t>(Oop::smallIntegerMax())) {
-        primitiveSuccess(Oop::fromSmallInteger(static_cast<int64_t>(value)));
-        return PrimitiveResult::Success;
-    }
-    return PrimitiveResult::Failure;  // Would need LargeInteger
+    Oop result = uint64ToOop(memory_, value);
+    if (result.isNil()) return PrimitiveResult::Failure;
+    primitiveSuccess(result);
+    return PrimitiveResult::Success;
 }
 
 // Primitive 608: Load int64 from bytes
@@ -21870,12 +21868,10 @@ PrimitiveResult Interpreter::primitiveLoadInt64FromBytes(int argCount) {
     int64_t value;
     memcpy(&value, bytes + index, sizeof(value));
 
-    // Return SmallInteger if it fits
-    if (value >= Oop::smallIntegerMin() && value <= Oop::smallIntegerMax()) {
-        primitiveSuccess(Oop::fromSmallInteger(value));
-        return PrimitiveResult::Success;
-    }
-    return PrimitiveResult::Failure;  // Would need LargeInteger
+    Oop result = int64ToOop(memory_, value);
+    if (result.isNil()) return PrimitiveResult::Failure;
+    primitiveSuccess(result);
+    return PrimitiveResult::Success;
 }
 
 // Primitive 609: Load pointer from bytes
@@ -22605,11 +22601,10 @@ PrimitiveResult Interpreter::primitiveLoadUInt64FromExternalAddress(int argCount
     uint64_t value;
     memcpy(&value, ptr + index, sizeof(value));
 
-    if (value <= static_cast<uint64_t>(Oop::smallIntegerMax())) {
-        primitiveSuccess(Oop::fromSmallInteger(static_cast<int64_t>(value)));
-        return PrimitiveResult::Success;
-    }
-    return PrimitiveResult::Failure;
+    Oop result = uint64ToOop(memory_, value);
+    if (result.isNil()) return PrimitiveResult::Failure;
+    primitiveSuccess(result);
+    return PrimitiveResult::Success;
 }
 
 // Primitive 638: Load int64 from external address
@@ -22628,11 +22623,10 @@ PrimitiveResult Interpreter::primitiveLoadInt64FromExternalAddress(int argCount)
     int64_t value;
     memcpy(&value, ptr + index, sizeof(value));
 
-    if (value >= Oop::smallIntegerMin() && value <= Oop::smallIntegerMax()) {
-        primitiveSuccess(Oop::fromSmallInteger(value));
-        return PrimitiveResult::Success;
-    }
-    return PrimitiveResult::Failure;
+    Oop result = int64ToOop(memory_, value);
+    if (result.isNil()) return PrimitiveResult::Failure;
+    primitiveSuccess(result);
+    return PrimitiveResult::Success;
 }
 
 // Primitive 639: Load pointer from external address
@@ -23540,14 +23534,11 @@ PrimitiveResult Interpreter::primitiveBytesUint64Read(int argCount) {
     if (static_cast<size_t>(offset) + 8 > hdr->byteSize()) return PrimitiveResult::Failure;
     uint64_t val;
     memcpy(&val, hdr->bytes() + offset, sizeof(uint64_t));
-    // If fits in SmallInteger, return that; otherwise need LargePositiveInteger
-    if (val <= static_cast<uint64_t>(INT64_MAX)) {
-        popN(2);
-        push(Oop::fromSmallInteger(static_cast<int64_t>(val)));
-        return PrimitiveResult::Success;
-    }
-    // Too large for SmallInteger — fall through to Smalltalk
-    return PrimitiveResult::Failure;
+    Oop result = uint64ToOop(memory_, val);
+    if (result.isNil()) return PrimitiveResult::Failure;
+    popN(2);
+    push(result);
+    return PrimitiveResult::Success;
 }
 
 // Primitive 608: int64AtOffset: — read signed 64-bit from byte object
@@ -23557,13 +23548,11 @@ PrimitiveResult Interpreter::primitiveBytesInt64Read(int argCount) {
     if (static_cast<size_t>(offset) + 8 > hdr->byteSize()) return PrimitiveResult::Failure;
     int64_t val;
     memcpy(&val, hdr->bytes() + offset, sizeof(int64_t));
-    // Check SmallInteger range
-    if (val >= -4611686018427387904LL && val <= 4611686018427387903LL) {
-        popN(2);
-        push(Oop::fromSmallInteger(val));
-        return PrimitiveResult::Success;
-    }
-    return PrimitiveResult::Failure;
+    Oop result = int64ToOop(memory_, val);
+    if (result.isNil()) return PrimitiveResult::Failure;
+    popN(2);
+    push(result);
+    return PrimitiveResult::Success;
 }
 
 // Primitive 609: pointerAtOffset: — read pointer from byte object
@@ -24593,19 +24582,20 @@ PrimitiveResult Interpreter::primitiveFileAttribute(int argCount) {
 
     switch (attrNum) {
         case 1: result = Oop::nil(); break; // fileName - nil for non-symlinks
-        case 2: result = Oop::fromSmallInteger(static_cast<int64_t>(st.st_mode)); break;
-        case 3: result = Oop::fromSmallInteger(static_cast<int64_t>(st.st_ino)); break;
-        case 4: result = Oop::fromSmallInteger(static_cast<int64_t>(st.st_dev)); break;
-        case 5: result = Oop::fromSmallInteger(static_cast<int64_t>(st.st_nlink)); break;
-        case 6: result = Oop::fromSmallInteger(static_cast<int64_t>(st.st_uid)); break;
-        case 7: result = Oop::fromSmallInteger(static_cast<int64_t>(st.st_gid)); break;
-        case 8: result = Oop::fromSmallInteger(static_cast<int64_t>(st.st_size)); break;
-        case 9: result = Oop::fromSmallInteger(static_cast<int64_t>(st.st_atime) + squeakEpochDelta); break;
-        case 10: result = Oop::fromSmallInteger(static_cast<int64_t>(st.st_mtime) + squeakEpochDelta); break;
-        case 11: result = Oop::fromSmallInteger(static_cast<int64_t>(st.st_ctime) + squeakEpochDelta); break;
+        case 2: result = int64ToOop(memory_, static_cast<int64_t>(st.st_mode)); break;
+        case 3: result = int64ToOop(memory_, static_cast<int64_t>(st.st_ino)); break;
+        case 4: result = int64ToOop(memory_, static_cast<int64_t>(st.st_dev)); break;
+        case 5: result = int64ToOop(memory_, static_cast<int64_t>(st.st_nlink)); break;
+        case 6: result = int64ToOop(memory_, static_cast<int64_t>(st.st_uid)); break;
+        case 7: result = int64ToOop(memory_, static_cast<int64_t>(st.st_gid)); break;
+        case 8: result = int64ToOop(memory_, static_cast<int64_t>(st.st_size)); break;
+        case 9: result = int64ToOop(memory_, static_cast<int64_t>(st.st_atime) + squeakEpochDelta); break;
+        case 10: result = int64ToOop(memory_, static_cast<int64_t>(st.st_mtime) + squeakEpochDelta); break;
+        case 11: result = int64ToOop(memory_, static_cast<int64_t>(st.st_ctime) + squeakEpochDelta); break;
         case 12: result = Oop::nil(); break; // creationDate - not available on Unix
         default: return PrimitiveResult::Failure;
     }
+    if (result.isNil() && attrNum != 1 && attrNum != 12) return PrimitiveResult::Failure;
 
     popN(3);
     push(result);
