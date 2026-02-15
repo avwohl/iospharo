@@ -4888,88 +4888,102 @@ void Interpreter::returnFromMethod() {
         }
     }
 
+    // Determine if we're executing in a CompiledBlock (vs CompiledMethod).
+    // For blocks, a failed NLR (home method not found) must send cannotReturn:.
+    // For methods, returnFromMethod() is just a regular return.
+    bool isCompiledBlock = false;
+    Oop homeMethodForCR = Oop::nil();
+    if (method_.isObject() && method_.rawBits() > 0x10000) {
+        ObjectHeader* mObj = method_.asObjectPtr();
+        if (mObj->isCompiledMethod()) {
+            Oop hdr = memory_.fetchPointer(0, method_);
+            if (hdr.isSmallInteger()) {
+                int numLits = hdr.asSmallInteger() & 0x7FFF;
+                if (numLits >= 1) {
+                    Oop enclosing = memory_.fetchPointer(numLits, method_);
+                    // Follow chain of enclosing blocks to find home CompiledMethod
+                    int chainDepth = 0;
+                    while (enclosing.isObject() && enclosing.rawBits() > 0x10000 && chainDepth < 20) {
+                        ObjectHeader* ecHdr = enclosing.asObjectPtr();
+                        if (!ecHdr->isCompiledMethod()) break;
+                        isCompiledBlock = true;
+                        Oop ecHeader = memory_.fetchPointer(0, enclosing);
+                        if (!ecHeader.isSmallInteger()) { homeMethodForCR = enclosing; break; }
+                        int ecNumLits = ecHeader.asSmallInteger() & 0x7FFF;
+                        if (ecNumLits < 1) { homeMethodForCR = enclosing; break; }
+                        Oop ecLastLit = memory_.fetchPointer(ecNumLits, enclosing);
+                        bool lastLitIsCode = false;
+                        if (ecLastLit.isObject() && ecLastLit.rawBits() > 0x10000) {
+                            lastLitIsCode = ecLastLit.asObjectPtr()->isCompiledMethod();
+                        }
+                        if (!lastLitIsCode) { homeMethodForCR = enclosing; break; }
+                        enclosing = ecLastLit;
+                        chainDepth++;
+                    }
+                    if (homeMethodForCR.isNil() && enclosing.isObject() && enclosing.rawBits() > 0x10000) {
+                        if (enclosing.asObjectPtr()->isCompiledMethod()) {
+                            isCompiledBlock = true;
+                            homeMethodForCR = enclosing;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // CONTEXT-BASED NLR: When frameDepth_ == 0 and we're in a CompiledBlock,
     // we need to use the context chain to find the home method and unwind to it.
     // This happens when exception handling (on:do:) caused context materialization.
-    {
-        Oop homeMethod = Oop::nil();
-        bool isCompiledBlock = false;
-
-        if (method_.isObject() && method_.rawBits() > 0x10000) {
-            ObjectHeader* mObj = method_.asObjectPtr();
-            if (mObj->isCompiledMethod()) {
-                Oop hdr = memory_.fetchPointer(0, method_);
-                if (hdr.isSmallInteger()) {
-                    int numLits = hdr.asSmallInteger() & 0x7FFF;
-                    if (numLits >= 1) {
-                        Oop enclosing = memory_.fetchPointer(numLits, method_);
-                        // Follow chain of enclosing blocks to find home CompiledMethod
-                        int chainDepth = 0;
-                        while (enclosing.isObject() && enclosing.rawBits() > 0x10000 && chainDepth < 20) {
-                            ObjectHeader* ecHdr = enclosing.asObjectPtr();
-                            if (!ecHdr->isCompiledMethod()) break;
-                            isCompiledBlock = true;
-                            Oop ecHeader = memory_.fetchPointer(0, enclosing);
-                            if (!ecHeader.isSmallInteger()) { homeMethod = enclosing; break; }
-                            int ecNumLits = ecHeader.asSmallInteger() & 0x7FFF;
-                            if (ecNumLits < 1) { homeMethod = enclosing; break; }
-                            Oop ecLastLit = memory_.fetchPointer(ecNumLits, enclosing);
-                            bool isBlock = false;
-                            if (ecLastLit.isObject() && ecLastLit.rawBits() > 0x10000) {
-                                isBlock = ecLastLit.asObjectPtr()->isCompiledMethod();
-                            }
-                            if (!isBlock) { homeMethod = enclosing; break; }
-                            enclosing = ecLastLit;
-                            chainDepth++;
-                        }
-                        if (homeMethod.isNil() && enclosing.isObject() && enclosing.rawBits() > 0x10000) {
-                            if (enclosing.asObjectPtr()->isCompiledMethod()) {
-                                isCompiledBlock = true;
-                                homeMethod = enclosing;
-                            }
-                        }
-                    }
-                }
+    if (isCompiledBlock && frameDepth_ == 0 && homeMethodForCR.isObject() && !homeMethodForCR.isNil()) {
+        // Walk up the context chain to find the context executing homeMethod
+        Oop ctx = activeContext_;
+        Oop homeCtx = Oop::nil();
+        int depth = 0;
+        while (ctx.isObject() && !ctx.isNil() && depth < 200) {
+            Oop ctxMethod = memory_.fetchPointer(3, ctx);
+            if (ctxMethod.rawBits() == homeMethodForCR.rawBits()) {
+                homeCtx = ctx;
+                break;
             }
+            ctx = memory_.fetchPointer(0, ctx);
+            depth++;
         }
 
-        // If we're in a CompiledBlock and frameDepth_ == 0, do context-based NLR
-        if (isCompiledBlock && frameDepth_ == 0 && homeMethod.isObject() && !homeMethod.isNil()) {
-            // Walk up the context chain to find the context executing homeMethod
-            Oop ctx = activeContext_;
-            Oop homeCtx = Oop::nil();
-            int depth = 0;
-            while (ctx.isObject() && !ctx.isNil() && depth < 200) {
-                Oop ctxMethod = memory_.fetchPointer(3, ctx);
-                if (ctxMethod.rawBits() == homeMethod.rawBits()) {
-                    homeCtx = ctx;
-                    break;
-                }
-                ctx = memory_.fetchPointer(0, ctx);
-                depth++;
+        if (homeCtx.isObject() && !homeCtx.isNil()) {
+            // Check for unwind (ensure:) contexts between here and home
+            if (handleContextNLRUnwind(value, activeContext_, homeCtx)) {
+                return;
             }
 
-            if (homeCtx.isObject() && !homeCtx.isNil()) {
-                // Check for unwind (ensure:) contexts between here and home
-                if (handleContextNLRUnwind(value, activeContext_, homeCtx)) {
-                    return;
+            // No unwind contexts - return FROM the home context
+            Oop sender = memory_.fetchPointer(0, homeCtx);
+            if (sender.isObject() && !sender.isNil()) {
+                Oop stackpOop = memory_.fetchPointer(2, sender);
+                if (stackpOop.isSmallInteger()) {
+                    int stackp = stackpOop.asSmallInteger();
+                    stackp++;
+                    memory_.storePointer(2, sender, Oop::fromSmallInteger(stackp));
+                    memory_.storePointer(5 + stackp, sender, value);
                 }
-
-                // No unwind contexts - return FROM the home context
-                Oop sender = memory_.fetchPointer(0, homeCtx);
-                if (sender.isObject() && !sender.isNil()) {
-                    Oop stackpOop = memory_.fetchPointer(2, sender);
-                    if (stackpOop.isSmallInteger()) {
-                        int stackp = stackpOop.asSmallInteger();
-                        stackp++;
-                        memory_.storePointer(2, sender, Oop::fromSmallInteger(stackp));
-                        memory_.storePointer(5 + stackp, sender, value);
-                    }
-                    executeFromContext(sender);
-                    return;
-                }
+                executeFromContext(sender);
+                return;
             }
         }
+    }
+
+    // If we're in a CompiledBlock and couldn't find the home method in the call chain,
+    // the home method has already returned. Send cannotReturn: per Pharo spec.
+    if (isCompiledBlock) {
+        // Materialize frames if needed so cannotReturn: has proper context
+        if (frameDepth_ > 0) {
+            Oop topCtx = materializeFrameStack();
+            activeContext_ = topCtx;
+            frameDepth_ = 0;
+        }
+        push(activeContext_);  // receiver: the context that cannot return
+        push(value);           // arg: the value that was being returned
+        sendSelector(selectors_.cannotReturn, 1);
+        return;
     }
 
     returnValue(value);
@@ -5106,6 +5120,11 @@ void Interpreter::returnFromBlock() {
     // Home method not found in context chain - send cannotReturn: to the active context
     // This happens when a block tries to return from a method that has already returned.
     // Per Pharo spec, Context >> cannotReturn: signals BlockCannotReturn.
+    if (frameDepth_ > 0) {
+        Oop topCtx = materializeFrameStack();
+        activeContext_ = topCtx;
+        frameDepth_ = 0;
+    }
     push(activeContext_);  // receiver: the context that cannot return
     push(value);           // arg: the value that was being returned
     sendSelector(selectors_.cannotReturn, 1);
