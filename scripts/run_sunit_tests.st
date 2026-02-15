@@ -504,12 +504,11 @@ runTestClass: testClass run: runNum on: s detail: d
    These acquire compilation/class mutation mutexes, then timeout-suspend holds the
    lock forever. Subsequent compilation attempts deadlock, GC under pressure corrupts
    process priority fields, putToSleep() aborts on non-SmallInteger priority."
-  (#(SlotBasicTest SlotMigrationTest SlotErrorsTest SlotIntegrationTest
-     SlotAnnouncementsTest SlotClassVariableTest SlotClassBuilderTest
+  (#(SlotAnnouncementsTest SlotClassBuilderTest
      SlotEnvironmentTest SlotExampleMovieAndPersonTest SlotSilentTest
-     SlotTest SlotMethodRecompilationTest SlotTraitsTest
+     SlotMethodRecompilationTest
      SlotLayoutEqualityTest SlotLayoutExtensionTest
-     TraitTest TraitCompositionTest ClassTraitTest MOPTraitTest
+     TraitCompositionTest ClassTraitTest MOPTraitTest
      TraitPureBehaviorTest TraitPrecedenceCompositionTest
      TraitWithAliasTest TraitWithConflictsTest TraitChangesTest
      TraitMethodDescriptionTest TraitOverloadingOfMethodsInTraitedClassTest
