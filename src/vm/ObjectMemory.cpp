@@ -1990,6 +1990,12 @@ Oop ObjectMemory::objectAfter(Oop current) {
 
     ObjectHeader* header = current.asObjectPtr();
     uint8_t* ptr = reinterpret_cast<uint8_t*>(header);
+    // For overflow objects, the allocation starts 8 bytes before the header
+    // (the overflow word precedes the main header). totalSize() includes the
+    // overflow word, so we must back up ptr to the allocation start.
+    if (header->hasOverflowSlots()) {
+        ptr -= sizeof(uint64_t);
+    }
     size_t size = header->totalSize();
     uint8_t* next = ptr + size;
 

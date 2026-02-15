@@ -8070,6 +8070,10 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                             rcvClass = std::string((char*)nh->bytes(), nh->byteSize()) + " class";
                     }
                 }
+                // Still unknown? Show class index for debugging
+                if (rcvClass == "?") {
+                    rcvClass = "?(classIdx=" + std::to_string(rcv.asObjectPtr()->classIndex()) + ")";
+                }
             }
         }
         // Also show the calling method
