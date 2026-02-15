@@ -2754,14 +2754,9 @@ bool Interpreter::step() {
                             vmTimeoutCount, (long long)elapsed, prio,
                             (unsigned long long)g_stepNum, frameDepth_, g_lastSelName);
                     fflush(stderr);
-                    // Don't terminate the idle process — it's the last process
-                    // and killing it would stop the VM. Just log and continue.
-                    // Also cap terminations at 5 to avoid killing ALL processes.
-                    if (prio > 10 && vmTimeoutCount <= 5) {
-                        fprintf(stderr, "[VM-TIMEOUT #%d] terminating pri=%d process\n",
-                                vmTimeoutCount, prio);
-                        terminateAndSwitchProcess();
-                    }
+                    // Don't terminate processes — the Smalltalk test runner
+                    // handles its own timeouts via spin-wait. VM-level
+                    // termination kills the test runner itself.
                     lastHighPriTime = std::chrono::steady_clock::now();
                     return running_;
                 }
