@@ -3587,29 +3587,11 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 extA_ = 0;
                 extB_ = 0;
                 Oop value = pop();
-                bool isT = isTrue(value);
-
-                if constexpr (ENABLE_DEBUG_LOGGING) {
-                    static int eeCount = 0;
-                    static FILE* jumpLog = nullptr;
-                    if (!jumpLog) jumpLog = nullptr;
-                    bool isF = isFalse(value);
-                    eeCount++;
-                    if (jumpLog && eeCount <= 200) {
-                        fprintf(jumpLog, "[JIT #%d] value=0x%llx isTrue=%d isFalse=%d offset=%d %s\n",
-                                eeCount, (unsigned long long)value.rawBits(),
-                                isT, isF, offset, isT ? "JUMP" : "no-jump");
-                        fflush(jumpLog);
-                    }
-                }
-
-                if (false && offset < 0 && g_stepNum >= 10000 && g_stepNum <= 25000) {
-                    static FILE* bjLog = nullptr;
-                    if (!bjLog) bjLog = nullptr;
-                    if (bjLog) { fprintf(bjLog, "[BJ #%llu] 0xEE offset=%d isT=%d\n", g_stepNum, offset, isT); fflush(bjLog); }
-                }
-                if (isT) {
+                if (isTrue(value)) {
                     instructionPointer_ += offset;
+                } else if (!isFalse(value)) {
+                    push(value);
+                    sendMustBeBoolean(value);
                 }
                 break;
             }
@@ -3621,30 +3603,11 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 extA_ = 0;
                 extB_ = 0;
                 Oop value = pop();
-                bool isT = isTrue(value);
-                bool willJump = !isT;
-
-                if constexpr (ENABLE_DEBUG_LOGGING) {
-                    static int efCount = 0;
-                    static FILE* jumpLog = nullptr;
-                    if (!jumpLog) jumpLog = nullptr;
-                    bool isF = isFalse(value);
-                    efCount++;
-                    if (jumpLog && efCount <= 200) {
-                        fprintf(jumpLog, "[JIF #%d] value=0x%llx isTrue=%d isFalse=%d offset=%d %s\n",
-                                efCount, (unsigned long long)value.rawBits(),
-                                isT, isF, offset, willJump ? "JUMP" : "no-jump");
-                        fflush(jumpLog);
-                    }
-                }
-
-                if (false && offset < 0 && g_stepNum >= 10000 && g_stepNum <= 25000) {
-                    static FILE* bjLog = nullptr;
-                    if (!bjLog) bjLog = nullptr;
-                    if (bjLog) { fprintf(bjLog, "[BJ #%llu] 0xEF offset=%d willJump=%d\n", g_stepNum, offset, willJump); fflush(bjLog); }
-                }
-                if (willJump) {
+                if (isFalse(value)) {
                     instructionPointer_ += offset;
+                } else if (!isTrue(value)) {
+                    push(value);
+                    sendMustBeBoolean(value);
                 }
                 break;
             }
