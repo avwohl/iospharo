@@ -21,449 +21,16 @@ nextRunNumber
 
 !SUnitRunner class methodsFor: 'running'!
 runDiagnostic: stream
-  "Exception handling diagnostic - tests forked process exception chains"
-  stream nextPutAll: '=== EXCEPTION DIAGNOSTICS ==='; cr. stream flush.
-  "Test 1: ZeroDivide handler (no fork)"
-  [| x |
-   x := false.
-   [ 1/0 ] on: ZeroDivide do: [:e | x := true].
-   stream nextPutAll: 'T1 ZeroDivide (no fork): '; nextPutAll: x printString; cr. stream flush]
-  on: Error do: [:e |
-   stream nextPutAll: 'T1 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
-  "Test 2: UnhandledError in same process (with pass)"
-  [| x |
-   x := false.
-   [[ 1/0 ] on: UnhandledError do: [:e | x := true]] on: ZeroDivide do: [:e | e pass].
-   stream nextPutAll: 'T2 UnhandledError (no fork): '; nextPutAll: x printString; cr. stream flush]
-  on: Error do: [:e |
-   stream nextPutAll: 'T2 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
-  "Test 3: Simple fork"
+  "Quick sanity check - verify basic forking and exception handling work"
+  stream nextPutAll: '=== DIAGNOSTICS ==='; cr. stream flush.
   [| sem done |
    sem := Semaphore new. done := false.
-   [done := true. sem signal] fork.
-   (sem waitTimeoutSeconds: 2) ifTrue: [stream nextPutAll: 'T3 Fork TIMEOUT'; cr]
-   ifFalse: [stream nextPutAll: 'T3 Fork OK: '; nextPutAll: done printString; cr]. stream flush]
-  on: Error do: [:e |
-   stream nextPutAll: 'T3 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
-  "Test 4: ZeroDivide in fork"
-  [| sem x |
-   sem := Semaphore new. x := false.
-   [[ 1/0 ] on: ZeroDivide do: [:e | x := true]. sem signal] fork.
-   (sem waitTimeoutSeconds: 2) ifTrue: [stream nextPutAll: 'T4 Fork+ZeroDivide TIMEOUT'; cr]
-   ifFalse: [stream nextPutAll: 'T4 Fork+ZeroDivide OK: '; nextPutAll: x printString; cr]. stream flush]
-  on: Error do: [:e |
-   stream nextPutAll: 'T4 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
-  "Test 5: UnhandledError in fork (THE failing case)"
-  [| sem x |
-   sem := Semaphore new. x := false.
-   [[ 1/0 ] on: UnhandledError do: [:e | x := true]. sem signal] fork.
-   (sem waitTimeoutSeconds: 2) ifTrue: [stream nextPutAll: 'T5 Fork+UnhandledError TIMEOUT'; cr]
-   ifFalse: [stream nextPutAll: 'T5 Fork+UnhandledError OK: '; nextPutAll: x printString; cr]. stream flush]
-  on: Error do: [:e |
-   stream nextPutAll: 'T5 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
-  "Test 6: Error handler in fork"
-  [| sem x |
-   sem := Semaphore new. x := false.
-   [[ 1/0 ] on: Error do: [:e | x := true]. sem signal] fork.
-   (sem waitTimeoutSeconds: 2) ifTrue: [stream nextPutAll: 'T6 Fork+Error TIMEOUT'; cr]
-   ifFalse: [stream nextPutAll: 'T6 Fork+Error OK: '; nextPutAll: x printString; cr]. stream flush]
-  on: Error do: [:e |
-   stream nextPutAll: 'T6 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
-  "Test 7: ensure in fork"
-  [| sem ensured |
-   sem := Semaphore new. ensured := false.
-   [[1 + 1] ensure: [ensured := true. sem signal]] fork.
-   (sem waitTimeoutSeconds: 2) ifTrue: [stream nextPutAll: 'T7 Fork+ensure TIMEOUT'; cr]
-   ifFalse: [stream nextPutAll: 'T7 Fork+ensure OK: '; nextPutAll: ensured printString; cr]. stream flush]
-  on: Error do: [:e |
-   stream nextPutAll: 'T7 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
-  "Test 8: runWithNoHandlers pattern"
-  [| synchSemaphore result |
-   synchSemaphore := Semaphore new.
-   [result := [[ 1/0 ] on: UnhandledError do: [:ue | ue exception]]
-     ensure: [synchSemaphore signal]] forkNamed: 'Test process'.
-   (synchSemaphore waitTimeoutSeconds: 2) ifTrue: [stream nextPutAll: 'T8 runWithNoHandlers TIMEOUT'; cr]
-   ifFalse: [stream nextPutAll: 'T8 runWithNoHandlers OK: '; nextPutAll: result printString; cr]. stream flush]
-  on: Error do: [:e |
-   stream nextPutAll: 'T8 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
-  "Test 9: forkAt:80 + inner fork with Semaphore>>wait (no timeout machinery)"
-  [| outerSem outerResult |
-   outerSem := Semaphore new.
-   outerResult := 'not set'.
-   [[| innerSem executed |
-     innerSem := Semaphore new.
-     executed := false.
-     [executed := true. innerSem signal] fork.
-     innerSem wait. "Direct wait - no timeout mechanism"
-     outerResult := 'OK executed=', executed printString.
-     outerSem signal]
-   on: Error do: [:e |
-     outerResult := 'ERROR: ', e class name, ' - ', e messageText.
-     outerSem signal]] forkAt: 80.
-   (outerSem waitTimeoutSeconds: 5) ifTrue: [
-     stream nextPutAll: 'T9 ForkAt80+wait OUTER_TIMEOUT'; cr]
-   ifFalse: [
-     stream nextPutAll: 'T9 ForkAt80+wait: '; nextPutAll: outerResult; cr].
+   [[ 1/0 ] on: ZeroDivide do: [:e | done := true]. sem signal] fork.
+   (sem waitTimeoutSeconds: 3) ifTrue: [stream nextPutAll: 'DIAG: fork+exception TIMEOUT'; cr]
+   ifFalse: [stream nextPutAll: 'DIAG: fork+exception OK: '; nextPutAll: done printString; cr].
    stream flush]
   on: Error do: [:e |
-   stream nextPutAll: 'T9 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
-  "Test 10: forkAt:80 + inner fork with waitTimeoutSeconds: (complex machinery)"
-  [| outerSem outerResult |
-   outerSem := Semaphore new.
-   outerResult := 'not set'.
-   [[| innerSem executed |
-     innerSem := Semaphore new.
-     executed := false.
-     [executed := true. innerSem signal] fork.
-     (innerSem waitTimeoutSeconds: 2) ifTrue: [outerResult := 'INNER_TIMEOUT']
-     ifFalse: [outerResult := 'OK executed=', executed printString].
-     outerSem signal]
-   on: Error do: [:e |
-     outerResult := 'ERROR: ', e class name, ' - ', e messageText.
-     outerSem signal]] forkAt: 80.
-   (outerSem waitTimeoutSeconds: 5) ifTrue: [
-     stream nextPutAll: 'T10 ForkAt80+waitTimeout OUTER_TIMEOUT'; cr]
-   ifFalse: [
-     stream nextPutAll: 'T10 ForkAt80+waitTimeout: '; nextPutAll: outerResult; cr].
-   stream flush]
-  on: Error do: [:e |
-   stream nextPutAll: 'T10 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
-  "Test 11: forkAt:80 with pre-signaled semaphore (no scheduling needed)"
-  [| outerSem outerResult |
-   outerSem := Semaphore new.
-   outerResult := 'not set'.
-   [[| innerSem |
-     innerSem := Semaphore new.
-     innerSem signal. "Pre-signal"
-     innerSem wait. "Should return immediately"
-     outerResult := 'OK (pre-signaled)'.
-     outerSem signal]
-   on: Error do: [:e |
-     outerResult := 'ERROR: ', e class name, ' - ', e messageText.
-     outerSem signal]] forkAt: 80.
-   (outerSem waitTimeoutSeconds: 5) ifTrue: [
-     stream nextPutAll: 'T11 ForkAt80+preSignaled OUTER_TIMEOUT'; cr]
-   ifFalse: [
-     stream nextPutAll: 'T11 ForkAt80+preSignaled: '; nextPutAll: outerResult; cr].
-   stream flush]
-  on: Error do: [:e |
-   stream nextPutAll: 'T11 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
-  "Test 12: ExceptionTester simpleEnsureTestWithUparrow (the actual failing test)"
-  [| tester result |
-   tester := ExceptionTester new.
-   result := tester runTest: #simpleEnsureTestWithUparrow.
-   stream nextPutAll: 'T12 ExceptionTester suiteLog: '; nextPutAll: result printString; cr.
-   stream nextPutAll: 'T12 ExceptionTester log: '; nextPutAll: tester log printString; cr.
-   stream nextPutAll: 'T12 Expected: '; nextPutAll: tester simpleEnsureTestWithUparrowResults printString; cr.
-   stream flush]
-  on: Error do: [:e |
-   stream nextPutAll: 'T12 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
-  "Test 13: simple ensure without NLR (ensure block should fire)"
-  [| ensuredRan result |
-   ensuredRan := false.
-   result := [42] ensure: [ensuredRan := true].
-   stream nextPutAll: 'T13 SimpleEnsure: result='; nextPutAll: result printString;
-     nextPutAll: ' ensured='; nextPutAll: ensuredRan printString; cr.
-   stream flush]
-  on: Error do: [:e |
-   stream nextPutAll: 'T13 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
-  "Test 14: ensure with NLR from block (non-method ^nil)"
-  [| sem log |
-   sem := Semaphore new. log := OrderedCollection new.
-   [| r |
-    r := [log add: 'before'. true ifTrue: [^nil]. log add: 'after'] ensure: [log add: 'ensured'].
-    log add: ('result=', r printString).
-    sem signal] fork.
-   (sem waitTimeoutSeconds: 3) ifTrue: [
-     stream nextPutAll: 'T14 Fork+Ensure+NLR: TIMEOUT'; cr]
-   ifFalse: [
-     stream nextPutAll: 'T14 Fork+Ensure+NLR log: '; nextPutAll: log printString; cr.
-     (log includes: 'ensured')
-       ifTrue: [stream nextPutAll: 'T14 Fork+Ensure+NLR: OK (ensure fired)'; cr]
-       ifFalse: [stream nextPutAll: 'T14 Fork+Ensure+NLR: FAIL (ensure did not fire)'; cr]].
-   stream flush]
-  on: Error do: [:e |
-   stream nextPutAll: 'T14 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
-  "Test 15: RecursionStopper homeMethod diagnostic"
-  [| value log |
-   value := 0. log := OrderedCollection new.
-   RecursionStopper during: [
-     value := value + 1.
-     log add: ('outer-before: v=', value printString).
-     RecursionStopper during: [
-       value := value + 1.
-       log add: ('inner: v=', value printString).
-     ].
-     log add: ('outer-after: v=', value printString).
-   ].
-   stream nextPutAll: 'T15 RecursionStopper: log='; nextPutAll: log printString; cr.
-   stream nextPutAll: 'T15 value='; nextPutAll: value printString; cr.
-   (value = 1) ifTrue: [stream nextPutAll: 'T15 OK'; cr]
-     ifFalse: [stream nextPutAll: 'T15 FAIL (expected 1 got '; nextPutAll: value printString; nextPutAll: ')'; cr].
-   stream flush]
-  on: Error do: [:e |
-   stream nextPutAll: 'T15 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
-  "Test 16: thisContext sender homeMethod identity check"
-  [| method1 method2 |
-   method1 := thisContext method.
-   method2 := nil.
-   RecursionStopper during: [
-     "We're inside during:'s block. during: calls thisContext sender homeMethod."
-     "Let's manually check what homeMethod returns here"
-     method2 := thisContext home method.
-   ].
-   stream nextPutAll: 'T16 method1='; nextPutAll: method1 class name; cr.
-   stream nextPutAll: 'T16 method2='; nextPutAll: (method2 ifNil: ['nil'] ifNotNil: [method2 class name]); cr.
-   stream nextPutAll: 'T16 same='; nextPutAll: (method1 == method2) printString; cr.
-   stream flush]
-  on: Error do: [:e |
-   stream nextPutAll: 'T16 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
-  "Test 17: Direct tryPrimitive:withArgs: test for quick primitives"
-  [| aReceiver result isFailTok |
-   aReceiver := Rectangle origin: 0@0 corner: 100@200.
-   "Test P118 with quick primitive 264 (return instVar 0)"
-   result := aReceiver tryPrimitive: 264 withArgs: #().
-   isFailTok := (result class == Array and: [result size = 2]).
-   stream nextPutAll: 'T17a P118(264) result class: '; nextPutAll: result class name; cr.
-   stream nextPutAll: 'T17a P118(264) result: '; nextPutAll: result printString; cr.
-   stream nextPutAll: 'T17a P118(264) isFailToken: '; nextPutAll: isFailTok printString; cr.
-   (isFailTok not and: [result = (0@0)])
-     ifTrue: [stream nextPutAll: 'T17a OK'; cr]
-     ifFalse: [stream nextPutAll: 'T17a FAIL'; cr].
-   "Test P118 with quick primitive 256 (return self)"
-   result := aReceiver tryPrimitive: 256 withArgs: #().
-   isFailTok := (result class == Array and: [result size = 2]).
-   stream nextPutAll: 'T17b P118(256) result class: '; nextPutAll: result class name; cr.
-   stream nextPutAll: 'T17b P118(256) result: '; nextPutAll: result printString; cr.
-   stream nextPutAll: 'T17b P118(256) isFailToken: '; nextPutAll: isFailTok printString; cr.
-   (isFailTok not and: [result == aReceiver])
-     ifTrue: [stream nextPutAll: 'T17b OK'; cr]
-     ifFalse: [stream nextPutAll: 'T17b FAIL'; cr].
-   "Test P118 with quick primitive 257 (return true)"
-   result := aReceiver tryPrimitive: 257 withArgs: #().
-   stream nextPutAll: 'T17c P118(257) result: '; nextPutAll: result printString; cr.
-   "Test doPrimitive: directly"
-   [| ctx value |
-    ctx := Context sender: thisContext receiver: aReceiver method: (Rectangle >> #center) arguments: #().
-    ctx push: aReceiver. "push receiver for topLeft send"
-    value := ctx doPrimitive: 264 method: (Rectangle >> #topLeft) receiver: aReceiver args: #().
-    stream nextPutAll: 'T17d doPrimitive:264 class: '; nextPutAll: value class name; cr.
-    stream nextPutAll: 'T17d doPrimitive:264 result: '; nextPutAll: value printString; cr.
-    stream nextPutAll: 'T17d is same ctx: '; nextPutAll: (value == ctx) printString; cr.
-    (value == ctx)
-      ifTrue: [stream nextPutAll: 'T17d OK (doPrimitive returned context)'; cr]
-      ifFalse: [stream nextPutAll: 'T17d FAIL (doPrimitive returned something else)'; cr].
-   ] on: Error do: [:e |
-    stream nextPutAll: 'T17d ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr].
-   "Test the full stepping with quick methods - detailed trace"
-   [| ctx newCtx centerMethod topLeftMethod value ft1 ft2 |
-    centerMethod := Rectangle >> #center.
-    topLeftMethod := Rectangle >> #topLeft.
-    "Test isFailToken directly with detailed checks"
-    ft1 := Context primitiveFailToken.
-    ft2 := Context primitiveFailTokenFor: nil.
-    ctx := Context sender: thisContext receiver: aReceiver method: centerMethod arguments: #().
-    stream nextPutAll: 'T17e failToken class='; nextPutAll: ft1 class name; cr.
-    stream nextPutAll: 'T17e failToken size='; nextPutAll: ft1 size printString; cr.
-    stream nextPutAll: 'T17e failToken at1 class='; nextPutAll: (ft1 at: 1) class name; cr.
-    stream nextPutAll: 'T17e failToken at1 hash='; nextPutAll: (ft1 at: 1) identityHash printString; cr.
-    "Check objectClass:"
-    stream nextPutAll: 'T17e objectClass ft1='; nextPutAll: (ctx objectClass: ft1) name; cr.
-    stream nextPutAll: 'T17e objectClass==Array='; nextPutAll: ((ctx objectClass: ft1) == Array) printString; cr.
-    "Check PrimitiveFailToken from method literal"
-    stream nextPutAll: 'T17e PFT class='; nextPutAll: (Context classPool at: #PrimitiveFailToken) class name; cr.
-    stream nextPutAll: 'T17e PFT hash='; nextPutAll: (Context classPool at: #PrimitiveFailToken) identityHash printString; cr.
-    stream nextPutAll: 'T17e PFT==at1='; nextPutAll: ((Context classPool at: #PrimitiveFailToken) == (ft1 at: 1)) printString; cr.
-    "Check size = 2"
-    stream nextPutAll: 'T17e ft1 size=2? '; nextPutAll: (ft1 size = 2) printString; cr.
-    "Full isFailToken check"
-    stream nextPutAll: 'T17e isFailToken(ft1)='; nextPutAll: (ctx isFailToken: ft1) printString; cr.
-    stream nextPutAll: 'T17e isFailToken(ft2)='; nextPutAll: (ctx isFailToken: ft2) printString; cr.
-    "Test tryPrimitive:withArgs: directly"
-    value := aReceiver tryPrimitive: 264 withArgs: #().
-    stream nextPutAll: 'T17e direct tryPrim class='; nextPutAll: value class name; cr.
-    stream nextPutAll: 'T17e direct tryPrim value='; nextPutAll: value printString; cr.
-    stream nextPutAll: 'T17e isFailToken(direct)='; nextPutAll: (ctx isFailToken: value) printString; cr.
-    "Test doPrimitive:method:receiver:args: directly"
-    value := ctx doPrimitive: 264 method: topLeftMethod receiver: aReceiver args: #().
-    stream nextPutAll: 'T17e doPrim264 class='; nextPutAll: value class name; cr.
-    stream nextPutAll: 'T17e doPrim264 value='; nextPutAll: value printString; cr.
-    stream nextPutAll: 'T17e isFailToken(doPrim)='; nextPutAll: (ctx isFailToken: value) printString; cr.
-    "Test tryPrimitiveFor:receiver:args: directly"
-    value := ctx tryPrimitiveFor: topLeftMethod receiver: aReceiver args: #().
-    stream nextPutAll: 'T17e tryPrimFor class='; nextPutAll: value class name; cr.
-    stream nextPutAll: 'T17e tryPrimFor value='; nextPutAll: value printString; cr.
-    stream nextPutAll: 'T17e isFailToken(tryPrimFor)='; nextPutAll: (ctx isFailToken: value) printString; cr.
-    "Now test the full step"
-    ctx := Context sender: thisContext receiver: aReceiver method: centerMethod arguments: #().
-    ctx step. "push self"
-    newCtx := ctx step. "send topLeft"
-    stream nextPutAll: 'T17e step2 class='; nextPutAll: newCtx class name; cr.
-    stream nextPutAll: 'T17e step2 value='; nextPutAll: newCtx printString; cr.
-    stream nextPutAll: 'T17e isFailToken(step2)='; nextPutAll: (ctx isFailToken: newCtx) printString; cr.
-    (newCtx == ctx)
-      ifTrue: [stream nextPutAll: 'T17e OK (quick step)'; cr]
-      ifFalse: [stream nextPutAll: 'T17e FAIL: '; nextPutAll: newCtx class name; cr].
-    stream flush]
-  on: Error do: [:e |
-   stream nextPutAll: 'T17e ERR: '; nextPutAll: e class name; nextPutAll: ' '; nextPutAll: e messageText; cr. stream flush].
-   stream flush]
-  on: Error do: [:e |
-   stream nextPutAll: 'T17 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
-  "Test 19: Deprecation transform chain - detailed trace"
-  [| oldRW oldAT cm dep ruleStr ctxStr cosStr nodeStr xformStr |
-   ExampleForDeprecationTest compile: 'sendsDeprecatedMessageWithTransform ^ self deprecatedMessageWithTransform'.
-   cm := ExampleForDeprecationTest compiledMethodAt: #sendsDeprecatedMessageWithTransform.
-   stream nextPutAll: 'T19a compiled sendsOld: '; nextPutAll: (cm sendsSelector: #deprecatedMessageWithTransform) printString; cr.
-   oldRW := Deprecation raiseWarning.
-   oldAT := Deprecation activateTransformations.
-   Deprecation raiseWarning: false.
-   Deprecation activateTransformations: true.
-   dep := nil.
-   cosStr := 'not-set'. nodeStr := 'not-set'. xformStr := 'not-set'.
-   [ExampleForDeprecationTest new sendsDeprecatedMessageWithTransform]
-     on: Deprecation do: [:d |
-       dep := d.
-       [| cos |
-         cos := d contextOfSender.
-         cosStr := cos class name , ' >> ' , cos method selector.
-         [| sn |
-           sn := cos sourceNodeExecuted.
-           nodeStr := sn class name , ': ' , sn printString.
-         ] on: Error do: [:e2 | nodeStr := e2 class name , ' - ' , e2 messageText].
-       ] on: Error do: [:e2 | cosStr := e2 class name , ' - ' , e2 messageText].
-       [d transform. xformStr := 'OK'] on: Error do: [:e2 | xformStr := e2 class name , ' - ' , e2 messageText].
-       d resume].
-   stream nextPutAll: 'T19c caught: '; nextPutAll: (dep ifNil: ['NONE'] ifNotNil: [dep class name]); cr.
-   stream nextPutAll: 'T19c shouldTransform: '; nextPutAll: (dep ifNil: ['N/A'] ifNotNil: [dep shouldTransform printString]); cr.
-   stream nextPutAll: 'T19c contextOfSender: '; nextPutAll: cosStr; cr.
-   stream nextPutAll: 'T19c sourceNode: '; nextPutAll: nodeStr; cr.
-   stream nextPutAll: 'T19c transform: '; nextPutAll: xformStr; cr.
-   Deprecation raiseWarning: oldRW.
-   Deprecation activateTransformations: oldAT.
-   cm := ExampleForDeprecationTest compiledMethodAt: #sendsDeprecatedMessageWithTransform.
-   stream nextPutAll: 'T19b afterCall sendsOld: '; nextPutAll: (cm sendsSelector: #deprecatedMessageWithTransform) printString; cr.
-   stream nextPutAll: 'T19b afterCall sendsNew: '; nextPutAll: (cm sendsSelector: #newMessage) printString; cr.
-   ExampleForDeprecationTest removeSelector: #sendsDeprecatedMessageWithTransform.
-   stream flush]
-  on: Error do: [:e |
-   stream nextPutAll: 'T19 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
-  "Test 20a: Dump restart/jump source and bytecodes"
-  [| jumpMethod restartMethod |
-   jumpMethod := Context >> #jump.
-   restartMethod := Context >> #restart.
-   stream nextPutAll: 'T20a restart source: '; nextPutAll: restartMethod sourceCode; cr.
-   stream nextPutAll: 'T20a jump source: '; nextPutAll: jumpMethod sourceCode; cr.
-   stream nextPutAll: 'T20a jump bytecodes:'.
-   jumpMethod initialPC to: jumpMethod endPC do: [:i |
-     stream nextPutAll: ' '; nextPutAll: (jumpMethod at: i) printString].
-   stream cr.
-   stream nextPutAll: 'T20a jump initialPC: '; nextPutAll: jumpMethod initialPC printString; cr.
-   stream nextPutAll: 'T20a jump endPC: '; nextPutAll: jumpMethod endPC printString; cr.
-   stream nextPutAll: 'T20a jump numLiterals: '; nextPutAll: jumpMethod numLiterals printString; cr.
-   stream nextPutAll: 'T20a jump header: '; nextPutAll: (jumpMethod headerDescription); cr.
-   stream nextPutAll: 'T20a restart bytecodes:'.
-   restartMethod initialPC to: restartMethod endPC do: [:i |
-     stream nextPutAll: ' '; nextPutAll: (restartMethod at: i) printString].
-   stream cr.
-   stream flush]
-  on: Error do: [:e |
-   stream nextPutAll: 'T20a ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
-  "Test 20: Context restart - simple test matching SUnit testClosureRestart"
-  [| a firstTimeThrough result |
-   firstTimeThrough := true.
-   a := 10.
-   result := nil.
-   [ | b |
-     stream nextPutAll: 'T20-BLK b='; nextPutAll: b printString;
-       nextPutAll: ' a='; nextPutAll: a printString;
-       nextPutAll: ' ftt='; nextPutAll: firstTimeThrough printString; cr; flush.
-     b := a + 20.
-     stream nextPutAll: 'T20-BLK2 b='; nextPutAll: b printString; cr; flush.
-     firstTimeThrough ifTrue: [
-       firstTimeThrough := false.
-       stream nextPutAll: 'T20-RESTART'; cr; flush.
-       thisContext restart ].
-     stream nextPutAll: 'T20-PAST b='; nextPutAll: b printString; cr; flush.
-     result := b.
-   ] value.
-   stream nextPutAll: 'T20 result='; nextPutAll: result printString; cr.
-   stream nextPutAll: 'T20 a='; nextPutAll: a printString; cr.
-   (result = 30 and: [a = 10])
-     ifTrue: [stream nextPutAll: 'T20 OK'; cr]
-     ifFalse: [stream nextPutAll: 'T20 FAIL (expected result=30 a=10)'; cr].
-   stream flush]
-  on: Error do: [:e |
-   stream nextPutAll: 'T20 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
-  "Test 21: Primitive 76 (stackp:) and 211 (tempAt:put:) directly"
-  [| ctx meth |
-   meth := Context >> #privRefresh.
-   ctx := Context sender: nil receiver: nil method: meth arguments: #().
-   "Check tempAt:put: on the context"
-   ctx tempAt: 1 put: 42.
-   stream nextPutAll: 'T21 tempAt:1 after put:42 = '; nextPutAll: (ctx tempAt: 1) printString; cr.
-   ctx tempAt: 1 put: nil.
-   stream nextPutAll: 'T21 tempAt:1 after put:nil = '; nextPutAll: (ctx tempAt: 1) printString; cr.
-   stream flush]
-  on: Error do: [:e |
-   stream nextPutAll: 'T21 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
-  "Test 22: localMethods / localSelectors"
-  [| lm ls allSels |
-   lm := ExampleForTest1 localMethods.
-   ls := ExampleForTest1 localSelectors.
-   allSels := ExampleForTest1 methodDict keys.
-   stream nextPutAll: 'T22 methodDict keys: '; nextPutAll: allSels printString; cr.
-   stream nextPutAll: 'T22 localMethods: '; nextPutAll: (lm collect: [:m | m selector]) printString; cr.
-   stream nextPutAll: 'T22 localSelectors: '; nextPutAll: ls printString; cr.
-   lm do: [:m |
-     stream nextPutAll: 'T22 method '; nextPutAll: m selector; nextPutAll: ' protocol='.
-     stream nextPutAll: m protocolName printString.
-     stream nextPutAll: ' origin='; nextPutAll: m origin name.
-     stream nextPutAll: ' isExtension='; nextPutAll: m isExtension printString; cr].
-   stream flush]
-  on: Error do: [:e |
-   stream nextPutAll: 'T22 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
-  "Test 22c: Investigate isExtension / hasProperty: #extensionPackage"
-  [| m |
-   ExampleForTest1 compile: 'extensionMethod ' classified: '*AGeneratedPackageForTest'.
-   m := ExampleForTest1 >> #extensionMethod.
-   stream nextPutAll: 'T22c method class: '; nextPutAll: m class name; cr.
-   stream nextPutAll: 'T22c protocolName: '; nextPutAll: m protocolName printString; cr.
-   stream nextPutAll: 'T22c isExtension: '; nextPutAll: m isExtension printString; cr.
-   stream nextPutAll: 'T22c hasProperty extensionPackage: '; nextPutAll: (m hasProperty: #extensionPackage) printString; cr.
-   "Check if properties exist at all"
-   stream nextPutAll: 'T22c properties: '; nextPutAll: m properties printString; cr.
-   "Check package info"
-   stream nextPutAll: 'T22c package: '; nextPutAll: m package printString; cr.
-   stream nextPutAll: 'T22c methodClass package: '; nextPutAll: m methodClass package printString; cr.
-   "Check definedMethods vs localMethods"
-   stream nextPutAll: 'T22c localMethods: '; nextPutAll: (ExampleForTest1 localMethods collect: [:x | x selector]) printString; cr.
-   stream nextPutAll: 'T22c definedMethods: '; nextPutAll: (ExampleForTest1 definedMethods collect: [:x | x selector]) printString; cr.
-   "Cleanup"
-   [self packageOrganizer removePackage: 'AGeneratedPackageForTest'] on: Error do: [:e | ].
-   stream flush]
-  on: Error do: [:e |
-   stream nextPutAll: 'T22c ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
-  "Test 23: Weak reference + GC — replicate testReceiverWithGC exactly"
-  [| m result |
-   m := WeakMessageSend receiver: Object new selector: #isNil.
-   "Replicate what garbageCollectMost does"
-   Smalltalk garbageCollectMost.
-   result := m value.
-   stream nextPutAll: 'T23 result = '; nextPutAll: result printString; cr.
-   stream nextPutAll: 'T23 result isNil = '; nextPutAll: result isNil printString; cr.
-   stream nextPutAll: 'T23 receiver after GC = '; nextPutAll: m receiver printString; cr.
-   stream nextPutAll: 'T23 receiver isNil = '; nextPutAll: m receiver isNil printString; cr.
-   "Now test with fullGC instead"
-   m := WeakMessageSend receiver: Object new selector: #isNil.
-   Smalltalk garbageCollect.
-   result := m value.
-   stream nextPutAll: 'T23b after fullGC: result = '; nextPutAll: result printString; cr.
-   stream nextPutAll: 'T23b result isNil = '; nextPutAll: result isNil printString; cr.
-   stream nextPutAll: 'T23b receiver = '; nextPutAll: m receiver printString; cr.
-   stream flush]
-  on: Error do: [:e |
-   stream nextPutAll: 'T23 ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
+   stream nextPutAll: 'DIAG ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
   stream nextPutAll: '=== END DIAGNOSTICS ==='; cr; cr. stream flush! !
 
 !SUnitRunner class methodsFor: 'running'!
@@ -1022,33 +589,15 @@ runTestClass: testClass run: runNum on: s detail: d
 
 !SUnitRunner class methodsFor: 'running'!
 runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
-  "Run a single test with spin-wait timeout. Does NOT depend on Delay scheduler
-   (which dies from GC corruption around 1B steps). CRITICAL: Fork watchdog FIRST
-   so it's on the ready list before the test preempts.
+  "Run a single test with spin-wait timeout. NO Delay scheduler dependency.
+   Both test and runner at same priority; Processor yield rotates between them.
+   Time microsecondClockValue is a VM primitive that always works.
    Returns nil for pass, #fail, #error, #skip, or #timeout."
-  | sem result testDone testProcess |
-  sem := Semaphore new.
+  | result testDone testProcess startUsec timeoutUsec |
   result := nil. "nil means pass"
   testDone := false.
-  testProcess := nil.
 
-  "Fork BOTH at runner's priority (no preemption, both go on ready list).
-   Using fork (not forkAt:) ensures neither preempts before both are created."
-  [| startUsec timeoutUsec |
-    startUsec := Time microsecondClockValue.
-    timeoutUsec := seconds * 1000000.
-    [testDone not and: [
-      ((Time microsecondClockValue - startUsec) abs <= timeoutUsec)]]
-        whileTrue: [Processor yield].
-    testDone ifFalse: [
-      testProcess ifNotNil: [
-        [testProcess suspend] on: Error do: [:e |]].
-      result ifNil: [result := #timeout].
-      s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
-        nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; cr.
-      s flush.
-      sem signal]] fork.
-
+  "Fork test at runner's priority — no preemption, test goes on ready list"
   testProcess := [
     [[[[(testClass selector: sel) runCase]
       on: TestFailure do: [:ex |
@@ -1067,11 +616,21 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
         s nextPutAll: '  ERROR: '; nextPutAll: sel;
           nextPutAll: ' ('; nextPutAll: ex class name;
           nextPutAll: ': '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 100)); nextPutAll: ')'; cr].
-    testDone := true.
-    sem signal] fork.
+    testDone := true] fork.
 
-  "Runner blocks — both test and watchdog are on ready list at same priority"
-  sem wait.
+  "Spin-wait for completion or timeout — yield rotates same-priority processes"
+  startUsec := Time microsecondClockValue.
+  timeoutUsec := seconds * 1000000.
+  [testDone not and: [
+    ((Time microsecondClockValue - startUsec) abs <= timeoutUsec)]]
+      whileTrue: [Processor yield].
+
+  testDone ifFalse: [
+    [testProcess suspend] on: Error do: [:e |].
+    result ifNil: [result := #timeout].
+    s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
+      nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; cr.
+    s flush].
   ^ result! !
 
 !SUnitRunner class methodsFor: 'startup'!
