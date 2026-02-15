@@ -77,6 +77,7 @@ static int compareMagnitudes(const std::vector<uint8_t>& a, const std::vector<ui
 static Oop makeLargeInteger(ObjectMemory& memory, const std::vector<uint8_t>& magnitude, bool isNegative);
 static bool isLargeInteger(ObjectMemory& memory, Oop oop, bool& isNegative);
 static std::vector<uint8_t> extractMagnitude(ObjectMemory& memory, Oop largeInt);
+static int compareIntegers(ObjectMemory& memory, Oop a, Oop b);
 
 // External step counter from Interpreter.cpp for debugging
 extern uint64_t g_stepNum;
@@ -1330,6 +1331,18 @@ PrimitiveResult Interpreter::primitiveLessThan(int argCount) {
         return PrimitiveResult::Success;
     }
 
+    // Fallback: handle LargeIntegers of arbitrary size
+    {
+        std::vector<uint8_t> aMag, bMag;
+        bool aNeg, bNeg;
+        if (extractInteger(memory_, rcvr, aMag, aNeg) &&
+            extractInteger(memory_, arg, bMag, bNeg)) {
+            int cmp = compareIntegers(memory_, rcvr, arg);
+            primitiveSuccess(cmp < 0 ? memory_.trueObject() : memory_.falseObject());
+            return PrimitiveResult::Success;
+        }
+    }
+
     return PrimitiveResult::Failure;
 }
 
@@ -1351,6 +1364,18 @@ PrimitiveResult Interpreter::primitiveGreaterThan(int argCount) {
         bool result = (rcvrVal > argVal);
         primitiveSuccess(result ? memory_.trueObject() : memory_.falseObject());
         return PrimitiveResult::Success;
+    }
+
+    // Fallback: handle LargeIntegers of arbitrary size
+    {
+        std::vector<uint8_t> aMag, bMag;
+        bool aNeg, bNeg;
+        if (extractInteger(memory_, rcvr, aMag, aNeg) &&
+            extractInteger(memory_, arg, bMag, bNeg)) {
+            int cmp = compareIntegers(memory_, rcvr, arg);
+            primitiveSuccess(cmp > 0 ? memory_.trueObject() : memory_.falseObject());
+            return PrimitiveResult::Success;
+        }
     }
 
     return PrimitiveResult::Failure;
@@ -1391,6 +1416,18 @@ PrimitiveResult Interpreter::primitiveLessOrEqual(int argCount) {
         return PrimitiveResult::Success;
     }
 
+    // Fallback: handle LargeIntegers of arbitrary size
+    {
+        std::vector<uint8_t> aMag, bMag;
+        bool aNeg, bNeg;
+        if (extractInteger(memory_, rcvr, aMag, aNeg) &&
+            extractInteger(memory_, arg, bMag, bNeg)) {
+            int cmp = compareIntegers(memory_, rcvr, arg);
+            primitiveSuccess(cmp <= 0 ? memory_.trueObject() : memory_.falseObject());
+            return PrimitiveResult::Success;
+        }
+    }
+
     return PrimitiveResult::Failure;
 }
 
@@ -1412,6 +1449,18 @@ PrimitiveResult Interpreter::primitiveGreaterOrEqual(int argCount) {
         bool result = (rcvrVal >= argVal);
         primitiveSuccess(result ? memory_.trueObject() : memory_.falseObject());
         return PrimitiveResult::Success;
+    }
+
+    // Fallback: handle LargeIntegers of arbitrary size
+    {
+        std::vector<uint8_t> aMag, bMag;
+        bool aNeg, bNeg;
+        if (extractInteger(memory_, rcvr, aMag, aNeg) &&
+            extractInteger(memory_, arg, bMag, bNeg)) {
+            int cmp = compareIntegers(memory_, rcvr, arg);
+            primitiveSuccess(cmp >= 0 ? memory_.trueObject() : memory_.falseObject());
+            return PrimitiveResult::Success;
+        }
     }
 
     return PrimitiveResult::Failure;
@@ -1437,6 +1486,18 @@ PrimitiveResult Interpreter::primitiveEqual(int argCount) {
         return PrimitiveResult::Success;
     }
 
+    // Fallback: handle LargeIntegers of arbitrary size
+    {
+        std::vector<uint8_t> aMag, bMag;
+        bool aNeg, bNeg;
+        if (extractInteger(memory_, rcvr, aMag, aNeg) &&
+            extractInteger(memory_, arg, bMag, bNeg)) {
+            int cmp = compareIntegers(memory_, rcvr, arg);
+            primitiveSuccess(cmp == 0 ? memory_.trueObject() : memory_.falseObject());
+            return PrimitiveResult::Success;
+        }
+    }
+
     return PrimitiveResult::Failure;
 }
 
@@ -1458,6 +1519,18 @@ PrimitiveResult Interpreter::primitiveNotEqual(int argCount) {
         bool result = (rcvrVal != argVal);
         primitiveSuccess(result ? memory_.trueObject() : memory_.falseObject());
         return PrimitiveResult::Success;
+    }
+
+    // Fallback: handle LargeIntegers of arbitrary size
+    {
+        std::vector<uint8_t> aMag, bMag;
+        bool aNeg, bNeg;
+        if (extractInteger(memory_, rcvr, aMag, aNeg) &&
+            extractInteger(memory_, arg, bMag, bNeg)) {
+            int cmp = compareIntegers(memory_, rcvr, arg);
+            primitiveSuccess(cmp != 0 ? memory_.trueObject() : memory_.falseObject());
+            return PrimitiveResult::Success;
+        }
     }
 
     return PrimitiveResult::Failure;
@@ -3087,16 +3160,26 @@ PrimitiveResult Interpreter::primitiveShallowCopy(int argCount) {
 PrimitiveResult Interpreter::primitiveIdentityHash(int argCount) {
     Oop rcvr = stackValue(argCount);  // Receiver is under arguments
 
-    // Per official VM: fail if receiver is immediate
-    if (!rcvr.isObject()) {
+    uint32_t hash;
+    if (rcvr.isSmallInteger()) {
+        // SmallInteger identity hash: use the value itself (masked to positive range)
+        hash = static_cast<uint32_t>(rcvr.asSmallInteger()) & 0x3FFFFF;
+    } else if (rcvr.isCharacter()) {
+        // Character identity hash: use the character value
+        hash = static_cast<uint32_t>(rcvr.asCharacter()) & 0x3FFFFF;
+    } else if (rcvr.isSmallFloat()) {
+        // SmallFloat identity hash: hash the raw bits
+        uint64_t bits = rcvr.rawBits();
+        hash = static_cast<uint32_t>((bits >> 32) ^ bits) & 0x3FFFFF;
+    } else if (rcvr.isObject()) {
+        // Follow forwarding pointers (created by become:)
+        rcvr = memory_.followForwarded(rcvr);
+        // identityHashOf handles lazy hash generation and caching
+        hash = memory_.identityHashOf(rcvr);
+    } else {
         return PrimitiveResult::Failure;
     }
 
-    // Follow forwarding pointers (created by become:)
-    rcvr = memory_.followForwarded(rcvr);
-
-    // identityHashOf handles lazy hash generation and caching
-    uint32_t hash = memory_.identityHashOf(rcvr);
     popN(argCount + 1);
     push(Oop::fromSmallInteger(hash));
     return PrimitiveResult::Success;
