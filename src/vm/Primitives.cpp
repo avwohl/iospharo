@@ -7378,20 +7378,33 @@ PrimitiveResult Interpreter::primDigitDivNegative(int argCount) {
     // Don't negate zero
     if (quotientMag.size() == 1 && quotientMag[0] == 0) quotientNeg = false;
 
+    // GC safety: each makeLargeInteger/allocateSlots may trigger GC, invalidating
+    // previously allocated Oops on the C++ stack. Push intermediates onto the
+    // Smalltalk stack so GC can update them.
+
     Oop quotient = makeLargeInteger(memory_, quotientMag, quotientNeg);
     if (quotient.isNil()) return PrimitiveResult::Failure;
+    // Push quotient onto stack so GC can find it
+    push(quotient);
 
     // Remainder keeps the sign of the dividend (per Smalltalk semantics of digitDiv)
     bool remainderNeg = dividendNeg && !(remainderMag.size() == 1 && remainderMag[0] == 0);
     Oop remainder = makeLargeInteger(memory_, remainderMag, remainderNeg);
-    if (remainder.isNil()) return PrimitiveResult::Failure;
+    if (remainder.isNil()) { pop(); return PrimitiveResult::Failure; }
+    // Push remainder onto stack so GC can find it
+    push(remainder);
 
     // Allocate a 2-element Array
     Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
     uint32_t arrayClassIdx = memory_.indexOfClass(arrayClass);
     if (arrayClassIdx == 0) arrayClassIdx = memory_.registerClass(arrayClass);
     Oop resultArray = memory_.allocateSlots(arrayClassIdx, 2, ObjectFormat::Indexable);
-    if (resultArray.isNil()) return PrimitiveResult::Failure;
+    if (resultArray.isNil()) { popN(2); return PrimitiveResult::Failure; }
+
+    // Retrieve GC-safe values from stack
+    remainder = stackValue(0);
+    quotient = stackValue(1);
+    popN(2);  // pop the temp quotient and remainder
 
     memory_.storePointer(0, resultArray, quotient);
     memory_.storePointer(1, resultArray, remainder);
