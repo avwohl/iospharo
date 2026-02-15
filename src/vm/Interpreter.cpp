@@ -9511,13 +9511,17 @@ Oop Interpreter::materializeFrameStack() {
             ObjectHeader* ctxHdr = activeContext_.asObjectPtr();
             size_t ctxSlots = ctxHdr->slotCount();
 
-            // Sync temps: context → C++ (preserves Smalltalk modifications like tempNamed:put:)
-            for (int i = 0; i < numTemps && i < numItems && (ContextFixedFields + i) < static_cast<int>(ctxSlots); i++) {
-                *(framePointer_ + 1 + i) = memory_.fetchPointer(ContextFixedFields + i, activeContext_);
-            }
-
-            // Sync expression stack: C++ → context (interpreter manages the stack)
-            for (int i = numTemps; i < numItems && (ContextFixedFields + i) < static_cast<int>(ctxSlots); i++) {
+            // Sync ALL items (temps + expression stack): C++ → context.
+            // The C++ stack is the canonical source: bytecodes modify temps
+            // directly on the C++ stack without updating the context object.
+            // Previously this synced temps context→C++ "to preserve Smalltalk
+            // modifications like tempNamed:put:", but that was WRONG: it
+            // overwrote the C++ stack's latest values with the context's stale
+            // values from the last executeFromContext, destroying all temp
+            // modifications made by bytecodes since then. This caused process
+            // switching corruption (tests passing sequentially but failing
+            // when forked with Processor yield).
+            for (int i = 0; i < numItems && (ContextFixedFields + i) < static_cast<int>(ctxSlots); i++) {
                 Oop item = *(framePointer_ + 1 + i);
                 memory_.storePointer(ContextFixedFields + i, activeContext_, item);
             }
@@ -9567,13 +9571,13 @@ Oop Interpreter::materializeFrameStack() {
             static const int CtxFixed = 6;
 
             if (frame0.savedFP != nullptr) {
-                // Bidirectional sync for temps: context → C++ (preserves Smalltalk
-                // modifications like tempNamed:put:), expression stack: C++ → context.
+                // Sync temps: C++ stack → context (C++ stack is canonical).
+                // Same fix as the frameDepth_==0 path: bytecodes modify temps
+                // on the C++ stack, not on the context object.
                 size_t ctxSlots = acHdr->slotCount();
                 for (int t = 0; t < numTemps && t < 32; t++) {
                     if (static_cast<size_t>(CtxFixed + t) < ctxSlots) {
-                        Oop ctxVal = memory_.fetchPointer(CtxFixed + t, activeContext_);
-                        *(frame0.savedFP + 1 + t) = ctxVal;
+                        memory_.storePointer(CtxFixed + t, activeContext_, *(frame0.savedFP + 1 + t));
                     }
                     savedCount++;
                 }
