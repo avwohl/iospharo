@@ -15192,8 +15192,10 @@ PrimitiveResult Interpreter::primitiveBitReverse(int argCount) {
         value >>= 1;
     }
 
+    Oop res = uint64ToOop(memory_, result);
+    if (res.isNil()) return PrimitiveResult::Failure;
     pop();
-    push(Oop::fromSmallInteger(static_cast<intptr_t>(result & 0x7FFFFFFFFFFFF)));
+    push(res);
     return PrimitiveResult::Success;
 }
 
@@ -15235,8 +15237,10 @@ PrimitiveResult Interpreter::primitiveByteSwap64(int argCount) {
     // Byte swap using built-in
     uint64_t result = __builtin_bswap64(value);
 
+    Oop res = uint64ToOop(memory_, result);
+    if (res.isNil()) return PrimitiveResult::Failure;
     pop();
-    push(Oop::fromSmallInteger(static_cast<intptr_t>(result & 0x7FFFFFFFFFFFF)));
+    push(res);
     return PrimitiveResult::Success;
 }
 
