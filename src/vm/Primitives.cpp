@@ -6194,20 +6194,15 @@ static std::vector<uint8_t> subtractMagnitudes(const std::vector<uint8_t>& a, co
     return result;
 }
 
-// Helper: Multiply two magnitudes
-static std::vector<uint8_t> multiplyMagnitudes(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
-    if (a.empty() || b.empty() || (a.size() == 1 && a[0] == 0) || (b.size() == 1 && b[0] == 0)) {
-        return std::vector<uint8_t>(1, 0);
-    }
-
-    // +1 byte absorbs intermediate carry overflow; trailing-zero trim removes it
+// Helper: Schoolbook multiplication for small operands
+static std::vector<uint8_t> schoolbookMultiply(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
     std::vector<uint8_t> result(a.size() + b.size() + 1, 0);
 
     for (size_t i = 0; i < a.size(); i++) {
         uint32_t carry = 0;
         for (size_t j = 0; j < b.size() || carry; j++) {
             size_t pos = i + j;
-            if (pos >= result.size()) break;  // Safety bound
+            if (pos >= result.size()) break;
             uint32_t prod = result[pos] + carry;
             if (j < b.size()) {
                 prod += static_cast<uint32_t>(a[i]) * b[j];
@@ -6217,10 +6212,114 @@ static std::vector<uint8_t> multiplyMagnitudes(const std::vector<uint8_t>& a, co
         }
     }
 
-    // Remove trailing zeros
     while (result.size() > 1 && result.back() == 0) {
         result.pop_back();
     }
+    return result;
+}
+
+// Helper: Add two magnitudes (for Karatsuba)
+static std::vector<uint8_t> addMag(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
+    size_t maxLen = std::max(a.size(), b.size());
+    std::vector<uint8_t> result(maxLen + 1, 0);
+    uint32_t carry = 0;
+    for (size_t i = 0; i < maxLen || carry; i++) {
+        if (i >= result.size()) break;
+        uint32_t sum = carry;
+        if (i < a.size()) sum += a[i];
+        if (i < b.size()) sum += b[i];
+        result[i] = static_cast<uint8_t>(sum & 0xFF);
+        carry = sum >> 8;
+    }
+    while (result.size() > 1 && result.back() == 0) result.pop_back();
+    return result;
+}
+
+// Helper: Subtract magnitudes (a >= b required, for Karatsuba)
+static std::vector<uint8_t> subMag(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
+    std::vector<uint8_t> result(a.size(), 0);
+    int32_t borrow = 0;
+    for (size_t i = 0; i < a.size(); i++) {
+        int32_t diff = static_cast<int32_t>(a[i]) - borrow;
+        if (i < b.size()) diff -= b[i];
+        if (diff < 0) { diff += 256; borrow = 1; }
+        else { borrow = 0; }
+        result[i] = static_cast<uint8_t>(diff);
+    }
+    while (result.size() > 1 && result.back() == 0) result.pop_back();
+    return result;
+}
+
+// Karatsuba multiplication: O(n^1.585) instead of O(n^2)
+// Threshold: use schoolbook for small operands
+static constexpr size_t KARATSUBA_THRESHOLD = 32;
+
+static std::vector<uint8_t> multiplyMagnitudes(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
+    if (a.empty() || b.empty() || (a.size() == 1 && a[0] == 0) || (b.size() == 1 && b[0] == 0)) {
+        return std::vector<uint8_t>(1, 0);
+    }
+
+    // Use schoolbook for small operands
+    if (a.size() < KARATSUBA_THRESHOLD || b.size() < KARATSUBA_THRESHOLD) {
+        return schoolbookMultiply(a, b);
+    }
+
+    // Karatsuba: split each number at midpoint
+    // a = a1 * B^m + a0,  b = b1 * B^m + b0  where B=256, m=half
+    size_t m = std::min(a.size(), b.size()) / 2;
+
+    // Split a into a0 (low m bytes) and a1 (high bytes)
+    std::vector<uint8_t> a0(a.begin(), a.begin() + m);
+    std::vector<uint8_t> a1(a.begin() + m, a.end());
+    // Split b into b0 (low m bytes) and b1 (high bytes)
+    std::vector<uint8_t> b0(b.begin(), b.begin() + m);
+    std::vector<uint8_t> b1(b.begin() + m, b.end());
+
+    // Trim trailing zeros from halves
+    while (a0.size() > 1 && a0.back() == 0) a0.pop_back();
+    while (a1.size() > 1 && a1.back() == 0) a1.pop_back();
+    while (b0.size() > 1 && b0.back() == 0) b0.pop_back();
+    while (b1.size() > 1 && b1.back() == 0) b1.pop_back();
+
+    // Three recursive multiplications (instead of four)
+    std::vector<uint8_t> z0 = multiplyMagnitudes(a0, b0);           // a0 * b0
+    std::vector<uint8_t> z2 = multiplyMagnitudes(a1, b1);           // a1 * b1
+    std::vector<uint8_t> a0a1 = addMag(a0, a1);                    // a0 + a1
+    std::vector<uint8_t> b0b1 = addMag(b0, b1);                    // b0 + b1
+    std::vector<uint8_t> z1full = multiplyMagnitudes(a0a1, b0b1);   // (a0+a1)*(b0+b1)
+
+    // z1 = z1full - z2 - z0
+    std::vector<uint8_t> z1 = subMag(subMag(z1full, z2), z0);
+
+    // Result = z2 * B^(2m) + z1 * B^m + z0
+    // Shift z2 left by 2m bytes, z1 left by m bytes
+    std::vector<uint8_t> result = z0;
+    result.resize(std::max(result.size(), m + z1.size()), 0);
+    result.resize(std::max(result.size(), 2 * m + z2.size()), 0);
+
+    // Add z1 << m
+    uint32_t carry = 0;
+    for (size_t i = 0; i < z1.size() || carry; i++) {
+        size_t pos = m + i;
+        if (pos >= result.size()) result.push_back(0);
+        uint32_t sum = result[pos] + carry;
+        if (i < z1.size()) sum += z1[i];
+        result[pos] = static_cast<uint8_t>(sum & 0xFF);
+        carry = sum >> 8;
+    }
+
+    // Add z2 << 2m
+    carry = 0;
+    for (size_t i = 0; i < z2.size() || carry; i++) {
+        size_t pos = 2 * m + i;
+        if (pos >= result.size()) result.push_back(0);
+        uint32_t sum = result[pos] + carry;
+        if (i < z2.size()) sum += z2[i];
+        result[pos] = static_cast<uint8_t>(sum & 0xFF);
+        carry = sum >> 8;
+    }
+
+    while (result.size() > 1 && result.back() == 0) result.pop_back();
     return result;
 }
 
