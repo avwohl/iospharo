@@ -6214,7 +6214,22 @@ static void divideMagnitudes(const std::vector<uint8_t>& dividend, const std::ve
         return;
     }
 
-    // Simple long division algorithm (byte by byte)
+    // Fast path: single-byte divisor (covers dividing by 10, printing, etc.)
+    if (divisor.size() == 1) {
+        uint8_t d = divisor[0];
+        quotient.resize(dividend.size(), 0);
+        uint16_t rem = 0;
+        for (int i = static_cast<int>(dividend.size()) - 1; i >= 0; i--) {
+            rem = (rem << 8) | dividend[i];
+            quotient[i] = static_cast<uint8_t>(rem / d);
+            rem = rem % d;
+        }
+        remainder = { static_cast<uint8_t>(rem) };
+        while (quotient.size() > 1 && quotient.back() == 0) quotient.pop_back();
+        return;
+    }
+
+    // Multi-byte divisor: long division with trial quotient estimation
     remainder.clear();
     quotient.resize(dividend.size(), 0);
 
@@ -6227,11 +6242,48 @@ static void divideMagnitudes(const std::vector<uint8_t>& dividend, const std::ve
             remainder.pop_back();
         }
 
-        // Find how many times divisor fits into remainder
+        // Estimate quotient digit using top bytes
         uint8_t q = 0;
-        while (compareMagnitudes(remainder, divisor) >= 0) {
-            remainder = subtractMagnitudes(remainder, divisor);
-            q++;
+        if (compareMagnitudes(remainder, divisor) >= 0) {
+            if (remainder.size() > divisor.size()) {
+                // remainder has more bytes — estimate from top 2 bytes / top byte
+                uint16_t top = (static_cast<uint16_t>(remainder.back()) << 8);
+                if (remainder.size() >= 2) top |= remainder[remainder.size() - 2];
+                q = static_cast<uint8_t>(std::min<uint16_t>(255, top / divisor.back()));
+            } else {
+                // Same size — estimate from top bytes
+                q = remainder.back() / divisor.back();
+            }
+
+            // Multiply divisor by estimated q and check
+            if (q > 0) {
+                // Compute divisor * q
+                std::vector<uint8_t> product(divisor.size() + 1, 0);
+                uint16_t carry = 0;
+                for (size_t j = 0; j < divisor.size(); j++) {
+                    uint16_t v = static_cast<uint16_t>(divisor[j]) * q + carry;
+                    product[j] = v & 0xFF;
+                    carry = v >> 8;
+                }
+                product[divisor.size()] = static_cast<uint8_t>(carry);
+                while (product.size() > 1 && product.back() == 0) product.pop_back();
+
+                // Adjust q down if over-estimated
+                while (compareMagnitudes(product, remainder) > 0 && q > 0) {
+                    q--;
+                    product = subtractMagnitudes(product, divisor);
+                }
+
+                if (q > 0) {
+                    remainder = subtractMagnitudes(remainder, product);
+                }
+            }
+
+            // Handle any remaining (q was under-estimated by at most 1-2)
+            while (compareMagnitudes(remainder, divisor) >= 0) {
+                remainder = subtractMagnitudes(remainder, divisor);
+                q++;
+            }
         }
         quotient[i] = q;
     }
@@ -6849,7 +6901,55 @@ static std::vector<uint8_t> bitwiseXor(const std::vector<uint8_t>& a, const std:
     return result;
 }
 
-// Primitive 34: Bitwise AND
+// Helper: Convert magnitude + sign to two's complement byte representation
+// Positive: magnitude with a zero sign-extension byte
+// Negative: ~(magnitude - 1) with 0xFF sign-extension byte
+static std::vector<uint8_t> toTwosComplement(const std::vector<uint8_t>& magnitude, bool isNegative) {
+    if (magnitude.size() == 1 && magnitude[0] == 0) {
+        return {0};  // Zero is zero regardless of sign
+    }
+    if (!isNegative) {
+        auto result = magnitude;
+        result.push_back(0);  // sign extension
+        return result;
+    }
+    // Negative: Two's complement of n = ~(n - 1)
+    auto temp = magnitude;
+    // Subtract 1
+    for (size_t i = 0; i < temp.size(); i++) {
+        if (temp[i] > 0) { temp[i]--; break; }
+        temp[i] = 0xFF;  // borrow
+    }
+    // Invert all bits
+    for (size_t i = 0; i < temp.size(); i++) temp[i] = ~temp[i];
+    temp.push_back(0xFF);  // sign extension
+    return temp;
+}
+
+// Helper: Convert two's complement bytes back to magnitude + sign
+static void fromTwosComplement(const std::vector<uint8_t>& tc, std::vector<uint8_t>& magnitude, bool& isNegative) {
+    if (tc.empty() || (tc.back() & 0x80) == 0) {
+        // Positive
+        isNegative = false;
+        magnitude = tc.empty() ? std::vector<uint8_t>{0} : tc;
+        while (magnitude.size() > 1 && magnitude.back() == 0) magnitude.pop_back();
+        return;
+    }
+    // Negative: magnitude = ~tc + 1
+    isNegative = true;
+    magnitude = tc;
+    for (size_t i = 0; i < magnitude.size(); i++) magnitude[i] = ~magnitude[i];
+    uint16_t carry = 1;
+    for (size_t i = 0; i < magnitude.size() && carry; i++) {
+        uint16_t sum = magnitude[i] + carry;
+        magnitude[i] = sum & 0xFF;
+        carry = sum >> 8;
+    }
+    if (carry) magnitude.push_back(1);
+    while (magnitude.size() > 1 && magnitude.back() == 0) magnitude.pop_back();
+}
+
+// Primitive 34: Bitwise AND (with two's complement for negative integers)
 PrimitiveResult Interpreter::primitiveBitAndLargeIntegers(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
@@ -6862,28 +6962,41 @@ PrimitiveResult Interpreter::primitiveBitAndLargeIntegers(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // For simplicity, only handle positive integers for bitwise ops
-    // (Two's complement for negatives is complex)
-    if (aNeg || bNeg) {
-        return PrimitiveResult::Failure;
+    std::vector<uint8_t> resultMag;
+    bool resultNeg;
+
+    if (!aNeg && !bNeg) {
+        // Fast path: both positive
+        resultMag = bitwiseAnd(aMag, bMag);
+        resultNeg = false;
+    } else {
+        // Two's complement path for negative operands
+        auto aTc = toTwosComplement(aMag, aNeg);
+        auto bTc = toTwosComplement(bMag, bNeg);
+        size_t maxSize = std::max(aTc.size(), bTc.size());
+        uint8_t aExt = aNeg ? 0xFF : 0x00;
+        uint8_t bExt = bNeg ? 0xFF : 0x00;
+        while (aTc.size() < maxSize) aTc.push_back(aExt);
+        while (bTc.size() < maxSize) bTc.push_back(bExt);
+        std::vector<uint8_t> result(maxSize);
+        for (size_t i = 0; i < maxSize; i++) result[i] = aTc[i] & bTc[i];
+        fromTwosComplement(result, resultMag, resultNeg);
     }
 
-    std::vector<uint8_t> result = bitwiseAnd(aMag, bMag);
-
     Oop resultOop;
-    if (tryConvertToSmallInteger(result, false, resultOop)) {
+    if (tryConvertToSmallInteger(resultMag, resultNeg, resultOop)) {
         primitiveSuccess(resultOop);
         return PrimitiveResult::Success;
     }
 
-    resultOop = makeLargeInteger(memory_, result, false);
+    resultOop = makeLargeInteger(memory_, resultMag, resultNeg);
     if (resultOop.isNil()) return PrimitiveResult::Failure;
 
     primitiveSuccess(resultOop);
     return PrimitiveResult::Success;
 }
 
-// Primitive 35: Bitwise OR
+// Primitive 35: Bitwise OR (with two's complement for negative integers)
 PrimitiveResult Interpreter::primitiveBitOrLargeIntegers(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
@@ -6896,26 +7009,39 @@ PrimitiveResult Interpreter::primitiveBitOrLargeIntegers(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    if (aNeg || bNeg) {
-        return PrimitiveResult::Failure;
+    std::vector<uint8_t> resultMag;
+    bool resultNeg;
+
+    if (!aNeg && !bNeg) {
+        resultMag = bitwiseOr(aMag, bMag);
+        resultNeg = false;
+    } else {
+        auto aTc = toTwosComplement(aMag, aNeg);
+        auto bTc = toTwosComplement(bMag, bNeg);
+        size_t maxSize = std::max(aTc.size(), bTc.size());
+        uint8_t aExt = aNeg ? 0xFF : 0x00;
+        uint8_t bExt = bNeg ? 0xFF : 0x00;
+        while (aTc.size() < maxSize) aTc.push_back(aExt);
+        while (bTc.size() < maxSize) bTc.push_back(bExt);
+        std::vector<uint8_t> result(maxSize);
+        for (size_t i = 0; i < maxSize; i++) result[i] = aTc[i] | bTc[i];
+        fromTwosComplement(result, resultMag, resultNeg);
     }
 
-    std::vector<uint8_t> result = bitwiseOr(aMag, bMag);
-
     Oop resultOop;
-    if (tryConvertToSmallInteger(result, false, resultOop)) {
+    if (tryConvertToSmallInteger(resultMag, resultNeg, resultOop)) {
         primitiveSuccess(resultOop);
         return PrimitiveResult::Success;
     }
 
-    resultOop = makeLargeInteger(memory_, result, false);
+    resultOop = makeLargeInteger(memory_, resultMag, resultNeg);
     if (resultOop.isNil()) return PrimitiveResult::Failure;
 
     primitiveSuccess(resultOop);
     return PrimitiveResult::Success;
 }
 
-// Primitive 36: Bitwise XOR
+// Primitive 36: Bitwise XOR (with two's complement for negative integers)
 PrimitiveResult Interpreter::primitiveBitXorLargeIntegers(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
@@ -6928,26 +7054,111 @@ PrimitiveResult Interpreter::primitiveBitXorLargeIntegers(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    if (aNeg || bNeg) {
-        return PrimitiveResult::Failure;
+    std::vector<uint8_t> resultMag;
+    bool resultNeg;
+
+    if (!aNeg && !bNeg) {
+        resultMag = bitwiseXor(aMag, bMag);
+        resultNeg = false;
+    } else {
+        auto aTc = toTwosComplement(aMag, aNeg);
+        auto bTc = toTwosComplement(bMag, bNeg);
+        size_t maxSize = std::max(aTc.size(), bTc.size());
+        uint8_t aExt = aNeg ? 0xFF : 0x00;
+        uint8_t bExt = bNeg ? 0xFF : 0x00;
+        while (aTc.size() < maxSize) aTc.push_back(aExt);
+        while (bTc.size() < maxSize) bTc.push_back(bExt);
+        std::vector<uint8_t> result(maxSize);
+        for (size_t i = 0; i < maxSize; i++) result[i] = aTc[i] ^ bTc[i];
+        fromTwosComplement(result, resultMag, resultNeg);
     }
 
-    std::vector<uint8_t> result = bitwiseXor(aMag, bMag);
-
     Oop resultOop;
-    if (tryConvertToSmallInteger(result, false, resultOop)) {
+    if (tryConvertToSmallInteger(resultMag, resultNeg, resultOop)) {
         primitiveSuccess(resultOop);
         return PrimitiveResult::Success;
     }
 
-    resultOop = makeLargeInteger(memory_, result, false);
+    resultOop = makeLargeInteger(memory_, resultMag, resultNeg);
     if (resultOop.isNil()) return PrimitiveResult::Failure;
 
     primitiveSuccess(resultOop);
     return PrimitiveResult::Success;
 }
 
+// Helper: Right-shift a magnitude vector by k bits (logical shift)
+static std::vector<uint8_t> magnitudeRightShift(const std::vector<uint8_t>& mag, int64_t shift) {
+    size_t byteShift = shift / 8;
+    int bitShift = shift % 8;
+
+    if (byteShift >= mag.size()) return {0};
+
+    std::vector<uint8_t> result(mag.size() - byteShift, 0);
+    for (size_t i = byteShift; i < mag.size(); i++) {
+        result[i - byteShift] = mag[i];
+    }
+    if (bitShift > 0) {
+        uint8_t carry = 0;
+        for (size_t i = result.size(); i > 0; i--) {
+            uint8_t byte = result[i-1];
+            result[i-1] = (byte >> bitShift) | (carry << (8 - bitShift));
+            carry = byte & ((1 << bitShift) - 1);
+        }
+    }
+    while (result.size() > 1 && result.back() == 0) result.pop_back();
+    return result;
+}
+
+// Helper: Left-shift a magnitude vector by k bits
+static std::vector<uint8_t> magnitudeLeftShift(const std::vector<uint8_t>& mag, int64_t shift) {
+    size_t byteShift = shift / 8;
+    int bitShift = shift % 8;
+
+    size_t resultSize = mag.size() + byteShift + 1;
+    if (resultSize > 128 * 1024 * 1024) return {};  // 128MB max
+    std::vector<uint8_t> result(resultSize, 0);
+
+    for (size_t i = 0; i < mag.size(); i++) {
+        result[i + byteShift] = mag[i];
+    }
+    if (bitShift > 0) {
+        uint8_t carry = 0;
+        for (size_t i = byteShift; i < result.size(); i++) {
+            uint16_t val = (static_cast<uint16_t>(result[i]) << bitShift) | carry;
+            result[i] = val & 0xFF;
+            carry = val >> 8;
+        }
+    }
+    while (result.size() > 1 && result.back() == 0) result.pop_back();
+    return result;
+}
+
+// Helper: Subtract 1 from magnitude (assumes magnitude > 0)
+static std::vector<uint8_t> magnitudeSubtractOne(const std::vector<uint8_t>& mag) {
+    auto result = mag;
+    for (size_t i = 0; i < result.size(); i++) {
+        if (result[i] > 0) { result[i]--; break; }
+        result[i] = 0xFF;
+    }
+    while (result.size() > 1 && result.back() == 0) result.pop_back();
+    return result;
+}
+
+// Helper: Add 1 to magnitude
+static std::vector<uint8_t> magnitudeAddOne(const std::vector<uint8_t>& mag) {
+    auto result = mag;
+    uint16_t carry = 1;
+    for (size_t i = 0; i < result.size() && carry; i++) {
+        uint16_t sum = result[i] + carry;
+        result[i] = sum & 0xFF;
+        carry = sum >> 8;
+    }
+    if (carry) result.push_back(1);
+    return result;
+}
+
 // Primitive 37: Bit shift (positive = left, negative = right)
+// Supports negative receivers via arithmetic shift semantics
 PrimitiveResult Interpreter::primitiveBitShiftLargeIntegers(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
@@ -6964,76 +7175,44 @@ PrimitiveResult Interpreter::primitiveBitShiftLargeIntegers(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // For simplicity, only handle positive integers
-    if (aNeg) {
-        return PrimitiveResult::Failure;
-    }
+    std::vector<uint8_t> resultMag;
+    bool resultNeg;
 
-    std::vector<uint8_t> result;
-
-    if (shift >= 0) {
-        // Left shift
-        size_t byteShift = shift / 8;
-        int bitShift = shift % 8;
-
-        size_t resultSize = aMag.size() + byteShift + 1;
-        if (resultSize > 128 * 1024 * 1024) {  // 128MB max — prevent std::bad_alloc
-            return PrimitiveResult::Failure;
-        }
-        result.resize(resultSize, 0);
-
-        // Copy with byte shift
-        for (size_t i = 0; i < aMag.size(); i++) {
-            result[i + byteShift] = aMag[i];
-        }
-
-        // Apply bit shift within bytes
-        if (bitShift > 0) {
-            uint8_t carry = 0;
-            for (size_t i = byteShift; i < result.size(); i++) {
-                uint16_t val = (static_cast<uint16_t>(result[i]) << bitShift) | carry;
-                result[i] = val & 0xFF;
-                carry = val >> 8;
-            }
-        }
-    } else {
-        // Right shift
-        size_t byteShift = (-shift) / 8;
-        int bitShift = (-shift) % 8;
-
-        if (byteShift >= aMag.size()) {
-            // Shifted to zero
-            result = {0};
+    if (!aNeg) {
+        // Positive receiver: simple magnitude shift
+        if (shift >= 0) {
+            resultMag = magnitudeLeftShift(aMag, shift);
+            if (resultMag.empty()) return PrimitiveResult::Failure;  // overflow
         } else {
-            result.resize(aMag.size() - byteShift, 0);
-
-            // Copy with byte shift
-            for (size_t i = byteShift; i < aMag.size(); i++) {
-                result[i - byteShift] = aMag[i];
-            }
-
-            // Apply bit shift within bytes (from high to low, carry flows downward)
-            if (bitShift > 0) {
-                uint8_t carry = 0;
-                for (size_t i = result.size(); i > 0; i--) {
-                    uint8_t byte = result[i-1];
-                    result[i-1] = (byte >> bitShift) | (carry << (8 - bitShift));
-                    carry = byte & ((1 << bitShift) - 1);
-                }
-            }
+            resultMag = magnitudeRightShift(aMag, -shift);
         }
+        resultNeg = false;
+    } else {
+        // Negative receiver: arithmetic shift semantics
+        // Left shift: (-n) << k = -(n << k)
+        // Right shift: (-n) >> k = -((n-1) >> k + 1)
+        if (shift >= 0) {
+            resultMag = magnitudeLeftShift(aMag, shift);
+            if (resultMag.empty()) return PrimitiveResult::Failure;
+            resultNeg = true;
+        } else {
+            // Arithmetic right shift of negative
+            auto m = magnitudeSubtractOne(aMag);
+            m = magnitudeRightShift(m, -shift);
+            resultMag = magnitudeAddOne(m);
+            resultNeg = true;
+        }
+        // Check for -0 → 0
+        if (resultMag.size() == 1 && resultMag[0] == 0) resultNeg = false;
     }
-
-    // Trim leading zeros
-    while (result.size() > 1 && result.back() == 0) result.pop_back();
 
     Oop resultOop;
-    if (tryConvertToSmallInteger(result, false, resultOop)) {
+    if (tryConvertToSmallInteger(resultMag, resultNeg, resultOop)) {
         primitiveSuccess(resultOop);
         return PrimitiveResult::Success;
     }
 
-    resultOop = makeLargeInteger(memory_, result, false);
+    resultOop = makeLargeInteger(memory_, resultMag, resultNeg);
     if (resultOop.isNil()) return PrimitiveResult::Failure;
 
     primitiveSuccess(resultOop);
@@ -7159,56 +7338,26 @@ PrimitiveResult Interpreter::primDigitDivNegative(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Convert magnitudes to unsigned values for division
-    // For simplicity, handle up to 128-bit using __int128
-    if (dividendMag.size() > 16 || divisorMag.size() > 16)
-        return PrimitiveResult::Failure;  // Too large, let Smalltalk handle
+    // Check for division by zero
+    if (divisorMag.size() == 1 && divisorMag[0] == 0) {
+        return PrimitiveResult::Failure;
+    }
 
-    __uint128_t dividend = 0;
-    for (size_t i = dividendMag.size(); i > 0; i--)
-        dividend = (dividend << 8) | dividendMag[i - 1];
-
-    __uint128_t divisor = 0;
-    for (size_t i = divisorMag.size(); i > 0; i--)
-        divisor = (divisor << 8) | divisorMag[i - 1];
-
-    if (divisor == 0) return PrimitiveResult::Failure;  // Division by zero
-
-    __uint128_t quotientVal = dividend / divisor;
-    __uint128_t remainderVal = dividend % divisor;
+    // Use general-purpose divideMagnitudes (no size limit)
+    std::vector<uint8_t> quotientMag, remainderMag;
+    divideMagnitudes(dividendMag, divisorMag, quotientMag, remainderMag);
 
     // Determine quotient sign from the neg flag
     bool quotientNeg = (negFlag.rawBits() == memory_.trueObject().rawBits());
-
-    // Convert quotient to magnitude bytes
-    std::vector<uint8_t> quotientMag;
-    if (quotientVal == 0) {
-        quotientMag.push_back(0);
-    } else {
-        __uint128_t v = quotientVal;
-        while (v > 0) {
-            quotientMag.push_back(static_cast<uint8_t>(v & 0xFF));
-            v >>= 8;
-        }
-    }
-
-    // Convert remainder to magnitude bytes (remainder is always non-negative in digit division)
-    std::vector<uint8_t> remainderMag;
-    if (remainderVal == 0) {
-        remainderMag.push_back(0);
-    } else {
-        __uint128_t v = remainderVal;
-        while (v > 0) {
-            remainderMag.push_back(static_cast<uint8_t>(v & 0xFF));
-            v >>= 8;
-        }
-    }
+    // Don't negate zero
+    if (quotientMag.size() == 1 && quotientMag[0] == 0) quotientNeg = false;
 
     Oop quotient = makeLargeInteger(memory_, quotientMag, quotientNeg);
     if (quotient.isNil()) return PrimitiveResult::Failure;
 
     // Remainder keeps the sign of the dividend (per Smalltalk semantics of digitDiv)
-    Oop remainder = makeLargeInteger(memory_, remainderMag, dividendNeg);
+    bool remainderNeg = dividendNeg && !(remainderMag.size() == 1 && remainderMag[0] == 0);
+    Oop remainder = makeLargeInteger(memory_, remainderMag, remainderNeg);
     if (remainder.isNil()) return PrimitiveResult::Failure;
 
     // Allocate a 2-element Array
@@ -8325,54 +8474,85 @@ PrimitiveResult Interpreter::primitiveBecomeForward(int argCount) {
 PrimitiveResult Interpreter::primitiveHighBit(int argCount) {
     Oop rcvr = stackTop();
 
-    if (!rcvr.isSmallInteger()) {
-        return PrimitiveResult::Failure;
-    }
-
-    int64_t value = rcvr.asSmallInteger();
-
-    if (value < 0) {
-        return PrimitiveResult::Failure;  // Undefined for negative
-    }
-
-    if (value == 0) {
+    if (rcvr.isSmallInteger()) {
+        int64_t value = rcvr.asSmallInteger();
+        if (value < 0) return PrimitiveResult::Failure;  // Undefined for negative
+        if (value == 0) {
+            pop();
+            push(Oop::fromSmallInteger(0));
+            return PrimitiveResult::Success;
+        }
+        int highBit = 64 - __builtin_clzll(static_cast<uint64_t>(value));
         pop();
-        push(Oop::fromSmallInteger(0));
+        push(Oop::fromSmallInteger(highBit));
         return PrimitiveResult::Success;
     }
 
-    // Count leading zeros and compute high bit position (1-based)
-    // For 64-bit value, highBit = 64 - __builtin_clzll(value)
-    int highBit = 64 - __builtin_clzll(static_cast<uint64_t>(value));
+    // LargePositiveInteger support
+    bool isNeg;
+    if (rcvr.isObject() && isLargeInteger(memory_, rcvr, isNeg)) {
+        if (isNeg) return PrimitiveResult::Failure;  // Undefined for negative
+        std::vector<uint8_t> mag = extractMagnitude(memory_, rcvr);
+        if (mag.size() == 1 && mag[0] == 0) {
+            pop();
+            push(Oop::fromSmallInteger(0));
+            return PrimitiveResult::Success;
+        }
+        // mag is little-endian, mag.back() is MSB (guaranteed non-zero after trim)
+        int highBit = (static_cast<int>(mag.size()) - 1) * 8
+                    + (32 - __builtin_clz(static_cast<uint32_t>(mag.back())));
+        pop();
+        push(Oop::fromSmallInteger(highBit));
+        return PrimitiveResult::Success;
+    }
 
-    pop();
-    push(Oop::fromSmallInteger(highBit));
-    return PrimitiveResult::Success;
+    return PrimitiveResult::Failure;
 }
 
 // Primitive 576: Return the index of the low bit (1-based, 0 if no bits set)
 PrimitiveResult Interpreter::primitiveLowBit(int argCount) {
     Oop rcvr = stackTop();
 
-    if (!rcvr.isSmallInteger()) {
-        return PrimitiveResult::Failure;
+    if (rcvr.isSmallInteger()) {
+        int64_t value = rcvr.asSmallInteger();
+        if (value == 0) {
+            pop();
+            push(Oop::fromSmallInteger(0));
+            return PrimitiveResult::Success;
+        }
+        // Works for negative values too: 2's complement preserves trailing zeros
+        int lowBit = __builtin_ctzll(static_cast<uint64_t>(value)) + 1;
+        pop();
+        push(Oop::fromSmallInteger(lowBit));
+        return PrimitiveResult::Success;
     }
 
-    int64_t value = rcvr.asSmallInteger();
-
-    if (value == 0) {
+    // LargeInteger support (positive or negative — lowBit of -n = lowBit of n)
+    bool isNeg;
+    if (rcvr.isObject() && isLargeInteger(memory_, rcvr, isNeg)) {
+        std::vector<uint8_t> mag = extractMagnitude(memory_, rcvr);
+        if (mag.size() == 1 && mag[0] == 0) {
+            pop();
+            push(Oop::fromSmallInteger(0));
+            return PrimitiveResult::Success;
+        }
+        // Find first non-zero byte (mag is little-endian)
+        for (size_t i = 0; i < mag.size(); i++) {
+            if (mag[i] != 0) {
+                int lowBit = static_cast<int>(i) * 8
+                           + __builtin_ctz(static_cast<uint32_t>(mag[i])) + 1;
+                pop();
+                push(Oop::fromSmallInteger(lowBit));
+                return PrimitiveResult::Success;
+            }
+        }
+        // All zero bytes (shouldn't happen after trim, but handle gracefully)
         pop();
         push(Oop::fromSmallInteger(0));
         return PrimitiveResult::Success;
     }
 
-    // Count trailing zeros and add 1 for 1-based index
-    // Works for negative values too: 2's complement preserves trailing zeros
-    int lowBit = __builtin_ctzll(static_cast<uint64_t>(value)) + 1;
-
-    pop();
-    push(Oop::fromSmallInteger(lowBit));
-    return PrimitiveResult::Success;
+    return PrimitiveResult::Failure;
 }
 
 // ===== WORD ARRAY ACCESS PRIMITIVES =====
