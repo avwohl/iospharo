@@ -1637,6 +1637,13 @@ private:
     PrimitiveResult primitiveFFIIntegerAtPut(int argCount);       // Named: write integer at offset
     PrimitiveResult primitiveGetAddressOfOOP(int argCount);       // Named: get address of oop
 
+    // ByteArray float access primitives (613-629)
+    // Read/write float/double data within byte-format objects
+    PrimitiveResult primitiveFloat32Read(int argCount);           // 613: float32AtOffset:
+    PrimitiveResult primitiveFloat64Read(int argCount);           // 614: float64AtOffset:
+    PrimitiveResult primitiveFloat32Write(int argCount);          // 628: float32AtOffset:put:
+    PrimitiveResult primitiveFloat64Write(int argCount);          // 629: float64AtOffset:put:
+
     // ExternalAddress read primitives (numbered 631-639)
     // Read from external memory pointed to by ExternalAddress
     PrimitiveResult primitiveExternalUint8Read(int argCount);     // 631: uint8AtOffset:

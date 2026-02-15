@@ -12885,6 +12885,13 @@ void Interpreter::initializePrimitives() {
     // The old hand-written table had many errors (wrong primitive numbers).
     // Using the generated table ensures correctness.
 
+    // ByteArray float access primitives (613-629)
+    // Read/write float/double data within byte-format objects (ByteArray, etc.)
+    primitiveTable_[613] = &Interpreter::primitiveFloat32Read;         // float32AtOffset:
+    primitiveTable_[614] = &Interpreter::primitiveFloat64Read;         // float64AtOffset:
+    primitiveTable_[628] = &Interpreter::primitiveFloat32Write;        // float32AtOffset:put:
+    primitiveTable_[629] = &Interpreter::primitiveFloat64Write;        // float64AtOffset:put:
+
     // ExternalAddress read primitives (numbered 631-639)
     // These read from external memory pointed to by ExternalAddress.
     // Used by FFI for output parameter dereferencing (void**, int*, etc.)

@@ -23366,6 +23366,147 @@ PrimitiveResult Interpreter::primitiveFFIFree(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== ByteArray float access primitives (613-629) =====
+// These read/write float/double data within byte-format objects (ByteArray, etc.)
+// Used by ByteArray >> float32AtOffset:, float64AtOffset:, float32AtOffset:put:, float64AtOffset:put:
+// Offset is zero-based.
+
+// Primitive 613: float32AtOffset: — read 32-bit float from byte object
+PrimitiveResult Interpreter::primitiveFloat32Read(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+    Oop offsetOop = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    if (!offsetOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t offset = offsetOop.asSmallInteger();
+    if (offset < 0) return PrimitiveResult::Failure;
+
+    if (!rcvr.isObject()) return PrimitiveResult::Failure;
+    ObjectHeader* hdr = rcvr.asObjectPtr();
+    if (!hdr->isBytesObject()) return PrimitiveResult::Failure;
+
+    if (static_cast<size_t>(offset) + sizeof(float) > hdr->byteSize())
+        return PrimitiveResult::Failure;
+
+    float fval;
+    memcpy(&fval, hdr->bytes() + offset, sizeof(float));
+
+    // makeFloat may allocate — stack values may be forwarded by GC but we don't need them
+    Oop result = makeFloat(memory_, static_cast<double>(fval));
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    popN(2);
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 614: float64AtOffset: — read 64-bit double from byte object
+PrimitiveResult Interpreter::primitiveFloat64Read(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+    Oop offsetOop = stackValue(0);
+    Oop rcvr = stackValue(1);
+
+    if (!offsetOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t offset = offsetOop.asSmallInteger();
+    if (offset < 0) return PrimitiveResult::Failure;
+
+    if (!rcvr.isObject()) return PrimitiveResult::Failure;
+    ObjectHeader* hdr = rcvr.asObjectPtr();
+    if (!hdr->isBytesObject()) return PrimitiveResult::Failure;
+
+    if (static_cast<size_t>(offset) + sizeof(double) > hdr->byteSize())
+        return PrimitiveResult::Failure;
+
+    double dval;
+    memcpy(&dval, hdr->bytes() + offset, sizeof(double));
+
+    Oop result = makeFloat(memory_, dval);
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    popN(2);
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 628: float32AtOffset:put: — write 32-bit float into byte object
+PrimitiveResult Interpreter::primitiveFloat32Write(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+    Oop valueOop = stackValue(0);
+    Oop offsetOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!rcvr.isObject()) return PrimitiveResult::Failure;
+    ObjectHeader* hdr = rcvr.asObjectPtr();
+    if (!hdr->isBytesObject()) return PrimitiveResult::Failure;
+
+    if (!offsetOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t offset = offsetOop.asSmallInteger();
+    if (offset < 0) return PrimitiveResult::Failure;
+
+    // Check immutability — signal attemptToAssign:withIndex: via Smalltalk
+    if (hdr->isImmutable()) {
+        popN(3);
+        push(rcvr);
+        push(valueOop);
+        push(Oop::fromSmallInteger(offset + 1));  // 1-based index
+        Oop selector = memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign);
+        sendSelector(selector, 2);
+        return PrimitiveResult::Success;
+    }
+
+    if (static_cast<size_t>(offset) + sizeof(float) > hdr->byteSize())
+        return PrimitiveResult::Failure;
+
+    double dval;
+    if (!extractFloat(memory_, valueOop, dval)) return PrimitiveResult::Failure;
+
+    float fval = static_cast<float>(dval);
+    memcpy(hdr->bytes() + offset, &fval, sizeof(float));
+
+    popN(3);
+    push(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 629: float64AtOffset:put: — write 64-bit double into byte object
+PrimitiveResult Interpreter::primitiveFloat64Write(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+    Oop valueOop = stackValue(0);
+    Oop offsetOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!rcvr.isObject()) return PrimitiveResult::Failure;
+    ObjectHeader* hdr = rcvr.asObjectPtr();
+    if (!hdr->isBytesObject()) return PrimitiveResult::Failure;
+
+    if (!offsetOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t offset = offsetOop.asSmallInteger();
+    if (offset < 0) return PrimitiveResult::Failure;
+
+    // Check immutability — signal attemptToAssign:withIndex: via Smalltalk
+    if (hdr->isImmutable()) {
+        popN(3);
+        push(rcvr);
+        push(valueOop);
+        push(Oop::fromSmallInteger(offset + 1));  // 1-based index
+        Oop selector = memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign);
+        sendSelector(selector, 2);
+        return PrimitiveResult::Success;
+    }
+
+    if (static_cast<size_t>(offset) + sizeof(double) > hdr->byteSize())
+        return PrimitiveResult::Failure;
+
+    double dval;
+    if (!extractFloat(memory_, valueOop, dval)) return PrimitiveResult::Failure;
+
+    memcpy(hdr->bytes() + offset, &dval, sizeof(double));
+
+    popN(3);
+    push(valueOop);
+    return PrimitiveResult::Success;
+}
+
 // ===== ExternalAddress read primitives (631-639) =====
 // These read from EXTERNAL MEMORY pointed to by an ExternalAddress.
 // The ExternalAddress bytes contain a pointer value; these primitives
