@@ -5634,8 +5634,27 @@ void Interpreter::arithmeticSend(int which) {
     }
 
     if (selector.isNil()) {
-        // Fallback: return receiver for unsupported operations
-        pop();  // Pop argument, leave receiver
+        // Cached selector was nil — fall back to special selectors array
+        Oop specialSelectors = memory_.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
+        if (specialSelectors.isObject() && specialSelectors.rawBits() > 0x10000) {
+            ObjectHeader* ssHdr = specialSelectors.asObjectPtr();
+            size_t selectorSlot = which * 2;
+            if (selectorSlot < ssHdr->slotCount()) {
+                selector = ssHdr->slotAt(selectorSlot);
+            }
+        }
+    }
+
+    if (selector.isNil()) {
+        // Still nil — this shouldn't happen. Send via doesNotUnderstand.
+        static int nilSelCount = 0;
+        if (++nilSelCount <= 10) {
+            fprintf(stderr, "[ARITH-NIL-SEL] op=%d step=%llu — selector is nil, cannot send\n",
+                    which, (unsigned long long)g_stepNum);
+        }
+        // Pop args, push nil to avoid stack corruption
+        popN(argCount + 1);
+        push(memory_.nil());
         return;
     }
 

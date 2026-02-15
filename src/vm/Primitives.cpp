@@ -1389,19 +1389,6 @@ PrimitiveResult Interpreter::primitiveLessOrEqual(int argCount) {
     if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
         int64_t rcvrVal = rcvr.asSmallInteger();
         int64_t argVal = arg.asSmallInteger();
-        // Trace: log when comparing against 55 (startupList size)
-        if (argVal == 55 && g_stepNum < 2000000) {
-            static FILE* leLog = nullptr;
-            static int leCount = 0;
-            if (!leLog) leLog = nullptr;
-            if (leLog && leCount < 500) {
-                leCount++;
-                fprintf(leLog, "[LE55 #%d step=%llu] %lld <= 55 = %s\n",
-                        leCount, (unsigned long long)g_stepNum,
-                        (long long)rcvrVal, rcvrVal <= 55 ? "true" : "FALSE!");
-                fflush(leLog);
-            }
-        }
         bool result = rcvrVal <= argVal;
         primitiveSuccess(result ? memory_.trueObject() : memory_.falseObject());
         return PrimitiveResult::Success;
