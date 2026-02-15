@@ -91,6 +91,40 @@ extern int g_traceSendsAfterPrim264;
 static bool trySigned64BitValueOf(ObjectMemory& memory, Oop oop, int64_t& value);
 static std::vector<uint8_t> magnitudeLeftShift(const std::vector<uint8_t>& mag, int64_t shift);
 
+// Helper: Convert uint64_t to SmallInteger or LargePositiveInteger.
+// Returns nil on allocation failure.
+static Oop uint64ToOop(ObjectMemory& memory, uint64_t value) {
+    if (value <= static_cast<uint64_t>(Oop::smallIntegerMax())) {
+        return Oop::fromSmallInteger(static_cast<int64_t>(value));
+    }
+    // Create LargePositiveInteger from little-endian bytes
+    std::vector<uint8_t> mag;
+    uint64_t tmp = value;
+    while (tmp > 0) {
+        mag.push_back(static_cast<uint8_t>(tmp & 0xFF));
+        tmp >>= 8;
+    }
+    if (mag.empty()) mag.push_back(0);
+    return makeLargeInteger(memory, mag, false);
+}
+
+// Helper: Convert int64_t to SmallInteger or LargeInteger (positive or negative).
+// Returns nil on allocation failure.
+static Oop int64ToOop(ObjectMemory& memory, int64_t value) {
+    if (Oop::canBeSmallInteger(value)) {
+        return Oop::fromSmallInteger(value);
+    }
+    bool neg = value < 0;
+    uint64_t abs = neg ? static_cast<uint64_t>(-value) : static_cast<uint64_t>(value);
+    std::vector<uint8_t> mag;
+    while (abs > 0) {
+        mag.push_back(static_cast<uint8_t>(abs & 0xFF));
+        abs >>= 8;
+    }
+    if (mag.empty()) mag.push_back(0);
+    return makeLargeInteger(memory, mag, neg);
+}
+
 // ===== PRIMITIVE FAILURE STUB =====
 // This is used for primitives that should always fail (fall back to Smalltalk)
 PrimitiveResult Interpreter::primitiveFailure(int argCount) {
@@ -5154,8 +5188,11 @@ PrimitiveResult Interpreter::primitiveMicrosecondClock(int argCount) {
         return PrimitiveResult::Success;
     }
 
-    // Fall back to Smalltalk for LargeInteger creation
-    return PrimitiveResult::Failure;
+    // Create LargePositiveInteger for large timestamp
+    Oop result = int64ToOop(memory_, smalltalkUs);
+    if (result.isNil()) return PrimitiveResult::Failure;
+    primitiveSuccess(result);
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveLocalMicrosecondClock(int argCount) {
@@ -5175,10 +5212,10 @@ PrimitiveResult Interpreter::primitiveHighResClock(int argCount) {
         return PrimitiveResult::Success;
     }
 
-    // Too large for SmallInteger — need LargePositiveInteger
-    // For now, return microseconds which fits
-    int64_t micros = nanos / 1000;
-    primitiveSuccess(Oop::fromSmallInteger(micros));
+    // Too large for SmallInteger — create LargePositiveInteger
+    Oop result = int64ToOop(memory_, nanos);
+    if (result.isNil()) return PrimitiveResult::Failure;
+    primitiveSuccess(result);
     return PrimitiveResult::Success;
 }
 
@@ -11241,10 +11278,10 @@ PrimitiveResult Interpreter::primitiveImageBaseAddress(int argCount) {
     // Return the old space start address as a small integer (truncated)
     uintptr_t baseAddr = reinterpret_cast<uintptr_t>(memory_.oldSpaceStart());
 
-    // For safety, return just a hash of the address (not the actual address)
-    // to avoid exposing memory layout
+    Oop result = uint64ToOop(memory_, baseAddr);
+    if (result.isNil()) return PrimitiveResult::Failure;
     pop();
-    push(Oop::fromSmallInteger(static_cast<intptr_t>(baseAddr & 0x7FFFFFFFFFFFF)));
+    push(result);
     return PrimitiveResult::Success;
 }
 
@@ -11254,11 +11291,12 @@ PrimitiveResult Interpreter::primitiveImageBaseAddress(int argCount) {
 PrimitiveResult Interpreter::primitiveHighestAvailableAddress(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    // Return old space end as the highest available address
     uintptr_t highAddr = reinterpret_cast<uintptr_t>(memory_.oldSpaceEnd());
 
+    Oop result = uint64ToOop(memory_, highAddr);
+    if (result.isNil()) return PrimitiveResult::Failure;
     pop();
-    push(Oop::fromSmallInteger(static_cast<intptr_t>(highAddr & 0x7FFFFFFFFFFFF)));
+    push(result);
     return PrimitiveResult::Success;
 }
 
@@ -11488,9 +11526,10 @@ PrimitiveResult Interpreter::primitivePointerAddress(int argCount) {
         address = static_cast<uintptr_t>(objOop.asSmallInteger());
     }
 
+    Oop result = uint64ToOop(memory_, address);
+    if (result.isNil()) return PrimitiveResult::Failure;
     pop();
-    // Return as small integer (may truncate on 64-bit systems)
-    push(Oop::fromSmallInteger(static_cast<intptr_t>(address & 0x7FFFFFFFFFFFF)));
+    push(result);
     return PrimitiveResult::Success;
 }
 
@@ -13452,24 +13491,34 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
             break;
 
         case ffi::FFIType::Int64:
+            resultOop = int64ToOop(memory_, static_cast<int64_t>(result.intValue));
+            if (resultOop.isNil()) return PrimitiveResult::Failure;
+            break;
+
         case ffi::FFIType::UInt64:
-            // May need to box large integers
-            if (result.intValue <= INT32_MAX && static_cast<int64_t>(result.intValue) >= INT32_MIN) {
-                resultOop = Oop::fromSmallInteger(static_cast<int64_t>(result.intValue));
-            } else {
-                // TODO: Create LargeInteger
-                resultOop = Oop::fromSmallInteger(static_cast<int64_t>(result.intValue & 0x7FFFFFFF));
-            }
+            resultOop = uint64ToOop(memory_, result.intValue);
+            if (resultOop.isNil()) return PrimitiveResult::Failure;
             break;
 
         case ffi::FFIType::Pointer:
-            // Create ExternalAddress or return SmallInteger if it fits
             if (result.ptrValue == nullptr) {
                 resultOop = Oop::nil();
             } else {
-                // For now, return as SmallInteger (truncated)
-                // TODO: Create proper ExternalAddress
-                resultOop = Oop::fromSmallInteger(static_cast<int64_t>(result.intValue));
+                // Create ExternalAddress to hold the pointer
+                Oop externalAddressClass = memory_.findGlobal("ExternalAddress");
+                if (externalAddressClass.isNil()) {
+                    // Fallback: return as positive integer
+                    resultOop = uint64ToOop(memory_, reinterpret_cast<uintptr_t>(result.ptrValue));
+                    if (resultOop.isNil()) return PrimitiveResult::Failure;
+                } else {
+                    uint32_t classIndex = memory_.indexOfClass(externalAddressClass);
+                    if (classIndex == 0) return PrimitiveResult::Failure;
+                    constexpr size_t ptrSize = sizeof(void*);
+                    resultOop = memory_.allocateBytes(classIndex, ptrSize);
+                    if (resultOop.isNil()) return PrimitiveResult::Failure;
+                    ObjectHeader* hdr = resultOop.asObjectPtr();
+                    memcpy(hdr->bytes(), &result.ptrValue, ptrSize);
+                }
             }
             break;
 
@@ -14690,12 +14739,12 @@ PrimitiveResult Interpreter::primitiveObjectHeader(int argCount) {
     }
 
     ObjectHeader* header = receiver.asObjectPtr();
-    // Return the first 64 bits of the header
     uint64_t headerBits = *reinterpret_cast<uint64_t*>(header);
 
+    Oop result = uint64ToOop(memory_, headerBits);
+    if (result.isNil()) return PrimitiveResult::Failure;
     pop();
-    // Return truncated to fit in SmallInteger
-    push(Oop::fromSmallInteger(static_cast<intptr_t>(headerBits & 0x7FFFFFFFFFFFF)));
+    push(result);
     return PrimitiveResult::Success;
 }
 
