@@ -6200,7 +6200,8 @@ static std::vector<uint8_t> multiplyMagnitudes(const std::vector<uint8_t>& a, co
         return std::vector<uint8_t>(1, 0);
     }
 
-    std::vector<uint8_t> result(a.size() + b.size(), 0);
+    // +1 byte absorbs intermediate carry overflow; trailing-zero trim removes it
+    std::vector<uint8_t> result(a.size() + b.size() + 1, 0);
 
     for (size_t i = 0; i < a.size(); i++) {
         uint32_t carry = 0;

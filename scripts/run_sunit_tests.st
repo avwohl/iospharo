@@ -9,6 +9,15 @@ Object subclass: #SUnitRunner
   classVariableNames: ''
   package: 'Tests-Runner'!
 
+"UndefinedObject >> findNextHandlerContext terminates the handler context chain.
+ Context >> findNextHandlerContext calls sender findNextHandlerContext; when sender
+ is nil, UndefinedObject needs this method to return nil (no more handlers) instead
+ of triggering an infinite DNU loop. Standard Cog VM avoids this via optimized C
+ exception primitives, but our Smalltalk code path requires the method."
+UndefinedObject compile: 'findNextHandlerContext
+  "Terminate the handler context chain -- no more contexts to search."
+  ^ nil' classified: 'private'!
+
 !SUnitRunner class methodsFor: 'running'!
 nextRunNumber
   "Read, increment, and persist the run counter."
