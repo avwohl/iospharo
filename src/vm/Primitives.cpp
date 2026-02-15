@@ -23366,10 +23366,440 @@ PrimitiveResult Interpreter::primitiveFFIFree(int argCount) {
     return PrimitiveResult::Success;
 }
 
-// ===== ByteArray float access primitives (613-629) =====
-// These read/write float/double data within byte-format objects (ByteArray, etc.)
-// Used by ByteArray >> float32AtOffset:, float64AtOffset:, float32AtOffset:put:, float64AtOffset:put:
-// Offset is zero-based.
+// ===== ByteArray data access primitives (600-629) =====
+// These read/write typed data within byte-format objects (ByteArray, etc.)
+// Used by Pharo's FFI marshaling layer (e.g., uint32AtOffset:, float64AtOffset:put:).
+// Offset is zero-based. Primitives 600-614 are reads, 615-629 are writes.
+
+// Helper: validate byte-object receiver and zero-based offset for reads
+static bool byteObjectReadSetup(pharo::Interpreter& interp, pharo::ObjectMemory& mem,
+                                  int argCount, ObjectHeader*& hdr, int64_t& offset) {
+    if (argCount != 1) return false;
+    Oop offsetOop = interp.stackValue(0);
+    if (!offsetOop.isSmallInteger()) return false;
+    offset = offsetOop.asSmallInteger();
+    if (offset < 0) return false;
+    Oop rcvr = interp.stackValue(1);
+    if (!rcvr.isObject()) return false;
+    hdr = rcvr.asObjectPtr();
+    return hdr->isBytesObject();
+}
+
+// Helper: validate byte-object receiver and zero-based offset for writes, check immutability
+static bool byteObjectWriteSetup(pharo::Interpreter& interp, pharo::ObjectMemory& mem,
+                                   int argCount, ObjectHeader*& hdr, int64_t& offset,
+                                   Oop& rcvr, Oop& valueOop) {
+    if (argCount != 2) return false;
+    valueOop = interp.stackValue(0);
+    Oop offsetOop = interp.stackValue(1);
+    if (!offsetOop.isSmallInteger()) return false;
+    offset = offsetOop.asSmallInteger();
+    if (offset < 0) return false;
+    rcvr = interp.stackValue(2);
+    if (!rcvr.isObject()) return false;
+    hdr = rcvr.asObjectPtr();
+    return hdr->isBytesObject();
+}
+
+// --- Primitives 600-612: ByteArray reads ---
+
+// Primitive 600: boolean8AtOffset: — read 8-bit boolean (0=false, else true)
+PrimitiveResult Interpreter::primitiveBytesBoolean8Read(int argCount) {
+    ObjectHeader* hdr; int64_t offset;
+    if (!byteObjectReadSetup(*this, memory_, argCount, hdr, offset)) return PrimitiveResult::Failure;
+    if (static_cast<size_t>(offset) + 1 > hdr->byteSize()) return PrimitiveResult::Failure;
+    uint8_t val = hdr->bytes()[offset];
+    popN(2);
+    push(val ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitive 601: uint8AtOffset: — read unsigned 8-bit from byte object
+PrimitiveResult Interpreter::primitiveBytesUint8Read(int argCount) {
+    ObjectHeader* hdr; int64_t offset;
+    if (!byteObjectReadSetup(*this, memory_, argCount, hdr, offset)) return PrimitiveResult::Failure;
+    if (static_cast<size_t>(offset) + 1 > hdr->byteSize()) return PrimitiveResult::Failure;
+    popN(2);
+    push(Oop::fromSmallInteger(hdr->bytes()[offset]));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 602: int8AtOffset: — read signed 8-bit from byte object
+PrimitiveResult Interpreter::primitiveBytesInt8Read(int argCount) {
+    ObjectHeader* hdr; int64_t offset;
+    if (!byteObjectReadSetup(*this, memory_, argCount, hdr, offset)) return PrimitiveResult::Failure;
+    if (static_cast<size_t>(offset) + 1 > hdr->byteSize()) return PrimitiveResult::Failure;
+    int8_t val;
+    memcpy(&val, hdr->bytes() + offset, 1);
+    popN(2);
+    push(Oop::fromSmallInteger(val));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 603: uint16AtOffset: — read unsigned 16-bit from byte object
+PrimitiveResult Interpreter::primitiveBytesUint16Read(int argCount) {
+    ObjectHeader* hdr; int64_t offset;
+    if (!byteObjectReadSetup(*this, memory_, argCount, hdr, offset)) return PrimitiveResult::Failure;
+    if (static_cast<size_t>(offset) + 2 > hdr->byteSize()) return PrimitiveResult::Failure;
+    uint16_t val;
+    memcpy(&val, hdr->bytes() + offset, sizeof(uint16_t));
+    popN(2);
+    push(Oop::fromSmallInteger(val));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 604: int16AtOffset: — read signed 16-bit from byte object
+PrimitiveResult Interpreter::primitiveBytesInt16Read(int argCount) {
+    ObjectHeader* hdr; int64_t offset;
+    if (!byteObjectReadSetup(*this, memory_, argCount, hdr, offset)) return PrimitiveResult::Failure;
+    if (static_cast<size_t>(offset) + 2 > hdr->byteSize()) return PrimitiveResult::Failure;
+    int16_t val;
+    memcpy(&val, hdr->bytes() + offset, sizeof(int16_t));
+    popN(2);
+    push(Oop::fromSmallInteger(val));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 605: uint32AtOffset: — read unsigned 32-bit from byte object
+PrimitiveResult Interpreter::primitiveBytesUint32Read(int argCount) {
+    ObjectHeader* hdr; int64_t offset;
+    if (!byteObjectReadSetup(*this, memory_, argCount, hdr, offset)) return PrimitiveResult::Failure;
+    if (static_cast<size_t>(offset) + 4 > hdr->byteSize()) return PrimitiveResult::Failure;
+    uint32_t val;
+    memcpy(&val, hdr->bytes() + offset, sizeof(uint32_t));
+    popN(2);
+    push(Oop::fromSmallInteger(static_cast<int64_t>(val)));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 606: int32AtOffset: — read signed 32-bit from byte object
+PrimitiveResult Interpreter::primitiveBytesInt32Read(int argCount) {
+    ObjectHeader* hdr; int64_t offset;
+    if (!byteObjectReadSetup(*this, memory_, argCount, hdr, offset)) return PrimitiveResult::Failure;
+    if (static_cast<size_t>(offset) + 4 > hdr->byteSize()) return PrimitiveResult::Failure;
+    int32_t val;
+    memcpy(&val, hdr->bytes() + offset, sizeof(int32_t));
+    popN(2);
+    push(Oop::fromSmallInteger(static_cast<int64_t>(val)));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 607: uint64AtOffset: — read unsigned 64-bit from byte object
+PrimitiveResult Interpreter::primitiveBytesUint64Read(int argCount) {
+    ObjectHeader* hdr; int64_t offset;
+    if (!byteObjectReadSetup(*this, memory_, argCount, hdr, offset)) return PrimitiveResult::Failure;
+    if (static_cast<size_t>(offset) + 8 > hdr->byteSize()) return PrimitiveResult::Failure;
+    uint64_t val;
+    memcpy(&val, hdr->bytes() + offset, sizeof(uint64_t));
+    // If fits in SmallInteger, return that; otherwise need LargePositiveInteger
+    if (val <= static_cast<uint64_t>(INT64_MAX)) {
+        popN(2);
+        push(Oop::fromSmallInteger(static_cast<int64_t>(val)));
+        return PrimitiveResult::Success;
+    }
+    // Too large for SmallInteger — fall through to Smalltalk
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 608: int64AtOffset: — read signed 64-bit from byte object
+PrimitiveResult Interpreter::primitiveBytesInt64Read(int argCount) {
+    ObjectHeader* hdr; int64_t offset;
+    if (!byteObjectReadSetup(*this, memory_, argCount, hdr, offset)) return PrimitiveResult::Failure;
+    if (static_cast<size_t>(offset) + 8 > hdr->byteSize()) return PrimitiveResult::Failure;
+    int64_t val;
+    memcpy(&val, hdr->bytes() + offset, sizeof(int64_t));
+    // Check SmallInteger range
+    if (val >= -4611686018427387904LL && val <= 4611686018427387903LL) {
+        popN(2);
+        push(Oop::fromSmallInteger(val));
+        return PrimitiveResult::Success;
+    }
+    return PrimitiveResult::Failure;
+}
+
+// Primitive 609: pointerAtOffset: — read pointer from byte object
+PrimitiveResult Interpreter::primitiveBytesPointerRead(int argCount) {
+    ObjectHeader* hdr; int64_t offset;
+    if (!byteObjectReadSetup(*this, memory_, argCount, hdr, offset)) return PrimitiveResult::Failure;
+    if (static_cast<size_t>(offset) + sizeof(void*) > hdr->byteSize()) return PrimitiveResult::Failure;
+    void* val;
+    memcpy(&val, hdr->bytes() + offset, sizeof(void*));
+    Oop result = tffi_newExternalAddress(val);
+    if (result.isNil()) return PrimitiveResult::Failure;
+    popN(2);
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 610: char8AtOffset: — read 8-bit character from byte object
+PrimitiveResult Interpreter::primitiveBytesChar8Read(int argCount) {
+    ObjectHeader* hdr; int64_t offset;
+    if (!byteObjectReadSetup(*this, memory_, argCount, hdr, offset)) return PrimitiveResult::Failure;
+    if (static_cast<size_t>(offset) + 1 > hdr->byteSize()) return PrimitiveResult::Failure;
+    popN(2);
+    push(Oop::fromCharacter(hdr->bytes()[offset]));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 611: char16AtOffset: — read 16-bit character from byte object
+PrimitiveResult Interpreter::primitiveBytesChar16Read(int argCount) {
+    ObjectHeader* hdr; int64_t offset;
+    if (!byteObjectReadSetup(*this, memory_, argCount, hdr, offset)) return PrimitiveResult::Failure;
+    if (static_cast<size_t>(offset) + 2 > hdr->byteSize()) return PrimitiveResult::Failure;
+    uint16_t val;
+    memcpy(&val, hdr->bytes() + offset, sizeof(uint16_t));
+    popN(2);
+    push(Oop::fromCharacter(val));
+    return PrimitiveResult::Success;
+}
+
+// Primitive 612: char32AtOffset: — read 32-bit character from byte object
+PrimitiveResult Interpreter::primitiveBytesChar32Read(int argCount) {
+    ObjectHeader* hdr; int64_t offset;
+    if (!byteObjectReadSetup(*this, memory_, argCount, hdr, offset)) return PrimitiveResult::Failure;
+    if (static_cast<size_t>(offset) + 4 > hdr->byteSize()) return PrimitiveResult::Failure;
+    uint32_t val;
+    memcpy(&val, hdr->bytes() + offset, sizeof(uint32_t));
+    popN(2);
+    push(Oop::fromCharacter(val));
+    return PrimitiveResult::Success;
+}
+
+// --- Primitives 615-627: ByteArray writes ---
+// Write primitives check immutability and send attemptToAssign:withIndex: if read-only.
+
+// Primitive 615: boolean8AtOffset:put: — write 8-bit boolean into byte object
+PrimitiveResult Interpreter::primitiveBytesBoolean8Write(int argCount) {
+    ObjectHeader* hdr; int64_t offset; Oop rcvr, valueOop;
+    if (!byteObjectWriteSetup(*this, memory_, argCount, hdr, offset, rcvr, valueOop))
+        return PrimitiveResult::Failure;
+    if (hdr->isImmutable()) { popN(3); push(rcvr); push(valueOop); push(Oop::fromSmallInteger(offset + 1));
+        sendSelector(memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign), 2);
+        return PrimitiveResult::Success; }
+    if (static_cast<size_t>(offset) + 1 > hdr->byteSize()) return PrimitiveResult::Failure;
+    uint8_t val = (valueOop.rawBits() == memory_.trueObject().rawBits()) ? 1 : 0;
+    hdr->bytes()[offset] = val;
+    popN(3); push(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 616: uint8AtOffset:put: — write unsigned 8-bit into byte object
+PrimitiveResult Interpreter::primitiveBytesUint8Write(int argCount) {
+    ObjectHeader* hdr; int64_t offset; Oop rcvr, valueOop;
+    if (!byteObjectWriteSetup(*this, memory_, argCount, hdr, offset, rcvr, valueOop))
+        return PrimitiveResult::Failure;
+    if (hdr->isImmutable()) { popN(3); push(rcvr); push(valueOop); push(Oop::fromSmallInteger(offset + 1));
+        sendSelector(memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign), 2);
+        return PrimitiveResult::Success; }
+    if (static_cast<size_t>(offset) + 1 > hdr->byteSize()) return PrimitiveResult::Failure;
+    if (!valueOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t v = valueOop.asSmallInteger();
+    if (v < 0 || v > 255) return PrimitiveResult::Failure;
+    hdr->bytes()[offset] = static_cast<uint8_t>(v);
+    popN(3); push(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 617: int8AtOffset:put: — write signed 8-bit into byte object
+PrimitiveResult Interpreter::primitiveBytesInt8Write(int argCount) {
+    ObjectHeader* hdr; int64_t offset; Oop rcvr, valueOop;
+    if (!byteObjectWriteSetup(*this, memory_, argCount, hdr, offset, rcvr, valueOop))
+        return PrimitiveResult::Failure;
+    if (hdr->isImmutable()) { popN(3); push(rcvr); push(valueOop); push(Oop::fromSmallInteger(offset + 1));
+        sendSelector(memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign), 2);
+        return PrimitiveResult::Success; }
+    if (static_cast<size_t>(offset) + 1 > hdr->byteSize()) return PrimitiveResult::Failure;
+    if (!valueOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t v = valueOop.asSmallInteger();
+    if (v < -128 || v > 127) return PrimitiveResult::Failure;
+    int8_t val = static_cast<int8_t>(v);
+    memcpy(hdr->bytes() + offset, &val, 1);
+    popN(3); push(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 618: uint16AtOffset:put: — write unsigned 16-bit into byte object
+PrimitiveResult Interpreter::primitiveBytesUint16Write(int argCount) {
+    ObjectHeader* hdr; int64_t offset; Oop rcvr, valueOop;
+    if (!byteObjectWriteSetup(*this, memory_, argCount, hdr, offset, rcvr, valueOop))
+        return PrimitiveResult::Failure;
+    if (hdr->isImmutable()) { popN(3); push(rcvr); push(valueOop); push(Oop::fromSmallInteger(offset + 1));
+        sendSelector(memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign), 2);
+        return PrimitiveResult::Success; }
+    if (static_cast<size_t>(offset) + 2 > hdr->byteSize()) return PrimitiveResult::Failure;
+    if (!valueOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t v = valueOop.asSmallInteger();
+    if (v < 0 || v > 65535) return PrimitiveResult::Failure;
+    uint16_t val = static_cast<uint16_t>(v);
+    memcpy(hdr->bytes() + offset, &val, sizeof(uint16_t));
+    popN(3); push(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 619: int16AtOffset:put: — write signed 16-bit into byte object
+PrimitiveResult Interpreter::primitiveBytesInt16Write(int argCount) {
+    ObjectHeader* hdr; int64_t offset; Oop rcvr, valueOop;
+    if (!byteObjectWriteSetup(*this, memory_, argCount, hdr, offset, rcvr, valueOop))
+        return PrimitiveResult::Failure;
+    if (hdr->isImmutable()) { popN(3); push(rcvr); push(valueOop); push(Oop::fromSmallInteger(offset + 1));
+        sendSelector(memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign), 2);
+        return PrimitiveResult::Success; }
+    if (static_cast<size_t>(offset) + 2 > hdr->byteSize()) return PrimitiveResult::Failure;
+    if (!valueOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t v = valueOop.asSmallInteger();
+    if (v < -32768 || v > 32767) return PrimitiveResult::Failure;
+    int16_t val = static_cast<int16_t>(v);
+    memcpy(hdr->bytes() + offset, &val, sizeof(int16_t));
+    popN(3); push(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 620: uint32AtOffset:put: — write unsigned 32-bit into byte object
+PrimitiveResult Interpreter::primitiveBytesUint32Write(int argCount) {
+    ObjectHeader* hdr; int64_t offset; Oop rcvr, valueOop;
+    if (!byteObjectWriteSetup(*this, memory_, argCount, hdr, offset, rcvr, valueOop))
+        return PrimitiveResult::Failure;
+    if (hdr->isImmutable()) { popN(3); push(rcvr); push(valueOop); push(Oop::fromSmallInteger(offset + 1));
+        sendSelector(memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign), 2);
+        return PrimitiveResult::Success; }
+    if (static_cast<size_t>(offset) + 4 > hdr->byteSize()) return PrimitiveResult::Failure;
+    if (!valueOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t v = valueOop.asSmallInteger();
+    if (v < 0 || v > 4294967295LL) return PrimitiveResult::Failure;
+    uint32_t val = static_cast<uint32_t>(v);
+    memcpy(hdr->bytes() + offset, &val, sizeof(uint32_t));
+    popN(3); push(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 621: int32AtOffset:put: — write signed 32-bit into byte object
+PrimitiveResult Interpreter::primitiveBytesInt32Write(int argCount) {
+    ObjectHeader* hdr; int64_t offset; Oop rcvr, valueOop;
+    if (!byteObjectWriteSetup(*this, memory_, argCount, hdr, offset, rcvr, valueOop))
+        return PrimitiveResult::Failure;
+    if (hdr->isImmutable()) { popN(3); push(rcvr); push(valueOop); push(Oop::fromSmallInteger(offset + 1));
+        sendSelector(memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign), 2);
+        return PrimitiveResult::Success; }
+    if (static_cast<size_t>(offset) + 4 > hdr->byteSize()) return PrimitiveResult::Failure;
+    if (!valueOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t v = valueOop.asSmallInteger();
+    if (v < INT32_MIN || v > INT32_MAX) return PrimitiveResult::Failure;
+    int32_t val = static_cast<int32_t>(v);
+    memcpy(hdr->bytes() + offset, &val, sizeof(int32_t));
+    popN(3); push(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 622: uint64AtOffset:put: — write unsigned 64-bit into byte object
+PrimitiveResult Interpreter::primitiveBytesUint64Write(int argCount) {
+    ObjectHeader* hdr; int64_t offset; Oop rcvr, valueOop;
+    if (!byteObjectWriteSetup(*this, memory_, argCount, hdr, offset, rcvr, valueOop))
+        return PrimitiveResult::Failure;
+    if (hdr->isImmutable()) { popN(3); push(rcvr); push(valueOop); push(Oop::fromSmallInteger(offset + 1));
+        sendSelector(memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign), 2);
+        return PrimitiveResult::Success; }
+    if (static_cast<size_t>(offset) + 8 > hdr->byteSize()) return PrimitiveResult::Failure;
+    if (!valueOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t v = valueOop.asSmallInteger();
+    if (v < 0) return PrimitiveResult::Failure;
+    uint64_t val = static_cast<uint64_t>(v);
+    memcpy(hdr->bytes() + offset, &val, sizeof(uint64_t));
+    popN(3); push(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 623: int64AtOffset:put: — write signed 64-bit into byte object
+PrimitiveResult Interpreter::primitiveBytesInt64Write(int argCount) {
+    ObjectHeader* hdr; int64_t offset; Oop rcvr, valueOop;
+    if (!byteObjectWriteSetup(*this, memory_, argCount, hdr, offset, rcvr, valueOop))
+        return PrimitiveResult::Failure;
+    if (hdr->isImmutable()) { popN(3); push(rcvr); push(valueOop); push(Oop::fromSmallInteger(offset + 1));
+        sendSelector(memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign), 2);
+        return PrimitiveResult::Success; }
+    if (static_cast<size_t>(offset) + 8 > hdr->byteSize()) return PrimitiveResult::Failure;
+    if (!valueOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t val = valueOop.asSmallInteger();
+    memcpy(hdr->bytes() + offset, &val, sizeof(int64_t));
+    popN(3); push(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 624: pointerAtOffset:put: — write pointer into byte object
+PrimitiveResult Interpreter::primitiveBytesPointerWrite(int argCount) {
+    ObjectHeader* hdr; int64_t offset; Oop rcvr, valueOop;
+    if (!byteObjectWriteSetup(*this, memory_, argCount, hdr, offset, rcvr, valueOop))
+        return PrimitiveResult::Failure;
+    if (hdr->isImmutable()) { popN(3); push(rcvr); push(valueOop); push(Oop::fromSmallInteger(offset + 1));
+        sendSelector(memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign), 2);
+        return PrimitiveResult::Success; }
+    if (static_cast<size_t>(offset) + sizeof(void*) > hdr->byteSize()) return PrimitiveResult::Failure;
+    // Value must be an ExternalAddress (byte object containing a pointer)
+    if (!valueOop.isObject()) return PrimitiveResult::Failure;
+    ObjectHeader* valHdr = valueOop.asObjectPtr();
+    if (!valHdr->isBytesObject() || valHdr->byteSize() < sizeof(void*)) return PrimitiveResult::Failure;
+    void* ptr;
+    memcpy(&ptr, valHdr->bytes(), sizeof(void*));
+    memcpy(hdr->bytes() + offset, &ptr, sizeof(void*));
+    popN(3); push(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 625: char8AtOffset:put: — write 8-bit character into byte object
+PrimitiveResult Interpreter::primitiveBytesChar8Write(int argCount) {
+    ObjectHeader* hdr; int64_t offset; Oop rcvr, valueOop;
+    if (!byteObjectWriteSetup(*this, memory_, argCount, hdr, offset, rcvr, valueOop))
+        return PrimitiveResult::Failure;
+    if (hdr->isImmutable()) { popN(3); push(rcvr); push(valueOop); push(Oop::fromSmallInteger(offset + 1));
+        sendSelector(memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign), 2);
+        return PrimitiveResult::Success; }
+    if (static_cast<size_t>(offset) + 1 > hdr->byteSize()) return PrimitiveResult::Failure;
+    uint32_t charVal;
+    if (valueOop.isCharacter()) charVal = valueOop.asCharacter();
+    else if (valueOop.isSmallInteger()) charVal = static_cast<uint32_t>(valueOop.asSmallInteger());
+    else return PrimitiveResult::Failure;
+    if (charVal > 255) return PrimitiveResult::Failure;
+    hdr->bytes()[offset] = static_cast<uint8_t>(charVal);
+    popN(3); push(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 626: char16AtOffset:put: — write 16-bit character into byte object
+PrimitiveResult Interpreter::primitiveBytesChar16Write(int argCount) {
+    ObjectHeader* hdr; int64_t offset; Oop rcvr, valueOop;
+    if (!byteObjectWriteSetup(*this, memory_, argCount, hdr, offset, rcvr, valueOop))
+        return PrimitiveResult::Failure;
+    if (hdr->isImmutable()) { popN(3); push(rcvr); push(valueOop); push(Oop::fromSmallInteger(offset + 1));
+        sendSelector(memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign), 2);
+        return PrimitiveResult::Success; }
+    if (static_cast<size_t>(offset) + 2 > hdr->byteSize()) return PrimitiveResult::Failure;
+    uint32_t charVal;
+    if (valueOop.isCharacter()) charVal = valueOop.asCharacter();
+    else if (valueOop.isSmallInteger()) charVal = static_cast<uint32_t>(valueOop.asSmallInteger());
+    else return PrimitiveResult::Failure;
+    if (charVal > 65535) return PrimitiveResult::Failure;
+    uint16_t val = static_cast<uint16_t>(charVal);
+    memcpy(hdr->bytes() + offset, &val, sizeof(uint16_t));
+    popN(3); push(valueOop);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 627: char32AtOffset:put: — write 32-bit character into byte object
+PrimitiveResult Interpreter::primitiveBytesChar32Write(int argCount) {
+    ObjectHeader* hdr; int64_t offset; Oop rcvr, valueOop;
+    if (!byteObjectWriteSetup(*this, memory_, argCount, hdr, offset, rcvr, valueOop))
+        return PrimitiveResult::Failure;
+    if (hdr->isImmutable()) { popN(3); push(rcvr); push(valueOop); push(Oop::fromSmallInteger(offset + 1));
+        sendSelector(memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign), 2);
+        return PrimitiveResult::Success; }
+    if (static_cast<size_t>(offset) + 4 > hdr->byteSize()) return PrimitiveResult::Failure;
+    uint32_t charVal;
+    if (valueOop.isCharacter()) charVal = valueOop.asCharacter();
+    else if (valueOop.isSmallInteger()) charVal = static_cast<uint32_t>(valueOop.asSmallInteger());
+    else return PrimitiveResult::Failure;
+    memcpy(hdr->bytes() + offset, &charVal, sizeof(uint32_t));
+    popN(3); push(valueOop);
+    return PrimitiveResult::Success;
+}
 
 // Primitive 613: float32AtOffset: — read 32-bit float from byte object
 PrimitiveResult Interpreter::primitiveFloat32Read(int argCount) {

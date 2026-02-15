@@ -12885,10 +12885,37 @@ void Interpreter::initializePrimitives() {
     // The old hand-written table had many errors (wrong primitive numbers).
     // Using the generated table ensures correctness.
 
-    // ByteArray float access primitives (613-629)
-    // Read/write float/double data within byte-format objects (ByteArray, etc.)
+    // ByteArray data access primitives (600-629)
+    // Read typed data from byte-format objects (ByteArray, etc.)
+    primitiveTable_[600] = &Interpreter::primitiveBytesBoolean8Read;   // boolean8AtOffset:
+    primitiveTable_[601] = &Interpreter::primitiveBytesUint8Read;      // uint8AtOffset:
+    primitiveTable_[602] = &Interpreter::primitiveBytesInt8Read;       // int8AtOffset:
+    primitiveTable_[603] = &Interpreter::primitiveBytesUint16Read;     // uint16AtOffset:
+    primitiveTable_[604] = &Interpreter::primitiveBytesInt16Read;      // int16AtOffset:
+    primitiveTable_[605] = &Interpreter::primitiveBytesUint32Read;     // uint32AtOffset:
+    primitiveTable_[606] = &Interpreter::primitiveBytesInt32Read;      // int32AtOffset:
+    primitiveTable_[607] = &Interpreter::primitiveBytesUint64Read;     // uint64AtOffset:
+    primitiveTable_[608] = &Interpreter::primitiveBytesInt64Read;      // int64AtOffset:
+    primitiveTable_[609] = &Interpreter::primitiveBytesPointerRead;    // pointerAtOffset:
+    primitiveTable_[610] = &Interpreter::primitiveBytesChar8Read;      // char8AtOffset:
+    primitiveTable_[611] = &Interpreter::primitiveBytesChar16Read;     // char16AtOffset:
+    primitiveTable_[612] = &Interpreter::primitiveBytesChar32Read;     // char32AtOffset:
     primitiveTable_[613] = &Interpreter::primitiveFloat32Read;         // float32AtOffset:
     primitiveTable_[614] = &Interpreter::primitiveFloat64Read;         // float64AtOffset:
+    // Write typed data into byte-format objects (with immutability check)
+    primitiveTable_[615] = &Interpreter::primitiveBytesBoolean8Write;  // boolean8AtOffset:put:
+    primitiveTable_[616] = &Interpreter::primitiveBytesUint8Write;     // uint8AtOffset:put:
+    primitiveTable_[617] = &Interpreter::primitiveBytesInt8Write;      // int8AtOffset:put:
+    primitiveTable_[618] = &Interpreter::primitiveBytesUint16Write;    // uint16AtOffset:put:
+    primitiveTable_[619] = &Interpreter::primitiveBytesInt16Write;     // int16AtOffset:put:
+    primitiveTable_[620] = &Interpreter::primitiveBytesUint32Write;    // uint32AtOffset:put:
+    primitiveTable_[621] = &Interpreter::primitiveBytesInt32Write;     // int32AtOffset:put:
+    primitiveTable_[622] = &Interpreter::primitiveBytesUint64Write;    // uint64AtOffset:put:
+    primitiveTable_[623] = &Interpreter::primitiveBytesInt64Write;     // int64AtOffset:put:
+    primitiveTable_[624] = &Interpreter::primitiveBytesPointerWrite;   // pointerAtOffset:put:
+    primitiveTable_[625] = &Interpreter::primitiveBytesChar8Write;     // char8AtOffset:put:
+    primitiveTable_[626] = &Interpreter::primitiveBytesChar16Write;    // char16AtOffset:put:
+    primitiveTable_[627] = &Interpreter::primitiveBytesChar32Write;    // char32AtOffset:put:
     primitiveTable_[628] = &Interpreter::primitiveFloat32Write;        // float32AtOffset:put:
     primitiveTable_[629] = &Interpreter::primitiveFloat64Write;        // float64AtOffset:put:
 

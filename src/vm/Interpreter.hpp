@@ -1637,12 +1637,38 @@ private:
     PrimitiveResult primitiveFFIIntegerAtPut(int argCount);       // Named: write integer at offset
     PrimitiveResult primitiveGetAddressOfOOP(int argCount);       // Named: get address of oop
 
-    // ByteArray float access primitives (613-629)
-    // Read/write float/double data within byte-format objects
-    PrimitiveResult primitiveFloat32Read(int argCount);           // 613: float32AtOffset:
-    PrimitiveResult primitiveFloat64Read(int argCount);           // 614: float64AtOffset:
-    PrimitiveResult primitiveFloat32Write(int argCount);          // 628: float32AtOffset:put:
-    PrimitiveResult primitiveFloat64Write(int argCount);          // 629: float64AtOffset:put:
+    // ByteArray data access primitives (600-629)
+    // Read/write typed data within byte-format objects
+    PrimitiveResult primitiveBytesBoolean8Read(int argCount);     // 600
+    PrimitiveResult primitiveBytesUint8Read(int argCount);        // 601
+    PrimitiveResult primitiveBytesInt8Read(int argCount);         // 602
+    PrimitiveResult primitiveBytesUint16Read(int argCount);       // 603
+    PrimitiveResult primitiveBytesInt16Read(int argCount);        // 604
+    PrimitiveResult primitiveBytesUint32Read(int argCount);       // 605
+    PrimitiveResult primitiveBytesInt32Read(int argCount);        // 606
+    PrimitiveResult primitiveBytesUint64Read(int argCount);       // 607
+    PrimitiveResult primitiveBytesInt64Read(int argCount);        // 608
+    PrimitiveResult primitiveBytesPointerRead(int argCount);      // 609
+    PrimitiveResult primitiveBytesChar8Read(int argCount);        // 610
+    PrimitiveResult primitiveBytesChar16Read(int argCount);       // 611
+    PrimitiveResult primitiveBytesChar32Read(int argCount);       // 612
+    PrimitiveResult primitiveFloat32Read(int argCount);           // 613
+    PrimitiveResult primitiveFloat64Read(int argCount);           // 614
+    PrimitiveResult primitiveBytesBoolean8Write(int argCount);    // 615
+    PrimitiveResult primitiveBytesUint8Write(int argCount);       // 616
+    PrimitiveResult primitiveBytesInt8Write(int argCount);        // 617
+    PrimitiveResult primitiveBytesUint16Write(int argCount);      // 618
+    PrimitiveResult primitiveBytesInt16Write(int argCount);       // 619
+    PrimitiveResult primitiveBytesUint32Write(int argCount);      // 620
+    PrimitiveResult primitiveBytesInt32Write(int argCount);       // 621
+    PrimitiveResult primitiveBytesUint64Write(int argCount);      // 622
+    PrimitiveResult primitiveBytesInt64Write(int argCount);       // 623
+    PrimitiveResult primitiveBytesPointerWrite(int argCount);     // 624
+    PrimitiveResult primitiveBytesChar8Write(int argCount);       // 625
+    PrimitiveResult primitiveBytesChar16Write(int argCount);      // 626
+    PrimitiveResult primitiveBytesChar32Write(int argCount);      // 627
+    PrimitiveResult primitiveFloat32Write(int argCount);          // 628
+    PrimitiveResult primitiveFloat64Write(int argCount);          // 629
 
     // ExternalAddress read primitives (numbered 631-639)
     // Read from external memory pointed to by ExternalAddress
