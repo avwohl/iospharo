@@ -620,14 +620,16 @@ runTestClass: testClass run: runNum on: s detail: d
 !SUnitRunner class methodsFor: 'running'!
 runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
   "Run a single test with spin-wait timeout. NO Delay scheduler dependency.
-   Both test and runner at same priority; Processor yield rotates between them.
+   Fork test at requested priority. Runner lowers to same priority so yield rotates.
+   This allows system processes (mourn=51, finalize=40) to preempt lower-priority tests.
    Time microsecondClockValue is a VM primitive that always works.
    Returns nil for pass, #fail, #error, #skip, or #timeout."
-  | result testDone testProcess startUsec timeoutUsec |
+  | result testDone testProcess startUsec timeoutUsec originalPriority |
   result := nil. "nil means pass"
   testDone := false.
+  originalPriority := Processor activeProcess priority.
 
-  "Fork test at runner's priority — no preemption, test goes on ready list"
+  "Fork test at requested priority"
   testProcess := [
     [[[[(testClass selector: sel) runCase]
       on: TestFailure do: [:ex |
@@ -646,7 +648,10 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
         s nextPutAll: '  ERROR: '; nextPutAll: sel;
           nextPutAll: ' ('; nextPutAll: ex class name;
           nextPutAll: ': '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 100)); nextPutAll: ')'; cr].
-    testDone := true] fork.
+    testDone := true] forkAt: priority.
+
+  "Lower runner to test priority so yield rotates between them"
+  Processor activeProcess priority: priority.
 
   "Spin-wait for completion or timeout — yield rotates same-priority processes"
   startUsec := Time microsecondClockValue.
@@ -654,6 +659,9 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
   [testDone not and: [
     ((Time microsecondClockValue - startUsec) abs <= timeoutUsec)]]
       whileTrue: [Processor yield].
+
+  "Restore runner priority"
+  Processor activeProcess priority: originalPriority.
 
   testDone ifFalse: [
     [testProcess suspend] on: Error do: [:e |].

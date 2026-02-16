@@ -6098,65 +6098,17 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
     }
 
-    // Check for completely invalid receiver (raw 0, not the actual nil object)
+    // Handle completely invalid receiver (raw 0) — treat as nil to avoid null deref.
+    // This indicates an uninitialized pointer bug; method lookup on nil will give
+    // proper DNU for messages nil doesn't understand.
     if (rcvr.rawBits() == 0) {
         Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
-        popN(argCount + 1);
-        push(nilObj);
-        return;
+        rcvr = nilObj;
+        // Fix receiver on the stack so 'self' is correct in dispatched method
+        *(stackPointer_ - 1 - argCount) = nilObj;
     }
 
-    Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
     Oop rcvrClass = memory_.classOf(rcvr);
-
-    if (rcvrClass.rawBits() == 0) {
-        popN(argCount + 1);
-        push(nilObj);
-        return;
-    }
-
-    // Handle deprecation transform check - when deprecation messages are sent
-    // to a block instead of a transform rule, return appropriate defaults.
-    if (rcvr.isObject() && selBytes && selLen > 0) {
-        auto selIs = [selBytes, selLen](const char* s) {
-            size_t n = strlen(s);
-            return selLen == n && memcmp(selBytes, s, n) == 0;
-        };
-        if (selIs("shouldTransform") || selIs("deprecatedMethodName") ||
-            selIs("explanationString") || selIs("transformingSelector") ||
-            selIs("contextOfDeprecatedMethod") || selIs("sendingMethodName") ||
-            selIs("default") || selIs("transform:")) {
-            Oop rcvrClassLocal = memory_.classOf(rcvr);
-            std::string className;
-            if (rcvrClassLocal.isObject()) {
-                Oop nameOop = memory_.fetchPointer(6, rcvrClassLocal);
-                if (nameOop.isObject()) {
-                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
-                        className = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                    }
-                }
-            }
-            if (className.find("Block") != std::string::npos ||
-                className.find("Closure") != std::string::npos) {
-                if (selIs("shouldTransform")) {
-                    Oop falseObj = memory_.specialObject(SpecialObjectIndex::FalseObject);
-                    popN(argCount + 1);
-                    push(falseObj);
-                    return;
-                }
-                if (selIs("transform:") && argCount >= 1) {
-                    Oop arg = stackValue(0);
-                    popN(argCount + 1);
-                    push(arg);
-                    return;
-                }
-                popN(argCount + 1);
-                push(nilObj);
-                return;
-            }
-        }
-    }
 
     // TRACE: track isNull on non-null ExternalAddress to debug return value
     static int traceIsNull = 0;
