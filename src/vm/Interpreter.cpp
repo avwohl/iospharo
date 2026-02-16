@@ -2923,21 +2923,51 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                         returnFromMethod();
                         break;
                     }
-                    case 0x5D: returnValue(memory_.nil()); break;          // block return nil
+                    case 0x5D: {
+                        // BlockReturn nil
+                        // If we're in a full block (CompiledBlock), return nil from the block frame.
+                        // If we're in an inlined block within a CompiledMethod, push nil and continue.
+                        bool inFullBlock5D = (method_.isObject() && method_.rawBits() > 0x10000 &&
+                                              method_.asObjectPtr()->classIndex() == 3117);
+                        if (inFullBlock5D) {
+                            returnValue(memory_.nil());
+                        } else {
+                            // Inlined block: push nil (the block's return value) and continue
+                            push(memory_.nil());
+                            // Jump by extB_ bytes (0 means just continue to next bytecode)
+                            if (extB_ != 0) {
+                                instructionPointer_ += extB_;
+                                extB_ = 0;
+                            }
+                        }
+                        break;
+                    }
                     case 0x5E: {                                           // block return top
-                        // Sista V1: 0x5E is extensible via Extend A
-                        // extA_ = 0: return from current block (simple return)
+                        // Sista V1: 0x5E is extensible via Extend A and Extend B
                         // extA_ = N: return from N-th enclosing block (non-local return)
+                        // extB_ = jump distance for inlined blocks
                         int enclosingLevels = extA_;
-                        extA_ = 0;  // Consume extension
+                        int jumpDist = extB_;
+                        extA_ = 0;
+                        extB_ = 0;
 
                         if (enclosingLevels > 0) {
                             // Non-local return - unwind enclosingLevels blocks
                             returnFromBlock();
                         } else {
-                            // Simple block return - just return the value
-                            Oop value = pop();
-                            returnValue(value);
+                            // Check if we're in a full block (CompiledBlock) or inlined block
+                            bool inFullBlock = (method_.isObject() && method_.rawBits() > 0x10000 &&
+                                                method_.asObjectPtr()->classIndex() == 3117);
+                            if (inFullBlock) {
+                                // Full block return - pop TOS and return from block frame
+                                Oop value = pop();
+                                returnValue(value);
+                            } else {
+                                // Inlined block return - TOS is the block's result value.
+                                // It stays on the stack. Jump by jumpDist bytes forward
+                                // (0 means continue to next bytecode).
+                                instructionPointer_ += jumpDist;
+                            }
                         }
                         break;
                     }
@@ -4077,43 +4107,6 @@ void Interpreter::returnValue(Oop value) {
                     if (executeFromContext(sender)) {
                         // Push the return value onto the new context's stack
                         push(value);
-                        // TRACE: context-based return to isValid
-                        {
-                            static int ctxRetTrace = 0;
-                            if (ctxRetTrace < 5) {
-                                bool isIsValid = false;
-                                if (method_.isObject() && method_.rawBits() > 0x10000) {
-                                    Oop hdr2 = memory_.fetchPointer(0, method_);
-                                    if (hdr2.isSmallInteger()) {
-                                        int nl2 = hdr2.asSmallInteger() & 0x7FFF;
-                                        if (nl2 >= 2) {
-                                            Oop sel2 = memory_.fetchPointer(nl2 - 1, method_);
-                                            if (sel2.isObject() && sel2.rawBits() > 0x10000) {
-                                                ObjectHeader* sh2 = sel2.asObjectPtr();
-                                                if (sh2->isBytesObject() && sh2->byteSize() == 7 &&
-                                                    memcmp(sh2->bytes(), "isValid", 7) == 0)
-                                                    isIsValid = true;
-                                            }
-                                        }
-                                    }
-                                }
-                                if (isIsValid) {
-                                    ctxRetTrace++;
-                                    int sd2 = static_cast<int>(stackPointer_ - stackBase_);
-                                    Oop tos2 = stackTop();
-                                    fprintf(stderr, "[CTX-RETURN-ISVALID] #%d TOS=0x%llx pushed=0x%llx sd=%d\n",
-                                            ctxRetTrace, (unsigned long long)tos2.rawBits(),
-                                            (unsigned long long)value.rawBits(), sd2);
-                                    fprintf(stderr, "[CTX-RETURN-ISVALID]   stack:");
-                                    for (int si = 0; si < std::min(sd2, 5); si++) {
-                                        Oop sv2 = *(stackPointer_ - 1 - si);
-                                        fprintf(stderr, " [%d]=0x%llx", si, (unsigned long long)sv2.rawBits());
-                                    }
-                                    fprintf(stderr, "\n");
-                                    fflush(stderr);
-                                }
-                            }
-                        }
                         return;
                     }
                 }
@@ -7925,7 +7918,7 @@ void Interpreter::sendMustBeBoolean(Oop value) {
     // If this causes infinite recursion, the DNU depth limit will stopVM().
     static int mbCount = 0;
     mbCount++;
-    if (mbCount <= 3) {
+    if (mbCount <= 10) {
         std::string clsName = "?";
         if (value.isSmallInteger()) {
             clsName = "SmallInteger(" + std::to_string(value.asSmallInteger()) + ")";
@@ -8031,6 +8024,35 @@ void Interpreter::sendMustBeBoolean(Oop value) {
                 }
             }
         }
+        // Dump recent bytecodes from circular buffer (last 40, newest first)
+        fprintf(stderr, "  recentBytecodes (newest→oldest): ");
+        for (int rb = 0; rb < 40; rb++) {
+            uint8_t b = recentBytecodes_[(recentBytecodeIdx_ - 1 - rb + 256) % 256];
+            fprintf(stderr, "%02x ", b);
+        }
+        fprintf(stderr, "\n");
+        // Also dump saved frames info
+        fprintf(stderr, "  savedFrames (fd=%zu): ", frameDepth_);
+        for (size_t sf = 0; sf < frameDepth_ && sf < 5; sf++) {
+            auto& f = savedFrames_[sf];
+            std::string sfSel = "?";
+            if (f.savedMethod.isObject() && f.savedMethod.rawBits() > 0x10000) {
+                Oop mh = memory_.fetchPointer(0, f.savedMethod);
+                if (mh.isSmallInteger()) {
+                    int nL = mh.asSmallInteger() & 0x7FFF;
+                    if (nL >= 2 && nL < 100) {
+                        Oop sel = memory_.fetchPointer(nL - 1, f.savedMethod);
+                        if (sel.isObject() && sel.asObjectPtr()->isBytesObject() && sel.asObjectPtr()->byteSize() < 100)
+                            sfSel = std::string((char*)sel.asObjectPtr()->bytes(), sel.asObjectPtr()->byteSize());
+                    }
+                }
+            }
+            int sfIpOff = -1;
+            if (f.savedMethod.isObject() && f.savedIP)
+                sfIpOff = static_cast<int>(f.savedIP - f.savedMethod.asObjectPtr()->bytes());
+            fprintf(stderr, "[%zu]%s@%d ", sf, sfSel.c_str(), sfIpOff);
+        }
+        fprintf(stderr, "\n");
         // Dump inline stack
         {
             int stackDepth = static_cast<int>(stackPointer_ - stackBase_);
@@ -8673,18 +8695,62 @@ void Interpreter::initializeSelectors() {
     selectors_.value_ = Oop::nil();
     selectors_.valueValue = Oop::nil();
 
-    // Log results
-    // DEBUG: "[DEBUG] Arithmetic selectors found:"
-    // std::cerr << "  +: 0x" << std::hex << selectors_.add.rawBits() << std::dec; // DEBUG
-    // std::cerr << "  -: 0x" << std::hex << selectors_.subtract.rawBits() << std::dec; // DEBUG
-    // std::cerr << "  <: 0x" << std::hex << selectors_.lessThan.rawBits() << std::dec; // DEBUG
-    // std::cerr << "  >: 0x" << std::hex << selectors_.greaterThan.rawBits() << std::dec; // DEBUG
-    // std::cerr << "  *: 0x" << std::hex << selectors_.multiply.rawBits() << std::dec; // DEBUG
-    // std::cerr << "  /: 0x" << std::hex << selectors_.divide.rawBits() << std::dec; // DEBUG
-    // std::cerr << "  =: 0x" << std::hex << selectors_.equal.rawBits() << std::dec; // DEBUG
-    // std::cerr << "  at:: 0x" << std::hex << selectors_.at.rawBits() << std::dec; // DEBUG
-    // std::cerr << "  ==: 0x" << std::hex << selectors_.eq.rawBits() << std::dec; // DEBUG
-    // std::cerr << "  value: 0x" << std::hex << selectors_.value.rawBits() << std::dec; // DEBUG
+    // Log resolved selectors
+    auto logSel = [this](const char* label, Oop sel) {
+        std::cerr << "[SELECTORS] " << label << ": 0x" << std::hex << sel.rawBits() << std::dec;
+        if (sel.isNil() || sel.rawBits() == 0) {
+            std::cerr << " (NIL)";
+        } else if (sel.isSmallInteger()) {
+            std::cerr << " (SmallInt=" << sel.asSmallInteger() << ")";
+        } else if (sel.isObject() && sel.rawBits() > 0x10000) {
+            ObjectHeader* h = sel.asObjectPtr();
+            if (h->isBytesObject() && h->byteSize() < 50) {
+                std::cerr << " (#" << std::string((char*)h->bytes(), h->byteSize()) << ")";
+            } else {
+                std::cerr << " (fmt=" << (int)h->format() << " slots=" << h->slotCount() << ")";
+            }
+        }
+        std::cerr << "\n";
+    };
+    logSel("+", selectors_.add);
+    logSel("-", selectors_.subtract);
+    logSel("<", selectors_.lessThan);
+    logSel(">", selectors_.greaterThan);
+    logSel("<=", selectors_.lessEqual);
+    logSel(">=", selectors_.greaterEqual);
+    logSel("=", selectors_.equal);
+    logSel("~=", selectors_.notEqual);
+    logSel("*", selectors_.multiply);
+    logSel("/", selectors_.divide);
+
+    // Dump the special selectors array to verify mapping
+    Oop specialSelectors2 = memory_.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
+    if (specialSelectors2.isObject() && specialSelectors2.rawBits() > 0x10000) {
+        ObjectHeader* ssHdr2 = specialSelectors2.asObjectPtr();
+        size_t ssSlots = ssHdr2->slotCount();
+        std::cerr << "[SPECIAL-SELECTORS] array has " << ssSlots << " slots:\n";
+        for (size_t i = 0; i < std::min(ssSlots, (size_t)64); i += 2) {
+            Oop sel = ssHdr2->slotAt(i);
+            Oop argc = (i+1 < ssSlots) ? ssHdr2->slotAt(i+1) : Oop::nil();
+            std::cerr << "  [" << i << "] ";
+            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                ObjectHeader* sh = sel.asObjectPtr();
+                if (sh->isBytesObject() && sh->byteSize() < 50) {
+                    std::cerr << "#" << std::string((char*)sh->bytes(), sh->byteSize());
+                } else {
+                    std::cerr << "obj(fmt=" << (int)sh->format() << ")";
+                }
+            } else if (sel.isSmallInteger()) {
+                std::cerr << "SI(" << sel.asSmallInteger() << ")";
+            } else {
+                std::cerr << "0x" << std::hex << sel.rawBits() << std::dec;
+            }
+            if (argc.isSmallInteger()) {
+                std::cerr << " argc=" << argc.asSmallInteger();
+            }
+            std::cerr << "\n";
+        }
+    }
 }
 
 // ===== PROCESS SCHEDULING =====
