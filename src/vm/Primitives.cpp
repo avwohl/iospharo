@@ -2005,6 +2005,11 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
         // For format 2 (Indexable): no fixed fields, access directly
         // For format 3 (IndexableWithFixed): add fixedFields to index
         ObjectFormat fmt = header->format();
+        // Per official VM: format 0 (ZeroSized) and 1 (FixedSize) are NOT indexable.
+        // primitive at:/at:put: must fail for these - use instVarAt: instead.
+        if (fmt == ObjectFormat::ZeroSized || fmt == ObjectFormat::FixedSize) {
+            return PrimitiveResult::Failure;
+        }
         size_t fixedFields = 0;
         // Formats 3, 4, 5 all can have named (fixed) instVars before indexable slots:
         //   3 = IndexableWithFixed (e.g. Context)
@@ -2098,6 +2103,11 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
         // Per official VM: at:put: accesses the INDEXABLE part, skipping fixed fields
         // Formats 3, 4, 5 can have named (fixed) instVars before indexable slots
         ObjectFormat fmt = header->format();
+        // Per official VM: format 0 (ZeroSized) and 1 (FixedSize) are NOT indexable.
+        // primitive at:/at:put: must fail for these - use instVarAt: instead.
+        if (fmt == ObjectFormat::ZeroSized || fmt == ObjectFormat::FixedSize) {
+            return PrimitiveResult::Failure;
+        }
         size_t fixedFields = 0;
         if (fmt == ObjectFormat::IndexableWithFixed ||
             fmt == ObjectFormat::Weak ||
