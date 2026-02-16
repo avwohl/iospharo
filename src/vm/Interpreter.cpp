@@ -4374,57 +4374,6 @@ terminate_process:
     // After popping, if execution is still running, push the result
     if (running_) {
         push(value);
-
-        // TRACE: verify stack after isNull return to isValid
-        {
-            static int postReturnTrace = 0;
-            if (postReturnTrace < 5) {
-                // Check if restored method is isValid
-                bool isIsValid = false;
-                if (method_.isObject() && method_.rawBits() > 0x10000) {
-                    Oop hdr = memory_.fetchPointer(0, method_);
-                    if (hdr.isSmallInteger()) {
-                        int nl = hdr.asSmallInteger() & 0x7FFF;
-                        if (nl >= 2) {
-                            Oop sel = memory_.fetchPointer(nl - 1, method_);
-                            if (sel.isObject() && sel.rawBits() > 0x10000) {
-                                ObjectHeader* sh = sel.asObjectPtr();
-                                if (sh->isBytesObject() && sh->byteSize() == 7 &&
-                                    memcmp(sh->bytes(), "isValid", 7) == 0) {
-                                    isIsValid = true;
-                                }
-                            }
-                        }
-                    }
-                }
-                if (isIsValid) {
-                    postReturnTrace++;
-                    const char* tosType = "?";
-                    Oop tos = stackTop();
-                    if (tos.rawBits() == memory_.trueObject().rawBits()) tosType = "TRUE";
-                    else if (tos.rawBits() == memory_.falseObject().rawBits()) tosType = "FALSE";
-                    else if (tos.isNil()) tosType = "nil";
-                    else if (tos.isSmallInteger()) tosType = "SmallInt";
-                    else {
-                        tosType = "OBJECT";
-                    }
-                    int sd = static_cast<int>(stackPointer_ - stackBase_);
-                    fprintf(stderr, "[POST-RETURN-ISVALID] #%d TOS=%s(0x%llx) pushed=%s(0x%llx) sd=%d fd=%zu\n",
-                            postReturnTrace, tosType, (unsigned long long)tos.rawBits(),
-                            value.rawBits() == memory_.trueObject().rawBits() ? "TRUE" :
-                            value.rawBits() == memory_.falseObject().rawBits() ? "FALSE" :
-                            "OTHER", (unsigned long long)value.rawBits(), sd, frameDepth_);
-                    // Show a few stack items
-                    fprintf(stderr, "[POST-RETURN-ISVALID]   stack:");
-                    for (int si = 0; si < std::min(sd, 5); si++) {
-                        Oop sv = *(stackPointer_ - 1 - si);
-                        fprintf(stderr, " [%d]=0x%llx", si, (unsigned long long)sv.rawBits());
-                    }
-                    fprintf(stderr, "\n");
-                    fflush(stderr);
-                }
-            }
-        }
     }
 }
 
@@ -5934,38 +5883,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     }
 
     Oop rcvrClass = memory_.classOf(rcvr);
-
-    // TRACE: track isNull on non-null ExternalAddress to debug return value
-    static int traceIsNull = 0;
-    if (selBytes && selLen == 6 && memcmp(selBytes, "isNull", 6) == 0) {
-        if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-            ObjectHeader* rh = rcvr.asObjectPtr();
-            if (rh->isBytesObject() && rh->byteSize() == 8) {
-                // Check if non-null (any non-zero byte)
-                bool isNonNull = false;
-                for (int bi = 0; bi < 8; bi++) {
-                    if (rh->bytes()[bi] != 0) { isNonNull = true; break; }
-                }
-                if (isNonNull && traceIsNull < 5) {
-                    traceIsNull++;
-                    fprintf(stderr, "[TRACE-ISNULL] #%d isNull on NON-NULL EA oop=0x%llx fd=%zu bytes:",
-                            traceIsNull, (unsigned long long)rcvr.rawBits(), frameDepth_);
-                    for (int bi = 0; bi < 8; bi++) fprintf(stderr, " %02x", rh->bytes()[bi]);
-                    fprintf(stderr, " SP=%p FP=%p stackBase=%p\n",
-                            (void*)stackPointer_, (void*)framePointer_, (void*)stackBase_);
-                    // Dump stack around TOS
-                    int sd = static_cast<int>(stackPointer_ - stackBase_);
-                    fprintf(stderr, "[TRACE-ISNULL]   stackDepth=%d stack:", sd);
-                    for (int si = 0; si < std::min(sd, 5); si++) {
-                        Oop sv = *(stackPointer_ - 1 - si);
-                        fprintf(stderr, " [%d]=0x%llx", si, (unsigned long long)sv.rawBits());
-                    }
-                    fprintf(stderr, "\n");
-                    fflush(stderr);
-                }
-            }
-        }
-    }
 
     // Check method cache
     MethodCacheEntry* cached = probeCache(selector, rcvrClass);
@@ -10974,9 +10891,7 @@ bool Interpreter::bootstrapStartup() {
     static int bootstrapCallCount = 0;
     static bool imageBooted = false;  // true once we've ever found a runnable process
     bootstrapCallCount++;
-    if (bootstrapCallCount <= 5) {
-        std::cerr << "[STARTUP] bootstrapStartup called (call #" << bootstrapCallCount << ")\n";
-    }
+    // Startup logging removed — bootstrap is stable
 
     // In Spur, nil is an actual object at heap start, not 0
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
@@ -10993,8 +10908,7 @@ bool Interpreter::bootstrapStartup() {
             if (queues.isObject()) {
                 ObjectHeader* queuesHeader = queues.asObjectPtr();
                 size_t numQueues = queuesHeader->slotCount();
-                if (bootstrapCallCount <= 5)
-                    std::cerr << "[STARTUP] Found " << numQueues << " priority queues\n";
+                (void)numQueues;
 
                 // Search from highest to lowest priority for a runnable process
                 for (int i = static_cast<int>(numQueues) - 1; i >= 0; i--) {
@@ -11002,16 +10916,11 @@ bool Interpreter::bootstrapStartup() {
                     if (queue.rawBits() == nilObj.rawBits() || !queue.isObject()) continue;
 
                     ObjectHeader* queueHeader = queue.asObjectPtr();
-                    if (bootstrapCallCount <= 5)
-                        std::cerr << "[STARTUP] Queue at priority " << (i + 1) << ": cls=" << queueHeader->classIndex()
-                                  << " slots=" << queueHeader->slotCount() << "\n";
+                    (void)queueHeader;
 
                     // LinkedList layout: slot 0 = firstLink, slot 1 = lastLink
                     Oop firstProcess = memory_.fetchPointer(0, queue);
-                    if (bootstrapCallCount <= 5)
-                        std::cerr << "[STARTUP] firstProcess: 0x" << std::hex << firstProcess.rawBits()
-                                  << std::dec << " isNil=" << (firstProcess.rawBits() == nilObj.rawBits())
-                                  << " isObj=" << firstProcess.isObject() << "\n";
+                    // first process logging removed
                     if (firstProcess.rawBits() == nilObj.rawBits() || !firstProcess.isObject()) continue;
 
                     ObjectHeader* procHeader = firstProcess.asObjectPtr();
@@ -11037,27 +10946,19 @@ bool Interpreter::bootstrapStartup() {
                     //   slot 1 = suspendedContext
                     //   slot 2 = priority
                     Oop context = memory_.fetchPointer(1, firstProcess);  // suspendedContext is at slot 1
-                    if (bootstrapCallCount <= 5)
-                        std::cerr << "[STARTUP] Process at priority " << (i + 1)
-                                  << ": suspendedContext=0x" << std::hex << context.rawBits() << std::dec << "\n";
+                    // process context logging removed
                     if (context.rawBits() != nilObj.rawBits() && context.isObject()) {
                         ObjectHeader* ctxHeader = context.asObjectPtr();
-                        if (bootstrapCallCount <= 5)
-                            std::cerr << "[STARTUP] suspendedContext: cls=" << ctxHeader->classIndex()
-                                      << " slots=" << ctxHeader->slotCount()
-                                      << " fmt=" << (int)ctxHeader->format() << "\n";
+                        // context details logging removed
 
                         // Only try to execute if it looks like a Context (not a Process)
                         // Context format is usually 3 (indexable with fixed), Process format is 1
                         if (ctxHeader->format() == ObjectFormat::IndexableWithFixed) {
-                            if (bootstrapCallCount <= 5)
-                                std::cerr << "[STARTUP] Found valid context, resuming execution!\n";
+                            // Found valid context
                             imageBooted = true;
                             return executeFromContext(context);
                         } else {
-                            if (bootstrapCallCount <= 5)
-                                std::cerr << "[STARTUP] suspendedContext doesn't look like a Context (format="
-                                          << (int)ctxHeader->format() << ")\n";
+                            // Not a context — format doesn't match
                         }
                     }
                 }
@@ -11067,8 +10968,7 @@ bool Interpreter::bootstrapStartup() {
 
     // Approach 2: Try to resume from where the image was saved
     // The saved active process might have a context embedded deeper
-    if (bootstrapCallCount <= 5)
-        std::cerr << "[STARTUP] Approach 2: Checking active process...\n";
+    // Approach 2 logging removed
     Oop schedulerAssoc2 = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
     if (schedulerAssoc2.isObject()) {
         Oop scheduler = memory_.fetchPointer(1, schedulerAssoc2);  // Get scheduler
@@ -11076,28 +10976,19 @@ bool Interpreter::bootstrapStartup() {
             Oop activeProcess = memory_.fetchPointer(1, scheduler);  // Get activeProcess
             if (activeProcess.isObject()) {
                 ObjectHeader* procHeader = activeProcess.asObjectPtr();
-                if (bootstrapCallCount <= 5)
-                    std::cerr << "[STARTUP] Active process: 0x" << std::hex << activeProcess.rawBits()
-                              << std::dec << " slots=" << procHeader->slotCount()
-                              << " cls=" << procHeader->classIndex() << "\n";
+                (void)procHeader;
 
                 // Check suspendedContext (slot 1) of active process
                 if (procHeader->slotCount() > 1) {
                     Oop suspendedCtx = procHeader->slotAt(1);
-                    if (bootstrapCallCount <= 5) {
-                        std::cerr << "[STARTUP] Active process suspendedContext: 0x"
-                                  << std::hex << suspendedCtx.rawBits() << std::dec;
-                        if (suspendedCtx.isNil()) std::cerr << " (nil)";
-                        std::cerr << "\n";
-                    }
+                    // suspended context logging removed
                     if (suspendedCtx.isNil()) {
                         // nil - no context
                     } else if (suspendedCtx.isObject()) {
                         ObjectHeader* ctxHdr = suspendedCtx.asObjectPtr();
                         // Try to resume from this context if it looks valid
                         if (ctxHdr->format() == ObjectFormat::IndexableWithFixed) {
-                            if (bootstrapCallCount <= 5)
-                                std::cerr << "[STARTUP] Resuming from active process context!\n";
+                            // Resuming from active process context
                             imageBooted = true;
                             return executeFromContext(suspendedCtx);
                         }
