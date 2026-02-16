@@ -8405,10 +8405,27 @@ void Interpreter::sendMustBeBoolean(Oop value) {
         if (method_.isObject() && instructionPointer_) {
             ipOff = static_cast<int>(instructionPointer_ - method_.asObjectPtr()->bytes());
         }
-        fprintf(stderr, "[MUSTBEBOOL #%d] value=0x%llx class=%s method=%s rcvr=%s ipOff=%d fd=%zu fwd=%d gcCount=%d\n",
+        fprintf(stderr, "[MUSTBEBOOL #%d] value=0x%llx class=%s method=%s rcvr=%s ipOff=%d fd=%zu fwd=%d gcCount=%d",
                 mbCount, (unsigned long long)value.rawBits(), clsName.c_str(), mSel.c_str(),
                 rcvrCls.c_str(), ipOff, frameDepth_, isForwarder,
                 memory_.statistics().gcCount);
+        // Print diagnostic: is this actually true/false at a different address?
+        fprintf(stderr, " true=0x%llx false=0x%llx",
+                (unsigned long long)memory_.trueObject().rawBits(),
+                (unsigned long long)memory_.falseObject().rawBits());
+        // If value is an object, print raw header bytes and check if it's inside another object
+        if (value.isObject()) {
+            auto* hdr = value.asObjectPtr();
+            uint64_t rawHdr = *reinterpret_cast<uint64_t*>(hdr);
+            fprintf(stderr, " hdr=0x%llx fmt=%d ci=%d slots=%zu",
+                    (unsigned long long)rawHdr, (int)hdr->format(),
+                    (int)hdr->classIndex(), hdr->slotCount());
+            // Check if value is between heap start and first regular object
+            auto* heapStart = memory_.oldSpaceStart();
+            ptrdiff_t heapOffset = reinterpret_cast<uint8_t*>(hdr) - heapStart;
+            fprintf(stderr, " heapOff=0x%llx", (unsigned long long)heapOffset);
+        }
+        fprintf(stderr, "\n");
     }
     sendSelector(selectors_.mustBeBoolean, 0);
 }
