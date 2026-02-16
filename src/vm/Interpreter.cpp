@@ -2255,9 +2255,16 @@ void Interpreter::checkTimerSemaphore() {
         int64_t currentUsec = unixUsec + kSmalltalkEpochOffset;
 
         if (currentUsec >= nextWakeupUsec_) {
+            static int timerFireCount = 0;
+            timerFireCount++;
             Oop semaphore = timerSemaphore_;
             timerSemaphore_ = Oop::nil();
             nextWakeupUsec_ = INT64_MAX;
+            if (timerFireCount <= 50 || timerFireCount % 100 == 0) {
+                fprintf(stderr, "[TIMER-FIRE #%d] usec timer fired, signaling sema=0x%llx step=%llu\n",
+                        timerFireCount, (unsigned long long)semaphore.rawBits(),
+                        (unsigned long long)g_stepNum);
+            }
             synchronousSignal(semaphore);
             return;
         }

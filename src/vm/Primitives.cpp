@@ -14857,6 +14857,11 @@ PrimitiveResult Interpreter::primitiveSignalAtUTCMicroseconds(int argCount) {
         // Disable timer
         timerSemaphore_ = Oop::nil();
         nextWakeupUsec_ = INT64_MAX;
+        set242Count++;
+        if (set242Count <= 50 || set242Count % 100 == 0) {
+            fprintf(stderr, "[TIMER-SET242 #%d] DISABLE timer step=%llu\n",
+                    set242Count, (unsigned long long)g_stepNum);
+        }
     } else {
         // Detect conflict: ms timer also armed?
         if (nextWakeupTime_ != 0) {
@@ -14867,6 +14872,11 @@ PrimitiveResult Interpreter::primitiveSignalAtUTCMicroseconds(int argCount) {
         timerSemaphore_ = sema;
         nextWakeupUsec_ = usecs;
         set242Count++;
+        if (set242Count <= 50 || set242Count % 100 == 0) {
+            fprintf(stderr, "[TIMER-SET242 #%d] ARM usecs=%lld sema=0x%llx step=%llu\n",
+                    set242Count, (long long)usecs, (unsigned long long)sema.rawBits(),
+                    (unsigned long long)g_stepNum);
+        }
     }
 
     popN(2);  // Pop both arguments, leave receiver
