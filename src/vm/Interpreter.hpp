@@ -312,7 +312,6 @@ public:
 
     /// Signal the finalization semaphore if any mourners were queued during GC.
     void signalFinalizationIfNeeded();
-    void forceYieldForFinalization(Oop activeProcess);
 
     /// Check if an object can be made immutable (per Cog VM's canBeImmutable:).
     /// Returns false for contexts, ephemerons, weak objects, semaphores,
@@ -525,11 +524,6 @@ private:
     std::atomic<bool> heartbeatRunning_{false};
     std::atomic<bool> pendingDisplaySync_{false};
     std::thread heartbeatThread_;
-
-    // Finalization: set when force-yield to finalization process failed
-    // (process was not on the ready list at priority 50).
-    // The step check will periodically retry yielding.
-    bool pendingMournerYield_ = false;
 
     // GC verification: saved bytecode at IP before GC to detect corruption
     uint8_t gcVerifyBytecodeAtIP_ = 0xFF;

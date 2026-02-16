@@ -2489,64 +2489,22 @@ void Interpreter::synchronousSignal(Oop semaphore) {
 }
 
 void Interpreter::signalFinalizationIfNeeded() {
-    if (memory_.pendingFinalizationSignals() > 0) {
-        memory_.clearPendingFinalizationSignals();
-        if (memory_.hasMourners()) {
-            Oop sema = memory_.specialObject(SpecialObjectIndex::TheFinalizationSemaphore);
-            if (sema.isObject() && sema.rawBits() != memory_.nil().rawBits()) {
-                Oop activeProcess = getActiveProcess();
-                Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, sema);
+    // Standard approach: signal the finalization semaphore when GC has fired
+    // ephemerons. The finalization process wakes up and processes mourners
+    // according to normal priority scheduling.
+    //
+    // DO NOT forcibly transfer to the finalization process — that violates
+    // the priority scheduler and disrupts in-progress mourning by creating
+    // duplicate mournLoop processes.
+    if (memory_.pendingFinalizationSignals() <= 0) return;
+    memory_.clearPendingFinalizationSignals();
 
-                if (firstLink.isObject() && firstLink.rawBits() != memory_.nil().rawBits()) {
-                    // Case 1: Finalization process is waiting on the semaphore.
-                    // Remove it and force-yield to it directly.
-                    Oop finProcess = removeFirstLinkOfList(sema);
-                    putToSleep(activeProcess);
-                    transferTo(finProcess);
-                } else {
-                    // Case 2: Finalization process is not on the semaphore.
-                    // Signal the semaphore (for excess count), then search the
-                    // ready list for a finalization-priority process and yield to it.
-                    synchronousSignal(sema);
-                    forceYieldForFinalization(activeProcess);
-                }
-            }
-        }
-    }
+    Oop sema = memory_.specialObject(SpecialObjectIndex::TheFinalizationSemaphore);
+    if (!sema.isObject() || sema == memory_.nil()) return;
+
+    synchronousSignal(sema);
 }
 
-void Interpreter::forceYieldForFinalization(Oop activeProcess) {
-    // The finalization process runs at userInterruptPriority (50).
-    // Check the ready list at priority 50 for the finalization process.
-    constexpr int finalizationPriority = 50;
-    constexpr int finalizationIdx = finalizationPriority - 1; // 0-indexed
-
-    Oop schedAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
-    Oop scheduler = memory_.fetchPointer(1, schedAssoc);
-    Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
-    ObjectHeader* listsHdr = schedLists.asObjectPtr();
-
-    if (finalizationIdx >= (int)listsHdr->slotCount()) return;
-
-    Oop processList = memory_.fetchPointer(finalizationIdx, schedLists);
-    Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, processList);
-    if (first.isObject() && first.rawBits() != memory_.nil().rawBits()) {
-        // Found the finalization process on the ready list at priority 50.
-        Oop finProcess = removeFirstLinkOfList(processList);
-        putToSleep(activeProcess);
-        transferTo(finProcess);
-    } else {
-        // Finalization process is not on the ready list at priority 50.
-        // It may be blocked on a throttle semaphore (inside its mourning loop).
-        // The finalization semaphore has been signaled (excess++), so the fin
-        // process will pick up mourners when it returns to its wait loop.
-        // However, this may take time if higher-priority processes keep running.
-        //
-        // Mark that we have pending mourners that need attention.
-        // The step check will periodically try to yield to the fin process.
-        pendingMournerYield_ = true;
-    }
-}
 
 // ===== HEARTBEAT THREAD =====
 
@@ -2765,43 +2723,6 @@ bool Interpreter::step() {
 
         g_watchdogSubphase = 12;
         signalFinalizationIfNeeded();
-
-        // If mourners are pending but we couldn't yield to the finalization
-        // process (it was blocked on a throttle semaphore), check if it's
-        // now available on the finalization semaphore or ready list.
-        if (pendingMournerYield_ && memory_.hasMourners()) {
-            Oop sema = memory_.specialObject(SpecialObjectIndex::TheFinalizationSemaphore);
-            if (sema.isObject() && sema.rawBits() != memory_.nil().rawBits()) {
-                Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, sema);
-                if (firstLink.isObject() && firstLink.rawBits() != memory_.nil().rawBits()) {
-                    // Finalization process is now on the semaphore - yield to it
-                    pendingMournerYield_ = false;
-                    Oop finProcess = removeFirstLinkOfList(sema);
-                    Oop activeProcess = getActiveProcess();
-                    putToSleep(activeProcess);
-                    transferTo(finProcess);
-                } else {
-                    // Try ready list at priority 50
-                    Oop schedAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
-                    Oop scheduler = memory_.fetchPointer(1, schedAssoc);
-                    Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
-                    constexpr int finIdx = 49; // priority 50, 0-indexed
-                    if (finIdx < (int)schedLists.asObjectPtr()->slotCount()) {
-                        Oop processList = memory_.fetchPointer(finIdx, schedLists);
-                        Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, processList);
-                        if (first.isObject() && first.rawBits() != memory_.nil().rawBits()) {
-                            pendingMournerYield_ = false;
-                            Oop finProcess = removeFirstLinkOfList(processList);
-                            Oop activeProcess = getActiveProcess();
-                            putToSleep(activeProcess);
-                            transferTo(finProcess);
-                        }
-                    }
-                }
-            }
-        } else if (pendingMournerYield_ && !memory_.hasMourners()) {
-            pendingMournerYield_ = false;  // Mourners were processed
-        }
 
         // Log active process priority + selector (disabled — fprintf overhead slows VM)
         // Enable only when actively debugging scheduler issues

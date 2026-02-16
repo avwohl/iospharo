@@ -618,6 +618,9 @@ private:
     // Finalization / mourning
     std::vector<Oop> mournQueue_;              // Objects needing finalization (ephemerons + weak)
     int pendingFinalizationSignals_ = 0;       // Count of signals to send post-GC
+    size_t ephemeronEncounterCount_ = 0;       // Debug: ephemerons encountered during mark
+    size_t ephemeronInactiveCount_ = 0;        // Debug: ephemerons with alive keys
+    size_t ephemeronActiveCount_ = 0;          // Debug: ephemerons with dead keys
 
     // Context class index (cached for GC - Context objects need special
     // handling to avoid tracing garbage in unused stack slots)

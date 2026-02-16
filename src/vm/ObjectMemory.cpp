@@ -2579,6 +2579,10 @@ void ObjectMemory::markAndTrace(Oop oop) {
             // Immediates and perm objects are always "alive"
         }
 
+        ephemeronEncounterCount_++;
+        if (keyAlive) ephemeronInactiveCount_++;
+        else ephemeronActiveCount_++;
+
         if (keyAlive) {
             // Inactive ephemeron: treat as fully strong (mark all pointer fields)
             markStack_.push_back(obj);
@@ -2748,6 +2752,9 @@ size_t ObjectMemory::markPhase() {
     markStack_.reserve(100000);
     weakList_.clear();
     ephemeronList_.clear();
+    ephemeronEncounterCount_ = 0;
+    ephemeronInactiveCount_ = 0;
+    ephemeronActiveCount_ = 0;
 
     // Build valid object start set for interior pointer detection.
     // This prevents markAndTrace from calling setMarked() on interior pointers
@@ -2782,13 +2789,18 @@ size_t ObjectMemory::markPhase() {
     // 4. Ephemeron fixed-point iteration
     // Some ephemerons' keys may have become reachable through other marking.
     // Iterate until no more ephemerons become inactive, then fire the rest.
-    if (!ephemeronList_.empty()) {
-        while (markInactiveEphemerons()) {
-            // markInactiveEphemerons drains the mark stack internally,
-            // which may make more ephemeron keys reachable.
+    {
+        size_t fired = 0;
+        if (!ephemeronList_.empty()) {
+            while (markInactiveEphemerons()) {}
+            fired = ephemeronList_.size();
+            fireAllEphemerons();
         }
-        // All remaining ephemerons have dead keys — fire them
-        fireAllEphemerons();
+        if constexpr (false) {
+            fprintf(stderr, "[EPHEMERON] encountered=%zu aliveKey=%zu deadKey=%zu fired=%zu mourners=%zu pending=%d\n",
+                    ephemeronEncounterCount_, ephemeronInactiveCount_, ephemeronActiveCount_,
+                    fired, mournQueue_.size(), pendingFinalizationSignals_);
+        }
     }
 
     // 5. Process weak objects (nil dead references, queue mourners)

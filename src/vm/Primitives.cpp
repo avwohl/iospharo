@@ -7693,18 +7693,13 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
     // Get free space after GC
     size_t freeBytes = memory_.freeOldSpaceBytes();
 
-    // Push result BEFORE signaling finalization — signalFinalizationIfNeeded may
-    // call transferTo() to switch to the finalization process, so the result must
-    // be on the current process's stack before the switch.
+    // Push result before signaling finalization.
     if (Oop::canBeSmallInteger(static_cast<int64_t>(freeBytes))) {
         primitiveSuccess(Oop::fromSmallInteger(static_cast<int64_t>(freeBytes)));
     } else {
         primitiveSuccess(Oop::fromSmallInteger(Oop::smallIntegerMax()));
     }
 
-    // Signal finalization semaphore after GC result is pushed.
-    // This may preempt the current process if the finalization process
-    // has higher priority (e.g., FinalizationProcess at priority 60).
     signalFinalizationIfNeeded();
 
     return PrimitiveResult::Success;
