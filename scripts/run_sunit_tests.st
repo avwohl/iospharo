@@ -652,9 +652,13 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
   "Fork watchdog at high priority — Delay-based so it preempts stuck tests.
    The Delay scheduler runs at priority 80, which preempts test at 79.
    Watchdog at originalPriority (90) preempts everything when Delay fires."
-  [Delay waitMilliseconds: (seconds * 1000).
+  [(Delay forMilliseconds: seconds * 1000) wait.
    testDone ifFalse: [
      testDone := true.
+     result := #timeout.
+     s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
+       nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; cr.
+     s flush.
      [testProcess suspend] on: Error do: [:e |]]] forkAt: originalPriority.
 
   "Lower runner to test priority so yield rotates between them"
