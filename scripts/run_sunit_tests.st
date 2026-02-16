@@ -526,11 +526,15 @@ runTestClass: testClass run: runNum on: s detail: d
   s flush.
   "Tests must run below timingPriority (80) so the Delay scheduler can
    preempt hanging tests and fire waitTimeoutSeconds: timeouts.
-   Finalization tests MUST run below mourn priority (51) so the mourn
-   process can complete without being preempted — otherwise suspended
-   mourn frames hold references to mourned entries, keeping ephemeron
-   keys alive (testFinalizationWithOnFork). Other tests run at 79."
-  testPriority := (#(FinalizationRegistryTest WeakAnnouncerTest ObjectFinalizerTest)
+   Weak/finalization tests MUST run below mourn priority (51) so the mourn
+   process can preempt the test and complete mourning between GC and
+   assertions. The standard Pharo VM runs all tests at priority 40
+   (userSchedulingPriority), but we run most at 79 for isolation."
+  testPriority := (#(FinalizationRegistryTest WeakAnnouncerTest ObjectFinalizerTest
+    WeakKeyDictionaryTest WeakIdentityKeyDictionaryTest
+    WeakSetTest WeakIdentitySetTest
+    WeakValueDictionaryTest WeakIdentityValueDictionaryTest
+    WeakOrderedCollectionTest WeakRegistryTest)
     includes: testClass name asSymbol) ifTrue: [40] ifFalse: [79].
   p := 0. f := 0. e := 0. sk := 0. t := 0. consecutiveTimeouts := 0.
   sels := testClass allTestSelectors asArray.
