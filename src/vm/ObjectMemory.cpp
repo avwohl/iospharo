@@ -2071,13 +2071,7 @@ ObjectHeader* ObjectMemory::allocateRaw(size_t size, Space space) {
                 size_t gcThreshold = lastCompactedSize_ + gcHeadroom_;
                 if (used > gcThreshold && !needsCompactGC_) {
                     needsCompactGC_ = true;
-                    static int thresholdGCCount = 0;
-                    if (++thresholdGCCount <= 20) {
-                        fprintf(stderr, "[GC-TRIGGER #%d] used=%zuMB > threshold=%zuMB (lastCompacted=%zuMB + headroom=%zuMB)\n",
-                                thresholdGCCount, used / (1024*1024), gcThreshold / (1024*1024),
-                                lastCompactedSize_ / (1024*1024), gcHeadroom_ / (1024*1024));
-                        fflush(stderr);
-                    }
+                    // GC threshold crossed — compaction will run at next safe point
                 }
                 return obj;
             }

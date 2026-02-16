@@ -2392,11 +2392,12 @@ void Interpreter::startHeartbeat() {
                 int subphase = g_watchdogSubphase;
                 uint8_t lastBC = g_watchdogLastBytecode;
                 bool stuck = (steps == lastSteps);
-                fprintf(stderr, "[WATCHDOG] tick=%d steps=%lldM phase=%s sub=%d bc=0x%02x pri=%d%s\n",
-                        tickCount, steps / 1000000,
-                        (phase >= 0 && phase <= 4) ? phaseName[phase] : "?",
-                        subphase, lastBC, g_watchdogProcessPriority,
-                        stuck ? " STUCK!" : "");
+                if (stuck) {
+                    fprintf(stderr, "[WATCHDOG] tick=%d steps=%lldM phase=%s sub=%d bc=0x%02x pri=%d STUCK!\n",
+                            tickCount, steps / 1000000,
+                            (phase >= 0 && phase <= 4) ? phaseName[phase] : "?",
+                            subphase, lastBC, g_watchdogProcessPriority);
+                }
                 if (stuck && subphase == 15) {
                     fprintf(stderr, "[WATCHDOG] STUCK in send: %s >> %s (prim=%d)\n",
                             g_watchdogReceiverClass, g_watchdogSelector, g_watchdogPrimIndex);
@@ -2476,16 +2477,8 @@ bool Interpreter::step() {
     g_watchdogSubphase = 10;
     if (memory_.needsCompactGC()) {
         memory_.clearCompactGCFlag();
-        int gcNum = memory_.statistics().gcCount + 1;
-        fprintf(stderr, "[GC-RUN #%d] step=%llu fd=%zu method=0x%llx ip=%p\n",
-                gcNum, g_stepNum, frameDepth_,
-                (unsigned long long)method_.rawBits(),
-                (void*)instructionPointer_);
         memory_.fullGC();
         flushMethodCache();
-        fprintf(stderr, "[GC-DONE #%d] method=0x%llx ip=%p\n",
-                gcNum, (unsigned long long)method_.rawBits(),
-                (void*)instructionPointer_);
     }
 
     g_stepCount++;
@@ -7812,9 +7805,9 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     static int dnuDepth = 0;
     const int MAX_DNU_DEPTH = 10;
 
-    // General DNU tracing: log DNUs (skip startup batch, log new ones)
+    // General DNU tracing: log first 5 DNUs for debugging
     static int generalDnuCount = 0;
-    if (generalDnuCount < 20 || (generalDnuCount >= 20 && generalDnuCount < 500 && g_stepCount > 90000000)) {
+    if (generalDnuCount < 5) {
         generalDnuCount++;
         std::string selName = "?";
         if (selector.isObject() && selector.rawBits() > 0x10000) {
@@ -7919,190 +7912,6 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         return;
     }
 
-    // Diagnostic: trace DNU for #not on ExternalAddress (investigating display issue)
-    static int dnu_not_count = 0;
-    if (dnu_not_count < 3 && selector.isObject() && selector.rawBits() > 0x10000) {
-        ObjectHeader* selHdr = selector.asObjectPtr();
-        if (selHdr->isBytesObject() && selHdr->byteSize() == 3 &&
-            memcmp(selHdr->bytes(), "not", 3) == 0) {
-            dnu_not_count++;
-            Oop rcv = stackValue(argCount);  // receiver is under args
-            std::string rcvClassName = "unknown";
-            if (rcv.isSmallInteger()) rcvClassName = "SmallInteger(" + std::to_string(rcv.asSmallInteger()) + ")";
-            else if (rcv.isCharacter()) rcvClassName = "Character";
-            else if (rcv.isNil()) rcvClassName = "UndefinedObject";
-            else if (rcv.isObject()) {
-                Oop cls = memory_.classOf(rcv);
-                if (cls.isObject() && memory_.slotCountOf(cls) > 6) {
-                    Oop nameOop = memory_.fetchPointer(6, cls);
-                    if (nameOop.isObject()) {
-                        ObjectHeader* nh = nameOop.asObjectPtr();
-                        if (nh->isBytesObject())
-                            rcvClassName = std::string(reinterpret_cast<char*>(nh->bytes()), nh->byteSize());
-                    }
-                }
-                ObjectHeader* rcvHdr = rcv.asObjectPtr();
-                if (rcvHdr->isBytesObject()) {
-                    size_t bs = rcvHdr->byteSize();
-                    rcvClassName += " (bytes=" + std::to_string(bs) + " [";
-                    for (size_t bi = 0; bi < std::min(bs, (size_t)8); bi++) {
-                        char hex[4]; snprintf(hex, sizeof(hex), "%02x", rcvHdr->bytes()[bi]);
-                        if (bi > 0) rcvClassName += " ";
-                        rcvClassName += hex;
-                    }
-                    rcvClassName += "])";
-                }
-            }
-            fprintf(stderr, "[DNU-NOT] #not sent to %s (oop=0x%llx)\n",
-                    rcvClassName.c_str(), (unsigned long long)rcv.rawBits());
-
-            // Helper lambda: extract selector string from a CompiledMethod
-            // Selector is the penultimate literal (nLits-1 slot)
-            auto extractSelector = [this](Oop method) -> std::string {
-                if (!method.isObject() || method.rawBits() < 0x10000) return "?";
-                ObjectHeader* mh = method.asObjectPtr();
-                if (!mh->isCompiledMethod()) return "?cm";
-                Oop methHdr = memory_.fetchPointer(0, method);
-                if (!methHdr.isSmallInteger()) return "?hdr";
-                int nLits = methHdr.asSmallInteger() & 0x7FFF;
-                if (nLits < 2) return "?lit";
-                // Penultimate literal is selector (or AdditionalMethodState)
-                Oop selOop = memory_.fetchPointer(nLits - 1, method);
-                if (selOop.isObject() && selOop.rawBits() > 0x10000) {
-                    ObjectHeader* sh = selOop.asObjectPtr();
-                    if (sh->isBytesObject() && sh->byteSize() <= 80)
-                        return std::string((char*)sh->bytes(), sh->byteSize());
-                    // Might be AdditionalMethodState - check slot 1 for selector
-                    if (sh->slotCount() >= 2) {
-                        Oop innerSel = memory_.fetchPointer(1, selOop);
-                        if (innerSel.isObject() && innerSel.rawBits() > 0x10000) {
-                            ObjectHeader* ish = innerSel.asObjectPtr();
-                            if (ish->isBytesObject() && ish->byteSize() <= 80)
-                                return std::string((char*)ish->bytes(), ish->byteSize());
-                        }
-                    }
-                }
-                return "?sel";
-            };
-            auto extractClass = [this](Oop method) -> std::string {
-                if (!method.isObject() || method.rawBits() < 0x10000) return "?";
-                Oop methHdr = memory_.fetchPointer(0, method);
-                if (!methHdr.isSmallInteger()) return "?hdr";
-                int nLits = methHdr.asSmallInteger() & 0x7FFF;
-                if (nLits < 1) return "?lit";
-                Oop lastLit = memory_.fetchPointer(nLits, method);
-                if (!lastLit.isObject()) return "?ll";
-                // Last literal is usually a MethodClassAssociation: key=selector, value=class
-                if (memory_.slotCountOf(lastLit) >= 2) {
-                    Oop cls = memory_.fetchPointer(1, lastLit);
-                    if (cls.isObject() && memory_.slotCountOf(cls) > 6) {
-                        Oop cn = memory_.fetchPointer(6, cls);
-                        if (cn.isObject()) {
-                            ObjectHeader* cnh = cn.asObjectPtr();
-                            if (cnh->isBytesObject())
-                                return std::string((char*)cnh->bytes(), cnh->byteSize());
-                        }
-                    }
-                }
-                return "?cls";
-            };
-
-            // Current method
-            fprintf(stderr, "[DNU-NOT]   current: %s >> %s (frameDepth=%d)\n",
-                    extractClass(method_).c_str(), extractSelector(method_).c_str(),
-                    (int)frameDepth_);
-            // Saved frames (most recent first)
-            int printed = 0;
-            for (int fi = (int)frameDepth_ - 1; fi >= 0 && printed < 8; fi--, printed++) {
-                auto& sf = savedFrames_[fi];
-                fprintf(stderr, "[DNU-NOT]   frame[%d]: %s >> %s\n",
-                        fi, extractClass(sf.savedMethod).c_str(),
-                        extractSelector(sf.savedMethod).c_str());
-            }
-
-            // Dump bytecodes of current method
-            if (method_.isObject() && method_.rawBits() > 0x10000) {
-                Oop mhdr = memory_.fetchPointer(0, method_);
-                if (mhdr.isSmallInteger()) {
-                    int nLits = mhdr.asSmallInteger() & 0x7FFF;
-                    ObjectHeader* mobj = method_.asObjectPtr();
-                    size_t totalBytes = mobj->byteSize();
-                    size_t bcStart = (1 + nLits) * 8;
-                    if (bcStart < totalBytes) {
-                        size_t bcLen = totalBytes - bcStart;
-                        uint8_t* bc = mobj->bytes() + bcStart;
-                        // IP position
-                        ptrdiff_t ipOffset = instructionPointer_ - bc;
-                        fprintf(stderr, "[DNU-NOT]   nLits=%d bcStart=%zu bcLen=%zu ip=%td\n",
-                                nLits, bcStart, bcLen, ipOffset);
-                        // Dump all literals
-                        for (int li = 1; li <= nLits && li <= 20; li++) {
-                            Oop lit = memory_.fetchPointer(li, method_);
-                            std::string litStr = "?";
-                            if (lit.isSmallInteger()) {
-                                litStr = "SmallInt(" + std::to_string(lit.asSmallInteger()) + ")";
-                            } else if (lit.isObject() && lit.rawBits() > 0x10000) {
-                                ObjectHeader* lh = lit.asObjectPtr();
-                                if (lh->isBytesObject() && lh->byteSize() <= 50)
-                                    litStr = "'" + std::string((char*)lh->bytes(), lh->byteSize()) + "'";
-                                else
-                                    litStr = "obj(cls=" + std::to_string((unsigned)lh->classIndex()) +
-                                             " fmt=" + std::to_string((unsigned)lh->format()) +
-                                             " slots=" + std::to_string((unsigned long)lh->slotCount()) + ")";
-                            } else if (lit.rawBits() == memory_.trueObject().rawBits()) {
-                                litStr = "true";
-                            } else if (lit.rawBits() == memory_.falseObject().rawBits()) {
-                                litStr = "false";
-                            } else if (lit.isNil() || lit.rawBits() == memory_.nil().rawBits()) {
-                                litStr = "nil";
-                            } else {
-                                litStr = "oop(0x" + std::to_string(lit.rawBits()) + ")";
-                            }
-                            fprintf(stderr, "[DNU-NOT]   lit[%d]: %s\n", li, litStr.c_str());
-                        }
-                        // Dump bytecodes (up to 40 bytes)
-                        fprintf(stderr, "[DNU-NOT]   bytecodes:");
-                        for (size_t i = 0; i < bcLen && i < 40; i++) {
-                            if (i == (size_t)ipOffset) fprintf(stderr, " >>>");
-                            fprintf(stderr, " %02x", bc[i]);
-                        }
-                        fprintf(stderr, "\n");
-                    }
-                }
-            }
-
-            // Dump stack values near TOS
-            fprintf(stderr, "[DNU-NOT]   stackDepth=%d\n", (int)(stackPointer_ - stack_.data()));
-            for (int si = 0; si < 5 && si <= (int)(stackPointer_ - stack_.data()); si++) {
-                Oop sv = stackValue(si);
-                std::string svStr = "?";
-                if (sv.isSmallInteger()) svStr = "SmallInt(" + std::to_string(sv.asSmallInteger()) + ")";
-                else if (sv.rawBits() == memory_.trueObject().rawBits()) svStr = "true";
-                else if (sv.rawBits() == memory_.falseObject().rawBits()) svStr = "false";
-                else if (sv.isNil() || sv.rawBits() == memory_.nil().rawBits()) svStr = "nil";
-                else if (sv.isObject() && sv.rawBits() > 0x10000) {
-                    ObjectHeader* svh = sv.asObjectPtr();
-                    Oop svCls = memory_.classOf(sv);
-                    std::string cn = "?";
-                    if (svCls.isObject() && memory_.slotCountOf(svCls) > 6) {
-                        Oop nameOop = memory_.fetchPointer(6, svCls);
-                        if (nameOop.isObject()) {
-                            ObjectHeader* nh = nameOop.asObjectPtr();
-                            if (nh->isBytesObject() && nh->byteSize() <= 50)
-                                cn = std::string((char*)nh->bytes(), nh->byteSize());
-                        }
-                    }
-                    svStr = cn + "(fmt=" + std::to_string((unsigned)svh->format()) +
-                            " cls=" + std::to_string((unsigned)svh->classIndex()) + ")";
-                }
-                fprintf(stderr, "[DNU-NOT]   stack[%d]: %s (0x%llx)\n",
-                        si, svStr.c_str(), (unsigned long long)stackValue(si).rawBits());
-            }
-
-            fflush(stderr);
-        }
-    }
-
     // Create Message object
     Oop messageClass = memory_.specialObject(SpecialObjectIndex::ClassMessage);
     uint32_t messageClassIdx = memory_.indexOfClass(messageClass);
@@ -8199,7 +8008,7 @@ void Interpreter::sendMustBeBoolean(Oop value) {
     // If this causes infinite recursion, the DNU depth limit will stopVM().
     static int mbCount = 0;
     mbCount++;
-    if (mbCount <= 10) {
+    if (mbCount <= 3) {
         std::string clsName = "?";
         if (value.isSmallInteger()) {
             clsName = "SmallInteger(" + std::to_string(value.asSmallInteger()) + ")";
