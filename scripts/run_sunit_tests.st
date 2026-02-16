@@ -614,11 +614,12 @@ runTestClass: testClass run: runNum on: s detail: d
 
 !SUnitRunner class methodsFor: 'running'!
 runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
-  "Run a single test with Delay-based timeout.
-   Fork test at requested priority. Fork a watchdog at high priority that uses
-   Delay to enforce the timeout — this preempts even stuck test processes.
-   Returns nil for pass, #fail, #error, #skip, or #timeout."
-  | result testDone testProcess originalPriority |
+  "Run a single test with yield-loop timeout.
+   Fork test at requested priority. The runner itself tracks elapsed time
+   in its yield loop (no Delay-based watchdog needed). The timer fires
+   every ~1s which preempts the test at priority 40, giving the runner
+   a chance to check time and enforce the timeout."
+  | result testDone testProcess originalPriority deadline |
   result := nil. "nil means pass"
   testDone := false.
   originalPriority := Processor activeProcess priority.
@@ -644,39 +645,28 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
           nextPutAll: ': '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 100)); nextPutAll: ')'; cr].
     testDone := true] forkAt: priority.
 
-  "Fork watchdog at timingPriority (80) — uses repeated short delays
-   instead of a single long one. The Delay scheduler processes expired
-   delays on each timer fire (~1s heartbeat). Short delays (100ms) work
-   reliably; long delays (10s) sometimes get lost in the scheduler's queue."
-  [| deadline |
-   deadline := Time millisecondClockValue + (seconds * 1000).
-   [testDone not and: [Time millisecondClockValue < deadline]]
-     whileTrue: [(Delay forMilliseconds: 500) wait].
-   testDone ifFalse: [
-     testDone := true.
-     result := #timeout.
-     s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
-       nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; cr.
-     s flush.
-     [testProcess suspend] on: Error do: [:e |]]] forkAt: 80.
-
   "Lower runner to test priority so yield rotates between them"
   Processor activeProcess priority: priority.
 
-  "Spin-wait for completion — watchdog guarantees timeout even for stuck tests"
-  [testDone not] whileTrue: [Processor yield].
+  "Spin-wait with time check — the timer preempts every ~1s, giving the
+   runner a chance to check elapsed time. No Delay/watchdog needed."
+  deadline := Time millisecondClockValue + (seconds * 1000).
+  [testDone not and: [Time millisecondClockValue < deadline]]
+    whileTrue: [Processor yield].
 
   "Restore runner priority"
   Processor activeProcess priority: originalPriority.
 
-  testDone ifTrue: [result ifNil: ["pass — already nil"]].
-  "Check if it was a timeout (testProcess still alive)"
-  (result isNil and: [testProcess isTerminated not]) ifTrue: [
+  "Handle timeout if test didn't finish in time"
+  testDone ifFalse: [
     [testProcess suspend] on: Error do: [:e |].
+    testDone := true.
     result := #timeout.
     s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
       nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; cr.
     s flush].
+
+  testDone ifTrue: [result ifNil: ["pass — already nil"]].
   ^ result! !
 
 !SUnitRunner class methodsFor: 'startup'!
