@@ -644,11 +644,14 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
           nextPutAll: ': '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 100)); nextPutAll: ')'; cr].
     testDone := true] forkAt: priority.
 
-  "Fork watchdog at timingPriority (80) — must be ABOVE the test priority so
-   it preempts immediately, creates the Delay, and registers the timer BEFORE
-   the test process gets CPU. The Delay scheduler also runs at 80. When the
-   timer fires, the scheduler signals the watchdog back to life."
-  [(Delay forMilliseconds: seconds * 1000) wait.
+  "Fork watchdog at timingPriority (80) — uses repeated short delays
+   instead of a single long one. The Delay scheduler processes expired
+   delays on each timer fire (~1s heartbeat). Short delays (100ms) work
+   reliably; long delays (10s) sometimes get lost in the scheduler's queue."
+  [| deadline |
+   deadline := Time millisecondClockValue + (seconds * 1000).
+   [testDone not and: [Time millisecondClockValue < deadline]]
+     whileTrue: [(Delay forMilliseconds: 500) wait].
    testDone ifFalse: [
      testDone := true.
      result := #timeout.
