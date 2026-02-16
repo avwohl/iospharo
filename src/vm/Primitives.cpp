@@ -15176,11 +15176,6 @@ PrimitiveResult Interpreter::primitiveSignalAtUTCMicroseconds(int argCount) {
         timerSemaphore_ = sema;
         nextWakeupUsec_ = usecs;
         set242Count++;
-        if (set242Count <= 20 || set242Count % 200 == 0) {
-            fprintf(stderr, "[TIMER-SET242 #%d] usecs=%lld sema=0x%llx step=%llu\n",
-                    set242Count, (long long)usecs, (unsigned long long)sema.rawBits(),
-                    (unsigned long long)g_stepNum);
-        }
     }
 
     popN(2);  // Pop both arguments, leave receiver

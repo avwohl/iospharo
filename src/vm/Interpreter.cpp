@@ -2246,162 +2246,6 @@ void Interpreter::interpret() {
 }
 
 void Interpreter::checkTimerSemaphore() {
-    // Periodic timer state summary (every ~5 seconds wall clock)
-    // Use counter-based gating: check wall clock only every 200 calls
-    // (~5 times/sec at 1024-bytecode intervals) to avoid clock overhead.
-    static int checkCount = 0;
-    static int usecFireTotal = 0;
-    static int msFireTotal = 0;
-    static auto lastSummary = std::chrono::steady_clock::now();
-    checkCount++;
-    bool doSummary = false;
-    if ((checkCount % 200) == 0) {
-        auto now_wall = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now_wall - lastSummary).count();
-        if (elapsed >= 5) {
-            doSummary = true;
-            lastSummary = now_wall;
-        }
-    }
-    if (doSummary) {
-        // Check active process priority
-        int activePri = -1;
-        Oop activeProc = getActiveProcess();
-        if (activeProc.isObject()) {
-            Oop priOop = memory_.fetchPointer(ProcessPriorityIndex, activeProc);
-            if (priOop.isSmallInteger()) activePri = (int)priOop.asSmallInteger();
-        }
-        // Count ready processes per priority
-        int readyCounts[101] = {};
-        Oop schedAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
-        if (schedAssoc.isObject()) {
-            Oop processScheduler = memory_.fetchPointer(1, schedAssoc);
-            if (processScheduler.isObject()) {
-                Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, processScheduler);
-                if (schedLists.isObject()) {
-                    ObjectHeader* listsHdr = schedLists.asObjectPtr();
-                    size_t nLists = listsHdr->slotCount();
-                    for (size_t i = 0; i < nLists && i < 100; i++) {
-                        Oop list = memory_.fetchPointer(i, schedLists);
-                        if (!list.isObject()) continue;
-                        Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, list);
-                        int count = 0;
-                        Oop proc = first;
-                        while (proc.isObject() && !proc.isNil() && count < 50) {
-                            count++;
-                            proc = memory_.fetchPointer(ProcessNextLinkIndex, proc);
-                        }
-                        readyCounts[i] = count;
-                    }
-                }
-            }
-        }
-        fprintf(stderr, "[TIMER-SUMMARY] checks=%d usecFires=%d msFires=%d "
-                "usecArmed=%s msArmed=%s timerSem=%s activePri=%d step=%llu\n",
-                checkCount, usecFireTotal, msFireTotal,
-                nextWakeupUsec_ != INT64_MAX ? "yes" : "no",
-                nextWakeupTime_ != 0 ? "yes" : "no",
-                timerSemaphore_.isNil() ? "nil" : "set",
-                activePri,
-                (unsigned long long)g_stepNum);
-        // Show non-zero ready queues
-        for (int i = 0; i < 100; i++) {
-            if (readyCounts[i] > 0) {
-                fprintf(stderr, "  [READY] pri=%d count=%d\n", i+1, readyCounts[i]);
-            }
-        }
-        // Show what the active process is doing
-        fprintf(stderr, "  [ACTIVE] sel=%s cls=%s fd=%zu\n",
-                g_lastSelName, g_watchdogReceiverClass, frameDepth_);
-        // Dump blocked process info for priority 40 (MorphicRenderLoop)
-        if (readyCounts[39] == 0 && activePri != 40) {
-            if (g_savedP40Process.isObject() && !g_savedP40Process.isNil()) {
-                Oop proc = g_savedP40Process;
-                // myList (slot 3 of process) = what it's waiting on
-                Oop myList = memory_.fetchPointer(3, proc);
-                if (myList.isObject() && !myList.isNil()) {
-                    std::string listClassName = "?";
-                    Oop myListCls = memory_.classOf(myList);
-                    if (myListCls.isObject() && memory_.slotCountOf(myListCls) > 6) {
-                        Oop nameOop = memory_.fetchPointer(6, myListCls);
-                        if (nameOop.isObject() && !nameOop.isNil()) {
-                            ObjectHeader* nHdr = nameOop.asObjectPtr();
-                            if (nHdr->isBytesObject() && nHdr->byteSize() < 100)
-                                listClassName = std::string((char*)nHdr->bytes(), nHdr->byteSize());
-                        }
-                    }
-                    fprintf(stderr, "  [P40-WAITING-ON] %s (0x%llx)\n",
-                            listClassName.c_str(), (unsigned long long)myList.rawBits());
-                }
-                // Walk the context chain (up to 8 frames)
-                Oop ctx = memory_.fetchPointer(1, proc); // suspendedContext
-                for (int frame = 0; frame < 8 && ctx.isObject() && !ctx.isNil(); frame++) {
-                    ObjectHeader* ctxHdr = ctx.asObjectPtr();
-                    if (ctxHdr->slotCount() < 6) break;
-                    Oop method = memory_.fetchPointer(3, ctx);
-                    Oop receiver = memory_.fetchPointer(5, ctx);
-                    // Get receiver class name
-                    std::string rcvClass = "?";
-                    if (receiver.isSmallInteger()) rcvClass = "SmallInteger";
-                    else if (receiver.isNil()) rcvClass = "nil";
-                    else if (receiver.isObject() && receiver.rawBits() > 0x10000) {
-                        Oop cls = memory_.classOf(receiver);
-                        if (cls.isObject() && memory_.slotCountOf(cls) > 6) {
-                            Oop nameOop = memory_.fetchPointer(6, cls);
-                            if (nameOop.isObject() && !nameOop.isNil()) {
-                                ObjectHeader* nh = nameOop.asObjectPtr();
-                                if (nh->isBytesObject() && nh->byteSize() < 100)
-                                    rcvClass = std::string((char*)nh->bytes(), nh->byteSize());
-                            }
-                        }
-                    }
-                    // Get selector from method
-                    std::string selName = "?";
-                    if (method.isObject() && !method.isNil()) {
-                        Oop headerOop = memory_.fetchPointer(0, method);
-                        if (headerOop.isSmallInteger()) {
-                            int numLits = (int)(headerOop.asSmallInteger() & 0x7FFF);
-                            if (numLits > 0) {
-                                // Last literal is AdditionalMethodState or selector
-                                Oop lastLit = memory_.fetchPointer(numLits, method);
-                                if (lastLit.isObject() && !lastLit.isNil()) {
-                                    ObjectHeader* llHdr = lastLit.asObjectPtr();
-                                    if (llHdr->isBytesObject() && llHdr->byteSize() < 100) {
-                                        // Direct selector (Symbol)
-                                        selName = std::string((char*)llHdr->bytes(), llHdr->byteSize());
-                                    } else if (llHdr->slotCount() > 0) {
-                                        // AdditionalMethodState: selector in slot 0
-                                        Oop selOop = memory_.fetchPointer(0, lastLit);
-                                        if (selOop.isObject() && !selOop.isNil()) {
-                                            ObjectHeader* selHdr = selOop.asObjectPtr();
-                                            if (selHdr->isBytesObject() && selHdr->byteSize() < 100)
-                                                selName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                                        }
-                                    }
-                                }
-                                // If last literal didn't give us a selector, try second-to-last
-                                if (selName == "?" && numLits > 1) {
-                                    Oop penLit = memory_.fetchPointer(numLits - 1, method);
-                                    if (penLit.isObject() && !penLit.isNil()) {
-                                        ObjectHeader* plHdr = penLit.asObjectPtr();
-                                        if (plHdr->isBytesObject() && plHdr->byteSize() < 100)
-                                            selName = std::string((char*)plHdr->bytes(), plHdr->byteSize());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    fprintf(stderr, "  [P40-FRAME#%d] %s >> %s\n", frame, rcvClass.c_str(), selName.c_str());
-                    // Follow sender chain
-                    ctx = memory_.fetchPointer(0, ctx); // sender
-                }
-            }
-        }
-        checkCount = 0;
-        usecFireTotal = 0;
-        msFireTotal = 0;
-    }
-
     // Check microsecond timer (primitive 242 - used by DelaySemaphoreScheduler)
     if (nextWakeupUsec_ != INT64_MAX && !timerSemaphore_.isNil()) {
         static constexpr int64_t kSmalltalkEpochOffset = 2177452800LL * 1000000LL;
@@ -2411,13 +2255,6 @@ void Interpreter::checkTimerSemaphore() {
         int64_t currentUsec = unixUsec + kSmalltalkEpochOffset;
 
         if (currentUsec >= nextWakeupUsec_) {
-            usecFireTotal++;
-            if (usecFireTotal <= 20 || usecFireTotal % 200 == 0) {
-                fprintf(stderr, "[TIMER-FIRE-USEC #%d] target=%lld current=%lld delta=%lldus step=%llu\n",
-                        usecFireTotal, (long long)nextWakeupUsec_, (long long)currentUsec,
-                        (long long)(currentUsec - nextWakeupUsec_),
-                        (unsigned long long)g_stepNum);
-            }
             Oop semaphore = timerSemaphore_;
             timerSemaphore_ = Oop::nil();
             nextWakeupUsec_ = INT64_MAX;
@@ -2437,11 +2274,6 @@ void Interpreter::checkTimerSemaphore() {
     bool timerElapsed = (diff > 0) && (diff < 0x20000000);
 
     if (timerElapsed) {
-        msFireTotal++;
-        if (msFireTotal <= 20 || msFireTotal % 200 == 0) {
-            fprintf(stderr, "[TIMER-FIRE-MS #%d] targetMs=%lld currentMs=%lld diff=%lld step=%llu\n",
-                    msFireTotal, targetMs, currentMs, diff, (unsigned long long)g_stepNum);
-        }
         Oop semaphore = timerSemaphore_;
         timerSemaphore_ = Oop::nil();
         nextWakeupTime_ = 0;
@@ -9985,11 +9817,7 @@ void Interpreter::transferTo(Oop newProcess) {
         // Track p40 process for diagnostic
         if (newPri == 40) g_savedP40Process = newProcess;
         else if (oldPri == 40) g_savedP40Process = oldProcess;
-        if (switchCount <= 50 || switchCount % 5000 == 0) {
-            fprintf(stderr, "[SWITCH #%d] pri %d -> %d step=%lld sel=%s cls=%s\n",
-                    switchCount, oldPri, newPri, (long long)g_watchdogSteps.load(),
-                    g_lastSelName, g_watchdogReceiverClass);
-        }
+        (void)switchCount; // Suppress unused warning
     }
 
     // Save current execution state to old process's suspendedContext
