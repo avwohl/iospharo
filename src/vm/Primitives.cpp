@@ -17842,50 +17842,42 @@ PrimitiveResult Interpreter::primitiveDecompressFromByteArray(int argCount) {
 }
 
 // Primitive 294: Find first occurrence of character in string
-// aString startIndex char primitiveFindFirstInString -> index or 0
+// MiscPrimitivePlugin: primitiveFindFirstInString
+// ByteString class >> findFirstInString: aString inSet: inclusionMap startingAt: start
+// Returns 1-based index of first byte where inclusionMap[byte] != 0, or 0 if none found.
 PrimitiveResult Interpreter::primitiveFindFirstInString(int argCount) {
     if (argCount != 3) return PrimitiveResult::Failure;
 
-    Oop charOop = stackTop();
-    Oop startIndexOop = stackValue(1);
-    Oop stringOop = stackValue(2);
+    Oop startOop = stackTop();           // arg 3: start index
+    Oop inclusionMapOop = stackValue(1); // arg 2: ByteArray of 256 entries
+    Oop stringOop = stackValue(2);       // arg 1: the string to search
 
-    if (!startIndexOop.isSmallInteger()) {
-        return PrimitiveResult::Failure;
-    }
-    if (!stringOop.isObject()) {
-        return PrimitiveResult::Failure;
-    }
+    if (!startOop.isSmallInteger()) return PrimitiveResult::Failure;
+    if (!stringOop.isObject()) return PrimitiveResult::Failure;
+    if (!inclusionMapOop.isObject()) return PrimitiveResult::Failure;
 
-    intptr_t startIndex = startIndexOop.asSmallInteger();
+    // inclusionMap must be 256 bytes
+    size_t mapSize = memory_.byteSizeOf(inclusionMapOop);
+    if (mapSize != 256) return PrimitiveResult::Failure;
+
+    intptr_t start = startOop.asSmallInteger();
     size_t stringSize = memory_.byteSizeOf(stringOop);
 
-    // Get character to find
-    uint8_t charToFind;
-    if (charOop.isSmallInteger()) {
-        charToFind = static_cast<uint8_t>(charOop.asSmallInteger());
-    } else if (charOop.isCharacter()) {
-        charToFind = static_cast<uint8_t>(charOop.asCharacter());
-    } else {
-        return PrimitiveResult::Failure;
-    }
+    if (start < 1) start = 1;
 
-    // Smalltalk uses 1-based indexing
-    if (startIndex < 1) startIndex = 1;
-
-    // Search for character
-    for (size_t i = static_cast<size_t>(startIndex - 1); i < stringSize; i++) {
-        if (memory_.fetchByte(i, stringOop) == charToFind) {
-            popN(3);  // arguments
-            pop();    // receiver
+    // Search for first byte where inclusionMap[byte] != 0
+    for (size_t i = static_cast<size_t>(start - 1); i < stringSize; i++) {
+        uint8_t byte = memory_.fetchByte(i, stringOop);
+        uint8_t mapEntry = memory_.fetchByte(byte, inclusionMapOop);
+        if (mapEntry != 0) {
+            popN(argCount + 1);  // args + receiver
             push(Oop::fromSmallInteger(static_cast<intptr_t>(i + 1)));  // 1-based
             return PrimitiveResult::Success;
         }
     }
 
     // Not found
-    popN(3);
-    pop();
+    popN(argCount + 1);
     push(Oop::fromSmallInteger(0));
     return PrimitiveResult::Success;
 }
