@@ -7640,6 +7640,13 @@ PrimitiveResult Interpreter::primitiveYield(int argCount) {
     Oop receiver = stackValue(argCount);  // The Processor
     primitiveSuccess(receiver);
 
+    // ALWAYS check the timer before scheduling decisions.
+    // This is critical: if this process is in a yield loop and the Delay
+    // scheduler is waiting on its timer semaphore, checkTimerSemaphore()
+    // may signal the scheduler, putting it in the ready queue at priority 80.
+    // Without this, a yield loop can starve the Delay scheduler forever.
+    checkTimerSemaphore();
+
     // Put current process at the back of its priority queue
     addLastLinkToList(activeProcess, priorityList);
 
@@ -7651,9 +7658,6 @@ PrimitiveResult Interpreter::primitiveYield(int argCount) {
         removeFirstLinkOfList(priorityList);
         return PrimitiveResult::Success;
     }
-
-    // Check for pending timer signals before switching (in case Delay expired)
-    checkTimerSemaphore();
 
     g_xferReason = "primYield";
     transferTo(nextProcess);

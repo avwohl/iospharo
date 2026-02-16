@@ -2193,11 +2193,11 @@ void Interpreter::interpret() {
             processPendingSignals();
         }
 
-        // Check timer every 1000 bytecodes (~45K checks/sec at full speed)
-        // to avoid calling system_clock::now() on every bytecode.
-        if ((loopCount & 0x3FF) == 0) {  // every 1024 iterations
-            checkTimerSemaphore();
-        }
+        // Check timer every outer loop iteration (every 1000 bytecodes).
+        // Previous check used (loopCount & 0x3FF) which only triggered every
+        // 128,000 steps due to loopCount incrementing by 1000. This was too
+        // slow for 30ms Delays. Now checks every 1000 bytecodes (~1ms at 1M/s).
+        checkTimerSemaphore();
 
         // Process input events every 10K bytecodes
         if (loopCount % 10000 == 0) {
