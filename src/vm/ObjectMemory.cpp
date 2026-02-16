@@ -64,11 +64,6 @@ bool ObjectMemory::initialize(const MemoryConfig& config) {
     oldSpaceMmapSize_ = config.oldSpaceSize;
     oldSpaceEnd_ = oldSpaceStart_ + config.oldSpaceSize;
     oldSpaceFree_ = oldSpaceStart_;
-    fprintf(stderr, "[HEAP] permSpace: %p - %p\n", permSpaceStart_, permSpaceEnd_);
-    fprintf(stderr, "[HEAP] oldSpace: %p - %p (%.1f GB)\n",
-            oldSpaceStart_, oldSpaceEnd_, config.oldSpaceSize / (1024.0*1024.0*1024.0));
-    fprintf(stderr, "[HEAP] newSpace: %p - %p\n", newSpaceStart_, newSpaceEnd_);
-
     newSpaceStart_ = static_cast<uint8_t*>(
         std::aligned_alloc(8, config.newSpaceSize));
     if (!newSpaceStart_) {
@@ -79,6 +74,12 @@ bool ObjectMemory::initialize(const MemoryConfig& config) {
         return false;
     }
     newSpaceEnd_ = newSpaceStart_ + config.newSpaceSize;
+
+    fprintf(stderr, "[HEAP] permSpace: %p - %p\n", permSpaceStart_, permSpaceEnd_);
+    fprintf(stderr, "[HEAP] oldSpace: %p - %p (%.1f GB)\n",
+            oldSpaceStart_, oldSpaceEnd_, config.oldSpaceSize / (1024.0*1024.0*1024.0));
+    fprintf(stderr, "[HEAP] newSpace: %p - %p (%zu MB)\n", newSpaceStart_, newSpaceEnd_,
+            config.newSpaceSize / (1024*1024));
 
     // Split new space into eden and survivor
     size_t edenSize = (config.newSpaceSize * config.edenRatio) / 100;

@@ -8169,6 +8169,8 @@ PrimitiveResult Interpreter::primitiveSlotAt(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    rcvr = memory_.followForwarded(rcvr);
+
     int64_t index = indexOop.asSmallInteger();
     if (index < 1) {  // 1-based indexing from Smalltalk
         return PrimitiveResult::Failure;
@@ -8275,6 +8277,8 @@ PrimitiveResult Interpreter::primitiveSlotAtPut(int argCount) {
     if (!rcvr.isObject() || !indexOop.isSmallInteger()) {
         return PrimitiveResult::Failure;
     }
+
+    rcvr = memory_.followForwarded(rcvr);
 
     int64_t index = indexOop.asSmallInteger();
     if (index < 1) {  // 1-based indexing from Smalltalk

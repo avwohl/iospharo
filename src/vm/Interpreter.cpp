@@ -6521,6 +6521,61 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // Get receiver from stack (now in the frame)
     receiver_ = argument(0);  // First "argument" slot is actually receiver
 
+    // Check for corrupt receiver (object pointer outside heap)
+    if ((receiver_.rawBits() & 7) == 0 && receiver_.rawBits() != 0 && !memory_.isValidPointer(receiver_)) {
+        static int corruptRcvrCount = 0;
+        if (++corruptRcvrCount <= 3) {
+            // Get selector of the method being activated
+            std::string sel = "?";
+            if (method.isObject() && method.rawBits() > 0x10000) {
+                Oop hdr = memory_.fetchPointer(0, method);
+                if (hdr.isSmallInteger()) {
+                    int nl = hdr.asSmallInteger() & 0x7FFF;
+                    if (nl >= 2 && nl < 100) {
+                        Oop selOop = memory_.fetchPointer(nl - 1, method);
+                        if (selOop.isObject() && selOop.rawBits() > 0x10000) {
+                            ObjectHeader* sh = selOop.asObjectPtr();
+                            if (sh->isBytesObject() && sh->byteSize() < 100)
+                                sel = std::string((char*)sh->bytes(), sh->byteSize());
+                        }
+                    }
+                }
+            }
+            fprintf(stderr, "[CORRUPT-RCVR #%d] rcvr=0x%llx activating=#%s step=%llu fd=%zu\n",
+                    corruptRcvrCount, (unsigned long long)receiver_.rawBits(),
+                    sel.c_str(), (unsigned long long)g_stepNum, frameDepth_);
+            // Dump the CALLER's state (before pushFrame changed things)
+            fprintf(stderr, "  caller: sel=#");
+            if (savedFrames_[frameDepth_ - 1].savedMethod.isObject()) {
+                Oop callerMeth = savedFrames_[frameDepth_ - 1].savedMethod;
+                Oop chdr = memory_.fetchPointer(0, callerMeth);
+                if (chdr.isSmallInteger()) {
+                    int cnl = chdr.asSmallInteger() & 0x7FFF;
+                    if (cnl >= 2 && cnl < 100) {
+                        Oop csel = memory_.fetchPointer(cnl - 1, callerMeth);
+                        if (csel.isObject() && csel.rawBits() > 0x10000) {
+                            ObjectHeader* csh = csel.asObjectPtr();
+                            if (csh->isBytesObject() && csh->byteSize() < 100)
+                                fprintf(stderr, "%.*s", (int)csh->byteSize(), (char*)csh->bytes());
+                        }
+                    }
+                }
+            }
+            fprintf(stderr, " rcvr=0x%llx\n", (unsigned long long)savedFrames_[frameDepth_ - 1].savedReceiver.rawBits());
+            // Show stack around FP
+            int depth = static_cast<int>(stackPointer_ - stackBase_);
+            int fpIdx = static_cast<int>(framePointer_ - stackBase_);
+            fprintf(stderr, "  stackDepth=%d fpIdx=%d argCount=%d\n", depth, fpIdx, argCount);
+            for (int i = std::max(0, fpIdx - 2); i < std::min(depth, fpIdx + argCount + 3); i++) {
+                Oop v = stackBase_[i];
+                const char* marker = (v.rawBits() == receiver_.rawBits()) ? " <<<CORRUPT" : "";
+                const char* fpMark = (i == fpIdx) ? " <=FP" : "";
+                fprintf(stderr, "    [%d] 0x%llx%s%s\n", i, (unsigned long long)v.rawBits(), fpMark, marker);
+            }
+            std::cerr.flush();
+        }
+    }
+
 
     // Trace fullCheck activation specifically (disabled for performance)
     if constexpr (ENABLE_DEBUG_LOGGING) {
@@ -8426,6 +8481,68 @@ void Interpreter::sendMustBeBoolean(Oop value) {
             fprintf(stderr, " heapOff=0x%llx", (unsigned long long)heapOffset);
         }
         fprintf(stderr, "\n");
+        // Enhanced: dump method header, bytecodes around IP, and stack
+        if (method_.isObject() && method_.rawBits() > 0x10000) {
+            Oop mhdr = memory_.fetchPointer(0, method_);
+            int64_t hdrVal = mhdr.isSmallInteger() ? mhdr.asSmallInteger() : 0;
+            int nLits = hdrVal & 0x7FFF;
+            int nTemps = (hdrVal >> 18) & 0x3F;
+            int nArgs = (hdrVal >> 24) & 0xF;
+            int primIdx = primitiveIndexOf(method_);
+            fprintf(stderr, "  method hdr=0x%llx nLits=%d nTemps=%d nArgs=%d prim=%d\n",
+                    (unsigned long long)hdrVal, nLits, nTemps, nArgs, primIdx);
+            // Dump bytecodes around IP
+            if (instructionPointer_ && ipOff > 0) {
+                uint8_t* mBytes = method_.asObjectPtr()->bytes();
+                size_t mSize = method_.asObjectPtr()->byteSize();
+                int bcStart = ipOff - 10;
+                if (bcStart < (1+nLits)*8) bcStart = (1+nLits)*8;
+                int bcEnd = ipOff + 10;
+                if (bcEnd > (int)mSize) bcEnd = (int)mSize;
+                fprintf(stderr, "  bytecodes[%d..%d] (IP at %d): ", bcStart, bcEnd-1, ipOff);
+                for (int b = bcStart; b < bcEnd; b++) {
+                    if (b == ipOff) fprintf(stderr, "[");
+                    fprintf(stderr, "%02x", mBytes[b]);
+                    if (b == ipOff) fprintf(stderr, "]");
+                    fprintf(stderr, " ");
+                }
+                fprintf(stderr, "\n");
+            }
+            // Dump the selector from all possible positions
+            for (int li = nLits; li >= std::max(1, nLits-2); li--) {
+                Oop lit = memory_.fetchPointer(li, method_);
+                if (lit.isObject() && lit.rawBits() > 0x10000) {
+                    ObjectHeader* lh = lit.asObjectPtr();
+                    if (lh->isBytesObject() && lh->byteSize() < 100) {
+                        fprintf(stderr, "  literal[%d]='%.*s'\n", li, (int)lh->byteSize(), (char*)lh->bytes());
+                    } else {
+                        fprintf(stderr, "  literal[%d]=obj(cls=%u slots=%zu)\n", li, lh->classIndex(), lh->slotCount());
+                    }
+                }
+            }
+        }
+        // Dump inline stack
+        {
+            int stackDepth = static_cast<int>(stackPointer_ - stackBase_);
+            int fpOff = static_cast<int>(framePointer_ - stackBase_);
+            fprintf(stderr, "  stack: depth=%d fpOff=%d\n", stackDepth, fpOff);
+            int dumpStart = std::max(0, fpOff - 2);
+            int dumpEnd = std::min(stackDepth, fpOff + 20);
+            for (int s = dumpStart; s < dumpEnd; s++) {
+                Oop v = stackBase_[s];
+                const char* marker = (s == fpOff) ? " <=FP" : "";
+                if (v.rawBits() == memory_.trueObject().rawBits())
+                    fprintf(stderr, "    [%d] TRUE%s\n", s, marker);
+                else if (v.rawBits() == memory_.falseObject().rawBits())
+                    fprintf(stderr, "    [%d] FALSE%s\n", s, marker);
+                else if (v.rawBits() == memory_.nil().rawBits())
+                    fprintf(stderr, "    [%d] nil%s\n", s, marker);
+                else if (v.isSmallInteger())
+                    fprintf(stderr, "    [%d] SMI(%lld)%s\n", s, (long long)v.asSmallInteger(), marker);
+                else
+                    fprintf(stderr, "    [%d] 0x%llx%s\n", s, (unsigned long long)v.rawBits(), marker);
+            }
+        }
     }
     sendSelector(selectors_.mustBeBoolean, 0);
 }
@@ -12221,11 +12338,11 @@ bool Interpreter::executeFromContext(Oop context) {
         return false;
     }
 
-    // Fix unrelocated context pointer if needed
+    // Fix unrelocated context pointer if needed (only for object pointers, not immediates)
     {
         const uint64_t OLD_IMAGE_BASE = 0x10000000000ULL;
         uint64_t ctxAddr = context.rawBits() & ~7ULL;
-        if (ctxAddr >= OLD_IMAGE_BASE && ctxAddr < OLD_IMAGE_BASE * 2) {
+        if (context.isObject() && ctxAddr >= OLD_IMAGE_BASE && ctxAddr < OLD_IMAGE_BASE * 2) {
             uint64_t offset = ctxAddr - OLD_IMAGE_BASE;
             uint64_t newAddr = reinterpret_cast<uint64_t>(memory_.oldSpaceStart()) + offset;
             context = memory_.oopFromPointer(reinterpret_cast<ObjectHeader*>(newAddr));
@@ -12265,8 +12382,13 @@ bool Interpreter::executeFromContext(Oop context) {
     uint64_t methodAddr = method_.rawBits() & ~7ULL;
     uint64_t receiverAddr = receiver_.rawBits() & ~7ULL;
 
-    bool methodUnrelocated = (methodAddr >= OLD_IMAGE_BASE && methodAddr < OLD_IMAGE_BASE * 2);
-    bool receiverUnrelocated = (receiverAddr >= OLD_IMAGE_BASE && receiverAddr < OLD_IMAGE_BASE * 2);
+    // CRITICAL: Only check object pointers (tag 000) for unrelocated addresses.
+    // SmallIntegers (tag 001) with large values can fall in the old image base range
+    // after masking off tag bits, causing them to be "fixed up" into corrupt pointers.
+    bool methodUnrelocated = method_.isObject() &&
+        (methodAddr >= OLD_IMAGE_BASE && methodAddr < OLD_IMAGE_BASE * 2);
+    bool receiverUnrelocated = receiver_.isObject() &&
+        (receiverAddr >= OLD_IMAGE_BASE && receiverAddr < OLD_IMAGE_BASE * 2);
 
     if (methodUnrelocated || receiverUnrelocated) {
         // Fix method pointer if needed
@@ -12294,10 +12416,10 @@ bool Interpreter::executeFromContext(Oop context) {
         }
     }
 
-    // Fix sender slot if unrelocated
+    // Fix sender slot if unrelocated (only for object pointers, not immediates)
     Oop sender = memory_.fetchPointer(0, context);
     uint64_t senderAddr = sender.rawBits() & ~7ULL;
-    if (senderAddr >= OLD_IMAGE_BASE && senderAddr < OLD_IMAGE_BASE * 2) {
+    if (sender.isObject() && senderAddr >= OLD_IMAGE_BASE && senderAddr < OLD_IMAGE_BASE * 2) {
         uint64_t offset = senderAddr - OLD_IMAGE_BASE;
         uint64_t newAddr = newBase + offset;
         ObjectHeader* newSenderPtr = reinterpret_cast<ObjectHeader*>(newAddr);
