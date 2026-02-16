@@ -7640,12 +7640,12 @@ PrimitiveResult Interpreter::primitiveYield(int argCount) {
     Oop receiver = stackValue(argCount);  // The Processor
     primitiveSuccess(receiver);
 
-    // ALWAYS check the timer before scheduling decisions.
-    // This is critical: if this process is in a yield loop and the Delay
-    // scheduler is waiting on its timer semaphore, checkTimerSemaphore()
-    // may signal the scheduler, putting it in the ready queue at priority 80.
-    // Without this, a yield loop can starve the Delay scheduler forever.
-    checkTimerSemaphore();
+    // NOTE: Do NOT call checkTimerSemaphore() here!
+    // It can trigger synchronousSignal() → transferTo(), switching the active
+    // process. After the switch, this function continues with stale locals
+    // (activeProcess, priorityList), corrupting the scheduler's ready queues.
+    // The main loop already calls checkTimerSemaphore() every ~1000 bytecodes,
+    // which is frequent enough to wake the Delay scheduler.
 
     // Put current process at the back of its priority queue
     addLastLinkToList(activeProcess, priorityList);
@@ -14852,31 +14852,14 @@ PrimitiveResult Interpreter::primitiveSignalAtUTCMicroseconds(int argCount) {
     }
 
     // Store the timer info
-    static int set242Count = 0;
     if (usecs == 0 || sema.isNil()) {
         // Disable timer
         timerSemaphore_ = Oop::nil();
         nextWakeupUsec_ = INT64_MAX;
-        set242Count++;
-        if (set242Count <= 50 || set242Count % 100 == 0) {
-            fprintf(stderr, "[TIMER-SET242 #%d] DISABLE timer step=%llu\n",
-                    set242Count, (unsigned long long)g_stepNum);
-        }
     } else {
-        // Detect conflict: ms timer also armed?
-        if (nextWakeupTime_ != 0) {
-            fprintf(stderr, "[TIMER-CONFLICT] prim242 arming while ms timer also armed! msTarget=%lld\n",
-                    (long long)nextWakeupTime_);
-        }
         // Schedule the timer
         timerSemaphore_ = sema;
         nextWakeupUsec_ = usecs;
-        set242Count++;
-        if (set242Count <= 50 || set242Count % 100 == 0) {
-            fprintf(stderr, "[TIMER-SET242 #%d] ARM usecs=%lld sema=0x%llx step=%llu\n",
-                    set242Count, (long long)usecs, (unsigned long long)sema.rawBits(),
-                    (unsigned long long)g_stepNum);
-        }
     }
 
     popN(2);  // Pop both arguments, leave receiver
