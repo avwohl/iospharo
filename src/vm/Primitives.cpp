@@ -7598,10 +7598,14 @@ PrimitiveResult Interpreter::primitiveHashMultiply(int argCount) {
 
 // ===== PROCESS PRIMITIVES =====
 
-// Primitive 167: Yield to other processes of same priority
+// Primitive 167: Yield — put active process at back of its queue, then run
+// the highest-priority ready process.  The Cog VM's primitiveYield does a
+// full reschedule (addLastLink:toList: then transferTo: wakeHighestPriority)
+// so that higher-priority processes that became ready (e.g. Delay scheduler
+// at priority 80) get CPU even when the yielding process is at a lower
+// priority.  Our previous implementation only checked same-priority peers,
+// which starved higher-priority processes and broke Delay-based timeouts.
 PrimitiveResult Interpreter::primitiveYield(int argCount) {
-    static int noSwitchCount = 0;
-
     // Get the active process
     Oop activeProcess = getActiveProcess();
     if (activeProcess.isNil()) {
@@ -7629,50 +7633,30 @@ PrimitiveResult Interpreter::primitiveYield(int argCount) {
     }
     Oop priorityList = memory_.fetchPointer(priority - 1, processLists);
 
-    // Check if there are other processes at the same priority
-    Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, priorityList);
+    // CRITICAL: Complete the primitive's stack effect BEFORE saving context.
+    // Pop receiver (+ args), push result. For yield, result is self (Processor).
+    // This ensures the saved context has the correct post-primitive stack state,
+    // so when this process is later resumed, it continues with the result on stack.
+    Oop receiver = stackValue(argCount);  // The Processor
+    primitiveSuccess(receiver);
 
-    if (!firstLink.isNil()) {
-        // There are other processes waiting - put current process at end of queue
-        // and switch to the first one
-        noSwitchCount = 0;
+    // Put current process at the back of its priority queue
+    addLastLinkToList(activeProcess, priorityList);
 
-        // CRITICAL: Complete the primitive's stack effect BEFORE saving context.
-        // Pop receiver (+ args), push result. For yield, result is self (Processor).
-        // This ensures the saved context has the correct post-primitive stack state,
-        // so when this process is later resumed, it continues with the result on stack.
-        Oop receiver = stackValue(argCount);  // The Processor
-        primitiveSuccess(receiver);
+    // Wake the highest-priority ready process (may be at a different priority)
+    Oop nextProcess = wakeHighestPriority();
 
-        // Add current process to end of priority list
-        addLastLinkToList(activeProcess, priorityList);
-
-        // Remove first process from list
-        Oop nextProcess = removeFirstLinkOfList(priorityList);
-
-        // Use transferTo for proper context save/switch.
-        // transferTo calls materializeFrameStack() to sync IP/stack to context,
-        // saves context to old process, and loads new process's context.
-        g_xferReason = "primYield";
-        transferTo(nextProcess);
+    if (nextProcess.isNil() || nextProcess.rawBits() == activeProcess.rawBits()) {
+        // No other process to run — remove ourselves from the queue and continue
+        removeFirstLinkOfList(priorityList);
         return PrimitiveResult::Success;
     }
 
-    // No process switch happened - track consecutive yields without switch
-    noSwitchCount++;
+    // Check for pending timer signals before switching (in case Delay expired)
+    checkTimerSemaphore();
 
-    // If we're spin-yielding (no other process to switch to), sleep briefly
-    // This prevents CPU spinning when the delay mechanism isn't working
-    if (noSwitchCount > 10) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        noSwitchCount = 0;
-
-        // Process any pending external semaphore signals
-        processPendingSignals();
-    }
-
-    // No switch: return receiver
-    primitiveSuccess(stackTop());
+    g_xferReason = "primYield";
+    transferTo(nextProcess);
     return PrimitiveResult::Success;
 }
 

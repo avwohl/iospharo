@@ -649,9 +649,10 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
           nextPutAll: ': '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 100)); nextPutAll: ')'; cr].
     testDone := true] forkAt: priority.
 
-  "Fork watchdog at high priority — Delay-based so it preempts stuck tests.
-   The Delay scheduler runs at priority 80, which preempts test at 79.
-   Watchdog at originalPriority (90) preempts everything when Delay fires."
+  "Fork watchdog at timingPriority (80) — must be ABOVE the test priority so
+   it preempts immediately, creates the Delay, and registers the timer BEFORE
+   the test process gets CPU. The Delay scheduler also runs at 80. When the
+   timer fires, the scheduler signals the watchdog back to life."
   [(Delay forMilliseconds: seconds * 1000) wait.
    testDone ifFalse: [
      testDone := true.
@@ -659,7 +660,7 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
      s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
        nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; cr.
      s flush.
-     [testProcess suspend] on: Error do: [:e |]]] forkAt: originalPriority.
+     [testProcess suspend] on: Error do: [:e |]]] forkAt: 80.
 
   "Lower runner to test priority so yield rotates between them"
   Processor activeProcess priority: priority.
