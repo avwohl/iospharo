@@ -614,17 +614,18 @@ runTestClass: testClass run: runNum on: s detail: d
 
 !SUnitRunner class methodsFor: 'running'!
 runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
-  "Run a single test with yield-loop timeout.
-   Fork test at requested priority. The runner itself tracks elapsed time
-   in its yield loop (no Delay-based watchdog needed). The timer fires
-   every ~1s which preempts the test at priority 40, giving the runner
-   a chance to check time and enforce the timeout."
-  | result testDone testProcess originalPriority deadline |
+  "Run a single test with Delay-based timeout.
+   Fork the test at the requested priority (e.g. 40). The runner stays at its
+   original higher priority (e.g. 80) and polls via short Delays. Each Delay
+   sleeps the runner, letting the test run. When the Delay fires, the Delay
+   scheduler (priority 80) wakes the runner which checks elapsed time.
+   This works because Delays use the timer semaphore (prim 242) which the VM
+   checks every ~1000 bytecodes in the outer interpreter loop."
+  | result testDone testProcess deadline |
   result := nil. "nil means pass"
   testDone := false.
-  originalPriority := Processor activeProcess priority.
 
-  "Fork test at requested priority"
+  "Fork test at requested priority (lower than runner)"
   testProcess := [
     [[[[(testClass selector: sel) runCase]
       on: TestFailure do: [:ex |
@@ -645,17 +646,12 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
           nextPutAll: ': '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 100)); nextPutAll: ')'; cr].
     testDone := true] forkAt: priority.
 
-  "Lower runner to test priority so yield rotates between them"
-  Processor activeProcess priority: priority.
-
-  "Spin-wait with time check — the timer preempts every ~1s, giving the
-   runner a chance to check elapsed time. No Delay/watchdog needed."
+  "Poll with Delay-based sleep at runner's original priority.
+   Runner is at higher priority than test, so it preempts when woken by Delay.
+   Each 500ms Delay lets the test run for 500ms, then the runner checks time."
   deadline := Time millisecondClockValue + (seconds * 1000).
   [testDone not and: [Time millisecondClockValue < deadline]]
-    whileTrue: [Processor yield].
-
-  "Restore runner priority"
-  Processor activeProcess priority: originalPriority.
+    whileTrue: [(Delay forMilliseconds: 500) wait].
 
   "Handle timeout if test didn't finish in time"
   testDone ifFalse: [
