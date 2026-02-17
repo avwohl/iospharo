@@ -2,28 +2,44 @@
 
 ## Current Status (2026-02-16, commit d82c201)
 
-### Test Results
+### Test Results — Full Batch Run
 
-**Last full baseline (commit 2265fb6):** 10779/11732 pass (91.9%), 83 fail, 835 error, 21 skip, 14 timeout
+**Previous baseline (commit 2265fb6):** 10779/11732 pass (91.9%), 83 fail, 835 error, 21 skip, 14 timeout
 
-Since that baseline, **41 commits** have been made with significant fixes.
-A new full batch test has NOT completed yet — partial results below.
+**Current (commit d82c201):** **11639/12500 pass (93.1%)**, 56 fail, 777 error, 20 skip, 8 timeout
 
-**Partial batch (8 classes, current build):**
-- 695/727 pass (95.6%), 9 fail, 19 error, 4 skip
+| Metric | Previous | Current | Delta |
+|---|---|---|---|
+| Total tests | 11,732 | 12,500 | +768 |
+| Pass | 10,779 (91.9%) | 11,639 (93.1%) | **+860** |
+| Fail | 83 | 56 | -27 |
+| Error | 835 | 777 | -58 |
+| Skip | 21 | 20 | -1 |
+| Timeout | 14 | 8 | -6 |
 
-| Test Class | P | F | E | S | Total |
-|---|---|---|---|---|---|
-| SortedCollectionTest | 278 | 0 | 9 | 0 | 287 |
-| IdentitySetTest | 173 | 1 | 2 | 0 | 176 |
-| SmallIntegerTest | 27 | 0 | 0 | 0 | 29* |
-| IntegerTest | 70 | 7 | 3 | 3 | 83 |
-| FloatTest | 70 | 1 | 1 | 1 | 75 |
-| FractionTest | 28 | 0 | 2 | 0 | 32 |
-| PointTest | 34 | 0 | 0 | 0 | 36* |
-| CharacterTest | 15 | 0 | 2 | 0 | 19 |
+41 commits since last baseline. 12 batches of 50 classes ran successfully.
 
-*Some tests in SmallIntegerTest/PointTest not counted (2 skip each).
+### Error Breakdown by Category
+
+| Category | Count | Root Cause |
+|---|---|---|
+| WeakKeyDictionaryTest | ~69 | Process switch corruption when forked; pass 100% synchronously |
+| WeakIdentityKeyDictionaryTest | ~87 | Same as above |
+| SystemEnvironmentTest | ~48 | `#>` DNU — SystemEnvironment doesn't implement comparison |
+| PackageOnModelTest | ~18 | Package system class restructuring |
+| PackageAndClassesTest | ~20 | Package system class restructuring |
+| PackageAnnouncementsTest | ~8 | Package system class restructuring |
+| ClassDescriptionProtocolsTest | ~28 | Protocol/package system issues |
+| ClassTest | ~24 | Class modification primitives |
+| ClassAnnotationTest + subtypes | ~30 | Annotation system, class creation in tests |
+| FFICalloutAPITest | ~14 | FFI type resolution broken |
+| FBDDecompilerTest | ~26 | Bytecode decompiler (test infra) |
+| FinalizationRegistryTest | 3 TO | Finalization timing issues |
+| MonitorTest | 2 TO | Monitor/semaphore timing |
+| ContinuationTest | 1 TO | Continuation test infrastructure |
+| IntegerTest | 7 F, 3 E | testFactorial, testLargeShift, testModulo |
+| OC* (compiler tests) | ~15 | Compiler test infrastructure |
+| Misc | ~60 | Various smaller categories |
 
 ### Fixes Since Last Baseline (41 commits)
 
@@ -60,33 +76,24 @@ A new full batch test has NOT completed yet — partial results below.
 4. **Minimal fork test**: 9/10 tests pass (including WeakKeyDictionary basics: at, sort, associations, copy). Only `testAdd` hangs
 5. **No SmallInteger-at: diagnostic fired**: The `primitiveAt` on SmallInteger diagnostic added to this build never triggered — the original error cause may be resolved, but a new hang appeared
 
+### What To Do Next (Priority Order)
+
+1. **Fix WeakKeyDict forked test failures (~156 errors)**: The single biggest category. Tests pass synchronously but fail/hang when forked. Root cause is in process switching — likely in `materializeFrameStack` / `executeFromContext` roundtrip or GC interaction during process switch. This would eliminate ~20% of all remaining errors.
+
+2. **Fix SystemEnvironment `#>` DNU (~48 errors)**: SystemEnvironment doesn't implement the `#>` comparison operator. Either implement it in the VM's method lookup or ensure the image-side Comparable protocol is working.
+
+3. **Fix Package/Class system tests (~80+ errors)**: These are all related to class creation/modification in tests. Package system expects certain behaviors from `Smalltalk organization`, protocol management, etc. May need fixes to class creation primitives or package-related primitives.
+
+4. **Fix IntegerTest failures (7 fail, 3 error)**: testFactorial (returns 94 instead of 94!), testLargeShift, testModulo. The factorial bug is likely a remaining conditional jump issue in the optimized algorithm.
+
+5. **GUI menus**: After test suite is stable, focus on making menu actions work.
+
 ### Known Remaining Issues
 
-**High Priority — Tests:**
-- **WeakKeyDict testAdd hangs when forked**: `DictionaryTest>>testAdd` calls `nonEmptyDict` then `add: associationWithKeyNotInToAdd`. Something in this flow loops infinitely in a forked process. Hypothesis: hash table scan infinite loop after identity hash fix changed hash values
-- **InstanceVariableNotFound errors** (~50): Trait-defined test methods reference instance variables that don't exist on concrete test classes. Example: `sortedCollection not found in LinkedListTest`. This is a class/trait restructuring issue — likely need to implement missing trait slot composition
-- **NonBooleanReceiver errors** (~20): `SystemEnvironment >> #>` comparison sends, `storeOn:` issues — likely the `#>` DNU for non-comparable objects, need `Magnitude >> #>` or similar
-- **IntegerTest failures**: testFactorial (returns 94 instead of 94!), testLargeShift, testModulo — factorial bug is in optimized partition algorithm (conditional jump issue?)
-
-**Medium Priority — GUI:**
+**GUI Status:**
 - Desktop renders, top menu draws, world menu draws
 - Dragging startup window makes it disappear (window management issue)
 - Menus don't execute actions (likely event handling / morphic issue)
-
-### What To Do Next
-
-1. **Run a full batch test** with the current build to get updated numbers. This is the single most important thing — we need a real baseline with all 41 fixes.
-   ```bash
-   scripts/run_batch_tests.sh
-   ```
-
-2. **Investigate testAdd hang**: Add bytecode tracing to the forked process to find the infinite loop location. Key suspect: hash table probing in `HashedCollection >> #findElementOrNil:` or similar. The identity hash fix (`712a05e`) changed SmallFloat hash values — verify that WeakKeyDictionary's hash function doesn't produce degenerate probe sequences.
-
-3. **Investigate InstanceVariableNotFound**: This affects ~50 tests across many classes. Root cause is trait composition not properly adding instance variable slots to concrete test classes. May need to fix slot composition or trait application in the VM's class creation primitives.
-
-4. **Fix factorial**: The `Integer >> #factorial` optimized algorithm returns `self` (94) instead of computing the factorial. Long-form conditional jump (0xEE/0xEF) was fixed in `dc2bc85` but factorial might use a different bytecode pattern. Need bytecode tracing of `94 factorial` execution.
-
-5. **GUI menus**: After test suite is stable, focus on making menu actions work.
 
 ### Architecture Notes
 
