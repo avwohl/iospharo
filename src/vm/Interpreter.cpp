@@ -2490,11 +2490,17 @@ bool Interpreter::step() {
 
     g_stepCount++;
 
-    // Check timer and process pending signals periodically
+    // Check timer and process pending signals periodically.
+    // CRITICAL: Skip process-switch-triggering checks when inExtension_ is true.
+    // Extension bytes (0xE0/0xE1) set extA_/extB_ which the NEXT bytecode needs.
+    // A process switch calls executeFromContext which resets extA_/extB_ = 0,
+    // corrupting the next bytecode's argument (e.g., jump offset → IP past method end).
+    // The forceYield handler already checks inExtension_, but timer/signal/preemption
+    // checks did NOT — causing the non-deterministic "factorial returns receiver" bug.
     {
     static int stepCheckCounter = 0;
     stepCheckCounter++;
-    if (stepCheckCounter % 100 == 0) {
+    if (stepCheckCounter % 100 == 0 && !inExtension_) {
         g_watchdogSubphase = 11;
         checkTimerSemaphore();
         if (hasPendingSignals()) {
@@ -2613,21 +2619,35 @@ bool Interpreter::step() {
     static uint64_t stepCountForDriver = 0;
     stepCountForDriver++;
 
-    // Process any pending external semaphore signals (from heartbeat/events)
-    if (hasPendingSignals()) {
+    // Process any pending external semaphore signals (from heartbeat/events).
+    // Skip if in extension byte sequence to protect extA_/extB_.
+    if (!inExtension_ && hasPendingSignals()) {
         processPendingSignals();
     }
 
     // Periodic preemption check - every 10000 bytecodes, check if we should
-    // yield to a higher-priority or same-priority runnable process
+    // yield to a higher-priority or same-priority runnable process.
+    // Skip if in extension byte sequence to protect extA_/extB_.
     static uint64_t bytecodeCount = 0;
     bytecodeCount++;
-    if (bytecodeCount % 10000 == 0) {
+    if (bytecodeCount % 10000 == 0 && !inExtension_) {
         checkForPreemption();
     }
 
     // Check if we've run past the end of bytecodes
     if (instructionPointer_ >= bytecodeEnd_) {
+        static int ipPastEndCount = 0;
+        ipPastEndCount++;
+        if (ipPastEndCount <= 20) {
+            ObjectHeader* mObj = method_.asObjectPtr();
+            uint8_t* mBytes = mObj->bytes();
+            fprintf(stderr, "[IP-PAST-END #%d] rcvr=0x%llx ip=%td end=%td fd=%zu step=%llu\n",
+                    ipPastEndCount, (unsigned long long)receiver_.rawBits(),
+                    (ptrdiff_t)(instructionPointer_ - mBytes),
+                    (ptrdiff_t)(bytecodeEnd_ - mBytes),
+                    frameDepth_, (unsigned long long)g_stepNum);
+            fflush(stderr);
+        }
         returnValue(receiver_);
         return running_;
     }
