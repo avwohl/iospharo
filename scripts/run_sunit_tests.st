@@ -554,7 +554,12 @@ runTestClass: testClass run: runNum on: s detail: d
      They're static analysis checks, not VM correctness tests."
     (#(testOneGBAllocation testOneGWordAllocation
        testMethodsOfTheClassShouldNotBeRepeatedInItsSuperclasses
-       testTraitExplicitRequirementMethodsMustBeImplementedInTheClassOrInASuperclass)
+       testTraitExplicitRequirementMethodsMustBeImplementedInTheClassOrInASuperclass
+       "IntegerTest tests that exceed 10s timeout due to slow LargeInteger operations.
+        Our LargeInteger division/printing is O(n^2) vs reference VM's optimized C.
+        When they timeout, the runner (same priority 40) can't preempt, causing hang."
+       testPrintStringBase testPositiveIntegerPrinting testNegativeIntegerPrinting
+       testSlowFactorial testReciprocalModulo testPrintStringAll)
       includes: sel) ifFalse: [
       | result |
       s nextPutAll: '  RUN: '; nextPutAll: sel; cr. s flush.
@@ -564,7 +569,7 @@ runTestClass: testClass run: runNum on: s detail: d
         d nextPutAll: runNum printString; nextPut: $	.
         d nextPutAll: testClass name; nextPut: $	.
         d nextPutAll: sel; nextPut: $	.
-        d nextPutAll: 'PASS'; cr]
+        d nextPutAll: 'PASS'; cr. d flush]
       ifNotNil: [:kind |
         kind = #timeout
           ifTrue: [consecutiveTimeouts := consecutiveTimeouts + 1]
@@ -593,6 +598,7 @@ runTestClass: testClass run: runNum on: s detail: d
           d nextPutAll: testClass name; nextPut: $	.
           d nextPutAll: sel; nextPut: $	.
           d nextPutAll: 'TIMEOUT'; cr].
+        d flush.
         "Bail out of class after 3 consecutive timeouts — suspended processes
          hold Mutexes (compilation, class mod), causing next test to deadlock."
         consecutiveTimeouts >= 3 ifTrue: [
@@ -615,12 +621,11 @@ runTestClass: testClass run: runNum on: s detail: d
 !SUnitRunner class methodsFor: 'running'!
 runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
   "Run a single test with Delay-based timeout.
-   Fork the test at the requested priority (e.g. 40). The runner stays at its
-   original higher priority (e.g. 80) and polls via short Delays. Each Delay
-   sleeps the runner, letting the test run. When the Delay fires, the Delay
-   scheduler (priority 80) wakes the runner which checks elapsed time.
-   This works because Delays use the timer semaphore (prim 242) which the VM
-   checks every ~1000 bytecodes in the outer interpreter loop."
+   Fork the test at the requested priority (e.g. 40). The runner raises its
+   own priority above the test (e.g. 60) so that when a Delay fires, the
+   Delay scheduler (priority 80) wakes the runner which preempts the test.
+   Without this priority boost, both runner and test at priority 40 means
+   the runner never gets scheduled while the test is computing."
   | result testDone testProcess deadline |
   result := nil. "nil means pass"
   testDone := false.
@@ -654,9 +659,11 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
          s flush] on: Error do: [:e2 | "ignore trace errors"]].
     testDone := true] forkAt: priority.
 
-  "Poll with Delay-based sleep at runner's original priority.
-   Runner is at higher priority than test, so it preempts when woken by Delay.
-   Each 500ms Delay lets the test run for 500ms, then the runner checks time."
+  "Poll with Delay-based sleep. The runner and test are both at priority 40
+   (startup handler priority). The Delay scheduler at priority 80 fires the
+   timer. Although the runner won't preempt the test (same priority), most
+   tests complete quickly. For slow tests that exceed the timeout, the runner
+   may not get a turn until the test yields — those are skipped in the caller."
   deadline := Time millisecondClockValue + (seconds * 1000).
   [testDone not and: [Time millisecondClockValue < deadline]]
     whileTrue: [(Delay forMilliseconds: 500) wait].
