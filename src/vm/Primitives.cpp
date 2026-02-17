@@ -23214,9 +23214,7 @@ PrimitiveResult Interpreter::primitiveBytesBoolean8Write(int argCount) {
     ObjectHeader* hdr; int64_t offset; Oop rcvr, valueOop;
     if (!byteObjectWriteSetup(*this, memory_, argCount, hdr, offset, rcvr, valueOop))
         return PrimitiveResult::Failure;
-    if (hdr->isImmutable()) { popN(3); push(rcvr); push(valueOop); push(Oop::fromSmallInteger(offset + 1));
-        sendSelector(memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign), 2);
-        return PrimitiveResult::Success; }
+    if (hdr->isImmutable()) { return PrimitiveResult::Failure; }
     if (static_cast<size_t>(offset) + 1 > hdr->byteSize()) return PrimitiveResult::Failure;
     uint8_t val = (valueOop.rawBits() == memory_.trueObject().rawBits()) ? 1 : 0;
     hdr->bytes()[offset] = val;
@@ -23229,9 +23227,7 @@ PrimitiveResult Interpreter::primitiveBytesUint8Write(int argCount) {
     ObjectHeader* hdr; int64_t offset; Oop rcvr, valueOop;
     if (!byteObjectWriteSetup(*this, memory_, argCount, hdr, offset, rcvr, valueOop))
         return PrimitiveResult::Failure;
-    if (hdr->isImmutable()) { popN(3); push(rcvr); push(valueOop); push(Oop::fromSmallInteger(offset + 1));
-        sendSelector(memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign), 2);
-        return PrimitiveResult::Success; }
+    if (hdr->isImmutable()) { return PrimitiveResult::Failure; }
     if (static_cast<size_t>(offset) + 1 > hdr->byteSize()) return PrimitiveResult::Failure;
     if (!valueOop.isSmallInteger()) return PrimitiveResult::Failure;
     int64_t v = valueOop.asSmallInteger();
@@ -23246,9 +23242,7 @@ PrimitiveResult Interpreter::primitiveBytesInt8Write(int argCount) {
     ObjectHeader* hdr; int64_t offset; Oop rcvr, valueOop;
     if (!byteObjectWriteSetup(*this, memory_, argCount, hdr, offset, rcvr, valueOop))
         return PrimitiveResult::Failure;
-    if (hdr->isImmutable()) { popN(3); push(rcvr); push(valueOop); push(Oop::fromSmallInteger(offset + 1));
-        sendSelector(memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign), 2);
-        return PrimitiveResult::Success; }
+    if (hdr->isImmutable()) { return PrimitiveResult::Failure; }
     if (static_cast<size_t>(offset) + 1 > hdr->byteSize()) return PrimitiveResult::Failure;
     if (!valueOop.isSmallInteger()) return PrimitiveResult::Failure;
     int64_t v = valueOop.asSmallInteger();
@@ -23264,9 +23258,7 @@ PrimitiveResult Interpreter::primitiveBytesUint16Write(int argCount) {
     ObjectHeader* hdr; int64_t offset; Oop rcvr, valueOop;
     if (!byteObjectWriteSetup(*this, memory_, argCount, hdr, offset, rcvr, valueOop))
         return PrimitiveResult::Failure;
-    if (hdr->isImmutable()) { popN(3); push(rcvr); push(valueOop); push(Oop::fromSmallInteger(offset + 1));
-        sendSelector(memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign), 2);
-        return PrimitiveResult::Success; }
+    if (hdr->isImmutable()) { return PrimitiveResult::Failure; }
     if (static_cast<size_t>(offset) + 2 > hdr->byteSize()) return PrimitiveResult::Failure;
     if (!valueOop.isSmallInteger()) return PrimitiveResult::Failure;
     int64_t v = valueOop.asSmallInteger();
@@ -23282,9 +23274,7 @@ PrimitiveResult Interpreter::primitiveBytesInt16Write(int argCount) {
     ObjectHeader* hdr; int64_t offset; Oop rcvr, valueOop;
     if (!byteObjectWriteSetup(*this, memory_, argCount, hdr, offset, rcvr, valueOop))
         return PrimitiveResult::Failure;
-    if (hdr->isImmutable()) { popN(3); push(rcvr); push(valueOop); push(Oop::fromSmallInteger(offset + 1));
-        sendSelector(memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign), 2);
-        return PrimitiveResult::Success; }
+    if (hdr->isImmutable()) { return PrimitiveResult::Failure; }
     if (static_cast<size_t>(offset) + 2 > hdr->byteSize()) return PrimitiveResult::Failure;
     if (!valueOop.isSmallInteger()) return PrimitiveResult::Failure;
     int64_t v = valueOop.asSmallInteger();
@@ -23300,9 +23290,7 @@ PrimitiveResult Interpreter::primitiveBytesUint32Write(int argCount) {
     ObjectHeader* hdr; int64_t offset; Oop rcvr, valueOop;
     if (!byteObjectWriteSetup(*this, memory_, argCount, hdr, offset, rcvr, valueOop))
         return PrimitiveResult::Failure;
-    if (hdr->isImmutable()) { popN(3); push(rcvr); push(valueOop); push(Oop::fromSmallInteger(offset + 1));
-        sendSelector(memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign), 2);
-        return PrimitiveResult::Success; }
+    if (hdr->isImmutable()) { return PrimitiveResult::Failure; }
     if (static_cast<size_t>(offset) + 4 > hdr->byteSize()) return PrimitiveResult::Failure;
     if (!valueOop.isSmallInteger()) return PrimitiveResult::Failure;
     int64_t v = valueOop.asSmallInteger();
@@ -23318,9 +23306,7 @@ PrimitiveResult Interpreter::primitiveBytesInt32Write(int argCount) {
     ObjectHeader* hdr; int64_t offset; Oop rcvr, valueOop;
     if (!byteObjectWriteSetup(*this, memory_, argCount, hdr, offset, rcvr, valueOop))
         return PrimitiveResult::Failure;
-    if (hdr->isImmutable()) { popN(3); push(rcvr); push(valueOop); push(Oop::fromSmallInteger(offset + 1));
-        sendSelector(memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign), 2);
-        return PrimitiveResult::Success; }
+    if (hdr->isImmutable()) { return PrimitiveResult::Failure; }
     if (static_cast<size_t>(offset) + 4 > hdr->byteSize()) return PrimitiveResult::Failure;
     if (!valueOop.isSmallInteger()) return PrimitiveResult::Failure;
     int64_t v = valueOop.asSmallInteger();
@@ -23336,9 +23322,7 @@ PrimitiveResult Interpreter::primitiveBytesUint64Write(int argCount) {
     ObjectHeader* hdr; int64_t offset; Oop rcvr, valueOop;
     if (!byteObjectWriteSetup(*this, memory_, argCount, hdr, offset, rcvr, valueOop))
         return PrimitiveResult::Failure;
-    if (hdr->isImmutable()) { popN(3); push(rcvr); push(valueOop); push(Oop::fromSmallInteger(offset + 1));
-        sendSelector(memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign), 2);
-        return PrimitiveResult::Success; }
+    if (hdr->isImmutable()) { return PrimitiveResult::Failure; }
     if (static_cast<size_t>(offset) + 8 > hdr->byteSize()) return PrimitiveResult::Failure;
     if (!valueOop.isSmallInteger()) return PrimitiveResult::Failure;
     int64_t v = valueOop.asSmallInteger();
@@ -23354,9 +23338,7 @@ PrimitiveResult Interpreter::primitiveBytesInt64Write(int argCount) {
     ObjectHeader* hdr; int64_t offset; Oop rcvr, valueOop;
     if (!byteObjectWriteSetup(*this, memory_, argCount, hdr, offset, rcvr, valueOop))
         return PrimitiveResult::Failure;
-    if (hdr->isImmutable()) { popN(3); push(rcvr); push(valueOop); push(Oop::fromSmallInteger(offset + 1));
-        sendSelector(memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign), 2);
-        return PrimitiveResult::Success; }
+    if (hdr->isImmutable()) { return PrimitiveResult::Failure; }
     if (static_cast<size_t>(offset) + 8 > hdr->byteSize()) return PrimitiveResult::Failure;
     if (!valueOop.isSmallInteger()) return PrimitiveResult::Failure;
     int64_t val = valueOop.asSmallInteger();
@@ -23370,9 +23352,7 @@ PrimitiveResult Interpreter::primitiveBytesPointerWrite(int argCount) {
     ObjectHeader* hdr; int64_t offset; Oop rcvr, valueOop;
     if (!byteObjectWriteSetup(*this, memory_, argCount, hdr, offset, rcvr, valueOop))
         return PrimitiveResult::Failure;
-    if (hdr->isImmutable()) { popN(3); push(rcvr); push(valueOop); push(Oop::fromSmallInteger(offset + 1));
-        sendSelector(memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign), 2);
-        return PrimitiveResult::Success; }
+    if (hdr->isImmutable()) { return PrimitiveResult::Failure; }
     if (static_cast<size_t>(offset) + sizeof(void*) > hdr->byteSize()) return PrimitiveResult::Failure;
     // Value must be an ExternalAddress (byte object containing a pointer)
     if (!valueOop.isObject()) return PrimitiveResult::Failure;
@@ -23390,9 +23370,7 @@ PrimitiveResult Interpreter::primitiveBytesChar8Write(int argCount) {
     ObjectHeader* hdr; int64_t offset; Oop rcvr, valueOop;
     if (!byteObjectWriteSetup(*this, memory_, argCount, hdr, offset, rcvr, valueOop))
         return PrimitiveResult::Failure;
-    if (hdr->isImmutable()) { popN(3); push(rcvr); push(valueOop); push(Oop::fromSmallInteger(offset + 1));
-        sendSelector(memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign), 2);
-        return PrimitiveResult::Success; }
+    if (hdr->isImmutable()) { return PrimitiveResult::Failure; }
     if (static_cast<size_t>(offset) + 1 > hdr->byteSize()) return PrimitiveResult::Failure;
     uint32_t charVal;
     if (valueOop.isCharacter()) charVal = valueOop.asCharacter();
@@ -23409,9 +23387,7 @@ PrimitiveResult Interpreter::primitiveBytesChar16Write(int argCount) {
     ObjectHeader* hdr; int64_t offset; Oop rcvr, valueOop;
     if (!byteObjectWriteSetup(*this, memory_, argCount, hdr, offset, rcvr, valueOop))
         return PrimitiveResult::Failure;
-    if (hdr->isImmutable()) { popN(3); push(rcvr); push(valueOop); push(Oop::fromSmallInteger(offset + 1));
-        sendSelector(memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign), 2);
-        return PrimitiveResult::Success; }
+    if (hdr->isImmutable()) { return PrimitiveResult::Failure; }
     if (static_cast<size_t>(offset) + 2 > hdr->byteSize()) return PrimitiveResult::Failure;
     uint32_t charVal;
     if (valueOop.isCharacter()) charVal = valueOop.asCharacter();
@@ -23429,9 +23405,7 @@ PrimitiveResult Interpreter::primitiveBytesChar32Write(int argCount) {
     ObjectHeader* hdr; int64_t offset; Oop rcvr, valueOop;
     if (!byteObjectWriteSetup(*this, memory_, argCount, hdr, offset, rcvr, valueOop))
         return PrimitiveResult::Failure;
-    if (hdr->isImmutable()) { popN(3); push(rcvr); push(valueOop); push(Oop::fromSmallInteger(offset + 1));
-        sendSelector(memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign), 2);
-        return PrimitiveResult::Success; }
+    if (hdr->isImmutable()) { return PrimitiveResult::Failure; }
     if (static_cast<size_t>(offset) + 4 > hdr->byteSize()) return PrimitiveResult::Failure;
     uint32_t charVal;
     if (valueOop.isCharacter()) charVal = valueOop.asCharacter();
@@ -23514,15 +23488,9 @@ PrimitiveResult Interpreter::primitiveFloat32Write(int argCount) {
     int64_t offset = offsetOop.asSmallInteger();
     if (offset < 0) return PrimitiveResult::Failure;
 
-    // Check immutability — signal attemptToAssign:withIndex: via Smalltalk
+    // Check immutability — return Failure to let Smalltalk fallback handle write barrier
     if (hdr->isImmutable()) {
-        popN(3);
-        push(rcvr);
-        push(valueOop);
-        push(Oop::fromSmallInteger(offset + 1));  // 1-based index
-        Oop selector = memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign);
-        sendSelector(selector, 2);
-        return PrimitiveResult::Success;
+        return PrimitiveResult::Failure;
     }
 
     if (static_cast<size_t>(offset) + sizeof(float) > hdr->byteSize())
@@ -23554,15 +23522,9 @@ PrimitiveResult Interpreter::primitiveFloat64Write(int argCount) {
     int64_t offset = offsetOop.asSmallInteger();
     if (offset < 0) return PrimitiveResult::Failure;
 
-    // Check immutability — signal attemptToAssign:withIndex: via Smalltalk
+    // Check immutability — return Failure to let Smalltalk fallback handle write barrier
     if (hdr->isImmutable()) {
-        popN(3);
-        push(rcvr);
-        push(valueOop);
-        push(Oop::fromSmallInteger(offset + 1));  // 1-based index
-        Oop selector = memory_.specialObject(SpecialObjectIndex::SelectorAttemptToAssign);
-        sendSelector(selector, 2);
-        return PrimitiveResult::Success;
+        return PrimitiveResult::Failure;
     }
 
     if (static_cast<size_t>(offset) + sizeof(double) > hdr->byteSize())

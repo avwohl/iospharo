@@ -793,8 +793,16 @@ static sqInt proxy_primitiveFailFor(sqInt code) {
 
 static sqInt proxy_sendInvokeCallbackStackRegistersJmpbuf(sqInt a, sqInt b, sqInt c, sqInt d) { return 0; }
 static sqInt proxy_reestablishContextPriorToCallback(sqInt ctx) { return 0; }
-static sqInt proxy_isOopImmutable(sqInt oop) { return 0; }
-static sqInt proxy_isOopMutable(sqInt oop) { return 1; }
+static sqInt proxy_isOopImmutable(sqInt oop) {
+    Oop obj = sqIntToOop(oop);
+    if (!obj.isObject() || obj.rawBits() < 0x10000) return 0;
+    return obj.asObjectPtr()->isImmutable() ? 1 : 0;
+}
+static sqInt proxy_isOopMutable(sqInt oop) {
+    Oop obj = sqIntToOop(oop);
+    if (!obj.isObject() || obj.rawBits() < 0x10000) return 1;
+    return obj.asObjectPtr()->isImmutable() ? 0 : 1;
+}
 
 static sqInt proxy_methodReturnBool(sqInt b) {
     gInterp->popN(gInterp->argumentCount() + 1);

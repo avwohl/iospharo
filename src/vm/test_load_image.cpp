@@ -729,9 +729,8 @@ int main(int argc, char* argv[]) {
                     break;
                 }
                 consecutiveIdle++;
-                // Report first idle transition and record wall-clock time
+                // Record wall-clock time on first idle transition
                 if (consecutiveIdle == 1) {
-                    std::cout << "[IDLE] First idle at step " << i << " after " << activeSteps << " active steps" << std::endl;
                     idleStartTime = std::chrono::steady_clock::now();
 
                     // Inject click during first idle — the OSSDL2Driver event loop

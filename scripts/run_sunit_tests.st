@@ -643,7 +643,15 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
         result := #error.
         s nextPutAll: '  ERROR: '; nextPutAll: sel;
           nextPutAll: ' ('; nextPutAll: ex class name;
-          nextPutAll: ': '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 100)); nextPutAll: ')'; cr].
+          nextPutAll: ': '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 100)); nextPutAll: ')'; cr.
+        "Capture stack trace for diagnosis"
+        [| ctx count |
+         ctx := ex signalerContext.
+         count := 0.
+         [ctx notNil and: [count < 25]] whileTrue: [
+           s nextPutAll: '    >> '; nextPutAll: ctx printString; cr.
+           ctx := ctx sender. count := count + 1].
+         s flush] on: Error do: [:e2 | "ignore trace errors"]].
     testDone := true] forkAt: priority.
 
   "Poll with Delay-based sleep at runner's original priority.

@@ -7750,7 +7750,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
     // General DNU tracing: log first 5 DNUs for debugging
     static int generalDnuCount = 0;
-    if (generalDnuCount < 5) {
+    if (generalDnuCount < 20) {
         generalDnuCount++;
         std::string selName = "?";
         if (selector.isObject() && selector.rawBits() > 0x10000) {
@@ -7810,9 +7810,16 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                 }
             }
         }
-        fprintf(stderr, "[DNU #%d] %s >> #%s (args=%d) caller=%s fd=%zu\n",
+        fprintf(stderr, "[DNU #%d] %s >> #%s (args=%d) caller=%s fd=%zu rcv=0x%llx",
                 generalDnuCount, rcvClass.c_str(), selName.c_str(), argCount,
-                callerSel.c_str(), frameDepth_);
+                callerSel.c_str(), frameDepth_, (unsigned long long)rcv.rawBits());
+        if (rcv.isObject() && rcv.rawBits() > 0x10000) {
+            fprintf(stderr, " classIdx=%d", rcv.asObjectPtr()->classIndex());
+            Oop cls = memory_.classOf(rcv);
+            if (cls.isObject() && cls.rawBits() > 0x10000)
+                fprintf(stderr, " clsAddr=0x%llx", (unsigned long long)cls.rawBits());
+        }
+        fprintf(stderr, "\n");
         fflush(stderr);
     }
 
