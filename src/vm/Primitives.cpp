@@ -14627,7 +14627,7 @@ PrimitiveResult Interpreter::primitiveCompiledMethodPrimitive(int argCount) {
     return PrimitiveResult::Success;
 }
 
-// Primitive 560: Get selector of compiled method (last literal)
+// Primitive 560: Get selector of compiled method (penultimate literal)
 // aMethod primitiveCompiledMethodSelector -> selector
 PrimitiveResult Interpreter::primitiveCompiledMethodSelector(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
@@ -14645,10 +14645,12 @@ PrimitiveResult Interpreter::primitiveCompiledMethodSelector(int argCount) {
     intptr_t header = headerOop.asSmallInteger();
     intptr_t numLiterals = header & 0x7FFF;
 
-    // Selector is typically the last literal (or second to last in some encodings)
+    // Selector is the penultimate literal (second-to-last).
+    // Last literal (slot numLiterals) = method class association.
+    // Penultimate literal (slot numLiterals - 1) = selector.
     Oop selector = Oop::nil();
-    if (numLiterals > 0) {
-        selector = memory_.fetchPointer(static_cast<size_t>(numLiterals), methodOop);
+    if (numLiterals >= 2) {
+        selector = memory_.fetchPointer(static_cast<size_t>(numLiterals - 1), methodOop);
     }
 
     pop();
