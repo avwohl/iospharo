@@ -54,6 +54,13 @@ char g_watchdogReceiverClass[64] = {0};
 char g_lastSelName[64] = {0};
 volatile int g_watchdogPrimIndex = 0;
 volatile int g_watchdogProcessPriority = 0;  // Current process priority (updated in step loop)
+
+// MUSTBEBOOL diagnostic: track last dispatched send for root cause analysis
+static pharo::Oop g_lastDispatchSelector;
+static pharo::Oop g_lastDispatchRcvrClass;
+static pharo::Oop g_lastDispatchMethod;
+static int g_lastDispatchArgCount = 0;
+static int g_lastDispatchPrimIndex = 0;
 volatile sig_atomic_t g_sigsegvRecoveryEnabled = 0;
 
 // Trace sends after SDL_PollEvent returns a mouse event (set by FFI.cpp)
@@ -5353,15 +5360,12 @@ void Interpreter::arithmeticSend(int which) {
     }
 
     if (selector.isNil()) {
-        // Still nil — this shouldn't happen. Send via doesNotUnderstand.
-        static int nilSelCount = 0;
-        if (++nilSelCount <= 10) {
-            fprintf(stderr, "[ARITH-NIL-SEL] op=%d step=%llu — selector is nil, cannot send\n",
-                    which, (unsigned long long)g_stepNum);
-        }
-        // Pop args, push nil to avoid stack corruption
-        popN(argCount + 1);
-        push(memory_.nil());
+        char buf[256];
+        snprintf(buf, sizeof(buf),
+                 "arithmeticSend: special selector %d is nil at step %llu — "
+                 "specialObjectsArray or SmallInteger method dict is corrupt",
+                 which, (unsigned long long)g_stepNum);
+        stopVM(buf);
         return;
     }
 
@@ -5877,11 +5881,18 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
     Oop rcvrClass = memory_.classOf(rcvr);
 
+    // Record last dispatch for MUSTBEBOOL diagnostics
+    g_lastDispatchSelector = selector;
+    g_lastDispatchRcvrClass = rcvrClass;
+    g_lastDispatchArgCount = argCount;
+
     // Check method cache
     MethodCacheEntry* cached = probeCache(selector, rcvrClass);
 
     if (cached && cached->method != Oop::nil()) {
         // Cache hit
+        g_lastDispatchMethod = cached->method;
+        g_lastDispatchPrimIndex = cached->primitiveIndex;
         if (cached->primitiveIndex > 0) {
             g_watchdogPrimIndex = cached->primitiveIndex;
             argCount_ = argCount;
@@ -5925,9 +5936,11 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
     // Cache the method
     cacheMethod(selector, rcvrClass, method);
+    g_lastDispatchMethod = method;
 
     // Check for primitive
     int primIndex = primitiveIndexOf(method);
+    g_lastDispatchPrimIndex = primIndex;
 
     if (primIndex > 0) {
         g_watchdogPrimIndex = primIndex;
@@ -7918,7 +7931,7 @@ void Interpreter::sendMustBeBoolean(Oop value) {
     // If this causes infinite recursion, the DNU depth limit will stopVM().
     static int mbCount = 0;
     mbCount++;
-    if (mbCount <= 10) {
+    if (mbCount <= 30) {
         std::string clsName = "?";
         if (value.isSmallInteger()) {
             clsName = "SmallInteger(" + std::to_string(value.asSmallInteger()) + ")";
@@ -8074,6 +8087,40 @@ void Interpreter::sendMustBeBoolean(Oop value) {
                 else
                     fprintf(stderr, "    [%d] 0x%llx%s\n", s, (unsigned long long)v.rawBits(), marker);
             }
+        }
+        // DIAGNOSTIC: Dump the last dispatched send info
+        // This tells us what method returned the non-boolean value
+        {
+            std::string lastSel = "?";
+            if (g_lastDispatchSelector.isObject() && g_lastDispatchSelector.rawBits() > 0x10000) {
+                ObjectHeader* sh = g_lastDispatchSelector.asObjectPtr();
+                if (sh->isBytesObject() && sh->byteSize() < 100)
+                    lastSel = std::string((char*)sh->bytes(), sh->byteSize());
+            }
+            std::string lastRcvrCls = "?";
+            if (g_lastDispatchRcvrClass.isObject() && g_lastDispatchRcvrClass.rawBits() > 0x10000) {
+                if (g_lastDispatchRcvrClass.asObjectPtr()->slotCount() > 6) {
+                    Oop nm = memory_.fetchPointer(6, g_lastDispatchRcvrClass);
+                    if (nm.isObject() && nm.rawBits() > 0x10000 && nm.asObjectPtr()->isBytesObject() && nm.asObjectPtr()->byteSize() < 100)
+                        lastRcvrCls = std::string((char*)nm.asObjectPtr()->bytes(), nm.asObjectPtr()->byteSize());
+                }
+            }
+            std::string lastMethodSel = "?";
+            if (g_lastDispatchMethod.isObject() && g_lastDispatchMethod.rawBits() > 0x10000) {
+                Oop mhdr = memory_.fetchPointer(0, g_lastDispatchMethod);
+                if (mhdr.isSmallInteger()) {
+                    int nl = mhdr.asSmallInteger() & 0x7FFF;
+                    if (nl >= 2 && nl < 100) {
+                        Oop sel = memory_.fetchPointer(nl - 1, g_lastDispatchMethod);
+                        if (sel.isObject() && sel.rawBits() > 0x10000 && sel.asObjectPtr()->isBytesObject() && sel.asObjectPtr()->byteSize() < 100)
+                            lastMethodSel = std::string((char*)sel.asObjectPtr()->bytes(), sel.asObjectPtr()->byteSize());
+                    }
+                }
+            }
+            fprintf(stderr, "  LAST-DISPATCH: %s >> #%s → method=#%s prim=%d args=%d method=0x%llx\n",
+                    lastRcvrCls.c_str(), lastSel.c_str(), lastMethodSel.c_str(),
+                    g_lastDispatchPrimIndex, g_lastDispatchArgCount,
+                    (unsigned long long)g_lastDispatchMethod.rawBits());
         }
     }
     sendSelector(selectors_.mustBeBoolean, 0);

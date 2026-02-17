@@ -272,8 +272,6 @@ PrimitiveResult Interpreter::primitiveIncrementalGC(int argCount) {
         primitiveSuccess(Oop::fromSmallInteger(Oop::smallIntegerMax()));
     }
 
-    signalFinalizationIfNeeded();
-
     return PrimitiveResult::Success;
 }
 
@@ -1597,6 +1595,45 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
     // Official VM behavior: fail if index is not SmallInteger (PrimErrBadArgument)
     // or if receiver is not an object (PrimErrInappropriate)
     if (!index.isSmallInteger() || !rcvr.isObject()) {
+        // Diagnostic: log when at: is sent to a SmallInteger
+        if (rcvr.isSmallInteger()) {
+            static int smiAtCount = 0;
+            smiAtCount++;
+            if (smiAtCount <= 20) {
+                // Get calling method selector for context
+                std::string sel = "?", cls = "?";
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    Oop methodHeader = memory_.fetchPointer(0, method_);
+                    if (methodHeader.isSmallInteger()) {
+                        int numLits = methodHeader.asSmallInteger() & 0x7FFF;
+                        if (numLits >= 2 && numLits < 500) {
+                            Oop selOop = memory_.fetchPointer(numLits - 1, method_);
+                            if (selOop.isObject() && selOop.rawBits() > 0x10000) {
+                                ObjectHeader* sh = selOop.asObjectPtr();
+                                if (sh->isBytesObject() && sh->byteSize() < 100)
+                                    sel = std::string((char*)sh->bytes(), sh->byteSize());
+                            }
+                        }
+                    }
+                }
+                if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+                    Oop rcvrCls = memory_.classOf(receiver_);
+                    if (rcvrCls.isObject()) {
+                        Oop n = memory_.fetchPointer(6, rcvrCls);
+                        if (n.isObject() && n.rawBits() > 0x10000) {
+                            ObjectHeader* nh = n.asObjectPtr();
+                            if (nh->isBytesObject() && nh->byteSize() < 100)
+                                cls = std::string((char*)nh->bytes(), nh->byteSize());
+                        }
+                    }
+                }
+                fprintf(stderr, "[AT-SMI #%d] at: on SmallInteger %lld, index=0x%llx, method=%s>>%s, receiver_=0x%llx(%s)\n",
+                        smiAtCount, (long long)rcvr.asSmallInteger(),
+                        (unsigned long long)index.rawBits(),
+                        cls.c_str(), sel.c_str(),
+                        (unsigned long long)receiver_.rawBits(), cls.c_str());
+            }
+        }
         return PrimitiveResult::Failure;
     }
 
@@ -1768,6 +1805,42 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
     Oop rcvr = stackValue(2);
 
     if (!index.isSmallInteger() || !rcvr.isObject()) {
+        // Diagnostic: log when at:put: is sent to a SmallInteger
+        if (rcvr.isSmallInteger()) {
+            static int smiAtPutCount = 0;
+            smiAtPutCount++;
+            if (smiAtPutCount <= 20) {
+                std::string sel = "?", cls = "?";
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    Oop methodHeader = memory_.fetchPointer(0, method_);
+                    if (methodHeader.isSmallInteger()) {
+                        int numLits = methodHeader.asSmallInteger() & 0x7FFF;
+                        if (numLits >= 2 && numLits < 500) {
+                            Oop selOop = memory_.fetchPointer(numLits - 1, method_);
+                            if (selOop.isObject() && selOop.rawBits() > 0x10000) {
+                                ObjectHeader* sh = selOop.asObjectPtr();
+                                if (sh->isBytesObject() && sh->byteSize() < 100)
+                                    sel = std::string((char*)sh->bytes(), sh->byteSize());
+                            }
+                        }
+                    }
+                }
+                if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+                    Oop rcvrCls = memory_.classOf(receiver_);
+                    if (rcvrCls.isObject()) {
+                        Oop n = memory_.fetchPointer(6, rcvrCls);
+                        if (n.isObject() && n.rawBits() > 0x10000) {
+                            ObjectHeader* nh = n.asObjectPtr();
+                            if (nh->isBytesObject() && nh->byteSize() < 100)
+                                cls = std::string((char*)nh->bytes(), nh->byteSize());
+                        }
+                    }
+                }
+                fprintf(stderr, "[ATPUT-SMI #%d] at:put: on SmallInteger %lld, method=%s>>%s\n",
+                        smiAtPutCount, (long long)rcvr.asSmallInteger(),
+                        cls.c_str(), sel.c_str());
+            }
+        }
         return PrimitiveResult::Failure;
     }
 
@@ -7270,8 +7343,6 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
     } else {
         primitiveSuccess(Oop::fromSmallInteger(Oop::smallIntegerMax()));
     }
-
-    signalFinalizationIfNeeded();
 
     return PrimitiveResult::Success;
 }

@@ -1622,9 +1622,6 @@ void ObjectMemory::sweepGC() {
     static int sweepCount = 0;
     sweepCount++;
 
-    // Clear finalization state for this GC cycle (fresh count)
-    pendingFinalizationSignals_ = 0;
-
     auto start = std::chrono::steady_clock::now();
 
     // 1. Clear all marks
@@ -1734,9 +1731,6 @@ GCResult ObjectMemory::fullGC() {
     gcCallCount++;
 
     size_t usedBefore = oldSpaceFree_ - oldSpaceStart_;
-
-    // Clear finalization state for this GC cycle (fresh count)
-    pendingFinalizationSignals_ = 0;
 
     // 1. Convert interpreter IPs to offsets (methods may move)
     if (interpreter_) {
