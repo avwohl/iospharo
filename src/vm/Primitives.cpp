@@ -8203,16 +8203,21 @@ PrimitiveResult Interpreter::primitiveObjectPointsTo(int argCount) {
 void Interpreter::scanStackReplace(Oop oldOop, Oop newOop) {
     uint64_t oldBits = oldOop.rawBits();
 
-    // Scan current frame state
+    // Scan ALL interpreter Oop fields (must match forEachRoot coverage)
     if (receiver_.rawBits() == oldBits) receiver_ = newOop;
     if (method_.rawBits() == oldBits) method_ = newOop;
+    if (newMethod_.rawBits() == oldBits) newMethod_ = newOop;
+    if (homeMethod_.rawBits() == oldBits) homeMethod_ = newOop;
+    if (closure_.rawBits() == oldBits) closure_ = newOop;
+    if (activeContext_.rawBits() == oldBits) activeContext_ = newOop;
+    if (currentFrameMaterializedCtx_.rawBits() == oldBits) currentFrameMaterializedCtx_ = newOop;
 
     // Scan the live operand stack (stackPointer_ is one past the last live value)
     for (Oop* p = stackBase_; p < stackPointer_; p++) {
         if (p->rawBits() == oldBits) *p = newOop;
     }
 
-    // Scan saved frames
+    // Scan saved frames (including materializedContext)
     for (size_t i = 0; i < frameDepth_; i++) {
         auto& f = savedFrames_[i];
         if (f.savedReceiver.rawBits() == oldBits) f.savedReceiver = newOop;
@@ -8220,6 +8225,7 @@ void Interpreter::scanStackReplace(Oop oldOop, Oop newOop) {
         if (f.savedHomeMethod.rawBits() == oldBits) f.savedHomeMethod = newOop;
         if (f.savedClosure.rawBits() == oldBits) f.savedClosure = newOop;
         if (f.savedActiveContext.rawBits() == oldBits) f.savedActiveContext = newOop;
+        if (f.materializedContext.rawBits() == oldBits) f.materializedContext = newOop;
     }
 }
 
