@@ -3647,7 +3647,7 @@ void Interpreter::push(Oop value) {
             }
             // Skip known-legitimate methods where Symbol class is used correctly
             bool isLegitimate = (msel == "asSymbol" || msel == "rawIntern:" ||
-                                 msel == "intern:" || msel == "at:" ||
+                                 msel == "intern:" ||
                                  msel == "registeredClass" || msel == "startup:" ||
                                  msel == "startUp:" || msel == "symbolTable" ||
                                  msel == "new:" || msel == "basicNew:" ||

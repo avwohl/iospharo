@@ -686,6 +686,53 @@ int main(int argc, char* argv[]) {
                     fprintf(stderr, "[SYMCLS-CHECK] 0x300002298 is not a valid object\n");
                 }
                 fflush(stderr);
+
+                // Pre-execution heap scan: find ALL objects that reference Symbol class
+                // This runs BEFORE any bytecodes execute, so it shows the image state
+                if (trial.isObject() && trial.rawBits() > 0x10000 &&
+                    trial.asObjectPtr()->classIndex() == 3094) {
+                    fprintf(stderr, "\n=== Pre-execution Symbol class reference scan ===\n");
+                    int found = 0;
+                    int nameSlotCorruption = 0;
+                    pharo::Oop current = memory.firstObject();
+                    while (current.isObject() && current.rawBits() > 0x10000) {
+                        auto* curHdr = current.asObjectPtr();
+                        // Only check pointer objects (not bytes/compiled methods)
+                        if (!curHdr->isBytesObject()) {
+                            size_t slots = curHdr->slotCount();
+                            for (size_t i = 0; i < slots; i++) {
+                                if (curHdr->slotAt(i).rawBits() == trial.rawBits()) {
+                                    found++;
+                                    uint32_t ci = curHdr->classIndex();
+                                    if (found <= 50) {
+                                        fprintf(stderr, "[SYMCLS-REF #%d] obj=0x%llx(ci%u,slots%zu,fmt%u) "
+                                                "slot[%zu]=SymbolClass\n",
+                                                found, (unsigned long long)current.rawBits(),
+                                                ci, slots, curHdr->format(), i);
+                                    }
+                                    // Check if this is a class with Symbol class in name slot (5)
+                                    if (i == 5 && slots >= 7) {
+                                        nameSlotCorruption++;
+                                        fprintf(stderr, "  *** POSSIBLE NAME SLOT CORRUPTION: "
+                                                "obj ci=%u has Symbol class at slot 5 ***\n", ci);
+                                        // Log other slots for context
+                                        for (size_t j = 0; j < std::min(slots, (size_t)10); j++) {
+                                            pharo::Oop sv = curHdr->slotAt(j);
+                                            fprintf(stderr, "    slot[%zu] = 0x%llx%s\n",
+                                                    j, (unsigned long long)sv.rawBits(),
+                                                    sv.isSmallInteger() ? " (smi)" :
+                                                    (sv.rawBits() == 0 ? " (nil)" : ""));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        current = memory.objectAfter(current);
+                    }
+                    fprintf(stderr, "[SYMCLS-REF] Total: %d references to Symbol class, "
+                            "%d name-slot corruptions\n", found, nameSlotCorruption);
+                    fflush(stderr);
+                }
             }
         }
 
