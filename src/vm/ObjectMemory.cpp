@@ -1754,6 +1754,31 @@ GCResult ObjectMemory::fullGC() {
     // 3. Mark phase
     size_t markedCount = markPhase();
 
+    // DIAGNOSTIC: Lightweight Symbol class corruption check.
+    // Compare slot values against the known Oop for Symbol class (classIdx 3094).
+    // Uses simple 64-bit bit comparison — no pointer following.
+    Oop symClassOop;
+    int preCompCount = 0;
+    bool symCheckEnabled = (classTable_.size() > 3094 && classTable_[3094].isObject());
+    if (symCheckEnabled) {
+        symClassOop = classTable_[3094];
+        uint64_t symBits = symClassOop.rawBits();
+        ObjectScanner scanner(oldSpaceStart_, oldSpaceFree_);
+        while (ObjectHeader* obj = scanner.next()) {
+            if (!obj->isMarked()) continue;
+            uint32_t ci = obj->classIndex();
+            if (ci == 36 || ci == 38) continue;  // Context, FullBlockClosure — legitimate
+            if (obj->isCompiledMethod()) continue;
+            ObjectFormat fmt = obj->format();
+            if (fmt > ObjectFormat::WeakWithFixed) continue;
+            size_t numSlots = obj->slotCount();
+            Oop* slots = obj->slots();
+            for (size_t i = 0; i < numSlots; i++) {
+                if (slots[i].rawBits() == symBits) preCompCount++;
+            }
+        }
+    }
+
     // 4. Plan + update + copy (compact)
     planCompactSavingForwarders();
     updatePointersAfterCompact();
@@ -1796,6 +1821,44 @@ GCResult ObjectMemory::fullGC() {
                     (size_t)result.milliseconds, usedAfter / (1024*1024));
             fflush(gcLog);
             fclose(gcLog);
+        }
+    }
+
+    // POST-GC VERIFICATION: Compare Symbol class ref count before vs after compaction.
+    // After compaction, Symbol class may have moved — use updated classTable entry.
+    // If count INCREASED, compaction introduced corruption.
+    if (symCheckEnabled) {
+        Oop newSymClassOop = classTable_[3094];
+        uint64_t newSymBits = newSymClassOop.rawBits();
+        int postCompCount = 0;
+        int firstBadCi = 0; uint64_t firstBadObj = 0; int firstBadSlot = -1;
+        ObjectScanner scanner(oldSpaceStart_, oldSpaceFree_);
+        while (ObjectHeader* obj = scanner.next()) {
+            uint32_t ci = obj->classIndex();
+            if (ci == 36 || ci == 38) continue;
+            if (obj->isCompiledMethod()) continue;
+            ObjectFormat fmt = obj->format();
+            if (fmt > ObjectFormat::WeakWithFixed) continue;
+            size_t numSlots = obj->slotCount();
+            Oop* slots = obj->slots();
+            for (size_t i = 0; i < numSlots; i++) {
+                if (slots[i].rawBits() == newSymBits) {
+                    postCompCount++;
+                    if (firstBadSlot < 0 && postCompCount > preCompCount) {
+                        firstBadCi = ci;
+                        firstBadObj = reinterpret_cast<uint64_t>(obj);
+                        firstBadSlot = (int)i;
+                    }
+                }
+            }
+        }
+        if (postCompCount > preCompCount) {
+            fprintf(stderr, "[GC-SYM-CORRUPT #%d] Compaction introduced Symbol class refs! "
+                    "%d -> %d (+%d) firstNew: ci=%d obj=0x%llx slot=%d symOop=0x%llx->0x%llx\n",
+                    gcCallCount, preCompCount, postCompCount, postCompCount - preCompCount,
+                    firstBadCi, (unsigned long long)firstBadObj, firstBadSlot,
+                    (unsigned long long)symClassOop.rawBits(),
+                    (unsigned long long)newSymClassOop.rawBits());
         }
     }
 

@@ -3614,6 +3614,7 @@ void Interpreter::push(Oop value) {
             }
         }
     }
+
     if (stackPointer_ >= stack_.data() + MaxStackDepth) {
         static int overflowCount = 0;
         overflowCount++;
@@ -7750,7 +7751,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
     // General DNU tracing: log first 5 DNUs for debugging
     static int generalDnuCount = 0;
-    if (generalDnuCount < 20) {
+    if (generalDnuCount < 50) {
         generalDnuCount++;
         std::string selName = "?";
         if (selector.isObject() && selector.rawBits() > 0x10000) {
@@ -7820,6 +7821,87 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                 fprintf(stderr, " clsAddr=0x%llx", (unsigned long long)cls.rawBits());
         }
         fprintf(stderr, "\n");
+
+        // Enhanced diagnostic: when receiver is Symbol class (classIdx 3094),
+        // dump full backtrace with temps to trace the source of corruption
+        if (rcv.isObject() && rcv.rawBits() > 0x10000 && rcv.asObjectPtr()->classIndex() == 3094) {
+            fprintf(stderr, "[DNU-DIAG] Symbol class corruption detected! Full backtrace:\n");
+
+            // Helper lambda to get method name from method oop
+            auto getMethodName = [&](Oop methodOop) -> std::string {
+                if (!methodOop.isObject() || methodOop.rawBits() <= 0x10000) return "?";
+                Oop hdr = memory_.fetchPointer(0, methodOop);
+                if (!hdr.isSmallInteger()) return "?";
+                int nl = hdr.asSmallInteger() & 0x7FFF;
+                if (nl < 2) return "?";
+                Oop s = memory_.fetchPointer(nl - 1, methodOop);
+                if (!s.isObject() || s.rawBits() <= 0x10000) return "?";
+                ObjectHeader* sh = s.asObjectPtr();
+                if (sh->isBytesObject() && sh->byteSize() < 100)
+                    return std::string((char*)sh->bytes(), sh->byteSize());
+                return "?";
+            };
+
+            // Current frame: method name, receiver, IP offset
+            fprintf(stderr, "  [current] method=#%s rcvr=0x%llx\n",
+                    getMethodName(method_).c_str(), (unsigned long long)receiver_.rawBits());
+
+            // Dump operand stack (values between stackBase_ and stackPointer_)
+            size_t stackSize = stackPointer_ - stackBase_;
+            fprintf(stderr, "  [stack] %zu values:", stackSize);
+            for (size_t si = 0; si < std::min(stackSize, (size_t)20); si++) {
+                Oop v = stackBase_[si];
+                if (v.isSmallInteger())
+                    fprintf(stderr, " SI(%lld)", v.asSmallInteger());
+                else if (v.isNil())
+                    fprintf(stderr, " nil");
+                else if (v.isObject() && v.rawBits() > 0x10000) {
+                    ObjectHeader* vh = v.asObjectPtr();
+                    if (vh->isBytesObject() && vh->byteSize() < 40) {
+                        std::string s((char*)vh->bytes(), vh->byteSize());
+                        fprintf(stderr, " \"%s\"(ci%d)", s.c_str(), vh->classIndex());
+                    } else {
+                        fprintf(stderr, " 0x%llx(ci%d)", (unsigned long long)v.rawBits(), vh->classIndex());
+                    }
+                } else {
+                    fprintf(stderr, " 0x%llx", (unsigned long long)v.rawBits());
+                }
+            }
+            fprintf(stderr, "\n");
+
+            // Dump all saved frames (full backtrace)
+            for (size_t fi = frameDepth_; fi > 0; fi--) {
+                auto& sf = savedFrames_[fi - 1];
+                std::string mname = getMethodName(sf.savedMethod);
+                std::string rcvrInfo = "?";
+                if (sf.savedReceiver.isSmallInteger())
+                    rcvrInfo = "SI(" + std::to_string(sf.savedReceiver.asSmallInteger()) + ")";
+                else if (sf.savedReceiver.isObject() && sf.savedReceiver.rawBits() > 0x10000) {
+                    Oop cls = memory_.classOf(sf.savedReceiver);
+                    if (cls.isObject() && memory_.slotCountOf(cls) > 6) {
+                        Oop nameOop = memory_.fetchPointer(6, cls);
+                        if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                            ObjectHeader* nh = nameOop.asObjectPtr();
+                            if (nh->isBytesObject() && nh->byteSize() < 50)
+                                rcvrInfo = std::string((char*)nh->bytes(), nh->byteSize());
+                        }
+                    }
+                }
+                fprintf(stderr, "  [frame %zu] #%s rcvr=%s\n", fi - 1, mname.c_str(), rcvrInfo.c_str());
+                // Show frame pointer region (temps live at FP[0]=receiver, FP[1..]=temps)
+                if (sf.savedFP && sf.savedFP >= stackBase_ && sf.savedFP < stackBase_ + stack_.size()) {
+                    // Scan a few values around the frame pointer for Symbol class
+                    size_t maxCheck = std::min((size_t)10, (size_t)(stackPointer_ - sf.savedFP));
+                    for (size_t si = 0; si < maxCheck; si++) {
+                        if (sf.savedFP[si].rawBits() == rcv.rawBits()) {
+                            fprintf(stderr, "    **SYMBOL_CLASS at FP[%zu]**\n", si);
+                        }
+                    }
+                }
+            }
+            fprintf(stderr, "[DNU-DIAG] end\n");
+            fflush(stderr);
+        }
         fflush(stderr);
     }
 

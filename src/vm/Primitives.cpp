@@ -8293,6 +8293,11 @@ PrimitiveResult Interpreter::primitiveBecome(int argCount) {
         else if (f.savedActiveContext.rawBits() == argBits) f.savedActiveContext = rcvr;
     }
 
+    // Flush method cache — become swaps references, so cached entries
+    // for either object are now stale (the cache key classOop may now
+    // refer to a different class).
+    flushMethodCache();
+
     popN(2);
     push(rcvr);
     return PrimitiveResult::Success;
