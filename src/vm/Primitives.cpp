@@ -3351,6 +3351,11 @@ PrimitiveResult Interpreter::primitiveBlockCopy(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    // GC SAFETY: outerContext may be stale after allocation triggered GC.
+    // Re-read from the stack (still present, args not yet popped).
+    // startPc and numArgsOop are SmallIntegers (immediates, safe).
+    outerContext = stackValue(argCount == 2 ? 2 : 1);
+
     // Initialize the closure
     memory_.storePointer(0, closure, outerContext);  // outerContext
     memory_.storePointer(1, closure, startPc);       // startpc
@@ -3443,12 +3448,19 @@ PrimitiveResult Interpreter::primitiveClosureCopyWithCopiedValues(int argCount) 
         return PrimitiveResult::Failure;
     }
 
+    // GC SAFETY: Re-read Oops from the stack after allocation (may have triggered GC).
+    // The stack values are GC roots and have been updated; our local copies may be stale.
+    // numArgsOop is a SmallInteger (immediate, safe).
+    compiledBlock = stackValue(static_cast<size_t>(numCopied));
+    outerContext = stackValue(static_cast<size_t>(numCopied + 2));
+
     // Initialize the closure
     memory_.storePointer(0, closure, outerContext);
     memory_.storePointer(1, closure, compiledBlock);
     memory_.storePointer(2, closure, numArgsOop);
 
     // Copy the captured values (in reverse order from stack)
+    // These are re-read from the stack (GC roots) each iteration
     for (size_t i = 0; i < numCopied; ++i) {
         Oop copiedValue = stackValue(numCopied - 1 - i);
         memory_.storePointer(3 + i, closure, copiedValue);
@@ -11643,11 +11655,18 @@ PrimitiveResult Interpreter::primitiveDirectoryLookup(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    // GC SAFETY: push resultArray before createStringObject (which allocates internally)
+    push(resultArray);
+
     // Create name string
     Oop nameString = createStringObject(memory_, entry->d_name);
     if (nameString.isNil()) {
+        pop();  // resultArray
         return PrimitiveResult::Failure;
     }
+
+    // Pop GC-safe resultArray
+    resultArray = pop();
 
     // Store the results
     memory_.storePointer(0, resultArray, nameString);
@@ -11711,9 +11730,14 @@ PrimitiveResult Interpreter::primitiveDirectoryGetMacTypeAndCreator(int argCount
         return PrimitiveResult::Failure;
     }
 
-    // Create empty strings for type and creator
+    // GC SAFETY: push resultArray before createStringObject (which allocates)
+    push(resultArray);
     Oop emptyType = createStringObject(memory_, "");
+    // Push emptyType too before second createStringObject
+    push(emptyType);
     Oop emptyCreator = createStringObject(memory_, "");
+    emptyType = pop();
+    resultArray = pop();
 
     memory_.storePointer(0, resultArray, emptyType);
     memory_.storePointer(1, resultArray, emptyCreator);
@@ -13671,6 +13695,10 @@ PrimitiveResult Interpreter::primitiveFindRoots(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
     Oop targetObject = stackTop();
+
+    // GC SAFETY: Do a full GC first so the subsequent allocation for the result
+    // array is unlikely to trigger another GC (matching reference VM behavior).
+    memory_.fullGC();
 
     // We need to find all objects that reference targetObject
     // This requires a full heap scan

@@ -600,15 +600,24 @@ void Interpreter::ensureDisplayForm(int width, int height, int depth) {
     }
 
     // Fill bitmap with a distinctive color to show it's our bitmap
-    ObjectHeader* bitmapHdr = bitmapObj.asObjectPtr();
-    uint32_t* pixels = reinterpret_cast<uint32_t*>(bitmapHdr->bytes());
-    for (size_t i = 0; i < pixelCount; i++) {
-        pixels[i] = 0xFF4488CC;  // Distinctive blue-gray so we know it's ours
+    {
+        ObjectHeader* bitmapHdr = bitmapObj.asObjectPtr();
+        uint32_t* pixels = reinterpret_cast<uint32_t*>(bitmapHdr->bytes());
+        for (size_t i = 0; i < pixelCount; i++) {
+            pixels[i] = 0xFF4488CC;  // Distinctive blue-gray so we know it's ours
+        }
     }
+
+    // GC SAFETY: push bitmapObj onto operand stack before second allocation,
+    // since allocateSlots may trigger GC which would invalidate bitmapObj.
+    push(bitmapObj);
 
     // Allocate Form with 5 slots: bits, width, height, depth, offset
     std::cerr << "[DISPLAY] Allocating Form with 5 slots...\n";
     Oop formObj = memory_.allocateSlots(formClassIdx, 5);
+
+    // Pop GC-safe bitmapObj
+    bitmapObj = pop();
 
     if (formObj.isNil()) {
         std::cerr << "[DISPLAY] FAILED: Form allocation returned nil\n";
@@ -8440,11 +8449,16 @@ void Interpreter::createBlock() {
     // Ensure proper context identity by materializing if running inline
     Oop outerContextForBlock = activeContext_;
     if (frameDepth_ > 0) {
+        // GC SAFETY: materializeFrameStack allocates contexts, which may trigger GC.
+        // Protect block on the operand stack during allocation.
+        push(block);
         outerContextForBlock = materializeFrameStack();
+        block = pop();
         activeContext_ = outerContextForBlock;
         frameDepth_ = 0;  // Reset after materialization to prevent duplicate contexts
     }
     memory_.storePointer(0, block, outerContextForBlock);  // outerContext
+    // GC SAFETY: method_ is a GC root, so method_.asObjectPtr() is always valid
     memory_.storePointer(1, block, Oop::fromSmallInteger(
         instructionPointer_ - method_.asObjectPtr()->bytes()));
     memory_.storePointer(2, block, Oop::fromSmallInteger(numArgs));
@@ -8710,11 +8724,16 @@ void Interpreter::createBlockWithArgs(int numArgs, int numCopied, int blockSize)
     // Ensure proper context identity by materializing if running inline
     Oop outerContextForBlock = activeContext_;
     if (frameDepth_ > 0) {
+        // GC SAFETY: materializeFrameStack allocates contexts, which may trigger GC.
+        // Protect block on the operand stack during allocation.
+        push(block);
         outerContextForBlock = materializeFrameStack();
+        block = pop();
         activeContext_ = outerContextForBlock;
         frameDepth_ = 0;  // Reset after materialization to prevent duplicate contexts
     }
     memory_.storePointer(0, block, outerContextForBlock);  // outerContext
+    // GC SAFETY: method_ is a GC root, so method_.asObjectPtr() is always valid
     memory_.storePointer(1, block, Oop::fromSmallInteger(
         instructionPointer_ - method_.asObjectPtr()->bytes()));  // startPC
     memory_.storePointer(2, block, Oop::fromSmallInteger(numArgs));
@@ -9688,6 +9707,15 @@ Oop Interpreter::materializeFrameStack() {
             int64_t headerValue = methodHeader.asSmallInteger();
             int numTemps = (headerValue >> 18) & 0x3F;  // Fixed: was using wrong bit offset
 
+            // GC SAFETY: Compute IP offset BEFORE any allocation (same pattern as saved-frame loop).
+            int ipOffset = 0;
+            {
+                uint8_t* mBytes = methodHdr->bytes();
+                if (instructionPointer_ >= mBytes && instructionPointer_ < mBytes + methodHdr->byteSize()) {
+                    ipOffset = static_cast<int>(instructionPointer_ - mBytes);
+                }
+            }
+
             // Reuse previously materialized context for the current frame if available.
             // This ensures context identity across multiple materialize calls.
             Oop context = currentFrameMaterializedCtx_;
@@ -9699,7 +9727,6 @@ Oop Interpreter::materializeFrameStack() {
             } else {
                 size_t contextSize = 6 + numTemps + 32;
                 Oop contextClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
-                // Use indexOfClass to get the class table index, NOT the object's own classIndex (which is the metaclass)
                 uint32_t classIndex = contextClass.isObject() ? memory_.indexOfClass(contextClass) : 0;
                 if (classIndex == 0) {
                     classIndex = 36;  // Fallback to typical Context class index
@@ -9709,13 +9736,16 @@ Oop Interpreter::materializeFrameStack() {
                 context = memory_.allocateSlots(classIndex, contextSize, ObjectFormat::IndexableWithFixed);
                 // Cache for future materializations of this frame
                 currentFrameMaterializedCtx_ = context;
+
+                // GC SAFETY: allocation may have triggered GC. Re-derive from roots.
+                methodHdr = method_.asObjectPtr();
+                if (frameDepth_ > 0) {
+                    sender = savedFrames_[frameDepth_ - 1].materializedContext;
+                }
+                // (activeContext_ case: sender was already activeContext_, which is a GC root)
             }
             if (!context.isNil()) {
-                uint8_t* methodBytes = methodHdr->bytes();
-                int pc = 1;
-                if (instructionPointer_ >= methodBytes && instructionPointer_ < methodBytes + methodHdr->byteSize()) {
-                    pc = static_cast<int>(instructionPointer_ - methodBytes) + 1;
-                }
+                int pc = ipOffset + 1;  // 1-based PC from 0-based offset
 
                 memory_.storePointer(0, context, sender);                       // sender
                 memory_.storePointer(1, context, Oop::fromSmallInteger(pc));    // pc
@@ -11348,8 +11378,11 @@ bool Interpreter::bootstrapStartup() {
                     Oop bitmapObj = memory_.allocateWords(bitmapClassIdx, pixelCount);
 
                     if (!bitmapObj.isNil()) {
+                        // GC SAFETY: push bitmapObj before second allocation
+                        push(bitmapObj);
                         // Allocate form with 5 slots
                         Oop formObj = memory_.allocateSlots(formClassIdx, 5);
+                        bitmapObj = pop();
 
                         if (!formObj.isNil()) {
                             // Set form slots: bits, width, height, depth, offset
