@@ -678,21 +678,22 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
          s flush] on: Error do: [:e2 | "ignore trace errors"]].
     doneSem signal] forkAt: priority.
 
-  "Fork watchdog at priority+1. Uses spin-wait with relinquishProcessorForMicroseconds:
+  "Fork watchdog at SAME priority as test. Uses spin-wait with Processor yield
    instead of Delay, so it works even when the Delay scheduler is dead.
-   Each cycle: check time, yield to let test run (~1s via heartbeat forceYield)."
+   The heartbeat forceYield (1s) round-robins same-priority processes,
+   giving the watchdog a turn to check elapsed time each second."
   watchdog := [
     | startMs |
     startMs := Time millisecondClockValue.
     [((Time millisecondClockValue - startMs) bitAnd: 16r1FFFFFFF) < (seconds * 1000)] whileTrue: [
-      Processor relinquishProcessorForMicroseconds: 500000].
+      Processor yield].
     "Timeout elapsed — test is still running"
     [testProcess suspend] on: Error do: [:e |].
     result := #timeout.
     s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
       nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; cr.
     s flush.
-    doneSem signal] forkAt: priority + 1.
+    doneSem signal] forkAt: priority.
 
   "Wait for test completion or watchdog timeout"
   doneSem wait.
