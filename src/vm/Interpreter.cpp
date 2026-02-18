@@ -2747,33 +2747,7 @@ bool Interpreter::step() {
     // not interpret() which has its own loopCount.
     g_watchdogSteps.store(g_stepNum, std::memory_order_relaxed);
 
-    // P80 step-by-step trace: log each step after scheduler resumes
-    if (g_p80ResumeWatch > 0) {
-        g_p80ResumeWatch--;
-        // Peek at next bytecode without advancing IP
-        uint8_t nextBc = *instructionPointer_;
-        // Check activeContext_ sender/PC
-        const char* senderStatus = "??";
-        const char* pcStatus = "??";
-        if (activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
-            Oop sender = memory_.fetchPointer(0, activeContext_);
-            Oop pc = memory_.fetchPointer(1, activeContext_);
-            senderStatus = sender.isNil() ? "nil" : (sender.isObject() ? "obj" : "imm");
-            pcStatus = pc.isSmallInteger() ? "smi" : (pc.isNil() ? "nil" : "obj");
-        }
-        // Get IP offset
-        ptrdiff_t ipOff = -1;
-        if (method_.isObject() && method_.rawBits() > 0x10000) {
-            ipOff = instructionPointer_ - method_.asObjectPtr()->bytes();
-        }
-        fprintf(stderr, "[P80-STEP] step=%llu bc=0x%02x fd=%zu ctx=0x%llx sender=%s pc=%s ipOff=%td watchCtx=0x%llx%s\n",
-                (unsigned long long)g_stepNum, nextBc, frameDepth_,
-                (unsigned long long)activeContext_.rawBits(),
-                senderStatus, pcStatus, ipOff,
-                (unsigned long long)g_p80WatchCtx,
-                (activeContext_.rawBits() == g_p80WatchCtx) ? " (WATCHED)" : "");
-        fflush(stderr);
-    }
+    // P80 step-by-step trace (disabled — too verbose for production runs)
 
     // Check for forced process yield BEFORE fetching the next bytecode.
     // CRITICAL: Must happen before fetchByte() because fetchByte() advances
@@ -2867,73 +2841,7 @@ skip_yield:
     g_watchdogLastBytecode = bytecode;
     g_watchdogSubphase = 15;
 
-    // Auto-detect findInterned: at fd=0 (resumed from context, not via activateMethod)
-    if (!g_traceFindInterned && g_findInternedTraceCount < 3 && g_symbolMetaclassIdx != 0 &&
-        frameDepth_ == 0 && method_.isObject() && method_.rawBits() > 0x10000) {
-        // Quick check: is this findInterned: ?
-        Oop hdr = memory_.fetchPointer(0, method_);
-        if (hdr.isSmallInteger()) {
-            int nl = hdr.asSmallInteger() & 0x7FFF;
-            if (nl >= 2) {
-                Oop sel = memory_.fetchPointer(nl - 1, method_);
-                if (sel.isObject() && sel.rawBits() > 0x10000) {
-                    auto* sh = sel.asObjectPtr();
-                    if (sh->isBytesObject() && sh->byteSize() == 13 &&
-                        memcmp(sh->bytes(), "findInterned:", 13) == 0 &&
-                        receiver_.isObject() && receiver_.rawBits() > 0x10000 &&
-                        receiver_.asObjectPtr()->classIndex() == g_symbolMetaclassIdx) {
-                        g_traceFindInterned = true;
-                        g_findInternedTraceCount++;
-                        fprintf(stderr, "[FI-ENTER-FD0 #%d] step=%llu fd=0 rcvr=0x%llx bc=0x%02x\n",
-                                g_findInternedTraceCount, (unsigned long long)g_stepNum,
-                                (unsigned long long)receiver_.rawBits(), bytecode);
-                        fflush(stderr);
-                    }
-                }
-            }
-        }
-    }
-
-    // Trace findInterned: method bytecode-by-bytecode (max 200 steps)
-    if (g_traceFindInterned) {
-        static int fiTraceSteps = 0;
-        fiTraceSteps++;
-        if (fiTraceSteps > 200) {
-            g_traceFindInterned = false;
-            fiTraceSteps = 0;
-            fprintf(stderr, "[FI-TRACE] ended (200 steps)\n");
-            fflush(stderr);
-        } else {
-            ptrdiff_t ipOff = -1;
-            if (method_.isObject() && method_.rawBits() > 0x10000)
-                ipOff = instructionPointer_ - method_.asObjectPtr()->bytes();
-            // Show stack top and method selector
-            Oop stTop = (stackPointer_ > stackBase_) ? *(stackPointer_ - 1) : Oop::nil();
-            int stDepth = (int)(stackPointer_ - stackBase_);
-            // Quick method selector
-            std::string msel = "?";
-            if (method_.isObject() && method_.rawBits() > 0x10000) {
-                Oop hdr = memory_.fetchPointer(0, method_);
-                if (hdr.isSmallInteger()) {
-                    int nl = hdr.asSmallInteger() & 0x7FFF;
-                    if (nl >= 2) {
-                        Oop s = memory_.fetchPointer(nl - 1, method_);
-                        if (s.isObject() && s.rawBits() > 0x10000) {
-                            auto* sh = s.asObjectPtr();
-                            if (sh->isBytesObject() && sh->byteSize() < 40)
-                                msel = std::string((char*)sh->bytes(), sh->byteSize());
-                        }
-                    }
-                }
-            }
-            fprintf(stderr, "[FI-TRACE] step=%llu bc=0x%02x ip=%td fd=%zu #%s stD=%d top=0x%llx(ci%d)\n",
-                    (unsigned long long)g_stepNum, bytecode, ipOff, frameDepth_,
-                    msel.c_str(), stDepth,
-                    (unsigned long long)stTop.rawBits(),
-                    (stTop.isObject() && stTop.rawBits() > 0x10000) ? stTop.asObjectPtr()->classIndex() : -1);
-            fflush(stderr);
-        }
-    }
+    // FI-TRACE and findInterned: bytecode trace (disabled — too verbose)
 
     inExtension_ = false;
 
@@ -3873,132 +3781,6 @@ void Interpreter::push(Oop value) {
         }
     }
 
-    // Symbol class push detector: classIndex 3094 is Symbol's metaclass
-    // Filter out known-legitimate methods to catch unexpected uses
-    if (value.isObject() && value.rawBits() > 0x10000) {
-        ObjectHeader* valHdr = value.asObjectPtr();
-        if (valHdr->classIndex() == g_symbolMetaclassIdx) {
-            // Get method selector first for filtering
-            std::string msel = "?";
-            if (method_.isObject() && method_.rawBits() > 0x10000) {
-                Oop hdr = memory_.fetchPointer(0, method_);
-                if (hdr.isSmallInteger()) {
-                    int nl = hdr.asSmallInteger() & 0x7FFF;
-                    if (nl >= 2 && nl < 100) {
-                        Oop s = memory_.fetchPointer(nl - 1, method_);
-                        if (s.isObject() && s.rawBits() > 0x10000) {
-                            ObjectHeader* sh = s.asObjectPtr();
-                            if (sh->isBytesObject() && sh->byteSize() < 80)
-                                msel = std::string((char*)sh->bytes(), sh->byteSize());
-                        }
-                    }
-                }
-            }
-            // Skip known-legitimate methods where Symbol class is used correctly
-            bool isLegitimate = (msel == "asSymbol" || msel == "rawIntern:" ||
-                                 msel == "intern:" ||
-                                 msel == "registeredClass" || msel == "startup:" ||
-                                 msel == "startUp:" || msel == "symbolTable" ||
-                                 msel == "new:" || msel == "basicNew:" ||
-                                 msel == "doesNotUnderstand:" || msel == "findSymbol:" ||
-                                 msel == "allSymbolTablesDo:" || msel == "subclasses" ||
-                                 msel == "subclassResponsibility" || msel == "class");
-            if (!isLegitimate) {
-                static int symClsPushCount = 0;
-                if (++symClsPushCount <= 200) {
-                    ptrdiff_t ipOff = -1;
-                    if (method_.isObject() && method_.rawBits() > 0x10000)
-                        ipOff = instructionPointer_ - method_.asObjectPtr()->bytes();
-                    // Extra info for pushReceiverVariable (bc 0x00-0x0F or 0xE2):
-                    // log receiver address + class index + name
-                    std::string rcvInfo = "";
-                    if (lastBytecode_ <= 0x0F || lastBytecode_ == 0xE2) {
-                        rcvInfo = " rcvr=0x";
-                        char buf[64];
-                        snprintf(buf, sizeof(buf), "%llx", (unsigned long long)receiver_.rawBits());
-                        rcvInfo += buf;
-                        if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-                            ObjectHeader* rh = receiver_.asObjectPtr();
-                            snprintf(buf, sizeof(buf), "(ci%d,slots%u)", rh->classIndex(), rh->slotCount());
-                            rcvInfo += buf;
-                            // Try to get class name from slot 5 (name) IF this is a class
-                            if (rh->slotCount() > 6) {
-                                Oop nameSlot = memory_.fetchPointer(5, receiver_);
-                                Oop nameSlot6 = memory_.fetchPointer(6, receiver_);
-                                snprintf(buf, sizeof(buf), " slot5=0x%llx slot6=0x%llx",
-                                    (unsigned long long)nameSlot.rawBits(),
-                                    (unsigned long long)nameSlot6.rawBits());
-                                rcvInfo += buf;
-                            }
-                        }
-                    }
-                    fprintf(stderr, "[PUSH-SYMCLS #%d] bc=0x%02x method=#%s ip=%td "
-                            "step=%llu fd=%zu val=0x%llx%s\n",
-                            symClsPushCount, lastBytecode_, msel.c_str(), ipOff,
-                            (unsigned long long)g_stepNum, frameDepth_,
-                            (unsigned long long)value.rawBits(), rcvInfo.c_str());
-                    fflush(stderr);
-
-                    // First 3 times for findInterned:: dump method bytecodes and context state
-                    static int findInternedDumpCount = 0;
-                    if (msel == "findInterned:" && ++findInternedDumpCount <= 3) {
-                        ObjectHeader* mObj = method_.asObjectPtr();
-                        Oop mHeader = memory_.fetchPointer(0, method_);
-                        if (mHeader.isSmallInteger()) {
-                            int nLits = mHeader.asSmallInteger() & 0x7FFF;
-                            int nTemps = (mHeader.asSmallInteger() >> 18) & 0x3F;
-                            int nArgs = (mHeader.asSmallInteger() >> 24) & 0xF;
-                            size_t bcStart = (1 + nLits) * 8;
-                            size_t totalBytes = mObj->byteSize();
-                            fprintf(stderr, "[SYMCLS-DUMP] findInterned: nLits=%d nTemps=%d nArgs=%d bcStart=%zu totalBytes=%zu\n",
-                                    nLits, nTemps, nArgs, bcStart, totalBytes);
-                            fprintf(stderr, "[SYMCLS-DUMP] bytecodes:");
-                            for (size_t b = bcStart; b < totalBytes && b < bcStart + 80; b++) {
-                                fprintf(stderr, " %02x", mObj->bytes()[b]);
-                            }
-                            fprintf(stderr, "\n");
-                            for (int lit = 0; lit < nLits && lit < 10; lit++) {
-                                Oop litVal = memory_.fetchPointer(1 + lit, method_);
-                                fprintf(stderr, "[SYMCLS-DUMP] lit[%d]=0x%llx", lit, (unsigned long long)litVal.rawBits());
-                                if (litVal.isSmallInteger()) fprintf(stderr, " (smi=%lld)", (long long)litVal.asSmallInteger());
-                                else if (litVal.isObject() && litVal.rawBits() > 0x10000) {
-                                    ObjectHeader* lh = litVal.asObjectPtr();
-                                    if (lh->isBytesObject() && lh->byteSize() < 80) {
-                                        std::string ls((char*)lh->bytes(), lh->byteSize());
-                                        fprintf(stderr, " =\"%s\"", ls.c_str());
-                                    } else {
-                                        fprintf(stderr, " (ci=%d,slots=%u)", lh->classIndex(), lh->slotCount());
-                                    }
-                                }
-                                fprintf(stderr, "\n");
-                            }
-                            int numItems = static_cast<int>(stackPointer_ - framePointer_) - 1;
-                            fprintf(stderr, "[SYMCLS-DUMP] stack (%d items, fd=%zu):", numItems, frameDepth_);
-                            for (int si = 0; si < numItems && si < 20; si++) {
-                                Oop item = framePointer_[1 + si];
-                                fprintf(stderr, " [%d]=0x%llx", si, (unsigned long long)item.rawBits());
-                                if (item.rawBits() == value.rawBits()) fprintf(stderr, "(SYMCLS!)");
-                            }
-                            fprintf(stderr, "\n");
-                            if (frameDepth_ == 0 && activeContext_.isObject()) {
-                                ObjectHeader* ctxH = activeContext_.asObjectPtr();
-                                size_t ctxSlots = ctxH->slotCount();
-                                fprintf(stderr, "[SYMCLS-DUMP] ctx slots (%zu):", ctxSlots);
-                                for (size_t cs = 0; cs < ctxSlots && cs < 20; cs++) {
-                                    Oop sv = memory_.fetchPointer(cs, activeContext_);
-                                    fprintf(stderr, " [%zu]=0x%llx", cs, (unsigned long long)sv.rawBits());
-                                    if (sv.rawBits() == value.rawBits()) fprintf(stderr, "(SYMCLS!)");
-                                }
-                                fprintf(stderr, "\n");
-                            }
-                        }
-                        fflush(stderr);
-                    }
-                }
-            }
-        }
-    }
-
     if (stackPointer_ >= stack_.data() + MaxStackDepth) {
         static int overflowCount = 0;
         overflowCount++;
@@ -4405,52 +4187,6 @@ void Interpreter::pushLiteralVariable(int index) {
     // Normal case: Association with key in slot 0, value in slot 1
     Oop value = memory_.fetchPointer(1, assoc);  // Association>>value
 
-    // Diagnostic: check if a literal variable pushes Symbol class
-    if (g_symbolMetaclassIdx != 0 && value.isObject() && value.rawBits() > 0x10000 &&
-        value.asObjectPtr()->classIndex() == g_symbolMetaclassIdx) {
-        static int litVarSymClsCount = 0;
-        if (++litVarSymClsCount <= 20) {
-            // Get association key (slot 0)
-            Oop key = memory_.fetchPointer(0, assoc);
-            std::string keyStr = "?";
-            if (key.isObject() && key.rawBits() > 0x10000) {
-                ObjectHeader* kh = key.asObjectPtr();
-                if (kh->isBytesObject() && kh->byteSize() < 80)
-                    keyStr = std::string((char*)kh->bytes(), kh->byteSize());
-            }
-            // Get method selector
-            std::string msel = "?";
-            if (method_.isObject() && method_.rawBits() > 0x10000) {
-                Oop hdr = memory_.fetchPointer(0, method_);
-                if (hdr.isSmallInteger()) {
-                    int nl = hdr.asSmallInteger() & 0x7FFF;
-                    if (nl >= 2) {
-                        Oop s = memory_.fetchPointer(nl - 1, method_);
-                        if (s.isObject() && s.rawBits() > 0x10000) {
-                            auto* sh = s.asObjectPtr();
-                            if (sh->isBytesObject() && sh->byteSize() < 80)
-                                msel = std::string((char*)sh->bytes(), sh->byteSize());
-                        }
-                    }
-                }
-            }
-            // Also get assoc classIndex and value object details
-            int assocCI = assoc.asObjectPtr()->classIndex();
-            int valCI = value.asObjectPtr()->classIndex();
-            size_t valSlots = value.asObjectPtr()->slotCount();
-            uint64_t valRawHdr = value.asObjectPtr()->rawHeader();
-            fprintf(stderr, "[LITVAR-SYMCLS #%d] key='%s' method=#%s litIdx=%d step=%llu fd=%zu "
-                    "assoc=0x%llx(ci%d) val=0x%llx(ci%d,slots%zu,hdr=0x%llx) "
-                    "expectedSymCls=0x%llx\n",
-                    litVarSymClsCount, keyStr.c_str(), msel.c_str(), index,
-                    (unsigned long long)g_stepNum, frameDepth_,
-                    (unsigned long long)assoc.rawBits(), assocCI,
-                    (unsigned long long)value.rawBits(), valCI, valSlots,
-                    (unsigned long long)valRawHdr,
-                    (unsigned long long)g_symbolClassOop);
-            fflush(stderr);
-        }
-    }
 
     push(value);
 }
@@ -7210,33 +6946,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     argCount_ = argCount;
     closure_ = memory_.nil();  // Method activations have no closure
 
-    // Detect entry into findInterned: for bytecode tracing (only at fd>0, activateMethod path)
-    if (g_findInternedTraceCount < 3 && g_symbolMetaclassIdx != 0 &&
-        frameDepth_ > 0 && g_stepNum > 14200000 && method.isObject() && method.rawBits() > 0x10000) {
-        Oop hdr = memory_.fetchPointer(0, method);
-        if (hdr.isSmallInteger()) {
-            int nl = hdr.asSmallInteger() & 0x7FFF;
-            if (nl >= 2) {
-                Oop sel = memory_.fetchPointer(nl - 1, method);
-                if (sel.isObject() && sel.rawBits() > 0x10000) {
-                    auto* sh = sel.asObjectPtr();
-                    if (sh->isBytesObject() && sh->byteSize() == 13 &&
-                        memcmp(sh->bytes(), "findInterned:", 13) == 0) {
-                        // Check if receiver is Symbol class
-                        if (receiver_.isObject() && receiver_.rawBits() > 0x10000 &&
-                            receiver_.asObjectPtr()->classIndex() == g_symbolMetaclassIdx) {
-                            g_traceFindInterned = true;
-                            g_findInternedTraceCount++;
-                            fprintf(stderr, "[FI-ENTER #%d] step=%llu fd=%zu rcvr=0x%llx\n",
-                                    g_findInternedTraceCount, (unsigned long long)g_stepNum,
-                                    frameDepth_, (unsigned long long)receiver_.rawBits());
-                            fflush(stderr);
-                        }
-                    }
-                }
-            }
-        }
-    }
+    // findInterned: trace detection (disabled — too verbose)
 
     // Determine homeMethod_ based on whether this is a CompiledMethod or CompiledBlock
     // CompiledMethod (class index 3101): homeMethod_ = method
@@ -8469,198 +8179,6 @@ Oop Interpreter::receiverInstVar(size_t index) const {
 }
 
 void Interpreter::setReceiverInstVar(size_t index, Oop value) {
-    // Diagnostic: detect when Symbol class is stored via receiver instvar write
-    if (value.isObject() && value.rawBits() > 0x10000 &&
-        value.asObjectPtr()->classIndex() == g_symbolMetaclassIdx) {
-        static int symClsIVStoreCount = 0;
-        if (++symClsIVStoreCount <= 20) {
-            std::string msel = "?";
-            if (method_.isObject() && method_.rawBits() > 0x10000) {
-                Oop hdr = memory_.fetchPointer(0, method_);
-                if (hdr.isSmallInteger()) {
-                    int nl = hdr.asSmallInteger() & 0x7FFF;
-                    if (nl >= 2 && nl < 100) {
-                        Oop s = memory_.fetchPointer(nl - 1, method_);
-                        if (s.isObject() && s.rawBits() > 0x10000) {
-                            ObjectHeader* sh = s.asObjectPtr();
-                            if (sh->isBytesObject() && sh->byteSize() < 80)
-                                msel = std::string((char*)sh->bytes(), sh->byteSize());
-                        }
-                    }
-                }
-            }
-            ptrdiff_t ipOff = -1;
-            if (method_.isObject() && method_.rawBits() > 0x10000)
-                ipOff = instructionPointer_ - method_.asObjectPtr()->bytes();
-            // Get receiver class name for context
-            std::string rcvCls = "?";
-            if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-                Oop cls = memory_.classOf(receiver_);
-                if (cls.isObject() && memory_.slotCountOf(cls) > 6) {
-                    Oop cn = memory_.fetchPointer(6, cls);
-                    if (cn.isObject() && cn.rawBits() > 0x10000) {
-                        ObjectHeader* cnh = cn.asObjectPtr();
-                        if (cnh->isBytesObject() && cnh->byteSize() < 50)
-                            rcvCls = std::string((char*)cnh->bytes(), cnh->byteSize());
-                    }
-                }
-            }
-            fprintf(stderr, "[IVSTORE-SYMCLS #%d] bc=0x%02x method=#%s ip=%td step=%llu "
-                    "fd=%zu rcvr=0x%llx(%s) idx=%zu\n",
-                    symClsIVStoreCount, lastBytecode_, msel.c_str(), ipOff,
-                    (unsigned long long)g_stepNum, frameDepth_,
-                    (unsigned long long)receiver_.rawBits(), rcvCls.c_str(), index);
-
-            // Dump current operand stack (C++ stack) values
-            if (stackPointer_ && stackBase_) {
-                ptrdiff_t stackSize = stackPointer_ - stackBase_;
-                fprintf(stderr, "  C++ STACK (sp-base=%td):\n", stackSize);
-                for (ptrdiff_t si = 0; si < std::min(stackSize, (ptrdiff_t)20); si++) {
-                    Oop sv = stackBase_[si];
-                    const char* marker = (sv.isObject() && sv.rawBits() == value.rawBits()) ? " **SYMCLS**" : "";
-                    if (sv.isSmallInteger())
-                        fprintf(stderr, "    stk[%td] = SI(%lld)%s\n", si, sv.asSmallInteger(), marker);
-                    else if (sv.isNil())
-                        fprintf(stderr, "    stk[%td] = nil%s\n", si, marker);
-                    else if (sv.isObject() && sv.rawBits() > 0x10000) {
-                        ObjectHeader* svh = sv.asObjectPtr();
-                        if (svh->isBytesObject() && svh->byteSize() < 60) {
-                            std::string s((char*)svh->bytes(), svh->byteSize());
-                            fprintf(stderr, "    stk[%td] = \"%s\"(ci%u)%s\n", si, s.c_str(), svh->classIndex(), marker);
-                        } else {
-                            fprintf(stderr, "    stk[%td] = 0x%llx(ci%u,fmt%u,slots%zu)%s\n", si,
-                                    (unsigned long long)sv.rawBits(), svh->classIndex(),
-                                    (unsigned)svh->format(), svh->slotCount(), marker);
-                        }
-                    } else {
-                        fprintf(stderr, "    stk[%td] = 0x%llx%s\n", si, (unsigned long long)sv.rawBits(), marker);
-                    }
-                }
-            }
-
-            // Walk sender chain from activeContext_ to find caller
-            if (activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
-                fprintf(stderr, "  CONTEXT SENDER CHAIN:\n");
-                Oop ctx = activeContext_;
-                for (int depth = 0; depth < 8; depth++) {
-                    if (!ctx.isObject() || ctx.rawBits() <= 0x10000 || ctx.isNil()) break;
-                    size_t ctxSlots = memory_.slotCountOf(ctx);
-                    if (ctxSlots < 6) break;
-
-                    Oop ctxMethod = memory_.fetchPointer(3, ctx);
-                    std::string cmsel = "?";
-                    int numLits = 0;
-                    if (ctxMethod.isObject() && ctxMethod.rawBits() > 0x10000) {
-                        Oop chdr = memory_.fetchPointer(0, ctxMethod);
-                        if (chdr.isSmallInteger()) {
-                            numLits = chdr.asSmallInteger() & 0x7FFF;
-                            if (numLits >= 2 && numLits < 100) {
-                                Oop cs = memory_.fetchPointer(numLits - 1, ctxMethod);
-                                if (cs.isObject() && cs.rawBits() > 0x10000) {
-                                    ObjectHeader* csh = cs.asObjectPtr();
-                                    if (csh->isBytesObject() && csh->byteSize() < 80)
-                                        cmsel = std::string((char*)csh->bytes(), csh->byteSize());
-                                }
-                            }
-                        }
-                    }
-                    Oop ctxIP = memory_.fetchPointer(1, ctx);
-                    Oop ctxSP = memory_.fetchPointer(2, ctx);
-                    Oop ctxRcv = memory_.fetchPointer(5, ctx);
-                    std::string crcvCls = "?";
-                    if (ctxRcv.isObject() && ctxRcv.rawBits() > 0x10000) {
-                        Oop ccls = memory_.classOf(ctxRcv);
-                        if (ccls.isObject() && memory_.slotCountOf(ccls) > 6) {
-                            Oop ccn = memory_.fetchPointer(6, ccls);
-                            if (ccn.isObject() && ccn.rawBits() > 0x10000) {
-                                ObjectHeader* ccnh = ccn.asObjectPtr();
-                                if (ccnh->isBytesObject() && ccnh->byteSize() < 50)
-                                    crcvCls = std::string((char*)ccnh->bytes(), ccnh->byteSize());
-                            }
-                        }
-                    }
-                    int64_t ip = ctxIP.isSmallInteger() ? ctxIP.asSmallInteger() : -1;
-                    int64_t sp = ctxSP.isSmallInteger() ? ctxSP.asSmallInteger() : 0;
-                    fprintf(stderr, "    [%d] #%s ip=%lld sp=%lld rcvr=%s(0x%llx) slots=%zu%s\n",
-                            depth, cmsel.c_str(), (long long)ip, (long long)sp,
-                            crcvCls.c_str(), (unsigned long long)ctxRcv.rawBits(),
-                            ctxSlots, (ctx.rawBits() == activeContext_.rawBits()) ? " <ACTIVE>" : "");
-
-                    // Dump context stack values (slots 6 to min(6+sp, ctxSlots-1))
-                    size_t maxDump = std::min((size_t)(6 + sp + 1), ctxSlots);
-                    if (maxDump > ctxSlots) maxDump = ctxSlots;
-                    for (size_t si = 6; si < maxDump && si < 6 + 20; si++) {
-                        Oop sv = memory_.fetchPointer(si, ctx);
-                        const char* marker = (sv.isObject() && sv.rawBits() == value.rawBits()) ? " **SYMCLS**" : "";
-                        if (sv.isSmallInteger())
-                            fprintf(stderr, "      slot[%zu] = SI(%lld)%s\n", si, sv.asSmallInteger(), marker);
-                        else if (sv.isNil())
-                            fprintf(stderr, "      slot[%zu] = nil%s\n", si, marker);
-                        else if (sv.isObject() && sv.rawBits() > 0x10000) {
-                            ObjectHeader* svh = sv.asObjectPtr();
-                            if (svh->isBytesObject() && svh->byteSize() < 60) {
-                                std::string s((char*)svh->bytes(), svh->byteSize());
-                                fprintf(stderr, "      slot[%zu] = \"%s\"(ci%u)%s\n", si, s.c_str(), svh->classIndex(), marker);
-                            } else {
-                                fprintf(stderr, "      slot[%zu] = 0x%llx(ci%u,fmt%u,slots%zu)%s\n", si,
-                                        (unsigned long long)sv.rawBits(), svh->classIndex(),
-                                        (unsigned)svh->format(), svh->slotCount(), marker);
-                            }
-                        } else {
-                            fprintf(stderr, "      slot[%zu] = 0x%llx%s\n", si, (unsigned long long)sv.rawBits(), marker);
-                        }
-                    }
-
-                    // Also dump method literals if this is the direct sender (depth=1)
-                    // to see what values the method references
-                    if (depth == 1 && ctxMethod.isObject() && ctxMethod.rawBits() > 0x10000 && numLits > 0) {
-                        fprintf(stderr, "      LITERALS (%d):", numLits);
-                        for (int li = 1; li < std::min(numLits, 20); li++) {
-                            Oop lit = memory_.fetchPointer(li, ctxMethod);
-                            if (lit.isObject() && lit.rawBits() == value.rawBits()) {
-                                fprintf(stderr, " [%d]=**SYMCLS**", li);
-                            } else if (lit.isObject() && lit.rawBits() > 0x10000) {
-                                ObjectHeader* lh = lit.asObjectPtr();
-                                if (lh->isBytesObject() && lh->byteSize() < 40) {
-                                    std::string ls((char*)lh->bytes(), lh->byteSize());
-                                    fprintf(stderr, " [%d]=\"%s\"", li, ls.c_str());
-                                } else {
-                                    fprintf(stderr, " [%d]=0x%llx(ci%u)", li,
-                                            (unsigned long long)lit.rawBits(), lh->classIndex());
-                                }
-                            } else if (lit.isSmallInteger()) {
-                                fprintf(stderr, " [%d]=SI(%lld)", li, lit.asSmallInteger());
-                            }
-                        }
-                        fprintf(stderr, "\n");
-
-                        // Dump bytecodes around sender's IP
-                        if (ip > 0) {
-                            ObjectHeader* mhdr = ctxMethod.asObjectPtr();
-                            size_t bcStart = (numLits + 1) * 8; // bytes offset to bytecodes
-                            size_t bcSize = mhdr->byteSize() - bcStart;
-                            uint8_t* bc = mhdr->bytes() + bcStart;
-                            int64_t relIP = ip - bcStart;
-                            fprintf(stderr, "      BYTECODES around ip=%lld (bcStart=%zu relIP=%lld bcSize=%zu):\n",
-                                    (long long)ip, bcStart, (long long)relIP, bcSize);
-                            // Show 10 bytes before and 10 after relIP
-                            int64_t start = std::max((int64_t)0, relIP - 10);
-                            int64_t end = std::min((int64_t)bcSize, relIP + 10);
-                            for (int64_t bi = start; bi < end; bi++) {
-                                fprintf(stderr, "        bc[%lld] = 0x%02x%s\n",
-                                        bi, bc[bi], (bi == relIP) ? " <-- IP" : "");
-                            }
-                        }
-                    }
-
-                    // Move to sender
-                    Oop sender = memory_.fetchPointer(0, ctx);
-                    ctx = sender;
-                }
-            }
-            fflush(stderr);
-        }
-    }
 
     // Check immutability - send attemptToAssign:withIndex: if receiver is immutable
     if (receiver_.isObject()) {
@@ -9062,101 +8580,14 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         }
         fprintf(stderr, "\n");
 
-        // Enhanced diagnostic: when receiver is Symbol class (classIdx 3094),
-        // dump full backtrace with temps to trace the source of corruption
-        if (rcv.isObject() && rcv.rawBits() > 0x10000 && rcv.asObjectPtr()->classIndex() == g_symbolMetaclassIdx) {
-            fprintf(stderr, "[DNU-DIAG] Symbol class corruption detected! Full backtrace:\n");
-
-            // Helper lambda to get method name from method oop
-            auto getMethodName = [&](Oop methodOop) -> std::string {
-                if (!methodOop.isObject() || methodOop.rawBits() <= 0x10000) return "?";
-                Oop hdr = memory_.fetchPointer(0, methodOop);
-                if (!hdr.isSmallInteger()) return "?";
-                int nl = hdr.asSmallInteger() & 0x7FFF;
-                if (nl < 2) return "?";
-                Oop s = memory_.fetchPointer(nl - 1, methodOop);
-                if (!s.isObject() || s.rawBits() <= 0x10000) return "?";
-                ObjectHeader* sh = s.asObjectPtr();
-                if (sh->isBytesObject() && sh->byteSize() < 100)
-                    return std::string((char*)sh->bytes(), sh->byteSize());
-                return "?";
-            };
-
-            // Current frame: method name, receiver, IP offset
-            fprintf(stderr, "  [current] method=#%s rcvr=0x%llx\n",
-                    getMethodName(method_).c_str(), (unsigned long long)receiver_.rawBits());
-
-            // Dump operand stack (values between stackBase_ and stackPointer_)
-            size_t stackSize = stackPointer_ - stackBase_;
-            fprintf(stderr, "  [stack] %zu values:", stackSize);
-            for (size_t si = 0; si < std::min(stackSize, (size_t)20); si++) {
-                Oop v = stackBase_[si];
-                if (v.isSmallInteger())
-                    fprintf(stderr, " SI(%lld)", v.asSmallInteger());
-                else if (v.isNil())
-                    fprintf(stderr, " nil");
-                else if (v.isObject() && v.rawBits() > 0x10000) {
-                    ObjectHeader* vh = v.asObjectPtr();
-                    if (vh->isBytesObject() && vh->byteSize() < 40) {
-                        std::string s((char*)vh->bytes(), vh->byteSize());
-                        fprintf(stderr, " \"%s\"(ci%d)", s.c_str(), vh->classIndex());
-                    } else {
-                        fprintf(stderr, " 0x%llx(ci%d)", (unsigned long long)v.rawBits(), vh->classIndex());
-                    }
-                } else {
-                    fprintf(stderr, " 0x%llx", (unsigned long long)v.rawBits());
-                }
+        // Brief diagnostic when receiver is Symbol class
+        if (rcv.isObject() && rcv.rawBits() > 0x10000 &&
+            g_symbolMetaclassIdx != 0 && rcv.asObjectPtr()->classIndex() == g_symbolMetaclassIdx) {
+            static int symClsDnuCount = 0;
+            if (++symClsDnuCount <= 20) {
+                fprintf(stderr, "[DNU-SYMCLS #%d] Symbol class DNU at step=%llu fd=%zu\n",
+                        symClsDnuCount, (unsigned long long)g_stepNum, frameDepth_);
             }
-            fprintf(stderr, "\n");
-
-            // Dump all saved frames (full backtrace)
-            for (size_t fi = frameDepth_; fi > 0; fi--) {
-                auto& sf = savedFrames_[fi - 1];
-                std::string mname = getMethodName(sf.savedMethod);
-                std::string rcvrInfo = "?";
-                if (sf.savedReceiver.isSmallInteger())
-                    rcvrInfo = "SI(" + std::to_string(sf.savedReceiver.asSmallInteger()) + ")";
-                else if (sf.savedReceiver.isObject() && sf.savedReceiver.rawBits() > 0x10000) {
-                    Oop cls = memory_.classOf(sf.savedReceiver);
-                    if (cls.isObject() && memory_.slotCountOf(cls) > 6) {
-                        Oop nameOop = memory_.fetchPointer(6, cls);
-                        if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
-                            ObjectHeader* nh = nameOop.asObjectPtr();
-                            if (nh->isBytesObject() && nh->byteSize() < 50)
-                                rcvrInfo = std::string((char*)nh->bytes(), nh->byteSize());
-                        }
-                    }
-                }
-                fprintf(stderr, "  [frame %zu] #%s rcvr=%s(0x%llx)\n", fi - 1, mname.c_str(), rcvrInfo.c_str(),
-                        (unsigned long long)sf.savedReceiver.rawBits());
-                // Show ALL frame values (temps live at FP[0]=receiver, FP[1..]=temps)
-                if (sf.savedFP && sf.savedFP >= stackBase_ && sf.savedFP < stackBase_ + stack_.size()) {
-                    size_t maxCheck = std::min((size_t)16, (size_t)(stackPointer_ - sf.savedFP));
-                    for (size_t si = 0; si < maxCheck; si++) {
-                        Oop fv = sf.savedFP[si];
-                        const char* marker = (fv.rawBits() == rcv.rawBits()) ? " **SYMCLS**" : "";
-                        if (fv.isSmallInteger())
-                            fprintf(stderr, "    FP[%zu] = SI(%lld)%s\n", si, fv.asSmallInteger(), marker);
-                        else if (fv.isNil())
-                            fprintf(stderr, "    FP[%zu] = nil%s\n", si, marker);
-                        else if (fv.isObject() && fv.rawBits() > 0x10000) {
-                            ObjectHeader* fvh = fv.asObjectPtr();
-                            if (fvh->isBytesObject() && fvh->byteSize() < 60) {
-                                std::string s((char*)fvh->bytes(), fvh->byteSize());
-                                fprintf(stderr, "    FP[%zu] = \"%s\"(ci%u)%s\n", si, s.c_str(), fvh->classIndex(), marker);
-                            } else {
-                                fprintf(stderr, "    FP[%zu] = 0x%llx(ci%u,fmt%u,slots%zu)%s\n", si,
-                                        (unsigned long long)fv.rawBits(), fvh->classIndex(),
-                                        (unsigned)fvh->format(), fvh->slotCount(), marker);
-                            }
-                        } else {
-                            fprintf(stderr, "    FP[%zu] = 0x%llx%s\n", si, (unsigned long long)fv.rawBits(), marker);
-                        }
-                    }
-                }
-            }
-            fprintf(stderr, "[DNU-DIAG] end\n");
-            fflush(stderr);
         }
         fflush(stderr);
     }
@@ -11117,34 +10548,7 @@ void Interpreter::transferTo(Oop newProcess) {
         memory_.storePointer(ProcessSuspendedContextIndex, oldProcess, contextToSave);
     }
 
-    // Diagnostic: log scheduler save/restore with sender state
-    {
-        int oPri = -1, nPri = -1;
-        {
-            Oop p = memory_.fetchPointer(ProcessPriorityIndex, oldProcess);
-            oPri = p.isSmallInteger() ? (int)p.asSmallInteger() : -1;
-        }
-        {
-            Oop p = memory_.fetchPointer(ProcessPriorityIndex, newProcess);
-            nPri = p.isSmallInteger() ? (int)p.asSmallInteger() : -1;
-        }
-        if (oPri == 80 && contextToSave.isObject() && !contextToSave.isNil()) {
-            Oop sender = memory_.fetchPointer(0, contextToSave);
-            Oop pc = memory_.fetchPointer(1, contextToSave);
-            fprintf(stderr, "[XFER-SAVE-P80] ctx=0x%llx sender=%s pc=%s step=%llu fd=%zu\n",
-                    (unsigned long long)contextToSave.rawBits(),
-                    sender.isNil() ? "nil" : (sender.isObject() ? "obj" : "??"),
-                    pc.isSmallInteger() ? "smi" : (pc.isNil() ? "nil" : "??"),
-                    (unsigned long long)g_stepNum, frameDepth_);
-            if (sender.isNil() || pc.isNil()) {
-                fprintf(stderr, "[XFER-SAVE-P80] WARNING: saving dead context!\n");
-                if (contextMethodStartsWith(memory_, contextToSave, "waitForUser")) {
-                    fprintf(stderr, "[XFER-SAVE-P80] SAVING DEAD SCHEDULER CONTEXT!\n");
-                }
-            }
-            fflush(stderr);
-        }
-    }
+    // P80 scheduler save/resume logging (disabled — too verbose)
 
     // Switch to new process
     setActiveProcess(newProcess);
@@ -11152,30 +10556,6 @@ void Interpreter::transferTo(Oop newProcess) {
     // Get new process's suspended context
     Oop newContext = memory_.fetchPointer(ProcessSuspendedContextIndex, newProcess);
 
-    // Diagnostic: log scheduler resume
-    {
-        Oop p = memory_.fetchPointer(ProcessPriorityIndex, newProcess);
-        int nPri = p.isSmallInteger() ? (int)p.asSmallInteger() : -1;
-        if (nPri == 80 && newContext.isObject() && !newContext.isNil()) {
-            Oop sender = memory_.fetchPointer(0, newContext);
-            Oop pc = memory_.fetchPointer(1, newContext);
-            fprintf(stderr, "[XFER-RESUME-P80] ctx=0x%llx sender=%s pc=%s step=%llu\n",
-                    (unsigned long long)newContext.rawBits(),
-                    sender.isNil() ? "nil" : (sender.isObject() ? "obj" : "??"),
-                    pc.isSmallInteger() ? "smi" : (pc.isNil() ? "nil" : "??"),
-                    (unsigned long long)g_stepNum);
-            if (sender.isNil() || pc.isNil()) {
-                fprintf(stderr, "[XFER-RESUME-P80] WARNING: resuming dead context!\n");
-                if (contextMethodStartsWith(memory_, newContext, "waitForUser")) {
-                    fprintf(stderr, "[XFER-RESUME-P80] RESUMING DEAD SCHEDULER CONTEXT!\n");
-                }
-            }
-            fflush(stderr);
-            // Enable step-by-step tracing for the first 10 steps after P80 resumes
-            g_p80ResumeWatch = 10;
-            g_p80WatchCtx = newContext.rawBits();
-        }
-    }
 
     // Nil out the new process's suspendedContext now that we've read it.
     // This prevents GC from tracing stale context chains that keep objects alive.

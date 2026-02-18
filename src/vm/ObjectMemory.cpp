@@ -786,12 +786,6 @@ Oop ObjectMemory::findGlobal(const std::string& name) const {
 
         totalAssocs++;
         if (symbolEquals(key, name.c_str())) {
-            if (name == "Symbol") {
-                Oop val = fetchPointer(1, item);
-                fprintf(stderr, "[findGlobal] Symbol: assoc=0x%llx(ci%d) val=0x%llx\n",
-                        (unsigned long long)item.rawBits(), item.asObjectPtr()->classIndex(),
-                        (unsigned long long)val.rawBits());
-            }
             return fetchPointer(1, item);
         }
     }
@@ -1310,38 +1304,6 @@ void ObjectMemory::storePointer(size_t index, Oop obj, Oop value) {
     // Bounds check
     if (index >= header->slotCount()) return;
 
-    // Diagnostic: detect when Symbol class (classIndex 3094) is stored ANYWHERE
-    if (value.isObject() && value.rawBits() > 0x10000) {
-        ObjectHeader* valHdr = value.asObjectPtr();
-        if (valHdr->classIndex() == g_symbolMetaclassIdx) {
-            uint32_t objCI = header->classIndex();
-            // Skip Context (ci=36) and BlockClosure/FullBlockClosure (ci=38)
-            // These legitimately store Symbol class as receiver
-            if (objCI != 36 && objCI != 38) {
-                static int symClsStoreCount = 0;
-                if (++symClsStoreCount <= 50) {
-                    uint32_t objSlots = header->slotCount();
-                    Oop oldVal = header->slotAt(index);
-                    fprintf(stderr, "[STORE-SYMCLS #%d] step=%llu obj=0x%llx(ci%u,slots%u) idx=%zu "
-                            "val=0x%llx oldVal=0x%llx\n",
-                            symClsStoreCount, (unsigned long long)g_stepNum,
-                            (unsigned long long)obj.rawBits(), objCI, objSlots, index,
-                            (unsigned long long)value.rawBits(),
-                            (unsigned long long)oldVal.rawBits());
-                    // C++ backtrace to find caller
-                    void* bt[20];
-                    int depth = backtrace(bt, 20);
-                    char** syms = backtrace_symbols(bt, depth);
-                    if (syms) {
-                        for (int i = 0; i < depth && i < 10; i++)
-                            fprintf(stderr, "  bt[%d]: %s\n", i, syms[i]);
-                        free(syms);
-                    }
-                    fflush(stderr);
-                }
-            }
-        }
-    }
 
     // Check for old->young pointer (needs remembered set)
     if (isOld(obj) && value.isObject() && isYoung(value)) {
@@ -1796,33 +1758,7 @@ GCResult ObjectMemory::fullGC() {
     // 3. Mark phase
     size_t markedCount = markPhase();
 
-    // DIAGNOSTIC: Lightweight Symbol class corruption check.
-    // Compare slot values against the known Oop for Symbol class (classIdx 3094).
-    // Uses simple 64-bit bit comparison — no pointer following.
-    Oop symClassOop;
-    int preCompCount = 0;
-    bool symCheckEnabled = (classTable_.size() > 3094 && classTable_[3094].isObject());
-    if (symCheckEnabled) {
-        symClassOop = classTable_[3094];
-        uint64_t symBits = symClassOop.rawBits();
-        ObjectScanner scanner(oldSpaceStart_, oldSpaceFree_);
-        while (ObjectHeader* obj = scanner.next()) {
-            if (!obj->isMarked()) continue;
-            uint32_t ci = obj->classIndex();
-            if (ci == 36 || ci == 38) continue;  // Context, FullBlockClosure — legitimate
-            if (obj->isCompiledMethod()) continue;
-            ObjectFormat fmt = obj->format();
-            if (fmt > ObjectFormat::WeakWithFixed) continue;
-            size_t numSlots = obj->slotCount();
-            Oop* slots = obj->slots();
-            for (size_t i = 0; i < numSlots; i++) {
-                if (slots[i].rawBits() == symBits) preCompCount++;
-            }
-        }
-    }
-
-    // Save pre-compaction oldSpaceFree for stale pointer check
-    uint8_t* preCompactOldSpaceFree = oldSpaceFree_;
+    // Symbol class corruption check and stale pointer check disabled (verified clean)
 
     // 4. Plan + update + copy (compact)
     planCompactSavingForwarders();
@@ -1832,83 +1768,7 @@ GCResult ObjectMemory::fullGC() {
     // 5. Rebuild free list from gap
     rebuildFreeListAfterCompact();
 
-    // 5a. Post-compaction stale pointer check (first 5 GCs only)
-    if (gcCallCount <= 5) {
-        // Build a set of valid object addresses post-compaction
-        std::unordered_set<uintptr_t> validAddrs;
-        validAddrs.reserve(800000);
-        {
-            ObjectScanner sc(oldSpaceStart_, oldSpaceFree_);
-            while (ObjectHeader* obj = sc.next()) {
-                if (obj->classIndex() != 0) {
-                    validAddrs.insert(reinterpret_cast<uintptr_t>(obj));
-                }
-            }
-        }
-        // Also check pointers to dead zone (between new and old oldSpaceFree_)
-        int staleCount = 0;
-        int deadZoneCount = 0;
-        ObjectScanner sc2(oldSpaceStart_, oldSpaceFree_);
-        while (ObjectHeader* obj = sc2.next()) {
-            if (obj->classIndex() == 0) continue;
-            size_t np = pointerSlotsOf(obj);
-            Oop* slots = obj->slots();
-            for (size_t i = 0; i < np; ++i) {
-                Oop val = slots[i];
-                if (!val.isObject()) continue;
-                auto* ptr = reinterpret_cast<uint8_t*>(val.asObjectPtr());
-                // Check if pointer is in old space range (using PRE-compaction boundary)
-                if (ptr >= oldSpaceStart_ && ptr < preCompactOldSpaceFree) {
-                    if (ptr >= oldSpaceFree_) {
-                        // Points to dead zone!
-                        deadZoneCount++;
-                        if (deadZoneCount <= 10) {
-                            fprintf(stderr, "[GC-DEADZONE #%d/%d] obj=0x%llx(ci%d) slot[%zu]=0x%llx in dead zone!\n",
-                                    gcCallCount, deadZoneCount,
-                                    (unsigned long long)reinterpret_cast<uintptr_t>(obj),
-                                    obj->classIndex(), i,
-                                    (unsigned long long)val.rawBits());
-                        }
-                    } else if (validAddrs.find(reinterpret_cast<uintptr_t>(val.asObjectPtr())) == validAddrs.end()) {
-                        staleCount++;
-                        if (staleCount <= 10) {
-                            fprintf(stderr, "[GC-STALE #%d/%d] obj=0x%llx(ci%d) slot[%zu]=0x%llx points to invalid!\n",
-                                    gcCallCount, staleCount,
-                                    (unsigned long long)reinterpret_cast<uintptr_t>(obj),
-                                    obj->classIndex(), i,
-                                    (unsigned long long)val.rawBits());
-                        }
-                    }
-                }
-            }
-        }
-        // Also check interpreter roots for stale pointers
-        if (interpreter_) {
-            int interpStale = 0;
-            interpreter_->forEachRoot([&](Oop& oop) {
-                if (!oop.isObject()) return;
-                auto* ptr = reinterpret_cast<uint8_t*>(oop.asObjectPtr());
-                if (ptr >= oldSpaceStart_ && ptr < preCompactOldSpaceFree) {
-                    if (ptr >= oldSpaceFree_ ||
-                        (ptr < oldSpaceFree_ && validAddrs.find(reinterpret_cast<uintptr_t>(oop.asObjectPtr())) == validAddrs.end())) {
-                        interpStale++;
-                        if (interpStale <= 5) {
-                            fprintf(stderr, "[GC-ROOT-STALE #%d/%d] root=0x%llx %s\n",
-                                    gcCallCount, interpStale,
-                                    (unsigned long long)oop.rawBits(),
-                                    (ptr >= oldSpaceFree_) ? "DEADZONE" : "INVALID");
-                        }
-                    }
-                }
-            });
-            if (interpStale > 0) {
-                fprintf(stderr, "[GC-ROOT-STALE #%d] TOTAL: %d stale interpreter roots!\n", gcCallCount, interpStale);
-            }
-        }
-        if (staleCount > 0 || deadZoneCount > 0) {
-            fprintf(stderr, "[GC-STALE #%d] stale=%d deadzone=%d\n", gcCallCount, staleCount, deadZoneCount);
-        }
-    }
+    // Post-compaction stale pointer check (disabled — verified clean, too expensive for production)
 
     // 6. Update nil bits if nil moved
     if (nilObject_.isObject()) {
@@ -1948,43 +1808,7 @@ GCResult ObjectMemory::fullGC() {
         }
     }
 
-    // POST-GC VERIFICATION: Compare Symbol class ref count before vs after compaction.
-    // After compaction, Symbol class may have moved — use updated classTable entry.
-    // If count INCREASED, compaction introduced corruption.
-    if (symCheckEnabled) {
-        Oop newSymClassOop = classTable_[3094];
-        uint64_t newSymBits = newSymClassOop.rawBits();
-        int postCompCount = 0;
-        int firstBadCi = 0; uint64_t firstBadObj = 0; int firstBadSlot = -1;
-        ObjectScanner scanner(oldSpaceStart_, oldSpaceFree_);
-        while (ObjectHeader* obj = scanner.next()) {
-            uint32_t ci = obj->classIndex();
-            if (ci == 36 || ci == 38) continue;
-            if (obj->isCompiledMethod()) continue;
-            ObjectFormat fmt = obj->format();
-            if (fmt > ObjectFormat::WeakWithFixed) continue;
-            size_t numSlots = obj->slotCount();
-            Oop* slots = obj->slots();
-            for (size_t i = 0; i < numSlots; i++) {
-                if (slots[i].rawBits() == newSymBits) {
-                    postCompCount++;
-                    if (firstBadSlot < 0 && postCompCount > preCompCount) {
-                        firstBadCi = ci;
-                        firstBadObj = reinterpret_cast<uint64_t>(obj);
-                        firstBadSlot = (int)i;
-                    }
-                }
-            }
-        }
-        if (postCompCount > preCompCount) {
-            fprintf(stderr, "[GC-SYM-CORRUPT #%d] Compaction introduced Symbol class refs! "
-                    "%d -> %d (+%d) firstNew: ci=%d obj=0x%llx slot=%d symOop=0x%llx->0x%llx\n",
-                    gcCallCount, preCompCount, postCompCount, postCompCount - preCompCount,
-                    firstBadCi, (unsigned long long)firstBadObj, firstBadSlot,
-                    (unsigned long long)symClassOop.rawBits(),
-                    (unsigned long long)newSymClassOop.rawBits());
-        }
-    }
+    // Symbol class post-compaction check (disabled — verified clean)
 
     // Record compacted size for threshold-based GC triggering
     lastCompactedSize_ = oldSpaceFree_ - oldSpaceStart_;
@@ -3266,19 +3090,14 @@ void ObjectMemory::updatePointersAfterCompact() {
                 }
                 scan += ts;
             }
-            if (newSpaceScanCallCount <= 10 && (objCount > 0 || updatedCount > 0)) {
-                fprintf(stderr, "[GC-NEWSCAN #%d] %s: %d objects, %d pointers updated\n",
-                        newSpaceScanCallCount, label, objCount, updatedCount);
-            }
+            (void)label;  // suppress unused warning
             newSpaceUpdated += updatedCount;
         };
         // Scan eden (edenStart_ to edenFree_)
         scanNewSpaceRegion(edenStart_, edenFree_, "eden");
         // Scan survivor space (survivorStart_ to newSpaceEnd_)
         scanNewSpaceRegion(survivorStart_, newSpaceEnd_, "survivor");
-        if (newSpaceScanCallCount <= 10) {
-            fprintf(stderr, "[GC-NEWSCAN #%d] total updated: %d\n", newSpaceScanCallCount, newSpaceUpdated);
-        }
+        (void)newSpaceUpdated;  // suppress unused warning
     }
 
     // Update memory roots

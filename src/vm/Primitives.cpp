@@ -1767,33 +1767,6 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
         }
         size_t actualSlot = fixedFields + arrayIndex;
         Oop result = header->slotAt(actualSlot);
-        // DIAGNOSTIC: detect when at: returns Symbol class (ci=3094)
-        if (result.isObject() && result.rawBits() > 0x10000 &&
-            result.asObjectPtr()->classIndex() == g_symbolMetaclassIdx) {
-            static int atSymClsCount = 0;
-            if (++atSymClsCount <= 20) {
-                uint32_t rcvrCI = header->classIndex();
-                uint8_t rcvrFmt = static_cast<uint8_t>(header->format());
-                fprintf(stderr, "[AT-SYMCLS #%d] step=%llu rcvr=0x%llx(ci%u,fmt%u,slots%zu) "
-                        "idx=%lld fixed=%zu actualSlot=%zu result=0x%llx\n",
-                        atSymClsCount, (unsigned long long)g_stepNum,
-                        (unsigned long long)rcvr.rawBits(), rcvrCI, rcvrFmt,
-                        header->slotCount(), (long long)idx, fixedFields, actualSlot,
-                        (unsigned long long)result.rawBits());
-                // Show neighboring slots for context
-                for (size_t k = (actualSlot > 2 ? actualSlot - 2 : 0);
-                     k < actualSlot + 3 && k < header->slotCount(); k++) {
-                    Oop sv = header->slotAt(k);
-                    uint32_t svci = 0;
-                    if (sv.isObject() && sv.rawBits() > 0x10000)
-                        svci = sv.asObjectPtr()->classIndex();
-                    fprintf(stderr, "  slot[%zu] = 0x%llx (ci=%u)%s\n",
-                            k, (unsigned long long)sv.rawBits(), svci,
-                            k == actualSlot ? " <--" : "");
-                }
-                fflush(stderr);
-            }
-        }
         primitiveSuccess(result);
         return PrimitiveResult::Success;
     } else if (header->isCompiledMethod()) {
@@ -1923,49 +1896,6 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
             return PrimitiveResult::Failure;
         }
         size_t actualSlot = fixedFields + arrayIndex;
-
-        // Diagnostic: catch when Symbol class (classIndex 3094) is stored into any object
-        if (value.isObject() && value.rawBits() > 0x10000) {
-            ObjectHeader* valHdr = value.asObjectPtr();
-            if (valHdr->classIndex() == g_symbolMetaclassIdx) {  // Symbol class metaclass
-                static int symClsStoreCount = 0;
-                if (++symClsStoreCount <= 20) {
-                    // Get receiver class name
-                    std::string rcvrCls = "?";
-                    Oop rc = memory_.classOf(rcvr);
-                    if (rc.isObject()) {
-                        Oop n = memory_.fetchPointer(6, rc);
-                        if (n.isObject() && n.rawBits() > 0x10000) {
-                            ObjectHeader* nh = n.asObjectPtr();
-                            if (nh->isBytesObject() && nh->byteSize() < 100)
-                                rcvrCls = std::string((char*)nh->bytes(), nh->byteSize());
-                        }
-                    }
-                    // Get method selector
-                    std::string msel = "?";
-                    if (method_.isObject() && method_.rawBits() > 0x10000) {
-                        Oop hdr = memory_.fetchPointer(0, method_);
-                        if (hdr.isSmallInteger()) {
-                            int nl = hdr.asSmallInteger() & 0x7FFF;
-                            if (nl >= 2) {
-                                Oop s = memory_.fetchPointer(nl - 1, method_);
-                                if (s.isObject() && s.rawBits() > 0x10000) {
-                                    ObjectHeader* sh = s.asObjectPtr();
-                                    if (sh->isBytesObject() && sh->byteSize() < 80)
-                                        msel = std::string((char*)sh->bytes(), sh->byteSize());
-                                }
-                            }
-                        }
-                    }
-                    fprintf(stderr, "[SYMCLS-STORE #%d] at:put: storing Symbol class into %s[%zu] "
-                            "rcvr=0x%llx method=#%s step=%llu fd=%zu\n",
-                            symClsStoreCount, rcvrCls.c_str(), arrayIndex,
-                            (unsigned long long)rcvr.rawBits(), msel.c_str(),
-                            (unsigned long long)g_stepNum, frameDepth_);
-                    fflush(stderr);
-                }
-            }
-        }
 
         // Use storePointer for proper write barrier (old→young tracking)
         memory_.storePointer(actualSlot, rcvr, value);
@@ -9441,28 +9371,6 @@ PrimitiveResult Interpreter::primitiveTerminateTo(int argCount) {
             if (current.rawBits() == aContextOrNil.rawBits()) break;
             if (!current.isObject() || current.rawBits() == nilObj.rawBits()) break;
             Oop sender = memory_.fetchPointer(SenderIndex, current);
-            // Diagnostic: check if we're killing a scheduler context
-            {
-                Oop m = memory_.fetchPointer(3, current);
-                if (m.isObject() && m.rawBits() > 0x10000) {
-                    Oop h = memory_.fetchPointer(0, m);
-                    if (h.isSmallInteger()) {
-                        int nl = h.asSmallInteger() & 0x7FFF;
-                        if (nl >= 2) {
-                            Oop s = memory_.fetchPointer(nl - 1, m);
-                            if (s.isObject() && s.rawBits() > 0x10000) {
-                                auto* sh = s.asObjectPtr();
-                                if (sh->isBytesObject() && sh->byteSize() > 15 &&
-                                    memcmp(sh->bytes(), "waitForUser", 11) == 0) {
-                                    fprintf(stderr, "[KILL-SCHED-CTX] at prim196-terminateTo ctx=0x%llx step=%llu\n",
-                                            (unsigned long long)current.rawBits(), (unsigned long long)g_stepNum);
-                                    fflush(stderr);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
             memory_.storePointer(SenderIndex, current, nilObj);
             current = sender;
         }
