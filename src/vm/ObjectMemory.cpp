@@ -1821,6 +1821,9 @@ GCResult ObjectMemory::fullGC() {
         }
     }
 
+    // Save pre-compaction oldSpaceFree for stale pointer check
+    uint8_t* preCompactOldSpaceFree = oldSpaceFree_;
+
     // 4. Plan + update + copy (compact)
     planCompactSavingForwarders();
     updatePointersAfterCompact();
@@ -1828,6 +1831,84 @@ GCResult ObjectMemory::fullGC() {
 
     // 5. Rebuild free list from gap
     rebuildFreeListAfterCompact();
+
+    // 5a. Post-compaction stale pointer check (first 5 GCs only)
+    if (gcCallCount <= 5) {
+        // Build a set of valid object addresses post-compaction
+        std::unordered_set<uintptr_t> validAddrs;
+        validAddrs.reserve(800000);
+        {
+            ObjectScanner sc(oldSpaceStart_, oldSpaceFree_);
+            while (ObjectHeader* obj = sc.next()) {
+                if (obj->classIndex() != 0) {
+                    validAddrs.insert(reinterpret_cast<uintptr_t>(obj));
+                }
+            }
+        }
+        // Also check pointers to dead zone (between new and old oldSpaceFree_)
+        int staleCount = 0;
+        int deadZoneCount = 0;
+        ObjectScanner sc2(oldSpaceStart_, oldSpaceFree_);
+        while (ObjectHeader* obj = sc2.next()) {
+            if (obj->classIndex() == 0) continue;
+            size_t np = pointerSlotsOf(obj);
+            Oop* slots = obj->slots();
+            for (size_t i = 0; i < np; ++i) {
+                Oop val = slots[i];
+                if (!val.isObject()) continue;
+                auto* ptr = reinterpret_cast<uint8_t*>(val.asObjectPtr());
+                // Check if pointer is in old space range (using PRE-compaction boundary)
+                if (ptr >= oldSpaceStart_ && ptr < preCompactOldSpaceFree) {
+                    if (ptr >= oldSpaceFree_) {
+                        // Points to dead zone!
+                        deadZoneCount++;
+                        if (deadZoneCount <= 10) {
+                            fprintf(stderr, "[GC-DEADZONE #%d/%d] obj=0x%llx(ci%d) slot[%zu]=0x%llx in dead zone!\n",
+                                    gcCallCount, deadZoneCount,
+                                    (unsigned long long)reinterpret_cast<uintptr_t>(obj),
+                                    obj->classIndex(), i,
+                                    (unsigned long long)val.rawBits());
+                        }
+                    } else if (validAddrs.find(reinterpret_cast<uintptr_t>(val.asObjectPtr())) == validAddrs.end()) {
+                        staleCount++;
+                        if (staleCount <= 10) {
+                            fprintf(stderr, "[GC-STALE #%d/%d] obj=0x%llx(ci%d) slot[%zu]=0x%llx points to invalid!\n",
+                                    gcCallCount, staleCount,
+                                    (unsigned long long)reinterpret_cast<uintptr_t>(obj),
+                                    obj->classIndex(), i,
+                                    (unsigned long long)val.rawBits());
+                        }
+                    }
+                }
+            }
+        }
+        // Also check interpreter roots for stale pointers
+        if (interpreter_) {
+            int interpStale = 0;
+            interpreter_->forEachRoot([&](Oop& oop) {
+                if (!oop.isObject()) return;
+                auto* ptr = reinterpret_cast<uint8_t*>(oop.asObjectPtr());
+                if (ptr >= oldSpaceStart_ && ptr < preCompactOldSpaceFree) {
+                    if (ptr >= oldSpaceFree_ ||
+                        (ptr < oldSpaceFree_ && validAddrs.find(reinterpret_cast<uintptr_t>(oop.asObjectPtr())) == validAddrs.end())) {
+                        interpStale++;
+                        if (interpStale <= 5) {
+                            fprintf(stderr, "[GC-ROOT-STALE #%d/%d] root=0x%llx %s\n",
+                                    gcCallCount, interpStale,
+                                    (unsigned long long)oop.rawBits(),
+                                    (ptr >= oldSpaceFree_) ? "DEADZONE" : "INVALID");
+                        }
+                    }
+                }
+            });
+            if (interpStale > 0) {
+                fprintf(stderr, "[GC-ROOT-STALE #%d] TOTAL: %d stale interpreter roots!\n", gcCallCount, interpStale);
+            }
+        }
+        if (staleCount > 0 || deadZoneCount > 0) {
+            fprintf(stderr, "[GC-STALE #%d] stale=%d deadzone=%d\n", gcCallCount, staleCount, deadZoneCount);
+        }
+    }
 
     // 6. Update nil bits if nil moved
     if (nilObject_.isObject()) {
@@ -3162,26 +3243,42 @@ void ObjectMemory::updatePointersAfterCompact() {
     // Without this, young objects holding old space pointers become stale
     // after compaction moves old space objects.
     {
-        auto scanNewSpaceRegion = [&](uint8_t* start, uint8_t* end) {
+        static int newSpaceScanCallCount = 0;
+        newSpaceScanCallCount++;
+        int newSpaceUpdated = 0;
+        auto scanNewSpaceRegion = [&](uint8_t* start, uint8_t* end, const char* label) {
+            int objCount = 0;
+            int updatedCount = 0;
             uint8_t* scan = start;
             while (scan < end) {
                 ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(scan);
                 size_t ts = obj->totalSize();
                 if (ts == 0 || ts > 0x10000000) break;  // Invalid — stop
                 if (obj->classIndex() != 0) {  // Not free
+                    objCount++;
                     size_t numPointers = pointerSlotsOf(obj);
                     Oop* slots = obj->slots();
                     for (size_t i = 0; i < numPointers; ++i) {
+                        Oop old = slots[i];
                         slots[i] = resolveForward(slots[i]);
+                        if (slots[i].rawBits() != old.rawBits()) updatedCount++;
                     }
                 }
                 scan += ts;
             }
+            if (newSpaceScanCallCount <= 10 && (objCount > 0 || updatedCount > 0)) {
+                fprintf(stderr, "[GC-NEWSCAN #%d] %s: %d objects, %d pointers updated\n",
+                        newSpaceScanCallCount, label, objCount, updatedCount);
+            }
+            newSpaceUpdated += updatedCount;
         };
         // Scan eden (edenStart_ to edenFree_)
-        scanNewSpaceRegion(edenStart_, edenFree_);
+        scanNewSpaceRegion(edenStart_, edenFree_, "eden");
         // Scan survivor space (survivorStart_ to newSpaceEnd_)
-        scanNewSpaceRegion(survivorStart_, newSpaceEnd_);
+        scanNewSpaceRegion(survivorStart_, newSpaceEnd_, "survivor");
+        if (newSpaceScanCallCount <= 10) {
+            fprintf(stderr, "[GC-NEWSCAN #%d] total updated: %d\n", newSpaceScanCallCount, newSpaceUpdated);
+        }
     }
 
     // Update memory roots
