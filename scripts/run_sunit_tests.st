@@ -9,11 +9,6 @@ Object subclass: #SUnitRunner
   classVariableNames: ''
   package: 'Tests-Runner'!
 
-"Monkey-patch cr to write LF (0x0A) instead of CR (0x0D) for Unix compatibility.
- Pharo Stream>>cr writes Character cr (0x0D), but Unix tools need LF (0x0A)."
-ZnCharacterWriteStream compile: 'cr
-  self nextPut: Character lf' classified: 'writing'!
-
 "UndefinedObject >> findNextHandlerContext terminates the handler context chain.
  Context >> findNextHandlerContext calls sender findNextHandlerContext; when sender
  is nil, UndefinedObject needs this method to return nil (no more handlers) instead
