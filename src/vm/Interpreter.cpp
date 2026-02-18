@@ -9463,6 +9463,12 @@ Oop Interpreter::materializeFrameStack() {
             // Use activeContext_ as the context for frame[0], skip creating a new one
             sender = activeContext_;
             startFrame = 1;
+            // CRITICAL: Store activeContext_ as the materialized context for frame[0].
+            // Without this, the GC safety code in the current-frame allocation below
+            // re-derives sender from savedFrames_[0].materializedContext, which is nil
+            // (no separate context was created for frame[0]). This caused
+            // thisContext sender == nil inside Context>>jump, crashing startup.
+            savedFrames_[0].materializedContext = activeContext_;
         }
     }
 
