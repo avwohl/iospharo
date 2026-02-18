@@ -38,9 +38,6 @@
 // Forward declaration for SDL rendering active check (defined in FFI.cpp)
 extern "C" bool ffi_isSDLRenderingActive();
 
-// Dynamic Symbol class detection (defined in Interpreter.cpp)
-extern int g_symbolMetaclassIdx;
-
 // Global symbol name map for TFFI call logging
 static std::unordered_map<uintptr_t, std::string> g_symbolNames;
 #include <ffi.h>

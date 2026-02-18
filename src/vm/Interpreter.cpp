@@ -46,76 +46,6 @@ volatile uint8_t g_watchdogLastBytecode = 0;
 static pharo::Oop g_delaySchedulerProcess = pharo::Oop::nil();
 static bool g_delaySchedulerDead = false;
 
-// Diagnostic: check if a context's method selector starts with a given prefix
-static bool contextMethodStartsWith(pharo::ObjectMemory& memory, pharo::Oop ctx, const char* prefix) {
-    if (!ctx.isObject() || ctx.isNil() || ctx.rawBits() <= 0x10000) return false;
-    pharo::Oop method = memory.fetchPointer(3, ctx);
-    if (!method.isObject() || method.isNil() || method.rawBits() <= 0x10000) return false;
-    pharo::Oop hdr = memory.fetchPointer(0, method);
-    if (!hdr.isSmallInteger()) return false;
-    int nl = hdr.asSmallInteger() & 0x7FFF;
-    if (nl < 2) return false;
-    pharo::Oop sel = memory.fetchPointer(nl - 1, method);
-    if (!sel.isObject() || sel.rawBits() <= 0x10000) return false;
-    auto* sh = sel.asObjectPtr();
-    if (!sh->isBytesObject() || sh->byteSize() < strlen(prefix)) return false;
-    return memcmp(sh->bytes(), prefix, strlen(prefix)) == 0;
-}
-
-// Ring buffer for context-kill events (for scheduler death diagnosis)
-struct CtxKillEvent {
-    uint64_t step;
-    uint64_t ctxAddr;
-    uint64_t senderAddr;
-    const char* location;  // which code path killed it
-    char methodName[40];
-};
-static CtxKillEvent g_ctxKillRing[32];
-static int g_ctxKillIdx = 0;
-
-// P80 resume step-by-step trace: counts down from 10 after P80 resumes
-static int g_p80ResumeWatch = 0;
-static uint64_t g_p80WatchCtx = 0;  // context address being watched
-
-// Dynamic Symbol class detection (set from test_load_image.cpp at startup)
-uint64_t g_symbolClassOop = 0;    // Oop bits of the Symbol class object
-int g_symbolMetaclassIdx = 0;      // classIndex of Symbol class (metaclass index)
-
-// Per-bytecode trace for findInterned: method
-static int g_findInternedTraceCount = 0;  // how many times we've traced findInterned:
-static bool g_traceFindInterned = false;  // currently tracing?
-
-static void recordCtxKill(uint64_t step, pharo::Oop ctx, pharo::Oop sender,
-                          const char* location, pharo::ObjectMemory& memory) {
-    auto& e = g_ctxKillRing[g_ctxKillIdx % 32];
-    e.step = step;
-    e.ctxAddr = ctx.rawBits();
-    e.senderAddr = sender.rawBits();
-    e.location = location;
-    e.methodName[0] = '\0';
-    // Extract method name
-    if (ctx.isObject() && ctx.rawBits() > 0x10000) {
-        pharo::Oop m = memory.fetchPointer(3, ctx);
-        if (m.isObject() && m.rawBits() > 0x10000) {
-            pharo::Oop h = memory.fetchPointer(0, m);
-            if (h.isSmallInteger()) {
-                int nl = h.asSmallInteger() & 0x7FFF;
-                if (nl >= 2) {
-                    pharo::Oop s = memory.fetchPointer(nl - 1, m);
-                    if (s.isObject() && s.rawBits() > 0x10000) {
-                        auto* sh = s.asObjectPtr();
-                        if (sh->isBytesObject() && sh->byteSize() < 39) {
-                            memcpy(e.methodName, sh->bytes(), sh->byteSize());
-                            e.methodName[sh->byteSize()] = '\0';
-                        }
-                    }
-                }
-            }
-        }
-    }
-    g_ctxKillIdx++;
-}
-
 // Forward declaration for SDL rendering active check (defined in FFI.cpp)
 extern "C" bool ffi_isSDLRenderingActive();
 // Watchdog send diagnostic: selector and receiver class name for last send
@@ -3207,85 +3137,6 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         // Sista V1: 0xC8-0xCF (200-207): Pop and Store Receiver Variable 0-7
         int varIndex = bytecode & 0x07;
         Oop value = pop();
-        // Diagnostic: if popped value is Symbol class, dump stack state
-        if (value.isObject() && value.rawBits() > 0x10000 &&
-            value.asObjectPtr()->classIndex() == g_symbolMetaclassIdx) {
-            static int popSymClsCount = 0;
-            if (++popSymClsCount <= 20) {
-                ptrdiff_t spIdx = stackPointer_ - stackBase_;
-                fprintf(stderr, "[POP-SYMCLS #%d] bc=0x%02x varIdx=%d fd=%zu step=%llu spIdx=%td\n",
-                        popSymClsCount, bytecode, varIndex, frameDepth_,
-                        (unsigned long long)g_stepNum, spIdx);
-                // Dump stack values around pop point
-                fprintf(stderr, "  popped=0x%llx (at stackBase_[%td])\n",
-                        (unsigned long long)value.rawBits(), spIdx);
-                // Show what's still at that address
-                fprintf(stderr, "  sp[0]=0x%llx (still in memory)\n",
-                        (unsigned long long)stackPointer_[0].rawBits());
-                // Show temp values
-                for (ptrdiff_t i = 0; i < std::min(spIdx + 3, (ptrdiff_t)8); i++) {
-                    Oop sv = stackBase_[i];
-                    if (sv.isSmallInteger())
-                        fprintf(stderr, "  stackBase_[%td] = SI(%lld)%s\n", i, sv.asSmallInteger(),
-                                (i == spIdx) ? " <-- pop point" : "");
-                    else if (sv.isNil())
-                        fprintf(stderr, "  stackBase_[%td] = nil%s\n", i,
-                                (i == spIdx) ? " <-- pop point" : "");
-                    else if (sv.isObject() && sv.rawBits() > 0x10000) {
-                        ObjectHeader* svh = sv.asObjectPtr();
-                        if (svh->isBytesObject() && svh->byteSize() < 60)
-                            fprintf(stderr, "  stackBase_[%td] = \"%s\"(ci%u)%s\n", i,
-                                    std::string((char*)svh->bytes(), svh->byteSize()).c_str(),
-                                    svh->classIndex(), (i == spIdx) ? " <-- pop point" : "");
-                        else
-                            fprintf(stderr, "  stackBase_[%td] = 0x%llx(ci%u)%s\n", i,
-                                    (unsigned long long)sv.rawBits(), svh->classIndex(),
-                                    (i == spIdx) ? " <-- pop point" : "");
-                    } else {
-                        fprintf(stderr, "  stackBase_[%td] = 0x%llx%s\n", i,
-                                (unsigned long long)sv.rawBits(),
-                                (i == spIdx) ? " <-- pop point" : "");
-                    }
-                }
-                // Dump method bytecodes
-                if (method_.isObject() && method_.rawBits() > 0x10000) {
-                    Oop mhdr = memory_.fetchPointer(0, method_);
-                    int nl = mhdr.isSmallInteger() ? (mhdr.asSmallInteger() & 0x7FFF) : 0;
-                    size_t bcStart = (nl + 1) * 8;
-                    ObjectHeader* mobj = method_.asObjectPtr();
-                    size_t totalBytes = mobj->byteSize();
-                    size_t bcSize = (totalBytes > bcStart) ? totalBytes - bcStart : 0;
-                    uint8_t* bc = mobj->bytes() + bcStart;
-                    ptrdiff_t ipOff = instructionPointer_ - mobj->bytes();
-                    fprintf(stderr, "  method: nlits=%d bcStart=%zu bcSize=%zu ip=%td relIP=%td\n",
-                            nl, bcStart, bcSize, ipOff, ipOff - (ptrdiff_t)bcStart);
-                    fprintf(stderr, "  bytecodes:");
-                    for (size_t bi = 0; bi < std::min(bcSize, (size_t)20); bi++) {
-                        fprintf(stderr, " %02x", bc[bi]);
-                    }
-                    fprintf(stderr, "\n");
-                    // Dump first few literals
-                    fprintf(stderr, "  literals:");
-                    for (int li = 0; li <= std::min(nl, 10); li++) {
-                        Oop lit = memory_.fetchPointer(li, method_);
-                        if (lit.isSmallInteger())
-                            fprintf(stderr, " [%d]=SI(%lld)", li, lit.asSmallInteger());
-                        else if (lit.isObject() && lit.rawBits() > 0x10000) {
-                            ObjectHeader* lh = lit.asObjectPtr();
-                            if (lh->isBytesObject() && lh->byteSize() < 40)
-                                fprintf(stderr, " [%d]=\"%s\"", li,
-                                        std::string((char*)lh->bytes(), lh->byteSize()).c_str());
-                            else
-                                fprintf(stderr, " [%d]=0x%llx(ci%u,fmt%u)", li,
-                                        (unsigned long long)lit.rawBits(), lh->classIndex(),
-                                        (unsigned)lh->format());
-                        }
-                    }
-                    fprintf(stderr, "\n");
-                }
-                fflush(stderr);
-            }
-        }
         setReceiverInstVar(varIndex, value);
     }
     else if (bytecode <= 0xD7) {
@@ -4268,12 +4119,6 @@ void Interpreter::returnValue(Oop value) {
             Oop senderOfCurrent = memory_.fetchPointer(0, activeContext_);
 
             // Kill the current context (ensure: is done)
-            recordCtxKill(g_stepNum, activeContext_, senderOfCurrent, "nlr-ensure-done", memory_);
-            if (contextMethodStartsWith(memory_, activeContext_, "waitForUser")) {
-                fprintf(stderr, "[KILL-SCHED-CTX] at nlr-ensure-done ctx=0x%llx step=%llu\n",
-                        (unsigned long long)activeContext_.rawBits(), (unsigned long long)g_stepNum);
-                fflush(stderr);
-            }
             memory_.storePointer(0, activeContext_, nilObj);  // sender = nil
             memory_.storePointer(1, activeContext_, nilObj);  // pc = nil (dead)
 
@@ -4301,12 +4146,6 @@ void Interpreter::returnValue(Oop value) {
                 while (c.isObject() && c.rawBits() != nilObj.rawBits() &&
                        c.rawBits() != nextEnsureCtx.rawBits() && safety++ < 200) {
                     Oop next = memory_.fetchPointer(0, c);
-                    recordCtxKill(g_stepNum, c, next, "nlr-between-ensures", memory_);
-                    if (contextMethodStartsWith(memory_, c, "waitForUser")) {
-                        fprintf(stderr, "[KILL-SCHED-CTX] at nlr-between-ensures ctx=0x%llx step=%llu\n",
-                                (unsigned long long)c.rawBits(), (unsigned long long)g_stepNum);
-                        fflush(stderr);
-                    }
                     memory_.storePointer(0, c, nilObj);
                     memory_.storePointer(1, c, nilObj);
                     c = next;
@@ -4339,12 +4178,6 @@ void Interpreter::returnValue(Oop value) {
                 while (c.isObject() && c.rawBits() != nilObj.rawBits() &&
                        c.rawBits() != homeCtx.rawBits() && safety++ < 200) {
                     Oop next = memory_.fetchPointer(0, c);
-                    recordCtxKill(g_stepNum, c, next, "nlr-to-home", memory_);
-                    if (contextMethodStartsWith(memory_, c, "waitForUser")) {
-                        fprintf(stderr, "[KILL-SCHED-CTX] at nlr-to-home ctx=0x%llx step=%llu\n",
-                                (unsigned long long)c.rawBits(), (unsigned long long)g_stepNum);
-                        fflush(stderr);
-                    }
                     memory_.storePointer(0, c, nilObj);
                     memory_.storePointer(1, c, nilObj);
                     c = next;
@@ -4354,12 +4187,6 @@ void Interpreter::returnValue(Oop value) {
                 Oop homeSender = memory_.fetchPointer(0, homeCtx);
 
                 // Kill homeCtx itself
-                recordCtxKill(g_stepNum, homeCtx, homeSender, "nlr-kill-home", memory_);
-                if (contextMethodStartsWith(memory_, homeCtx, "waitForUser")) {
-                    fprintf(stderr, "[KILL-SCHED-CTX] at nlr-kill-home ctx=0x%llx step=%llu\n",
-                            (unsigned long long)homeCtx.rawBits(), (unsigned long long)g_stepNum);
-                    fflush(stderr);
-                }
                 memory_.storePointer(0, homeCtx, nilObj);
                 memory_.storePointer(1, homeCtx, nilObj);
 
@@ -4520,19 +4347,15 @@ void Interpreter::returnValue(Oop value) {
 
         // Check if current context has a sender
         Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
-        const char* termReason = nullptr;  // Why we fell through to terminate
-
         if (activeContext_.isObject() && activeContext_.rawBits() != nilObj.rawBits()) {
             Oop sender = memory_.fetchPointer(0, activeContext_);
 
             // DEFENSIVE: Check for corrupted sender (raw 0 or very low address)
             if (sender.rawBits() == 0 || sender.rawBits() < 0x10000) {
                 // Corrupted sender - treat as end of context chain
-                termReason = "corrupted-sender";
                 // Fall through to terminate current process
             } else if (sender.rawBits() == nilObj.rawBits()) {
                 // Sender is nil - this method is at the top of the context chain
-                termReason = "nil-sender";
                 // Fall through to terminate current process
             } else if (sender.isObject() && sender.rawBits() != nilObj.rawBits()) {
                 // Fix unrelocated sender pointer before dereferencing
@@ -4547,7 +4370,6 @@ void Interpreter::returnValue(Oop value) {
                 }
                 if (!memory_.isValidPointer(sender)) {
                     // Invalid sender - terminate process
-                    termReason = "invalid-sender-ptr";
                     goto terminate_process;
                 }
                 ObjectHeader* senderHdr = sender.asObjectPtr();
@@ -4563,14 +4385,6 @@ void Interpreter::returnValue(Oop value) {
                     // Execute from sender, which will push the return value appropriately
                     // First, mark the returning context as dead per Cog VM semantics:
                     // nil the sender and PC so isDead returns true and sender chain is broken.
-                    recordCtxKill(g_stepNum, activeContext_, sender, "returnValue-fd0", memory_);
-                    if (contextMethodStartsWith(memory_, activeContext_, "waitForUser")) {
-                        fprintf(stderr, "[KILL-SCHED-CTX] at returnValue-fd0 ctx=0x%llx sender=0x%llx step=%llu\n",
-                                (unsigned long long)activeContext_.rawBits(),
-                                (unsigned long long)sender.rawBits(),
-                                (unsigned long long)g_stepNum);
-                        fflush(stderr);
-                    }
                     memory_.storePointer(0, activeContext_, memory_.nil());  // sender = nil
                     memory_.storePointer(1, activeContext_, memory_.nil());  // pc = nil → isDead
 
@@ -4579,71 +4393,12 @@ void Interpreter::returnValue(Oop value) {
                         push(value);
                         return;
                     }
-                    termReason = "executeFromContext-failed";
                 } else {
-                    termReason = "sender-not-context";
                 }
             }
         }
 
 terminate_process:
-        // Diagnostic: log high-priority process termination details
-        {
-            Oop proc = getActiveProcess();
-            Oop prioOop = memory_.fetchPointer(2, proc);
-            int prio = prioOop.isSmallInteger() ? (int)prioOop.asSmallInteger() : -1;
-            if (prio >= 70) {
-                // Log the context chain state for high-priority process death
-                fprintf(stderr, "[HIPRI-TERM] prio=%d proc=0x%llx step=%llu fd=%zu reason=%s\n",
-                        prio, (unsigned long long)proc.rawBits(),
-                        (unsigned long long)g_stepNum, frameDepth_,
-                        termReason ? termReason : "no-context");
-                // Log current context info
-                Oop ctx = activeContext_;
-                int depth = 0;
-                while (ctx.isObject() && !ctx.isNil() && depth < 10) {
-                    Oop method = memory_.fetchPointer(3, ctx);
-                    Oop pc = memory_.fetchPointer(1, ctx);
-                    Oop sender = memory_.fetchPointer(0, ctx);
-                    std::string mname = "?";
-                    if (method.isObject() && !method.isNil()) {
-                        Oop hdr = memory_.fetchPointer(0, method);
-                        if (hdr.isSmallInteger()) {
-                            int nl = hdr.asSmallInteger() & 0x7FFF;
-                            if (nl >= 2) {
-                                Oop s = memory_.fetchPointer(nl - 1, method);
-                                if (s.isObject() && s.rawBits() > 0x10000) {
-                                    ObjectHeader* sh = s.asObjectPtr();
-                                    if (sh->isBytesObject() && sh->byteSize() < 80)
-                                        mname = std::string((char*)sh->bytes(), sh->byteSize());
-                                }
-                            }
-                        }
-                    }
-                    fprintf(stderr, "[HIPRI-TERM]  ctx[%d]=0x%llx method=%s pc=%s sender=%s\n",
-                            depth, (unsigned long long)ctx.rawBits(), mname.c_str(),
-                            pc.isSmallInteger() ? std::to_string(pc.asSmallInteger()).c_str() :
-                                (pc.isNil() ? "nil(dead)" : "obj"),
-                            sender.isNil() ? "nil" :
-                                (sender.rawBits() == 0 ? "RAW-0" :
-                                    (sender.isObject() ? "obj" : "smi??")));
-                    ctx = sender;
-                    depth++;
-                }
-                // Dump recent context-kill ring buffer
-                fprintf(stderr, "[HIPRI-TERM] Recent context kills (last 20):\n");
-                int startIdx = (g_ctxKillIdx > 20) ? g_ctxKillIdx - 20 : 0;
-                for (int k = startIdx; k < g_ctxKillIdx; k++) {
-                    auto& e = g_ctxKillRing[k % 32];
-                    fprintf(stderr, "[HIPRI-TERM]  kill[%d] step=%llu ctx=0x%llx sender=0x%llx loc=%s method=%s\n",
-                            k, (unsigned long long)e.step,
-                            (unsigned long long)e.ctxAddr,
-                            (unsigned long long)e.senderAddr,
-                            e.location, e.methodName);
-                }
-                fflush(stderr);
-            }
-        }
         // Mark current process as terminated by clearing its suspendedContext
         terminateCurrentProcess();
 
@@ -4896,146 +4651,12 @@ terminate_process:
 
     // After popping, if execution is still running, push the result
     if (running_) {
-        // Diagnostic: detect when Symbol class is returned as a value
-        // Skip when receiver IS Symbol class (legitimate: methods on Symbol class return self)
-        if (value.isObject() && value.rawBits() > 0x10000 &&
-            value.asObjectPtr()->classIndex() == g_symbolMetaclassIdx &&
-            value.rawBits() != receiver_.rawBits()) {
-            static int retSymClsCount = 0;
-            if (++retSymClsCount <= 50) {
-                // Get CALLER method name (method_ was just restored by popFrame)
-                std::string callerSel = "?";
-                if (method_.isObject() && method_.rawBits() > 0x10000) {
-                    Oop hdr = memory_.fetchPointer(0, method_);
-                    if (hdr.isSmallInteger()) {
-                        int nl = hdr.asSmallInteger() & 0x7FFF;
-                        if (nl >= 2 && nl < 100) {
-                            Oop s = memory_.fetchPointer(nl - 1, method_);
-                            if (s.isObject() && s.rawBits() > 0x10000) {
-                                ObjectHeader* sh = s.asObjectPtr();
-                                if (sh->isBytesObject() && sh->byteSize() < 80)
-                                    callerSel = std::string((char*)sh->bytes(), sh->byteSize());
-                            }
-                        }
-                    }
-                }
-                // Get receiver class of caller
-                std::string callerRcvCls = "?";
-                if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-                    Oop cls = memory_.classOf(receiver_);
-                    if (cls.isObject() && memory_.slotCountOf(cls) > 6) {
-                        Oop cn = memory_.fetchPointer(6, cls);
-                        if (cn.isObject() && cn.rawBits() > 0x10000) {
-                            ObjectHeader* cnh = cn.asObjectPtr();
-                            if (cnh->isBytesObject() && cnh->byteSize() < 50)
-                                callerRcvCls = std::string((char*)cnh->bytes(), cnh->byteSize());
-                        }
-                    }
-                }
-                ptrdiff_t ipOff = -1;
-                if (method_.isObject() && method_.rawBits() > 0x10000)
-                    ipOff = instructionPointer_ - method_.asObjectPtr()->bytes();
-                fprintf(stderr, "[RET-SYMCLS #%d] fd=%zu step=%llu caller=#%s(%s) ip=%td "
-                        "val=0x%llx\n",
-                        retSymClsCount, frameDepth_, (unsigned long long)g_stepNum,
-                        callerSel.c_str(), callerRcvCls.c_str(), ipOff,
-                        (unsigned long long)value.rawBits());
-                fflush(stderr);
-            }
-        }
         push(value);
     }
 }
 
 void Interpreter::returnFromMethod() {
     Oop value = pop();
-
-    // Diagnostic: trace NLR attempts from CompiledBlocks where receiver is Symbol class
-    // This specifically catches [^ self rawIntern: ...] inside Symbol>>intern:
-    bool traceNLR_ = false;
-    if (receiver_.isObject() && receiver_.rawBits() > 0x10000 &&
-        receiver_.asObjectPtr()->classIndex() == g_symbolMetaclassIdx) {  // Symbol class metaclass
-        // Check if we're in a CompiledBlock (not a CompiledMethod)
-        if (method_.isObject() && method_.rawBits() > 0x10000) {
-            Oop hdr = memory_.fetchPointer(0, method_);
-            if (hdr.isSmallInteger()) {
-                int nl = hdr.asSmallInteger() & 0x7FFF;
-                if (nl >= 1) {
-                    Oop lastLit = memory_.fetchPointer(nl, method_);
-                    if (lastLit.isObject() && lastLit.rawBits() > 0x10000 &&
-                        lastLit.asObjectPtr()->isCompiledMethod()) {
-                        // This IS a CompiledBlock (last literal is compiled code)
-                        traceNLR_ = true;
-                        static int nlrTraceCount = 0;
-                        if (++nlrTraceCount <= 30) {
-                            fprintf(stderr, "[NLR-TRACE #%d] 0x5C in CompiledBlock, rcvr=SymbolClass "
-                                    "fd=%zu val=0x%llx step=%llu\n",
-                                    nlrTraceCount, frameDepth_,
-                                    (unsigned long long)value.rawBits(),
-                                    (unsigned long long)g_stepNum);
-                            // Show savedFrames homeFrameDepth
-                            if (frameDepth_ > 0) {
-                                fprintf(stderr, "  savedFrames_[%zu].homeFrameDepth=%zu\n",
-                                        frameDepth_ - 1, savedFrames_[frameDepth_ - 1].homeFrameDepth);
-                                // Show all savedFrames methods
-                                for (size_t i = 0; i < frameDepth_ && i < 8; i++) {
-                                    std::string sm = "?";
-                                    Oop m = savedFrames_[i].savedMethod;
-                                    if (m.isObject() && m.rawBits() > 0x10000) {
-                                        Oop mh = memory_.fetchPointer(0, m);
-                                        if (mh.isSmallInteger()) {
-                                            int mnl = mh.asSmallInteger() & 0x7FFF;
-                                            if (mnl >= 2 && mnl < 100) {
-                                                Oop s = memory_.fetchPointer(mnl - 1, m);
-                                                if (s.isObject() && s.rawBits() > 0x10000) {
-                                                    ObjectHeader* sh = s.asObjectPtr();
-                                                    if (sh->isBytesObject() && sh->byteSize() < 80)
-                                                        sm = std::string((char*)sh->bytes(), sh->byteSize());
-                                                }
-                                            }
-                                        }
-                                    }
-                                    fprintf(stderr, "  sf[%zu] method=0x%llx #%s homeFrame=%zu\n",
-                                            i, (unsigned long long)m.rawBits(), sm.c_str(),
-                                            savedFrames_[i].homeFrameDepth);
-                                }
-                            }
-                            // Show context chain from activeContext_
-                            if (frameDepth_ == 0) {
-                                fprintf(stderr, "  Context chain from activeContext_:\n");
-                                Oop ctx = activeContext_;
-                                for (int d = 0; d < 10 && ctx.isObject() && !ctx.isNil(); d++) {
-                                    Oop cm = memory_.fetchPointer(3, ctx);
-                                    std::string cms = "?";
-                                    if (cm.isObject() && cm.rawBits() > 0x10000) {
-                                        Oop cmh = memory_.fetchPointer(0, cm);
-                                        if (cmh.isSmallInteger()) {
-                                            int cmnl = cmh.asSmallInteger() & 0x7FFF;
-                                            if (cmnl >= 2 && cmnl < 100) {
-                                                Oop s = memory_.fetchPointer(cmnl - 1, cm);
-                                                if (s.isObject() && s.rawBits() > 0x10000) {
-                                                    ObjectHeader* sh = s.asObjectPtr();
-                                                    if (sh->isBytesObject() && sh->byteSize() < 80)
-                                                        cms = std::string((char*)sh->bytes(), sh->byteSize());
-                                                }
-                                            }
-                                        }
-                                    }
-                                    Oop pc = memory_.fetchPointer(1, ctx);
-                                    fprintf(stderr, "    [%d] ctx=0x%llx method=#%s pc=%s\n",
-                                            d, (unsigned long long)ctx.rawBits(), cms.c_str(),
-                                            pc.isNil() ? "nil(DEAD)" :
-                                            pc.isSmallInteger() ? std::to_string(pc.asSmallInteger()).c_str() : "?");
-                                    ctx = memory_.fetchPointer(0, ctx);
-                                }
-                            }
-                            fflush(stderr);
-                        }
-                    }
-                }
-            }
-        }
-    }
 
     // Check if we're executing inside a block (CompiledBlock)
     // If so, a "return from method" (^) should actually return from the HOME method,
@@ -5114,15 +4735,6 @@ void Interpreter::returnFromMethod() {
                 // might still be in inline frames if block was re-pushed after materialization)
                 for (size_t si = 0; si < frameDepth_; si++) {
                     if (savedFrames_[si].savedMethod.rawBits() == homeMethodOop.rawBits()) {
-                        if (traceNLR_) {
-                            static int nlrInlineCount = 0;
-                            if (++nlrInlineCount <= 10) {
-                                fprintf(stderr, "[NLR-INLINE #%d] fd=%zu homeFrame=%zu step=%llu\n",
-                                        nlrInlineCount, frameDepth_, si,
-                                        (unsigned long long)g_stepNum);
-                                fflush(stderr);
-                            }
-                        }
                         // Home method IS in savedFrames_ — use inline NLR
                         size_t homeFrame = si;
                         while (frameDepth_ > homeFrame) {
@@ -5157,16 +4769,6 @@ void Interpreter::returnFromMethod() {
                 }
 
                 if (homeCtx.isObject() && !homeCtx.isNil()) {
-                    if (traceNLR_) {
-                        static int nlrCtxFdNCount = 0;
-                        if (++nlrCtxFdNCount <= 10) {
-                            fprintf(stderr, "[NLR-CTXCHAIN-FD>0 #%d] fd=%zu homeCtx=0x%llx depth=%d step=%llu\n",
-                                    nlrCtxFdNCount, frameDepth_,
-                                    (unsigned long long)homeCtx.rawBits(), searchDepth,
-                                    (unsigned long long)g_stepNum);
-                            fflush(stderr);
-                        }
-                    }
                     // Found home context! Do context-based NLR
                     // Materialize all inline frames first
                     if (frameDepth_ > 0) {
@@ -5328,42 +4930,14 @@ void Interpreter::returnFromMethod() {
         }
 
         if (homeCtx.isObject() && !homeCtx.isNil()) {
-            if (traceNLR_) {
-                static int nlrFoundCount = 0;
-                if (++nlrFoundCount <= 10) {
-                    Oop hpc = memory_.fetchPointer(1, homeCtx);
-                    fprintf(stderr, "[NLR-FOUND-FD0 #%d] homeCtx=0x%llx pc=%s depth=%d step=%llu\n",
-                            nlrFoundCount, (unsigned long long)homeCtx.rawBits(),
-                            hpc.isNil() ? "nil(DEAD)" : hpc.isSmallInteger() ?
-                                std::to_string(hpc.asSmallInteger()).c_str() : "?",
-                            depth, (unsigned long long)g_stepNum);
-                    fflush(stderr);
-                }
-            }
             // Check for unwind (ensure:) contexts between here and home
             if (handleContextNLRUnwind(value, activeContext_, homeCtx)) {
-                if (traceNLR_) {
-                    static int nlrUnwindCount = 0;
-                    if (++nlrUnwindCount <= 10) {
-                        fprintf(stderr, "[NLR-UNWIND-FD0 #%d] aboutToReturn:through: sent, step=%llu\n",
-                                nlrUnwindCount, (unsigned long long)g_stepNum);
-                        fflush(stderr);
-                    }
-                }
                 return;
             }
 
             // No unwind contexts - return FROM the home context
             Oop sender = memory_.fetchPointer(0, homeCtx);
             if (sender.isObject() && !sender.isNil()) {
-                if (traceNLR_) {
-                    static int nlrOkCount = 0;
-                    if (++nlrOkCount <= 10) {
-                        fprintf(stderr, "[NLR-OK-FD0 #%d] returning from homeCtx sender, step=%llu\n",
-                                nlrOkCount, (unsigned long long)g_stepNum);
-                        fflush(stderr);
-                    }
-                }
                 Oop stackpOop = memory_.fetchPointer(2, sender);
                 if (stackpOop.isSmallInteger()) {
                     int stackp = stackpOop.asSmallInteger();
@@ -5380,15 +4954,6 @@ void Interpreter::returnFromMethod() {
     // If we're in a CompiledBlock and couldn't find the home method in the call chain,
     // the home method has already returned. Send cannotReturn: per Pharo spec.
     if (isCompiledBlock) {
-        if (traceNLR_) {
-            static int cannotRetCount = 0;
-            if (++cannotRetCount <= 30) {
-                fprintf(stderr, "[NLR-CANNOTRETURN #%d] fd=%zu step=%llu val=0x%llx\n",
-                        cannotRetCount, frameDepth_,
-                        (unsigned long long)g_stepNum, (unsigned long long)value.rawBits());
-                fflush(stderr);
-            }
-        }
         // Materialize frames if needed so cannotReturn: has proper context
         if (frameDepth_ > 0) {
             Oop topCtx = materializeFrameStack();
@@ -8580,15 +8145,6 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         }
         fprintf(stderr, "\n");
 
-        // Brief diagnostic when receiver is Symbol class
-        if (rcv.isObject() && rcv.rawBits() > 0x10000 &&
-            g_symbolMetaclassIdx != 0 && rcv.asObjectPtr()->classIndex() == g_symbolMetaclassIdx) {
-            static int symClsDnuCount = 0;
-            if (++symClsDnuCount <= 20) {
-                fprintf(stderr, "[DNU-SYMCLS #%d] Symbol class DNU at step=%llu fd=%zu\n",
-                        symClsDnuCount, (unsigned long long)g_stepNum, frameDepth_);
-            }
-        }
         fflush(stderr);
     }
 
@@ -9639,10 +9195,6 @@ void Interpreter::terminateCurrentProcess() {
     nlrHomeMethod_ = Oop::nil();
     nlrValue_ = Oop::nil();
 
-    static FILE* termLog = stderr;  // Always log terminations - critical diagnostic
-    static int termCount = 0;
-    termCount++;
-
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
     Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
 
@@ -9668,47 +9220,11 @@ void Interpreter::terminateCurrentProcess() {
     // the context is in the interpreter's registers (not saved to the heap).
     // So we do NOT skip based on suspendedContext == nil here.
 
-    if (termLog && termCount <= 50) {
-        // Get priority
-        Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
-        int prio = prioOop.isSmallInteger() ? static_cast<int>(prioOop.asSmallInteger()) : -1;
-        fprintf(termLog, "[TERMINATE #%d step=%lld] process=0x%llx priority=%d fd=%zu\n",
-                termCount, (long long)g_stepNum, (unsigned long long)activeProcess.rawBits(), prio,
-                frameDepth_);
-        // Log current method selector
-        auto extractSel = [this](Oop method) -> std::string {
-            if (!method.isObject() || method.rawBits() <= 0x10000) return "?";
-            ObjectHeader* mh = method.asObjectPtr();
-            if (!mh->isCompiledMethod()) return "?";
-            Oop h = mh->slotAt(0);
-            if (!h.isSmallInteger()) return "?";
-            int nl = h.asSmallInteger() & 0x7FFF;
-            if (nl < 2 || nl >= (int)mh->slotCount()) return "?";
-            Oop sel = mh->slotAt(nl - 1);
-            if (!sel.isObject() || sel.rawBits() <= 0x10000) return "?";
-            ObjectHeader* sh = sel.asObjectPtr();
-            if (!sh->isBytesObject() || sh->byteSize() > 80) return "?";
-            return std::string((char*)sh->bytes(), sh->byteSize());
-        };
-        fprintf(termLog, "[TERMINATE #%d] current: %s\n", termCount, extractSel(method_).c_str());
-        for (size_t fi = 0; fi < std::min(frameDepth_, (size_t)10); fi++) {
-            size_t idx = frameDepth_ - 1 - fi;
-            fprintf(termLog, "[TERMINATE #%d]   frame[%zu]: %s\n", termCount,
-                    idx, extractSel(savedFrames_[idx].savedMethod).c_str());
-        }
-        fflush(termLog);
-    }
-
     // Get the list this process belongs to and remove it properly
     Oop myList = memory_.fetchPointer(ProcessMyListIndex, activeProcess);
     if (myList.isObject() && myList.rawBits() != nilObj.rawBits()) {
         // Remove from its linked list properly
         removeProcessFromList(activeProcess, myList);
-        if (termLog && termCount <= 50) {
-            fprintf(termLog, "[TERMINATE #%d] Removed from list 0x%llx\n",
-                    termCount, (unsigned long long)myList.rawBits());
-            fflush(termLog);
-        }
     }
 
     // Process: slot 1 = suspendedContext - set it to nil to mark as terminated
