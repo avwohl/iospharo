@@ -516,7 +516,8 @@ runTestClass: testClass run: runNum on: s detail: d
      AccessorInstanceVariableSlotTest ComputedSlotTest
      ProcessLocalSlotTest WeakClassVariableTest WeakSlotTest
      FFICallbackParametersTest FFICallbackTest
-     ProcessTest)
+     ProcessTest SlotMigrationTest SlotErrorsTest
+     BlockClosureValueWithinDurationTest)
     includes: testClass name) ifTrue: [
     s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' === SKIPPED (crashes VM: class restructuring/mutex)'; cr. s flush.
     ^ {0. 0. 0. 0. 0}].
