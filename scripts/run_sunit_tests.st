@@ -454,6 +454,21 @@ runAllTests
       nextPutAll: ' of '; print: testClasses size;
       nextPutAll: ') ==='; cr; cr.
     self runDiagnostic: stream.
+    "Check symbol table for Symbol class corruption"
+    [| symCls count |
+     symCls := Symbol.
+     count := 0.
+     (Symbol classVariableNamed: #SymbolTable) read do: [:each |
+       each == symCls ifTrue: [count := count + 1]].
+     (Symbol classVariableNamed: #NewSymbols) read do: [:each |
+       each == symCls ifTrue: [count := count + 1]].
+     stream nextPutAll: 'SYMTABLE-CHECK: Symbol class found '; print: count;
+       nextPutAll: ' times in symbol tables'; cr. stream flush.
+     count > 0 ifTrue: [
+       stream nextPutAll: 'WARNING: Symbol class IS in symbol table - this causes corruption!!'; cr.
+       stream flush]]
+    on: Error do: [:e |
+     stream nextPutAll: 'SYMTABLE-CHECK error: '; nextPutAll: e messageText; cr. stream flush].
     batchClasses do: [:tc | | counts |
       [counts := self runTestClass: tc run: runNum on: stream detail: detail.
       totalP := totalP + (counts at: 1).
