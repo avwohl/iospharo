@@ -494,9 +494,8 @@ runTestClass: testClass run: runNum on: s detail: d
   "Run all tests in a class. Returns #(pass fail error skip timeout)."
   | sels p f e sk t testPriority consecutiveTimeouts |
 
-  "Skip genuinely abstract classes"
-  (#(CollectionRootTest CDBehaviorParserTest CDClassDefinitionParserTest)
-    includes: testClass name) ifTrue: [
+  "Skip genuinely abstract classes — use isAbstract instead of manual list"
+  ([testClass isAbstract] on: Error do: [:e | false]) ifTrue: [
     s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' === SKIPPED (abstract)'; cr. s flush.
     ^ {0. 0. 0. 0. 0}].
 
