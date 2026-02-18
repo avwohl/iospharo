@@ -1893,7 +1893,8 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
             return PrimitiveResult::Failure;
         }
         size_t actualSlot = fixedFields + arrayIndex;
-        header->slotAtPut(actualSlot, value);
+        // Use storePointer for proper write barrier (old→young tracking)
+        memory_.storePointer(actualSlot, rcvr, value);
         primitiveSuccess(value);
         return PrimitiveResult::Success;
     } else if (header->isCompiledMethod()) {
@@ -2257,7 +2258,8 @@ PrimitiveResult Interpreter::primitiveInstVarAtPut(int argCount) {
     }
 
     size_t instVarIndex = static_cast<size_t>(idx - 1);
-    header->slotAtPut(instVarIndex, value);
+    // Use storePointer for proper write barrier (old→young tracking)
+    memory_.storePointer(instVarIndex, rcvr, value);
     primitiveSuccess(value);
     return PrimitiveResult::Success;
 }
@@ -2379,7 +2381,8 @@ PrimitiveResult Interpreter::primitiveObjectAtPut(int argCount) {
     }
 
     // Store value at (index - 1)
-    header->slotAtPut(static_cast<size_t>(index - 1), value);
+    // Use storePointer for proper write barrier (old→young tracking)
+    memory_.storePointer(static_cast<size_t>(index - 1), rcvr, value);
     popN(3);
     push(value);
     return PrimitiveResult::Success;
@@ -5296,7 +5299,8 @@ PrimitiveResult Interpreter::primitiveReplaceFromTo(int argCount) {
 
         for (int64_t i = 0; i < count; ++i) {
             Oop value = replHeader->slotAt(replFixed + repStartIdx - 1 + i);
-            rcvrHeader->slotAtPut(rcvrFixed + startIdx - 1 + i, value);
+            // Use storePointer for proper write barrier (old→young tracking)
+            memory_.storePointer(rcvrFixed + startIdx - 1 + i, rcvr, value);
         }
 
         primitiveSuccess(rcvr);
@@ -9055,9 +9059,10 @@ PrimitiveResult Interpreter::primitiveCopyObject(int argCount) {
     if (src->slotCount() != dst->slotCount()) return PrimitiveResult::Failure;
 
     // Copy all slots from source to destination
+    // Use storePointer for proper write barrier (old→young tracking)
     size_t numSlots = src->slotCount();
     for (size_t i = 0; i < numSlots; i++) {
-        dst->slotAtPut(i, src->slotAt(i));
+        memory_.storePointer(i, rcvr, src->slotAt(i));
     }
 
     // Pop argument, leave receiver on stack
@@ -15399,7 +15404,8 @@ PrimitiveResult Interpreter::primitiveStringReplace(int argCount) {
         // Copy slots (offset by fixed fields)
         for (size_t i = 0; i < count; i++) {
             Oop value = srcHdr->slotAt(srcFixed + srcIdx + i);
-            destHdr->slotAtPut(destFixed + dstStartIdx + i, value);
+            // Use storePointer for proper write barrier (old→young tracking)
+            memory_.storePointer(destFixed + dstStartIdx + i, destOop, value);
         }
 
         popN(4);  // Pop 4 args, leave dest
