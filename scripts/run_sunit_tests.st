@@ -625,7 +625,7 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
    Delay scheduler (priority 80) wakes the runner which preempts the test.
    Without this priority boost, both runner and test at priority 40 means
    the runner never gets scheduled while the test is computing."
-  | result testDone testProcess deadline |
+  | result testDone testProcess deadline savedPriority |
   result := nil. "nil means pass"
   testDone := false.
 
@@ -658,14 +658,17 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
          s flush] on: Error do: [:e2 | "ignore trace errors"]].
     testDone := true] forkAt: priority.
 
-  "Poll with Delay-based sleep. The runner and test are both at priority 40
-   (startup handler priority). The Delay scheduler at priority 80 fires the
-   timer. Although the runner won't preempt the test (same priority), most
-   tests complete quickly. For slow tests that exceed the timeout, the runner
-   may not get a turn until the test yields — those are skipped in the caller."
+  "Boost runner priority above test so Delay-based timeout can preempt.
+   When the Delay fires, the Delay scheduler (priority 80) wakes the runner.
+   If the runner is at higher priority than the test, it preempts immediately.
+   Without this boost, both at priority 40 means the runner never gets CPU
+   while a test is in a tight compute loop (infinite loop = permanent hang)."
+  savedPriority := Processor activeProcess priority.
+  Processor activeProcess priority: (priority + 10 max: 50).
   deadline := Time millisecondClockValue + (seconds * 1000).
   [testDone not and: [Time millisecondClockValue < deadline]]
     whileTrue: [(Delay forMilliseconds: 500) wait].
+  Processor activeProcess priority: savedPriority.
 
   "Handle timeout if test didn't finish in time"
   testDone ifFalse: [
