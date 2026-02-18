@@ -72,6 +72,11 @@ struct CtxKillEvent {
 };
 static CtxKillEvent g_ctxKillRing[32];
 static int g_ctxKillIdx = 0;
+
+// P80 resume step-by-step trace: counts down from 10 after P80 resumes
+static int g_p80ResumeWatch = 0;
+static uint64_t g_p80WatchCtx = 0;  // context address being watched
+
 static void recordCtxKill(uint64_t step, pharo::Oop ctx, pharo::Oop sender,
                           const char* location, pharo::ObjectMemory& memory) {
     auto& e = g_ctxKillRing[g_ctxKillIdx % 32];
@@ -2733,6 +2738,34 @@ bool Interpreter::step() {
     // Must be updated here because test_load_image calls step() directly,
     // not interpret() which has its own loopCount.
     g_watchdogSteps.store(g_stepNum, std::memory_order_relaxed);
+
+    // P80 step-by-step trace: log each step after scheduler resumes
+    if (g_p80ResumeWatch > 0) {
+        g_p80ResumeWatch--;
+        // Peek at next bytecode without advancing IP
+        uint8_t nextBc = *instructionPointer_;
+        // Check activeContext_ sender/PC
+        const char* senderStatus = "??";
+        const char* pcStatus = "??";
+        if (activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
+            Oop sender = memory_.fetchPointer(0, activeContext_);
+            Oop pc = memory_.fetchPointer(1, activeContext_);
+            senderStatus = sender.isNil() ? "nil" : (sender.isObject() ? "obj" : "imm");
+            pcStatus = pc.isSmallInteger() ? "smi" : (pc.isNil() ? "nil" : "obj");
+        }
+        // Get IP offset
+        ptrdiff_t ipOff = -1;
+        if (method_.isObject() && method_.rawBits() > 0x10000) {
+            ipOff = instructionPointer_ - method_.asObjectPtr()->bytes();
+        }
+        fprintf(stderr, "[P80-STEP] step=%llu bc=0x%02x fd=%zu ctx=0x%llx sender=%s pc=%s ipOff=%td watchCtx=0x%llx%s\n",
+                (unsigned long long)g_stepNum, nextBc, frameDepth_,
+                (unsigned long long)activeContext_.rawBits(),
+                senderStatus, pcStatus, ipOff,
+                (unsigned long long)g_p80WatchCtx,
+                (activeContext_.rawBits() == g_p80WatchCtx) ? " (WATCHED)" : "");
+        fflush(stderr);
+    }
 
     // Check for forced process yield BEFORE fetching the next bytecode.
     // CRITICAL: Must happen before fetchByte() because fetchByte() advances
@@ -10931,6 +10964,9 @@ void Interpreter::transferTo(Oop newProcess) {
                 }
             }
             fflush(stderr);
+            // Enable step-by-step tracing for the first 10 steps after P80 resumes
+            g_p80ResumeWatch = 10;
+            g_p80WatchCtx = newContext.rawBits();
         }
     }
 
