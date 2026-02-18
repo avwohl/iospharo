@@ -9,6 +9,11 @@ Object subclass: #SUnitRunner
   classVariableNames: ''
   package: 'Tests-Runner'!
 
+"Monkey-patch cr to write LF (0x0A) instead of CR (0x0D) for Unix compatibility.
+ Pharo Stream>>cr writes Character cr (0x0D), but Unix tools need LF (0x0A)."
+ZnCharacterWriteStream compile: 'cr
+  self nextPut: Character lf' classified: 'writing'!
+
 "UndefinedObject >> findNextHandlerContext terminates the handler context chain.
  Context >> findNextHandlerContext calls sender findNextHandlerContext; when sender
  is nil, UndefinedObject needs this method to return nil (no more handlers) instead
@@ -539,8 +544,8 @@ runTestClass: testClass run: runNum on: s detail: d
 
   s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' ==='; cr.
   s flush.
-  "Tests must run below timingPriority (80) so the Delay scheduler can
-   preempt hanging tests and fire waitTimeoutSeconds: timeouts.
+  "Tests must run below timingPriority (80). Watchdog uses spin-wait
+   (relinquishProcessorForMicroseconds:) so it works even if Delay scheduler dies.
    Use priority 40 (userSchedulingPriority) matching standard Pharo behavior.
    This is critical because some tests do forkAt: activeProcess priority + N
    and priority 79+20=99 would exceed Processor highestPriority (80).
@@ -635,11 +640,11 @@ runTestClass: testClass run: runNum on: s detail: d
 
 !SUnitRunner class methodsFor: 'running'!
 runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
-  "Run a single test with semaphore-based completion + Delay timeout.
-   Fork the test at the SAME priority. The test signals doneSem when done,
-   waking the runner immediately (no polling delay). For timeouts, a separate
-   watchdog process at priority+1 fires after the deadline and suspends
-   the test, then signals doneSem."
+  "Run a single test with spin-wait watchdog that does NOT depend on Delay scheduler.
+   Fork the test at the requested priority. The test signals doneSem when done,
+   waking the runner immediately. The watchdog at priority+1 uses
+   relinquishProcessorForMicroseconds: to yield, checking elapsed time each cycle.
+   The heartbeat forceYield (1s) preempts the test back to the watchdog."
   | result testProcess doneSem watchdog |
   result := nil. "nil means pass"
   doneSem := Semaphore new.
@@ -673,12 +678,14 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
          s flush] on: Error do: [:e2 | "ignore trace errors"]].
     doneSem signal] forkAt: priority.
 
-  "Fork watchdog at priority+1 so it can preempt a hanging test.
-   The watchdog waits for the timeout, then suspends the test and signals
-   doneSem so the runner wakes up. For fast tests, the runner wakes from
-   doneSem before the watchdog fires, and we suspend the watchdog."
+  "Fork watchdog at priority+1. Uses spin-wait with relinquishProcessorForMicroseconds:
+   instead of Delay, so it works even when the Delay scheduler is dead.
+   Each cycle: check time, yield to let test run (~1s via heartbeat forceYield)."
   watchdog := [
-    (Delay forSeconds: seconds) wait.
+    | startMs |
+    startMs := Time millisecondClockValue.
+    [((Time millisecondClockValue - startMs) bitAnd: 16r1FFFFFFF) < (seconds * 1000)] whileTrue: [
+      Processor relinquishProcessorForMicroseconds: 500000].
     "Timeout elapsed — test is still running"
     [testProcess suspend] on: Error do: [:e |].
     result := #timeout.
