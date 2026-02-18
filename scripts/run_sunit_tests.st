@@ -619,17 +619,16 @@ runTestClass: testClass run: runNum on: s detail: d
 
 !SUnitRunner class methodsFor: 'running'!
 runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
-  "Run a single test with Delay-based timeout.
-   Fork the test at the requested priority (e.g. 40). The runner raises its
-   own priority above the test (e.g. 60) so that when a Delay fires, the
-   Delay scheduler (priority 80) wakes the runner which preempts the test.
-   Without this priority boost, both runner and test at priority 40 means
-   the runner never gets scheduled while the test is computing."
-  | result testDone testProcess deadline savedPriority |
+  "Run a single test with semaphore-based completion + Delay timeout.
+   Fork the test at the SAME priority. The test signals doneSem when done,
+   waking the runner immediately (no polling delay). For timeouts, a separate
+   watchdog process at priority+1 fires after the deadline and suspends
+   the test, then signals doneSem."
+  | result testProcess doneSem watchdog |
   result := nil. "nil means pass"
-  testDone := false.
+  doneSem := Semaphore new.
 
-  "Fork test at requested priority (lower than runner)"
+  "Fork test at requested priority"
   testProcess := [
     [[[[(testClass selector: sel) runCase]
       on: TestFailure do: [:ex |
@@ -656,30 +655,28 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
            s nextPutAll: '    >> '; nextPutAll: ctx printString; cr.
            ctx := ctx sender. count := count + 1].
          s flush] on: Error do: [:e2 | "ignore trace errors"]].
-    testDone := true] forkAt: priority.
+    doneSem signal] forkAt: priority.
 
-  "Boost runner priority above test so Delay-based timeout can preempt.
-   When the Delay fires, the Delay scheduler (priority 80) wakes the runner.
-   If the runner is at higher priority than the test, it preempts immediately.
-   Without this boost, both at priority 40 means the runner never gets CPU
-   while a test is in a tight compute loop (infinite loop = permanent hang)."
-  savedPriority := Processor activeProcess priority.
-  Processor activeProcess priority: (priority + 10 max: 50).
-  deadline := Time millisecondClockValue + (seconds * 1000).
-  [testDone not and: [Time millisecondClockValue < deadline]]
-    whileTrue: [(Delay forMilliseconds: 500) wait].
-  Processor activeProcess priority: savedPriority.
-
-  "Handle timeout if test didn't finish in time"
-  testDone ifFalse: [
+  "Fork watchdog at priority+1 so it can preempt a hanging test.
+   The watchdog waits for the timeout, then suspends the test and signals
+   doneSem so the runner wakes up. For fast tests, the runner wakes from
+   doneSem before the watchdog fires, and we suspend the watchdog."
+  watchdog := [
+    (Delay forSeconds: seconds) wait.
+    "Timeout elapsed — test is still running"
     [testProcess suspend] on: Error do: [:e |].
-    testDone := true.
     result := #timeout.
     s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
       nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; cr.
-    s flush].
+    s flush.
+    doneSem signal] forkAt: priority + 1.
 
-  testDone ifTrue: [result ifNil: ["pass — already nil"]].
+  "Wait for test completion or watchdog timeout"
+  doneSem wait.
+
+  "Clean up watchdog if test completed before timeout"
+  [watchdog suspend] on: Error do: [:e |].
+
   ^ result! !
 
 !SUnitRunner class methodsFor: 'startup'!
