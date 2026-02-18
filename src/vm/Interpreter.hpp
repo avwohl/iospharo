@@ -381,6 +381,15 @@ private:
     Oop closure_;        // Current FullBlockClosure if executing a block, nil for methods
     Oop activeContext_;  // Current Smalltalk context (for sender chain)
     Oop currentFrameMaterializedCtx_;  // Cached context for current frame (reused across materialize calls)
+
+    // Pending NLR through ensure: — tracks NLR continuation when ensure: runs cleanup.
+    // Context-based path: nlrTargetCtx_ = home context, set by handleContextNLRUnwind.
+    // Inline path safety net: nlrHomeMethod_ = home method, set by inline ensure: handler.
+    // When ensure: returns, returnValue() at fd=0 checks these to continue the NLR.
+    Oop nlrTargetCtx_;    // Home context for pending NLR (nil when no NLR pending)
+    Oop nlrEnsureCtx_;    // The ensure: context being resumed (nil when no NLR pending)
+    Oop nlrHomeMethod_;   // Home method for inline NLR safety net (nil when not active)
+    Oop nlrValue_;        // Saved NLR value for safety net
     int argCount_;
 
     // Sista V1 extension bytes (reset after each instruction)
@@ -1854,6 +1863,12 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
     visitor(closure_);
     visitor(activeContext_);
     visitor(currentFrameMaterializedCtx_);
+
+    // Pending NLR state (must survive GC during ensure: cleanup)
+    visitor(nlrTargetCtx_);
+    visitor(nlrEnsureCtx_);
+    visitor(nlrHomeMethod_);
+    visitor(nlrValue_);
 
     // VM state Oops
     visitor(displayForm_);

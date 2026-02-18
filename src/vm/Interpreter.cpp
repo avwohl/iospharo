@@ -104,6 +104,10 @@ Interpreter::Interpreter(ObjectMemory& memory)
     , activeContext_(Oop::nil())
     , currentFrameMaterializedCtx_(Oop::nil())
     , closure_(Oop::nil())
+    , nlrTargetCtx_(Oop::nil())
+    , nlrEnsureCtx_(Oop::nil())
+    , nlrHomeMethod_(Oop::nil())
+    , nlrValue_(Oop::nil())
     , argCount_(0)
     , extA_(0)
     , extB_(0)
@@ -4246,6 +4250,221 @@ void Interpreter::pushSpecial(int which) {
 void Interpreter::returnValue(Oop value) {
     // If no frames to pop, check if we have a sender context to return to
     if (frameDepth_ == 0) {
+        // Check for pending NLR through ensure:.
+        // When a context-based NLR (fd=0) encounters an ensure: context,
+        // handleContextNLRUnwind resumes the ensure: to run its cleanup block.
+        // When ensure: returns (^ returnValue), we intercept here to continue
+        // the NLR to the home method's sender, handling multiple ensure: contexts.
+        if (nlrTargetCtx_.isObject() && !nlrTargetCtx_.isNil()) {
+            Oop homeCtx = nlrTargetCtx_;
+            Oop nilObj = memory_.nil();
+
+            // Get sender of current context BEFORE killing it
+            Oop senderOfCurrent = memory_.fetchPointer(0, activeContext_);
+
+            // Kill the current context (ensure: is done)
+            memory_.storePointer(0, activeContext_, nilObj);  // sender = nil
+            memory_.storePointer(1, activeContext_, nilObj);  // pc = nil (dead)
+
+            // Look for MORE ensure: (prim 198) contexts between here and homeCtx
+            Oop nextEnsureCtx = Oop::nil();
+            {
+                Oop ctx = senderOfCurrent;
+                int depth = 0;
+                while (ctx.isObject() && !ctx.isNil() && depth < 200) {
+                    if (ctx.rawBits() == homeCtx.rawBits()) break;
+                    Oop method = memory_.fetchPointer(3, ctx);
+                    if (method.isObject() && !method.isNil() && primitiveIndexOf(method) == 198) {
+                        nextEnsureCtx = ctx;
+                        break;
+                    }
+                    ctx = memory_.fetchPointer(0, ctx);
+                    depth++;
+                }
+            }
+
+            if (nextEnsureCtx.isObject() && !nextEnsureCtx.isNil()) {
+                // Found another ensure: — kill contexts between current and it
+                Oop c = senderOfCurrent;
+                int safety = 0;
+                while (c.isObject() && c.rawBits() != nilObj.rawBits() &&
+                       c.rawBits() != nextEnsureCtx.rawBits() && safety++ < 200) {
+                    Oop next = memory_.fetchPointer(0, c);
+                    memory_.storePointer(0, c, nilObj);
+                    memory_.storePointer(1, c, nilObj);
+                    c = next;
+                }
+
+                // Update pending NLR to next ensure:
+                nlrEnsureCtx_ = nextEnsureCtx;
+                // nlrTargetCtx_ stays as homeCtx
+
+                // Push NLR value onto next ensure:'s stack (as valueNoContextSwitch return)
+                Oop stackpOop = memory_.fetchPointer(2, nextEnsureCtx);
+                if (stackpOop.isSmallInteger()) {
+                    int stackp = stackpOop.asSmallInteger();
+                    stackp++;
+                    memory_.storePointer(2, nextEnsureCtx, Oop::fromSmallInteger(stackp));
+                    memory_.storePointer(5 + stackp, nextEnsureCtx, value);
+                }
+
+                // Resume next ensure: context
+                executeFromContext(nextEnsureCtx);
+                return;
+            } else {
+                // No more ensure: — complete the NLR
+                nlrTargetCtx_ = Oop::nil();
+                nlrEnsureCtx_ = Oop::nil();
+
+                // Kill remaining contexts from senderOfCurrent to homeCtx (not including homeCtx)
+                Oop c = senderOfCurrent;
+                int safety = 0;
+                while (c.isObject() && c.rawBits() != nilObj.rawBits() &&
+                       c.rawBits() != homeCtx.rawBits() && safety++ < 200) {
+                    Oop next = memory_.fetchPointer(0, c);
+                    memory_.storePointer(0, c, nilObj);
+                    memory_.storePointer(1, c, nilObj);
+                    c = next;
+                }
+
+                // Get homeCtx's sender (NLR returns to caller of home method)
+                Oop homeSender = memory_.fetchPointer(0, homeCtx);
+
+                // Kill homeCtx itself
+                memory_.storePointer(0, homeCtx, nilObj);
+                memory_.storePointer(1, homeCtx, nilObj);
+
+                // Return to homeCtx's sender with the NLR value
+                if (homeSender.isObject() && !homeSender.isNil() &&
+                    memory_.isValidPointer(homeSender)) {
+                    stackPointer_ = stackBase_;
+                    executeFromContext(homeSender);
+                    push(value);
+
+                    static int nlrCompleteCount = 0;
+                    if (++nlrCompleteCount <= 20) {
+                        fprintf(stderr, "[NLR-COMPLETE #%d] value=0x%llx homeSender=0x%llx step=%llu\n",
+                                nlrCompleteCount, (unsigned long long)value.rawBits(),
+                                (unsigned long long)homeSender.rawBits(),
+                                (unsigned long long)g_stepNum);
+                        fflush(stderr);
+                    }
+                    return;
+                } else {
+                    // No valid sender — terminate process
+                    terminateCurrentProcess();
+                    return;
+                }
+            }
+        }
+
+        // Safety net: inline NLR through ensure: lost its homeFrameDepth
+        // due to a process switch (materialize→context→executeFromContext).
+        // nlrHomeMethod_ was set by the inline ensure: handler. Search the
+        // context chain for the home context and continue the NLR.
+        if (nlrHomeMethod_.isObject() && !nlrHomeMethod_.isNil()) {
+            Oop homeMethodOop = nlrHomeMethod_;
+            Oop savedValue = nlrValue_;
+            nlrHomeMethod_ = Oop::nil();
+            nlrValue_ = Oop::nil();
+
+            // Kill current context (ensure: is done)
+            Oop nilObj = memory_.nil();
+            Oop senderOfCurrent = memory_.fetchPointer(0, activeContext_);
+            memory_.storePointer(0, activeContext_, nilObj);
+            memory_.storePointer(1, activeContext_, nilObj);
+
+            // Search sender chain for home context (method match)
+            Oop homeCtx = Oop::nil();
+            Oop ctx = senderOfCurrent;
+            int depth = 0;
+            while (ctx.isObject() && !ctx.isNil() && depth < 200) {
+                if (memory_.fetchPointer(3, ctx).rawBits() == homeMethodOop.rawBits()) {
+                    homeCtx = ctx;
+                    break;
+                }
+                ctx = memory_.fetchPointer(0, ctx);
+                depth++;
+            }
+
+            if (homeCtx.isObject() && !homeCtx.isNil()) {
+                // Check for MORE ensure: between here and home
+                Oop nextEnsure = Oop::nil();
+                ctx = senderOfCurrent;
+                depth = 0;
+                while (ctx.isObject() && !ctx.isNil() && depth < 200) {
+                    if (ctx.rawBits() == homeCtx.rawBits()) break;
+                    Oop method = memory_.fetchPointer(3, ctx);
+                    if (method.isObject() && !method.isNil() && primitiveIndexOf(method) == 198) {
+                        nextEnsure = ctx;
+                        break;
+                    }
+                    ctx = memory_.fetchPointer(0, ctx);
+                    depth++;
+                }
+
+                if (nextEnsure.isObject() && !nextEnsure.isNil()) {
+                    // Set up pending NLR for the next ensure:
+                    // Kill contexts between senderOfCurrent and nextEnsure
+                    Oop c = senderOfCurrent;
+                    int safety = 0;
+                    while (c.isObject() && c.rawBits() != nilObj.rawBits() &&
+                           c.rawBits() != nextEnsure.rawBits() && safety++ < 200) {
+                        Oop next = memory_.fetchPointer(0, c);
+                        memory_.storePointer(0, c, nilObj);
+                        memory_.storePointer(1, c, nilObj);
+                        c = next;
+                    }
+                    nlrTargetCtx_ = homeCtx;
+                    nlrEnsureCtx_ = nextEnsure;
+                    // Push value onto next ensure:'s stack
+                    Oop stackpOop = memory_.fetchPointer(2, nextEnsure);
+                    if (stackpOop.isSmallInteger()) {
+                        int stackp = stackpOop.asSmallInteger();
+                        stackp++;
+                        memory_.storePointer(2, nextEnsure, Oop::fromSmallInteger(stackp));
+                        memory_.storePointer(5 + stackp, nextEnsure, savedValue);
+                    }
+                    executeFromContext(nextEnsure);
+                } else {
+                    // No more ensure: — complete the NLR directly
+                    // Kill contexts between senderOfCurrent and homeCtx
+                    Oop c = senderOfCurrent;
+                    int safety = 0;
+                    while (c.isObject() && c.rawBits() != nilObj.rawBits() &&
+                           c.rawBits() != homeCtx.rawBits() && safety++ < 200) {
+                        Oop next = memory_.fetchPointer(0, c);
+                        memory_.storePointer(0, c, nilObj);
+                        memory_.storePointer(1, c, nilObj);
+                        c = next;
+                    }
+                    Oop homeSender = memory_.fetchPointer(0, homeCtx);
+                    memory_.storePointer(0, homeCtx, nilObj);
+                    memory_.storePointer(1, homeCtx, nilObj);
+
+                    if (homeSender.isObject() && !homeSender.isNil() &&
+                        memory_.isValidPointer(homeSender)) {
+                        stackPointer_ = stackBase_;
+                        executeFromContext(homeSender);
+                        push(savedValue);
+
+                        static int nlrSafetyCount = 0;
+                        if (++nlrSafetyCount <= 20) {
+                            fprintf(stderr, "[NLR-SAFETY #%d] value=0x%llx step=%llu\n",
+                                    nlrSafetyCount, (unsigned long long)savedValue.rawBits(),
+                                    (unsigned long long)g_stepNum);
+                            fflush(stderr);
+                        }
+                    } else {
+                        terminateCurrentProcess();
+                    }
+                }
+                return;
+            }
+            // Home context not found — fall through to normal return
+            // (nlrHomeMethod_ was already cleared above)
+        }
+
         // Check if current context has a sender
         Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
 
@@ -4606,45 +4825,90 @@ terminate_process:
 void Interpreter::returnFromMethod() {
     Oop value = pop();
 
-    // Diagnostic: detect when a method is returning Symbol class
-    // Skip when receiver IS Symbol class (legitimate: method ON Symbol class returns self)
-    if (value.isObject() && value.rawBits() > 0x10000 &&
-        value.asObjectPtr()->classIndex() == 3094 &&
-        value.rawBits() != receiver_.rawBits()) {
-        static int retFromMethodSymClsCount = 0;
-        if (++retFromMethodSymClsCount <= 50) {
-            std::string msel = "?";
-            if (method_.isObject() && method_.rawBits() > 0x10000) {
-                Oop hdr = memory_.fetchPointer(0, method_);
-                if (hdr.isSmallInteger()) {
-                    int nl = hdr.asSmallInteger() & 0x7FFF;
-                    if (nl >= 2 && nl < 100) {
-                        Oop s = memory_.fetchPointer(nl - 1, method_);
-                        if (s.isObject() && s.rawBits() > 0x10000) {
-                            ObjectHeader* sh = s.asObjectPtr();
-                            if (sh->isBytesObject() && sh->byteSize() < 80)
-                                msel = std::string((char*)sh->bytes(), sh->byteSize());
+    // Diagnostic: trace NLR attempts from CompiledBlocks where receiver is Symbol class
+    // This specifically catches [^ self rawIntern: ...] inside Symbol>>intern:
+    bool traceNLR_ = false;
+    if (receiver_.isObject() && receiver_.rawBits() > 0x10000 &&
+        receiver_.asObjectPtr()->classIndex() == 3094) {  // Symbol class metaclass
+        // Check if we're in a CompiledBlock (not a CompiledMethod)
+        if (method_.isObject() && method_.rawBits() > 0x10000) {
+            Oop hdr = memory_.fetchPointer(0, method_);
+            if (hdr.isSmallInteger()) {
+                int nl = hdr.asSmallInteger() & 0x7FFF;
+                if (nl >= 1) {
+                    Oop lastLit = memory_.fetchPointer(nl, method_);
+                    if (lastLit.isObject() && lastLit.rawBits() > 0x10000 &&
+                        lastLit.asObjectPtr()->isCompiledMethod()) {
+                        // This IS a CompiledBlock (last literal is compiled code)
+                        traceNLR_ = true;
+                        static int nlrTraceCount = 0;
+                        if (++nlrTraceCount <= 30) {
+                            fprintf(stderr, "[NLR-TRACE #%d] 0x5C in CompiledBlock, rcvr=SymbolClass "
+                                    "fd=%zu val=0x%llx step=%llu\n",
+                                    nlrTraceCount, frameDepth_,
+                                    (unsigned long long)value.rawBits(),
+                                    (unsigned long long)g_stepNum);
+                            // Show savedFrames homeFrameDepth
+                            if (frameDepth_ > 0) {
+                                fprintf(stderr, "  savedFrames_[%zu].homeFrameDepth=%zu\n",
+                                        frameDepth_ - 1, savedFrames_[frameDepth_ - 1].homeFrameDepth);
+                                // Show all savedFrames methods
+                                for (size_t i = 0; i < frameDepth_ && i < 8; i++) {
+                                    std::string sm = "?";
+                                    Oop m = savedFrames_[i].savedMethod;
+                                    if (m.isObject() && m.rawBits() > 0x10000) {
+                                        Oop mh = memory_.fetchPointer(0, m);
+                                        if (mh.isSmallInteger()) {
+                                            int mnl = mh.asSmallInteger() & 0x7FFF;
+                                            if (mnl >= 2 && mnl < 100) {
+                                                Oop s = memory_.fetchPointer(mnl - 1, m);
+                                                if (s.isObject() && s.rawBits() > 0x10000) {
+                                                    ObjectHeader* sh = s.asObjectPtr();
+                                                    if (sh->isBytesObject() && sh->byteSize() < 80)
+                                                        sm = std::string((char*)sh->bytes(), sh->byteSize());
+                                                }
+                                            }
+                                        }
+                                    }
+                                    fprintf(stderr, "  sf[%zu] method=0x%llx #%s homeFrame=%zu\n",
+                                            i, (unsigned long long)m.rawBits(), sm.c_str(),
+                                            savedFrames_[i].homeFrameDepth);
+                                }
+                            }
+                            // Show context chain from activeContext_
+                            if (frameDepth_ == 0) {
+                                fprintf(stderr, "  Context chain from activeContext_:\n");
+                                Oop ctx = activeContext_;
+                                for (int d = 0; d < 10 && ctx.isObject() && !ctx.isNil(); d++) {
+                                    Oop cm = memory_.fetchPointer(3, ctx);
+                                    std::string cms = "?";
+                                    if (cm.isObject() && cm.rawBits() > 0x10000) {
+                                        Oop cmh = memory_.fetchPointer(0, cm);
+                                        if (cmh.isSmallInteger()) {
+                                            int cmnl = cmh.asSmallInteger() & 0x7FFF;
+                                            if (cmnl >= 2 && cmnl < 100) {
+                                                Oop s = memory_.fetchPointer(cmnl - 1, cm);
+                                                if (s.isObject() && s.rawBits() > 0x10000) {
+                                                    ObjectHeader* sh = s.asObjectPtr();
+                                                    if (sh->isBytesObject() && sh->byteSize() < 80)
+                                                        cms = std::string((char*)sh->bytes(), sh->byteSize());
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Oop pc = memory_.fetchPointer(1, ctx);
+                                    fprintf(stderr, "    [%d] ctx=0x%llx method=#%s pc=%s\n",
+                                            d, (unsigned long long)ctx.rawBits(), cms.c_str(),
+                                            pc.isNil() ? "nil(DEAD)" :
+                                            pc.isSmallInteger() ? std::to_string(pc.asSmallInteger()).c_str() : "?");
+                                    ctx = memory_.fetchPointer(0, ctx);
+                                }
+                            }
+                            fflush(stderr);
                         }
                     }
                 }
             }
-            std::string rcvCls = "?";
-            if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-                Oop cls = memory_.classOf(receiver_);
-                if (cls.isObject() && memory_.slotCountOf(cls) > 6) {
-                    Oop cn = memory_.fetchPointer(6, cls);
-                    if (cn.isObject() && cn.rawBits() > 0x10000) {
-                        ObjectHeader* cnh = cn.asObjectPtr();
-                        if (cnh->isBytesObject() && cnh->byteSize() < 50)
-                            rcvCls = std::string((char*)cnh->bytes(), cnh->byteSize());
-                    }
-                }
-            }
-            fprintf(stderr, "[RETMETHOD-SYMCLS #%d] method=#%s rcvr=%s(0x%llx) fd=%zu step=%llu\n",
-                    retFromMethodSymClsCount, msel.c_str(), rcvCls.c_str(),
-                    (unsigned long long)receiver_.rawBits(), frameDepth_,
-                    (unsigned long long)g_stepNum);
-            fflush(stderr);
         }
     }
 
@@ -4725,7 +4989,16 @@ void Interpreter::returnFromMethod() {
                 // might still be in inline frames if block was re-pushed after materialization)
                 for (size_t si = 0; si < frameDepth_; si++) {
                     if (savedFrames_[si].savedMethod.rawBits() == homeMethodOop.rawBits()) {
-                        // Home method IS in savedFrames_ — use inline NLR instead
+                        if (traceNLR_) {
+                            static int nlrInlineCount = 0;
+                            if (++nlrInlineCount <= 10) {
+                                fprintf(stderr, "[NLR-INLINE #%d] fd=%zu homeFrame=%zu step=%llu\n",
+                                        nlrInlineCount, frameDepth_, si,
+                                        (unsigned long long)g_stepNum);
+                                fflush(stderr);
+                            }
+                        }
+                        // Home method IS in savedFrames_ — use inline NLR
                         size_t homeFrame = si;
                         while (frameDepth_ > homeFrame) {
                             // Check ensure: in unwind path
@@ -4733,6 +5006,8 @@ void Interpreter::returnFromMethod() {
                                 Oop rm = savedFrames_[frameDepth_ - 1].savedMethod;
                                 if (rm.isObject() && rm.rawBits() > 0x10000 &&
                                     primitiveIndexOf(rm) == 198) {
+                                    nlrHomeMethod_ = savedFrames_[homeFrame].savedMethod;
+                                    nlrValue_ = value;
                                     popFrame();
                                     push(value);
                                     if (frameDepth_ > 0) savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
@@ -4757,6 +5032,16 @@ void Interpreter::returnFromMethod() {
                 }
 
                 if (homeCtx.isObject() && !homeCtx.isNil()) {
+                    if (traceNLR_) {
+                        static int nlrCtxFdNCount = 0;
+                        if (++nlrCtxFdNCount <= 10) {
+                            fprintf(stderr, "[NLR-CTXCHAIN-FD>0 #%d] fd=%zu homeCtx=0x%llx depth=%d step=%llu\n",
+                                    nlrCtxFdNCount, frameDepth_,
+                                    (unsigned long long)homeCtx.rawBits(), searchDepth,
+                                    (unsigned long long)g_stepNum);
+                            fflush(stderr);
+                        }
+                    }
                     // Found home context! Do context-based NLR
                     // Materialize all inline frames first
                     if (frameDepth_ > 0) {
@@ -4828,16 +5113,19 @@ void Interpreter::returnFromMethod() {
                                 }
                                 if (primIndex == 198) {
                                     // Found an ensure: frame! Stop the NLR here.
+                                    // Also set nlrHomeMethod_ as a safety net: if a
+                                    // process switch happens during cleanup and the
+                                    // savedFrame homeFrameDepth is lost, returnValue()
+                                    // at fd=0 can use nlrHomeMethod_ to find the home
+                                    // context and continue the NLR.
+                                    nlrHomeMethod_ = savedFrames_[homeFrame].savedMethod;
+                                    nlrValue_ = value;
                                     popFrame();
-                                    // Now method_ = ensure:, IP = after valueNoContextSwitch
-                                    // Push the NLR return value as the result of valueNoContextSwitch
                                     push(value);
-                                    // Set homeFrameDepth so that when ensure: does ^returnValue,
-                                    // the NLR continues to the original target.
                                     if (frameDepth_ > 0) {
                                         savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
                                     }
-                                    return;  // Let interpreter run ensure:'s continuation
+                                    return;
                                 }
                             }
                         }
@@ -4846,6 +5134,8 @@ void Interpreter::returnFromMethod() {
                 popFrame();
             }
             // Now we're at homeFrame, returnValue pops this frame and returns to caller
+            nlrHomeMethod_ = Oop::nil();  // Clear safety net — inline NLR succeeded
+            nlrValue_ = Oop::nil();
             returnValue(value);
             return;
         }
@@ -4913,14 +5203,42 @@ void Interpreter::returnFromMethod() {
         }
 
         if (homeCtx.isObject() && !homeCtx.isNil()) {
+            if (traceNLR_) {
+                static int nlrFoundCount = 0;
+                if (++nlrFoundCount <= 10) {
+                    Oop hpc = memory_.fetchPointer(1, homeCtx);
+                    fprintf(stderr, "[NLR-FOUND-FD0 #%d] homeCtx=0x%llx pc=%s depth=%d step=%llu\n",
+                            nlrFoundCount, (unsigned long long)homeCtx.rawBits(),
+                            hpc.isNil() ? "nil(DEAD)" : hpc.isSmallInteger() ?
+                                std::to_string(hpc.asSmallInteger()).c_str() : "?",
+                            depth, (unsigned long long)g_stepNum);
+                    fflush(stderr);
+                }
+            }
             // Check for unwind (ensure:) contexts between here and home
             if (handleContextNLRUnwind(value, activeContext_, homeCtx)) {
+                if (traceNLR_) {
+                    static int nlrUnwindCount = 0;
+                    if (++nlrUnwindCount <= 10) {
+                        fprintf(stderr, "[NLR-UNWIND-FD0 #%d] aboutToReturn:through: sent, step=%llu\n",
+                                nlrUnwindCount, (unsigned long long)g_stepNum);
+                        fflush(stderr);
+                    }
+                }
                 return;
             }
 
             // No unwind contexts - return FROM the home context
             Oop sender = memory_.fetchPointer(0, homeCtx);
             if (sender.isObject() && !sender.isNil()) {
+                if (traceNLR_) {
+                    static int nlrOkCount = 0;
+                    if (++nlrOkCount <= 10) {
+                        fprintf(stderr, "[NLR-OK-FD0 #%d] returning from homeCtx sender, step=%llu\n",
+                                nlrOkCount, (unsigned long long)g_stepNum);
+                        fflush(stderr);
+                    }
+                }
                 Oop stackpOop = memory_.fetchPointer(2, sender);
                 if (stackpOop.isSmallInteger()) {
                     int stackp = stackpOop.asSmallInteger();
@@ -4937,6 +5255,15 @@ void Interpreter::returnFromMethod() {
     // If we're in a CompiledBlock and couldn't find the home method in the call chain,
     // the home method has already returned. Send cannotReturn: per Pharo spec.
     if (isCompiledBlock) {
+        if (traceNLR_) {
+            static int cannotRetCount = 0;
+            if (++cannotRetCount <= 30) {
+                fprintf(stderr, "[NLR-CANNOTRETURN #%d] fd=%zu step=%llu val=0x%llx\n",
+                        cannotRetCount, frameDepth_,
+                        (unsigned long long)g_stepNum, (unsigned long long)value.rawBits());
+                fflush(stderr);
+            }
+        }
         // Materialize frames if needed so cannotReturn: has proper context
         if (frameDepth_ > 0) {
             Oop topCtx = materializeFrameStack();
@@ -4984,16 +5311,14 @@ void Interpreter::returnFromBlock() {
                                 primIndex = bc[1] | (bc[2] << 8);
                             }
                             if (primIndex == 198) {
-                                // Found an ensure: frame! Stop the NLR here.
+                                nlrHomeMethod_ = savedFrames_[homeFrame].savedMethod;
+                                nlrValue_ = value;
                                 popFrame();
-                                // Push the NLR return value as the result of valueNoContextSwitch
                                 push(value);
-                                // Set this frame's homeFrameDepth so that when ensure: does
-                                // ^returnValue, the NLR continues to the original target.
                                 if (frameDepth_ > 0) {
                                     savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
                                 }
-                                return;  // Let interpreter run ensure:'s continuation
+                                return;
                             }
                         }
                     }
@@ -5095,49 +5420,106 @@ void Interpreter::returnFromBlock() {
 
 // Handle unwind (ensure:) contexts during context-based non-local returns.
 // Walks the sender chain from startCtx to homeCtx looking for contexts whose
-// method has primitive 198 (the ensure:/ifCurtailed: marker). If found, sends
-// aboutToReturn:through: to the current context, letting Smalltalk handle the
-// unwind. Returns true if an unwind context was found.
+// method has primitive 198 (the ensure:/ifCurtailed: marker).
+//
+// When found, uses a "pending NLR" mechanism:
+// 1. Kill all contexts from startCtx to just before ensureCtx
+// 2. Push the NLR value onto ensureCtx's stack (as if valueNoContextSwitch returned)
+// 3. Store homeCtx in nlrTargetCtx_ and ensureCtx in nlrEnsureCtx_
+// 4. executeFromContext(ensureCtx) — ensure: runs its cleanup normally
+// 5. When ensure: returns (detected in returnValue() via nlrTargetCtx_),
+//    the NLR continues to homeCtx's sender
+//
+// This correctly handles multiple ensure: contexts in the chain: each ensure:
+// runs its cleanup, and the NLR continues through all of them.
+//
+// Previous approach using aboutToReturn:through: was broken: it fired the
+// ensure: cleanup but didn't continue the NLR. The NLR value was returned
+// normally through the ensure: → critical: chain, and intern:'s `pop; returnSelf`
+// discarded it, returning Symbol class instead of the interned symbol.
 bool Interpreter::handleContextNLRUnwind(Oop value, Oop startCtx, Oop homeCtx) {
     Oop ctx = startCtx;
     int depth = 0;
+    Oop ensureCtx = Oop::nil();
 
+    // Find the first ensure: (prim 198) context between start and home
     while (ctx.isObject() && !ctx.isNil() && depth < 200) {
-        if (ctx.rawBits() == homeCtx.rawBits()) break;  // Reached home, no unwind found
+        if (ctx.rawBits() == homeCtx.rawBits()) break;
 
-        Oop method = memory_.fetchPointer(3, ctx);  // slot 3 = method
+        Oop method = memory_.fetchPointer(3, ctx);
         if (method.isObject() && !method.isNil()) {
             if (primitiveIndexOf(method) == 198) {
-                // Found an unwind context (ensure:/ifCurtailed:).
-                // Per the reference VM, send aboutToReturn:through: to the
-                // current context and let Smalltalk handle the unwind.
-                // Send aboutToReturn:through: to activeContext_
-                // receiver = current context, arg1 = return value, arg2 = unwind context
-                push(activeContext_);  // receiver
-                push(value);           // arg 1: the return value
-                push(ctx);             // arg 2: the first unwind context
-                sendSelector(selectors_.aboutToReturn, 2);
-                return true;
+                ensureCtx = ctx;
+                break;
             }
         }
-        ctx = memory_.fetchPointer(0, ctx);  // sender = slot 0
+        ctx = memory_.fetchPointer(0, ctx);
         depth++;
     }
 
-    // Reference VM also checks if homeCtx itself has prim 198
-    // (e.g., the home IS an ensure: context)
-    if (ctx.isObject() && !ctx.isNil() && ctx.rawBits() == homeCtx.rawBits()) {
+    // Also check if homeCtx itself is an ensure: context
+    if (ensureCtx.isNil() && ctx.isObject() && !ctx.isNil() &&
+        ctx.rawBits() == homeCtx.rawBits()) {
         Oop method = memory_.fetchPointer(3, homeCtx);
         if (method.isObject() && !method.isNil() && primitiveIndexOf(method) == 198) {
-            push(activeContext_);
-            push(value);
-            push(homeCtx);
-            sendSelector(selectors_.aboutToReturn, 2);
-            return true;
+            ensureCtx = homeCtx;
         }
     }
 
-    return false;
+    if (ensureCtx.isNil()) return false;
+
+    Oop nilObj = memory_.nil();
+
+    // Step 1: Kill all contexts from startCtx up to (but not including) ensureCtx
+    {
+        Oop c = startCtx;
+        int safety = 0;
+        while (c.isObject() && c.rawBits() != nilObj.rawBits() &&
+               c.rawBits() != ensureCtx.rawBits() && safety++ < 200) {
+            Oop nextSender = memory_.fetchPointer(0, c);
+            memory_.storePointer(0, c, nilObj);  // sender = nil
+            memory_.storePointer(1, c, nilObj);  // pc = nil (dead)
+            c = nextSender;
+        }
+    }
+
+    // Step 2: Store the NLR target so returnValue() can continue the NLR
+    nlrTargetCtx_ = homeCtx;
+    nlrEnsureCtx_ = ensureCtx;
+
+    // Step 3: Push the NLR value onto ensureCtx's stack
+    // This simulates valueNoContextSwitch returning the NLR value.
+    // ensure: method: `returnValue := self valueNoContextSwitch`
+    // The ensureCtx is waiting for the return of valueNoContextSwitch.
+    // Push the NLR value as that return value.
+    {
+        Oop stackpOop = memory_.fetchPointer(2, ensureCtx);
+        if (stackpOop.isSmallInteger()) {
+            int stackp = stackpOop.asSmallInteger();
+            stackp++;
+            memory_.storePointer(2, ensureCtx, Oop::fromSmallInteger(stackp));
+            memory_.storePointer(5 + stackp, ensureCtx, value);
+        }
+    }
+
+    // Step 4: Execute from ensureCtx
+    // ensure: resumes after valueNoContextSwitch:
+    //   returnValue := <NLR value>  (assignment from the stack)
+    //   complete := true
+    //   aBlock value               (ensure block fires!)
+    //   ^ returnValue              (returns NLR value — intercepted by returnValue())
+    executeFromContext(ensureCtx);
+
+    static int nlrUnwindDirectCount = 0;
+    if (++nlrUnwindDirectCount <= 20) {
+        fprintf(stderr, "[NLR-UNWIND-PEND #%d] ensureCtx=0x%llx homeCtx=0x%llx step=%llu\n",
+                nlrUnwindDirectCount, (unsigned long long)ensureCtx.rawBits(),
+                (unsigned long long)homeCtx.rawBits(),
+                (unsigned long long)g_stepNum);
+        fflush(stderr);
+    }
+
+    return true;
 }
 
 void Interpreter::extendedPush() {
@@ -9403,6 +9785,12 @@ void Interpreter::initializeSelectors() {
 // ===== PROCESS SCHEDULING =====
 
 void Interpreter::terminateCurrentProcess() {
+    // Clear any pending NLR state
+    nlrTargetCtx_ = Oop::nil();
+    nlrEnsureCtx_ = Oop::nil();
+    nlrHomeMethod_ = Oop::nil();
+    nlrValue_ = Oop::nil();
+
     static FILE* termLog = stderr;  // Always log terminations - critical diagnostic
     static int termCount = 0;
     termCount++;
