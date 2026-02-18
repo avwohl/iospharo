@@ -1764,6 +1764,33 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
         }
         size_t actualSlot = fixedFields + arrayIndex;
         Oop result = header->slotAt(actualSlot);
+        // DIAGNOSTIC: detect when at: returns Symbol class (ci=3094)
+        if (result.isObject() && result.rawBits() > 0x10000 &&
+            result.asObjectPtr()->classIndex() == 3094) {
+            static int atSymClsCount = 0;
+            if (++atSymClsCount <= 20) {
+                uint32_t rcvrCI = header->classIndex();
+                uint8_t rcvrFmt = static_cast<uint8_t>(header->format());
+                fprintf(stderr, "[AT-SYMCLS #%d] step=%llu rcvr=0x%llx(ci%u,fmt%u,slots%zu) "
+                        "idx=%lld fixed=%zu actualSlot=%zu result=0x%llx\n",
+                        atSymClsCount, (unsigned long long)g_stepNum,
+                        (unsigned long long)rcvr.rawBits(), rcvrCI, rcvrFmt,
+                        header->slotCount(), (long long)idx, fixedFields, actualSlot,
+                        (unsigned long long)result.rawBits());
+                // Show neighboring slots for context
+                for (size_t k = (actualSlot > 2 ? actualSlot - 2 : 0);
+                     k < actualSlot + 3 && k < header->slotCount(); k++) {
+                    Oop sv = header->slotAt(k);
+                    uint32_t svci = 0;
+                    if (sv.isObject() && sv.rawBits() > 0x10000)
+                        svci = sv.asObjectPtr()->classIndex();
+                    fprintf(stderr, "  slot[%zu] = 0x%llx (ci=%u)%s\n",
+                            k, (unsigned long long)sv.rawBits(), svci,
+                            k == actualSlot ? " <--" : "");
+                }
+                fflush(stderr);
+            }
+        }
         primitiveSuccess(result);
         return PrimitiveResult::Success;
     } else if (header->isCompiledMethod()) {
@@ -9367,6 +9394,28 @@ PrimitiveResult Interpreter::primitiveTerminateTo(int argCount) {
             if (current.rawBits() == aContextOrNil.rawBits()) break;
             if (!current.isObject() || current.rawBits() == nilObj.rawBits()) break;
             Oop sender = memory_.fetchPointer(SenderIndex, current);
+            // Diagnostic: check if we're killing a scheduler context
+            {
+                Oop m = memory_.fetchPointer(3, current);
+                if (m.isObject() && m.rawBits() > 0x10000) {
+                    Oop h = memory_.fetchPointer(0, m);
+                    if (h.isSmallInteger()) {
+                        int nl = h.asSmallInteger() & 0x7FFF;
+                        if (nl >= 2) {
+                            Oop s = memory_.fetchPointer(nl - 1, m);
+                            if (s.isObject() && s.rawBits() > 0x10000) {
+                                auto* sh = s.asObjectPtr();
+                                if (sh->isBytesObject() && sh->byteSize() > 15 &&
+                                    memcmp(sh->bytes(), "waitForUser", 11) == 0) {
+                                    fprintf(stderr, "[KILL-SCHED-CTX] at prim196-terminateTo ctx=0x%llx step=%llu\n",
+                                            (unsigned long long)current.rawBits(), (unsigned long long)g_stepNum);
+                                    fflush(stderr);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             memory_.storePointer(SenderIndex, current, nilObj);
             current = sender;
         }

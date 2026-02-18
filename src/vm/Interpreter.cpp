@@ -46,6 +46,63 @@ volatile uint8_t g_watchdogLastBytecode = 0;
 static pharo::Oop g_delaySchedulerProcess = pharo::Oop::nil();
 static bool g_delaySchedulerDead = false;
 
+// Diagnostic: check if a context's method selector starts with a given prefix
+static bool contextMethodStartsWith(pharo::ObjectMemory& memory, pharo::Oop ctx, const char* prefix) {
+    if (!ctx.isObject() || ctx.isNil() || ctx.rawBits() <= 0x10000) return false;
+    pharo::Oop method = memory.fetchPointer(3, ctx);
+    if (!method.isObject() || method.isNil() || method.rawBits() <= 0x10000) return false;
+    pharo::Oop hdr = memory.fetchPointer(0, method);
+    if (!hdr.isSmallInteger()) return false;
+    int nl = hdr.asSmallInteger() & 0x7FFF;
+    if (nl < 2) return false;
+    pharo::Oop sel = memory.fetchPointer(nl - 1, method);
+    if (!sel.isObject() || sel.rawBits() <= 0x10000) return false;
+    auto* sh = sel.asObjectPtr();
+    if (!sh->isBytesObject() || sh->byteSize() < strlen(prefix)) return false;
+    return memcmp(sh->bytes(), prefix, strlen(prefix)) == 0;
+}
+
+// Ring buffer for context-kill events (for scheduler death diagnosis)
+struct CtxKillEvent {
+    uint64_t step;
+    uint64_t ctxAddr;
+    uint64_t senderAddr;
+    const char* location;  // which code path killed it
+    char methodName[40];
+};
+static CtxKillEvent g_ctxKillRing[32];
+static int g_ctxKillIdx = 0;
+static void recordCtxKill(uint64_t step, pharo::Oop ctx, pharo::Oop sender,
+                          const char* location, pharo::ObjectMemory& memory) {
+    auto& e = g_ctxKillRing[g_ctxKillIdx % 32];
+    e.step = step;
+    e.ctxAddr = ctx.rawBits();
+    e.senderAddr = sender.rawBits();
+    e.location = location;
+    e.methodName[0] = '\0';
+    // Extract method name
+    if (ctx.isObject() && ctx.rawBits() > 0x10000) {
+        pharo::Oop m = memory.fetchPointer(3, ctx);
+        if (m.isObject() && m.rawBits() > 0x10000) {
+            pharo::Oop h = memory.fetchPointer(0, m);
+            if (h.isSmallInteger()) {
+                int nl = h.asSmallInteger() & 0x7FFF;
+                if (nl >= 2) {
+                    pharo::Oop s = memory.fetchPointer(nl - 1, m);
+                    if (s.isObject() && s.rawBits() > 0x10000) {
+                        auto* sh = s.asObjectPtr();
+                        if (sh->isBytesObject() && sh->byteSize() < 39) {
+                            memcpy(e.methodName, sh->bytes(), sh->byteSize());
+                            e.methodName[sh->byteSize()] = '\0';
+                        }
+                    }
+                }
+            }
+        }
+    }
+    g_ctxKillIdx++;
+}
+
 // Forward declaration for SDL rendering active check (defined in FFI.cpp)
 extern "C" bool ffi_isSDLRenderingActive();
 // Watchdog send diagnostic: selector and receiver class name for last send
@@ -4263,6 +4320,12 @@ void Interpreter::returnValue(Oop value) {
             Oop senderOfCurrent = memory_.fetchPointer(0, activeContext_);
 
             // Kill the current context (ensure: is done)
+            recordCtxKill(g_stepNum, activeContext_, senderOfCurrent, "nlr-ensure-done", memory_);
+            if (contextMethodStartsWith(memory_, activeContext_, "waitForUser")) {
+                fprintf(stderr, "[KILL-SCHED-CTX] at nlr-ensure-done ctx=0x%llx step=%llu\n",
+                        (unsigned long long)activeContext_.rawBits(), (unsigned long long)g_stepNum);
+                fflush(stderr);
+            }
             memory_.storePointer(0, activeContext_, nilObj);  // sender = nil
             memory_.storePointer(1, activeContext_, nilObj);  // pc = nil (dead)
 
@@ -4290,6 +4353,12 @@ void Interpreter::returnValue(Oop value) {
                 while (c.isObject() && c.rawBits() != nilObj.rawBits() &&
                        c.rawBits() != nextEnsureCtx.rawBits() && safety++ < 200) {
                     Oop next = memory_.fetchPointer(0, c);
+                    recordCtxKill(g_stepNum, c, next, "nlr-between-ensures", memory_);
+                    if (contextMethodStartsWith(memory_, c, "waitForUser")) {
+                        fprintf(stderr, "[KILL-SCHED-CTX] at nlr-between-ensures ctx=0x%llx step=%llu\n",
+                                (unsigned long long)c.rawBits(), (unsigned long long)g_stepNum);
+                        fflush(stderr);
+                    }
                     memory_.storePointer(0, c, nilObj);
                     memory_.storePointer(1, c, nilObj);
                     c = next;
@@ -4322,6 +4391,12 @@ void Interpreter::returnValue(Oop value) {
                 while (c.isObject() && c.rawBits() != nilObj.rawBits() &&
                        c.rawBits() != homeCtx.rawBits() && safety++ < 200) {
                     Oop next = memory_.fetchPointer(0, c);
+                    recordCtxKill(g_stepNum, c, next, "nlr-to-home", memory_);
+                    if (contextMethodStartsWith(memory_, c, "waitForUser")) {
+                        fprintf(stderr, "[KILL-SCHED-CTX] at nlr-to-home ctx=0x%llx step=%llu\n",
+                                (unsigned long long)c.rawBits(), (unsigned long long)g_stepNum);
+                        fflush(stderr);
+                    }
                     memory_.storePointer(0, c, nilObj);
                     memory_.storePointer(1, c, nilObj);
                     c = next;
@@ -4331,6 +4406,12 @@ void Interpreter::returnValue(Oop value) {
                 Oop homeSender = memory_.fetchPointer(0, homeCtx);
 
                 // Kill homeCtx itself
+                recordCtxKill(g_stepNum, homeCtx, homeSender, "nlr-kill-home", memory_);
+                if (contextMethodStartsWith(memory_, homeCtx, "waitForUser")) {
+                    fprintf(stderr, "[KILL-SCHED-CTX] at nlr-kill-home ctx=0x%llx step=%llu\n",
+                            (unsigned long long)homeCtx.rawBits(), (unsigned long long)g_stepNum);
+                    fflush(stderr);
+                }
                 memory_.storePointer(0, homeCtx, nilObj);
                 memory_.storePointer(1, homeCtx, nilObj);
 
@@ -4343,10 +4424,34 @@ void Interpreter::returnValue(Oop value) {
 
                     static int nlrCompleteCount = 0;
                     if (++nlrCompleteCount <= 20) {
-                        fprintf(stderr, "[NLR-COMPLETE #%d] value=0x%llx homeSender=0x%llx step=%llu\n",
+                        Oop proc = getActiveProcess();
+                        Oop prioOop = memory_.fetchPointer(2, proc); // priority
+                        int prio = prioOop.isSmallInteger() ? (int)prioOop.asSmallInteger() : -1;
+                        // Get method name of homeSender
+                        std::string hsMethod = "?";
+                        if (homeSender.isObject() && !homeSender.isNil()) {
+                            Oop m = memory_.fetchPointer(3, homeSender);
+                            if (m.isObject() && !m.isNil()) {
+                                Oop hdr = memory_.fetchPointer(0, m);
+                                if (hdr.isSmallInteger()) {
+                                    int nl = hdr.asSmallInteger() & 0x7FFF;
+                                    if (nl >= 2) {
+                                        Oop s = memory_.fetchPointer(nl - 1, m);
+                                        if (s.isObject() && s.rawBits() > 0x10000) {
+                                            ObjectHeader* sh = s.asObjectPtr();
+                                            if (sh->isBytesObject() && sh->byteSize() < 80)
+                                                hsMethod = std::string((char*)sh->bytes(), sh->byteSize());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        fprintf(stderr, "[NLR-COMPLETE #%d] value=0x%llx homeSender=0x%llx step=%llu proc=0x%llx prio=%d hsMethod=%s\n",
                                 nlrCompleteCount, (unsigned long long)value.rawBits(),
                                 (unsigned long long)homeSender.rawBits(),
-                                (unsigned long long)g_stepNum);
+                                (unsigned long long)g_stepNum,
+                                (unsigned long long)proc.rawBits(), prio,
+                                hsMethod.c_str());
                         fflush(stderr);
                     }
                     return;
@@ -4467,6 +4572,7 @@ void Interpreter::returnValue(Oop value) {
 
         // Check if current context has a sender
         Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
+        const char* termReason = nullptr;  // Why we fell through to terminate
 
         if (activeContext_.isObject() && activeContext_.rawBits() != nilObj.rawBits()) {
             Oop sender = memory_.fetchPointer(0, activeContext_);
@@ -4474,9 +4580,11 @@ void Interpreter::returnValue(Oop value) {
             // DEFENSIVE: Check for corrupted sender (raw 0 or very low address)
             if (sender.rawBits() == 0 || sender.rawBits() < 0x10000) {
                 // Corrupted sender - treat as end of context chain
+                termReason = "corrupted-sender";
                 // Fall through to terminate current process
             } else if (sender.rawBits() == nilObj.rawBits()) {
                 // Sender is nil - this method is at the top of the context chain
+                termReason = "nil-sender";
                 // Fall through to terminate current process
             } else if (sender.isObject() && sender.rawBits() != nilObj.rawBits()) {
                 // Fix unrelocated sender pointer before dereferencing
@@ -4491,6 +4599,7 @@ void Interpreter::returnValue(Oop value) {
                 }
                 if (!memory_.isValidPointer(sender)) {
                     // Invalid sender - terminate process
+                    termReason = "invalid-sender-ptr";
                     goto terminate_process;
                 }
                 ObjectHeader* senderHdr = sender.asObjectPtr();
@@ -4506,6 +4615,14 @@ void Interpreter::returnValue(Oop value) {
                     // Execute from sender, which will push the return value appropriately
                     // First, mark the returning context as dead per Cog VM semantics:
                     // nil the sender and PC so isDead returns true and sender chain is broken.
+                    recordCtxKill(g_stepNum, activeContext_, sender, "returnValue-fd0", memory_);
+                    if (contextMethodStartsWith(memory_, activeContext_, "waitForUser")) {
+                        fprintf(stderr, "[KILL-SCHED-CTX] at returnValue-fd0 ctx=0x%llx sender=0x%llx step=%llu\n",
+                                (unsigned long long)activeContext_.rawBits(),
+                                (unsigned long long)sender.rawBits(),
+                                (unsigned long long)g_stepNum);
+                        fflush(stderr);
+                    }
                     memory_.storePointer(0, activeContext_, memory_.nil());  // sender = nil
                     memory_.storePointer(1, activeContext_, memory_.nil());  // pc = nil → isDead
 
@@ -4514,11 +4631,71 @@ void Interpreter::returnValue(Oop value) {
                         push(value);
                         return;
                     }
+                    termReason = "executeFromContext-failed";
+                } else {
+                    termReason = "sender-not-context";
                 }
             }
         }
 
 terminate_process:
+        // Diagnostic: log high-priority process termination details
+        {
+            Oop proc = getActiveProcess();
+            Oop prioOop = memory_.fetchPointer(2, proc);
+            int prio = prioOop.isSmallInteger() ? (int)prioOop.asSmallInteger() : -1;
+            if (prio >= 70) {
+                // Log the context chain state for high-priority process death
+                fprintf(stderr, "[HIPRI-TERM] prio=%d proc=0x%llx step=%llu fd=%zu reason=%s\n",
+                        prio, (unsigned long long)proc.rawBits(),
+                        (unsigned long long)g_stepNum, frameDepth_,
+                        termReason ? termReason : "no-context");
+                // Log current context info
+                Oop ctx = activeContext_;
+                int depth = 0;
+                while (ctx.isObject() && !ctx.isNil() && depth < 10) {
+                    Oop method = memory_.fetchPointer(3, ctx);
+                    Oop pc = memory_.fetchPointer(1, ctx);
+                    Oop sender = memory_.fetchPointer(0, ctx);
+                    std::string mname = "?";
+                    if (method.isObject() && !method.isNil()) {
+                        Oop hdr = memory_.fetchPointer(0, method);
+                        if (hdr.isSmallInteger()) {
+                            int nl = hdr.asSmallInteger() & 0x7FFF;
+                            if (nl >= 2) {
+                                Oop s = memory_.fetchPointer(nl - 1, method);
+                                if (s.isObject() && s.rawBits() > 0x10000) {
+                                    ObjectHeader* sh = s.asObjectPtr();
+                                    if (sh->isBytesObject() && sh->byteSize() < 80)
+                                        mname = std::string((char*)sh->bytes(), sh->byteSize());
+                                }
+                            }
+                        }
+                    }
+                    fprintf(stderr, "[HIPRI-TERM]  ctx[%d]=0x%llx method=%s pc=%s sender=%s\n",
+                            depth, (unsigned long long)ctx.rawBits(), mname.c_str(),
+                            pc.isSmallInteger() ? std::to_string(pc.asSmallInteger()).c_str() :
+                                (pc.isNil() ? "nil(dead)" : "obj"),
+                            sender.isNil() ? "nil" :
+                                (sender.rawBits() == 0 ? "RAW-0" :
+                                    (sender.isObject() ? "obj" : "smi??")));
+                    ctx = sender;
+                    depth++;
+                }
+                // Dump recent context-kill ring buffer
+                fprintf(stderr, "[HIPRI-TERM] Recent context kills (last 20):\n");
+                int startIdx = (g_ctxKillIdx > 20) ? g_ctxKillIdx - 20 : 0;
+                for (int k = startIdx; k < g_ctxKillIdx; k++) {
+                    auto& e = g_ctxKillRing[k % 32];
+                    fprintf(stderr, "[HIPRI-TERM]  kill[%d] step=%llu ctx=0x%llx sender=0x%llx loc=%s method=%s\n",
+                            k, (unsigned long long)e.step,
+                            (unsigned long long)e.ctxAddr,
+                            (unsigned long long)e.senderAddr,
+                            e.location, e.methodName);
+                }
+                fflush(stderr);
+            }
+        }
         // Mark current process as terminated by clearing its suspendedContext
         terminateCurrentProcess();
 
@@ -10700,11 +10877,62 @@ void Interpreter::transferTo(Oop newProcess) {
         memory_.storePointer(ProcessSuspendedContextIndex, oldProcess, contextToSave);
     }
 
+    // Diagnostic: log scheduler save/restore with sender state
+    {
+        int oPri = -1, nPri = -1;
+        {
+            Oop p = memory_.fetchPointer(ProcessPriorityIndex, oldProcess);
+            oPri = p.isSmallInteger() ? (int)p.asSmallInteger() : -1;
+        }
+        {
+            Oop p = memory_.fetchPointer(ProcessPriorityIndex, newProcess);
+            nPri = p.isSmallInteger() ? (int)p.asSmallInteger() : -1;
+        }
+        if (oPri == 80 && contextToSave.isObject() && !contextToSave.isNil()) {
+            Oop sender = memory_.fetchPointer(0, contextToSave);
+            Oop pc = memory_.fetchPointer(1, contextToSave);
+            fprintf(stderr, "[XFER-SAVE-P80] ctx=0x%llx sender=%s pc=%s step=%llu fd=%zu\n",
+                    (unsigned long long)contextToSave.rawBits(),
+                    sender.isNil() ? "nil" : (sender.isObject() ? "obj" : "??"),
+                    pc.isSmallInteger() ? "smi" : (pc.isNil() ? "nil" : "??"),
+                    (unsigned long long)g_stepNum, frameDepth_);
+            if (sender.isNil() || pc.isNil()) {
+                fprintf(stderr, "[XFER-SAVE-P80] WARNING: saving dead context!\n");
+                if (contextMethodStartsWith(memory_, contextToSave, "waitForUser")) {
+                    fprintf(stderr, "[XFER-SAVE-P80] SAVING DEAD SCHEDULER CONTEXT!\n");
+                }
+            }
+            fflush(stderr);
+        }
+    }
+
     // Switch to new process
     setActiveProcess(newProcess);
 
     // Get new process's suspended context
     Oop newContext = memory_.fetchPointer(ProcessSuspendedContextIndex, newProcess);
+
+    // Diagnostic: log scheduler resume
+    {
+        Oop p = memory_.fetchPointer(ProcessPriorityIndex, newProcess);
+        int nPri = p.isSmallInteger() ? (int)p.asSmallInteger() : -1;
+        if (nPri == 80 && newContext.isObject() && !newContext.isNil()) {
+            Oop sender = memory_.fetchPointer(0, newContext);
+            Oop pc = memory_.fetchPointer(1, newContext);
+            fprintf(stderr, "[XFER-RESUME-P80] ctx=0x%llx sender=%s pc=%s step=%llu\n",
+                    (unsigned long long)newContext.rawBits(),
+                    sender.isNil() ? "nil" : (sender.isObject() ? "obj" : "??"),
+                    pc.isSmallInteger() ? "smi" : (pc.isNil() ? "nil" : "??"),
+                    (unsigned long long)g_stepNum);
+            if (sender.isNil() || pc.isNil()) {
+                fprintf(stderr, "[XFER-RESUME-P80] WARNING: resuming dead context!\n");
+                if (contextMethodStartsWith(memory_, newContext, "waitForUser")) {
+                    fprintf(stderr, "[XFER-RESUME-P80] RESUMING DEAD SCHEDULER CONTEXT!\n");
+                }
+            }
+            fflush(stderr);
+        }
+    }
 
     // Nil out the new process's suspendedContext now that we've read it.
     // This prevents GC from tracing stale context chains that keep objects alive.
