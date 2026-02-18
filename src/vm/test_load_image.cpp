@@ -615,32 +615,61 @@ int main(int argc, char* argv[]) {
                 fprintf(stderr, "[SYMCLS-DETECT] Symbol at %p, oldSpace=[%p,%p), inOldSpace=%d\n",
                         symAddr, osStart, osFree,
                         (symAddr >= osStart && symAddr < osFree) ? 1 : 0);
-                // Check the association at 0x3000660c0 (from LITVAR-SYMCLS in asSymbol)
-                {
-                    auto* assocAddr = reinterpret_cast<ObjectHeader*>(memory.oldSpaceStart() + 0x660c0);
-                    if (reinterpret_cast<uint8_t*>(assocAddr) < reinterpret_cast<uint8_t*>(memory.oldSpaceFree())) {
-                        fprintf(stderr, "[SYMCLS-DETECT] Assoc@0x660c0: ci=%d slots=%zu fmt=%d hash=%u\n",
-                                assocAddr->classIndex(), assocAddr->slotCount(), (int)assocAddr->format(),
-                                assocAddr->identityHash());
-                        if (assocAddr->slotCount() >= 2) {
-                            Oop k = assocAddr->slotAt(0);
-                            Oop v = assocAddr->slotAt(1);
-                            fprintf(stderr, "[SYMCLS-DETECT] Assoc@0x660c0: key=0x%llx val=0x%llx\n",
-                                    (unsigned long long)k.rawBits(), (unsigned long long)v.rawBits());
-                            if (v.isObject() && v.rawBits() > 0x10000) {
-                                fprintf(stderr, "[SYMCLS-DETECT] val at 0x%llx: ci=%d slots=%zu fmt=%d\n",
-                                        (unsigned long long)v.rawBits(),
-                                        v.asObjectPtr()->classIndex(), v.asObjectPtr()->slotCount(),
-                                        (int)v.asObjectPtr()->format());
-                            }
+                // Check object at 0x2298 offset (where PUSH-SYMCLS fires at 0x300002298)
+                auto* obj2298 = reinterpret_cast<ObjectHeader*>(memory.oldSpaceStart() + 0x2298);
+                if (reinterpret_cast<uint8_t*>(obj2298) < reinterpret_cast<uint8_t*>(memory.oldSpaceFree())) {
+                    fprintf(stderr, "[SYMCLS-DETECT] Object at 0x2298: ci=%d slots=%zu fmt=%d hash=%u rawHdr=0x%llx\n",
+                            obj2298->classIndex(), obj2298->slotCount(), (int)obj2298->format(),
+                            obj2298->identityHash(), (unsigned long long)obj2298->rawHeader());
+                    // Show first few slots
+                    for (size_t si = 0; si < std::min(obj2298->slotCount(), (size_t)6); si++) {
+                        Oop sv = obj2298->slotAt(si);
+                        fprintf(stderr, "  slot[%zu] = 0x%llx", si, (unsigned long long)sv.rawBits());
+                        if (sv.isObject() && sv.rawBits() > 0x10000) {
+                            auto* sh = sv.asObjectPtr();
+                            if (sh->isBytesObject() && sh->byteSize() < 80)
+                                fprintf(stderr, " =\"%.*s\"", (int)sh->byteSize(), (char*)sh->bytes());
+                            else
+                                fprintf(stderr, " (ci=%d,slots=%zu,fmt=%d)", sh->classIndex(), sh->slotCount(), (int)sh->format());
+                        } else if (sv.isSmallInteger()) {
+                            fprintf(stderr, " (smi=%lld)", (long long)sv.asSmallInteger());
+                        }
+                        fprintf(stderr, "\n");
+                    }
+                }
+                // Also scan ALL old space objects with ci=3094 using objectAfter
+                // Skip the broken linear scan — instead check a few key addresses
+                // Check object at 0x65ea8 offset (where LITVAR-SYMCLS shows the association)
+                auto* assoc65ea8 = reinterpret_cast<ObjectHeader*>(memory.oldSpaceStart() + 0x65ea8);
+                if (reinterpret_cast<uint8_t*>(assoc65ea8) < reinterpret_cast<uint8_t*>(memory.oldSpaceFree())) {
+                    fprintf(stderr, "[SYMCLS-DETECT] Obj@0x65ea8: ci=%d slots=%zu fmt=%d hash=%u rawHdr=0x%llx\n",
+                            assoc65ea8->classIndex(), assoc65ea8->slotCount(), (int)assoc65ea8->format(),
+                            assoc65ea8->identityHash(), (unsigned long long)assoc65ea8->rawHeader());
+                    if (assoc65ea8->slotCount() >= 2 && assoc65ea8->slotCount() < 100) {
+                        Oop k = assoc65ea8->slotAt(0);
+                        Oop v = assoc65ea8->slotAt(1);
+                        fprintf(stderr, "  key=0x%llx val=0x%llx\n",
+                                (unsigned long long)k.rawBits(), (unsigned long long)v.rawBits());
+                    }
+                }
+                // Also check the dictionary assoc from findGlobal (0x7a160)
+                auto* assoc7a160 = reinterpret_cast<ObjectHeader*>(memory.oldSpaceStart() + 0x7a160);
+                if (reinterpret_cast<uint8_t*>(assoc7a160) < reinterpret_cast<uint8_t*>(memory.oldSpaceFree())) {
+                    fprintf(stderr, "[SYMCLS-DETECT] Obj@0x7a160: ci=%d slots=%zu fmt=%d hash=%u rawHdr=0x%llx\n",
+                            assoc7a160->classIndex(), assoc7a160->slotCount(), (int)assoc7a160->format(),
+                            assoc7a160->identityHash(), (unsigned long long)assoc7a160->rawHeader());
+                    if (assoc7a160->slotCount() >= 2 && assoc7a160->slotCount() < 100) {
+                        Oop k = assoc7a160->slotAt(0);
+                        Oop v = assoc7a160->slotAt(1);
+                        fprintf(stderr, "  key=0x%llx val=0x%llx\n",
+                                (unsigned long long)k.rawBits(), (unsigned long long)v.rawBits());
+                        if (k.isObject() && k.rawBits() > 0x10000 && k.asObjectPtr()->isBytesObject()) {
+                            fprintf(stderr, "  key=\"%.*s\" val: ci=%d\n",
+                                    (int)k.asObjectPtr()->byteSize(), (char*)k.asObjectPtr()->bytes(),
+                                    v.isObject() && v.rawBits() > 0x10000 ? v.asObjectPtr()->classIndex() : -1);
                         }
                     }
                 }
-                // Check what's at 0x3000024b0 — it's what PUSH-SYMCLS fires on
-                auto* suspect = reinterpret_cast<ObjectHeader*>(memory.oldSpaceStart() + 0x24b0);
-                fprintf(stderr, "[SYMCLS-DETECT] Object at 0x24b0 offset: ci=%d slots=%zu fmt=%d hash=%u\n",
-                        suspect->classIndex(), suspect->slotCount(), (int)suspect->format(),
-                        suspect->identityHash());
                 // Check what classTable[3094] actually contains
                 Oop metaclass = memory.classAtIndex(3094);
                 fprintf(stderr, "[SYMCLS-DETECT] classTable[3094] = 0x%llx (should be Symbol class metaclass)\n",
@@ -692,9 +721,25 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        // Check 0x300002298 before ensureDisplayForm
+        {
+            auto* check0 = reinterpret_cast<ObjectHeader*>(memory.oldSpaceStart() + 0x2298);
+            fprintf(stderr, "[TIMING] Before ensureDisplayForm: 0x2298 ci=%d fmt=%d slots=%zu rawHdr=0x%llx\n",
+                    check0->classIndex(), (int)check0->format(), check0->slotCount(),
+                    (unsigned long long)check0->rawHeader());
+        }
+
         // Create Display Form if it doesn't exist (image may be headless)
         std::cout << "\n=== Creating Display ===" << std::endl;
         interpreter.ensureDisplayForm(1024, 768, 32);
+
+        // Check 0x300002298 after ensureDisplayForm
+        {
+            auto* check1 = reinterpret_cast<ObjectHeader*>(memory.oldSpaceStart() + 0x2298);
+            fprintf(stderr, "[TIMING] After ensureDisplayForm: 0x2298 ci=%d fmt=%d slots=%zu rawHdr=0x%llx\n",
+                    check1->classIndex(), (int)check1->format(), check1->slotCount(),
+                    (unsigned long long)check1->rawHeader());
+        }
 
         // Verify Display was created
         Oop display = memory.findGlobal("Display");
@@ -767,6 +812,13 @@ int main(int argc, char* argv[]) {
             std::cout << "After GC: used=" << (usedAfter / (1024*1024)) << "MB free=" << (freeAfter / (1024*1024)) << "MB" << std::endl;
             std::cout << "Freed: " << ((freeAfter > freeBefore) ? (freeAfter - freeBefore) / 1024 : 0) << "KB" << std::endl;
             std::cout << "GC reclaimed: " << gcResult.bytesReclaimed << " bytes, moved: " << gcResult.objectsMoved << " objects, took: " << gcResult.milliseconds << "ms" << std::endl;
+            // Check 0x300002298 after fullGC
+            {
+                auto* check2 = reinterpret_cast<ObjectHeader*>(memory.oldSpaceStart() + 0x2298);
+                fprintf(stderr, "[TIMING] After fullGC: 0x2298 ci=%d fmt=%d slots=%zu rawHdr=0x%llx\n",
+                        check2->classIndex(), (int)check2->format(), check2->slotCount(),
+                        (unsigned long long)check2->rawHeader());
+            }
         }
 
         // Debug: find Symbol class address and classIndex in this image

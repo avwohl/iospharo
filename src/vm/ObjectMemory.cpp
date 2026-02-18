@@ -786,6 +786,12 @@ Oop ObjectMemory::findGlobal(const std::string& name) const {
 
         totalAssocs++;
         if (symbolEquals(key, name.c_str())) {
+            if (name == "Symbol") {
+                Oop val = fetchPointer(1, item);
+                fprintf(stderr, "[findGlobal] Symbol: assoc=0x%llx(ci%d) val=0x%llx\n",
+                        (unsigned long long)item.rawBits(), item.asObjectPtr()->classIndex(),
+                        (unsigned long long)val.rawBits());
+            }
             return fetchPointer(1, item);
         }
     }
@@ -3150,6 +3156,32 @@ void ObjectMemory::updatePointersAfterCompact() {
                 slots[i] = resolveForward(slots[i]);
             }
         }
+    }
+
+    // Update pointers in NEW SPACE objects that reference old space.
+    // Without this, young objects holding old space pointers become stale
+    // after compaction moves old space objects.
+    {
+        auto scanNewSpaceRegion = [&](uint8_t* start, uint8_t* end) {
+            uint8_t* scan = start;
+            while (scan < end) {
+                ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(scan);
+                size_t ts = obj->totalSize();
+                if (ts == 0 || ts > 0x10000000) break;  // Invalid — stop
+                if (obj->classIndex() != 0) {  // Not free
+                    size_t numPointers = pointerSlotsOf(obj);
+                    Oop* slots = obj->slots();
+                    for (size_t i = 0; i < numPointers; ++i) {
+                        slots[i] = resolveForward(slots[i]);
+                    }
+                }
+                scan += ts;
+            }
+        };
+        // Scan eden (edenStart_ to edenFree_)
+        scanNewSpaceRegion(edenStart_, edenFree_);
+        // Scan survivor space (survivorStart_ to newSpaceEnd_)
+        scanNewSpaceRegion(survivorStart_, newSpaceEnd_);
     }
 
     // Update memory roots
