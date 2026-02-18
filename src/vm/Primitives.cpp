@@ -8038,6 +8038,11 @@ PrimitiveResult Interpreter::primitiveAllInstances(int argCount) {
 
     uint32_t targetClassIndex = memory_.indexOfClass(classOop);
 
+    // GC SAFETY: Do a full GC first so the subsequent allocation for the result
+    // array is unlikely to trigger another GC (matching reference VM behavior).
+    // This avoids the vector's Oops becoming stale after allocateSlots.
+    memory_.fullGC();
+
     // Collect instances using allObjectsDo
     std::vector<Oop> instances;
     memory_.allObjectsDo([&](Oop obj) {
@@ -8070,6 +8075,10 @@ PrimitiveResult Interpreter::primitiveAllInstances(int argCount) {
 
 // Primitive 178: Return all objects in the system
 PrimitiveResult Interpreter::primitiveAllObjects(int argCount) {
+    // GC SAFETY: Do a full GC first so the subsequent allocation for the result
+    // array is unlikely to trigger another GC (matching reference VM behavior).
+    memory_.fullGC();
+
     // Collect all visible objects using allObjectsDo
     // Skip classIdx=0 objects — these are hidden VM objects (free chunks,
     // class table pages) that should never be visible to Smalltalk code.

@@ -7944,26 +7944,33 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         return;
     }
 
-    // Create Message object
+    // GC SAFETY: allocateSlots may trigger fullGC, invalidating all C++ locals
+    // that hold Oops. Push selector onto the operand stack so it's a GC root.
+    // Stack currently: ... receiver arg1 arg2 ... argN
+    push(selector);
+    // Stack now: ... receiver arg1 arg2 ... argN selector
+
+    // Create Message object (may trigger GC)
     Oop messageClass = memory_.specialObject(SpecialObjectIndex::ClassMessage);
     uint32_t messageClassIdx = memory_.indexOfClass(messageClass);
     if (messageClassIdx == 0)
         messageClassIdx = memory_.registerClass(messageClass);
-    // Pharo's Message has 3 instance vars: selector, args, lookupClass
-    // Allocate 3 slots; lookupClass (slot 2) defaults to nil
     Oop message = memory_.allocateSlots(messageClassIdx, 3, ObjectFormat::FixedSize);
 
     if (message.rawBits() == memory_.nil().rawBits()) {
         std::cerr << "[DNU-FATAL] Failed to allocate Message object\n";
+        pop();  // selector
         for (int i = 0; i < argCount + 1; i++) pop();
         dnuDepth--;
         stopVM("DNU: Failed to allocate Message object");
         return;
     }
 
-    memory_.storePointer(0, message, selector);
+    // Push message onto stack to protect it during second allocation
+    push(message);
+    // Stack now: ... receiver arg1 arg2 ... argN selector message
 
-    // Create arguments array
+    // Create arguments array (may trigger GC)
     Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
     uint32_t arrayClassIdx = memory_.indexOfClass(arrayClass);
     if (arrayClassIdx == 0)
@@ -7972,11 +7979,20 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
     if (args.rawBits() == memory_.nil().rawBits() && argCount > 0) {
         std::cerr << "[DNU-FATAL] Failed to allocate Array for DNU args\n";
+        pop();  // message
+        pop();  // selector
         for (int i = 0; i < argCount + 1; i++) pop();
         dnuDepth--;
         stopVM("DNU: Failed to allocate args Array");
         return;
     }
+
+    // Pop message and selector from stack (now GC-updated)
+    message = pop();
+    selector = pop();
+    // Stack restored: ... receiver arg1 arg2 ... argN
+
+    memory_.storePointer(0, message, selector);
 
     for (int i = argCount - 1; i >= 0; --i) {
         memory_.storePointer(i, args, pop());
@@ -8009,10 +8025,22 @@ void Interpreter::invokeObjectAsMethod(Oop nonMethod, Oop selector, int argCount
     //   3. Push: nonMethod, selector, argsArray, receiver
     //   4. Send #run:with:in: to nonMethod (3 args)
 
-    // Allocate Array for arguments
+    // GC SAFETY: Push nonMethod and selector onto stack before allocation,
+    // since allocateSlots may trigger fullGC which invalidates C++ locals.
+    // Stack on entry: ... receiver arg1 arg2 ... argN
+    push(nonMethod);
+    push(selector);
+    // Stack: ... receiver arg1 arg2 ... argN nonMethod selector
+
+    // Allocate Array for arguments (may trigger GC)
     Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
     uint32_t arrayClassIndex = memory_.indexOfClass(arrayClass);
     Oop argsArray = memory_.allocateSlots(arrayClassIndex, argCount, ObjectFormat::Indexable);
+
+    // Pop GC-safe nonMethod and selector
+    selector = pop();
+    nonMethod = pop();
+    // Stack restored: ... receiver arg1 arg2 ... argN
 
     // Pop arguments into the array (top of stack = last arg)
     for (int i = argCount - 1; i >= 0; --i) {
@@ -8508,26 +8536,22 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
     // at:/at:put:/basicSize correctly skip the fixed fields when accessing copied values.
     Oop block = memory_.allocateSlots(classIdx, slots, ObjectFormat::IndexableWithFixed);
 
-    // Use activeContext_ as the outer context
-    // Note: activateBlock now updates activeContext_ when entering blocks,
-    // so blocks created inside other blocks will capture the correct context chain
+    // GC SAFETY: compiledBlock may be stale after allocation triggered GC compaction.
+    // Re-read from method literals (method_ is a GC root, so literal() is always valid).
+    compiledBlock = literal(litIndex);
 
     // Set outerContext field.
-    // BlockClosure >> homeMethod uses outerContext to trace back to the home method
-    // via the `home` chain. This is used by RecursionStopper and other code that
-    // identifies the enclosing method. If outerContext is stale (points to an old
-    // context from before the current inline frames were created), homeMethod will
-    // return the wrong method.
-    //
     // For blocks that need outerContext (ignoreOuterContext=false), we materialize
-    // the frame stack to create proper Context objects. The materialized contexts
-    // are only used for the closure's outerContext chain (for home/homeMethod).
-    // We do NOT switch to context-based execution here because that would break
-    // process suspension (activeContext_ becomes stale when inline frames are
-    // pushed on top, causing suspended processes to lose their execution state).
+    // the frame stack to create proper Context objects.
     Oop outerContextForBlock;
     if (!ignoreOuterContext && frameDepth_ > 0) {
+        // GC SAFETY: materializeFrameStack allocates contexts, which may trigger GC.
+        // Protect block on the operand stack during allocation.
+        push(block);
         outerContextForBlock = materializeFrameStack();
+        block = pop();
+        // Re-read compiledBlock again (MFS may have triggered another GC)
+        compiledBlock = literal(litIndex);
     } else {
         outerContextForBlock = activeContext_;
     }
@@ -9456,6 +9480,19 @@ Oop Interpreter::materializeFrameStack() {
         int numTemps = (headerValue >> 18) & 0x3F;  // Fixed: was using wrong bit offset
         int numArgs = (headerValue >> 24) & 0xF;
 
+        // GC SAFETY: Compute IP offset BEFORE any allocation that could trigger GC.
+        // frame.savedIP is a raw uint8_t* into the method's byte array. GC compaction
+        // moves methods but does NOT update raw pointers (only Oop fields via forEachRoot).
+        // After GC, savedIP is stale. Capture the offset now while both savedIP and
+        // methodHdr point to the same (pre-GC) address space.
+        int ipOffset = 0;
+        {
+            uint8_t* mBytes = methodHdr->bytes();
+            if (frame.savedIP >= mBytes && frame.savedIP < mBytes + methodHdr->byteSize()) {
+                ipOffset = static_cast<int>(frame.savedIP - mBytes);
+            }
+        }
+
         // Reuse previously materialized context for this frame if available.
         // This ensures context identity: block closures created in a frame get
         // the same context object as thisContext returns for the same activation.
@@ -9488,14 +9525,25 @@ Oop Interpreter::materializeFrameStack() {
             }
             // Cache this context for future materializations of the same frame
             frame.materializedContext = context;
+
+            // GC SAFETY: allocateSlots may trigger fullGC, which compacts the heap
+            // and moves objects. All C++ locals holding Oops or raw pointers into
+            // heap objects are now stale. Re-derive them from GC roots.
+            // - sender: re-read from the previous frame's materializedContext (a root)
+            //   or from activeContext_ (a root) if this is the first frame
+            if (i == startFrame) {
+                sender = activeContext_;  // activeContext_ is a GC root
+            } else {
+                sender = savedFrames_[i - 1].materializedContext;  // also a GC root
+            }
+            // - methodHdr: re-derive from frame.savedMethod (a GC root)
+            methodHdr = frame.savedMethod.asObjectPtr();
         }
 
-        // Calculate PC (byte offset from method start)
+        // Calculate PC using the pre-computed IP offset (GC safe).
+        // ipOffset was computed before any allocation that could trigger GC.
         uint8_t* methodBytes = methodHdr->bytes();
-        int pc = 1;  // Default to start
-        if (frame.savedIP >= methodBytes && frame.savedIP < methodBytes + methodHdr->byteSize()) {
-            pc = static_cast<int>(frame.savedIP - methodBytes) + 1;  // 1-based
-        }
+        int pc = ipOffset + 1;  // 1-based PC from 0-based offset
 
         // Initialize context
         memory_.storePointer(0, context, sender);                           // sender
