@@ -587,6 +587,111 @@ int main(int argc, char* argv[]) {
         std::cout << "Active method: 0x" << std::hex
                   << interpreter.activeMethod().rawBits() << std::dec << std::endl;
 
+        // Find Symbol class dynamically and export for runtime diagnostics
+        {
+            Oop symbolGlobal = memory.findGlobal("Symbol");
+            if (!symbolGlobal.isNil() && symbolGlobal.isObject()) {
+                int symMetaclassIdx = symbolGlobal.asObjectPtr()->classIndex();
+                fprintf(stderr, "[SYMCLS-DETECT] Symbol class object at 0x%llx metaclassIdx=%d\n",
+                        (unsigned long long)symbolGlobal.rawBits(), symMetaclassIdx);
+                // Export the Oop value and metaclass index for runtime diagnostics
+                extern uint64_t g_symbolClassOop;
+                extern int g_symbolMetaclassIdx;
+                g_symbolClassOop = symbolGlobal.rawBits();
+                g_symbolMetaclassIdx = symMetaclassIdx;
+                fprintf(stderr, "[SYMCLS-DETECT] Set g_symbolClassOop=0x%llx g_symbolMetaclassIdx=%d\n",
+                        (unsigned long long)g_symbolClassOop, g_symbolMetaclassIdx);
+                // Double-check: verify classIndex at 0x300016768
+                auto* directCheck = symbolGlobal.asObjectPtr();
+                fprintf(stderr, "[SYMCLS-DETECT] Direct check: addr=0x%llx ci=%d slots=%zu fmt=%d rawHdr=0x%llx\n",
+                        (unsigned long long)symbolGlobal.rawBits(),
+                        directCheck->classIndex(), directCheck->slotCount(),
+                        (int)directCheck->format(),
+                        (unsigned long long)directCheck->rawHeader());
+                // Is this address within old space?
+                auto* osStart = reinterpret_cast<uint8_t*>(memory.oldSpaceStart());
+                auto* osFree = reinterpret_cast<uint8_t*>(memory.oldSpaceFree());
+                auto* symAddr = reinterpret_cast<uint8_t*>(directCheck);
+                fprintf(stderr, "[SYMCLS-DETECT] Symbol at %p, oldSpace=[%p,%p), inOldSpace=%d\n",
+                        symAddr, osStart, osFree,
+                        (symAddr >= osStart && symAddr < osFree) ? 1 : 0);
+                // Check the association at 0x3000660c0 (from LITVAR-SYMCLS in asSymbol)
+                {
+                    auto* assocAddr = reinterpret_cast<ObjectHeader*>(memory.oldSpaceStart() + 0x660c0);
+                    if (reinterpret_cast<uint8_t*>(assocAddr) < reinterpret_cast<uint8_t*>(memory.oldSpaceFree())) {
+                        fprintf(stderr, "[SYMCLS-DETECT] Assoc@0x660c0: ci=%d slots=%zu fmt=%d hash=%u\n",
+                                assocAddr->classIndex(), assocAddr->slotCount(), (int)assocAddr->format(),
+                                assocAddr->identityHash());
+                        if (assocAddr->slotCount() >= 2) {
+                            Oop k = assocAddr->slotAt(0);
+                            Oop v = assocAddr->slotAt(1);
+                            fprintf(stderr, "[SYMCLS-DETECT] Assoc@0x660c0: key=0x%llx val=0x%llx\n",
+                                    (unsigned long long)k.rawBits(), (unsigned long long)v.rawBits());
+                            if (v.isObject() && v.rawBits() > 0x10000) {
+                                fprintf(stderr, "[SYMCLS-DETECT] val at 0x%llx: ci=%d slots=%zu fmt=%d\n",
+                                        (unsigned long long)v.rawBits(),
+                                        v.asObjectPtr()->classIndex(), v.asObjectPtr()->slotCount(),
+                                        (int)v.asObjectPtr()->format());
+                            }
+                        }
+                    }
+                }
+                // Check what's at 0x3000024b0 — it's what PUSH-SYMCLS fires on
+                auto* suspect = reinterpret_cast<ObjectHeader*>(memory.oldSpaceStart() + 0x24b0);
+                fprintf(stderr, "[SYMCLS-DETECT] Object at 0x24b0 offset: ci=%d slots=%zu fmt=%d hash=%u\n",
+                        suspect->classIndex(), suspect->slotCount(), (int)suspect->format(),
+                        suspect->identityHash());
+                // Check what classTable[3094] actually contains
+                Oop metaclass = memory.classAtIndex(3094);
+                fprintf(stderr, "[SYMCLS-DETECT] classTable[3094] = 0x%llx (should be Symbol class metaclass)\n",
+                        (unsigned long long)metaclass.rawBits());
+                // Check whether there's a different Symbol-like object elsewhere in old space
+                // by scanning all objects with classIndex == symMetaclassIdx (3094)
+                {
+                    auto* scan = reinterpret_cast<uint8_t*>(memory.oldSpaceStart());
+                    auto* end = reinterpret_cast<uint8_t*>(memory.oldSpaceFree());
+                    int count3094 = 0;
+                    int objCount = 0;
+                    auto* symTarget = reinterpret_cast<uint8_t*>(symbolGlobal.asObjectPtr());
+                    bool passedTarget = false;
+                    while (scan < end) {
+                        auto* obj = reinterpret_cast<ObjectHeader*>(scan);
+                        size_t ts = obj->totalSize();
+                        if (ts == 0 || ts > 0x10000000) {
+                            fprintf(stderr, "[SYMCLS-DETECT] Scan stopped at obj %d addr=0x%llx ts=%zu ci=%d\n",
+                                    objCount, (unsigned long long)(uintptr_t)scan, ts, obj->classIndex());
+                            break;
+                        }
+                        if (!passedTarget && scan + ts > symTarget) {
+                            // We either contain or skip the target
+                            if (scan <= symTarget && scan + ts > symTarget) {
+                                if (scan == symTarget) {
+                                    fprintf(stderr, "[SYMCLS-DETECT] Scan HITS Symbol at obj %d! ci=%d ts=%zu\n",
+                                            objCount, obj->classIndex(), ts);
+                                } else {
+                                    fprintf(stderr, "[SYMCLS-DETECT] Scan SKIPS OVER Symbol! obj %d at 0x%llx ts=%zu ci=%d, Symbol at 0x%llx (offset %lld within)\n",
+                                            objCount, (unsigned long long)(uintptr_t)scan, ts, obj->classIndex(),
+                                            (unsigned long long)(uintptr_t)symTarget,
+                                            (long long)(symTarget - scan));
+                                }
+                                passedTarget = true;
+                            }
+                        }
+                        if (obj->classIndex() == (uint32_t)symMetaclassIdx) {
+                            count3094++;
+                        }
+                        objCount++;
+                        scan += ts;
+                    }
+                    fprintf(stderr, "[SYMCLS-DETECT] Scanned %d objects, found %d with ci=3094\n", objCount, count3094);
+                }
+                fflush(stderr);
+            } else {
+                fprintf(stderr, "[SYMCLS-DETECT] Symbol global not found!\n");
+                fflush(stderr);
+            }
+        }
+
         // Create Display Form if it doesn't exist (image may be headless)
         std::cout << "\n=== Creating Display ===" << std::endl;
         interpreter.ensureDisplayForm(1024, 768, 32);

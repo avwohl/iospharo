@@ -77,6 +77,14 @@ static int g_ctxKillIdx = 0;
 static int g_p80ResumeWatch = 0;
 static uint64_t g_p80WatchCtx = 0;  // context address being watched
 
+// Dynamic Symbol class detection (set from test_load_image.cpp at startup)
+uint64_t g_symbolClassOop = 0;    // Oop bits of the Symbol class object
+int g_symbolMetaclassIdx = 0;      // classIndex of Symbol class (metaclass index)
+
+// Per-bytecode trace for findInterned: method
+static int g_findInternedTraceCount = 0;  // how many times we've traced findInterned:
+static bool g_traceFindInterned = false;  // currently tracing?
+
 static void recordCtxKill(uint64_t step, pharo::Oop ctx, pharo::Oop sender,
                           const char* location, pharo::ObjectMemory& memory) {
     auto& e = g_ctxKillRing[g_ctxKillIdx % 32];
@@ -2859,6 +2867,74 @@ skip_yield:
     g_watchdogLastBytecode = bytecode;
     g_watchdogSubphase = 15;
 
+    // Auto-detect findInterned: at fd=0 (resumed from context, not via activateMethod)
+    if (!g_traceFindInterned && g_findInternedTraceCount < 3 && g_symbolMetaclassIdx != 0 &&
+        frameDepth_ == 0 && method_.isObject() && method_.rawBits() > 0x10000) {
+        // Quick check: is this findInterned: ?
+        Oop hdr = memory_.fetchPointer(0, method_);
+        if (hdr.isSmallInteger()) {
+            int nl = hdr.asSmallInteger() & 0x7FFF;
+            if (nl >= 2) {
+                Oop sel = memory_.fetchPointer(nl - 1, method_);
+                if (sel.isObject() && sel.rawBits() > 0x10000) {
+                    auto* sh = sel.asObjectPtr();
+                    if (sh->isBytesObject() && sh->byteSize() == 13 &&
+                        memcmp(sh->bytes(), "findInterned:", 13) == 0 &&
+                        receiver_.isObject() && receiver_.rawBits() > 0x10000 &&
+                        receiver_.asObjectPtr()->classIndex() == g_symbolMetaclassIdx) {
+                        g_traceFindInterned = true;
+                        g_findInternedTraceCount++;
+                        fprintf(stderr, "[FI-ENTER-FD0 #%d] step=%llu fd=0 rcvr=0x%llx bc=0x%02x\n",
+                                g_findInternedTraceCount, (unsigned long long)g_stepNum,
+                                (unsigned long long)receiver_.rawBits(), bytecode);
+                        fflush(stderr);
+                    }
+                }
+            }
+        }
+    }
+
+    // Trace findInterned: method bytecode-by-bytecode (max 200 steps)
+    if (g_traceFindInterned) {
+        static int fiTraceSteps = 0;
+        fiTraceSteps++;
+        if (fiTraceSteps > 200) {
+            g_traceFindInterned = false;
+            fiTraceSteps = 0;
+            fprintf(stderr, "[FI-TRACE] ended (200 steps)\n");
+            fflush(stderr);
+        } else {
+            ptrdiff_t ipOff = -1;
+            if (method_.isObject() && method_.rawBits() > 0x10000)
+                ipOff = instructionPointer_ - method_.asObjectPtr()->bytes();
+            // Show stack top and method selector
+            Oop stTop = (stackPointer_ > stackBase_) ? *(stackPointer_ - 1) : Oop::nil();
+            int stDepth = (int)(stackPointer_ - stackBase_);
+            // Quick method selector
+            std::string msel = "?";
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                Oop hdr = memory_.fetchPointer(0, method_);
+                if (hdr.isSmallInteger()) {
+                    int nl = hdr.asSmallInteger() & 0x7FFF;
+                    if (nl >= 2) {
+                        Oop s = memory_.fetchPointer(nl - 1, method_);
+                        if (s.isObject() && s.rawBits() > 0x10000) {
+                            auto* sh = s.asObjectPtr();
+                            if (sh->isBytesObject() && sh->byteSize() < 40)
+                                msel = std::string((char*)sh->bytes(), sh->byteSize());
+                        }
+                    }
+                }
+            }
+            fprintf(stderr, "[FI-TRACE] step=%llu bc=0x%02x ip=%td fd=%zu #%s stD=%d top=0x%llx(ci%d)\n",
+                    (unsigned long long)g_stepNum, bytecode, ipOff, frameDepth_,
+                    msel.c_str(), stDepth,
+                    (unsigned long long)stTop.rawBits(),
+                    (stTop.isObject() && stTop.rawBits() > 0x10000) ? stTop.asObjectPtr()->classIndex() : -1);
+            fflush(stderr);
+        }
+    }
+
     inExtension_ = false;
 
     dispatchBytecode(bytecode);
@@ -3225,7 +3301,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         Oop value = pop();
         // Diagnostic: if popped value is Symbol class, dump stack state
         if (value.isObject() && value.rawBits() > 0x10000 &&
-            value.asObjectPtr()->classIndex() == 3094) {
+            value.asObjectPtr()->classIndex() == g_symbolMetaclassIdx) {
             static int popSymClsCount = 0;
             if (++popSymClsCount <= 20) {
                 ptrdiff_t spIdx = stackPointer_ - stackBase_;
@@ -3801,7 +3877,7 @@ void Interpreter::push(Oop value) {
     // Filter out known-legitimate methods to catch unexpected uses
     if (value.isObject() && value.rawBits() > 0x10000) {
         ObjectHeader* valHdr = value.asObjectPtr();
-        if (valHdr->classIndex() == 3094) {
+        if (valHdr->classIndex() == g_symbolMetaclassIdx) {
             // Get method selector first for filtering
             std::string msel = "?";
             if (method_.isObject() && method_.rawBits() > 0x10000) {
@@ -3862,6 +3938,62 @@ void Interpreter::push(Oop value) {
                             (unsigned long long)g_stepNum, frameDepth_,
                             (unsigned long long)value.rawBits(), rcvInfo.c_str());
                     fflush(stderr);
+
+                    // First 3 times for findInterned:: dump method bytecodes and context state
+                    static int findInternedDumpCount = 0;
+                    if (msel == "findInterned:" && ++findInternedDumpCount <= 3) {
+                        ObjectHeader* mObj = method_.asObjectPtr();
+                        Oop mHeader = memory_.fetchPointer(0, method_);
+                        if (mHeader.isSmallInteger()) {
+                            int nLits = mHeader.asSmallInteger() & 0x7FFF;
+                            int nTemps = (mHeader.asSmallInteger() >> 18) & 0x3F;
+                            int nArgs = (mHeader.asSmallInteger() >> 24) & 0xF;
+                            size_t bcStart = (1 + nLits) * 8;
+                            size_t totalBytes = mObj->byteSize();
+                            fprintf(stderr, "[SYMCLS-DUMP] findInterned: nLits=%d nTemps=%d nArgs=%d bcStart=%zu totalBytes=%zu\n",
+                                    nLits, nTemps, nArgs, bcStart, totalBytes);
+                            fprintf(stderr, "[SYMCLS-DUMP] bytecodes:");
+                            for (size_t b = bcStart; b < totalBytes && b < bcStart + 80; b++) {
+                                fprintf(stderr, " %02x", mObj->bytes()[b]);
+                            }
+                            fprintf(stderr, "\n");
+                            for (int lit = 0; lit < nLits && lit < 10; lit++) {
+                                Oop litVal = memory_.fetchPointer(1 + lit, method_);
+                                fprintf(stderr, "[SYMCLS-DUMP] lit[%d]=0x%llx", lit, (unsigned long long)litVal.rawBits());
+                                if (litVal.isSmallInteger()) fprintf(stderr, " (smi=%lld)", (long long)litVal.asSmallInteger());
+                                else if (litVal.isObject() && litVal.rawBits() > 0x10000) {
+                                    ObjectHeader* lh = litVal.asObjectPtr();
+                                    if (lh->isBytesObject() && lh->byteSize() < 80) {
+                                        std::string ls((char*)lh->bytes(), lh->byteSize());
+                                        fprintf(stderr, " =\"%s\"", ls.c_str());
+                                    } else {
+                                        fprintf(stderr, " (ci=%d,slots=%u)", lh->classIndex(), lh->slotCount());
+                                    }
+                                }
+                                fprintf(stderr, "\n");
+                            }
+                            int numItems = static_cast<int>(stackPointer_ - framePointer_) - 1;
+                            fprintf(stderr, "[SYMCLS-DUMP] stack (%d items, fd=%zu):", numItems, frameDepth_);
+                            for (int si = 0; si < numItems && si < 20; si++) {
+                                Oop item = framePointer_[1 + si];
+                                fprintf(stderr, " [%d]=0x%llx", si, (unsigned long long)item.rawBits());
+                                if (item.rawBits() == value.rawBits()) fprintf(stderr, "(SYMCLS!)");
+                            }
+                            fprintf(stderr, "\n");
+                            if (frameDepth_ == 0 && activeContext_.isObject()) {
+                                ObjectHeader* ctxH = activeContext_.asObjectPtr();
+                                size_t ctxSlots = ctxH->slotCount();
+                                fprintf(stderr, "[SYMCLS-DUMP] ctx slots (%zu):", ctxSlots);
+                                for (size_t cs = 0; cs < ctxSlots && cs < 20; cs++) {
+                                    Oop sv = memory_.fetchPointer(cs, activeContext_);
+                                    fprintf(stderr, " [%zu]=0x%llx", cs, (unsigned long long)sv.rawBits());
+                                    if (sv.rawBits() == value.rawBits()) fprintf(stderr, "(SYMCLS!)");
+                                }
+                                fprintf(stderr, "\n");
+                            }
+                        }
+                        fflush(stderr);
+                    }
                 }
             }
         }
@@ -4272,6 +4404,53 @@ void Interpreter::pushLiteralVariable(int index) {
 
     // Normal case: Association with key in slot 0, value in slot 1
     Oop value = memory_.fetchPointer(1, assoc);  // Association>>value
+
+    // Diagnostic: check if a literal variable pushes Symbol class
+    if (g_symbolMetaclassIdx != 0 && value.isObject() && value.rawBits() > 0x10000 &&
+        value.asObjectPtr()->classIndex() == g_symbolMetaclassIdx) {
+        static int litVarSymClsCount = 0;
+        if (++litVarSymClsCount <= 20) {
+            // Get association key (slot 0)
+            Oop key = memory_.fetchPointer(0, assoc);
+            std::string keyStr = "?";
+            if (key.isObject() && key.rawBits() > 0x10000) {
+                ObjectHeader* kh = key.asObjectPtr();
+                if (kh->isBytesObject() && kh->byteSize() < 80)
+                    keyStr = std::string((char*)kh->bytes(), kh->byteSize());
+            }
+            // Get method selector
+            std::string msel = "?";
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                Oop hdr = memory_.fetchPointer(0, method_);
+                if (hdr.isSmallInteger()) {
+                    int nl = hdr.asSmallInteger() & 0x7FFF;
+                    if (nl >= 2) {
+                        Oop s = memory_.fetchPointer(nl - 1, method_);
+                        if (s.isObject() && s.rawBits() > 0x10000) {
+                            auto* sh = s.asObjectPtr();
+                            if (sh->isBytesObject() && sh->byteSize() < 80)
+                                msel = std::string((char*)sh->bytes(), sh->byteSize());
+                        }
+                    }
+                }
+            }
+            // Also get assoc classIndex and value object details
+            int assocCI = assoc.asObjectPtr()->classIndex();
+            int valCI = value.asObjectPtr()->classIndex();
+            size_t valSlots = value.asObjectPtr()->slotCount();
+            uint64_t valRawHdr = value.asObjectPtr()->rawHeader();
+            fprintf(stderr, "[LITVAR-SYMCLS #%d] key='%s' method=#%s litIdx=%d step=%llu fd=%zu "
+                    "assoc=0x%llx(ci%d) val=0x%llx(ci%d,slots%zu,hdr=0x%llx) "
+                    "expectedSymCls=0x%llx\n",
+                    litVarSymClsCount, keyStr.c_str(), msel.c_str(), index,
+                    (unsigned long long)g_stepNum, frameDepth_,
+                    (unsigned long long)assoc.rawBits(), assocCI,
+                    (unsigned long long)value.rawBits(), valCI, valSlots,
+                    (unsigned long long)valRawHdr,
+                    (unsigned long long)g_symbolClassOop);
+            fflush(stderr);
+        }
+    }
 
     push(value);
 }
@@ -4984,7 +5163,7 @@ terminate_process:
         // Diagnostic: detect when Symbol class is returned as a value
         // Skip when receiver IS Symbol class (legitimate: methods on Symbol class return self)
         if (value.isObject() && value.rawBits() > 0x10000 &&
-            value.asObjectPtr()->classIndex() == 3094 &&
+            value.asObjectPtr()->classIndex() == g_symbolMetaclassIdx &&
             value.rawBits() != receiver_.rawBits()) {
             static int retSymClsCount = 0;
             if (++retSymClsCount <= 50) {
@@ -5039,7 +5218,7 @@ void Interpreter::returnFromMethod() {
     // This specifically catches [^ self rawIntern: ...] inside Symbol>>intern:
     bool traceNLR_ = false;
     if (receiver_.isObject() && receiver_.rawBits() > 0x10000 &&
-        receiver_.asObjectPtr()->classIndex() == 3094) {  // Symbol class metaclass
+        receiver_.asObjectPtr()->classIndex() == g_symbolMetaclassIdx) {  // Symbol class metaclass
         // Check if we're in a CompiledBlock (not a CompiledMethod)
         if (method_.isObject() && method_.rawBits() > 0x10000) {
             Oop hdr = memory_.fetchPointer(0, method_);
@@ -7031,6 +7210,34 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     argCount_ = argCount;
     closure_ = memory_.nil();  // Method activations have no closure
 
+    // Detect entry into findInterned: for bytecode tracing (only at fd>0, activateMethod path)
+    if (g_findInternedTraceCount < 3 && g_symbolMetaclassIdx != 0 &&
+        frameDepth_ > 0 && g_stepNum > 14200000 && method.isObject() && method.rawBits() > 0x10000) {
+        Oop hdr = memory_.fetchPointer(0, method);
+        if (hdr.isSmallInteger()) {
+            int nl = hdr.asSmallInteger() & 0x7FFF;
+            if (nl >= 2) {
+                Oop sel = memory_.fetchPointer(nl - 1, method);
+                if (sel.isObject() && sel.rawBits() > 0x10000) {
+                    auto* sh = sel.asObjectPtr();
+                    if (sh->isBytesObject() && sh->byteSize() == 13 &&
+                        memcmp(sh->bytes(), "findInterned:", 13) == 0) {
+                        // Check if receiver is Symbol class
+                        if (receiver_.isObject() && receiver_.rawBits() > 0x10000 &&
+                            receiver_.asObjectPtr()->classIndex() == g_symbolMetaclassIdx) {
+                            g_traceFindInterned = true;
+                            g_findInternedTraceCount++;
+                            fprintf(stderr, "[FI-ENTER #%d] step=%llu fd=%zu rcvr=0x%llx\n",
+                                    g_findInternedTraceCount, (unsigned long long)g_stepNum,
+                                    frameDepth_, (unsigned long long)receiver_.rawBits());
+                            fflush(stderr);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Determine homeMethod_ based on whether this is a CompiledMethod or CompiledBlock
     // CompiledMethod (class index 3101): homeMethod_ = method
     // CompiledBlock (class index 3117): homeMethod_ = slot 0 (the home method)
@@ -8264,7 +8471,7 @@ Oop Interpreter::receiverInstVar(size_t index) const {
 void Interpreter::setReceiverInstVar(size_t index, Oop value) {
     // Diagnostic: detect when Symbol class is stored via receiver instvar write
     if (value.isObject() && value.rawBits() > 0x10000 &&
-        value.asObjectPtr()->classIndex() == 3094) {
+        value.asObjectPtr()->classIndex() == g_symbolMetaclassIdx) {
         static int symClsIVStoreCount = 0;
         if (++symClsIVStoreCount <= 20) {
             std::string msel = "?";
@@ -8857,7 +9064,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
         // Enhanced diagnostic: when receiver is Symbol class (classIdx 3094),
         // dump full backtrace with temps to trace the source of corruption
-        if (rcv.isObject() && rcv.rawBits() > 0x10000 && rcv.asObjectPtr()->classIndex() == 3094) {
+        if (rcv.isObject() && rcv.rawBits() > 0x10000 && rcv.asObjectPtr()->classIndex() == g_symbolMetaclassIdx) {
             fprintf(stderr, "[DNU-DIAG] Symbol class corruption detected! Full backtrace:\n");
 
             // Helper lambda to get method name from method oop

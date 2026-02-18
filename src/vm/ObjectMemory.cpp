@@ -15,6 +15,8 @@
 #include <sys/mman.h>
 #include <execinfo.h>
 
+extern int g_symbolMetaclassIdx;
+
 namespace pharo {
 
 extern uint64_t g_stepNum;
@@ -1305,7 +1307,7 @@ void ObjectMemory::storePointer(size_t index, Oop obj, Oop value) {
     // Diagnostic: detect when Symbol class (classIndex 3094) is stored ANYWHERE
     if (value.isObject() && value.rawBits() > 0x10000) {
         ObjectHeader* valHdr = value.asObjectPtr();
-        if (valHdr->classIndex() == 3094) {
+        if (valHdr->classIndex() == g_symbolMetaclassIdx) {
             uint32_t objCI = header->classIndex();
             // Skip Context (ci=36) and BlockClosure/FullBlockClosure (ci=38)
             // These legitimately store Symbol class as receiver
@@ -1840,11 +1842,12 @@ GCResult ObjectMemory::fullGC() {
     result.milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
         end - start).count();
 
-    if (gcCallCount <= 5) {
-        std::cerr << "[FULL-GC #" << gcCallCount << "] marked=" << markedCount
-                  << " reclaimed=" << (result.bytesReclaimed / 1024) << "KB"
-                  << " time=" << result.milliseconds << "ms"
-                  << " used=" << (usedAfter / (1024*1024)) << "MB\n";
+    if (gcCallCount <= 10) {
+        fprintf(stderr, "[FULL-GC #%d] step=%llu marked=%zu reclaimed=%zuKB time=%lldms used=%zuMB\n",
+                gcCallCount, (unsigned long long)g_stepNum, markedCount,
+                result.bytesReclaimed / 1024, (long long)result.milliseconds,
+                usedAfter / (1024*1024));
+        fflush(stderr);
     }
     // Log GC to file (Mac Catalyst stderr is lost)
     {
@@ -2890,7 +2893,69 @@ size_t ObjectMemory::markPhase() {
     }
 
     // 5. Process weak objects (nil dead references, queue mourners)
+    // DIAGNOSTIC: scan WeakArrays for Symbol class BEFORE processWeaklings
+    {
+        static int gcDiagCount = 0;
+        gcDiagCount++;
+        int symClsInWeak = 0;
+        for (ObjectHeader* obj : weakList_) {
+            size_t slots = obj->slotCount();
+            size_t startSlot = fixedFieldCountOf(obj);
+            for (size_t i = startSlot; i < slots; ++i) {
+                Oop ref = obj->slotAt(i);
+                if (ref.isObject() && ref.rawBits() > 0x10000 &&
+                    ref.asObjectPtr()->classIndex() == g_symbolMetaclassIdx) {
+                    symClsInWeak++;
+                    if (symClsInWeak <= 5) {
+                        fprintf(stderr, "[GC-DIAG #%d BEFORE] Symbol class in WeakArray! "
+                                "obj=0x%llx(ci%u,slots%zu) slot=%zu marked=%d\n",
+                                gcDiagCount,
+                                (unsigned long long)Oop::fromObject(obj).rawBits(),
+                                obj->classIndex(), slots, i,
+                                ref.asObjectPtr()->isMarked() ? 1 : 0);
+                        fflush(stderr);
+                    }
+                }
+            }
+        }
+        if (symClsInWeak > 0 && gcDiagCount <= 20) {
+            fprintf(stderr, "[GC-DIAG #%d] Found %d Symbol class refs in WeakArrays BEFORE processWeaklings\n",
+                    gcDiagCount, symClsInWeak);
+            fflush(stderr);
+        }
+    }
     processWeaklings();
+    // DIAGNOSTIC: scan WeakArrays for Symbol class AFTER processWeaklings
+    {
+        static int gcDiagCountPost = 0;
+        gcDiagCountPost++;
+        int symClsInWeak = 0;
+        for (ObjectHeader* obj : weakList_) {
+            size_t slots = obj->slotCount();
+            size_t startSlot = fixedFieldCountOf(obj);
+            for (size_t i = startSlot; i < slots; ++i) {
+                Oop ref = obj->slotAt(i);
+                if (ref.isObject() && ref.rawBits() > 0x10000 &&
+                    ref.asObjectPtr()->classIndex() == g_symbolMetaclassIdx) {
+                    symClsInWeak++;
+                    if (symClsInWeak <= 5) {
+                        fprintf(stderr, "[GC-DIAG #%d AFTER] Symbol class STILL in WeakArray! "
+                                "obj=0x%llx(ci%u,slots%zu) slot=%zu marked=%d\n",
+                                gcDiagCountPost,
+                                (unsigned long long)Oop::fromObject(obj).rawBits(),
+                                obj->classIndex(), slots, i,
+                                ref.asObjectPtr()->isMarked() ? 1 : 0);
+                        fflush(stderr);
+                    }
+                }
+            }
+        }
+        if (symClsInWeak > 0 && gcDiagCountPost <= 20) {
+            fprintf(stderr, "[GC-DIAG #%d] Found %d Symbol class refs in WeakArrays AFTER processWeaklings\n",
+                    gcDiagCountPost, symClsInWeak);
+            fflush(stderr);
+        }
+    }
 
     // 6. Count marked objects
     ObjectScanner scanner(oldSpaceStart_, oldSpaceFree_);

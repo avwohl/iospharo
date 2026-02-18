@@ -38,6 +38,9 @@
 // Forward declaration for SDL rendering active check (defined in FFI.cpp)
 extern "C" bool ffi_isSDLRenderingActive();
 
+// Dynamic Symbol class detection (defined in Interpreter.cpp)
+extern int g_symbolMetaclassIdx;
+
 // Global symbol name map for TFFI call logging
 static std::unordered_map<uintptr_t, std::string> g_symbolNames;
 #include <ffi.h>
@@ -1766,7 +1769,7 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
         Oop result = header->slotAt(actualSlot);
         // DIAGNOSTIC: detect when at: returns Symbol class (ci=3094)
         if (result.isObject() && result.rawBits() > 0x10000 &&
-            result.asObjectPtr()->classIndex() == 3094) {
+            result.asObjectPtr()->classIndex() == g_symbolMetaclassIdx) {
             static int atSymClsCount = 0;
             if (++atSymClsCount <= 20) {
                 uint32_t rcvrCI = header->classIndex();
@@ -1920,6 +1923,50 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
             return PrimitiveResult::Failure;
         }
         size_t actualSlot = fixedFields + arrayIndex;
+
+        // Diagnostic: catch when Symbol class (classIndex 3094) is stored into any object
+        if (value.isObject() && value.rawBits() > 0x10000) {
+            ObjectHeader* valHdr = value.asObjectPtr();
+            if (valHdr->classIndex() == g_symbolMetaclassIdx) {  // Symbol class metaclass
+                static int symClsStoreCount = 0;
+                if (++symClsStoreCount <= 20) {
+                    // Get receiver class name
+                    std::string rcvrCls = "?";
+                    Oop rc = memory_.classOf(rcvr);
+                    if (rc.isObject()) {
+                        Oop n = memory_.fetchPointer(6, rc);
+                        if (n.isObject() && n.rawBits() > 0x10000) {
+                            ObjectHeader* nh = n.asObjectPtr();
+                            if (nh->isBytesObject() && nh->byteSize() < 100)
+                                rcvrCls = std::string((char*)nh->bytes(), nh->byteSize());
+                        }
+                    }
+                    // Get method selector
+                    std::string msel = "?";
+                    if (method_.isObject() && method_.rawBits() > 0x10000) {
+                        Oop hdr = memory_.fetchPointer(0, method_);
+                        if (hdr.isSmallInteger()) {
+                            int nl = hdr.asSmallInteger() & 0x7FFF;
+                            if (nl >= 2) {
+                                Oop s = memory_.fetchPointer(nl - 1, method_);
+                                if (s.isObject() && s.rawBits() > 0x10000) {
+                                    ObjectHeader* sh = s.asObjectPtr();
+                                    if (sh->isBytesObject() && sh->byteSize() < 80)
+                                        msel = std::string((char*)sh->bytes(), sh->byteSize());
+                                }
+                            }
+                        }
+                    }
+                    fprintf(stderr, "[SYMCLS-STORE #%d] at:put: storing Symbol class into %s[%zu] "
+                            "rcvr=0x%llx method=#%s step=%llu fd=%zu\n",
+                            symClsStoreCount, rcvrCls.c_str(), arrayIndex,
+                            (unsigned long long)rcvr.rawBits(), msel.c_str(),
+                            (unsigned long long)g_stepNum, frameDepth_);
+                    fflush(stderr);
+                }
+            }
+        }
+
         // Use storePointer for proper write barrier (old→young tracking)
         memory_.storePointer(actualSlot, rcvr, value);
         primitiveSuccess(value);
