@@ -13,6 +13,7 @@
 #include <unordered_set>
 #include <functional>
 #include <sys/mman.h>
+#include <execinfo.h>
 
 namespace pharo {
 
@@ -1300,6 +1301,39 @@ void ObjectMemory::storePointer(size_t index, Oop obj, Oop value) {
 
     // Bounds check
     if (index >= header->slotCount()) return;
+
+    // Diagnostic: detect when Symbol class (classIndex 3094) is stored ANYWHERE
+    if (value.isObject() && value.rawBits() > 0x10000) {
+        ObjectHeader* valHdr = value.asObjectPtr();
+        if (valHdr->classIndex() == 3094) {
+            uint32_t objCI = header->classIndex();
+            // Skip Context (ci=36) and BlockClosure/FullBlockClosure (ci=38)
+            // These legitimately store Symbol class as receiver
+            if (objCI != 36 && objCI != 38) {
+                static int symClsStoreCount = 0;
+                if (++symClsStoreCount <= 50) {
+                    uint32_t objSlots = header->slotCount();
+                    Oop oldVal = header->slotAt(index);
+                    fprintf(stderr, "[STORE-SYMCLS #%d] step=%llu obj=0x%llx(ci%u,slots%u) idx=%zu "
+                            "val=0x%llx oldVal=0x%llx\n",
+                            symClsStoreCount, (unsigned long long)g_stepNum,
+                            (unsigned long long)obj.rawBits(), objCI, objSlots, index,
+                            (unsigned long long)value.rawBits(),
+                            (unsigned long long)oldVal.rawBits());
+                    // C++ backtrace to find caller
+                    void* bt[20];
+                    int depth = backtrace(bt, 20);
+                    char** syms = backtrace_symbols(bt, depth);
+                    if (syms) {
+                        for (int i = 0; i < depth && i < 10; i++)
+                            fprintf(stderr, "  bt[%d]: %s\n", i, syms[i]);
+                        free(syms);
+                    }
+                    fflush(stderr);
+                }
+            }
+        }
+    }
 
     // Check for old->young pointer (needs remembered set)
     if (isOld(obj) && value.isObject() && isYoung(value)) {

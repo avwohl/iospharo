@@ -3624,6 +3624,76 @@ void Interpreter::push(Oop value) {
         }
     }
 
+    // Symbol class push detector: classIndex 3094 is Symbol's metaclass
+    // Filter out known-legitimate methods to catch unexpected uses
+    if (value.isObject() && value.rawBits() > 0x10000) {
+        ObjectHeader* valHdr = value.asObjectPtr();
+        if (valHdr->classIndex() == 3094) {
+            // Get method selector first for filtering
+            std::string msel = "?";
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                Oop hdr = memory_.fetchPointer(0, method_);
+                if (hdr.isSmallInteger()) {
+                    int nl = hdr.asSmallInteger() & 0x7FFF;
+                    if (nl >= 2 && nl < 100) {
+                        Oop s = memory_.fetchPointer(nl - 1, method_);
+                        if (s.isObject() && s.rawBits() > 0x10000) {
+                            ObjectHeader* sh = s.asObjectPtr();
+                            if (sh->isBytesObject() && sh->byteSize() < 80)
+                                msel = std::string((char*)sh->bytes(), sh->byteSize());
+                        }
+                    }
+                }
+            }
+            // Skip known-legitimate methods where Symbol class is used correctly
+            bool isLegitimate = (msel == "asSymbol" || msel == "rawIntern:" ||
+                                 msel == "intern:" || msel == "at:" ||
+                                 msel == "registeredClass" || msel == "startup:" ||
+                                 msel == "startUp:" || msel == "symbolTable" ||
+                                 msel == "new:" || msel == "basicNew:" ||
+                                 msel == "doesNotUnderstand:" || msel == "findSymbol:" ||
+                                 msel == "allSymbolTablesDo:" || msel == "subclasses" ||
+                                 msel == "subclassResponsibility" || msel == "class");
+            if (!isLegitimate) {
+                static int symClsPushCount = 0;
+                if (++symClsPushCount <= 200) {
+                    ptrdiff_t ipOff = -1;
+                    if (method_.isObject() && method_.rawBits() > 0x10000)
+                        ipOff = instructionPointer_ - method_.asObjectPtr()->bytes();
+                    // Extra info for pushReceiverVariable (bc 0x00-0x0F or 0xE2):
+                    // log receiver address + class index + name
+                    std::string rcvInfo = "";
+                    if (lastBytecode_ <= 0x0F || lastBytecode_ == 0xE2) {
+                        rcvInfo = " rcvr=0x";
+                        char buf[64];
+                        snprintf(buf, sizeof(buf), "%llx", (unsigned long long)receiver_.rawBits());
+                        rcvInfo += buf;
+                        if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+                            ObjectHeader* rh = receiver_.asObjectPtr();
+                            snprintf(buf, sizeof(buf), "(ci%d,slots%u)", rh->classIndex(), rh->slotCount());
+                            rcvInfo += buf;
+                            // Try to get class name from slot 5 (name) IF this is a class
+                            if (rh->slotCount() > 6) {
+                                Oop nameSlot = memory_.fetchPointer(5, receiver_);
+                                Oop nameSlot6 = memory_.fetchPointer(6, receiver_);
+                                snprintf(buf, sizeof(buf), " slot5=0x%llx slot6=0x%llx",
+                                    (unsigned long long)nameSlot.rawBits(),
+                                    (unsigned long long)nameSlot6.rawBits());
+                                rcvInfo += buf;
+                            }
+                        }
+                    }
+                    fprintf(stderr, "[PUSH-SYMCLS #%d] bc=0x%02x method=#%s ip=%td "
+                            "step=%llu fd=%zu val=0x%llx%s\n",
+                            symClsPushCount, lastBytecode_, msel.c_str(), ipOff,
+                            (unsigned long long)g_stepNum, frameDepth_,
+                            (unsigned long long)value.rawBits(), rcvInfo.c_str());
+                    fflush(stderr);
+                }
+            }
+        }
+    }
+
     if (stackPointer_ >= stack_.data() + MaxStackDepth) {
         static int overflowCount = 0;
         overflowCount++;
@@ -7432,6 +7502,51 @@ Oop Interpreter::receiverInstVar(size_t index) const {
 }
 
 void Interpreter::setReceiverInstVar(size_t index, Oop value) {
+    // Diagnostic: detect when Symbol class is stored via receiver instvar write
+    if (value.isObject() && value.rawBits() > 0x10000 &&
+        value.asObjectPtr()->classIndex() == 3094) {
+        static int symClsIVStoreCount = 0;
+        if (++symClsIVStoreCount <= 20) {
+            std::string msel = "?";
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                Oop hdr = memory_.fetchPointer(0, method_);
+                if (hdr.isSmallInteger()) {
+                    int nl = hdr.asSmallInteger() & 0x7FFF;
+                    if (nl >= 2 && nl < 100) {
+                        Oop s = memory_.fetchPointer(nl - 1, method_);
+                        if (s.isObject() && s.rawBits() > 0x10000) {
+                            ObjectHeader* sh = s.asObjectPtr();
+                            if (sh->isBytesObject() && sh->byteSize() < 80)
+                                msel = std::string((char*)sh->bytes(), sh->byteSize());
+                        }
+                    }
+                }
+            }
+            ptrdiff_t ipOff = -1;
+            if (method_.isObject() && method_.rawBits() > 0x10000)
+                ipOff = instructionPointer_ - method_.asObjectPtr()->bytes();
+            // Get receiver class name for context
+            std::string rcvCls = "?";
+            if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+                Oop cls = memory_.classOf(receiver_);
+                if (cls.isObject() && memory_.slotCountOf(cls) > 6) {
+                    Oop cn = memory_.fetchPointer(6, cls);
+                    if (cn.isObject() && cn.rawBits() > 0x10000) {
+                        ObjectHeader* cnh = cn.asObjectPtr();
+                        if (cnh->isBytesObject() && cnh->byteSize() < 50)
+                            rcvCls = std::string((char*)cnh->bytes(), cnh->byteSize());
+                    }
+                }
+            }
+            fprintf(stderr, "[IVSTORE-SYMCLS #%d] bc=0x%02x method=#%s ip=%td step=%llu "
+                    "fd=%zu rcvr=0x%llx(%s) idx=%zu\n",
+                    symClsIVStoreCount, lastBytecode_, msel.c_str(), ipOff,
+                    (unsigned long long)g_stepNum, frameDepth_,
+                    (unsigned long long)receiver_.rawBits(), rcvCls.c_str(), index);
+            fflush(stderr);
+        }
+    }
+
     // Check immutability - send attemptToAssign:withIndex: if receiver is immutable
     if (receiver_.isObject()) {
         ObjectHeader* hdr = receiver_.asObjectPtr();

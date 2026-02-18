@@ -664,6 +664,31 @@ int main(int argc, char* argv[]) {
             std::cout << "GC reclaimed: " << gcResult.bytesReclaimed << " bytes, moved: " << gcResult.objectsMoved << " objects, took: " << gcResult.milliseconds << "ms" << std::endl;
         }
 
+        // Debug: find Symbol class address and classIndex in this image
+        {
+            // Walk the class table to find Symbol class
+            // Special object 48 (compact classes) or just scan heap
+            // Easier: check the classIndex of a known symbol
+            auto so = memory.specialObjectsArray();
+            if (so.isObject()) {
+                // Special object 16 = Symbol table (NewSymbols or SymbolTable)
+                // Actually, check if we can find Symbol class via special selectors
+                // The simplest approach: walk first few classes
+                fprintf(stderr, "[SYMCLS-CHECK] Looking for Symbol class...\n");
+                // Try to find it by scanning object headers for classIndex that's a metaclass
+                // Actually, let's just check if address 0x300002298 has classIndex 3094
+                pharo::Oop trial = pharo::Oop::fromRawBits(0x300002298);
+                if (trial.isObject() && trial.rawBits() > 0x10000) {
+                    auto* hdr = trial.asObjectPtr();
+                    fprintf(stderr, "[SYMCLS-CHECK] 0x300002298 classIndex=%u slotCount=%u\n",
+                            hdr->classIndex(), hdr->slotCount());
+                } else {
+                    fprintf(stderr, "[SYMCLS-CHECK] 0x300002298 is not a valid object\n");
+                }
+                fflush(stderr);
+            }
+        }
+
         // Run bytecode steps for testing
         std::cout << "\n=== Execution Test ===" << std::endl;
         auto execStart = std::chrono::steady_clock::now();
