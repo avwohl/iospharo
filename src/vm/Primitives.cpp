@@ -7762,25 +7762,6 @@ PrimitiveResult Interpreter::primitiveYield(int argCount) {
     // Wake the highest-priority ready process (may be at a different priority)
     Oop nextProcess = wakeHighestPriority();
 
-    // Diagnostic: track P40 yields
-    if (priority == 40) {
-        static int p40YieldCount = 0;
-        if (++p40YieldCount <= 10) {
-            int nextPri = -1;
-            if (nextProcess.isObject() && !nextProcess.isNil()) {
-                Oop np = memory_.fetchPointer(ProcessPriorityIndex, nextProcess);
-                nextPri = np.isSmallInteger() ? (int)np.asSmallInteger() : -1;
-            }
-            fprintf(stderr, "[P40-YIELD #%d] step=%lluM next=P%d same=%d nil=%d\n",
-                    p40YieldCount,
-                    (unsigned long long)(g_stepNum / 1000000),
-                    nextPri,
-                    nextProcess.rawBits() == activeProcess.rawBits() ? 1 : 0,
-                    nextProcess.isNil() ? 1 : 0);
-            fflush(stderr);
-        }
-    }
-
     if (nextProcess.isNil() || nextProcess.rawBits() == activeProcess.rawBits()) {
         // No other process to run — remove ourselves from the queue and continue
         removeFirstLinkOfList(priorityList);

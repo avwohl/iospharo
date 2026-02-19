@@ -2558,7 +2558,6 @@ bool Interpreter::step() {
         {
             static std::chrono::steady_clock::time_point lastHighPriTime =
                 std::chrono::steady_clock::now();
-            static int vmTimeoutCount = 0;
             static bool startupGracePeriod = true;
 
             Oop currentActive = getActiveProcess();
@@ -2570,29 +2569,13 @@ bool Interpreter::step() {
                 lastHighPriTime = std::chrono::steady_clock::now();
                 startupGracePeriod = false; // Delay scheduler has run at least once
             } else if (!startupGracePeriod) {
-                // After startup: check if Delay scheduler has been absent too long
+                // After startup: check if Delay scheduler has been absent too long.
+                // Reset timer to avoid stale state but don't terminate — the
+                // Smalltalk test runner handles its own timeouts via spin-wait.
                 auto now = std::chrono::steady_clock::now();
                 auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
                     now - lastHighPriTime).count();
-                // Log every 10 seconds of absence
-                static long long lastLoggedElapsed = 0;
-                if (elapsed >= 10 && elapsed != lastLoggedElapsed && elapsed % 5 == 0) {
-                    lastLoggedElapsed = elapsed;
-                    fprintf(stderr, "[VM-TIMEOUT-WATCH] pri=%d absent=%llds step=%llu fd=%zu grace=%d\n",
-                            prio, (long long)elapsed, (unsigned long long)g_stepNum, frameDepth_,
-                            (int)startupGracePeriod);
-                    fflush(stderr);
-                }
                 if (elapsed >= 15) {
-                    vmTimeoutCount++;
-                    fprintf(stderr, "[VM-TIMEOUT #%d] Delay scheduler absent for %llds, "
-                            "pri=%d process step=%llu fd=%zu sel=%s\n",
-                            vmTimeoutCount, (long long)elapsed, prio,
-                            (unsigned long long)g_stepNum, frameDepth_, g_lastSelName);
-                    fflush(stderr);
-                    // Don't terminate processes — the Smalltalk test runner
-                    // handles its own timeouts via spin-wait. VM-level
-                    // termination kills the test runner itself.
                     lastHighPriTime = std::chrono::steady_clock::now();
                     return running_;
                 }
@@ -2704,16 +2687,6 @@ bool Interpreter::step() {
     // not interpret() which has its own loopCount.
     g_watchdogSteps.store(g_stepNum, std::memory_order_relaxed);
 
-    // Periodic priority trace: show what priority we're running at every 1M steps
-    if (g_stepNum % 1000000 == 0) {
-        Oop proc = getActiveProcess();
-        Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, proc);
-        int prio = prioOop.isSmallInteger() ? (int)prioOop.asSmallInteger() : -1;
-        fprintf(stderr, "[STEP %lluM] pri=%d\n",
-                (unsigned long long)(g_stepNum / 1000000), prio);
-        fflush(stderr);
-    }
-
     // cannotReturn: deadline check. When a process hits cannotReturn:, we give
     // the Smalltalk error handler a step budget (set in returnFromMethod). If the
     // budget expires and the same process is still running, terminate it. This
@@ -2723,14 +2696,6 @@ bool Interpreter::step() {
     if (cannotReturnDeadline_ > 0 && g_stepNum >= cannotReturnDeadline_ && !inExtension_) {
         Oop currentProcess = getActiveProcess();
         if (currentProcess.rawBits() == lastCannotReturnProcess_.rawBits()) {
-            Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, currentProcess);
-            int prio = prioOop.isSmallInteger() ? (int)prioOop.asSmallInteger() : -1;
-            static int deadlineTermCount = 0;
-            if (++deadlineTermCount <= 20) {
-                fprintf(stderr, "[CR-DEADLINE #%d] P%d exceeded step budget at step=%llu\n",
-                        deadlineTermCount, prio, (unsigned long long)g_stepNum);
-                fflush(stderr);
-            }
             cannotReturnCount_ = 0;
             cannotReturnDeadline_ = 0;
             lastCannotReturnProcess_ = Oop::nil();
@@ -4606,17 +4571,6 @@ terminate_process:
             Oop currentProcess = getActiveProcess();
             if (currentProcess.rawBits() != lastCannotReturnProcess_.rawBits()) {
                 // Different process — reset counter
-                static int crNewProcCount = 0;
-                if (++crNewProcCount <= 20) {
-                    Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, currentProcess);
-                    int prio = prioOop.isSmallInteger() ? (int)prioOop.asSmallInteger() : -1;
-                    fprintf(stderr, "[CR-NEW-PROC #%d] P%d proc=0x%llx prev=0x%llx step=%llu\n",
-                            crNewProcCount, prio,
-                            (unsigned long long)currentProcess.rawBits(),
-                            (unsigned long long)lastCannotReturnProcess_.rawBits(),
-                            (unsigned long long)g_stepNum);
-                    fflush(stderr);
-                }
                 cannotReturnCount_ = 0;
                 lastCannotReturnProcess_ = currentProcess;
             }
@@ -4639,15 +4593,6 @@ terminate_process:
             }
             // Too many cannotReturn: events — error handler is not terminating.
             // Fall through to terminate the process.
-            static int cannotReturnTermCount = 0;
-            if (++cannotReturnTermCount <= 20) {
-                Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, currentProcess);
-                int prio = prioOop.isSmallInteger() ? (int)prioOop.asSmallInteger() : -1;
-                fprintf(stderr, "[CANNOT-RETURN-TERM #%d] P%d count=%d step=%llu\n",
-                        cannotReturnTermCount, prio, cannotReturnCount_,
-                        (unsigned long long)g_stepNum);
-                fflush(stderr);
-            }
             cannotReturnCount_ = 0;
             cannotReturnDeadline_ = 0;
             lastCannotReturnProcess_ = Oop::nil();
@@ -10390,18 +10335,6 @@ void Interpreter::checkForPreemption() {
 
         // Put current process back on ready queue
         putToSleep(activeProcess);
-
-        // Diagnostic: track P40 preemption switches
-        if (activePriority == 40 || static_cast<int>(i + 1) == 40) {
-            static int p40PreemptCount = 0;
-            if (++p40PreemptCount <= 10) {
-                fprintf(stderr, "[P40-PREEMPT #%d] step=%lluM old=P%d new=P%d\n",
-                        p40PreemptCount,
-                        (unsigned long long)(g_stepNum / 1000000),
-                        activePriority, static_cast<int>(i + 1));
-                fflush(stderr);
-            }
-        }
 
         // Switch to new process
         g_xferReason = "checkPreemption";
