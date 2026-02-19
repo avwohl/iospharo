@@ -676,13 +676,15 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
     startMs := Time millisecondClockValue.
     [((Time millisecondClockValue - startMs) bitAnd: 16r1FFFFFFF) < (seconds * 1000)] whileTrue: [
       Processor yield].
-    "Timeout elapsed — test is still running"
-    [testProcess terminate] on: Error do: [:e |].
+    "Timeout elapsed — test is still running.
+     Signal doneSem FIRST so runner continues even if terminate hangs."
     result := #timeout.
     s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
       nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; cr.
     s flush.
-    doneSem signal] forkAt: priority.
+    doneSem signal.
+    "Terminate after signaling — best effort cleanup"
+    [testProcess terminate] on: Error do: [:e |]] forkAt: priority.
 
   "Wait for test completion or watchdog timeout"
   doneSem wait.
