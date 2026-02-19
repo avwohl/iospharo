@@ -109,6 +109,9 @@ Interpreter::Interpreter(ObjectMemory& memory)
     , nlrHomeMethod_(Oop::nil())
     , nlrValue_(Oop::nil())
     , lastCannotReturnCtx_(Oop::nil())
+    , lastCannotReturnProcess_(Oop::nil())
+    , cannotReturnCount_(0)
+    , cannotReturnDeadline_(0)
     , argCount_(0)
     , extA_(0)
     , extB_(0)
@@ -2701,7 +2704,51 @@ bool Interpreter::step() {
     // not interpret() which has its own loopCount.
     g_watchdogSteps.store(g_stepNum, std::memory_order_relaxed);
 
-    // P80 step-by-step trace (disabled — too verbose for production runs)
+    // Periodic priority trace: show what priority we're running at every 1M steps
+    if (g_stepNum % 1000000 == 0) {
+        Oop proc = getActiveProcess();
+        Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, proc);
+        int prio = prioOop.isSmallInteger() ? (int)prioOop.asSmallInteger() : -1;
+        fprintf(stderr, "[STEP %lluM] pri=%d\n",
+                (unsigned long long)(g_stepNum / 1000000), prio);
+        fflush(stderr);
+    }
+
+    // cannotReturn: deadline check. When a process hits cannotReturn:, we give
+    // the Smalltalk error handler a step budget (set in returnFromMethod). If the
+    // budget expires and the same process is still running, terminate it. This
+    // prevents high-priority processes (like the P80 Delay scheduler) from
+    // monopolizing the CPU during error handling and starving lower-priority
+    // processes (like the P40 test runner/watchdog).
+    if (cannotReturnDeadline_ > 0 && g_stepNum >= cannotReturnDeadline_ && !inExtension_) {
+        Oop currentProcess = getActiveProcess();
+        if (currentProcess.rawBits() == lastCannotReturnProcess_.rawBits()) {
+            Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, currentProcess);
+            int prio = prioOop.isSmallInteger() ? (int)prioOop.asSmallInteger() : -1;
+            static int deadlineTermCount = 0;
+            if (++deadlineTermCount <= 20) {
+                fprintf(stderr, "[CR-DEADLINE #%d] P%d exceeded step budget at step=%llu\n",
+                        deadlineTermCount, prio, (unsigned long long)g_stepNum);
+                fflush(stderr);
+            }
+            cannotReturnCount_ = 0;
+            cannotReturnDeadline_ = 0;
+            lastCannotReturnProcess_ = Oop::nil();
+            lastCannotReturnCtx_ = Oop::nil();
+            terminateCurrentProcess();
+            if (tryReschedule()) {
+                return running_;
+            }
+            if (bootstrapStartup()) {
+                return running_;
+            }
+            stopVM("No runnable processes after cannotReturn: deadline termination");
+        } else {
+            // Different process is running — the cannotReturn: process was already
+            // handled (switched away). Clear the deadline.
+            cannotReturnDeadline_ = 0;
+        }
+    }
 
     // Check for forced process yield BEFORE fetching the next bytecode.
     // CRITICAL: Must happen before fetchByte() because fetchByte() advances
@@ -2709,7 +2756,7 @@ bool Interpreter::step() {
     // past the fetched bytecode, causing it to be SKIPPED when the process
     // is later restored — leading to expression stack corruption and DNUs.
     g_watchdogSubphase = 14;
-    bool shouldYield = forceYield_.load(std::memory_order_relaxed);
+    bool shouldYield = forceYield_.load(std::memory_order_acquire);
     if (shouldYield) {
         // Per Cog VM: suppress context switch after activating methods with
         // primitive 198 (ensure:/ifCurtailed:). These methods must run their
@@ -2724,7 +2771,7 @@ bool Interpreter::step() {
             // Don't consume forceYield - retry on next step
             goto skip_yield;
         }
-        forceYield_.store(false, std::memory_order_relaxed);
+        forceYield_.store(false, std::memory_order_release);
         Oop activeProcess = getActiveProcess();
         Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
         int activePriority = activePriorityOop.isSmallInteger() ?
@@ -4549,20 +4596,61 @@ terminate_process:
         }
         // Per reference VM spec: send cannotReturn: instead of silently terminating.
         // This gives Smalltalk's exception handling a chance to handle the situation.
-        // Guard: if cannotReturn: was already sent for this context (meaning the
-        // exception handler returned instead of terminating), terminate the process
-        // to prevent an infinite loop.
+        // Guard: limit cannotReturn: events per process. The error handler from
+        // cannotReturn: may itself try to return through nil sender, creating new
+        // contexts each time (so context-identity checks don't work). It may also
+        // trigger process switches (which would reset a per-switch counter). Track
+        // by process identity instead: count cannotReturn: events for the same process
+        // across any number of context switches.
         if (activeContext_.isObject() && !activeContext_.isNil()) {
-            if (activeContext_.rawBits() != lastCannotReturnCtx_.rawBits()) {
+            Oop currentProcess = getActiveProcess();
+            if (currentProcess.rawBits() != lastCannotReturnProcess_.rawBits()) {
+                // Different process — reset counter
+                static int crNewProcCount = 0;
+                if (++crNewProcCount <= 20) {
+                    Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, currentProcess);
+                    int prio = prioOop.isSmallInteger() ? (int)prioOop.asSmallInteger() : -1;
+                    fprintf(stderr, "[CR-NEW-PROC #%d] P%d proc=0x%llx prev=0x%llx step=%llu\n",
+                            crNewProcCount, prio,
+                            (unsigned long long)currentProcess.rawBits(),
+                            (unsigned long long)lastCannotReturnProcess_.rawBits(),
+                            (unsigned long long)g_stepNum);
+                    fflush(stderr);
+                }
+                cannotReturnCount_ = 0;
+                lastCannotReturnProcess_ = currentProcess;
+            }
+            cannotReturnCount_++;
+            if (cannotReturnCount_ <= 2) {
                 lastCannotReturnCtx_ = activeContext_;
+                // Set a step deadline for error handling. The cannotReturn: handler
+                // in Smalltalk sends error: which triggers exception handling. In our
+                // interpreted VM this can take 35M+ steps at P80, monopolizing CPU
+                // and preventing lower-priority test/watchdog processes from running.
+                // Give error handling 2M steps (~2 seconds), then forcibly terminate.
+                if (cannotReturnCount_ == 1) {
+                    cannotReturnDeadline_ = g_stepNum + 2000000;
+                }
                 stackPointer_ = stackBase_;
                 push(activeContext_);  // receiver: the context that cannot return
                 push(value);           // arg: the value that was being returned
                 sendSelector(selectors_.cannotReturn, 1);
                 return;
             }
-            // Second time for same context — cannotReturn: didn't terminate.
+            // Too many cannotReturn: events — error handler is not terminating.
             // Fall through to terminate the process.
+            static int cannotReturnTermCount = 0;
+            if (++cannotReturnTermCount <= 20) {
+                Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, currentProcess);
+                int prio = prioOop.isSmallInteger() ? (int)prioOop.asSmallInteger() : -1;
+                fprintf(stderr, "[CANNOT-RETURN-TERM #%d] P%d count=%d step=%llu\n",
+                        cannotReturnTermCount, prio, cannotReturnCount_,
+                        (unsigned long long)g_stepNum);
+                fflush(stderr);
+            }
+            cannotReturnCount_ = 0;
+            cannotReturnDeadline_ = 0;
+            lastCannotReturnProcess_ = Oop::nil();
             lastCannotReturnCtx_ = Oop::nil();
         }
 
@@ -10043,29 +10131,6 @@ void Interpreter::transferTo(Oop newProcess) {
         return;
     }
 
-    // Diagnostic: log P80+ process switches
-    {
-        int newPri = -1;
-        Oop np = memory_.fetchPointer(ProcessPriorityIndex, newProcess);
-        newPri = np.isSmallInteger() ? (int)np.asSmallInteger() : -1;
-        int oldPri = -1;
-        if (oldProcess.isObject() && oldProcess.rawBits() > 0x10000) {
-            Oop op = memory_.fetchPointer(ProcessPriorityIndex, oldProcess);
-            oldPri = op.isSmallInteger() ? (int)op.asSmallInteger() : -1;
-        }
-        if (newPri >= 80 || oldPri >= 80) {
-            static int p80XferCount = 0;
-            if (++p80XferCount <= 100) {
-                fprintf(stderr, "[XFER-P80 #%d] P%d->P%d step=%llu new=0x%llx old=0x%llx\n",
-                        p80XferCount, oldPri, newPri,
-                        (unsigned long long)g_stepNum,
-                        (unsigned long long)newProcess.rawBits(),
-                        (unsigned long long)oldProcess.rawBits());
-                fflush(stderr);
-            }
-        }
-    }
-
     ObjectHeader* newProcHdr = newProcess.asObjectPtr();
     if (newProcHdr->slotCount() < 2) {
         return;
@@ -10103,111 +10168,6 @@ void Interpreter::transferTo(Oop newProcess) {
         memory_.storePointer(ProcessSuspendedContextIndex, oldProcess, contextToSave);
     }
 
-    // Diagnostic: check P80 process context chain health when saving
-    {
-        int oldPri2 = -1;
-        if (oldProcess.isObject() && oldProcess.rawBits() > 0x10000) {
-            Oop op = memory_.fetchPointer(ProcessPriorityIndex, oldProcess);
-            oldPri2 = op.isSmallInteger() ? (int)op.asSmallInteger() : -1;
-        }
-        if (oldPri2 >= 80 && contextToSave.isObject() && !contextToSave.isNil()) {
-            // Walk the sender chain and count depth
-            int depth = 0;
-            Oop ctx = contextToSave;
-            std::string topMethod = "?";
-            while (ctx.isObject() && !ctx.isNil() && memory_.isValidPointer(ctx) && depth < 50) {
-                if (depth == 0) {
-                    Oop m = memory_.fetchPointer(3, ctx);
-                    if (m.isObject() && !m.isNil() && memory_.isValidPointer(m)) {
-                        Oop hdr = memory_.fetchPointer(0, m);
-                        if (hdr.isSmallInteger()) {
-                            int nl = hdr.asSmallInteger() & 0x7FFF;
-                            if (nl >= 2) {
-                                Oop s = memory_.fetchPointer(nl - 1, m);
-                                if (s.isObject() && s.rawBits() > 0x10000 && memory_.isValidPointer(s)) {
-                                    ObjectHeader* sh = s.asObjectPtr();
-                                    if (sh->isBytesObject() && sh->byteSize() < 80)
-                                        topMethod = std::string((char*)sh->bytes(), sh->byteSize());
-                                }
-                            }
-                        }
-                    }
-                }
-                depth++;
-                Oop snd = memory_.fetchPointer(0, ctx);
-                if (snd.rawBits() == memory_.nil().rawBits()) break;
-                ctx = snd;
-            }
-            static int lastP80Depth = -1;
-            static int p80SaveCount = 0;
-            p80SaveCount++;
-            // Always log when depth changes, or first 5
-            if (depth != lastP80Depth || p80SaveCount <= 5) {
-                // Build full chain for first 5 or on depth change
-                std::string fullChain;
-                Oop c3 = contextToSave;
-                for (int j = 0; j < 10 && c3.isObject() && !c3.isNil() && memory_.isValidPointer(c3); j++) {
-                    Oop m3 = memory_.fetchPointer(3, c3);
-                    std::string mname = "?";
-                    if (m3.isObject() && !m3.isNil() && memory_.isValidPointer(m3)) {
-                        Oop hdr3 = memory_.fetchPointer(0, m3);
-                        if (hdr3.isSmallInteger()) {
-                            int nl3 = hdr3.asSmallInteger() & 0x7FFF;
-                            if (nl3 >= 2) {
-                                Oop s3 = memory_.fetchPointer(nl3 - 1, m3);
-                                if (s3.isObject() && s3.rawBits() > 0x10000 && memory_.isValidPointer(s3)) {
-                                    ObjectHeader* sh3 = s3.asObjectPtr();
-                                    if (sh3->isBytesObject() && sh3->byteSize() < 80)
-                                        mname = std::string((char*)sh3->bytes(), sh3->byteSize());
-                                }
-                            }
-                        }
-                    }
-                    if (!fullChain.empty()) fullChain += " <- ";
-                    fullChain += mname;
-                    Oop snd3 = memory_.fetchPointer(0, c3);
-                    if (snd3.rawBits() == memory_.nil().rawBits()) break;
-                    c3 = snd3;
-                }
-                fprintf(stderr, "[P80-SAVE #%d] depth=%d step=%llu fd=%zu chain=[%s]\n",
-                        p80SaveCount, depth,
-                        (unsigned long long)g_stepNum, frameDepth_, fullChain.c_str());
-                fflush(stderr);
-            }
-            lastP80Depth = depth;
-            if (depth <= 2) {
-                // Walk chain for full method names when depth is suspiciously low
-                std::string fullChain;
-                Oop c2 = contextToSave;
-                for (int j = 0; j < 10 && c2.isObject() && !c2.isNil() && memory_.isValidPointer(c2); j++) {
-                    Oop m2 = memory_.fetchPointer(3, c2);
-                    if (m2.isObject() && !m2.isNil() && memory_.isValidPointer(m2)) {
-                        Oop hdr2 = memory_.fetchPointer(0, m2);
-                        if (hdr2.isSmallInteger()) {
-                            int nl2 = hdr2.asSmallInteger() & 0x7FFF;
-                            if (nl2 >= 2) {
-                                Oop s2 = memory_.fetchPointer(nl2 - 1, m2);
-                                if (s2.isObject() && s2.rawBits() > 0x10000 && memory_.isValidPointer(s2)) {
-                                    ObjectHeader* sh2 = s2.asObjectPtr();
-                                    if (sh2->isBytesObject() && sh2->byteSize() < 80) {
-                                        if (!fullChain.empty()) fullChain += " <- ";
-                                        fullChain += std::string((char*)sh2->bytes(), sh2->byteSize());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Oop snd2 = memory_.fetchPointer(0, c2);
-                    if (snd2.rawBits() == memory_.nil().rawBits()) break;
-                    c2 = snd2;
-                }
-                fprintf(stderr, "[P80-SAVE-DANGER] depth=%d!!! step=%llu chain=[%s]\n",
-                        depth, (unsigned long long)g_stepNum, fullChain.c_str());
-                fflush(stderr);
-            }
-        }
-    }
-
     // Switch to new process
     setActiveProcess(newProcess);
 
@@ -10224,6 +10184,9 @@ void Interpreter::transferTo(Oop newProcess) {
     stackPointer_ = stackBase_;
     frameDepth_ = 0;
     lastCannotReturnCtx_ = Oop::nil();  // Clear per-process guard
+    // Note: cannotReturnCount_ is NOT reset here — it tracks per process identity,
+    // not per process switch. This prevents the error handler from resetting the
+    // counter via intermediate process switches.
 
     // Resume execution from the new context
     executeFromContext(newContext);
@@ -10427,6 +10390,18 @@ void Interpreter::checkForPreemption() {
 
         // Put current process back on ready queue
         putToSleep(activeProcess);
+
+        // Diagnostic: track P40 preemption switches
+        if (activePriority == 40 || static_cast<int>(i + 1) == 40) {
+            static int p40PreemptCount = 0;
+            if (++p40PreemptCount <= 10) {
+                fprintf(stderr, "[P40-PREEMPT #%d] step=%lluM old=P%d new=P%d\n",
+                        p40PreemptCount,
+                        (unsigned long long)(g_stepNum / 1000000),
+                        activePriority, static_cast<int>(i + 1));
+                fflush(stderr);
+            }
+        }
 
         // Switch to new process
         g_xferReason = "checkPreemption";
