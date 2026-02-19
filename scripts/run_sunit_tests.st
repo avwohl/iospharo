@@ -643,7 +643,11 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
 
   "Fork test at requested priority"
   testProcess := [
-    [[[[(testClass selector: sel) runCase]
+    | testInstance |
+    testInstance := testClass selector: sel.
+    "Set testCase on TestExecutionEnvironment so EpMonitor can query shouldLogWithEpicea"
+    [CurrentExecutionEnvironment value instVarNamed: 'testCase' put: testInstance] on: Error do: [:e2 |].
+    [[[[[testInstance runCase]
       on: TestFailure do: [:ex |
         result := #fail.
         s nextPutAll: '  FAIL: '; nextPutAll: sel;
@@ -667,8 +671,10 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
          [ctx notNil and: [count < 25]] whileTrue: [
            s nextPutAll: '    >> '; nextPutAll: ctx printString; cr.
            ctx := ctx sender. count := count + 1].
-         s flush] on: Error do: [:e2 | "ignore trace errors"]].
-    doneSem signal] forkAt: priority.
+         s flush] on: Error do: [:e2 | "ignore trace errors"]]]
+    "ensure: guarantees doneSem signal even if tearDown throws a second
+     error during unwinding that escapes the on: Error handler."
+    ensure: [doneSem signal]] forkAt: priority.
 
   "Fork watchdog at SAME priority as test. Uses spin-wait with Processor yield
    instead of Delay, so it works even when the Delay scheduler is dead.
