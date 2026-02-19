@@ -9192,6 +9192,15 @@ void Interpreter::terminateCurrentProcess() {
     nlrHomeMethod_ = Oop::nil();
     nlrValue_ = Oop::nil();
 
+    // Also remove any saved NLR state for this process
+    Oop currentProcess = getActiveProcess();
+    for (int i = 0; i < savedNlrCount_; ++i) {
+        if (savedNlrStates_[i].process.rawBits() == currentProcess.rawBits()) {
+            savedNlrStates_[i] = savedNlrStates_[--savedNlrCount_];
+            break;
+        }
+    }
+
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
     Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
 
@@ -10049,6 +10058,37 @@ void Interpreter::transferTo(Oop newProcess) {
         (void)switchCount; // Suppress unused warning
     }
 
+    // Save outgoing process's NLR state if any is active.
+    // NLR state is global but logically per-process. Without saving/restoring,
+    // a process switch during NLR through ensure: would either:
+    // - Leak stale NLR state to the incoming process (killing P80 scheduler), or
+    // - Clear it, losing the NLR for the outgoing process (Symbol class bug).
+    bool hasActiveNlr = (nlrTargetCtx_.isObject() && !nlrTargetCtx_.isNil()) ||
+                        (nlrHomeMethod_.isObject() && !nlrHomeMethod_.isNil());
+    if (hasActiveNlr) {
+        // Save NLR state for the outgoing process
+        // First check if this process already has saved state (update in place)
+        bool saved = false;
+        for (int i = 0; i < savedNlrCount_; ++i) {
+            if (savedNlrStates_[i].process.rawBits() == oldProcess.rawBits()) {
+                savedNlrStates_[i].targetCtx = nlrTargetCtx_;
+                savedNlrStates_[i].ensureCtx = nlrEnsureCtx_;
+                savedNlrStates_[i].homeMethod = nlrHomeMethod_;
+                savedNlrStates_[i].value = nlrValue_;
+                saved = true;
+                break;
+            }
+        }
+        if (!saved && savedNlrCount_ < MAX_SAVED_NLR) {
+            auto& s = savedNlrStates_[savedNlrCount_++];
+            s.process = oldProcess;
+            s.targetCtx = nlrTargetCtx_;
+            s.ensureCtx = nlrEnsureCtx_;
+            s.homeMethod = nlrHomeMethod_;
+            s.value = nlrValue_;
+        }
+    }
+
     // Save current execution state to old process's suspendedContext
     // If we have inline frames, materialize them into context objects
     Oop contextToSave = materializeFrameStack();
@@ -10067,7 +10107,6 @@ void Interpreter::transferTo(Oop newProcess) {
     // Get new process's suspended context
     Oop newContext = memory_.fetchPointer(ProcessSuspendedContextIndex, newProcess);
 
-
     // Nil out the new process's suspendedContext now that we've read it.
     // This prevents GC from tracing stale context chains that keep objects alive.
     // The reference VM (cointerp.c transferTo:from:) does the same.
@@ -10084,17 +10123,27 @@ void Interpreter::transferTo(Oop newProcess) {
     // Resume execution from the new context
     executeFromContext(newContext);
 
-    // CRITICAL FIX: Clear NLR state on process switch.
-    // nlrHomeMethod_/nlrValue_ are global interpreter fields set during NLR
-    // through ensure: frames. If the outgoing process had an active NLR and
-    // a process switch occurred (e.g., timer signal to P80 scheduler), the
-    // incoming process would see stale NLR state. This caused returnValue()
-    // at fd=0 to incorrectly nil the incoming process's sender chain,
-    // killing the P80 Delay scheduler.
-    nlrHomeMethod_ = Oop::nil();
-    nlrValue_ = Oop::nil();
-    nlrTargetCtx_ = Oop::nil();
-    nlrEnsureCtx_ = Oop::nil();
+    // Restore NLR state for the incoming process (if any was saved)
+    bool restored = false;
+    for (int i = 0; i < savedNlrCount_; ++i) {
+        if (savedNlrStates_[i].process.rawBits() == newProcess.rawBits()) {
+            nlrTargetCtx_ = savedNlrStates_[i].targetCtx;
+            nlrEnsureCtx_ = savedNlrStates_[i].ensureCtx;
+            nlrHomeMethod_ = savedNlrStates_[i].homeMethod;
+            nlrValue_ = savedNlrStates_[i].value;
+            // Remove this entry (swap with last)
+            savedNlrStates_[i] = savedNlrStates_[--savedNlrCount_];
+            restored = true;
+            break;
+        }
+    }
+    if (!restored) {
+        // No saved NLR state for this process — clear (prevents stale leaks)
+        nlrHomeMethod_ = Oop::nil();
+        nlrValue_ = Oop::nil();
+        nlrTargetCtx_ = Oop::nil();
+        nlrEnsureCtx_ = Oop::nil();
+    }
 }
 
 bool Interpreter::tryReschedule() {

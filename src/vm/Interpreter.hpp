@@ -390,6 +390,21 @@ private:
     Oop nlrEnsureCtx_;    // The ensure: context being resumed (nil when no NLR pending)
     Oop nlrHomeMethod_;   // Home method for inline NLR safety net (nil when not active)
     Oop nlrValue_;        // Saved NLR value for safety net
+    // Per-process saved NLR state: when a process switch occurs mid-NLR,
+    // the outgoing process's NLR state is saved here and restored when it resumes.
+    // Without this, process switches during NLR through ensure: would lose the NLR
+    // (e.g., Symbol>>intern: returns Symbol class instead of the interned symbol).
+    static constexpr int MAX_SAVED_NLR = 8;
+    struct SavedNlrState {
+        Oop process;       // The process that owns this NLR state
+        Oop targetCtx;     // nlrTargetCtx_
+        Oop ensureCtx;     // nlrEnsureCtx_
+        Oop homeMethod;    // nlrHomeMethod_
+        Oop value;         // nlrValue_
+    };
+    SavedNlrState savedNlrStates_[MAX_SAVED_NLR];
+    int savedNlrCount_ = 0;
+
     Oop lastCannotReturnCtx_;      // Guard against cannotReturn: infinite loop (GC root)
     Oop lastCannotReturnProcess_;  // Process that triggered cannotReturn: (GC root)
     int cannotReturnCount_;        // Counter for cannotReturn: events per process
@@ -1875,6 +1890,15 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
     visitor(nlrValue_);
     visitor(lastCannotReturnCtx_);
     visitor(lastCannotReturnProcess_);
+
+    // Per-process saved NLR states (all entries, including process Oops)
+    for (int i = 0; i < savedNlrCount_; ++i) {
+        visitor(savedNlrStates_[i].process);
+        visitor(savedNlrStates_[i].targetCtx);
+        visitor(savedNlrStates_[i].ensureCtx);
+        visitor(savedNlrStates_[i].homeMethod);
+        visitor(savedNlrStates_[i].value);
+    }
 
     // VM state Oops
     visitor(displayForm_);
