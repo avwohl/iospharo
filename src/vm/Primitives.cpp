@@ -16661,19 +16661,21 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 case 4: // OR NOT
                     for (intptr_t x = 0; x < width; x++) row[x] |= ~fill;
                     break;
-                case 24: { // alpha blend fill
+                case 24: { // alpha blend fill (source-over Porter-Duff)
                     uint32_t sa = (fill >> 24) & 0xFF;
                     if (sa == 255) {
                         for (intptr_t x = 0; x < width; x++) row[x] = fill;
                     } else if (sa > 0) {
-                        uint32_t da = 255 - sa;
+                        uint32_t invSa = 255 - sa;
                         uint32_t fillRB = fill & 0xFF00FF;
                         uint32_t fillG  = fill & 0x00FF00;
                         for (intptr_t x = 0; x < width; x++) {
                             uint32_t d = row[x];
-                            uint32_t rb = (fillRB * sa + (d & 0xFF00FF) * da + 0x800080) >> 8;
-                            uint32_t g  = (fillG  * sa + (d & 0x00FF00) * da + 0x008000) >> 8;
-                            row[x] = (rb & 0xFF00FF) | (g & 0x00FF00) | 0xFF000000;
+                            uint32_t dAlpha = (d >> 24) & 0xFF;
+                            uint32_t rb = (fillRB * sa + (d & 0xFF00FF) * invSa + 0x800080) >> 8;
+                            uint32_t g  = (fillG  * sa + (d & 0x00FF00) * invSa + 0x008000) >> 8;
+                            uint32_t outAlpha = sa + ((dAlpha * invSa + 127) / 255);
+                            row[x] = (rb & 0xFF00FF) | (g & 0x00FF00) | (outAlpha << 24);
                         }
                     }
                     // sa == 0: fully transparent, nothing to do
@@ -16987,17 +16989,19 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 case 4:  // OR NOT: dest = dest OR NOT(source AND halftone)
                     for (intptr_t x = 0; x < width; x++) dstRow[x] |= ~(srcRow[x] & ht);
                     break;
-                case 24: { // alpha blend
+                case 24: { // alpha blend (source-over Porter-Duff)
                     for (intptr_t x = 0; x < width; x++) {
                         uint32_t s = srcRow[x];
                         uint32_t d = dstRow[x];
                         uint32_t sa = (s >> 24) & 0xFF;
                         if (sa == 255) { dstRow[x] = s; continue; }
                         if (sa == 0) continue;
-                        uint32_t da = 255 - sa;
-                        uint32_t rb = ((s & 0xFF00FF) * sa + (d & 0xFF00FF) * da + 0x800080) >> 8;
-                        uint32_t g  = ((s & 0x00FF00) * sa + (d & 0x00FF00) * da + 0x008000) >> 8;
-                        dstRow[x] = (rb & 0xFF00FF) | (g & 0x00FF00) | 0xFF000000;
+                        uint32_t invSa = 255 - sa;
+                        uint32_t dAlpha = (d >> 24) & 0xFF;
+                        uint32_t rb = ((s & 0xFF00FF) * sa + (d & 0xFF00FF) * invSa + 0x800080) >> 8;
+                        uint32_t g  = ((s & 0x00FF00) * sa + (d & 0x00FF00) * invSa + 0x008000) >> 8;
+                        uint32_t outAlpha = sa + ((dAlpha * invSa + 127) / 255);
+                        dstRow[x] = (rb & 0xFF00FF) | (g & 0x00FF00) | (outAlpha << 24);
                     }
                     break;
                 }
@@ -17164,15 +17168,17 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     case 1: // AND NOT
                         dstRow[x] &= ~srcPixel;
                         break;
-                    case 24: { // alpha blend
+                    case 24: { // alpha blend (source-over Porter-Duff)
                         uint32_t sa = (srcPixel >> 24) & 0xFF;
                         if (sa == 255) { dstRow[x] = srcPixel; break; }
                         if (sa == 0) break;
-                        uint32_t da = 255 - sa;
+                        uint32_t invSa = 255 - sa;
                         uint32_t d = dstRow[x];
-                        uint32_t rb = ((srcPixel & 0xFF00FF) * sa + (d & 0xFF00FF) * da + 0x800080) >> 8;
-                        uint32_t g  = ((srcPixel & 0x00FF00) * sa + (d & 0x00FF00) * da + 0x008000) >> 8;
-                        dstRow[x] = (rb & 0xFF00FF) | (g & 0x00FF00) | 0xFF000000;
+                        uint32_t dAlpha = (d >> 24) & 0xFF;
+                        uint32_t rb = ((srcPixel & 0xFF00FF) * sa + (d & 0xFF00FF) * invSa + 0x800080) >> 8;
+                        uint32_t g  = ((srcPixel & 0x00FF00) * sa + (d & 0x00FF00) * invSa + 0x008000) >> 8;
+                        uint32_t outAlpha = sa + ((dAlpha * invSa + 127) / 255);
+                        dstRow[x] = (rb & 0xFF00FF) | (g & 0x00FF00) | (outAlpha << 24);
                         break;
                     }
                     default: {
@@ -17219,15 +17225,17 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     case 25: case 7:
                         dstRow[x] |= srcPixel;
                         break;
-                    case 24: {
+                    case 24: { // alpha blend (source-over Porter-Duff)
                         uint32_t sa = (srcPixel >> 24) & 0xFF;
                         if (sa == 255) { dstRow[x] = srcPixel; break; }
                         if (sa == 0) break;
-                        uint32_t da = 255 - sa;
+                        uint32_t invSa = 255 - sa;
                         uint32_t d = dstRow[x];
-                        uint32_t rb = ((srcPixel & 0xFF00FF) * sa + (d & 0xFF00FF) * da + 0x800080) >> 8;
-                        uint32_t g  = ((srcPixel & 0x00FF00) * sa + (d & 0x00FF00) * da + 0x008000) >> 8;
-                        dstRow[x] = (rb & 0xFF00FF) | (g & 0x00FF00) | 0xFF000000;
+                        uint32_t dAlpha = (d >> 24) & 0xFF;
+                        uint32_t rb = ((srcPixel & 0xFF00FF) * sa + (d & 0xFF00FF) * invSa + 0x800080) >> 8;
+                        uint32_t g  = ((srcPixel & 0x00FF00) * sa + (d & 0x00FF00) * invSa + 0x008000) >> 8;
+                        uint32_t outAlpha = sa + ((dAlpha * invSa + 127) / 255);
+                        dstRow[x] = (rb & 0xFF00FF) | (g & 0x00FF00) | (outAlpha << 24);
                         break;
                     }
                     default: {
@@ -17300,15 +17308,17 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 switch (combinationRule) {
                     case 3: case 34: dstRow[x] = srcPixel; break;
                     case 25: case 7: dstRow[x] |= srcPixel; break;
-                    case 24: {
+                    case 24: { // alpha blend (source-over Porter-Duff)
                         uint32_t sa = (srcPixel >> 24) & 0xFF;
                         if (sa == 255) { dstRow[x] = srcPixel; break; }
                         if (sa == 0) break;
-                        uint32_t da = 255 - sa;
+                        uint32_t invSa = 255 - sa;
                         uint32_t d = dstRow[x];
-                        uint32_t rb = ((srcPixel & 0xFF00FF) * sa + (d & 0xFF00FF) * da + 0x800080) >> 8;
-                        uint32_t g  = ((srcPixel & 0x00FF00) * sa + (d & 0x00FF00) * da + 0x008000) >> 8;
-                        dstRow[x] = (rb & 0xFF00FF) | (g & 0x00FF00) | 0xFF000000;
+                        uint32_t dAlpha = (d >> 24) & 0xFF;
+                        uint32_t rb = ((srcPixel & 0xFF00FF) * sa + (d & 0xFF00FF) * invSa + 0x800080) >> 8;
+                        uint32_t g  = ((srcPixel & 0x00FF00) * sa + (d & 0x00FF00) * invSa + 0x008000) >> 8;
+                        uint32_t outAlpha = sa + ((dAlpha * invSa + 127) / 255);
+                        dstRow[x] = (rb & 0xFF00FF) | (g & 0x00FF00) | (outAlpha << 24);
                         break;
                     }
                     default: {
