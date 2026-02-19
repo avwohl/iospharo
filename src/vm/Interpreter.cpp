@@ -2332,6 +2332,29 @@ void Interpreter::synchronousSignal(Oop semaphore) {
         }
 
         if (processPriority > activePriority) {
+            // Diagnostic: check P80 process context chain before wakeup
+            if (processPriority >= 80) {
+                Oop ctx = memory_.fetchPointer(ProcessSuspendedContextIndex, process);
+                int depth = 0;
+                Oop c = ctx;
+                while (c.isObject() && !c.isNil() && memory_.isValidPointer(c) && depth < 50) {
+                    depth++;
+                    Oop snd = memory_.fetchPointer(0, c);
+                    if (snd.rawBits() == memory_.nil().rawBits()) break;
+                    c = snd;
+                }
+                static int lastWakeDepth = -1;
+                static int wakeCount = 0;
+                wakeCount++;
+                if (depth != lastWakeDepth || wakeCount <= 20 || depth <= 2) {
+                    fprintf(stderr, "[P80-WAKE #%d] depth=%d ctx=0x%llx step=%llu\n",
+                            wakeCount, depth,
+                            (unsigned long long)ctx.rawBits(),
+                            (unsigned long long)g_stepNum);
+                    fflush(stderr);
+                }
+                lastWakeDepth = depth;
+            }
             putToSleep(activeProcess);
             transferTo(process);
         } else {
@@ -4399,6 +4422,77 @@ void Interpreter::returnValue(Oop value) {
         }
 
 terminate_process:
+        // Diagnostic: log when terminating a high-priority process (P60+)
+        {
+            Oop proc = getActiveProcess();
+            Oop prioOop = memory_.fetchPointer(2, proc); // priority
+            int prio = prioOop.isSmallInteger() ? (int)prioOop.asSmallInteger() : -1;
+            if (prio >= 60) {
+                // Get method selector from activeContext_
+                std::string msel = "?";
+                if (activeContext_.isObject() && !activeContext_.isNil()) {
+                    Oop m = memory_.fetchPointer(3, activeContext_);
+                    if (m.isObject() && !m.isNil() && memory_.isValidPointer(m)) {
+                        Oop hdr = memory_.fetchPointer(0, m);
+                        if (hdr.isSmallInteger()) {
+                            int nl = hdr.asSmallInteger() & 0x7FFF;
+                            if (nl >= 2) {
+                                Oop s = memory_.fetchPointer(nl - 1, m);
+                                if (s.isObject() && s.rawBits() > 0x10000 && memory_.isValidPointer(s)) {
+                                    ObjectHeader* sh = s.asObjectPtr();
+                                    if (sh->isBytesObject() && sh->byteSize() < 80)
+                                        msel = std::string((char*)sh->bytes(), sh->byteSize());
+                                }
+                            }
+                        }
+                    }
+                }
+                // Get sender status
+                std::string reason = "unknown";
+                if (activeContext_.isObject() && !activeContext_.isNil()) {
+                    Oop sender = memory_.fetchPointer(0, activeContext_);
+                    if (sender.rawBits() == 0 || sender.rawBits() < 0x10000) reason = "corrupted-sender";
+                    else if (sender.isNil() || sender.rawBits() == memory_.nil().rawBits()) reason = "nil-sender";
+                    else if (!memory_.isValidPointer(sender)) reason = "invalid-sender";
+                    else {
+                        ObjectHeader* sh = sender.asObjectPtr();
+                        if (sh->slotCount() < 6) reason = "sender-too-small";
+                        else if (sh->format() != ObjectFormat::IndexableWithFixed) reason = "sender-bad-format";
+                        else reason = "executeFromContext-failed";
+                    }
+                } else reason = "no-activeContext";
+                // Walk context chain (up to 10 frames) to see the stack
+                std::string chain;
+                Oop ctx = activeContext_;
+                for (int i = 0; i < 10 && ctx.isObject() && !ctx.isNil(); i++) {
+                    if (!memory_.isValidPointer(ctx)) break;
+                    Oop cm = memory_.fetchPointer(3, ctx);
+                    if (cm.isObject() && !cm.isNil() && memory_.isValidPointer(cm)) {
+                        Oop ch = memory_.fetchPointer(0, cm);
+                        if (ch.isSmallInteger()) {
+                            int cnl = ch.asSmallInteger() & 0x7FFF;
+                            if (cnl >= 2) {
+                                Oop cs = memory_.fetchPointer(cnl - 1, cm);
+                                if (cs.isObject() && cs.rawBits() > 0x10000 && memory_.isValidPointer(cs)) {
+                                    ObjectHeader* csh = cs.asObjectPtr();
+                                    if (csh->isBytesObject() && csh->byteSize() < 80) {
+                                        if (!chain.empty()) chain += " <- ";
+                                        chain += std::string((char*)csh->bytes(), csh->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Oop snd = memory_.fetchPointer(0, ctx);
+                    if (snd.rawBits() == memory_.nil().rawBits()) break;
+                    ctx = snd;
+                }
+                fprintf(stderr, "[TERM-P%d] reason=%s method=#%s step=%llu chain=[%s]\n",
+                        prio, reason.c_str(), msel.c_str(),
+                        (unsigned long long)g_stepNum, chain.c_str());
+                fflush(stderr);
+            }
+        }
         // Mark current process as terminated by clearing its suspendedContext
         terminateCurrentProcess();
 
@@ -10027,6 +10121,29 @@ void Interpreter::transferTo(Oop newProcess) {
         return;
     }
 
+    // Diagnostic: log P80+ process switches
+    {
+        int newPri = -1;
+        Oop np = memory_.fetchPointer(ProcessPriorityIndex, newProcess);
+        newPri = np.isSmallInteger() ? (int)np.asSmallInteger() : -1;
+        int oldPri = -1;
+        if (oldProcess.isObject() && oldProcess.rawBits() > 0x10000) {
+            Oop op = memory_.fetchPointer(ProcessPriorityIndex, oldProcess);
+            oldPri = op.isSmallInteger() ? (int)op.asSmallInteger() : -1;
+        }
+        if (newPri >= 80 || oldPri >= 80) {
+            static int p80XferCount = 0;
+            if (++p80XferCount <= 100) {
+                fprintf(stderr, "[XFER-P80 #%d] P%d->P%d step=%llu new=0x%llx old=0x%llx\n",
+                        p80XferCount, oldPri, newPri,
+                        (unsigned long long)g_stepNum,
+                        (unsigned long long)newProcess.rawBits(),
+                        (unsigned long long)oldProcess.rawBits());
+                fflush(stderr);
+            }
+        }
+    }
+
     ObjectHeader* newProcHdr = newProcess.asObjectPtr();
     if (newProcHdr->slotCount() < 2) {
         return;
@@ -10064,7 +10181,110 @@ void Interpreter::transferTo(Oop newProcess) {
         memory_.storePointer(ProcessSuspendedContextIndex, oldProcess, contextToSave);
     }
 
-    // P80 scheduler save/resume logging (disabled — too verbose)
+    // Diagnostic: check P80 process context chain health when saving
+    {
+        int oldPri2 = -1;
+        if (oldProcess.isObject() && oldProcess.rawBits() > 0x10000) {
+            Oop op = memory_.fetchPointer(ProcessPriorityIndex, oldProcess);
+            oldPri2 = op.isSmallInteger() ? (int)op.asSmallInteger() : -1;
+        }
+        if (oldPri2 >= 80 && contextToSave.isObject() && !contextToSave.isNil()) {
+            // Walk the sender chain and count depth
+            int depth = 0;
+            Oop ctx = contextToSave;
+            std::string topMethod = "?";
+            while (ctx.isObject() && !ctx.isNil() && memory_.isValidPointer(ctx) && depth < 50) {
+                if (depth == 0) {
+                    Oop m = memory_.fetchPointer(3, ctx);
+                    if (m.isObject() && !m.isNil() && memory_.isValidPointer(m)) {
+                        Oop hdr = memory_.fetchPointer(0, m);
+                        if (hdr.isSmallInteger()) {
+                            int nl = hdr.asSmallInteger() & 0x7FFF;
+                            if (nl >= 2) {
+                                Oop s = memory_.fetchPointer(nl - 1, m);
+                                if (s.isObject() && s.rawBits() > 0x10000 && memory_.isValidPointer(s)) {
+                                    ObjectHeader* sh = s.asObjectPtr();
+                                    if (sh->isBytesObject() && sh->byteSize() < 80)
+                                        topMethod = std::string((char*)sh->bytes(), sh->byteSize());
+                                }
+                            }
+                        }
+                    }
+                }
+                depth++;
+                Oop snd = memory_.fetchPointer(0, ctx);
+                if (snd.rawBits() == memory_.nil().rawBits()) break;
+                ctx = snd;
+            }
+            static int lastP80Depth = -1;
+            static int p80SaveCount = 0;
+            p80SaveCount++;
+            // Always log when depth changes, or first 5
+            if (depth != lastP80Depth || p80SaveCount <= 5) {
+                // Build full chain for first 5 or on depth change
+                std::string fullChain;
+                Oop c3 = contextToSave;
+                for (int j = 0; j < 10 && c3.isObject() && !c3.isNil() && memory_.isValidPointer(c3); j++) {
+                    Oop m3 = memory_.fetchPointer(3, c3);
+                    std::string mname = "?";
+                    if (m3.isObject() && !m3.isNil() && memory_.isValidPointer(m3)) {
+                        Oop hdr3 = memory_.fetchPointer(0, m3);
+                        if (hdr3.isSmallInteger()) {
+                            int nl3 = hdr3.asSmallInteger() & 0x7FFF;
+                            if (nl3 >= 2) {
+                                Oop s3 = memory_.fetchPointer(nl3 - 1, m3);
+                                if (s3.isObject() && s3.rawBits() > 0x10000 && memory_.isValidPointer(s3)) {
+                                    ObjectHeader* sh3 = s3.asObjectPtr();
+                                    if (sh3->isBytesObject() && sh3->byteSize() < 80)
+                                        mname = std::string((char*)sh3->bytes(), sh3->byteSize());
+                                }
+                            }
+                        }
+                    }
+                    if (!fullChain.empty()) fullChain += " <- ";
+                    fullChain += mname;
+                    Oop snd3 = memory_.fetchPointer(0, c3);
+                    if (snd3.rawBits() == memory_.nil().rawBits()) break;
+                    c3 = snd3;
+                }
+                fprintf(stderr, "[P80-SAVE #%d] depth=%d step=%llu fd=%zu chain=[%s]\n",
+                        p80SaveCount, depth,
+                        (unsigned long long)g_stepNum, frameDepth_, fullChain.c_str());
+                fflush(stderr);
+            }
+            lastP80Depth = depth;
+            if (depth <= 2) {
+                // Walk chain for full method names when depth is suspiciously low
+                std::string fullChain;
+                Oop c2 = contextToSave;
+                for (int j = 0; j < 10 && c2.isObject() && !c2.isNil() && memory_.isValidPointer(c2); j++) {
+                    Oop m2 = memory_.fetchPointer(3, c2);
+                    if (m2.isObject() && !m2.isNil() && memory_.isValidPointer(m2)) {
+                        Oop hdr2 = memory_.fetchPointer(0, m2);
+                        if (hdr2.isSmallInteger()) {
+                            int nl2 = hdr2.asSmallInteger() & 0x7FFF;
+                            if (nl2 >= 2) {
+                                Oop s2 = memory_.fetchPointer(nl2 - 1, m2);
+                                if (s2.isObject() && s2.rawBits() > 0x10000 && memory_.isValidPointer(s2)) {
+                                    ObjectHeader* sh2 = s2.asObjectPtr();
+                                    if (sh2->isBytesObject() && sh2->byteSize() < 80) {
+                                        if (!fullChain.empty()) fullChain += " <- ";
+                                        fullChain += std::string((char*)sh2->bytes(), sh2->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Oop snd2 = memory_.fetchPointer(0, c2);
+                    if (snd2.rawBits() == memory_.nil().rawBits()) break;
+                    c2 = snd2;
+                }
+                fprintf(stderr, "[P80-SAVE-DANGER] depth=%d!!! step=%llu chain=[%s]\n",
+                        depth, (unsigned long long)g_stepNum, fullChain.c_str());
+                fflush(stderr);
+            }
+        }
+    }
 
     // Switch to new process
     setActiveProcess(newProcess);

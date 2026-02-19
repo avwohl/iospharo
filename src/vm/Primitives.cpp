@@ -3773,6 +3773,39 @@ PrimitiveResult Interpreter::primitiveResume(int argCount) {
     int activePriority = safeProcessPriority(activeProcess);
     if (activePriority < 0) return PrimitiveResult::Failure;
 
+    // Diagnostic: log P80+ process resumes
+    if (processPriority >= 80) {
+        static int p80ResumeCount = 0;
+        if (++p80ResumeCount <= 50) {
+            // Get process's suspended context method
+            std::string msel = "?";
+            Oop ctx = memory_.fetchPointer(ProcessSuspendedContextIndex, process);
+            if (ctx.isObject() && !ctx.isNil()) {
+                Oop m = memory_.fetchPointer(3, ctx);
+                if (m.isObject() && !m.isNil() && memory_.isValidPointer(m)) {
+                    Oop hdr = memory_.fetchPointer(0, m);
+                    if (hdr.isSmallInteger()) {
+                        int nl = hdr.asSmallInteger() & 0x7FFF;
+                        if (nl >= 2) {
+                            Oop s = memory_.fetchPointer(nl - 1, m);
+                            if (s.isObject() && s.rawBits() > 0x10000 && memory_.isValidPointer(s)) {
+                                ObjectHeader* sh = s.asObjectPtr();
+                                if (sh->isBytesObject() && sh->byteSize() < 80)
+                                    msel = std::string((char*)sh->bytes(), sh->byteSize());
+                            }
+                        }
+                    }
+                }
+            }
+            fprintf(stderr, "[RESUME-P%d #%d] proc=0x%llx activePri=%d method=#%s step=%llu\n",
+                    processPriority, p80ResumeCount,
+                    (unsigned long long)process.rawBits(),
+                    activePriority, msel.c_str(),
+                    (unsigned long long)g_stepNum);
+            fflush(stderr);
+        }
+    }
+
     if (processPriority > activePriority) {
         // Resumed process has higher priority - preempt current process
         // Put current process to sleep
@@ -14975,6 +15008,21 @@ PrimitiveResult Interpreter::primitiveSignalAtUTCMicroseconds(int argCount) {
         // Schedule the timer
         timerSemaphore_ = sema;
         nextWakeupUsec_ = usecs;
+    }
+
+    // Diagnostic: log timer semaphore registrations
+    {
+        static int timerRegCount = 0;
+        if (++timerRegCount <= 200) {
+            Oop proc = getActiveProcess();
+            Oop prioOop = memory_.fetchPointer(2, proc);
+            int prio = prioOop.isSmallInteger() ? (int)prioOop.asSmallInteger() : -1;
+            fprintf(stderr, "[TIMER-REG #%d] P%d usecs=%lld sema=%s step=%llu\n",
+                    timerRegCount, prio, (long long)usecs,
+                    sema.isNil() ? "nil" : "set",
+                    (unsigned long long)g_stepNum);
+            fflush(stderr);
+        }
     }
 
     popN(2);  // Pop both arguments, leave receiver
