@@ -2856,8 +2856,6 @@ skip_yield:
     g_watchdogLastBytecode = bytecode;
     g_watchdogSubphase = 15;
 
-    // FI-TRACE and findInterned: bytecode trace (disabled — too verbose)
-
     inExtension_ = false;
 
     dispatchBytecode(bytecode);
@@ -10135,6 +10133,18 @@ void Interpreter::transferTo(Oop newProcess) {
 
     // Resume execution from the new context
     executeFromContext(newContext);
+
+    // CRITICAL FIX: Clear NLR state on process switch.
+    // nlrHomeMethod_/nlrValue_ are global interpreter fields set during NLR
+    // through ensure: frames. If the outgoing process had an active NLR and
+    // a process switch occurred (e.g., timer signal to P80 scheduler), the
+    // incoming process would see stale NLR state. This caused returnValue()
+    // at fd=0 to incorrectly nil the incoming process's sender chain,
+    // killing the P80 Delay scheduler.
+    nlrHomeMethod_ = Oop::nil();
+    nlrValue_ = Oop::nil();
+    nlrTargetCtx_ = Oop::nil();
+    nlrEnsureCtx_ = Oop::nil();
 }
 
 bool Interpreter::tryReschedule() {
