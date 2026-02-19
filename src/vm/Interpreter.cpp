@@ -2540,7 +2540,7 @@ bool Interpreter::step() {
     {
     static int stepCheckCounter = 0;
     stepCheckCounter++;
-    if (stepCheckCounter % 100 == 0 && !inExtension_) {
+    if ((stepCheckCounter & 0x3FF) == 0 && !inExtension_) {  // every 1024 steps
         g_watchdogSubphase = 11;
         checkTimerSemaphore();
         if (hasPendingSignals()) {
@@ -6359,6 +6359,8 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
     //   slots 2+: keys (Symbols) stored inline, indexed by hash
     //
     // Key at slot[i+2] corresponds to method at valuesArray[i]
+    // Lookup uses open addressing with linear probing: hash & (size-1), wrap around.
+    // Symbols are interned, so identity comparison (Oop equality) suffices.
 
     if (!methodDict.isObject()) return Oop::nil();
 
@@ -6366,81 +6368,46 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
     size_t mdSlotCount = mdHeader->slotCount();
     if (mdSlotCount < 3) return Oop::nil();
 
-    // Extract selector bytes for string comparison
-    std::string selectorStr;
-    Oop actualSelector = selector;
-
-    if (selector.isObject() && selector.rawBits() > 0x10000) {
-        ObjectHeader* selHdr = selector.asObjectPtr();
-
-        // Handle wrapped selectors (AdditionalMethodState etc.)
-        if (selHdr->format() == ObjectFormat::FixedSize && selHdr->slotCount() >= 1) {
-            Oop innerSel = memory_.fetchPointer(0, selector);
-            if (innerSel.isObject() && innerSel.rawBits() > 0x10000) {
-                ObjectHeader* innerHdr = innerSel.asObjectPtr();
-                if (innerHdr->isBytesObject()) {
-                    actualSelector = innerSel;
-                    selHdr = innerHdr;
-                }
-            }
-        }
-
-        if (selHdr->isBytesObject() && selHdr->byteSize() <= 100) {
-            selectorStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-        }
-    }
-
     // Get values array (slot 1)
     Oop valuesArray = memory_.fetchPointer(1, methodDict);
     if (!valuesArray.isObject() || valuesArray.rawBits() < 0x10000) return Oop::nil();
 
     ObjectHeader* valuesHeader = valuesArray.asObjectPtr();
     size_t valuesSize = valuesHeader->slotCount();
-    size_t keySlotCount = mdSlotCount - 2;
+    size_t keySlotCount = mdSlotCount - 2;  // number of key slots (power of 2)
+
+    if (keySlotCount == 0) return Oop::nil();
 
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
-    auto isNilOrEmpty = [nilObj](Oop o) -> bool {
-        return o.isNil() || o.rawBits() == nilObj.rawBits() || o.rawBits() < 0x10000;
-    };
+    uint64_t nilBits = nilObj.rawBits();
 
-    // Search all key slots (linear scan — correct but O(n))
-    for (size_t i = 0; i < keySlotCount; ++i) {
-        size_t mdSlotIndex = i + 2;
-        Oop key = memory_.fetchPointer(mdSlotIndex, methodDict);
-
-        if (isNilOrEmpty(key)) continue;
-
-        // Exact identity match (Symbols are unique objects)
-        if (key.rawBits() == actualSelector.rawBits() || key.rawBits() == selector.rawBits()) {
-            if (i < valuesSize) {
-                Oop method = memory_.fetchPointer(i, valuesArray);
-                if (method.isObject() && method.rawBits() > 0x10000) {
-                    // Validate method is actually a CompiledMethod
-                    ObjectHeader* mHdr = method.asObjectPtr();
-                    return method;  // May be non-CompiledMethod (metalink etc.) — caller handles
-                }
-            }
-            continue;
-        }
-
-        // String comparison fallback (for selectors that may not be interned)
-        if (!selectorStr.empty() && key.isObject() && key.rawBits() > 0x10000) {
-            ObjectHeader* keyHdr = key.asObjectPtr();
-            if (keyHdr->isBytesObject()) {
-                size_t keyLen = keyHdr->byteSize();
-                if (keyLen == selectorStr.size() &&
-                    memcmp(keyHdr->bytes(), selectorStr.data(), keyLen) == 0) {
-                    if (i < valuesSize) {
-                        Oop method = memory_.fetchPointer(i, valuesArray);
-                        if (method.isObject() && method.rawBits() > 0x10000) {
-                            ObjectHeader* mHdr = method.asObjectPtr();
-                            return method;  // May be non-CompiledMethod — caller handles
-                        }
-                    }
-                }
-            }
-        }
+    // Hash-based probe: start at (identityHash & (keySlotCount - 1)), linear probe
+    uint32_t selectorHash = 0;
+    if (selector.isObject()) {
+        selectorHash = selector.asObjectPtr()->identityHash();
     }
+    size_t mask = keySlotCount - 1;  // keySlotCount is power of 2
+    size_t startIndex = selectorHash & mask;
+    size_t i = startIndex;
+
+    do {
+        Oop key = memory_.fetchPointer(i + 2, methodDict);
+
+        // nil slot = end of probe chain (key not found)
+        if (key.isNil() || key.rawBits() == nilBits) {
+            return Oop::nil();
+        }
+
+        // Identity match — Symbols are interned
+        if (key.rawBits() == selector.rawBits()) {
+            if (i < valuesSize) {
+                return memory_.fetchPointer(i, valuesArray);
+            }
+            return Oop::nil();
+        }
+
+        i = (i + 1) & mask;
+    } while (i != startIndex);  // Full wrap = not found
 
     return Oop::nil();
 }
@@ -8555,8 +8522,8 @@ Oop Interpreter::methodDictOf(Oop classOop) const {
 
 Oop Interpreter::methodClassOf(Oop method) const {
     // Get the class that defines this CompiledMethod by reading the last literal.
-    // In Pharo, the last literal of a CompiledMethod is an Association whose value
-    // is the class where the method is defined. This is critical for super sends.
+    // In Pharo, the last literal is an Association/ClassBinding whose value (slot 1)
+    // is the defining class. This matches the reference VM's methodClassOf:.
     if (!method.isObject()) return memory_.nil();
 
     // Get numLiterals from method header
@@ -8568,59 +8535,18 @@ Oop Interpreter::methodClassOf(Oop method) const {
 
     if (numLiterals < 2) return memory_.nil();
 
-    // In Pharo, the literal layout is:
-    //   slot 0: method header
-    //   slot 1: literal[0]  ...  slot N: literal[N-1]
-    // The LAST literal (slot numLiterals) is the class binding (Association/GlobalVariable).
-    // The PENULTIMATE literal (slot numLiterals-1) is the selector (Symbol).
-    // The class binding's value (slot 1) is the defining class.
-    // This matches VMMaker's lastLiteralOf: which does fetchPointer(literalCount, method).
+    // The LAST literal (slot numLiterals) is the class binding.
     Oop lastLiteral = memory_.fetchPointer(numLiterals, method);
-
-    // The last literal can be:
-    // 1. An Association (classBinding) - extract value (slot 1)
-    // 2. Directly a class
-    // 3. An AdditionalMethodState - need to unwrap
 
     if (!lastLiteral.isObject() || lastLiteral.isNil()) return memory_.nil();
 
-    // Check if it's an Association by looking at its class
-    Oop lastLitClass = memory_.classOf(lastLiteral);
-    if (lastLitClass.isObject()) {
-        Oop className = memory_.fetchPointer(6, lastLitClass);
-        if (className.isObject()) {
-            ObjectHeader* nameHdr = className.asObjectPtr();
-            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
-                std::string classNameStr((char*)nameHdr->bytes(), nameHdr->byteSize());
-                if (classNameStr == "Association" || classNameStr == "ClassBinding" ||
-                    classNameStr == "GlobalVariable" || classNameStr == "LiteralVariable" ||
-                    classNameStr == "ClassVariable" || classNameStr == "WorkspaceVariable" ||
-                    classNameStr.find("Binding") != std::string::npos ||
-                    classNameStr.find("Variable") != std::string::npos) {
-                    // It's an Association-like binding - get value (slot 1)
-                    return memory_.fetchPointer(1, lastLiteral);
-                }
-                if (classNameStr == "AdditionalMethodState") {
-                    // AdditionalMethodState wraps the method - fallback to nil
-                }
-            }
-        }
-    }
-
-    // Check if lastLiteral IS a class (has a methodDict at slot 1)
+    // Reference VM approach: if it's a pointer object with > 1 slots,
+    // slot 1 is the value (defining class). No string comparisons needed.
     ObjectHeader* litHdr = lastLiteral.asObjectPtr();
-    if (litHdr->slotCount() >= 7) {
-        Oop maybeName = memory_.fetchPointer(6, lastLiteral);
-        if (maybeName.isObject()) {
-            ObjectHeader* nameHdr = maybeName.asObjectPtr();
-            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
-                // Looks like a class - return it
-                return lastLiteral;
-            }
-        }
+    if (!litHdr->isBytesObject() && litHdr->slotCount() > 1) {
+        return memory_.fetchPointer(1, lastLiteral);
     }
 
-    // Fallback: return nil (caller should use receiver's class as fallback)
     return memory_.nil();
 }
 

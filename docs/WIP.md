@@ -1,19 +1,63 @@
 # iOS Pharo VM — Work In Progress
 
-## Current Status (2026-02-17, commit 29dd7ea)
+## Current Status (2026-02-19)
 
-### Test Results — Full Batch Run (commit d82c201)
+### Test Results — Full Run (commits up to d337e7e)
 
-**11639/12500 pass (93.1%)**, 56 fail, 777 error, 20 skip, 8 timeout
+Previous run (commit 4c056bd): ~12262 pass, 52 fail, 43 error, 20 skip, ~132 timeout
+Current run (in progress, 254/576 classes): significant improvements
 
-| Metric | Count |
-|---|---|
-| Total tests | 12,500 |
-| Pass | 11,639 (93.1%) |
-| Fail | 56 |
-| Error | 777 |
-| Skip | 20 |
-| Timeout | 8 |
+### Key Fixes This Session
+
+1. **ProcessTerminateBugTest** (commit 1fceb0a): NLR reachability check in `returnValue()`.
+   When `Context>>jump` transfers control between stacks (e.g., during process termination
+   via `runUntilReturnFrom:`), pending NLR state pointed to the terminated process's stack.
+   Fix: walk sender chain to verify NLR target is reachable before continuing NLR.
+   Result: 12/12 pass (was 10/12).
+
+2. **Test runner execution environment** (commit 86e2b07): Wrapped test batch in
+   `CurrentExecutionEnvironment runTestsBy:` which activates `TestExecutionEnvironment`.
+   This provides `processMonitor` etc. that ProcessTest needs.
+   Result: 46 ProcessTest errors → 0.
+
+3. **Float write immutability** (commit 86e2b07): Removed immutability checks from
+   primitives 628/629 (float32/float64 write). Reference VM writes through immutability;
+   the Smalltalk tests are marked `<expectedFailure>`.
+   Result: 2 WriteBarrierTest errors → 0.
+
+4. **primitiveContextSize** (commit d337e7e): Was returning allocated capacity
+   (`slotCount - 6`) instead of current `stackp` value. Object>>halt has capacity 16
+   but stackp=1.
+   Result: InstructionStreamTest `testSimulatingAMethodWithHaltHasCorrectContext` fixed.
+
+5. **Performance optimizations** (uncommitted):
+   - `lookupInMethodDict`: Rewrote from O(n) linear scan with `std::string` heap allocation
+     to O(1) hash-based probe with identity comparison. Symbols are interned.
+   - `methodClassOf`: Replaced 6 string comparisons + `std::string::find` with simple
+     slot count check (reference VM approach).
+   - Timer check interval: 100 → 1024 steps (reduces syscall overhead 10x).
+   These fix the ~1000x slowdown for class hierarchy operations that caused most timeouts.
+
+### Remaining Issues
+
+| Category | Count | Status |
+|---|---|---|
+| Timeouts | ~80 | Mostly performance-related; perf fixes should help dramatically |
+| ProcessTest errors | ~46 | Fixed (execution environment) |
+| WriteBarrierTest errors | 2 | Fixed (float write immutability) |
+| ProcessTerminateBugTest | 2 | Fixed (NLR reachability) |
+| OpalCompiler AST cache | ~21 | Array basicNew: failure cascade — test contamination |
+| Slot/class layout tests | ~5 | Test isolation issues — previous tests corrupt class hierarchy |
+| SHA1/MD5 hash tests | 3 | Missing DSAPrims plugin — image code has Character>>bitShift: bug |
+| WeakKeyDictionary | 2 | GC finalization timing — weak entries cleared too early |
+| CodeSimulationTest | 1 | prepareMethod:forSimulationWith: not impl for SistaV1 |
+| testCannotBeRecompiled | 1 | Fails on reference VM too (Pharo image bug) |
+| testNoWeakBlock | 1 | Fails on reference VM too (no ephemeron support for weak blocks) |
+
+### Delay Scheduler Health
+
+No `DELAY-DEAD` messages in current run (254+ classes). The per-process NLR state
+fix from the previous session appears to have resolved the Delay scheduler death issue.
 
 ### GUI Status
 
@@ -23,48 +67,10 @@
 - Dragging startup window makes it disappear (window management issue)
 - Menu actions don't execute (likely event handling / morphic issue)
 
-### Error Breakdown by Category
+### Architecture
 
-| Category | Count | Root Cause |
-|---|---|---|
-| WeakKeyDictionaryTest | ~69 | Process switch corruption when forked; pass 100% synchronously |
-| WeakIdentityKeyDictionaryTest | ~87 | Same as above |
-| SystemEnvironmentTest | ~48 | `#>` DNU — SystemEnvironment doesn't implement comparison |
-| PackageOnModelTest | ~18 | Package system class restructuring |
-| PackageAndClassesTest | ~20 | Package system class restructuring |
-| PackageAnnouncementsTest | ~8 | Package system class restructuring |
-| ClassDescriptionProtocolsTest | ~28 | Protocol/package system issues |
-| ClassTest | ~24 | Class modification primitives |
-| ClassAnnotationTest + subtypes | ~30 | Annotation system, class creation in tests |
-| FFICalloutAPITest | ~14 | FFI type resolution broken |
-| FBDDecompilerTest | ~26 | Bytecode decompiler (test infra) |
-| FinalizationRegistryTest | 3 TO | Finalization timing issues |
-| MonitorTest | 2 TO | Monitor/semaphore timing |
-| IntegerTest | 7 F, 3 E | testLargeShift, testModulo, etc. |
-| OC* (compiler tests) | ~15 | Compiler test infrastructure |
-| Misc | ~60 | Various smaller categories |
-
-### What To Do Next (Priority Order)
-
-1. **Fix WeakKeyDict forked test failures (~156 errors)**: The single biggest category.
-   Tests pass synchronously but fail/hang when forked. Root cause is in process
-   switching — likely `materializeFrameStack` / `executeFromContext` roundtrip or
-   GC interaction during process switch. Would eliminate ~20% of remaining errors.
-
-2. **Fix SystemEnvironment `#>` DNU (~48 errors)**: SystemEnvironment doesn't
-   implement the `#>` comparison operator.
-
-3. **Fix Package/Class system tests (~80+ errors)**: Related to class
-   creation/modification in tests. Package system expects certain behaviors from
-   `Smalltalk organization`, protocol management, etc.
-
-4. **GUI menu actions**: Make menu items execute their actions.
-
-### Architecture Notes
-
-- C++ inline stack: `stackBase_` to `stackPointer_`, `framePointer_` for current frame
-- Process switch: `materializeFrameStack()` saves C++ state → context object, `executeFromContext()` restores
-- GC traces C++ stack via `forEachRoot()` which iterates `stackBase_..stackPointer_`
-- Saved frames (inline calls) stored in `savedFrames_[]` array, materialized to context objects on switch
-- Context layout: slot 0=sender, 1=pc, 2=stackp, 3=method, 4=closure, 5=receiver, 6+=temps+stack
-- SDL2 stubs in FFI.cpp bridge between Pharo image's OSSDL2Driver and our Metal rendering pipeline
+- `src/vm/Interpreter.cpp` — Sista V1 bytecode interpreter
+- `src/vm/Primitives.cpp` — Primitive implementations
+- `src/vm/ObjectMemory.cpp` — Memory management, GC
+- `scripts/run_sunit_tests.st` — Test runner (chunk format)
+- `docs/SistaV1-Bytecode-Spec.md` — Bytecode reference
