@@ -514,31 +514,17 @@ runTestClass: testClass run: runNum on: s detail: d
     s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' === SKIPPED (abstract)'; cr. s flush.
     ^ {0. 0. 0. 0. 0}].
 
-  "Skip classes that crash the VM via GC corruption during class restructuring.
-   These acquire compilation/class mutation mutexes, then timeout-suspend holds the
-   lock forever. Subsequent compilation attempts deadlock, GC under pressure corrupts
-   process priority fields, putToSleep() aborts on non-SmallInteger priority."
-  (#(SlotAnnouncementsTest SlotClassBuilderTest
-     SlotEnvironmentTest SlotExampleMovieAndPersonTest SlotSilentTest
-     SlotMethodRecompilationTest
-     SlotLayoutEqualityTest SlotLayoutExtensionTest
-     TraitCompositionTest ClassTraitTest MOPTraitTest
-     TraitPureBehaviorTest TraitPrecedenceCompositionTest
-     TraitWithAliasTest TraitWithConflictsTest TraitChangesTest
-     TraitMethodDescriptionTest TraitOverloadingOfMethodsInTraitedClassTest
-     TraitPackagingTest TraitInTraitClassTest TraitWithMethodsInProtocolsTest
-     TraitSlotScopeTest TraitWithSlotsTest TraitWithComplexSlotsTest
-     AccessorInstanceVariableSlotTest ComputedSlotTest
-     ProcessLocalSlotTest WeakClassVariableTest WeakSlotTest
-     FFICallbackParametersTest FFICallbackTest
-     ProcessTest SlotMigrationTest SlotErrorsTest
-     BlockClosureValueWithinDurationTest)
-    includes: testClass name) ifTrue: [
-    s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' === SKIPPED (crashes VM: class restructuring/mutex)'; cr. s flush.
-    ^ {0. 0. 0. 0. 0}].
-
   s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' ==='; cr.
   s flush.
+  "Check if Delay scheduler is alive before this class"
+  [| sem alive |
+   alive := false.
+   sem := Semaphore new.
+   [(Delay forMilliseconds: 50) wait. sem signal] fork.
+   (sem waitTimeoutSeconds: 3) ifFalse: [alive := true].
+   alive ifFalse: [
+     s nextPutAll: 'DELAY-DEAD-BEFORE: '; nextPutAll: testClass name; cr. s flush]]
+  on: Error do: [:e |].
   "Tests must run below timingPriority (80). Watchdog uses spin-wait
    (relinquishProcessorForMicroseconds:) so it works even if Delay scheduler dies.
    Use priority 40 (userSchedulingPriority) matching standard Pharo behavior.
@@ -614,8 +600,7 @@ runTestClass: testClass run: runNum on: s detail: d
           d nextPutAll: sel; nextPut: $	.
           d nextPutAll: 'TIMEOUT'; cr].
         d flush.
-        "Bail out of class after 3 consecutive timeouts — suspended processes
-         hold Mutexes (compilation, class mod), causing next test to deadlock."
+        "Bail out of class after 3 consecutive timeouts to avoid wasting time"
         consecutiveTimeouts >= 3 ifTrue: [
           s nextPutAll: '  BAIL: 3 consecutive timeouts, skipping rest of class'; cr.
           s nextPutAll: 'Total: '; print: sels size;
@@ -624,6 +609,15 @@ runTestClass: testClass run: runNum on: s detail: d
             nextPutAll: ' T:'; print: t; cr; cr. s flush.
           ^ {p. f. e. sk. t}]]]].
 
+  "Check if Delay scheduler is alive after this class"
+  [| sem alive |
+   alive := false.
+   sem := Semaphore new.
+   [(Delay forMilliseconds: 50) wait. sem signal] fork.
+   (sem waitTimeoutSeconds: 3) ifFalse: [alive := true].
+   alive ifFalse: [
+     s nextPutAll: 'DELAY-DEAD-AFTER: '; nextPutAll: testClass name; cr. s flush]]
+  on: Error do: [:e |].
   s nextPutAll: 'Total: '; print: sels size;
     nextPutAll: ' P:'; print: p;
     nextPutAll: ' F:'; print: f;
@@ -683,7 +677,7 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
     [((Time millisecondClockValue - startMs) bitAnd: 16r1FFFFFFF) < (seconds * 1000)] whileTrue: [
       Processor yield].
     "Timeout elapsed — test is still running"
-    [testProcess suspend] on: Error do: [:e |].
+    [testProcess terminate] on: Error do: [:e |].
     result := #timeout.
     s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
       nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; cr.
