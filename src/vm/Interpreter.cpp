@@ -108,6 +108,7 @@ Interpreter::Interpreter(ObjectMemory& memory)
     , nlrEnsureCtx_(Oop::nil())
     , nlrHomeMethod_(Oop::nil())
     , nlrValue_(Oop::nil())
+    , lastCannotReturnCtx_(Oop::nil())
     , argCount_(0)
     , extA_(0)
     , extB_(0)
@@ -4547,20 +4548,25 @@ terminate_process:
             }
         }
         // Per reference VM spec: send cannotReturn: instead of silently terminating.
-        // This gives Smalltalk's exception handling a chance to handle the situation
-        // (e.g., log the error, signal BlockCannotReturn, etc.) instead of silently
-        // killing the process. The reference VM NEVER terminates a process at this
-        // point — it always sends cannotReturn:.
+        // This gives Smalltalk's exception handling a chance to handle the situation.
+        // Guard: if cannotReturn: was already sent for this context (meaning the
+        // exception handler returned instead of terminating), terminate the process
+        // to prevent an infinite loop.
         if (activeContext_.isObject() && !activeContext_.isNil()) {
-            stackPointer_ = stackBase_;
-            push(activeContext_);  // receiver: the context that cannot return
-            push(value);           // arg: the value that was being returned
-            sendSelector(selectors_.cannotReturn, 1);
-            return;
+            if (activeContext_.rawBits() != lastCannotReturnCtx_.rawBits()) {
+                lastCannotReturnCtx_ = activeContext_;
+                stackPointer_ = stackBase_;
+                push(activeContext_);  // receiver: the context that cannot return
+                push(value);           // arg: the value that was being returned
+                sendSelector(selectors_.cannotReturn, 1);
+                return;
+            }
+            // Second time for same context — cannotReturn: didn't terminate.
+            // Fall through to terminate the process.
+            lastCannotReturnCtx_ = Oop::nil();
         }
 
-        // Fallback: activeContext_ is nil (shouldn't happen at fd==0, but safety).
-        // In this case we genuinely can't send cannotReturn: — terminate the process.
+        // Terminate the process (cannotReturn: failed or activeContext_ is nil)
         terminateCurrentProcess();
         if (tryReschedule()) {
             return;
@@ -10217,6 +10223,7 @@ void Interpreter::transferTo(Oop newProcess) {
     // Reset interpreter state
     stackPointer_ = stackBase_;
     frameDepth_ = 0;
+    lastCannotReturnCtx_ = Oop::nil();  // Clear per-process guard
 
     // Resume execution from the new context
     executeFromContext(newContext);

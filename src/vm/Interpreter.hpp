@@ -390,6 +390,7 @@ private:
     Oop nlrEnsureCtx_;    // The ensure: context being resumed (nil when no NLR pending)
     Oop nlrHomeMethod_;   // Home method for inline NLR safety net (nil when not active)
     Oop nlrValue_;        // Saved NLR value for safety net
+    Oop lastCannotReturnCtx_;  // Guard against cannotReturn: infinite loop
     int argCount_;
 
     // Sista V1 extension bytes (reset after each instruction)
@@ -1869,6 +1870,7 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
     visitor(nlrEnsureCtx_);
     visitor(nlrHomeMethod_);
     visitor(nlrValue_);
+    visitor(lastCannotReturnCtx_);
 
     // VM state Oops
     visitor(displayForm_);
