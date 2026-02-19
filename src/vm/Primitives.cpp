@@ -10292,14 +10292,25 @@ PrimitiveResult Interpreter::primitiveContextSize(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    ObjectHeader* header = context.asObjectPtr();
-    size_t slotCount = header->slotCount();
+    // Context>>size returns the current stackp value (number of temps+stack in use),
+    // NOT the allocated capacity. The stackp is stored in slot 2 of the context.
+    // For the active context, we use the C++ stack pointer.
+    Oop stackpOop;
+    if (context.rawBits() == activeContext_.rawBits()) {
+        // Active context: derive from C++ stack pointer
+        int64_t sp = static_cast<int64_t>(stackPointer_ - stackBase_) + 1;
+        stackpOop = Oop::fromSmallInteger(sp);
+    } else {
+        // Inactive/materialized context: read stackp from slot 2
+        stackpOop = memory_.fetchPointer(2, context);
+    }
 
-    // Subtract the fixed context fields (sender, pc, stackp, method, closureOrNil, receiver)
-    size_t tempStackSize = slotCount > ContextFixedSlots ? slotCount - ContextFixedSlots : 0;
+    if (!stackpOop.isSmallInteger()) {
+        return PrimitiveResult::Failure;
+    }
 
     pop();
-    push(Oop::fromSmallInteger(static_cast<int64_t>(tempStackSize)));
+    push(stackpOop);
     return PrimitiveResult::Success;
 }
 
