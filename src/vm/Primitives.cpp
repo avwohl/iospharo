@@ -23601,10 +23601,8 @@ PrimitiveResult Interpreter::primitiveFloat32Write(int argCount) {
     int64_t offset = offsetOop.asSmallInteger();
     if (offset < 0) return PrimitiveResult::Failure;
 
-    // Check immutability — return Failure to let Smalltalk fallback handle write barrier
-    if (hdr->isImmutable()) {
-        return PrimitiveResult::Failure;
-    }
+    // Note: reference VM does NOT check immutability here — writes through.
+    // The Smalltalk-level tests are marked <expectedFailure> for this reason.
 
     if (static_cast<size_t>(offset) + sizeof(float) > hdr->byteSize())
         return PrimitiveResult::Failure;
@@ -23635,10 +23633,8 @@ PrimitiveResult Interpreter::primitiveFloat64Write(int argCount) {
     int64_t offset = offsetOop.asSmallInteger();
     if (offset < 0) return PrimitiveResult::Failure;
 
-    // Check immutability — return Failure to let Smalltalk fallback handle write barrier
-    if (hdr->isImmutable()) {
-        return PrimitiveResult::Failure;
-    }
+    // Note: reference VM does NOT check immutability here — writes through.
+    // The Smalltalk-level tests are marked <expectedFailure> for this reason.
 
     if (static_cast<size_t>(offset) + sizeof(double) > hdr->byteSize())
         return PrimitiveResult::Failure;

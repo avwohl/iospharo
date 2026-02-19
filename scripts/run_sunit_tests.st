@@ -404,7 +404,7 @@ runAllTests
     DocCommentsReleaseTest PharoDocCommentTest
     ObjectWithPrintingRaisingHaltTest
     EFFFICallTest BitBltTest
-    FastStepThroughTest) do: [:name |
+    FastStepThroughTest StepThroughTest) do: [:name |
       (Smalltalk globals at: name ifAbsent: [nil])
         ifNotNil: [:cls | addOnce value: cls]].
 
@@ -469,6 +469,9 @@ runAllTests
        stream flush]]
     on: Error do: [:e |
      stream nextPutAll: 'SYMTABLE-CHECK error: '; nextPutAll: e messageText; cr. stream flush].
+    "Wrap in TestExecutionEnvironment so tests that need processMonitor etc. work.
+     DefaultExecutionEnvironment>>runTestsBy: activates TestExecutionEnvironment."
+    CurrentExecutionEnvironment runTestsBy: [
     batchClasses do: [:tc | | counts |
       [counts := self runTestClass: tc run: runNum on: stream detail: detail.
       totalP := totalP + (counts at: 1).
@@ -480,7 +483,7 @@ runAllTests
           stream nextPutAll: '*** RUNNER ERROR in '; nextPutAll: tc name;
             nextPutAll: ': '; nextPutAll: ex class name;
             nextPutAll: ' - '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 200)); cr].
-      stream flush. detail flush].
+      stream flush. detail flush]].
     stream nextPutAll: '*** BATCH COMPLETED for '; print: batchClasses size;
       nextPutAll: ' classes ('; print: batchStart; nextPutAll: '-'; print: batchEnd; nextPutAll: ')'; cr.
     stream flush.
