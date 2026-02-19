@@ -2775,6 +2775,55 @@ bool Interpreter::step() {
             executePendingDriverInstall();
             return running_;
         }
+
+        // Convert pending driver setup to install if ready
+        if (hasPendingDriverSetup_ && pendingDriverSetupMethod_.isObject()) {
+            Oop nilObj2 = memory_.nil();
+            Oop osWindowDriverClass = memory_.findGlobal("OSWindowDriver");
+            if (osWindowDriverClass.isObject() && osWindowDriverClass.rawBits() != nilObj2.rawBits()) {
+                Oop classPool = memory_.fetchPointer(7, osWindowDriverClass);
+                if (classPool.isObject() && classPool.rawBits() != nilObj2.rawBits()) {
+                    ObjectHeader* poolHdr = classPool.asObjectPtr();
+                    if (poolHdr->slotCount() >= 2) {
+                        Oop assocArray = memory_.fetchPointer(1, classPool);
+                        if (assocArray.isObject()) {
+                            ObjectHeader* arrayHdr = assocArray.asObjectPtr();
+                            for (size_t i = 0; i < arrayHdr->slotCount(); i++) {
+                                Oop assoc = memory_.fetchPointer(i, assocArray);
+                                if (assoc.isObject() && assoc.rawBits() != nilObj2.rawBits()) {
+                                    ObjectHeader* assocHdr = assoc.asObjectPtr();
+                                    if (assocHdr->slotCount() >= 2) {
+                                        Oop key = memory_.fetchPointer(0, assoc);
+                                        if (key.isObject()) {
+                                            ObjectHeader* keyHdr = key.asObjectPtr();
+                                            if (keyHdr->isBytesObject() && keyHdr->byteSize() == 7) {
+                                                std::string keyName((char*)keyHdr->bytes(), keyHdr->byteSize());
+                                                if (keyName == "Current") {
+                                                    Oop driverInstance = memory_.fetchPointer(1, assoc);
+                                                    if (driverInstance.isObject() && driverInstance.rawBits() != nilObj2.rawBits()) {
+                                                        pendingDriverInstallMethod_ = pendingDriverSetupMethod_;
+                                                        pendingDriverInstallReceiver_ = driverInstance;
+                                                        hasPendingDriverInstall_ = true;
+                                                        pendingDriverMethodNeedsArg_ = false;
+                                                    }
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            hasPendingDriverSetup_ = false;
+            pendingDriverSetupMethod_ = Oop::nil();
+            if (hasPendingDriverInstall_) {
+                executePendingDriverInstall();
+                return running_;
+            }
+        }
     }
 skip_yield:
 
@@ -4359,7 +4408,11 @@ void Interpreter::returnValue(Oop value) {
                             fflush(stderr);
                         }
                     } else {
-                        terminateCurrentProcess();
+                        // homeSender is nil/invalid — send cannotReturn: per spec
+                        stackPointer_ = stackBase_;
+                        push(activeContext_);
+                        push(savedValue);
+                        sendSelector(selectors_.cannotReturn, 1);
                     }
                 }
                 return;
@@ -4493,166 +4546,29 @@ terminate_process:
                 fflush(stderr);
             }
         }
-        // Mark current process as terminated by clearing its suspendedContext
-        terminateCurrentProcess();
-
-        // Check if we need to call setupEventLoop after install completed
-        if (hasPendingDriverSetup_ && pendingDriverSetupMethod_.isObject()) {
-
-            // Get the driver instance from OSWindowDriver's Current class variable
-            Oop nilObj = memory_.nil();
-            Oop osWindowDriverClass = memory_.findGlobal("OSWindowDriver");
-            Oop driverInstance = Oop::nil();
-
-            if (osWindowDriverClass.isObject() && osWindowDriverClass.rawBits() != nilObj.rawBits()) {
-                // ClassPool is at slot 7
-                Oop classPool = memory_.fetchPointer(7, osWindowDriverClass);
-                if (classPool.isObject() && classPool.rawBits() != nilObj.rawBits()) {
-                    ObjectHeader* poolHdr = classPool.asObjectPtr();
-                    if (poolHdr->slotCount() >= 2) {
-                        Oop assocArray = memory_.fetchPointer(1, classPool);
-                        if (assocArray.isObject()) {
-                            ObjectHeader* arrayHdr = assocArray.asObjectPtr();
-                            for (size_t i = 0; i < arrayHdr->slotCount(); i++) {
-                                Oop assoc = memory_.fetchPointer(i, assocArray);
-                                if (assoc.isObject() && assoc.rawBits() != nilObj.rawBits()) {
-                                    ObjectHeader* assocHdr = assoc.asObjectPtr();
-                                    if (assocHdr->slotCount() >= 2) {
-                                        Oop key = memory_.fetchPointer(0, assoc);
-                                        if (key.isObject()) {
-                                            ObjectHeader* keyHdr = key.asObjectPtr();
-                                            if (keyHdr->isBytesObject() && keyHdr->byteSize() == 7) {
-                                                std::string keyName((char*)keyHdr->bytes(), keyHdr->byteSize());
-                                                if (keyName == "Current") {
-                                                    driverInstance = memory_.fetchPointer(1, assoc);
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (driverInstance.isObject() && driverInstance.rawBits() != nilObj.rawBits()) {
-                // Schedule setupEventLoop on the driver instance
-                pendingDriverInstallMethod_ = pendingDriverSetupMethod_;
-                pendingDriverInstallReceiver_ = driverInstance;
-                hasPendingDriverInstall_ = true;
-                pendingDriverMethodNeedsArg_ = false;
-
-                // Clear setup state
-                hasPendingDriverSetup_ = false;
-                pendingDriverSetupMethod_ = Oop::nil();
-                pendingDriverSetupReceiver_ = Oop::nil();
-
-                // Execute it now (like executePendingDriverInstall does)
-                if (executePendingDriverInstall()) {
-                    return;  // Let the method run
-                }
-            }
-
-            // Clear setup state even if we couldn't call it
-            hasPendingDriverSetup_ = false;
-            pendingDriverSetupMethod_ = Oop::nil();
+        // Per reference VM spec: send cannotReturn: instead of silently terminating.
+        // This gives Smalltalk's exception handling a chance to handle the situation
+        // (e.g., log the error, signal BlockCannotReturn, etc.) instead of silently
+        // killing the process. The reference VM NEVER terminates a process at this
+        // point — it always sends cannotReturn:.
+        if (activeContext_.isObject() && !activeContext_.isNil()) {
+            stackPointer_ = stackBase_;
+            push(activeContext_);  // receiver: the context that cannot return
+            push(value);           // arg: the value that was being returned
+            sendSelector(selectors_.cannotReturn, 1);
+            return;
         }
 
-        // Try to find another runnable process
+        // Fallback: activeContext_ is nil (shouldn't happen at fd==0, but safety).
+        // In this case we genuinely can't send cannotReturn: — terminate the process.
+        terminateCurrentProcess();
         if (tryReschedule()) {
             return;
         }
-
-        // If no other process to run, try startup entry point
         if (bootstrapStartup()) {
             return;
         }
-
-        // No runnable processes - idle loop until one becomes available.
-        // We must NOT return to the bytecode loop here because the current
-        // process has been terminated and its method/IP are no longer valid.
-        // Keep trying to find a runnable process - never give up in a GUI app
-        {
-            // Clear method_ so we can detect if signal processing activates a process
-            // via synchronousSignal() → transferTo() → executeFromContext()
-            method_ = Oop::nil();
-
-            while (running_) {
-
-                // GC safe point: no process is active, safe to compact
-                if (memory_.needsCompactGC()) {
-                    memory_.clearCompactGCFlag();
-                    memory_.fullGC();
-                    flushMethodCache();  // Compaction moves objects — stale cache
-                }
-
-                // Process pending external semaphore signals (from events, timers)
-                if (hasPendingSignals()) {
-                    processPendingSignals();
-                }
-
-                // Process input events - may signal semaphores that wake processes
-                processInputEvents();
-
-                // Check timer semaphore - may wake delay processes
-                checkTimerSemaphore();
-
-                // If any signal processing above called synchronousSignal() →
-                // transferTo() → executeFromContext(), method_ will be set to
-                // the new process's method. Return to the bytecode loop to run it.
-                if (!method_.isNil() && method_.isObject()) {
-                    return;
-                }
-
-                // Pump the native run loop so UIKit can deliver touch/hover
-                // events and Metal can render frames.  Without this, the main
-                // thread is blocked and no events arrive — creating a deadlock
-                // where we wait for events that can never be delivered.
-#if __APPLE__
-                if (relinquishCallback_) {
-                    // Pump the run loop multiple times to fully process events.
-                    // A single pump may only handle hitTest; the actual touch
-                    // delivery happens in a subsequent run loop iteration.
-                    for (int pump = 0; pump < 10; pump++) {
-                        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.001, true);
-                    }
-                    // Then sleep briefly to cap CPU usage
-                    CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.010, false);
-                } else {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                }
-#else
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-#endif
-
-                // Diagnostic: detect stranded events in gEventQueue
-                {
-                    static int idleIterations = 0;
-                    idleIterations++;
-                    size_t qSize = pharo::gEventQueue.size();
-                    if (qSize > 0 && (idleIterations % 100 == 0)) {
-                        fprintf(stderr, "[IDLE-STRANDED] iter=%d queueSize=%zu timerSem=%s wakeup=%s\n",
-                                idleIterations, qSize,
-                                timerSemaphore_.isNil() ? "nil" : "set",
-                                nextWakeupUsec_ == INT64_MAX ? "none" : "armed");
-                    }
-                    if (idleIterations % 500 == 0) {
-                        fprintf(stderr, "[IDLE-STATE] iter=%d queueSize=%zu timerSem=%s wakeup=%s\n",
-                                idleIterations, qSize,
-                                timerSemaphore_.isNil() ? "nil" : "set",
-                                nextWakeupUsec_ == INT64_MAX ? "none" : "armed");
-                    }
-                }
-
-                // Try to find a runnable process
-                if (tryReschedule()) {
-                    return;
-                }
-            }
-            return;
-        }
+        stopVM("No runnable processes after terminate with nil activeContext");
     }
 
 
