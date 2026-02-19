@@ -4198,6 +4198,32 @@ void Interpreter::returnValue(Oop value) {
             Oop homeCtx = nlrTargetCtx_;
             Oop nilObj = memory_.nil();
 
+            // Verify NLR target is reachable from current sender chain.
+            // Context>>jump can transfer control to a completely different stack
+            // (e.g., from a terminated process back to the terminator process via
+            // runUntilReturnFrom:). If the NLR target is not reachable, the NLR
+            // must be abandoned — continuing it would walk the wrong stack.
+            {
+                Oop check = memory_.fetchPointer(0, activeContext_);
+                bool reachable = false;
+                for (int i = 0; i < 2000 && check.isObject() && !check.isNil(); i++) {
+                    if (check.rawBits() == homeCtx.rawBits()) {
+                        reachable = true;
+                        break;
+                    }
+                    check = memory_.fetchPointer(0, check);
+                }
+                if (!reachable) {
+                    // NLR target is unreachable — abandon NLR and do normal return
+                    nlrTargetCtx_ = Oop::nil();
+                    nlrEnsureCtx_ = Oop::nil();
+                    nlrHomeMethod_ = Oop::nil();
+                    nlrValue_ = Oop::nil();
+                    // Fall through to normal fd=0 return below
+                    goto normalReturn;
+                }
+            }
+
             // Get sender of current context BEFORE killing it
             Oop senderOfCurrent = memory_.fetchPointer(0, activeContext_);
 
@@ -4391,6 +4417,7 @@ void Interpreter::returnValue(Oop value) {
             // (nlrHomeMethod_ was already cleared above)
         }
 
+        normalReturn:
         // Check if current context has a sender
         Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
         if (activeContext_.isObject() && activeContext_.rawBits() != nilObj.rawBits()) {
