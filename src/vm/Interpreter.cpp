@@ -4279,39 +4279,6 @@ void Interpreter::returnValue(Oop value) {
                     stackPointer_ = stackBase_;
                     executeFromContext(homeSender);
                     push(value);
-
-                    static int nlrCompleteCount = 0;
-                    if (++nlrCompleteCount <= 20) {
-                        Oop proc = getActiveProcess();
-                        Oop prioOop = memory_.fetchPointer(2, proc); // priority
-                        int prio = prioOop.isSmallInteger() ? (int)prioOop.asSmallInteger() : -1;
-                        // Get method name of homeSender
-                        std::string hsMethod = "?";
-                        if (homeSender.isObject() && !homeSender.isNil()) {
-                            Oop m = memory_.fetchPointer(3, homeSender);
-                            if (m.isObject() && !m.isNil()) {
-                                Oop hdr = memory_.fetchPointer(0, m);
-                                if (hdr.isSmallInteger()) {
-                                    int nl = hdr.asSmallInteger() & 0x7FFF;
-                                    if (nl >= 2) {
-                                        Oop s = memory_.fetchPointer(nl - 1, m);
-                                        if (s.isObject() && s.rawBits() > 0x10000) {
-                                            ObjectHeader* sh = s.asObjectPtr();
-                                            if (sh->isBytesObject() && sh->byteSize() < 80)
-                                                hsMethod = std::string((char*)sh->bytes(), sh->byteSize());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        fprintf(stderr, "[NLR-COMPLETE #%d] value=0x%llx homeSender=0x%llx step=%llu proc=0x%llx prio=%d hsMethod=%s\n",
-                                nlrCompleteCount, (unsigned long long)value.rawBits(),
-                                (unsigned long long)homeSender.rawBits(),
-                                (unsigned long long)g_stepNum,
-                                (unsigned long long)proc.rawBits(), prio,
-                                hsMethod.c_str());
-                        fflush(stderr);
-                    }
                     return;
                 } else {
                     // No valid sender — terminate process
@@ -4410,14 +4377,6 @@ void Interpreter::returnValue(Oop value) {
                         stackPointer_ = stackBase_;
                         executeFromContext(homeSender);
                         push(savedValue);
-
-                        static int nlrSafetyCount = 0;
-                        if (++nlrSafetyCount <= 20) {
-                            fprintf(stderr, "[NLR-SAFETY #%d] value=0x%llx step=%llu\n",
-                                    nlrSafetyCount, (unsigned long long)savedValue.rawBits(),
-                                    (unsigned long long)g_stepNum);
-                            fflush(stderr);
-                        }
                     } else {
                         // homeSender is nil/invalid — send cannotReturn: per spec
                         stackPointer_ = stackBase_;
@@ -5246,15 +5205,6 @@ bool Interpreter::handleContextNLRUnwind(Oop value, Oop startCtx, Oop homeCtx) {
     //   aBlock value               (ensure block fires!)
     //   ^ returnValue              (returns NLR value — intercepted by returnValue())
     executeFromContext(ensureCtx);
-
-    static int nlrUnwindDirectCount = 0;
-    if (++nlrUnwindDirectCount <= 20) {
-        fprintf(stderr, "[NLR-UNWIND-PEND #%d] ensureCtx=0x%llx homeCtx=0x%llx step=%llu\n",
-                nlrUnwindDirectCount, (unsigned long long)ensureCtx.rawBits(),
-                (unsigned long long)homeCtx.rawBits(),
-                (unsigned long long)g_stepNum);
-        fflush(stderr);
-    }
 
     return true;
 }
