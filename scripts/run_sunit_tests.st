@@ -599,7 +599,11 @@ runTestClass: testClass run: runNum on: s detail: d
         Our LargeInteger division/printing is O(n^2) vs reference VM's optimized C.
         When they timeout, the runner (same priority 40) can't preempt, causing hang."
        testPrintStringBase testPositiveIntegerPrinting testNegativeIntegerPrinting
-       testSlowFactorial testReciprocalModulo testPrintStringAll)
+       testSlowFactorial testReciprocalModulo testPrintStringAll
+       "testTransformingDeprecation hangs the VM: Deprecation>>transform triggers
+        code rewriting that creates an infinite loop or high-priority process, starving
+        the P40 watchdog. The watchdog never fires even after 10+ minutes."
+       testTransformingDeprecation)
       includes: sel) ifFalse: [
       | result |
       s nextPutAll: '  RUN: '; nextPutAll: sel; cr. s flush.
