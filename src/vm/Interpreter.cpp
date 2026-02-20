@@ -2327,6 +2327,23 @@ void Interpreter::synchronousSignal(Oop semaphore) {
         if (processPriority > activePriority) {
             putToSleep(activeProcess);
             transferTo(process);
+        } else if (processPriority == activePriority) {
+            // Same priority: yield to implement fair round-robin scheduling.
+            // This matches the reference VM's "preemptionYields" behavior (default
+            // true in Pharo 10+). When a semaphore signal wakes a process at the
+            // same priority, the active process yields, enabling fair interleaving
+            // of same-priority processes (critical for queue contention tests).
+            // Steps: add woken process to end of queue, put active to sleep (end),
+            // then transfer to the first process in the queue.
+            putToSleep(process);  // woken process goes to end of its priority queue
+            putToSleep(activeProcess);  // active process also goes to end
+            // Transfer to first process in the priority queue
+            Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
+            Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
+            Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
+            Oop processList = memory_.fetchPointer(processPriority - 1, schedLists);
+            Oop first = removeFirstLinkOfList(processList);
+            transferTo(first);
         } else {
             putToSleep(process);
         }
@@ -2389,10 +2406,11 @@ void Interpreter::startHeartbeat() {
                 }
             }
 
-            // Every ~10ms, set force yield flag for round-robin scheduling and preemption.
-            // Reference VM fires every ~1ms; 10ms balances scheduling fairness with overhead.
+            // Every ~2ms, set force yield flag for round-robin scheduling and preemption.
+            // Reference VM heartbeat fires every ~2ms (DEFAULT_BEAT_MS = 2 in heartbeat.c)
+            // and forces interrupt checks via stackLimit manipulation.
             // Critical for queue contention tests with many same-priority processes.
-            if (tickCount % 10 == 0) {
+            if (tickCount % 2 == 0) {
                 forceYield_.store(true, std::memory_order_release);
             }
 
