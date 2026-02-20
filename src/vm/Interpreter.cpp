@@ -2506,8 +2506,7 @@ bool Interpreter::step() {
     {
     static int stepCheckCounter = 0;
     stepCheckCounter++;
-    if (((stepCheckCounter & 0x3FF) == 0 || forceEventCheck_) && !inExtension_) {  // every 1024 steps, or forced after GC
-        forceEventCheck_ = false;
+    if ((stepCheckCounter & 0x3FF) == 0 && !inExtension_) {  // every 1024 steps
         g_watchdogSubphase = 11;
         checkTimerSemaphore();
         if (hasPendingSignals()) {

@@ -423,7 +423,7 @@ private:
     bool primitiveFailed_;
     bool suppressContextSwitch_ = false;  // Suppress forceYield after prim 198 (ensure:) activation
     bool inExtension_ = false;  // True after extension byte (0xE0/0xE1), prevents forceYield from splitting extension+target
-    bool forceEventCheck_ = false;  // Set by GC primitives to force immediate event check (signals finalization)
+    // forceEventCheck_ removed — caused WeakKeyDictionaryTest regression (Got 1 instead of 1001)
     int lastPrimitiveIndex_ = 0;  // For stepDetailed() tracking
 
     // System paths and arguments

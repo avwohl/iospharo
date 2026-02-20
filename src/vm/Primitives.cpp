@@ -272,9 +272,6 @@ PrimitiveResult Interpreter::primitiveIncrementalGC(int argCount) {
         primitiveSuccess(Oop::fromSmallInteger(Oop::smallIntegerMax()));
     }
 
-    // Force event check on next step so finalization gets signaled immediately.
-    forceEventCheck_ = true;
-
     return PrimitiveResult::Success;
 }
 
@@ -7381,11 +7378,6 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
     } else {
         primitiveSuccess(Oop::fromSmallInteger(Oop::smallIntegerMax()));
     }
-
-    // Force event check on next step so finalization gets signaled immediately.
-    // Reference VM checks events at every send; we check every 1024 steps.
-    // Without this, weak reference tests fail because finalization runs too late.
-    forceEventCheck_ = true;
 
     return PrimitiveResult::Success;
 }
