@@ -2359,6 +2359,17 @@ void Interpreter::signalFinalizationIfNeeded() {
     // the priority scheduler and disrupts in-progress mourning by creating
     // duplicate mournLoop processes.
     if (memory_.pendingFinalizationSignals() <= 0) return;
+
+    // Don't signal if the finalization process is already running (pri >= 51).
+    // Without this guard, auto-GC during mourning queues more mourners, which
+    // get signaled at the next periodic check, keeping the P51 process in an
+    // infinite mourn-GC-mourn cycle that starves the P40 test and watchdog.
+    // The mourning process will pick up any remaining mourners when it loops.
+    Oop activeProc = getActiveProcess();
+    Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, activeProc);
+    int activePri = prioOop.isSmallInteger() ? static_cast<int>(prioOop.asSmallInteger()) : 0;
+    if (activePri >= 51) return;  // Already at/above finalization priority
+
     memory_.clearPendingFinalizationSignals();
 
     Oop sema = memory_.specialObject(SpecialObjectIndex::TheFinalizationSemaphore);
