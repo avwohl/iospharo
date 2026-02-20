@@ -2580,7 +2580,9 @@ bool Interpreter::step() {
         }
 
         g_watchdogSubphase = 12;
-        // signalFinalizationIfNeeded() now runs every step (above), no need here.
+        // Signal finalization periodically for auto-GC mourners (not handled by the
+        // one-shot flag which only fires after explicit GC primitives 130/131).
+        signalFinalizationIfNeeded();
 
         // Log active process priority + selector (disabled — fprintf overhead slows VM)
         // Enable only when actively debugging scheduler issues
