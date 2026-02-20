@@ -4279,8 +4279,13 @@ void Interpreter::returnValue(Oop value) {
                 if (homeSender.isObject() && !homeSender.isNil() &&
                     memory_.isValidPointer(homeSender)) {
                     stackPointer_ = stackBase_;
+                    Oop hsStackp = memory_.fetchPointer(2, homeSender);
+                    int hsOrigSp = hsStackp.isSmallInteger()
+                        ? static_cast<int>(hsStackp.asSmallInteger()) : 0;
                     executeFromContext(homeSender);
-                    push(value);
+                    framePointer_[1 + hsOrigSp] = value;
+                    Oop* pastVal = framePointer_ + 1 + hsOrigSp + 1;
+                    if (pastVal > stackPointer_) stackPointer_ = pastVal;
                     return;
                 } else {
                     // No valid sender — terminate process
@@ -4377,8 +4382,13 @@ void Interpreter::returnValue(Oop value) {
                     if (homeSender.isObject() && !homeSender.isNil() &&
                         memory_.isValidPointer(homeSender)) {
                         stackPointer_ = stackBase_;
+                        Oop hs2Stackp = memory_.fetchPointer(2, homeSender);
+                        int hs2OrigSp = hs2Stackp.isSmallInteger()
+                            ? static_cast<int>(hs2Stackp.asSmallInteger()) : 0;
                         executeFromContext(homeSender);
-                        push(savedValue);
+                        framePointer_[1 + hs2OrigSp] = savedValue;
+                        Oop* pastVal2 = framePointer_ + 1 + hs2OrigSp + 1;
+                        if (pastVal2 > stackPointer_) stackPointer_ = pastVal2;
                     } else {
                         // homeSender is nil/invalid — send cannotReturn: per spec
                         stackPointer_ = stackBase_;
@@ -4431,15 +4441,32 @@ void Interpreter::returnValue(Oop value) {
                     // Reset stack for new context
                     stackPointer_ = stackBase_;
 
-                    // Execute from sender, which will push the return value appropriately
-                    // First, mark the returning context as dead per Cog VM semantics:
+                    // Mark the returning context as dead per Cog VM semantics:
                     // nil the sender and PC so isDead returns true and sender chain is broken.
                     memory_.storePointer(0, activeContext_, memory_.nil());  // sender = nil
                     memory_.storePointer(1, activeContext_, memory_.nil());  // pc = nil → isDead
 
+                    // Read sender's stackp BEFORE executeFromContext (which uses it).
+                    // We need this to place the return value at the correct
+                    // Pharo stack position, especially when stackp < numTemps
+                    // (e.g., after Context>>jump's "self pop" decrements stackp).
+                    Oop senderStackp = memory_.fetchPointer(2, sender);
+                    int origSp = senderStackp.isSmallInteger()
+                        ? static_cast<int>(senderStackp.asSmallInteger()) : 0;
+
                     if (executeFromContext(sender)) {
-                        // Push the return value onto the new context's stack
-                        push(value);
+                        // Place return value at framePointer_[1 + origSp],
+                        // which is the Pharo context's stackp+1 position.
+                        // In the normal case (origSp >= numTemps), this is the
+                        // same as push(). In the jump case (origSp < numTemps),
+                        // this correctly overwrites the temp slot instead of
+                        // going above the padded nil temps.
+                        framePointer_[1 + origSp] = value;
+                        // Ensure stackPointer_ is past the written position
+                        Oop* pastValue = framePointer_ + 1 + origSp + 1;
+                        if (pastValue > stackPointer_) {
+                            stackPointer_ = pastValue;
+                        }
                         return;
                     }
                 } else {
@@ -12327,6 +12354,7 @@ Oop Interpreter::findSelector(const char* name) {
     // DEBUG: "[DEBUG] findSelector: '" << name << "' not found"
     return Oop::nil();
 }
+
 
 bool Interpreter::executeFromContext(Oop context) {
     // Set up SIGSEGV recovery point - if we crash accessing unrelocated pointers,
