@@ -2506,7 +2506,8 @@ bool Interpreter::step() {
     {
     static int stepCheckCounter = 0;
     stepCheckCounter++;
-    if ((stepCheckCounter & 0x3FF) == 0 && !inExtension_) {  // every 1024 steps
+    if (((stepCheckCounter & 0x3FF) == 0 || forceEventCheck_) && !inExtension_) {  // every 1024 steps, or forced after GC
+        forceEventCheck_ = false;
         g_watchdogSubphase = 11;
         checkTimerSemaphore();
         if (hasPendingSignals()) {
@@ -13223,6 +13224,14 @@ void Interpreter::initializeNamedPrimitives() {
     // The image calls this to register a semaphore for SDL2 event notification
     registerNamedPrimitive("", "primitiveSetVMSDL2Input:", &Interpreter::primitiveSetVMSDL2Input);
     registerNamedPrimitive("SDL_Event", "primitiveSetVMSDL2Input:", &Interpreter::primitiveSetVMSDL2Input);
+
+    // SocketPlugin stubs (minimal for UUID generation / NetNameResolver)
+    registerNamedPrimitive("SocketPlugin", "primitiveInitializeNetwork", &Interpreter::primitiveInitializeNetwork);
+    registerNamedPrimitive("SocketPlugin", "primitiveResolverStatus", &Interpreter::primitiveResolverStatus);
+    registerNamedPrimitive("SocketPlugin", "primitiveResolverLocalAddress", &Interpreter::primitiveResolverLocalAddress);
+
+    // UUIDPlugin
+    registerNamedPrimitive("UUIDPlugin", "primitiveMakeUUID", &Interpreter::primitiveMakeUUID);
 
     // ThreadedFFI (TFFI) primitives - used by TFFIBackend in Pharo 13+
     // These must be registered under "" (empty module) because the image looks them up that way.

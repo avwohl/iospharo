@@ -423,6 +423,7 @@ private:
     bool primitiveFailed_;
     bool suppressContextSwitch_ = false;  // Suppress forceYield after prim 198 (ensure:) activation
     bool inExtension_ = false;  // True after extension byte (0xE0/0xE1), prevents forceYield from splitting extension+target
+    bool forceEventCheck_ = false;  // Set by GC primitives to force immediate event check (signals finalization)
     int lastPrimitiveIndex_ = 0;  // For stepDetailed() tracking
 
     // System paths and arguments
@@ -1748,6 +1749,14 @@ private:
     PrimitiveResult primitiveClosedir(int argCount);                  // Named: FileAttributesPlugin closedir
     PrimitiveResult primitiveRewinddir(int argCount);                 // Named: FileAttributesPlugin rewinddir
     PrimitiveResult primitiveGetenv(int argCount);                    // Named: get environment variable
+
+    // SocketPlugin stubs (minimal for UUID generation)
+    PrimitiveResult primitiveInitializeNetwork(int argCount);         // Named: SocketPlugin
+    PrimitiveResult primitiveResolverStatus(int argCount);            // Named: SocketPlugin
+    PrimitiveResult primitiveResolverLocalAddress(int argCount);      // Named: SocketPlugin
+
+    // UUIDPlugin
+    PrimitiveResult primitiveMakeUUID(int argCount);                  // Named: UUIDPlugin
 
     // SmallFloat primitives (541-559)
     // These are optimized versions of Float primitives for SmallFloat immediates

@@ -272,6 +272,9 @@ PrimitiveResult Interpreter::primitiveIncrementalGC(int argCount) {
         primitiveSuccess(Oop::fromSmallInteger(Oop::smallIntegerMax()));
     }
 
+    // Force event check on next step so finalization gets signaled immediately.
+    forceEventCheck_ = true;
+
     return PrimitiveResult::Success;
 }
 
@@ -7378,6 +7381,11 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
     } else {
         primitiveSuccess(Oop::fromSmallInteger(Oop::smallIntegerMax()));
     }
+
+    // Force event check on next step so finalization gets signaled immediately.
+    // Reference VM checks events at every send; we check every 1024 steps.
+    // Without this, weak reference tests fail because finalization runs too late.
+    forceEventCheck_ = true;
 
     return PrimitiveResult::Success;
 }
@@ -24486,6 +24494,73 @@ PrimitiveResult Interpreter::primitiveGetenv(int argCount) {
     } else {
         push(memory_.nil());
     }
+    return PrimitiveResult::Success;
+}
+
+// ===== SOCKETPLUGIN STUBS =====
+// Minimal stubs for NetNameResolver — enough for UUID generation.
+// The image calls these via <primitive: 'xxx' module: 'SocketPlugin'>.
+
+// primitiveInitializeNetwork
+// Stack: receiver, semaphoreIndex -> receiver
+// NetNameResolver>>primInitializeNetwork: semaIndex
+PrimitiveResult Interpreter::primitiveInitializeNetwork(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+    popN(1);  // pop semaphoreIndex arg, leave receiver
+    return PrimitiveResult::Success;
+}
+
+// primitiveResolverStatus
+// Stack: receiver -> SmallInteger (status code)
+// 0=Uninitialized, 1=Ready, 2=Busy, 3=Error
+PrimitiveResult Interpreter::primitiveResolverStatus(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+    popN(1);  // pop receiver
+    push(Oop::fromSmallInteger(1));  // ResolverReady
+    return PrimitiveResult::Success;
+}
+
+// primitiveResolverLocalAddress
+// Stack: receiver -> ByteArray (4 bytes, IPv4 address)
+PrimitiveResult Interpreter::primitiveResolverLocalAddress(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+    // Create a 4-byte ByteArray with 127.0.0.1
+    Oop byteArrayClass = memory_.specialObject(SpecialObjectIndex::ClassByteArray);
+    if (byteArrayClass.isNil()) return PrimitiveResult::Failure;
+    uint32_t classIndex = memory_.indexOfClass(byteArrayClass);
+    Oop result = memory_.allocateBytes(classIndex, 4);
+    if (result.isNil()) return PrimitiveResult::Failure;
+    memory_.storeByte(0, result, 127);
+    memory_.storeByte(1, result, 0);
+    memory_.storeByte(2, result, 0);
+    memory_.storeByte(3, result, 1);
+    popN(1);  // pop receiver
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// ===== UUIDPLUGIN =====
+// primitiveMakeUUID: fills receiver ByteArray with random UUID bytes
+// Stack: receiver (ByteArray) -> receiver (modified in place)
+PrimitiveResult Interpreter::primitiveMakeUUID(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+    Oop rcvr = stackTop();
+    if (rcvr.isImmediate()) return PrimitiveResult::Failure;
+    size_t size = memory_.byteSizeOf(rcvr);
+    if (size < 16) return PrimitiveResult::Failure;
+
+    // Generate 16 random bytes
+    for (size_t i = 0; i < 16; i++) {
+        memory_.storeByte(i, rcvr, static_cast<uint8_t>(rand() & 0xFF));
+    }
+
+    // Set UUID version 4 and variant bits
+    uint8_t byte6 = memory_.fetchByte(6, rcvr);
+    memory_.storeByte(6, rcvr, (byte6 & 0x0F) | 0x40);  // Version 4
+    uint8_t byte8 = memory_.fetchByte(8, rcvr);
+    memory_.storeByte(8, rcvr, (byte8 & 0x3F) | 0x80);  // Variant 1
+
+    // Leave receiver on stack
     return PrimitiveResult::Success;
 }
 
