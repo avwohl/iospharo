@@ -2389,10 +2389,10 @@ void Interpreter::startHeartbeat() {
                 }
             }
 
-            // Every ~1000ms, set force yield flag to allow lower priority processes to run
-            // This simulates the preemption that would happen from primitive 230 (relinquishProcessor)
-            // Using a longer interval (1 second) to allow more startup work to complete
-            if (tickCount % 1000 == 0) {
+            // Every ~10ms, set force yield flag for round-robin scheduling and preemption.
+            // Reference VM fires every ~1ms; 10ms balances scheduling fairness with overhead.
+            // Critical for queue contention tests with many same-priority processes.
+            if (tickCount % 10 == 0) {
                 forceYield_.store(true, std::memory_order_release);
             }
 

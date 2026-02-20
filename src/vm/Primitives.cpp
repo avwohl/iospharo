@@ -369,6 +369,16 @@ PrimitiveResult Interpreter::primitiveDoPrimitiveWithArgs(int argCount) {
         return PrimitiveResult::Success;
     }
 
+    // Block evaluation primitives (201-209) must fail when called through
+    // primitive 118. The debugger's stepping simulation uses tryPrimitive:withArgs:
+    // (prim 118) to test primitives. Block evaluation changes execution context
+    // (activates the block), which is incompatible with the prim 118 call path.
+    // Failing here forces the simulation to fall through to doPrimitive:method:receiver:args:
+    // which properly creates a simulated block context via simulateValueWithArguments:caller:.
+    if (primIndex >= 201 && primIndex <= 209) {
+        return PrimitiveResult::Failure;
+    }
+
     // Get the primitive function
     PrimitiveFunc primFunc = primitiveTable_[static_cast<size_t>(primIndex)];
     if (primFunc == nullptr) {
