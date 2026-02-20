@@ -542,6 +542,10 @@ private:
     int64_t nextWakeupTime_ = 0;  // 0 means no timer set (in ioMSecs units)
     int64_t nextWakeupUsec_ = INT64_MAX;  // UTC microsecond wakeup (for primitive 242)
 
+    // GC-safe temporary storage for Oops that need to survive allocation.
+    // Used in transferTo() to protect newProcess across materializeFrameStack().
+    Oop gcTempOop_ = Oop::nil();
+
     // Low space threshold for GC (bytes) - signals TheLowSpaceSemaphore when free < threshold
     size_t lowSpaceThreshold_ = 0;
 
@@ -1903,6 +1907,7 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
     // VM state Oops
     visitor(displayForm_);
     visitor(timerSemaphore_);
+    visitor(gcTempOop_);
     visitor(pendingWorldMenuMethod_);
     visitor(pendingWorldMenuReceiver_);
     visitor(pendingMenuActionMorph_);

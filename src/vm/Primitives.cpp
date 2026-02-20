@@ -3886,9 +3886,6 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
 
     // No signal available - must wait
     Oop activeProcess = getActiveProcess();
-    Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
-    int activePriority = activePriorityOop.isSmallInteger() ?
-                         static_cast<int>(activePriorityOop.asSmallInteger()) : -1;
 
     // Add current process to semaphore wait list and switch to next runnable
     addLastLinkToList(activeProcess, semaphore);
@@ -15019,21 +15016,6 @@ PrimitiveResult Interpreter::primitiveSignalAtUTCMicroseconds(int argCount) {
         // Schedule the timer
         timerSemaphore_ = sema;
         nextWakeupUsec_ = usecs;
-    }
-
-    // Diagnostic: log timer semaphore registrations
-    {
-        static int timerRegCount = 0;
-        if (++timerRegCount <= 200) {
-            Oop proc = getActiveProcess();
-            Oop prioOop = memory_.fetchPointer(2, proc);
-            int prio = prioOop.isSmallInteger() ? (int)prioOop.asSmallInteger() : -1;
-            fprintf(stderr, "[TIMER-REG #%d] P%d usecs=%lld sema=%s step=%llu\n",
-                    timerRegCount, prio, (long long)usecs,
-                    sema.isNil() ? "nil" : "set",
-                    (unsigned long long)g_stepNum);
-            fflush(stderr);
-        }
     }
 
     popN(2);  // Pop both arguments, leave receiver

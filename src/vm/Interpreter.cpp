@@ -42,10 +42,6 @@ std::atomic<int> g_watchdogPhase{0};
 volatile int g_watchdogSubphase = 0;
 volatile uint8_t g_watchdogLastBytecode = 0;
 
-// Track the Delay scheduler process for diagnostics
-static pharo::Oop g_delaySchedulerProcess = pharo::Oop::nil();
-static bool g_delaySchedulerDead = false;
-
 // Forward declaration for SDL rendering active check (defined in FFI.cpp)
 extern "C" bool ffi_isSDLRenderingActive();
 // Watchdog send diagnostic: selector and receiver class name for last send
@@ -2320,13 +2316,6 @@ void Interpreter::synchronousSignal(Oop semaphore) {
         int processPriority = safeProcessPriority(process);
         if (processPriority < 0) return;  // Corrupted process - abandon signal
 
-        // Track Delay scheduler process (first pri=80 process we see signaled)
-        if (processPriority == 80 && g_delaySchedulerProcess.isNil()) {
-            g_delaySchedulerProcess = process;
-            fprintf(stderr, "[DELAY-SCHED] Identified Delay scheduler process: 0x%llx\n",
-                    (unsigned long long)process.rawBits());
-        }
-
         Oop activeProcess = getActiveProcess();
         int activePriority = safeProcessPriority(activeProcess);
         if (activePriority < 0) {
@@ -2336,29 +2325,6 @@ void Interpreter::synchronousSignal(Oop semaphore) {
         }
 
         if (processPriority > activePriority) {
-            // Diagnostic: check P80 process context chain before wakeup
-            if (processPriority >= 80) {
-                Oop ctx = memory_.fetchPointer(ProcessSuspendedContextIndex, process);
-                int depth = 0;
-                Oop c = ctx;
-                while (c.isObject() && !c.isNil() && memory_.isValidPointer(c) && depth < 50) {
-                    depth++;
-                    Oop snd = memory_.fetchPointer(0, c);
-                    if (snd.rawBits() == memory_.nil().rawBits()) break;
-                    c = snd;
-                }
-                static int lastWakeDepth = -1;
-                static int wakeCount = 0;
-                wakeCount++;
-                if (depth != lastWakeDepth || wakeCount <= 20 || depth <= 2) {
-                    fprintf(stderr, "[P80-WAKE #%d] depth=%d ctx=0x%llx step=%llu\n",
-                            wakeCount, depth,
-                            (unsigned long long)ctx.rawBits(),
-                            (unsigned long long)g_stepNum);
-                    fflush(stderr);
-                }
-                lastWakeDepth = depth;
-            }
             putToSleep(activeProcess);
             transferTo(process);
         } else {
@@ -2696,6 +2662,16 @@ bool Interpreter::step() {
     if (cannotReturnDeadline_ > 0 && g_stepNum >= cannotReturnDeadline_ && !inExtension_) {
         Oop currentProcess = getActiveProcess();
         if (currentProcess.rawBits() == lastCannotReturnProcess_.rawBits()) {
+            // Log which process is being terminated by cannotReturn: deadline
+            {
+                intptr_t priority = 0;
+                if (currentProcess.isObject()) {
+                    Oop priOop = memory_.fetchPointer(2, currentProcess); // priority field
+                    if (priOop.isSmallInteger()) priority = priOop.asSmallInteger();
+                }
+                fprintf(stderr, "[CANNOT-RETURN-TERMINATE] step=%lld P%ld\n",
+                        (long long)g_stepNum, (long)priority);
+            }
             cannotReturnCount_ = 0;
             cannotReturnDeadline_ = 0;
             lastCannotReturnProcess_ = Oop::nil();
@@ -9139,6 +9115,41 @@ void Interpreter::initializeSelectors() {
 // ===== PROCESS SCHEDULING =====
 
 void Interpreter::terminateCurrentProcess() {
+    // Log high-priority process terminations to diagnose Delay scheduler death
+    {
+        Oop proc = getActiveProcess();
+        if (proc.isObject()) {
+            Oop priOop = memory_.fetchPointer(2, proc);
+            if (priOop.isSmallInteger()) {
+                int prio = (int)priOop.asSmallInteger();
+                if (prio >= 60) {
+                    // Get method selector from activeContext_
+                    std::string msel = "?";
+                    if (activeContext_.isObject() && !activeContext_.isNil() && memory_.isValidPointer(activeContext_)) {
+                        Oop m = memory_.fetchPointer(3, activeContext_);
+                        if (m.isObject() && !m.isNil() && memory_.isValidPointer(m)) {
+                            Oop hdr = memory_.fetchPointer(0, m);
+                            if (hdr.isSmallInteger()) {
+                                int nl = hdr.asSmallInteger() & 0x7FFF;
+                                if (nl >= 2) {
+                                    Oop s = memory_.fetchPointer(nl - 1, m);
+                                    if (s.isObject() && s.rawBits() > 0x10000 && memory_.isValidPointer(s)) {
+                                        ObjectHeader* sh = s.asObjectPtr();
+                                        if (sh->isBytesObject() && sh->byteSize() < 80)
+                                            msel = std::string((char*)sh->bytes(), sh->byteSize());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    fprintf(stderr, "[TERMINATE-P%d] step=%lld method=%s\n",
+                            prio, (long long)g_stepNum, msel.c_str());
+                    fflush(stderr);
+                }
+            }
+        }
+    }
+
     // Clear any pending NLR state
     nlrTargetCtx_ = Oop::nil();
     nlrEnsureCtx_ = Oop::nil();
@@ -10043,8 +10054,18 @@ void Interpreter::transferTo(Oop newProcess) {
     }
 
     // Save current execution state to old process's suspendedContext
-    // If we have inline frames, materialize them into context objects
+    // If we have inline frames, materialize them into context objects.
+    //
+    // GC SAFETY: materializeFrameStack() allocates context objects, which can
+    // trigger GC compaction. After compaction, all C++ locals holding Oops are
+    // stale. We store newProcess in a GC-root member field to protect it, and
+    // re-derive oldProcess from getActiveProcess() after.
+    Oop savedNewProcess = gcTempOop_;  // Save previous value
+    gcTempOop_ = newProcess;  // Protect from GC (gcTempOop_ is a GC root)
     Oop contextToSave = materializeFrameStack();
+    newProcess = gcTempOop_;  // Restore after potential GC
+    gcTempOop_ = savedNewProcess;  // Restore previous value
+    oldProcess = getActiveProcess();  // Re-derive from GC root
 
     // Save context unconditionally (matches official Pharo VM behavior).
     // The official VM does NOT check for nil sender — it always saves the

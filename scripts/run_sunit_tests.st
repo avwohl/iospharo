@@ -520,13 +520,33 @@ runTestClass: testClass run: runNum on: s detail: d
   s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' ==='; cr.
   s flush.
   "Check if Delay scheduler is alive before this class"
-  [| sem alive |
+  [| sem alive startMs |
    alive := false.
    sem := Semaphore new.
    [(Delay forMilliseconds: 50) wait. sem signal] fork.
-   (sem waitTimeoutSeconds: 3) ifFalse: [alive := true].
+   "Spin-wait using wall-clock time (not yield count).
+    Processor yield is a no-op when no other process is at our priority,
+    so we must check real elapsed time. 5 second timeout."
+   startMs := Time millisecondClockValue.
+   [alive not and: [((Time millisecondClockValue - startMs) bitAnd: 16r1FFFFFFF) < 5000]]
+     whileTrue: [sem isSignaled ifTrue: [alive := true]. Processor yield].
+   alive ifFalse: [sem isSignaled ifTrue: [alive := true]].
    alive ifFalse: [
-     s nextPutAll: 'DELAY-DEAD-BEFORE: '; nextPutAll: testClass name; cr. s flush]]
+     s nextPutAll: '  TIMEOUT:DELAY-DEAD-BEFORE: '; nextPutAll: testClass name; cr.
+     [| proc ctx |
+      proc := Delay scheduler schedulingProcess.
+      s nextPutAll: '  DELAY-DIAG: proc='.
+      proc ifNil: [s nextPutAll: 'nil']
+        ifNotNil: [
+          s nextPutAll: proc class name; nextPutAll: ' pri='; print: proc priority;
+            nextPutAll: ' suspended='.
+          ctx := proc suspendedContext.
+          ctx ifNil: [s nextPutAll: 'nil (ACTIVE or DEAD)']
+            ifNotNil: [s nextPutAll: ctx printString].
+          s nextPutAll: ' isTerminated='; nextPutAll: proc isTerminated printString;
+            nextPutAll: ' isSuspended='; nextPutAll: proc isSuspended printString].
+      s cr. s flush] on: Error do: [:e |
+        s nextPutAll: '  DELAY-DIAG-ERROR: '; nextPutAll: e printString; cr. s flush]]]
   on: Error do: [:e |].
   "Tests must run below timingPriority (80). Watchdog uses spin-wait
    (relinquishProcessorForMicroseconds:) so it works even if Delay scheduler dies.
@@ -613,13 +633,31 @@ runTestClass: testClass run: runNum on: s detail: d
           ^ {p. f. e. sk. t}]]]].
 
   "Check if Delay scheduler is alive after this class"
-  [| sem alive |
+  [| sem alive startMs |
    alive := false.
    sem := Semaphore new.
    [(Delay forMilliseconds: 50) wait. sem signal] fork.
-   (sem waitTimeoutSeconds: 3) ifFalse: [alive := true].
+   "Spin-wait using wall-clock time — same fix as BEFORE check"
+   startMs := Time millisecondClockValue.
+   [alive not and: [((Time millisecondClockValue - startMs) bitAnd: 16r1FFFFFFF) < 5000]]
+     whileTrue: [sem isSignaled ifTrue: [alive := true]. Processor yield].
+   alive ifFalse: [sem isSignaled ifTrue: [alive := true]].
    alive ifFalse: [
-     s nextPutAll: 'DELAY-DEAD-AFTER: '; nextPutAll: testClass name; cr. s flush]]
+     s nextPutAll: 'DELAY-DEAD-AFTER: '; nextPutAll: testClass name; cr.
+     [| proc ctx |
+      proc := Delay scheduler schedulingProcess.
+      s nextPutAll: '  DELAY-DIAG: proc='.
+      proc ifNil: [s nextPutAll: 'nil']
+        ifNotNil: [
+          s nextPutAll: proc class name; nextPutAll: ' pri='; print: proc priority;
+            nextPutAll: ' suspended='.
+          ctx := proc suspendedContext.
+          ctx ifNil: [s nextPutAll: 'nil (ACTIVE or DEAD)']
+            ifNotNil: [s nextPutAll: ctx printString].
+          s nextPutAll: ' isTerminated='; nextPutAll: proc isTerminated printString;
+            nextPutAll: ' isSuspended='; nextPutAll: proc isSuspended printString].
+      s cr. s flush] on: Error do: [:e |
+        s nextPutAll: '  DELAY-DIAG-ERROR: '; nextPutAll: e printString; cr. s flush]]]
   on: Error do: [:e |].
   s nextPutAll: 'Total: '; print: sels size;
     nextPutAll: ' P:'; print: p;
