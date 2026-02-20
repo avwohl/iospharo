@@ -2510,9 +2510,10 @@ bool Interpreter::step() {
         memory_.clearCompactGCFlag();
         memory_.fullGC();
         flushMethodCache();
-        if (memory_.pendingFinalizationSignals() > 0) {
-            finalizationCheckAfterGC_ = true;
-        }
+        // Do NOT set finalizationCheckAfterGC_ here — auto-compact GC during normal
+        // allocation would create a cycle: alloc → GC → mourn → alloc → GC → mourn...
+        // Only explicit GC primitives (130, 131) set the one-shot flag. The periodic
+        // event check (every 1024 steps) handles auto-GC mourners.
     }
 
     g_stepCount++;
