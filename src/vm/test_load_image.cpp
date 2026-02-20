@@ -677,7 +677,7 @@ int main(int argc, char* argv[]) {
         std::cout << "\n=== Execution Test ===" << std::endl;
         auto execStart = std::chrono::steady_clock::now();
         // Use long execution for any command-line mode, short for GUI-only
-        long long totalSteps = !imageArgs.empty() ? 20000000000LL : 20000000000LL;
+        long long totalSteps = !imageArgs.empty() ? 40000000000LL : 40000000000LL;
         std::cout << "Running up to " << totalSteps << " bytecode steps..." << std::endl;
         if (!imageArgs.empty()) {
             std::cout << "Image args:";

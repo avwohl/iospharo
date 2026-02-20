@@ -734,15 +734,12 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
      error during unwinding that escapes the on: Error handler."
     ensure: [doneSem signal]] forkAt: priority.
 
-  "Fork watchdog at SAME priority as test. Uses spin-wait with Processor yield
-   instead of Delay, so it works even when the Delay scheduler is dead.
-   The heartbeat forceYield (1s) round-robins same-priority processes,
-   giving the watchdog a turn to check elapsed time each second."
+  "Fork watchdog at P79 (just below Delay scheduler at P80). Uses Delay-based
+   timing, which the Delay scheduler at P80 can signal reliably.
+   P79 ensures no test-spawned process (finalization at P51, UI at P60, etc.)
+   can starve the watchdog. When Delay fires, the watchdog preempts any P40 test."
   watchdog := [
-    | startMs |
-    startMs := Time millisecondClockValue.
-    [((Time millisecondClockValue - startMs) bitAnd: 16r1FFFFFFF) < (seconds * 1000)] whileTrue: [
-      Processor yield].
+    (Delay forMilliseconds: seconds * 1000) wait.
     "Timeout elapsed — test is still running.
      Signal doneSem FIRST so runner continues even if terminate hangs."
     result := #timeout.
@@ -751,7 +748,7 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
     s flush.
     doneSem signal.
     "Terminate after signaling — best effort cleanup"
-    [testProcess terminate] on: Error do: [:e |]] forkAt: priority.
+    [testProcess terminate] on: Error do: [:e |]] forkAt: 79.
 
   "Wait for test completion or watchdog timeout.
    Catch TestTookTooMuchTime — the TestExecutionEnvironment watchdog at P79 may
