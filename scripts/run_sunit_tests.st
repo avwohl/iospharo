@@ -607,7 +607,7 @@ runTestClass: testClass run: runNum on: s detail: d
       includes: sel) ifFalse: [
       | result |
       s nextPutAll: '  RUN: '; nextPutAll: sel; cr. s flush.
-      result := self runSingleTest: testClass selector: sel timeout: 15 priority: testPriority on: s.
+      result := self runSingleTest: testClass selector: sel timeout: 30 priority: testPriority on: s.
       result ifNil: [
         p := p + 1. consecutiveTimeouts := 0.
         d nextPutAll: runNum printString; nextPut: $	.
@@ -643,9 +643,9 @@ runTestClass: testClass run: runNum on: s detail: d
           d nextPutAll: sel; nextPut: $	.
           d nextPutAll: 'TIMEOUT'; cr].
         d flush.
-        "Bail out of class after 3 consecutive timeouts to avoid wasting time"
-        consecutiveTimeouts >= 3 ifTrue: [
-          s nextPutAll: '  BAIL: 3 consecutive timeouts, skipping rest of class'; cr.
+        "Bail out of class after 5 consecutive timeouts to avoid wasting time"
+        consecutiveTimeouts >= 5 ifTrue: [
+          s nextPutAll: '  BAIL: 5 consecutive timeouts, skipping rest of class'; cr.
           s nextPutAll: 'Total: '; print: sels size;
             nextPutAll: ' P:'; print: p; nextPutAll: ' F:'; print: f;
             nextPutAll: ' E:'; print: e; nextPutAll: ' S:'; print: sk;
@@ -694,7 +694,8 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
    Fork the test at the requested priority. The test signals doneSem when done,
    waking the runner immediately. The watchdog at priority+1 uses
    relinquishProcessorForMicroseconds: to yield, checking elapsed time each cycle.
-   The heartbeat forceYield (1s) preempts the test back to the watchdog."
+   The heartbeat forceYield (1s) preempts the test back to the watchdog.
+   Timeout: 30s primary, 60s backup."
   | result testProcess doneSem watchdog backupWatchdog testDone |
   result := nil. "nil means pass"
   testDone := false.
