@@ -1748,6 +1748,13 @@ private:
     PrimitiveResult primitiveReaddir(int argCount);                   // Named: FileAttributesPlugin readdir
     PrimitiveResult primitiveClosedir(int argCount);                  // Named: FileAttributesPlugin closedir
     PrimitiveResult primitiveRewinddir(int argCount);                 // Named: FileAttributesPlugin rewinddir
+    PrimitiveResult primitiveChangeMode(int argCount);               // Named: FileAttributesPlugin changeMode
+    PrimitiveResult primitiveChangeOwner(int argCount);              // Named: FileAttributesPlugin changeOwner
+    PrimitiveResult primitiveSymlinkChangeOwner(int argCount);       // Named: FileAttributesPlugin symlinkChangeOwner
+    PrimitiveResult primitiveFileAttributes(int argCount);           // Named: FileAttributesPlugin file attributes (batch)
+    PrimitiveResult primitivePlatToStPath(int argCount);             // Named: FileAttributesPlugin platToStPath
+    PrimitiveResult primitiveStToPlatPath(int argCount);             // Named: FileAttributesPlugin stToPlatPath
+    PrimitiveResult primitivePathMax(int argCount);                  // Named: FileAttributesPlugin pathMax
     PrimitiveResult primitiveGetenv(int argCount);                    // Named: get environment variable
 
     // SocketPlugin stubs (minimal for UUID generation)

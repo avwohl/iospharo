@@ -24473,6 +24473,274 @@ PrimitiveResult Interpreter::primitiveRewinddir(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// FileAttributesPlugin>>primitiveChangeMode
+// Stack: receiver, pathString, newMode -> nil or fail
+PrimitiveResult Interpreter::primitiveChangeMode(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop modeOop = stackTop();
+    Oop pathOop = stackValue(1);
+
+    if (!modeOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int mode = static_cast<int>(modeOop.asSmallInteger());
+
+    if (!pathOop.isObject()) return PrimitiveResult::Failure;
+    ObjectHeader* pathHdr = pathOop.asObjectPtr();
+    if (!pathHdr->isBytesObject()) return PrimitiveResult::Failure;
+    size_t len = memory_.byteSizeOf(pathOop);
+    std::string path(reinterpret_cast<const char*>(pathHdr->bytes()), len);
+
+    if (chmod(path.c_str(), mode) != 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    popN(3);
+    push(memory_.nil());
+    return PrimitiveResult::Success;
+}
+
+// FileAttributesPlugin>>primitiveChangeOwner
+// Stack: receiver, pathString, ownerId, groupId -> nil or fail
+PrimitiveResult Interpreter::primitiveChangeOwner(int argCount) {
+    if (argCount != 3) return PrimitiveResult::Failure;
+
+    Oop gidOop = stackTop();
+    Oop uidOop = stackValue(1);
+    Oop pathOop = stackValue(2);
+
+    if (!gidOop.isSmallInteger() || !uidOop.isSmallInteger()) return PrimitiveResult::Failure;
+    uid_t uid = static_cast<uid_t>(uidOop.asSmallInteger());
+    gid_t gid = static_cast<gid_t>(gidOop.asSmallInteger());
+
+    if (!pathOop.isObject()) return PrimitiveResult::Failure;
+    ObjectHeader* pathHdr = pathOop.asObjectPtr();
+    if (!pathHdr->isBytesObject()) return PrimitiveResult::Failure;
+    size_t len = memory_.byteSizeOf(pathOop);
+    std::string path(reinterpret_cast<const char*>(pathHdr->bytes()), len);
+
+    if (chown(path.c_str(), uid, gid) != 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    popN(4);
+    push(memory_.nil());
+    return PrimitiveResult::Success;
+}
+
+// FileAttributesPlugin>>primitiveSymlinkChangeOwner
+// Stack: receiver, pathString, ownerId, groupId -> nil or fail
+PrimitiveResult Interpreter::primitiveSymlinkChangeOwner(int argCount) {
+    if (argCount != 3) return PrimitiveResult::Failure;
+
+    Oop gidOop = stackTop();
+    Oop uidOop = stackValue(1);
+    Oop pathOop = stackValue(2);
+
+    if (!gidOop.isSmallInteger() || !uidOop.isSmallInteger()) return PrimitiveResult::Failure;
+    uid_t uid = static_cast<uid_t>(uidOop.asSmallInteger());
+    gid_t gid = static_cast<gid_t>(gidOop.asSmallInteger());
+
+    if (!pathOop.isObject()) return PrimitiveResult::Failure;
+    ObjectHeader* pathHdr = pathOop.asObjectPtr();
+    if (!pathHdr->isBytesObject()) return PrimitiveResult::Failure;
+    size_t len = memory_.byteSizeOf(pathOop);
+    std::string path(reinterpret_cast<const char*>(pathHdr->bytes()), len);
+
+    if (lchown(path.c_str(), uid, gid) != 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    popN(4);
+    push(memory_.nil());
+    return PrimitiveResult::Success;
+}
+
+// FileAttributesPlugin>>primitiveFileAttributes (batch version)
+// Stack: receiver, pathString, mask -> Array{statArray. accessArray} or fail
+// Mask bits: 1=stat info, 2=access info, 4=use lstat
+// Returns 2-element Array: { statArray(12 elements) | nil . accessArray(3 bools) | nil }
+PrimitiveResult Interpreter::primitiveFileAttributes(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop maskOop = stackTop();
+    Oop pathOop = stackValue(1);
+
+    if (!maskOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int mask = static_cast<int>(maskOop.asSmallInteger());
+
+    if (!pathOop.isObject()) return PrimitiveResult::Failure;
+    ObjectHeader* pathHdr = pathOop.asObjectPtr();
+    if (!pathHdr->isBytesObject()) return PrimitiveResult::Failure;
+    size_t len = memory_.byteSizeOf(pathOop);
+    std::string path(reinterpret_cast<const char*>(pathHdr->bytes()), len);
+
+    struct stat st;
+    bool useLstat = (mask & 4) != 0;
+    int statResult = useLstat ? lstat(path.c_str(), &st) : stat(path.c_str(), &st);
+    if (statResult != 0) {
+        return PrimitiveResult::Failure;
+    }
+
+    Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
+    uint32_t arrayClassIdx = memory_.indexOfClass(arrayClass);
+
+    // Squeak epoch offset: seconds from Jan 1 1901 to Jan 1 1970
+    static const int64_t squeakEpochDelta = (int64_t)(52*365 + 17*366) * 24 * 60 * 60;
+
+    // Build stat array (12 elements) if mask & 1
+    Oop statArray = memory_.nil();
+    if (mask & 1) {
+        statArray = memory_.allocateSlots(arrayClassIdx, 12, ObjectFormat::Indexable);
+        if (statArray.isNil()) return PrimitiveResult::Failure;
+        push(statArray);  // GC protect on operand stack
+
+        // Fill each slot. int64ToOop may allocate, so re-read statArray after each call.
+        // Slot 0: fileName (nil for non-symlinks)
+        statArray = stackTop();
+        memory_.storePointer(0, statArray, Oop::nil());
+
+        // Slot 1: mode
+        { Oop v = int64ToOop(memory_, static_cast<int64_t>(st.st_mode));
+          statArray = stackTop(); memory_.storePointer(1, statArray, v); }
+        // Slot 2: inode
+        { Oop v = int64ToOop(memory_, static_cast<int64_t>(st.st_ino));
+          statArray = stackTop(); memory_.storePointer(2, statArray, v); }
+        // Slot 3: device
+        { Oop v = int64ToOop(memory_, static_cast<int64_t>(st.st_dev));
+          statArray = stackTop(); memory_.storePointer(3, statArray, v); }
+        // Slot 4: nlink
+        { Oop v = int64ToOop(memory_, static_cast<int64_t>(st.st_nlink));
+          statArray = stackTop(); memory_.storePointer(4, statArray, v); }
+        // Slot 5: uid
+        { Oop v = int64ToOop(memory_, static_cast<int64_t>(st.st_uid));
+          statArray = stackTop(); memory_.storePointer(5, statArray, v); }
+        // Slot 6: gid
+        { Oop v = int64ToOop(memory_, static_cast<int64_t>(st.st_gid));
+          statArray = stackTop(); memory_.storePointer(6, statArray, v); }
+        // Slot 7: size
+        { Oop v = int64ToOop(memory_, static_cast<int64_t>(st.st_size));
+          statArray = stackTop(); memory_.storePointer(7, statArray, v); }
+        // Slot 8: atime (Squeak epoch)
+        { Oop v = int64ToOop(memory_, static_cast<int64_t>(st.st_atime) + squeakEpochDelta);
+          statArray = stackTop(); memory_.storePointer(8, statArray, v); }
+        // Slot 9: mtime (Squeak epoch)
+        { Oop v = int64ToOop(memory_, static_cast<int64_t>(st.st_mtime) + squeakEpochDelta);
+          statArray = stackTop(); memory_.storePointer(9, statArray, v); }
+        // Slot 10: ctime (Squeak epoch)
+        { Oop v = int64ToOop(memory_, static_cast<int64_t>(st.st_ctime) + squeakEpochDelta);
+          statArray = stackTop(); memory_.storePointer(10, statArray, v); }
+        // Slot 11: creation time (macOS has birthtime)
+#ifdef __APPLE__
+        { Oop v = int64ToOop(memory_, static_cast<int64_t>(st.st_birthtimespec.tv_sec) + squeakEpochDelta);
+          statArray = stackTop(); memory_.storePointer(11, statArray, v); }
+#else
+        statArray = stackTop();
+        memory_.storePointer(11, statArray, Oop::nil());
+#endif
+
+        statArray = pop();  // restore from GC protection
+    }
+
+    // Build access array (3 booleans) if mask & 2
+    Oop accessArray = memory_.nil();
+    if (mask & 2) {
+        push(statArray);  // protect statArray across allocation
+        accessArray = memory_.allocateSlots(arrayClassIdx, 3, ObjectFormat::Indexable);
+        statArray = pop();  // restore statArray
+        if (accessArray.isNil()) return PrimitiveResult::Failure;
+
+        bool readable = access(path.c_str(), R_OK) == 0;
+        bool writable = access(path.c_str(), W_OK) == 0;
+        bool executable = access(path.c_str(), X_OK) == 0;
+
+        memory_.storePointer(0, accessArray, readable ? memory_.trueObject() : memory_.falseObject());
+        memory_.storePointer(1, accessArray, writable ? memory_.trueObject() : memory_.falseObject());
+        memory_.storePointer(2, accessArray, executable ? memory_.trueObject() : memory_.falseObject());
+    }
+
+    // Build outer result array: { statArray. accessArray }
+    push(statArray);     // protect across allocation
+    push(accessArray);   // protect across allocation
+    Oop resultArray = memory_.allocateSlots(arrayClassIdx, 2, ObjectFormat::Indexable);
+    accessArray = pop(); // restore
+    statArray = pop();   // restore
+    if (resultArray.isNil()) return PrimitiveResult::Failure;
+
+    memory_.storePointer(0, resultArray, statArray);
+    memory_.storePointer(1, resultArray, accessArray);
+
+    popN(3);  // pop mask, path, receiver
+    push(resultArray);
+    return PrimitiveResult::Success;
+}
+
+// FileAttributesPlugin>>primitivePlatToStPath
+// Stack: receiver, platformPath -> utf8Path (ByteArray)
+// On macOS/iOS, platform encoding IS UTF-8, so this is an identity transform
+PrimitiveResult Interpreter::primitivePlatToStPath(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop pathOop = stackTop();
+    if (!pathOop.isObject()) return PrimitiveResult::Failure;
+    ObjectHeader* pathHdr = pathOop.asObjectPtr();
+    if (!pathHdr->isBytesObject()) return PrimitiveResult::Failure;
+
+    // On macOS/iOS, platform encoding is UTF-8, so return a copy as ByteArray
+    size_t len = memory_.byteSizeOf(pathOop);
+    Oop byteArrayClass = memory_.specialObject(SpecialObjectIndex::ClassByteArray);
+    uint32_t classIndex = memory_.indexOfClass(byteArrayClass);
+    Oop result = memory_.allocateBytes(classIndex, len);
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    // Re-read after allocation (GC safety)
+    pathOop = stackTop();
+    pathHdr = pathOop.asObjectPtr();
+
+    memcpy(result.asObjectPtr()->bytes(), pathHdr->bytes(), len);
+
+    popN(2);
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// FileAttributesPlugin>>primitiveStToPlatPath
+// Stack: receiver, utf8Path -> platformPath (ByteArray)
+// On macOS/iOS, platform encoding IS UTF-8, so this is an identity transform
+PrimitiveResult Interpreter::primitiveStToPlatPath(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop pathOop = stackTop();
+    if (!pathOop.isObject()) return PrimitiveResult::Failure;
+    ObjectHeader* pathHdr = pathOop.asObjectPtr();
+    if (!pathHdr->isBytesObject()) return PrimitiveResult::Failure;
+
+    // On macOS/iOS, platform encoding is UTF-8, so return a copy as ByteArray
+    size_t len = memory_.byteSizeOf(pathOop);
+    Oop byteArrayClass = memory_.specialObject(SpecialObjectIndex::ClassByteArray);
+    uint32_t classIndex = memory_.indexOfClass(byteArrayClass);
+    Oop result = memory_.allocateBytes(classIndex, len);
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    // Re-read after allocation (GC safety)
+    pathOop = stackTop();
+    pathHdr = pathOop.asObjectPtr();
+
+    memcpy(result.asObjectPtr()->bytes(), pathHdr->bytes(), len);
+
+    popN(2);
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// FileAttributesPlugin>>primitivePathMax
+// Stack: receiver -> integer (PATH_MAX)
+PrimitiveResult Interpreter::primitivePathMax(int argCount) {
+    (void)argCount;
+    popN(1);  // pop receiver
+    push(Oop::fromSmallInteger(4096));  // FA_PATH_MAX
+    return PrimitiveResult::Success;
+}
+
 // primitiveGetenv
 // Stack: receiver, nameString -> valueString or nil
 PrimitiveResult Interpreter::primitiveGetenv(int argCount) {

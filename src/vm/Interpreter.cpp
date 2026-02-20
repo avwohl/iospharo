@@ -13229,6 +13229,13 @@ void Interpreter::initializeNamedPrimitives() {
     registerNamedPrimitive("FileAttributesPlugin", "primitiveReaddir", &Interpreter::primitiveReaddir);
     registerNamedPrimitive("FileAttributesPlugin", "primitiveClosedir", &Interpreter::primitiveClosedir);
     registerNamedPrimitive("FileAttributesPlugin", "primitiveRewinddir", &Interpreter::primitiveRewinddir);
+    registerNamedPrimitive("FileAttributesPlugin", "primitiveChangeMode", &Interpreter::primitiveChangeMode);
+    registerNamedPrimitive("FileAttributesPlugin", "primitiveChangeOwner", &Interpreter::primitiveChangeOwner);
+    registerNamedPrimitive("FileAttributesPlugin", "primitiveSymlinkChangeOwner", &Interpreter::primitiveSymlinkChangeOwner);
+    registerNamedPrimitive("FileAttributesPlugin", "primitiveFileAttributes", &Interpreter::primitiveFileAttributes);
+    registerNamedPrimitive("FileAttributesPlugin", "primitivePlatToStPath", &Interpreter::primitivePlatToStPath);
+    registerNamedPrimitive("FileAttributesPlugin", "primitiveStToPlatPath", &Interpreter::primitiveStToPlatPath);
+    registerNamedPrimitive("FileAttributesPlugin", "primitivePathMax", &Interpreter::primitivePathMax);
 
     // VM info
     registerNamedPrimitive("", "primitiveInterpreterSourceVersion", &Interpreter::primitiveInterpreterSourceVersion);
