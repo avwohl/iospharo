@@ -483,9 +483,22 @@ runAllTests
       totalS := totalS + (counts at: 4).
       totalT := totalT + (counts at: 5)]
         on: Error do: [:ex |
-          stream nextPutAll: '*** RUNNER ERROR in '; nextPutAll: tc name;
-            nextPutAll: ': '; nextPutAll: ex class name;
-            nextPutAll: ' - '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 200)); cr].
+          "TestTookTooMuchTime from TestExecutionEnvironment watchdog — count as timeout, don't abort class"
+          ex class name = 'TestTookTooMuchTime'
+            ifTrue: [
+              totalT := totalT + 1.
+              stream nextPutAll: '  TIMEOUT(env-class): '; nextPutAll: tc name; cr.
+              "Fix up env state so next test works"
+              [| env wds |
+               env := CurrentExecutionEnvironment value.
+               env instVarNamed: 'testCompleted' put: true.
+               wds := env instVarNamed: 'watchDogSemaphore'.
+               wds ifNotNil: [wds signal]]
+              on: Error do: [:e2 |]]
+            ifFalse: [
+              stream nextPutAll: '*** RUNNER ERROR in '; nextPutAll: tc name;
+                nextPutAll: ': '; nextPutAll: ex class name;
+                nextPutAll: ' - '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 200)); cr]].
       stream flush. detail flush]].
     stream nextPutAll: '*** BATCH COMPLETED for '; print: batchClasses size;
       nextPutAll: ' classes ('; print: batchStart; nextPutAll: '-'; print: batchEnd; nextPutAll: ')'; cr.
@@ -736,21 +749,34 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
     "Terminate after signaling — best effort cleanup"
     [testProcess terminate] on: Error do: [:e |]] forkAt: priority.
 
-  "Wait for test completion or watchdog timeout"
-  doneSem wait.
+  "Wait for test completion or watchdog timeout.
+   Catch TestTookTooMuchTime — the TestExecutionEnvironment watchdog at P79 may
+   signal this into our runner process (mainTestProcess) if testCompleted stays false.
+   This happens when our 15s watchdog terminates the test process but ensure: blocks
+   in runTestCase: don't fire, leaving testCompleted=false."
+  [doneSem wait] on: Error do: [:ex |
+    ex class name = 'TestTookTooMuchTime'
+      ifTrue: [
+        result ifNil: [result := #timeout].
+        s nextPutAll: '  TIMEOUT(env-watchdog): '; nextPutAll: sel; cr. s flush.
+        "Terminate the test process if still running"
+        [testProcess terminate] on: Error do: [:e2 |]]
+      ifFalse: [ex pass]].
 
   "Clean up watchdog if test completed before timeout"
   [watchdog suspend] on: Error do: [:e |].
 
   "Fix up TestExecutionEnvironment state: if our watchdog killed the test process,
    the ensure: block in runTestCase: may not have fired, leaving testCompleted=false.
-   This causes the environment's watchdog to eventually fire TestTookTooMuchTime."
-  [| env |
-   env := CurrentExecutionEnvironment value.
-   (env respondsTo: #instVarNamed:put:) ifTrue: [
+   The env watchdog at P79 is blocked in waitTimeoutMilliseconds: — it won't check
+   testCompleted until signaled or timed out. Signal only for timeouts."
+  result == #timeout ifTrue: [
+    [| env wds |
+     env := CurrentExecutionEnvironment value.
      env instVarNamed: 'testCompleted' put: true.
-     (env instVarNamed: 'watchDogSemaphore') ifNotNil: [:wds | wds signal]]]
-  on: Error do: [:e |].
+     wds := env instVarNamed: 'watchDogSemaphore'.
+     wds ifNotNil: [wds signal]]
+    on: Error do: [:e |]].
 
   ^ result! !
 
