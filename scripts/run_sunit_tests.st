@@ -695,8 +695,9 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
    waking the runner immediately. The watchdog at priority+1 uses
    relinquishProcessorForMicroseconds: to yield, checking elapsed time each cycle.
    The heartbeat forceYield (1s) preempts the test back to the watchdog."
-  | result testProcess doneSem watchdog |
+  | result testProcess doneSem watchdog backupWatchdog testDone |
   result := nil. "nil means pass"
+  testDone := false.
   doneSem := Semaphore new.
 
   "Fork test at requested priority"
@@ -732,23 +733,40 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
          s flush] on: Error do: [:e2 | "ignore trace errors"]]]
     "ensure: guarantees doneSem signal even if tearDown throws a second
      error during unwinding that escapes the on: Error handler."
-    ensure: [doneSem signal]] forkAt: priority.
+    ensure: [testDone := true. doneSem signal]] forkAt: priority.
 
-  "Fork watchdog at P79 (just below Delay scheduler at P80). Uses Delay-based
-   timing, which the Delay scheduler at P80 can signal reliably.
-   P79 ensures no test-spawned process (finalization at P51, UI at P60, etc.)
-   can starve the watchdog. When Delay fires, the watchdog preempts any P40 test."
+  "Two-tier watchdog:
+   1. P79 Delay-based (efficient, fires when Delay scheduler works)
+   2. P40 spin-wait backup (fires when Delay scheduler is dead/hung, 2x timeout)
+   Whichever fires first signals doneSem."
   watchdog := [
     (Delay forMilliseconds: seconds * 1000) wait.
-    "Timeout elapsed — test is still running.
-     Signal doneSem FIRST so runner continues even if terminate hangs."
-    result := #timeout.
-    s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
-      nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; cr.
-    s flush.
-    doneSem signal.
-    "Terminate after signaling — best effort cleanup"
-    [testProcess terminate] on: Error do: [:e |]] forkAt: 79.
+    "Timeout elapsed — check if test already finished (testDone flag)."
+    testDone ifFalse: [
+      result := #timeout.
+      testDone := true.
+      s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
+        nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; cr.
+      s flush.
+      doneSem signal.
+      "Terminate after signaling — best effort cleanup"
+      [testProcess terminate] on: Error do: [:e |]]] forkAt: 79.
+  "Backup: spin-wait at test priority using forceYield round-robin.
+   2x timeout gives primary watchdog time to fire first.
+   Uses testDone flag (not result isNil) — result=nil means 'pass', not 'still running'."
+  backupWatchdog := [| startMs |
+   startMs := Time millisecondClockValue.
+   [testDone not and: [
+     ((Time millisecondClockValue - startMs) bitAnd: 16r1FFFFFFF) < (seconds * 2000)]]
+       whileTrue: [Processor yield].
+   testDone ifFalse: [
+     result := #timeout.
+     testDone := true.
+     s nextPutAll: '  TIMEOUT(backup): '; nextPutAll: sel;
+       nextPutAll: ' (exceeded '; print: seconds * 2; nextPutAll: 's)'; cr.
+     s flush.
+     doneSem signal.
+     [testProcess terminate] on: Error do: [:e |]]] forkAt: priority.
 
   "Wait for test completion or watchdog timeout.
    Catch TestTookTooMuchTime — the TestExecutionEnvironment watchdog at P79 may
@@ -764,8 +782,9 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
         [testProcess terminate] on: Error do: [:e2 |]]
       ifFalse: [ex pass]].
 
-  "Clean up watchdog if test completed before timeout"
+  "Clean up watchdogs if test completed before timeout"
   [watchdog suspend] on: Error do: [:e |].
+  [backupWatchdog suspend] on: Error do: [:e |].
 
   "Fix up TestExecutionEnvironment state: if our watchdog killed the test process,
    the ensure: block in runTestCase: may not have fired, leaving testCompleted=false.
