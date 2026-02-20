@@ -2510,9 +2510,21 @@ bool Interpreter::step() {
         memory_.clearCompactGCFlag();
         memory_.fullGC();
         flushMethodCache();
+        if (memory_.pendingFinalizationSignals() > 0) {
+            finalizationCheckAfterGC_ = true;
+        }
     }
 
     g_stepCount++;
+
+    // Signal finalization promptly after GC. This one-shot flag fires on the step
+    // immediately after a GC primitive (or auto-compact GC), rather than waiting
+    // ~1M bytecodes. Without this, weak dictionary tests fail because the P51
+    // mourning process never gets CPU time before the P40 test asserts dict.size.
+    if (finalizationCheckAfterGC_ && !inExtension_) {
+        finalizationCheckAfterGC_ = false;
+        signalFinalizationIfNeeded();
+    }
 
     // Check timer and process pending signals periodically.
     // CRITICAL: Skip process-switch-triggering checks when inExtension_ is true.
@@ -2567,7 +2579,7 @@ bool Interpreter::step() {
         }
 
         g_watchdogSubphase = 12;
-        signalFinalizationIfNeeded();
+        // signalFinalizationIfNeeded() now runs every step (above), no need here.
 
         // Log active process priority + selector (disabled — fprintf overhead slows VM)
         // Enable only when actively debugging scheduler issues

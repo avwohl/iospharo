@@ -272,6 +272,11 @@ PrimitiveResult Interpreter::primitiveIncrementalGC(int argCount) {
         primitiveSuccess(Oop::fromSmallInteger(Oop::smallIntegerMax()));
     }
 
+    // Signal finalization on the very next step (not inside the primitive).
+    if (memory_.pendingFinalizationSignals() > 0) {
+        finalizationCheckAfterGC_ = true;
+    }
+
     return PrimitiveResult::Success;
 }
 
@@ -7387,6 +7392,12 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
         primitiveSuccess(Oop::fromSmallInteger(static_cast<int64_t>(freeBytes)));
     } else {
         primitiveSuccess(Oop::fromSmallInteger(Oop::smallIntegerMax()));
+    }
+
+    // Signal finalization on the very next step (not inside the primitive).
+    // The finalization process at P51 can then preempt and mourn dead weak keys.
+    if (memory_.pendingFinalizationSignals() > 0) {
+        finalizationCheckAfterGC_ = true;
     }
 
     return PrimitiveResult::Success;
