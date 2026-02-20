@@ -469,6 +469,9 @@ runAllTests
        stream flush]]
     on: Error do: [:e |
      stream nextPutAll: 'SYMTABLE-CHECK error: '; nextPutAll: e messageText; cr. stream flush].
+    "Increase TestExecutionEnvironment watchdog timeout so our 15s watchdog fires first.
+     Default is 10 seconds, which kills the runner process before our watchdog can handle it."
+    [TestCase defaultTimeLimit: 120 seconds] on: Error do: [:e |].
     "Wrap in TestExecutionEnvironment so tests that need processMonitor etc. work.
      DefaultExecutionEnvironment>>runTestsBy: activates TestExecutionEnvironment."
     CurrentExecutionEnvironment runTestsBy: [
@@ -738,6 +741,16 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
 
   "Clean up watchdog if test completed before timeout"
   [watchdog suspend] on: Error do: [:e |].
+
+  "Fix up TestExecutionEnvironment state: if our watchdog killed the test process,
+   the ensure: block in runTestCase: may not have fired, leaving testCompleted=false.
+   This causes the environment's watchdog to eventually fire TestTookTooMuchTime."
+  [| env |
+   env := CurrentExecutionEnvironment value.
+   (env respondsTo: #instVarNamed:put:) ifTrue: [
+     env instVarNamed: 'testCompleted' put: true.
+     (env instVarNamed: 'watchDogSemaphore') ifNotNil: [:wds | wds signal]]]
+  on: Error do: [:e |].
 
   ^ result! !
 
