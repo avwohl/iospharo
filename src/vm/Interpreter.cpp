@@ -2521,7 +2521,7 @@ bool Interpreter::step() {
     // immediately after a GC primitive (or auto-compact GC), rather than waiting
     // ~1M bytecodes. Without this, weak dictionary tests fail because the P51
     // mourning process never gets CPU time before the P40 test asserts dict.size.
-    if (finalizationCheckAfterGC_ && !inExtension_) {
+    if (finalizationCheckAfterGC_ && checkYieldOnNextStep_ && !inExtension_) {
         finalizationCheckAfterGC_ = false;
         signalFinalizationIfNeeded();
     }
@@ -2536,7 +2536,19 @@ bool Interpreter::step() {
     {
     static int stepCheckCounter = 0;
     stepCheckCounter++;
-    if ((stepCheckCounter & 0x3FF) == 0 && !inExtension_) {  // every 1024 steps
+
+    // Mark that an interrupt check is pending every 1024 bytecodes.
+    // The actual check (timer, signals, finalization) is deferred to the next
+    // "safe point" (send/jump/return) to avoid process switches between
+    // assignment bytecodes. This matches the reference VM (Cog), which only
+    // processes interrupts at sends and backward branches.
+    if ((stepCheckCounter & 0x3FF) == 0 && !inExtension_) {
+        pendingInterruptCheck_ = true;
+    }
+
+    // Process the interrupt check at the next safe point
+    if (pendingInterruptCheck_ && checkYieldOnNextStep_ && !inExtension_) {
+        pendingInterruptCheck_ = false;
         g_watchdogSubphase = 11;
         checkTimerSemaphore();
         if (hasPendingSignals()) {
@@ -2649,9 +2661,11 @@ bool Interpreter::step() {
     // Periodic preemption check - every 10000 bytecodes, check if we should
     // yield to a higher-priority or same-priority runnable process.
     // Skip if in extension byte sequence to protect extA_/extB_.
+    // Periodic preemption check - only at safe points to avoid interrupting
+    // multi-assignment sequences that lock-free queues depend on.
     static uint64_t bytecodeCount = 0;
     bytecodeCount++;
-    if (bytecodeCount % 10000 == 0 && !inExtension_) {
+    if (bytecodeCount % 10000 == 0 && checkYieldOnNextStep_ && !inExtension_) {
         checkForPreemption();
     }
 
@@ -2729,18 +2743,15 @@ bool Interpreter::step() {
     // past the fetched bytecode, causing it to be SKIPPED when the process
     // is later restored — leading to expression stack corruption and DNUs.
     //
-    // NOTE: We only check every 128 bytecodes, not every bytecode. The reference
-    // VM (Cog) only checks for interrupts at sends and backward branches — not
-    // between adjacent assignment bytecodes. Lock-free data structures (FIFOQueue,
-    // LIFOQueue, WaitfreeQueue) depend on multi-assignment sequences being atomic.
-    // Checking every bytecode would preempt between assignments, corrupting queues.
-    // 128 bytecodes (~0.01ms) is responsive enough for scheduling while preserving
-    // the atomicity assumption.
+    // Only check at "safe points": after sends and backward branches, matching
+    // the reference VM (Cog) which only checks interruptCheckCounter at sends
+    // and backward branches. Between sends, assignment bytecodes execute without
+    // preemption. Lock-free data structures (FIFOQueue, LIFOQueue, WaitfreeQueue)
+    // depend on multi-assignment sequences being atomic. The checkYieldOnNextStep_
+    // flag is set by send/backward-branch bytecode handlers.
     g_watchdogSubphase = 14;
-    {
-    static int forceYieldCheckCounter = 0;
-    if ((++forceYieldCheckCounter & 0x7F) != 0) goto skip_yield;
-    }
+    if (!checkYieldOnNextStep_) goto skip_yield;
+    checkYieldOnNextStep_ = false;
     {
     bool shouldYield = forceYield_.load(std::memory_order_acquire);
     if (shouldYield) {
@@ -2905,13 +2916,21 @@ ExecuteResult Interpreter::stepDetailed() {
     uint8_t bytecode = fetchByte();
 
     // Check if this is a send bytecode (message send)
-    bool isSend = (bytecode >= 0x60 && bytecode <= 0x7F) ||  // Sista send
-                  (bytecode >= 0x80 && bytecode <= 0x8F) ||  // V3 send
-                  (bytecode >= 0xB0 && bytecode <= 0xBF) ||  // Arithmetic sends
-                  (bytecode >= 0xC0 && bytecode <= 0xCF) ||  // More sends
-                  (bytecode >= 0xD0 && bytecode <= 0xDF) ||  // Send literal 0-15
-                  (bytecode >= 0xEA && bytecode <= 0xED) ||  // Extended sends
-                  bytecode == 0xF8 || bytecode == 0xF9;      // Super sends
+    // Sista V1 sends: 0x60-0xAF (arithmetic, special, literal 0-2 args), 0xEA-0xEB (extended, super)
+    bool isSend = (bytecode >= 0x60 && bytecode <= 0xAF) ||
+                  bytecode == 0xEA || bytecode == 0xEB;
+
+    // Set yield check flag for the NEXT step. The reference VM only checks for
+    // interrupts at sends and backward branches, not between assignment bytecodes.
+    // This preserves atomicity of multi-assignment sequences that lock-free queues
+    // (FIFOQueue, LIFOQueue, WaitfreeQueue) depend on.
+    // Safe points: sends, jumps (all), returns.
+    // Sista V1 jumps: 0xB0-0xC7 (short), 0xED-0xEF (long)
+    // Returns: 0x5C-0x5E
+    checkYieldOnNextStep_ = isSend ||
+        (bytecode >= 0xB0 && bytecode <= 0xC7) ||  // Short jumps
+        (bytecode >= 0xED && bytecode <= 0xEF) ||   // Long jumps
+        (bytecode >= 0x5C && bytecode <= 0x5E);     // Returns
 
     // Reset primitive tracking before dispatch
     lastPrimitiveIndex_ = 0;
