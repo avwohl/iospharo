@@ -2327,24 +2327,12 @@ void Interpreter::synchronousSignal(Oop semaphore) {
         if (processPriority > activePriority) {
             putToSleep(activeProcess);
             transferTo(process);
-        } else if (processPriority == activePriority) {
-            // Same priority: yield to implement fair round-robin scheduling.
-            // This matches the reference VM's "preemptionYields" behavior (default
-            // true in Pharo 10+). When a semaphore signal wakes a process at the
-            // same priority, the active process yields, enabling fair interleaving
-            // of same-priority processes (critical for queue contention tests).
-            // Steps: add woken process to end of queue, put active to sleep (end),
-            // then transfer to the first process in the queue.
-            putToSleep(process);  // woken process goes to end of its priority queue
-            putToSleep(activeProcess);  // active process also goes to end
-            // Transfer to first process in the priority queue
-            Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
-            Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
-            Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
-            Oop processList = memory_.fetchPointer(processPriority - 1, schedLists);
-            Oop first = removeFirstLinkOfList(processList);
-            transferTo(first);
         } else {
+            // Same or lower priority: just add woken process to its priority queue.
+            // Per the reference VM's resume: method, synchronousSignal does NOT
+            // yield for same-priority processes. Round-robin scheduling is handled
+            // by the heartbeat thread's forceYield (every 2ms), which triggers
+            // checkForPreemption with same-priority round-robin.
             putToSleep(process);
         }
     }
