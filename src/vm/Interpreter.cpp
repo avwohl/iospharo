@@ -2325,7 +2325,20 @@ void Interpreter::synchronousSignal(Oop semaphore) {
         }
 
         if (processPriority > activePriority) {
-            putToSleep(activeProcess);
+            // Higher-priority preemption: add active process to FRONT of its queue.
+            // This implements preemptionYields=false behavior, which is necessary
+            // because our VM checks interrupts at arbitrary bytecode positions (not
+            // just at sends like the reference VM). Without this, the preempted process
+            // goes to the end of the queue and a different same-priority process runs,
+            // which can see inconsistent state from an interrupted multi-assignment
+            // sequence (corrupting lock-free queues like WaitfreeQueue).
+            {
+                Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
+                Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
+                Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
+                Oop processList = memory_.fetchPointer(activePriority - 1, schedLists);
+                addFirstLinkToList(activeProcess, processList);
+            }
             transferTo(process);
         } else {
             // Same or lower priority: just add woken process to its priority queue.
@@ -2534,25 +2547,16 @@ bool Interpreter::step() {
     }
 
     // Check timer and process pending signals periodically.
-    // CRITICAL: All process-switch-triggering checks are deferred to safe points
-    // to avoid interrupting multi-assignment sequences. Extension bytes are never
-    // safe points because process switches reset extA_/extB_.
+    // Timer/signal checks run at normal frequency (every 1024 bytecodes) — NOT
+    // deferred to safe points. Timer signaling is critical for the Delay scheduler.
+    // Higher-priority preemption from timer signals is safe because it doesn't
+    // corrupt lock-free queues (the higher-priority process doesn't access shared
+    // P40 data). Same-priority round-robin is handled by forceYield, which IS
+    // restricted to safe points.
     {
     static int stepCheckCounter = 0;
     stepCheckCounter++;
-
-    // Mark that an interrupt check is pending every 1024 bytecodes.
-    // The actual check (timer, signals, finalization) is deferred to the next
-    // "safe point" (send/jump/return) to avoid process switches between
-    // assignment bytecodes. This matches the reference VM (Cog), which only
-    // processes interrupts at sends and backward branches.
-    if ((stepCheckCounter & 0x3FF) == 0) {
-        pendingInterruptCheck_ = true;
-    }
-
-    // Process the interrupt check at the next safe point
-    if (pendingInterruptCheck_ && atSafePoint) {
-        pendingInterruptCheck_ = false;
+    if ((stepCheckCounter & 0x3FF) == 0 && !inExtension_) {  // every 1024 steps
         g_watchdogSubphase = 11;
         checkTimerSemaphore();
         if (hasPendingSignals()) {
@@ -2662,17 +2666,18 @@ bool Interpreter::step() {
         processPendingSignals();
     }
 
-    // Periodic preemption check - every 10000 bytecodes, check if we should
-    // yield to a higher-priority or same-priority runnable process.
-    // Skip if in extension byte sequence to protect extA_/extB_.
-    // Periodic preemption check - only at safe points to avoid interrupting
-    // multi-assignment sequences that lock-free queues depend on.
-    // Periodic preemption check - only at safe points to avoid interrupting
-    // multi-assignment sequences that lock-free queues depend on.
+    // Periodic preemption check - deferred to safe points like all other
+    // process-switch triggers. Uses a deferred flag to avoid missing the
+    // safe point window (which would delay preemption by 10000 bytecodes).
+    {
     static uint64_t bytecodeCount = 0;
+    static bool pendingPreemptionCheck = false;
     bytecodeCount++;
-    if (bytecodeCount % 10000 == 0 && atSafePoint) {
+    if (bytecodeCount % 10000 == 0) pendingPreemptionCheck = true;
+    if (pendingPreemptionCheck && atSafePoint) {
+        pendingPreemptionCheck = false;
         checkForPreemption();
+    }
     }
 
     // Check if we've run past the end of bytecodes
@@ -2777,6 +2782,7 @@ bool Interpreter::step() {
         Oop nilObj = memory_.nil();
         Oop nextProcess = nilObj;
 
+        bool isPreemption = false;  // higher-priority vs same-priority
         {
             Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
             Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
@@ -2790,6 +2796,7 @@ bool Interpreter::step() {
                 Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, processList);
                 if (first.isObject() && first.rawBits() != nilObj.rawBits()) {
                     nextProcess = removeFirstLinkOfList(processList);
+                    isPreemption = true;
                     break;
                 }
             }
@@ -2811,7 +2818,20 @@ bool Interpreter::step() {
                            nextProcess.rawBits() != activeProcess.rawBits();
 
         if (foundProcess) {
-            putToSleep(activeProcess);
+            if (isPreemption) {
+                // Higher-priority preemption: active process goes to FRONT of queue.
+                // This is preemptionYields=false behavior, necessary because our VM
+                // can preempt between assignment bytecodes. The preempted process
+                // resumes when the preemptor finishes, preserving atomicity.
+                Oop schedulerAssoc2 = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
+                Oop scheduler2 = memory_.fetchPointer(1, schedulerAssoc2);
+                Oop schedLists2 = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler2);
+                Oop processList = memory_.fetchPointer(activePriority - 1, schedLists2);
+                addFirstLinkToList(activeProcess, processList);
+            } else {
+                // Same-priority round-robin: active process goes to END of queue.
+                putToSleep(activeProcess);
+            }
             g_xferReason = "forceYield";
             transferTo(nextProcess);
         }
@@ -9343,6 +9363,32 @@ void Interpreter::addLastLinkToList(Oop process, Oop list) {
     }
 
     memory_.storePointer(LinkedListLastLinkIndex, list, process);
+}
+
+void Interpreter::addFirstLinkToList(Oop process, Oop list) {
+    // Add process to the FRONT of a linked list (preemptionYields=false behavior).
+    // Used when a process is preempted by a higher-priority process and should
+    // resume immediately when the preemptor finishes.
+    if (!process.isObject() || !list.isObject()) return;
+    ObjectHeader* procHdr = process.asObjectPtr();
+    if (procHdr->slotCount() < 4) return;
+
+    Oop nilObj = memory_.nil();
+
+    // Set process.myList = list
+    memory_.storePointer(ProcessMyListIndex, process, list);
+
+    Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, list);
+    if (firstLink.isNil() || firstLink.rawBits() == nilObj.rawBits()) {
+        // Empty list - process becomes both first and last
+        memory_.storePointer(ProcessNextLinkIndex, process, nilObj);
+        memory_.storePointer(LinkedListFirstLinkIndex, list, process);
+        memory_.storePointer(LinkedListLastLinkIndex, list, process);
+    } else {
+        // Non-empty list - prepend (process becomes first, old first is next)
+        memory_.storePointer(ProcessNextLinkIndex, process, firstLink);
+        memory_.storePointer(LinkedListFirstLinkIndex, list, process);
+    }
 }
 
 Oop Interpreter::removeFirstLinkOfList(Oop list) {
