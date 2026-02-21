@@ -861,15 +861,15 @@ int stub_SDL_PollEvent(void* event) {
         }
     }
 
-    // Log calls — first 30, every 100th, and every 5000th for long runs
-    if (totalPollCalls <= 30 || totalPollCalls % 100 == 0) {
+    // Log calls — first 10 and every 50000th for long runs
+    if (totalPollCalls <= 10 || totalPollCalls % 50000 == 0) {
         fprintf(stderr, "[SDL-POLL] #%d event ptr=%p queueSize=%zu pending=%zu\n",
                 totalPollCalls, event, pharo::gEventQueue.size(),
                 sPendingWindowEvents.size());
     }
 
     // Monitor gDisplaySurface for unexpected content changes
-    if (pharo::gDisplaySurface && (totalPollCalls % 1000 == 0)) {
+    if (pharo::gDisplaySurface && (totalPollCalls % 50000 == 0)) {
         uint32_t* px = pharo::gDisplaySurface->pixels();
         int w = pharo::gDisplaySurface->width();
         int h = pharo::gDisplaySurface->height();
@@ -1019,10 +1019,10 @@ int stub_SDL_PollEvent(void* event) {
         return 0;
     }
 
-    // Log every event pop (first 20 + periodic)
+    // Log every event pop (first 5 + periodic)
     static int popCount = 0;
     popCount++;
-    if (popCount <= 20 || popCount % 100 == 0) {
+    if (popCount <= 5 || popCount % 500 == 0) {
         fprintf(stderr, "[SDL-POP] #%d event type=%d arg1=%d arg2=%d arg3=%d arg5=%d\n",
                 popCount, pharoEvent.type, pharoEvent.arg1, pharoEvent.arg2,
                 pharoEvent.arg3, pharoEvent.arg5);
@@ -1042,6 +1042,9 @@ int stub_SDL_PollEvent(void* event) {
         fprintf(stderr, "[SDL-EVT] Mouse event: subtype=%d x=%d y=%d buttons=%d\n",
                 subtype, pharoEvent.arg1, pharoEvent.arg2, pharoEvent.arg3);
 
+        // Track previous position for computing relative motion (xrel/yrel)
+        int prevX = sMouseX;
+        int prevY = sMouseY;
         // Update tracked mouse position
         sMouseX = pharoEvent.arg1;
         sMouseY = pharoEvent.arg2;
@@ -1063,6 +1066,8 @@ int stub_SDL_PollEvent(void* event) {
             sdlEvent->motion.which = 0;  // Touch or mouse
             sdlEvent->motion.x = pharoEvent.arg1;
             sdlEvent->motion.y = pharoEvent.arg2;
+            sdlEvent->motion.xrel = pharoEvent.arg1 - prevX;
+            sdlEvent->motion.yrel = pharoEvent.arg2 - prevY;
             sdlEvent->motion.state = sdlButtonMask;
         } else if (subtype == 1) {
             // Mouse button down — update tracked state
@@ -1118,16 +1123,16 @@ int stub_SDL_PollEvent(void* event) {
                 sdlEvent->button.button = SDL_BUTTON_LEFT;    // Default
             }
         }
-        // Log all mouse events (no limit)
+        // Log mouse events (first 30 + periodic)
         {
             static int mouseLogCount = 0;
             mouseLogCount++;
-            fprintf(stderr, "[SDL-MOUSE] #%d type=0x%x windowID=0x%x button=%d state=%d x=%d y=%d\n",
-                    mouseLogCount, sdlEvent->button.type, sdlEvent->button.windowID,
-                    sdlEvent->button.button, sdlEvent->button.state,
-                    sdlEvent->button.x, sdlEvent->button.y);
-            // Note: send tracing now triggers from GetModState (last FFI call in event handler)
-            // to skip the >1000 sends of UFFI compilation/setup
+            if (mouseLogCount <= 30 || mouseLogCount % 200 == 0) {
+                fprintf(stderr, "[SDL-MOUSE] #%d type=0x%x button=%d state=%d x=%d y=%d\n",
+                        mouseLogCount, sdlEvent->button.type,
+                        sdlEvent->button.button, sdlEvent->button.state,
+                        sdlEvent->button.x, sdlEvent->button.y);
+            }
         }
         return 1;  // Event available
     } else if (pharoEvent.type == static_cast<int>(pharo::EventType::MouseWheel)) {

@@ -195,7 +195,7 @@ class PharoCanvasViewController: UIViewController {
         super.viewDidAppear(animated)
         mtkView.becomeFirstResponder()
 
-        // Automated interaction testing — uncomment to enable:
+        // Automated menu test disabled — use manual interaction
         // #if targetEnvironment(macCatalyst)
         // waitForThemeReady {
         //     NSLog("[TEST] Theme ready, injecting test events")
@@ -266,25 +266,111 @@ class PharoCanvasViewController: UIViewController {
             return
         }
 
-        NSLog("[TEST] === Quick verification test ===")
+        NSLog("[TEST] === Click-click menu test ===")
 
         // Take "before" screenshot
         saveBufferScreenshot(tag: "01-before")
 
-        // Click Browse menu
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            NSLog("[TEST] Click Browse menu at (113,8)")
-            let browsePos = CGPoint(x: 113, y: 8)
-            bridge.sendMouseMoved(to: browsePos, modifiers: 0)
-            bridge.sendTouchDown(at: browsePos, buttons: IOS_RED_BUTTON)
+        var t: Double = 1.0
+
+        // Step 1: Click "Browse" menu label (click-click: mouseDown+mouseUp)
+        DispatchQueue.main.asyncAfter(deadline: .now() + t) {
+            NSLog("[TEST] Step 1: Click Browse at (113,8)")
+            let pos = CGPoint(x: 113, y: 8)
+            bridge.sendMouseMoved(to: pos, modifiers: 0)
+            bridge.sendTouchDown(at: pos, buttons: IOS_RED_BUTTON)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                bridge.sendTouchUp(at: browsePos, buttons: IOS_RED_BUTTON)
+                bridge.sendTouchUp(at: pos, buttons: IOS_RED_BUTTON)
             }
         }
+        t += 1.5
 
-        // Screenshot after Browse click
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-            self.saveBufferScreenshot(tag: "02-after-browse")
+        // Step 2: Screenshot — should show Browse dropdown
+        DispatchQueue.main.asyncAfter(deadline: .now() + t) {
+            self.saveBufferScreenshot(tag: "02-browse-dropdown")
+        }
+        t += 0.5
+
+        // Step 3: Move mouse from menu bar down to first dropdown item
+        // Simulate hover moving from (113,8) → (113,28) → (113,40)
+        DispatchQueue.main.asyncAfter(deadline: .now() + t) {
+            NSLog("[TEST] Step 3: Hover to dropdown item (113,30)")
+            bridge.sendMouseMoved(to: CGPoint(x: 113, y: 15), modifiers: 0)
+        }
+        t += 0.1
+        DispatchQueue.main.asyncAfter(deadline: .now() + t) {
+            bridge.sendMouseMoved(to: CGPoint(x: 113, y: 22), modifiers: 0)
+        }
+        t += 0.1
+        DispatchQueue.main.asyncAfter(deadline: .now() + t) {
+            bridge.sendMouseMoved(to: CGPoint(x: 113, y: 30), modifiers: 0)
+        }
+        t += 0.1
+        DispatchQueue.main.asyncAfter(deadline: .now() + t) {
+            bridge.sendMouseMoved(to: CGPoint(x: 113, y: 38), modifiers: 0)
+        }
+        t += 0.5
+
+        // Step 4: Screenshot — should show item highlighted
+        DispatchQueue.main.asyncAfter(deadline: .now() + t) {
+            self.saveBufferScreenshot(tag: "03-hover-item")
+        }
+        t += 0.5
+
+        // Step 5: Click the first dropdown item "System Browser" (~113, 38)
+        DispatchQueue.main.asyncAfter(deadline: .now() + t) {
+            NSLog("[TEST] Step 5: Click dropdown item at (113,38)")
+            let pos = CGPoint(x: 113, y: 38)
+            bridge.sendMouseMoved(to: pos, modifiers: 0)
+            bridge.sendTouchDown(at: pos, buttons: IOS_RED_BUTTON)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                bridge.sendTouchUp(at: pos, buttons: IOS_RED_BUTTON)
+            }
+        }
+        t += 3.0
+
+        // Step 6: Screenshot — should show System Browser opened
+        DispatchQueue.main.asyncAfter(deadline: .now() + t) {
+            self.saveBufferScreenshot(tag: "04-after-click-item")
+        }
+        t += 0.5
+
+        // Step 7: Also test drag pattern for comparison
+        // Click and hold Browse, drag to second item, release
+        DispatchQueue.main.asyncAfter(deadline: .now() + t) {
+            NSLog("[TEST] Step 7: Drag test — mouseDown Browse, drag to item, mouseUp")
+            let start = CGPoint(x: 190, y: 8) // Debug menu
+            bridge.sendMouseMoved(to: start, modifiers: 0)
+            bridge.sendTouchDown(at: start, buttons: IOS_RED_BUTTON)
+        }
+        t += 0.3
+        // Drag down slowly
+        DispatchQueue.main.asyncAfter(deadline: .now() + t) {
+            bridge.sendTouchMoved(to: CGPoint(x: 190, y: 15), buttons: IOS_RED_BUTTON)
+        }
+        t += 0.1
+        DispatchQueue.main.asyncAfter(deadline: .now() + t) {
+            bridge.sendTouchMoved(to: CGPoint(x: 190, y: 25), buttons: IOS_RED_BUTTON)
+        }
+        t += 0.1
+        DispatchQueue.main.asyncAfter(deadline: .now() + t) {
+            bridge.sendTouchMoved(to: CGPoint(x: 190, y: 35), buttons: IOS_RED_BUTTON)
+        }
+        t += 0.5
+        // Screenshot while held
+        DispatchQueue.main.asyncAfter(deadline: .now() + t) {
+            self.saveBufferScreenshot(tag: "05-drag-held")
+        }
+        t += 0.5
+        // Release on item
+        DispatchQueue.main.asyncAfter(deadline: .now() + t) {
+            NSLog("[TEST] Step 7b: Release on drag item at (190,35)")
+            bridge.sendTouchUp(at: CGPoint(x: 190, y: 35), buttons: IOS_RED_BUTTON)
+        }
+        t += 3.0
+        // Final screenshot
+        DispatchQueue.main.asyncAfter(deadline: .now() + t) {
+            self.saveBufferScreenshot(tag: "06-after-drag")
             NSLog("[TEST] === Test complete ===")
         }
     }
