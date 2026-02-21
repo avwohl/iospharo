@@ -2517,22 +2517,26 @@ bool Interpreter::step() {
 
     g_stepCount++;
 
+    // Capture safe-point status. checkYieldOnNextStep_ is set when the previous
+    // bytecode was a send, jump, or return. All interrupt/scheduling checks are
+    // restricted to safe points, matching the reference VM (Cog) which only
+    // processes interrupts at sends and backward branches. This preserves atomicity
+    // of multi-assignment sequences that lock-free queues depend on.
+    bool atSafePoint = checkYieldOnNextStep_ && !inExtension_;
+
     // Signal finalization promptly after GC. This one-shot flag fires on the step
     // immediately after a GC primitive (or auto-compact GC), rather than waiting
     // ~1M bytecodes. Without this, weak dictionary tests fail because the P51
     // mourning process never gets CPU time before the P40 test asserts dict.size.
-    if (finalizationCheckAfterGC_ && checkYieldOnNextStep_ && !inExtension_) {
+    if (finalizationCheckAfterGC_ && atSafePoint) {
         finalizationCheckAfterGC_ = false;
         signalFinalizationIfNeeded();
     }
 
     // Check timer and process pending signals periodically.
-    // CRITICAL: Skip process-switch-triggering checks when inExtension_ is true.
-    // Extension bytes (0xE0/0xE1) set extA_/extB_ which the NEXT bytecode needs.
-    // A process switch calls executeFromContext which resets extA_/extB_ = 0,
-    // corrupting the next bytecode's argument (e.g., jump offset → IP past method end).
-    // The forceYield handler already checks inExtension_, but timer/signal/preemption
-    // checks did NOT — causing the non-deterministic "factorial returns receiver" bug.
+    // CRITICAL: All process-switch-triggering checks are deferred to safe points
+    // to avoid interrupting multi-assignment sequences. Extension bytes are never
+    // safe points because process switches reset extA_/extB_.
     {
     static int stepCheckCounter = 0;
     stepCheckCounter++;
@@ -2542,12 +2546,12 @@ bool Interpreter::step() {
     // "safe point" (send/jump/return) to avoid process switches between
     // assignment bytecodes. This matches the reference VM (Cog), which only
     // processes interrupts at sends and backward branches.
-    if ((stepCheckCounter & 0x3FF) == 0 && !inExtension_) {
+    if ((stepCheckCounter & 0x3FF) == 0) {
         pendingInterruptCheck_ = true;
     }
 
     // Process the interrupt check at the next safe point
-    if (pendingInterruptCheck_ && checkYieldOnNextStep_ && !inExtension_) {
+    if (pendingInterruptCheck_ && atSafePoint) {
         pendingInterruptCheck_ = false;
         g_watchdogSubphase = 11;
         checkTimerSemaphore();
@@ -2663,9 +2667,11 @@ bool Interpreter::step() {
     // Skip if in extension byte sequence to protect extA_/extB_.
     // Periodic preemption check - only at safe points to avoid interrupting
     // multi-assignment sequences that lock-free queues depend on.
+    // Periodic preemption check - only at safe points to avoid interrupting
+    // multi-assignment sequences that lock-free queues depend on.
     static uint64_t bytecodeCount = 0;
     bytecodeCount++;
-    if (bytecodeCount % 10000 == 0 && checkYieldOnNextStep_ && !inExtension_) {
+    if (bytecodeCount % 10000 == 0 && atSafePoint) {
         checkForPreemption();
     }
 
@@ -2743,15 +2749,9 @@ bool Interpreter::step() {
     // past the fetched bytecode, causing it to be SKIPPED when the process
     // is later restored — leading to expression stack corruption and DNUs.
     //
-    // Only check at "safe points": after sends and backward branches, matching
-    // the reference VM (Cog) which only checks interruptCheckCounter at sends
-    // and backward branches. Between sends, assignment bytecodes execute without
-    // preemption. Lock-free data structures (FIFOQueue, LIFOQueue, WaitfreeQueue)
-    // depend on multi-assignment sequences being atomic. The checkYieldOnNextStep_
-    // flag is set by send/backward-branch bytecode handlers.
+    // Only check at safe points (atSafePoint computed above).
     g_watchdogSubphase = 14;
-    if (!checkYieldOnNextStep_) goto skip_yield;
-    checkYieldOnNextStep_ = false;
+    if (!atSafePoint) goto skip_yield;
     {
     bool shouldYield = forceYield_.load(std::memory_order_acquire);
     if (shouldYield) {
