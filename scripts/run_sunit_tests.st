@@ -426,18 +426,34 @@ runAllTests
       (Smalltalk globals at: name ifAbsent: [nil])
         ifNotNil: [:cls | addOnce value: cls]].
 
-  "Read batch range from /tmp/sunit_batch.txt (format: 'startIndex endIndex').
-   If file absent, run all classes."
+  "Read batch range from /tmp/sunit_batch.txt (format: 'startIndex endIndex')
+   OR class names from /tmp/sunit_class_names.txt (one class name per line).
+   If class names file exists, it takes priority. If neither, run all classes."
   batchStart := 1.
   batchEnd := testClasses size.
-  [| batchFile parts |
-   batchFile := '/tmp/sunit_batch.txt' asFileReference.
-   batchFile exists ifTrue: [
-     parts := batchFile contents trimBoth substrings.
-     batchStart := parts first asInteger.
-     batchEnd := parts second asInteger min: testClasses size]]
+  [| classNamesFile |
+   classNamesFile := '/tmp/sunit_class_names.txt' asFileReference.
+   classNamesFile exists ifTrue: [
+     | names selected |
+     names := classNamesFile contents lines
+       collect: [:l | l trimBoth]
+       thenSelect: [:l | l notEmpty].
+     selected := OrderedCollection new.
+     names do: [:name |
+       testClasses detect: [:c | c name = name] ifFound: [:c | selected add: c]].
+     batchClasses := selected.
+     batchStart := 1.
+     batchEnd := selected size]
+   ifFalse: [
+     [| batchFile parts |
+      batchFile := '/tmp/sunit_batch.txt' asFileReference.
+      batchFile exists ifTrue: [
+        parts := batchFile contents trimBoth substrings.
+        batchStart := parts first asInteger.
+        batchEnd := parts second asInteger min: testClasses size]]
+     on: Error do: [:e | ]]]
   on: Error do: [:e | ].
-  batchClasses := testClasses copyFrom: batchStart to: batchEnd.
+  batchClasses ifNil: [batchClasses := testClasses copyFrom: batchStart to: batchEnd].
 
   "Open output files — both overwritten per batch.
    Shell script concatenates detail files across batches."
@@ -752,9 +768,11 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
       doneSem signal.
       "Terminate after signaling — best effort cleanup"
       [testProcess terminate] on: Error do: [:e |]]] forkAt: 79.
-  "Backup: spin-wait at test priority using forceYield round-robin.
+  "Backup: spin-wait at LOW priority (P10) using Processor yield.
    2x timeout gives primary watchdog time to fire first.
-   Uses testDone flag (not result isNil) — result=nil means 'pass', not 'still running'."
+   Uses testDone flag (not result isNil) — result=nil means 'pass', not 'still running'.
+   MUST be below userBackgroundPriority (30) so it never starves test-forked
+   processes (MonitorTest forks at P30, SemaphoreTest at activePriority-1=P39)."
   backupWatchdog := [| startMs |
    startMs := Time millisecondClockValue.
    [testDone not and: [
@@ -767,7 +785,7 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
        nextPutAll: ' (exceeded '; print: seconds * 2; nextPutAll: 's)'; cr.
      s flush.
      doneSem signal.
-     [testProcess terminate] on: Error do: [:e |]]] forkAt: priority.
+     [testProcess terminate] on: Error do: [:e |]]] forkAt: 10.
 
   "Wait for test completion or watchdog timeout.
    Catch TestTookTooMuchTime — the TestExecutionEnvironment watchdog at P79 may

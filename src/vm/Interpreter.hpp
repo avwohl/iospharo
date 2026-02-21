@@ -424,7 +424,6 @@ private:
     bool suppressContextSwitch_ = false;  // Suppress forceYield after prim 198 (ensure:) activation
     bool inExtension_ = false;  // True after extension byte (0xE0/0xE1), prevents forceYield from splitting extension+target
     bool finalizationCheckAfterGC_ = false;  // One-shot: signal finalization on next step after GC
-    bool checkYieldOnNextStep_ = false;  // Check forceYield only after sends/backward branches (safe points)
     int lastPrimitiveIndex_ = 0;  // For stepDetailed() tracking
 
     // System paths and arguments
@@ -1865,8 +1864,6 @@ private:
 
     /// Add process to end of a LinkedList
     void addLastLinkToList(Oop process, Oop list);
-    /// Add process to front of a LinkedList (preemptionYields=false)
-    void addFirstLinkToList(Oop process, Oop list);
 
     /// Remove and return first process from a LinkedList
     Oop removeFirstLinkOfList(Oop list);
