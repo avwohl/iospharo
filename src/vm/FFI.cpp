@@ -243,6 +243,7 @@ struct SDLTextureState {
     int height;
     int pitch;
     void* renderer;  // Which renderer owns this texture
+    bool usesDisplaySurface;  // True when LockTexture returned the display surface buffer
 };
 
 // Per-renderer state
@@ -549,6 +550,21 @@ void stub_SDL_RenderPresent(void* renderer) {
     }
 
     if (pharo::gDisplaySurface) {
+        // When texture writes directly to display surface, skip the copy —
+        // Pharo already wrote there via BitBlt. Just log and call update().
+        if (tit->second.usesDisplaySurface) {
+            if (totalCalls <= 20 || totalCalls % 200 == 0) {
+                uint32_t* dst = pharo::gDisplaySurface->pixels();
+                int dstW = pharo::gDisplaySurface->width();
+                int dstH = pharo::gDisplaySurface->height();
+                uint32_t center = (dstH > 384 && dstW > 512) ? dst[384 * dstW + 512] : 0;
+                fprintf(stderr, "[SDL-RP] #%d direct-display %dx%d center=%08x\n",
+                        totalCalls, dstW, dstH, center);
+            }
+            pharo::gDisplaySurface->update();
+            return;
+        }
+
         uint32_t* src = tit->second.pixels;
         int srcW = tit->second.width;
         int srcH = tit->second.height;
@@ -631,6 +647,7 @@ void* stub_SDL_CreateTexture(void* renderer, uint32_t format, int access, int w,
     state.height = h;
     state.pitch = w * 4;  // 32bpp XRGB
     state.renderer = renderer;
+    state.usesDisplaySurface = false;
     sTextures[handle] = state;
     // Track as current texture for this renderer
     auto rit = sRenderers.find(renderer);
@@ -667,24 +684,37 @@ int stub_SDL_LockTexture(void* texture, void* rect, void** pixels, int* pitch) {
         fprintf(stderr, "[POST-EXPOSE] SDL_LockTexture called! lock#%d (expose poll+%d)\n",
                 lockCount, g_postExposePollCount);
     }
+
+    // Return the display surface buffer directly instead of the texture's private buffer.
+    // Pharo stores this pointer via setPointer: and writes to it continuously via BitBlt,
+    // bypassing SDL_LockTexture/UnlockTexture after the first call. If we return the
+    // texture's private buffer, the Metal renderer (which reads from the display surface)
+    // never sees the updates. By returning the display surface buffer, Pharo writes
+    // directly where the Metal renderer reads, giving us live 30fps display updates.
+    uint32_t* returnPixels = it->second.pixels;
+    int returnPitch = it->second.pitch;
+
+    if (pharo::gDisplaySurface) {
+        int dsW = pharo::gDisplaySurface->width();
+        int dsH = pharo::gDisplaySurface->height();
+        if (dsW == it->second.width && dsH == it->second.height) {
+            returnPixels = pharo::gDisplaySurface->pixels();
+            returnPitch = dsW * 4;
+            it->second.usesDisplaySurface = true;
+        }
+    }
+
     if (lockCount <= 10 || lockCount % 200 == 0) {
-        fprintf(stderr, "[SDL-LOCK] #%d texture=%p pixels_ptr=%p pitch_ptr=%p actual_pixels=%p pitch=%d (%dx%d)\n",
-                lockCount, texture, (void*)pixels, (void*)pitch,
-                it->second.pixels, it->second.pitch,
+        fprintf(stderr, "[SDL-LOCK] #%d texture=%p pixels=%p (display_surface=%d) pitch=%d (%dx%d)\n",
+                lockCount, texture, returnPixels,
+                (returnPixels != it->second.pixels), returnPitch,
                 it->second.width, it->second.height);
     }
     if (pixels) {
-        *pixels = it->second.pixels;
-        if (lockCount <= 10) {
-            fprintf(stderr, "[SDL-LOCK] #%d wrote *pixels=%p\n", lockCount, *pixels);
-        }
-    } else {
-        if (lockCount <= 10) {
-            fprintf(stderr, "[SDL-LOCK] #%d SKIP: pixels ptr is NULL! Cannot write output.\n", lockCount);
-        }
+        *pixels = returnPixels;
     }
     if (pitch) {
-        *pitch = it->second.pitch;
+        *pitch = returnPitch;
     }
 
     return 0;
@@ -698,6 +728,10 @@ void stub_SDL_UnlockTexture(void* texture) {
     // deferUpdatesWhile:. Without this, display never updates after drawing errors.
     auto it = sTextures.find(texture);
     if (it == sTextures.end() || !it->second.pixels) return;
+
+    // Skip copy when texture writes directly to the display surface buffer —
+    // Pharo already wrote there, copying the texture's private buffer would overwrite.
+    if (it->second.usesDisplaySurface) return;
 
     if (pharo::gDisplaySurface) {
         uint32_t* src = it->second.pixels;

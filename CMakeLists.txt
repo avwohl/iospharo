@@ -6,8 +6,11 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Detect platform for xcframework slice selection
-# Check for Mac Catalyst by looking for "macabi" in compiler flags
-if(CMAKE_C_FLAGS MATCHES "macabi" OR CMAKE_CXX_FLAGS MATCHES "macabi")
+# FORCE_XCFRAMEWORK_PLATFORM can be set externally (e.g., for Mac Catalyst builds
+# where cmake configures for iOS but xcodebuild targets macabi)
+if(FORCE_XCFRAMEWORK_PLATFORM)
+    set(XCFRAMEWORK_PLATFORM "${FORCE_XCFRAMEWORK_PLATFORM}")
+elseif(CMAKE_C_FLAGS MATCHES "macabi" OR CMAKE_CXX_FLAGS MATCHES "macabi")
     set(XCFRAMEWORK_PLATFORM "ios-arm64_x86_64-maccatalyst")
 elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     if(CMAKE_OSX_SYSROOT MATCHES "Simulator")
