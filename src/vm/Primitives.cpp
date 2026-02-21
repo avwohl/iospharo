@@ -24669,19 +24669,39 @@ PrimitiveResult Interpreter::primitiveFileAttributes(int argCount) {
         memory_.storePointer(2, accessArray, executable ? memory_.trueObject() : memory_.falseObject());
     }
 
-    // Build outer result array: { statArray. accessArray }
-    push(statArray);     // protect across allocation
-    push(accessArray);   // protect across allocation
-    Oop resultArray = memory_.allocateSlots(arrayClassIdx, 2, ObjectFormat::Indexable);
-    accessArray = pop(); // restore
-    statArray = pop();   // restore
-    if (resultArray.isNil()) return PrimitiveResult::Failure;
+    // Return format depends on which mask bits are set:
+    //   mask & 3 == 1: return stat array directly (12 elements)
+    //   mask & 3 == 2: return access array directly (3 booleans)
+    //   mask & 3 == 3: return { statArray. accessArray } (2-element array)
+    // The Pharo image's File class>>fileAttributes:mask: depends on this:
+    //   mask=1 → statAttributes := attributes (the stat array IS the result)
+    //   mask=3 → statAttributes := attributes at: 1 (stat array inside compound)
+    int maskBits = mask & 3;
+    if (maskBits == 3) {
+        // Both stat and access: wrap in a 2-element array
+        push(statArray);     // protect across allocation
+        push(accessArray);   // protect across allocation
+        Oop resultArray = memory_.allocateSlots(arrayClassIdx, 2, ObjectFormat::Indexable);
+        accessArray = pop(); // restore
+        statArray = pop();   // restore
+        if (resultArray.isNil()) return PrimitiveResult::Failure;
 
-    memory_.storePointer(0, resultArray, statArray);
-    memory_.storePointer(1, resultArray, accessArray);
+        memory_.storePointer(0, resultArray, statArray);
+        memory_.storePointer(1, resultArray, accessArray);
 
-    popN(3);  // pop mask, path, receiver
-    push(resultArray);
+        popN(3);  // pop mask, path, receiver
+        push(resultArray);
+    } else if (maskBits == 1) {
+        // Stat only: return stat array directly
+        popN(3);
+        push(statArray);
+    } else if (maskBits == 2) {
+        // Access only: return access array directly
+        popN(3);
+        push(accessArray);
+    } else {
+        return PrimitiveResult::Failure;
+    }
     return PrimitiveResult::Success;
 }
 
