@@ -2728,7 +2728,20 @@ bool Interpreter::step() {
     // instructionPointer_. If we yield after fetching, the saved PC will point
     // past the fetched bytecode, causing it to be SKIPPED when the process
     // is later restored — leading to expression stack corruption and DNUs.
+    //
+    // NOTE: We only check every 128 bytecodes, not every bytecode. The reference
+    // VM (Cog) only checks for interrupts at sends and backward branches — not
+    // between adjacent assignment bytecodes. Lock-free data structures (FIFOQueue,
+    // LIFOQueue, WaitfreeQueue) depend on multi-assignment sequences being atomic.
+    // Checking every bytecode would preempt between assignments, corrupting queues.
+    // 128 bytecodes (~0.01ms) is responsive enough for scheduling while preserving
+    // the atomicity assumption.
     g_watchdogSubphase = 14;
+    {
+    static int forceYieldCheckCounter = 0;
+    if ((++forceYieldCheckCounter & 0x7F) != 0) goto skip_yield;
+    }
+    {
     bool shouldYield = forceYield_.load(std::memory_order_acquire);
     if (shouldYield) {
         // Per Cog VM: suppress context switch after activating methods with
@@ -2846,6 +2859,7 @@ bool Interpreter::step() {
             }
         }
     }
+    } // forceYield check block (entered every 128 bytecodes)
 skip_yield:
 
     // VM safety: terminate a process that the watchdog flagged as stuck
