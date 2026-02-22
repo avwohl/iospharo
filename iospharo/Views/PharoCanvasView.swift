@@ -67,6 +67,7 @@ class PharoMTKView: MTKView {
 
     private var currentButton: Int = IOS_RED_BUTTON
     var suppressNextTouchCancel = false
+    var suppressNextTouchEnd = false
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         eventLog("[TOUCH] touchesBegan count=\(touches.count) bridge=\(bridge != nil)")
@@ -86,6 +87,13 @@ class PharoMTKView: MTKView {
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        // When UIContextMenuInteraction handles a right-click, UIKit still fires
+        // touchesEnded for the original touch. Skip the spurious RED button-up
+        // since contextMenuInteraction already sent the correct YELLOW events.
+        if suppressNextTouchEnd {
+            suppressNextTouchEnd = false
+            return
+        }
         guard let touch = touches.first, let bridge = bridge else { return }
         let point = touch.location(in: self)
         NSLog("[TOUCH] up at (%d,%d) buttons=%d", Int(point.x), Int(point.y), currentButton)
@@ -643,15 +651,21 @@ extension PharoCanvasViewController: UIContextMenuInteractionDelegate {
         _ interaction: UIContextMenuInteraction,
         configurationForMenuAtLocation location: CGPoint
     ) -> UIContextMenuConfiguration? {
-        // Capture right-click position and send to Pharo as yellow button.
-        // Suppress the touchesCancelled that UIKit fires after context menu
-        // interaction, which would send a spurious LEFT button UP.
+        // Capture right-click position and send to Pharo as yellow button click.
+        // In Pharo, yellow-button menus open on mouseDown and close on mouseUp.
+        // Since Mac Catalyst right-click is a single event (not hold), we send
+        // both down and up with enough delay for the menu to build and render.
+        // The menu then stays open in "click" mode for the user to interact with.
         pharoEventLog("[RIGHT-CLICK] at (\(Int(location.x)),\(Int(location.y)))")
         mtkView.suppressNextTouchCancel = true
+        mtkView.suppressNextTouchEnd = true
         if let bridge = bridge {
             bridge.sendMouseMoved(to: location, modifiers: 0)
             bridge.sendTouchDown(at: location, buttons: IOS_YELLOW_BUTTON)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            // Delay the button-up enough for Pharo to build and render the menu.
+            // 500ms gives the menu builder time to complete. In Pharo, menus that
+            // receive both down+up at the same position "stick" open.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 bridge.sendTouchUp(at: location, buttons: IOS_YELLOW_BUTTON)
             }
         }
