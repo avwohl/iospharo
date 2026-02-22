@@ -2208,8 +2208,13 @@ void Interpreter::interpret() {
             }
         }
 
-        // Process any pending external semaphore signals
-        if (hasPendingSignals()) {
+        // Process any pending external semaphore signals.
+        // CRITICAL: Skip if in extension byte sequence to protect extA_/extB_.
+        // The last step() in the batch may have been an extension byte (0xE0/0xE1).
+        // A process switch here would call executeFromContext() which resets
+        // extA_/extB_ to 0, corrupting the next bytecode's arguments (e.g.,
+        // turning a backward jump into a forward jump past method end).
+        if (hasPendingSignals() && !inExtension_) {
             processPendingSignals();
         }
 
@@ -2217,10 +2222,14 @@ void Interpreter::interpret() {
         // Previous check used (loopCount & 0x3FF) which only triggered every
         // 128,000 steps due to loopCount incrementing by 1000. This was too
         // slow for 30ms Delays. Now checks every 1000 bytecodes (~1ms at 1M/s).
-        checkTimerSemaphore();
+        // CRITICAL: Skip if in extension byte sequence (same reason as above).
+        if (!inExtension_) {
+            checkTimerSemaphore();
+        }
 
         // Process input events every 10K bytecodes
-        if (loopCount % 10000 == 0) {
+        // CRITICAL: Skip if in extension byte sequence (same reason as above).
+        if (loopCount % 10000 == 0 && !inExtension_) {
             processInputEvents();
         }
 
@@ -2659,14 +2668,46 @@ bool Interpreter::step() {
     if (instructionPointer_ >= bytecodeEnd_) {
         static int ipPastEndCount = 0;
         ipPastEndCount++;
-        if (ipPastEndCount <= 20) {
+        if (ipPastEndCount <= 50) {
             ObjectHeader* mObj = method_.asObjectPtr();
             uint8_t* mBytes = mObj->bytes();
-            fprintf(stderr, "[IP-PAST-END #%d] rcvr=0x%llx ip=%td end=%td fd=%zu step=%llu\n",
+            ptrdiff_t ipOffset = instructionPointer_ - mBytes;
+            ptrdiff_t endOffset = bytecodeEnd_ - mBytes;
+            fprintf(stderr, "[IP-PAST-END #%d] rcvr=0x%llx ip=%td end=%td fd=%zu step=%llu lastBC=0x%02x extA=%d extB=%d inExt=%d\n",
                     ipPastEndCount, (unsigned long long)receiver_.rawBits(),
-                    (ptrdiff_t)(instructionPointer_ - mBytes),
-                    (ptrdiff_t)(bytecodeEnd_ - mBytes),
-                    frameDepth_, (unsigned long long)g_stepNum);
+                    ipOffset, endOffset,
+                    frameDepth_, (unsigned long long)g_stepNum,
+                    lastBytecode_, extA_, extB_, (int)inExtension_);
+            // Extract method selector
+            if (mObj->slotCount() > 0) {
+                Oop hdr = memory_.fetchPointer(0, method_);
+                if (hdr.isSmallInteger()) {
+                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                    // Selector is at slot numLits (last literal) or numLits-1
+                    for (size_t s = (numLits > 0 ? numLits - 1 : 0); s <= numLits && s < mObj->slotCount(); s++) {
+                        Oop sel = memory_.fetchPointer(s, method_);
+                        if (sel.isObject() && sel.rawBits() > 0x10000 && memory_.isValidObject(sel)) {
+                            ObjectHeader* selHdr = sel.asObjectPtr();
+                            if (selHdr->isBytesObject() && selHdr->byteSize() < 100) {
+                                fprintf(stderr, "  selector (slot %zu): %.*s\n",
+                                        s, (int)selHdr->byteSize(), (char*)selHdr->bytes());
+                            }
+                        }
+                    }
+                    fprintf(stderr, "  numLiterals=%zu methodSlots=%u\n", numLits, mObj->slotCount());
+                }
+            }
+            // Dump last 16 bytecodes before the end and 16 after
+            ptrdiff_t dumpStart = endOffset - 16;
+            if (dumpStart < 0) dumpStart = 0;
+            ptrdiff_t dumpEnd = endOffset + 16;
+            size_t totalBytes = mObj->byteSize();
+            if ((size_t)dumpEnd > totalBytes) dumpEnd = totalBytes;
+            fprintf(stderr, "  bytecodes [%td..%td] (end=%td): ", dumpStart, dumpEnd, endOffset);
+            for (ptrdiff_t i = dumpStart; i < dumpEnd; i++) {
+                fprintf(stderr, "%02x%s", mBytes[i], (i == endOffset - 1) ? "|" : " ");
+            }
+            fprintf(stderr, "\n");
             fflush(stderr);
         }
         returnValue(receiver_);
