@@ -13632,6 +13632,50 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
         }
     }
 
+    // Log unresolved external primitive calls
+    {
+        static int unresCount = 0;
+        if (unresCount++ < 30) {
+            Oop method = newMethod_.isObject() ? newMethod_ : method_;
+            fprintf(stderr, "[EXT-PRIM-FAIL] #%d argCount=%d literalStrings:", unresCount, argCount);
+            if (method.isObject()) {
+                Oop methodHeader = memory_.fetchPointer(0, method);
+                if (methodHeader.isSmallInteger()) {
+                    size_t nl = methodHeader.asSmallInteger() & 0x7FFF;
+                    for (size_t i = 1; i <= nl && i < 10; i++) {
+                        Oop lit = memory_.fetchPointer(i, method);
+                        if (!lit.isObject() || !memory_.isValidPointer(lit)) continue;
+                        ObjectHeader* lh = lit.asObjectPtr();
+                        if (lh->isBytesObject() && lh->byteSize() < 100) {
+                            fprintf(stderr, " \"%.*s\"", (int)lh->byteSize(), (char*)lh->bytes());
+                        } else if (!lh->isBytesObject() && lh->slotCount() >= 1 && lh->slotCount() <= 10) {
+                            fprintf(stderr, " [");
+                            for (size_t j = 0; j < lh->slotCount(); j++) {
+                                Oop sub = memory_.fetchPointer(j, lit);
+                                if (sub.isObject() && memory_.isValidPointer(sub)) {
+                                    ObjectHeader* sh = sub.asObjectPtr();
+                                    if (sh->isBytesObject() && sh->byteSize() < 100) {
+                                        fprintf(stderr, "%s\"%.*s\"", j ? "," : "", (int)sh->byteSize(), (char*)sh->bytes());
+                                    } else {
+                                        fprintf(stderr, "%s<%s:%zu>", j ? "," : "",
+                                                sh->isBytesObject() ? "bytes" : "ptrs", sh->slotCount());
+                                    }
+                                } else if (sub.isSmallInteger()) {
+                                    fprintf(stderr, "%s%lld", j ? "," : "", (long long)sub.asSmallInteger());
+                                } else {
+                                    fprintf(stderr, "%s?", j ? "," : "");
+                                }
+                            }
+                            fprintf(stderr, "]");
+                        }
+                    }
+                }
+            }
+            fprintf(stderr, "\n");
+            fflush(stderr);
+        }
+    }
+
     return PrimitiveResult::Failure;
 }
 
@@ -22942,6 +22986,19 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
                         moduleHandle = dlopen(libName.c_str(), RTLD_NOW | RTLD_GLOBAL);
                     }
                     if (!moduleHandle) {
+                        // Try Homebrew path (Mac Catalyst development)
+                        std::string brewPath;
+                        if (moduleName.find('/') != std::string::npos) {
+                            brewPath = moduleName;  // Already a full path
+                        } else {
+                            brewPath = "/opt/homebrew/lib/" + moduleName;
+                        }
+                        moduleHandle = dlopen(brewPath.c_str(), RTLD_NOW | RTLD_GLOBAL);
+                        if (moduleHandle) {
+                            fprintf(stderr, "[LOAD-SYMBOL] dlopen('%s') -> OK\n", brewPath.c_str());
+                        }
+                    }
+                    if (!moduleHandle) {
                         // dlopen failed — string may be a Smalltalk object repr
                         // (e.g., "a FFIMacLibraryFinder"), not a library path.
                         // Fall back to RTLD_DEFAULT to search all loaded images.
@@ -24593,25 +24650,50 @@ PrimitiveResult Interpreter::primitiveSymlinkChangeOwner(int argCount) {
 // Mask bits: 1=stat info, 2=access info, 4=use lstat
 // Returns 2-element Array: { statArray(12 elements) | nil . accessArray(3 bools) | nil }
 PrimitiveResult Interpreter::primitiveFileAttributes(int argCount) {
-    if (argCount != 2) return PrimitiveResult::Failure;
+    if (argCount != 2) {
+        fprintf(stderr, "[FILE-ATTR] FAIL: argCount=%d (expected 2)\n", argCount); fflush(stderr);
+        return PrimitiveResult::Failure;
+    }
 
     Oop maskOop = stackTop();
     Oop pathOop = stackValue(1);
 
-    if (!maskOop.isSmallInteger()) return PrimitiveResult::Failure;
+    if (!maskOop.isSmallInteger()) {
+        fprintf(stderr, "[FILE-ATTR] FAIL: mask not SmallInteger\n"); fflush(stderr);
+        return PrimitiveResult::Failure;
+    }
     int mask = static_cast<int>(maskOop.asSmallInteger());
 
-    if (!pathOop.isObject()) return PrimitiveResult::Failure;
+    if (!pathOop.isObject()) {
+        fprintf(stderr, "[FILE-ATTR] FAIL: path not object (mask=%d)\n", mask); fflush(stderr);
+        return PrimitiveResult::Failure;
+    }
     ObjectHeader* pathHdr = pathOop.asObjectPtr();
-    if (!pathHdr->isBytesObject()) return PrimitiveResult::Failure;
+    if (!pathHdr->isBytesObject()) {
+        fprintf(stderr, "[FILE-ATTR] FAIL: path not bytes (mask=%d, fmt=%d)\n", mask, (int)pathHdr->format()); fflush(stderr);
+        return PrimitiveResult::Failure;
+    }
     size_t len = memory_.byteSizeOf(pathOop);
     std::string path(reinterpret_cast<const char*>(pathHdr->bytes()), len);
+
+    static int faCallCount = 0;
+    int faCall = ++faCallCount;
 
     struct stat st;
     bool useLstat = (mask & 4) != 0;
     int statResult = useLstat ? lstat(path.c_str(), &st) : stat(path.c_str(), &st);
     if (statResult != 0) {
+        if (faCall <= 30) {
+            fprintf(stderr, "[FILE-ATTR] #%d STAT-FAIL '%s' errno=%d(%s) mask=%d\n",
+                    faCall, path.c_str(), errno, strerror(errno), mask);
+            fflush(stderr);
+        }
+        primFailCode_ = -3;  // FA_CANT_STAT_PATH
         return PrimitiveResult::Failure;
+    }
+    if (faCall <= 10) {
+        fprintf(stderr, "[FILE-ATTR] #%d OK '%s' mask=%d\n", faCall, path.c_str(), mask);
+        fflush(stderr);
     }
 
     Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
