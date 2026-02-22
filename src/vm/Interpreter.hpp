@@ -421,6 +421,7 @@ private:
     // Execution control
     bool running_;
     bool primitiveFailed_;
+    int primFailCode_ = 0;  // Primitive failure error code (stored in error: temp on failure)
     bool suppressContextSwitch_ = false;  // Suppress forceYield after prim 198 (ensure:) activation
     bool inExtension_ = false;  // True after extension byte (0xE0/0xE1), prevents forceYield from splitting extension+target
     bool finalizationCheckAfterGC_ = false;  // One-shot: signal finalization on next step after GC

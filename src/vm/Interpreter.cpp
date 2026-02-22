@@ -3220,6 +3220,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                     if (rcvrHdr->classIndex() == 38) {  // ClassFullBlockClosureCompactIndex
                         argCount_ = numArgs;
                         primitiveFailed_ = false;
+                        primFailCode_ = 0;
                         PrimitiveResult result = primitiveFullClosureValue(numArgs);
                         if (result == PrimitiveResult::Success) {
                             handled = true;
@@ -3470,6 +3471,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                         if (primIdx > 0) {
                             argCount_ = numArgs;
                             primitiveFailed_ = false;
+                            primFailCode_ = 0;
                             newMethod_ = method;
                             PrimitiveResult result = executePrimitive(primIdx, numArgs);
                             if (result == PrimitiveResult::Success) {
@@ -3498,6 +3500,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                         if (primIdx > 0) {
                             argCount_ = numArgs;
                             primitiveFailed_ = false;
+                            primFailCode_ = 0;
                             newMethod_ = method;
                             PrimitiveResult result = executePrimitive(primIdx, numArgs);
                             if (result == PrimitiveResult::Success) {
@@ -6337,6 +6340,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             g_watchdogPrimIndex = cached->primitiveIndex;
             argCount_ = argCount;
             primitiveFailed_ = false;
+            primFailCode_ = 0;
             newMethod_ = cached->method;
             PrimitiveResult result = executePrimitive(cached->primitiveIndex, argCount);
             if (result == PrimitiveResult::Success) {
@@ -6386,6 +6390,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         g_watchdogPrimIndex = primIndex;
         argCount_ = argCount;
         primitiveFailed_ = false;
+        primFailCode_ = 0;
         newMethod_ = method;
         PrimitiveResult result = executePrimitive(primIndex, argCount);
         if (result == PrimitiveResult::Success) {
@@ -7495,9 +7500,16 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     framePointer_ = newFP;
 
     // Initialize temporaries to nil (numTemps includes args, which are already on stack)
+    // If a primitive just failed with an error code, store it in the first extra temp
+    // (this is where Pharo's <primitive: N error: ec> expects the error code)
     int numExtraTemps = numTemps - argCount;
     for (int i = 0; i < numExtraTemps; ++i) {
-        push(memory_.nil());
+        if (i == 0 && primFailCode_ != 0) {
+            push(Oop::fromSmallInteger(primFailCode_));
+            primFailCode_ = 0;
+        } else {
+            push(memory_.nil());
+        }
     }
 
     return true;  // Successfully created frame
