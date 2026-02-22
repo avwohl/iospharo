@@ -22942,20 +22942,6 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
                         moduleHandle = dlopen(libName.c_str(), RTLD_NOW | RTLD_GLOBAL);
                     }
                     if (!moduleHandle) {
-                        // Try Homebrew path (Mac Catalyst development)
-                        // Only add prefix if moduleName doesn't already contain a path
-                        std::string brewPath;
-                        if (moduleName.find('/') != std::string::npos) {
-                            brewPath = moduleName;  // Already a full path
-                        } else {
-                            brewPath = "/opt/homebrew/lib/" + moduleName;
-                        }
-                        moduleHandle = dlopen(brewPath.c_str(), RTLD_NOW | RTLD_GLOBAL);
-                        if (!moduleHandle) {
-                            fprintf(stderr, "[LOAD-SYMBOL] dlopen('%s') failed: %s\n", brewPath.c_str(), dlerror());
-                        }
-                    }
-                    if (!moduleHandle) {
                         // dlopen failed — string may be a Smalltalk object repr
                         // (e.g., "a FFIMacLibraryFinder"), not a library path.
                         // Fall back to RTLD_DEFAULT to search all loaded images.
@@ -22978,21 +22964,24 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
         symbolAddr = dlsym(moduleHandle, symbolName.c_str());
     }
 
-    if (!symbolAddr && !moduleName.empty()) {
-        fprintf(stderr, "[LOAD-SYMBOL] '%s' from '%s' -> FAILED\n", symbolName.c_str(), moduleName.c_str());
+    if (!symbolAddr) {
+        if (!moduleName.empty()) {
+            static int failLogCount = 0;
+            if (failLogCount < 100) {
+                fprintf(stderr, "[LOAD-SYMBOL] '%s' from '%s' -> FAILED\n", symbolName.c_str(), moduleName.c_str());
+                failLogCount++;
+            }
+        }
+        return PrimitiveResult::Failure;
     }
 
-    // Retry: already handled above, just log success
-    if (symbolAddr && !moduleName.empty() && moduleName != "<SDL2-builtin>") {
+    // Log successful non-SDL symbol loads
+    if (!moduleName.empty() && moduleName != "<SDL2-builtin>") {
         static int symLogCount = 0;
-        if (symLogCount < 50) {
+        if (symLogCount < 100) {
             fprintf(stderr, "[LOAD-SYMBOL] '%s' from '%s' -> OK (%p)\n", symbolName.c_str(), moduleName.c_str(), symbolAddr);
             symLogCount++;
         }
-    }
-
-    if (!symbolAddr) {
-        return PrimitiveResult::Failure;
     }
 
     // Create an ExternalAddress containing the symbol address
@@ -23066,11 +23055,6 @@ PrimitiveResult Interpreter::primitiveLoadModule(int argCount) {
             // Try just .dylib suffix
             std::string libName = moduleName + ".dylib";
             moduleHandle = dlopen(libName.c_str(), RTLD_NOW | RTLD_GLOBAL);
-        }
-        if (!moduleHandle) {
-            // Try Homebrew path (Mac Catalyst development)
-            std::string brewPath = "/opt/homebrew/lib/lib" + moduleName + ".dylib";
-            moduleHandle = dlopen(brewPath.c_str(), RTLD_NOW | RTLD_GLOBAL);
         }
         if (moduleHandle) {
             fprintf(stderr, "[LOAD-MODULE] '%s' -> loaded OK (%p)\n", moduleName.c_str(), moduleHandle);
@@ -25500,22 +25484,6 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
     static int ffiCallCount = 0;
     ffiCallCount++;
 
-    // Log dlopen/dlsym calls for library loading diagnostics
-    {
-        auto nameIt = g_symbolNames.find(reinterpret_cast<uintptr_t>(funcPtr));
-        if (nameIt != g_symbolNames.end()) {
-            const std::string& funcName = nameIt->second;
-            if (funcName == "dlopen" && nargs >= 1) {
-                // First arg is the filename (const char*)
-                void* filenamePtr = nullptr;
-                memcpy(&filenamePtr, argPtrs[0], sizeof(void*));
-                const char* filename = filenamePtr ? static_cast<const char*>(filenamePtr) : "(null)";
-                fprintf(stderr, "[FFI-DLOPEN] dlopen('%s')\n", filename);
-                fflush(stderr);
-            }
-        }
-    }
-
     // Perform the FFI call.
     // Wrap in try/catch to handle ObjC exceptions (NSException) that may be
     // thrown by AppKit calls (e.g., setSubmenu: in Mac Catalyst where certain
@@ -25534,20 +25502,6 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
         memset(returnHolder, 0, 64);
     }
 
-    // Log dlopen result
-    {
-        auto nameIt = g_symbolNames.find(reinterpret_cast<uintptr_t>(funcPtr));
-        if (nameIt != g_symbolNames.end() && nameIt->second == "dlopen") {
-            void* result = nullptr;
-            memcpy(&result, returnHolder, sizeof(void*));
-            if (result) {
-                fprintf(stderr, "[FFI-DLOPEN] -> handle %p (OK)\n", result);
-            } else {
-                fprintf(stderr, "[FFI-DLOPEN] -> NULL (FAILED: %s)\n", dlerror());
-            }
-            fflush(stderr);
-        }
-    }
 
     // Marshall return value back to Smalltalk
     unsigned short returnTypeId = cif->rtype->type;
