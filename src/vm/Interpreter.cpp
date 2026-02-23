@@ -2539,7 +2539,6 @@ void Interpreter::signalSemaphoreDirectly(int externalIndex) {
         fprintf(stderr, "[CALLBACK] signalSemaphoreDirectly: semaphore at idx=%zu is nil/non-object\n", idx);
         return;
     }
-    fprintf(stderr, "[CALLBACK] signalSemaphoreDirectly idx=%zu\n", idx);
     synchronousSignal(semaphore);
 }
 
@@ -2548,8 +2547,9 @@ void Interpreter::signalSemaphoreDirectly(int externalIndex) {
 extern int g_callbackSemaphoreIndex;
 
 void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
-    fprintf(stderr, "[CALLBACK] enterInterpreterFromCallback depth=%d semIdx=%d\n",
-            callbackDepth_, g_callbackSemaphoreIndex);
+    static int enterCount = 0;
+    enterCount++;
+    fprintf(stderr, "[CB#%d] enter depth=%d\n", enterCount, callbackDepth_);
 
     // 1. Materialize frame stack (saves current execution to Smalltalk contexts).
     //    This may trigger GC — vmcc is on C heap, so it's safe.
@@ -2586,8 +2586,8 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
     // 6. Find and transfer to highest-priority ready process
     //    (The callback handler process should now be ready from the semaphore signal)
     Oop readyProcess = wakeHighestPriority();
-    fprintf(stderr, "[CALLBACK] wakeHighestPriority returned: %s\n",
-            readyProcess.isNil() ? "nil" : (readyProcess.isObject() ? "object" : "other"));
+    fprintf(stderr, "[CB#%d] wake=%s\n", enterCount,
+            readyProcess.isNil() ? "nil" : (readyProcess.isObject() ? "obj" : "?"));
     if (readyProcess.isObject() && !readyProcess.isNil()) {
         setActiveProcess(readyProcess);
         Oop ctx = memory_.fetchPointer(ProcessSuspendedContextIndex, readyProcess);
@@ -2612,7 +2612,7 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
             nestedStepCount++;
         }
 
-        if (nestedStepCount == 1000 || (nestedStepCount % 100000 == 0 && nestedStepCount > 0)) {
+        if (nestedStepCount % 1000000 == 0 && nestedStepCount > 0) {
             fprintf(stderr, "[CALLBACK] nested loop: %ld steps, pending=%s\n",
                     nestedStepCount, pendingCallbackReturn_ ? "YES" : "no");
         }
@@ -2627,13 +2627,11 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
             // The critical: block still needs to: release mutex, pop the
             // callbackInvocationStack, signal callbackReturnSemaphore, and
             // the forked process needs to terminate. ~50 bytecodes total,
-            // but we give 5000 for safety (process switches, GC, etc.).
-            fprintf(stderr, "[CALLBACK] Deferred return detected, running cooldown...\n");
-            for (int cooldown = 0; cooldown < 5000 && running_; cooldown++) {
+            // but we give 500 for safety (process switches, GC, etc.).
+            for (int cooldown = 0; cooldown < 500 && running_; cooldown++) {
                 step();
                 nestedStepCount++;
             }
-            fprintf(stderr, "[CALLBACK] Cooldown complete, switching to original process\n");
 
             // Save the current process's execution state and RE-QUEUE it.
             // Without re-queuing, this process becomes permanently lost from
@@ -2655,6 +2653,10 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
             // Pop suspended process from SuspendedProcessInCallout (LIFO)
             Oop suspendedProcess = memory_.specialObject(
                 SpecialObjectIndex::SuspendedProcessInCallout);
+            fprintf(stderr, "[CB] deferred: suspended=0x%llx nil=%d obj=%d\n",
+                    (unsigned long long)suspendedProcess.rawBits(),
+                    suspendedProcess.isNil() ? 1 : 0,
+                    suspendedProcess.isObject() ? 1 : 0);
             if (!suspendedProcess.isNil() && suspendedProcess.isObject()) {
                 Oop nextInChain = memory_.fetchPointer(
                     ProcessNextLinkIndex, suspendedProcess);

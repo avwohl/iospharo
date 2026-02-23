@@ -26999,8 +26999,9 @@ static pharo::Interpreter* g_interpreter = nullptr;
 // callback, then returns to C with the computed result.
 static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* userdata) {
     CallbackInfo* cbInfo = static_cast<CallbackInfo*>(userdata);
-    fprintf(stderr, "[CALLBACK] Handler invoked! cbInfo=%p ret=%p args=%p nargs=%u\n",
-            cbInfo, ret, args, cif->nargs);
+    static int callbackCount = 0;
+    callbackCount++;
+    fprintf(stderr, "[CB#%d] handler cbInfo=%p nargs=%u\n", callbackCount, cbInfo, cif->nargs);
 
     if (!g_interpreter) {
         fprintf(stderr, "[CALLBACK] g_interpreter not set!\n");
@@ -27069,8 +27070,7 @@ PrimitiveResult Interpreter::primitiveReadNextCallback(int argCount) {
 
     if (callbackDepth_ > 0) {
         VMCallbackContext* vmcc = callbackContextStack_[callbackDepth_ - 1];
-        fprintf(stderr, "[CALLBACK] primitiveReadNextCallback depth=%d vmcc=%p thunkp=%p\n",
-                callbackDepth_, vmcc, vmcc ? vmcc->thunkp : nullptr);
+        fprintf(stderr, "[CB] readNext depth=%d vmcc=%p\n", callbackDepth_, vmcc);
         Oop result = tffi_newExternalAddress(vmcc);
         if (result.isNil()) return PrimitiveResult::Failure;
         primitiveSuccess(result);
@@ -27225,7 +27225,7 @@ PrimitiveResult Interpreter::primitiveCallbackReturn(int argCount) {
     // we can unwind. Instead, we set a deferred return flag. The nested interpret
     // loop in enterInterpreterFromCallback detects this flag after the Smalltalk
     // code finishes its cleanup, then does the process restore and siglongjmp.
-    fprintf(stderr, "[CALLBACK-RETURN] Called with argCount=%d depth=%d\n", argCount, callbackDepth_);
+    fprintf(stderr, "[CB] return depth=%d\n", callbackDepth_);
 
     if (callbackDepth_ <= 0) {
         fprintf(stderr, "[CALLBACK-RETURN] No active callback (depth=0)\n");
