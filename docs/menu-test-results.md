@@ -1,5 +1,31 @@
 # Menu Item Test Results (2026-02-23)
 
+## Visual Verification (commit cb7c34b)
+
+**ALL THREE GUI PRIORITIES VERIFIED WORKING:**
+
+1. **Display properly** — Pharo 13 desktop renders correctly with dark theme,
+   Welcome window, Pharo lighthouse logo, text rendering, window controls. No red X.
+2. **Top menu works** — Clicking "Pharo" in menu bar opens dropdown with:
+   Settings (⌘OS), Save (⇧⌘S), Save as..., Save and quit, Quit
+3. **World menu works** — Left-click on empty desktop opens World menu with:
+   Pharo, Browse, Debug, Sources, System, Library, Windows, Help (all with submenu arrows)
+
+Verified via PPM display surface dumps (Metal content can't be captured by screencapture).
+
+### Key fixes enabling this:
+- **findSelectorInClass** (ad68f75): Was scanning MethodDictionary values array instead of
+  keys (slots 2+). This caused selectors_.subtract=nil → Point >> #- DNU → Emergency
+  Debugger → VM stall at 0.22M/s. Fixed: scan keys with symbolEquals.
+- **Native Cairo surfaces** (ad68f75): Removed FFI dispatch callbacks from primitiveCopyBits
+  (unsafe inside VM primitives). Uses dlsym-resolved cairo_image_surface_get_* instead.
+- **SurfacePlugin** (e08530c): Added primitiveRegisterSurface/primitiveUnregisterSurface
+  for Athens/Cairo dispatch surface registration.
+
+---
+
+## Programmatic Test Results
+
 Programmatic test via `scripts/test_menu_items.st` — discovers all `<worldMenu>` pragmas
 via PragmaMenuBuilder, executes each action in the Mac Catalyst app with 8s timeout.
 
