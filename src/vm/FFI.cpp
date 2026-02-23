@@ -701,6 +701,28 @@ void stub_SDL_RenderPresent(void* renderer) {
                 fprintf(stderr, "[SDL-RP] #%d direct-display %dx%d center=%08x\n",
                         totalCalls, dstW, dstH, center);
             }
+            // Dump display surface to PPM once for visual verification
+            if (totalCalls == 10) {
+                uint32_t* px = pharo::gDisplaySurface->pixels();
+                int w = pharo::gDisplaySurface->width();
+                int h = pharo::gDisplaySurface->height();
+                FILE* f = fopen("/tmp/pharo-display.ppm", "wb");
+                if (f && px) {
+                    fprintf(f, "P6\n%d %d\n255\n", w, h);
+                    for (int i = 0; i < w * h; i++) {
+                        uint32_t p = px[i];
+                        // ARGB → RGB
+                        uint8_t rgb[3] = {
+                            (uint8_t)((p >> 16) & 0xFF),
+                            (uint8_t)((p >> 8) & 0xFF),
+                            (uint8_t)(p & 0xFF)
+                        };
+                        fwrite(rgb, 1, 3, f);
+                    }
+                    fclose(f);
+                    fprintf(stderr, "[SDL-RP] Dumped display %dx%d to /tmp/pharo-display.ppm\n", w, h);
+                }
+            }
             pharo::gDisplaySurface->update();
             return;
         }
