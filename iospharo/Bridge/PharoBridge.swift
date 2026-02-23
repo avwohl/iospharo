@@ -7,6 +7,7 @@
 
 import Foundation
 import Combine
+import UIKit
 
 /// Main bridge between Swift and the Pharo VM
 @MainActor
@@ -97,6 +98,14 @@ class PharoBridge: ObservableObject {
         parameters.maxOldSpaceSize = 2 * 1024 * 1024 * 1024
         parameters.edenSize = 10 * 1024 * 1024
         parameters.maxCodeSize = 0
+
+        // Set display size from actual screen BEFORE vm_init so the initial
+        // Display Form matches the real screen size (not the 1024x768 default).
+        let screenBounds = UIScreen.main.bounds
+        let screenWidth = Int(screenBounds.width)
+        let screenHeight = Int(screenBounds.height)
+        ios_setDisplaySize(Int32(screenWidth), Int32(screenHeight))
+        fputs("[BRIDGE] Pre-set display size to \(screenWidth)x\(screenHeight) from UIScreen\n", stderr)
 
         let initResult = vm_init(&parameters)
 

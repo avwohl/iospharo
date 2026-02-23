@@ -49,13 +49,15 @@ struct ContentView: View {
         .onAppear {
             imageManager.checkForExistingImage()
 
-            // Auto-start for development if image is available
+            #if targetEnvironment(macCatalyst)
+            // Auto-start on Mac Catalyst (development convenience)
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                 if imageManager.hasImage && !bridge.isRunning {
                     NSLog("[iospharo] Auto-starting with image: %@", imageManager.imagePath ?? "nil")
                     startPharo()
                 }
             }
+            #endif
         }
     }
 
