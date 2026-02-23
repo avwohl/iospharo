@@ -6071,180 +6071,248 @@ static std::vector<uint8_t> extractMagnitude(ObjectMemory& memory, Oop largeInt)
     return result;
 }
 
+// ============================================================
+// Word-level (32-bit) helpers for LargeInteger arithmetic
+// Processing 4 bytes at a time gives ~16x fewer loop iterations
+// ============================================================
+
+// Convert little-endian bytes to 32-bit words
+static std::vector<uint32_t> bytesToWords(const std::vector<uint8_t>& bytes) {
+    size_t nWords = (bytes.size() + 3) / 4;
+    std::vector<uint32_t> words(nWords, 0);
+    for (size_t i = 0; i < bytes.size(); i++) {
+        words[i >> 2] |= static_cast<uint32_t>(bytes[i]) << ((i & 3) * 8);
+    }
+    return words;
+}
+
+// Convert 32-bit words back to little-endian bytes
+static std::vector<uint8_t> wordsToBytes(const std::vector<uint32_t>& words) {
+    std::vector<uint8_t> bytes;
+    bytes.reserve(words.size() * 4);
+    for (auto w : words) {
+        bytes.push_back(w & 0xFF);
+        bytes.push_back((w >> 8) & 0xFF);
+        bytes.push_back((w >> 16) & 0xFF);
+        bytes.push_back((w >> 24) & 0xFF);
+    }
+    while (bytes.size() > 1 && bytes.back() == 0) bytes.pop_back();
+    return bytes;
+}
+
+// Trim trailing zero words
+static void trimWords(std::vector<uint32_t>& w) {
+    while (w.size() > 1 && w.back() == 0) w.pop_back();
+}
+
 // Helper: Compare magnitudes (returns -1, 0, or 1)
 static int compareMagnitudes(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
-    if (a.size() != b.size()) {
-        return a.size() < b.size() ? -1 : 1;
-    }
-    for (size_t i = a.size(); i > 0; i--) {
-        if (a[i-1] != b[i-1]) {
-            return a[i-1] < b[i-1] ? -1 : 1;
-        }
+    // Compare by effective size first (skip trailing zeros)
+    size_t aLen = a.size(), bLen = b.size();
+    while (aLen > 1 && a[aLen-1] == 0) aLen--;
+    while (bLen > 1 && b[bLen-1] == 0) bLen--;
+    if (aLen != bLen) return aLen < bLen ? -1 : 1;
+    for (size_t i = aLen; i > 0; i--) {
+        if (a[i-1] != b[i-1]) return a[i-1] < b[i-1] ? -1 : 1;
     }
     return 0;
 }
 
-// Helper: Add two magnitudes
+// Word-level compare
+static int compareMagnitudesW(const std::vector<uint32_t>& a, const std::vector<uint32_t>& b) {
+    size_t aLen = a.size(), bLen = b.size();
+    while (aLen > 1 && a[aLen-1] == 0) aLen--;
+    while (bLen > 1 && b[bLen-1] == 0) bLen--;
+    if (aLen != bLen) return aLen < bLen ? -1 : 1;
+    for (size_t i = aLen; i > 0; i--) {
+        if (a[i-1] != b[i-1]) return a[i-1] < b[i-1] ? -1 : 1;
+    }
+    return 0;
+}
+
+// Helper: Add two magnitudes (word-level internally)
 static std::vector<uint8_t> addMagnitudes(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
-    size_t maxLen = std::max(a.size(), b.size());
-    std::vector<uint8_t> result(maxLen + 1, 0);
-
-    uint16_t carry = 0;
+    auto wa = bytesToWords(a), wb = bytesToWords(b);
+    size_t maxLen = std::max(wa.size(), wb.size());
+    std::vector<uint32_t> result(maxLen + 1, 0);
+    uint64_t carry = 0;
     for (size_t i = 0; i < maxLen || carry; i++) {
-        uint16_t sum = carry;
-        if (i < a.size()) sum += a[i];
-        if (i < b.size()) sum += b[i];
-        if (i < result.size()) {
-            result[i] = static_cast<uint8_t>(sum & 0xFF);
-        } else {
-            result.push_back(static_cast<uint8_t>(sum & 0xFF));
-        }
-        carry = sum >> 8;
+        uint64_t sum = carry;
+        if (i < wa.size()) sum += wa[i];
+        if (i < wb.size()) sum += wb[i];
+        if (i < result.size()) result[i] = static_cast<uint32_t>(sum);
+        else result.push_back(static_cast<uint32_t>(sum));
+        carry = sum >> 32;
     }
-
-    // Remove trailing zeros
-    while (result.size() > 1 && result.back() == 0) {
-        result.pop_back();
-    }
-    return result;
+    return wordsToBytes(result);
 }
 
-// Helper: Subtract magnitudes (assumes a >= b)
+// Helper: Subtract magnitudes (assumes a >= b, word-level internally)
 static std::vector<uint8_t> subtractMagnitudes(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
-    std::vector<uint8_t> result(a.size(), 0);
-
-    int16_t borrow = 0;
-    for (size_t i = 0; i < a.size(); i++) {
-        int16_t diff = static_cast<int16_t>(a[i]) - borrow;
-        if (i < b.size()) diff -= b[i];
-        if (diff < 0) {
-            diff += 256;
-            borrow = 1;
-        } else {
-            borrow = 0;
-        }
-        result[i] = static_cast<uint8_t>(diff);
+    auto wa = bytesToWords(a), wb = bytesToWords(b);
+    std::vector<uint32_t> result(wa.size(), 0);
+    int64_t borrow = 0;
+    for (size_t i = 0; i < wa.size(); i++) {
+        int64_t diff = static_cast<int64_t>(wa[i]) - borrow;
+        if (i < wb.size()) diff -= wb[i];
+        if (diff < 0) { diff += (1LL << 32); borrow = 1; }
+        else { borrow = 0; }
+        result[i] = static_cast<uint32_t>(diff);
     }
-
-    // Remove trailing zeros
-    while (result.size() > 1 && result.back() == 0) {
-        result.pop_back();
-    }
-    return result;
+    return wordsToBytes(result);
 }
 
-// Helper: Schoolbook multiplication for small operands
-static std::vector<uint8_t> schoolbookMultiply(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
-    std::vector<uint8_t> result(a.size() + b.size() + 1, 0);
-
-    for (size_t i = 0; i < a.size(); i++) {
-        uint32_t carry = 0;
-        for (size_t j = 0; j < b.size() || carry; j++) {
-            size_t pos = i + j;
-            if (pos >= result.size()) break;
-            uint32_t prod = result[pos] + carry;
-            if (j < b.size()) {
-                prod += static_cast<uint32_t>(a[i]) * b[j];
-            }
-            result[pos] = static_cast<uint8_t>(prod & 0xFF);
-            carry = prod >> 8;
-        }
-    }
-
-    while (result.size() > 1 && result.back() == 0) {
-        result.pop_back();
-    }
-    return result;
-}
-
-// Helper: Add two magnitudes (for Karatsuba)
-static std::vector<uint8_t> addMag(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
+// Word-level add (returns words)
+static std::vector<uint32_t> addWords(const std::vector<uint32_t>& a, const std::vector<uint32_t>& b) {
     size_t maxLen = std::max(a.size(), b.size());
-    std::vector<uint8_t> result(maxLen + 1, 0);
-    uint32_t carry = 0;
+    std::vector<uint32_t> result(maxLen + 1, 0);
+    uint64_t carry = 0;
     for (size_t i = 0; i < maxLen || carry; i++) {
-        if (i >= result.size()) break;
-        uint32_t sum = carry;
+        uint64_t sum = carry;
         if (i < a.size()) sum += a[i];
         if (i < b.size()) sum += b[i];
-        result[i] = static_cast<uint8_t>(sum & 0xFF);
-        carry = sum >> 8;
+        if (i < result.size()) result[i] = static_cast<uint32_t>(sum);
+        else result.push_back(static_cast<uint32_t>(sum));
+        carry = sum >> 32;
     }
-    while (result.size() > 1 && result.back() == 0) result.pop_back();
+    trimWords(result);
     return result;
 }
 
-// Helper: Subtract magnitudes (a >= b required, for Karatsuba)
-static std::vector<uint8_t> subMag(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
-    std::vector<uint8_t> result(a.size(), 0);
-    int32_t borrow = 0;
+// Word-level subtract (a >= b required)
+static std::vector<uint32_t> subWords(const std::vector<uint32_t>& a, const std::vector<uint32_t>& b) {
+    std::vector<uint32_t> result(a.size(), 0);
+    int64_t borrow = 0;
     for (size_t i = 0; i < a.size(); i++) {
-        int32_t diff = static_cast<int32_t>(a[i]) - borrow;
+        int64_t diff = static_cast<int64_t>(a[i]) - borrow;
         if (i < b.size()) diff -= b[i];
-        if (diff < 0) { diff += 256; borrow = 1; }
+        if (diff < 0) { diff += (1LL << 32); borrow = 1; }
         else { borrow = 0; }
-        result[i] = static_cast<uint8_t>(diff);
+        result[i] = static_cast<uint32_t>(diff);
     }
-    while (result.size() > 1 && result.back() == 0) result.pop_back();
+    trimWords(result);
     return result;
 }
 
-// Karatsuba multiplication: O(n^1.585) instead of O(n^2)
-// Threshold: use schoolbook for small operands
-static constexpr size_t KARATSUBA_THRESHOLD = 32;
+// Schoolbook multiplication using 32-bit words with 64-bit products
+static std::vector<uint8_t> schoolbookMultiply(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
+    auto wa = bytesToWords(a), wb = bytesToWords(b);
+    std::vector<uint32_t> result(wa.size() + wb.size() + 1, 0);
 
-static std::vector<uint8_t> multiplyMagnitudes(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
+    for (size_t i = 0; i < wa.size(); i++) {
+        uint64_t carry = 0;
+        for (size_t j = 0; j < wb.size(); j++) {
+            size_t pos = i + j;
+            uint64_t prod = static_cast<uint64_t>(wa[i]) * wb[j] + result[pos] + carry;
+            result[pos] = static_cast<uint32_t>(prod);
+            carry = prod >> 32;
+        }
+        size_t pos = i + wb.size();
+        while (carry && pos < result.size()) {
+            uint64_t sum = static_cast<uint64_t>(result[pos]) + carry;
+            result[pos] = static_cast<uint32_t>(sum);
+            carry = sum >> 32;
+            pos++;
+        }
+    }
+
+    return wordsToBytes(result);
+}
+
+// Schoolbook multiply on words (returns words, for Karatsuba)
+static std::vector<uint32_t> schoolbookMultiplyW(const std::vector<uint32_t>& wa, const std::vector<uint32_t>& wb) {
+    std::vector<uint32_t> result(wa.size() + wb.size() + 1, 0);
+    for (size_t i = 0; i < wa.size(); i++) {
+        uint64_t carry = 0;
+        for (size_t j = 0; j < wb.size(); j++) {
+            size_t pos = i + j;
+            uint64_t prod = static_cast<uint64_t>(wa[i]) * wb[j] + result[pos] + carry;
+            result[pos] = static_cast<uint32_t>(prod);
+            carry = prod >> 32;
+        }
+        size_t pos = i + wb.size();
+        while (carry && pos < result.size()) {
+            uint64_t sum = static_cast<uint64_t>(result[pos]) + carry;
+            result[pos] = static_cast<uint32_t>(sum);
+            carry = sum >> 32;
+            pos++;
+        }
+    }
+    trimWords(result);
+    return result;
+}
+
+// Karatsuba multiplication on words: O(n^1.585) instead of O(n^2)
+// Threshold in 32-bit words (= 32 bytes / 4 = 8 words)
+static constexpr size_t KARATSUBA_THRESHOLD_WORDS = 8;
+
+static std::vector<uint32_t> multiplyWords(const std::vector<uint32_t>& a, const std::vector<uint32_t>& b);
+
+static std::vector<uint32_t> multiplyWords(const std::vector<uint32_t>& a, const std::vector<uint32_t>& b) {
     if (a.empty() || b.empty() || (a.size() == 1 && a[0] == 0) || (b.size() == 1 && b[0] == 0)) {
-        return std::vector<uint8_t>(1, 0);
+        return std::vector<uint32_t>(1, 0);
     }
 
-    // Use schoolbook for small operands
-    if (a.size() < KARATSUBA_THRESHOLD || b.size() < KARATSUBA_THRESHOLD) {
-        return schoolbookMultiply(a, b);
+    // Scalar fast path: one operand is a single word (common in factorial)
+    if (a.size() == 1) {
+        std::vector<uint32_t> result(b.size() + 1, 0);
+        uint64_t carry = 0;
+        for (size_t i = 0; i < b.size(); i++) {
+            uint64_t prod = static_cast<uint64_t>(a[0]) * b[i] + carry;
+            result[i] = static_cast<uint32_t>(prod);
+            carry = prod >> 32;
+        }
+        if (carry) result[b.size()] = static_cast<uint32_t>(carry);
+        trimWords(result);
+        return result;
+    }
+    if (b.size() == 1) {
+        std::vector<uint32_t> result(a.size() + 1, 0);
+        uint64_t carry = 0;
+        for (size_t i = 0; i < a.size(); i++) {
+            uint64_t prod = static_cast<uint64_t>(b[0]) * a[i] + carry;
+            result[i] = static_cast<uint32_t>(prod);
+            carry = prod >> 32;
+        }
+        if (carry) result[a.size()] = static_cast<uint32_t>(carry);
+        trimWords(result);
+        return result;
     }
 
-    // Karatsuba: split each number at midpoint
-    // a = a1 * B^m + a0,  b = b1 * B^m + b0  where B=256, m=half
+    if (a.size() < KARATSUBA_THRESHOLD_WORDS || b.size() < KARATSUBA_THRESHOLD_WORDS) {
+        return schoolbookMultiplyW(a, b);
+    }
+
+    // Karatsuba: split at midpoint in words
     size_t m = std::min(a.size(), b.size()) / 2;
 
-    // Split a into a0 (low m bytes) and a1 (high bytes)
-    std::vector<uint8_t> a0(a.begin(), a.begin() + m);
-    std::vector<uint8_t> a1(a.begin() + m, a.end());
-    // Split b into b0 (low m bytes) and b1 (high bytes)
-    std::vector<uint8_t> b0(b.begin(), b.begin() + m);
-    std::vector<uint8_t> b1(b.begin() + m, b.end());
+    std::vector<uint32_t> a0(a.begin(), a.begin() + m);
+    std::vector<uint32_t> a1(a.begin() + m, a.end());
+    std::vector<uint32_t> b0(b.begin(), b.begin() + m);
+    std::vector<uint32_t> b1(b.begin() + m, b.end());
+    trimWords(a0); trimWords(a1); trimWords(b0); trimWords(b1);
 
-    // Trim trailing zeros from halves
-    while (a0.size() > 1 && a0.back() == 0) a0.pop_back();
-    while (a1.size() > 1 && a1.back() == 0) a1.pop_back();
-    while (b0.size() > 1 && b0.back() == 0) b0.pop_back();
-    while (b1.size() > 1 && b1.back() == 0) b1.pop_back();
-
-    // Three recursive multiplications (instead of four)
-    std::vector<uint8_t> z0 = multiplyMagnitudes(a0, b0);           // a0 * b0
-    std::vector<uint8_t> z2 = multiplyMagnitudes(a1, b1);           // a1 * b1
-    std::vector<uint8_t> a0a1 = addMag(a0, a1);                    // a0 + a1
-    std::vector<uint8_t> b0b1 = addMag(b0, b1);                    // b0 + b1
-    std::vector<uint8_t> z1full = multiplyMagnitudes(a0a1, b0b1);   // (a0+a1)*(b0+b1)
-
-    // z1 = z1full - z2 - z0
-    std::vector<uint8_t> z1 = subMag(subMag(z1full, z2), z0);
+    auto z0 = multiplyWords(a0, b0);
+    auto z2 = multiplyWords(a1, b1);
+    auto a0a1 = addWords(a0, a1);
+    auto b0b1 = addWords(b0, b1);
+    auto z1full = multiplyWords(a0a1, b0b1);
+    auto z1 = subWords(subWords(z1full, z2), z0);
 
     // Result = z2 * B^(2m) + z1 * B^m + z0
-    // Shift z2 left by 2m bytes, z1 left by m bytes
-    std::vector<uint8_t> result = z0;
+    std::vector<uint32_t> result = z0;
     result.resize(std::max(result.size(), m + z1.size()), 0);
     result.resize(std::max(result.size(), 2 * m + z2.size()), 0);
 
     // Add z1 << m
-    uint32_t carry = 0;
+    uint64_t carry = 0;
     for (size_t i = 0; i < z1.size() || carry; i++) {
         size_t pos = m + i;
         if (pos >= result.size()) result.push_back(0);
-        uint32_t sum = result[pos] + carry;
+        uint64_t sum = static_cast<uint64_t>(result[pos]) + carry;
         if (i < z1.size()) sum += z1[i];
-        result[pos] = static_cast<uint8_t>(sum & 0xFF);
-        carry = sum >> 8;
+        result[pos] = static_cast<uint32_t>(sum);
+        carry = sum >> 32;
     }
 
     // Add z2 << 2m
@@ -6252,17 +6320,29 @@ static std::vector<uint8_t> multiplyMagnitudes(const std::vector<uint8_t>& a, co
     for (size_t i = 0; i < z2.size() || carry; i++) {
         size_t pos = 2 * m + i;
         if (pos >= result.size()) result.push_back(0);
-        uint32_t sum = result[pos] + carry;
+        uint64_t sum = static_cast<uint64_t>(result[pos]) + carry;
         if (i < z2.size()) sum += z2[i];
-        result[pos] = static_cast<uint8_t>(sum & 0xFF);
-        carry = sum >> 8;
+        result[pos] = static_cast<uint32_t>(sum);
+        carry = sum >> 32;
     }
 
-    while (result.size() > 1 && result.back() == 0) result.pop_back();
+    trimWords(result);
     return result;
 }
 
-// Helper: Divide magnitudes, returns quotient and remainder
+// Byte-level interface for multiplyMagnitudes
+static std::vector<uint8_t> multiplyMagnitudes(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
+    if (a.empty() || b.empty() || (a.size() == 1 && a[0] == 0) || (b.size() == 1 && b[0] == 0)) {
+        return std::vector<uint8_t>(1, 0);
+    }
+    auto wa = bytesToWords(a), wb = bytesToWords(b);
+    auto result = multiplyWords(wa, wb);
+    return wordsToBytes(result);
+}
+
+
+// Helper: Divide magnitudes using word-level (32-bit) operations
+// Implements Knuth's Algorithm D for multi-word divisor
 static void divideMagnitudes(const std::vector<uint8_t>& dividend, const std::vector<uint8_t>& divisor,
                              std::vector<uint8_t>& quotient, std::vector<uint8_t>& remainder) {
     // Handle division by zero
@@ -6279,84 +6359,119 @@ static void divideMagnitudes(const std::vector<uint8_t>& dividend, const std::ve
         return;
     }
 
-    // Fast path: single-byte divisor (covers dividing by 10, printing, etc.)
-    if (divisor.size() == 1) {
-        uint8_t d = divisor[0];
-        quotient.resize(dividend.size(), 0);
-        uint16_t rem = 0;
-        for (int i = static_cast<int>(dividend.size()) - 1; i >= 0; i--) {
-            rem = (rem << 8) | dividend[i];
-            quotient[i] = static_cast<uint8_t>(rem / d);
+    auto wDividend = bytesToWords(dividend);
+    auto wDivisor = bytesToWords(divisor);
+    trimWords(wDividend);
+    trimWords(wDivisor);
+
+    size_t n = wDivisor.size();  // divisor word count
+
+    // Fast path: single-word divisor — O(m) where m = dividend words
+    if (n == 1) {
+        uint32_t d = wDivisor[0];
+        std::vector<uint32_t> wQuotient(wDividend.size(), 0);
+        uint64_t rem = 0;
+        for (int i = static_cast<int>(wDividend.size()) - 1; i >= 0; i--) {
+            rem = (rem << 32) | wDividend[i];
+            wQuotient[i] = static_cast<uint32_t>(rem / d);
             rem = rem % d;
         }
-        remainder = { static_cast<uint8_t>(rem) };
-        while (quotient.size() > 1 && quotient.back() == 0) quotient.pop_back();
+        trimWords(wQuotient);
+        quotient = wordsToBytes(wQuotient);
+        // remainder
+        if (rem == 0) remainder = {0};
+        else {
+            std::vector<uint32_t> wr = {static_cast<uint32_t>(rem)};
+            remainder = wordsToBytes(wr);
+        }
         return;
     }
 
-    // Multi-byte divisor: long division with trial quotient estimation
-    remainder.clear();
-    quotient.resize(dividend.size(), 0);
+    // Multi-word divisor: Knuth's Algorithm D
+    size_t m = wDividend.size();  // dividend word count
 
-    for (int i = static_cast<int>(dividend.size()) - 1; i >= 0; i--) {
-        // Shift remainder left by 8 bits and add next byte
-        remainder.insert(remainder.begin(), dividend[i]);
+    // D1: Normalize — shift so that divisor's MSW has its high bit set
+    int shift = __builtin_clz(wDivisor[n - 1]);
+    // Left-shift both dividend and divisor by 'shift' bits
+    auto leftShiftWords = [](std::vector<uint32_t>& v, int s) {
+        if (s == 0) return;
+        uint32_t carry = 0;
+        for (size_t i = 0; i < v.size(); i++) {
+            uint64_t val = (static_cast<uint64_t>(v[i]) << s) | carry;
+            v[i] = static_cast<uint32_t>(val);
+            carry = static_cast<uint32_t>(val >> 32);
+        }
+        if (carry) v.push_back(carry);
+    };
 
-        // Remove leading zeros from remainder for comparison
-        while (remainder.size() > 1 && remainder.back() == 0) {
-            remainder.pop_back();
+    std::vector<uint32_t> u = wDividend;
+    std::vector<uint32_t> v = wDivisor;
+    leftShiftWords(u, shift);
+    leftShiftWords(v, shift);
+    // Ensure u has at least m+1 words (u[m] may be 0)
+    if (u.size() <= m) u.resize(m + 1, 0);
+
+    n = v.size();  // may have changed if shift added a word — shouldn't since MSB was non-zero
+    size_t qLen = m - n + 1;
+    std::vector<uint32_t> wQuotient(qLen, 0);
+
+    // D2-D7: Main loop
+    for (int j = static_cast<int>(qLen) - 1; j >= 0; j--) {
+        // D3: Calculate trial quotient qhat
+        uint64_t uHigh = (static_cast<uint64_t>(u[j + n]) << 32) | u[j + n - 1];
+        uint64_t qhat = uHigh / v[n - 1];
+        uint64_t rhat = uHigh % v[n - 1];
+
+        // Refine qhat
+        while (qhat > 0xFFFFFFFF ||
+               (n >= 2 && qhat * v[n - 2] > ((rhat << 32) | u[j + n - 2]))) {
+            qhat--;
+            rhat += v[n - 1];
+            if (rhat > 0xFFFFFFFF) break;
         }
 
-        // Estimate quotient digit using top bytes
-        uint8_t q = 0;
-        if (compareMagnitudes(remainder, divisor) >= 0) {
-            if (remainder.size() > divisor.size()) {
-                // remainder has more bytes — estimate from top 2 bytes / top byte
-                uint16_t top = (static_cast<uint16_t>(remainder.back()) << 8);
-                if (remainder.size() >= 2) top |= remainder[remainder.size() - 2];
-                q = static_cast<uint8_t>(std::min<uint16_t>(255, top / divisor.back()));
-            } else {
-                // Same size — estimate from top bytes
-                q = remainder.back() / divisor.back();
-            }
-
-            // Multiply divisor by estimated q and check
-            if (q > 0) {
-                // Compute divisor * q
-                std::vector<uint8_t> product(divisor.size() + 1, 0);
-                uint16_t carry = 0;
-                for (size_t j = 0; j < divisor.size(); j++) {
-                    uint16_t v = static_cast<uint16_t>(divisor[j]) * q + carry;
-                    product[j] = v & 0xFF;
-                    carry = v >> 8;
-                }
-                product[divisor.size()] = static_cast<uint8_t>(carry);
-                while (product.size() > 1 && product.back() == 0) product.pop_back();
-
-                // Adjust q down if over-estimated
-                while (compareMagnitudes(product, remainder) > 0 && q > 0) {
-                    q--;
-                    product = subtractMagnitudes(product, divisor);
-                }
-
-                if (q > 0) {
-                    remainder = subtractMagnitudes(remainder, product);
-                }
-            }
-
-            // Handle any remaining (q was under-estimated by at most 1-2)
-            while (compareMagnitudes(remainder, divisor) >= 0) {
-                remainder = subtractMagnitudes(remainder, divisor);
-                q++;
-            }
+        // D4: Multiply and subtract: u[j..j+n] -= qhat * v[0..n-1]
+        int64_t borrow = 0;
+        for (size_t i = 0; i < n; i++) {
+            uint64_t prod = qhat * v[i];
+            int64_t diff = static_cast<int64_t>(u[j + i]) - static_cast<int64_t>(prod & 0xFFFFFFFF) + borrow;
+            u[j + i] = static_cast<uint32_t>(diff);
+            borrow = (diff >> 32) - static_cast<int64_t>(prod >> 32);
         }
-        quotient[i] = q;
+        int64_t diff = static_cast<int64_t>(u[j + n]) + borrow;
+        u[j + n] = static_cast<uint32_t>(diff);
+
+        // D5: Store quotient digit
+        wQuotient[j] = static_cast<uint32_t>(qhat);
+
+        // D6: If we subtracted too much (diff < 0), add back
+        if (diff < 0) {
+            wQuotient[j]--;
+            uint64_t carry = 0;
+            for (size_t i = 0; i < n; i++) {
+                uint64_t sum = static_cast<uint64_t>(u[j + i]) + v[i] + carry;
+                u[j + i] = static_cast<uint32_t>(sum);
+                carry = sum >> 32;
+            }
+            u[j + n] += static_cast<uint32_t>(carry);
+        }
     }
 
-    // Remove trailing zeros from quotient
-    while (quotient.size() > 1 && quotient.back() == 0) {
-        quotient.pop_back();
+    // D8: Unnormalize remainder (right shift by 'shift' bits)
+    std::vector<uint32_t> wRemainder(u.begin(), u.begin() + n);
+    if (shift > 0) {
+        uint32_t carry = 0;
+        for (int i = static_cast<int>(wRemainder.size()) - 1; i >= 0; i--) {
+            uint32_t newCarry = wRemainder[i] << (32 - shift);
+            wRemainder[i] = (wRemainder[i] >> shift) | carry;
+            carry = newCarry;
+        }
     }
+
+    trimWords(wQuotient);
+    trimWords(wRemainder);
+    quotient = wordsToBytes(wQuotient);
+    remainder = wordsToBytes(wRemainder);
 }
 
 // Helper: Check if magnitude fits in SmallInteger and convert
@@ -7512,6 +7627,269 @@ PrimitiveResult Interpreter::primDigitCompare(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// primAnyBitFromTo: check if any bit is set in magnitude between positions [start, stop]
+// Stack: receiver (Integer), from (SmallInt), to (SmallInt)
+// Bit indexing is 1-based: bit 1 = LSB (2^0)
+PrimitiveResult Interpreter::primAnyBitFromTo(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop toOop = stackValue(0);
+    Oop fromOop = stackValue(1);
+    Oop rcvr = stackValue(2);
+
+    if (!fromOop.isSmallInteger() || !toOop.isSmallInteger())
+        return PrimitiveResult::Failure;
+
+    int64_t start = fromOop.asSmallInteger();
+    int64_t stopArg = toOop.asSmallInteger();
+
+    if (start < 1 || stopArg < 1)
+        return PrimitiveResult::Failure;
+
+    // Handle SmallInteger receiver
+    if (rcvr.isSmallInteger()) {
+        int64_t val = rcvr.asSmallInteger();
+        if (val < 0) val = -val;  // magnitude
+        if (val == 0) {
+            popN(3);
+            push(memory_.falseObject());
+            return PrimitiveResult::Success;
+        }
+        int hb = 64 - __builtin_clzll(static_cast<uint64_t>(val));
+        int64_t stop = std::min(stopArg, static_cast<int64_t>(hb));
+        if (start > stop) {
+            popN(3);
+            push(memory_.falseObject());
+            return PrimitiveResult::Success;
+        }
+        // Check bits [start-1, stop-1] (0-based) in val
+        for (int64_t bit = start - 1; bit < stop; bit++) {
+            if (bit < 64 && (static_cast<uint64_t>(val) & (1ULL << bit))) {
+                popN(3);
+                push(memory_.trueObject());
+                return PrimitiveResult::Success;
+            }
+        }
+        popN(3);
+        push(memory_.falseObject());
+        return PrimitiveResult::Success;
+    }
+
+    // LargeInteger receiver — read bytes directly from object (no copy)
+    bool isNeg;
+    if (!rcvr.isObject() || !isLargeInteger(memory_, rcvr, isNeg))
+        return PrimitiveResult::Failure;
+
+    size_t byteSize = memory_.byteSizeOf(rcvr);
+
+    // Find highBit by scanning from MSB
+    int msbIndex = static_cast<int>(byteSize) - 1;
+    while (msbIndex > 0 && memory_.fetchByte(msbIndex, rcvr) == 0) msbIndex--;
+    uint8_t msb = memory_.fetchByte(msbIndex, rcvr);
+    int64_t highBit = (msb == 0) ? 0 : static_cast<int64_t>(msbIndex) * 8 + (32 - __builtin_clz(static_cast<uint32_t>(msb)));
+
+    if (highBit == 0) {
+        popN(3);
+        push(memory_.falseObject());
+        return PrimitiveResult::Success;
+    }
+
+    int64_t stop = std::min(stopArg, highBit);
+    if (start > stop) {
+        popN(3);
+        push(memory_.falseObject());
+        return PrimitiveResult::Success;
+    }
+
+    // Use 32-bit word-level scanning for efficiency
+    int64_t firstBit = start - 1;  // 0-based
+    int64_t lastBit = stop - 1;    // 0-based
+    size_t firstWord = firstBit / 32;
+    size_t lastWord = lastBit / 32;
+
+    // Read a 32-bit word from the object's bytes
+    auto readWord = [&](size_t wordIdx) -> uint32_t {
+        uint32_t w = 0;
+        size_t base = wordIdx * 4;
+        for (size_t i = 0; i < 4 && base + i < byteSize; i++) {
+            w |= static_cast<uint32_t>(memory_.fetchByte(base + i, rcvr)) << (i * 8);
+        }
+        return w;
+    };
+
+    uint32_t firstMask = 0xFFFFFFFFU << (firstBit & 31);
+    uint32_t lastMask = 0xFFFFFFFFU >> (31 - (lastBit & 31));
+
+    if (firstWord == lastWord) {
+        if (readWord(firstWord) & (firstMask & lastMask)) {
+            popN(3);
+            push(memory_.trueObject());
+            return PrimitiveResult::Success;
+        }
+    } else {
+        // Check first word
+        if (readWord(firstWord) & firstMask) {
+            popN(3);
+            push(memory_.trueObject());
+            return PrimitiveResult::Success;
+        }
+        // Check middle words
+        for (size_t w = firstWord + 1; w < lastWord; w++) {
+            if (readWord(w) != 0) {
+                popN(3);
+                push(memory_.trueObject());
+                return PrimitiveResult::Success;
+            }
+        }
+        // Check last word
+        if (readWord(lastWord) & lastMask) {
+            popN(3);
+            push(memory_.trueObject());
+            return PrimitiveResult::Success;
+        }
+    }
+
+    popN(3);
+    push(memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// primMontgomeryDigitLength: returns 32 (size of a digit in bits)
+PrimitiveResult Interpreter::primMontgomeryDigitLength(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+    pop();  // pop receiver
+    push(Oop::fromSmallInteger(32));
+    return PrimitiveResult::Success;
+}
+
+// primMontgomeryTimesModulo: Montgomery multiplication
+// Stack: receiver (A), secondOperand (B), modulus (M), mInvModB
+// Computes (A * B * R^-1) mod M where R = 2^(32*n), n = digit count of M
+PrimitiveResult Interpreter::primMontgomeryTimesModulo(int argCount) {
+    if (argCount != 3) return PrimitiveResult::Failure;
+
+    Oop mInvOop = stackValue(0);   // mInv mod B (where B = 2^32)
+    Oop modOop = stackValue(1);    // modulus M
+    Oop secOop = stackValue(2);    // second operand B
+    Oop rcvOop = stackValue(3);    // receiver A
+
+    // mInv must be a SmallInteger (fits in 32 bits)
+    if (!mInvOop.isSmallInteger()) return PrimitiveResult::Failure;
+    uint32_t mInv = static_cast<uint32_t>(mInvOop.asSmallInteger());
+
+    // Extract magnitudes
+    std::vector<uint8_t> aMag, bMag, mMag;
+    bool aNeg, bNeg, mNeg;
+
+    // Helper to extract integer magnitude
+    auto extractInt = [this](Oop oop, std::vector<uint8_t>& mag, bool& isNeg) -> bool {
+        if (oop.isSmallInteger()) {
+            int64_t val = oop.asSmallInteger();
+            isNeg = val < 0;
+            if (isNeg) val = -val;
+            mag.clear();
+            if (val == 0) { mag.push_back(0); return true; }
+            while (val > 0) {
+                mag.push_back(static_cast<uint8_t>(val & 0xFF));
+                val >>= 8;
+            }
+            return true;
+        }
+        if (oop.isObject() && isLargeInteger(memory_, oop, isNeg)) {
+            mag = extractMagnitude(memory_, oop);
+            return true;
+        }
+        return false;
+    };
+
+    if (!extractInt(rcvOop, aMag, aNeg) ||
+        !extractInt(secOop, bMag, bNeg) ||
+        !extractInt(modOop, mMag, mNeg))
+        return PrimitiveResult::Failure;
+
+    // Convert to 32-bit words
+    auto aWords = bytesToWords(aMag);
+    auto bWords = bytesToWords(bMag);
+    auto mWords = bytesToWords(mMag);
+
+    size_t n = mWords.size();  // modulus digit count
+    if (aWords.size() > n || bWords.size() > n)
+        return PrimitiveResult::Failure;
+
+    // Pad to n words
+    aWords.resize(n, 0);
+    bWords.resize(n, 0);
+
+    // Result accumulator: n+1 words
+    std::vector<uint32_t> result(n + 1, 0);
+
+    // Montgomery multiplication algorithm
+    for (size_t i = 0; i < n; i++) {
+        // Multiply: result += a[i] * b
+        uint64_t carry = 0;
+        for (size_t j = 0; j < n; j++) {
+            uint64_t prod = static_cast<uint64_t>(aWords[i]) * bWords[j]
+                          + result[j] + carry;
+            result[j] = static_cast<uint32_t>(prod);
+            carry = prod >> 32;
+        }
+        uint64_t sum = static_cast<uint64_t>(result[n]) + carry;
+        result[n] = static_cast<uint32_t>(sum);
+
+        // Montgomery reduction: u = result[0] * mInv mod 2^32
+        uint32_t u = result[0] * mInv;
+
+        // result += u * m, then shift right by 32 bits
+        carry = 0;
+        for (size_t j = 0; j < n; j++) {
+            uint64_t prod = static_cast<uint64_t>(u) * mWords[j]
+                          + result[j] + carry;
+            if (j > 0) result[j - 1] = static_cast<uint32_t>(prod);
+            carry = prod >> 32;
+        }
+        sum = static_cast<uint64_t>(result[n]) + carry;
+        result[n - 1] = static_cast<uint32_t>(sum);
+        result[n] = static_cast<uint32_t>(sum >> 32);
+    }
+
+    // If result >= modulus, subtract modulus once
+    // Compare result[0..n-1] with mWords[0..n-1]
+    bool resultGE = false;
+    if (result[n] != 0) {
+        resultGE = true;
+    } else {
+        for (int i = static_cast<int>(n) - 1; i >= 0; i--) {
+            if (result[i] > mWords[i]) { resultGE = true; break; }
+            if (result[i] < mWords[i]) break;
+        }
+    }
+    if (resultGE) {
+        int64_t borrow = 0;
+        for (size_t i = 0; i < n; i++) {
+            int64_t diff = static_cast<int64_t>(result[i]) - mWords[i] + borrow;
+            result[i] = static_cast<uint32_t>(diff);
+            borrow = diff >> 32;
+        }
+        result[n] = 0;
+    }
+
+    // Convert back to bytes and create LargePositiveInteger
+    result.resize(n);
+    trimWords(result);
+    std::vector<uint8_t> resultBytes = wordsToBytes(result);
+
+    // Try to normalize to SmallInteger
+    Oop resultOop;
+    if (!tryConvertToSmallInteger(resultBytes, false, resultOop)) {
+        resultOop = makeLargeInteger(memory_, resultBytes, false);
+        if (resultOop.isNil()) return PrimitiveResult::Failure;
+    }
+
+    popN(4);
+    push(resultOop);
+    return PrimitiveResult::Success;
+}
+
 // ===== GC PRIMITIVES =====
 
 PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
@@ -8577,19 +8955,26 @@ PrimitiveResult Interpreter::primitiveHighBit(int argCount) {
         return PrimitiveResult::Success;
     }
 
-    // LargePositiveInteger support
+    // LargePositiveInteger support — read bytes directly without copying
     bool isNeg;
     if (rcvr.isObject() && isLargeInteger(memory_, rcvr, isNeg)) {
         if (isNeg) return PrimitiveResult::Failure;  // Undefined for negative
-        std::vector<uint8_t> mag = extractMagnitude(memory_, rcvr);
-        if (mag.size() == 1 && mag[0] == 0) {
+        size_t byteSize = memory_.byteSizeOf(rcvr);
+        if (byteSize == 0) {
             pop();
             push(Oop::fromSmallInteger(0));
             return PrimitiveResult::Success;
         }
-        // mag is little-endian, mag.back() is MSB (guaranteed non-zero after trim)
-        int highBit = (static_cast<int>(mag.size()) - 1) * 8
-                    + (32 - __builtin_clz(static_cast<uint32_t>(mag.back())));
+        // Find MSB by scanning from top — no need to copy entire magnitude
+        int msbIndex = static_cast<int>(byteSize) - 1;
+        while (msbIndex > 0 && memory_.fetchByte(msbIndex, rcvr) == 0) msbIndex--;
+        uint8_t msb = memory_.fetchByte(msbIndex, rcvr);
+        if (msb == 0) {
+            pop();
+            push(Oop::fromSmallInteger(0));
+            return PrimitiveResult::Success;
+        }
+        int highBit = msbIndex * 8 + (32 - __builtin_clz(static_cast<uint32_t>(msb)));
         pop();
         push(Oop::fromSmallInteger(highBit));
         return PrimitiveResult::Success;

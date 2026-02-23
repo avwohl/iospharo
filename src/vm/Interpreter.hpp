@@ -1022,6 +1022,9 @@ private:
     PrimitiveResult primDigitDivNegative(int argCount);
     PrimitiveResult primDigitSubtractLargeIntegers(int argCount);
     PrimitiveResult primDigitCompare(int argCount);
+    PrimitiveResult primAnyBitFromTo(int argCount);
+    PrimitiveResult primMontgomeryDigitLength(int argCount);
+    PrimitiveResult primMontgomeryTimesModulo(int argCount);
 
     // Time/Timezone primitives (242-246)
     PrimitiveResult primitiveSignalAtUTCMicroseconds(int argCount);  // 242

@@ -13383,6 +13383,9 @@ void Interpreter::initializeNamedPrimitives() {
     registerNamedPrimitive("LargeIntegers", "primDigitBitXor", &Interpreter::primitiveBitXorLargeIntegers);
     registerNamedPrimitive("LargeIntegers", "primDigitBitShiftMagnitude", &Interpreter::primitiveBitShiftLargeIntegers);
     registerNamedPrimitive("LargeIntegers", "primDigitCompare", &Interpreter::primDigitCompare);
+    registerNamedPrimitive("LargeIntegers", "primAnyBitFromTo", &Interpreter::primAnyBitFromTo);
+    registerNamedPrimitive("LargeIntegers", "primMontgomeryDigitLength", &Interpreter::primMontgomeryDigitLength);
+    registerNamedPrimitive("LargeIntegers", "primMontgomeryTimesModulo", &Interpreter::primMontgomeryTimesModulo);
 
     // SDL2 input semaphore - enables SDL2 event polling
     // The image calls this to register a semaphore for SDL2 event notification
