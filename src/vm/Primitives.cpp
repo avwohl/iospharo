@@ -25334,6 +25334,45 @@ PrimitiveResult Interpreter::primitiveFileMasks(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// Built-in library support: SDL2, cairo stubs are compiled into the binary.
+// Pharo's FFI library finder checks file existence before calling primitiveLoadModule.
+// Rather than creating empty placeholder files on disk, we report these libraries
+// as "existing" at the file-primitive level, since the VM genuinely provides them.
+static bool isBuiltInLibrary(const std::string& path) {
+    // Extract filename from path
+    size_t lastSlash = path.rfind('/');
+    std::string filename = (lastSlash != std::string::npos) ? path.substr(lastSlash + 1) : path;
+
+    static const char* builtInNames[] = {
+        "libSDL2.dylib",
+        "libSDL2-2.0.so.0",
+        "libSDL2-2.0.so.0.2.1",
+        "libSDL2.so",
+        "libcairo.dylib",
+        "libcairo.so.2",
+        "libcairo.2.dylib",
+        nullptr
+    };
+    for (int i = 0; builtInNames[i]; i++) {
+        if (filename == builtInNames[i]) return true;
+    }
+    return false;
+}
+
+static void fillSyntheticStat(struct stat* st) {
+    memset(st, 0, sizeof(*st));
+    st->st_mode = S_IFREG | 0444;  // regular file, read-only
+    st->st_nlink = 1;
+    st->st_size = 4096;  // non-zero to look like a real library
+    time_t now = time(nullptr);
+    st->st_atime = now;
+    st->st_mtime = now;
+    st->st_ctime = now;
+#ifdef __APPLE__
+    st->st_birthtimespec.tv_sec = now;
+#endif
+}
+
 // primitiveFileAttribute
 // FileAttributesPlugin>>primitiveFileAttribute
 // Stack: receiver, pathString, attributeNumber -> value
@@ -25359,6 +25398,10 @@ PrimitiveResult Interpreter::primitiveFileAttribute(int argCount) {
     if (attrNum >= 13 && attrNum <= 15) {
         int mode = (attrNum == 13) ? R_OK : (attrNum == 14) ? W_OK : X_OK;
         bool ok = (access(path.c_str(), mode) == 0);
+        // Built-in libraries are readable but not writable/executable
+        if (!ok && isBuiltInLibrary(path)) {
+            ok = (attrNum == 13);  // readable=true, writable/executable=false
+        }
         popN(3);
         push(ok ? memory_.trueObject() : memory_.falseObject());
         return PrimitiveResult::Success;
@@ -25376,9 +25419,14 @@ PrimitiveResult Interpreter::primitiveFileAttribute(int argCount) {
     // Attributes 1-12 use stat()
     struct stat st;
     if (stat(path.c_str(), &st) != 0) {
-        osErrorCode_ = -3;  // FA_CANT_STAT_PATH (per FileAttributesPlugin convention)
-        primFailCode_ = PrimErrOSError;
-        return PrimitiveResult::Failure;
+        // File doesn't exist on disk — check if it's a built-in library
+        if (isBuiltInLibrary(path)) {
+            fillSyntheticStat(&st);
+        } else {
+            osErrorCode_ = -3;  // FA_CANT_STAT_PATH (per FileAttributesPlugin convention)
+            primFailCode_ = PrimErrOSError;
+            return PrimitiveResult::Failure;
+        }
     }
 
     Oop result;
@@ -25424,6 +25472,11 @@ PrimitiveResult Interpreter::primitiveFileExists(int argCount) {
 
     struct stat st;
     bool exists = (stat(path.c_str(), &st) == 0);
+
+    // Built-in libraries (SDL2/cairo stubs) exist as compiled-in code
+    if (!exists && isBuiltInLibrary(path)) {
+        exists = true;
+    }
 
     popN(2);  // pop arg + receiver
     push(exists ? memory_.trueObject() : memory_.falseObject());
@@ -25705,14 +25758,19 @@ PrimitiveResult Interpreter::primitiveFileAttributes(int argCount) {
     bool useLstat = (mask & 4) != 0;
     int statResult = useLstat ? lstat(path.c_str(), &st) : stat(path.c_str(), &st);
     if (statResult != 0) {
-        if (faCall <= 30) {
-            fprintf(stderr, "[FILE-ATTR] #%d STAT-FAIL '%s' errno=%d(%s) mask=%d\n",
-                    faCall, path.c_str(), errno, strerror(errno), mask);
-            fflush(stderr);
+        // File doesn't exist on disk — check if it's a built-in library
+        if (isBuiltInLibrary(path)) {
+            fillSyntheticStat(&st);
+        } else {
+            if (faCall <= 30) {
+                fprintf(stderr, "[FILE-ATTR] #%d STAT-FAIL '%s' errno=%d(%s) mask=%d\n",
+                        faCall, path.c_str(), errno, strerror(errno), mask);
+                fflush(stderr);
+            }
+            osErrorCode_ = -3;  // FA_CANT_STAT_PATH
+            primFailCode_ = PrimErrOSError;
+            return PrimitiveResult::Failure;
         }
-        osErrorCode_ = -3;  // FA_CANT_STAT_PATH
-        primFailCode_ = PrimErrOSError;
-        return PrimitiveResult::Failure;
     }
     if (faCall <= 10) {
         fprintf(stderr, "[FILE-ATTR] #%d OK '%s' mask=%d\n", faCall, path.c_str(), mask);

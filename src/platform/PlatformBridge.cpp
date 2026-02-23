@@ -271,39 +271,11 @@ bool vm_loadImage(const char* imagePath) {
         }
     }
 
-    // Create placeholder SDL2 library files in the image directory.
-    // Pharo's FFI library finders check if files exist on disk before loading.
-    // Our primitiveLoadModule handles SDL2 specially (returns a fake handle),
-    // but the finder raises an error if the file doesn't exist on disk.
-    // macOS/Catalyst: FFIMacLibraryFinder looks for libSDL2.dylib
-    // iOS/Unix: FFIUnix64LibraryFinder looks for libSDL2-2.0.so.0 etc.
-    {
-        std::string imgPath(imagePath);
-        size_t lastSlash = imgPath.rfind('/');
-        if (lastSlash != std::string::npos) {
-            std::string imageDir = imgPath.substr(0, lastSlash);
-            const char* names[] = {
-                "libSDL2.dylib",
-                "libSDL2-2.0.so.0",
-                "libSDL2-2.0.so.0.2.1",
-                "libSDL2.so",
-                "libcairo.dylib",
-                "libcairo.so.2",
-                "libcairo.2.dylib",
-                nullptr
-            };
-            for (int i = 0; names[i]; i++) {
-                std::string path = imageDir + "/" + names[i];
-                FILE* f = fopen(path.c_str(), "r");
-                if (f) { fclose(f); continue; }  // Already exists
-                f = fopen(path.c_str(), "w");
-                if (f) {
-                    fclose(f);
-                    fprintf(stderr, "[VM] Created placeholder: %s\n", path.c_str());
-                }
-            }
-        }
-    }
+    // SDL2/cairo libraries are compiled into the binary as stubs.
+    // File primitives (primitiveFileExists, primitiveFileAttribute) report
+    // these library names as "existing" so Pharo's FFI finder proceeds to
+    // primitiveLoadModule, which returns the built-in handle.
+    // No placeholder files needed on disk.
 
     // Register event callback to signal input semaphore when events arrive
     pharo::gEventQueue.setEventCallback(eventCallback, nullptr);
