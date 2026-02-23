@@ -9,6 +9,7 @@ build-vm/
 build-cpp/
 build-test/
 build-xcframework/
+third-party-build/
 
 # Generated source (large)
 cointerp.c
