@@ -203,11 +203,11 @@ class PharoCanvasViewController: UIViewController {
         super.viewDidAppear(animated)
         mtkView.becomeFirstResponder()
 
-        // Automated menu test disabled — use manual interaction
+        // Automated menu test — enable for testing, disable for normal use
         // #if targetEnvironment(macCatalyst)
         // waitForThemeReady {
         //     NSLog("[TEST] Theme ready, injecting test events")
-        //     self.injectMenuTest()
+        //     self.injectAllMenusTest()
         // }
         // #endif
     }
@@ -380,6 +380,113 @@ class PharoCanvasViewController: UIViewController {
         DispatchQueue.main.asyncAfter(deadline: .now() + t) {
             self.saveBufferScreenshot(tag: "06-after-drag")
             NSLog("[TEST] === Test complete ===")
+        }
+    }
+
+    private func injectAllMenusTest() {
+        guard let bridge = bridge else {
+            NSLog("[TEST] injectAllMenusTest: bridge is nil")
+            return
+        }
+
+        NSLog("[TEST] === All menus test ===")
+
+        // First close the Welcome window — X button in title bar at approx (831, 68)
+        var t: Double = 0.5
+        DispatchQueue.main.asyncAfter(deadline: .now() + t) {
+            NSLog("[TEST] Closing Welcome window — click X at (831,68)")
+            let closePos = CGPoint(x: 831, y: 68)
+            bridge.sendMouseMoved(to: closePos, modifiers: 0)
+            bridge.sendTouchDown(at: closePos, buttons: IOS_RED_BUTTON)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                bridge.sendTouchUp(at: closePos, buttons: IOS_RED_BUTTON)
+            }
+        }
+        t += 3.0
+
+        // Menu bar item X positions (Pharo coordinates, y≈8 for menu bar)
+        let menus: [(name: String, x: Int)] = [
+            ("Pharo",   30),
+            ("Browse",  80),
+            ("Debug",   130),
+            ("Sources", 185),
+            ("System",  240),
+            ("Library", 295),
+            ("Windows", 352),
+            ("Help",    407),
+        ]
+
+        let menuY = 8
+        let awayPos = CGPoint(x: 500, y: 400) // Empty desktop to click away
+
+        // Take "before" screenshot
+        DispatchQueue.main.asyncAfter(deadline: .now() + t) {
+            self.saveBufferScreenshot(tag: "00-before")
+        }
+        t += 0.5
+
+        for (i, menu) in menus.enumerated() {
+            let pos = CGPoint(x: menu.x, y: menuY)
+            let tag = String(format: "%02d-%@", i + 1, menu.name)
+
+            // Click the menu label
+            DispatchQueue.main.asyncAfter(deadline: .now() + t) {
+                NSLog("[TEST] Click %@ menu at (%d,%d)", menu.name, menu.x, menuY)
+                bridge.sendMouseMoved(to: pos, modifiers: 0)
+                bridge.sendTouchDown(at: pos, buttons: IOS_RED_BUTTON)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    bridge.sendTouchUp(at: pos, buttons: IOS_RED_BUTTON)
+                }
+            }
+            t += 3.0  // Give Pharo time to process event and render dropdown
+
+            // Screenshot the dropdown
+            DispatchQueue.main.asyncAfter(deadline: .now() + t) {
+                self.saveBufferScreenshot(tag: tag + "-dropdown")
+            }
+            t += 0.5
+
+            // Click away to close the dropdown
+            DispatchQueue.main.asyncAfter(deadline: .now() + t) {
+                bridge.sendMouseMoved(to: awayPos, modifiers: 0)
+                bridge.sendTouchDown(at: awayPos, buttons: IOS_RED_BUTTON)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    bridge.sendTouchUp(at: awayPos, buttons: IOS_RED_BUTTON)
+                }
+            }
+            t += 2.0
+        }
+
+        // World menu test: left-click on empty desktop area (below Welcome window)
+        DispatchQueue.main.asyncAfter(deadline: .now() + t) {
+            NSLog("[TEST] Click empty desktop for World menu at (900,650)")
+            let pos = CGPoint(x: 900, y: 650)
+            bridge.sendMouseMoved(to: pos, modifiers: 0)
+            bridge.sendTouchDown(at: pos, buttons: IOS_RED_BUTTON)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                bridge.sendTouchUp(at: pos, buttons: IOS_RED_BUTTON)
+            }
+        }
+        t += 3.0
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + t) {
+            self.saveBufferScreenshot(tag: "09-world-menu")
+        }
+        t += 0.5
+
+        // Click away to close world menu
+        DispatchQueue.main.asyncAfter(deadline: .now() + t) {
+            bridge.sendMouseMoved(to: CGPoint(x: 800, y: 200), modifiers: 0)
+            bridge.sendTouchDown(at: CGPoint(x: 800, y: 200), buttons: IOS_RED_BUTTON)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                bridge.sendTouchUp(at: CGPoint(x: 800, y: 200), buttons: IOS_RED_BUTTON)
+            }
+        }
+        t += 1.0
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + t) {
+            NSLog("[TEST] === All menus test complete ===")
+            self.saveBufferScreenshot(tag: "10-final")
         }
     }
 
