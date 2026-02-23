@@ -167,7 +167,8 @@ isDangerous: menuPath
   #('save' 'quit' 'exit' 'image cleanup' 'do image' 'profil'
     'full screen' 'delete all' 'discard' 'load toplo' 'screenshot'
     'start drawing' 'start stepping' 'restore display'
-    'roassalloadfullversion' 'roassalexporters' 'tutorial') do: [:d |
+    'roassalloadfullversion' 'roassalexporters' 'tutorial'
+    'spotter') do: [:d |
     (path includesSubstring: d) ifTrue: [^ true]].
   ^ false! !
 

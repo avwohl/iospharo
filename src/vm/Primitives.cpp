@@ -46,10 +46,29 @@ extern "C" bool ffi_isSDLRenderingActive();
 static std::unordered_map<uintptr_t, std::string> g_symbolNames;
 #include <ffi.h>
 
-// ===== SurfacePlugin: Manual Surface Management =====
-// Manual surfaces allow external code (e.g., SDL2 texture locking) to provide
-// pixel buffers that BitBlt can read from/write to. The surface ID is stored
-// as a SmallInteger in the Form's bits field.
+// ===== SurfacePlugin: Surface Management =====
+// Surfaces allow external code to provide pixel buffers for BitBlt.
+// Two kinds:
+// 1. Manual surfaces (primitiveCreateManualSurface) — dimensions set at creation,
+//    pixel pointer set via primitiveSetManualSurfacePointer.
+// 2. Dispatch surfaces (primitiveRegisterSurface) — use callback function pointers
+//    (getSurfaceFormat, lockSurface, unlockSurface, showSurface) from Cairo/Athens.
+
+// Function pointer types for dispatch-based surfaces (matches sqSurfaceDispatch)
+typedef int (*fn_getSurfaceFormat)(intptr_t surfaceHandle, int* width, int* height, int* depth, int* isMSB);
+typedef intptr_t (*fn_lockSurface)(intptr_t surfaceHandle, int *pitch, int x, int y, int w, int h);
+typedef int (*fn_unlockSurface)(intptr_t surfaceHandle, int x, int y, int w, int h);
+typedef int (*fn_showSurface)(intptr_t surfaceHandle, int x, int y, int w, int h);
+
+struct SurfaceDispatch {
+    int majorVersion;
+    int minorVersion;
+    fn_getSurfaceFormat getSurfaceFormat;
+    fn_lockSurface lockSurface;
+    fn_unlockSurface unlockSurface;
+    fn_showSurface showSurface;
+};
+
 struct ManualSurface {
     bool active;
     int width;
@@ -58,6 +77,9 @@ struct ManualSurface {
     int depth;
     bool isMSB;
     void* bits;    // external pixel pointer (set via setPointer)
+    // Dispatch-based surface support
+    intptr_t dispatchHandle;       // client-supplied handle passed to dispatch functions
+    SurfaceDispatch* dispatch;     // pointer to dispatch table (nullptr for manual surfaces)
 };
 
 static constexpr int kMaxSurfaces = 64;
@@ -16578,16 +16600,46 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     intptr_t destPitch = destWidth; // in 32-bit words for 32-bit depth
     int destSurfaceID = -1;
 
+    bool destSurfaceLocked = false;  // track if we locked a dispatch surface
+    int destSurfaceLockID = -1;     // surface ID that was locked
+    // RAII guard to unlock dispatch surface on any return path
+    struct SurfaceUnlocker {
+        bool& locked; int& surfID;
+        ~SurfaceUnlocker() {
+            if (locked && surfID >= 1 && surfID < kMaxSurfaces) {
+                ManualSurface* s = &g_surfaces[surfID];
+                if (s->active && s->dispatch && s->dispatch->unlockSurface) {
+                    s->dispatch->unlockSurface(s->dispatchHandle, 0, 0, s->width, s->height);
+                }
+                locked = false;
+            }
+        }
+    } surfaceGuard{destSurfaceLocked, destSurfaceLockID};
+
     if (destBits.isSmallInteger()) {
         // Surface handle — resolve via SurfacePlugin table
         destSurfaceID = static_cast<int>(destBits.asSmallInteger());
         ManualSurface* s = lookupSurface(destSurfaceID);
-        if (!s || !s->bits) {
+        if (!s) return PrimitiveResult::Failure;
+
+        if (s->dispatch && s->dispatch->lockSurface) {
+            // Dispatch-based surface (Cairo/Athens): lock to get pixel pointer
+            int pitch = 0;
+            intptr_t ptr = s->dispatch->lockSurface(s->dispatchHandle, &pitch, 0, 0, s->width, s->height);
+            if (!ptr) return PrimitiveResult::Failure;
+            destPixels = reinterpret_cast<uint32_t*>(ptr);
+            destBitsSize = static_cast<size_t>(pitch) * s->height;
+            destPitch = pitch / 4;
+            destSurfaceLocked = true;
+            destSurfaceLockID = destSurfaceID;
+        } else if (s->bits) {
+            // Manual surface: use pre-set pixel pointer
+            destPixels = reinterpret_cast<uint32_t*>(s->bits);
+            destBitsSize = static_cast<size_t>(s->rowPitch) * s->height;
+            destPitch = s->rowPitch / 4;
+        } else {
             return PrimitiveResult::Failure;
         }
-        destPixels = reinterpret_cast<uint32_t*>(s->bits);
-        destBitsSize = static_cast<size_t>(s->rowPitch) * s->height;
-        destPitch = s->rowPitch / 4; // rowPitch is in bytes, destPitch is in 32-bit words
     } else if (destBits.isObject() && !destBits.isNil() && destBits.rawBits() >= 0x10000) {
         ObjectHeader* destBitsHdr = destBits.asObjectPtr();
         destPixels = reinterpret_cast<uint32_t*>(destBitsHdr->bytes());
@@ -17658,6 +17710,225 @@ PrimitiveResult Interpreter::primitiveSetManualSurfacePointer(int argCount) {
     popN(argCount);
     return PrimitiveResult::Success;
 }
+
+// primitiveRegisterSurface (module: SurfacePlugin)
+// rcvr primRegisterSurface: surfaceHandle dispatch: dispatch surfaceId: idHolder
+// Stack: rcvr surfaceHandle dispatch surfaceIDHolder (3 args)
+// surfaceHandle: ExternalAddress — opaque client handle
+// dispatch: ExternalAddress — pointer to sqSurfaceDispatch struct
+// surfaceIDHolder: ByteArray(4) — output, written with new surface ID
+// Returns: true/false
+PrimitiveResult Interpreter::primitiveRegisterSurface(int argCount) {
+    if (argCount != 3) return PrimitiveResult::Failure;
+
+    Oop surfaceIDHolder = stackTop();      // arg 3: ByteArray(4) for output
+    Oop dispatchOop = stackValue(1);       // arg 2: ExternalAddress -> dispatch table
+    Oop surfaceHandleOop = stackValue(2);  // arg 1: ExternalAddress -> surface handle
+
+    // Validate surfaceIDHolder is a bytes object with at least 4 bytes
+    if (!surfaceIDHolder.isObject() || surfaceIDHolder.isNil()) return PrimitiveResult::Failure;
+    ObjectHeader* idHdr = surfaceIDHolder.asObjectPtr();
+    if (!idHdr->isBytesObject() || idHdr->byteSize() < 4) return PrimitiveResult::Failure;
+
+    // Extract dispatch pointer from ExternalAddress (first slot is a raw pointer)
+    SurfaceDispatch* dispatchPtr = nullptr;
+    if (dispatchOop.isObject() && !dispatchOop.isNil()) {
+        ObjectHeader* dispHdr = dispatchOop.asObjectPtr();
+        if (dispHdr->byteSize() >= sizeof(void*)) {
+            void* raw = nullptr;
+            std::memcpy(&raw, dispHdr->bytes(), sizeof(void*));
+            dispatchPtr = reinterpret_cast<SurfaceDispatch*>(raw);
+        }
+    }
+    if (!dispatchPtr) return PrimitiveResult::Failure;
+
+    // Validate dispatch version
+    if (dispatchPtr->majorVersion != 1 || dispatchPtr->minorVersion != 0) {
+        fprintf(stderr, "[SURFACE] registerSurface: bad dispatch version %d.%d\n",
+                dispatchPtr->majorVersion, dispatchPtr->minorVersion);
+        return PrimitiveResult::Failure;
+    }
+
+    // Extract surface handle pointer from ExternalAddress
+    intptr_t handlePtr = 0;
+    if (surfaceHandleOop.isObject() && !surfaceHandleOop.isNil()) {
+        ObjectHeader* handleHdr = surfaceHandleOop.asObjectPtr();
+        if (handleHdr->byteSize() >= sizeof(void*)) {
+            std::memcpy(&handlePtr, handleHdr->bytes(), sizeof(void*));
+        }
+    }
+
+    // Find a free slot
+    int surfaceID = -1;
+    for (int i = 1; i < kMaxSurfaces; i++) {
+        if (!g_surfaces[i].active) {
+            surfaceID = i;
+            break;
+        }
+    }
+    if (surfaceID < 0) return PrimitiveResult::Failure;  // table full
+
+    // Initialize the surface entry
+    g_surfaces[surfaceID] = {};
+    g_surfaces[surfaceID].active = true;
+    g_surfaces[surfaceID].dispatchHandle = handlePtr;
+    g_surfaces[surfaceID].dispatch = dispatchPtr;
+
+    // Query surface format from dispatch if available
+    if (dispatchPtr->getSurfaceFormat) {
+        int w = 0, h = 0, d = 0, msb = 0;
+        dispatchPtr->getSurfaceFormat(handlePtr, &w, &h, &d, &msb);
+        g_surfaces[surfaceID].width = w;
+        g_surfaces[surfaceID].height = h;
+        g_surfaces[surfaceID].depth = d;
+        g_surfaces[surfaceID].isMSB = (msb != 0);
+    }
+
+    // Write surface ID into the ByteArray output holder (little-endian 32-bit)
+    uint8_t* idBytes = idHdr->bytes();
+    int32_t id32 = static_cast<int32_t>(surfaceID);
+    std::memcpy(idBytes, &id32, 4);
+
+    fprintf(stderr, "[SURFACE] registerSurface: id=%d handle=%p dispatch=%p (w=%d h=%d d=%d)\n",
+            surfaceID, (void*)handlePtr, (void*)dispatchPtr,
+            g_surfaces[surfaceID].width, g_surfaces[surfaceID].height,
+            g_surfaces[surfaceID].depth);
+
+    // Pop args + receiver, push true
+    popN(argCount + 1);
+    push(memory_.trueObject());
+    return PrimitiveResult::Success;
+}
+
+// primitiveUnregisterSurface (module: SurfacePlugin)
+// rcvr primUnregisterSurface: surfaceID
+// Stack: rcvr surfaceID (1 arg)
+// Returns: true/false
+PrimitiveResult Interpreter::primitiveUnregisterSurface(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop idOop = stackTop();
+    if (!idOop.isSmallInteger()) return PrimitiveResult::Failure;
+
+    int surfaceID = static_cast<int>(idOop.asSmallInteger());
+    ManualSurface* s = lookupSurface(surfaceID);
+    if (!s) return PrimitiveResult::Failure;
+
+    fprintf(stderr, "[SURFACE] unregisterSurface: id=%d\n", surfaceID);
+
+    s->active = false;
+    s->bits = nullptr;
+    s->dispatch = nullptr;
+    s->dispatchHandle = 0;
+
+    // Pop arg + receiver, push true
+    popN(argCount + 1);
+    push(memory_.trueObject());
+    return PrimitiveResult::Success;
+}
+
+// ===== Extern C surface functions =====
+// These are called by the generated interpreter (cointerp-cpp.c) and can replace
+// the stubs in cogStubs.c. They use the same g_surfaces table as the primitives above.
+
+extern "C" {
+
+int ioRegisterSurface(void* surfaceHandle, void* fn, int* surfaceID) {
+    auto* dispatch = reinterpret_cast<SurfaceDispatch*>(fn);
+    if (!dispatch) return 0;
+    if (dispatch->majorVersion != 1 || dispatch->minorVersion != 0) return 0;
+
+    for (int i = 1; i < kMaxSurfaces; i++) {
+        if (!g_surfaces[i].active) {
+            g_surfaces[i] = {};
+            g_surfaces[i].active = true;
+            g_surfaces[i].dispatchHandle = reinterpret_cast<intptr_t>(surfaceHandle);
+            g_surfaces[i].dispatch = dispatch;
+            if (dispatch->getSurfaceFormat) {
+                int w = 0, h = 0, d = 0, msb = 0;
+                dispatch->getSurfaceFormat(reinterpret_cast<intptr_t>(surfaceHandle), &w, &h, &d, &msb);
+                g_surfaces[i].width = w;
+                g_surfaces[i].height = h;
+                g_surfaces[i].depth = d;
+                g_surfaces[i].isMSB = (msb != 0);
+            }
+            *surfaceID = i;
+            return 1;  // success
+        }
+    }
+    return 0;  // table full
+}
+
+int ioUnregisterSurface(int surfaceID) {
+    if (surfaceID < 1 || surfaceID >= kMaxSurfaces) return 0;
+    if (!g_surfaces[surfaceID].active) return 0;
+    g_surfaces[surfaceID].active = false;
+    g_surfaces[surfaceID].bits = nullptr;
+    g_surfaces[surfaceID].dispatch = nullptr;
+    g_surfaces[surfaceID].dispatchHandle = 0;
+    return 1;
+}
+
+int ioFindSurface(int surfaceID, void** surface, void** fn) {
+    if (surfaceID < 1 || surfaceID >= kMaxSurfaces) return 0;
+    if (!g_surfaces[surfaceID].active) return 0;
+    if (surface) *surface = reinterpret_cast<void*>(g_surfaces[surfaceID].dispatchHandle);
+    if (fn) *fn = g_surfaces[surfaceID].dispatch;
+    return 1;
+}
+
+int ioGetSurfaceFormat(int surfaceID, int* width, int* height, int* depth, int* isMSB) {
+    if (surfaceID < 1 || surfaceID >= kMaxSurfaces) return 0;
+    ManualSurface* s = &g_surfaces[surfaceID];
+    if (!s->active) return 0;
+
+    if (s->dispatch && s->dispatch->getSurfaceFormat) {
+        return s->dispatch->getSurfaceFormat(s->dispatchHandle, width, height, depth, isMSB);
+    }
+    // Manual surface — return stored dimensions
+    if (width) *width = s->width;
+    if (height) *height = s->height;
+    if (depth) *depth = s->depth;
+    if (isMSB) *isMSB = s->isMSB ? 1 : 0;
+    return 1;
+}
+
+intptr_t ioLockSurface(int surfaceID, int* pitch, int x, int y, int w, int h) {
+    if (surfaceID < 1 || surfaceID >= kMaxSurfaces) return 0;
+    ManualSurface* s = &g_surfaces[surfaceID];
+    if (!s->active) return 0;
+
+    if (s->dispatch && s->dispatch->lockSurface) {
+        return s->dispatch->lockSurface(s->dispatchHandle, pitch, x, y, w, h);
+    }
+    // Manual surface
+    if (pitch) *pitch = s->rowPitch;
+    return reinterpret_cast<intptr_t>(s->bits);
+}
+
+int ioUnlockSurface(int surfaceID, int x, int y, int w, int h) {
+    if (surfaceID < 1 || surfaceID >= kMaxSurfaces) return 0;
+    ManualSurface* s = &g_surfaces[surfaceID];
+    if (!s->active) return 0;
+
+    if (s->dispatch && s->dispatch->unlockSurface) {
+        return s->dispatch->unlockSurface(s->dispatchHandle, x, y, w, h);
+    }
+    return 1;  // manual surfaces don't need unlocking
+}
+
+int ioShowSurface(int surfaceID, int x, int y, int w, int h) {
+    if (surfaceID < 1 || surfaceID >= kMaxSurfaces) return 0;
+    ManualSurface* s = &g_surfaces[surfaceID];
+    if (!s->active) return 0;
+
+    if (s->dispatch && s->dispatch->showSurface) {
+        return s->dispatch->showSurface(s->dispatchHandle, x, y, w, h);
+    }
+    return 1;  // manual surfaces don't need explicit show
+}
+
+}  // extern "C"
 
 // Primitive 291: Draw loop (line drawing for BitBlt)
 // Uses existing primitiveDrawLoop implementation (also primitive 104)

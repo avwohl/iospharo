@@ -1072,10 +1072,12 @@ private:
     PrimitiveResult primitiveMixedSound(int argCount);             // 268
     PrimitiveResult primitiveControlOSProcess(int argCount);       // 269
 
-    // SurfacePlugin named primitives (for OSSDL2ExternalForm)
+    // SurfacePlugin named primitives (for OSSDL2ExternalForm and Athens/Cairo)
     PrimitiveResult primitiveCreateManualSurface(int argCount);
     PrimitiveResult primitiveDestroyManualSurface(int argCount);
     PrimitiveResult primitiveSetManualSurfacePointer(int argCount);
+    PrimitiveResult primitiveRegisterSurface(int argCount);
+    PrimitiveResult primitiveUnregisterSurface(int argCount);
 
     // BitBlt primitives (290-299)
     PrimitiveResult primitiveCopyBits(int argCount);               // 290

@@ -217,10 +217,7 @@ void setDesiredStackPageBytes(long long anInteger) {
 
 /* Time and heartbeat functions provided by heartbeat.c */
 
-/* Surface plugin */
-int ioFindSurface(int surfaceID, void** surface, void** fn) { return 0; }
-int ioRegisterSurface(void* surface, void* fn, int* surfaceID) { return 0; }
-int ioUnregisterSurface(int surfaceID) { return 0; }
+/* Surface plugin — real implementations in Primitives.cpp (extern "C") */
 
 /* Processor/clock functions provided by heartbeat.c */
 

@@ -13274,6 +13274,8 @@ void Interpreter::initializeNamedPrimitives() {
     registerNamedPrimitive("SurfacePlugin", "primitiveCreateManualSurface", &Interpreter::primitiveCreateManualSurface);
     registerNamedPrimitive("SurfacePlugin", "primitiveDestroyManualSurface", &Interpreter::primitiveDestroyManualSurface);
     registerNamedPrimitive("SurfacePlugin", "primitiveSetManualSurfacePointer", &Interpreter::primitiveSetManualSurfacePointer);
+    registerNamedPrimitive("SurfacePlugin", "primitiveRegisterSurface", &Interpreter::primitiveRegisterSurface);
+    registerNamedPrimitive("SurfacePlugin", "primitiveUnregisterSurface", &Interpreter::primitiveUnregisterSurface);
 
     // Display primitives (called with empty module name)
     registerNamedPrimitive("", "primitiveForceDisplayUpdate", &Interpreter::primitiveForceDisplayUpdate);
