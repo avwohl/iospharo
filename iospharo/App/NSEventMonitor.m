@@ -3,9 +3,13 @@
  *
  * Implementation of NSEvent monitoring for Mac Catalyst.
  * Uses dynamic Objective-C to access AppKit classes.
+ * This entire file is Mac Catalyst-only; on iOS it compiles as stubs.
  */
 
 #import "NSEventMonitor.h"
+
+#if TARGET_OS_MACCATALYST
+
 #import <objc/runtime.h>
 #import <objc/message.h>
 
@@ -231,3 +235,19 @@ static id (^_handlerBlock)(id) = nil;  // Keep strong reference to handler
 }
 
 @end
+
+#else // !TARGET_OS_MACCATALYST — iOS stubs
+
+@implementation NSEventMonitorHelper
+
++ (void)installMouseMonitorWithCallback:(MouseEventCallback)callback {
+    // NSEvent monitoring is not available on iOS
+}
+
++ (void)removeMouseMonitor {
+    // No-op on iOS
+}
+
+@end
+
+#endif // TARGET_OS_MACCATALYST
