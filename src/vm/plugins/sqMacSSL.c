@@ -12,6 +12,7 @@
 #include "SqueakSSL.h"
 #include <string.h>
 #include <stdarg.h>
+#include <TargetConditionals.h>
 
 #import <Security/Security.h>
 #import <Security/SecureTransport.h>
@@ -218,7 +219,9 @@ OSStatus sqSetupSSL(sqSSL* ssl, int isServer)
         CFDictionarySetValue(query, kSecMatchLimit, kSecMatchLimitOne);
         CFDictionarySetValue(query, kSecReturnRef, kCFBooleanTrue);
         CFDictionarySetValue(query, kSecClass, kSecClassIdentity);
+#if !TARGET_OS_MACCATALYST
         CFDictionarySetValue(query, kSecMatchSubjectWholeString, certName);
+#endif
         CFDictionarySetValue(query, kSecMatchValidOnDate, kCFNull);
         CFRelease(certName);
         SecIdentityRef identity;
