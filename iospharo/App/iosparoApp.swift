@@ -42,11 +42,9 @@ class SceneDelegate: NSObject, UIWindowSceneDelegate {
 /// App delegate to handle lifecycle events
 class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
-        // Redirect stderr to a file so we can capture VM fprintf output
-        freopen("/tmp/iospharo-stderr.log", "w", stderr)
-        NSLog("[APP] didFinishLaunching - stderr redirected to /tmp/iospharo-stderr.log")
-        fputs("[APP] didFinishLaunching via fputs\n", stderr)
-        fflush(stderr)
+        // Note: stderr is already redirected to /tmp/iospharo-stderr.log by C++ PlatformBridge.
+        // Do NOT freopen here — it would truncate the VM init output.
+        NSLog("[APP] didFinishLaunching")
         return true
     }
 
@@ -77,16 +75,10 @@ struct iosparoApp: App {
     @StateObject private var imageManager = ImageManager()
 
     var body: some Scene {
-        fputs("[APP] iosparoApp.body accessed\n", stderr)
-        fflush(stderr)
         return WindowGroup {
             ContentView()
                 .environmentObject(bridge)
                 .environmentObject(imageManager)
-                .onAppear {
-                    fputs("[APP] ContentView.onAppear\n", stderr)
-                    fflush(stderr)
-                }
         }
     }
 }

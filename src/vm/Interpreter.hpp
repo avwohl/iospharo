@@ -252,6 +252,9 @@ public:
     void ensureDisplayForm(int width, int height, int depth);  // Create Form and bind to Display global
     int screenDepth() const { return screenDepth_; }
 
+    /// Get error object from primFailCode_ (looks up PrimErrTable, clones for OS errors)
+    Oop getErrorObjectFromPrimFailCode();
+
     /// Get current execution state
     Oop activeContext() const;
     Oop activeMethod() const { return method_; }
@@ -358,6 +361,7 @@ private:
     };
     static constexpr size_t MaxFrameDepth = 65536;
     static constexpr size_t StackOverflowLimit = 4096;  // Graceful overflow limit — catch infinite recursion fast
+    static constexpr int PrimErrOSError = 21;  // Index in PrimErrTable for OS errors
     std::array<SavedFrame, MaxFrameDepth> savedFrames_;
     size_t frameDepth_;
 
@@ -422,6 +426,7 @@ private:
     bool running_;
     bool primitiveFailed_;
     int primFailCode_ = 0;  // Primitive failure error code (stored in error: temp on failure)
+    int64_t osErrorCode_ = 0;  // OS error code for PrimErrOSError (e.g., errno)
     bool suppressContextSwitch_ = false;  // Suppress forceYield after prim 198 (ensure:) activation
     bool inExtension_ = false;  // True after extension byte (0xE0/0xE1), prevents forceYield from splitting extension+target
     bool finalizationCheckAfterGC_ = false;  // One-shot: signal finalization on next step after GC

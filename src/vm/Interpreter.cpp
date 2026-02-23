@@ -6879,11 +6879,28 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     size_t bytecodeStart = (1 + numLiterals) * 8;
     instructionPointer_ = methodBytes + bytecodeStart;
 
-    // Skip past callPrimitive bytecode (0xF8 lowByte highByte) if present
+    // Skip past callPrimitive bytecode (0xF8 lowByte highByte) if present.
     // In Sista V1, primitive methods start with callPrimitive which should be skipped
-    // when the primitive fails and we fall through to execute bytecodes
+    // when the primitive fails and we fall through to execute bytecodes.
+    // If <primitive: N error: ec> is declared, 0xF5 (Store Temp #i) follows callPrimitive.
+    // We must skip that too and store the error object directly in the temp.
     if (usesSistaV1_ && instructionPointer_[0] == 0xF8) {
         instructionPointer_ += 3;  // Skip 0xF8 + 2 bytes of primitive index
+
+        // Check for "Store Temporary Variable #i" (0xF5 i) after callPrimitive
+        // This is the <primitive: N error: ec> pattern — skip the store and write error directly
+        if (instructionPointer_[0] == 0xF5) {
+            int tempIndex = instructionPointer_[1];
+            instructionPointer_ += 2;  // Skip 0xF5 + temp index byte
+
+            // Store error object in the specified temp if primitive failed
+            if (primFailCode_ != 0) {
+                Oop errorObj = getErrorObjectFromPrimFailCode();
+                *(framePointer_ + 1 + tempIndex) = errorObj;
+            }
+            primFailCode_ = 0;
+            osErrorCode_ = 0;
+        }
     }
 
     // Set bytecode end
@@ -7500,20 +7517,51 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     framePointer_ = newFP;
 
     // Initialize temporaries to nil (numTemps includes args, which are already on stack)
-    // If a primitive just failed with an error code, store it in the first extra temp
-    // (this is where Pharo's <primitive: N error: ec> expects the error code)
     int numExtraTemps = numTemps - argCount;
     for (int i = 0; i < numExtraTemps; ++i) {
-        if (i == 0 && primFailCode_ != 0) {
-            push(Oop::fromSmallInteger(primFailCode_));
-            primFailCode_ = 0;
-        } else {
-            push(memory_.nil());
-        }
+        push(memory_.nil());
     }
+
+    // Note: primFailCode_ error objects are stored by the callPrimitive/storeTemp skip
+    // code in activateMethod, NOT here. The error temp is identified by bytecode analysis
+    // (0xF5 storeTemp after 0xF8 callPrimitive), matching the reference VM's behavior.
 
     return true;  // Successfully created frame
 }
+
+Oop Interpreter::getErrorObjectFromPrimFailCode() {
+    // Convert primFailCode_ to the appropriate error object.
+    // Reference: StackInterpreter>>getErrorObjectFromPrimFailCode
+    if (primFailCode_ > 0) {
+        Oop table = memory_.specialObject(SpecialObjectIndex::PrimErrTableIndex);
+        if (table.isObject() && !table.isNil()) {
+            size_t tableSize = memory_.slotCountOf(table);
+            if (static_cast<size_t>(primFailCode_) <= tableSize) {
+                Oop errObj = memory_.fetchPointer(primFailCode_ - 1, table);  // 1-based to 0-based
+
+                // For PrimErrOSError (21), clone the template and set slot 1 to osErrorCode
+                if (primFailCode_ == PrimErrOSError && errObj.isObject() && !errObj.isNil()) {
+                    size_t numSlots = memory_.slotCountOf(errObj);
+                    if (numSlots >= 2) {
+                        push(errObj);  // GC safety during shallowCopy
+                        Oop clone = memory_.shallowCopy(errObj);
+                        errObj = pop();
+                        if (!clone.isNil()) {
+                            memory_.storePointer(1, clone, Oop::fromSmallInteger(static_cast<int64_t>(osErrorCode_)));
+                            return clone;
+                        }
+                    }
+                }
+
+                return errObj;
+            }
+        }
+    }
+    // Fallback: return primFailCode as SmallInteger
+    return Oop::fromSmallInteger(primFailCode_);
+}
+
+
 
 void Interpreter::popFrame() {
     // Restore previous execution state

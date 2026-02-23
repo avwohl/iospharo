@@ -167,6 +167,7 @@ enum class SpecialObjectIndex : size_t {
     SelectorAboutToReturn = 48,    // Was incorrectly 40
     SelectorRunWithIn = 49,
     SelectorAttemptToAssign = 50,   // attemptToAssign:withIndex:
+    PrimErrTableIndex = 51,         // Array of primitive error objects
     // ... more indices up to 59
     ClassFullBlockClosure = 59,
     Count = 60

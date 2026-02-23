@@ -83,11 +83,36 @@ When something doesn't work:
 and examining it.** Run the Mac Catalyst app, take a screenshot, and READ the
 screenshot with the Read tool to confirm what's actually on screen.
 
+### CRITICAL: Metal Window Capture
+
+`screencapture -x` CANNOT capture Metal layer content from Mac Catalyst apps.
+The window appears invisible/transparent in full-screen captures. You MUST use
+window-specific capture with the `-l` flag:
+
+```bash
+# Get window IDs for our process
+PID=$(pgrep -f "iospharo" | head -1)
+swift -e "
+import CoreGraphics
+let windowList = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as? [[String: Any]] ?? []
+for w in windowList {
+    guard let ownerPID = w[kCGWindowOwnerPID as String] as? Int, ownerPID == $PID else { continue }
+    let windowID = w[kCGWindowNumber as String] as? Int ?? -1
+    let name = w[kCGWindowName as String] as? String ?? \"\"
+    print(\"id=\(windowID) name='\(name)'\")
+}
+"
+
+# Capture specific window by ID
+screencapture -x -l <WINDOW_ID> /tmp/pharo-screenshot.png
+```
+
 Checklist before claiming a GUI fix works:
 1. Build and launch the Mac Catalyst app
-2. Take a screenshot: `screencapture -x /tmp/pharo-screenshot.png`
-3. Read the screenshot with the Read tool to see what's actually rendered
-4. Verify EACH specific claim (menu visible? clickable? world menu opens?)
+2. Get window ID using the Swift snippet above
+3. Take a screenshot: `screencapture -x -l <WINDOW_ID> /tmp/pharo-screenshot.png`
+4. Read the screenshot with the Read tool to see what's actually rendered
+5. Verify EACH specific claim (menu visible? clickable? world menu opens?)
 
 **Do NOT rely on log output, test pass rates, or code analysis alone.**
 Two weeks of "verified working" claims were wrong because nobody looked at the screen.

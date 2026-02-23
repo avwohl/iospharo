@@ -24356,6 +24356,8 @@ PrimitiveResult Interpreter::primitiveFileAttribute(int argCount) {
     // Attributes 1-12 use stat()
     struct stat st;
     if (stat(path.c_str(), &st) != 0) {
+        osErrorCode_ = -3;  // FA_CANT_STAT_PATH (per FileAttributesPlugin convention)
+        primFailCode_ = PrimErrOSError;
         return PrimitiveResult::Failure;
     }
 
@@ -24688,7 +24690,8 @@ PrimitiveResult Interpreter::primitiveFileAttributes(int argCount) {
                     faCall, path.c_str(), errno, strerror(errno), mask);
             fflush(stderr);
         }
-        primFailCode_ = -3;  // FA_CANT_STAT_PATH
+        osErrorCode_ = -3;  // FA_CANT_STAT_PATH
+        primFailCode_ = PrimErrOSError;
         return PrimitiveResult::Failure;
     }
     if (faCall <= 10) {
