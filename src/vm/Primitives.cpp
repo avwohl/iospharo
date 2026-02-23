@@ -9426,14 +9426,11 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
     // VM info attributes (index 1000+)
     switch (index) {
         case 1001:  // Operating system name
+            // Always report "Mac OS" — standard Pharo has no iOSPlatform class.
+            // "iOS" causes MacOSXPlatform.isActivePlatform to fail, breaking
+            // platform detection and MenubarMorph creation during startup.
             pop();
-#if TARGET_OS_MACCATALYST
             push(memory_.createString("Mac OS"));
-#elif TARGET_OS_IOS || TARGET_OS_IPHONE
-            push(memory_.createString("iOS"));
-#else
-            push(memory_.createString("Mac OS"));
-#endif
             return PrimitiveResult::Success;
         case 1002:
             pop();
@@ -21798,11 +21795,11 @@ PrimitiveResult Interpreter::primitiveGetPlatformName(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
 #if defined(__APPLE__)
-    #if TARGET_OS_IOS
-        const char* platform = "iOS";
-    #else
-        const char* platform = "Mac OS";
-    #endif
+    // Always report "Mac OS" — standard Pharo images have no iOSPlatform class.
+    // Returning "iOS" causes MacOSXPlatform.isActivePlatform to fail, which
+    // breaks platform detection and removes MenubarMorph during startup.
+    // Our FFI stubs provide the same SDL2 interface on both iOS and Mac Catalyst.
+    const char* platform = "Mac OS";
 #elif defined(__linux__)
     const char* platform = "linux";
 #else
