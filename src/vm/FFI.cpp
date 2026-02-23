@@ -7,6 +7,7 @@
 #include "FFI.hpp"
 #include "../platform/EventQueue.hpp"
 #include "../platform/DisplaySurface.hpp"
+#include "../platform/PlatformBridge.h"
 #include <iostream>
 #include <algorithm>
 #include <cstring>
@@ -701,26 +702,37 @@ void stub_SDL_RenderPresent(void* renderer) {
                 fprintf(stderr, "[SDL-RP] #%d direct-display %dx%d center=%08x\n",
                         totalCalls, dstW, dstH, center);
             }
-            // Dump display surface to PPM once for visual verification
-            if (totalCalls == 10) {
-                uint32_t* px = pharo::gDisplaySurface->pixels();
-                int w = pharo::gDisplaySurface->width();
-                int h = pharo::gDisplaySurface->height();
-                FILE* f = fopen("/tmp/pharo-display.ppm", "wb");
-                if (f && px) {
-                    fprintf(f, "P6\n%d %d\n255\n", w, h);
-                    for (int i = 0; i < w * h; i++) {
-                        uint32_t p = px[i];
-                        // ARGB → RGB
-                        uint8_t rgb[3] = {
-                            (uint8_t)((p >> 16) & 0xFF),
-                            (uint8_t)((p >> 8) & 0xFF),
-                            (uint8_t)(p & 0xFF)
-                        };
-                        fwrite(rgb, 1, 3, f);
+            // Dump display surface to PPM for visual verification.
+            // Triggered by /tmp/pharo-dump-request file existence.
+            // Write empty file to trigger: touch /tmp/pharo-dump-request
+            {
+                static int dumpSeq = 0;
+                bool shouldDump = (totalCalls == 10);
+                if (!shouldDump) {
+                    FILE* req = fopen("/tmp/pharo-dump-request", "r");
+                    if (req) { fclose(req); shouldDump = true; remove("/tmp/pharo-dump-request"); }
+                }
+                if (shouldDump) {
+                    uint32_t* px = pharo::gDisplaySurface->pixels();
+                    int w = pharo::gDisplaySurface->width();
+                    int h = pharo::gDisplaySurface->height();
+                    char path[128];
+                    snprintf(path, sizeof(path), "/tmp/pharo-display-%d.ppm", dumpSeq++);
+                    FILE* f = fopen(path, "wb");
+                    if (f && px) {
+                        fprintf(f, "P6\n%d %d\n255\n", w, h);
+                        for (int i = 0; i < w * h; i++) {
+                            uint32_t p = px[i];
+                            uint8_t rgb[3] = {
+                                (uint8_t)((p >> 16) & 0xFF),
+                                (uint8_t)((p >> 8) & 0xFF),
+                                (uint8_t)(p & 0xFF)
+                            };
+                            fwrite(rgb, 1, 3, f);
+                        }
+                        fclose(f);
+                        fprintf(stderr, "[SDL-RP] Dumped display %dx%d to %s\n", w, h, path);
                     }
-                    fclose(f);
-                    fprintf(stderr, "[SDL-RP] Dumped display %dx%d to /tmp/pharo-display.ppm\n", w, h);
                 }
             }
             pharo::gDisplaySurface->update();
@@ -1166,6 +1178,38 @@ int stub_SDL_PollEvent(void* event) {
             sPendingWindowEvents.push(SDL_WINDOWEVENT_EXPOSED);
             fprintf(stderr, "[SDL-PE] Queuing %sEXPOSED at poll#%d\n",
                     isFirst ? "SHOWN+SIZE_CHANGED+" : "periodic ", totalPollCalls);
+        }
+    }
+
+    // File-based event injection: /tmp/pharo-inject-events
+    // Format: one line per event: "click <x> <y> <button>" or "dump"
+    // button: 4=left(Red), 2=right(Yellow), 1=middle(Blue)
+    // Events are injected into the queue and the file is deleted.
+    if (totalPollCalls % 500 == 0) {
+        FILE* injectFile = fopen("/tmp/pharo-inject-events", "r");
+        if (injectFile) {
+            char line[256];
+            int injected = 0;
+            while (fgets(line, sizeof(line), injectFile)) {
+                int x, y, button;
+                if (sscanf(line, "click %d %d %d", &x, &y, &button) == 3) {
+                    // Inject move + down + up sequence
+                    vm_postMouseEvent(0, x, y, 0, 0);
+                    vm_postMouseEvent(1, x, y, button, 0);
+                    vm_postMouseEvent(2, x, y, 0, 0);
+                    fprintf(stderr, "[INJECT] click at (%d,%d) button=%d\n", x, y, button);
+                    injected++;
+                } else if (strncmp(line, "dump", 4) == 0) {
+                    // Create dump request file
+                    FILE* req = fopen("/tmp/pharo-dump-request", "w");
+                    if (req) fclose(req);
+                    fprintf(stderr, "[INJECT] dump requested\n");
+                }
+            }
+            fclose(injectFile);
+            remove("/tmp/pharo-inject-events");
+            if (injected > 0)
+                fprintf(stderr, "[INJECT] Injected %d events from file\n", injected);
         }
     }
 
