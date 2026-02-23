@@ -7,6 +7,8 @@
 #include "Interpreter.hpp"
 #include "InterpreterProxy.h"
 #include "FFI.hpp"
+#include "plugins/sqMemoryAccess.h"
+#include "../include/vmCallback.h"
 #include "../platform/DisplaySurface.hpp"
 #include "../platform/EventQueue.hpp"
 #include <cstring>
@@ -2169,10 +2171,23 @@ void Interpreter::interpret() {
         }
     }
 
-    int loopCount = 0;
+    volatile int loopCount = 0;
 #if __APPLE__
-    auto lastRunLoopPump = std::chrono::steady_clock::now();
+    volatile int64_t lastRunLoopPumpMs = 0;  // Tracks ms since start (volatile for longjmp)
+    auto runLoopBase = std::chrono::steady_clock::now();
 #endif
+
+    // Entry point for callback re-entry via siglongjmp(reenterInterpreter_, 1)
+    if (sigsetjmp(reenterInterpreter_, 0) != 0) {
+        // Re-entered from enterInterpreterFromCallback().
+        // Active process has been switched; just fall into the loop.
+        loopCount = 0;
+#if __APPLE__
+        runLoopBase = std::chrono::steady_clock::now();
+        lastRunLoopPumpMs = 0;
+#endif
+    }
+
     while (running_) {
         // Execute a batch of bytecodes before checking overhead
         // This dramatically reduces the per-bytecode cost of timer/event checks
@@ -2241,9 +2256,9 @@ void Interpreter::interpret() {
         //   - CFRunLoopRunInMode timeout: 0 (non-blocking, was 0.001)
         if (relinquishCallback_ && (loopCount % 100000 == 0)) {
             auto now = std::chrono::steady_clock::now();
-            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRunLoopPump).count();
-            if (elapsed >= 50) {
-                lastRunLoopPump = now;
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - runLoopBase).count();
+            if (elapsed - lastRunLoopPumpMs >= 50) {
+                lastRunLoopPumpMs = elapsed;
                 CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0, true);
             }
         }
@@ -2512,6 +2527,74 @@ void Interpreter::processPendingSignals() {
     }
 
     synchronousSignal(semaphore);
+}
+
+void Interpreter::signalSemaphoreDirectly(int externalIndex) {
+    Oop semTable = memory_.specialObject(SpecialObjectIndex::ExternalObjectsArray);
+    if (semTable.isNil() || !semTable.isObject()) return;
+    size_t idx = static_cast<size_t>(externalIndex - 1);
+    if (idx >= memory_.slotCountOf(semTable)) return;
+    Oop semaphore = memory_.fetchPointer(idx, semTable);
+    if (semaphore.isNil() || !semaphore.isObject()) return;
+    synchronousSignal(semaphore);
+}
+
+// ===== FFI CALLBACK SUPPORT =====
+
+extern int g_callbackSemaphoreIndex;
+
+void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
+    // 1. Save reenterInterpreter so nested callbacks can restore it
+    memcpy(vmcc->savedReenterInterpreter, reenterInterpreter_, sizeof(sigjmp_buf));
+
+    // 2. Materialize frame stack (saves current execution to Smalltalk contexts).
+    //    This may trigger GC — vmcc is on C heap, so it's safe.
+    //    GC SAFETY: protect activeProcess across materializeFrameStack (it allocates).
+    Oop savedGcTemp = gcTempOop_;
+    gcTempOop_ = getActiveProcess();
+    Oop savedCtx = materializeFrameStack();
+    Oop activeProcess = gcTempOop_;
+    gcTempOop_ = savedGcTemp;
+
+    // 3. Save active process's suspended context
+    if (!savedCtx.isNil() && savedCtx.isObject()) {
+        memory_.storePointer(ProcessSuspendedContextIndex, activeProcess, savedCtx);
+    }
+
+    // 4. Push active process onto SuspendedProcessInCallout linked list
+    //    (LIFO stack — head of list is the most recently suspended)
+    Oop prevHead = memory_.specialObject(SpecialObjectIndex::SuspendedProcessInCallout);
+    memory_.storePointer(ProcessNextLinkIndex, activeProcess, prevHead);
+    memory_.setSpecialObject(SpecialObjectIndex::SuspendedProcessInCallout, activeProcess);
+
+    // 5. Push vmcc onto callback context stack
+    if (callbackDepth_ < MaxCallbackDepth) {
+        callbackContextStack_[callbackDepth_++] = vmcc;
+    } else {
+        fprintf(stderr, "[CALLBACK] Max callback depth (%d) exceeded!\n", MaxCallbackDepth);
+    }
+
+    // 6. Signal callback semaphore to wake handler process
+    if (g_callbackSemaphoreIndex > 0) {
+        signalSemaphoreDirectly(g_callbackSemaphoreIndex);
+    }
+
+    // 7. Find and transfer to highest-priority ready process
+    //    (The callback handler process should now be ready from the semaphore signal)
+    Oop readyProcess = wakeHighestPriority();
+    if (readyProcess.isObject() && !readyProcess.isNil()) {
+        setActiveProcess(readyProcess);
+        Oop ctx = memory_.fetchPointer(ProcessSuspendedContextIndex, readyProcess);
+        memory_.storePointer(ProcessSuspendedContextIndex, readyProcess, memory_.nil());
+
+        // Reset interpreter state for new process
+        stackPointer_ = stackBase_;
+        frameDepth_ = 0;
+        executeFromContext(ctx);
+    }
+
+    // 8. Re-enter interpreter loop (does NOT return)
+    siglongjmp(reenterInterpreter_, 1);
 }
 
 bool Interpreter::step() {

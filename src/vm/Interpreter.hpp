@@ -54,6 +54,7 @@
 #include "../platform/EventQueue.hpp"
 #include <array>
 #include <atomic>
+#include <csetjmp>
 #include <cstdint>
 #include <cstdio>
 #include <functional>
@@ -63,6 +64,10 @@
 #include <unordered_map>
 #include <thread>
 #include <vector>
+
+// Forward declaration for FFI callback support (defined in vmCallback.h)
+struct _VMCallbackContext;
+typedef struct _VMCallbackContext VMCallbackContext;
 
 namespace pharo {
 
@@ -1904,6 +1909,25 @@ private:
 
     /// Context switch to a different process
     void transferTo(Oop newProcess);
+
+public:
+    // ===== FFI CALLBACK SUPPORT =====
+    // sigsetjmp/siglongjmp mechanism for C-to-Smalltalk callbacks
+
+    /// Enter interpreter from a C callback (called from callbackClosureHandler)
+    void enterInterpreterFromCallback(VMCallbackContext* vmcc);
+
+private:
+    /// Re-entry point for callbacks (sigsetjmp target in interpret())
+    sigjmp_buf reenterInterpreter_;
+
+    /// Stack of active callback contexts (for nested callbacks)
+    static constexpr int MaxCallbackDepth = 16;
+    VMCallbackContext* callbackContextStack_[MaxCallbackDepth] = {};
+    int callbackDepth_ = 0;
+
+    /// Signal a semaphore directly by external index (synchronous, not via atomic)
+    void signalSemaphoreDirectly(int externalIndex);
 };
 
 // ===== TEMPLATE IMPLEMENTATIONS =====

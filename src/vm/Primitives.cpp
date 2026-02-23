@@ -8,6 +8,8 @@
 #include "Interpreter.hpp"
 #include "ImageLoader.hpp"
 #include "FFI.hpp"
+#include "plugins/sqMemoryAccess.h"
+#include "../include/vmCallback.h"
 #include "../platform/DisplaySurface.hpp"
 #include "../platform/EventQueue.hpp"
 #ifdef __APPLE__
@@ -26986,7 +26988,11 @@ struct CallbackInfo {
 };
 
 // Global callback semaphore index (set by primitiveInitilizeCallbacks)
-static int g_callbackSemaphoreIndex = 0;
+// Non-static: accessed by enterInterpreterFromCallback in Interpreter.cpp
+int g_callbackSemaphoreIndex = 0;
+
+// Global interpreter pointer for callbackClosureHandler (C callback, no 'this' pointer)
+static pharo::Interpreter* g_interpreter = nullptr;
 
 // Simple pending callback queue
 static constexpr int MAX_PENDING_CALLBACKS = 64;
@@ -26997,26 +27003,66 @@ static struct {
 } g_pendingCallbacks[MAX_PENDING_CALLBACKS];
 static int g_pendingCallbackCount = 0;
 
-// The libffi closure handler - called when C code invokes a registered callback
+// The libffi closure handler - called when C code invokes a registered callback.
+// Uses sigsetjmp/siglongjmp to re-enter the Smalltalk interpreter to process the
+// callback, then returns to C with the computed result.
 static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* userdata) {
     CallbackInfo* cbInfo = static_cast<CallbackInfo*>(userdata);
 
-    // Queue the callback for Smalltalk processing
-    if (g_pendingCallbackCount < MAX_PENDING_CALLBACKS) {
-        g_pendingCallbacks[g_pendingCallbackCount].callback = cbInfo;
-        g_pendingCallbacks[g_pendingCallbackCount].returnHolder = ret;
-        g_pendingCallbacks[g_pendingCallbackCount].arguments = args;
-        g_pendingCallbackCount++;
+    if (!g_interpreter) {
+        fprintf(stderr, "[CALLBACK] g_interpreter not set!\n");
+        if (ret && cif->rtype->size > 0) memset(ret, 0, cif->rtype->size);
+        return;
     }
 
-    // Zero the return value (safe default for void, int, pointer return types)
-    if (ret && cif->rtype->size > 0) {
-        memset(ret, 0, cif->rtype->size);
+    // Allocate VMCallbackContext on C heap (survives GC and longjmp)
+    VMCallbackContext* vmcc = (VMCallbackContext*)calloc(1, sizeof(VMCallbackContext));
+    if (!vmcc) {
+        fprintf(stderr, "[CALLBACK] Failed to allocate VMCallbackContext!\n");
+        if (ret && cif->rtype->size > 0) memset(ret, 0, cif->rtype->size);
+        return;
     }
 
-    // TODO: For full callback support, we'd need setjmp/longjmp to re-enter
-    // the interpreter here. For now, we return 0 which is safe for void/int/pointer
-    // callbacks (like ObjC IMPs for menu handlers).
+    // Store argument/return pointers for Smalltalk to read.
+    // thunkp = the libffi ret buffer pointer
+    // stackp = the libffi args array pointer
+    // intregargsp/floatregargsp = args for direct access
+    vmcc->thunkp = ret;
+    vmcc->stackp = (sqIntptr_t*)args;
+    vmcc->intregargsp = (sqIntptr_t*)args;
+    vmcc->floatregargsp = (double*)args;
+
+    // Save C return point
+    if (sigsetjmp(vmcc->trampoline, 0) == 0) {
+        // First call — enter interpreter to process callback.
+        // enterInterpreterFromCallback does siglongjmp(reenterInterpreter_) and
+        // does NOT return here.
+        g_interpreter->enterInterpreterFromCallback(vmcc);
+
+        // Should never reach here
+        fprintf(stderr, "[CALLBACK] Warning: enterInterpreterFromCallback returned!\n");
+        if (ret && cif->rtype->size > 0) memset(ret, 0, cif->rtype->size);
+        free(vmcc);
+        return;
+    }
+
+    // Returned from primitiveCallbackReturn via siglongjmp(vmcc->trampoline, 1).
+    // Copy return value from vmcc->rvs to libffi's ret buffer.
+    if (ret) {
+        if (cif->rtype == &ffi_type_void) {
+            // No return value needed
+        } else if (cif->rtype == &ffi_type_double) {
+            memcpy(ret, &vmcc->rvs.valflt64, sizeof(double));
+        } else if (cif->rtype == &ffi_type_float) {
+            float fval = (float)vmcc->rvs.valflt64;
+            memcpy(ret, &fval, sizeof(float));
+        } else {
+            // Integer/pointer types — copy appropriate size
+            memcpy(ret, &vmcc->rvs.valword, cif->rtype->size <= sizeof(sqIntptr_t)
+                   ? cif->rtype->size : sizeof(sqIntptr_t));
+        }
+    }
+    free(vmcc);
 }
 
 // primitiveInitilizeCallbacks (sic - typo matches image)
@@ -27028,28 +27074,21 @@ PrimitiveResult Interpreter::primitiveInitilizeCallbacks(int argCount) {
     if (!semIdxOop.isSmallInteger()) return PrimitiveResult::Failure;
 
     g_callbackSemaphoreIndex = static_cast<int>(semIdxOop.asSmallInteger());
+    g_interpreter = this;  // Set global for callbackClosureHandler
 
     popN(argCount);  // Pop args, leave receiver
     return PrimitiveResult::Success;
 }
 
 // primitiveReadNextCallback
-// Returns nil (no pending callbacks) or an ExternalAddress wrapping the CallbackInfo*
+// Returns the current VMCallbackContext* as an ExternalAddress, or nil if no active callback.
+// The Smalltalk side uses this to access callback arguments and return type info.
 PrimitiveResult Interpreter::primitiveReadNextCallback(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    if (g_pendingCallbackCount > 0) {
-        // Dequeue first pending callback
-        CallbackInfo* cb = g_pendingCallbacks[0].callback;
-
-        // Shift remaining
-        for (int i = 1; i < g_pendingCallbackCount; i++) {
-            g_pendingCallbacks[i-1] = g_pendingCallbacks[i];
-        }
-        g_pendingCallbackCount--;
-
-        // Return ExternalAddress wrapping the CallbackInfo*
-        Oop result = tffi_newExternalAddress(cb);
+    if (callbackDepth_ > 0) {
+        VMCallbackContext* vmcc = callbackContextStack_[callbackDepth_ - 1];
+        Oop result = tffi_newExternalAddress(vmcc);
         if (result.isNil()) return PrimitiveResult::Failure;
         primitiveSuccess(result);
     } else {
@@ -27192,13 +27231,121 @@ PrimitiveResult Interpreter::primitiveUnregisterCallback(int argCount) {
 }
 
 // primitiveCallbackReturn
-// Receiver: TFCallbackInvocation
-// For now, just succeeds (the callback already returned 0 from the handler)
+// Called by the callback handler process after computing the return value.
+// Stack: receiver, returnTypeCode (SmallInteger), returnValue
+// Uses siglongjmp to return to C with the computed return value.
 PrimitiveResult Interpreter::primitiveCallbackReturn(int argCount) {
-    // In a full implementation, this would use longjmp to return to the C callback
-    // with the computed return value. For now, callbacks return 0 immediately.
-    popN(argCount);
-    return PrimitiveResult::Success;
+    if (callbackDepth_ <= 0) {
+        fprintf(stderr, "[CALLBACK-RETURN] No active callback (depth=0)\n");
+        return PrimitiveResult::Failure;
+    }
+
+    // Get VMCallbackContext from our stack
+    VMCallbackContext* vmcc = callbackContextStack_[callbackDepth_ - 1];
+    if (!vmcc) {
+        fprintf(stderr, "[CALLBACK-RETURN] Null VMCallbackContext at depth %d\n", callbackDepth_);
+        return PrimitiveResult::Failure;
+    }
+
+    // Read return type code and value from stack.
+    // Convention: primitiveCallbackReturn is called with 2 args:
+    //   stackValue(0) = returnValue (SmallInteger, Float, ExternalAddress, or LargeInteger)
+    //   stackValue(1) = returnTypeCode (SmallInteger: retword=1, retword64=2, retdouble=3, retstruct=4)
+    // If only 1 arg, treat it as the return value with type retword.
+    int returnTypeCode = retword;
+    Oop retValueOop = memory_.nil();
+
+    if (argCount >= 2) {
+        retValueOop = stackValue(0);
+        Oop typeCodeOop = stackValue(1);
+        if (typeCodeOop.isSmallInteger()) {
+            returnTypeCode = static_cast<int>(typeCodeOop.asSmallInteger());
+        }
+    } else if (argCount == 1) {
+        retValueOop = stackValue(0);
+    }
+
+    // Marshal return value into vmcc->rvs based on type code
+    memset(&vmcc->rvs, 0, sizeof(vmcc->rvs));
+    switch (returnTypeCode) {
+        case retword:   // Integer/pointer return
+        case retword64: // 64-bit integer return
+            if (retValueOop.isSmallInteger()) {
+                vmcc->rvs.valword = static_cast<sqIntptr_t>(retValueOop.asSmallInteger());
+            } else if (retValueOop.isObject()) {
+                ObjectHeader* hdr = retValueOop.asObjectPtr();
+                if (hdr->isBytesObject() && hdr->byteSize() >= sizeof(sqIntptr_t)) {
+                    // LargeInteger or ExternalAddress — read raw bytes
+                    memcpy(&vmcc->rvs.valword, hdr->bytes(), sizeof(sqIntptr_t));
+                } else if (hdr->isBytesObject() && hdr->byteSize() > 0) {
+                    // Smaller byte object — read what's available
+                    memcpy(&vmcc->rvs.valword, hdr->bytes(), hdr->byteSize());
+                }
+            }
+            break;
+        case retdouble: // Float/double return
+            if (retValueOop.isSmallFloat()) {
+                vmcc->rvs.valflt64 = retValueOop.asSmallFloat();
+            } else if (retValueOop.isSmallInteger()) {
+                vmcc->rvs.valflt64 = static_cast<double>(retValueOop.asSmallInteger());
+            } else if (retValueOop.isObject()) {
+                ObjectHeader* hdr = retValueOop.asObjectPtr();
+                if (hdr->isBytesObject() && hdr->byteSize() == sizeof(double)) {
+                    memcpy(&vmcc->rvs.valflt64, hdr->bytes(), sizeof(double));
+                }
+            }
+            break;
+        case retstruct: // Structure return
+            if (retValueOop.isObject()) {
+                ObjectHeader* hdr = retValueOop.asObjectPtr();
+                if (hdr->isBytesObject()) {
+                    vmcc->rvs.valstruct.addr = hdr->bytes();
+                    vmcc->rvs.valstruct.size = static_cast<sqIntptr_t>(hdr->byteSize());
+                }
+            }
+            break;
+        default:
+            fprintf(stderr, "[CALLBACK-RETURN] Unknown return type code: %d\n", returnTypeCode);
+            break;
+    }
+
+    // Pop the callback context from our stack
+    callbackDepth_--;
+
+    // Pop suspended process from SuspendedProcessInCallout linked list (LIFO)
+    Oop suspendedProcess = memory_.specialObject(SpecialObjectIndex::SuspendedProcessInCallout);
+    if (suspendedProcess.isNil()) {
+        fprintf(stderr, "[CALLBACK-RETURN] SuspendedProcessInCallout is nil!\n");
+        // Still longjmp back — the C side needs to continue
+        siglongjmp(vmcc->trampoline, 1);
+        return PrimitiveResult::Success; // unreachable
+    }
+    Oop nextInChain = memory_.fetchPointer(ProcessNextLinkIndex, suspendedProcess);
+    memory_.setSpecialObject(SpecialObjectIndex::SuspendedProcessInCallout, nextInChain);
+    memory_.storePointer(ProcessNextLinkIndex, suspendedProcess, memory_.nil());
+
+    // Put current (callback handler) process back to sleep
+    putToSleep(getActiveProcess());
+
+    // Restore the suspended process as active
+    setActiveProcess(suspendedProcess);
+
+    // Restore execution state from suspended context
+    Oop ctx = memory_.fetchPointer(ProcessSuspendedContextIndex, suspendedProcess);
+    memory_.storePointer(ProcessSuspendedContextIndex, suspendedProcess, memory_.nil());
+    stackPointer_ = stackBase_;
+    frameDepth_ = 0;
+    if (!ctx.isNil() && ctx.isObject()) {
+        executeFromContext(ctx);
+    }
+
+    // Restore reenterInterpreter from saved copy (for nested callback support)
+    memcpy(reenterInterpreter_, vmcc->savedReenterInterpreter, sizeof(sigjmp_buf));
+
+    // Jump back to C callback handler (callbackClosureHandler's sigsetjmp point)
+    siglongjmp(vmcc->trampoline, 1);
+    // DOES NOT RETURN
+    return PrimitiveResult::Success; // unreachable
 }
 
 } // namespace pharo
