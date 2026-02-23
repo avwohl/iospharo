@@ -93,6 +93,48 @@ static ManualSurface* lookupSurface(int handle) {
     return &g_surfaces[handle];
 }
 
+// Native Cairo function pointers for direct surface access
+// (fallback when FFI callbacks don't work)
+typedef int (*cairo_get_int_fn)(void*);
+typedef unsigned char* (*cairo_get_data_fn)(void*);
+static cairo_get_int_fn g_cairo_image_surface_get_width = nullptr;
+static cairo_get_int_fn g_cairo_image_surface_get_height = nullptr;
+static cairo_get_int_fn g_cairo_image_surface_get_stride = nullptr;
+static cairo_get_data_fn g_cairo_image_surface_get_data = nullptr;
+static bool g_cairoFuncsResolved = false;
+
+static void resolveCairoFunctions() {
+    if (g_cairoFuncsResolved) return;
+    g_cairoFuncsResolved = true;
+    g_cairo_image_surface_get_width = (cairo_get_int_fn)dlsym(RTLD_DEFAULT, "cairo_image_surface_get_width");
+    g_cairo_image_surface_get_height = (cairo_get_int_fn)dlsym(RTLD_DEFAULT, "cairo_image_surface_get_height");
+    g_cairo_image_surface_get_stride = (cairo_get_int_fn)dlsym(RTLD_DEFAULT, "cairo_image_surface_get_stride");
+    g_cairo_image_surface_get_data = (cairo_get_data_fn)dlsym(RTLD_DEFAULT, "cairo_image_surface_get_data");
+    if (g_cairo_image_surface_get_width) {
+        fprintf(stderr, "[SURFACE] Native Cairo functions resolved for direct surface access\n");
+    }
+}
+
+// Try to get surface info directly from Cairo when dispatch callbacks fail
+static bool cairoGetSurfaceFormat(intptr_t handle, int* w, int* h, int* d, int* msb) {
+    resolveCairoFunctions();
+    if (!g_cairo_image_surface_get_width || !g_cairo_image_surface_get_height) return false;
+    void* surf = reinterpret_cast<void*>(handle);
+    *w = g_cairo_image_surface_get_width(surf);
+    *h = g_cairo_image_surface_get_height(surf);
+    *d = 32;  // Cairo image surfaces are always 32-bit ARGB
+    if (msb) *msb = 0;
+    return (*w > 0 && *h > 0);
+}
+
+static uint8_t* cairoLockSurface(intptr_t handle, int* pitch) {
+    resolveCairoFunctions();
+    if (!g_cairo_image_surface_get_data || !g_cairo_image_surface_get_stride) return nullptr;
+    void* surf = reinterpret_cast<void*>(handle);
+    *pitch = g_cairo_image_surface_get_stride(surf);
+    return g_cairo_image_surface_get_data(surf);
+}
+
 namespace pharo {
 
 // Forward declarations for LargeInteger arithmetic helpers
@@ -16510,8 +16552,8 @@ static intptr_t bitBltField(ObjectMemory& memory, Oop bitBlt, size_t index) {
             memory.storePointer(index, bitBlt, Oop::fromSmallInteger(result));
             return result;
         }
-        // Fraction (2 SmallInteger inst vars: numerator, denominator)
-        if (fmt == ObjectFormat::FixedSize && hdr->slotCount() == 2) {
+        // Fraction or similar 2-slot object (numerator, denominator)
+        if (hdr->slotCount() >= 2) {
             Oop num = memory.fetchPointer(0, field);
             Oop den = memory.fetchPointer(1, field);
             if (num.isSmallInteger() && den.isSmallInteger()) {
@@ -16522,6 +16564,35 @@ static intptr_t bitBltField(ObjectMemory& memory, Oop bitBlt, size_t index) {
                     memory.storePointer(index, bitBlt, Oop::fromSmallInteger(result));
                     return result;
                 }
+            }
+            // Non-SmallInteger components — try to extract as integer anyway
+            // (numerator might be LargeInteger, denominator SmallInteger)
+            if (den.isSmallInteger()) {
+                intptr_t d = den.asSmallInteger();
+                if (d == 1) {
+                    // x/1 = x, try to extract numerator
+                    if (num.isSmallInteger()) return num.asSmallInteger();
+                    if (num.isObject() && !num.isNil()) {
+                        ObjectHeader* numHdr = num.asObjectPtr();
+                        if (numHdr->isBytesObject()) {
+                            // LargeInteger — extract value
+                            size_t byteSize = numHdr->byteSize();
+                            if (byteSize <= 8) {
+                                int64_t val = 0;
+                                std::memcpy(&val, numHdr->bytes(), byteSize);
+                                return static_cast<intptr_t>(val);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Log unrecognized object types for debugging
+        {
+            static int unknownFieldCount = 0;
+            if (unknownFieldCount++ < 10) {
+                fprintf(stderr, "[BITBLT-FIELD] Unknown field type at index %zu: fmt=%d slots=%zu\n",
+                        index, static_cast<int>(fmt), hdr->slotCount());
             }
         }
     }
@@ -16598,23 +16669,12 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     uint32_t* destPixels = nullptr;
     size_t destBitsSize = 0;
     intptr_t destPitch = destWidth; // in 32-bit words for 32-bit depth
+    // NOTE: No dispatch surface lock/unlock needed — we use native Cairo calls
+    // (dlsym for cairo_image_surface_get_data) which return direct pointers.
+    // No lock/unlock protocol needed for direct pixel access.
+    // Dispatch callbacks are FFI callbacks (Smalltalk code) — unsafe to call
+    // from inside VM primitives (corrupts interpreter state).
     int destSurfaceID = -1;
-
-    bool destSurfaceLocked = false;  // track if we locked a dispatch surface
-    int destSurfaceLockID = -1;     // surface ID that was locked
-    // RAII guard to unlock dispatch surface on any return path
-    struct SurfaceUnlocker {
-        bool& locked; int& surfID;
-        ~SurfaceUnlocker() {
-            if (locked && surfID >= 1 && surfID < kMaxSurfaces) {
-                ManualSurface* s = &g_surfaces[surfID];
-                if (s->active && s->dispatch && s->dispatch->unlockSurface) {
-                    s->dispatch->unlockSurface(s->dispatchHandle, 0, 0, s->width, s->height);
-                }
-                locked = false;
-            }
-        }
-    } surfaceGuard{destSurfaceLocked, destSurfaceLockID};
 
     if (destBits.isSmallInteger()) {
         // Surface handle — resolve via SurfacePlugin table
@@ -16622,16 +16682,45 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         ManualSurface* s = lookupSurface(destSurfaceID);
         if (!s) return PrimitiveResult::Failure;
 
-        if (s->dispatch && s->dispatch->lockSurface) {
-            // Dispatch-based surface (Cairo/Athens): lock to get pixel pointer
+        if (s->dispatch) {
+            // Dispatch-based surface (Cairo/Athens)
+            // NOTE: dispatch callbacks are FFI callbacks that invoke Smalltalk code.
+            // Calling them from inside a VM primitive is unsafe (corrupts interpreter state).
+            // Use native Cairo calls (dlsym) instead.
+            bool gotFormat = false;
             int pitch = 0;
-            intptr_t ptr = s->dispatch->lockSurface(s->dispatchHandle, &pitch, 0, 0, s->width, s->height);
-            if (!ptr) return PrimitiveResult::Failure;
-            destPixels = reinterpret_cast<uint32_t*>(ptr);
+
+            // Native Cairo format query
+            if (s->dispatchHandle) {
+                int w = 0, h = 0, d = 0, msb = 0;
+                if (cairoGetSurfaceFormat(s->dispatchHandle, &w, &h, &d, &msb)) {
+                    s->width = w; s->height = h; s->depth = d; s->isMSB = (msb != 0);
+                    destWidth = w; destHeight = h; destDepth = d;
+                    gotFormat = true;
+                }
+            }
+            // Fallback: use Form dimensions from inst vars
+            if (!gotFormat && destWidth > 0 && destHeight > 0) {
+                s->width = static_cast<int>(destWidth);
+                s->height = static_cast<int>(destHeight);
+                s->depth = static_cast<int>(destDepth);
+                gotFormat = true;
+            }
+
+            // Native Cairo pixel data access
+            bool gotData = false;
+            if (s->dispatchHandle) {
+                uint8_t* data = cairoLockSurface(s->dispatchHandle, &pitch);
+                if (data) {
+                    destPixels = reinterpret_cast<uint32_t*>(data);
+                    gotData = true;
+                }
+            }
+            if (!gotData || !gotFormat) return PrimitiveResult::Failure;
+
             destBitsSize = static_cast<size_t>(pitch) * s->height;
             destPitch = pitch / 4;
-            destSurfaceLocked = true;
-            destSurfaceLockID = destSurfaceID;
+            s->rowPitch = pitch;
         } else if (s->bits) {
             // Manual surface: use pre-set pixel pointer
             destPixels = reinterpret_cast<uint32_t*>(s->bits);
@@ -16896,13 +16985,82 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     bool srcNeedsByteSwap = (srcDepth < 0);
     if (srcDepth < 0) srcDepth = -srcDepth;
 
-    if (srcBits.isNil() || !srcBits.isObject() || srcBits.isSmallInteger() || srcBits.rawBits() < 0x10000) {
-        return PrimitiveResult::Failure;
-    }
+    uint8_t* srcBytes = nullptr;
+    size_t srcBitsSize = 0;
+    // NOTE: No dispatch surface lock/unlock needed — same as dest surface above.
 
-    ObjectHeader* srcBitsHdr = srcBits.asObjectPtr();
-    uint8_t* srcBytes = srcBitsHdr->bytes();
-    size_t srcBitsSize = srcBitsHdr->byteSize();
+    if (srcBits.isSmallInteger()) {
+        // Source is a surface handle
+        int srcSurfID = static_cast<int>(srcBits.asSmallInteger());
+        ManualSurface* ss = lookupSurface(srcSurfID);
+        {
+            static int srcSurfLog = 0;
+            if (srcSurfLog++ < 10) {
+                fprintf(stderr, "[BITBLT-SRC-SURF] srcSurfID=%d lookup=%s dispatch=%s bits=%p w=%d h=%d d=%d rule=%ld\n",
+                        srcSurfID, ss ? "OK" : "FAIL",
+                        (ss && ss->dispatch) ? "YES" : "NO",
+                        ss ? ss->bits : nullptr,
+                        ss ? ss->width : 0, ss ? ss->height : 0, ss ? ss->depth : 0,
+                        combinationRule);
+            }
+        }
+        if (!ss) return PrimitiveResult::Failure;
+
+        if (ss->dispatch) {
+            // Dispatch-based surface (Cairo/Athens)
+            // NOTE: dispatch callbacks are FFI callbacks that invoke Smalltalk code.
+            // Calling them from inside a VM primitive is unsafe (corrupts interpreter state).
+            // Use native Cairo calls (dlsym) instead.
+            int pitch = 0;
+            uint8_t* dataPtr = nullptr;
+
+            // Native Cairo format query
+            bool gotFormat = false;
+            if (ss->dispatchHandle) {
+                int w = 0, h = 0, d = 0, msb = 0;
+                if (cairoGetSurfaceFormat(ss->dispatchHandle, &w, &h, &d, &msb)) {
+                    ss->width = w; ss->height = h; ss->depth = d; ss->isMSB = (msb != 0);
+                    srcWidth = w; srcHeight = h; srcDepth = d;
+                    gotFormat = true;
+                }
+            }
+            // Fallback: use Form dimensions from inst vars
+            if (!gotFormat && srcWidth > 0 && srcHeight > 0) {
+                ss->width = static_cast<int>(srcWidth);
+                ss->height = static_cast<int>(srcHeight);
+                ss->depth = static_cast<int>(srcDepth);
+                gotFormat = true;
+            }
+
+            // Native Cairo pixel data access
+            bool gotData = false;
+            if (ss->dispatchHandle) {
+                dataPtr = cairoLockSurface(ss->dispatchHandle, &pitch);
+                if (dataPtr) gotData = true;
+            }
+
+            if (!gotData || !gotFormat) {
+                static int failLog = 0;
+                if (failLog++ < 5)
+                    fprintf(stderr, "[BITBLT-SRC-SURF] Cannot access surface: format=%d data=%d\n", gotFormat, gotData);
+                return PrimitiveResult::Failure;
+            }
+
+            srcBytes = dataPtr;
+            srcBitsSize = static_cast<size_t>(pitch) * ss->height;
+        } else if (ss->bits) {
+            srcBytes = reinterpret_cast<uint8_t*>(ss->bits);
+            srcBitsSize = static_cast<size_t>(ss->rowPitch) * ss->height;
+        } else {
+            return PrimitiveResult::Failure;
+        }
+    } else if (srcBits.isNil() || !srcBits.isObject() || srcBits.rawBits() < 0x10000) {
+        return PrimitiveResult::Failure;
+    } else {
+        ObjectHeader* srcBitsHdr = srcBits.asObjectPtr();
+        srcBytes = srcBitsHdr->bytes();
+        srcBitsSize = srcBitsHdr->byteSize();
+    }
 
     // Clip to source form bounds
     if (sourceX < 0) { intptr_t d = -sourceX; width -= d; destX += d; sourceX = 0; }
@@ -16922,7 +17080,9 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     }
 
     // Detect compressed source form (ByteArray bits that are too small for claimed dimensions)
-    {
+    // Only applies to object-based sources, not surface-based sources
+    if (srcBits.isObject() && !srcBits.isNil() && !srcBits.isSmallInteger()) {
+        ObjectHeader* srcBitsHdr = srcBits.asObjectPtr();
         auto srcBitsFmt = srcBitsHdr->format();
         bool isByteArray = (srcBitsFmt >= ObjectFormat::Indexable8 && srcBitsFmt <= ObjectFormat::Indexable8_7);
         if (isByteArray && srcDepth == 32) {
@@ -17583,11 +17743,17 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     {
         static int unsupCount = 0;
         if (unsupCount++ < 20) {
+            Oop dBits = memory_.fetchPointer(FormBits, destForm);
+            Oop sBits = sourceForm.isObject() && !sourceForm.isNil()
+                ? memory_.fetchPointer(FormBits, sourceForm) : Oop::nil();
             fprintf(stderr, "[BITBLT-UNSUP] srcDepth=%ld destDepth=%ld rule=%ld "
-                    "src=%ldx%ld dst=%ldx%ld dXY=(%ld,%ld) WH=(%ld,%ld)\n",
+                    "src=%ldx%ld dst=%ldx%ld dXY=(%ld,%ld) WH=(%ld,%ld) "
+                    "dBits=%s sBits=%s\n",
                     srcDepth, destDepth, combinationRule,
                     srcWidth, srcHeight, destWidth, destHeight,
-                    destX, destY, width, height);
+                    destX, destY, width, height,
+                    dBits.isSmallInteger() ? "SurfID" : "Obj",
+                    sBits.isSmallInteger() ? "SurfID" : "Obj");
         }
     }
     return PrimitiveResult::Failure;

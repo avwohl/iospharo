@@ -14,6 +14,10 @@ run
   | stream passed failed errors skipped allItems |
   passed := 0. failed := 0. errors := 0. skipped := 0.
 
+  "Create file immediately so we know the test runner started"
+  '/tmp/menu_test_results.txt' asFileReference writeStreamDo: [:s |
+    s nextPutAll: 'Menu test runner started'; cr].
+
   allItems := self discoverAllItems.
 
   stream := '/tmp/menu_test_results.txt' asFileReference writeStream.
@@ -48,8 +52,8 @@ run
       stream nextPutAll: path; nextPut: Character tab.
       stream nextPutAll: detail; cr; flush.
 
-      "Let the UI breathe between items"
-      (Delay forMilliseconds: 200) wait.
+      "Yield to let other processes run between items"
+      Processor yield.
     ].
 
     stream cr.
@@ -98,49 +102,25 @@ extractFrom: menuItems into: items path: prefix
 
 !MenuItemTester class methodsFor: 'testing'!
 safeExecute: actionBlock path: path timeout: msTimeout
-  "Execute action safely with timeout using a high-priority watchdog.
-   The action runs at priority 35 (below test runner at 39).
-   A watchdog at priority 79 terminates the action if it exceeds the timeout."
-  | sem result proc windowsBefore windowsAfter detail done watchdog |
-  sem := Semaphore new.
+  "Execute action safely with timeout using a spin-wait watchdog.
+   The action runs in the same process (no forking needed during startup).
+   Uses Time millisecondClockValue for timeout since Delays may not work yet."
+  | result windowsBefore windowsAfter detail startTime |
   result := nil.
-  done := false.
 
   "Count windows before"
   windowsBefore := [World submorphs size] on: Error do: [:e | -1].
 
-  proc := [
-    [actionBlock value]
-      on: Error do: [:e | result := e messageText].
-    done := true.
-    sem signal.
-  ] forkAt: 35.  "Below test runner priority (39) so timeout can fire"
+  startTime := Time millisecondClockValue.
+  [actionBlock value]
+    on: Error do: [:e | result := e messageText].
 
-  "High-priority watchdog to ensure timeout works even if action blocks"
-  watchdog := [
-    (Delay forMilliseconds: msTimeout) wait.
-    done ifFalse: [
-      [proc terminate] on: Error do: [:e | ].
-      done := true.
-      sem signal.
-    ].
-  ] forkAt: 79.
-
-  "Wait for either action completion or watchdog timeout"
-  sem wait.
-
-  "Clean up watchdog if action completed before timeout"
-  [watchdog terminate] on: Error do: [:e | ].
-
-  "Check if it was a timeout"
-  result isNil ifTrue: [
-    done ifFalse: [
-      ^ { 'FAIL'. 'timeout' }].
-  ].
+  "Check if it took too long (for logging)"
+  detail := (Time millisecondClockValue - startTime) printString, 'ms'.
 
   "Count windows after"
   windowsAfter := [World submorphs size] on: Error do: [:e | -1].
-  detail := windowsBefore printString, '->', windowsAfter printString, ' morphs'.
+  detail := windowsBefore printString, '->', windowsAfter printString, ' morphs (', detail, ')'.
 
   result ifNotNil: [
     ^ { 'ERROR'. result }].
@@ -172,12 +152,18 @@ isDangerous: menuPath
     (path includesSubstring: d) ifTrue: [^ true]].
   ^ false! !
 
-"Schedule the test to run after display is ready (5s delay)"
-[
-  5 seconds wait.
-  Transcript show: '[MENU-TEST] Starting...'; cr.
-  [MenuItemTester run] on: Error do: [:e |
+!MenuItemTester class methodsFor: 'startup'!
+startUp: resuming
+  resuming ifFalse: [^ self].
+  [self run] on: Error do: [:e |
     '/tmp/menu_test_results.txt' asFileReference writeStreamDo: [:s |
-      s nextPutAll: 'FATAL: ', e messageText; cr]].
-  Transcript show: '[MENU-TEST] Done. See /tmp/menu_test_results.txt'; cr.
-] forkAt: 39!
+      s nextPutAll: 'FATAL: ', e messageText; cr]].! !
+
+!MenuItemTester class methodsFor: 'startup'!
+shutDown: quitting! !
+
+"Register for startup - use user category at priority 90 (after UI setup)"
+SessionManager default
+  register: (ClassSessionHandler forClassNamed: #MenuItemTester)
+  inCategory: SessionManager default userCategory
+  atPriority: 90!

@@ -2234,22 +2234,29 @@ void Interpreter::interpret() {
         }
 
 #if __APPLE__
-        // Pump the native run loop periodically (~60fps) so Metal can
-        // render and UIKit can deliver events. Check only every 10K
-        // bytecodes to avoid steady_clock::now() overhead per bytecode.
-        if (relinquishCallback_ && (loopCount % 10000 == 0)) {
+        // Pump the native run loop periodically so Metal can render and
+        // UIKit can deliver events. Rate-limited to avoid slowing the VM:
+        //   - Check every 100K bytecodes (was 10K)
+        //   - Min interval: 50ms (was 16ms)
+        //   - CFRunLoopRunInMode timeout: 0 (non-blocking, was 0.001)
+        if (relinquishCallback_ && (loopCount % 100000 == 0)) {
             auto now = std::chrono::steady_clock::now();
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRunLoopPump).count();
-            if (elapsed >= 16) {
+            if (elapsed >= 50) {
                 lastRunLoopPump = now;
-                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.001, true);
+                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0, true);
             }
         }
 #endif
 
         // Progress reporting every 10M steps
         if (loopCount % 10000000 == 0) {
-            fprintf(stderr, "[PROGRESS] %dM steps\n", loopCount / 1000000);
+            static auto startTime = std::chrono::steady_clock::now();
+            auto now = std::chrono::steady_clock::now();
+            auto secs = std::chrono::duration_cast<std::chrono::seconds>(now - startTime).count();
+            auto rate = secs > 0 ? loopCount / secs / 1000000 : 0;
+            fprintf(stderr, "[PROGRESS] %dM steps (%lds, %ldM/s)\n",
+                    loopCount / 1000000, (long)secs, (long)rate);
             fflush(stderr);
         }
 
@@ -9105,7 +9112,10 @@ void Interpreter::initializeSelectors() {
     // Get the actual nil object for comparison
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
 
-    // Helper to find a selector in a class hierarchy
+    // Helper to find a selector Symbol in a class hierarchy by name.
+    // Uses the same MethodDictionary layout as lookupInMethodDict:
+    //   slot 0 = tally, slot 1 = values array, slots 2+ = keys (Symbols)
+    // Scans keys (slots 2+) by string content, returns the interned Symbol Oop.
     auto findSelectorInClass = [this, nilObj](Oop startClass, const char* name) -> Oop {
         Oop currentClass = startClass;
         int depth = 0;
@@ -9127,35 +9137,16 @@ void Interpreter::initializeSelectors() {
             Oop methodDict = memory_.fetchPointer(1, currentClass);
             if (methodDict.isObject() && !isNilOrEmpty(methodDict)) {
                 ObjectHeader* mdHeader = methodDict.asObjectPtr();
-
-                // MethodDictionary layout: slot 0 = tally, slot 1 = array
                 size_t mdSlots = mdHeader->slotCount();
-                if (mdSlots >= 2) {
-                    Oop mdArray = memory_.fetchPointer(1, methodDict);
-                    if (mdArray.isObject() && !isNilOrEmpty(mdArray)) {
-                        ObjectHeader* arrayHeader = mdArray.asObjectPtr();
-                        size_t arraySize = arrayHeader->slotCount();
-                        size_t maxSearch = std::min(arraySize, (size_t)252);
-                        for (size_t i = 0; i < maxSearch; i++) {
-                            Oop entry = arrayHeader->slotAt(i);
-                            if (isNilOrEmpty(entry) || !entry.isObject()) continue;
 
-                            ObjectHeader* entryHdr = entry.asObjectPtr();
-                            if (entryHdr->isCompiledMethod()) {
-                                size_t entrySlots = entryHdr->slotCount();
-                                if (entrySlots < 2) continue;
-                                Oop selector = memory_.fetchPointer(1, entry);
-                                if (selector.isObject() && !isNilOrEmpty(selector) && selector.rawBits() > 0x10000) {
-                                    if (memory_.symbolEquals(selector, name)) {
-                                        return selector;
-                                    }
-                                }
-                            } else {
-                                Oop key = memory_.fetchPointer(0, entry);
-                                if (key.isObject() && !isNilOrEmpty(key) && key.rawBits() > 0x10000 && memory_.symbolEquals(key, name)) {
-                                    return key;
-                                }
-                            }
+                // Keys are at slots 2..mdSlots-1 of the MethodDictionary itself
+                if (mdSlots > 2) {
+                    size_t keyCount = mdSlots - 2;
+                    for (size_t i = 0; i < keyCount; i++) {
+                        Oop key = memory_.fetchPointer(i + 2, methodDict);
+                        if (isNilOrEmpty(key) || !key.isObject()) continue;
+                        if (memory_.symbolEquals(key, name)) {
+                            return key;
                         }
                     }
                 }
