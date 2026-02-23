@@ -1576,7 +1576,7 @@ GCResult ObjectMemory::scavenge() {
     // This wastes eden space but prevents corruption.
 
     uint8_t* scan = edenStart_;
-    while (scan < edenFree_) {
+    while (scan + 8 <= edenFree_) {  // Need at least 8 bytes for header
         ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(scan);
         size_t size = obj->totalSize();
 
@@ -3010,7 +3010,7 @@ void ObjectMemory::updatePointersAfterCompact() {
             int objCount = 0;
             int updatedCount = 0;
             uint8_t* scan = start;
-            while (scan < end) {
+            while (scan + 8 <= end) {  // Need at least 8 bytes for header
                 ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(scan);
                 size_t ts = obj->totalSize();
                 if (ts == 0 || ts > 0x10000000) break;  // Invalid — stop

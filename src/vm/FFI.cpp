@@ -296,6 +296,17 @@ void* lookupFunction(const std::string& moduleName, const std::string& funcName)
         return func;
     }
 
+    // On iOS, system() calls abort() — return a stub that returns -1 (failure).
+    // This prevents FFI tests (e.g., DeleteVisitorTest) from crashing the app.
+#if TARGET_OS_IOS
+    if (funcName == "system") {
+        static auto systemStub = +[](const char*) -> int { return -1; };
+        void* func = reinterpret_cast<void*>(systemStub);
+        sFunctionCache[funcName] = func;
+        return func;
+    }
+#endif
+
     // Try real library first via dlsym — this finds symbols from libraries
     // already loaded by primitiveLoadModule (Homebrew, bundled, system).
     void* func = dlsym(RTLD_DEFAULT, funcName.c_str());

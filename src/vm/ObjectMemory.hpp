@@ -55,11 +55,11 @@ public:
 
     /// Returns next object header, or nullptr when exhausted.
     ObjectHeader* next() {
-        while (scan_ < end_) {
+        while (scan_ + 8 <= end_) {  // Need at least 8 bytes for header read
             // Skip zero padding (free space / segment bridges)
-            while (scan_ < end_ && *reinterpret_cast<uint64_t*>(scan_) == 0)
+            while (scan_ + 8 <= end_ && *reinterpret_cast<uint64_t*>(scan_) == 0)
                 scan_ += 8;
-            if (scan_ >= end_) return nullptr;
+            if (scan_ + 8 > end_) return nullptr;
 
             // objectStartingAt_: if byte7 is 0xFF, this is an overflow word — skip it.
             // In Spur, both the overflow word and the real header have 0xFF in byte 7.
@@ -67,7 +67,7 @@ public:
             // in memory), so one skip positions us at the real header.
             if (scan_[7] == 0xFF) {
                 scan_ += 8;
-                if (scan_ >= end_) return nullptr;
+                if (scan_ + 8 > end_) return nullptr;
             }
 
             // Now scan_ points to the main object header

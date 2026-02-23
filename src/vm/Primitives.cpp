@@ -23986,7 +23986,16 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
     // 2. Otherwise use lookupFunction which searches paths and falls back to stubs
     void* symbolAddr = nullptr;
 
-    if (moduleHandle && moduleHandle != RTLD_DEFAULT) {
+    // On iOS, system() calls abort() — return a stub that returns -1 (failure).
+    // This prevents tests (e.g., DeleteVisitorTest) from crashing the app.
+#if TARGET_OS_IOS
+    if (symbolName == "system") {
+        static auto systemStub = +[](const char*) -> int { return -1; };
+        symbolAddr = reinterpret_cast<void*>(systemStub);
+    }
+#endif
+
+    if (!symbolAddr && moduleHandle && moduleHandle != RTLD_DEFAULT) {
         // Real module handle — use it directly for the most accurate lookup
         symbolAddr = dlsym(moduleHandle, symbolName.c_str());
     }
