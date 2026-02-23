@@ -2544,10 +2544,7 @@ void Interpreter::signalSemaphoreDirectly(int externalIndex) {
 extern int g_callbackSemaphoreIndex;
 
 void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
-    // 1. Save reenterInterpreter so nested callbacks can restore it
-    memcpy(vmcc->savedReenterInterpreter, reenterInterpreter_, sizeof(sigjmp_buf));
-
-    // 2. Materialize frame stack (saves current execution to Smalltalk contexts).
+    // 1. Materialize frame stack (saves current execution to Smalltalk contexts).
     //    This may trigger GC — vmcc is on C heap, so it's safe.
     //    GC SAFETY: protect activeProcess across materializeFrameStack (it allocates).
     Oop savedGcTemp = gcTempOop_;
@@ -2556,30 +2553,30 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
     Oop activeProcess = gcTempOop_;
     gcTempOop_ = savedGcTemp;
 
-    // 3. Save active process's suspended context
+    // 2. Save active process's suspended context
     if (!savedCtx.isNil() && savedCtx.isObject()) {
         memory_.storePointer(ProcessSuspendedContextIndex, activeProcess, savedCtx);
     }
 
-    // 4. Push active process onto SuspendedProcessInCallout linked list
+    // 3. Push active process onto SuspendedProcessInCallout linked list
     //    (LIFO stack — head of list is the most recently suspended)
     Oop prevHead = memory_.specialObject(SpecialObjectIndex::SuspendedProcessInCallout);
     memory_.storePointer(ProcessNextLinkIndex, activeProcess, prevHead);
     memory_.setSpecialObject(SpecialObjectIndex::SuspendedProcessInCallout, activeProcess);
 
-    // 5. Push vmcc onto callback context stack
+    // 4. Push vmcc onto callback context stack
     if (callbackDepth_ < MaxCallbackDepth) {
         callbackContextStack_[callbackDepth_++] = vmcc;
     } else {
         fprintf(stderr, "[CALLBACK] Max callback depth (%d) exceeded!\n", MaxCallbackDepth);
     }
 
-    // 6. Signal callback semaphore to wake handler process
+    // 5. Signal callback semaphore to wake handler process
     if (g_callbackSemaphoreIndex > 0) {
         signalSemaphoreDirectly(g_callbackSemaphoreIndex);
     }
 
-    // 7. Find and transfer to highest-priority ready process
+    // 6. Find and transfer to highest-priority ready process
     //    (The callback handler process should now be ready from the semaphore signal)
     Oop readyProcess = wakeHighestPriority();
     if (readyProcess.isObject() && !readyProcess.isNil()) {
@@ -2593,8 +2590,27 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
         executeFromContext(ctx);
     }
 
-    // 8. Re-enter interpreter loop (does NOT return)
-    siglongjmp(reenterInterpreter_, 1);
+    // 7. Run a NESTED interpret loop on the C stack.
+    //    We CANNOT siglongjmp to the outer interpret() because that would move
+    //    the C stack pointer above the qsort/ffi_call frames, allowing new
+    //    step() calls to overwrite them. Instead, we run the interpreter right
+    //    here. When primitiveCallbackReturn fires, it siglongjmps to
+    //    vmcc->trampoline (in callbackClosureHandler), unwinding past this
+    //    frame but preserving all frames below us (qsort, ffi_call, etc.).
+    while (running_) {
+        for (int batch = 0; batch < 1000 && running_; batch++) {
+            step();
+        }
+        if (hasPendingSignals() && !inExtension_) {
+            processPendingSignals();
+        }
+        if (!inExtension_) {
+            checkTimerSemaphore();
+        }
+    }
+    // If we reach here, the VM was stopped (running_ = false).
+    // primitiveCallbackReturn should have siglongjmp'd out before this.
+    fprintf(stderr, "[CALLBACK] Warning: nested interpret loop exited without callback return\n");
 }
 
 bool Interpreter::step() {

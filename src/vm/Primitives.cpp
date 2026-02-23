@@ -27339,10 +27339,9 @@ PrimitiveResult Interpreter::primitiveCallbackReturn(int argCount) {
         executeFromContext(ctx);
     }
 
-    // Restore reenterInterpreter from saved copy (for nested callback support)
-    memcpy(reenterInterpreter_, vmcc->savedReenterInterpreter, sizeof(sigjmp_buf));
-
-    // Jump back to C callback handler (callbackClosureHandler's sigsetjmp point)
+    // Jump back to C callback handler (callbackClosureHandler's sigsetjmp point).
+    // This unwinds the nested interpret loop in enterInterpreterFromCallback,
+    // returning to qsort/ffi_call/etc. with process A's interpreter state restored.
     siglongjmp(vmcc->trampoline, 1);
     // DOES NOT RETURN
     return PrimitiveResult::Success; // unreachable
