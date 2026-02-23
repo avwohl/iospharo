@@ -1,11 +1,27 @@
 # Menu Item Test Results (2026-02-23)
 
 Programmatic test via `scripts/test_menu_items.st` — discovers all `<worldMenu>` pragmas
-via PragmaMenuBuilder, executes each action in the Mac Catalyst app with 10s timeout.
+via PragmaMenuBuilder, executes each action in the Mac Catalyst app with 8s timeout.
 
-**Summary: 47 pass, 2 fail, 6 error, 23 skip (of 78)**
+**Summary: 50 pass, 0 fail, 3 error, 25 skip (of 78)**
 
-## PASS (47)
+Previous: 47 pass, 2 fail, 6 error, 23 skip → 15 pass, 40 error (regression from stub removal)
+→ **50 pass, 0 fail, 3 error, 25 skip** (after BitBlt/FloatArray/library fixes)
+
+## Changes from previous run
+
+- **BitBlt negative depth fix**: `Form>>swapEndianness` sets `depth := 0 - depth`.
+  Our BitBlt couldn't handle negative depth → `copyFromByteArray:` → `unhibernate` →
+  `decompress` cascade failure. Fixed by handling `srcDepth < 0` (byte-swap within words).
+- **FloatArrayPlugin**: Real `primitiveAt`/`primitiveAtPut` for IEEE 32-bit float read/write.
+  Fixes `MatrixTransform2x3` errors (24+ `EXT-PRIM-FAIL` per session).
+- **Dynamic library loading**: FFI loads real libraries (FreeType, libgit2, Cairo) from
+  bundled Frameworks dir before falling back to stubs.
+- **Library bundling**: `scripts/bundle-libs.sh` copies 22 Homebrew dylibs, rewrites
+  `@loader_path`, re-signs with Apple Development identity.
+- **Test runner priority fix**: Actions at P35, watchdog at P79 prevents priority inversion.
+
+## PASS (50)
 
 | Menu | Item | Detail |
 |------|------|--------|
@@ -16,66 +32,59 @@ via PragmaMenuBuilder, executes each action in the Mac Catalyst app with 10s tim
 | Browse | Playground | 3→4 morphs |
 | Browse | Transcript | 3→4 morphs |
 | Browse | Dr Test | 3→4 morphs |
-| Browse | Finder | 7→8 morphs |
-| Debug | Debug Point Browser | 7→8 morphs |
-| Debug | Remove all Debug Points | 7→7 morphs |
-| Debug | Enable all Debug Points | 7→7 morphs |
-| Debug | Disable all Debug Points | 7→7 morphs |
-| Debug | Enable all break/inspect once | 7→7 morphs |
-| Sources | Git Repositories Browser | 7→8 morphs |
-| Sources | PackageDependencies | 7→8 morphs |
-| Sources | Undo last refactoring | 7→8 morphs |
-| Sources | Scopes Editor | 7→8 morphs |
-| System | System Reporter | 7→8 morphs |
-| System | Process Browser | 7→8 morphs |
-| System | NewToolsMenu > NewFileBrowser | 7→8 morphs |
-| System | NewToolsMenu > New Settings Browser | 7→8 morphs |
-| System | NewToolsMenu > ObjectTranscript | 7→8 morphs |
-| System | SystemStartup > SystemStartupLoader | 8→8 morphs |
-| System | SystemStartup > SystemStartupCreator | 8→8 morphs |
-| System | SystemStartup > SystemStartupFolder | 8→9 morphs |
-| System | SystemStartup > SystemStartupFolder | 8→9 morphs |
-| System | SystemFolders > SystemImageFolder | 8→8 morphs |
-| System | SystemFolders > SystemVMFolder | 8→8 morphs |
-| System | Space left | 8→9 morphs |
-| Tools | Rewrite Rule Editor | 8→9 morphs |
-| Tools | Expression Finder | 8→9 morphs |
-| Tools | Match Tool | 8→9 morphs |
-| Tools | Shortcuts Browser | 8→9 morphs |
-| Tools | Icons Pack Manager | 8→9 morphs |
-| Tools | Roassal > RoassalHelp > RoassalChat | 8→8 morphs |
-| Tools | Roassal > RoassalHelp > RoassalDocumentation | 8→8 morphs |
-| Tools | Roassal > RoassalSelf | 9→10 morphs |
-| Windows | Reopen closed windows | 9→10 morphs |
-| Windows | Expand all windows | 9→9 morphs |
-| Windows | Fit all windows | 10→10 morphs |
-| Windows | Close all debuggers | 10→6 morphs |
-| Windows | Send top window to back (\) | 6→6 morphs |
-| Help | Welcome to Pharo | 7→8 morphs |
-| Help | Pharo Zen | 7→8 morphs |
-| Help | Spec2 demo | 7→8 morphs |
-| Help | Spec2 examples | 7→8 morphs |
-| Help | About... | 7→8 morphs |
+| Browse | Spotter | 3→5 morphs |
+| Browse | Finder | 3→4 morphs |
+| Debug | Debug Point Browser | 3→4 morphs |
+| Debug | Remove all Debug Points | 3→3 morphs |
+| Debug | Enable all Debug Points | 3→3 morphs |
+| Debug | Disable all Debug Points | 3→3 morphs |
+| Debug | Enable all break/inspect once | 3→3 morphs |
+| Sources | Git Repositories Browser | 3→4 morphs |
+| Sources | PackageDependencies | 3→4 morphs |
+| Sources | Undo last refactoring | 3→4 morphs |
+| Sources | Scopes Editor | 3→4 morphs |
+| System | System Reporter | 3→4 morphs |
+| System | Process Browser | 3→4 morphs |
+| System | NewToolsMenu > NewFileBrowser | 3→4 morphs |
+| System | NewToolsMenu > New Settings Browser | 3→4 morphs |
+| System | NewToolsMenu > ObjectTranscript | 3→4 morphs |
+| System | SystemStartup > SystemStartupLoader | 3→3 morphs |
+| System | SystemStartup > SystemStartupCreator | 3→3 morphs |
+| System | SystemStartup > SystemStartupFolder | 3→4 morphs |
+| System | SystemStartup > SystemStartupFolder | 3→4 morphs |
+| System | SystemFolders > SystemImageFolder | 3→3 morphs |
+| System | SystemFolders > SystemVMFolder | 3→3 morphs |
+| System | Space left | 3→4 morphs |
+| Tools | Rewrite Rule Editor | 3→4 morphs |
+| Tools | Expression Finder | 3→4 morphs |
+| Tools | Match Tool | 3→4 morphs |
+| Tools | Shortcuts Browser | 3→4 morphs |
+| Tools | Icons Pack Manager | 3→4 morphs |
+| Tools | Roassal > RoassalHelp > RoassalChat | 3→3 morphs |
+| Tools | Roassal > RoassalHelp > RoassalDocumentation | 3→3 morphs |
+| Tools | Roassal > RoassalSelf | 3→4 morphs |
+| Windows | Reopen closed windows | 3→4 morphs |
+| Windows | Collapse all windows | 3→3 morphs |
+| Windows | Expand all windows | 3→3 morphs |
+| Windows | Fit all windows | 3→3 morphs |
+| Windows | Close all debuggers | 3→3 morphs |
+| Windows | Send top window to back (\) | 3→3 morphs |
+| Windows | Delete unchanged windows | 3→4 morphs |
+| Help | Welcome to Pharo | 3→4 morphs |
+| Help | Pharo Zen | 3→4 morphs |
+| Help | Spec2 demo | 3→4 morphs |
+| Help | Spec2 examples | 3→4 morphs |
+| Help | About... | 3→4 morphs |
 
-## FAIL (2) — Timeouts
-
-| Menu | Item | Detail | Cause |
-|------|------|--------|-------|
-| Tools | Roassal > RoassalLoad > RoassalLoadFullVersion | timeout | Tries to download from network |
-| Windows | Delete unchanged windows | timeout | Iterating many open morphs slowly |
-
-## ERROR (6)
+## ERROR (3)
 
 | Menu | Item | Error | Cause |
 |------|------|-------|-------|
-| Browse | Spotter | `a Heap() is empty` | Spotter internal issue |
-| Sources | Code Changes | `Error creating new surface` | Cairo library not available |
-| Tools | LoadToplo | `no error message set by libgit2` | libgit2 library not available |
-| Tools | Roassal > RoassalLoad > RoassalExporters | `no error message set by libgit2` | libgit2 library not available |
-| Windows | Collapse all windows | `receiver of "fitContents" is nil` | Morphic upstream issue |
-| Help | Documentation Browser | `primitive #primStartLookupOfName: in NetNameResolver class failed` | Network DNS primitive not implemented |
+| Sources | Code Changes | `Unable to register surface with SurfacePlugin` | Missing `primitiveRegisterSurface` (Athens/Cairo surface dispatch) |
+| Tools | LoadToplo | `could not find repository` | Git repo not present on disk (not a VM bug) |
+| Help | Documentation Browser | `Socket destroyed, cannot retrieve error message` | Network socket issue (not a VM bug) |
 
-## SKIP (23) — Dangerous items intentionally skipped
+## SKIP (25) — Dangerous or network-dependent items
 
 | Menu | Item | Reason |
 |------|------|--------|
@@ -91,6 +100,8 @@ via PragmaMenuBuilder, executes each action in the Mac Catalyst app with 10s tim
 | System | Start stepping again | dangerous |
 | System | Restore display | dangerous |
 | System | Screenshot | dangerous |
+| Tools | Roassal > RoassalLoad > RoassalLoadFullVersion | dangerous (network download) |
+| Tools | Roassal > RoassalLoad > RoassalExporters | dangerous (network download) |
 | Windows | Profiles > New Profile | dangerous |
 | Windows | Profiles > Update current profile | dangerous |
 | Windows | Profiles > Show/Hide current profile | dangerous |
