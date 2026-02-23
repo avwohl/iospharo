@@ -73,9 +73,6 @@ setup_ios_simulator_arm64() {
     # Autotools config.sub doesn't understand iOS triples.
     # Use aarch64-apple-darwin and rely on CFLAGS for actual target.
     HOST_TRIPLE="aarch64-apple-darwin"
-    # For CMake cross-compilation
-    CMAKE_SYSTEM_NAME="iOS"
-    CMAKE_OSX_SYSROOT="iphonesimulator"
     MESON_CPU="aarch64"
 }
 
@@ -90,8 +87,6 @@ setup_ios_simulator_x86_64() {
     export LDFLAGS="-arch x86_64 -isysroot $SDKROOT -mios-simulator-version-min=15.0"
     PLATFORM_NAME="ios-simulator-x86_64"
     HOST_TRIPLE="x86_64-apple-darwin"
-    CMAKE_SYSTEM_NAME="iOS"
-    CMAKE_OSX_SYSROOT="iphonesimulator"
     MESON_CPU="x86_64"
 }
 
@@ -106,8 +101,6 @@ setup_maccatalyst_arm64() {
     export LDFLAGS="-arch arm64 -isysroot $SDKROOT -target arm64-apple-ios15.0-macabi"
     PLATFORM_NAME="maccatalyst-arm64"
     HOST_TRIPLE="aarch64-apple-darwin"
-    CMAKE_SYSTEM_NAME="Darwin"
-    CMAKE_OSX_SYSROOT="macosx"
     MESON_CPU="aarch64"
 }
 
@@ -122,8 +115,6 @@ setup_maccatalyst_x86_64() {
     export LDFLAGS="-arch x86_64 -isysroot $SDKROOT -target x86_64-apple-ios15.0-macabi"
     PLATFORM_NAME="maccatalyst-x86_64"
     HOST_TRIPLE="x86_64-apple-darwin"
-    CMAKE_SYSTEM_NAME="Darwin"
-    CMAKE_OSX_SYSROOT="macosx"
     MESON_CPU="x86_64"
 }
 
@@ -195,6 +186,10 @@ build_autotools() {
 }
 
 # Helper: build a CMake library for the current platform
+# NOTE: We do NOT set CMAKE_SYSTEM_NAME=iOS because that triggers CMake's
+# built-in iOS toolchain which overrides compiler settings. Instead, the
+# cross-compilation is fully controlled by CFLAGS (-isysroot, -arch, -m*-min).
+# This produces correct static libraries for any target.
 build_cmake() {
     local name="$1"
     local srcdir="$2"
@@ -215,8 +210,7 @@ build_cmake() {
         -DCMAKE_C_FLAGS="$CFLAGS" \
         -DCMAKE_CXX_COMPILER="$CXX" \
         -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
-        -DCMAKE_SYSTEM_NAME="$CMAKE_SYSTEM_NAME" \
-        -DCMAKE_OSX_SYSROOT="$CMAKE_OSX_SYSROOT" \
+        -DCMAKE_FIND_ROOT_PATH="$prefix" \
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_SHARED_LIBS=OFF \
         "${cmake_args[@]}" \
@@ -237,8 +231,7 @@ build_libpng() {
         -DPNG_TESTS=OFF \
         -DPNG_TOOLS=OFF \
         -DPNG_FRAMEWORK=OFF \
-        -DPNG_SHARED=OFF \
-        -DPNG_ARM_NEON=off
+        -DPNG_SHARED=OFF
 }
 
 build_freetype() {
@@ -258,8 +251,7 @@ build_freetype() {
         -DCMAKE_INSTALL_PREFIX="$prefix" \
         -DCMAKE_C_COMPILER="$CC" \
         -DCMAKE_C_FLAGS="$CFLAGS" \
-        -DCMAKE_SYSTEM_NAME="$CMAKE_SYSTEM_NAME" \
-        -DCMAKE_OSX_SYSROOT="$CMAKE_OSX_SYSROOT" \
+        -DCMAKE_FIND_ROOT_PATH="$prefix" \
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_SHARED_LIBS=OFF \
         -DFT_DISABLE_HARFBUZZ=ON \
@@ -287,24 +279,29 @@ build_pixman() {
     rm -rf "$builddir"
     mkdir -p "$builddir"
 
-    # Create meson cross file (same pattern as cairo)
+    # Create meson cross file (reuse helper from cairo)
     local crossfile="${builddir}/cross.txt"
-    local meson_c_args=""
-    for flag in $CFLAGS; do
-        [ -n "$meson_c_args" ] && meson_c_args="$meson_c_args, "
-        meson_c_args="$meson_c_args'$flag'"
-    done
-    local meson_link_args=""
-    for flag in $LDFLAGS; do
-        [ -n "$meson_link_args" ] && meson_link_args="$meson_link_args, "
-        meson_link_args="$meson_link_args'$flag'"
-    done
+
+    meson_array_from_flags() {
+        local result=""
+        for flag in $1; do
+            [ -n "$result" ] && result="$result, "
+            result="$result'$flag'"
+        done
+        echo "$result"
+    }
+
+    local meson_c_args
+    meson_c_args=$(meson_array_from_flags "$CFLAGS")
+    local meson_link_args
+    meson_link_args=$(meson_array_from_flags "$LDFLAGS")
 
     cat > "$crossfile" <<CROSSEOF
 [binaries]
 c = '$CC'
 ar = '$AR'
 ranlib = '$RANLIB'
+pkg-config = 'pkg-config'
 
 [built-in options]
 c_args = [$meson_c_args]
@@ -354,8 +351,7 @@ build_harfbuzz() {
         -DCMAKE_CXX_COMPILER="$CXX" \
         -DCMAKE_C_FLAGS="$CFLAGS" \
         -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
-        -DCMAKE_SYSTEM_NAME="$CMAKE_SYSTEM_NAME" \
-        -DCMAKE_OSX_SYSROOT="$CMAKE_OSX_SYSROOT" \
+        -DCMAKE_FIND_ROOT_PATH="$prefix" \
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_SHARED_LIBS=OFF \
         -DHB_HAVE_FREETYPE=ON \
@@ -390,25 +386,21 @@ build_cairo() {
     # Create meson cross file
     local crossfile="${builddir}/cross.txt"
 
-    # Build properly quoted c_args and c_link_args arrays for meson
-    local meson_c_args=""
-    for flag in $CFLAGS; do
-        [ -n "$meson_c_args" ] && meson_c_args="$meson_c_args, "
-        meson_c_args="$meson_c_args'$flag'"
-    done
-    local meson_link_args=""
-    for flag in $LDFLAGS; do
-        [ -n "$meson_link_args" ] && meson_link_args="$meson_link_args, "
-        meson_link_args="$meson_link_args'$flag'"
-    done
+    # Helper: convert space-separated flags to meson array format
+    # e.g., "-arch arm64 -O2" -> "'-arch', 'arm64', '-O2'"
+    meson_array_from_flags() {
+        local result=""
+        for flag in $1; do
+            [ -n "$result" ] && result="$result, "
+            result="$result'$flag'"
+        done
+        echo "$result"
+    }
 
-    # Create a wrapper script for pkg-config that does NOT prepend sysroot
-    local pkg_config_wrapper="${builddir}/pkg-config-wrapper.sh"
-    cat > "$pkg_config_wrapper" <<'PKGEOF'
-#!/bin/sh
-exec pkg-config "$@"
-PKGEOF
-    chmod +x "$pkg_config_wrapper"
+    local meson_c_args
+    meson_c_args=$(meson_array_from_flags "$CFLAGS")
+    local meson_link_args
+    meson_link_args=$(meson_array_from_flags "$LDFLAGS")
 
     cat > "$crossfile" <<CROSSEOF
 [binaries]
@@ -416,7 +408,7 @@ c = '$CC'
 cpp = '$CXX'
 ar = '$AR'
 ranlib = '$RANLIB'
-pkgconfig = '$pkg_config_wrapper'
+pkg-config = 'pkg-config'
 
 [built-in options]
 c_args = [$meson_c_args]
@@ -432,8 +424,10 @@ CROSSEOF
     cd "$builddir"
     log "Configuring cairo (meson) for $PLATFORM_NAME..."
 
-    # Set PKG_CONFIG_PATH so meson finds our built libs
+    # Set PKG_CONFIG_PATH to ONLY our install prefix — prevents meson from
+    # finding host Homebrew packages (like lzo2) that aren't cross-compiled
     export PKG_CONFIG_PATH="${prefix}/lib/pkgconfig:${prefix}/share/pkgconfig"
+    export PKG_CONFIG_LIBDIR="${prefix}/lib/pkgconfig:${prefix}/share/pkgconfig"
 
     meson setup builddir "$srcdir" \
         --cross-file "$crossfile" \
@@ -447,6 +441,8 @@ CROSSEOF
         -Dpng=enabled \
         -Dtests=disabled \
         -Dspectre=disabled \
+        -Dglib=disabled \
+        -Dsymbol-lookup=disabled \
         > configure.log 2>&1 || { err "Meson configure failed for cairo"; cat configure.log; return 1; }
 
     log "Building cairo for $PLATFORM_NAME..."
@@ -531,7 +527,7 @@ build_libgit2() {
     build_cmake "libgit2" "$srcdir" \
         -DBUILD_TESTS=OFF \
         -DBUILD_CLI=OFF \
-        -DUSE_BUNDLED_ZLIB=ON \
+        -DUSE_BUNDLED_ZLIB=OFF \
         "${cmake_extra[@]}"
 }
 
